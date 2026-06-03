@@ -11,7 +11,7 @@ selected dynamic BusyBox/musl workflows useful and testable.
 
 ## Reference Material
 
-`../osdev-master` has been a major reference and a big help for research and
+`osdev` (will link later) has been a major reference and a big help for research and
 implementation of low-level boot, kernel, Linux ABI, and service-runtime work.
 Axiom64 still keeps its own native-first architecture and service boundaries.
 

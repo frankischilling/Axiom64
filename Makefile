@@ -5,7 +5,7 @@ CXXFLAGS = -std=c++20 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-exception
 KERNEL_SOURCES = $(wildcard kernel/*.cpp)
 KERNEL_OBJECTS = $(patsubst kernel/%.cpp,build/kernel/%.o,$(KERNEL_SOURCES)) build/kernel/entry.o
 
-.PHONY: all image test run run-serial deps busybox sources clean
+.PHONY: all image test test-storage run run-serial deps busybox sources clean
 all: image
 deps:
 	$(PYTHON) scripts/fetch.py
@@ -38,10 +38,13 @@ build/ipc-tests: userspace/ipc-tests.c
 build/signal-tests: userspace/signal-tests.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+build/storage-tests: userspace/storage-tests.c
+	@mkdir -p build
+	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 build/x11-probe: userspace/x11-probe.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
-ROOTFS_INPUTS = build/abi-static build/abi-dynamic build/init build/ipc-tests build/signal-tests build/x11-probe build/licenses/.stamp $(wildcard userspace/*.sh userspace/*.conf userspace/*.twmrc) $(wildcard userspace/toolchain-test/*) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/build_busybox.py scripts/fetch.py
+ROOTFS_INPUTS = build/abi-static build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/x11-probe build/licenses/.stamp $(wildcard userspace/*.sh userspace/*.conf userspace/*.twmrc) $(wildcard userspace/toolchain-test/*) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/build_busybox.py scripts/fetch.py
 build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox
@@ -50,6 +53,8 @@ image: build/axiom64.elf build/rootfs.cpio
 	$(PYTHON) scripts/image.py
 test: image
 	$(PYTHON) scripts/boot_test.py --firmware both
+test-storage:
+	$(PYTHON) scripts/storage_test.py
 run: image
 	qemu-system-x86_64 -machine pc -cpu max -m 2G -cdrom build/axiom64.iso -serial stdio -no-reboot
 run-serial: image

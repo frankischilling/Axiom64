@@ -48,6 +48,7 @@ extern Task* current;
 extern uint64_t ticks;
 extern bool trace_syscalls, test_mode;
 extern const char* test_suite;
+extern const char* test_phase;
 Task* new_task();
 int fork_task(Frame*, bool share = false, uint64_t stack = 0);
 int exec_task(Task*, const char*, const char* const*, const char* const*);

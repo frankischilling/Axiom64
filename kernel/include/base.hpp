@@ -34,8 +34,21 @@ inline uint8_t in8(uint16_t p) {
     asm volatile("inb %1,%0" : "=a"(v) : "Nd"(p));
     return v;
 }
+inline void out16(uint16_t p, uint16_t v) {
+    asm volatile("outw %0,%1" ::"a"(v), "Nd"(p));
+}
+inline uint16_t in16(uint16_t p) {
+    uint16_t v;
+    asm volatile("inw %1,%0" : "=a"(v) : "Nd"(p));
+    return v;
+}
 inline void out32(uint16_t p, uint32_t v) {
     asm volatile("outl %0,%1" ::"a"(v), "Nd"(p));
+}
+inline uint32_t in32(uint16_t p) {
+    uint32_t v;
+    asm volatile("inl %1,%0" : "=a"(v) : "Nd"(p));
+    return v;
 }
 inline uint64_t rdmsr(uint32_t m) {
     uint32_t a, d;
@@ -92,6 +105,8 @@ struct AddressSpace {
     bool string(uint64_t src, char* dst, size_t capacity) const;
 };
 void memory_init();
+// Supervisor-only, uncached mappings for device registers; length is bounded to 1 MiB.
+void* map_mmio(uint64_t address, size_t length);
 void arch_init();
 void arch_task(uint64_t fs);
 extern "C" [[noreturn]] void enter_user(Frame*);

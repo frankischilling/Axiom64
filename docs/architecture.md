@@ -8,12 +8,13 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | --- | --- |
 | `kernel/arch.cpp`, `entry.asm` | CPU tables, interrupts, syscall entry, register frames, return to Ring 3 |
 | `kernel/memory.cpp` | Physical allocation, page references, user page tables, validated user copies |
+| `kernel/pci.cpp`, `block.cpp` | PCI discovery, modern/legacy virtio block queues, raw sector I/O and flush |
 | `kernel/task.cpp` | ELF loading, fork/exec/exit/wait, scheduling, descriptors, TLS, FPU state |
 | `kernel/vfs.cpp` | Initramfs, mutable RAM files, directories, symlinks, hard links, pipes |
 | `kernel/syscall.cpp` | Linux syscall numbers, ABI structures, errors, blocking operations |
 | `kernel/signals.cpp` | Queues, masks, actions, signal frames, return, alternate stacks, timers |
 | `kernel/ipc.cpp`, `shared_memory.cpp` | Unix stream sockets, readiness, epoll, select, shared mappings, SysV segments |
-| `kernel/devices.cpp` | Serial terminal, PTYs, framebuffer, PS/2 keyboard and mouse events |
+| `kernel/devices.cpp` | Serial terminal, PTYs, framebuffer, PS/2 events, Linux block-device file operations |
 | `userspace/init.c` | Desktop and serial shell startup, child reaping, console shell restart |
 
 Each process has four-level user page tables with user, write, and execute permissions. The upper half shares supervisor mappings. Syscall buffers are validated across the full range and copied through the physical mapping. Fork copies private pages and retains shared page references. The scheduler uses one CPU, bounded task slots, and timer preemption; syscalls execute with interrupts masked.
@@ -30,7 +31,7 @@ This is a development OS with a tested compatibility surface. Unsupported syscal
 
 - One CPU, 64 task slots, 128 descriptors per task. No userspace threads or SMP.
 - Root identity only. No multiuser permission enforcement, security boundary for untrusted workloads, or cryptographic random generator.
-- A RAM filesystem. No persistent disk driver, network stack, or package installation service.
+- A RAM root filesystem and persistent raw virtio disks. No disk filesystem mounts, network stack, or package installation service. See [storage](storage.md) for the supported interfaces and limits.
 - Unix stream sockets without descriptor passing. No TCP/UDP, datagram sockets, or complete socket option support.
 - Eager copying on fork, bounded allocations, and no general `mremap` implementation.
 - Fixed framebuffer mode. No accelerated graphics, hardware gamma control, hotplug, or virtual-console switching.

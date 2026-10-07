@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "devices.hpp"
+#include "block.hpp"
 #include "ipc.hpp"
 #include "signals.hpp"
 #include "task.hpp"
@@ -62,6 +63,10 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
     if ((n->mode & 0170000) == directory && (flags & 3))
         return -21;
     n = file_node(n);
+    if (n->device == Device::block && (flags & 3) && block_info(n->device_id)->readonly)
+        return -30;
+    if (n->device == Device::block && (flags & 040000)) // O_DIRECT needs alignment semantics.
+        return -22;
     if (n->device == Device::tty && !current->controlling_pty && !current->controlling_console)
         return -6;
     if ((flags & 01000) && (flags & 3) && (n->mode & 0170000) == regular_file && !node_resize(n, 0))
@@ -92,8 +97,10 @@ static int64_t stat_node(Node* n, uint64_t dst) {
     s.mtime_ns = n->mtime.nsec;
     s.ctime = n->ctime.sec;
     s.ctime_ns = n->ctime.nsec;
-    if ((n->mode & 0170000) == character)
+    if ((n->mode & 0170000) == character || (n->mode & 0170000) == block_device)
         s.rdev = device_number(n);
+    if ((n->mode & 0170000) == block_device)
+        s.size = s.blocks = 0;
     return copy_result(dst, &s, sizeof(s));
 }
 static int64_t stat_path(int dirfd, uint64_t path, uint64_t dst, bool follow) {
@@ -390,7 +397,8 @@ static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
         int size = h->socket ? h->socket->size : h->pipe->size;
         return copy_result(arg, &size, 4);
     }
-    if (!h->node || (h->node->mode & 0170000) != character)
+    if (!h->node || ((h->node->mode & 0170000) != character &&
+                     (h->node->mode & 0170000) != block_device))
         return -25;
     return device_ioctl(h, request, arg);
 }
@@ -549,6 +557,8 @@ static int64_t dispatch(Frame* f) {
         auto h = fd_handle(a);
         if (!h)
             return -9;
+        if (int64_t(d) < 0)
+            return -22;
         uint64_t old = h->offset;
         h->offset = d;
         int64_t result = io(a, b, c, f->rax == 18);
@@ -754,8 +764,12 @@ static int64_t dispatch(Frame* f) {
         return -22;
     }
     case 74:
-    case 75:
-        return fd_handle(a) ? 0 : -9;
+    case 75: {
+        auto h = fd_handle(a);
+        if (!h)
+            return -9;
+        return h->node && h->node->device == Device::block ? block_flush(h->node->device_id) : 0;
+    }
     case 76: {
         char path[1024];
         if (!path_at(-100, a, path))
@@ -763,13 +777,15 @@ static int64_t dispatch(Frame* f) {
         auto n = lookup(path);
         if (!n)
             return -2;
+        if ((n->mode & 0170000) == block_device)
+            return -22;
         return node_resize(n, b) ? 0 : -28;
     }
     case 77: {
         auto h = fd_handle(a);
         if (!h)
             return -9;
-        if (!h->node || (h->flags & 3) == 0)
+        if (!h->node || (h->flags & 3) == 0 || (h->node->mode & 0170000) == block_device)
             return -22;
         return node_resize(h->node, b) ? 0 : -28;
     }

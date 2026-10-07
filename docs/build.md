@@ -34,4 +34,4 @@ make -C /root/toolchain-test test
 zsh -f
 ```
 
-The example Makefile compiles and runs C and C++ programs, exercises exceptions and the standard library, and checks a rejected C source file. Files in the boot root are held in RAM and disappear when the guest exits. Use a [mounted ext2 data volume](ext2.md) for persistent files. The initial target is QEMU's emulated PC with PS/2 input and a 1024x768 boot framebuffer.
+The example Makefile compiles and runs C and C++ programs, exercises exceptions, threads, synchronization, and the standard library, and checks a rejected C source file. Files in the boot root are held in RAM and disappear when the guest exits. Use a [mounted ext2 data volume](ext2.md) for persistent files. The initial target is QEMU's emulated PC with PS/2 input and a 1024x768 boot framebuffer.

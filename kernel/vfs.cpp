@@ -452,7 +452,7 @@ bool node_referenced(Node* node) {
         if (handle.references && references(handle.node))
             return true;
     for (auto& task : tasks)
-        if (task.state != State::empty && task.state != State::zombie && references(task.cwd_node))
+        if (task.state != State::empty && task.state != State::zombie && references(task.fs->cwd_node))
             return true;
     return socket_node_busy(node) ||
            (node->backing_physical && page_shared(node->backing_physical, node->capacity / page_size));
@@ -466,7 +466,7 @@ static bool mount_busy(Mount* mount, bool writers_only) {
             return true;
     for (auto& task : tasks)
         if (!writers_only && task.state != State::empty && task.state != State::zombie &&
-            task.cwd_node && task.cwd_node->mount == mount)
+            task.fs->cwd_node && task.fs->cwd_node->mount == mount)
             return true;
     // Shared file pages outlive file descriptors, including after fork.
     for (size_t i = 0; i < node_count; i++) {

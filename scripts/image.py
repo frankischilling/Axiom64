@@ -11,8 +11,8 @@ from fetch import ROOT, fetch
 parser = argparse.ArgumentParser()
 parser.add_argument("--test", action="store_true")
 parser.add_argument("--trace", action="store_true")
-parser.add_argument("--suite", choices=["full", "abi", "desktop", "storage", "ext2"], default="full")
-parser.add_argument("--phase", choices=["write", "verify", "readonly", "error", "invalid", "full"], default="verify")
+parser.add_argument("--suite", choices=["full", "abi", "desktop", "storage", "ext2", "threads"], default="full")
+parser.add_argument("--phase", choices=["write", "verify", "readonly", "error", "invalid", "full", "all", "cond"], default="verify")
 parser.add_argument("--output-name", help="ISO filename under build/ for an isolated test run")
 args = parser.parse_args()
 if args.output_name and (Path(args.output_name).name != args.output_name or
@@ -33,7 +33,8 @@ staging = ROOT / "build" / ("iso-" + args.output_name[:-4] if args.output_name e
 (staging / "boot" / "limine").mkdir(parents=True, exist_ok=True)
 (staging / "EFI" / "BOOT").mkdir(parents=True, exist_ok=True)
 for filename in ["axiom64.elf", "rootfs.cpio"]:
-    source = ROOT / "build" / ("rootfs-desktop.cpio" if filename == "rootfs.cpio" and args.test and args.suite != "full" else filename)
+    desktop_profile = args.suite not in ["full", "threads"] or (args.suite == "threads" and args.phase == "cond")
+    source = ROOT / "build" / ("rootfs-desktop.cpio" if filename == "rootfs.cpio" and args.test and desktop_profile else filename)
     target = staging / "boot" / filename
     if target.exists():
         target.unlink()
@@ -49,7 +50,7 @@ config = (ROOT / "boot" / "limine.conf").read_text()
 options = (" test" if args.test else "") + (" trace" if args.trace else "")
 if args.test:
     options += " suite=" + args.suite
-    if disk_suite:
+    if disk_suite or args.suite == "threads":
         options += " phase=" + args.phase
 config = config.replace("cmdline: init=/sbin/init", "cmdline: init=/sbin/init" + options)
 (staging / "boot" / "limine" / "limine.conf").write_text(config)

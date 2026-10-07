@@ -2,6 +2,12 @@
 set -eu
 /bin/abi-static
 /bin/abi-dynamic
+/bin/thread-static
+/bin/thread-dynamic
+/bin/futex-static
+/bin/futex-dynamic
+/bin/lifecycle-static
+/bin/lifecycle-dynamic
 /bin/ipc-tests
 /bin/signal-tests
 /bin/vfs-tests

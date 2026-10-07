@@ -25,10 +25,10 @@ static void collect(Segment* segment) {
     }
 }
 void shared_memory_fork(Task* child, const Task* parent) {
-    if (child->memory_shared)
+    if (child->memory == parent->memory)
         return;
-    memcpy(child->shared, parent->shared, sizeof(child->shared));
-    for (auto& attachment : child->shared)
+    memcpy(child->memory->shared, parent->memory->shared, sizeof(child->memory->shared));
+    for (auto& attachment : child->memory->shared)
         if (attachment.id) {
             auto segment = find(attachment.id);
             if (segment)
@@ -36,13 +36,13 @@ void shared_memory_fork(Task* child, const Task* parent) {
         }
 }
 void shared_memory_release(Task* task) {
-    for (auto& attachment : task->shared)
+    for (auto& attachment : task->memory->shared)
         if (attachment.id) {
             auto segment = find(attachment.id);
             if (segment) {
                 segment->attachments--;
                 segment->detached = ticks / 100;
-                segment->last_pid = task->pid;
+                segment->last_pid = task->process->pid;
                 collect(segment);
             }
             attachment = {};
@@ -80,9 +80,8 @@ int64_t shared_memory_syscall(Frame* f) {
                 uint64_t address = page_alloc(align_up(b) / page_size);
                 if (!address)
                     return -12;
-                segment = {next_id++, int(a), current->pid,       current->pid,
-                           address,   b,      ticks / 100,        0,
-                           0,         0,      unsigned(c & 0777), false};
+                segment = {next_id++, int(a), current->process->pid, current->process->pid,
+                           address, b, ticks / 100, 0, 0, 0, unsigned(c & 0777), false};
                 return segment.id;
             }
         return -28;
@@ -97,7 +96,7 @@ int64_t shared_memory_syscall(Frame* f) {
         if (base % page_size)
             return -22;
         SharedAttachment* record = nullptr;
-        for (auto& item : current->shared)
+        for (auto& item : current->memory->shared)
             if (!item.id) {
                 record = &item;
                 break;
@@ -106,34 +105,34 @@ int64_t shared_memory_syscall(Frame* f) {
             return -24;
         size_t length = align_up(segment->size);
         if (!base) {
-            base = current->memory.next_map;
-            current->memory.next_map += length + page_size;
+            base = current->memory->space.next_map;
+            current->memory->space.next_map += length + page_size;
         }
         if (base < page_size || base >= user_limit || length > user_limit - base)
             return -22;
         for (uint64_t page = base; page < base + length; page += page_size) {
-            auto entry = current->memory.entry(page);
+            auto entry = current->memory->space.entry(page);
             if (entry && (*entry & page_mask))
                 return -22;
         }
-        if (!current->memory.map_physical(base, segment->physical, length, (c & 0x1000) ? 1 : 3))
+        if (!current->memory->space.map_physical(base, segment->physical, length, (c & 0x1000) ? 1 : 3))
             return -12;
         *record = {segment->id, base, length};
         segment->attachments++;
         segment->attached = ticks / 100;
-        segment->last_pid = current->pid;
+        segment->last_pid = current->process->pid;
         return base;
     }
     if (f->rax == 67) {
-        for (auto& record : current->shared)
+        for (auto& record : current->memory->shared)
             if (record.id && record.base == a) {
                 auto segment = find(record.id);
-                current->memory.unmap(record.base, record.length);
+                current->memory->space.unmap(record.base, record.length);
                 record = {};
                 if (segment) {
                     segment->attachments--;
                     segment->detached = ticks / 100;
-                    segment->last_pid = current->pid;
+                    segment->last_pid = current->process->pid;
                     collect(segment);
                 }
                 return 0;
@@ -161,11 +160,11 @@ int64_t shared_memory_syscall(Frame* f) {
             info.creator = segment->creator;
             info.last_pid = segment->last_pid;
             info.attachments = segment->attachments;
-            return current->memory.copy_out(c, &info, sizeof(info)) ? 0 : -14;
+            return current->memory->space.copy_out(c, &info, sizeof(info)) ? 0 : -14;
         }
         if (command == 1) {
             Shmid info;
-            if (!current->memory.copy_in(&info, c, sizeof(info)))
+            if (!current->memory->space.copy_in(&info, c, sizeof(info)))
                 return -14;
             segment->mode = info.permission.mode & 0777;
             return 0;

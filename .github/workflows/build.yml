@@ -17,6 +17,8 @@ jobs:
         run: make -j2 image
       - name: Test BIOS and UEFI userspace
         run: python3 scripts/boot_test.py --firmware both
+      - name: Test pthread lifecycle and futex synchronization
+        run: make test-threads
       - name: Test virtio disks and reboot persistence
         run: python3 scripts/storage_test.py
       - name: Test writable ext2 volumes and host fsck
@@ -41,6 +43,8 @@ jobs:
             build/axiom64.elf
             build/boot-*.log
             build/boot-results.json
+            build/threads-*.log
+            build/threads-*-results.json
             build/desktop-*.png
             build/interactive-*.log
             build/interactive-*.png

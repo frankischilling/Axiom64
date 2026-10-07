@@ -39,7 +39,7 @@ The first three milestones define the next core sequence. Later milestones descr
 | F02 | [Block layer and virtio disk](https://github.com/frankischilling/Axiom64/issues/2) | partial | M1 | F01 |
 | F03 | [Writable ext2 and later ext4](https://github.com/frankischilling/Axiom64/issues/3) | partial | M1 | F02 |
 | F04 | [VFS, mounts, and pseudo filesystems](https://github.com/frankischilling/Axiom64/issues/4) | partial | M1 | F02 |
-| F05 | [POSIX threads and futexes](https://github.com/frankischilling/Axiom64/issues/5) | planned | M2 | F04 |
+| F05 | [POSIX threads and futexes](https://github.com/frankischilling/Axiom64/issues/5) | partial | M2 | F04 |
 | F06 | [Demand paging, copy-on-write, and swap](https://github.com/frankischilling/Axiom64/issues/6) | partial | M2 | F03, F05 |
 | F07 | [SMP scheduling and kernel synchronization](https://github.com/frankischilling/Axiom64/issues/7) | planned | M2 | F01, F05, F06 |
 | F08 | [Linux syscall and libc compatibility](https://github.com/frankischilling/Axiom64/issues/8) | partial | M4 | F05, F06, F13 |
@@ -163,7 +163,7 @@ Acceptance evidence:
 
 ### F05. POSIX threads and futexes
 
-Processes exist; CLONE_THREAD and guest pthreads are missing.
+Single-CPU musl pthread lifecycle, shared clone resources, TLS/FPU isolation, mutex/condition/semaphore synchronization, futex wait/wake/bitsets/requeue, and guest-compiled C++ threads are implemented. [The interface and tests](threads.md) cover worker fork/exec, group teardown, clear-TID, and shared futex backing lifetime. [Child #47](https://github.com/frankischilling/Axiom64/issues/47) tracks this slice; robust owner death, cancellation, remaining POSIX synchronization, complete signal semantics, and SMP remain planned.
 
 Required work:
 

@@ -5,7 +5,7 @@ CXXFLAGS = -std=c++20 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-exception
 KERNEL_SOURCES = $(wildcard kernel/*.cpp)
 KERNEL_OBJECTS = $(patsubst kernel/%.cpp,build/kernel/%.o,$(KERNEL_SOURCES)) build/kernel/entry.o
 
-.PHONY: all image test test-storage test-ext2 run run-serial deps busybox sources clean
+.PHONY: all image test test-storage test-ext2 test-threads run run-serial deps busybox sources clean
 all: image
 deps:
 	$(PYTHON) scripts/fetch.py
@@ -47,10 +47,28 @@ build/vfs-tests: userspace/vfs-tests.c
 build/ext2-tests: userspace/ext2-tests.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+build/thread-static: userspace/thread-tests.c
+	@mkdir -p build
+	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -lm -o $@
+build/thread-dynamic: userspace/thread-tests.c
+	@mkdir -p build
+	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DTHREAD_LINKAGE='"dynamic"' $< -lm -o $@
+build/futex-static: userspace/futex-tests.c
+	@mkdir -p build
+	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
+build/futex-dynamic: userspace/futex-tests.c
+	@mkdir -p build
+	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DFUTEX_LINKAGE='"dynamic"' $< -o $@
+build/lifecycle-static: userspace/thread-lifecycle.c userspace/test-clone.S
+	@mkdir -p build
+	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $^ -o $@
+build/lifecycle-dynamic: userspace/thread-lifecycle.c userspace/test-clone.S
+	@mkdir -p build
+	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DLIFE_LINKAGE='"dynamic"' $^ -o $@
 build/x11-probe: userspace/x11-probe.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
-ROOTFS_INPUTS = build/abi-static build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/x11-probe build/licenses/.stamp $(wildcard userspace/*.sh userspace/*.conf userspace/*.twmrc) $(wildcard userspace/toolchain-test/*) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/build_busybox.py scripts/fetch.py
+ROOTFS_INPUTS = build/lifecycle-static build/lifecycle-dynamic build/futex-static build/futex-dynamic build/thread-static build/thread-dynamic build/abi-static build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/x11-probe build/licenses/.stamp $(wildcard userspace/*.sh userspace/*.conf userspace/*.twmrc) $(wildcard userspace/toolchain-test/*) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/build_busybox.py scripts/fetch.py
 build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox
@@ -63,6 +81,8 @@ test-storage:
 	$(PYTHON) scripts/storage_test.py
 test-ext2:
 	$(PYTHON) scripts/ext2_test.py
+test-threads:
+	$(PYTHON) scripts/boot_test.py --suite threads --firmware both --timeout 170
 run: image
 	qemu-system-x86_64 -machine pc -cpu max -m 2G -cdrom build/axiom64.iso -serial stdio -no-reboot
 run-serial: image

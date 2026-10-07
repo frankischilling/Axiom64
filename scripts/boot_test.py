@@ -119,7 +119,7 @@ for firmware in firmwares:
         required += ["AXIOM64_TESTS_PASS", "AXIOM64_EXIT status=0"]
     if args.suite != "desktop" and not args.interactive:
         required += ["ABI_TESTS_PASS linkage=static", "ABI_TESTS_PASS linkage=dynamic",
-                     "IPC_TESTS_PASS", "SIGNAL_TESTS_PASS", "BUSYBOX_SHELL_PASS"]
+                     "IPC_TESTS_PASS", "SIGNAL_TESTS_PASS", "VFS_TESTS_PASS", "BUSYBOX_SHELL_PASS"]
     if args.suite == "full" and not args.interactive:
         required += ["NATIVE_C_PASS", "NATIVE_CPP_PASS", "NATIVE_DIAGNOSTICS_PASS", "NATIVE_TOOLCHAIN_PASS"]
     if args.suite != "abi" and not args.interactive:
@@ -130,7 +130,7 @@ for firmware in firmwares:
     if args.suite != "abi" and not screenshot.exists():
         missing.append("desktop screenshot")
     passed = not timed_out and not capture_error and returncode == (0 if args.interactive else 1) and not missing
-    passed &= not any(marker in text for marker in ["PANIC:", "FAULT ", "ABI_FAIL", "IPC_FAIL", "SIGNAL_FAIL", "X11_FAIL"])
+    passed &= not any(marker in text for marker in ["PANIC:", "FAULT ", "ABI_FAIL", "IPC_FAIL", "SIGNAL_FAIL", "VFS_FAIL", "X11_FAIL"])
     results.append({"firmware": firmware, "suite": "interactive" if args.interactive else args.suite, "passed": passed,
                     "returncode": returncode, "timed_out": timed_out, "capture_error": capture_error,
                     "elapsed_seconds": round(time.monotonic() - started, 2), "missing_markers": missing,

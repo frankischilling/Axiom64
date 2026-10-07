@@ -2,6 +2,8 @@
 #include "vfs.hpp"
 #include "devices.hpp"
 #include "ipc.hpp"
+#include "task.hpp"
+#include "block.hpp"
 
 namespace ax {
 Timestamp node_now() {
@@ -63,27 +65,45 @@ bool normalize(const char* cwd, const char* path, char* result, size_t cap) {
     result[output] = 0;
     return true;
 }
-static Node* child(Node* parent, const char* name, size_t len) {
-    for (Node* n = parent->first_child; n; n = n->next_sibling)
-        if (!n->removed && strlen(n->name) == len && !memcmp(n->name, name, len))
-            return n;
+static Mount mounts[16];
+static uint64_t next_mount_id = 1;
+static Mount* mounted_on(Node* point) {
+    for (auto& mount : mounts)
+        if (mount.active && mount.point == point)
+            return &mount;
     return nullptr;
 }
-void node_path(Node* n, char* result, size_t cap) {
-    if (n == root_node) {
+Node* directory_parent(Node* node) {
+    if (node == node->mount->root && node->mount->point)
+        return node->mount->point->parent;
+    return node->parent ? node->parent : node;
+}
+void node_path(Node* node, char* result, size_t cap) {
+    if (!cap)
+        return;
+    result[0] = 0;
+    Node* chain[128];
+    size_t count = 0;
+    while (node && node != root_node && count < 128) {
+        if (node == node->mount->root && node->mount->point) {
+            node = node->mount->point;
+            continue;
+        }
+        if (node->removed)
+            return;
+        chain[count++] = node;
+        node = node->parent;
+    }
+    if (node != root_node)
+        return;
+    size_t offset = 0;
+    if (!count) {
         if (cap >= 2) {
             result[0] = '/';
             result[1] = 0;
         }
         return;
     }
-    Node* chain[128];
-    size_t count = 0;
-    while (n && n != root_node && count < 128) {
-        chain[count++] = n;
-        n = n->parent;
-    }
-    size_t offset = 0;
     while (count) {
         auto part = chain[--count];
         size_t len = strlen(part->name);
@@ -97,100 +117,402 @@ void node_path(Node* n, char* result, size_t cap) {
     }
     result[offset] = 0;
 }
-Node* lookup(const char* path, bool follow, unsigned depth) {
-    if (depth > 16 || !path || *path != '/')
-        return nullptr;
-    Node* n = root_node;
-    for (size_t p = 0; path[p];) {
-        while (path[p] == '/')
+int resolve_path(const Path& path, Node*& result, bool follow) {
+    result = nullptr;
+    if (!path.text[0])
+        return -2;
+    char pending[2048];
+    memcpy(pending, path.text, strlen(path.text) + 1);
+    Node* node = pending[0] == '/' ? root_node : path.base;
+    if (!node)
+        return -2;
+    unsigned links = 0;
+    size_t p = 0;
+    while (pending[p]) {
+        while (pending[p] == '/')
             p++;
+        if ((node->mode & 0170000) != directory)
+            return -20;
+        if (!pending[p])
+            break;
         size_t begin = p;
-        while (path[p] && path[p] != '/')
+        while (pending[p] && pending[p] != '/')
             p++;
         size_t len = p - begin;
-        if (!len)
-            break;
-        if ((n->mode & 0170000) != directory)
-            return nullptr;
-        n = child(n, path + begin, len);
-        if (!n)
-            return nullptr;
-        if ((n->mode & 0170000) == symlink && (follow || path[p])) {
-            char base[1024], resolved[2048], combined[2048];
-            node_path(n->parent, base, sizeof(base));
-            if (!normalize(base, (const char*)n->data, resolved, sizeof(resolved)))
-                return nullptr;
-            size_t a = strlen(resolved), b = strlen(path + p);
-            if (a + b >= sizeof(combined))
-                return nullptr;
-            memcpy(combined, resolved, a);
-            memcpy(combined + a, path + p, b + 1);
-            return lookup(combined, follow, depth + 1);
+        if (len > 255)
+            return -36;
+        char name[256];
+        memcpy(name, pending + begin, len);
+        name[len] = 0;
+        if (!strcmp(name, "."))
+            continue;
+        if (!strcmp(name, "..")) {
+            node = directory_parent(node);
+            continue;
         }
+        Node* child = nullptr;
+        int error = node->mount->ops->lookup(node, name, child);
+        if (error)
+            return error;
+        if (auto mount = mounted_on(child))
+            child = mount->root;
+        if ((child->mode & 0170000) == symlink && (follow || pending[p])) {
+            if (++links > 40)
+                return -40;
+            auto target = file_node(child);
+            if (!target->size)
+                return -2;
+            size_t tail = strlen(pending + p);
+            if (target->size + tail >= sizeof(pending))
+                return -36;
+            char link[2048];
+            int64_t count = node_read(target, 0, link, target->size);
+            if (count < 0)
+                return count;
+            if (size_t(count) != target->size)
+                return -5;
+            memcpy(link + count, pending + p, tail + 1);
+            memcpy(pending, link, size_t(count) + tail + 1);
+            if (pending[0] == '/')
+                node = root_node;
+            p = 0;
+            continue;
+        }
+        node = child;
     }
-    return n;
+    result = node;
+    return 0;
 }
-Node* make_node(const char* path, uint32_t mode) {
-    if (!strcmp(path, "/"))
-        return root_node;
-    if (node_count == sizeof(nodes) / sizeof(nodes[0]))
+Node* lookup(const Path& path, bool follow) {
+    Node* node = nullptr;
+    resolve_path(path, node, follow);
+    return node;
+}
+Node* lookup(const char* text, bool follow, unsigned) {
+    Path path;
+    path.base = root_node;
+    if (!text || strlen(text) >= sizeof(path.text))
         return nullptr;
-    size_t length = strlen(path), split = length;
-    while (split && path[split - 1] != '/')
+    memcpy(path.text, text, strlen(text) + 1);
+    return lookup(path, follow);
+}
+static int parent_path(const Path& path, Node*& parent, char* name) {
+    size_t length = strlen(path.text);
+    while (length > 1 && path.text[length - 1] == '/')
+        length--;
+    size_t split = length;
+    while (split && path.text[split - 1] != '/')
         split--;
-    if (!split || length - split >= sizeof(Node::name))
-        return nullptr;
-    char parent_path[1024];
-    size_t pn = split == 1 ? 1 : split - 1;
-    if (pn >= sizeof(parent_path))
-        return nullptr;
-    memcpy(parent_path, path, pn);
-    parent_path[pn] = 0;
-    Node* parent = lookup(parent_path);
-    if (!parent || (parent->mode & 0170000) != directory ||
-        child(parent, path + split, length - split))
-        return nullptr;
-    Node* n = &nodes[node_count++];
-    n->inode = node_count;
-    n->links = 1;
-    n->parent = parent;
-    n->mode = mode;
-    n->atime = n->mtime = n->ctime = node_now();
-    n->next_sibling = parent->first_child;
-    parent->first_child = n;
-    memcpy(n->name, path + split, length - split + 1);
-    return n;
-}
-bool node_resize(Node* n, size_t size) {
-    n = file_node(n);
-    if (size > 256 * 1024 * 1024)
-        return false;
-    if (!n->owned || size > n->capacity) {
-        if (n->backing_physical && page_shared(n->backing_physical, n->capacity / page_size))
-            return false;
-        size_t cap = align_up(
-            max(size, min(size_t(256 * 1024 * 1024), max(size_t(65536), n->capacity * 2))));
-        uint64_t backing = page_alloc(cap / page_size);
-        if (!backing)
-            return false;
-        auto data = (uint8_t*)physical(backing);
-        memcpy(data, n->data, min(n->size, size));
-        if (n->backing_physical)
-            page_free(n->backing_physical, n->capacity / page_size);
-        else if (n->owned)
-            release(n->data);
-        n->data = data;
-        n->backing_physical = backing;
-        n->owned = true;
-        n->capacity = cap;
+    size_t len = length - split;
+    if (!len)
+        return -16;
+    if (len > 255)
+        return -36;
+    memcpy(name, path.text + split, len);
+    name[len] = 0;
+    if (!strcmp(name, ".") || !strcmp(name, ".."))
+        return -22;
+    Path base;
+    base.base = path.base;
+    if (!split)
+        memcpy(base.text, ".", 2);
+    else {
+        memcpy(base.text, path.text, split);
+        base.text[split] = 0;
     }
-    if (size > n->size)
-        memset(n->data + n->size, 0, size - n->size);
-    else if (size < n->size && n->owned)
-        memset(n->data + size, 0, n->size - size);
-    n->size = size;
-    n->mtime = n->ctime = node_now();
-    return true;
+    int error = resolve_path(base, parent);
+    return error ? error : (parent->mode & 0170000) == directory ? 0 : -20;
+}
+bool node_readonly(Node* node) {
+    return node && node->mount->readonly;
+}
+int create_node(const Path& path, uint32_t mode, Node*& node, const char* target) {
+    Node* existing = nullptr;
+    int error = resolve_path(path, existing, false);
+    if (!error)
+        return -17;
+    if (error != -2)
+        return error;
+    Node* parent = nullptr;
+    char name[256];
+    error = parent_path(path, parent, name);
+    if (error)
+        return error;
+    if (parent->removed)
+        return -2;
+    if (node_readonly(parent))
+        return -30;
+    error = parent->mount->ops->lookup(parent, name, existing);
+    if (!error)
+        return -17;
+    if (error != -2)
+        return error;
+    size_t len = strlen(path.text);
+    if ((mode & 0170000) != directory && len && path.text[len - 1] == '/')
+        return -21;
+    return parent->mount->ops->create(parent, name, mode, target, node);
+}
+Node* make_node(const char* text, uint32_t mode) {
+    if (!strcmp(text, "/"))
+        return root_node;
+    Path path;
+    path.base = root_node;
+    if (strlen(text) >= sizeof(path.text))
+        return nullptr;
+    memcpy(path.text, text, strlen(text) + 1);
+    Node* node = nullptr;
+    return create_node(path, mode, node) ? nullptr : node;
+}
+int link_node(const Path& from, const Path& to, bool follow) {
+    Node* target = nullptr;
+    int error = resolve_path(from, target, follow);
+    if (error)
+        return error;
+    target = file_node(target);
+    if (to.text[strlen(to.text) - 1] == '/')
+        return -2;
+    if ((target->mode & 0170000) == directory)
+        return -1;
+    Node* parent = nullptr;
+    char name[256];
+    error = parent_path(to, parent, name);
+    if (error)
+        return error;
+    if (target->mount != parent->mount)
+        return -18;
+    if (node_readonly(parent))
+        return -30;
+    Node* existing = nullptr;
+    error = parent->mount->ops->lookup(parent, name, existing);
+    if (!error)
+        return -17;
+    if (error != -2)
+        return error;
+    if ((target->mode & 0170000) != regular_file && (target->mode & 0170000) != symlink)
+        return -95;
+    return parent->mount->ops->link(target, parent, name);
+}
+static bool mount_root(Node* node) {
+    return node == node->mount->root;
+}
+static int empty_directory(Node* node) {
+    DirectoryEntry entry;
+    uint64_t cookie = 0;
+    while (true) {
+        int result = node_readdir(node, cookie, entry);
+        if (result <= 0)
+            return result;
+        if (strcmp(entry.name, ".") && strcmp(entry.name, ".."))
+            return -39;
+        if (entry.next == cookie)
+            return -5;
+        cookie = entry.next;
+    }
+}
+static bool dot_component(const Path& path) {
+    size_t end = strlen(path.text);
+    while (end && path.text[end - 1] == '/')
+        end--;
+    size_t begin = end;
+    while (begin && path.text[begin - 1] != '/')
+        begin--;
+    return (end - begin == 1 && path.text[begin] == '.') ||
+           (end - begin == 2 && path.text[begin] == '.' && path.text[begin + 1] == '.');
+}
+int remove_node(const Path& path, bool dir) {
+    if (dir && dot_component(path))
+        return -22;
+    Node* node = nullptr;
+    int error = resolve_path(path, node, false);
+    if (error)
+        return error;
+    if (mount_root(node) || mounted_on(node))
+        return -16;
+    if (node_readonly(node))
+        return -30;
+    if (dir) {
+        if ((node->mode & 0170000) != directory)
+            return -20;
+        error = empty_directory(node);
+        if (error)
+            return error;
+    } else if ((node->mode & 0170000) == directory)
+        return -21;
+    return node->mount->ops->remove(node);
+}
+int rename_node(const Path& from, const Path& to) {
+    if (dot_component(from) || dot_component(to))
+        return -16;
+    Node* node = nullptr;
+    int error = resolve_path(from, node, false);
+    if (error)
+        return error;
+    Node* parent = nullptr;
+    char name[256];
+    error = parent_path(to, parent, name);
+    if (error)
+        return error;
+    if (node->mount != parent->mount)
+        return -18;
+    if (mount_root(node) || mounted_on(node))
+        return -16;
+    if (node_readonly(node))
+        return -30;
+    Node* replaced = nullptr;
+    error = parent->mount->ops->lookup(parent, name, replaced);
+    if (error && error != -2)
+        return error;
+    if (to.text[strlen(to.text) - 1] == '/' && !replaced)
+        return -2;
+    if (replaced && (mount_root(replaced) || mounted_on(replaced)))
+        return -16;
+    if (replaced && file_node(replaced) == file_node(node))
+        return 0;
+    bool dir = (node->mode & 0170000) == directory;
+    for (Node* n = parent; dir && n; n = n->parent)
+        if (n == node)
+            return -22;
+    if (replaced) {
+        bool other_dir = (replaced->mode & 0170000) == directory;
+        if (dir != other_dir)
+            return dir ? -20 : -21;
+        if (other_dir && (error = empty_directory(replaced)))
+            return error;
+    }
+    return node->mount->ops->rename(node, parent, name, replaced);
+}
+int node_truncate(Node* node, uint64_t size) {
+    node = file_node(node);
+    if (int64_t(size) < 0)
+        return -22;
+    if (!node || (node->mode & 0170000) != regular_file)
+        return node && (node->mode & 0170000) == directory ? -21 : -22;
+    if (node_readonly(node))
+        return -30;
+    return node->mount->ops->truncate(node, size);
+}
+bool node_resize(Node* node, size_t size) {
+    return node_truncate(node, size) == 0;
+}
+int node_setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime) {
+    node = file_node(node);
+    if (node_readonly(node))
+        return -30;
+    return node->mount->ops->setattr(node, mode, atime, mtime);
+}
+int64_t node_read(Node* node, uint64_t offset, void* buffer, size_t length) {
+    node = file_node(node);
+    return node->mount->ops->read(node, offset, buffer, length);
+}
+int node_readdir(Node* node, uint64_t cookie, DirectoryEntry& entry) {
+    return node->mount->ops->readdir(node, cookie, entry);
+}
+int node_sync(Node* node, bool data_only) {
+    if (!node)
+        return -22;
+    if ((node->mode & 0170000) == block_device)
+        return block_flush(node->device_id);
+    return node->mount->ops->sync(node->mount, file_node(node), data_only);
+}
+int sync_filesystems() {
+    int error = 0;
+    for (auto& mount : mounts)
+        if (mount.active) {
+            int result = mount.ops->sync(&mount, nullptr, false);
+            if (result && !error)
+                error = result;
+        }
+    return error;
+}
+int node_map_shared(Node* node, uint64_t offset, size_t length, bool write, uint64_t& address) {
+    if (write && node_readonly(node))
+        return -30;
+    if (!node->mount->ops->map_shared)
+        return -19;
+    return node->mount->ops->map_shared(node, offset, length, address);
+}
+FilesystemStats node_stats(Node* node) {
+    return node->mount->ops->stats(node->mount);
+}
+static bool mount_busy(Mount* mount, bool writers_only) {
+    if (!writers_only && socket_mount_busy(mount))
+        return true;
+    for (auto& h : handles)
+        if (h.references && h.node && h.node->mount == mount &&
+            (!writers_only || ((h.flags & 3) && (h.node->mode & 0170000) == regular_file)))
+            return true;
+    for (auto& task : tasks)
+        if (!writers_only && task.state != State::empty && task.state != State::zombie &&
+            task.cwd_node && task.cwd_node->mount == mount)
+            return true;
+    // Shared file pages outlive file descriptors, including after fork.
+    for (size_t i = 0; i < node_count; i++) {
+        auto& node = nodes[i];
+        if (node.mount == mount && node.backing_physical &&
+            page_shared(node.backing_physical, node.capacity / page_size))
+            return true;
+    }
+    return false;
+}
+int mount_ramfs(const Path& path, const char* type, uint64_t flags) {
+    if (flags & ~uint64_t(1 | 32))
+        return -22;
+    Node* point = nullptr;
+    int error = resolve_path(path, point);
+    if (error)
+        return error;
+    if ((point->mode & 0170000) != directory)
+        return -20;
+    if (flags & 32) {
+        if (!mount_root(point))
+            return -22;
+        auto mount = point->mount;
+        if ((flags & 1) && mount_busy(mount, true))
+            return -16;
+        error = mount->ops->sync(mount, nullptr, false);
+        if (error)
+            return error;
+        mount->readonly = flags & 1;
+        return 0;
+    }
+    if (!type || strcmp(type, "ramfs"))
+        return -19;
+    if (mount_root(point))
+        return -16;
+    for (auto& mount : mounts)
+        if (!mount.active) {
+            mount = {next_mount_id++, nullptr, point, point->mount, &ramfs_ops, nullptr,
+                     false, bool(flags & 1)};
+            mount.root = ramfs_root(&mount, 0755);
+            if (!mount.root)
+                return -28;
+            mount.active = true;
+            return 0;
+        }
+    return -28;
+}
+int unmount(const Path& path, uint64_t flags) {
+    if (flags)
+        return -22;
+    Node* node = nullptr;
+    int error = resolve_path(path, node);
+    if (error)
+        return error;
+    if (!mount_root(node) || !node->mount->point)
+        return -22;
+    auto mount = node->mount;
+    for (auto& child : mounts)
+        if (child.active && child.parent == mount)
+            return -16;
+    if (mount_busy(mount, false))
+        return -16;
+    error = mount->ops->sync(mount, nullptr, false);
+    if (error)
+        return error;
+    mount->active = false;
+    mount->ops->destroy(mount);
+    *mount = {};
+    return 0;
 }
 static uint64_t hex(const char* p) {
     uint64_t v = 0;
@@ -201,10 +523,11 @@ static uint64_t hex(const char* p) {
     return v;
 }
 void vfs_init(const void* archive, size_t length) {
-    root_node = &nodes[node_count++];
-    root_node->mode = directory | 0755;
-    root_node->inode = 1;
-    root_node->links = 1;
+    mounts[0] = {next_mount_id++, nullptr, nullptr, nullptr, &ramfs_ops, nullptr, true, false};
+    root_node = ramfs_root(&mounts[0], 0755);
+    if (!root_node)
+        panic("root allocation");
+    mounts[0].root = root_node;
     auto data = (const uint8_t*)archive;
     size_t offset = 0;
     while (offset + 110 <= length) {
@@ -345,12 +668,9 @@ int64_t read_handle(Handle* h, void* buf, size_t len) {
         return -21;
     if ((n->mode & 0170000) == character || (n->mode & 0170000) == block_device)
         return device_read(h, buf, len);
-    if (h->offset >= n->size)
-        return 0;
-    size_t count = min(len, n->size - size_t(h->offset));
-    memcpy(buf, n->data + h->offset, count);
-    h->offset += count;
-    n->atime = node_now();
+    int64_t count = node_read(n, h->offset, buf, len);
+    if (count > 0)
+        h->offset += count;
     return count;
 }
 int64_t write_handle(Handle* h, const void* buf, size_t len) {
@@ -382,14 +702,17 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
         return -21;
     if (h->flags & 02000)
         h->offset = n->size;
-    if (h->offset > SIZE_MAX - len)
-        return -27;
-    if (h->offset + len > n->size || !n->owned)
-        if (!node_resize(n, max(size_t(h->offset + len), n->size)))
-            return -28;
-    memcpy(n->data + h->offset, buf, len);
-    h->offset += len;
-    n->mtime = n->ctime = node_now();
-    return len;
+    if (node_readonly(n))
+        return -30;
+    int64_t count = n->mount->ops->write(n, h->offset, buf, len);
+    if (count > 0) {
+        h->offset += count;
+        if (h->flags & 010000) {
+            int error = node_sync(n, true);
+            if (error)
+                return error;
+        }
+    }
+    return count;
 }
 } // namespace ax

@@ -186,7 +186,7 @@ bool AddressSpace::map(uint64_t va, size_t len, int prot) {
                 return false;
             *e = physical_page;
         }
-        *e = (*e & (page_mask | 0x600)) | permissions(prot);
+        *e = (*e & (page_mask | 0xe00)) | permissions(prot);
     }
     if (read_cr3() == root)
         write_cr3(root);
@@ -231,12 +231,12 @@ bool AddressSpace::protect(uint64_t va, size_t len, int prot) {
         return false;
     for (uint64_t p = va; p < va + len; p += page_size) {
         auto e = entry(p);
-        if (!e || !(*e & page_mask))
+        if (!e || !(*e & page_mask) || ((prot & 2) && (*e & 0x800)))
             return false;
     }
     for (uint64_t p = va; p < va + len; p += page_size) {
         auto e = entry(p);
-        *e = (*e & (page_mask | 0x600)) | permissions(prot);
+        *e = (*e & (page_mask | 0xe00)) | permissions(prot);
     }
     if (read_cr3() == root)
         write_cr3(root);

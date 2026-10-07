@@ -27,6 +27,7 @@ struct Task {
     AddressSpace memory;
     Descriptor fds[max_fds];
     char cwd[1024], executable[1024];
+    Node* cwd_node;
     uint64_t fs_base, brk_base, brk_end, tid_address, signal_mask;
     uint64_t signal_actions[64][4];
     uint64_t pending_signals, altstack_base, altstack_size;

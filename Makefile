@@ -41,10 +41,13 @@ build/signal-tests: userspace/signal-tests.c
 build/storage-tests: userspace/storage-tests.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+build/vfs-tests: userspace/vfs-tests.c
+	@mkdir -p build
+	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 build/x11-probe: userspace/x11-probe.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
-ROOTFS_INPUTS = build/abi-static build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/x11-probe build/licenses/.stamp $(wildcard userspace/*.sh userspace/*.conf userspace/*.twmrc) $(wildcard userspace/toolchain-test/*) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/build_busybox.py scripts/fetch.py
+ROOTFS_INPUTS = build/abi-static build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/x11-probe build/licenses/.stamp $(wildcard userspace/*.sh userspace/*.conf userspace/*.twmrc) $(wildcard userspace/toolchain-test/*) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/build_busybox.py scripts/fetch.py
 build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox

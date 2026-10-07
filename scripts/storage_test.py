@@ -31,8 +31,14 @@ def check_image(path, expected):
     return hashlib.sha256(actual).hexdigest()
 
 
-def boot(firmware, transport, phase, disk, second, image, timeout):
+def boot(firmware, transport, phase, disk, second, image, timeout, *, configuration=None):
     label = f"storage-{firmware}-{transport}-{phase}"
+    properties = ""
+    if configuration:
+        label += f"-q{configuration['size']}"
+        properties = (f",queue-size={configuration['size']},num-queues={configuration['queues']},"
+                      f"event_idx={configuration['features']},indirect_desc={configuration['features']},"
+                      f"packed={configuration['packed']}")
     logfile = ROOT / "build" / f"{label}.log"
     mode = "disable-legacy=on" if transport == "modern" else "disable-modern=on"
     readonly = phase == "readonly"
@@ -51,9 +57,9 @@ def boot(firmware, transport, phase, disk, second, image, timeout):
                "-cdrom", str(image), "-display", "none", "-serial", "stdio", "-monitor", "none",
                "-no-reboot", "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04",
                "-drive", f"if=none,id=data,format=raw,cache=writeback,file={backend},readonly={'on' if readonly else 'off'}",
-               "-device", f"virtio-blk-pci,drive=data,{mode},rerror=report,werror=report,addr=5",
+               "-device", f"virtio-blk-pci,drive=data,{mode},rerror=report,werror=report,addr=5{properties}",
                "-drive", f"if=none,id=second,format=raw,readonly=on,file={second}",
-               "-device", f"virtio-blk-pci,drive=second,{mode},addr=6"]
+               "-device", f"virtio-blk-pci,drive=second,{mode},addr=6{properties}"]
     if phase == "error":
         command += ["-trace", f"enable=virtio_blk_handle_read,file={ROOT / 'build' / (label + '.trace')}"]
     if firmware == "uefi":
@@ -66,8 +72,12 @@ def boot(firmware, transport, phase, disk, second, image, timeout):
                f"virtio-blk: disk=1 transport={transport} sectors={CAPACITY // 1024} readonly=1 flush=1",
                f"STORAGE_PHASE_PASS phase={phase}"]
     markers += {"write": ["STORAGE_WRITE_PASS", "STORAGE_RING_WRAP_PASS requests=65540"],
+                "queue": ["STORAGE_WRITE_PASS", "STORAGE_QUEUE_WRAP_PASS requests=2052"],
                 "verify": ["STORAGE_REBOOT_PASS"], "readonly": ["STORAGE_READONLY_PASS"],
                 "error": ["STORAGE_BACKEND_ERROR_PASS"]}[phase]
+    if configuration:
+        selected = min(256, configuration["size"]) if transport == "modern" else configuration["size"]
+        markers += [f"virtio-queue: disk={disk_number} id=0 size={selected}" for disk_number in [0, 1]]
     started = time.monotonic()
     timed_out = False
     with logfile.open("w") as output:
@@ -85,6 +95,8 @@ def boot(firmware, transport, phase, disk, second, image, timeout):
     report = {"firmware": firmware, "transport": transport, "phase": phase, "passed": passed,
               "returncode": returncode, "timed_out": timed_out, "missing": missing,
               "seconds": round(time.monotonic() - started, 2), "log": logfile.name}
+    if configuration:
+        report.update(configuration=configuration, selected_size=selected)
     print(json.dumps(report), flush=True)
     if not passed:
         print("\n".join(text.splitlines()[-24:]), flush=True)

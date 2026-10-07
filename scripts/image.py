@@ -12,7 +12,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--test", action="store_true")
 parser.add_argument("--trace", action="store_true")
 parser.add_argument("--suite", choices=["full", "abi", "desktop", "storage", "ext2", "threads"], default="full")
-parser.add_argument("--phase", choices=["write", "verify", "readonly", "error", "invalid", "full", "all", "cond", "io"], default="verify")
+parser.add_argument("--phase", choices=["write", "verify", "readonly", "error", "queue", "invalid", "full", "all", "cond", "io"], default="verify")
 parser.add_argument("--output-name", help="ISO filename under build/ for an isolated test run")
 args = parser.parse_args()
 if args.output_name and (Path(args.output_name).name != args.output_name or

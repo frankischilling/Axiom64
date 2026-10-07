@@ -60,6 +60,7 @@ extern "C" [[noreturn]] void kernel_main() {
     else if (word(cmd, "phase=verify")) test_phase = "AXIOM64_PHASE=verify";
     else if (word(cmd, "phase=readonly")) test_phase = "AXIOM64_PHASE=readonly";
     else if (word(cmd, "phase=error")) test_phase = "AXIOM64_PHASE=error";
+    else if (word(cmd, "phase=queue")) test_phase = "AXIOM64_PHASE=queue";
     else if (word(cmd, "phase=invalid")) test_phase = "AXIOM64_PHASE=invalid";
     else if (word(cmd, "phase=full")) test_phase = "AXIOM64_PHASE=full";
     else if (word(cmd, "phase=cond")) test_phase = "AXIOM64_PHASE=cond";

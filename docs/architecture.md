@@ -8,7 +8,8 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | --- | --- |
 | `kernel/arch.cpp`, `entry.asm` | CPU tables, interrupts, syscall entry, register frames, return to Ring 3 |
 | `kernel/memory.cpp` | Physical allocation, page references, user page tables, validated user copies |
-| `kernel/pci.cpp`, `block.cpp` | PCI discovery, modern/legacy virtio block queues, raw sector I/O and flush |
+| `kernel/pci.cpp`, `virtio.cpp`, `virtqueue.cpp` | PCI discovery, modern/legacy virtio transport, split-ring storage and descriptor ownership |
+| `kernel/block.cpp` | Virtio block request policy, raw sector I/O, flush, and filesystem claims |
 | `kernel/task.cpp` | Process/thread ownership, ELF loading, clone/fork/exec/exit/wait, scheduling, TLS, FPU state |
 | `kernel/futex.cpp` | Expected-value waits, wake/bitsets, requeue, deadlines, shared backing lifetime |
 | `kernel/io.cpp` | Retained I/O requests, captured vectors, wait completion, and interruption cleanup |

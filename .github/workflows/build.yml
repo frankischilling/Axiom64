@@ -15,12 +15,16 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y g++ make musl-tools linux-libc-dev nasm python3 xorriso qemu-system-x86 ovmf xfonts-utils e2fsprogs
       - name: Build standalone image
         run: make -j2 image
+      - name: Test split-queue ownership with sanitizers
+        run: make test-virtqueue
       - name: Test BIOS and UEFI userspace
         run: python3 scripts/boot_test.py --firmware both
       - name: Test pthread lifecycle, futexes, and blocked I/O
         run: make test-threads
       - name: Test virtio disks and reboot persistence
         run: python3 scripts/storage_test.py
+      - name: Test virtio queue sizes and offered features
+        run: make test-virtio
       - name: Test writable ext2 volumes and host fsck
         run: python3 scripts/ext2_test.py
       - name: Test normal desktop startup
@@ -52,6 +56,8 @@ jobs:
             build/storage-*.log
             build/storage-*.trace
             build/storage-results.json
+            build/virtio-image-*.log
+            build/virtio-results.json
             build/ext2-*.log
             build/ext2-results.json
             build/busybox-build.log

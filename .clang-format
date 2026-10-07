@@ -1,7 +1,24 @@
+# Axiom64 C++20 formatting; the Makefile controls the compiler language standard.
 BasedOnStyle: LLVM
+Language: Cpp
+Standard: c++20
+
 IndentWidth: 4
+ContinuationIndentWidth: 4
+TabWidth: 4
+UseTab: Never
 ColumnLimit: 100
+
+BreakBeforeBraces: Attach
+NamespaceIndentation: None
+PointerAlignment: Left
+ReferenceAlignment: Pointer
+DerivePointerAlignment: false
+
 AllowShortFunctionsOnASingleLine: Empty
 AllowShortIfStatementsOnASingleLine: Never
 AllowShortLoopsOnASingleLine: false
-PointerAlignment: Left
+AllowShortBlocksOnASingleLine: Never
+
+# Preserve kernel and platform header order.
+SortIncludes: Never

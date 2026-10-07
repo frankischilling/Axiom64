@@ -22,3 +22,27 @@ AllowShortBlocksOnASingleLine: Never
 
 # Preserve kernel and platform header order.
 SortIncludes: Never
+
+---
+# Axiom64 userspace C is compiled as C11. Formatting does not set the C standard.
+# A separate C language profile requires clang-format 20 or newer.
+Language: C
+BasedOnStyle: LLVM
+
+IndentWidth: 4
+ContinuationIndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+
+BreakBeforeBraces: Attach
+PointerAlignment: Left
+DerivePointerAlignment: false
+
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+
+# Keep feature-test macros and system headers in their intentional order.
+SortIncludes: Never

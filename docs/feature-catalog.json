@@ -50,7 +50,7 @@
       "title": "Firmware, buses, and interrupt routing",
       "milestone": "M1",
       "state": "partial",
-      "current": "Limine BIOS/UEFI boot and legacy PIT/PIC interrupts work; general device discovery is missing.",
+      "current": "Limine BIOS/UEFI boot, legacy PIT/PIC interrupts, PCI configuration-mechanism-1 enumeration, and virtio DMA work. PCIe ECAM, ACPI, and interrupt routing remain planned.",
       "scope": [
         "PCI/PCIe enumeration and driver binding",
         "MMIO mapping, DMA allocation, address limits, and cache attributes",
@@ -68,7 +68,11 @@
       "dependencies": [],
       "evidence": [
         "kernel/arch.cpp",
-        "kernel/main.cpp"
+        "kernel/main.cpp",
+        "kernel/pci.cpp",
+        "kernel/memory.cpp",
+        "scripts/storage_test.py",
+        "docs/storage.md"
       ],
       "branch": "feature/f01-firmware-buses-and-interrupt-routing",
       "issue": "https://github.com/frankischilling/Axiom64/issues/1"
@@ -77,8 +81,8 @@
       "id": "F02",
       "title": "Block layer and virtio disk",
       "milestone": "M1",
-      "state": "planned",
-      "current": "The guest has no persistent block device.",
+      "state": "partial",
+      "current": "Modern and legacy virtio block devices provide persistent raw sector I/O, Linux block nodes, and explicit flushes. Partitions, caching, stable root identifiers, and filesystem mounts remain planned.",
       "scope": [
         "Common block operations with bounds, flush, and error propagation",
         "Virtio PCI transport and virtio-blk request queues",
@@ -95,7 +99,13 @@
       "dependencies": [
         "F01"
       ],
-      "evidence": [],
+      "evidence": [
+        "kernel/block.cpp",
+        "kernel/devices.cpp",
+        "userspace/storage-tests.c",
+        "scripts/storage_test.py",
+        "docs/storage.md"
+      ],
       "branch": "feature/f02-block-layer-and-virtio-disk",
       "issue": "https://github.com/frankischilling/Axiom64/issues/2"
     },

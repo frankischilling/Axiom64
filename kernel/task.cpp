@@ -10,6 +10,7 @@ Task* current;
 uint64_t ticks;
 bool trace_syscalls, test_mode;
 const char* test_suite = "AXIOM64_SUITE=full";
+const char* test_phase = "AXIOM64_PHASE=none";
 static int next_pid = 1;
 
 Task* new_task() {
@@ -420,6 +421,7 @@ void start_init(const char* path) {
                          "TERM=vt100",
                          test_mode ? "AXIOM64_TEST=1" : "AXIOM64_TEST=0",
                          test_suite,
+                         test_phase,
                          nullptr};
     if (exec_task(init, path, args, env))
         panic("cannot execute init");

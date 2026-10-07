@@ -36,7 +36,7 @@ The first three milestones define the next core sequence. Later milestones descr
 | ID | Feature | State | Milestone | Dependencies |
 | --- | --- | --- | --- | --- |
 | F01 | [Firmware, buses, and interrupt routing](https://github.com/frankischilling/Axiom64/issues/1) | partial | M1 | Across all tracks |
-| F02 | [Block layer and virtio disk](https://github.com/frankischilling/Axiom64/issues/2) | planned | M1 | F01 |
+| F02 | [Block layer and virtio disk](https://github.com/frankischilling/Axiom64/issues/2) | partial | M1 | F01 |
 | F03 | [Writable ext2 and later ext4](https://github.com/frankischilling/Axiom64/issues/3) | planned | M1 | F02 |
 | F04 | [VFS, mounts, and pseudo filesystems](https://github.com/frankischilling/Axiom64/issues/4) | partial | M1 | F02 |
 | F05 | [POSIX threads and futexes](https://github.com/frankischilling/Axiom64/issues/5) | planned | M2 | F04 |
@@ -85,7 +85,7 @@ Use the development kernel branch as the integration base until it reaches main.
 
 ### F01. Firmware, buses, and interrupt routing
 
-Limine BIOS/UEFI boot and legacy PIT/PIC interrupts work; general device discovery is missing.
+Limine BIOS/UEFI boot, legacy PIT/PIC interrupts, PCI configuration-mechanism-1 enumeration, and virtio DMA work. PCIe ECAM, ACPI, and interrupt routing remain planned. [The first storage delivery](https://github.com/frankischilling/Axiom64/issues/40) adds the PCI and MMIO support used by raw virtio disks.
 
 Required work:
 
@@ -105,7 +105,7 @@ Acceptance evidence:
 
 ### F02. Block layer and virtio disk
 
-The guest has no persistent block device.
+Modern and legacy virtio block devices provide persistent raw sector I/O, Linux block nodes, and explicit flushes. [Storage tests](storage.md#verification) cover host disk bytes, fresh guest boots, read-only disks, queue rollover, and backend errors. [The first delivery](https://github.com/frankischilling/Axiom64/issues/40) leaves partitions, caching, stable root identifiers, and filesystem mounts for later work.
 
 Required work:
 

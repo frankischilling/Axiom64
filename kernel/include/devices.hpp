@@ -16,7 +16,8 @@ enum class Device {
     mouse,
     ptmx,
     pty_slave,
-    vt
+    vt,
+    block
 };
 struct Terminal {
     uint32_t input, output, control, local;

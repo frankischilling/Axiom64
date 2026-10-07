@@ -13,7 +13,7 @@ struct Timestamp {
 };
 Timestamp node_now();
 constexpr uint32_t regular_file = 0100000, directory = 0040000, symlink = 0120000,
-                   character = 0020000;
+                   character = 0020000, block_device = 0060000;
 struct Node {
     uint64_t inode;
     Node* parent;

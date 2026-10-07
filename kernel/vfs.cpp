@@ -343,7 +343,7 @@ int64_t read_handle(Handle* h, void* buf, size_t len) {
         return -9;
     if ((n->mode & 0170000) == directory)
         return -21;
-    if ((n->mode & 0170000) == character)
+    if ((n->mode & 0170000) == character || (n->mode & 0170000) == block_device)
         return device_read(h, buf, len);
     if (h->offset >= n->size)
         return 0;
@@ -376,7 +376,7 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
     auto n = h->node;
     if (!n)
         return -9;
-    if ((n->mode & 0170000) == character)
+    if ((n->mode & 0170000) == character || (n->mode & 0170000) == block_device)
         return device_write(h, buf, len);
     if ((n->mode & 0170000) != regular_file)
         return -21;

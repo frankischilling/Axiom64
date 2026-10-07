@@ -38,6 +38,36 @@ void memory_init() {
     }
     log("Memory: %u MiB available, isolated four-level paging\n", available / 256);
 }
+void* map_mmio(uint64_t address, size_t length) {
+    constexpr uint64_t physical_limit = 1ull << 52;
+    if (!length || length > 1024 * 1024 || address >= physical_limit ||
+        length > physical_limit - address || address > UINT64_MAX - direct_map ||
+        length - 1 > UINT64_MAX - direct_map - address ||
+        direct_map + address < 0xffff800000000000ull)
+        return nullptr;
+    for (uint64_t p = align_down(address); p < align_up(address + length); p += page_size) {
+        uint64_t va = direct_map + p;
+        auto table = (uint64_t*)physical(kernel_root);
+        for (int shift = 39; shift > 12; shift -= 9) {
+            auto& item = table[(va >> shift) & 511];
+            if (item & 128)
+                return nullptr; // Never change cache attributes of an existing huge RAM mapping.
+            if (!(item & 1)) {
+                uint64_t next = page_alloc();
+                if (!next)
+                    return nullptr;
+                item = next | 3;
+            }
+            table = (uint64_t*)physical(item & page_mask);
+        }
+        auto& entry = table[(va >> 12) & 511];
+        if ((entry & 1) && ((entry & page_mask) != p || !(entry & 16)))
+            return nullptr;
+        entry = p | 0x1bull | (1ull << 63); // Present, writable, PWT/PCD, supervisor, NX.
+        asm volatile("invlpg (%0)" ::"r"(va) : "memory");
+    }
+    return physical(address);
+}
 uint64_t page_alloc(size_t count) {
     if (!count || count >= max_pages)
         return 0;

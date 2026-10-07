@@ -17,6 +17,8 @@ jobs:
         run: make -j2 image
       - name: Test BIOS and UEFI userspace
         run: python3 scripts/boot_test.py --firmware both
+      - name: Test virtio disks and reboot persistence
+        run: python3 scripts/storage_test.py
       - name: Test normal desktop startup
         run: python3 scripts/boot_test.py --interactive --firmware both --timeout 180
       - name: Bundle corresponding sources
@@ -41,4 +43,7 @@ jobs:
             build/interactive-*.log
             build/interactive-*.png
             build/interactive-results.json
+            build/storage-*.log
+            build/storage-*.trace
+            build/storage-results.json
             build/busybox-build.log

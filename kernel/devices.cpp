@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "devices.hpp"
+#include "block.hpp"
 #include "boot.hpp"
 #include "signals.hpp"
 #include "task.hpp"
@@ -210,6 +211,16 @@ void devices_init() {
     tag("/dev/tty0", Device::vt);
     tag("/dev/tty1", Device::vt, 1);
     tag("/dev/ptmx", Device::ptmx);
+    for (unsigned i = 0; block_info(i); i++) {
+        char path[] = "/dev/vda";
+        path[7] += i;
+        auto node = make_node(path, block_device | 0600);
+        if (!node)
+            panic("block device node");
+        node->device = Device::block;
+        node->device_id = i;
+        node->size = block_info(i)->sectors * sector_size;
+    }
     if (!lookup("/dev/pts"))
         make_node("/dev/pts", directory | 0755);
     if (!lookup("/dev/input"))
@@ -240,6 +251,8 @@ void devices_init() {
 }
 uint64_t device_number(Node* node) {
     switch (node->device) {
+    case Device::block:
+        return 0xfc00 | (node->device_id * 16);
     case Device::serial:
         return node->device_id;
     case Device::tty:
@@ -341,7 +354,52 @@ bool device_ready(Handle* h, bool write) {
         return write || canonical_ready(console_input, console_terminal);
     return true;
 }
+static int64_t block_bytes(Handle* h, void* data, size_t len, bool write) {
+    const auto info = block_info(h->node->device_id);
+    if (!info)
+        return -19;
+    if (write && info->readonly)
+        return -30;
+    uint64_t capacity = info->sectors * sector_size;
+    if (h->offset >= capacity)
+        return write ? -28 : 0;
+    len = min(len, size_t(capacity - h->offset));
+    auto bytes = (uint8_t*)data;
+    size_t done = 0;
+    uint8_t partial[sector_size];
+    while (done < len) {
+        uint64_t position = h->offset;
+        size_t within = position % sector_size;
+        size_t count = min(len - done, sector_size - within);
+        int result;
+        if (!within && len - done >= sector_size) {
+            // Keep error reporting precise: advance the handle only for completed sectors.
+            count = sector_size;
+            result = write ? block_write(h->node->device_id, position / sector_size, bytes + done, 1)
+                           : block_read(h->node->device_id, position / sector_size, bytes + done, 1);
+        } else {
+            result = block_read(h->node->device_id, position / sector_size, partial, 1);
+            if (!result) {
+                if (write) {
+                    memcpy(partial + within, bytes + done, count);
+                    result = block_write(h->node->device_id, position / sector_size, partial, 1);
+                } else {
+                    memcpy(bytes + done, partial + within, count);
+                }
+            }
+        }
+        if (!result && write && (h->flags & 010000)) // O_DSYNC; O_SYNC includes this bit.
+            result = block_flush(h->node->device_id);
+        if (result)
+            return done ? int64_t(done) : result;
+        h->offset += count;
+        done += count;
+    }
+    return done;
+}
 int64_t device_read(Handle* h, void* data, size_t len) {
+    if (h->node->device == Device::block)
+        return block_bytes(h, data, len, false);
     if (h->pty) {
         auto p = h->pty;
         if (h->writer)
@@ -394,6 +452,8 @@ int64_t device_read(Handle* h, void* data, size_t len) {
     }
 }
 int64_t device_write(Handle* h, const void* data, size_t len) {
+    if (h->node->device == Device::block)
+        return block_bytes(h, const_cast<void*>(data), len, true);
     auto bytes = (const uint8_t*)data;
     if (h->pty) {
         auto p = h->pty;
@@ -450,6 +510,29 @@ static int64_t output(uint64_t dst, const void* data, size_t len) {
 }
 int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     auto kind = h->node->device;
+    if (kind == Device::block) {
+        const auto info = block_info(h->node->device_id);
+        if (!info)
+            return -19;
+        uint64_t capacity = info->sectors * sector_size;
+        int value;
+        switch (request) {
+        case 0x80081272: // BLKGETSIZE64
+            return output(arg, &capacity, sizeof(capacity));
+        case 0x1260: // BLKGETSIZE: unsigned long sector count on x86-64
+            return output(arg, &info->sectors, sizeof(info->sectors));
+        case 0x1268: // BLKSSZGET
+            value = sector_size;
+            return output(arg, &value, sizeof(value));
+        case 0x125e: // BLKROGET
+            value = info->readonly;
+            return output(arg, &value, sizeof(value));
+        case 0x1261: // BLKFLSBUF: no kernel block cache yet
+            return block_flush(h->node->device_id);
+        default:
+            return -25;
+        }
+    }
     if (kind == Device::framebuffer && framebuffer) {
         auto fb = framebuffer;
         if (request == 0x4600) {

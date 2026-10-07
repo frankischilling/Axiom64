@@ -2,8 +2,9 @@ CXX = g++
 NASM = nasm
 PYTHON = python3
 CXXFLAGS = -std=c++20 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pie -fno-threadsafe-statics -fno-use-cxa-atexit -fno-builtin -m64 -mno-red-zone -mcmodel=kernel -mgeneral-regs-only -Ikernel/include -Ivendor
-KERNEL_SOURCES = $(wildcard kernel/*.cpp)
-KERNEL_OBJECTS = $(patsubst kernel/%.cpp,build/kernel/%.o,$(KERNEL_SOURCES)) build/kernel/entry.o
+rwildcard = $(foreach entry,$(wildcard $1*),$(call rwildcard,$(entry)/,$2) $(filter $(subst *,%,$2),$(entry)))
+KERNEL_SOURCES = $(filter-out kernel/tests/%,$(call rwildcard,kernel/,*.cpp))
+KERNEL_OBJECTS = $(patsubst kernel/%.cpp,build/kernel/%.o,$(KERNEL_SOURCES)) build/kernel/arch/x86_64/entry.o
 
 .PHONY: all image test test-storage test-ext2 test-threads test-thread-io test-virtqueue test-virtio run run-serial deps busybox sources clean
 all: image
@@ -15,66 +16,67 @@ build/licenses/.stamp: sources.lock.json ports.lock.json dependencies.json scrip
 	$(PYTHON) scripts/sources.py prepare
 sources: busybox
 	$(PYTHON) scripts/sources.py bundle
-build/kernel/%.o: kernel/%.cpp $(wildcard kernel/include/*.hpp) vendor/limine.h
+build/kernel/%.o: kernel/%.cpp vendor/limine.h
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
-build/kernel/entry.o: kernel/entry.asm
+build/kernel/arch/x86_64/entry.o: kernel/arch/x86_64/entry.asm
 	@mkdir -p $(@D)
 	$(NASM) -f elf64 -g -F dwarf $< -o $@
-build/axiom64.elf: $(KERNEL_OBJECTS) kernel/linker.ld
-	ld -nostdlib -static -z max-page-size=0x1000 -T kernel/linker.ld $(KERNEL_OBJECTS) -o $@
-build/abi-static: userspace/abi-tests.c
+build/axiom64.elf: $(KERNEL_OBJECTS) kernel/arch/x86_64/linker.ld
+	ld -nostdlib -static -z max-page-size=0x1000 -T kernel/arch/x86_64/linker.ld $(KERNEL_OBJECTS) -o $@
+build/abi-static: userspace/tests/abi/abi.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
-build/abi-dynamic: userspace/abi-tests.c
+build/abi-dynamic: userspace/tests/abi/abi.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -DABI_LINKAGE='"dynamic"' $< -o $@
-build/init: userspace/init.c
+build/init: userspace/init/main.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
-build/ipc-tests: userspace/ipc-tests.c
+build/ipc-tests: userspace/tests/ipc/ipc.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
-build/signal-tests: userspace/signal-tests.c
+build/signal-tests: userspace/tests/process/signals.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
-build/storage-tests: userspace/storage-tests.c
+build/storage-tests: userspace/tests/storage/block.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
-build/vfs-tests: userspace/vfs-tests.c
+build/vfs-tests: userspace/tests/fs/vfs.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
-build/ext2-tests: userspace/ext2-tests.c
+build/ext2-tests: userspace/tests/fs/ext2.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
-build/thread-static: userspace/thread-tests.c
+build/thread-static: userspace/tests/threads/pthreads.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -lm -o $@
-build/thread-io-static: userspace/thread-io-tests.c
+build/thread-io-static: userspace/tests/threads/io.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
-build/thread-io-dynamic: userspace/thread-io-tests.c
+build/thread-io-dynamic: userspace/tests/threads/io.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DIO_LINKAGE='"dynamic"' $< -o $@
-build/thread-dynamic: userspace/thread-tests.c
+build/thread-dynamic: userspace/tests/threads/pthreads.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DTHREAD_LINKAGE='"dynamic"' $< -lm -o $@
-build/futex-static: userspace/futex-tests.c
+build/futex-static: userspace/tests/threads/futex.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
-build/futex-dynamic: userspace/futex-tests.c
+build/futex-dynamic: userspace/tests/threads/futex.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DFUTEX_LINKAGE='"dynamic"' $< -o $@
-build/lifecycle-static: userspace/thread-lifecycle.c userspace/test-clone.S
+build/lifecycle-static: userspace/tests/threads/lifecycle.c userspace/tests/threads/clone.S
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $^ -o $@
-build/lifecycle-dynamic: userspace/thread-lifecycle.c userspace/test-clone.S
+build/lifecycle-dynamic: userspace/tests/threads/lifecycle.c userspace/tests/threads/clone.S
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DLIFE_LINKAGE='"dynamic"' $^ -o $@
-build/x11-probe: userspace/x11-probe.c
+build/x11-probe: userspace/tests/desktop/probe.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
-ROOTFS_INPUTS = build/thread-io-static build/thread-io-dynamic build/lifecycle-static build/lifecycle-dynamic build/futex-static build/futex-dynamic build/thread-static build/thread-dynamic build/abi-static build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/x11-probe build/licenses/.stamp $(wildcard userspace/*.sh userspace/*.conf userspace/*.twmrc) $(wildcard userspace/toolchain-test/*) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/build_busybox.py scripts/fetch.py
+USERSPACE_DATA = $(foreach pattern,*.sh *.conf *.twmrc,$(call rwildcard,userspace/,$(pattern))) $(wildcard userspace/tests/toolchain/*)
+ROOTFS_INPUTS = build/thread-io-static build/thread-io-dynamic build/lifecycle-static build/lifecycle-dynamic build/futex-static build/futex-dynamic build/thread-static build/thread-dynamic build/abi-static build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/x11-probe build/licenses/.stamp $(USERSPACE_DATA) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/build_busybox.py scripts/fetch.py
 build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox
@@ -91,9 +93,9 @@ test-threads:
 	$(PYTHON) scripts/boot_test.py --suite threads --firmware both --timeout 170
 test-thread-io:
 	$(PYTHON) scripts/boot_test.py --suite threads --phase io --firmware both --timeout 90
-build/virtqueue-tests: kernel/tests/virtqueue.cpp kernel/virtqueue.cpp kernel/include/virtqueue.hpp kernel/include/base.hpp
+build/virtqueue-tests: kernel/tests/drivers/virtio/queue.cpp kernel/drivers/virtio/queue.cpp kernel/include/drivers/virtio/queue.hpp kernel/include/core/base.hpp
 	@mkdir -p build
-	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/virtqueue.cpp kernel/virtqueue.cpp -o $@
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/drivers/virtio/queue.cpp kernel/drivers/virtio/queue.cpp -o $@
 test-virtqueue: build/virtqueue-tests
 	./build/virtqueue-tests
 test-virtio:

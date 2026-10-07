@@ -1,6 +1,6 @@
 # Virtio transport and split queues
 
-`kernel/include/virtio.hpp` handles polling PCI devices through modern MMIO or legacy I/O registers. `kernel/include/virtqueue.hpp` owns split-ring storage, descriptor chains, completion identity, and CPU metadata. The block driver uses these modules for one outstanding request. Separate receive/transmit queues can hold several buffers in flight; Ethernet remains planned in [#51](https://github.com/frankischilling/Axiom64/issues/51).
+`kernel/include/drivers/virtio/pci.hpp` handles polling PCI devices through modern MMIO or legacy I/O registers. `kernel/include/drivers/virtio/queue.hpp` owns split-ring storage, descriptor chains, completion identity, and CPU metadata. The block driver uses these modules for one outstanding request. Separate receive/transmit queues can hold several buffers in flight; Ethernet remains planned in [#51](https://github.com/frankischilling/Axiom64/issues/51).
 
 ## Driver lifecycle
 

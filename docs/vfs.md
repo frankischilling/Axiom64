@@ -4,7 +4,7 @@ The boot initramfs supplies the RAM root. Ring 3 programs can mount independent 
 
 ## Kernel interface
 
-`kernel/include/vfs.hpp` defines `FilesystemOps`, `Mount`, `Node`, and `Path`. The VFS resolves paths and applies mount policy before dispatching lookup, creation, links, removal, rename, file reads/writes, truncation, metadata, enumeration, sync, and shared mapping to the filesystem. `kernel/ramfs.cpp` and `kernel/ext2.cpp` implement those operations. Filesystems can reject remount and perform final clean-state writes before unmount. Statistics return errors when metadata cannot be read. Initramfs import initializes the boot volume; device operations continue through their drivers.
+`kernel/include/fs/vfs.hpp` defines `FilesystemOps`, `Mount`, `Node`, and `Path`. The VFS resolves paths and applies mount policy before dispatching lookup, creation, links, removal, rename, file reads/writes, truncation, metadata, enumeration, sync, and shared mapping to the filesystem. `kernel/fs/ramfs.cpp` and `kernel/fs/ext2/ext2.cpp` implement those operations. Filesystems can reject remount and perform final clean-state writes before unmount. Statistics return errors when metadata cannot be read. Initramfs import initializes the boot volume; device operations continue through their drivers.
 
 Each node belongs to one mount. `stat.st_dev` identifies that mount; hard links share an inode within it. A path retains its starting directory node, so relative access through a working directory or directory descriptor keeps its identity when a mount covers that directory. Traversal resolves symlinks before `..`; a mounted root's `..` reaches the covered directory's parent. Names can contain 255 bytes. User paths are bounded to 1,023 bytes and symlink expansion to 2,047 bytes, with at most 40 followed links.
 
@@ -26,7 +26,7 @@ A read-only mount rejects file writes and namespace or metadata mutations with `
 
 ## Verification and limits
 
-`userspace/vfs-tests.c` runs from the ABI and full guest suites under both firmware types. It checks covered and restored contents, pre-existing directory descriptors, symlinks and loops, mount traversal, long names, directory enumeration, hard links, replacement and unlink lifetime, read-only operations, static/dynamic executable loading from a mounted volume, private/shared mappings, socket bindings, nested mounts, inherited working directories, and repeated mount-slot reuse. `VFS_TESTS_PASS` is mandatory. Existing ABI, native toolchain, desktop, and raw disk tests remain required.
+`userspace/tests/fs/vfs.c` runs from the ABI and full guest suites under both firmware types. It checks covered and restored contents, pre-existing directory descriptors, symlinks and loops, mount traversal, long names, directory enumeration, hard links, replacement and unlink lifetime, read-only operations, static/dynamic executable loading from a mounted volume, private/shared mappings, socket bindings, nested mounts, inherited working directories, and repeated mount-slot reuse. `VFS_TESTS_PASS` is mandatory. Existing ABI, native toolchain, desktop, and raw disk tests remain required.
 
 There are 16 mount slots including the root, and a shared pool of 16,384 RAM nodes. Unmount frees a volume's owned data and nodes. Removed nodes on an active volume remain allocated, so repeated create/unlink can exhaust that pool. RAM files have a 256 MiB limit; growth that would relocate shared backing returns `EBUSY`. RAM statistics report zero block capacity because there is no fixed block allocation pool.
 

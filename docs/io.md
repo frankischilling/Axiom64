@@ -16,7 +16,7 @@ Socket transfers support `MSG_DONTWAIT`, receive `MSG_PEEK`, and send `MSG_NOSIG
 
 ## Kernel interface
 
-`kernel/io.cpp` owns request import, transfer, completion, and release behind three functions in `kernel/include/io.hpp`:
+`kernel/io/io.cpp` owns request import, transfer, completion, and release behind three functions in `kernel/include/io/io.hpp`:
 
 | Function | Contract |
 | --- | --- |

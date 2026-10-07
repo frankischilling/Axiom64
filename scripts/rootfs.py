@@ -53,13 +53,13 @@ regular("bin/futex-dynamic", ROOT / "build" / "futex-dynamic")
 regular("bin/lifecycle-static", ROOT / "build" / "lifecycle-static")
 regular("bin/lifecycle-dynamic", ROOT / "build" / "lifecycle-dynamic")
 regular("sbin/init", ROOT / "build" / "init")
-regular("etc/boot-test.sh", ROOT / "userspace" / "boot-test.sh")
-regular("etc/desktop-test.sh", ROOT / "userspace" / "desktop-test.sh")
-regular("etc/storage-test.sh", ROOT / "userspace" / "storage-test.sh")
-regular("etc/ext2-test.sh", ROOT / "userspace" / "ext2-test.sh")
-regular("etc/thread-test.sh", ROOT / "userspace" / "thread-test.sh")
-regular("etc/x11-session.sh", ROOT / "userspace" / "x11-session.sh")
-regular("usr/bin/startx", ROOT / "userspace" / "startx.sh")
+regular("etc/boot-test.sh", ROOT / "userspace/tests/boot.sh")
+regular("etc/desktop-test.sh", ROOT / "userspace/tests/desktop/run.sh")
+regular("etc/storage-test.sh", ROOT / "userspace/tests/storage/block.sh")
+regular("etc/ext2-test.sh", ROOT / "userspace/tests/fs/ext2.sh")
+regular("etc/thread-test.sh", ROOT / "userspace/tests/threads/run.sh")
+regular("etc/x11-session.sh", ROOT / "userspace/desktop/x11-session.sh")
+regular("usr/bin/startx", ROOT / "userspace/desktop/startx.sh")
 regular("lib/ld-musl-x86_64.so.1", Path("/lib/ld-musl-x86_64.so.1").resolve())
 files["lib/libc.so"] = (0o120777, b"/lib/ld-musl-x86_64.so.1")
 regular("usr/share/licenses/Axiom64/LICENSE", ROOT / "LICENSE", 0o100644)
@@ -113,8 +113,8 @@ for package, archive in packages():
 regular("bin/busybox", busybox)
 files["bin/sh"] = (0o120777, b"/bin/busybox")
 for filename in ["xorg.conf", "system.twmrc"]:
-    regular(f"etc/X11/{filename}", ROOT / "userspace" / filename, 0o100644)
-regular("etc/xterm-session.sh", ROOT / "userspace" / "xterm-session.sh")
+    regular(f"etc/X11/{filename}", ROOT / "userspace/desktop" / filename, 0o100644)
+regular("etc/xterm-session.sh", ROOT / "userspace/desktop/xterm-session.sh")
 regular("bin/x11-probe", ROOT / "build" / "x11-probe")
 for path in ["etc/X11", "tmp/.X11-unix", "var", "var/log", "var/lib", "var/lib/xkb", "usr/share/licenses/Xorg"]:
     directory(path)
@@ -132,7 +132,7 @@ with tempfile.TemporaryDirectory(prefix="axiom64-fonts-") as temporary:
     regular(font_path + "/fonts.dir", font_stage / "fonts.dir", 0o100644)
 directory("root/toolchain-test")
 for filename in ["hello.c", "hello.cpp", "broken.c", "threads.cpp", "Makefile"]:
-    regular(f"root/toolchain-test/{filename}", ROOT / "userspace" / "toolchain-test" / filename, 0o100644)
+    regular(f"root/toolchain-test/{filename}", ROOT / "userspace/tests/toolchain" / filename, 0o100644)
 
 
 def entry(stream, path, mode, data, inode):

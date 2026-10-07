@@ -19,7 +19,7 @@ Use `disable-modern=on` to exercise the legacy PCI transport. To attach a read-o
 
 ## Interfaces
 
-`kernel/include/block.hpp` provides capacity, read-only status, whole-sector reads and writes, flush, and exclusive filesystem claims. A claim prevents another mount or raw writer from modifying the disk; filesystem writes carry their owner. Sector addresses are 64-bit and sectors are 512 bytes. The complete range is checked before a transfer. Calls return zero or a negative Linux error. Multi-sector writes are not atomic and may leave earlier sectors written if a later request fails.
+`kernel/include/drivers/block/block.hpp` provides capacity, read-only status, whole-sector reads and writes, flush, and exclusive filesystem claims. A claim prevents another mount or raw writer from modifying the disk; filesystem writes carry their owner. Sector addresses are 64-bit and sectors are 512 bytes. The complete range is checked before a transfer. Calls return zero or a negative Linux error. Multi-sector writes are not atomic and may leave earlier sectors written if a later request fails.
 
 The implementation copies through private, physically contiguous DMA buffers. User addresses never become device descriptors. The [shared virtio transport and queue modules](virtio.md) handle modern/legacy registers, configuration, queue geometry, descriptor ownership, and reset. The PCI module handles configuration mechanism 1, multifunction discovery, and assigned 32/64-bit memory BARs. Unsupported capabilities, invalid mappings, unavailable queues, and failed feature negotiation prevent a disk from being registered.
 

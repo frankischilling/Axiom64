@@ -4,6 +4,7 @@
 #include "ipc.hpp"
 #include "signals.hpp"
 #include "futex.hpp"
+#include "io.hpp"
 
 namespace ax {
 Task tasks[max_tasks];
@@ -51,6 +52,7 @@ static FileTable* copy_files(const FileTable* source) {
     return table;
 }
 static void release_resources(Task* t) {
+    io_discard(*t);
     futex_discard(*t);
     release_memory(t);
     release_files(t->files);
@@ -297,9 +299,7 @@ static bool awaken(Task& t) {
     switch (t.wait) {
     case Wait::read:
     case Wait::write:
-        ready = t.wait_fd < 0 || unsigned(t.wait_fd) >= max_fds ||
-                handle_ready(t.files->entries[t.wait_fd].handle, t.wait == Wait::write);
-        break;
+        return io_resume(t);
     case Wait::child:
         for (auto& c : tasks)
             if (c.state != State::empty && c.process->leader == &c &&
@@ -605,6 +605,7 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
     }
     replacement->space = memory;
     clear_tid(t);
+    io_discard(*t);
     if (t == current)
         write_cr3(memory.root);
     release_memory(t);

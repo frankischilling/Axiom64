@@ -182,7 +182,7 @@
       "title": "POSIX threads and futexes",
       "milestone": "M2",
       "state": "partial",
-      "current": "Single-CPU musl pthread lifecycle, clone resource sharing, TLS/FPU isolation, mutex/condition/semaphore synchronization, futex wait/wake/bitsets/requeue, group teardown, worker fork/exec, and guest-compiled C++ threads are implemented. Robust owner death, cancellation, remaining POSIX synchronization, full signal semantics, and SMP remain planned.",
+      "current": "Single-CPU musl pthread lifecycle, clone resource sharing, TLS/FPU isolation, mutex/condition/semaphore synchronization, futex wait/wake/bitsets/requeue, retained blocking I/O, group teardown, worker fork/exec, and guest-compiled C++ threads are implemented. Robust owner death, cancellation, remaining POSIX synchronization, full signal semantics, and SMP remain planned.",
       "scope": [
         "Shared address-space lifetime and clone/clone3 thread flags",
         "Thread IDs, groups, exit_group, join, TLS, and per-thread FPU state",
@@ -203,11 +203,15 @@
         "kernel/task.cpp",
         "kernel/include/task.hpp",
         "kernel/futex.cpp",
+        "kernel/io.cpp",
+        "kernel/include/io.hpp",
         "userspace/thread-tests.c",
         "userspace/futex-tests.c",
         "userspace/thread-lifecycle.c",
+        "userspace/thread-io-tests.c",
         "userspace/toolchain-test/threads.cpp",
-        "docs/threads.md"
+        "docs/threads.md",
+        "docs/io.md"
       ],
       "branch": "feature/f05-posix-threads-and-futexes",
       "issue": "https://github.com/frankischilling/Axiom64/issues/5"
@@ -275,7 +279,7 @@
       "title": "Linux syscall and libc compatibility",
       "milestone": "M4",
       "state": "partial",
-      "current": "Static/dynamic musl programs and a tested syscall subset work; unsupported calls return ENOSYS.",
+      "current": "Static/dynamic musl programs and a tested syscall subset work, including retained blocking I/O and tested restart behavior. Unsupported calls return ENOSYS; complete Linux conformance remains planned.",
       "scope": [
         "Machine-readable Linux x86-64 syscall/structure/flag/error matrix with tests",
         "Extend musl coverage without silent successful stubs",
@@ -298,7 +302,10 @@
       "evidence": [
         "kernel/syscall.cpp",
         "userspace/abi-tests.c",
-        "userspace/signal-tests.c"
+        "userspace/signal-tests.c",
+        "kernel/io.cpp",
+        "userspace/thread-io-tests.c",
+        "docs/io.md"
       ],
       "branch": "feature/f08-linux-syscall-and-libc-compatibility",
       "issue": "https://github.com/frankischilling/Axiom64/issues/8"

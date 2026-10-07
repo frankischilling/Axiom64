@@ -59,17 +59,18 @@ bool socket_ready(Socket* s, bool write) {
     return s->size || s->peer_closed || s->read_closed || !s->connected ||
            (s->peer && s->peer->write_closed);
 }
-int64_t socket_read(Socket* s, void* data, size_t len, bool peek) {
+int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_offset) {
     if (s->listener || !s->connected)
         return -107;
     if (!len || s->read_closed)
         return 0;
-    if (!s->size)
+    size_t offset = peek ? peek_offset : 0;
+    if (offset >= s->size)
         return s->peer_closed || !s->peer || s->peer->write_closed ? 0 : -11;
-    len = min(len, s->size);
+    len = min(len, s->size - offset);
     auto output = (uint8_t*)data;
     for (size_t i = 0; i < len; i++)
-        output[i] = s->bytes[(s->head + i) % s->capacity];
+        output[i] = s->bytes[(s->head + offset + i) % s->capacity];
     if (!peek) {
         s->head = (s->head + len) % s->capacity;
         s->size -= len;
@@ -96,7 +97,7 @@ int64_t socket_write(Socket* s, const void* data, size_t len) {
 static Handle* handle(int fd) {
     return fd >= 0 && unsigned(fd) < max_fds ? current->files->entries[fd].handle : nullptr;
 }
-static int install_socket(Socket* socket, int flags = 0) {
+static int install_socket(Task& task, Socket* socket, int flags = 0) {
     Handle* h = open_handle(nullptr, 2 | (flags & 04000));
     if (!h) {
         if (!socket->pending)
@@ -104,7 +105,7 @@ static int install_socket(Socket* socket, int flags = 0) {
         return -23;
     }
     h->socket = socket;
-    int fd = allocate_fd(current, h, 0, flags & 02000000);
+    int fd = allocate_fd(&task, h, 0, flags & 02000000);
     if (fd < 0) {
         h->socket = nullptr;
         close_handle(h);
@@ -136,57 +137,42 @@ static int address(uint64_t pointer, size_t length, UnixAddress& result, size_t&
     }
     return 0;
 }
-static int output_address(Socket* s, uint64_t pointer, uint64_t length_pointer) {
+int socket_output_address(Task& task, Socket* s, uint64_t pointer, uint64_t length_pointer) {
     if (!pointer && !length_pointer)
         return 0;
     uint32_t size;
-    if (!current->memory->space.copy_in(&size, length_pointer, 4))
+    if (!task.memory->space.copy_in(&size, length_pointer, 4))
         return -14;
     UnixAddress address{};
     address.family = 1;
     memcpy(address.path, s->local, s->local_length);
     uint32_t actual = 2 + s->local_length;
-    if (!current->memory->space.copy_out(pointer, &address, min(size, actual)) ||
-        !current->memory->space.copy_out(length_pointer, &actual, 4))
+    if (!task.memory->space.copy_out(pointer, &address, min(size, actual)) ||
+        !task.memory->space.copy_out(length_pointer, &actual, 4))
         return -14;
     return 0;
 }
-static int64_t blocked(int fd, bool write = false) {
-    current->state = State::blocked;
-    current->wait = write ? Wait::write : Wait::read;
-    current->wait_fd = fd;
-    return would_block;
-}
-static int64_t transfer(int fd, uint64_t buffer, size_t length, bool write, unsigned flags = 0) {
-    auto h = handle(fd);
-    if (!h || !h->socket)
-        return -88;
-    if (flags & ~unsigned(2 | 0x40 | 0x100 | 0x4000))
-        return -95;
-    if (!current->memory->space.valid(buffer, length, !write))
-        return -14;
-    uint8_t data[4096];
-    size_t done = 0;
-    while (done < length) {
-        size_t count = min(length - done, sizeof(data));
-        if (write)
-            current->memory->space.copy_in(data, buffer + done, count);
-        int64_t n = write ? socket_write(h->socket, data, count)
-                          : socket_read(h->socket, data, count, flags & 2);
-        if (n < 0) {
-            if (done)
-                return done;
-            if (n == -11 && !(h->flags & 04000) && !(flags & 0x40))
-                return blocked(fd, write);
-            return n;
-        }
-        if (!write)
-            current->memory->space.copy_out(buffer + done, data, n);
-        done += n;
-        if (size_t(n) < count || (flags & 2) || (!write && !socket_ready(h->socket, false)))
-            break;
+int64_t socket_accept(Task& task, Handle* h, uint64_t address, uint64_t length, unsigned flags) {
+    auto s = h->socket;
+    if (!s->listener)
+        return -22;
+    if (!s->queue_size)
+        return (h->flags & 04000) ? -11 : would_block;
+    auto accepted = s->queue[s->queue_head];
+    if (address) {
+        int error = socket_output_address(task, accepted->peer ? accepted->peer : accepted,
+                                          address, length);
+        if (error)
+            return error;
     }
-    return done;
+    int fd = install_socket(task, accepted,
+                            ((flags & 0x800) ? 04000 : 0) | ((flags & 0x80000) ? 02000000 : 0));
+    if (fd < 0)
+        return fd;
+    accepted->pending = false;
+    s->queue_head = (s->queue_head + 1) % 32;
+    s->queue_size--;
+    return fd;
 }
 uint32_t readiness(Handle* h) {
     if (!h)
@@ -302,15 +288,6 @@ bool poll_task_ready(Task& task) {
     }
     return false;
 }
-struct Message {
-    uint64_t name;
-    uint32_t name_length, padding;
-    uint64_t iov, iov_count, control, control_length;
-    uint32_t flags, padding2;
-};
-struct Iovec {
-    uint64_t base, length;
-};
 int64_t ipc_syscall(Frame* f) {
     auto a = f->rdi, b = f->rsi, c = f->rdx, d = f->r10;
     auto h = handle(a);
@@ -322,7 +299,7 @@ int64_t ipc_syscall(Frame* f) {
         if ((b & 0xf) != 1 || (b & ~uint64_t(0x8080f)) || c)
             return -93;
         s = allocate_socket();
-        return s ? install_socket(s, ((b & 0x800) ? 04000 : 0) | ((b & 0x80000) ? 02000000 : 0))
+        return s ? install_socket(*current, s, ((b & 0x800) ? 04000 : 0) | ((b & 0x80000) ? 02000000 : 0))
                  : -12;
     }
     case 49: {
@@ -405,77 +382,6 @@ int64_t ipc_syscall(Frame* f) {
         listener->queue_size++;
         return 0;
     }
-    case 43:
-    case 288: {
-        if (!s)
-            return -88;
-        if (!s->listener)
-            return -22;
-        if (!s->queue_size)
-            return (h->flags & 04000) ? -11 : blocked(a);
-        if (f->rax == 288 && (d & ~uint64_t(0x80800)))
-            return -22;
-        auto accepted = s->queue[s->queue_head];
-        if (b) {
-            int error = output_address(accepted->peer ? accepted->peer : accepted, b, c);
-            if (error)
-                return error;
-        }
-        int flags = f->rax == 288 ? ((d & 0x800) ? 04000 : 0) | ((d & 0x80000) ? 02000000 : 0) : 0;
-        int fd = install_socket(accepted, flags);
-        if (fd < 0)
-            return fd;
-        accepted->pending = false;
-        s->queue_head = (s->queue_head + 1) % 32;
-        s->queue_size--;
-        return fd;
-    }
-    case 44:
-        if (f->r8)
-            return -106;
-        return transfer(a, b, c, true, d);
-    case 45: {
-        int64_t n = transfer(a, b, c, false, d);
-        if (n >= 0 && f->r8 && s) {
-            int result = output_address(s->peer ? s->peer : s, f->r8, f->r9);
-            if (result)
-                return result;
-        }
-        return n;
-    }
-    case 46:
-    case 47: {
-        if (!s)
-            return -88;
-        Message message;
-        if (!current->memory->space.copy_in(&message, b, sizeof(message)))
-            return -14;
-        if (message.iov_count > 1024)
-            return -22;
-        if (message.control_length && f->rax == 46)
-            return -95;
-        size_t done = 0;
-        for (size_t i = 0; i < message.iov_count; i++) {
-            Iovec v;
-            if (!current->memory->space.copy_in(&v, message.iov + i * sizeof(v), sizeof(v)))
-                return done ? int64_t(done) : -14;
-            if (done && !socket_ready(s, f->rax == 46))
-                break;
-            auto n = transfer(a, v.base, v.length, f->rax == 46, c);
-            if (n < 0)
-                return done ? int64_t(done) : n;
-            done += n;
-            if (uint64_t(n) < v.length)
-                break;
-        }
-        if (f->rax == 47) {
-            message.control_length = 0;
-            message.flags = 0;
-            if (!current->memory->space.copy_out(b, &message, sizeof(message)))
-                return -14;
-        }
-        return done;
-    }
     case 48:
         if (!s)
             return -88;
@@ -489,13 +395,13 @@ int64_t ipc_syscall(Frame* f) {
     case 51:
         if (!s)
             return -88;
-        return output_address(s, b, c);
+        return socket_output_address(*current, s, b, c);
     case 52:
         if (!s)
             return -88;
         if (!s->connected || !s->peer)
             return -107;
-        return output_address(s->peer, b, c);
+        return socket_output_address(*current, s->peer, b, c);
     case 53: {
         if (a != 1 || (b & 0xf) != 1 || c)
             return -95;
@@ -511,9 +417,9 @@ int64_t ipc_syscall(Frame* f) {
         right->peer = left;
         left->connected = right->connected = true;
         int flags = ((b & 0x800) ? 04000 : 0) | ((b & 0x80000) ? 02000000 : 0);
-        int result[2] = {install_socket(left, flags), -1};
+        int result[2] = {install_socket(*current, left, flags), -1};
         if (result[0] >= 0)
-            result[1] = install_socket(right, flags);
+            result[1] = install_socket(*current, right, flags);
         if (result[0] < 0 || result[1] < 0) {
             if (result[0] >= 0) {
                 close_handle(current->files->entries[result[0]].handle);

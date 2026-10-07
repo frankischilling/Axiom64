@@ -5,6 +5,7 @@
 #include "signals.hpp"
 #include "task.hpp"
 #include "futex.hpp"
+#include "io.hpp"
 
 namespace ax {
 struct LinuxStat {
@@ -20,9 +21,6 @@ struct Timespec {
 };
 struct Timeval {
     int64_t sec, usec;
-};
-struct Iovec {
-    uint64_t base, length;
 };
 struct Pollfd {
     int32_t fd;
@@ -143,57 +141,6 @@ static int64_t block(Wait why, int fd = -1, int pid = -1) {
     current->wait_fd = fd;
     current->wait_pid = pid;
     return would_block;
-}
-static int64_t io(int fd, uint64_t buf, size_t length, bool write) {
-    Handle* h = fd_handle(fd);
-    if (!h)
-        return -9;
-    if (length > 0x7ffff000)
-        length = 0x7ffff000;
-    if (!current->memory->space.valid(buf, length, !write))
-        return -14;
-    uint8_t buffer[4096];
-    size_t done = 0;
-    while (done < length) {
-        size_t n = min(length - done, sizeof(buffer));
-        if (write && !current->memory->space.copy_in(buffer, buf + done, n))
-            return done ? int64_t(done) : -14;
-        int64_t result = write ? write_handle(h, buffer, n) : read_handle(h, buffer, n);
-        if (result < 0) {
-            if (done)
-                return done;
-            if (result == -11 && !(h->flags & 04000))
-                return block(write ? Wait::write : Wait::read, fd);
-            if (result == -32 && write)
-                queue_signal(current, 13, current->pid);
-            return result;
-        }
-        if (!write && result && !current->memory->space.copy_out(buf + done, buffer, result))
-            return -14;
-        done += result;
-        if (size_t(result) < n || (!write && h->node && (h->node->mode & 0170000) == character))
-            break;
-    }
-    return done;
-}
-static int64_t iov_io(int fd, uint64_t iov, size_t count, bool write) {
-    if (count > 1024)
-        return -22;
-    size_t done = 0;
-    for (size_t i = 0; i < count; i++) {
-        Iovec v;
-        if (!current->memory->space.copy_in(&v, iov + i * sizeof(v), sizeof(v)))
-            return done ? int64_t(done) : -14;
-        if (done && !handle_ready(fd_handle(fd), write))
-            break;
-        int64_t n = io(fd, v.base, v.length, write);
-        if (n < 0)
-            return done ? int64_t(done) : n;
-        done += n;
-        if (uint64_t(n) < v.length)
-            break;
-    }
-    return done;
 }
 static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd, uint64_t off) {
     if (!len || len > 256 * 1024 * 1024 || off % page_size || !(flags & 3) || (flags & 3) == 3 ||
@@ -524,9 +471,18 @@ static int64_t dispatch(Frame* f) {
     uint64_t a = f->rdi, b = f->rsi, c = f->rdx, d = f->r10, e = f->r8, g = f->r9;
     switch (f->rax) {
     case 0:
-        return io(a, b, c, false);
     case 1:
-        return io(a, b, c, true);
+    case 17:
+    case 18:
+    case 19:
+    case 20:
+    case 43:
+    case 44:
+    case 45:
+    case 46:
+    case 47:
+    case 288:
+        return io_syscall(*current, *f);
     case 2:
         return open_file(-100, a, b, c);
     case 3: {
@@ -648,23 +604,6 @@ static int64_t dispatch(Frame* f) {
     case 200:
     case 234:
         return signal_syscall(f);
-    case 17:
-    case 18: {
-        auto h = fd_handle(a);
-        if (!h)
-            return -9;
-        if (int64_t(d) < 0)
-            return -22;
-        uint64_t old = h->offset;
-        h->offset = d;
-        int64_t result = io(a, b, c, f->rax == 18);
-        h->offset = old;
-        return result;
-    }
-    case 19:
-        return iov_io(a, b, c, false);
-    case 20:
-        return iov_io(a, b, c, true);
     case 21: {
         Path path;
         if (!path_at(-100, a, path))
@@ -789,11 +728,6 @@ static int64_t dispatch(Frame* f) {
         return current->pid;
     case 41:
     case 42:
-    case 43:
-    case 44:
-    case 45:
-    case 46:
-    case 47:
     case 48:
     case 49:
     case 50:
@@ -806,7 +740,6 @@ static int64_t dispatch(Frame* f) {
     case 232:
     case 233:
     case 281:
-    case 288:
     case 291:
         return ipc_syscall(f);
     case 56:

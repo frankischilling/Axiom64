@@ -15,7 +15,7 @@ from qmp import Qmp
 parser = argparse.ArgumentParser()
 parser.add_argument("--firmware", choices=["bios", "uefi", "both"], default="both")
 parser.add_argument("--suite", choices=["full", "abi", "desktop", "threads"], default="full")
-parser.add_argument("--phase", choices=["all", "cond"], default="all", help="threads test selection")
+parser.add_argument("--phase", choices=["all", "cond", "io"], default="all", help="threads test selection")
 parser.add_argument("--timeout", type=int, default=600)
 parser.add_argument("--trace", action="store_true")
 parser.add_argument("--gdb", action="store_true")
@@ -26,7 +26,7 @@ if args.interactive and args.suite != "full":
 desktop_checks = args.suite in ["full", "desktop"]
 subprocess.run(["make", "-j2", "build/axiom64.elf",
                 "build/rootfs-desktop.cpio" if args.suite not in ["full", "threads"] or
-                    (args.suite == "threads" and args.phase == "cond") else "build/rootfs.cpio"],
+                    (args.suite == "threads" and args.phase in ["cond", "io"]) else "build/rootfs.cpio"],
                cwd=ROOT, check=True)
 subprocess.run([sys.executable, str(ROOT / "scripts" / "image.py")]
                + ([] if args.interactive else ["--test", "--suite", args.suite])
@@ -128,15 +128,18 @@ for firmware in firmwares:
                      "IPC_TESTS_PASS", "SIGNAL_TESTS_PASS", "VFS_TESTS_PASS", "BUSYBOX_SHELL_PASS",
                      "THREAD_TESTS_PASS linkage=static", "THREAD_TESTS_PASS linkage=dynamic",
                      "FUTEX_TESTS_PASS linkage=static", "FUTEX_TESTS_PASS linkage=dynamic",
-                     "THREAD_LIFECYCLE_PASS linkage=static", "THREAD_LIFECYCLE_PASS linkage=dynamic"]
+                     "THREAD_LIFECYCLE_PASS linkage=static", "THREAD_LIFECYCLE_PASS linkage=dynamic",
+                     "THREAD_IO_TESTS_PASS linkage=static", "THREAD_IO_TESTS_PASS linkage=dynamic"]
     if args.suite == "full" and not args.interactive:
         required += ["NATIVE_C_PASS", "NATIVE_CPP_PASS", "NATIVE_THREADS_PASS",
                      "NATIVE_DIAGNOSTICS_PASS", "NATIVE_TOOLCHAIN_PASS"]
     if args.suite == "threads":
         required += (["THREAD_MUTEX_COND_PASS"] if args.phase == "cond" else
+                     ["THREAD_IO_TESTS_PASS linkage=static", "THREAD_IO_TESTS_PASS linkage=dynamic"] if args.phase == "io" else
                      ["THREAD_TESTS_PASS linkage=static", "THREAD_TESTS_PASS linkage=dynamic",
                       "FUTEX_TESTS_PASS linkage=static", "FUTEX_TESTS_PASS linkage=dynamic",
                       "THREAD_LIFECYCLE_PASS linkage=static", "THREAD_LIFECYCLE_PASS linkage=dynamic",
+                      "THREAD_IO_TESTS_PASS linkage=static", "THREAD_IO_TESTS_PASS linkage=dynamic",
                       "NATIVE_THREADS_PASS"])
     if desktop_checks and not args.interactive:
         required += ["BASH_SHELL_PASS", "ZSH_SHELL_PASS", "XORG_SERVER_PASS",
@@ -146,7 +149,7 @@ for firmware in firmwares:
     if desktop_checks and not screenshot.exists():
         missing.append("desktop screenshot")
     passed = not timed_out and not capture_error and returncode == (0 if args.interactive else 1) and not missing
-    passed &= not any(marker in text for marker in ["PANIC:", "FAULT ", "ABI_FAIL", "IPC_FAIL", "SIGNAL_FAIL", "VFS_FAIL", "THREAD_FAIL", "FUTEX_FAIL", "LIFECYCLE_FAIL", "X11_FAIL"])
+    passed &= not any(marker in text for marker in ["PANIC:", "FAULT ", "ABI_FAIL", "IPC_FAIL", "SIGNAL_FAIL", "VFS_FAIL", "THREAD_FAIL", "THREAD_IO_FAIL", "FUTEX_FAIL", "LIFECYCLE_FAIL", "X11_FAIL"])
     results.append({"firmware": firmware, "suite": "interactive" if args.interactive else args.suite, "passed": passed,
                     "returncode": returncode, "timed_out": timed_out, "capture_error": capture_error,
                     "elapsed_seconds": round(time.monotonic() - started, 2), "missing_markers": missing,

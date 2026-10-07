@@ -17,7 +17,7 @@ jobs:
         run: make -j2 image
       - name: Test BIOS and UEFI userspace
         run: python3 scripts/boot_test.py --firmware both
-      - name: Test pthread lifecycle and futex synchronization
+      - name: Test pthread lifecycle, futexes, and blocked I/O
         run: make test-threads
       - name: Test virtio disks and reboot persistence
         run: python3 scripts/storage_test.py

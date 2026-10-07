@@ -63,6 +63,7 @@ extern "C" [[noreturn]] void kernel_main() {
     else if (word(cmd, "phase=invalid")) test_phase = "AXIOM64_PHASE=invalid";
     else if (word(cmd, "phase=full")) test_phase = "AXIOM64_PHASE=full";
     else if (word(cmd, "phase=cond")) test_phase = "AXIOM64_PHASE=cond";
+    else if (word(cmd, "phase=io")) test_phase = "AXIOM64_PHASE=io";
     memory_init();
     arch_init();
     auto modules = module_request.response;

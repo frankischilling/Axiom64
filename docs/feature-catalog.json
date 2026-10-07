@@ -1,0 +1,4705 @@
+{
+  "inventory_date": "2026-10-07",
+  "tested_baseline": "ba768b40b8d55e1abae43b331f931bfff1bec4e2",
+  "baseline_ci": "https://github.com/frankischilling/Axiom64/actions/runs/37607497820",
+  "milestones": [
+    {
+      "id": "M1",
+      "title": "Persistent storage",
+      "outcome": "Discover a virtio disk, mount writable ext2, and preserve guest files across reboots."
+    },
+    {
+      "id": "M2",
+      "title": "Threads and memory",
+      "outcome": "Run POSIX threads with futexes, strengthen virtual memory, and then schedule on multiple CPUs."
+    },
+    {
+      "id": "M3",
+      "title": "Usable networking",
+      "outcome": "Enforce accounts and permissions before network services; provide DHCP, DNS, TCP/UDP, ping, and file downloads."
+    },
+    {
+      "id": "M4",
+      "title": "Developer system",
+      "outcome": "Expand musl compatibility, add glibc and Linux i386, run developer tools, and build the OS inside itself."
+    },
+    {
+      "id": "M5",
+      "title": "Desktop and sessions",
+      "outcome": "Use Bash with a lightweight window manager; develop X11 and Wayland as parallel tracks."
+    },
+    {
+      "id": "M6",
+      "title": "Devices and real PCs",
+      "outcome": "Add AHCI/NVMe, USB input/storage, HD Audio, virtio GPU, and ordinary UEFI desktop hardware."
+    },
+    {
+      "id": "M7",
+      "title": "Additional binary compatibility",
+      "outcome": "Support BSD, System V, SunOS, Xenix, and ELKS programs, with explicit ABI and loader tests."
+    },
+    {
+      "id": "M8",
+      "title": "Installable distribution",
+      "outcome": "Deliver a live image, simple installer, signed package manager, reproducible sources, and recovery tools."
+    }
+  ],
+  "features": [
+    {
+      "id": "F01",
+      "title": "Firmware, buses, and interrupt routing",
+      "milestone": "M1",
+      "state": "partial",
+      "current": "Limine BIOS/UEFI boot and legacy PIT/PIC interrupts work; general device discovery is missing.",
+      "scope": [
+        "PCI/PCIe enumeration and driver binding",
+        "MMIO mapping, DMA allocation, address limits, and cache attributes",
+        "ACPI table validation, MADT/FADT discovery, and firmware handoff",
+        "Local APIC, I/O APIC, interrupt overrides, MSI/MSI-X, and INTx routing",
+        "ISA and ISA Plug-and-Play resources and drivers for UART, LPT, and legacy disks",
+        "Boot arguments, modules, root-device selection, and firmware diagnostics",
+        "Secondary boot paths: Multiboot, direct QEMU, disk/floppy, and PXE/iPXE"
+      ],
+      "acceptance": [
+        "Enumerate a QEMU PCI device with its BARs and demonstrate working DMA",
+        "Prove interrupt delivery before a driver relies on it and exercise an invalid resource range",
+        "Boot the supported firmware matrix with consistent device discovery and actionable failure logs"
+      ],
+      "dependencies": [],
+      "evidence": [
+        "kernel/arch.cpp",
+        "kernel/main.cpp"
+      ],
+      "branch": "feature/f01-firmware-buses-and-interrupt-routing",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/1"
+    },
+    {
+      "id": "F02",
+      "title": "Block layer and virtio disk",
+      "milestone": "M1",
+      "state": "planned",
+      "current": "The guest has no persistent block device.",
+      "scope": [
+        "Common block operations with bounds, flush, and error propagation",
+        "Virtio PCI transport and virtio-blk request queues",
+        "Buffer cache with documented read/write policy",
+        "GPT, MBR, and BSD disk-label parsing with overflow checks",
+        "Device/partition nodes and stable root selection by label or identifier",
+        "Guest-owned disk image creation and reusable reboot harness"
+      ],
+      "acceptance": [
+        "Write and read sectors through the guest driver and compare host disk bytes",
+        "Reject out-of-range and malformed partition requests",
+        "Flush, stop QEMU, start a second guest using the same disk, and recover the written data"
+      ],
+      "dependencies": [
+        "F01"
+      ],
+      "evidence": [],
+      "branch": "feature/f02-block-layer-and-virtio-disk",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/2"
+    },
+    {
+      "id": "F03",
+      "title": "Writable ext2 and later ext4",
+      "milestone": "M1",
+      "state": "planned",
+      "current": "The root filesystem is an initramfs with RAM-only changes.",
+      "scope": [
+        "Writable ext2 inodes, directories, indirect blocks, allocation, and links",
+        "Mount, unmount, sync, truncation, rename, permissions, and timestamps",
+        "Root or data mounts on virtio block",
+        "Host fsck interoperability and read-only/error handling",
+        "Extended attributes, large files, indexed directories, and extent support",
+        "Later ext4 journal/recovery and explicit feature-bit negotiation"
+      ],
+      "acceptance": [
+        "Create, grow, rename, link, unlink, and truncate files in the guest and verify them after reboot",
+        "Read guest-created content using host filesystem tools and pass fsck after clean shutdown",
+        "Exercise full-disk, unsupported-feature, and damaged-metadata cases without corrupting unrelated files"
+      ],
+      "dependencies": [
+        "F02"
+      ],
+      "evidence": [],
+      "branch": "feature/f03-writable-ext2-and-later-ext4",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/3"
+    },
+    {
+      "id": "F04",
+      "title": "VFS, mounts, and pseudo filesystems",
+      "milestone": "M1",
+      "state": "partial",
+      "current": "RAM files, basic directories/links, pipes, and selected synthetic device metadata work.",
+      "scope": [
+        "Mount graph, filesystem operations, vnode/dentry lifetime, and pathname traversal",
+        "File descriptions, descriptor lifetime, close-on-exec, and robust directory enumeration",
+        "Procfs process/system metadata and streaming files",
+        "Sysfs device/bus metadata, devfs, tmpfs/ramfs, and shmfs",
+        "Pseudo-device APIs: null, zero, full, CPUID, and privileged memory inspection",
+        "Chroot, mount flags, access checks, metadata, statfs, and disk usage",
+        "File locks, atomic rename, unlink lifetime, and concurrent lookup semantics"
+      ],
+      "acceptance": [
+        "Mount two filesystems and verify traversal, mount boundaries, and open-handle lifetime",
+        "Inspect changing process and device metadata from guest tools",
+        "Exercise symlink loops, relative paths, chroot escapes, and simultaneous rename/unlink"
+      ],
+      "dependencies": [
+        "F02"
+      ],
+      "evidence": [
+        "kernel/vfs.cpp",
+        "kernel/syscall.cpp"
+      ],
+      "branch": "feature/f04-vfs-mounts-and-pseudo-filesystems",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/4"
+    },
+    {
+      "id": "F05",
+      "title": "POSIX threads and futexes",
+      "milestone": "M2",
+      "state": "planned",
+      "current": "Processes exist; CLONE_THREAD and guest pthreads are missing.",
+      "scope": [
+        "Shared address-space lifetime and clone/clone3 thread flags",
+        "Thread IDs, groups, exit_group, join, TLS, and per-thread FPU state",
+        "Futex wait/wake with atomic expected-value checks and timeouts",
+        "Robust futex lists, clear-child-TID, cancellation, and process-shared synchronization",
+        "Pthread mutexes, condition variables, rwlocks, barriers, and semaphores",
+        "Thread-directed signals, masks, timers, and fork/exec interactions"
+      ],
+      "acceptance": [
+        "Run real musl pthread create/join and TLS isolation tests",
+        "Stress contested locks, producer/consumer queues, timeout races, and owner death",
+        "Run C++ std::thread/std::mutex and prove process/thread teardown releases resources"
+      ],
+      "dependencies": [
+        "F04"
+      ],
+      "evidence": [
+        "kernel/task.cpp",
+        "kernel/include/task.hpp"
+      ],
+      "branch": "feature/f05-posix-threads-and-futexes",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/5"
+    },
+    {
+      "id": "F06",
+      "title": "Demand paging, copy-on-write, and swap",
+      "milestone": "M2",
+      "state": "partial",
+      "current": "User page tables and shared mappings exist; fork eagerly copies private pages.",
+      "scope": [
+        "VM maps, objects, pages, reservations, and bounded allocation accounting",
+        "Demand-paged stacks and file-backed mmap with shared page-cache coherence",
+        "Copy-on-write fork and page-fault permission handling",
+        "mremap, msync, madvise, locking, and protection edge cases",
+        "Page reclamation, swap, and out-of-memory behavior",
+        "Kernel slabs/zones, aligned pools, allocator diagnostics, and large-page opportunities"
+      ],
+      "acceptance": [
+        "Demonstrate shared versus private file mappings and COW isolation after fork",
+        "Reclaim pages under pressure without losing live data",
+        "Exercise allocation failures, stack limits, malformed mappings, and swap recovery"
+      ],
+      "dependencies": [
+        "F03",
+        "F05"
+      ],
+      "evidence": [
+        "kernel/memory.cpp",
+        "kernel/shared_memory.cpp"
+      ],
+      "branch": "feature/f06-demand-paging-copy-on-write-and-swap",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/6"
+    },
+    {
+      "id": "F07",
+      "title": "SMP scheduling and kernel synchronization",
+      "milestone": "M2",
+      "state": "planned",
+      "current": "The scheduler runs one CPU with fixed process and descriptor limits.",
+      "scope": [
+        "Application-processor startup, per-CPU state, and interprocessor interrupts",
+        "Kernel threads, run queues, CPU affinity, priorities, and fairness",
+        "Spinlocks, mutexes, rwlocks, semaphores, condition variables, sleep queues, and turnstiles",
+        "Wakeup ordering, priority inheritance, lock diagnostics, and interrupt safety",
+        "Scalable task/descriptor accounting and process resource limits",
+        "Scheduler statistics, load average, and accounting"
+      ],
+      "acceptance": [
+        "Run work simultaneously on multiple emulated CPUs and demonstrate affinity",
+        "Stress fork/exec/wait and shared locks with multiple CPUs",
+        "Detect lock misuse and verify sleeping tasks do not consume a CPU"
+      ],
+      "dependencies": [
+        "F01",
+        "F05",
+        "F06"
+      ],
+      "evidence": [],
+      "branch": "feature/f07-smp-scheduling-and-kernel-synchronization",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/7"
+    },
+    {
+      "id": "F08",
+      "title": "Linux syscall and libc compatibility",
+      "milestone": "M4",
+      "state": "partial",
+      "current": "Static/dynamic musl programs and a tested syscall subset work; unsupported calls return ENOSYS.",
+      "scope": [
+        "Machine-readable Linux x86-64 syscall/structure/flag/error matrix with tests",
+        "Extend musl coverage without silent successful stubs",
+        "glibc loader, symbol/TLS requirements, vDSO assumptions, and ordinary Linux applications",
+        "File/process/resource/signal/time/socket/ioctl conformance",
+        "Dynamic linking, dlopen/dlsym, constructors/destructors, RELRO, and shared-library unwinding",
+        "ELF relocation/hash/TLS matrix, canonical function addresses, and W^X library mappings",
+        "POSIX conformance suites and documented unsupported semantics"
+      ],
+      "acceptance": [
+        "Tie each claimed syscall or ABI behavior to a guest test",
+        "Run both static and dynamic musl and glibc programs with their own loaders",
+        "Exercise negative/error cases and preserve older guest tests"
+      ],
+      "dependencies": [
+        "F05",
+        "F06",
+        "F13"
+      ],
+      "evidence": [
+        "kernel/syscall.cpp",
+        "userspace/abi-tests.c",
+        "userspace/signal-tests.c"
+      ],
+      "branch": "feature/f08-linux-syscall-and-libc-compatibility",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/8"
+    },
+    {
+      "id": "F09",
+      "title": "Accounts, permissions, and process credentials",
+      "milestone": "M3",
+      "state": "planned",
+      "current": "All tasks currently use root identity without multiuser permission enforcement.",
+      "scope": [
+        "UID/GID, supplementary groups, real/effective/saved credentials, and umask",
+        "File/directory access checks, ownership, sticky bits, set-ID, and chroot",
+        "passwd/group/shadow storage and account-management commands",
+        "Login, su/sudo policy, session identity, and login records",
+        "Process signaling/debugging permission checks and service privilege dropping",
+        "Isolation/resource-limit tests before exposing network services"
+      ],
+      "acceptance": [
+        "Create two users and prove unauthorized file access, signaling, and tracing fail",
+        "Start a service with a non-root identity and verify its credentials",
+        "Preserve accounts across reboot and test authentication failures"
+      ],
+      "dependencies": [
+        "F03",
+        "F04"
+      ],
+      "evidence": [],
+      "branch": "feature/f09-accounts-permissions-and-process-credentials",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/9"
+    },
+    {
+      "id": "F10",
+      "title": "Secure random number generation",
+      "milestone": "M3",
+      "state": "planned",
+      "current": "Current random bytes are not a cryptographic random generator.",
+      "scope": [
+        "Entropy pool and a documented cryptographic generator",
+        "Boot seeding, persisted seed rotation, hardware-source validation, and reseeding",
+        "getrandom, /dev/random, /dev/urandom, blocking, and readiness semantics",
+        "Shared randomness for authentication, TLS, and package signature tooling"
+      ],
+      "acceptance": [
+        "Verify readiness/blocking and error behavior before and after initialization",
+        "Test generator state transitions using deterministic fixtures",
+        "Run real TLS/key-generation clients without treating timing noise alone as proven entropy"
+      ],
+      "dependencies": [
+        "F03",
+        "F09"
+      ],
+      "evidence": [],
+      "branch": "feature/f10-secure-random-number-generation",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/10"
+    },
+    {
+      "id": "F11",
+      "title": "Ethernet devices and link management",
+      "milestone": "M3",
+      "state": "planned",
+      "current": "No Ethernet driver is present.",
+      "scope": [
+        "Network-device interface, packet buffers, statistics, MTU, and link state",
+        "Virtio-net first on QEMU",
+        "Intel e1000/e1000e and Realtek RTL8139/RTL8168 drivers",
+        "DMA rings, interrupt moderation, buffer ownership, and backpressure",
+        "Multiple interfaces, MAC filtering, multicast, and link transitions"
+      ],
+      "acceptance": [
+        "Exchange captured Ethernet frames between the guest and a controlled peer",
+        "Test receive/transmit ring wraparound, queue saturation, and link loss",
+        "Exercise each claimed NIC model with its own emulator or hardware evidence"
+      ],
+      "dependencies": [
+        "F01",
+        "F05"
+      ],
+      "evidence": [],
+      "branch": "feature/f11-ethernet-devices-and-link-management",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/11"
+    },
+    {
+      "id": "F12",
+      "title": "IPv4, IPv6, routing, and ICMP",
+      "milestone": "M3",
+      "state": "planned",
+      "current": "No IP stack is present.",
+      "scope": [
+        "Ethernet framing, ARP, IPv4 checksums, loopback, routing, aliases, and gateways",
+        "ICMP errors and echo/ping",
+        "Bounded fragment reassembly, malformed-packet handling, and path MTU discovery",
+        "IPv6 neighbor discovery, ICMPv6, addresses, routes, and router advertisements",
+        "Broadcast/multicast, packet options, TTL/TOS, and interface accounting"
+      ],
+      "acceptance": [
+        "Ping loopback and a controlled host peer, with packet capture proving guest-generated traffic",
+        "Reassemble permitted fragments and reject corrupt lengths/checksums",
+        "Exercise IPv6 reachability, route changes, and path MTU behavior"
+      ],
+      "dependencies": [
+        "F11"
+      ],
+      "evidence": [],
+      "branch": "feature/f12-ipv4-ipv6-routing-and-icmp",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/12"
+    },
+    {
+      "id": "F13",
+      "title": "TCP, UDP, and Linux socket semantics",
+      "milestone": "M3",
+      "state": "partial",
+      "current": "Unix stream sockets support X11; Internet and Unix datagram sockets are missing.",
+      "scope": [
+        "AF_INET/AF_INET6 TCP/UDP socket lifecycle, options, and errors",
+        "TCP sequence/window handling, retransmission, congestion, close, and reset",
+        "Datagram boundaries, peer addressing, connected UDP, and payload limits",
+        "AF_UNIX datagrams, credentials, SCM_RIGHTS, shutdown, and descriptor lifetime",
+        "AF_PACKET/raw sockets and netlink routing/device queries",
+        "sendmsg/recvmsg, batches, readiness, nonblocking I/O, and interruption"
+      ],
+      "acceptance": [
+        "Transfer data in both directions with a real host TCP/UDP peer",
+        "Inject loss, duplication, reordering, truncation, and resets",
+        "Run guest client/server programs and verify poll/epoll, ancillary data, and error semantics"
+      ],
+      "dependencies": [
+        "F12",
+        "F15"
+      ],
+      "evidence": [
+        "kernel/ipc.cpp",
+        "userspace/ipc-tests.c"
+      ],
+      "branch": "feature/f13-tcp-udp-and-linux-socket-semantics",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/13"
+    },
+    {
+      "id": "F14",
+      "title": "DHCP, DNS, and network configuration",
+      "milestone": "M3",
+      "state": "planned",
+      "current": "No network configuration or resolver service is available.",
+      "scope": [
+        "DHCP by default, lease renewal, saved configuration, and static override",
+        "DNS resolver including UDP, TCP fallback, search rules, and timeouts",
+        "Address, route, hostname, and interface tools",
+        "First release: DHCP, DNS, TCP/UDP, ping, and file download",
+        "HTTP/HTTPS tools with certificate validation and useful failure diagnostics"
+      ],
+      "acceptance": [
+        "Acquire a lease from a controlled server and resolve a controlled DNS name",
+        "Download an exact fixture and verify its hash in the guest",
+        "Test DHCP loss, static configuration, DNS failure, TLS failure, and reboot behavior"
+      ],
+      "dependencies": [
+        "F09",
+        "F10",
+        "F13"
+      ],
+      "evidence": [],
+      "branch": "feature/f14-dhcp-dns-and-network-configuration",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/14"
+    },
+    {
+      "id": "F15",
+      "title": "IPC and event notification",
+      "milestone": "M2",
+      "state": "partial",
+      "current": "Pipes, Unix streams, polling, epoll, select, and SysV shared memory have guest tests.",
+      "scope": [
+        "Complete pipe/FIFO, poll/select/epoll, descriptor-generation, and close semantics",
+        "System V semaphores, message queues, and shared-memory permissions/lifetime",
+        "POSIX named/unnamed semaphores and priority message queues",
+        "eventfd, signalfd, timerfd, filesystem notifications, and POSIX asynchronous I/O",
+        "Shared-memory and socket descriptor passing between processes",
+        "Timeout, interruption, cancellation, and shutdown behavior"
+      ],
+      "acceptance": [
+        "Run cross-process queue/semaphore/shared-memory tests with timeout and permission failures",
+        "Stress readiness across descriptor reuse, close, fork, and exec",
+        "Verify asynchronous notifications and cancellation using actual guest processes"
+      ],
+      "dependencies": [
+        "F05"
+      ],
+      "evidence": [
+        "kernel/ipc.cpp",
+        "kernel/shared_memory.cpp",
+        "userspace/ipc-tests.c"
+      ],
+      "branch": "feature/f15-ipc-and-event-notification",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/15"
+    },
+    {
+      "id": "F16",
+      "title": "Clocks, timers, and power management",
+      "milestone": "M6",
+      "state": "partial",
+      "current": "PIT timing is 100 Hz and clocks are boot-relative.",
+      "scope": [
+        "RTC wall clock, monotonic/realtime clocks, and clock setting permissions",
+        "HPET, ACPI PM timer, calibrated TSC, and higher-resolution deadlines",
+        "POSIX interval timers, timer notifications, sleeping, and scheduling deadlines",
+        "ACPI shutdown/reboot and firmware runtime services",
+        "CPU idle states, later suspend/resume, and device power transitions",
+        "Time synchronization and timezone data integration"
+      ],
+      "acceptance": [
+        "Measure clock behavior against a controlled host and test clock changes separately from monotonic time",
+        "Verify clean shutdown flushes storage and reboot restores it",
+        "Exercise timer cancellation, missed deadlines, and supported power transitions"
+      ],
+      "dependencies": [
+        "F01",
+        "F03",
+        "F05"
+      ],
+      "evidence": [
+        "kernel/arch.cpp",
+        "kernel/signals.cpp"
+      ],
+      "branch": "feature/f16-clocks-timers-and-power-management",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/16"
+    },
+    {
+      "id": "F17",
+      "title": "AHCI, NVMe, and other storage devices",
+      "milestone": "M6",
+      "state": "planned",
+      "current": "The guest currently has no disk-controller drivers.",
+      "scope": [
+        "AHCI/SATA, including controller quirks and appropriate RAID-mode discovery",
+        "NVMe queues, namespaces, resets, and transfer limits",
+        "Legacy IDE PIO/DMA and ATAPI",
+        "Common SCSI layer, virtio-scsi, optical devices, and USB storage integration",
+        "Ramdisk and floppy devices where legacy tests require them",
+        "Hotplug, timeouts, cache flush, and failed-device recovery"
+      ],
+      "acceptance": [
+        "Run the persistent filesystem/reboot suite on each claimed device type",
+        "Exercise controller reset, transfer bounds, and failed I/O",
+        "Compare written bytes against a host-readable disk image"
+      ],
+      "dependencies": [
+        "F02",
+        "F03",
+        "F19"
+      ],
+      "evidence": [],
+      "branch": "feature/f17-ahci-nvme-and-other-storage-devices",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/17"
+    },
+    {
+      "id": "F18",
+      "title": "Additional filesystems and host sharing",
+      "milestone": "M6",
+      "state": "planned",
+      "current": "Only RAM/initramfs filesystem content is available.",
+      "scope": [
+        "FAT and exFAT read/write, including allocation and entry checksums",
+        "UDF read/write and optical-media integration",
+        "Minix and System V filesystem formats",
+        "Virtio-9P and 9P protocol support for controlled host sharing",
+        "FUSE request/response interface and userspace filesystems",
+        "Filesystem tools, fsck/mkfs, unsupported-feature handling, and recovery"
+      ],
+      "acceptance": [
+        "Run create/read/write/rename/delete and remount tests for each claimed writable format",
+        "Verify guest output with independent host tools and filesystem checkers",
+        "Reject corrupt structures and test failed or disconnected host-sharing servers"
+      ],
+      "dependencies": [
+        "F02",
+        "F04",
+        "F13"
+      ],
+      "evidence": [],
+      "branch": "feature/f18-additional-filesystems-and-host-sharing",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/18"
+    },
+    {
+      "id": "F19",
+      "title": "USB controllers and devices",
+      "milestone": "M6",
+      "state": "planned",
+      "current": "Input currently comes from PS/2; no USB stack exists.",
+      "scope": [
+        "xHCI, EHCI, and UHCI controllers and interrupt/completion processing",
+        "Enumeration, descriptors, hubs, hotplug, and device-tree reporting",
+        "HID report parsing, keyboards, mice, and evdev integration",
+        "Mass storage Bulk-Only and UAS through the common SCSI layer",
+        "usbfs/user access, permission policy, and lsusb-style inspection",
+        "USB Audio Class after keyboards, mice, and storage"
+      ],
+      "acceptance": [
+        "Enumerate a hub with input and storage devices and use them from guest programs",
+        "Disconnect/reconnect during I/O without stale pointers or leaked resources",
+        "Test malformed descriptors, timeouts, and independent controller variants"
+      ],
+      "dependencies": [
+        "F01",
+        "F09"
+      ],
+      "evidence": [],
+      "branch": "feature/f19-usb-controllers-and-devices",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/19"
+    },
+    {
+      "id": "F20",
+      "title": "Terminals, input, and framebuffer console",
+      "milestone": "M5",
+      "state": "partial",
+      "current": "Serial, PTYs, PS/2 events, and Xorg framebuffer input work.",
+      "scope": [
+        "Complete terminal discipline, termios, process groups, sessions, and job control",
+        "Virtual terminals, console switching, ANSI handling, and resize",
+        "PS/2 and USB input queues with correct event timestamps and overflow behavior",
+        "Keyboard layouts, modifiers, mouse buttons/wheel, and input-device discovery",
+        "UART console devices, console selection, VGA text, and framebuffer drawing",
+        "PSF/BDF/PCF font loading, font cache, and console geometry"
+      ],
+      "acceptance": [
+        "Run shell job-control and terminal conformance tests",
+        "Switch virtual terminals while preserving their sessions and display contents",
+        "Verify keyboard/mouse input under both firmware types and disconnect supported devices safely"
+      ],
+      "dependencies": [
+        "F05",
+        "F19"
+      ],
+      "evidence": [
+        "kernel/devices.cpp",
+        "userspace/signal-tests.c"
+      ],
+      "branch": "feature/f20-terminals-input-and-framebuffer-console",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/20"
+    },
+    {
+      "id": "F21",
+      "title": "X11 and Wayland display servers",
+      "milestone": "M5",
+      "state": "partial",
+      "current": "Xorg fbdev, twm, xterm, and rendered pixels have BIOS/UEFI guest evidence.",
+      "scope": [
+        "Improve Xorg fbdev/evdev compatibility and enable its threaded paths when supported",
+        "Parallel Wayland compositor/client track with explicit kernel requirements",
+        "Software rendering, shared buffers, event delivery, and clipboard/session behavior",
+        "Shared-memory transport, fd passing, input permissions, and display isolation",
+        "Xwayland and interoperability when prerequisite interfaces are present",
+        "Application-visible rendering and real interactive-input tests"
+      ],
+      "acceptance": [
+        "Run real X11 and Wayland clients and compare rendered output to expected pixels",
+        "Send emulated input through the guest input stack and observe application behavior",
+        "Verify server restart/session teardown and resource cleanup"
+      ],
+      "dependencies": [
+        "F05",
+        "F13",
+        "F20"
+      ],
+      "evidence": [
+        "userspace/x11-probe.c",
+        "userspace/desktop-test.sh",
+        "scripts/boot_test.py"
+      ],
+      "branch": "feature/f21-x11-and-wayland-display-servers",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/21"
+    },
+    {
+      "id": "F22",
+      "title": "Virtio GPU and accelerated graphics",
+      "milestone": "M6",
+      "state": "planned",
+      "current": "Display uses a fixed boot framebuffer without acceleration.",
+      "scope": [
+        "Virtio GPU resource/scanout/cursor operations",
+        "Display modes, buffer ownership, hotplug, and multihead groundwork",
+        "DRM/KMS-like interfaces required by selected compositor/rendering stacks",
+        "Mesa/software renderer integration before accelerated contexts",
+        "Explicit accelerated-rendering transport, feature negotiation, and isolation",
+        "Legacy VGA/BGA paths and fallback for ordinary UEFI PCs"
+      ],
+      "acceptance": [
+        "Render and read back pixels using the guest graphics driver",
+        "Change supported modes and demonstrate compositor buffer lifetime handling",
+        "Test unsupported acceleration features and device resets with a working fallback"
+      ],
+      "dependencies": [
+        "F01",
+        "F19",
+        "F21"
+      ],
+      "evidence": [],
+      "branch": "feature/f22-virtio-gpu-and-accelerated-graphics",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/22"
+    },
+    {
+      "id": "F23",
+      "title": "Shells, window managers, and desktop environments",
+      "milestone": "M5",
+      "state": "partial",
+      "current": "BusyBox ash, Bash, zsh, twm, xterm, and xeyes work.",
+      "scope": [
+        "Bash as the default interactive shell while retaining ash and zsh",
+        "Lightweight FVWM/Openbox-style window manager next",
+        "Additional window managers: ctwm and matwm2",
+        "CDE and TDE desktop environments in the wider roadmap",
+        "X11 tools, fonts, fontconfig, locale/input support, and session selection",
+        "GTK/Motif/Tk/SDL applications and desktop application catalog"
+      ],
+      "acceptance": [
+        "Start Bash from normal serial and desktop sessions with job control",
+        "Open, move, resize, close, and restart windows in each claimed manager",
+        "Run a smoke scenario for every claimed desktop/application rather than treating package presence as proof"
+      ],
+      "dependencies": [
+        "F20",
+        "F21"
+      ],
+      "evidence": [
+        "userspace/init.c",
+        "userspace/startx.sh",
+        "userspace/system.twmrc"
+      ],
+      "branch": "feature/f23-shells-window-managers-and-desktop-environments",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23"
+    },
+    {
+      "id": "F24",
+      "title": "HD Audio and multimedia interfaces",
+      "milestone": "M6",
+      "state": "planned",
+      "current": "There is no audio driver or audio service.",
+      "scope": [
+        "QEMU Intel HD Audio playback and recording first",
+        "AC97, Sound Blaster 16, USB Audio Class, and a null/test backend",
+        "DMA ring/FIFO lifetime, interrupts, resets, and device format negotiation",
+        "/dev/audio and OSS /dev/dsp compatibility; required ALSA-style interfaces",
+        "PCM conversion, channel mixing, resampling, mixers, and latency behavior",
+        "Desktop audio service plus codecs, SDL, players, and recording tools"
+      ],
+      "acceptance": [
+        "Play a known waveform and compare host-captured audio",
+        "Record a controlled input and verify samples in the guest",
+        "Stress format changes, underruns/overruns, close/reset, and concurrent clients"
+      ],
+      "dependencies": [
+        "F01",
+        "F05",
+        "F19"
+      ],
+      "evidence": [],
+      "branch": "feature/f24-hd-audio-and-multimedia-interfaces",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/24"
+    },
+    {
+      "id": "F25",
+      "title": "Init, login, and system services",
+      "milestone": "M3",
+      "state": "partial",
+      "current": "Init starts desktop/serial processes and reaps children; general services are missing.",
+      "scope": [
+        "Minimal init, ordered startup, service supervision, restart, and clean shutdown",
+        "Logging/syslog, time synchronization, cron/at/batch, and accounting",
+        "SSH, controlled inetd/telnet compatibility, HTTP server, and network daemons",
+        "DHCP/network setup, device discovery, RPC/rpcbind, and D-Bus",
+        "Desktop login greeter, display manager, sessions, and logout",
+        "Service privilege separation, configuration, dependency ordering, and persistent state"
+      ],
+      "acceptance": [
+        "Boot and stop services in dependency order with captured logs",
+        "Authenticate a non-root SSH/session user only after credentials and randomness work",
+        "Test crashes, restart loops, failed configuration, logout, and reboot persistence"
+      ],
+      "dependencies": [
+        "F09",
+        "F10",
+        "F14"
+      ],
+      "evidence": [
+        "userspace/init.c"
+      ],
+      "branch": "feature/f25-init-login-and-system-services",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/25"
+    },
+    {
+      "id": "F26",
+      "title": "Signed packages and dependency resolution",
+      "milestone": "M8",
+      "state": "planned",
+      "current": "Build-time pinned packages are imported as data; no guest package manager exists.",
+      "scope": [
+        "Axiom64 package format, signed metadata/packages, and trusted key management",
+        "Dependency/conflict/version resolution and reproducible package recipes",
+        "Install, upgrade, remove, file ownership, and configuration preservation",
+        "Transactional failure handling, rollback/recovery, offline installation, and integrity checks",
+        "Mirrors/cache, source packages, license notices, and build provenance",
+        "Guest package builds and integration with the self-hosting milestone"
+      ],
+      "acceptance": [
+        "Install/update/remove a signed package with dependencies inside the guest",
+        "Reject invalid signatures, conflicts, downgrades by policy, and incomplete downloads",
+        "Interrupt an update and recover a bootable consistent package database"
+      ],
+      "dependencies": [
+        "F03",
+        "F09",
+        "F10",
+        "F14",
+        "F28"
+      ],
+      "evidence": [],
+      "branch": "feature/f26-signed-packages-and-dependency-resolution",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/26"
+    },
+    {
+      "id": "F27",
+      "title": "Live image and simple disk installer",
+      "milestone": "M8",
+      "state": "planned",
+      "current": "A live ISO boots; changes are lost when the guest stops.",
+      "scope": [
+        "Maintain a live BIOS/UEFI image",
+        "Simple installer with target-disk selection and a reviewable partition plan",
+        "GPT/MBR layouts, EFI system partition, bootloader installation, and root mount configuration",
+        "Initial users, hostname, timezone, and network settings",
+        "Reboot into the installed OS without the live medium",
+        "Rescue/recovery tools, logs, and safe failure behavior"
+      ],
+      "acceptance": [
+        "Install onto a disposable empty guest disk and boot it without the ISO under BIOS and UEFI",
+        "Preserve a test file and user account across multiple boots",
+        "Reject an invalid disk/layout and demonstrate recoverable failed installation"
+      ],
+      "dependencies": [
+        "F03",
+        "F09",
+        "F16",
+        "F26"
+      ],
+      "evidence": [],
+      "branch": "feature/f27-live-image-and-simple-disk-installer",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/27"
+    },
+    {
+      "id": "F28",
+      "title": "Native development and full self-hosting",
+      "milestone": "M4",
+      "state": "partial",
+      "current": "Guest GCC/binutils/Make compile and execute C/C++ examples, including exceptions.",
+      "scope": [
+        "Build tools, Git, editors, Python, and the developer package catalog first",
+        "Native GCC/binutils/GDB and portable build tools with a coherent sysroot",
+        "Build Axiom64 kernel, userspace, and packages from inside Axiom64",
+        "Static/shared C/C++ runtime, TLS, dlopen, and exceptions across shared libraries",
+        "Reproducible cross/native toolchain builds, headers, libraries, and source bundles",
+        "Native debugger, ptrace, linker inspection tools, and failed-build diagnostics"
+      ],
+      "acceptance": [
+        "Clone or import a source tree and build/test it using only guest processes and files",
+        "Build a new Axiom64 kernel/image inside the guest and boot the resulting artifact",
+        "Compile shared C++ libraries with TLS and cross-library exceptions and run negative compilation tests"
+      ],
+      "dependencies": [
+        "F03",
+        "F05",
+        "F08",
+        "F14",
+        "F34"
+      ],
+      "evidence": [
+        "userspace/toolchain-test/Makefile",
+        "docs/ports.md"
+      ],
+      "branch": "feature/f28-native-development-and-full-self-hosting",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28"
+    },
+    {
+      "id": "F29",
+      "title": "Linux i386 compatibility",
+      "milestone": "M4",
+      "state": "planned",
+      "current": "Only ELF64 Linux x86-64 userspace runs.",
+      "scope": [
+        "32-bit compatibility execution on the x86-64 kernel",
+        "Linux i386 syscall entry, numbers, structures, time types, and errno behavior",
+        "ELF32/PT_INTERP loading and separate 32-bit runtime search paths",
+        "32-bit TLS, FPU, signal frames, and system-call restart",
+        "Mixed 32/64-bit processes, IPC translation, debugging, and filesystem access"
+      ],
+      "acceptance": [
+        "Run static and dynamic 32-bit Linux programs with their unmodified loaders",
+        "Exchange files and IPC with a 64-bit guest process",
+        "Validate pointer/structure conversion and reject cross-bitness ELF/loader mismatches"
+      ],
+      "dependencies": [
+        "F01",
+        "F08"
+      ],
+      "evidence": [],
+      "branch": "feature/f29-linux-i386-compatibility",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/29"
+    },
+    {
+      "id": "F30",
+      "title": "BSD executable personalities",
+      "milestone": "M7",
+      "state": "planned",
+      "current": "There is no BSD syscall personality.",
+      "scope": [
+        "Separate FreeBSD, NetBSD, and OpenBSD syscall/error/flag mappings",
+        "ELF OSABI/interpreter recognition and personality-specific runtime roots",
+        "Signal frames, TLS, metadata, sysctl/kinfo, and native synchronization requests",
+        "Static and dynamic executables with their own runtime libraries",
+        "Per-target architecture/bitness matrix and documented implementation limits"
+      ],
+      "acceptance": [
+        "Run lawful test fixtures for each claimed target with observable guest behavior",
+        "Exercise its own dynamic loader, signals, filesystem calls, and process lifecycle",
+        "Keep syscall layouts and failures isolated between personalities"
+      ],
+      "dependencies": [
+        "F29",
+        "F33"
+      ],
+      "evidence": [],
+      "branch": "feature/f30-bsd-executable-personalities",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/31"
+    },
+    {
+      "id": "F31",
+      "title": "System V and SunOS personalities",
+      "milestone": "M7",
+      "state": "planned",
+      "current": "There is no System V or SunOS personality.",
+      "scope": [
+        "System V Release 3 COFF and Release 4 ELF execution",
+        "Call-gate entry, ABI-specific flags/errors, signal frames, and process setup",
+        "Static shared libraries and vendor runtime search rules",
+        "STREAMS transport providers, pseudo-terminals, IPC, and X11 client transport",
+        "SunOS 4.x a.out executable/syscall/terminal behavior",
+        "BSD/System V filesystem and process metadata differences"
+      ],
+      "acceptance": [
+        "Run shells and utilities for each claimed target against their own runtimes",
+        "Demonstrate STREAMS socket and X11 transport behavior",
+        "Validate signal/terminal frames and reject malformed COFF/a.out libraries"
+      ],
+      "dependencies": [
+        "F13",
+        "F20",
+        "F29",
+        "F33"
+      ],
+      "evidence": [],
+      "branch": "feature/f31-system-v-and-sunos-personalities",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/32"
+    },
+    {
+      "id": "F32",
+      "title": "ELKS and Xenix legacy programs",
+      "milestone": "M7",
+      "state": "planned",
+      "current": "There is no segmented 16-bit or Xenix execution support.",
+      "scope": [
+        "ELKS 16-bit a.out execution, syscall tables, and process metadata",
+        "Xenix x.out 8086/286/386 loaders and ABI selection",
+        "LDT/segmented execution or an explicit emulation path for modes unavailable in long mode",
+        "int/call-gate entry, segment limits, signals, terminal behavior, and IPC",
+        "Legacy runtime trees, compiler/utilities, and mixed-format process lifetimes"
+      ],
+      "acceptance": [
+        "Run 16-bit and 32-bit fixtures with their expected segmentation and system-call entry",
+        "Demonstrate invalid selectors/segment bounds fault safely",
+        "Run representative utilities and compile/execute a small program where toolchains are available"
+      ],
+      "dependencies": [
+        "F29",
+        "F31",
+        "F33"
+      ],
+      "evidence": [],
+      "branch": "feature/f32-elks-and-xenix-legacy-programs",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/33"
+    },
+    {
+      "id": "F33",
+      "title": "Executable formats and compatibility adapters",
+      "milestone": "M7",
+      "state": "partial",
+      "current": "ELF64, musl PT_INTERP, and script execution are supported.",
+      "scope": [
+        "ELF32/ELF64, PIE, interpreter contracts, permissions, and malformed-input validation",
+        "a.out, ELKS a.out, COFF, x.out, and static shared-library formats",
+        "Shebang execution and personality selection without global ABI state",
+        "Experimental PE/MZ loader research, explicitly separate from a claim of Windows compatibility",
+        "NTSYNC-compatible mutex/semaphore/event operations for Wine research",
+        "Runtime/library isolation, executable branding tools, and architecture mismatch errors"
+      ],
+      "acceptance": [
+        "Test each claimed loader with valid, truncated, overlapping, and wrong-architecture fixtures",
+        "Verify a failed exec preserves the prior address space",
+        "Record PE/Wine research as experimental until actual guest applications pass"
+      ],
+      "dependencies": [
+        "F06"
+      ],
+      "evidence": [
+        "kernel/task.cpp",
+        "userspace/abi-tests.c"
+      ],
+      "branch": "feature/f33-executable-formats-and-compatibility-adapters",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/34"
+    },
+    {
+      "id": "F34",
+      "title": "Debugging, tracing, and profiling",
+      "milestone": "M4",
+      "state": "partial",
+      "current": "Serial diagnostics, syscall tracing, symbols, and QEMU GDB hooks exist.",
+      "scope": [
+        "Kernel symbols, DWARF-aware stack traces, panic diagnostics, and crash/core dumps",
+        "ptrace, native GDB, process inspection, and signal-safe debugging",
+        "Syscall/resource accounting, diagnostics, and SysRq-style controls",
+        "QEMU guest sampling, folded stack profiles, and symbol resolution",
+        "Format-string linting, static checks, memory tracking, and allocator corruption detection",
+        "Repeatable failed-boot/debugging procedures and preserved diagnostic artifacts"
+      ],
+      "acceptance": [
+        "Debug a guest program through native ptrace/GDB and inspect a deliberate crash",
+        "Resolve a guest profile and kernel stack trace to known source locations",
+        "Demonstrate lint detection and diagnostic behavior with controlled faulty fixtures"
+      ],
+      "dependencies": [
+        "F05",
+        "F06"
+      ],
+      "evidence": [
+        "scripts/boot_test.py",
+        "kernel/task.cpp",
+        "kernel/runtime.cpp"
+      ],
+      "branch": "feature/f34-debugging-tracing-and-profiling",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/35"
+    },
+    {
+      "id": "F35",
+      "title": "Reliability and compatibility verification",
+      "milestone": "M8",
+      "state": "partial",
+      "current": "BIOS/UEFI ABI, compiler, X11 pixel, and emulated-input tests pass at the baseline.",
+      "scope": [
+        "Filesystem recovery, clean shutdown, and multi-boot persistence tests",
+        "Isolation, credentials, secure randomness, resource limits, and failure injection",
+        "Packet/ELF/filesystem/USB malformed-input tests and targeted fuzzing",
+        "Thread/SMP stress, race tests, long-running resource/leak checks, and allocator auditing",
+        "Diagnostics, core dumps, tracing, and kernel debugging evidence",
+        "CI hardware/firmware/program matrix with exact tested commit and retained artifacts"
+      ],
+      "acceptance": [
+        "Require evidence for each claimed capability and report untested states explicitly",
+        "Run cross-boot, network-peer, thread-stress, and crash-recovery scenarios inside the guest",
+        "Keep the established full and interactive firmware suites passing"
+      ],
+      "dependencies": [],
+      "evidence": [
+        "scripts/boot_test.py",
+        "docs/testing.md"
+      ],
+      "branch": "feature/f35-reliability-and-compatibility-verification",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/36"
+    },
+    {
+      "id": "F36",
+      "title": "Base commands and runtime library coverage",
+      "milestone": "M4",
+      "state": "partial",
+      "current": "BusyBox and selected imported libraries cover many commands; most individual behaviors are not yet tested.",
+      "scope": [
+        "Every base command and library listed in the application catalog",
+        "Files/text/archive tools, editors/pagers/manual pages, and shell semantics",
+        "Accounts/process/system/device administration and terminal tools",
+        "Native library API equivalents: libc/libm/pthread, resolver, editing, databases, realtime, USB, process inspection, and ELF utilities",
+        "Locale, Unicode, fonts, timezones, and documentation lookup",
+        "Games, demonstrations, BASIC/calculators, and other standalone utilities"
+      ],
+      "acceptance": [
+        "Assign each catalog entry a guest smoke/conformance test or an explicit planned state",
+        "Verify behavior through the chosen standard package or implementation rather than requiring duplicate implementations",
+        "Distinguish an imported archive from a program demonstrated to run"
+      ],
+      "dependencies": [
+        "F04",
+        "F08",
+        "F23",
+        "F28"
+      ],
+      "evidence": [],
+      "branch": "feature/f36-base-commands-and-runtime-library-coverage",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37"
+    },
+    {
+      "id": "F37",
+      "title": "Reproducible distribution and source provenance",
+      "milestone": "M8",
+      "state": "partial",
+      "current": "Build inputs, package hashes, licenses, and corresponding source bundles are pinned.",
+      "scope": [
+        "Kernel/build documentation under docs/ with a concise README",
+        "Pinned host/cross/native toolchains and package dependency graphs",
+        "Build profiles, reproducible disk/ISO images, and deterministic manifests",
+        "License/copyright retention and corresponding source/patch/recipe bundles",
+        "Verified downloads, offline caches, package update review, and CI artifacts",
+        "Windows/WSL and Linux build entry points with documented prerequisites",
+        "Host ABI diagnostic runner for foreign binaries, kept separate from guest compatibility evidence"
+      ],
+      "acceptance": [
+        "Build from pinned inputs in a fresh environment and validate artifacts/checksums",
+        "Account for every redistributed package with its notices and corresponding sources",
+        "Keep private decisions and reference inputs excluded from commits and source bundles"
+      ],
+      "dependencies": [
+        "F26",
+        "F28"
+      ],
+      "evidence": [
+        "dependencies.json",
+        "ports.lock.json",
+        "sources.lock.json",
+        "scripts/sources.py"
+      ],
+      "branch": "feature/f37-reproducible-distribution-and-source-provenance",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/38"
+    }
+  ],
+  "applications": [
+    {
+      "name": "addr2line",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "ar",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "arch",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "at",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F25",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/25",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "atd",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F25",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/25",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "audioctl",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F24",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/24",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "awk",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "bas",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "basename",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "batch",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F25",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/25",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "bc",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "brandelf",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "busybox",
+      "kind": "base-command",
+      "state": "demonstrated",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "cal",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "cat",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "chgrp",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "chmod",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "chown",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "chroot",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "clear",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "cmp",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "comm",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "compress",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "cp",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "cpio",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "cut",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "cxxfilt",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "date",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "dc",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "devtree",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "df",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "dhclient",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F14",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/14",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "diff",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "dirname",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "dmesg",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "doom",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "echo",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "echod",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F25",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/25",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "ed",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "elfedit",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "env",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "ex",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "false",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "find",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "fmt",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "fold",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "fsck",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F18",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/18",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "getty",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F25",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/25",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "gprof",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "grep",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "groupadd",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "groupdel",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "groupmod",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "groups",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "halt",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "head",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "hostname",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "id",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "ifconfig",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F14",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/14",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "init",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F25",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/25",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "join",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "keyboard",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "kill",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "last",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "ld.so",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "ldd",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "ldtctl",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F32",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/33",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "ln",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "login",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F25",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/25",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "ls",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "lspci",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "lsusb",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "mkdir",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "mkfs",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F18",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/18",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "mknod",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "mktemp",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "more",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "mount",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "mv",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "newgrp",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "nice",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "nm",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "nproc",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "objcopy",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "objdump",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "od",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "passwd",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "paste",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "pax",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "pgrep",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "ping",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F14",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/14",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "poweroff",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "pr",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "printf",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "prof",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "ps",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "pwd",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "radvd",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F14",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/14",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "ranlib",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "readelf",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "readlink",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "reboot",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "renice",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "reset",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "rm",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "rmdir",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "sdm",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F25",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/25",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "sed",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "seq",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "sh",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "size",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "sleep",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "slex",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "sort",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "split",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "strings",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "strip",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "stty",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "su",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "sum",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "sync",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "syslogd",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F25",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/25",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "tabs",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "tail",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "tar",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "tc",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "tee",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "telnetd",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F25",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/25",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "test",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "time",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "top",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "touch",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "tr",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "true",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "tty",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "umount",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "uname",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "uniq",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "uptime",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "useradd",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "userdel",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "usermod",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "uudecode",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "vi",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "w",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "wall",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "wc",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "which",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "who",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "whoami",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "write",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xargs",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xawdemo",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xenix",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F32",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/33",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "yacc",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "yes",
+      "kind": "base-command",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "autoconf",
+      "kind": "developer-tool",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "automake",
+      "kind": "developer-tool",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "binutils",
+      "kind": "developer-tool",
+      "state": "demonstrated",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "cmake",
+      "kind": "developer-tool",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "gcc",
+      "kind": "developer-tool",
+      "state": "demonstrated",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "gdb",
+      "kind": "developer-tool",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "git",
+      "kind": "developer-tool",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libtool",
+      "kind": "developer-tool",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "make",
+      "kind": "developer-tool",
+      "state": "demonstrated",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "nasm",
+      "kind": "developer-tool",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "pkg-config",
+      "kind": "developer-tool",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "python",
+      "kind": "developer-tool",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "file-magic",
+      "kind": "host-tool",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "font-util-native",
+      "kind": "host-tool",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "asm",
+      "kind": "kernel-support-library",
+      "state": "planned",
+      "owner": "F34",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/35",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "fmt",
+      "kind": "kernel-support-library",
+      "state": "planned",
+      "owner": "F34",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/35",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "angband",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "appres",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "atk",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "autoconf",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "automake",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "automake-pyshim",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "bash",
+      "kind": "port",
+      "state": "demonstrated",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "bdftopcf",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "beforelight",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "binutils",
+      "kind": "port",
+      "state": "demonstrated",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "bitmap",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "brotli",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "bzip2",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "ca-certificates",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F14",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/14",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "cairo",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "cde",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "cjson",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "cmake",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "constype",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "ctwm",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "curl",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F14",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/14",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "dbus",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F25",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/25",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "disasterparty",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "e2fsprogs",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F18",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/18",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "e2tools",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F18",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/18",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "editres",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "elinks",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "encodings",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "expat",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "expr",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "faad2",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F24",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/24",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "fdk-aac",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F24",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/24",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "file",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "flac",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F24",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/24",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "flex",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "font-adobe-100dpi",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "font-adobe-75dpi",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "font-bh-lucida",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "font-cursor-misc",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "font-dejavu",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "font-go",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "font-liberation",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "font-misc-misc",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "font-unifont",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "font-util",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "fontconfig",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "fonttosfnt",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "freetype",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "freetype-harfbuzz",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "fribidi",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "fslsfonts",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "fstobdf",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "fvwm3",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "gcc",
+      "kind": "port",
+      "state": "demonstrated",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "gdb",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "gdk-pixbuf",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "glib",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "glib1",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "glib2",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "glibc",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F08",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/8",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "gmp",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "grub",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "gtk1",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "gtk2",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "gzip",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "harfbuzz",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "hexchat",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "iceauth",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "ico",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "inetutils",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F14",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/14",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "ldns",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F14",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/14",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "less",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libarchive",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libcap",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libcss",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libdom",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libevent",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libffi",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libfontenc",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libFS",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libhubbub",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libICE",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libiconv",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libjpeg",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libogg",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F24",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/24",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libopus",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F24",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/24",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libparserutils",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libpng",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libSM",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libtirpc",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libtool",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "liburcu",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libuv",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libvorbis",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F24",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/24",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libwapcaplet",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libX11",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXau",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXaw",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libxcb",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXcomposite",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXcursor",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libxcvt",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXdamage",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXdmcp",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXext",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXfixes",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXfont",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXfont2",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXft",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXi",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXinerama",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libxkbcommon",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libxkbfile",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libxml2",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXmu",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXpm",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXrandr",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXrender",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXScrnSaver",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libxshmfence",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libxslt",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXt",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXtst",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXv",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libXxf86vm",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "links",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "listres",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "lmdb",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "luit",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "m4",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "make",
+      "kind": "port",
+      "state": "demonstrated",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "mandoc",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "matwm2",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "mc",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "mkfontscale",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "mksh",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "motif",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "motifgpt",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "mpfr",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "mpg123",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F24",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/24",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "musl",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F08",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/8",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "nano",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "ncurses",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "nethack",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "nginx",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F14",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/14",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "oclock",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "onetrueawk",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "openbox",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "openssh",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F14",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/14",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "openssl",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F14",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/14",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "opusfile",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F24",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/24",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "pango",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "perl",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "pixman",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "pkg-config",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "posixtestsuite",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F35",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/36",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "psymp3",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F24",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/24",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "python",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "qman",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "quickjs",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "readline",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "rendercheck",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "rgb",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "rogue",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "rpcbind",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F25",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/25",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "sdl12-compat",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "sdl2-compat",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "sdl3",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "sed",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "sessreg",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "setxkbmap",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "showfont",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "smproxy",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "sox",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F24",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/24",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "spandsp",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F24",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/24",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "speex",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F24",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/24",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "sqlite3",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "sudo",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "taglib",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F24",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/24",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "tcl",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "tde",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "texinfo",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "tk",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "tmux",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "transset",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "twm",
+      "kind": "port",
+      "state": "demonstrated",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "tzdata",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "viewres",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "vim",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "wayland",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "weston",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "x11perf",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xauth",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xbacklight",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xbiff",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xbitmaps",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xcalc",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xcb-proto",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xcb-util",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xclipboard",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xclock",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xcmsdb",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xcompmgr",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xconsole",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xcursorgen",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xditview",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xdpyinfo",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xedit",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xev",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xeyes",
+      "kind": "port",
+      "state": "demonstrated",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xfd",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xfontsel",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xgamma",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xgc",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xhost",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xkbcomp",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xkbevd",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xkbprint",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xkbutils",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xkeyboard-config",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xkill",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xload",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xlogo",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xlsatoms",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xlsclients",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xlsfonts",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xmag",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xman",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xmessage",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xmodmap",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xmore",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xorg-server",
+      "kind": "port",
+      "state": "demonstrated",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xorgproto",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xpr",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xprop",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xrandr",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xrdb",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xrefresh",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xset",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xsetmode",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xsetpointer",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xsetroot",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xsm",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xstdcmap",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xterm",
+      "kind": "port",
+      "state": "demonstrated",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xtrans",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xvinfo",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xwayland",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xwd",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xwininfo",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xwud",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "zlib",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "zsh",
+      "kind": "port",
+      "state": "demonstrated",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "at",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F25",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/25",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "bc",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "c",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F08",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/8",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "curses",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "dbm",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "demangle",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "dl",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F08",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/8",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "edit",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "elfobj",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "exvi",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "join",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "kvm",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "libuu",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "m",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F08",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/8",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "proc",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "pthread",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F15",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/15",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "pwdb",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "regex",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "resolv",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "rt",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F15",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/15",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "sys",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F08",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/8",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "usb",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "yacc",
+      "kind": "runtime-library",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "native_test",
+      "kind": "test-support",
+      "state": "planned",
+      "owner": "F35",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/36",
+      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    }
+  ]
+}

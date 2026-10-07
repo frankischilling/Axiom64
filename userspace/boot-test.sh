@@ -8,6 +8,8 @@ set -eu
 /bin/futex-dynamic
 /bin/lifecycle-static
 /bin/lifecycle-dynamic
+/bin/thread-io-static --guest
+/bin/thread-io-dynamic --guest
 /bin/ipc-tests
 /bin/signal-tests
 /bin/vfs-tests

@@ -12,7 +12,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--test", action="store_true")
 parser.add_argument("--trace", action="store_true")
 parser.add_argument("--suite", choices=["full", "abi", "desktop", "storage", "ext2", "threads"], default="full")
-parser.add_argument("--phase", choices=["write", "verify", "readonly", "error", "invalid", "full", "all", "cond"], default="verify")
+parser.add_argument("--phase", choices=["write", "verify", "readonly", "error", "invalid", "full", "all", "cond", "io"], default="verify")
 parser.add_argument("--output-name", help="ISO filename under build/ for an isolated test run")
 args = parser.parse_args()
 if args.output_name and (Path(args.output_name).name != args.output_name or
@@ -33,7 +33,7 @@ staging = ROOT / "build" / ("iso-" + args.output_name[:-4] if args.output_name e
 (staging / "boot" / "limine").mkdir(parents=True, exist_ok=True)
 (staging / "EFI" / "BOOT").mkdir(parents=True, exist_ok=True)
 for filename in ["axiom64.elf", "rootfs.cpio"]:
-    desktop_profile = args.suite not in ["full", "threads"] or (args.suite == "threads" and args.phase == "cond")
+    desktop_profile = args.suite not in ["full", "threads"] or (args.suite == "threads" and args.phase in ["cond", "io"])
     source = ROOT / "build" / ("rootfs-desktop.cpio" if filename == "rootfs.cpio" and args.test and desktop_profile else filename)
     target = staging / "boot" / filename
     if target.exists():

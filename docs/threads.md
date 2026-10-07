@@ -55,6 +55,7 @@ Timeouts use the existing 100 Hz boot-relative clocks. `FUTEX_CLOCK_REALTIME` is
 
 ```sh
 make test-threads
+make test-thread-io
 python3 scripts/boot_test.py --suite threads --phase cond --firmware both --timeout 30
 make test
 ```
@@ -63,7 +64,9 @@ The dedicated suite boots both BIOS and UEFI. It requires static and dynamic mus
 
 Lifecycle tests exercise blocked group teardown, a surviving worker after leader exit, stop/continue, final-thread status, fork and exec from workers, and raw clone resource/TID flags. An assembly test helper invokes the kernel clone interface independently of libc wrapper restrictions. The guest GNU C++ toolchain builds and runs a contended `std::thread`/mutex/condition-variable queue and a condition timeout. The full suite also requires these thread tests alongside ABI, signals, mounts, compilers, desktop, and input checks; storage and ext2 retain separate matrices.
 
-Evidence is saved in `build/threads-all-{bios,uefi}.log` and `build/threads-all-results.json`. The condition-only profile writes `threads-cond-*` evidence. Host execution of a test program is a contract comparison and does not replace guest evidence.
+[Blocking I/O tests](io.md#verification-and-limits) additionally check retained pipe/socket descriptions across close/dup2/reuse, copied vector metadata, accept, nested signal I/O, fresh lookup on restart, abandoned handlers, failed/successful exec, fatal exit, and repeated endpoint cleanup. They run in both linkage modes in the complete suites, with a separate focused profile.
+
+Evidence is saved in `build/threads-all-{bios,uefi}.log` and `build/threads-all-results.json`. The condition-only profile writes `threads-cond-*` evidence and the I/O profile writes `threads-io-*`. Host execution of a test program is a contract comparison and does not replace guest evidence.
 
 ## Remaining work
 

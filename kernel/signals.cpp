@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "signals.hpp"
 #include "futex.hpp"
+#include "io.hpp"
 
 namespace ax {
 static bool default_ignore(int signal) {
@@ -84,10 +85,12 @@ void signal_interrupt(Task& task) {
     uint64_t flags = task.handlers->signal_actions[signal - 1][1];
     if (task.handlers->signal_actions[signal - 1][0] <= 1) {
         task.state = State::runnable;
-        return; // Fatal/stop actions retain the blocked operation until delivery.
+        return; // Default delivery chooses group stop or termination.
     }
     bool restart = (flags & 0x10000000) &&
                    (task.wait == Wait::read || task.wait == Wait::write || task.wait == Wait::child);
+    // A caught signal ends this attempt. SA_RESTART re-enters with a fresh fd lookup.
+    io_discard(task);
     if (task.handlers->signal_actions[signal - 1][0] > 1 && !restart) {
         if (task.wait == Wait::futex)
             futex_discard(task);
@@ -146,8 +149,13 @@ bool signal_deliver(Task& task) {
                     task.process->stopped = true;
                     for (auto& member : tasks)
                         if (member.state != State::empty && member.state != State::zombie &&
-                            member.process == task.process)
+                            member.process == task.process) {
+                            if (member.io) {
+                                io_discard(member);
+                                member.wait = Wait::none;
+                            }
                             member.state = State::stopped;
+                        }
                     task.process->stop_signal = signal;
                     task.process->stop_reported = false;
                     notify_parent(task.process, 5, signal);

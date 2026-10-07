@@ -11,6 +11,7 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/pci.cpp`, `block.cpp` | PCI discovery, modern/legacy virtio block queues, raw sector I/O and flush |
 | `kernel/task.cpp` | Process/thread ownership, ELF loading, clone/fork/exec/exit/wait, scheduling, TLS, FPU state |
 | `kernel/futex.cpp` | Expected-value waits, wake/bitsets, requeue, deadlines, shared backing lifetime |
+| `kernel/io.cpp` | Retained I/O requests, captured vectors, wait completion, and interruption cleanup |
 | `kernel/vfs.cpp`, `ramfs.cpp` | Filesystem dispatch, mount namespace, RAM volumes, initramfs, file descriptions, pipes |
 | `kernel/ext2.cpp` | Classic ext2 volumes, mount validation, allocation, file/directory operations, synchronous commits |
 | `kernel/syscall.cpp` | Linux syscall numbers, ABI structures, errors, blocking operations |
@@ -22,6 +23,8 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 Each memory context has four-level user page tables with user, write, and execute permissions. The upper half shares supervisor mappings. Syscall buffers are validated across the full range and copied through the physical mapping. Clone can share the address space, file table, working directory/umask, and signal dispositions; fork copies private pages and retains shared page references. The scheduler uses one CPU, bounded task slots, and timer preemption; syscalls execute with interrupts masked.
 
 The ELF loader validates ELF64 segments, loads a `PT_INTERP` musl interpreter, and supplies argv, environment, and the auxiliary vector. Failed exec preserves the old address space. Successful exec ends other group members and unshares the descriptor/disposition tables. File descriptions share offsets across fork and dup; close-on-exec belongs to descriptors. Each thread preserves FS base and FPU state. [Thread ownership and futexes](threads.md) describe exit/reaping, clear-TID, supported clone flags, and synchronization limits.
+
+[Blocking I/O](io.md) retains the selected file description and captured vector metadata while an attempt waits. Completion updates the owner's saved frame before signal delivery. Caught signals release the attempt; an `SA_RESTART` entry selects a descriptor again. Task teardown releases saved operations before memory and file tables.
 
 Signals use the Linux x86-64 frame layout and a userspace return trampoline. Supported behavior includes caught faults, masks, alternate stacks, restartable I/O, alarms, SIGCHLD, and stop/continue reporting. PTYs track controlling sessions and foreground process groups, translate terminal input, and deliver terminal interrupt and resize signals.
 

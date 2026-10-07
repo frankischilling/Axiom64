@@ -39,6 +39,7 @@ struct SignalHandlers {
     uint64_t signal_actions[64][4]{};
 };
 struct Task;
+struct IoRequest;
 struct Process {
     int pid = 0, parent = 0, pgid = 0, sid = 0, exit_status = 0, stop_signal = 0;
     unsigned live_threads = 1;
@@ -74,6 +75,7 @@ struct Task {
     uint64_t deadline;
     int vfork_parent;
     FutexWait futex;
+    IoRequest* io;
     alignas(16) uint8_t fpu[512];
 };
 extern Task tasks[max_tasks];

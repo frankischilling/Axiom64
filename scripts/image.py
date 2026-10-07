@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build an ISO that boots through the same Limine protocol on BIOS and UEFI."""
 import argparse
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -10,6 +11,7 @@ from fetch import ROOT, fetch
 parser = argparse.ArgumentParser()
 parser.add_argument("--test", action="store_true")
 parser.add_argument("--trace", action="store_true")
+parser.add_argument("--suite", choices=["full", "abi", "desktop"], default="full")
 args = parser.parse_args()
 archive = fetch("limine")
 limine = ROOT / "downloads" / "limine"
@@ -23,14 +25,23 @@ subprocess.run(["make", "-C", str(limine)], check=True, stdout=subprocess.DEVNUL
 staging = ROOT / "build" / "iso"
 (staging / "boot" / "limine").mkdir(parents=True, exist_ok=True)
 (staging / "EFI" / "BOOT").mkdir(parents=True, exist_ok=True)
-shutil.copy2(ROOT / "build" / "axiom64.elf", staging / "boot" / "axiom64.elf")
-shutil.copy2(ROOT / "build" / "rootfs.cpio", staging / "boot" / "rootfs.cpio")
+for filename in ["axiom64.elf", "rootfs.cpio"]:
+    source = ROOT / "build" / ("rootfs-desktop.cpio" if filename == "rootfs.cpio" and args.test and args.suite != "full" else filename)
+    target = staging / "boot" / filename
+    if target.exists():
+        target.unlink()
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copy2(source, target)
 for filename in ["limine-bios.sys", "limine-bios-cd.bin", "limine-uefi-cd.bin"]:
     shutil.copy2(limine / filename, staging / "boot" / "limine" / filename)
 shutil.copy2(limine / "BOOTX64.EFI", staging / "EFI" / "BOOT" / "BOOTX64.EFI")
 shutil.copy2(limine / "LICENSE", staging / "boot" / "limine" / "LICENSE")
 config = (ROOT / "boot" / "limine.conf").read_text()
 options = (" test" if args.test else "") + (" trace" if args.trace else "")
+if args.test:
+    options += " suite=" + args.suite
 config = config.replace("cmdline: init=/sbin/init", "cmdline: init=/sbin/init" + options)
 (staging / "boot" / "limine" / "limine.conf").write_text(config)
 destination = ROOT / "build" / ("axiom64-test.iso" if args.test else "axiom64.iso")

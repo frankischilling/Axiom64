@@ -8,4 +8,4 @@ extern volatile limine_memmap_request memmap_request;
 extern volatile limine_module_request module_request;
 extern volatile limine_framebuffer_request framebuffer_request;
 extern volatile limine_executable_cmdline_request cmdline_request;
-}
+} // namespace ax

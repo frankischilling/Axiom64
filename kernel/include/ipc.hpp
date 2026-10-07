@@ -8,6 +8,7 @@ struct Socket {
     uint16_t type;
     uint8_t local[108];
     size_t local_length;
+    Node* bound_node;
     Socket* peer;
     Socket* queue[32];
     size_t queue_head, queue_size, backlog;
@@ -31,6 +32,7 @@ struct Epoll {
 };
 int64_t ipc_syscall(Frame*);
 void socket_close(Socket*);
+bool socket_mount_busy(Mount*);
 bool socket_ready(Socket*, bool);
 int64_t socket_read(Socket*, void*, size_t, bool peek = false);
 int64_t socket_write(Socket*, const void*, size_t);

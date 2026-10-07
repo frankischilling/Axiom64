@@ -22,6 +22,7 @@ Task* new_task() {
             t.umask = 0022;
             t.cwd[0] = '/';
             t.cwd[1] = 0;
+            t.cwd_node = root_node;
             t.fpu[0] = 0x7f;
             t.fpu[1] = 3;
             *reinterpret_cast<uint32_t*>(t.fpu + 24) = 0x1f80;
@@ -69,6 +70,7 @@ int fork_task(Frame* f, bool share, uint64_t stack) {
     child->umask = current->umask;
     memcpy(child->signal_actions, current->signal_actions, sizeof(child->signal_actions));
     memcpy(child->cwd, current->cwd, sizeof(child->cwd));
+    child->cwd_node = current->cwd_node;
     memcpy(child->executable, current->executable, sizeof(child->executable));
     memcpy(child->fpu, current->fpu, sizeof(child->fpu));
     for (unsigned i = 0; i < max_fds; i++) {
@@ -88,6 +90,7 @@ void exit_task(Task* t, int status) {
     terminal_exit(t);
     shared_memory_release(t);
     t->state = State::zombie;
+    t->cwd_node = nullptr;
     for (auto& fd : t->fds) {
         close_handle(fd.handle);
         fd = {};
@@ -208,7 +211,11 @@ static int load_image(AddressSpace& mem, Node* file, uint64_t base, Image& image
         return -2;
     if (file->size < sizeof(ElfHeader))
         return -8;
-    auto h = (const ElfHeader*)file->data;
+    ElfHeader header;
+    int64_t result = node_read(file, 0, &header, sizeof(header));
+    if (result != sizeof(header))
+        return result < 0 ? result : -8;
+    auto h = &header;
     if (memcmp(h->ident, "\177ELF\2\1\1", 7) || h->machine != 62 || h->version != 1 ||
         (h->type != 2 && h->type != 3))
         return -8;
@@ -223,16 +230,22 @@ static int load_image(AddressSpace& mem, Node* file, uint64_t base, Image& image
     image.phnum = h->phnum;
     image.base = base;
     bool executable = false;
-    auto ph = (const ProgramHeader*)(file->data + h->phoff);
+    ProgramHeader ph[128];
+    result = node_read(file, h->phoff, ph, h->phnum * sizeof(ProgramHeader));
+    if (result != int64_t(h->phnum * sizeof(ProgramHeader)))
+        return result < 0 ? result : -8;
     for (unsigned i = 0; i < h->phnum; i++) {
         auto p = ph[i];
         if (p.offset > file->size || p.filesz > file->size - p.offset)
             return -8;
         if (p.type == 3) {
-            if (p.filesz < 2 || p.filesz > sizeof(image.interpreter) ||
-                file->data[p.offset + p.filesz - 1])
+            if (p.filesz < 2 || p.filesz > sizeof(image.interpreter))
                 return -8;
-            memcpy(image.interpreter, file->data + p.offset, p.filesz);
+            result = node_read(file, p.offset, image.interpreter, p.filesz);
+            if (result != int64_t(p.filesz))
+                return result < 0 ? result : -8;
+            if (image.interpreter[p.filesz - 1])
+                return -8;
             continue;
         }
         if (p.type != 1 || !p.memsz)
@@ -245,8 +258,16 @@ static int load_image(AddressSpace& mem, Node* file, uint64_t base, Image& image
             return -8;
         if (!mem.map(align_down(va), align_up(va + p.memsz) - align_down(va), 7))
             return -12;
-        if (!mem.copy_out(va, file->data + p.offset, p.filesz))
-            return -8;
+        uint8_t buffer[4096];
+        for (uint64_t done = 0; done < p.filesz;) {
+            result = node_read(file, p.offset + done, buffer,
+                               min(size_t(p.filesz - done), sizeof(buffer)));
+            if (result <= 0)
+                return result < 0 ? result : -8;
+            if (!mem.copy_out(va + done, buffer, result))
+                return -8;
+            done += result;
+        }
         image.end = max(image.end, va + p.memsz);
         if (h->phoff >= p.offset &&
             h->phoff + uint64_t(h->phnum) * sizeof(ProgramHeader) <= p.offset + p.filesz)
@@ -267,7 +288,16 @@ static int load_image(AddressSpace& mem, Node* file, uint64_t base, Image& image
     return 0;
 }
 int exec_task(Task* t, const char* path, const char* const* argv, const char* const* envp) {
-    Node* file = file_node(lookup(path));
+    Path name;
+    name.base = t->cwd_node;
+    if (strlen(path) >= sizeof(name.text))
+        return -36;
+    memcpy(name.text, path, strlen(path) + 1);
+    Node* file = nullptr;
+    int lookup_error = resolve_path(name, file);
+    if (lookup_error)
+        return lookup_error;
+    file = file_node(file);
     if (!file)
         return -2;
     AddressSpace memory;

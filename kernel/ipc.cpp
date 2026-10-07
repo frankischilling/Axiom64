@@ -4,6 +4,12 @@
 namespace ax {
 static Socket sockets[256];
 static Epoll* epolls[64];
+bool socket_mount_busy(Mount* mount) {
+    for (auto& socket : sockets)
+        if (socket.used && socket.bound_node && socket.bound_node->mount == mount)
+            return true;
+    return false;
+}
 static Socket* allocate_socket(unsigned type = 1) {
     for (auto& socket : sockets)
         if (!socket.used) {
@@ -120,13 +126,7 @@ static int address(uint64_t pointer, size_t length, UnixAddress& result, size_t&
         if (path_length == 108 && result.path[107])
             return -36;
         result.path[min(path_length, size_t(107))] = 0;
-        char normalized[1024];
-        if (!normalize(current->cwd, (const char*)result.path, normalized, sizeof(normalized)))
-            return -22;
-        path_length = strlen(normalized) + 1;
-        if (path_length > 108)
-            return -36;
-        memcpy(result.path, normalized, path_length);
+        path_length = strlen((const char*)result.path) + 1;
     }
     return 0;
 }
@@ -330,13 +330,18 @@ int64_t ipc_syscall(Frame* f) {
         if (error)
             return error;
         for (auto& other : sockets)
-            if (other.used && other.local_length == len && !memcmp(other.local, addr.path, len))
+            if (!addr.path[0] && other.used && other.local_length == len &&
+                !memcmp(other.local, addr.path, len))
                 return -98;
         if (addr.path[0]) {
-            if (lookup((char*)addr.path, false))
+            Path path;
+            path.base = current->cwd_node;
+            memcpy(path.text, addr.path, len);
+            if (lookup(path, false))
                 return -98;
-            if (!make_node((char*)addr.path, 0140000 | 0777))
-                return -2;
+            error = create_node(path, 0140000 | 0777, s->bound_node);
+            if (error)
+                return error;
         }
         memcpy(s->local, addr.path, len);
         s->local_length = len;
@@ -361,9 +366,19 @@ int64_t ipc_syscall(Frame* f) {
         if (error)
             return error;
         Socket* listener = nullptr;
+        Node* target = nullptr;
+        if (addr.path[0]) {
+            Path path;
+            path.base = current->cwd_node;
+            memcpy(path.text, addr.path, len);
+            error = resolve_path(path, target);
+            if (error)
+                return error;
+        }
         for (auto& other : sockets)
-            if (other.used && other.listener && other.local_length == len &&
-                !memcmp(other.local, addr.path, len))
+            if (other.used && other.listener &&
+                (addr.path[0] ? other.bound_node == target :
+                 other.local_length == len && !memcmp(other.local, addr.path, len)))
                 listener = &other;
         if (!listener)
             return -111;
@@ -376,6 +391,7 @@ int64_t ipc_syscall(Frame* f) {
         server->pending = true;
         server->peer = s;
         server->local_length = listener->local_length;
+        server->bound_node = listener->bound_node;
         memcpy(server->local, listener->local, listener->local_length);
         s->peer = server;
         s->connected = true;

@@ -143,7 +143,7 @@ Acceptance evidence:
 
 ### F04. VFS, mounts, and pseudo filesystems
 
-RAM files, basic directories/links, pipes, and selected synthetic device metadata work.
+RAM files, independent RAM mounts, filesystem dispatch, directory identity, read-only policy, mount-aware statfs, rename, links, pipes, and selected synthetic device metadata work. [Mount tests and limits](vfs.md) describe the first delivery under [#42](https://github.com/frankischilling/Axiom64/issues/42); the remaining requirements below stay open.
 
 Required work:
 

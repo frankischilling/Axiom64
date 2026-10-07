@@ -4,6 +4,7 @@ set -eu
 /bin/abi-dynamic
 /bin/ipc-tests
 /bin/signal-tests
+/bin/vfs-tests
 echo 'BUSYBOX_ASH_STARTED'
 uname -a
 printf 'alpha\nbeta\n' > /tmp/shell-data

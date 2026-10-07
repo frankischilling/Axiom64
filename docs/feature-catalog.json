@@ -140,7 +140,7 @@
       "title": "VFS, mounts, and pseudo filesystems",
       "milestone": "M1",
       "state": "partial",
-      "current": "RAM files, basic directories/links, pipes, and selected synthetic device metadata work.",
+      "current": "RAM files, independent RAM mounts, filesystem dispatch, directory identity, read-only policy, mount-aware statfs, rename, links, pipes, and selected synthetic device metadata work.",
       "scope": [
         "Mount graph, filesystem operations, vnode/dentry lifetime, and pathname traversal",
         "File descriptions, descriptor lifetime, close-on-exec, and robust directory enumeration",
@@ -160,7 +160,10 @@
       ],
       "evidence": [
         "kernel/vfs.cpp",
-        "kernel/syscall.cpp"
+        "kernel/ramfs.cpp",
+        "kernel/syscall.cpp",
+        "userspace/vfs-tests.c",
+        "docs/vfs.md"
       ],
       "branch": "feature/f04-vfs-mounts-and-pseudo-filesystems",
       "issue": "https://github.com/frankischilling/Axiom64/issues/4"

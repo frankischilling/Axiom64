@@ -33,29 +33,45 @@ static Handle* fd_handle(int fd) {
 static int64_t copy_result(uint64_t to, const void* data, size_t size) {
     return current->memory.copy_out(to, data, size) ? 0 : -14;
 }
-static bool path_at(int fd, uint64_t user, char* result) {
-    char path[1024], base[1024];
-    if (!current->memory.string(user, path, sizeof(path)))
+static bool path_at(int fd, uint64_t user, Path& path) {
+    if (!current->memory.string(user, path.text, sizeof(path.text)))
         return false;
-    if (*path == '/' || fd == -100)
-        return normalize(current->cwd, path, result, 1024);
-    Handle* h = fd_handle(fd);
-    if (!h || !h->node || (h->node->mode & 0170000) != directory)
+    if (!path.text[0]) {
+        path.error = -2;
         return false;
-    node_path(h->node, base, sizeof(base));
-    return normalize(base, path, result, 1024);
+    }
+    path.base = root_node;
+    if (path.text[0] != '/') {
+        if (fd == -100)
+            path.base = current->cwd_node;
+        else {
+            auto h = fd_handle(fd);
+            if (!h || !h->node) {
+                path.error = -9;
+                return false;
+            }
+            if ((h->node->mode & 0170000) != directory) {
+                path.error = -20;
+                return false;
+            }
+            path.base = h->node;
+        }
+    }
+    path.error = 0;
+    return true;
 }
 static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode) {
-    char name[1024];
+    Path name;
     if (!path_at(dirfd, path, name))
-        return -14;
-    auto n = lookup(name, !(flags & 0400000));
-    if (n && (flags & 0300) == 0300)
+        return name.error;
+    Node* n = nullptr;
+    int error = resolve_path(name, n, !(flags & 0400000) && !((flags & 0300) == 0300));
+    if (!error && (flags & 0300) == 0300)
         return -17;
-    if (!n && (flags & 0100))
-        n = make_node(name, regular_file | ((mode & 0777) & ~current->umask));
-    if (!n)
-        return -2;
+    if (error == -2 && (flags & 0100))
+        error = create_node(name, regular_file | ((mode & 0777) & ~current->umask), n);
+    if (error)
+        return error;
     if ((flags & 0200000) && (n->mode & 0170000) != directory)
         return -20;
     if ((n->mode & 0170000) == symlink)
@@ -63,14 +79,19 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
     if ((n->mode & 0170000) == directory && (flags & 3))
         return -21;
     n = file_node(n);
+    if ((flags & 3) && (n->mode & 0170000) == regular_file && node_readonly(n))
+        return -30;
     if (n->device == Device::block && (flags & 3) && block_info(n->device_id)->readonly)
         return -30;
     if (n->device == Device::block && (flags & 040000)) // O_DIRECT needs alignment semantics.
         return -22;
     if (n->device == Device::tty && !current->controlling_pty && !current->controlling_console)
         return -6;
-    if ((flags & 01000) && (flags & 3) && (n->mode & 0170000) == regular_file && !node_resize(n, 0))
-        return -12;
+    if ((flags & 01000) && (flags & 3) && (n->mode & 0170000) == regular_file) {
+        error = node_truncate(n, 0);
+        if (error)
+            return error;
+    }
     Handle* h = open_handle(n, flags);
     if (!h)
         return -23;
@@ -84,7 +105,7 @@ static int64_t stat_node(Node* n, uint64_t dst) {
         return -2;
     n = file_node(n);
     LinuxStat s{};
-    s.dev = 1;
+    s.dev = n->mount->id;
     s.ino = n->inode;
     s.nlink = n->links;
     s.mode = n->mode;
@@ -104,10 +125,12 @@ static int64_t stat_node(Node* n, uint64_t dst) {
     return copy_result(dst, &s, sizeof(s));
 }
 static int64_t stat_path(int dirfd, uint64_t path, uint64_t dst, bool follow) {
-    char name[1024];
+    Path name;
     if (!path_at(dirfd, path, name))
-        return -14;
-    return stat_node(lookup(name, follow), dst);
+        return name.error;
+    Node* node = nullptr;
+    int error = resolve_path(name, node, follow);
+    return error ? error : stat_node(node, dst);
 }
 static int64_t block(Wait why, int fd = -1, int pid = -1) {
     current->state = State::blocked;
@@ -191,26 +214,40 @@ static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd,
             return framebuffer_map(current->memory, addr, len, prot, off);
         if (!h->node || (h->node->mode & 0170000) != regular_file)
             return -19;
+        if ((h->flags & 3) == 1)
+            return -13;
     }
     if (h && (flags & 1)) {
         if ((prot & 2) && (h->flags & 3) != 2)
             return -13;
-        auto node = h->node;
-        size_t old = node->size;
-        if (off > SIZE_MAX - len || !node_resize(node, max(old, size_t(off + len))))
+        uint64_t backing;
+        int error = node_map_shared(h->node, off, len, prot & 2, backing);
+        if (error)
+            return error;
+        if (!current->memory.map_physical(addr, backing, len, prot))
             return -12;
-        node->size = old;
-        return current->memory.map_physical(addr, node->backing_physical + off, len, prot)
-                   ? int64_t(addr)
-                   : -12;
+        if ((h->flags & 3) != 2 || node_readonly(h->node))
+            for (uint64_t page = addr; page < addr + len; page += page_size)
+                *current->memory.entry(page) |= 0x800; // Shared mapping may never gain write access.
+        return addr;
     }
     if (!current->memory.map(addr, len, 3))
         return -12;
     if ((flags & 0x21) == 0x21)
         for (uint64_t page = addr; page < addr + len; page += page_size)
             *current->memory.entry(page) |= 0x400;
-    if (h && off < h->node->size)
-        current->memory.copy_out(addr, h->node->data + off, min(len, h->node->size - size_t(off)));
+    if (h && off < h->node->size) {
+        uint8_t buffer[4096];
+        size_t count = min(len, h->node->size - size_t(off));
+        for (size_t done = 0; done < count;) {
+            int64_t result = node_read(h->node, off + done, buffer, min(sizeof(buffer), count - done));
+            if (result <= 0 || !current->memory.copy_out(addr + done, buffer, size_t(result))) {
+                current->memory.unmap(addr, len);
+                return result < 0 ? result : -5;
+            }
+            done += result;
+        }
+    }
     if (!current->memory.protect(addr, len, prot))
         return -12;
     return addr;
@@ -312,7 +349,7 @@ static int64_t exec_user(uint64_t path, uint64_t argv, uint64_t envp, Frame* fra
     if (!a)
         return -12;
     int result = -14;
-    if (!path_at(-100, path, a->path)) {
+    if (!current->memory.string(path, a->path, sizeof(a->path))) {
         release(a);
         return result;
     }
@@ -350,30 +387,71 @@ static int64_t getdents(int fd, uint64_t buffer, size_t size) {
     if (!h->node || (h->node->mode & 0170000) != directory)
         return -20;
     size_t done = 0;
-    for (size_t i = h->offset; i < node_count + 2; i++) {
-        Node* n = i == 0   ? h->node
-                  : i == 1 ? (h->node->parent ? h->node->parent : h->node)
-                           : &nodes[i - 2];
-        if (i >= 2 && (n->parent != h->node || n->removed)) {
-            h->offset = i + 1;
-            continue;
-        }
-        const char* name = i == 0 ? "." : i == 1 ? ".." : n->name;
-        size_t len = strlen(name) + 1, record = (19 + len + 7) & ~size_t(7);
+    while (true) {
+        DirectoryEntry entry{};
+        int result = node_readdir(h->node, h->offset, entry);
+        if (result <= 0)
+            return done ? int64_t(done) : result;
+        size_t len = strlen(entry.name) + 1, record = (19 + len + 7) & ~size_t(7);
         if (record > size - done)
             return done ? int64_t(done) : -22;
-        uint8_t data[160]{};
-        uint64_t ino = n->inode, next = i + 1;
+        uint8_t data[280]{};
         uint16_t reclen = record;
-        memcpy(data, &ino, 8);
-        memcpy(data + 8, &next, 8);
+        memcpy(data, &entry.inode, 8);
+        memcpy(data + 8, &entry.next, 8);
         memcpy(data + 16, &reclen, 2);
-        data[18] = (n->mode >> 12) & 15;
-        memcpy(data + 19, name, len);
+        data[18] = (entry.mode >> 12) & 15;
+        memcpy(data + 19, entry.name, len);
         if (!current->memory.copy_out(buffer + done, data, record))
             return -14;
         done += record;
-        h->offset = i + 1;
+        h->offset = entry.next;
+    }
+}
+struct LinuxStatfs {
+    uint64_t type, bsize, blocks, bfree, bavail, files, ffree;
+    uint32_t fsid[2];
+    uint64_t namelen, frsize, flags, spare[4];
+};
+static_assert(sizeof(LinuxStatfs) == 120);
+static int64_t statfs_node(Node* node, uint64_t dst) {
+    if (!node)
+        return -2;
+    auto stats = node_stats(node);
+    LinuxStatfs result{};
+    result.type = stats.type;
+    result.bsize = result.frsize = stats.block_size;
+    result.blocks = stats.blocks;
+    result.bfree = result.bavail = stats.free_blocks;
+    result.files = stats.files;
+    result.ffree = stats.free_files;
+    result.fsid[0] = node->mount->id;
+    result.namelen = 255;
+    result.flags = node_readonly(node) ? 1 : 0;
+    return copy_result(dst, &result, sizeof(result));
+}
+static int64_t readlink_path(int fd, uint64_t path, uint64_t buffer, size_t capacity) {
+    if (!capacity)
+        return -22;
+    Path name;
+    if (!path_at(fd, path, name))
+        return name.error;
+    Node* node = nullptr;
+    int error = resolve_path(name, node, false);
+    if (error)
+        return error;
+    node = file_node(node);
+    if ((node->mode & 0170000) != symlink)
+        return -22;
+    uint8_t data[1024];
+    size_t count = min(capacity, node->size), done = 0;
+    while (done < count) {
+        int64_t result = node_read(node, done, data, min(sizeof(data), count - done));
+        if (result <= 0)
+            return result < 0 ? result : -5;
+        if (copy_result(buffer + done, data, result))
+            return -14;
+        done += result;
     }
     return done;
 }
@@ -490,6 +568,15 @@ static int64_t dispatch(Frame* f) {
     case 9:
         return mmap_call(a, b, c, d, e, g);
     case 10:
+        if (c & 2) {
+            if (a >= user_limit || b > user_limit - a)
+                return -22;
+            for (uint64_t p = a; p < a + b; p += page_size) {
+                auto entry = current->memory.entry(p);
+                if (entry && (*entry & 0x800))
+                    return -13;
+            }
+        }
         return current->memory.protect(a, align_up(b), c) ? 0 : -12;
     case 11:
         if (a % page_size || !b || a >= user_limit || b > user_limit - a)
@@ -570,13 +657,13 @@ static int64_t dispatch(Frame* f) {
     case 20:
         return iov_io(a, b, c, true);
     case 21: {
-        char path[1024];
+        Path path;
         if (!path_at(-100, a, path))
-            return -14;
+            return path.error;
         auto n = lookup(path);
         if (!n)
             return -2;
-        return (b & 1) && !(n->mode & 0111) ? -13 : 0;
+        return (b & 2) && node_readonly(n) ? -30 : (b & 1) && !(n->mode & 0111) ? -13 : 0;
     }
     case 22:
         return create_pipe(a, 0);
@@ -768,18 +855,18 @@ static int64_t dispatch(Frame* f) {
         auto h = fd_handle(a);
         if (!h)
             return -9;
-        return h->node && h->node->device == Device::block ? block_flush(h->node->device_id) : 0;
+        return node_sync(h->node, f->rax == 75);
     }
     case 76: {
-        char path[1024];
+        Path path;
         if (!path_at(-100, a, path))
-            return -14;
+            return path.error;
         auto n = lookup(path);
         if (!n)
             return -2;
         if ((n->mode & 0170000) == block_device)
             return -22;
-        return node_resize(n, b) ? 0 : -28;
+        return node_truncate(n, b);
     }
     case 77: {
         auto h = fd_handle(a);
@@ -787,23 +874,27 @@ static int64_t dispatch(Frame* f) {
             return -9;
         if (!h->node || (h->flags & 3) == 0 || (h->node->mode & 0170000) == block_device)
             return -22;
-        return node_resize(h->node, b) ? 0 : -28;
+        return node_truncate(h->node, b);
     }
     case 79: {
+        node_path(current->cwd_node, current->cwd, sizeof(current->cwd));
+        if (!current->cwd[0])
+            return -2;
         size_t n = strlen(current->cwd) + 1;
         if (b < n)
             return -34;
         return copy_result(a, current->cwd, n) ? -14 : int64_t(n);
     }
     case 80: {
-        char path[1024];
+        Path path;
         if (!path_at(-100, a, path))
-            return -14;
+            return path.error;
         auto n = lookup(path);
         if (!n)
             return -2;
         if ((n->mode & 0170000) != directory)
             return -20;
+        current->cwd_node = n;
         node_path(n, current->cwd, sizeof(current->cwd));
         return 0;
     }
@@ -813,89 +904,73 @@ static int64_t dispatch(Frame* f) {
             return -9;
         if (!h->node || (h->node->mode & 0170000) != directory)
             return -20;
+        current->cwd_node = h->node;
         node_path(h->node, current->cwd, sizeof(current->cwd));
         return 0;
     }
-    case 83: {
-        char path[1024];
-        if (!path_at(-100, a, path))
-            return -14;
-        if (lookup(path, false))
-            return -17;
-        return make_node(path, directory | ((b & 0777) & ~current->umask)) ? 0 : -2;
+    case 83:
+    case 258: {
+        Path path;
+        if (!path_at(f->rax == 83 ? -100 : int(a), f->rax == 83 ? a : b, path))
+            return path.error;
+        Node* node = nullptr;
+        return create_node(path, directory | (((f->rax == 83 ? b : c) & 0777) & ~current->umask), node);
     }
     case 85:
         return open_file(-100, a, 01000 | 0100 | 1, b);
     case 86:
     case 265: {
-        char old_path[1024], new_path[1024];
+        Path old_path, new_path;
         if (f->rax == 265 && (e & ~0x400ull))
             return -22;
-        if (!path_at(f->rax == 86 ? -100 : int(a), f->rax == 86 ? a : b, old_path) ||
-            !path_at(f->rax == 86 ? -100 : int(c), f->rax == 86 ? b : d, new_path))
-            return -14;
-        Node* target = file_node(lookup(old_path, f->rax == 265 && (e & 0x400)));
-        if (!target)
-            return -2;
-        if ((target->mode & 0170000) == directory)
-            return -1;
-        if ((target->mode & 0170000) != regular_file)
-            return -95;
-        if (lookup(new_path, false))
-            return -17;
-        Node* alias = make_node(new_path, target->mode);
-        if (!alias)
-            return -2;
-        alias->hardlink = target;
-        alias->inode = target->inode;
-        target->links++;
-        return 0;
+        if (!path_at(f->rax == 86 ? -100 : int(a), f->rax == 86 ? a : b, old_path))
+            return old_path.error;
+        if (!path_at(f->rax == 86 ? -100 : int(c), f->rax == 86 ? b : d, new_path))
+            return new_path.error;
+        return link_node(old_path, new_path, f->rax == 265 && (e & 0x400));
+    }
+    case 82:
+    case 264: {
+        Path old_path, new_path;
+        if (!path_at(f->rax == 82 ? -100 : int(a), f->rax == 82 ? a : b, old_path))
+            return old_path.error;
+        if (!path_at(f->rax == 82 ? -100 : int(c), f->rax == 82 ? b : d, new_path))
+            return new_path.error;
+        return rename_node(old_path, new_path);
     }
     case 84:
-    case 87: {
-        char path[1024];
-        if (!path_at(-100, a, path))
-            return -14;
-        auto n = lookup(path, false);
-        if (!n)
-            return -2;
-        if (n == root_node)
-            return -16;
-        if (f->rax == 84) {
-            if ((n->mode & 0170000) != directory)
-                return -20;
-            for (size_t i = 0; i < node_count; i++)
-                if (nodes[i].parent == n && !nodes[i].removed)
-                    return -39;
-        } else if ((n->mode & 0170000) == directory)
-            return -21;
-        n->removed = true;
-        if (file_node(n)->links)
-            file_node(n)->links--;
-        return 0;
-    }
-    case 89: {
-        char path[1024];
-        if (!path_at(-100, a, path))
-            return -14;
-        auto n = lookup(path, false);
-        if (!n)
-            return -2;
-        if ((n->mode & 0170000) != symlink)
+    case 87:
+    case 263: {
+        if (f->rax == 263 && (c & ~0x200ull))
             return -22;
-        size_t len = min(size_t(c), n->size);
-        return copy_result(b, n->data, len) ? -14 : int64_t(len);
+        Path path;
+        if (!path_at(f->rax == 263 ? int(a) : -100, f->rax == 263 ? b : a, path))
+            return path.error;
+        return remove_node(path, f->rax == 84 || (f->rax == 263 && (c & 0x200)));
     }
-    case 90: {
-        char path[1024];
-        if (!path_at(-100, a, path))
+    case 88:
+    case 266: {
+        char target[1024];
+        if (!current->memory.string(a, target, sizeof(target)))
             return -14;
-        auto n = lookup(path);
-        if (!n)
+        Path path;
+        if (!path_at(f->rax == 88 ? -100 : int(b), f->rax == 88 ? b : c, path))
+            return path.error;
+        Node* node = nullptr;
+        return create_node(path, symlink | 0777, node, target);
+    }
+    case 89:
+        return readlink_path(-100, a, b, c);
+    case 267:
+        return readlink_path(a, b, c, d);
+    case 90: {
+        Path path;
+        if (!path_at(-100, a, path))
+            return path.error;
+        auto node = file_node(lookup(path));
+        if (!node)
             return -2;
-        n = file_node(n);
-        n->mode = (n->mode & 0170000) | (b & 07777);
-        return 0;
+        return node_setattr(node, (node->mode & 0170000) | (b & 07777), node->atime, node->mtime);
     }
     case 91: {
         auto h = fd_handle(a);
@@ -903,8 +978,8 @@ static int64_t dispatch(Frame* f) {
             return -9;
         if (!h->node)
             return -22;
-        h->node->mode = (h->node->mode & 0170000) | (b & 07777);
-        return 0;
+        auto node = h->node;
+        return node_setattr(node, (node->mode & 0170000) | (b & 07777), node->atime, node->mtime);
     }
     case 95: {
         uint32_t old = current->umask;
@@ -917,12 +992,15 @@ static int64_t dispatch(Frame* f) {
         if ((uint32_t(b) != 0 && uint32_t(b) != UINT32_MAX) ||
             (uint32_t(c) != 0 && uint32_t(c) != UINT32_MAX))
             return -1;
-        if (f->rax == 93)
-            return fd_handle(a) ? 0 : -9;
-        char path[1024];
+        if (f->rax == 93) {
+            auto h = fd_handle(a);
+            return !h ? -9 : node_readonly(h->node) ? -30 : 0;
+        }
+        Path path;
         if (!path_at(-100, a, path))
-            return -14;
-        return lookup(path, f->rax == 92) ? 0 : -2;
+            return path.error;
+        auto node = lookup(path, f->rax == 92);
+        return !node ? -2 : node_readonly(node) ? -30 : 0;
     }
     case 96: {
         uint64_t time[] = {ticks / 100, (ticks % 100) * 10000};
@@ -1038,19 +1116,53 @@ static int64_t dispatch(Frame* f) {
         Timespec ts{0, 10000000};
         return copy_result(b, &ts, sizeof(ts));
     }
+    case 137: {
+        Path path;
+        if (!path_at(-100, a, path))
+            return path.error;
+        return statfs_node(lookup(path), b);
+    }
+    case 138: {
+        auto h = fd_handle(a);
+        return !h ? -9 : !h->node ? -22 : statfs_node(h->node, b);
+    }
+    case 162:
+        return sync_filesystems();
+    case 165: {
+        Path path;
+        if (!path_at(-100, b, path))
+            return path.error;
+        char type[64]{};
+        if (c && !current->memory.string(c, type, sizeof(type)))
+            return -14;
+        if (e) {
+            char options[1024];
+            if (!current->memory.string(e, options, sizeof(options)))
+                return -14;
+            if (options[0])
+                return -22;
+        }
+        return mount_ramfs(path, type, d);
+    }
+    case 166: {
+        Path path;
+        if (!path_at(-100, a, path))
+            return path.error;
+        return unmount(path, b);
+    }
     case 257:
         return open_file(a, b, c, d);
     case 262:
         return stat_path(a, b, c, !(d & 0x100));
     case 269:
     case 439: {
-        char path[1024];
+        Path path;
         if (!path_at(a, b, path))
-            return -14;
+            return path.error;
         auto n = lookup(path);
         if (!n)
             return -2;
-        return (c & 1) && !(n->mode & 0111) ? -13 : 0;
+        return (c & 2) && node_readonly(n) ? -30 : (c & 1) && !(n->mode & 0111) ? -13 : 0;
     }
     case 273:
         return -38;
@@ -1059,9 +1171,9 @@ static int64_t dispatch(Frame* f) {
             return -22;
         Node* node;
         if (b) {
-            char path[1024];
+            Path path;
             if (!path_at(a, b, path))
-                return -14;
+                return path.error;
             node = lookup(path, !(d & 0x100));
             if (!node)
                 return -2;
@@ -1089,11 +1201,7 @@ static int64_t dispatch(Frame* f) {
                 update[i] = {input[i].sec, uint64_t(input[i].nsec)};
             }
         }
-        node->atime = update[0];
-        node->mtime = update[1];
-        if (changed)
-            node->ctime = node_now();
-        return 0;
+        return changed ? node_setattr(node, node->mode, update[0], update[1]) : 0;
     }
     case 292:
         if (a == b || (c & ~02000000))

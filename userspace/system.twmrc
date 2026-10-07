@@ -1,0 +1,30 @@
+RandomPlacement
+NoGrabServer
+NoTitle { "xeyes" }
+Color {
+    BorderColor "#4f80a8"
+    BorderTileBackground "#23374d"
+    BorderTileForeground "#23374d"
+    TitleBackground "#23374d"
+    TitleForeground "white"
+    MenuBackground "#23374d"
+    MenuForeground "white"
+}
+TitleFont "fixed"
+MenuFont "fixed"
+IconFont "fixed"
+IconManagerFont "fixed"
+ResizeFont "fixed"
+BorderWidth 2
+Button1 = : title : f.move
+Button2 = : title : f.raise
+Button3 = : title : f.resize
+Button1 = : root : f.menu "main"
+Menu "main" {
+    "Axiom64" f.title
+    "Terminal" f.exec "xterm -e /bin/bash -i &"
+    "Raise" f.raise
+    "Move" f.move
+    "Resize" f.resize
+    "Close" f.delete
+}

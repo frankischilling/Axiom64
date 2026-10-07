@@ -1,0 +1,19 @@
+{
+  "limine": {
+    "version": "12.9.3",
+    "url": "https://github.com/limine-bootloader/limine/releases/download/v12.9.3/limine-binary.tar.gz",
+    "archive": "limine-binary.tar.gz",
+    "sha256": "9f42fe9ea2e84d71056529969b1d5c24ba9a2287ffcc01bcce58b0ef8aa98b1d"
+  },
+  "busybox": {
+    "version": "1.37.0",
+    "url": "https://busybox.net/downloads/busybox-1.37.0.tar.bz2",
+    "archive": "busybox-1.37.0.tar.bz2",
+    "sha256": "3311dff32e746499f4df0d5df04d7eb396382d7e108bb9250e7b519b837043a4"
+  },
+  "limine_header": {
+    "revision": "3a0526b700e356f0eac1b71a77697b3fd1c707a3",
+    "path": "vendor/limine.h",
+    "sha256": "0aadf2633c85d8cb145344c968add158aeb1deb68af567d55ba8431c492b6d4c"
+  }
+}

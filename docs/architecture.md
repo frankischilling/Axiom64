@@ -11,6 +11,7 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/pci.cpp`, `block.cpp` | PCI discovery, modern/legacy virtio block queues, raw sector I/O and flush |
 | `kernel/task.cpp` | ELF loading, fork/exec/exit/wait, scheduling, descriptors, TLS, FPU state |
 | `kernel/vfs.cpp`, `ramfs.cpp` | Filesystem dispatch, mount namespace, RAM volumes, initramfs, file descriptions, pipes |
+| `kernel/ext2.cpp` | Classic ext2 volumes, mount validation, allocation, file/directory operations, synchronous commits |
 | `kernel/syscall.cpp` | Linux syscall numbers, ABI structures, errors, blocking operations |
 | `kernel/signals.cpp` | Queues, masks, actions, signal frames, return, alternate stacks, timers |
 | `kernel/ipc.cpp`, `shared_memory.cpp` | Unix stream sockets, readiness, epoll, select, shared mappings, SysV segments |
@@ -31,7 +32,7 @@ This is a development OS with a tested compatibility surface. Unsupported syscal
 
 - One CPU, 64 task slots, 128 descriptors per task. No userspace threads or SMP.
 - Root identity only. No multiuser permission enforcement, security boundary for untrusted workloads, or cryptographic random generator.
-- A RAM root, independent RAM mounts, and persistent raw virtio disks. Disk filesystems, a network stack, and a package installation service remain planned. See [mounts](vfs.md) and [storage](storage.md) for interfaces and limits.
+- A RAM root, independent RAM mounts, raw virtio disks, and [writable classic ext2 data volumes](ext2.md). Disk-backed root, advanced filesystems/recovery, a network stack, and a package installation service remain planned. See [mounts](vfs.md) and [storage](storage.md) for interfaces and limits.
 - Unix stream sockets without descriptor passing. No TCP/UDP, datagram sockets, or complete socket option support.
 - Eager copying on fork, bounded allocations, and no general `mremap` implementation.
 - Fixed framebuffer mode. No accelerated graphics, hardware gamma control, hotplug, or virtual-console switching.

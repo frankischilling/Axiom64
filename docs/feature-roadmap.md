@@ -37,7 +37,7 @@ The first three milestones define the next core sequence. Later milestones descr
 | --- | --- | --- | --- | --- |
 | F01 | [Firmware, buses, and interrupt routing](https://github.com/frankischilling/Axiom64/issues/1) | partial | M1 | Across all tracks |
 | F02 | [Block layer and virtio disk](https://github.com/frankischilling/Axiom64/issues/2) | partial | M1 | F01 |
-| F03 | [Writable ext2 and later ext4](https://github.com/frankischilling/Axiom64/issues/3) | planned | M1 | F02 |
+| F03 | [Writable ext2 and later ext4](https://github.com/frankischilling/Axiom64/issues/3) | partial | M1 | F02 |
 | F04 | [VFS, mounts, and pseudo filesystems](https://github.com/frankischilling/Axiom64/issues/4) | partial | M1 | F02 |
 | F05 | [POSIX threads and futexes](https://github.com/frankischilling/Axiom64/issues/5) | planned | M2 | F04 |
 | F06 | [Demand paging, copy-on-write, and swap](https://github.com/frankischilling/Axiom64/issues/6) | partial | M2 | F03, F05 |
@@ -105,7 +105,7 @@ Acceptance evidence:
 
 ### F02. Block layer and virtio disk
 
-Modern and legacy virtio block devices provide persistent raw sector I/O, Linux block nodes, and explicit flushes. [Storage tests](storage.md#verification) cover host disk bytes, fresh guest boots, read-only disks, queue rollover, and backend errors. [The first delivery](https://github.com/frankischilling/Axiom64/issues/40) leaves partitions, caching, stable root identifiers, and filesystem mounts for later work.
+Modern and legacy virtio block devices provide persistent sector I/O, Linux block nodes, explicit flushes, and exclusive filesystem claims. [Storage tests](storage.md#verification) cover host disk bytes, fresh guest boots, read-only disks, queue rollover, and backend errors. [The first raw-disk delivery](https://github.com/frankischilling/Axiom64/issues/40) and [ext2 follow-up](https://github.com/frankischilling/Axiom64/issues/45) leave partitions, caching, and stable root identifiers for later work.
 
 Required work:
 
@@ -124,7 +124,7 @@ Acceptance evidence:
 
 ### F03. Writable ext2 and later ext4
 
-The root filesystem is an initramfs with RAM-only changes.
+Classic ext2 data volumes support persistent files, directories, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and reboot verification. Root still uses RAM; advanced formats and recovery remain planned. [The data-volume delivery](https://github.com/frankischilling/Axiom64/issues/45) and [format/test limits](ext2.md) describe this slice. Every requirement below remains in the complete filesystem area.
 
 Required work:
 
@@ -143,7 +143,7 @@ Acceptance evidence:
 
 ### F04. VFS, mounts, and pseudo filesystems
 
-RAM files, independent RAM mounts, filesystem dispatch, directory identity, read-only policy, mount-aware statfs, rename, links, pipes, and selected synthetic device metadata work. [Mount tests and limits](vfs.md) describe the first delivery under [#42](https://github.com/frankischilling/Axiom64/issues/42); the remaining requirements below stay open.
+RAM and classic ext2 mounts, filesystem dispatch, directory identity, read-only policy, mount-aware statfs, rename, links, pipes, and selected synthetic device metadata work. [Mount tests and limits](vfs.md) describe the mount interface from [#42](https://github.com/frankischilling/Axiom64/issues/42) and the [ext2 delivery](https://github.com/frankischilling/Axiom64/issues/45); the remaining requirements below stay open.
 
 Required work:
 

@@ -83,6 +83,8 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
         return -30;
     if (n->device == Device::block && (flags & 3) && block_info(n->device_id)->readonly)
         return -30;
+    if (n->device == Device::block && (flags & 3) && block_claimed(n->device_id))
+        return -16;
     if (n->device == Device::block && (flags & 040000)) // O_DIRECT needs alignment semantics.
         return -22;
     if (n->device == Device::tty && !current->controlling_pty && !current->controlling_console)
@@ -111,7 +113,9 @@ static int64_t stat_node(Node* n, uint64_t dst) {
     s.mode = n->mode;
     s.size = n->size;
     s.blksize = page_size;
-    s.blocks = (n->size + 511) / 512;
+    s.blocks = n->allocated_blocks;
+    s.uid = n->uid;
+    s.gid = n->gid;
     s.atime = n->atime.sec;
     s.atime_ns = n->atime.nsec;
     s.mtime = n->mtime.sec;
@@ -417,7 +421,10 @@ static_assert(sizeof(LinuxStatfs) == 120);
 static int64_t statfs_node(Node* node, uint64_t dst) {
     if (!node)
         return -2;
-    auto stats = node_stats(node);
+    FilesystemStats stats;
+    int error = node_stats(node, stats);
+    if (error)
+        return error;
     LinuxStatfs result{};
     result.type = stats.type;
     result.bsize = result.frsize = stats.block_size;
@@ -1142,7 +1149,10 @@ static int64_t dispatch(Frame* f) {
             if (options[0])
                 return -22;
         }
-        return mount_ramfs(path, type, d);
+        Path source;
+        if (!(d & 32) && !strcmp(type, "ext2") && !path_at(-100, a, source))
+            return source.error;
+        return mount_filesystem(path, source, type, d);
     }
     case 166: {
         Path path;

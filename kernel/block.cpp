@@ -348,7 +348,24 @@ const BlockInfo* block_info(unsigned device) {
 int block_read(unsigned device, uint64_t sector, void* data, size_t count) {
     return transfer(device, sector, data, count, false);
 }
-int block_write(unsigned device, uint64_t sector, const void* data, size_t count) {
+static const void* block_owners[8];
+int block_claim(unsigned device, const void* owner) {
+    if (!block_info(device)) return -19;
+    if (!owner) return -22;
+    if (block_owners[device]) return -16;
+    block_owners[device] = owner;
+    return 0;
+}
+void block_unclaim(unsigned device, const void* owner) {
+    if (device < 8 && block_owners[device] == owner)
+        block_owners[device] = nullptr;
+}
+bool block_claimed(unsigned device) {
+    return device < 8 && block_owners[device];
+}
+int block_write(unsigned device, uint64_t sector, const void* data, size_t count, const void* owner) {
+    if (device < 8 && block_owners[device] && block_owners[device] != owner)
+        return -16;
     return transfer(device, sector, const_cast<void*>(data), count, true);
 }
 int block_flush(unsigned device) {

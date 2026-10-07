@@ -27,6 +27,7 @@ int main(void) {
     const char* suite = getenv("AXIOM64_SUITE");
     if (test && *test == '1') {
         const char* script = suite && !strcmp(suite, "storage") ? "/etc/storage-test.sh"
+                             : suite && !strcmp(suite, "ext2") ? "/etc/ext2-test.sh"
                              : suite && !strcmp(suite, "desktop") ? "/etc/desktop-test.sh"
                                                                   : "/etc/boot-test.sh";
         execl("/bin/busybox", "busybox", "sh", script, (char*)0);

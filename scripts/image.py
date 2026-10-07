@@ -11,9 +11,13 @@ from fetch import ROOT, fetch
 parser = argparse.ArgumentParser()
 parser.add_argument("--test", action="store_true")
 parser.add_argument("--trace", action="store_true")
-parser.add_argument("--suite", choices=["full", "abi", "desktop", "storage"], default="full")
-parser.add_argument("--phase", choices=["write", "verify", "readonly", "error"], default="verify")
+parser.add_argument("--suite", choices=["full", "abi", "desktop", "storage", "ext2"], default="full")
+parser.add_argument("--phase", choices=["write", "verify", "readonly", "error", "invalid", "full"], default="verify")
+parser.add_argument("--output-name", help="ISO filename under build/ for an isolated test run")
 args = parser.parse_args()
+if args.output_name and (Path(args.output_name).name != args.output_name or
+                         not args.output_name.endswith(".iso") or "\\" in args.output_name):
+    parser.error("--output-name must be an ISO filename without directory components")
 archive = fetch("limine")
 limine = ROOT / "downloads" / "limine"
 if not (limine / "limine.c").exists():
@@ -23,8 +27,9 @@ if not (limine / "limine.c").exists():
     if extracted.exists() and extracted != limine:
         extracted.rename(limine)
 subprocess.run(["make", "-C", str(limine)], check=True, stdout=subprocess.DEVNULL)
-storage = args.test and args.suite == "storage"
-staging = ROOT / "build" / ("iso-storage-" + args.phase if storage else "iso")
+disk_suite = args.test and args.suite in ["storage", "ext2"]
+staging = ROOT / "build" / ("iso-" + args.output_name[:-4] if args.output_name else
+                            "iso-" + args.suite + "-" + args.phase if disk_suite else "iso")
 (staging / "boot" / "limine").mkdir(parents=True, exist_ok=True)
 (staging / "EFI" / "BOOT").mkdir(parents=True, exist_ok=True)
 for filename in ["axiom64.elf", "rootfs.cpio"]:
@@ -44,11 +49,12 @@ config = (ROOT / "boot" / "limine.conf").read_text()
 options = (" test" if args.test else "") + (" trace" if args.trace else "")
 if args.test:
     options += " suite=" + args.suite
-    if args.suite == "storage":
+    if disk_suite:
         options += " phase=" + args.phase
 config = config.replace("cmdline: init=/sbin/init", "cmdline: init=/sbin/init" + options)
 (staging / "boot" / "limine" / "limine.conf").write_text(config)
-destination = ROOT / "build" / ("storage-" + args.phase + ".iso" if storage else
+destination = ROOT / "build" / (args.output_name if args.output_name else
+                                  args.suite + "-" + args.phase + ".iso" if disk_suite else
                                   "axiom64-test.iso" if args.test else "axiom64.iso")
 command = ["xorriso", "-as", "mkisofs", "-quiet", "-R", "-J", "-b", "boot/limine/limine-bios-cd.bin", "-no-emul-boot", "-boot-load-size", "4", "-boot-info-table", "--efi-boot", "boot/limine/limine-uefi-cd.bin", "-efi-boot-part", "--efi-boot-image", "--protective-msdos-label", str(staging), "-o", str(destination)]
 subprocess.run(command, check=True)

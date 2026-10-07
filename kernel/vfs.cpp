@@ -4,6 +4,7 @@
 #include "ipc.hpp"
 #include "task.hpp"
 #include "block.hpp"
+#include "ext2.hpp"
 
 namespace ax {
 Timestamp node_now() {
@@ -431,8 +432,30 @@ int node_map_shared(Node* node, uint64_t offset, size_t length, bool write, uint
         return -19;
     return node->mount->ops->map_shared(node, offset, length, address);
 }
-FilesystemStats node_stats(Node* node) {
-    return node->mount->ops->stats(node->mount);
+int node_stats(Node* node, FilesystemStats& result) {
+    return node->mount->ops->stats(node->mount, result);
+}
+bool node_referenced(Node* node) {
+    node = file_node(node);
+    if (!node)
+        return false;
+    auto references = [node](Node* reference) {
+        while (reference) {
+            reference = file_node(reference);
+            if (reference == node)
+                return true;
+            reference = reference->parent;
+        }
+        return false;
+    };
+    for (auto& handle : handles)
+        if (handle.references && references(handle.node))
+            return true;
+    for (auto& task : tasks)
+        if (task.state != State::empty && task.state != State::zombie && references(task.cwd_node))
+            return true;
+    return socket_node_busy(node) ||
+           (node->backing_physical && page_shared(node->backing_physical, node->capacity / page_size));
 }
 static bool mount_busy(Mount* mount, bool writers_only) {
     if (!writers_only && socket_mount_busy(mount))
@@ -454,8 +477,8 @@ static bool mount_busy(Mount* mount, bool writers_only) {
     }
     return false;
 }
-int mount_ramfs(const Path& path, const char* type, uint64_t flags) {
-    if (flags & ~uint64_t(1 | 32))
+int mount_filesystem(const Path& path, const Path& source, const char* type, uint64_t flags) {
+    if (flags & ~uint64_t(1 | 32 | 32768)) // MS_SILENT is used by the mount utility.
         return -22;
     Node* point = nullptr;
     int error = resolve_path(path, point);
@@ -472,20 +495,43 @@ int mount_ramfs(const Path& path, const char* type, uint64_t flags) {
         error = mount->ops->sync(mount, nullptr, false);
         if (error)
             return error;
+        if (mount->ops->remount) {
+            error = mount->ops->remount(mount, flags & 1);
+            if (error)
+                return error;
+        }
         mount->readonly = flags & 1;
         return 0;
     }
-    if (!type || strcmp(type, "ramfs"))
+    bool ram = type && !strcmp(type, "ramfs"), disk = type && !strcmp(type, "ext2");
+    if (!ram && !disk)
         return -19;
+    Node* device = nullptr;
+    if (disk) {
+        error = resolve_path(source, device);
+        if (error)
+            return error;
+        device = file_node(device);
+        if (device->device != Device::block)
+            return -15;
+    }
     if (mount_root(point))
         return -16;
     for (auto& mount : mounts)
         if (!mount.active) {
-            mount = {next_mount_id++, nullptr, point, point->mount, &ramfs_ops, nullptr,
+            mount = {next_mount_id++, nullptr, point, point->mount, ram ? &ramfs_ops : &ext2_ops, nullptr,
                      false, bool(flags & 1)};
-            mount.root = ramfs_root(&mount, 0755);
-            if (!mount.root)
-                return -28;
+            if (ram) {
+                mount.root = ramfs_root(&mount, 0755);
+                if (!mount.root)
+                    return -28;
+            } else {
+                error = ext2_mount(&mount, device);
+                if (error) {
+                    mount = {};
+                    return error;
+                }
+            }
             mount.active = true;
             return 0;
         }
@@ -509,6 +555,11 @@ int unmount(const Path& path, uint64_t flags) {
     error = mount->ops->sync(mount, nullptr, false);
     if (error)
         return error;
+    if (mount->ops->prepare_unmount) {
+        error = mount->ops->prepare_unmount(mount);
+        if (error)
+            return error;
+    }
     mount->active = false;
     mount->ops->destroy(mount);
     *mount = {};
@@ -565,6 +616,7 @@ void vfs_init(const void* archive, size_t length) {
         } else
             n->data = const_cast<uint8_t*>(data + content);
         n->size = size;
+        n->allocated_blocks = (size + 511) / 512;
         offset = (content + size + 3) & ~size_t(3);
     }
     const char* dirs[] = {"/dev", "/proc", "/tmp", "/run"};

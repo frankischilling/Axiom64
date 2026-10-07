@@ -20,6 +20,7 @@ The harness boots QEMU under BIOS and UEFI, checks firmware identity, requires e
 | Desktop input | QEMU PS/2 mouse and keyboard; a command typed into interactive Bash creates a file checked by the guest |
 | Virtio storage | Separate 16-boot firmware/transport matrix, host disk-byte comparison, fresh-boot persistence, read-only disks, index rollover, backend read/write/flush errors |
 | VFS mounts | Independent RAM volumes, hidden/restored contents, directory identity, read-only policy, cross-filesystem errors, executable loading, mappings, sockets, busy unmounts, slot reuse |
+| Writable ext2 | Four disk layouts across firmware/transports, guest files and executable loading, fresh-boot reads, host file/metadata comparisons and fsck, full allocation, rejected formats, and I/O retries |
 
 The host captures `build/desktop-bios.png` and `desktop-uefi.png` after input succeeds. Logs are `build/boot-bios.log` and `boot-uefi.log`; results are in `build/boot-results.json`.
 
@@ -30,10 +31,13 @@ python3 scripts/boot_test.py --suite abi --firmware bios --timeout 60
 python3 scripts/boot_test.py --suite desktop --firmware bios --timeout 120
 python3 scripts/boot_test.py --interactive --firmware both --timeout 180
 python3 scripts/storage_test.py --firmware bios --transport modern
+python3 scripts/ext2_test.py --quick --firmware bios --transport modern
 ```
 
 These profiles omit large native development packages from a separate root filesystem. The full suite uses the full root filesystem. `--trace` logs syscall entry and results; `--gdb` exposes QEMU debugging on local TCP port 1234.
 
-GitHub Actions builds the normal ISO and runs the full firmware suite, storage matrix, and normal desktop checks on Ubuntu 24.04. The `axiom64-boot` artifact contains the image, kernel, logs, results, and screenshots. A separate source artifact carries upstream archives and exact package recipes. A green run applies to its tested commit; check that commit when comparing results with local changes.
+GitHub Actions builds the normal ISO and runs the full firmware suite, raw-storage and ext2 matrices, and normal desktop checks on Ubuntu 24.04. The `axiom64-boot` artifact contains the image, kernel, logs, results, and screenshots. A separate source artifact carries upstream archives and exact package recipes. A green run applies to its tested commit; check that commit when comparing results with local changes.
 
 Run `make test-storage` for the complete disk matrix. The harness creates and overwrites only its generated fixtures under `build/`. [Storage verification](storage.md#verification) describes the phases, host comparisons, evidence files, and paths that are not yet fault-injected.
+
+Run `make test-ext2` for the complete filesystem matrix. [Ext2 verification](ext2.md#verification) describes supported layouts, host `debugfs`/`e2fsck` checks, failure injection, and remaining limits. The harness creates its own disk images under `build/` and accepts no user disk path.

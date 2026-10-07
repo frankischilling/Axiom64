@@ -52,10 +52,14 @@ extern "C" [[noreturn]] void kernel_main() {
         test_suite = "AXIOM64_SUITE=abi";
     else if (word(cmd, "suite=storage"))
         test_suite = "AXIOM64_SUITE=storage";
+    else if (word(cmd, "suite=ext2"))
+        test_suite = "AXIOM64_SUITE=ext2";
     if (word(cmd, "phase=write")) test_phase = "AXIOM64_PHASE=write";
     else if (word(cmd, "phase=verify")) test_phase = "AXIOM64_PHASE=verify";
     else if (word(cmd, "phase=readonly")) test_phase = "AXIOM64_PHASE=readonly";
     else if (word(cmd, "phase=error")) test_phase = "AXIOM64_PHASE=error";
+    else if (word(cmd, "phase=invalid")) test_phase = "AXIOM64_PHASE=invalid";
+    else if (word(cmd, "phase=full")) test_phase = "AXIOM64_PHASE=full";
     memory_init();
     arch_init();
     auto modules = module_request.response;

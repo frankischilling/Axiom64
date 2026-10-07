@@ -1,6 +1,6 @@
 # Storage
 
-The kernel discovers PCI virtio block devices at boot and exposes whole disks as `/dev/vda` through `/dev/vdh`. Raw disk writes persist when flushed. The root filesystem and ordinary files still live in RAM; writable ext2 is the next storage task.
+The kernel discovers PCI virtio block devices at boot and exposes whole disks as `/dev/vda` through `/dev/vdh`. Raw disk writes persist when flushed. [Writable ext2 data mounts](ext2.md) provide persistent ordinary files; the boot root remains in RAM.
 
 ## Attach a disk
 
@@ -19,7 +19,7 @@ Use `disable-modern=on` to exercise the legacy PCI transport. To attach a read-o
 
 ## Interfaces
 
-`kernel/include/block.hpp` provides capacity, read-only status, whole-sector reads and writes, and flush. Sector addresses are 64-bit and sectors are 512 bytes. The complete range is checked before a transfer. Calls return zero or a negative Linux error. Multi-sector writes are not atomic and may leave earlier sectors written if a later request fails.
+`kernel/include/block.hpp` provides capacity, read-only status, whole-sector reads and writes, flush, and exclusive filesystem claims. A claim prevents another mount or raw writer from modifying the disk; filesystem writes carry their owner. Sector addresses are 64-bit and sectors are 512 bytes. The complete range is checked before a transfer. Calls return zero or a negative Linux error. Multi-sector writes are not atomic and may leave earlier sectors written if a later request fails.
 
 The implementation copies through private, physically contiguous DMA buffers. User addresses never become device descriptors. The PCI module handles configuration mechanism 1, multifunction discovery, and assigned 32/64-bit memory BARs. Modern registers use bounded, uncached supervisor mappings; the legacy transport uses its I/O BAR. Unsupported capabilities, invalid mappings, unavailable queues, and failed feature negotiation prevent a disk from being registered.
 
@@ -39,7 +39,7 @@ Block nodes support these Linux x86-64 operations:
 
 Reads at or beyond capacity return EOF. A write that crosses the end returns the completed prefix; a write starting at the end returns `ENOSPC`. Opening a read-only disk for writing returns `EROFS`. Device truncation and unsupported `O_DIRECT` return `EINVAL`; unsupported ioctls return `ENOTTY`. There is no kernel block cache. If flush was not negotiated, the driver relies on the virtio writethrough contract.
 
-Syscalls currently run on one CPU with interrupts masked, which serializes access to the queue and partial-sector writes. The driver is not ready for concurrent kernel callers or SMP. Limits include eight device initialization attempts, no hotplug or capacity-change handling, and no ECAM, IOMMU, partition parser, disk filesystem mounts, or disk-backed root. [RAM mounts and filesystem dispatch](vfs.md) provide the interface for the next filesystem implementation. Partitioning, caching, and stable root identifiers remain in [the block roadmap](https://github.com/frankischilling/Axiom64/issues/2); writable ext2 remains in [the filesystem roadmap](https://github.com/frankischilling/Axiom64/issues/3).
+Syscalls currently run on one CPU with interrupts masked, which serializes access to the queue and partial-sector writes. The driver is not ready for concurrent kernel callers or SMP. Limits include eight device initialization attempts, no hotplug or capacity-change handling, and no ECAM, IOMMU, partition parser, or disk-backed root. [Filesystem dispatch](vfs.md) supports RAM and classic ext2 mounts. Partitioning, caching, and stable root identifiers remain in [the block roadmap](https://github.com/frankischilling/Axiom64/issues/2); advanced filesystems and recovery remain in [the filesystem roadmap](https://github.com/frankischilling/Axiom64/issues/3).
 
 ## Verification
 

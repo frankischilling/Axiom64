@@ -4,6 +4,12 @@
 namespace ax {
 static Socket sockets[256];
 static Epoll* epolls[64];
+bool socket_node_busy(Node* node) {
+    for (auto& socket : sockets)
+        if (socket.used && file_node(socket.bound_node) == node)
+            return true;
+    return false;
+}
 bool socket_mount_busy(Mount* mount) {
     for (auto& socket : sockets)
         if (socket.used && socket.bound_node && socket.bound_node->mount == mount)

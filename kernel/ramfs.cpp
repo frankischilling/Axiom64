@@ -59,6 +59,7 @@ static int create(Node* parent, const char* name, uint32_t mode, const char* tar
     if (target) {
         node->data = data;
         node->size = strlen(target);
+        node->allocated_blocks = (node->size + 511) / 512;
         node->capacity = node->size + 1;
         node->owned = true;
     }
@@ -130,6 +131,7 @@ static int truncate(Node* node, size_t size) {
     else if (size < node->size)
         memset(node->data + size, 0, node->size - size);
     node->size = size;
+    node->allocated_blocks = (size + 511) / 512;
     node->mtime = node->ctime = node_now();
     return 0;
 }
@@ -183,17 +185,19 @@ static int map_shared(Node* node, uint64_t offset, size_t length, uint64_t& phys
     if (offset > SIZE_MAX - length)
         return -27;
     size_t old = node->size;
+    uint64_t old_blocks = node->allocated_blocks;
     auto mtime = node->mtime, ctime = node->ctime;
     int error = truncate(node, max(old, size_t(offset + length)));
     if (error)
         return error;
     node->size = old;
+    node->allocated_blocks = old_blocks;
     node->mtime = mtime;
     node->ctime = ctime;
     physical_address = node->backing_physical + offset;
     return 0;
 }
-static FilesystemStats stats(Mount* mount) {
+static int stats(Mount* mount, FilesystemStats& result) {
     uint64_t files = 0, free = 0;
     for (size_t i = 0; i < node_count; i++) {
         if (!nodes[i].mount)
@@ -201,8 +205,9 @@ static FilesystemStats stats(Mount* mount) {
         else if (nodes[i].mount == mount && !nodes[i].removed)
             files++;
     }
-    return {0x858458f6, page_size, 0, 0, files,
-            free + sizeof(nodes) / sizeof(nodes[0]) - node_count};
+    result = {0x858458f6, page_size, 0, 0, files,
+              free + sizeof(nodes) / sizeof(nodes[0]) - node_count};
+    return 0;
 }
 static void destroy(Mount* mount) {
     for (size_t i = 0; i < node_count; i++) {
@@ -219,5 +224,5 @@ static void destroy(Mount* mount) {
     }
 }
 const FilesystemOps ramfs_ops = {find, create, link, remove, rename, read, write, truncate,
-                                 setattr, readdir, sync, map_shared, stats, destroy};
+                                 setattr, readdir, sync, map_shared, stats, destroy, nullptr, nullptr};
 } // namespace ax

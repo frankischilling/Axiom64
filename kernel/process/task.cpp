@@ -21,6 +21,7 @@ template <class T> static T* make_resource() {
         *result = T{};
     return result;
 }
+
 static void release_memory(Task* t) {
     auto memory = t->memory;
     if (!memory)
@@ -35,6 +36,7 @@ static void release_memory(Task* t) {
         release(memory);
     t->memory = nullptr;
 }
+
 static void release_files(FileTable* table) {
     if (table && !--table->references) {
         for (auto& fd : table->entries)
@@ -42,6 +44,7 @@ static void release_files(FileTable* table) {
         release(table);
     }
 }
+
 static FileTable* copy_files(const FileTable* source) {
     auto table = make_resource<FileTable>();
     if (table)
@@ -51,6 +54,7 @@ static FileTable* copy_files(const FileTable* source) {
         }
     return table;
 }
+
 static void release_resources(Task* t) {
     io_discard(*t);
     futex_discard(*t);
@@ -64,6 +68,7 @@ static void release_resources(Task* t) {
         release(t->handlers);
     t->handlers = nullptr;
 }
+
 Task* new_task() {
     if (next_pid == INT32_MAX)
         return nullptr;
@@ -94,6 +99,7 @@ Task* new_task() {
         }
     return nullptr;
 }
+
 int allocate_fd(Task* t, Handle* h, int start, bool cloexec) {
     if (start < 0)
         return -22;
@@ -104,11 +110,13 @@ int allocate_fd(Task* t, Handle* h, int start, bool cloexec) {
         }
     return -24;
 }
+
 static constexpr uint64_t clone_vm = 0x100, clone_fs = 0x200, clone_files = 0x400,
                           clone_sighand = 0x800, clone_vfork = 0x4000, clone_thread = 0x10000,
                           clone_sysvsem = 0x40000, clone_settls = 0x80000,
                           clone_parent_settid = 0x100000, clone_child_cleartid = 0x200000,
                           clone_detached = 0x400000, clone_child_settid = 0x1000000;
+
 int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, uint64_t child_tid,
                uint64_t tls) {
     constexpr uint64_t supported = 0xff | clone_vm | clone_fs | clone_files | clone_sighand |
@@ -218,9 +226,11 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
     }
     return child->pid;
 }
+
 int fork_task(Frame* frame, bool share, uint64_t stack) {
     return clone_task(frame, 17 | (share ? clone_vm | clone_vfork : 0), stack, 0, 0, 0);
 }
+
 static void finish_process(Task* last) {
     auto process = last->process;
     process->stopped = false;
@@ -243,6 +253,7 @@ static void finish_process(Task* last) {
         panic("init exited");
     }
 }
+
 static void clear_tid(Task* t) {
     if (t->tid_address) {
         uint32_t zero = 0;
@@ -251,6 +262,7 @@ static void clear_tid(Task* t) {
     }
     t->tid_address = 0;
 }
+
 void exit_thread(Task* t, int status) {
     if (t->state == State::empty || t->state == State::zombie)
         return;
@@ -269,6 +281,7 @@ void exit_thread(Task* t, int status) {
         t->process = nullptr;
     }
 }
+
 void exit_task(Task* t, int status) {
     auto process = t->process;
     for (auto& member : tasks)
@@ -279,6 +292,7 @@ void exit_task(Task* t, int status) {
     process->exit_status = status;
     exit_thread(t, status);
 }
+
 void reap_task(Task* t) {
     if (t->state != State::zombie || t->process->live_threads || t->process->leader != t)
         panic("invalid process reap");
@@ -339,6 +353,7 @@ static bool awaken(Task& t) {
     }
     return ready;
 }
+
 Frame* schedule(Frame* f, bool yield) {
     if (current && f) {
         current->frame = *f;
@@ -374,14 +389,17 @@ struct ElfHeader {
     uint32_t flags;
     uint16_t ehsize, phentsize, phnum, shentsize, shnum, shstrndx;
 };
+
 struct ProgramHeader {
     uint32_t type, flags;
     uint64_t offset, vaddr, paddr, filesz, memsz, align;
 };
+
 struct Image {
     uint64_t entry, phdr, phnum, end, base;
     char interpreter[1024];
 };
+
 static int load_image(AddressSpace& mem, Node* file, uint64_t base, Image& image) {
     if (!file || (file->mode & 0170000) != regular_file)
         return -2;
@@ -463,6 +481,7 @@ static int load_image(AddressSpace& mem, Node* file, uint64_t base, Image& image
         }
     return 0;
 }
+
 int exec_task(Task* t, const char* path, const char* const* argv, const char* const* envp) {
     Path name;
     name.base = t->fs->cwd_node;
@@ -645,6 +664,7 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
         image.interpreter[0] ? "dynamic musl" : "static ELF");
     return 0;
 }
+
 void start_init(const char* path) {
     Task* init = new_task();
     if (!init)
@@ -667,6 +687,7 @@ void start_init(const char* path) {
         panic("cannot execute init");
     enter_user(schedule(nullptr, true));
 }
+
 extern "C" Frame* handle_trap(Frame* f) {
     if (f->vector == 32) {
         ticks++;

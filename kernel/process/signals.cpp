@@ -7,12 +7,14 @@ namespace ax {
 static bool default_ignore(int signal) {
     return signal == 17 || signal == 18 || signal == 23 || signal == 28;
 }
+
 static void notify_parent(Process* process, int code, int status) {
     for (auto& parent : tasks)
         if (parent.state != State::empty && parent.process->leader == &parent &&
             parent.process->pid == process->parent)
             queue_process_signal(parent.process, 17, process->pid, code, status);
 }
+
 static void control_signal(Process* process, int signal) {
     constexpr uint64_t stops = (1ull << 18) | (1ull << 19) | (1ull << 20) | (1ull << 21);
     bool resumed = false;
@@ -40,6 +42,7 @@ static void control_signal(Process* process, int signal) {
         }
     }
 }
+
 void queue_signal(Task* task, int signal, int sender, int code, int status, uint64_t address) {
     if (signal < 1 || signal > 64 || task->state == State::empty || task->state == State::zombie)
         return;
@@ -49,6 +52,7 @@ void queue_signal(Task* task, int signal, int sender, int code, int status, uint
     task->pending_signals |= 1ull << (signal - 1);
     task->signal_data[signal - 1] = {sender, code, status, address};
 }
+
 void queue_process_signal(Process* process, int signal, int sender, int code, int status,
                           uint64_t address) {
     if (!process->live_threads || signal < 1 || signal > 64)
@@ -63,6 +67,7 @@ void queue_process_signal(Process* process, int signal, int sender, int code, in
             return;
         }
 }
+
 static int actionable(const Task& task) {
     uint64_t pending = (task.pending_signals | task.process->pending_signals) & ~task.signal_mask;
     for (int s = 1; s <= 64; s++)
@@ -74,11 +79,13 @@ static int actionable(const Task& task) {
         }
     return 0;
 }
+
 bool signal_wakes(const Task& task) {
     return (task.wait != Wait::vfork ||
             ((task.pending_signals | task.process->pending_signals) & (1ull << 8))) &&
            actionable(task);
 }
+
 void signal_interrupt(Task& task) {
     int signal = actionable(task);
     if (!signal)
@@ -107,30 +114,36 @@ void signal_interrupt(Task& task) {
     task.wait = Wait::none;
     task.state = State::runnable;
 }
+
 struct UserStack {
     uint64_t pointer;
     int32_t flags;
     uint32_t padding;
     uint64_t size;
 };
+
 struct Context {
     uint64_t r8, r9, r10, r11, r12, r13, r14, r15, rdi, rsi, rbp, rbx, rdx, rax, rcx, rsp, rip,
         rflags;
     uint16_t cs, gs, fs, ss;
     uint64_t error, trap, oldmask, address, fpstate, reserved[8];
 };
+
 struct Ucontext {
     uint64_t flags, link;
     UserStack stack;
     Context context;
     uint64_t mask;
 };
+
 struct SignalFrame {
     uint64_t restorer;
     Ucontext uc;
     uint8_t info[128];
 };
+
 static_assert(sizeof(Context) == 256 && sizeof(Ucontext) == 304 && sizeof(SignalFrame) == 440);
+
 bool signal_deliver(Task& task) {
     uint64_t pending = (task.pending_signals | task.process->pending_signals) & ~task.signal_mask;
     for (int signal = 1; signal <= 64; signal++)
@@ -246,6 +259,7 @@ bool signal_deliver(Task& task) {
         }
     return task.state == State::runnable;
 }
+
 void signal_tick() {
     for (auto& task : tasks)
         if (task.state != State::empty && task.process->leader == &task &&
@@ -256,6 +270,7 @@ void signal_tick() {
             queue_process_signal(task.process, 14);
         }
 }
+
 static int64_t restore_signal(Frame* f) {
     SignalFrame saved;
     if (f->rsp < 8 || !current->memory->space.copy_in(&saved, f->rsp - 8, sizeof(saved))) {
@@ -283,6 +298,7 @@ static int64_t restore_signal(Frame* f) {
     current->signal_mask = saved.uc.mask & ~((1ull << 8) | (1ull << 18));
     return 0;
 }
+
 int64_t signal_syscall(Frame* f) {
     uint64_t a = f->rdi, b = f->rsi, c = f->rdx;
     if (f->rax == 15)
@@ -305,12 +321,15 @@ int64_t signal_syscall(Frame* f) {
     if (f->rax == 36 || f->rax == 38) {
         if (a != 0)
             return -22; // ITIMER_REAL; virtual/profiling clocks are not implemented.
+
         struct Timeval {
             int64_t sec, usec;
         };
+
         struct Timer {
             Timeval interval, value;
         };
+
         uint64_t left =
             current->process->alarm_deadline > ticks ? current->process->alarm_deadline - ticks : 0;
         Timer old{{int64_t(current->process->alarm_interval / 100),

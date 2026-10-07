@@ -6,6 +6,7 @@ struct [[gnu::packed]] TablePointer {
     uint16_t size;
     uint64_t base;
 };
+
 struct [[gnu::packed]] Tss {
     uint32_t reserved;
     uint64_t rsp[3];
@@ -14,18 +15,21 @@ struct [[gnu::packed]] Tss {
     uint64_t reserved3;
     uint16_t reserved4, iomap;
 };
+
 struct [[gnu::packed]] Gate {
     uint16_t low, selector;
     uint8_t ist, type;
     uint16_t middle;
     uint32_t high, reserved;
 };
+
 static uint64_t gdt[7];
 static Gate idt[256];
 static Tss tss;
 alignas(16) static uint8_t kernel_stack[128 * 1024], fault_stack[16 * 1024];
 extern "C" {
 uint64_t kernel_stack_top;
+
 void load_gdt(TablePointer*);
 }
 
@@ -77,6 +81,7 @@ void arch_init() {
     out8(0x40, uint8_t(11932 >> 8));
     log("CPU: GDT, TSS, IDT, SYSCALL and PIT initialized\n");
 }
+
 void arch_task(uint64_t fs) {
     wrmsr(0xc0000100, fs);
 }

@@ -52,6 +52,7 @@ static void* identity(void* argument) {
     }
     return (void*)(uintptr_t)(index + 900);
 }
+
 static void* resources(void* argument) {
     (void)argument;
     CHECK(chdir("/tmp/thread-directory") == 0);
@@ -61,6 +62,7 @@ static void* resources(void* argument) {
     CHECK(shared_fd >= 0 && write(shared_fd, "shared", 6) == 6);
     return 0;
 }
+
 static void* producer(void* argument) {
     unsigned base = (uintptr_t)argument;
     for (unsigned i = 0; i < 600; i++) {
@@ -75,6 +77,7 @@ static void* producer(void* argument) {
     }
     return 0;
 }
+
 static void* consumer(void* argument) {
     (void)argument;
     for (unsigned i = 0; i < 600; i++) {
@@ -88,11 +91,13 @@ static void* consumer(void* argument) {
     }
     return 0;
 }
+
 static void* detached_worker(void* argument) {
     (void)argument;
     atomic_fetch_add(&detached, 1);
     return 0;
 }
+
 static void* sem_worker(void* argument) {
     (void)argument;
     CHECK(sem_wait(&semaphore) == 0);
@@ -101,6 +106,7 @@ static void* sem_worker(void* argument) {
     CHECK(pthread_mutex_unlock(&mutex) == 0);
     return 0;
 }
+
 static struct timespec after_ms(long milliseconds) {
     struct timespec at;
     CHECK(clock_gettime(CLOCK_REALTIME, &at) == 0);
@@ -109,6 +115,7 @@ static struct timespec after_ms(long milliseconds) {
     at.tv_nsec %= 1000000000;
     return at;
 }
+
 int main(int argc, char** argv) {
     process = getpid();
     CHECK(syscall(SYS_gettid) == process);

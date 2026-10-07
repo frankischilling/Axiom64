@@ -8,11 +8,13 @@ extern "C" void* memcpy(void* d, const void* s, size_t n) {
     asm volatile("rep movsb" : "+D"(target), "+S"(source), "+c"(n)::"memory");
     return d;
 }
+
 extern "C" void* memset(void* d, int c, size_t n) {
     auto target = d;
     asm volatile("rep stosb" : "+D"(target), "+c"(n) : "a"(static_cast<uint8_t>(c)) : "memory");
     return d;
 }
+
 extern "C" void* memmove(void* d, const void* s, size_t n) {
     auto a = (unsigned char*)d;
     auto b = (const unsigned char*)s;
@@ -24,6 +26,7 @@ extern "C" void* memmove(void* d, const void* s, size_t n) {
     }
     return d;
 }
+
 extern "C" int memcmp(const void* a, const void* b, size_t n) {
     auto x = (const unsigned char*)a;
     auto y = (const unsigned char*)b;
@@ -32,12 +35,14 @@ extern "C" int memcmp(const void* a, const void* b, size_t n) {
             return x[i] - y[i];
     return 0;
 }
+
 extern "C" size_t strlen(const char* s) {
     size_t n = 0;
     while (s[n])
         n++;
     return n;
 }
+
 extern "C" int strcmp(const char* a, const char* b) {
     while (*a && *a == *b) {
         a++;
@@ -45,6 +50,7 @@ extern "C" int strcmp(const char* a, const char* b) {
     }
     return (unsigned char)*a - (unsigned char)*b;
 }
+
 extern "C" void __cxa_pure_virtual() {
     ax::panic("pure virtual call");
 }
@@ -59,6 +65,7 @@ void serial_init() {
     out8(0x3fa, 0xc7);
     out8(0x3fc, 0x0b);
 }
+
 void putchar(char c) {
     if (c == '\n')
         putchar('\r');
@@ -66,9 +73,11 @@ void putchar(char c) {
         asm volatile("pause");
     out8(0x3f8, c);
 }
+
 int serial_read() {
     return (in8(0x3fd) & 1) ? in8(0x3f8) : -1;
 }
+
 static void number(uint64_t v, unsigned base) {
     char b[32];
     size_t n = 0;
@@ -79,6 +88,7 @@ static void number(uint64_t v, unsigned base) {
     while (n)
         putchar(b[--n]);
 }
+
 void log(const char* s, ...) {
     va_list ap;
     va_start(ap, s);
@@ -121,6 +131,7 @@ void log(const char* s, ...) {
     }
     va_end(ap);
 }
+
 [[noreturn]] void panic(const char* s) {
     log("\nPANIC: %s\n", s);
     out32(0xf4, 0x7f);
@@ -128,6 +139,7 @@ void log(const char* s, ...) {
     for (;;)
         asm volatile("hlt");
 }
+
 [[noreturn]] void poweroff(int status) {
     log("AXIOM64_EXIT status=%d\n", int64_t(status));
     out32(0xf4, status ? 1 : 0);

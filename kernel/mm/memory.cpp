@@ -8,9 +8,11 @@ static uint8_t bitmap[max_pages / 8];
 static uint16_t page_references[max_pages];
 static size_t search_page = 1;
 static uint64_t kernel_root;
+
 static bool used(size_t p) {
     return bitmap[p / 8] & (1u << (p % 8));
 }
+
 static void mark(size_t p, bool allocated) {
     if (allocated)
         bitmap[p / 8] |= 1u << (p % 8);
@@ -38,9 +40,11 @@ void memory_init() {
     }
     log("Memory: %u MiB available, isolated four-level paging\n", available / 256);
 }
+
 void activate_kernel_memory() {
     write_cr3(kernel_root);
 }
+
 void* map_mmio(uint64_t address, size_t length) {
     constexpr uint64_t physical_limit = 1ull << 52;
     if (!length || length > 1024 * 1024 || address >= physical_limit ||
@@ -71,6 +75,7 @@ void* map_mmio(uint64_t address, size_t length) {
     }
     return physical(address);
 }
+
 uint64_t page_alloc(size_t count) {
     if (!count || count >= max_pages)
         return 0;
@@ -93,6 +98,7 @@ uint64_t page_alloc(size_t count) {
     }
     return 0;
 }
+
 void page_free(uint64_t p, size_t count) {
     if (!p || p % page_size || p / page_size + count > max_pages)
         panic("invalid physical free");
@@ -105,6 +111,7 @@ void page_free(uint64_t p, size_t count) {
     }
     search_page = min(search_page, size_t(p / page_size));
 }
+
 void page_retain(uint64_t p, size_t count) {
     if (!p || p % page_size || p / page_size + count > max_pages)
         panic("invalid page retain");
@@ -115,6 +122,7 @@ void page_retain(uint64_t p, size_t count) {
         refs++;
     }
 }
+
 bool page_shared(uint64_t p, size_t count) {
     if (!p || p / page_size + count > max_pages)
         return false;
@@ -123,6 +131,7 @@ bool page_shared(uint64_t p, size_t count) {
             return true;
     return false;
 }
+
 void* alloc(size_t size) {
     if (size > SIZE_MAX - 16 - page_size)
         return nullptr;
@@ -135,6 +144,7 @@ void* alloc(size_t size) {
     header[1] = 0x4158494f4d484541;
     return header + 2;
 }
+
 void release(void* address) {
     if (!address)
         return;
@@ -143,6 +153,7 @@ void release(void* address) {
         panic("invalid heap free");
     page_free(uint64_t(header) - direct_map, header[0]);
 }
+
 bool AddressSpace::create() {
     root = page_alloc();
     if (!root)
@@ -152,6 +163,7 @@ bool AddressSpace::create() {
     next_map = 0x100000000;
     return true;
 }
+
 uint64_t* AddressSpace::entry(uint64_t va, bool create_table) {
     if (!root || va >= user_limit)
         return nullptr;
@@ -172,9 +184,11 @@ uint64_t* AddressSpace::entry(uint64_t va, bool create_table) {
     }
     return &table[(va >> 12) & 511];
 }
+
 static uint64_t permissions(int prot) {
     return 4 | ((prot & 3) ? 1 : 0) | ((prot & 2) ? 2 : 0) | ((prot & 4) ? 1 : (1ull << 63));
 }
+
 bool AddressSpace::map(uint64_t va, size_t len, int prot) {
     if (va % page_size || va < page_size || va >= user_limit || len > user_limit - va ||
         len > SIZE_MAX - page_size)
@@ -195,6 +209,7 @@ bool AddressSpace::map(uint64_t va, size_t len, int prot) {
         write_cr3(root);
     return true;
 }
+
 bool AddressSpace::map_physical(uint64_t va, uint64_t pa, size_t len, int prot, bool external) {
     if (va % page_size || pa % page_size || va < page_size || va >= user_limit ||
         len > user_limit - va)
@@ -215,6 +230,7 @@ bool AddressSpace::map_physical(uint64_t va, uint64_t pa, size_t len, int prot, 
         write_cr3(root);
     return true;
 }
+
 void AddressSpace::unmap(uint64_t va, size_t len) {
     if (va >= user_limit || len > user_limit - va)
         return;
@@ -229,6 +245,7 @@ void AddressSpace::unmap(uint64_t va, size_t len) {
     if (read_cr3() == root)
         write_cr3(root);
 }
+
 bool AddressSpace::protect(uint64_t va, size_t len, int prot) {
     if (va % page_size || va >= user_limit || len > user_limit - va)
         return false;
@@ -245,6 +262,7 @@ bool AddressSpace::protect(uint64_t va, size_t len, int prot) {
         write_cr3(root);
     return true;
 }
+
 bool AddressSpace::valid(uint64_t va, size_t len, bool write) const {
     if (va >= user_limit || len > user_limit - va)
         return false;
@@ -255,6 +273,7 @@ bool AddressSpace::valid(uint64_t va, size_t len, bool write) const {
     }
     return true;
 }
+
 bool AddressSpace::copy_in(void* dst, uint64_t src, size_t len) const {
     if (!valid(src, len))
         return false;
@@ -269,6 +288,7 @@ bool AddressSpace::copy_in(void* dst, uint64_t src, size_t len) const {
     }
     return true;
 }
+
 bool AddressSpace::copy_out(uint64_t dst, const void* src, size_t len) const {
     if (!valid(dst, len, true))
         return false;
@@ -283,6 +303,7 @@ bool AddressSpace::copy_out(uint64_t dst, const void* src, size_t len) const {
     }
     return true;
 }
+
 bool AddressSpace::string(uint64_t src, char* dst, size_t cap) const {
     for (size_t i = 0; i < cap; i++) {
         if (!copy_in(dst + i, src + i, 1))
@@ -292,6 +313,7 @@ bool AddressSpace::string(uint64_t src, char* dst, size_t cap) const {
     }
     return false;
 }
+
 static void destroy_table(uint64_t phys, int level) {
     auto t = (uint64_t*)physical(phys);
     size_t end = level == 4 ? 256 : 512;
@@ -304,12 +326,14 @@ static void destroy_table(uint64_t phys, int level) {
         }
     page_free(phys);
 }
+
 void AddressSpace::destroy() {
     if (root) {
         destroy_table(root, 4);
         root = 0;
     }
 }
+
 static bool clone_table(uint64_t dest, uint64_t src, int level) {
     auto d = (uint64_t*)physical(dest), s = (uint64_t*)physical(src);
     size_t end = level == 4 ? 256 : 512;
@@ -333,6 +357,7 @@ static bool clone_table(uint64_t dest, uint64_t src, int level) {
         }
     return true;
 }
+
 bool AddressSpace::clone_from(const AddressSpace& src) {
     if (!create())
         return false;

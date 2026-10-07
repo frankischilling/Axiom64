@@ -6,11 +6,13 @@ namespace {
 constexpr uint64_t version_one = 1ull << 32;
 static uint64_t tsc_frequency;
 static bool calibrated;
+
 static uint64_t timestamp() {
     uint32_t low, high;
     asm volatile("rdtsc" : "=a"(low), "=d"(high));
     return uint64_t(high) << 32 | low;
 }
+
 static void calibrate_timeout() {
     if (calibrated)
         return;
@@ -30,19 +32,23 @@ static void calibrate_timeout() {
         }
     out8(0x61, speaker);
 }
+
 static bool expired(uint64_t started, unsigned spins) {
     return spins >= 20000000 || (tsc_frequency && timestamp() - started >= tsc_frequency * 2);
 }
 } // namespace
+
 void VirtioPci::set_status(uint8_t value) const {
     if (modern())
         common_.w8(20, value);
     else
         out8(io_ + 18, value);
 }
+
 uint8_t VirtioPci::status() const {
     return modern() ? common_.r8(20) : in8(io_ + 18);
 }
+
 bool VirtioPci::map_region(uint8_t capability, Region& result) {
     uint64_t bar;
     uint32_t offset = pci_.read32(capability + 8), length = pci_.read32(capability + 12);
@@ -55,6 +61,7 @@ bool VirtioPci::map_region(uint8_t capability, Region& result) {
     result = {(volatile uint8_t*)mapped, length};
     return true;
 }
+
 bool VirtioPci::discover(size_t minimum) {
     if (pci_.read16(6) & 16) {
         uint8_t at = pci_.read8(0x34) & 0xfc;
@@ -113,6 +120,7 @@ bool VirtioPci::discover(size_t minimum) {
     mode_ = Mode::legacy;
     return true;
 }
+
 bool VirtioPci::open(const PciFunction& pci, uint64_t features, size_t minimum) {
     // Transport features are managed here; no indirect/event-index/packed rings.
     if (opened_ || pci.read16(0) != 0x1af4 || features >> 24 || minimum > 256)
@@ -151,6 +159,7 @@ bool VirtioPci::open(const PciFunction& pci, uint64_t features, size_t minimum) 
     initialized_ = true;
     return true;
 }
+
 bool VirtioPci::setup_queue(SplitQueue& queue, uint16_t id, uint16_t preferred, uint16_t minimum) {
     if (!initialized_ || running_ || !preferred || preferred > 32768 ||
         (preferred & (preferred - 1)) || !minimum || minimum > preferred || queue.layout().size)
@@ -216,6 +225,7 @@ bool VirtioPci::setup_queue(SplitQueue& queue, uint16_t id, uint16_t preferred, 
     }
     return true;
 }
+
 bool VirtioPci::read_config(size_t offset, void* output, size_t length) const {
     size_t limit = modern() ? config_.length : 0x10000u - io_ - 20;
     if (!initialized_ || !output || offset > limit || length > limit - offset)
@@ -243,6 +253,7 @@ bool VirtioPci::read_config(size_t offset, void* output, size_t length) const {
     }
     return false;
 }
+
 bool VirtioPci::start() {
     if (!initialized_ || running_)
         return false;
@@ -262,9 +273,11 @@ bool VirtioPci::start() {
             return false;
     return true;
 }
+
 bool VirtioPci::healthy() const {
     return running_ && pci_.read16(0) == 0x1af4 && (status() & (0x80 | 0x40 | 4)) == 4;
 }
+
 bool VirtioPci::notify(const SplitQueue& queue) const {
     if (!healthy() || queue.broken_ || !queue.device_owned_)
         return false;
@@ -279,6 +292,7 @@ bool VirtioPci::notify(const SplitQueue& queue) const {
         }
     return false;
 }
+
 int VirtioPci::wait(SplitQueue& queue, VirtioCompletion& completion) const {
     bool bound = false;
     for (const auto& item : queues_)
@@ -301,6 +315,7 @@ int VirtioPci::wait(SplitQueue& queue, VirtioCompletion& completion) const {
     }
     return -5;
 }
+
 bool VirtioPci::stop() {
     running_ = initialized_ = false;
     if (mode_ == Mode::none)

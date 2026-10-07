@@ -43,15 +43,18 @@ static void geometry(void) {
     pattern_length = (12 + n + 3) * block_size + 713;
     triple_offset = (12 + n + n * n) * block_size + 29;
 }
+
 static void put(const char* path, const char* text) {
     int fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0644);
     CHECK(fd >= 0 && write(fd, text, strlen(text)) == (ssize_t)strlen(text) && close(fd) == 0);
 }
+
 static void expect(int fd, const char* text) {
     char buffer[128] = {0};
     CHECK(fd >= 0 && read(fd, buffer, sizeof(buffer)) == (ssize_t)strlen(text));
     CHECK(!strcmp(buffer, text) && close(fd) == 0);
 }
+
 static void pattern(int fd, int write_it, uint64_t length, uint64_t start) {
     for (uint64_t offset = 0; offset < length;) {
         size_t count = length - offset < sizeof(bytes) ? length - offset : sizeof(bytes);
@@ -66,6 +69,7 @@ static void pattern(int fd, int write_it, uint64_t length, uint64_t start) {
         offset += count;
     }
 }
+
 static void copy_program(const char* source, const char* target) {
     int in = open(source, O_RDONLY), out = open(target, O_CREAT | O_TRUNC | O_WRONLY, 0755);
     CHECK(in >= 0 && out >= 0);
@@ -82,11 +86,13 @@ static void copy_program(const char* source, const char* target) {
     int status;
     CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 17);
 }
+
 static void long_name(unsigned i, char* path) {
     int prefix = sprintf(path, "/tmp/ext2-volume/many/%03u-", i);
     memset(path + prefix, 'a' + i % 26, 236);
     path[prefix + 236] = 0;
 }
+
 static void namespace_tests(void) {
     CHECK(mkdir("/tmp/ext2-volume/a", 0755) == 0);
     CHECK(mkdir("/tmp/ext2-volume/b", 0755) == 0);
@@ -156,6 +162,7 @@ static void namespace_tests(void) {
     put(maxname, "long-name");
     ERROR(umount(volume), EBUSY); // The next open inode keeps its volume mounted.
 }
+
 static void write_tests(void) {
     int raw = open("/dev/vda", O_RDWR);
     CHECK(raw >= 0);
@@ -242,6 +249,7 @@ static void write_tests(void) {
     CHECK(raw >= 0 && close(raw) == 0);
     puts("EXT2_WRITE_PASS");
 }
+
 static void verify_tests(int readonly_disk) {
     if (readonly_disk)
         ERROR(mount("/dev/vda", volume, "ext2", 0, NULL), EROFS);
@@ -287,6 +295,7 @@ static void verify_tests(int readonly_disk) {
     CHECK(umount(volume) == 0);
     puts(readonly_disk ? "EXT2_READONLY_PASS" : "EXT2_REBOOT_PASS");
 }
+
 static void invalid_tests(void) {
     unsigned count = 0;
     for (char disk = 'a'; disk <= 'h'; disk++) {
@@ -308,6 +317,7 @@ static void invalid_tests(void) {
     CHECK(count > 0);
     printf("EXT2_REJECT_PASS volumes=%u\n", count);
 }
+
 static void error_tests(void) {
     for (char disk = 'a'; disk <= 'c'; disk++) {
         char device[] = "/dev/vda";
@@ -334,6 +344,7 @@ static void error_tests(void) {
     ERROR(mount("/dev/vde", volume, "ext2", MS_RDONLY, NULL), EIO);
     puts("EXT2_BACKEND_ERROR_PASS");
 }
+
 static void full_tests(void) {
     CHECK(mount("/dev/vda", volume, "ext2", 0, NULL) == 0);
     geometry();
@@ -388,6 +399,7 @@ static void full_tests(void) {
     CHECK(umount(volume) == 0);
     puts("EXT2_FULL_VOLUME_PASS");
 }
+
 int main(int argc, char** argv) {
     CHECK(argc == 2 && mkdir(volume, 0755) == 0);
     const char* phase = argv[1];

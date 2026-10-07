@@ -25,6 +25,7 @@
             exit(1);                                                                               \
         }                                                                                          \
     } while (0)
+
 enum {
     WAIT = 0,
     WAKE = 1,
@@ -34,22 +35,27 @@ enum {
     WAKE_BITSET = 10,
     PRIVATE = 128
 };
+
 static long futex(uint32_t* word, int op, int value, const void* fourth, uint32_t* second,
                   uint32_t mask) {
     return syscall(SYS_futex, word, op, value, fourth, second, mask);
 }
+
 static atomic_uint entered;
 static volatile sig_atomic_t signaled;
+
 static void signal_handler(int signal) {
     if (signal == SIGUSR1)
         signaled++;
 }
+
 struct Waiter {
     uint32_t* word;
     int op, value, timed, error;
     uint32_t mask;
     struct timespec deadline;
 };
+
 static void* waiter(void* pointer) {
     struct Waiter* args = pointer;
     atomic_fetch_add(&entered, 1);
@@ -58,6 +64,7 @@ static void* waiter(void* pointer) {
     CHECK(args->error ? result == -1 && errno == args->error : result == 0);
     return 0;
 }
+
 static struct timespec later(long milliseconds) {
     struct timespec at;
     CHECK(clock_gettime(CLOCK_MONOTONIC, &at) == 0);
@@ -66,6 +73,7 @@ static struct timespec later(long milliseconds) {
     at.tv_nsec %= 1000000000;
     return at;
 }
+
 static void await_waiters(unsigned count) {
     struct timespec limit = later(2000), now;
     while (atomic_load(&entered) != count) {
@@ -76,11 +84,13 @@ static void await_waiters(unsigned count) {
     }
     usleep(20000);
 }
+
 static void expect_child(pid_t child, int expected) {
     int status;
     CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
           WEXITSTATUS(status) == expected);
 }
+
 int main(void) {
     uint32_t words[2] = {44, 44};
     struct timespec immediate = {0, 0}, invalid = {0, 1000000000};

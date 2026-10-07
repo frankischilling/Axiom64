@@ -19,6 +19,7 @@
     } while (0)
 static volatile sig_atomic_t seen, on_alt, child_seen;
 static unsigned char alternate_stack[16384];
+
 static void handler(int signal, siginfo_t* info, void* context) {
     volatile unsigned char local;
     uintptr_t address = (uintptr_t)&local;
@@ -29,19 +30,23 @@ static void handler(int signal, siginfo_t* info, void* context) {
     on_alt = address >= (uintptr_t)alternate_stack &&
              address < (uintptr_t)alternate_stack + sizeof(alternate_stack);
 }
+
 static void child_handler(int signal) {
     if (signal == SIGCHLD)
         child_seen++;
 }
+
 static void fault_handler(int signal, siginfo_t* info, void* context) {
     (void)context;
     _exit(signal == SIGSEGV && info->si_addr == (void*)(uintptr_t)0x12345000 ? 33 : 99);
 }
+
 static void expect_exit(pid_t child, int expected) {
     int status;
     CHECK(waitpid(child, &status, 0) == child);
     CHECK(WIFEXITED(status) && WEXITSTATUS(status) == expected);
 }
+
 int main(void) {
     stack_t stack = {.ss_sp = alternate_stack, .ss_size = sizeof(alternate_stack)};
     CHECK(sigaltstack(&stack, 0) == 0);

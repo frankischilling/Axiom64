@@ -33,12 +33,14 @@ enum {
     ERROR_READ = 12328,
     ERROR_WRITE = 12348
 };
+
 static unsigned char payload[LENGTH], actual[LENGTH];
 
 static void filled(const unsigned char* bytes, size_t length, unsigned char value) {
     for (size_t i = 0; i < length; i++)
         CHECK(bytes[i] == value);
 }
+
 static void metadata(int fd, uint64_t capacity, int readonly, unsigned minor_number) {
     struct stat stat;
     CHECK(fstat(fd, &stat) == 0 && S_ISBLK(stat.st_mode));
@@ -66,6 +68,7 @@ static void metadata(int fd, uint64_t capacity, int readonly, unsigned minor_num
     CHECK(pread(fd, actual, 1, capacity + 512) == 0);
     CHECK(lseek(fd, 0, SEEK_CUR) == 0);
 }
+
 static void persisted(int fd) {
     CHECK(lseek(fd, 123, SEEK_SET) == 123);
     CHECK(pread(fd, actual, LENGTH, START) == LENGTH);
@@ -80,6 +83,7 @@ static void persisted(int fd) {
     CHECK(pread(fd, actual, 32, CAPACITY - 257 - 32) == 32);
     filled(actual, 32, 0xa5);
 }
+
 int main(int argc, char** argv) {
     CHECK(argc == 2);
     const char* phase = argv[1];

@@ -4,6 +4,8 @@
 
 namespace ax {
 int64_t io_syscall(Task&, const Frame&);
+
 bool io_resume(Task&);
+
 void io_discard(Task&);
 } // namespace ax

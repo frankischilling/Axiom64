@@ -3,6 +3,7 @@
 #include <numeric>
 #include <stdexcept>
 #include <vector>
+
 int main() {
     std::vector<int> values{1, 2, 3, 4, 5};
     if (std::accumulate(values.begin(), values.end(), 0) != 15)

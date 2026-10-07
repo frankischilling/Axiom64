@@ -20,6 +20,7 @@
             exit(1);                                                                               \
         }                                                                                          \
     } while (0)
+
 static void transfer(int fd, void* bytes, size_t size, int writing) {
     unsigned char* data = bytes;
     while (size) {
@@ -31,16 +32,19 @@ static void transfer(int fd, void* bytes, size_t size, int writing) {
         size -= n;
     }
 }
+
 static uint16_t u16(const void* p) {
     uint16_t value;
     memcpy(&value, p, 2);
     return value;
 }
+
 static uint32_t u32(const void* p) {
     uint32_t value;
     memcpy(&value, p, 4);
     return value;
 }
+
 static unsigned char* response(int fd, unsigned char header[32], size_t* length) {
     for (;;) {
         transfer(fd, header, 32, 0);
@@ -59,6 +63,7 @@ static unsigned char* response(int fd, unsigned char header[32], size_t* length)
     transfer(fd, data, *length, 0);
     return data;
 }
+
 static uint32_t terminal_window(int fd, uint32_t window, uint32_t class_atom, int depth) {
     unsigned char reply[32];
     size_t length;
@@ -87,6 +92,7 @@ static uint32_t terminal_window(int fd, uint32_t window, uint32_t class_atom, in
     free(children);
     return found;
 }
+
 int main(int argc, char** argv) {
     if (argc > 1 && !strcmp(argv[1], "--device")) {
         char target[128] = {0};

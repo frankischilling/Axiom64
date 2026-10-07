@@ -29,7 +29,9 @@
     } while (0)
 
 enum Kind { READ, READV, RECV, RECVMSG, WRITE, WRITEV, SEND, SENDMSG, ACCEPT, ACCEPT4 };
+
 static int guest;
+
 struct Operation {
     int fd, error;
     enum Kind kind;
@@ -40,6 +42,7 @@ struct Operation {
     ssize_t result;
     atomic_int entered, done;
 };
+
 static void prepare(struct Operation* operation, int fd, enum Kind kind) {
     memset(operation, 0, sizeof(*operation));
     operation->fd = fd;
@@ -51,6 +54,7 @@ static void prepare(struct Operation* operation, int fd, enum Kind kind) {
     operation->message.msg_iov = operation->vectors;
     operation->message.msg_iovlen = 2;
 }
+
 static void* io_worker(void* pointer) {
     struct Operation* operation = pointer;
     atomic_store(&operation->entered, 1);
@@ -90,6 +94,7 @@ static void* io_worker(void* pointer) {
     atomic_store(&operation->done, 1);
     return 0;
 }
+
 static void await_entry(struct Operation* operation) {
     while (!atomic_load(&operation->entered))
         sched_yield();
@@ -97,13 +102,16 @@ static void await_entry(struct Operation* operation) {
     usleep(40000);
     CHECK(!atomic_load(&operation->done));
 }
+
 static void pair(int endpoints[2], int socket) {
     CHECK((socket ? socketpair(AF_UNIX, SOCK_STREAM, 0, endpoints) : pipe(endpoints)) == 0);
 }
+
 static void no_reader(int fd) {
     errno = 0;
     CHECK(write(fd, "x", 1) == -1 && errno == EPIPE);
 }
+
 static void blocked_receive(int socket, enum Kind kind, int replace_with_dup, int mutate_vectors) {
     int original[2], replacement[2];
     pair(original, socket);
@@ -148,6 +156,7 @@ static void blocked_receive(int socket, enum Kind kind, int replace_with_dup, in
     CHECK(read(replacement[0], bytes, 5) == 5 && !memcmp(bytes, "wrong", 5));
     CHECK(close(original[1]) == 0 && close(replacement[0]) == 0 && close(replacement[1]) == 0);
 }
+
 static size_t fill(int fd) {
     int flags = fcntl(fd, F_GETFL);
     CHECK(flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0);
@@ -167,6 +176,7 @@ static size_t fill(int fd) {
     CHECK(fcntl(fd, F_SETFL, flags) == 0);
     return total;
 }
+
 static void drain(int fd, size_t total) {
     char bytes[4096];
     while (total) {
@@ -178,6 +188,7 @@ static void drain(int fd, size_t total) {
         total -= count;
     }
 }
+
 static void blocked_send(int socket, enum Kind kind, int mutate_vectors) {
     int original[2], replacement[2];
     pair(original, socket);
@@ -213,6 +224,7 @@ static void blocked_send(int socket, enum Kind kind, int mutate_vectors) {
 static volatile sig_atomic_t first_entered, second_entered, first_result, second_result;
 static volatile sig_atomic_t first_byte, second_byte;
 static int handler_pipe[2][2];
+
 static void first_handler(int signal) {
     (void)signal;
     first_entered = 1;
@@ -220,6 +232,7 @@ static void first_handler(int signal) {
     first_result = read(handler_pipe[0][0], &byte, 1);
     first_byte = byte;
 }
+
 static void second_handler(int signal) {
     (void)signal;
     second_entered = 1;
@@ -227,11 +240,13 @@ static void second_handler(int signal) {
     second_result = read(handler_pipe[1][0], &byte, 1);
     second_byte = byte;
 }
+
 static void install_handler(int signal, void (*handler)(int), int restart) {
     struct sigaction action = {.sa_handler = handler, .sa_flags = restart ? SA_RESTART : 0};
     sigemptyset(&action.sa_mask);
     CHECK(sigaction(signal, &action, 0) == 0);
 }
+
 static void signal_restart(int restart, int nested) {
     CHECK(pipe(handler_pipe[0]) == 0 && pipe(handler_pipe[1]) == 0);
     first_entered = second_entered = first_result = second_result = first_byte = second_byte = 0;
@@ -273,6 +288,7 @@ static void signal_restart(int restart, int nested) {
     for (int i = 0; i < 2; i++)
         CHECK(close(handler_pipe[i][0]) == 0 && close(handler_pipe[i][1]) == 0);
 }
+
 static void listener_reuse(enum Kind kind) {
     static unsigned sequence;
     struct sockaddr address = {.sa_family = AF_UNIX};
@@ -306,6 +322,7 @@ static void listener_reuse(enum Kind kind) {
     CHECK(client >= 0 && connect(client, &address, sizeof(address)) == -1 && errno == ECONNREFUSED);
     CHECK(close(client) == 0);
 }
+
 static void partial_and_errors(void) {
     for (int socket = 0; socket < 2; socket++) {
         int endpoints[2];
@@ -363,6 +380,7 @@ static void partial_and_errors(void) {
     CHECK(pthread_join(thread, 0) == 0 && operation.result == -1 && operation.error == EFAULT);
     CHECK(close(endpoints[0]) == 0 && close(endpoints[1]) == 0);
 }
+
 static void stopped_restart(void) {
     int original[2], ready[2];
     CHECK(pipe(original) == 0 && pipe(ready) == 0);
@@ -393,6 +411,7 @@ static void stopped_restart(void) {
     CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
     CHECK(close(original[1]) == 0 && close(ready[0]) == 0);
 }
+
 static void teardown(const char* executable, int execute, int writing) {
     int endpoints[2];
     CHECK(pipe(endpoints) == 0);
@@ -434,11 +453,14 @@ static void teardown(const char* executable, int execute, int writing) {
         no_reader(fd);
     CHECK(close(fd) == 0);
 }
+
 static sigjmp_buf abandoned_context;
+
 static void abandon_handler(int signal) {
     (void)signal;
     siglongjmp(abandoned_context, 1);
 }
+
 static void* abandon_worker(void* pointer) {
     struct Operation* operation = pointer;
     if (!sigsetjmp(abandoned_context, 1)) {
@@ -450,6 +472,7 @@ static void* abandon_worker(void* pointer) {
     atomic_store(&operation->done, 1);
     return 0;
 }
+
 static void abandoned_restart(void) {
     install_handler(SIGUSR1, abandon_handler, 1);
     int original[2], replacement[2];
@@ -466,12 +489,14 @@ static void abandoned_restart(void) {
     no_reader(original[1]);
     CHECK(close(original[1]) == 0 && close(replacement[0]) == 0 && close(replacement[1]) == 0);
 }
+
 static void* surviving_worker(void* pointer) {
     struct Operation* operation = pointer;
     io_worker(operation);
     CHECK(operation->result == 5 && !memcmp(operation->bytes, "right", 5));
     return 0;
 }
+
 static void leader_exit(void) {
     int original[2], ready[2];
     CHECK(pipe(original) == 0 && pipe(ready) == 0);
@@ -498,6 +523,7 @@ static void leader_exit(void) {
     no_reader(original[1]);
     CHECK(close(original[1]) == 0 && close(ready[0]) == 0);
 }
+
 static void copied_files(void) {
     int original[2], ready[2];
     CHECK(pipe(original) == 0 && pipe(ready) == 0);
@@ -523,6 +549,7 @@ static void copied_files(void) {
     CHECK(close(original[1]) == 0 && close(ready[0]) == 0);
     CHECK(close(replacement[0]) == 0 && close(replacement[1]) == 0);
 }
+
 int main(int argc, char** argv) {
     if (argc == 2 && !strcmp(argv[1], "--exec-marker"))
         return 0;

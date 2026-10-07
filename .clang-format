@@ -15,10 +15,13 @@ PointerAlignment: Left
 ReferenceAlignment: Pointer
 DerivePointerAlignment: false
 
-AllowShortFunctionsOnASingleLine: Empty
+AllowShortFunctionsOnASingleLine: None
 AllowShortIfStatementsOnASingleLine: Never
 AllowShortLoopsOnASingleLine: false
 AllowShortBlocksOnASingleLine: Never
+# Separate definition blocks and preserve blank lines between function prototypes.
+SeparateDefinitionBlocks: Always
+MaxEmptyLinesToKeep: 1
 
 # Preserve kernel and platform header order.
 SortIncludes: Never
@@ -39,10 +42,13 @@ BreakBeforeBraces: Attach
 PointerAlignment: Left
 DerivePointerAlignment: false
 
-AllowShortFunctionsOnASingleLine: Empty
+AllowShortFunctionsOnASingleLine: None
 AllowShortIfStatementsOnASingleLine: Never
 AllowShortLoopsOnASingleLine: false
 AllowShortBlocksOnASingleLine: Never
+# Separate definition blocks and preserve blank lines between function prototypes.
+SeparateDefinitionBlocks: Always
+MaxEmptyLinesToKeep: 1
 
 # Keep feature-test macros and system headers in their intentional order.
 SortIncludes: Never

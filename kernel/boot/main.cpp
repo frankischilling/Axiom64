@@ -34,6 +34,7 @@ static bool word(const char* s, const char* match) {
             return true;
     return false;
 }
+
 extern "C" [[noreturn]] void kernel_main() {
     asm volatile("cli");
     serial_init();

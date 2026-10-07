@@ -28,6 +28,7 @@ bool SplitQueue::create(uint16_t size) {
     virtio_dma_barrier();
     return true;
 }
+
 VirtioQueueLayout SplitQueue::layout() const {
     if (!size_)
         return {};
@@ -35,6 +36,7 @@ VirtioQueueLayout SplitQueue::layout() const {
             physical_ + align_up(size_t(size_) * sizeof(Descriptor) + 6 + size_t(size_) * 2),
             size_};
 }
+
 int SplitQueue::submit(const VirtioBuffer* buffers, unsigned count, uint64_t cookie) {
     if (!physical_ || broken_)
         return -5;
@@ -76,6 +78,7 @@ int SplitQueue::submit(const VirtioBuffer* buffers, unsigned count, uint64_t coo
     virtio_dma_barrier();
     return head;
 }
+
 int SplitQueue::complete(VirtioCompletion& result) {
     if (!physical_ || broken_)
         return -5;
@@ -107,6 +110,7 @@ int SplitQueue::complete(VirtioCompletion& result) {
     consumed_++;
     return 1;
 }
+
 bool SplitQueue::release() {
     if (device_owned_)
         return false;

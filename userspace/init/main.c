@@ -22,6 +22,7 @@ static pid_t console(void) {
     }
     return child;
 }
+
 int main(void) {
     const char* test = getenv("AXIOM64_TEST");
     const char* suite = getenv("AXIOM64_SUITE");

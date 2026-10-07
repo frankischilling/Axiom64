@@ -3,6 +3,7 @@
 
 namespace ax {
 static uint64_t next_inode = 1;
+
 static Node* allocate_node(Mount* mount, uint32_t mode) {
     Node* node = nullptr;
     for (size_t i = 0; i < node_count; i++)
@@ -22,9 +23,11 @@ static Node* allocate_node(Mount* mount, uint32_t mode) {
     node->atime = node->mtime = node->ctime = node_now();
     return node;
 }
+
 Node* ramfs_root(Mount* mount, uint32_t mode) {
     return allocate_node(mount, directory | (mode & 07777));
 }
+
 static int find(Node* parent, const char* name, Node*& result) {
     for (auto n = parent->first_child; n; n = n->next_sibling)
         if (!n->removed && !strcmp(n->name, name)) {
@@ -33,6 +36,7 @@ static int find(Node* parent, const char* name, Node*& result) {
         }
     return -2;
 }
+
 static void attach(Node* node, Node* parent, const char* name) {
     node->parent = parent;
     node->next_sibling = parent->first_child;
@@ -42,6 +46,7 @@ static void attach(Node* node, Node* parent, const char* name) {
     if ((node->mode & 0170000) == directory)
         parent->links++;
 }
+
 static int create(Node* parent, const char* name, uint32_t mode, const char* target, Node*& node) {
     uint8_t* data = nullptr;
     if (target) {
@@ -65,6 +70,7 @@ static int create(Node* parent, const char* name, uint32_t mode, const char* tar
     }
     return 0;
 }
+
 static int link(Node* target, Node* parent, const char* name) {
     Node* alias;
     int error = create(parent, name, target->mode, nullptr, alias);
@@ -76,6 +82,7 @@ static int link(Node* target, Node* parent, const char* name) {
     target->ctime = node_now();
     return 0;
 }
+
 static int remove(Node* node) {
     node->removed = true;
     if ((node->mode & 0170000) == directory) {
@@ -87,6 +94,7 @@ static int remove(Node* node) {
     node->parent->mtime = node->parent->ctime = node_now();
     return 0;
 }
+
 static int rename(Node* node, Node* parent, const char* name, Node* replaced) {
     auto old_parent = node->parent;
     Node** slot = &old_parent->first_child;
@@ -104,6 +112,7 @@ static int rename(Node* node, Node* parent, const char* name, Node* replaced) {
     file_node(node)->ctime = node_now();
     return 0;
 }
+
 static int truncate(Node* node, size_t size) {
     if (size > 256 * 1024 * 1024)
         return -27;
@@ -136,6 +145,7 @@ static int truncate(Node* node, size_t size) {
     node->mtime = node->ctime = node_now();
     return 0;
 }
+
 static int64_t read(Node* node, uint64_t offset, void* buffer, size_t length) {
     if (offset >= node->size)
         return 0;
@@ -145,6 +155,7 @@ static int64_t read(Node* node, uint64_t offset, void* buffer, size_t length) {
         node->atime = node_now();
     return count;
 }
+
 static int64_t write(Node* node, uint64_t offset, const void* buffer, size_t length) {
     if (offset > SIZE_MAX - length)
         return -27;
@@ -157,6 +168,7 @@ static int64_t write(Node* node, uint64_t offset, const void* buffer, size_t len
     node->mtime = node->ctime = node_now();
     return length;
 }
+
 static int setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime) {
     node->mode = mode;
     node->atime = atime;
@@ -164,6 +176,7 @@ static int setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime) 
     node->ctime = node_now();
     return 0;
 }
+
 static int readdir(Node* parent, uint64_t cookie, DirectoryEntry& entry) {
     for (uint64_t i = cookie; i < node_count + 2; i++) {
         Node* node = i == 0 ? parent : i == 1 ? directory_parent(parent) : &nodes[i - 2];
@@ -179,9 +192,11 @@ static int readdir(Node* parent, uint64_t cookie, DirectoryEntry& entry) {
     }
     return 0;
 }
+
 static int sync(Mount*, Node*, bool) {
     return 0;
 }
+
 static int map_shared(Node* node, uint64_t offset, size_t length, uint64_t& physical_address) {
     if (offset > SIZE_MAX - length)
         return -27;
@@ -198,6 +213,7 @@ static int map_shared(Node* node, uint64_t offset, size_t length, uint64_t& phys
     physical_address = node->backing_physical + offset;
     return 0;
 }
+
 static int stats(Mount* mount, FilesystemStats& result) {
     uint64_t files = 0, free = 0;
     for (size_t i = 0; i < node_count; i++) {
@@ -210,6 +226,7 @@ static int stats(Mount* mount, FilesystemStats& result) {
               0,          files,     free + sizeof(nodes) / sizeof(nodes[0]) - node_count};
     return 0;
 }
+
 static void destroy(Mount* mount) {
     for (size_t i = 0; i < node_count; i++) {
         auto& node = nodes[i];
@@ -224,6 +241,7 @@ static void destroy(Mount* mount) {
         node = {};
     }
 }
+
 const FilesystemOps ramfs_ops = {find,  create,   link,    remove,  rename, read,
                                  write, truncate, setattr, readdir, sync,   map_shared,
                                  stats, destroy,  nullptr, nullptr};

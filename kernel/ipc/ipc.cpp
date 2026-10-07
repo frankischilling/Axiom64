@@ -4,18 +4,21 @@
 namespace ax {
 static Socket sockets[256];
 static Epoll* epolls[64];
+
 bool socket_node_busy(Node* node) {
     for (auto& socket : sockets)
         if (socket.used && file_node(socket.bound_node) == node)
             return true;
     return false;
 }
+
 bool socket_mount_busy(Mount* mount) {
     for (auto& socket : sockets)
         if (socket.used && socket.bound_node && socket.bound_node->mount == mount)
             return true;
     return false;
 }
+
 static Socket* allocate_socket(unsigned type = 1) {
     for (auto& socket : sockets)
         if (!socket.used) {
@@ -32,6 +35,7 @@ static Socket* allocate_socket(unsigned type = 1) {
         }
     return nullptr;
 }
+
 void socket_close(Socket* s) {
     if (!s || !s->used)
         return;
@@ -50,6 +54,7 @@ void socket_close(Socket* s) {
     s->bytes = nullptr;
     s->used = false;
 }
+
 bool socket_ready(Socket* s, bool write) {
     if (s->listener)
         return !write && s->queue_size;
@@ -59,6 +64,7 @@ bool socket_ready(Socket* s, bool write) {
     return s->size || s->peer_closed || s->read_closed || !s->connected ||
            (s->peer && s->peer->write_closed);
 }
+
 int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_offset) {
     if (s->listener || !s->connected)
         return -107;
@@ -77,6 +83,7 @@ int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_of
     }
     return len;
 }
+
 int64_t socket_write(Socket* s, const void* data, size_t len) {
     if (!s->connected)
         return -107;
@@ -94,9 +101,11 @@ int64_t socket_write(Socket* s, const void* data, size_t len) {
     peer->size += len;
     return len;
 }
+
 static Handle* handle(int fd) {
     return fd >= 0 && unsigned(fd) < max_fds ? current->files->entries[fd].handle : nullptr;
 }
+
 static int install_socket(Task& task, Socket* socket, int flags = 0) {
     Handle* h = open_handle(nullptr, 2 | (flags & 04000));
     if (!h) {
@@ -114,10 +123,12 @@ static int install_socket(Task& task, Socket* socket, int flags = 0) {
     }
     return fd;
 }
+
 struct UnixAddress {
     uint16_t family;
     uint8_t path[108];
 };
+
 static int address(uint64_t pointer, size_t length, UnixAddress& result, size_t& path_length) {
     if (length < 2 || length > sizeof(result))
         return -22;
@@ -137,6 +148,7 @@ static int address(uint64_t pointer, size_t length, UnixAddress& result, size_t&
     }
     return 0;
 }
+
 int socket_output_address(Task& task, Socket* s, uint64_t pointer, uint64_t length_pointer) {
     if (!pointer && !length_pointer)
         return 0;
@@ -152,6 +164,7 @@ int socket_output_address(Task& task, Socket* s, uint64_t pointer, uint64_t leng
         return -14;
     return 0;
 }
+
 int64_t socket_accept(Task& task, Handle* h, uint64_t address, uint64_t length, unsigned flags) {
     auto s = h->socket;
     if (!s->listener)
@@ -174,6 +187,7 @@ int64_t socket_accept(Task& task, Handle* h, uint64_t address, uint64_t length, 
     s->queue_size--;
     return fd;
 }
+
 uint32_t readiness(Handle* h) {
     if (!h)
         return 32;
@@ -189,6 +203,7 @@ uint32_t readiness(Handle* h) {
         events |= 16 | 0x2000;
     return events;
 }
+
 static int epoll_events(Task& task, Epoll* poll, uint64_t output, unsigned count, bool copy) {
     unsigned ready = 0;
     for (auto& item : poll->items) {
@@ -215,6 +230,7 @@ static int epoll_events(Task& task, Epoll* poll, uint64_t output, unsigned count
     }
     return ready;
 }
+
 void epoll_notify() {
     for (auto poll : epolls)
         if (poll)
@@ -226,12 +242,14 @@ void epoll_notify() {
                     item.last_ready = ready;
                 }
 }
+
 void epoll_close(Epoll* poll) {
     for (auto& entry : epolls)
         if (entry == poll)
             entry = nullptr;
     release(poll);
 }
+
 int select_events(Task& task, const Frame& frame, bool copy) {
     int count = int(frame.rdi);
     if (count < 0 || count > 1024)
@@ -264,6 +282,7 @@ int select_events(Task& task, const Frame& frame, bool copy) {
                 return -14;
     return ready;
 }
+
 bool poll_task_ready(Task& task) {
     if (task.deadline && ticks >= task.deadline)
         return true;
@@ -274,10 +293,12 @@ bool poll_task_ready(Task& task) {
         auto h = fd >= 0 && unsigned(fd) < max_fds ? task.files->entries[fd].handle : nullptr;
         return !h || !h->epoll || epoll_events(task, h->epoll, 0, max_fds, false) != 0;
     }
+
     struct Pollfd {
         int32_t fd;
         int16_t events, revents;
     };
+
     for (size_t i = 0; i < task.frame.rsi && i < max_fds; i++) {
         Pollfd p;
         if (!task.memory->space.copy_in(&p, task.frame.rdi + i * sizeof(p), sizeof(p)))
@@ -290,6 +311,7 @@ bool poll_task_ready(Task& task) {
     }
     return false;
 }
+
 int64_t ipc_syscall(Frame* f) {
     auto a = f->rdi, b = f->rsi, c = f->rdx, d = f->r10;
     auto h = handle(a);

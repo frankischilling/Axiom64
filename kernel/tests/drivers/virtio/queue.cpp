@@ -10,12 +10,15 @@
             std::exit(1);                                                                          \
         }                                                                                          \
     } while (0)
+
 namespace {
 size_t pages_live, allocations_live;
 bool fail_pages, fail_metadata;
 } // namespace
+
 namespace ax {
 uint64_t direct_map = 0;
+
 uint64_t page_alloc(size_t count) {
     if (fail_pages)
         return 0;
@@ -24,11 +27,13 @@ uint64_t page_alloc(size_t count) {
         pages_live += count;
     return reinterpret_cast<uint64_t>(memory);
 }
+
 void page_free(uint64_t address, size_t count) {
     CHECK(pages_live >= count);
     pages_live -= count;
     std::free(reinterpret_cast<void*>(address));
 }
+
 void* alloc(size_t bytes) {
     if (fail_metadata)
         return nullptr;
@@ -37,42 +42,51 @@ void* alloc(size_t bytes) {
         allocations_live++;
     return memory;
 }
+
 void release(void* memory) {
     CHECK(memory && allocations_live);
     allocations_live--;
     std::free(memory);
 }
 } // namespace ax
+
 namespace {
 using namespace ax;
+
 struct WireDescriptor {
     uint64_t address;
     uint32_t length;
     uint16_t flags, next;
 };
+
 static_assert(sizeof(WireDescriptor) == 16);
+
 // Simulated device observes only the wire layout, not the queue's CPU metadata.
 struct Device {
     VirtioQueueLayout layout;
     volatile uint16_t* available;
     volatile uint16_t* used;
     uint16_t taken = 0, produced = 0;
+
     explicit Device(const SplitQueue& queue)
         : layout(queue.layout()), available((volatile uint16_t*)physical(layout.available)),
           used((volatile uint16_t*)physical(layout.used)) {
         CHECK(layout.size && available[0] == 1 && available[1] == 0 && used[1] == 0);
     }
+
     uint16_t take() {
         CHECK(uint16_t(available[1] - taken));
         virtio_dma_barrier();
         return available[2 + (taken++ & (layout.size - 1))];
     }
+
     WireDescriptor descriptor(unsigned index) const {
         CHECK(index < layout.size);
         WireDescriptor result{};
         memcpy(&result, physical(layout.descriptors + index * sizeof(result)), sizeof(result));
         return result;
     }
+
     void check_chain(uint16_t head, const VirtioBuffer* buffers, unsigned count) const {
         unsigned at = head;
         for (unsigned i = 0; i < count; i++) {
@@ -82,6 +96,7 @@ struct Device {
             at = d.next;
         }
     }
+
     void finish(uint32_t head, uint32_t length) {
         uint32_t entry[2]{head, length};
         memcpy(physical(layout.used + 4 + size_t(produced & (layout.size - 1)) * sizeof(entry)),
@@ -91,16 +106,19 @@ struct Device {
         virtio_dma_barrier();
     }
 };
+
 static void consume(SplitQueue& queue, uint16_t head, uint64_t cookie, uint32_t length) {
     VirtioCompletion result{};
     CHECK(queue.complete(result) == 1);
     CHECK(result.head == head && result.cookie == cookie && result.length == length);
 }
+
 static void clean(SplitQueue& queue) {
     CHECK(queue.release());
     CHECK(!queue.layout().size && !queue.layout().descriptors && !queue.layout().used);
     CHECK(!pages_live && !allocations_live);
 }
+
 static void geometry_and_rollover() {
     const uint16_t sizes[]{1, 2, 4, 8, 256, 32768};
     const VirtioBuffer buffer{0x1000, 64, true};
@@ -141,6 +159,7 @@ static void geometry_and_rollover() {
     clean(queue);
     std::puts("VIRTQUEUE_GEOMETRY_WRAP_PASS requests=70000");
 }
+
 static void concurrent_chains() {
     SplitQueue queue;
     CHECK(queue.create(8));
@@ -179,6 +198,7 @@ static void concurrent_chains() {
     clean(queue);
     std::puts("VIRTQUEUE_CONCURRENT_CHAINS_PASS");
 }
+
 static void bad_completions() {
     const VirtioBuffer buffers[]{{0x2000, 16, false}, {0x3000, 32, true}};
     for (unsigned variant = 0; variant < 5; variant++) {
@@ -211,6 +231,7 @@ static void bad_completions() {
     }
     std::puts("VIRTQUEUE_INVALID_COMPLETION_PASS");
 }
+
 static void errors_and_allocation() {
     SplitQueue queue;
     CHECK(!queue.create(0) && !queue.create(3) && !queue.create(65535));
@@ -242,6 +263,7 @@ static void errors_and_allocation() {
     std::puts("VIRTQUEUE_ERROR_ALLOCATION_PASS");
 }
 } // namespace
+
 int main() {
     geometry_and_rollover();
     concurrent_chains();

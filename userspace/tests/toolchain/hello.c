@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <stdio.h>
 #include <stdlib.h>
+
 int main(void) {
     int* values = malloc(100 * sizeof(int));
     if (!values)

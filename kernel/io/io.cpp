@@ -7,13 +7,16 @@ namespace ax {
 struct Iovec {
     uint64_t base, length;
 };
+
 struct Message {
     uint64_t name;
     uint32_t name_length, padding;
     uint64_t iov, iov_count, control, control_length;
     uint32_t flags, padding2;
 };
+
 static_assert(sizeof(Iovec) == 16 && sizeof(Message) == 56);
+
 struct IoRequest {
     Handle* handle;
     Frame call;
@@ -22,6 +25,7 @@ struct IoRequest {
     unsigned flags;
     bool write, socket, accept, positioned;
 };
+
 static void destroy(IoRequest* request) {
     if (!request)
         return;
@@ -30,11 +34,13 @@ static void destroy(IoRequest* request) {
     close_handle(request->handle);
     release(request);
 }
+
 void io_discard(Task& task) {
     auto request = task.io;
     task.io = nullptr;
     destroy(request);
 }
+
 static int import_vectors(Task& task, IoRequest& request, uint64_t pointer, size_t count) {
     if (count > 1024)
         return -22;
@@ -62,6 +68,7 @@ static int import_vectors(Task& task, IoRequest& request, uint64_t pointer, size
     }
     return 0;
 }
+
 static int prepare(Task& task, IoRequest& request) {
     const auto& f = request.call;
     request.write = f.rax == 1 || f.rax == 18 || f.rax == 20 || f.rax == 44 || f.rax == 46;
@@ -109,6 +116,7 @@ static int prepare(Task& task, IoRequest& request) {
     request.count = 1;
     return 0;
 }
+
 static int64_t transfer(Task& task, IoRequest& request, const Iovec& vector, size_t peek_offset) {
     auto h = request.handle;
     if (!task.memory->space.valid(vector.base, vector.length, !request.write))
@@ -140,6 +148,7 @@ static int64_t transfer(Task& task, IoRequest& request, const Iovec& vector, siz
     }
     return done;
 }
+
 static int64_t attempt(Task& task, IoRequest& request) {
     auto h = request.handle;
     const auto& f = request.call;
@@ -186,6 +195,7 @@ static int64_t attempt(Task& task, IoRequest& request) {
     }
     return result;
 }
+
 int64_t io_syscall(Task& task, const Frame& frame) {
     int fd = int(frame.rdi);
     Handle* h = fd >= 0 && unsigned(fd) < max_fds ? task.files->entries[fd].handle : nullptr;
@@ -211,6 +221,7 @@ int64_t io_syscall(Task& task, const Frame& frame) {
         destroy(request);
     return result;
 }
+
 bool io_resume(Task& task) {
     auto request = task.io;
     if (!request)

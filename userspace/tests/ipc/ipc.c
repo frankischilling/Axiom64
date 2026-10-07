@@ -28,14 +28,18 @@
             exit(1);                                                                               \
         }                                                                                          \
     } while (0)
+
 static void reap(pid_t child) {
     int status;
     CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
 }
+
 static volatile sig_atomic_t terminal_signals;
+
 static void terminal_handler(int signal) {
     terminal_signals |= signal == SIGINT ? 1 : 2;
 }
+
 int main(void) {
     int pair[2];
     CHECK(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) == 0);

@@ -30,12 +30,14 @@
         CHECK((expr) == -1 && errno == (code));                                                    \
     } while (0)
 static const char* volume = "/tmp/vfs-volume";
+
 static void put(const char* path, const char* text) {
     int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
     CHECK(fd >= 0);
     CHECK(write(fd, text, strlen(text)) == (ssize_t)strlen(text));
     CHECK(close(fd) == 0);
 }
+
 static void expect_fd(int fd, const char* text) {
     char buffer[80] = {0};
     CHECK(fd >= 0);
@@ -43,11 +45,13 @@ static void expect_fd(int fd, const char* text) {
     CHECK(!strcmp(buffer, text));
     CHECK(close(fd) == 0);
 }
+
 static void check_cwd(const char* path) {
     char buffer[1024];
     CHECK(getcwd(buffer, sizeof(buffer)) == buffer);
     CHECK(!strcmp(buffer, path));
 }
+
 static void copy_program(const char* from, const char* to) {
     int source = open(from, O_RDONLY), target = open(to, O_CREAT | O_WRONLY, 0755);
     CHECK(source >= 0 && target >= 0);
@@ -65,6 +69,7 @@ static void copy_program(const char* from, const char* to) {
     int status;
     CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 17);
 }
+
 int main(void) {
     ERROR(mkdir("/", 0755), EEXIST);
     ERROR(mkdir("/tmp/.", 0755), EEXIST);

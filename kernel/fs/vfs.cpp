@@ -10,6 +10,7 @@ namespace ax {
 Timestamp node_now() {
     return {int64_t(ticks / 100), (ticks % 100) * 10000000};
 }
+
 Node nodes[16384];
 size_t node_count;
 Node* root_node;
@@ -66,19 +67,23 @@ bool normalize(const char* cwd, const char* path, char* result, size_t cap) {
     result[output] = 0;
     return true;
 }
+
 static Mount mounts[16];
 static uint64_t next_mount_id = 1;
+
 static Mount* mounted_on(Node* point) {
     for (auto& mount : mounts)
         if (mount.active && mount.point == point)
             return &mount;
     return nullptr;
 }
+
 Node* directory_parent(Node* node) {
     if (node == node->mount->root && node->mount->point)
         return node->mount->point->parent;
     return node->parent ? node->parent : node;
 }
+
 void node_path(Node* node, char* result, size_t cap) {
     if (!cap)
         return;
@@ -118,6 +123,7 @@ void node_path(Node* node, char* result, size_t cap) {
     }
     result[offset] = 0;
 }
+
 int resolve_path(const Path& path, Node*& result, bool follow) {
     result = nullptr;
     if (!path.text[0])
@@ -184,11 +190,13 @@ int resolve_path(const Path& path, Node*& result, bool follow) {
     result = node;
     return 0;
 }
+
 Node* lookup(const Path& path, bool follow) {
     Node* node = nullptr;
     resolve_path(path, node, follow);
     return node;
 }
+
 Node* lookup(const char* text, bool follow, unsigned) {
     Path path;
     path.base = root_node;
@@ -197,6 +205,7 @@ Node* lookup(const char* text, bool follow, unsigned) {
     memcpy(path.text, text, strlen(text) + 1);
     return lookup(path, follow);
 }
+
 static int parent_path(const Path& path, Node*& parent, char* name) {
     size_t length = strlen(path.text);
     while (length > 1 && path.text[length - 1] == '/')
@@ -224,9 +233,11 @@ static int parent_path(const Path& path, Node*& parent, char* name) {
     int error = resolve_path(base, parent);
     return error ? error : (parent->mode & 0170000) == directory ? 0 : -20;
 }
+
 bool node_readonly(Node* node) {
     return node && node->mount->readonly;
 }
+
 int create_node(const Path& path, uint32_t mode, Node*& node, const char* target) {
     Node* existing = nullptr;
     int error = resolve_path(path, existing, false);
@@ -253,6 +264,7 @@ int create_node(const Path& path, uint32_t mode, Node*& node, const char* target
         return -21;
     return parent->mount->ops->create(parent, name, mode, target, node);
 }
+
 Node* make_node(const char* text, uint32_t mode) {
     if (!strcmp(text, "/"))
         return root_node;
@@ -264,6 +276,7 @@ Node* make_node(const char* text, uint32_t mode) {
     Node* node = nullptr;
     return create_node(path, mode, node) ? nullptr : node;
 }
+
 int link_node(const Path& from, const Path& to, bool follow) {
     Node* target = nullptr;
     int error = resolve_path(from, target, follow);
@@ -293,9 +306,11 @@ int link_node(const Path& from, const Path& to, bool follow) {
         return -95;
     return parent->mount->ops->link(target, parent, name);
 }
+
 static bool mount_root(Node* node) {
     return node == node->mount->root;
 }
+
 static int empty_directory(Node* node) {
     DirectoryEntry entry;
     uint64_t cookie = 0;
@@ -310,6 +325,7 @@ static int empty_directory(Node* node) {
         cookie = entry.next;
     }
 }
+
 static bool dot_component(const Path& path) {
     size_t end = strlen(path.text);
     while (end && path.text[end - 1] == '/')
@@ -320,6 +336,7 @@ static bool dot_component(const Path& path) {
     return (end - begin == 1 && path.text[begin] == '.') ||
            (end - begin == 2 && path.text[begin] == '.' && path.text[begin + 1] == '.');
 }
+
 int remove_node(const Path& path, bool dir) {
     if (dir && dot_component(path))
         return -22;
@@ -341,6 +358,7 @@ int remove_node(const Path& path, bool dir) {
         return -21;
     return node->mount->ops->remove(node);
 }
+
 int rename_node(const Path& from, const Path& to) {
     if (dot_component(from) || dot_component(to))
         return -16;
@@ -382,6 +400,7 @@ int rename_node(const Path& from, const Path& to) {
     }
     return node->mount->ops->rename(node, parent, name, replaced);
 }
+
 int node_truncate(Node* node, uint64_t size) {
     node = file_node(node);
     if (int64_t(size) < 0)
@@ -392,22 +411,27 @@ int node_truncate(Node* node, uint64_t size) {
         return -30;
     return node->mount->ops->truncate(node, size);
 }
+
 bool node_resize(Node* node, size_t size) {
     return node_truncate(node, size) == 0;
 }
+
 int node_setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime) {
     node = file_node(node);
     if (node_readonly(node))
         return -30;
     return node->mount->ops->setattr(node, mode, atime, mtime);
 }
+
 int64_t node_read(Node* node, uint64_t offset, void* buffer, size_t length) {
     node = file_node(node);
     return node->mount->ops->read(node, offset, buffer, length);
 }
+
 int node_readdir(Node* node, uint64_t cookie, DirectoryEntry& entry) {
     return node->mount->ops->readdir(node, cookie, entry);
 }
+
 int node_sync(Node* node, bool data_only) {
     if (!node)
         return -22;
@@ -415,6 +439,7 @@ int node_sync(Node* node, bool data_only) {
         return block_flush(node->device_id);
     return node->mount->ops->sync(node->mount, file_node(node), data_only);
 }
+
 int sync_filesystems() {
     int error = 0;
     for (auto& mount : mounts)
@@ -425,6 +450,7 @@ int sync_filesystems() {
         }
     return error;
 }
+
 int node_map_shared(Node* node, uint64_t offset, size_t length, bool write, uint64_t& address) {
     if (write && node_readonly(node))
         return -30;
@@ -432,9 +458,11 @@ int node_map_shared(Node* node, uint64_t offset, size_t length, bool write, uint
         return -19;
     return node->mount->ops->map_shared(node, offset, length, address);
 }
+
 int node_stats(Node* node, FilesystemStats& result) {
     return node->mount->ops->stats(node->mount, result);
 }
+
 bool node_referenced(Node* node) {
     node = file_node(node);
     if (!node)
@@ -459,6 +487,7 @@ bool node_referenced(Node* node) {
            (node->backing_physical &&
             page_shared(node->backing_physical, node->capacity / page_size));
 }
+
 static bool mount_busy(Mount* mount, bool writers_only) {
     if (!writers_only && socket_mount_busy(mount))
         return true;
@@ -479,6 +508,7 @@ static bool mount_busy(Mount* mount, bool writers_only) {
     }
     return false;
 }
+
 int mount_filesystem(const Path& path, const Path& source, const char* type, uint64_t flags) {
     if (flags & ~uint64_t(1 | 32 | 32768)) // MS_SILENT is used by the mount utility.
         return -22;
@@ -545,6 +575,7 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
         }
     return -28;
 }
+
 int unmount(const Path& path, uint64_t flags) {
     if (flags)
         return -22;
@@ -573,6 +604,7 @@ int unmount(const Path& path, uint64_t flags) {
     *mount = {};
     return 0;
 }
+
 static uint64_t hex(const char* p) {
     uint64_t v = 0;
     for (int i = 0; i < 8; i++) {
@@ -581,6 +613,7 @@ static uint64_t hex(const char* p) {
     }
     return v;
 }
+
 void vfs_init(const void* archive, size_t length) {
     mounts[0] = {next_mount_id++, nullptr, nullptr, nullptr, &ramfs_ops, nullptr, true, false};
     root_node = ramfs_root(&mounts[0], 0755);
@@ -638,6 +671,7 @@ void vfs_init(const void* archive, size_t length) {
             make_node(p, character | 0666);
     log("VFS: imported %u nodes from initramfs\n", uint64_t(node_count));
 }
+
 Handle* open_handle(Node* n, uint32_t flags) {
     for (auto& h : handles)
         if (!h.references) {
@@ -651,6 +685,7 @@ Handle* open_handle(Node* n, uint32_t flags) {
         }
     return nullptr;
 }
+
 Handle* pipe_handle(Pipe* p, bool writer) {
     Handle* h = open_handle(nullptr, writer ? 1 : 0);
     if (h) {
@@ -663,10 +698,12 @@ Handle* pipe_handle(Pipe* p, bool writer) {
     }
     return h;
 }
+
 void retain(Handle* h) {
     if (h)
         h->references++;
 }
+
 void close_handle(Handle* h) {
     if (!h || !h->references || --h->references)
         return;
@@ -687,6 +724,7 @@ void close_handle(Handle* h) {
     h->node = nullptr;
     h->pipe = nullptr;
 }
+
 bool handle_ready(Handle* h, bool write) {
     if (!h)
         return true;
@@ -701,6 +739,7 @@ bool handle_ready(Handle* h, bool write) {
         return true;
     return device_ready(h, write);
 }
+
 int64_t read_handle(Handle* h, void* buf, size_t len) {
     if ((h->flags & 3) == 1)
         return -9;
@@ -733,6 +772,7 @@ int64_t read_handle(Handle* h, void* buf, size_t len) {
         h->offset += count;
     return count;
 }
+
 int64_t write_handle(Handle* h, const void* buf, size_t len) {
     if ((h->flags & 3) == 0)
         return -9;

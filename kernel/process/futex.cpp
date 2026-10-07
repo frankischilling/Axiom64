@@ -7,6 +7,7 @@ struct Key {
     uint64_t identity, page;
     uint32_t* word;
 };
+
 static int make_key(Task* task, uint64_t address, bool private_key, Key& key,
                     bool read_word = true) {
     if (address & 3)
@@ -29,11 +30,13 @@ static int make_key(Task* task, uint64_t address, bool private_key, Key& key,
         reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(physical(page)) + address % page_size)};
     return 0;
 }
+
 void futex_discard(Task& task) {
     if (task.futex.pinned_page)
         page_free(task.futex.pinned_page);
     task.futex = {};
 }
+
 static void complete(Task& task, int result) {
     futex_discard(task);
     // A blocked syscall was saved two bytes before its return address. Complete
@@ -45,11 +48,13 @@ static void complete(Task& task, int result) {
     if (task.state != State::stopped)
         task.state = State::runnable;
 }
+
 static bool matches(const Task& task, const Key& key, uint32_t bitset) {
     return (task.state == State::blocked || task.state == State::stopped) &&
            task.wait == Wait::futex && task.futex.queued && task.futex.domain == key.domain &&
            task.futex.identity == key.identity && (task.futex.bitset & bitset);
 }
+
 int futex_wake(Task* caller, uint64_t address, int count, bool private_key, uint32_t bitset) {
     if (!bitset)
         return -22;
@@ -67,17 +72,20 @@ int futex_wake(Task* caller, uint64_t address, int count, bool private_key, uint
         }
     return woken;
 }
+
 bool futex_ready(Task& task) {
     if (!task.futex.queued || !task.futex.deadline || ticks < task.futex.deadline)
         return false;
     complete(task, -110);
     return true;
 }
+
 static uint64_t time_ticks(int64_t sec, int64_t nsec) {
     uint64_t fraction = (nsec + 9999999) / 10000000;
     return uint64_t(sec) > (UINT64_MAX - fraction) / 100 ? UINT64_MAX
                                                          : uint64_t(sec) * 100 + fraction;
 }
+
 int64_t futex_syscall(Frame* frame) {
     uint64_t address = frame->rdi, timeout = frame->r10;
     uint32_t op = frame->rsi, command = op & 127, bitset = frame->r9;
@@ -134,6 +142,7 @@ int64_t futex_syscall(Frame* frame) {
         struct Time {
             int64_t sec, nsec;
         } time;
+
         if (!current->memory->space.copy_in(&time, timeout, sizeof(time)))
             return -14;
         if (time.sec < 0 || time.nsec < 0 || time.nsec >= 1000000000)

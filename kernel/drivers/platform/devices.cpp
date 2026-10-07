@@ -12,20 +12,24 @@ static Terminal console_terminal{0x500,  5, 0xbf,
                                  0x8a3b, 0, {3, 28, 127, 21, 4, 0, 1, 0, 17, 19, 26}};
 static ByteQueue console_input;
 static int console_pgid = 1, vt_mode = 0, keyboard_mode = 1;
+
 struct InputEvent {
     int64_t sec, usec;
     uint16_t type, code;
     int32_t value;
 };
+
 struct InputQueue {
     InputEvent events[256];
     uint64_t sequence;
 };
+
 static InputQueue keyboard_events, mouse_events;
 static uint8_t keys[96];
 static bool extended;
 static uint8_t mouse_packet[3], mouse_offset, mouse_buttons;
 static bool mouse_ack_pending;
+
 static void terminal_signal(int pgid, int signal) {
     if (pgid <= 0)
         return;
@@ -34,6 +38,7 @@ static void terminal_signal(int pgid, int signal) {
             task.process->pgid == pgid)
             queue_process_signal(task.process, signal);
 }
+
 static void detach_pty(Pty* p) {
     terminal_signal(p->pgid, 1);
     terminal_signal(p->pgid, 18);
@@ -42,12 +47,14 @@ static void detach_pty(Pty* p) {
             task.process->controlling_pty = nullptr;
     p->sid = p->pgid = 0;
 }
+
 void terminal_exit(Task* task) {
     if (task->process->controlling_pty && task->process->pid == task->process->sid)
         detach_pty(task->process->controlling_pty);
     task->process->controlling_pty = nullptr;
     task->process->controlling_console = false;
 }
+
 static int64_t attach_pty(Pty* p, bool force) {
     if (current->process->controlling_pty == p)
         return 0;
@@ -71,6 +78,7 @@ static void queue_put(ByteQueue& q, uint8_t value) {
         q.size++;
     }
 }
+
 static size_t queue_read(ByteQueue& q, void* data, size_t len) {
     len = min(len, q.size);
     auto output = (uint8_t*)data;
@@ -81,6 +89,7 @@ static size_t queue_read(ByteQueue& q, void* data, size_t len) {
     q.size -= len;
     return len;
 }
+
 static bool canonical_ready(const ByteQueue& q, const Terminal& term) {
     if (!(term.local & 2))
         return q.size;
@@ -91,6 +100,7 @@ static bool canonical_ready(const ByteQueue& q, const Terminal& term) {
     }
     return false;
 }
+
 static int64_t terminal_read(ByteQueue& q, const Terminal& term, void* data, size_t len) {
     if (!len)
         return 0;
@@ -111,6 +121,7 @@ static int64_t terminal_read(ByteQueue& q, const Terminal& term, void* data, siz
     }
     return count;
 }
+
 static void terminal_input(ByteQueue& input, ByteQueue* echo, const Terminal& term, int pgid,
                            uint8_t c) {
     if ((term.local & 1) && c && (c == term.cc[0] || c == term.cc[1] || c == term.cc[10])) {
@@ -145,6 +156,7 @@ static void terminal_input(ByteQueue& input, ByteQueue* echo, const Terminal& te
             putchar(c);
     }
 }
+
 static void tag(const char* path, Device type, unsigned id = 0) {
     Node* n = lookup(path);
     if (!n)
@@ -154,6 +166,7 @@ static void tag(const char* path, Device type, unsigned id = 0) {
     n->device = type;
     n->device_id = id;
 }
+
 static void number_path(char* out, const char* prefix, unsigned number) {
     size_t length = strlen(prefix);
     memcpy(out, prefix, length);
@@ -167,6 +180,7 @@ static void number_path(char* out, const char* prefix, unsigned number) {
         out[length++] = digits[--count];
     out[length] = 0;
 }
+
 static bool controller_wait(bool output) {
     for (unsigned i = 0; i < 100000; i++) {
         uint8_t status = in8(0x64);
@@ -175,6 +189,7 @@ static bool controller_wait(bool output) {
     }
     return false;
 }
+
 void devices_init() {
     auto response = framebuffer_request.response;
     if (response && response->framebuffer_count)
@@ -251,6 +266,7 @@ void devices_init() {
     if (controller_wait(false))
         out8(0x60, 0xf4);
 }
+
 uint64_t device_number(Node* node) {
     switch (node->device) {
     case Device::block:
@@ -281,6 +297,7 @@ uint64_t device_number(Node* node) {
         return 0;
     }
 }
+
 bool device_open(Handle* h) {
     if (!h->node)
         return true;
@@ -330,6 +347,7 @@ bool device_open(Handle* h) {
     }
     return true;
 }
+
 void device_close(Handle* h) {
     if (!h->pty)
         return;
@@ -342,6 +360,7 @@ void device_close(Handle* h) {
     if (!p->masters && !p->slaves)
         p->used = false;
 }
+
 bool device_ready(Handle* h, bool write) {
     if (h->pty) {
         auto p = h->pty;
@@ -358,6 +377,7 @@ bool device_ready(Handle* h, bool write) {
         return write || canonical_ready(console_input, console_terminal);
     return true;
 }
+
 static int64_t block_bytes(Handle* h, void* data, size_t len, bool write) {
     const auto info = block_info(h->node->device_id);
     if (!info)
@@ -402,6 +422,7 @@ static int64_t block_bytes(Handle* h, void* data, size_t len, bool write) {
     }
     return done;
 }
+
 int64_t device_read(Handle* h, void* data, size_t len) {
     if (h->node->device == Device::block)
         return block_bytes(h, data, len, false);
@@ -456,6 +477,7 @@ int64_t device_read(Handle* h, void* data, size_t len) {
         return -19;
     }
 }
+
 int64_t device_write(Handle* h, const void* data, size_t len) {
     if (h->node->device == Device::block)
         return block_bytes(h, const_cast<void*>(data), len, true);
@@ -489,9 +511,11 @@ int64_t device_write(Handle* h, const void* data, size_t len) {
     }
     return -19;
 }
+
 struct Bitfield {
     uint32_t offset, length, msb_right;
 };
+
 struct FbVar {
     uint32_t xres, yres, xres_virtual, yres_virtual, xoffset, yoffset, bpp, grayscale;
     Bitfield red, green, blue, transparency;
@@ -499,6 +523,7 @@ struct FbVar {
         upper_margin, lower_margin, hsync_len, vsync_len, sync, vmode, rotate, colorspace,
         reserved[4];
 };
+
 struct FbFix {
     char id[16];
     uint64_t smem_start;
@@ -509,10 +534,13 @@ struct FbFix {
     uint32_t mmio_len, accel;
     uint16_t capabilities, reserved[2];
 };
+
 static_assert(sizeof(FbVar) == 160 && sizeof(FbFix) == 80);
+
 static int64_t output(uint64_t dst, const void* data, size_t len) {
     return current->memory->space.copy_out(dst, data, len) ? 0 : -14;
 }
+
 int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     auto kind = h->node->device;
     if (kind == Device::block) {
@@ -716,6 +744,7 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
         return -25;
     }
 }
+
 int64_t framebuffer_map(AddressSpace& memory, uint64_t va, size_t length, int prot,
                         uint64_t offset) {
     if (!framebuffer || offset > framebuffer->pitch * framebuffer->height ||
@@ -726,10 +755,12 @@ int64_t framebuffer_map(AddressSpace& memory, uint64_t va, size_t length, int pr
         return -22;
     return memory.map_physical(va, address, length, prot, true) ? int64_t(va) : -12;
 }
+
 static void event(InputQueue& q, uint16_t type, uint16_t code, int32_t value) {
     q.events[q.sequence++ % 256] = {int64_t(ticks / 100), int64_t(ticks % 100) * 10000, type, code,
                                     value};
 }
+
 void devices_poll() {
     for (unsigned i = 0; i < 64; i++) {
         int c = serial_read();

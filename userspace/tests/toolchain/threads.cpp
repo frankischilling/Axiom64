@@ -9,6 +9,7 @@ static std::mutex lock;
 static std::condition_variable changed;
 static unsigned items, produced, consumed;
 static thread_local unsigned local = 7;
+
 static void produce(unsigned number) {
     local = number + 20;
     for (unsigned i = 0; i < 800; ++i) {
@@ -21,6 +22,7 @@ static void produce(unsigned number) {
         changed.notify_all();
     }
 }
+
 static void consume() {
     for (unsigned i = 0; i < 800; ++i) {
         std::unique_lock<std::mutex> held(lock);
@@ -30,6 +32,7 @@ static void consume() {
         changed.notify_all();
     }
 }
+
 int main() {
     std::vector<std::thread> workers;
     for (unsigned i = 0; i < 3; ++i) {

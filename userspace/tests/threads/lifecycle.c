@@ -29,14 +29,17 @@
 static _Atomic int* relay;
 static _Atomic int blocked_word;
 static const char* helper = "/bin/abi-static";
+
 static void wait_word(_Atomic int* word, int expected) {
     struct timespec limit = {2, 0};
     CHECK(syscall(SYS_futex, word, 0, expected, &limit, 0, 0) == 0 || errno == EAGAIN ||
           errno == EINTR);
 }
+
 static void wake_word(_Atomic int* word) {
     CHECK(syscall(SYS_futex, word, 1, 64, 0, 0, 0) >= 0);
 }
+
 static void child_status(pid_t child, int expected) {
     int status;
     CHECK(waitpid(child, &status, 0) == child);
@@ -44,18 +47,21 @@ static void child_status(pid_t child, int expected) {
         fprintf(stderr, "LIFECYCLE_STATUS child=%d got=%x expected=%d\n", child, status, expected);
     CHECK(WIFEXITED(status) && WEXITSTATUS(status) == expected);
 }
+
 static void* blocked(void* unused) {
     (void)unused;
     for (;;)
         wait_word(&blocked_word, 0);
     return 0;
 }
+
 static void* group_exit(void* unused) {
     (void)unused;
     usleep(30000);
     syscall(SYS_exit_group, 42);
     return 0;
 }
+
 static void* survive_leader(void* unused) {
     (void)unused;
     while (atomic_load(relay + 2))
@@ -67,11 +73,13 @@ static void* survive_leader(void* unused) {
     syscall(SYS_exit, 0);
     return 0;
 }
+
 static void* exec_worker(void* unused) {
     (void)unused;
     execl(helper, "abi-static", "child", (char*)0);
     _exit(99);
 }
+
 static void* fork_worker(void* unused) {
     (void)unused;
     pid_t group = getpid();
@@ -85,12 +93,15 @@ static void* fork_worker(void* unused) {
     child_status(child, 17);
     return (void*)(uintptr_t)91;
 }
+
 struct CloneArgs {
     _Atomic int parent_tid, child_tid, seen;
     int fd;
 };
+
 extern long test_clone(int (*fn)(void*), void* stack, unsigned long flags, void* arg,
                        void* parent_tid, void* child_tid);
+
 static int clone_worker(void* pointer) {
     struct CloneArgs* args = pointer;
     CHECK(getpid() == syscall(SYS_gettid) && getpid() == atomic_load(&args->child_tid));
@@ -99,6 +110,7 @@ static int clone_worker(void* pointer) {
     atomic_store(&args->seen, getpid());
     return 31;
 }
+
 int main(int argc, char** argv) {
     if (argc == 2)
         helper = argv[1];

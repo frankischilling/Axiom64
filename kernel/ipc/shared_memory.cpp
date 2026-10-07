@@ -8,8 +8,10 @@ struct Segment {
     unsigned attachments, mode;
     bool removed;
 };
+
 static Segment segments[64];
 static int next_id = 1;
+
 static Segment* find(int id) {
     if (id <= 0)
         return nullptr;
@@ -18,12 +20,14 @@ static Segment* find(int id) {
             return &segment;
     return nullptr;
 }
+
 static void collect(Segment* segment) {
     if (segment && segment->removed && !segment->attachments) {
         page_free(segment->physical, align_up(segment->size) / page_size);
         *segment = {};
     }
 }
+
 void shared_memory_fork(Task* child, const Task* parent) {
     if (child->memory == parent->memory)
         return;
@@ -35,6 +39,7 @@ void shared_memory_fork(Task* child, const Task* parent) {
                 segment->attachments++;
         }
 }
+
 void shared_memory_release(Task* task) {
     for (auto& attachment : task->memory->shared)
         if (attachment.id) {
@@ -48,18 +53,22 @@ void shared_memory_release(Task* task) {
             attachment = {};
         }
 }
+
 struct Permission {
     int32_t key;
     uint32_t uid, gid, cuid, cgid, mode, sequence, pad;
     uint64_t reserved[2];
 };
+
 struct Shmid {
     Permission permission;
     uint64_t size, atime, dtime, ctime;
     int32_t creator, last_pid;
     uint64_t attachments, reserved[2];
 };
+
 static_assert(sizeof(Permission) == 48 && sizeof(Shmid) == 112);
+
 int64_t shared_memory_syscall(Frame* f) {
     uint64_t a = f->rdi, b = f->rsi, c = f->rdx;
     if (f->rax == 29) {

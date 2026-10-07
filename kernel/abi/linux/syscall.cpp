@@ -15,23 +15,30 @@ struct LinuxStat {
     int64_t size, blksize, blocks;
     uint64_t atime, atime_ns, mtime, mtime_ns, ctime, ctime_ns, reserved[3];
 };
+
 static_assert(sizeof(LinuxStat) == 144);
+
 struct Timespec {
     int64_t sec, nsec;
 };
+
 struct Timeval {
     int64_t sec, usec;
 };
+
 struct Pollfd {
     int32_t fd;
     int16_t events, revents;
 };
+
 static Handle* fd_handle(int fd) {
     return fd >= 0 && unsigned(fd) < max_fds ? current->files->entries[fd].handle : nullptr;
 }
+
 static int64_t copy_result(uint64_t to, const void* data, size_t size) {
     return current->memory->space.copy_out(to, data, size) ? 0 : -14;
 }
+
 static bool path_at(int fd, uint64_t user, Path& path) {
     if (!current->memory->space.string(user, path.text, sizeof(path.text)))
         return false;
@@ -59,6 +66,7 @@ static bool path_at(int fd, uint64_t user, Path& path) {
     path.error = 0;
     return true;
 }
+
 static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode) {
     Path name;
     if (!path_at(dirfd, path, name))
@@ -102,6 +110,7 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
         close_handle(h);
     return fd;
 }
+
 static int64_t stat_node(Node* n, uint64_t dst) {
     if (!n)
         return -2;
@@ -128,6 +137,7 @@ static int64_t stat_node(Node* n, uint64_t dst) {
         s.size = s.blocks = 0;
     return copy_result(dst, &s, sizeof(s));
 }
+
 static int64_t stat_path(int dirfd, uint64_t path, uint64_t dst, bool follow) {
     Path name;
     if (!path_at(dirfd, path, name))
@@ -136,6 +146,7 @@ static int64_t stat_path(int dirfd, uint64_t path, uint64_t dst, bool follow) {
     int error = resolve_path(name, node, follow);
     return error ? error : stat_node(node, dst);
 }
+
 static int64_t block(Wait why, int fd = -1, int pid = -1) {
     current->state = State::blocked;
     current->wait = why;
@@ -143,6 +154,7 @@ static int64_t block(Wait why, int fd = -1, int pid = -1) {
     current->wait_pid = pid;
     return would_block;
 }
+
 static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd, uint64_t off) {
     if (!len || len > 256 * 1024 * 1024 || off % page_size || !(flags & 3) || (flags & 3) == 3 ||
         (prot & ~7))
@@ -208,6 +220,7 @@ static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd,
         return -12;
     return addr;
 }
+
 static int64_t dup_fd(int old, int target, int flags = 0) {
     Handle* h = fd_handle(old);
     if (!h)
@@ -221,6 +234,7 @@ static int64_t dup_fd(int old, int target, int flags = 0) {
     }
     return target;
 }
+
 static int64_t create_pipe(uint64_t dst, int flags) {
     if (flags & ~(04000 | 02000000))
         return -22;
@@ -255,6 +269,7 @@ static int64_t create_pipe(uint64_t dst, int flags) {
     current->memory->space.copy_out(dst, result, sizeof(result));
     return 0;
 }
+
 static int64_t wait_child(int pid, uint64_t status, int options, uint64_t usage) {
     if (options & ~11)
         return -22;
@@ -297,11 +312,13 @@ static int64_t wait_child(int pid, uint64_t status, int options, uint64_t usage)
         return 0;
     return block(Wait::child, -1, pid);
 }
+
 struct ExecArgs {
     char path[1024], args[128][1024], env[128][1024];
     const char* argv[129];
     const char* envp[129];
 };
+
 static int64_t exec_user(uint64_t path, uint64_t argv, uint64_t envp, Frame* frame) {
     auto a = (ExecArgs*)alloc(sizeof(ExecArgs));
     if (!a)
@@ -338,6 +355,7 @@ static int64_t exec_user(uint64_t path, uint64_t argv, uint64_t envp, Frame* fra
     release(a);
     return result;
 }
+
 static int64_t getdents(int fd, uint64_t buffer, size_t size) {
     auto h = fd_handle(fd);
     if (!h)
@@ -366,12 +384,15 @@ static int64_t getdents(int fd, uint64_t buffer, size_t size) {
         h->offset = entry.next;
     }
 }
+
 struct LinuxStatfs {
     uint64_t type, bsize, blocks, bfree, bavail, files, ffree;
     uint32_t fsid[2];
     uint64_t namelen, frsize, flags, spare[4];
 };
+
 static_assert(sizeof(LinuxStatfs) == 120);
+
 static int64_t statfs_node(Node* node, uint64_t dst) {
     if (!node)
         return -2;
@@ -391,6 +412,7 @@ static int64_t statfs_node(Node* node, uint64_t dst) {
     result.flags = node_readonly(node) ? 1 : 0;
     return copy_result(dst, &result, sizeof(result));
 }
+
 static int64_t readlink_path(int fd, uint64_t path, uint64_t buffer, size_t capacity) {
     if (!capacity)
         return -22;
@@ -416,6 +438,7 @@ static int64_t readlink_path(int fd, uint64_t path, uint64_t buffer, size_t capa
     }
     return done;
 }
+
 static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
     request = uint32_t(request);
     auto h = fd_handle(fd);
@@ -441,6 +464,7 @@ static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
         return -25;
     return device_ioctl(h, request, arg);
 }
+
 static int64_t poll_call(uint64_t pointer, size_t count, int timeout) {
     if (count > max_fds)
         return -22;
@@ -472,6 +496,7 @@ static int64_t poll_call(uint64_t pointer, size_t count, int timeout) {
         current->deadline = ticks + (timeout + 9) / 10;
     return block(Wait::poll);
 }
+
 static int64_t dispatch(Frame* f) {
     uint64_t a = f->rdi, b = f->rsi, c = f->rdx, d = f->r10, e = f->r8, g = f->r9;
     switch (f->rax) {
@@ -1191,6 +1216,7 @@ static int64_t dispatch(Frame* f) {
         return -38;
     }
 }
+
 extern "C" Frame* handle_syscall(Frame* f) {
     asm volatile("fxsave64 %0" : "=m"(current->fpu));
     uint64_t number = f->rax;

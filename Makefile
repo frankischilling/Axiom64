@@ -5,7 +5,7 @@ CXXFLAGS = -std=c++20 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-exception
 KERNEL_SOURCES = $(wildcard kernel/*.cpp)
 KERNEL_OBJECTS = $(patsubst kernel/%.cpp,build/kernel/%.o,$(KERNEL_SOURCES)) build/kernel/entry.o
 
-.PHONY: all image test test-storage test-ext2 test-threads test-thread-io run run-serial deps busybox sources clean
+.PHONY: all image test test-storage test-ext2 test-threads test-thread-io test-virtqueue test-virtio run run-serial deps busybox sources clean
 all: image
 deps:
 	$(PYTHON) scripts/fetch.py
@@ -91,6 +91,13 @@ test-threads:
 	$(PYTHON) scripts/boot_test.py --suite threads --firmware both --timeout 170
 test-thread-io:
 	$(PYTHON) scripts/boot_test.py --suite threads --phase io --firmware both --timeout 90
+build/virtqueue-tests: kernel/tests/virtqueue.cpp kernel/virtqueue.cpp kernel/include/virtqueue.hpp kernel/include/base.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/virtqueue.cpp kernel/virtqueue.cpp -o $@
+test-virtqueue: build/virtqueue-tests
+	./build/virtqueue-tests
+test-virtio:
+	$(PYTHON) scripts/virtio_test.py
 run: image
 	qemu-system-x86_64 -machine pc -cpu max -m 2G -cdrom build/axiom64.iso -serial stdio -no-reboot
 run-serial: image

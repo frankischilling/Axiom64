@@ -110,7 +110,7 @@ int main(int argc, char** argv) {
         errno = 0;
         CHECK(pwrite(fd, payload, 1, -1) == -1 && errno == EINVAL);
         CHECK(write(fd, payload, 0) == 0);
-        if (!strcmp(phase, "write")) {
+        if (!strcmp(phase, "write") || !strcmp(phase, "queue")) {
             CHECK(lseek(fd, START, SEEK_SET) == START);
             CHECK(write(fd, payload, LENGTH) == LENGTH);
             CHECK(lseek(fd, 0, SEEK_CUR) == START + LENGTH);
@@ -122,12 +122,14 @@ int main(int argc, char** argv) {
             CHECK(fdatasync(fd) == 0);
             CHECK(ioctl(fd, BLKFLSBUF, 0) == 0);
             persisted(fd);
-            // More than 65536 requests exercise both ring-slot reuse and index rollover.
-            for (unsigned i = 0; i < 65540; i++) {
+            // Default matrix crosses the 16-bit index; geometry cases cross ring slots.
+            unsigned requests = !strcmp(phase, "queue") ? 2052 : 65540;
+            for (unsigned i = 0; i < requests; i++) {
                 CHECK(pread(fd, actual, 512, 0) == 512);
                 CHECK(!memcmp(actual, "AXIOM64-DISK-FIRST\n", 18));
             }
-            puts("STORAGE_RING_WRAP_PASS requests=65540");
+            if (!strcmp(phase, "queue")) puts("STORAGE_QUEUE_WRAP_PASS requests=2052");
+            else puts("STORAGE_RING_WRAP_PASS requests=65540");
             puts("STORAGE_WRITE_PASS");
         } else if (!strcmp(phase, "error")) {
             // The host injects one backend error for each of these operations.

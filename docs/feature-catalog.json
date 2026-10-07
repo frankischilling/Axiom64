@@ -50,7 +50,7 @@
       "title": "Firmware, buses, and interrupt routing",
       "milestone": "M1",
       "state": "partial",
-      "current": "Limine BIOS/UEFI boot, legacy PIT/PIC interrupts, PCI configuration-mechanism-1 enumeration, and virtio DMA work. PCIe ECAM, ACPI, and interrupt routing remain planned.",
+      "current": "Limine BIOS/UEFI boot, legacy PIT/PIC interrupts, PCI configuration-mechanism-1 enumeration, shared modern/legacy virtio PCI setup, and split-queue DMA ownership work. PCIe ECAM, ACPI, and interrupt routing remain planned.",
       "scope": [
         "PCI/PCIe enumeration and driver binding",
         "MMIO mapping, DMA allocation, address limits, and cache attributes",
@@ -72,7 +72,14 @@
         "kernel/pci.cpp",
         "kernel/memory.cpp",
         "scripts/storage_test.py",
-        "docs/storage.md"
+        "docs/storage.md",
+        "kernel/virtio.cpp",
+        "kernel/virtqueue.cpp",
+        "kernel/include/virtio.hpp",
+        "kernel/include/virtqueue.hpp",
+        "kernel/tests/virtqueue.cpp",
+        "scripts/virtio_test.py",
+        "docs/virtio.md"
       ],
       "branch": "feature/f01-firmware-buses-and-interrupt-routing",
       "issue": "https://github.com/frankischilling/Axiom64/issues/1"
@@ -82,7 +89,7 @@
       "title": "Block layer and virtio disk",
       "milestone": "M1",
       "state": "partial",
-      "current": "Modern and legacy virtio block devices provide persistent sector I/O, Linux block nodes, explicit flushes, and exclusive filesystem claims. Partitions, caching, and stable root identifiers remain planned.",
+      "current": "Modern and legacy virtio block devices use a shared PCI transport and split queue for persistent sector I/O, Linux block nodes, explicit flushes, and exclusive filesystem claims. Partitions, caching, and stable root identifiers remain planned.",
       "scope": [
         "Common block operations with bounds, flush, and error propagation",
         "Virtio PCI transport and virtio-blk request queues",
@@ -104,7 +111,14 @@
         "kernel/devices.cpp",
         "userspace/storage-tests.c",
         "scripts/storage_test.py",
-        "docs/storage.md"
+        "docs/storage.md",
+        "kernel/virtio.cpp",
+        "kernel/virtqueue.cpp",
+        "kernel/include/virtio.hpp",
+        "kernel/include/virtqueue.hpp",
+        "kernel/tests/virtqueue.cpp",
+        "scripts/virtio_test.py",
+        "docs/virtio.md"
       ],
       "branch": "feature/f02-block-layer-and-virtio-disk",
       "issue": "https://github.com/frankischilling/Axiom64/issues/2"
@@ -564,7 +578,7 @@
       "title": "Additional filesystems and host sharing",
       "milestone": "M6",
       "state": "planned",
-      "current": "Only RAM/initramfs filesystem content is available.",
+      "current": "Classic ext2 data volumes are available; additional filesystem formats and storage management remain planned.",
       "scope": [
         "FAT and exFAT read/write, including allocation and entry checksums",
         "UDF read/write and optical-media integration",
@@ -828,7 +842,7 @@
       "title": "Live image and simple disk installer",
       "milestone": "M8",
       "state": "planned",
-      "current": "A live ISO boots; changes are lost when the guest stops.",
+      "current": "A live ISO boots with a RAM root; ext2 data mounts can preserve files. A disk installer remains planned.",
       "scope": [
         "Maintain a live BIOS/UEFI image",
         "Simple installer with target-disk selection and a reviewable partition plan",

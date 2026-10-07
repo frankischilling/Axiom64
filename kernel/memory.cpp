@@ -38,6 +38,9 @@ void memory_init() {
     }
     log("Memory: %u MiB available, isolated four-level paging\n", available / 256);
 }
+void activate_kernel_memory() {
+    write_cr3(kernel_root);
+}
 void* map_mmio(uint64_t address, size_t length) {
     constexpr uint64_t physical_limit = 1ull << 52;
     if (!length || length > 1024 * 1024 || address >= physical_limit ||

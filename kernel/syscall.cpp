@@ -4,6 +4,7 @@
 #include "ipc.hpp"
 #include "signals.hpp"
 #include "task.hpp"
+#include "futex.hpp"
 
 namespace ax {
 struct LinuxStat {
@@ -28,13 +29,13 @@ struct Pollfd {
     int16_t events, revents;
 };
 static Handle* fd_handle(int fd) {
-    return fd >= 0 && unsigned(fd) < max_fds ? current->fds[fd].handle : nullptr;
+    return fd >= 0 && unsigned(fd) < max_fds ? current->files->entries[fd].handle : nullptr;
 }
 static int64_t copy_result(uint64_t to, const void* data, size_t size) {
-    return current->memory.copy_out(to, data, size) ? 0 : -14;
+    return current->memory->space.copy_out(to, data, size) ? 0 : -14;
 }
 static bool path_at(int fd, uint64_t user, Path& path) {
-    if (!current->memory.string(user, path.text, sizeof(path.text)))
+    if (!current->memory->space.string(user, path.text, sizeof(path.text)))
         return false;
     if (!path.text[0]) {
         path.error = -2;
@@ -43,7 +44,7 @@ static bool path_at(int fd, uint64_t user, Path& path) {
     path.base = root_node;
     if (path.text[0] != '/') {
         if (fd == -100)
-            path.base = current->cwd_node;
+            path.base = current->fs->cwd_node;
         else {
             auto h = fd_handle(fd);
             if (!h || !h->node) {
@@ -69,7 +70,7 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
     if (!error && (flags & 0300) == 0300)
         return -17;
     if (error == -2 && (flags & 0100))
-        error = create_node(name, regular_file | ((mode & 0777) & ~current->umask), n);
+        error = create_node(name, regular_file | ((mode & 0777) & ~current->fs->umask), n);
     if (error)
         return error;
     if ((flags & 0200000) && (n->mode & 0170000) != directory)
@@ -87,7 +88,7 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
         return -16;
     if (n->device == Device::block && (flags & 040000)) // O_DIRECT needs alignment semantics.
         return -22;
-    if (n->device == Device::tty && !current->controlling_pty && !current->controlling_console)
+    if (n->device == Device::tty && !current->process->controlling_pty && !current->process->controlling_console)
         return -6;
     if ((flags & 01000) && (flags & 3) && (n->mode & 0170000) == regular_file) {
         error = node_truncate(n, 0);
@@ -149,13 +150,13 @@ static int64_t io(int fd, uint64_t buf, size_t length, bool write) {
         return -9;
     if (length > 0x7ffff000)
         length = 0x7ffff000;
-    if (!current->memory.valid(buf, length, !write))
+    if (!current->memory->space.valid(buf, length, !write))
         return -14;
     uint8_t buffer[4096];
     size_t done = 0;
     while (done < length) {
         size_t n = min(length - done, sizeof(buffer));
-        if (write && !current->memory.copy_in(buffer, buf + done, n))
+        if (write && !current->memory->space.copy_in(buffer, buf + done, n))
             return done ? int64_t(done) : -14;
         int64_t result = write ? write_handle(h, buffer, n) : read_handle(h, buffer, n);
         if (result < 0) {
@@ -167,7 +168,7 @@ static int64_t io(int fd, uint64_t buf, size_t length, bool write) {
                 queue_signal(current, 13, current->pid);
             return result;
         }
-        if (!write && result && !current->memory.copy_out(buf + done, buffer, result))
+        if (!write && result && !current->memory->space.copy_out(buf + done, buffer, result))
             return -14;
         done += result;
         if (size_t(result) < n || (!write && h->node && (h->node->mode & 0170000) == character))
@@ -181,7 +182,7 @@ static int64_t iov_io(int fd, uint64_t iov, size_t count, bool write) {
     size_t done = 0;
     for (size_t i = 0; i < count; i++) {
         Iovec v;
-        if (!current->memory.copy_in(&v, iov + i * sizeof(v), sizeof(v)))
+        if (!current->memory->space.copy_in(&v, iov + i * sizeof(v), sizeof(v)))
             return done ? int64_t(done) : -14;
         if (done && !handle_ready(fd_handle(fd), write))
             break;
@@ -202,10 +203,10 @@ static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd,
     if (flags & 0x10) {
         if (addr % page_size || addr < page_size || addr >= user_limit || len > user_limit - addr)
             return -22;
-        current->memory.unmap(addr, len);
+        current->memory->space.unmap(addr, len);
     } else {
-        addr = current->memory.next_map;
-        current->memory.next_map += len + page_size;
+        addr = current->memory->space.next_map;
+        current->memory->space.next_map += len + page_size;
     }
     if (addr >= user_limit || len > user_limit - addr)
         return -12;
@@ -215,7 +216,7 @@ static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd,
         if (!h)
             return -9;
         if (h->node && h->node->device == Device::framebuffer)
-            return framebuffer_map(current->memory, addr, len, prot, off);
+            return framebuffer_map(current->memory->space, addr, len, prot, off);
         if (!h->node || (h->node->mode & 0170000) != regular_file)
             return -19;
         if ((h->flags & 3) == 1)
@@ -228,31 +229,31 @@ static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd,
         int error = node_map_shared(h->node, off, len, prot & 2, backing);
         if (error)
             return error;
-        if (!current->memory.map_physical(addr, backing, len, prot))
+        if (!current->memory->space.map_physical(addr, backing, len, prot))
             return -12;
         if ((h->flags & 3) != 2 || node_readonly(h->node))
             for (uint64_t page = addr; page < addr + len; page += page_size)
-                *current->memory.entry(page) |= 0x800; // Shared mapping may never gain write access.
+                *current->memory->space.entry(page) |= 0x800; // Shared mapping may never gain write access.
         return addr;
     }
-    if (!current->memory.map(addr, len, 3))
+    if (!current->memory->space.map(addr, len, 3))
         return -12;
     if ((flags & 0x21) == 0x21)
         for (uint64_t page = addr; page < addr + len; page += page_size)
-            *current->memory.entry(page) |= 0x400;
+            *current->memory->space.entry(page) |= 0x400;
     if (h && off < h->node->size) {
         uint8_t buffer[4096];
         size_t count = min(len, h->node->size - size_t(off));
         for (size_t done = 0; done < count;) {
             int64_t result = node_read(h->node, off + done, buffer, min(sizeof(buffer), count - done));
-            if (result <= 0 || !current->memory.copy_out(addr + done, buffer, size_t(result))) {
-                current->memory.unmap(addr, len);
+            if (result <= 0 || !current->memory->space.copy_out(addr + done, buffer, size_t(result))) {
+                current->memory->space.unmap(addr, len);
                 return result < 0 ? result : -5;
             }
             done += result;
         }
     }
-    if (!current->memory.protect(addr, len, prot))
+    if (!current->memory->space.protect(addr, len, prot))
         return -12;
     return addr;
 }
@@ -263,16 +264,16 @@ static int64_t dup_fd(int old, int target, int flags = 0) {
     if (target < 0 || unsigned(target) >= max_fds)
         return -9;
     if (target != old) {
-        close_handle(current->fds[target].handle);
+        close_handle(current->files->entries[target].handle);
         retain(h);
-        current->fds[target] = {h, bool(flags & 02000000)};
+        current->files->entries[target] = {h, bool(flags & 02000000)};
     }
     return target;
 }
 static int64_t create_pipe(uint64_t dst, int flags) {
     if (flags & ~(04000 | 02000000))
         return -22;
-    if (!current->memory.valid(dst, 8, true))
+    if (!current->memory->space.valid(dst, 8, true))
         return -14;
     auto pipe = (Pipe*)alloc(sizeof(Pipe));
     if (!pipe)
@@ -295,46 +296,47 @@ static int64_t create_pipe(uint64_t dst, int flags) {
         result[1] = allocate_fd(current, writer, 0, flags & 02000000);
     if (result[0] < 0 || result[1] < 0) {
         if (result[0] >= 0)
-            current->fds[result[0]] = {};
+            current->files->entries[result[0]] = {};
         close_handle(reader);
         close_handle(writer);
         return -24;
     }
-    current->memory.copy_out(dst, result, sizeof(result));
+    current->memory->space.copy_out(dst, result, sizeof(result));
     return 0;
 }
 static int64_t wait_child(int pid, uint64_t status, int options, uint64_t usage) {
     if (options & ~11)
         return -22;
-    if (status && !current->memory.valid(status, 4, true))
+    if (status && !current->memory->space.valid(status, 4, true))
         return -14;
     bool found = false;
     for (auto& t : tasks) {
-        if (t.state == State::empty || t.parent != current->pid || (pid > 0 && t.pid != pid) ||
-            (pid == 0 && t.pgid != current->pgid) || (pid < -1 && t.pgid != -pid))
+        if (t.state == State::empty || t.process->leader != &t ||
+            t.process->parent != current->process->pid || (pid > 0 && t.process->pid != pid) ||
+            (pid == 0 && t.process->pgid != current->process->pgid) || (pid < -1 && t.process->pgid != -pid))
             continue;
         found = true;
-        bool stopped = t.state == State::stopped && !t.stop_reported && (options & 2);
-        bool continued = t.continued && (options & 8);
-        if (t.state != State::zombie && !stopped && !continued)
+        bool stopped = t.process->stopped && !t.process->stop_reported && (options & 2);
+        bool continued = t.process->continued && (options & 8);
+        if ((t.state != State::zombie || t.process->live_threads) && !stopped && !continued)
             continue;
-        int child = t.pid;
-        int child_status = continued && t.state != State::zombie ? 0xffff : t.exit_status;
+        int child = t.process->pid;
+        int child_status = !t.process->live_threads ? t.process->exit_status
+                           : continued            ? 0xffff
+                                                  : (t.process->stop_signal << 8) | 0x7f;
         if (status)
-            current->memory.copy_out(status, &child_status, 4);
+            current->memory->space.copy_out(status, &child_status, 4);
         if (usage) {
             uint64_t zeros[18]{};
             if (copy_result(usage, zeros, sizeof(zeros)))
                 return -14;
         }
-        if (t.state == State::zombie) {
-            if (!t.memory_shared)
-                t.memory.destroy();
-            t.state = State::empty;
-        } else if (continued)
-            t.continued = false;
+        if (t.state == State::zombie && !t.process->live_threads)
+            reap_task(&t);
+        else if (continued)
+            t.process->continued = false;
         else
-            t.stop_reported = true;
+            t.process->stop_reported = true;
         return child;
     }
     if (!found)
@@ -353,7 +355,7 @@ static int64_t exec_user(uint64_t path, uint64_t argv, uint64_t envp, Frame* fra
     if (!a)
         return -12;
     int result = -14;
-    if (!current->memory.string(path, a->path, sizeof(a->path))) {
+    if (!current->memory->space.string(path, a->path, sizeof(a->path))) {
         release(a);
         return result;
     }
@@ -364,13 +366,13 @@ static int64_t exec_user(uint64_t path, uint64_t argv, uint64_t envp, Frame* fra
         }
         for (unsigned i = 0; i < 128; i++) {
             uint64_t p;
-            if (!current->memory.copy_in(&p, ptr + i * 8, 8))
+            if (!current->memory->space.copy_in(&p, ptr + i * 8, 8))
                 return false;
             if (!p) {
                 result[i] = nullptr;
                 return true;
             }
-            if (!current->memory.string(p, strings[i], 1024))
+            if (!current->memory->space.string(p, strings[i], 1024))
                 return false;
             result[i] = strings[i];
         }
@@ -406,7 +408,7 @@ static int64_t getdents(int fd, uint64_t buffer, size_t size) {
         memcpy(data + 16, &reclen, 2);
         data[18] = (entry.mode >> 12) & 15;
         memcpy(data + 19, entry.name, len);
-        if (!current->memory.copy_out(buffer + done, data, record))
+        if (!current->memory->space.copy_out(buffer + done, data, record))
             return -14;
         done += record;
         h->offset = entry.next;
@@ -469,13 +471,13 @@ static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
         return -9;
     if (request == 0x5421) {
         int nonblock;
-        if (!current->memory.copy_in(&nonblock, arg, 4))
+        if (!current->memory->space.copy_in(&nonblock, arg, 4))
             return -14;
         h->flags = nonblock ? h->flags | 04000 : h->flags & ~04000u;
         return 0;
     }
     if (request == 0x5451 || request == 0x5450) {
-        current->fds[fd].cloexec = request == 0x5451;
+        current->files->entries[fd].cloexec = request == 0x5451;
         return 0;
     }
     if (request == 0x541b && (h->socket || h->pipe)) {
@@ -493,7 +495,7 @@ static int64_t poll_call(uint64_t pointer, size_t count, int timeout) {
     int ready = 0;
     for (size_t i = 0; i < count; i++) {
         Pollfd p;
-        if (!current->memory.copy_in(&p, pointer + i * sizeof(p), sizeof(p)))
+        if (!current->memory->space.copy_in(&p, pointer + i * sizeof(p), sizeof(p)))
             return -14;
         p.revents = 0;
         auto h = fd_handle(p.fd);
@@ -532,7 +534,7 @@ static int64_t dispatch(Frame* f) {
         if (!h)
             return -9;
         close_handle(h);
-        current->fds[a] = {};
+        current->files->entries[a] = {};
         return 0;
     }
     case 4:
@@ -579,36 +581,36 @@ static int64_t dispatch(Frame* f) {
             if (a >= user_limit || b > user_limit - a)
                 return -22;
             for (uint64_t p = a; p < a + b; p += page_size) {
-                auto entry = current->memory.entry(p);
+                auto entry = current->memory->space.entry(p);
                 if (entry && (*entry & 0x800))
                     return -13;
             }
         }
-        return current->memory.protect(a, align_up(b), c) ? 0 : -12;
+        return current->memory->space.protect(a, align_up(b), c) ? 0 : -12;
     case 11:
         if (a % page_size || !b || a >= user_limit || b > user_limit - a)
             return -22;
-        current->memory.unmap(a, align_up(b));
+        current->memory->space.unmap(a, align_up(b));
         return 0;
     case 12:
         if (!a)
-            return current->brk_end;
-        if (a < current->brk_base || a > current->brk_base + 128 * 1024 * 1024)
-            return current->brk_end;
-        if (a > current->brk_end &&
-            !current->memory.map(align_up(current->brk_end),
-                                 align_up(a) - align_up(current->brk_end), 3))
-            return current->brk_end;
-        if (a < current->brk_end)
-            current->memory.unmap(align_up(a), align_up(current->brk_end) - align_up(a));
-        current->brk_end = a;
+            return current->memory->brk_end;
+        if (a < current->memory->brk_base || a > current->memory->brk_base + 128 * 1024 * 1024)
+            return current->memory->brk_end;
+        if (a > current->memory->brk_end &&
+            !current->memory->space.map(align_up(current->memory->brk_end),
+                                 align_up(a) - align_up(current->memory->brk_end), 3))
+            return current->memory->brk_end;
+        if (a < current->memory->brk_end)
+            current->memory->space.unmap(align_up(a), align_up(current->memory->brk_end) - align_up(a));
+        current->memory->brk_end = a;
         return a;
     case 13:
         if (a < 1 || a > 64 || a == 9 || a == 19 || d != 8)
             return -22;
-        if (c && copy_result(c, current->signal_actions[a - 1], 32))
+        if (c && copy_result(c, current->handlers->signal_actions[a - 1], 32))
             return -14;
-        if (b && !current->memory.copy_in(current->signal_actions[a - 1], b, 32))
+        if (b && !current->memory->space.copy_in(current->handlers->signal_actions[a - 1], b, 32))
             return -14;
         return 0;
     case 14: {
@@ -618,7 +620,7 @@ static int64_t dispatch(Frame* f) {
             return -14;
         if (b) {
             uint64_t mask;
-            if (!current->memory.copy_in(&mask, b, 8))
+            if (!current->memory->space.copy_in(&mask, b, 8))
                 return -14;
             mask &= ~((1ull << 8) | (1ull << 18));
             if (a == 0)
@@ -685,12 +687,12 @@ static int64_t dispatch(Frame* f) {
         };
         if (pselect && f->r9 && !current->suspend_mask) {
             uint64_t arguments[2], mask;
-            if (!current->memory.copy_in(arguments, f->r9, sizeof(arguments)))
+            if (!current->memory->space.copy_in(arguments, f->r9, sizeof(arguments)))
                 return -14;
             if (arguments[0]) {
                 if (arguments[1] != 8)
                     return -22;
-                if (!current->memory.copy_in(&mask, arguments[0], sizeof(mask)))
+                if (!current->memory->space.copy_in(&mask, arguments[0], sizeof(mask)))
                     return -14;
                 current->suspend_saved_mask = current->signal_mask;
                 current->suspend_mask = true;
@@ -706,7 +708,7 @@ static int64_t dispatch(Frame* f) {
         int64_t timeout[2]{};
         uint64_t delay = 0;
         if (e) {
-            if (!current->memory.copy_in(timeout, e, sizeof(timeout))) {
+            if (!current->memory->space.copy_in(timeout, e, sizeof(timeout))) {
                 restore_mask();
                 current->deadline = 0;
                 return -14;
@@ -743,9 +745,9 @@ static int64_t dispatch(Frame* f) {
     case 26:
         if (a % page_size || (c & ~7) || (c & 5) == 5)
             return -22;
-        return current->memory.valid(a, b) ? 0 : -12;
+        return current->memory->space.valid(a, b) ? 0 : -12;
     case 28:
-        return current->memory.valid(a, b) ? 0 : -12;
+        return current->memory->space.valid(a, b) ? 0 : -12;
     case 29:
     case 30:
     case 31:
@@ -765,7 +767,7 @@ static int64_t dispatch(Frame* f) {
         return dup_fd(a, b);
     case 35: {
         Timespec ts;
-        if (!current->memory.copy_in(&ts, a, sizeof(ts)))
+        if (!current->memory->space.copy_in(&ts, a, sizeof(ts)))
             return -14;
         if (ts.sec < 0 || ts.nsec < 0 || ts.nsec >= 1000000000)
             return -22;
@@ -782,6 +784,7 @@ static int64_t dispatch(Frame* f) {
         return block(Wait::sleep);
     }
     case 39:
+        return current->process->pid;
     case 186:
         return current->pid;
     case 41:
@@ -807,11 +810,7 @@ static int64_t dispatch(Frame* f) {
     case 291:
         return ipc_syscall(f);
     case 56:
-        if ((a & ~uint64_t(0xff)) == 0x4100)
-            return fork_task(f, true, b);
-        if ((a & ~uint64_t(0xff)) || b)
-            return -38;
-        return fork_task(f);
+        return clone_task(f, a, b, c, d, e);
     case 57:
         return fork_task(f);
     case 58:
@@ -819,6 +818,8 @@ static int64_t dispatch(Frame* f) {
     case 59:
         return exec_user(a, b, c, f);
     case 60:
+        exit_thread(current, (a & 255) << 8);
+        return 0;
     case 231:
         exit_task(current, (a & 255) << 8);
         return 0;
@@ -844,9 +845,9 @@ static int64_t dispatch(Frame* f) {
             return fd;
         }
         if (b == 1)
-            return current->fds[a].cloexec;
+            return current->files->entries[a].cloexec;
         if (b == 2) {
-            current->fds[a].cloexec = c & 1;
+            current->files->entries[a].cloexec = c & 1;
             return 0;
         }
         if (b == 3)
@@ -884,13 +885,13 @@ static int64_t dispatch(Frame* f) {
         return node_truncate(h->node, b);
     }
     case 79: {
-        node_path(current->cwd_node, current->cwd, sizeof(current->cwd));
-        if (!current->cwd[0])
+        node_path(current->fs->cwd_node, current->fs->cwd, sizeof(current->fs->cwd));
+        if (!current->fs->cwd[0])
             return -2;
-        size_t n = strlen(current->cwd) + 1;
+        size_t n = strlen(current->fs->cwd) + 1;
         if (b < n)
             return -34;
-        return copy_result(a, current->cwd, n) ? -14 : int64_t(n);
+        return copy_result(a, current->fs->cwd, n) ? -14 : int64_t(n);
     }
     case 80: {
         Path path;
@@ -901,8 +902,8 @@ static int64_t dispatch(Frame* f) {
             return -2;
         if ((n->mode & 0170000) != directory)
             return -20;
-        current->cwd_node = n;
-        node_path(n, current->cwd, sizeof(current->cwd));
+        current->fs->cwd_node = n;
+        node_path(n, current->fs->cwd, sizeof(current->fs->cwd));
         return 0;
     }
     case 81: {
@@ -911,8 +912,8 @@ static int64_t dispatch(Frame* f) {
             return -9;
         if (!h->node || (h->node->mode & 0170000) != directory)
             return -20;
-        current->cwd_node = h->node;
-        node_path(h->node, current->cwd, sizeof(current->cwd));
+        current->fs->cwd_node = h->node;
+        node_path(h->node, current->fs->cwd, sizeof(current->fs->cwd));
         return 0;
     }
     case 83:
@@ -921,7 +922,7 @@ static int64_t dispatch(Frame* f) {
         if (!path_at(f->rax == 83 ? -100 : int(a), f->rax == 83 ? a : b, path))
             return path.error;
         Node* node = nullptr;
-        return create_node(path, directory | (((f->rax == 83 ? b : c) & 0777) & ~current->umask), node);
+        return create_node(path, directory | (((f->rax == 83 ? b : c) & 0777) & ~current->fs->umask), node);
     }
     case 85:
         return open_file(-100, a, 01000 | 0100 | 1, b);
@@ -958,7 +959,7 @@ static int64_t dispatch(Frame* f) {
     case 88:
     case 266: {
         char target[1024];
-        if (!current->memory.string(a, target, sizeof(target)))
+        if (!current->memory->space.string(a, target, sizeof(target)))
             return -14;
         Path path;
         if (!path_at(f->rax == 88 ? -100 : int(b), f->rax == 88 ? b : c, path))
@@ -989,8 +990,8 @@ static int64_t dispatch(Frame* f) {
         return node_setattr(node, (node->mode & 0170000) | (b & 07777), node->atime, node->mtime);
     }
     case 95: {
-        uint32_t old = current->umask;
-        current->umask = a & 0777;
+        uint32_t old = current->fs->umask;
+        current->fs->umask = a & 0777;
         return old;
     }
     case 92:
@@ -1048,28 +1049,30 @@ static int64_t dispatch(Frame* f) {
     case 109: {
         Task* target = nullptr;
         for (auto& t : tasks)
-            if (t.state != State::empty && t.pid == int(a ? a : current->pid))
+            if (t.state != State::empty && t.process->leader == &t &&
+                t.process->pid == int(a ? a : current->process->pid))
                 target = &t;
         if (!target)
             return -3;
-        target->pgid = b ? b : target->pid;
+        target->process->pgid = b ? b : target->process->pid;
         return 0;
     }
     case 110:
-        return current->parent;
+        return current->process->parent;
     case 111:
-        return current->pgid;
+        return current->process->pgid;
     case 112:
-        if (current->pgid == current->pid)
+        if (current->process->pgid == current->process->pid)
             return -1;
-        current->sid = current->pgid = current->pid;
-        current->controlling_pty = nullptr;
-        current->controlling_console = false;
-        return current->pid;
+        current->process->sid = current->process->pgid = current->process->pid;
+        current->process->controlling_pty = nullptr;
+        current->process->controlling_console = false;
+        return current->process->pid;
     case 124:
         for (auto& t : tasks)
-            if (t.state != State::empty && t.pid == int(a ? a : current->pid))
-                return t.sid;
+            if (t.state != State::empty && t.process->leader == &t &&
+                t.process->pid == int(a ? a : current->process->pid))
+                return t.process->sid;
         return -3;
     case 122:
     case 123:
@@ -1080,8 +1083,9 @@ static int64_t dispatch(Frame* f) {
         return 0;
     case 121:
         for (auto& t : tasks)
-            if (t.state != State::empty && t.pid == int(a ? a : current->pid))
-                return t.pgid;
+            if (t.state != State::empty && t.process->leader == &t &&
+                t.process->pid == int(a ? a : current->process->pid))
+                return t.process->pgid;
         return -3;
     case 158:
         if (a == 0x1002) {
@@ -1099,9 +1103,7 @@ static int64_t dispatch(Frame* f) {
             return -22;
         poweroff(0);
     case 202:
-        if ((b & 127) == 1)
-            return 0;
-        return -38;
+        return futex_syscall(f);
     case 204: {
         if (b < 8)
             return -22;
@@ -1140,11 +1142,11 @@ static int64_t dispatch(Frame* f) {
         if (!path_at(-100, b, path))
             return path.error;
         char type[64]{};
-        if (c && !current->memory.string(c, type, sizeof(type)))
+        if (c && !current->memory->space.string(c, type, sizeof(type)))
             return -14;
         if (e) {
             char options[1024];
-            if (!current->memory.string(e, options, sizeof(options)))
+            if (!current->memory->space.string(e, options, sizeof(options)))
                 return -14;
             if (options[0])
                 return -22;
@@ -1196,7 +1198,7 @@ static int64_t dispatch(Frame* f) {
         node = file_node(node);
         Timestamp update[] = {node->atime, node->mtime};
         Timespec input[2];
-        if (c && !current->memory.copy_in(input, c, sizeof(input)))
+        if (c && !current->memory->space.copy_in(input, c, sizeof(input)))
             return -14;
         bool changed = false;
         for (unsigned i = 0; i < 2; i++) {
@@ -1220,7 +1222,7 @@ static int64_t dispatch(Frame* f) {
     case 293:
         return create_pipe(a, b);
     case 302: {
-        if (a && int(a) != current->pid)
+        if (a && int(a) != current->process->pid && int(a) != current->pid)
             return -3;
         uint64_t limit[] = {b == 7 ? max_fds : 0x7fffffffffffffffull,
                             b == 7 ? max_fds : 0x7fffffffffffffffull};
@@ -1231,7 +1233,7 @@ static int64_t dispatch(Frame* f) {
     case 318: {
         if (c & ~7)
             return -22;
-        if (!current->memory.valid(a, b, true))
+        if (!current->memory->space.valid(a, b, true))
             return -14;
         uint8_t bytes[256];
         size_t done = 0;
@@ -1239,7 +1241,7 @@ static int64_t dispatch(Frame* f) {
         while (done < b) {
             size_t n = min(size_t(b - done), sizeof(bytes));
             read_handle(&temporary, bytes, n);
-            current->memory.copy_out(a + done, bytes, n);
+            current->memory->space.copy_out(a + done, bytes, n);
             done += n;
         }
         return done;

@@ -44,11 +44,18 @@ regular("bin/signal-tests", ROOT / "build" / "signal-tests")
 regular("bin/storage-tests", ROOT / "build" / "storage-tests")
 regular("bin/vfs-tests", ROOT / "build" / "vfs-tests")
 regular("bin/ext2-tests", ROOT / "build" / "ext2-tests")
+regular("bin/thread-static", ROOT / "build" / "thread-static")
+regular("bin/thread-dynamic", ROOT / "build" / "thread-dynamic")
+regular("bin/futex-static", ROOT / "build" / "futex-static")
+regular("bin/futex-dynamic", ROOT / "build" / "futex-dynamic")
+regular("bin/lifecycle-static", ROOT / "build" / "lifecycle-static")
+regular("bin/lifecycle-dynamic", ROOT / "build" / "lifecycle-dynamic")
 regular("sbin/init", ROOT / "build" / "init")
 regular("etc/boot-test.sh", ROOT / "userspace" / "boot-test.sh")
 regular("etc/desktop-test.sh", ROOT / "userspace" / "desktop-test.sh")
 regular("etc/storage-test.sh", ROOT / "userspace" / "storage-test.sh")
 regular("etc/ext2-test.sh", ROOT / "userspace" / "ext2-test.sh")
+regular("etc/thread-test.sh", ROOT / "userspace" / "thread-test.sh")
 regular("etc/x11-session.sh", ROOT / "userspace" / "x11-session.sh")
 regular("usr/bin/startx", ROOT / "userspace" / "startx.sh")
 regular("lib/ld-musl-x86_64.so.1", Path("/lib/ld-musl-x86_64.so.1").resolve())
@@ -122,7 +129,7 @@ with tempfile.TemporaryDirectory(prefix="axiom64-fonts-") as temporary:
     subprocess.run(["mkfontscale", "-b", "-s", "-l", str(font_stage)], check=True)
     regular(font_path + "/fonts.dir", font_stage / "fonts.dir", 0o100644)
 directory("root/toolchain-test")
-for filename in ["hello.c", "hello.cpp", "broken.c", "Makefile"]:
+for filename in ["hello.c", "hello.cpp", "broken.c", "threads.cpp", "Makefile"]:
     regular(f"root/toolchain-test/{filename}", ROOT / "userspace" / "toolchain-test" / filename, 0o100644)
 
 

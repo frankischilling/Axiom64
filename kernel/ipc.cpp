@@ -94,7 +94,7 @@ int64_t socket_write(Socket* s, const void* data, size_t len) {
     return len;
 }
 static Handle* handle(int fd) {
-    return fd >= 0 && unsigned(fd) < max_fds ? current->fds[fd].handle : nullptr;
+    return fd >= 0 && unsigned(fd) < max_fds ? current->files->entries[fd].handle : nullptr;
 }
 static int install_socket(Socket* socket, int flags = 0) {
     Handle* h = open_handle(nullptr, 2 | (flags & 04000));
@@ -121,7 +121,7 @@ static int address(uint64_t pointer, size_t length, UnixAddress& result, size_t&
     if (length < 2 || length > sizeof(result))
         return -22;
     result = {};
-    if (!current->memory.copy_in(&result, pointer, length))
+    if (!current->memory->space.copy_in(&result, pointer, length))
         return -14;
     if (result.family != 1)
         return -97;
@@ -140,14 +140,14 @@ static int output_address(Socket* s, uint64_t pointer, uint64_t length_pointer) 
     if (!pointer && !length_pointer)
         return 0;
     uint32_t size;
-    if (!current->memory.copy_in(&size, length_pointer, 4))
+    if (!current->memory->space.copy_in(&size, length_pointer, 4))
         return -14;
     UnixAddress address{};
     address.family = 1;
     memcpy(address.path, s->local, s->local_length);
     uint32_t actual = 2 + s->local_length;
-    if (!current->memory.copy_out(pointer, &address, min(size, actual)) ||
-        !current->memory.copy_out(length_pointer, &actual, 4))
+    if (!current->memory->space.copy_out(pointer, &address, min(size, actual)) ||
+        !current->memory->space.copy_out(length_pointer, &actual, 4))
         return -14;
     return 0;
 }
@@ -163,14 +163,14 @@ static int64_t transfer(int fd, uint64_t buffer, size_t length, bool write, unsi
         return -88;
     if (flags & ~unsigned(2 | 0x40 | 0x100 | 0x4000))
         return -95;
-    if (!current->memory.valid(buffer, length, !write))
+    if (!current->memory->space.valid(buffer, length, !write))
         return -14;
     uint8_t data[4096];
     size_t done = 0;
     while (done < length) {
         size_t count = min(length - done, sizeof(data));
         if (write)
-            current->memory.copy_in(data, buffer + done, count);
+            current->memory->space.copy_in(data, buffer + done, count);
         int64_t n = write ? socket_write(h->socket, data, count)
                           : socket_read(h->socket, data, count, flags & 2);
         if (n < 0) {
@@ -181,7 +181,7 @@ static int64_t transfer(int fd, uint64_t buffer, size_t length, bool write, unsi
             return n;
         }
         if (!write)
-            current->memory.copy_out(buffer + done, data, n);
+            current->memory->space.copy_out(buffer + done, data, n);
         done += n;
         if (size_t(n) < count || (flags & 2) || (!write && !socket_ready(h->socket, false)))
             break;
@@ -207,7 +207,7 @@ static int epoll_events(Task& task, Epoll* poll, uint64_t output, unsigned count
     unsigned ready = 0;
     for (auto& item : poll->items) {
         if (!item.used || !item.enabled || item.fd < 0 || unsigned(item.fd) >= max_fds ||
-            task.fds[item.fd].handle != item.handle || item.handle->generation != item.generation)
+            task.files->entries[item.fd].handle != item.handle || item.handle->generation != item.generation)
             continue;
         uint32_t mask = (item.event.events & (1u << 31))
                             ? item.pending
@@ -216,7 +216,7 @@ static int epoll_events(Task& task, Epoll* poll, uint64_t output, unsigned count
             continue;
         if (copy) {
             EpollEvent event{mask, item.event.data};
-            if (!task.memory.copy_out(output + ready * sizeof(event), &event, sizeof(event)))
+            if (!task.memory->space.copy_out(output + ready * sizeof(event), &event, sizeof(event)))
                 return -14;
             if (item.event.events & (1u << 31))
                 item.pending = 0;
@@ -253,14 +253,14 @@ int select_events(Task& task, const Frame& frame, bool copy) {
     uint64_t pointers[] = {frame.rsi, frame.rdx, frame.r10};
     size_t bytes = ((count + 63) / 64) * 8;
     for (unsigned set = 0; set < 3; set++)
-        if (pointers[set] && bytes && !task.memory.copy_in(input[set], pointers[set], bytes))
+        if (pointers[set] && bytes && !task.memory->space.copy_in(input[set], pointers[set], bytes))
             return -14;
     int ready = 0;
     for (int fd = 0; fd < count; fd++) {
         uint64_t bit = 1ull << (fd % 64);
         for (unsigned set = 0; set < 3; set++)
             if (input[set][fd / 64] & bit) {
-                auto h = unsigned(fd) < max_fds ? task.fds[fd].handle : nullptr;
+                auto h = unsigned(fd) < max_fds ? task.files->entries[fd].handle : nullptr;
                 if (!h)
                     return -9;
                 uint32_t wanted = set == 0 ? 1 | 8 | 16 : set == 1 ? 4 | 8 | 16 : 2;
@@ -272,7 +272,7 @@ int select_events(Task& task, const Frame& frame, bool copy) {
     }
     if (copy)
         for (unsigned set = 0; set < 3; set++)
-            if (pointers[set] && bytes && !task.memory.copy_out(pointers[set], output[set], bytes))
+            if (pointers[set] && bytes && !task.memory->space.copy_out(pointers[set], output[set], bytes))
                 return -14;
     return ready;
 }
@@ -283,7 +283,7 @@ bool poll_task_ready(Task& task) {
         return select_events(task, task.frame, false) != 0;
     if (task.frame.rax == 232 || task.frame.rax == 281) {
         int fd = task.frame.rdi;
-        auto h = fd >= 0 && unsigned(fd) < max_fds ? task.fds[fd].handle : nullptr;
+        auto h = fd >= 0 && unsigned(fd) < max_fds ? task.files->entries[fd].handle : nullptr;
         return !h || !h->epoll || epoll_events(task, h->epoll, 0, max_fds, false) != 0;
     }
     struct Pollfd {
@@ -292,11 +292,11 @@ bool poll_task_ready(Task& task) {
     };
     for (size_t i = 0; i < task.frame.rsi && i < max_fds; i++) {
         Pollfd p;
-        if (!task.memory.copy_in(&p, task.frame.rdi + i * sizeof(p), sizeof(p)))
+        if (!task.memory->space.copy_in(&p, task.frame.rdi + i * sizeof(p), sizeof(p)))
             return true;
         if (p.fd < 0)
             continue;
-        auto h = unsigned(p.fd) < max_fds ? task.fds[p.fd].handle : nullptr;
+        auto h = unsigned(p.fd) < max_fds ? task.files->entries[p.fd].handle : nullptr;
         if (readiness(h) & (p.events | 8 | 16 | 32))
             return true;
     }
@@ -341,7 +341,7 @@ int64_t ipc_syscall(Frame* f) {
                 return -98;
         if (addr.path[0]) {
             Path path;
-            path.base = current->cwd_node;
+            path.base = current->fs->cwd_node;
             memcpy(path.text, addr.path, len);
             if (lookup(path, false))
                 return -98;
@@ -375,7 +375,7 @@ int64_t ipc_syscall(Frame* f) {
         Node* target = nullptr;
         if (addr.path[0]) {
             Path path;
-            path.base = current->cwd_node;
+            path.base = current->fs->cwd_node;
             memcpy(path.text, addr.path, len);
             error = resolve_path(path, target);
             if (error)
@@ -448,7 +448,7 @@ int64_t ipc_syscall(Frame* f) {
         if (!s)
             return -88;
         Message message;
-        if (!current->memory.copy_in(&message, b, sizeof(message)))
+        if (!current->memory->space.copy_in(&message, b, sizeof(message)))
             return -14;
         if (message.iov_count > 1024)
             return -22;
@@ -457,7 +457,7 @@ int64_t ipc_syscall(Frame* f) {
         size_t done = 0;
         for (size_t i = 0; i < message.iov_count; i++) {
             Iovec v;
-            if (!current->memory.copy_in(&v, message.iov + i * sizeof(v), sizeof(v)))
+            if (!current->memory->space.copy_in(&v, message.iov + i * sizeof(v), sizeof(v)))
                 return done ? int64_t(done) : -14;
             if (done && !socket_ready(s, f->rax == 46))
                 break;
@@ -471,7 +471,7 @@ int64_t ipc_syscall(Frame* f) {
         if (f->rax == 47) {
             message.control_length = 0;
             message.flags = 0;
-            if (!current->memory.copy_out(b, &message, sizeof(message)))
+            if (!current->memory->space.copy_out(b, &message, sizeof(message)))
                 return -14;
         }
         return done;
@@ -499,7 +499,7 @@ int64_t ipc_syscall(Frame* f) {
     case 53: {
         if (a != 1 || (b & 0xf) != 1 || c)
             return -95;
-        if (!current->memory.valid(d, 8, true))
+        if (!current->memory->space.valid(d, 8, true))
             return -14;
         auto left = allocate_socket(), right = allocate_socket();
         if (!left || !right) {
@@ -516,13 +516,13 @@ int64_t ipc_syscall(Frame* f) {
             result[1] = install_socket(right, flags);
         if (result[0] < 0 || result[1] < 0) {
             if (result[0] >= 0) {
-                close_handle(current->fds[result[0]].handle);
-                current->fds[result[0]] = {};
+                close_handle(current->files->entries[result[0]].handle);
+                current->files->entries[result[0]] = {};
             } else
                 socket_close(right);
             return -24;
         }
-        current->memory.copy_out(d, result, 8);
+        current->memory->space.copy_out(d, result, 8);
         return 0;
     }
     case 54:
@@ -531,7 +531,7 @@ int64_t ipc_syscall(Frame* f) {
         if (b != 1)
             return -92;
         if (c == 2 || c == 9 || c == 7 || c == 8)
-            return current->memory.valid(d, f->r8) ? 0 : -14;
+            return current->memory->space.valid(d, f->r8) ? 0 : -14;
         return -92;
     case 55: {
         if (!s)
@@ -542,11 +542,11 @@ int64_t ipc_syscall(Frame* f) {
         if (value < 0)
             return -92;
         uint32_t len;
-        if (!current->memory.copy_in(&len, f->r8, 4))
+        if (!current->memory->space.copy_in(&len, f->r8, 4))
             return -14;
         uint32_t actual = 4;
-        if (!current->memory.copy_out(d, &value, min(len, actual)) ||
-            !current->memory.copy_out(f->r8, &actual, 4))
+        if (!current->memory->space.copy_out(d, &value, min(len, actual)) ||
+            !current->memory->space.copy_out(f->r8, &actual, 4))
             return -14;
         return 0;
     }
@@ -603,7 +603,7 @@ int64_t ipc_syscall(Frame* f) {
         if (b != 1 && b != 3)
             return -22;
         EpollEvent event;
-        if (!current->memory.copy_in(&event, d, sizeof(event)))
+        if (!current->memory->space.copy_in(&event, d, sizeof(event)))
             return -14;
         if (!item)
             for (auto& candidate : h->epoll->items)

@@ -181,8 +181,8 @@
       "id": "F05",
       "title": "POSIX threads and futexes",
       "milestone": "M2",
-      "state": "planned",
-      "current": "Processes exist; CLONE_THREAD and guest pthreads are missing.",
+      "state": "partial",
+      "current": "Single-CPU musl pthread lifecycle, clone resource sharing, TLS/FPU isolation, mutex/condition/semaphore synchronization, futex wait/wake/bitsets/requeue, group teardown, worker fork/exec, and guest-compiled C++ threads are implemented. Robust owner death, cancellation, remaining POSIX synchronization, full signal semantics, and SMP remain planned.",
       "scope": [
         "Shared address-space lifetime and clone/clone3 thread flags",
         "Thread IDs, groups, exit_group, join, TLS, and per-thread FPU state",
@@ -201,7 +201,13 @@
       ],
       "evidence": [
         "kernel/task.cpp",
-        "kernel/include/task.hpp"
+        "kernel/include/task.hpp",
+        "kernel/futex.cpp",
+        "userspace/thread-tests.c",
+        "userspace/futex-tests.c",
+        "userspace/thread-lifecycle.c",
+        "userspace/toolchain-test/threads.cpp",
+        "docs/threads.md"
       ],
       "branch": "feature/f05-posix-threads-and-futexes",
       "issue": "https://github.com/frankischilling/Axiom64/issues/5"

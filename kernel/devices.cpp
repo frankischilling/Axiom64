@@ -30,36 +30,38 @@ static void terminal_signal(int pgid, int signal) {
     if (pgid <= 0)
         return;
     for (auto& task : tasks)
-        if (task.pgid == pgid)
-            queue_signal(&task, signal);
+        if (task.state != State::empty && task.process->leader == &task &&
+            task.process->pgid == pgid)
+            queue_process_signal(task.process, signal);
 }
 static void detach_pty(Pty* p) {
     terminal_signal(p->pgid, 1);
     terminal_signal(p->pgid, 18);
     for (auto& task : tasks)
-        if (task.controlling_pty == p)
-            task.controlling_pty = nullptr;
+        if (task.state != State::empty && task.process->controlling_pty == p)
+            task.process->controlling_pty = nullptr;
     p->sid = p->pgid = 0;
 }
 void terminal_exit(Task* task) {
-    if (task->controlling_pty && task->pid == task->sid)
-        detach_pty(task->controlling_pty);
-    task->controlling_pty = nullptr;
-    task->controlling_console = false;
+    if (task->process->controlling_pty && task->process->pid == task->process->sid)
+        detach_pty(task->process->controlling_pty);
+    task->process->controlling_pty = nullptr;
+    task->process->controlling_console = false;
 }
 static int64_t attach_pty(Pty* p, bool force) {
-    if (current->controlling_pty == p)
+    if (current->process->controlling_pty == p)
         return 0;
-    if (current->pid != current->sid || current->controlling_pty || current->controlling_console)
+    if (current->process->pid != current->process->sid || current->process->controlling_pty ||
+        current->process->controlling_console)
         return -1;
-    if (p->sid && p->sid != current->sid) {
+    if (p->sid && p->sid != current->process->sid) {
         if (!force)
             return -1;
         detach_pty(p);
     }
-    p->sid = current->sid;
-    p->pgid = current->pgid;
-    current->controlling_pty = p;
+    p->sid = current->process->sid;
+    p->pgid = current->process->pgid;
+    current->process->controlling_pty = p;
     return 0;
 }
 
@@ -284,10 +286,10 @@ bool device_open(Handle* h) {
         return true;
     auto kind = h->node->device;
     if (kind == Device::tty) {
-        if (!current || (!current->controlling_pty && !current->controlling_console))
+        if (!current || (!current->process->controlling_pty && !current->process->controlling_console))
             return false;
-        if (current->controlling_pty) {
-            h->pty = current->controlling_pty;
+        if (current->process->controlling_pty) {
+            h->pty = current->process->controlling_pty;
             h->pty->slaves++;
         }
         return true;
@@ -320,8 +322,8 @@ bool device_open(Handle* h) {
         h->pty = &ptys[id];
         h->pty->slaves++;
         h->writer = false;
-        if (current && !(h->flags & 0400) && !current->controlling_pty &&
-            !current->controlling_console && current->pid == current->sid && !h->pty->sid)
+        if (current && !(h->flags & 0400) && !current->process->controlling_pty &&
+            !current->process->controlling_console && current->process->pid == current->process->sid && !h->pty->sid)
             attach_pty(h->pty, false);
     }
     return true;
@@ -506,7 +508,7 @@ struct FbFix {
 };
 static_assert(sizeof(FbVar) == 160 && sizeof(FbFix) == 80);
 static int64_t output(uint64_t dst, const void* data, size_t len) {
-    return current->memory.copy_out(dst, data, len) ? 0 : -14;
+    return current->memory->space.copy_out(dst, data, len) ? 0 : -14;
 }
 int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     auto kind = h->node->device;
@@ -557,7 +559,7 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
         }
         if (request == 0x4601) {
             FbVar var;
-            if (!current->memory.copy_in(&var, arg, sizeof(var)))
+            if (!current->memory->space.copy_in(&var, arg, sizeof(var)))
                 return -14;
             return var.xres == fb->width && var.yres == fb->height && var.bpp == fb->bpp ? 0 : -22;
         }
@@ -609,18 +611,19 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     case 0x5402:
     case 0x5403:
     case 0x5404:
-        return current->memory.copy_in(term, arg, sizeof(*term)) ? 0 : -14;
+        return current->memory->space.copy_in(term, arg, sizeof(*term)) ? 0 : -14;
     case 0x540f:
         return output(arg, group, 4);
     case 0x5410: {
         int next_group;
-        if (!current->memory.copy_in(&next_group, arg, 4))
+        if (!current->memory->space.copy_in(&next_group, arg, 4))
             return -14;
         if (next_group <= 0)
             return -22;
         bool member = false;
         for (auto& task : tasks)
-            if (task.state != State::empty && task.pgid == next_group && task.sid == current->sid)
+            if (task.state != State::empty && task.process->pgid == next_group &&
+                task.process->sid == current->process->sid)
                 member = true;
         if (!member)
             return -1;
@@ -630,19 +633,19 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     case 0x540e:
         if (h->pty)
             return attach_pty(h->pty, arg != 0);
-        current->controlling_console = true;
-        console_pgid = current->pgid;
+        current->process->controlling_console = true;
+        console_pgid = current->process->pgid;
         return 0;
     case 0x5422:
-        if (h->pty && current->controlling_pty == h->pty) {
-            if (current->pid == current->sid)
+        if (h->pty && current->process->controlling_pty == h->pty) {
+            if (current->process->pid == current->process->sid)
                 detach_pty(h->pty);
-            current->controlling_pty = nullptr;
+            current->process->controlling_pty = nullptr;
         } else
-            current->controlling_console = false;
+            current->process->controlling_console = false;
         return 0;
     case 0x5429: {
-        int sid = h->pty ? h->pty->sid : current->sid;
+        int sid = h->pty ? h->pty->sid : current->process->sid;
         return output(arg, &sid, sizeof(sid));
     }
     case 0x5413: {
@@ -652,7 +655,7 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     }
     case 0x5414: {
         uint16_t size[4];
-        if (!current->memory.copy_in(size, arg, sizeof(size)))
+        if (!current->memory->space.copy_in(size, arg, sizeof(size)))
             return -14;
         if (h->pty) {
             bool changed = h->pty->rows != size[0] || h->pty->columns != size[1];
@@ -675,7 +678,7 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     case 0x40045431:
         if (!h->pty || !h->writer)
             return -25;
-        return current->memory.valid(arg, 4) ? 0 : -14;
+        return current->memory->space.valid(arg, 4) ? 0 : -14;
     case 0x5600: {
         int free_vt = 1;
         return output(arg, &free_vt, 4);
@@ -685,7 +688,7 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
         return output(arg, mode, sizeof(mode));
     }
     case 0x5602:
-        return current->memory.valid(arg, 8) ? 0 : -14;
+        return current->memory->space.valid(arg, 8) ? 0 : -14;
     case 0x5603: {
         uint16_t state[] = {1, 0, 2};
         return output(arg, state, sizeof(state));

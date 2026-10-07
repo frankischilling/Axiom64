@@ -3,6 +3,7 @@
 #include "devices.hpp"
 #include "ipc.hpp"
 #include "signals.hpp"
+#include "futex.hpp"
 
 namespace ax {
 Task tasks[max_tasks];
@@ -13,16 +14,77 @@ const char* test_suite = "AXIOM64_SUITE=full";
 const char* test_phase = "AXIOM64_PHASE=none";
 static int next_pid = 1;
 
+template <class T> static T* make_resource() {
+    auto result = static_cast<T*>(alloc(sizeof(T)));
+    if (result)
+        *result = T{};
+    return result;
+}
+static void release_memory(Task* t) {
+    auto memory = t->memory;
+    if (!memory)
+        return;
+    if (memory->references == 1) {
+        shared_memory_release(t);
+        if (memory->space.root && read_cr3() == memory->space.root)
+            activate_kernel_memory();
+        memory->space.destroy();
+    }
+    if (!--memory->references)
+        release(memory);
+    t->memory = nullptr;
+}
+static void release_files(FileTable* table) {
+    if (table && !--table->references) {
+        for (auto& fd : table->entries)
+            close_handle(fd.handle);
+        release(table);
+    }
+}
+static FileTable* copy_files(const FileTable* source) {
+    auto table = make_resource<FileTable>();
+    if (table)
+        for (unsigned i = 0; i < max_fds; i++) {
+            table->entries[i] = source->entries[i];
+            retain(table->entries[i].handle);
+        }
+    return table;
+}
+static void release_resources(Task* t) {
+    futex_discard(*t);
+    release_memory(t);
+    release_files(t->files);
+    t->files = nullptr;
+    if (t->fs && !--t->fs->references)
+        release(t->fs);
+    t->fs = nullptr;
+    if (t->handlers && !--t->handlers->references)
+        release(t->handlers);
+    t->handlers = nullptr;
+}
 Task* new_task() {
+    if (next_pid == INT32_MAX)
+        return nullptr;
     for (auto& t : tasks)
         if (t.state == State::empty) {
             memset(&t, 0, sizeof(t));
+            t.process = make_resource<Process>();
+            t.memory = make_resource<MemoryContext>();
+            t.files = make_resource<FileTable>();
+            t.fs = make_resource<FsContext>();
+            t.handlers = make_resource<SignalHandlers>();
+            if (!t.process || !t.memory || !t.files || !t.fs || !t.handlers) {
+                release_resources(&t);
+                release(t.process);
+                t.process = nullptr;
+                return nullptr;
+            }
             t.pid = next_pid++;
+            t.process->pid = t.pid;
+            t.process->leader = &t;
             t.state = State::runnable;
-            t.umask = 0022;
-            t.cwd[0] = '/';
-            t.cwd[1] = 0;
-            t.cwd_node = root_node;
+            t.fs->cwd[0] = '/';
+            t.fs->cwd_node = root_node;
             t.fpu[0] = 0x7f;
             t.fpu[1] = 3;
             *reinterpret_cast<uint32_t*>(t.fpu + 24) = 0x1f80;
@@ -34,85 +96,196 @@ int allocate_fd(Task* t, Handle* h, int start, bool cloexec) {
     if (start < 0)
         return -22;
     for (unsigned i = start; i < max_fds; i++)
-        if (!t->fds[i].handle) {
-            t->fds[i] = {h, cloexec};
+        if (!t->files->entries[i].handle) {
+            t->files->entries[i] = {h, cloexec};
             return i;
         }
     return -24;
 }
-int fork_task(Frame* f, bool share, uint64_t stack) {
+static constexpr uint64_t clone_vm = 0x100, clone_fs = 0x200, clone_files = 0x400,
+                          clone_sighand = 0x800, clone_vfork = 0x4000, clone_thread = 0x10000,
+                          clone_sysvsem = 0x40000, clone_settls = 0x80000,
+                          clone_parent_settid = 0x100000, clone_child_cleartid = 0x200000,
+                          clone_detached = 0x400000, clone_child_settid = 0x1000000;
+int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid,
+               uint64_t child_tid, uint64_t tls) {
+    constexpr uint64_t supported = 0xff | clone_vm | clone_fs | clone_files | clone_sighand |
+                                   clone_vfork | clone_thread | clone_sysvsem | clone_settls |
+                                   clone_parent_settid | clone_child_cleartid | clone_detached |
+                                   clone_child_settid;
+    if (flags & ~supported)
+        return -38;
+    bool thread = flags & clone_thread, vm = flags & clone_vm;
+    if (!thread && (flags & 0xff) != 17)
+        return -38; // This slice supports SIGCHLD process children and thread groups.
+    if (((flags & clone_sighand) && !vm) ||
+        (thread && (!(flags & clone_sighand) || (flags & (0xff | clone_vfork)))) ||
+        ((flags & clone_vfork) && !vm) || ((flags & 0xff) != 0 && (flags & 0xff) != 17) ||
+        (vm && !(flags & clone_vfork) && !stack))
+        return -22;
+    if (stack && (stack < 8 || !current->memory->space.valid(stack - 8, 8, true)))
+        return -14;
+    if ((flags & clone_settls) && tls >= user_limit)
+        return -22;
+    if ((flags & clone_parent_settid) &&
+        !current->memory->space.valid(parent_tid, 4, true))
+        return -14;
+    if ((flags & (clone_child_settid | clone_child_cleartid)) && child_tid &&
+        !current->memory->space.valid(child_tid, 4, true))
+        return -14;
+    if ((flags & clone_child_settid) && !child_tid)
+        return -14;
     Task* child = new_task();
     if (!child)
         return -11;
-    if (share) {
+    if (vm) {
+        release_memory(child);
         child->memory = current->memory;
-        child->memory_shared = true;
-        child->vfork_parent = current->pid;
-    } else if (!child->memory.clone_from(current->memory)) {
-        child->state = State::empty;
-        return -12;
+        child->memory->references++;
+    } else {
+        if (!child->memory->space.clone_from(current->memory->space)) {
+            release_resources(child);
+            release(child->process);
+            child->process = nullptr;
+            child->state = State::empty;
+            return -12;
+        }
+        child->memory->brk_base = current->memory->brk_base;
+        child->memory->brk_end = current->memory->brk_end;
+        shared_memory_fork(child, current);
+    }
+    if (flags & clone_files) {
+        release_files(child->files);
+        child->files = current->files;
+        child->files->references++;
+    } else
+        for (unsigned i = 0; i < max_fds; i++) {
+            child->files->entries[i] = current->files->entries[i];
+            retain(child->files->entries[i].handle);
+        }
+    if (flags & clone_fs) {
+        release(child->fs);
+        child->fs = current->fs;
+        child->fs->references++;
+    } else {
+        *child->fs = *current->fs;
+        child->fs->references = 1;
+    }
+    if (flags & clone_sighand) {
+        release(child->handlers);
+        child->handlers = current->handlers;
+        child->handlers->references++;
+    } else
+        memcpy(child->handlers->signal_actions, current->handlers->signal_actions,
+               sizeof(child->handlers->signal_actions));
+    if (thread) {
+        release(child->process);
+        child->process = current->process;
+        child->process->live_threads++;
+    } else {
+        child->process->parent = current->process->pid;
+        child->process->pgid = current->process->pgid;
+        child->process->sid = current->process->sid;
+        child->process->controlling_pty = current->process->controlling_pty;
+        child->process->controlling_console = current->process->controlling_console;
+        memcpy(child->process->executable, current->process->executable,
+               sizeof(child->process->executable));
     }
     child->frame = *f;
     child->frame.rax = 0;
     if (stack)
         child->frame.rsp = stack;
-    child->parent = current->pid;
-    child->pgid = current->pgid;
-    child->sid = current->sid;
-    child->controlling_pty = current->controlling_pty;
-    child->controlling_console = current->controlling_console;
-    child->fs_base = current->fs_base;
-    child->brk_base = current->brk_base;
-    child->brk_end = current->brk_end;
+    child->fs_base = (flags & clone_settls) ? tls : current->fs_base;
     child->signal_mask = current->signal_mask;
-    child->altstack_base = current->altstack_base;
-    child->altstack_size = current->altstack_size;
-    child->umask = current->umask;
-    memcpy(child->signal_actions, current->signal_actions, sizeof(child->signal_actions));
-    memcpy(child->cwd, current->cwd, sizeof(child->cwd));
-    child->cwd_node = current->cwd_node;
-    memcpy(child->executable, current->executable, sizeof(child->executable));
-    memcpy(child->fpu, current->fpu, sizeof(child->fpu));
-    for (unsigned i = 0; i < max_fds; i++) {
-        child->fds[i] = current->fds[i];
-        retain(child->fds[i].handle);
+    if (!vm || (flags & clone_vfork)) {
+        child->altstack_base = current->altstack_base;
+        child->altstack_size = current->altstack_size;
     }
-    shared_memory_fork(child, current);
-    if (share) {
+    memcpy(child->fpu, current->fpu, sizeof(child->fpu));
+    uint32_t tid = child->pid;
+    if (flags & clone_parent_settid)
+        current->memory->space.copy_out(parent_tid, &tid, 4);
+    if (flags & clone_child_settid)
+        child->memory->space.copy_out(child_tid, &tid, 4);
+    if (flags & clone_child_cleartid)
+        child->tid_address = child_tid;
+    if (flags & clone_vfork) {
+        child->vfork_parent = current->pid;
         current->state = State::blocked;
         current->wait = Wait::vfork;
         current->wait_pid = child->pid;
     }
     return child->pid;
 }
-void exit_task(Task* t, int status) {
-    t->exit_status = status;
-    terminal_exit(t);
-    shared_memory_release(t);
-    t->state = State::zombie;
-    t->cwd_node = nullptr;
-    for (auto& fd : t->fds) {
-        close_handle(fd.handle);
-        fd = {};
-    }
-    if (t->tid_address) {
-        uint32_t zero = 0;
-        t->memory.copy_out(t->tid_address, &zero, 4);
-    }
+int fork_task(Frame* frame, bool share, uint64_t stack) {
+    return clone_task(frame, 17 | (share ? clone_vm | clone_vfork : 0), stack, 0, 0, 0);
+}
+static void finish_process(Task* last) {
+    auto process = last->process;
+    process->stopped = false;
+    terminal_exit(last);
+    process->leader->state = State::zombie;
     for (auto& child : tasks)
-        if (child.parent == t->pid && child.state != State::empty)
-            child.parent = 1;
-    t->vfork_parent = 0;
+        if (child.state != State::empty && child.process->parent == process->pid)
+            child.process->parent = 1;
     for (auto& parent : tasks)
-        if (parent.pid == t->parent && parent.state != State::empty)
-            queue_signal(&parent, 17, t->pid, (status & 127) ? 2 : 1,
-                         (status & 127) ? status & 127 : status >> 8);
-    if (t->pid == 1) {
+        if (parent.state != State::empty && parent.process->leader == &parent &&
+            parent.process->pid == process->parent)
+            queue_process_signal(parent.process, 17, process->pid,
+                                 (process->exit_status & 127) ? 2 : 1,
+                                 (process->exit_status & 127) ? process->exit_status & 127
+                                                             : process->exit_status >> 8);
+    if (process->pid == 1) {
         if (test_mode)
-            poweroff((status & 127) ? 128 + (status & 127) : (status >> 8) & 255);
+            poweroff((process->exit_status & 127) ? 128 + (process->exit_status & 127)
+                                                 : (process->exit_status >> 8) & 255);
         panic("init exited");
     }
 }
+static void clear_tid(Task* t) {
+    if (t->tid_address) {
+        uint32_t zero = 0;
+        if (t->memory->space.copy_out(t->tid_address, &zero, 4))
+            futex_wake(t, t->tid_address, 1, false);
+    }
+    t->tid_address = 0;
+}
+void exit_thread(Task* t, int status) {
+    if (t->state == State::empty || t->state == State::zombie)
+        return;
+    auto process = t->process;
+    clear_tid(t);
+    t->vfork_parent = 0;
+    t->wait = Wait::none;
+    t->state = State::zombie;
+    release_resources(t);
+    if (process->leader == t || process->live_threads == 1)
+        process->exit_status = status;
+    if (!--process->live_threads)
+        finish_process(t);
+    if (process->leader != t) {
+        t->state = State::empty;
+        t->process = nullptr;
+    }
+}
+void exit_task(Task* t, int status) {
+    auto process = t->process;
+    for (auto& member : tasks)
+        if (&member != t && member.state != State::empty && member.state != State::zombie &&
+            member.process == process)
+            exit_thread(&member, status);
+    // Last-thread notification and init's test exit must use the group status.
+    process->exit_status = status;
+    exit_thread(t, status);
+}
+void reap_task(Task* t) {
+    if (t->state != State::zombie || t->process->live_threads || t->process->leader != t)
+        panic("invalid process reap");
+    release(t->process);
+    t->process = nullptr;
+    t->state = State::empty;
+}
+
 static bool awaken(Task& t) {
     if (t.state != State::blocked)
         return t.state == State::runnable;
@@ -125,17 +298,18 @@ static bool awaken(Task& t) {
     case Wait::read:
     case Wait::write:
         ready = t.wait_fd < 0 || unsigned(t.wait_fd) >= max_fds ||
-                handle_ready(t.fds[t.wait_fd].handle, t.wait == Wait::write);
+                handle_ready(t.files->entries[t.wait_fd].handle, t.wait == Wait::write);
         break;
     case Wait::child:
         for (auto& c : tasks)
-            if (c.parent == t.pid &&
-                (c.state == State::zombie ||
-                 (c.state == State::stopped && !c.stop_reported && (t.frame.rdx & 2)) ||
-                 (c.continued && (t.frame.rdx & 8))) &&
-                (t.wait_pid > 0    ? c.pid == t.wait_pid
-                 : t.wait_pid == 0 ? c.pgid == t.pgid
-                 : t.wait_pid < -1 ? c.pgid == -t.wait_pid
+            if (c.state != State::empty && c.process->leader == &c &&
+                c.process->parent == t.process->pid &&
+                ((c.state == State::zombie && !c.process->live_threads) ||
+                 (c.process->stopped && !c.process->stop_reported && (t.frame.rdx & 2)) ||
+                 (c.process->continued && (t.frame.rdx & 8))) &&
+                (t.wait_pid > 0    ? c.process->pid == t.wait_pid
+                 : t.wait_pid == 0 ? c.process->pgid == t.process->pgid
+                 : t.wait_pid < -1 ? c.process->pgid == -t.wait_pid
                                    : true))
                 ready = true;
         break;
@@ -152,6 +326,9 @@ static bool awaken(Task& t) {
                 ready = false;
         break;
     case Wait::signal:
+        break;
+    case Wait::futex:
+        ready = futex_ready(t);
         break;
     default:
         ready = true;
@@ -179,7 +356,7 @@ Frame* schedule(Frame* f, bool yield) {
             if (!signal_deliver(*t))
                 continue;
             current = t;
-            write_cr3(t->memory.root);
+            write_cr3(t->memory->space.root);
             arch_task(t->fs_base);
             asm volatile("fxrstor64 %0" ::"m"(t->fpu));
             return &t->frame;
@@ -289,7 +466,7 @@ static int load_image(AddressSpace& mem, Node* file, uint64_t base, Image& image
 }
 int exec_task(Task* t, const char* path, const char* const* argv, const char* const* envp) {
     Path name;
-    name.base = t->cwd_node;
+    name.base = t->fs->cwd_node;
     if (strlen(path) >= sizeof(name.text))
         return -36;
     memcpy(name.text, path, strlen(path) + 1);
@@ -400,15 +577,48 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
     memory.copy_out(cursor, &value, 8);
     cursor += 8;
     memory.copy_out(cursor, aux, sizeof(aux));
-    AddressSpace old = t->memory;
-    if (!t->memory_shared)
-        shared_memory_release(t);
-    t->memory = memory;
+    auto replacement = make_resource<MemoryContext>();
+    bool private_files = t->files->references > 1, private_handlers = t->handlers->references > 1;
+    auto files = private_files ? copy_files(t->files) : nullptr;
+    auto handlers = private_handlers ? make_resource<SignalHandlers>() : nullptr;
+    if (!replacement || (private_files && !files) || (private_handlers && !handlers)) {
+        release(replacement);
+        release_files(files);
+        release(handlers);
+        memory.destroy();
+        return -12;
+    }
+    if (handlers) {
+        *handlers = *t->handlers;
+        handlers->references = 1;
+    }
+    auto process = t->process;
+    for (auto& member : tasks)
+        if (&member != t && member.state != State::empty && member.state != State::zombie &&
+            member.process == process)
+            exit_thread(&member, 0);
+    if (process->leader != t) {
+        process->leader->state = State::empty;
+        process->leader->process = nullptr;
+        process->leader = t;
+        t->pid = process->pid;
+    }
+    replacement->space = memory;
+    clear_tid(t);
     if (t == current)
         write_cr3(memory.root);
-    if (!t->memory_shared)
-        old.destroy();
-    t->memory_shared = false;
+    release_memory(t);
+    t->memory = replacement;
+    if (files) {
+        release_files(t->files);
+        t->files = files;
+    }
+    if (handlers) {
+        if (!--t->handlers->references)
+            release(t->handlers);
+        t->handlers = handlers;
+    }
+    futex_discard(*t);
     t->vfork_parent = 0;
     t->frame = {};
     t->frame.rip = entry;
@@ -417,14 +627,14 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
     t->frame.ss = 0x1b;
     t->frame.rflags = 0x202;
     t->fs_base = 0;
-    t->brk_base = t->brk_end = align_up(image.end);
+    t->memory->brk_base = t->memory->brk_end = align_up(image.end);
     t->tid_address = 0;
     t->altstack_base = t->altstack_size = 0;
-    for (auto& action : t->signal_actions)
+    for (auto& action : t->handlers->signal_actions)
         if (action[0] != 1)
             memset(action, 0, sizeof(action));
-    memcpy(t->executable, path, min(strlen(path) + 1, sizeof(t->executable)));
-    for (auto& fd : t->fds)
+    memcpy(t->process->executable, path, min(strlen(path) + 1, sizeof(t->process->executable)));
+    for (auto& fd : t->files->entries)
         if (fd.cloexec) {
             close_handle(fd.handle);
             fd = {};
@@ -439,12 +649,12 @@ void start_init(const char* path) {
     Task* init = new_task();
     if (!init)
         panic("init allocation");
-    init->pgid = init->pid;
-    init->sid = init->pid;
-    init->controlling_console = true;
+    init->process->pgid = init->pid;
+    init->process->sid = init->pid;
+    init->process->controlling_console = true;
     auto console = lookup("/dev/console");
     for (unsigned i = 0; i < 3; i++)
-        init->fds[i].handle = open_handle(console, i ? 1 : 0);
+        init->files->entries[i].handle = open_handle(console, i ? 1 : 0);
     const char* args[] = {path, nullptr};
     const char* env[] = {"PATH=/bin:/usr/bin:/sbin:/usr/sbin",
                          "HOME=/root",
@@ -482,7 +692,7 @@ extern "C" Frame* handle_trap(Frame* f) {
         log("User exception: vector=%u rip=%x address=%x pid=%u signal=%u\n", f->vector, f->rip,
             cr2, uint64_t(current->pid), uint64_t(signal));
         if (current->signal_mask & (1ull << (signal - 1)) ||
-            current->signal_actions[signal - 1][0] == 1)
+            current->handlers->signal_actions[signal - 1][0] == 1)
             exit_task(current, signal);
         else
             queue_signal(current, signal, 0, f->vector == 14 ? (f->error & 1) ? 2 : 1 : 1, 0,

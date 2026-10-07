@@ -9,7 +9,8 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/arch.cpp`, `entry.asm` | CPU tables, interrupts, syscall entry, register frames, return to Ring 3 |
 | `kernel/memory.cpp` | Physical allocation, page references, user page tables, validated user copies |
 | `kernel/pci.cpp`, `block.cpp` | PCI discovery, modern/legacy virtio block queues, raw sector I/O and flush |
-| `kernel/task.cpp` | ELF loading, fork/exec/exit/wait, scheduling, descriptors, TLS, FPU state |
+| `kernel/task.cpp` | Process/thread ownership, ELF loading, clone/fork/exec/exit/wait, scheduling, TLS, FPU state |
+| `kernel/futex.cpp` | Expected-value waits, wake/bitsets, requeue, deadlines, shared backing lifetime |
 | `kernel/vfs.cpp`, `ramfs.cpp` | Filesystem dispatch, mount namespace, RAM volumes, initramfs, file descriptions, pipes |
 | `kernel/ext2.cpp` | Classic ext2 volumes, mount validation, allocation, file/directory operations, synchronous commits |
 | `kernel/syscall.cpp` | Linux syscall numbers, ABI structures, errors, blocking operations |
@@ -18,19 +19,19 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/devices.cpp` | Serial terminal, PTYs, framebuffer, PS/2 events, Linux block-device file operations |
 | `userspace/init.c` | Desktop and serial shell startup, child reaping, console shell restart |
 
-Each process has four-level user page tables with user, write, and execute permissions. The upper half shares supervisor mappings. Syscall buffers are validated across the full range and copied through the physical mapping. Fork copies private pages and retains shared page references. The scheduler uses one CPU, bounded task slots, and timer preemption; syscalls execute with interrupts masked.
+Each memory context has four-level user page tables with user, write, and execute permissions. The upper half shares supervisor mappings. Syscall buffers are validated across the full range and copied through the physical mapping. Clone can share the address space, file table, working directory/umask, and signal dispositions; fork copies private pages and retains shared page references. The scheduler uses one CPU, bounded task slots, and timer preemption; syscalls execute with interrupts masked.
 
-The ELF loader validates ELF64 segments, loads a `PT_INTERP` musl interpreter, and supplies argv, environment, and the auxiliary vector. Failed exec preserves the old address space. File descriptions share offsets across fork and dup; close-on-exec belongs to descriptors. Each task preserves FS base and FPU state.
+The ELF loader validates ELF64 segments, loads a `PT_INTERP` musl interpreter, and supplies argv, environment, and the auxiliary vector. Failed exec preserves the old address space. Successful exec ends other group members and unshares the descriptor/disposition tables. File descriptions share offsets across fork and dup; close-on-exec belongs to descriptors. Each thread preserves FS base and FPU state. [Thread ownership and futexes](threads.md) describe exit/reaping, clear-TID, supported clone flags, and synchronization limits.
 
 Signals use the Linux x86-64 frame layout and a userspace return trampoline. Supported behavior includes caught faults, masks, alternate stacks, restartable I/O, alarms, SIGCHLD, and stop/continue reporting. PTYs track controlling sessions and foreground process groups, translate terminal input, and deliver terminal interrupt and resize signals.
 
-The framebuffer maps Limine's physical pixel storage into userspace. Xorg's fbdev driver uses `/dev/fb0` and platform-device metadata; evdev reads PS/2 events from `/dev/input/event0` and `event1`. Unix sockets carry X11 traffic. The desktop uses software drawing with GLX disabled and Xorg's input thread disabled because guest threads are not implemented.
+The framebuffer maps Limine's physical pixel storage into userspace. Xorg's fbdev driver uses `/dev/fb0` and platform-device metadata; evdev reads PS/2 events from `/dev/input/event0` and `event1`. Unix sockets carry X11 traffic. The desktop uses software drawing with GLX disabled. Xorg's input thread remains disabled pending dedicated coverage of that path.
 
 ## Current limits
 
 This is a development OS with a tested compatibility surface. Unsupported syscalls return `ENOSYS`; these working programs do not imply complete Linux compatibility.
 
-- One CPU, 64 task slots, 128 descriptors per task. No userspace threads or SMP.
+- One CPU, 64 task slots, 128 descriptors per file table. Musl pthreads and C++ threads work within [the tested slice](threads.md); SMP and complete POSIX threading remain planned.
 - Root identity only. No multiuser permission enforcement, security boundary for untrusted workloads, or cryptographic random generator.
 - A RAM root, independent RAM mounts, raw virtio disks, and [writable classic ext2 data volumes](ext2.md). Disk-backed root, advanced filesystems/recovery, a network stack, and a package installation service remain planned. See [mounts](vfs.md) and [storage](storage.md) for interfaces and limits.
 - Unix stream sockets without descriptor passing. No TCP/UDP, datagram sockets, or complete socket option support.

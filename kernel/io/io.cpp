@@ -121,9 +121,9 @@ static int64_t transfer(Task& task, IoRequest& request, const Iovec& vector, siz
             return done ? int64_t(done) : -14;
         int64_t n;
         if (request.socket)
-            n = request.write ? socket_write(h->socket, buffer, count)
-                              : socket_read(h->socket, buffer, count, request.flags & 2,
-                                            peek_offset + done);
+            n = request.write
+                    ? socket_write(h->socket, buffer, count)
+                    : socket_read(h->socket, buffer, count, request.flags & 2, peek_offset + done);
         else
             n = request.write ? write_handle(h, buffer, count) : read_handle(h, buffer, count);
         if (n < 0) {
@@ -134,9 +134,8 @@ static int64_t transfer(Task& task, IoRequest& request, const Iovec& vector, siz
         if (!request.write && n && !task.memory->space.copy_out(vector.base + done, buffer, n))
             return done ? int64_t(done) : -14;
         done += n;
-        if (size_t(n) < count ||
-            (!request.write && !request.socket && h->node &&
-             (h->node->mode & 0170000) == character))
+        if (size_t(n) < count || (!request.write && !request.socket && h->node &&
+                                  (h->node->mode & 0170000) == character))
             break;
     }
     return done;
@@ -172,15 +171,16 @@ static int64_t attempt(Task& task, IoRequest& request) {
     if (result == -11 && !(h->flags & 04000) && !(request.flags & 0x40) && !request.positioned)
         return would_block;
     if (result >= 0 && f.rax == 45 && f.r8) {
-        int error = socket_output_address(task, h->socket->peer ? h->socket->peer : h->socket,
-                                          f.r8, f.r9);
+        int error =
+            socket_output_address(task, h->socket->peer ? h->socket->peer : h->socket, f.r8, f.r9);
         if (error)
             return error;
     }
     if (result >= 0 && f.rax == 47) {
         uint64_t control_length = 0;
         uint32_t flags = 0;
-        if (!task.memory->space.copy_out(f.rsi + offsetof(Message, control_length), &control_length, 8) ||
+        if (!task.memory->space.copy_out(f.rsi + offsetof(Message, control_length), &control_length,
+                                         8) ||
             !task.memory->space.copy_out(f.rsi + offsetof(Message, flags), &flags, 4))
             return -14;
     }

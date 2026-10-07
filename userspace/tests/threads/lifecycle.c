@@ -19,16 +19,20 @@
 #ifndef LIFE_LINKAGE
 #define LIFE_LINKAGE "static"
 #endif
-#define CHECK(expr) do { if (!(expr)) { \
-    fprintf(stderr, "LIFECYCLE_FAIL line=%d: %s errno=%d\n", __LINE__, #expr, errno); \
-    exit(1); } } while (0)
+#define CHECK(expr)                                                                                \
+    do {                                                                                           \
+        if (!(expr)) {                                                                             \
+            fprintf(stderr, "LIFECYCLE_FAIL line=%d: %s errno=%d\n", __LINE__, #expr, errno);      \
+            exit(1);                                                                               \
+        }                                                                                          \
+    } while (0)
 static _Atomic int* relay;
 static _Atomic int blocked_word;
 static const char* helper = "/bin/abi-static";
 static void wait_word(_Atomic int* word, int expected) {
     struct timespec limit = {2, 0};
-    CHECK(syscall(SYS_futex, word, 0, expected, &limit, 0, 0) == 0 ||
-          errno == EAGAIN || errno == EINTR);
+    CHECK(syscall(SYS_futex, word, 0, expected, &limit, 0, 0) == 0 || errno == EAGAIN ||
+          errno == EINTR);
 }
 static void wake_word(_Atomic int* word) {
     CHECK(syscall(SYS_futex, word, 1, 64, 0, 0, 0) >= 0);
@@ -85,8 +89,8 @@ struct CloneArgs {
     _Atomic int parent_tid, child_tid, seen;
     int fd;
 };
-extern long test_clone(int (*fn)(void*), void* stack, unsigned long flags,
-                       void* arg, void* parent_tid, void* child_tid);
+extern long test_clone(int (*fn)(void*), void* stack, unsigned long flags, void* arg,
+                       void* parent_tid, void* child_tid);
 static int clone_worker(void* pointer) {
     struct CloneArgs* args = pointer;
     CHECK(getpid() == syscall(SYS_gettid) && getpid() == atomic_load(&args->child_tid));
@@ -162,11 +166,11 @@ int main(int argc, char** argv) {
     CHECK(args.fd >= 0);
     void* stack = mmap(0, 65536, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     CHECK(stack != MAP_FAILED);
-    int flags = SIGCHLD | CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND |
-                CLONE_PARENT_SETTID | CLONE_CHILD_SETTID | CLONE_CHILD_CLEARTID;
+    int flags = SIGCHLD | CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_PARENT_SETTID |
+                CLONE_CHILD_SETTID | CLONE_CHILD_CLEARTID;
     /* Exercise the kernel flags independently of the libc clone wrapper. */
     long clone_result = test_clone(clone_worker, (char*)stack + 65536, flags, &args,
-                                  &args.parent_tid, &args.child_tid);
+                                   &args.parent_tid, &args.child_tid);
     if (clone_result < 0)
         errno = -clone_result;
     child = clone_result;

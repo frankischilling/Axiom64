@@ -1,12 +1,14 @@
 CXX = g++
 NASM = nasm
 PYTHON = python3
+CLANG_FORMAT ?= clang-format-20
 CXXFLAGS = -std=c++20 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pie -fno-threadsafe-statics -fno-use-cxa-atexit -fno-builtin -m64 -mno-red-zone -mcmodel=kernel -mgeneral-regs-only -Ikernel/include -Ivendor
 rwildcard = $(foreach entry,$(wildcard $1*),$(call rwildcard,$(entry)/,$2) $(filter $(subst *,%,$2),$(entry)))
 KERNEL_SOURCES = $(filter-out kernel/tests/%,$(call rwildcard,kernel/,*.cpp))
 KERNEL_OBJECTS = $(patsubst kernel/%.cpp,build/kernel/%.o,$(KERNEL_SOURCES)) build/kernel/arch/x86_64/entry.o
+FORMAT_SOURCES = $(call rwildcard,kernel/,*.cpp) $(call rwildcard,kernel/include/,*.hpp) $(foreach pattern,*.c *.cpp,$(call rwildcard,userspace/,$(pattern)))
 
-.PHONY: all image test test-storage test-ext2 test-threads test-thread-io test-virtqueue test-virtio run run-serial deps busybox sources clean
+.PHONY: all image test test-storage test-ext2 test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
 all: image
 deps:
 	$(PYTHON) scripts/fetch.py
@@ -100,6 +102,10 @@ test-virtqueue: build/virtqueue-tests
 	./build/virtqueue-tests
 test-virtio:
 	$(PYTHON) scripts/virtio_test.py
+format:
+	$(CLANG_FORMAT) -i $(FORMAT_SOURCES)
+check-format:
+	$(CLANG_FORMAT) --dry-run --Werror $(FORMAT_SOURCES)
 run: image
 	qemu-system-x86_64 -machine pc -cpu max -m 2G -cdrom build/axiom64.iso -serial stdio -no-reboot
 run-serial: image

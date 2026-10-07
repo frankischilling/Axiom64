@@ -16,10 +16,19 @@
 #include <time.h>
 #include <unistd.h>
 
-#define CHECK(expr) do { if (!(expr)) { \
-    fprintf(stderr, "VFS_FAIL line=%d: %s errno=%d (%s)\n", __LINE__, #expr, errno, strerror(errno)); \
-    exit(1); } } while (0)
-#define ERROR(expr, code) do { errno = 0; CHECK((expr) == -1 && errno == (code)); } while (0)
+#define CHECK(expr)                                                                                \
+    do {                                                                                           \
+        if (!(expr)) {                                                                             \
+            fprintf(stderr, "VFS_FAIL line=%d: %s errno=%d (%s)\n", __LINE__, #expr, errno,        \
+                    strerror(errno));                                                              \
+            exit(1);                                                                               \
+        }                                                                                          \
+    } while (0)
+#define ERROR(expr, code)                                                                          \
+    do {                                                                                           \
+        errno = 0;                                                                                 \
+        CHECK((expr) == -1 && errno == (code));                                                    \
+    } while (0)
 static const char* volume = "/tmp/vfs-volume";
 static void put(const char* path, const char* text) {
     int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
@@ -119,7 +128,8 @@ int main(void) {
     CHECK(symlinkat("/tmp/vfs-volume/replaced", dir, "absolute") == 0);
     expect_fd(openat(dir, "absolute", O_RDONLY), "mounted");
     char target_text[80] = {0};
-    CHECK(readlinkat(dir, "shortcut", target_text, sizeof(target_text)) == 3 && !strcmp(target_text, "a/b"));
+    CHECK(readlinkat(dir, "shortcut", target_text, sizeof(target_text)) == 3 &&
+          !strcmp(target_text, "a/b"));
     ERROR(openat(dir, "replaced/", O_RDONLY), ENOTDIR);
     char long_name[256];
     memset(long_name, 'n', 255);

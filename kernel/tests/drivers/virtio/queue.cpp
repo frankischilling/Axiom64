@@ -3,17 +3,25 @@
 #include <cstdlib>
 #include "drivers/virtio/queue.hpp"
 
-#define CHECK(value) do { if (!(value)) { std::printf("VIRTQUEUE_FAIL line=%d: %s\n", __LINE__, #value); std::exit(1); } } while (0)
+#define CHECK(value)                                                                               \
+    do {                                                                                           \
+        if (!(value)) {                                                                            \
+            std::printf("VIRTQUEUE_FAIL line=%d: %s\n", __LINE__, #value);                         \
+            std::exit(1);                                                                          \
+        }                                                                                          \
+    } while (0)
 namespace {
 size_t pages_live, allocations_live;
 bool fail_pages, fail_metadata;
-}
+} // namespace
 namespace ax {
 uint64_t direct_map = 0;
 uint64_t page_alloc(size_t count) {
-    if (fail_pages) return 0;
+    if (fail_pages)
+        return 0;
     void* memory = std::aligned_alloc(page_size, count * page_size);
-    if (memory) pages_live += count;
+    if (memory)
+        pages_live += count;
     return reinterpret_cast<uint64_t>(memory);
 }
 void page_free(uint64_t address, size_t count) {
@@ -22,9 +30,11 @@ void page_free(uint64_t address, size_t count) {
     std::free(reinterpret_cast<void*>(address));
 }
 void* alloc(size_t bytes) {
-    if (fail_metadata) return nullptr;
+    if (fail_metadata)
+        return nullptr;
     void* memory = std::calloc(1, bytes);
-    if (memory) allocations_live++;
+    if (memory)
+        allocations_live++;
     return memory;
 }
 void release(void* memory) {
@@ -32,10 +42,14 @@ void release(void* memory) {
     allocations_live--;
     std::free(memory);
 }
-}
+} // namespace ax
 namespace {
 using namespace ax;
-struct WireDescriptor { uint64_t address; uint32_t length; uint16_t flags, next; };
+struct WireDescriptor {
+    uint64_t address;
+    uint32_t length;
+    uint16_t flags, next;
+};
 static_assert(sizeof(WireDescriptor) == 16);
 // Simulated device observes only the wire layout, not the queue's CPU metadata.
 struct Device {
@@ -43,9 +57,9 @@ struct Device {
     volatile uint16_t* available;
     volatile uint16_t* used;
     uint16_t taken = 0, produced = 0;
-    explicit Device(const SplitQueue& queue) : layout(queue.layout()),
-        available((volatile uint16_t*)physical(layout.available)),
-        used((volatile uint16_t*)physical(layout.used)) {
+    explicit Device(const SplitQueue& queue)
+        : layout(queue.layout()), available((volatile uint16_t*)physical(layout.available)),
+          used((volatile uint16_t*)physical(layout.used)) {
         CHECK(layout.size && available[0] == 1 && available[1] == 0 && used[1] == 0);
     }
     uint16_t take() {
@@ -70,7 +84,8 @@ struct Device {
     }
     void finish(uint32_t head, uint32_t length) {
         uint32_t entry[2]{head, length};
-        memcpy(physical(layout.used + 4 + size_t(produced & (layout.size - 1)) * sizeof(entry)), entry, sizeof(entry));
+        memcpy(physical(layout.used + 4 + size_t(produced & (layout.size - 1)) * sizeof(entry)),
+               entry, sizeof(entry));
         virtio_dma_barrier();
         used[1] = ++produced;
         virtio_dma_barrier();
@@ -172,10 +187,16 @@ static void bad_completions() {
         Device device(queue);
         int head = queue.submit(buffers, 2, 42);
         CHECK(head >= 0 && device.take() == head);
-        if (variant == 0) device.finish(UINT32_MAX, 1);
-        if (variant == 1) device.finish(device.descriptor(head).next, 1);
-        if (variant == 2) { device.finish(head, 1); device.finish(head, 1); }
-        if (variant == 3) device.finish(device.layout.size, 1);
+        if (variant == 0)
+            device.finish(UINT32_MAX, 1);
+        if (variant == 1)
+            device.finish(device.descriptor(head).next, 1);
+        if (variant == 2) {
+            device.finish(head, 1);
+            device.finish(head, 1);
+        }
+        if (variant == 3)
+            device.finish(device.layout.size, 1);
         if (variant == 4) {
             device.finish(head, 1);
             consume(queue, head, 42, 1);
@@ -208,7 +229,7 @@ static void errors_and_allocation() {
     CHECK(queue.submit(buffers, 5, 0) == -22);
     const VirtioBuffer order[]{{0x2000, 16, true}, {0x3000, 32, false}};
     CHECK(queue.submit(order, 2, 0) == -22);
-    const VirtioBuffer address[]{ {1ull << 52, 1, true}, {(1ull << 52) - 1, 2, true} };
+    const VirtioBuffer address[]{{1ull << 52, 1, true}, {(1ull << 52) - 1, 2, true}};
     CHECK(queue.submit(address, 1, 0) == -22 && queue.submit(address + 1, 1, 0) == -22);
     const VirtioBuffer oversized[]{{0x2000, UINT32_MAX, false}, {0x3000, 1, true}};
     CHECK(queue.submit(oversized, 2, 0) == -22 && device.available[1] == 0);
@@ -220,7 +241,7 @@ static void errors_and_allocation() {
     CHECK(queue.release());
     std::puts("VIRTQUEUE_ERROR_ALLOCATION_PASS");
 }
-}
+} // namespace
 int main() {
     geometry_and_rollover();
     concurrent_chains();

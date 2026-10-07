@@ -108,10 +108,11 @@ static int truncate(Node* node, size_t size) {
     if (size > 256 * 1024 * 1024)
         return -27;
     if (!node->owned || size > node->capacity) {
-        if (node->backing_physical && page_shared(node->backing_physical, node->capacity / page_size))
+        if (node->backing_physical &&
+            page_shared(node->backing_physical, node->capacity / page_size))
             return -16;
-        size_t cap = align_up(max(size, min(size_t(256 * 1024 * 1024),
-                                           max(size_t(65536), node->capacity * 2))));
+        size_t cap = align_up(
+            max(size, min(size_t(256 * 1024 * 1024), max(size_t(65536), node->capacity * 2))));
         uint64_t backing = page_alloc(cap / page_size);
         if (!backing)
             return -12;
@@ -205,8 +206,8 @@ static int stats(Mount* mount, FilesystemStats& result) {
         else if (nodes[i].mount == mount && !nodes[i].removed)
             files++;
     }
-    result = {0x858458f6, page_size, 0, 0, files,
-              free + sizeof(nodes) / sizeof(nodes[0]) - node_count};
+    result = {0x858458f6, page_size, 0,
+              0,          files,     free + sizeof(nodes) / sizeof(nodes[0]) - node_count};
     return 0;
 }
 static void destroy(Mount* mount) {
@@ -223,6 +224,7 @@ static void destroy(Mount* mount) {
         node = {};
     }
 }
-const FilesystemOps ramfs_ops = {find, create, link, remove, rename, read, write, truncate,
-                                 setattr, readdir, sync, map_shared, stats, destroy, nullptr, nullptr};
+const FilesystemOps ramfs_ops = {find,  create,   link,    remove,  rename, read,
+                                 write, truncate, setattr, readdir, sync,   map_shared,
+                                 stats, destroy,  nullptr, nullptr};
 } // namespace ax

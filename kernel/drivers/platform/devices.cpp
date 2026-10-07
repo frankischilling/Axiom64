@@ -286,7 +286,8 @@ bool device_open(Handle* h) {
         return true;
     auto kind = h->node->device;
     if (kind == Device::tty) {
-        if (!current || (!current->process->controlling_pty && !current->process->controlling_console))
+        if (!current ||
+            (!current->process->controlling_pty && !current->process->controlling_console))
             return false;
         if (current->process->controlling_pty) {
             h->pty = current->process->controlling_pty;
@@ -323,7 +324,8 @@ bool device_open(Handle* h) {
         h->pty->slaves++;
         h->writer = false;
         if (current && !(h->flags & 0400) && !current->process->controlling_pty &&
-            !current->process->controlling_console && current->process->pid == current->process->sid && !h->pty->sid)
+            !current->process->controlling_console &&
+            current->process->pid == current->process->sid && !h->pty->sid)
             attach_pty(h->pty, false);
     }
     return true;
@@ -377,8 +379,9 @@ static int64_t block_bytes(Handle* h, void* data, size_t len, bool write) {
         if (!within && len - done >= sector_size) {
             // Keep error reporting precise: advance the handle only for completed sectors.
             count = sector_size;
-            result = write ? block_write(h->node->device_id, position / sector_size, bytes + done, 1)
-                           : block_read(h->node->device_id, position / sector_size, bytes + done, 1);
+            result = write
+                         ? block_write(h->node->device_id, position / sector_size, bytes + done, 1)
+                         : block_read(h->node->device_id, position / sector_size, bytes + done, 1);
         } else {
             result = block_read(h->node->device_id, position / sector_size, partial, 1);
             if (!result) {

@@ -15,10 +15,19 @@
 #include <time.h>
 #include <unistd.h>
 
-#define CHECK(expr) do { if (!(expr)) { \
-    fprintf(stderr, "EXT2_FAIL line=%d: %s errno=%d (%s)\n", __LINE__, #expr, errno, strerror(errno)); \
-    exit(1); } } while (0)
-#define ERROR(expr, code) do { errno = 0; CHECK((expr) == -1 && errno == (code)); } while (0)
+#define CHECK(expr)                                                                                \
+    do {                                                                                           \
+        if (!(expr)) {                                                                             \
+            fprintf(stderr, "EXT2_FAIL line=%d: %s errno=%d (%s)\n", __LINE__, #expr, errno,       \
+                    strerror(errno));                                                              \
+            exit(1);                                                                               \
+        }                                                                                          \
+    } while (0)
+#define ERROR(expr, code)                                                                          \
+    do {                                                                                           \
+        errno = 0;                                                                                 \
+        CHECK((expr) == -1 && errno == (code));                                                    \
+    } while (0)
 static const char* volume = "/tmp/ext2-volume";
 static unsigned char bytes[4096], actual[4096];
 static unsigned block_size;
@@ -46,8 +55,10 @@ static void expect(int fd, const char* text) {
 static void pattern(int fd, int write_it, uint64_t length, uint64_t start) {
     for (uint64_t offset = 0; offset < length;) {
         size_t count = length - offset < sizeof(bytes) ? length - offset : sizeof(bytes);
-        for (size_t i = 0; i < count; i++) bytes[i] = ((offset + i) * 31 + 17) & 255;
-        if (write_it) CHECK(pwrite(fd, bytes, count, start + offset) == (ssize_t)count);
+        for (size_t i = 0; i < count; i++)
+            bytes[i] = ((offset + i) * 31 + 17) & 255;
+        if (write_it)
+            CHECK(pwrite(fd, bytes, count, start + offset) == (ssize_t)count);
         else {
             CHECK(pread(fd, actual, count, start + offset) == (ssize_t)count);
             CHECK(!memcmp(actual, bytes, count));
@@ -59,11 +70,15 @@ static void copy_program(const char* source, const char* target) {
     int in = open(source, O_RDONLY), out = open(target, O_CREAT | O_TRUNC | O_WRONLY, 0755);
     CHECK(in >= 0 && out >= 0);
     ssize_t count;
-    while ((count = read(in, bytes, sizeof(bytes))) > 0) CHECK(write(out, bytes, count) == count);
+    while ((count = read(in, bytes, sizeof(bytes))) > 0)
+        CHECK(write(out, bytes, count) == count);
     CHECK(count == 0 && fsync(out) == 0 && close(out) == 0 && close(in) == 0);
     pid_t child = fork();
     CHECK(child >= 0);
-    if (!child) { execl(target, target, "child", (char*)NULL); _exit(99); }
+    if (!child) {
+        execl(target, target, "child", (char*)NULL);
+        _exit(99);
+    }
     int status;
     CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 17);
 }
@@ -103,11 +118,13 @@ static void namespace_tests(void) {
     CHECK(rmdir("/tmp/ext2-volume/a") == 0 && rmdir("/tmp/ext2-volume/b") == 0);
     CHECK(symlink("final", "/tmp/ext2-volume/short-link") == 0);
     char target[128] = {0};
-    for (unsigned i = 0; i < 50; i++) strcat(target, "./");
+    for (unsigned i = 0; i < 50; i++)
+        strcat(target, "./");
     strcat(target, "final");
     CHECK(symlink(target, "/tmp/ext2-volume/long-link") == 0);
     char link_text[128] = {0};
-    CHECK(readlink("/tmp/ext2-volume/long-link", link_text, sizeof(link_text)) == (ssize_t)strlen(target));
+    CHECK(readlink("/tmp/ext2-volume/long-link", link_text, sizeof(link_text)) ==
+          (ssize_t)strlen(target));
     CHECK(!strcmp(link_text, target));
     expect(open("/tmp/ext2-volume/long-link", O_RDONLY), "linked-data");
     CHECK(mkdir("/tmp/ext2-volume/many", 0755) == 0);
@@ -122,7 +139,8 @@ static void namespace_tests(void) {
     unsigned count = 0;
     struct dirent* entry;
     while ((entry = readdir(dir))) {
-        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
+            continue;
         CHECK(strlen(entry->d_name) == 240 && entry->d_type == DT_REG);
         count++;
     }
@@ -133,7 +151,8 @@ static void namespace_tests(void) {
     ERROR(rmdir("/tmp/ext2-volume/many"), ENOTEMPTY);
     char maxname[300] = "/tmp/ext2-volume/";
     size_t prefix = strlen(maxname);
-    memset(maxname + prefix, 'z', 255); maxname[prefix + 255] = 0;
+    memset(maxname + prefix, 'z', 255);
+    maxname[prefix + 255] = 0;
     put(maxname, "long-name");
     ERROR(umount(volume), EBUSY); // The next open inode keeps its volume mounted.
 }
@@ -162,7 +181,8 @@ static void write_tests(void) {
     int pin = open(volume, O_RDONLY | O_DIRECTORY);
     CHECK(pin >= 0);
     CHECK(fsync(pin) == 0);
-    CHECK(statfs(volume, &after) == 0 && after.f_bfree == before.f_bfree && after.f_ffree == before.f_ffree);
+    CHECK(statfs(volume, &after) == 0 && after.f_bfree == before.f_bfree &&
+          after.f_ffree == before.f_ffree);
     namespace_tests();
     CHECK(close(pin) == 0);
     int fd = open("/tmp/ext2-volume/pattern", O_CREAT | O_RDWR, 0644);
@@ -183,7 +203,8 @@ static void write_tests(void) {
     uint64_t keep = 12 * block_size + 37;
     CHECK(ftruncate(fd, keep) == 0 && ftruncate(fd, pattern_length) == 0);
     CHECK(pread(fd, actual, sizeof(actual), keep) == sizeof(actual));
-    for (unsigned i = 0; i < sizeof(actual); i++) CHECK(!actual[i]);
+    for (unsigned i = 0; i < sizeof(actual); i++)
+        CHECK(!actual[i]);
     CHECK(fstat(fd, &(struct stat){0}) == 0 && close(fd) == 0);
     fd = open("/tmp/ext2-volume/sparse", O_CREAT | O_RDWR, 0644);
     CHECK(fd >= 0 && pwrite(fd, "triples!", 8, triple_offset) == 8);
@@ -191,7 +212,8 @@ static void write_tests(void) {
     CHECK(fstat(fd, &stat) == 0 && (uint64_t)stat.st_size == triple_offset + 8);
     CHECK(stat.st_blocks == (long)(4 * block_size / 512));
     CHECK(pread(fd, actual, sizeof(actual), triple_offset - sizeof(actual)) == sizeof(actual));
-    for (unsigned i = 0; i < sizeof(actual); i++) CHECK(!actual[i]);
+    for (unsigned i = 0; i < sizeof(actual); i++)
+        CHECK(!actual[i]);
     CHECK(fsync(fd) == 0 && close(fd) == 0);
     fd = open("/tmp/ext2-volume/pruned", O_CREAT | O_RDWR, 0644);
     CHECK(fd >= 0 && pwrite(fd, "triples!", 8, triple_offset) == 8 && ftruncate(fd, 0) == 0);
@@ -221,13 +243,15 @@ static void write_tests(void) {
     puts("EXT2_WRITE_PASS");
 }
 static void verify_tests(int readonly_disk) {
-    if (readonly_disk) ERROR(mount("/dev/vda", volume, "ext2", 0, NULL), EROFS);
+    if (readonly_disk)
+        ERROR(mount("/dev/vda", volume, "ext2", 0, NULL), EROFS);
     CHECK(mount("/dev/vda", volume, "ext2", MS_RDONLY, NULL) == 0);
     geometry();
     expect(open("/tmp/ext2-volume/seed.txt", O_RDONLY), "host-created seed\n");
     expect(open("/tmp/ext2-volume/cli.txt", O_RDONLY), "command-line-mount\n");
     struct stat info;
-    CHECK(stat("/tmp/ext2-volume/final", &info) == 0 && (info.st_mode & 07777) == 0640 && info.st_nlink == 1);
+    CHECK(stat("/tmp/ext2-volume/final", &info) == 0 && (info.st_mode & 07777) == 0640 &&
+          info.st_nlink == 1);
     CHECK(info.st_atim.tv_sec == 1234567890 && info.st_mtim.tv_sec == 1234567891);
     CHECK(stat("/tmp/ext2-volume/old-time", &info) == 0);
     CHECK(info.st_atim.tv_sec == -123456789 && info.st_mtim.tv_sec == -42);
@@ -247,7 +271,9 @@ static void verify_tests(int readonly_disk) {
     CHECK(dir);
     unsigned count = 0;
     struct dirent* entry;
-    while ((entry = readdir(dir))) if (entry->d_name[0] != '.') count++;
+    while ((entry = readdir(dir)))
+        if (entry->d_name[0] != '.')
+            count++;
     CHECK(count == 191 && closedir(dir) == 0);
     ERROR(open("/tmp/ext2-volume/new", O_CREAT | O_RDWR, 0644), EROFS);
     ERROR(chmod("/tmp/ext2-volume/final", 0666), EROFS);
@@ -256,7 +282,8 @@ static void verify_tests(int readonly_disk) {
     ERROR(rename("/tmp/ext2-volume/final", "/tmp/ext2-volume/no"), EROFS);
     ERROR(link("/tmp/ext2-volume/final", "/tmp/ext2-volume/no"), EROFS);
     ERROR(truncate("/tmp/ext2-volume/final", 0), EROFS);
-    if (readonly_disk) ERROR(mount(NULL, volume, NULL, MS_REMOUNT, NULL), EROFS);
+    if (readonly_disk)
+        ERROR(mount(NULL, volume, NULL, MS_REMOUNT, NULL), EROFS);
     CHECK(umount(volume) == 0);
     puts(readonly_disk ? "EXT2_READONLY_PASS" : "EXT2_REBOOT_PASS");
 }
@@ -266,7 +293,10 @@ static void invalid_tests(void) {
         char path[] = "/dev/vda";
         path[7] = disk;
         int fd = open(path, O_RDONLY);
-        if (fd < 0) { CHECK(errno == ENOENT); break; }
+        if (fd < 0) {
+            CHECK(errno == ENOENT);
+            break;
+        }
         char header[96] = {0};
         CHECK(pread(fd, header, sizeof(header) - 1, 0) == sizeof(header) - 1 && close(fd) == 0);
         int expected = 0;
@@ -314,19 +344,24 @@ static void full_tests(void) {
     memset(bytes, 0x59, sizeof(bytes));
     ssize_t count;
     uint64_t written = 0;
-    while ((count = write(fd, bytes, sizeof(bytes))) > 0) written += count;
+    while ((count = write(fd, bytes, sizeof(bytes))) > 0)
+        written += count;
     CHECK(count == -1 && errno == ENOSPC && written > 0);
     struct stat stat;
     CHECK(fstat(fd, &stat) == 0 && (uint64_t)stat.st_size == written);
     int tail = open("/tmp/ext2-volume/last-blocks", O_CREAT | O_WRONLY, 0644);
     CHECK(tail >= 0);
-    while ((count = write(tail, bytes, block_size)) > 0) CHECK(count == (ssize_t)block_size);
+    while ((count = write(tail, bytes, block_size)) > 0)
+        CHECK(count == (ssize_t)block_size);
     CHECK(count == -1 && errno == ENOSPC && close(tail) == 0);
     CHECK(statfs(volume, &full) == 0 && !full.f_bfree);
     ERROR(mkdir("/tmp/ext2-volume/fail-dir", 0755), ENOSPC);
-    CHECK(statfs(volume, &after) == 0 && after.f_ffree == full.f_ffree && after.f_bfree == full.f_bfree);
-    CHECK(close(fd) == 0 && unlink("/tmp/ext2-volume/full") == 0 && unlink("/tmp/ext2-volume/last-blocks") == 0);
-    CHECK(statfs(volume, &after) == 0 && after.f_bfree == before.f_bfree && after.f_ffree == before.f_ffree);
+    CHECK(statfs(volume, &after) == 0 && after.f_ffree == full.f_ffree &&
+          after.f_bfree == full.f_bfree);
+    CHECK(close(fd) == 0 && unlink("/tmp/ext2-volume/full") == 0 &&
+          unlink("/tmp/ext2-volume/last-blocks") == 0);
+    CHECK(statfs(volume, &after) == 0 && after.f_bfree == before.f_bfree &&
+          after.f_ffree == before.f_ffree);
     expect(open("/tmp/ext2-volume/seed.txt", O_RDONLY), "host-created seed\n");
     CHECK(umount(volume) == 0);
     CHECK(mount("/dev/vdb", volume, "ext2", 0, NULL) == 0);
@@ -336,27 +371,40 @@ static void full_tests(void) {
         char path[80];
         sprintf(path, "/tmp/ext2-volume/inode-%u", created);
         fd = open(path, O_CREAT | O_WRONLY | O_EXCL, 0644);
-        if (fd < 0) { CHECK(errno == ENOSPC); break; }
+        if (fd < 0) {
+            CHECK(errno == ENOSPC);
+            break;
+        }
         CHECK(close(fd) == 0);
     }
     CHECK(created > 0 && created < 256 && statfs(volume, &full) == 0 && !full.f_ffree);
     for (unsigned i = 0; i < created; i++) {
-        char path[80]; sprintf(path, "/tmp/ext2-volume/inode-%u", i); CHECK(unlink(path) == 0);
+        char path[80];
+        sprintf(path, "/tmp/ext2-volume/inode-%u", i);
+        CHECK(unlink(path) == 0);
     }
-    CHECK(statfs(volume, &after) == 0 && after.f_ffree == before.f_ffree && after.f_bfree == before.f_bfree);
+    CHECK(statfs(volume, &after) == 0 && after.f_ffree == before.f_ffree &&
+          after.f_bfree == before.f_bfree);
     CHECK(umount(volume) == 0);
     puts("EXT2_FULL_VOLUME_PASS");
 }
 int main(int argc, char** argv) {
     CHECK(argc == 2 && mkdir(volume, 0755) == 0);
     const char* phase = argv[1];
-    if (!strcmp(phase, "write")) write_tests();
-    else if (!strcmp(phase, "verify")) verify_tests(0);
-    else if (!strcmp(phase, "readonly")) verify_tests(1);
-    else if (!strcmp(phase, "invalid")) invalid_tests();
-    else if (!strcmp(phase, "error")) error_tests();
-    else if (!strcmp(phase, "full")) full_tests();
-    else CHECK(0);
+    if (!strcmp(phase, "write"))
+        write_tests();
+    else if (!strcmp(phase, "verify"))
+        verify_tests(0);
+    else if (!strcmp(phase, "readonly"))
+        verify_tests(1);
+    else if (!strcmp(phase, "invalid"))
+        invalid_tests();
+    else if (!strcmp(phase, "error"))
+        error_tests();
+    else if (!strcmp(phase, "full"))
+        full_tests();
+    else
+        CHECK(0);
     printf("EXT2_PHASE_PASS phase=%s\n", phase);
     return 0;
 }

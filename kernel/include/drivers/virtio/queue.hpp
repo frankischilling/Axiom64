@@ -4,7 +4,9 @@
 
 namespace ax {
 class VirtioPci;
-inline void virtio_dma_barrier() { asm volatile("mfence" ::: "memory"); }
+inline void virtio_dma_barrier() {
+    asm volatile("mfence" ::: "memory");
+}
 struct VirtioBuffer {
     uint64_t address;
     uint32_t length;
@@ -21,7 +23,7 @@ struct VirtioQueueLayout {
 };
 // One CPU, serialized callers. Payload buffers remain the driver's responsibility.
 class SplitQueue {
-public:
+  public:
     SplitQueue() = default;
     SplitQueue(const SplitQueue&) = delete;
     SplitQueue& operator=(const SplitQueue&) = delete;
@@ -33,11 +35,22 @@ public:
     int complete(VirtioCompletion&);
     // Refuses to free storage until the transport acknowledges a device reset.
     bool release();
-private:
+
+  private:
     friend class VirtioPci;
-    struct Descriptor { uint64_t address; uint32_t length; uint16_t flags, next; };
-    struct UsedEntry { uint32_t id, length; };
-    struct Owner { uint64_t cookie; uint16_t next, count; bool occupied; };
+    struct Descriptor {
+        uint64_t address;
+        uint32_t length;
+        uint16_t flags, next;
+    };
+    struct UsedEntry {
+        uint32_t id, length;
+    };
+    struct Owner {
+        uint64_t cookie;
+        uint16_t next, count;
+        bool occupied;
+    };
     static_assert(sizeof(Descriptor) == 16 && sizeof(UsedEntry) == 8);
     uint64_t physical_ = 0;
     size_t pages_ = 0;
@@ -49,6 +62,9 @@ private:
     uint16_t size_ = 0, free_head_ = 0xffff, free_count_ = 0;
     uint16_t available_ = 0, consumed_ = 0, pending_ = 0;
     bool device_owned_ = false, broken_ = false;
-    int fail() { broken_ = true; return -5; }
+    int fail() {
+        broken_ = true;
+        return -5;
+    }
 };
 } // namespace ax

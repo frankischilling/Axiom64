@@ -86,8 +86,8 @@ extern const char* test_suite;
 extern const char* test_phase;
 Task* new_task();
 int fork_task(Frame*, bool share = false, uint64_t stack = 0);
-int clone_task(Frame*, uint64_t flags, uint64_t stack, uint64_t parent_tid,
-               uint64_t child_tid, uint64_t tls);
+int clone_task(Frame*, uint64_t flags, uint64_t stack, uint64_t parent_tid, uint64_t child_tid,
+               uint64_t tls);
 int exec_task(Task*, const char*, const char* const*, const char* const*);
 void exit_task(Task*, int);
 void exit_thread(Task*, int);

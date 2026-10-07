@@ -20,9 +20,13 @@
 #ifndef IO_LINKAGE
 #define IO_LINKAGE "static"
 #endif
-#define CHECK(expr) do { if (!(expr)) { \
-    fprintf(stderr, "THREAD_IO_FAIL line=%d: %s errno=%d\n", __LINE__, #expr, errno); \
-    _exit(1); } } while (0)
+#define CHECK(expr)                                                                                \
+    do {                                                                                           \
+        if (!(expr)) {                                                                             \
+            fprintf(stderr, "THREAD_IO_FAIL line=%d: %s errno=%d\n", __LINE__, #expr, errno);      \
+            _exit(1);                                                                              \
+        }                                                                                          \
+    } while (0)
 
 enum Kind { READ, READV, RECV, RECVMSG, WRITE, WRITEV, SEND, SENDMSG, ACCEPT, ACCEPT4 };
 static int guest;
@@ -51,16 +55,36 @@ static void* io_worker(void* pointer) {
     struct Operation* operation = pointer;
     atomic_store(&operation->entered, 1);
     switch (operation->kind) {
-    case READ: operation->result = read(operation->fd, operation->buffer, 5); break;
-    case READV: operation->result = readv(operation->fd, operation->vectors, 2); break;
-    case RECV: operation->result = recv(operation->fd, operation->bytes, 5, 0); break;
-    case RECVMSG: operation->result = recvmsg(operation->fd, &operation->message, 0); break;
-    case WRITE: operation->result = write(operation->fd, operation->bytes, 5); break;
-    case WRITEV: operation->result = writev(operation->fd, operation->vectors, 2); break;
-    case SEND: operation->result = send(operation->fd, operation->bytes, 5, MSG_NOSIGNAL); break;
-    case SENDMSG: operation->result = sendmsg(operation->fd, &operation->message, MSG_NOSIGNAL); break;
-    case ACCEPT: operation->result = accept(operation->fd, 0, 0); break;
-    case ACCEPT4: operation->result = accept4(operation->fd, 0, 0, SOCK_CLOEXEC | SOCK_NONBLOCK); break;
+    case READ:
+        operation->result = read(operation->fd, operation->buffer, 5);
+        break;
+    case READV:
+        operation->result = readv(operation->fd, operation->vectors, 2);
+        break;
+    case RECV:
+        operation->result = recv(operation->fd, operation->bytes, 5, 0);
+        break;
+    case RECVMSG:
+        operation->result = recvmsg(operation->fd, &operation->message, 0);
+        break;
+    case WRITE:
+        operation->result = write(operation->fd, operation->bytes, 5);
+        break;
+    case WRITEV:
+        operation->result = writev(operation->fd, operation->vectors, 2);
+        break;
+    case SEND:
+        operation->result = send(operation->fd, operation->bytes, 5, MSG_NOSIGNAL);
+        break;
+    case SENDMSG:
+        operation->result = sendmsg(operation->fd, &operation->message, MSG_NOSIGNAL);
+        break;
+    case ACCEPT:
+        operation->result = accept(operation->fd, 0, 0);
+        break;
+    case ACCEPT4:
+        operation->result = accept4(operation->fd, 0, 0, SOCK_CLOEXEC | SOCK_NONBLOCK);
+        break;
     }
     operation->error = errno;
     atomic_store(&operation->done, 1);
@@ -252,9 +276,11 @@ static void signal_restart(int restart, int nested) {
 static void listener_reuse(enum Kind kind) {
     static unsigned sequence;
     struct sockaddr address = {.sa_family = AF_UNIX};
-    snprintf(address.sa_data + 1, sizeof(address.sa_data) - 1, "i%u.%u", (unsigned)getpid(), ++sequence);
+    snprintf(address.sa_data + 1, sizeof(address.sa_data) - 1, "i%u.%u", (unsigned)getpid(),
+             ++sequence);
     int listener = socket(AF_UNIX, SOCK_STREAM, 0);
-    CHECK(listener >= 0 && bind(listener, &address, sizeof(address)) == 0 && listen(listener, 4) == 0);
+    CHECK(listener >= 0 && bind(listener, &address, sizeof(address)) == 0 &&
+          listen(listener, 4) == 0);
     CHECK(accept4(listener, 0, 0, 0x100000) == -1 && errno == EINVAL);
     struct Operation operation;
     prepare(&operation, listener, kind);
@@ -297,10 +323,17 @@ static void partial_and_errors(void) {
             if (guest) {
                 CHECK(recv(endpoints[0], bytes, 1, MSG_WAITALL) == -1 && errno == EOPNOTSUPP);
                 struct timeval timeout = {.tv_usec = 1000};
-                CHECK(setsockopt(endpoints[0], SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == -1 && errno == ENOPROTOOPT);
-                CHECK(setsockopt(endpoints[0], SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) == -1 && errno == ENOPROTOOPT);
+                CHECK(setsockopt(endpoints[0], SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                                 sizeof(timeout)) == -1 &&
+                      errno == ENOPROTOOPT);
+                CHECK(setsockopt(endpoints[0], SOL_SOCKET, SO_SNDTIMEO, &timeout,
+                                 sizeof(timeout)) == -1 &&
+                      errno == ENOPROTOOPT);
                 struct sockaddr address = {.sa_family = AF_UNIX};
-                struct msghdr named = {.msg_name = &address, .msg_namelen = sizeof(address), .msg_iov = vectors, .msg_iovlen = 2};
+                struct msghdr named = {.msg_name = &address,
+                                       .msg_namelen = sizeof(address),
+                                       .msg_iov = vectors,
+                                       .msg_iovlen = 2};
                 CHECK(recvmsg(endpoints[0], &named, 0) == -1 && errno == EOPNOTSUPP);
             }
             CHECK(write(endpoints[1], "right", 5) == 5);

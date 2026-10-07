@@ -452,10 +452,12 @@ bool node_referenced(Node* node) {
         if (handle.references && references(handle.node))
             return true;
     for (auto& task : tasks)
-        if (task.state != State::empty && task.state != State::zombie && references(task.fs->cwd_node))
+        if (task.state != State::empty && task.state != State::zombie &&
+            references(task.fs->cwd_node))
             return true;
     return socket_node_busy(node) ||
-           (node->backing_physical && page_shared(node->backing_physical, node->capacity / page_size));
+           (node->backing_physical &&
+            page_shared(node->backing_physical, node->capacity / page_size));
 }
 static bool mount_busy(Mount* mount, bool writers_only) {
     if (!writers_only && socket_mount_busy(mount))
@@ -519,8 +521,14 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
         return -16;
     for (auto& mount : mounts)
         if (!mount.active) {
-            mount = {next_mount_id++, nullptr, point, point->mount, ram ? &ramfs_ops : &ext2_ops, nullptr,
-                     false, bool(flags & 1)};
+            mount = {next_mount_id++,
+                     nullptr,
+                     point,
+                     point->mount,
+                     ram ? &ramfs_ops : &ext2_ops,
+                     nullptr,
+                     false,
+                     bool(flags & 1)};
             if (ram) {
                 mount.root = ramfs_root(&mount, 0755);
                 if (!mount.root)

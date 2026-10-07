@@ -128,7 +128,7 @@ def bundle(inputs):
         for origin, paths in inputs:
             for path in paths:
                 archive.add(path, arcname=f"ports/{origin}/{path.name}")
-        for path in ["sources.lock.json", "ports.lock.json", "dependencies.json", "LICENSE", "Makefile", "README.md"]:
+        for path in ["sources.lock.json", "ports.lock.json", "dependencies.json", "LICENSE", "Makefile", "README.md", ".clang-format"]:
             archive.add(ROOT / path, arcname=f"Axiom64/{path}")
         for path in sorted((ROOT / "scripts").glob("*.py")):
             archive.add(path, arcname=f"Axiom64/scripts/{path.name}")

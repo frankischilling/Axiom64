@@ -17,16 +17,27 @@
 #define BLKFLSBUF 0x1261
 #define BLKSSZGET 0x1268
 #define BLKGETSIZE64 0x80081272
-#define CHECK(expr) do { if (!(expr)) { \
-    fprintf(stderr, "STORAGE_FAIL line=%d: %s errno=%d (%s)\n", \
-            __LINE__, #expr, errno, strerror(errno)); exit(1); } } while (0)
+#define CHECK(expr)                                                                                \
+    do {                                                                                           \
+        if (!(expr)) {                                                                             \
+            fprintf(stderr, "STORAGE_FAIL line=%d: %s errno=%d (%s)\n", __LINE__, #expr, errno,    \
+                    strerror(errno));                                                              \
+            exit(1);                                                                               \
+        }                                                                                          \
+    } while (0)
 
-enum { CAPACITY = 8 * 1024 * 1024, START = 8192 + 37, LENGTH = 16384 + 713,
-       ERROR_READ = 12328, ERROR_WRITE = 12348 };
+enum {
+    CAPACITY = 8 * 1024 * 1024,
+    START = 8192 + 37,
+    LENGTH = 16384 + 713,
+    ERROR_READ = 12328,
+    ERROR_WRITE = 12348
+};
 static unsigned char payload[LENGTH], actual[LENGTH];
 
 static void filled(const unsigned char* bytes, size_t length, unsigned char value) {
-    for (size_t i = 0; i < length; i++) CHECK(bytes[i] == value);
+    for (size_t i = 0; i < length; i++)
+        CHECK(bytes[i] == value);
 }
 static void metadata(int fd, uint64_t capacity, int readonly, unsigned minor_number) {
     struct stat stat;
@@ -72,7 +83,8 @@ static void persisted(int fd) {
 int main(int argc, char** argv) {
     CHECK(argc == 2);
     const char* phase = argv[1];
-    for (size_t i = 0; i < sizeof(payload); i++) payload[i] = (i * 31 + 17) & 255;
+    for (size_t i = 0; i < sizeof(payload); i++)
+        payload[i] = (i * 31 + 17) & 255;
     int fd = open("/dev/vda", O_RDONLY);
     CHECK(fd >= 0);
     errno = 0;
@@ -128,8 +140,10 @@ int main(int argc, char** argv) {
                 CHECK(pread(fd, actual, 512, 0) == 512);
                 CHECK(!memcmp(actual, "AXIOM64-DISK-FIRST\n", 18));
             }
-            if (!strcmp(phase, "queue")) puts("STORAGE_QUEUE_WRAP_PASS requests=2052");
-            else puts("STORAGE_RING_WRAP_PASS requests=65540");
+            if (!strcmp(phase, "queue"))
+                puts("STORAGE_QUEUE_WRAP_PASS requests=2052");
+            else
+                puts("STORAGE_RING_WRAP_PASS requests=65540");
             puts("STORAGE_WRITE_PASS");
         } else if (!strcmp(phase, "error")) {
             // The host injects one backend error for each of these operations.
@@ -159,7 +173,8 @@ int main(int argc, char** argv) {
             CHECK(pwrite(synced, actual, 1, ERROR_WRITE * 512 + 9) == 1);
             CHECK(close(synced) == 0);
             puts("STORAGE_BACKEND_ERROR_PASS");
-        } else CHECK(0);
+        } else
+            CHECK(0);
     }
     CHECK(close(fd) == 0);
     printf("STORAGE_PHASE_PASS phase=%s\n", phase);

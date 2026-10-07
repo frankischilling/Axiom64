@@ -160,8 +160,8 @@ int64_t socket_accept(Task& task, Handle* h, uint64_t address, uint64_t length, 
         return (h->flags & 04000) ? -11 : would_block;
     auto accepted = s->queue[s->queue_head];
     if (address) {
-        int error = socket_output_address(task, accepted->peer ? accepted->peer : accepted,
-                                          address, length);
+        int error = socket_output_address(task, accepted->peer ? accepted->peer : accepted, address,
+                                          length);
         if (error)
             return error;
     }
@@ -193,7 +193,8 @@ static int epoll_events(Task& task, Epoll* poll, uint64_t output, unsigned count
     unsigned ready = 0;
     for (auto& item : poll->items) {
         if (!item.used || !item.enabled || item.fd < 0 || unsigned(item.fd) >= max_fds ||
-            task.files->entries[item.fd].handle != item.handle || item.handle->generation != item.generation)
+            task.files->entries[item.fd].handle != item.handle ||
+            item.handle->generation != item.generation)
             continue;
         uint32_t mask = (item.event.events & (1u << 31))
                             ? item.pending
@@ -258,7 +259,8 @@ int select_events(Task& task, const Frame& frame, bool copy) {
     }
     if (copy)
         for (unsigned set = 0; set < 3; set++)
-            if (pointers[set] && bytes && !task.memory->space.copy_out(pointers[set], output[set], bytes))
+            if (pointers[set] && bytes &&
+                !task.memory->space.copy_out(pointers[set], output[set], bytes))
                 return -14;
     return ready;
 }
@@ -299,7 +301,8 @@ int64_t ipc_syscall(Frame* f) {
         if ((b & 0xf) != 1 || (b & ~uint64_t(0x8080f)) || c)
             return -93;
         s = allocate_socket();
-        return s ? install_socket(*current, s, ((b & 0x800) ? 04000 : 0) | ((b & 0x80000) ? 02000000 : 0))
+        return s ? install_socket(*current, s,
+                                  ((b & 0x800) ? 04000 : 0) | ((b & 0x80000) ? 02000000 : 0))
                  : -12;
     }
     case 49: {
@@ -360,8 +363,8 @@ int64_t ipc_syscall(Frame* f) {
         }
         for (auto& other : sockets)
             if (other.used && other.listener &&
-                (addr.path[0] ? other.bound_node == target :
-                 other.local_length == len && !memcmp(other.local, addr.path, len)))
+                (addr.path[0] ? other.bound_node == target
+                              : other.local_length == len && !memcmp(other.local, addr.path, len)))
                 listener = &other;
         if (!listener)
             return -111;

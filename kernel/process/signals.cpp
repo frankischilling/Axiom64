@@ -76,7 +76,8 @@ static int actionable(const Task& task) {
 }
 bool signal_wakes(const Task& task) {
     return (task.wait != Wait::vfork ||
-            ((task.pending_signals | task.process->pending_signals) & (1ull << 8))) && actionable(task);
+            ((task.pending_signals | task.process->pending_signals) & (1ull << 8))) &&
+           actionable(task);
 }
 void signal_interrupt(Task& task) {
     int signal = actionable(task);
@@ -87,8 +88,8 @@ void signal_interrupt(Task& task) {
         task.state = State::runnable;
         return; // Default delivery chooses group stop or termination.
     }
-    bool restart = (flags & 0x10000000) &&
-                   (task.wait == Wait::read || task.wait == Wait::write || task.wait == Wait::child);
+    bool restart = (flags & 0x10000000) && (task.wait == Wait::read || task.wait == Wait::write ||
+                                            task.wait == Wait::child);
     // A caught signal ends this attempt. SA_RESTART re-enters with a fresh fd lookup.
     io_discard(task);
     if (task.handlers->signal_actions[signal - 1][0] > 1 && !restart) {
@@ -223,7 +224,8 @@ bool signal_deliver(Task& task) {
                 memcpy(saved.info + 24, &task.signal_data[signal - 1].status, 4);
             }
             if (!task.memory->space.copy_out(frame, &saved, sizeof(saved)) ||
-                !task.memory->space.copy_out(fp, task.fpu, 512) || !task.memory->space.valid(handler, 1)) {
+                !task.memory->space.copy_out(fp, task.fpu, 512) ||
+                !task.memory->space.valid(handler, 1)) {
                 exit_task(&task, 11);
                 return false;
             }
@@ -309,8 +311,8 @@ int64_t signal_syscall(Frame* f) {
         struct Timer {
             Timeval interval, value;
         };
-        uint64_t left = current->process->alarm_deadline > ticks
-                            ? current->process->alarm_deadline - ticks : 0;
+        uint64_t left =
+            current->process->alarm_deadline > ticks ? current->process->alarm_deadline - ticks : 0;
         Timer old{{int64_t(current->process->alarm_interval / 100),
                    int64_t(current->process->alarm_interval % 100) * 10000},
                   {int64_t(left / 100), int64_t(left % 100) * 10000}};
@@ -334,8 +336,8 @@ int64_t signal_syscall(Frame* f) {
         return 0;
     }
     if (f->rax == 37) {
-        uint64_t left = current->process->alarm_deadline > ticks
-                            ? current->process->alarm_deadline - ticks : 0;
+        uint64_t left =
+            current->process->alarm_deadline > ticks ? current->process->alarm_deadline - ticks : 0;
         current->process->alarm_interval = 0;
         current->process->alarm_deadline = uint32_t(a) ? ticks + uint64_t(uint32_t(a)) * 100 : 0;
         return (left + 99) / 100;
@@ -358,8 +360,8 @@ int64_t signal_syscall(Frame* f) {
                 return -14;
             if (stack.flags & ~2)
                 return -22;
-            if (!(stack.flags & 2) &&
-                (stack.size < 2048 || !current->memory->space.valid(stack.pointer, stack.size, true)))
+            if (!(stack.flags & 2) && (stack.size < 2048 || !current->memory->space.valid(
+                                                                stack.pointer, stack.size, true)))
                 return -12;
             current->altstack_base = (stack.flags & 2) ? 0 : stack.pointer;
             current->altstack_size = (stack.flags & 2) ? 0 : stack.size;
@@ -378,13 +380,13 @@ int64_t signal_syscall(Frame* f) {
     bool found = false;
     for (auto& task : tasks)
         if (task.state != State::empty &&
-            (f->rax == 234   ? task.state != State::zombie &&
-                              int(a) == task.process->pid && int(b) == task.pid
+            (f->rax == 234
+                 ? task.state != State::zombie && int(a) == task.process->pid && int(b) == task.pid
              : f->rax == 200 ? int(a) == task.pid
                              : task.process->leader == &task &&
-                               (int(a) == task.process->pid || int(a) == -1 ||
-                                   (int(a) == 0 && task.process->pgid == current->process->pgid) ||
-                                   (int(a) < -1 && task.process->pgid == -int(a))))) {
+                                   (int(a) == task.process->pid || int(a) == -1 ||
+                                    (int(a) == 0 && task.process->pgid == current->process->pgid) ||
+                                    (int(a) < -1 && task.process->pgid == -int(a))))) {
             found = true;
             if (signal) {
                 if (f->rax == 234 || f->rax == 200)

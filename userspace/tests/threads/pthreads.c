@@ -19,9 +19,13 @@
 #ifndef THREAD_LINKAGE
 #define THREAD_LINKAGE "static"
 #endif
-#define CHECK(expr) do { if (!(expr)) { \
-    fprintf(stderr, "THREAD_FAIL line=%d: %s errno=%d\n", __LINE__, #expr, errno); \
-    exit(1); } } while (0)
+#define CHECK(expr)                                                                                \
+    do {                                                                                           \
+        if (!(expr)) {                                                                             \
+            fprintf(stderr, "THREAD_FAIL line=%d: %s errno=%d\n", __LINE__, #expr, errno);         \
+            exit(1);                                                                               \
+        }                                                                                          \
+    } while (0)
 
 static _Thread_local unsigned local = 0x1234;
 static pid_t process;

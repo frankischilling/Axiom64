@@ -29,9 +29,11 @@ bool SplitQueue::create(uint16_t size) {
     return true;
 }
 VirtioQueueLayout SplitQueue::layout() const {
-    if (!size_) return {};
+    if (!size_)
+        return {};
     return {physical_, physical_ + size_t(size_) * sizeof(Descriptor),
-            physical_ + align_up(size_t(size_) * sizeof(Descriptor) + 6 + size_t(size_) * 2), size_};
+            physical_ + align_up(size_t(size_) * sizeof(Descriptor) + 6 + size_t(size_) * 2),
+            size_};
 }
 int SplitQueue::submit(const VirtioBuffer* buffers, unsigned count, uint64_t cookie) {
     if (!physical_ || broken_)
@@ -58,8 +60,8 @@ int SplitQueue::submit(const VirtioBuffer* buffers, unsigned count, uint64_t coo
         uint16_t next = owner.next;
         const auto& b = buffers[i];
         descriptors_[at] = {b.address, b.length,
-            uint16_t((b.writable ? 2 : 0) | (i + 1 < count ? 1 : 0)),
-            uint16_t(i + 1 < count ? next : 0)};
+                            uint16_t((b.writable ? 2 : 0) | (i + 1 < count ? 1 : 0)),
+                            uint16_t(i + 1 < count ? next : 0)};
         owner.occupied = true;
         owner.count = i ? 0 : uint16_t(count);
         owner.cookie = i ? 0 : cookie;

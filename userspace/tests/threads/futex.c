@@ -18,13 +18,24 @@
 #ifndef FUTEX_LINKAGE
 #define FUTEX_LINKAGE "static"
 #endif
-#define CHECK(expr) do { if (!(expr)) { \
-    fprintf(stderr, "FUTEX_FAIL line=%d: %s errno=%d\n", __LINE__, #expr, errno); \
-    exit(1); } } while (0)
-enum { WAIT = 0, WAKE = 1, REQUEUE = 3, CMP_REQUEUE = 4,
-       WAIT_BITSET = 9, WAKE_BITSET = 10, PRIVATE = 128 };
-static long futex(uint32_t* word, int op, int value, const void* fourth,
-                  uint32_t* second, uint32_t mask) {
+#define CHECK(expr)                                                                                \
+    do {                                                                                           \
+        if (!(expr)) {                                                                             \
+            fprintf(stderr, "FUTEX_FAIL line=%d: %s errno=%d\n", __LINE__, #expr, errno);          \
+            exit(1);                                                                               \
+        }                                                                                          \
+    } while (0)
+enum {
+    WAIT = 0,
+    WAKE = 1,
+    REQUEUE = 3,
+    CMP_REQUEUE = 4,
+    WAIT_BITSET = 9,
+    WAKE_BITSET = 10,
+    PRIVATE = 128
+};
+static long futex(uint32_t* word, int op, int value, const void* fourth, uint32_t* second,
+                  uint32_t mask) {
     return syscall(SYS_futex, word, op, value, fourth, second, mask);
 }
 static atomic_uint entered;
@@ -42,8 +53,8 @@ struct Waiter {
 static void* waiter(void* pointer) {
     struct Waiter* args = pointer;
     atomic_fetch_add(&entered, 1);
-    long result = futex(args->word, args->op, args->value,
-                        args->timed ? &args->deadline : 0, 0, args->mask);
+    long result =
+        futex(args->word, args->op, args->value, args->timed ? &args->deadline : 0, 0, args->mask);
     CHECK(args->error ? result == -1 && errno == args->error : result == 0);
     return 0;
 }
@@ -67,8 +78,8 @@ static void await_waiters(unsigned count) {
 }
 static void expect_child(pid_t child, int expected) {
     int status;
-    CHECK(waitpid(child, &status, 0) == child &&
-          WIFEXITED(status) && WEXITSTATUS(status) == expected);
+    CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+          WEXITSTATUS(status) == expected);
 }
 int main(void) {
     uint32_t words[2] = {44, 44};
@@ -85,7 +96,8 @@ int main(void) {
     struct Waiter args[3];
     atomic_store(&entered, 0);
     for (unsigned i = 0; i < 2; i++) {
-        args[i] = (struct Waiter){.word=words, .op=WAIT_BITSET | PRIVATE, .value=44, .mask=1u<<i};
+        args[i] = (struct Waiter){
+            .word = words, .op = WAIT_BITSET | PRIVATE, .value = 44, .mask = 1u << i};
         CHECK(pthread_create(&threads[i], 0, waiter, &args[i]) == 0);
     }
     await_waiters(2);
@@ -96,21 +108,20 @@ int main(void) {
         CHECK(pthread_join(threads[i], 0) == 0);
     atomic_store(&entered, 0);
     for (unsigned i = 0; i < 3; i++) {
-        args[i] = (struct Waiter){.word=words, .op=WAIT | PRIVATE, .value=44};
+        args[i] = (struct Waiter){.word = words, .op = WAIT | PRIVATE, .value = 44};
         CHECK(pthread_create(&threads[i], 0, waiter, &args[i]) == 0);
     }
     await_waiters(3);
-    CHECK(futex(words, CMP_REQUEUE | PRIVATE, 1, (void*)2, words + 1, 43) == -1 &&
-          errno == EAGAIN);
+    CHECK(futex(words, CMP_REQUEUE | PRIVATE, 1, (void*)2, words + 1, 43) == -1 && errno == EAGAIN);
     CHECK(futex(words, CMP_REQUEUE | PRIVATE, 1, (void*)2, words + 1, 44) == 3);
     CHECK(futex(words, WAKE | PRIVATE, INT_MAX, 0, 0, 0) == 0);
     CHECK(futex(words + 1, WAKE | PRIVATE, INT_MAX, 0, 0, 0) == 2);
     for (unsigned i = 0; i < 3; i++)
         CHECK(pthread_join(threads[i], 0) == 0);
-    struct sigaction action = {.sa_handler=signal_handler};
+    struct sigaction action = {.sa_handler = signal_handler};
     CHECK(sigemptyset(&action.sa_mask) == 0 && sigaction(SIGUSR1, &action, 0) == 0);
     atomic_store(&entered, 0);
-    args[0] = (struct Waiter){.word=words, .op=WAIT | PRIVATE, .value=44, .error=EINTR};
+    args[0] = (struct Waiter){.word = words, .op = WAIT | PRIVATE, .value = 44, .error = EINTR};
     CHECK(pthread_create(threads, 0, waiter, args) == 0);
     await_waiters(1);
     CHECK(pthread_kill(threads[0], SIGUSR1) == 0);
@@ -124,7 +135,7 @@ int main(void) {
     CHECK(first != MAP_FAILED && second != MAP_FAILED && first != second);
     *first = 44;
     atomic_store(&entered, 0);
-    args[0] = (struct Waiter){.word=first, .op=WAIT, .value=44};
+    args[0] = (struct Waiter){.word = first, .op = WAIT, .value = 44};
     CHECK(pthread_create(threads, 0, waiter, args) == 0);
     await_waiters(1);
     CHECK(munmap(first, 4096) == 0);
@@ -136,22 +147,25 @@ int main(void) {
     CHECK(first != MAP_FAILED);
     *first = 44;
     atomic_store(&entered, 0);
-    args[0] = (struct Waiter){.word=first, .op=WAIT_BITSET, .value=44,
-                             .timed=1, .error=ETIMEDOUT, .mask=UINT32_MAX,
-                             .deadline=later(300)};
+    args[0] = (struct Waiter){.word = first,
+                              .op = WAIT_BITSET,
+                              .value = 44,
+                              .timed = 1,
+                              .error = ETIMEDOUT,
+                              .mask = UINT32_MAX,
+                              .deadline = later(300)};
     CHECK(pthread_create(threads, 0, waiter, args) == 0);
     await_waiters(1);
     CHECK(munmap(first, 4096) == 0);
-    second = mmap(first, 4096, PROT_READ | PROT_WRITE,
-                  MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    second =
+        mmap(first, 4096, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     CHECK(second == first);
     *second = 44;
     CHECK(futex(second, WAKE, 1, 0, 0, 0) == 0);
     CHECK(pthread_join(threads[0], 0) == 0 && munmap(second, 4096) == 0);
     puts("FUTEX_MAPPING_LIFETIME_PASS");
 
-    uint32_t* shared = mmap(0, 4096, PROT_READ | PROT_WRITE,
-                           MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    uint32_t* shared = mmap(0, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     CHECK(shared != MAP_FAILED);
     atomic_store((_Atomic uint32_t*)shared, 0);
     pid_t child = fork();

@@ -109,8 +109,8 @@ static constexpr uint64_t clone_vm = 0x100, clone_fs = 0x200, clone_files = 0x40
                           clone_sysvsem = 0x40000, clone_settls = 0x80000,
                           clone_parent_settid = 0x100000, clone_child_cleartid = 0x200000,
                           clone_detached = 0x400000, clone_child_settid = 0x1000000;
-int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid,
-               uint64_t child_tid, uint64_t tls) {
+int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, uint64_t child_tid,
+               uint64_t tls) {
     constexpr uint64_t supported = 0xff | clone_vm | clone_fs | clone_files | clone_sighand |
                                    clone_vfork | clone_thread | clone_sysvsem | clone_settls |
                                    clone_parent_settid | clone_child_cleartid | clone_detached |
@@ -129,8 +129,7 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid,
         return -14;
     if ((flags & clone_settls) && tls >= user_limit)
         return -22;
-    if ((flags & clone_parent_settid) &&
-        !current->memory->space.valid(parent_tid, 4, true))
+    if ((flags & clone_parent_settid) && !current->memory->space.valid(parent_tid, 4, true))
         return -14;
     if ((flags & (clone_child_settid | clone_child_cleartid)) && child_tid &&
         !current->memory->space.valid(child_tid, 4, true))
@@ -236,11 +235,11 @@ static void finish_process(Task* last) {
             queue_process_signal(parent.process, 17, process->pid,
                                  (process->exit_status & 127) ? 2 : 1,
                                  (process->exit_status & 127) ? process->exit_status & 127
-                                                             : process->exit_status >> 8);
+                                                              : process->exit_status >> 8);
     if (process->pid == 1) {
         if (test_mode)
             poweroff((process->exit_status & 127) ? 128 + (process->exit_status & 127)
-                                                 : (process->exit_status >> 8) & 255);
+                                                  : (process->exit_status >> 8) & 255);
         panic("init exited");
     }
 }

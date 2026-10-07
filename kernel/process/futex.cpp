@@ -23,10 +23,10 @@ static int make_key(Task* task, uint64_t address, bool private_key, Key& key,
     if (*entry & 0x200)
         return -22; // Device mappings cannot own a synchronization word.
     uint64_t page = *entry & page_mask;
-    key = {private_key ? task->memory : nullptr,
-           private_key ? address : page + address % page_size, page,
-           reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(physical(page)) +
-                                       address % page_size)};
+    key = {
+        private_key ? task->memory : nullptr, private_key ? address : page + address % page_size,
+        page,
+        reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(physical(page)) + address % page_size)};
     return 0;
 }
 void futex_discard(Task& task) {
@@ -47,9 +47,8 @@ static void complete(Task& task, int result) {
 }
 static bool matches(const Task& task, const Key& key, uint32_t bitset) {
     return (task.state == State::blocked || task.state == State::stopped) &&
-           task.wait == Wait::futex && task.futex.queued &&
-           task.futex.domain == key.domain && task.futex.identity == key.identity &&
-           (task.futex.bitset & bitset);
+           task.wait == Wait::futex && task.futex.queued && task.futex.domain == key.domain &&
+           task.futex.identity == key.identity && (task.futex.bitset & bitset);
 }
 int futex_wake(Task* caller, uint64_t address, int count, bool private_key, uint32_t bitset) {
     if (!bitset)
@@ -76,16 +75,15 @@ bool futex_ready(Task& task) {
 }
 static uint64_t time_ticks(int64_t sec, int64_t nsec) {
     uint64_t fraction = (nsec + 9999999) / 10000000;
-    return uint64_t(sec) > (UINT64_MAX - fraction) / 100
-               ? UINT64_MAX
-               : uint64_t(sec) * 100 + fraction;
+    return uint64_t(sec) > (UINT64_MAX - fraction) / 100 ? UINT64_MAX
+                                                         : uint64_t(sec) * 100 + fraction;
 }
 int64_t futex_syscall(Frame* frame) {
     uint64_t address = frame->rdi, timeout = frame->r10;
     uint32_t op = frame->rsi, command = op & 127, bitset = frame->r9;
     bool private_key = op & 128;
-    if ((op & ~511u) || (command != 0 && command != 1 && command != 3 &&
-                        command != 4 && command != 9 && command != 10))
+    if ((op & ~511u) || (command != 0 && command != 1 && command != 3 && command != 4 &&
+                         command != 9 && command != 10))
         return -38;
     if ((op & 256) && command != 0 && command != 9)
         return -38;
@@ -141,8 +139,7 @@ int64_t futex_syscall(Frame* frame) {
         if (time.sec < 0 || time.nsec < 0 || time.nsec >= 1000000000)
             return -22;
         uint64_t value = time_ticks(time.sec, time.nsec);
-        deadline = command == 9 ? value
-                                : value > UINT64_MAX - ticks ? UINT64_MAX : ticks + value;
+        deadline = command == 9 ? value : value > UINT64_MAX - ticks ? UINT64_MAX : ticks + value;
     }
     // SYSCALL masks interrupts; on the current single CPU this read and queue
     // insertion cannot race another userspace writer or wake operation.

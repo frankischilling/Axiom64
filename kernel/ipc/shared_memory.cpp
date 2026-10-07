@@ -81,7 +81,8 @@ int64_t shared_memory_syscall(Frame* f) {
                 if (!address)
                     return -12;
                 segment = {next_id++, int(a), current->process->pid, current->process->pid,
-                           address, b, ticks / 100, 0, 0, 0, unsigned(c & 0777), false};
+                           address,   b,      ticks / 100,           0,
+                           0,         0,      unsigned(c & 0777),    false};
                 return segment.id;
             }
         return -28;
@@ -115,7 +116,8 @@ int64_t shared_memory_syscall(Frame* f) {
             if (entry && (*entry & page_mask))
                 return -22;
         }
-        if (!current->memory->space.map_physical(base, segment->physical, length, (c & 0x1000) ? 1 : 3))
+        if (!current->memory->space.map_physical(base, segment->physical, length,
+                                                 (c & 0x1000) ? 1 : 3))
             return -12;
         *record = {segment->id, base, length};
         segment->attachments++;

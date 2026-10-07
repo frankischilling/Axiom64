@@ -29,3 +29,17 @@ Userspace program targets name their source files explicitly. Initramfs dependen
 Build and port helpers remain under `scripts/`; pinned dependency inputs are in the lock files and `vendor/`. Documentation belongs under `docs/`. Generated outputs, downloaded archives, private answers, local evidence, and worktrees remain in the ignored `build/`, `downloads/`, and `.local/` directories.
 
 The corresponding-source bundle walks kernel and userspace folders recursively, so it includes the same sources and headers used by the build. [Testing](testing.md) describes the existing guest and host suites; [architecture](architecture.md) describes interfaces and current limits.
+
+## Formatting
+
+The root `.clang-format` contains C++20 and C profiles. Kernel sources, headers, and host tests use the C++ profile. Userspace C sources use the C profile, and native C++ test programs use the C++ profile. Both preserve include order and use four spaces and a 100-column limit. The Makefile continues to select C11 and C++20 for compilation.
+
+On the Ubuntu build host, install the formatter and run these commands from the repository root:
+
+```sh
+sudo apt-get install -y clang-format-20
+make format
+make check-format
+```
+
+The targets cover project C/C++ sources and headers under `kernel/` and `userspace/`. Imported headers under `vendor/` retain their upstream formatting. Set `CLANG_FORMAT=/path/to/clang-format-20` when the executable uses another name. Clang-format 20 or newer can read the separate C profile; version 20 is used for the checked formatting. CI runs `make check-format`, and the corresponding-source bundle includes the configuration.

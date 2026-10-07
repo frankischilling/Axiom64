@@ -86,7 +86,8 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
         return -16;
     if (n->device == Device::block && (flags & 040000)) // O_DIRECT needs alignment semantics.
         return -22;
-    if (n->device == Device::tty && !current->process->controlling_pty && !current->process->controlling_console)
+    if (n->device == Device::tty && !current->process->controlling_pty &&
+        !current->process->controlling_console)
         return -6;
     if ((flags & 01000) && (flags & 3) && (n->mode & 0170000) == regular_file) {
         error = node_truncate(n, 0);
@@ -180,7 +181,8 @@ static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd,
             return -12;
         if ((h->flags & 3) != 2 || node_readonly(h->node))
             for (uint64_t page = addr; page < addr + len; page += page_size)
-                *current->memory->space.entry(page) |= 0x800; // Shared mapping may never gain write access.
+                *current->memory->space.entry(page) |=
+                    0x800; // Shared mapping may never gain write access.
         return addr;
     }
     if (!current->memory->space.map(addr, len, 3))
@@ -192,8 +194,10 @@ static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd,
         uint8_t buffer[4096];
         size_t count = min(len, h->node->size - size_t(off));
         for (size_t done = 0; done < count;) {
-            int64_t result = node_read(h->node, off + done, buffer, min(sizeof(buffer), count - done));
-            if (result <= 0 || !current->memory->space.copy_out(addr + done, buffer, size_t(result))) {
+            int64_t result =
+                node_read(h->node, off + done, buffer, min(sizeof(buffer), count - done));
+            if (result <= 0 ||
+                !current->memory->space.copy_out(addr + done, buffer, size_t(result))) {
                 current->memory->space.unmap(addr, len);
                 return result < 0 ? result : -5;
             }
@@ -260,7 +264,8 @@ static int64_t wait_child(int pid, uint64_t status, int options, uint64_t usage)
     for (auto& t : tasks) {
         if (t.state == State::empty || t.process->leader != &t ||
             t.process->parent != current->process->pid || (pid > 0 && t.process->pid != pid) ||
-            (pid == 0 && t.process->pgid != current->process->pgid) || (pid < -1 && t.process->pgid != -pid))
+            (pid == 0 && t.process->pgid != current->process->pgid) ||
+            (pid < -1 && t.process->pgid != -pid))
             continue;
         found = true;
         bool stopped = t.process->stopped && !t.process->stop_reported && (options & 2);
@@ -269,8 +274,8 @@ static int64_t wait_child(int pid, uint64_t status, int options, uint64_t usage)
             continue;
         int child = t.process->pid;
         int child_status = !t.process->live_threads ? t.process->exit_status
-                           : continued            ? 0xffff
-                                                  : (t.process->stop_signal << 8) | 0x7f;
+                           : continued              ? 0xffff
+                                                    : (t.process->stop_signal << 8) | 0x7f;
         if (status)
             current->memory->space.copy_out(status, &child_status, 4);
         if (usage) {
@@ -431,8 +436,8 @@ static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
         int size = h->socket ? h->socket->size : h->pipe->size;
         return copy_result(arg, &size, 4);
     }
-    if (!h->node || ((h->node->mode & 0170000) != character &&
-                     (h->node->mode & 0170000) != block_device))
+    if (!h->node ||
+        ((h->node->mode & 0170000) != character && (h->node->mode & 0170000) != block_device))
         return -25;
     return device_ioctl(h, request, arg);
 }
@@ -555,10 +560,11 @@ static int64_t dispatch(Frame* f) {
             return current->memory->brk_end;
         if (a > current->memory->brk_end &&
             !current->memory->space.map(align_up(current->memory->brk_end),
-                                 align_up(a) - align_up(current->memory->brk_end), 3))
+                                        align_up(a) - align_up(current->memory->brk_end), 3))
             return current->memory->brk_end;
         if (a < current->memory->brk_end)
-            current->memory->space.unmap(align_up(a), align_up(current->memory->brk_end) - align_up(a));
+            current->memory->space.unmap(align_up(a),
+                                         align_up(current->memory->brk_end) - align_up(a));
         current->memory->brk_end = a;
         return a;
     case 13:
@@ -855,7 +861,8 @@ static int64_t dispatch(Frame* f) {
         if (!path_at(f->rax == 83 ? -100 : int(a), f->rax == 83 ? a : b, path))
             return path.error;
         Node* node = nullptr;
-        return create_node(path, directory | (((f->rax == 83 ? b : c) & 0777) & ~current->fs->umask), node);
+        return create_node(
+            path, directory | (((f->rax == 83 ? b : c) & 0777) & ~current->fs->umask), node);
     }
     case 85:
         return open_file(-100, a, 01000 | 0100 | 1, b);

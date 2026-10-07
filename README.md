@@ -9,5 +9,6 @@ The QEMU image supports BIOS and UEFI boot. It includes BusyBox ash, Bash, zsh, 
 - [Guest tests and CI evidence](docs/testing.md)
 - [Userspace ports, licenses, and source bundles](docs/ports.md)
 - [Development milestones](docs/milestones.md)
+- [Full feature and application roadmap](docs/feature-roadmap.md)
 
 The kernel is licensed under [GPL-3.0-or-later](LICENSE). Included userspace packages retain their upstream licenses.

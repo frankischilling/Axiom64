@@ -6,20 +6,22 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 
 | Module | Responsibility |
 | --- | --- |
-| `kernel/arch.cpp`, `entry.asm` | CPU tables, interrupts, syscall entry, register frames, return to Ring 3 |
-| `kernel/memory.cpp` | Physical allocation, page references, user page tables, validated user copies |
-| `kernel/pci.cpp`, `virtio.cpp`, `virtqueue.cpp` | PCI discovery, modern/legacy virtio transport, split-ring storage and descriptor ownership |
-| `kernel/block.cpp` | Virtio block request policy, raw sector I/O, flush, and filesystem claims |
-| `kernel/task.cpp` | Process/thread ownership, ELF loading, clone/fork/exec/exit/wait, scheduling, TLS, FPU state |
-| `kernel/futex.cpp` | Expected-value waits, wake/bitsets, requeue, deadlines, shared backing lifetime |
-| `kernel/io.cpp` | Retained I/O requests, captured vectors, wait completion, and interruption cleanup |
-| `kernel/vfs.cpp`, `ramfs.cpp` | Filesystem dispatch, mount namespace, RAM volumes, initramfs, file descriptions, pipes |
-| `kernel/ext2.cpp` | Classic ext2 volumes, mount validation, allocation, file/directory operations, synchronous commits |
-| `kernel/syscall.cpp` | Linux syscall numbers, ABI structures, errors, blocking operations |
-| `kernel/signals.cpp` | Queues, masks, actions, signal frames, return, alternate stacks, timers |
-| `kernel/ipc.cpp`, `shared_memory.cpp` | Unix stream sockets, readiness, epoll, select, shared mappings, SysV segments |
-| `kernel/devices.cpp` | Serial terminal, PTYs, framebuffer, PS/2 events, Linux block-device file operations |
-| `userspace/init.c` | Desktop and serial shell startup, child reaping, console shell restart |
+| `kernel/arch/x86_64/arch.cpp`, `entry.asm` | CPU tables, interrupts, syscall entry, register frames, return to Ring 3 |
+| `kernel/mm/memory.cpp` | Physical allocation, page references, user page tables, validated user copies |
+| `kernel/drivers/platform/pci.cpp`, `kernel/drivers/virtio/` | PCI discovery, modern/legacy virtio transport, split-ring storage and descriptor ownership |
+| `kernel/drivers/block/block.cpp` | Virtio block request policy, raw sector I/O, flush, and filesystem claims |
+| `kernel/process/task.cpp` | Process/thread ownership, ELF loading, clone/fork/exec/exit/wait, scheduling, TLS, FPU state |
+| `kernel/process/futex.cpp` | Expected-value waits, wake/bitsets, requeue, deadlines, shared backing lifetime |
+| `kernel/io/io.cpp` | Retained I/O requests, captured vectors, wait completion, and interruption cleanup |
+| `kernel/fs/vfs.cpp`, `ramfs.cpp` | Filesystem dispatch, mount namespace, RAM volumes, initramfs, file descriptions, pipes |
+| `kernel/fs/ext2/ext2.cpp` | Classic ext2 volumes, mount validation, allocation, file/directory operations, synchronous commits |
+| `kernel/abi/linux/syscall.cpp` | Linux syscall numbers, ABI structures, errors, blocking operations |
+| `kernel/process/signals.cpp` | Queues, masks, actions, signal frames, return, alternate stacks, timers |
+| `kernel/ipc/ipc.cpp`, `shared_memory.cpp` | Unix stream sockets, readiness, epoll, select, shared mappings, SysV segments |
+| `kernel/drivers/platform/devices.cpp` | Serial terminal, PTYs, framebuffer, PS/2 events, Linux block-device file operations |
+| `userspace/init/main.c` | Desktop and serial shell startup, child reaping, console shell restart |
+
+Sources and public headers use matching subsystem folders. Desktop configuration is under `userspace/desktop/`; guest and host tests are grouped by the subsystem they exercise. [Source layout and build discovery](source-layout.md) describe the paths and conventions.
 
 Each memory context has four-level user page tables with user, write, and execute permissions. The upper half shares supervisor mappings. Syscall buffers are validated across the full range and copied through the physical mapping. Clone can share the address space, file table, working directory/umask, and signal dispositions; fork copies private pages and retains shared page references. The scheduler uses one CPU, bounded task slots, and timer preemption; syscalls execute with interrupts masked.
 

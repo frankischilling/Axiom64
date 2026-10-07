@@ -1,7 +1,54 @@
+# Axiom64 C++20 formatting; the Makefile controls the compiler language standard.
 BasedOnStyle: LLVM
+Language: Cpp
+Standard: c++20
+
 IndentWidth: 4
+ContinuationIndentWidth: 4
+TabWidth: 4
+UseTab: Never
 ColumnLimit: 100
-AllowShortFunctionsOnASingleLine: Empty
+
+BreakBeforeBraces: Attach
+NamespaceIndentation: None
+PointerAlignment: Left
+ReferenceAlignment: Pointer
+DerivePointerAlignment: false
+
+AllowShortFunctionsOnASingleLine: None
 AllowShortIfStatementsOnASingleLine: Never
 AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+# Separate definition blocks and preserve blank lines between function prototypes.
+SeparateDefinitionBlocks: Always
+MaxEmptyLinesToKeep: 1
+
+# Preserve kernel and platform header order.
+SortIncludes: Never
+
+---
+# Axiom64 userspace C is compiled as C11. Formatting does not set the C standard.
+# A separate C language profile requires clang-format 20 or newer.
+Language: C
+BasedOnStyle: LLVM
+
+IndentWidth: 4
+ContinuationIndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+
+BreakBeforeBraces: Attach
 PointerAlignment: Left
+DerivePointerAlignment: false
+
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+# Separate definition blocks and preserve blank lines between function prototypes.
+SeparateDefinitionBlocks: Always
+MaxEmptyLinesToKeep: 1
+
+# Keep feature-test macros and system headers in their intentional order.
+SortIncludes: Never

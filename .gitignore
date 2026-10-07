@@ -1,5 +1,5 @@
 /build/
-/downloads/
+/downloads
 /.local/
 __pycache__/
 *.pyc

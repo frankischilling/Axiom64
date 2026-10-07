@@ -67,17 +67,17 @@
       ],
       "dependencies": [],
       "evidence": [
-        "kernel/arch.cpp",
-        "kernel/main.cpp",
-        "kernel/pci.cpp",
-        "kernel/memory.cpp",
+        "kernel/arch/x86_64/arch.cpp",
+        "kernel/boot/main.cpp",
+        "kernel/drivers/platform/pci.cpp",
+        "kernel/mm/memory.cpp",
         "scripts/storage_test.py",
         "docs/storage.md",
-        "kernel/virtio.cpp",
-        "kernel/virtqueue.cpp",
-        "kernel/include/virtio.hpp",
-        "kernel/include/virtqueue.hpp",
-        "kernel/tests/virtqueue.cpp",
+        "kernel/drivers/virtio/pci.cpp",
+        "kernel/drivers/virtio/queue.cpp",
+        "kernel/include/drivers/virtio/pci.hpp",
+        "kernel/include/drivers/virtio/queue.hpp",
+        "kernel/tests/drivers/virtio/queue.cpp",
         "scripts/virtio_test.py",
         "docs/virtio.md"
       ],
@@ -107,16 +107,16 @@
         "F01"
       ],
       "evidence": [
-        "kernel/block.cpp",
-        "kernel/devices.cpp",
-        "userspace/storage-tests.c",
+        "kernel/drivers/block/block.cpp",
+        "kernel/drivers/platform/devices.cpp",
+        "userspace/tests/storage/block.c",
         "scripts/storage_test.py",
         "docs/storage.md",
-        "kernel/virtio.cpp",
-        "kernel/virtqueue.cpp",
-        "kernel/include/virtio.hpp",
-        "kernel/include/virtqueue.hpp",
-        "kernel/tests/virtqueue.cpp",
+        "kernel/drivers/virtio/pci.cpp",
+        "kernel/drivers/virtio/queue.cpp",
+        "kernel/include/drivers/virtio/pci.hpp",
+        "kernel/include/drivers/virtio/queue.hpp",
+        "kernel/tests/drivers/virtio/queue.cpp",
         "scripts/virtio_test.py",
         "docs/virtio.md"
       ],
@@ -146,10 +146,10 @@
         "F02"
       ],
       "evidence": [
-        "kernel/ext2.cpp",
-        "kernel/include/ext2.hpp",
-        "userspace/ext2-tests.c",
-        "userspace/ext2-test.sh",
+        "kernel/fs/ext2/ext2.cpp",
+        "kernel/include/fs/ext2/ext2.hpp",
+        "userspace/tests/fs/ext2.c",
+        "userspace/tests/fs/ext2.sh",
         "scripts/ext2_test.py",
         "docs/ext2.md"
       ],
@@ -180,12 +180,12 @@
         "F02"
       ],
       "evidence": [
-        "kernel/vfs.cpp",
-        "kernel/ramfs.cpp",
-        "kernel/ext2.cpp",
-        "kernel/syscall.cpp",
-        "userspace/vfs-tests.c",
-        "userspace/ext2-tests.c",
+        "kernel/fs/vfs.cpp",
+        "kernel/fs/ramfs.cpp",
+        "kernel/fs/ext2/ext2.cpp",
+        "kernel/abi/linux/syscall.cpp",
+        "userspace/tests/fs/vfs.c",
+        "userspace/tests/fs/ext2.c",
         "docs/vfs.md"
       ],
       "branch": "feature/f04-vfs-mounts-and-pseudo-filesystems",
@@ -214,16 +214,16 @@
         "F04"
       ],
       "evidence": [
-        "kernel/task.cpp",
-        "kernel/include/task.hpp",
-        "kernel/futex.cpp",
-        "kernel/io.cpp",
-        "kernel/include/io.hpp",
-        "userspace/thread-tests.c",
-        "userspace/futex-tests.c",
-        "userspace/thread-lifecycle.c",
-        "userspace/thread-io-tests.c",
-        "userspace/toolchain-test/threads.cpp",
+        "kernel/process/task.cpp",
+        "kernel/include/process/task.hpp",
+        "kernel/process/futex.cpp",
+        "kernel/io/io.cpp",
+        "kernel/include/io/io.hpp",
+        "userspace/tests/threads/pthreads.c",
+        "userspace/tests/threads/futex.c",
+        "userspace/tests/threads/lifecycle.c",
+        "userspace/tests/threads/io.c",
+        "userspace/tests/toolchain/threads.cpp",
         "docs/threads.md",
         "docs/io.md"
       ],
@@ -254,8 +254,8 @@
         "F05"
       ],
       "evidence": [
-        "kernel/memory.cpp",
-        "kernel/shared_memory.cpp"
+        "kernel/mm/memory.cpp",
+        "kernel/ipc/shared_memory.cpp"
       ],
       "branch": "feature/f06-demand-paging-copy-on-write-and-swap",
       "issue": "https://github.com/frankischilling/Axiom64/issues/6"
@@ -314,11 +314,11 @@
         "F13"
       ],
       "evidence": [
-        "kernel/syscall.cpp",
-        "userspace/abi-tests.c",
-        "userspace/signal-tests.c",
-        "kernel/io.cpp",
-        "userspace/thread-io-tests.c",
+        "kernel/abi/linux/syscall.cpp",
+        "userspace/tests/abi/abi.c",
+        "userspace/tests/process/signals.c",
+        "kernel/io/io.cpp",
+        "userspace/tests/threads/io.c",
         "docs/io.md"
       ],
       "branch": "feature/f08-linux-syscall-and-libc-compatibility",
@@ -451,8 +451,8 @@
         "F15"
       ],
       "evidence": [
-        "kernel/ipc.cpp",
-        "userspace/ipc-tests.c"
+        "kernel/ipc/ipc.cpp",
+        "userspace/tests/ipc/ipc.c"
       ],
       "branch": "feature/f13-tcp-udp-and-linux-socket-semantics",
       "issue": "https://github.com/frankischilling/Axiom64/issues/13"
@@ -507,9 +507,9 @@
         "F05"
       ],
       "evidence": [
-        "kernel/ipc.cpp",
-        "kernel/shared_memory.cpp",
-        "userspace/ipc-tests.c"
+        "kernel/ipc/ipc.cpp",
+        "kernel/ipc/shared_memory.cpp",
+        "userspace/tests/ipc/ipc.c"
       ],
       "branch": "feature/f15-ipc-and-event-notification",
       "issue": "https://github.com/frankischilling/Axiom64/issues/15"
@@ -539,8 +539,8 @@
         "F05"
       ],
       "evidence": [
-        "kernel/arch.cpp",
-        "kernel/signals.cpp"
+        "kernel/arch/x86_64/arch.cpp",
+        "kernel/process/signals.cpp"
       ],
       "branch": "feature/f16-clocks-timers-and-power-management",
       "issue": "https://github.com/frankischilling/Axiom64/issues/16"
@@ -652,8 +652,8 @@
         "F19"
       ],
       "evidence": [
-        "kernel/devices.cpp",
-        "userspace/signal-tests.c"
+        "kernel/drivers/platform/devices.cpp",
+        "userspace/tests/process/signals.c"
       ],
       "branch": "feature/f20-terminals-input-and-framebuffer-console",
       "issue": "https://github.com/frankischilling/Axiom64/issues/20"
@@ -683,8 +683,8 @@
         "F20"
       ],
       "evidence": [
-        "userspace/x11-probe.c",
-        "userspace/desktop-test.sh",
+        "userspace/tests/desktop/probe.c",
+        "userspace/tests/desktop/run.sh",
         "scripts/boot_test.py"
       ],
       "branch": "feature/f21-x11-and-wayland-display-servers",
@@ -742,9 +742,9 @@
         "F21"
       ],
       "evidence": [
-        "userspace/init.c",
-        "userspace/startx.sh",
-        "userspace/system.twmrc"
+        "userspace/init/main.c",
+        "userspace/desktop/startx.sh",
+        "userspace/desktop/system.twmrc"
       ],
       "branch": "feature/f23-shells-window-managers-and-desktop-environments",
       "issue": "https://github.com/frankischilling/Axiom64/issues/23"
@@ -802,7 +802,7 @@
         "F14"
       ],
       "evidence": [
-        "userspace/init.c"
+        "userspace/init/main.c"
       ],
       "branch": "feature/f25-init-login-and-system-services",
       "issue": "https://github.com/frankischilling/Axiom64/issues/25"
@@ -893,7 +893,7 @@
         "F34"
       ],
       "evidence": [
-        "userspace/toolchain-test/Makefile",
+        "userspace/tests/toolchain/Makefile",
         "docs/ports.md"
       ],
       "branch": "feature/f28-native-development-and-full-self-hosting",
@@ -1030,8 +1030,8 @@
         "F06"
       ],
       "evidence": [
-        "kernel/task.cpp",
-        "userspace/abi-tests.c"
+        "kernel/process/task.cpp",
+        "userspace/tests/abi/abi.c"
       ],
       "branch": "feature/f33-executable-formats-and-compatibility-adapters",
       "issue": "https://github.com/frankischilling/Axiom64/issues/34"
@@ -1061,8 +1061,8 @@
       ],
       "evidence": [
         "scripts/boot_test.py",
-        "kernel/task.cpp",
-        "kernel/runtime.cpp"
+        "kernel/process/task.cpp",
+        "kernel/core/runtime.cpp"
       ],
       "branch": "feature/f34-debugging-tracing-and-profiling",
       "issue": "https://github.com/frankischilling/Axiom64/issues/35"

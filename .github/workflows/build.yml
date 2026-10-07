@@ -12,7 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install build and emulation tools
-        run: sudo apt-get update && sudo apt-get install -y g++ make musl-tools linux-libc-dev nasm python3 xorriso qemu-system-x86 ovmf xfonts-utils e2fsprogs
+        run: sudo apt-get update && sudo apt-get install -y g++ make musl-tools linux-libc-dev nasm python3 xorriso qemu-system-x86 ovmf xfonts-utils e2fsprogs clang-format-20
+      - name: Check C and C++ formatting
+        run: make check-format
       - name: Build standalone image
         run: make -j2 image
       - name: Test split-queue ownership with sanitizers

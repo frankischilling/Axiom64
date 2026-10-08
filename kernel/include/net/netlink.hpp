@@ -34,6 +34,8 @@ size_t routing_capacity(const NetlinkHeader&);
 
 size_t routing_reply(const void*, uint32_t port, bool capped, void* output);
 
+int netlink_address_change(const void*, const NetlinkHeader&);
+
 void netlink_close(NetlinkSocket*);
 
 bool netlink_ready(NetlinkSocket*, bool write);

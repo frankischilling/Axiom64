@@ -16,6 +16,10 @@ static void check(bool condition, const char* reason) {
 }
 
 namespace ax {
+int netlink_address_change(const void*, const NetlinkHeader&) {
+    return -95; // This fixture covers route messages; address validation has its own suite.
+}
+
 const NetInfo* net_info(unsigned index) {
     static NetInfo information[2];
     return index && index <= 2 ? &information[index - 1] : nullptr;

@@ -2,7 +2,7 @@
 
 Axiom64 targets a modular monolith kernel in C++ and Assembly with services and applications in Ring 3. Linux x86-64 is the primary userspace ABI. This roadmap preserves the complete requested feature scope, including legacy binary formats and the application catalog.
 
-The next implementation order is persistent storage, threads, then networking. Start with virtio block and writable ext2; add ext4 later. Provide POSIX pthreads and futexes before SMP. The first usable network release must acquire a DHCP lease, resolve DNS, exchange TCP/UDP traffic, answer ping, and download a file. Static network configuration must also work.
+The next implementation order is persistent storage, threads, then networking. Start with virtio block and writable ext2; add ext4 later. Provide POSIX pthreads and futexes before SMP. The first usable network release must acquire a DHCP lease, resolve DNS, exchange TCP/UDP traffic, answer ping, and download a file. Static network configuration must also work. Default DHCP configures every connected Ethernet adapter, with saved static settings taking precedence for each interface.
 
 Accounts, permissions, and secure randomness must work before network services are exposed. Developer tools come first among new application groups. Full self-hosting is a milestone: build the kernel and packages inside Axiom64, then boot the result. Expand musl first, then glibc and ordinary Linux applications; Linux i386 is the next binary compatibility target.
 
@@ -294,7 +294,7 @@ Acceptance evidence:
 
 ### F12. IPv4, IPv6, routing, and ICMP
 
-The [initial IPv4 host path](ipv4.md) supports static addresses, connected and explicit routes, loopback, bounded ARP, raw ICMP sockets, and echo/ping on both Ethernet adapters. [Netlink route control](netlink.md) adds bounded main-table dumps and protocol/scope-filtered mutations. Options and fragments are rejected; complete IPv4, IPv6, reassembly, multicast, and path MTU behavior remain required. [The initial implementation task](https://github.com/frankischilling/Axiom64/issues/61) and [route-control prerequisite](https://github.com/frankischilling/Axiom64/issues/67) cover these slices.
+The [initial IPv4 host path](ipv4.md) supports static addresses, connected and explicit routes, loopback, bounded ARP, raw ICMP sockets, and echo/ping on both Ethernet adapters. [Netlink control](netlink.md) adds bounded main-table dumps, protocol/scope-filtered route mutations, and complete address updates. Options and fragments are rejected; complete IPv4, IPv6, reassembly, multicast, and path MTU behavior remain required. [The initial implementation task](https://github.com/frankischilling/Axiom64/issues/61), [route-control prerequisite](https://github.com/frankischilling/Axiom64/issues/67), and [address/ownership task](https://github.com/frankischilling/Axiom64/issues/69) cover these slices.
 
 Required work:
 
@@ -312,7 +312,7 @@ Acceptance evidence:
 
 ### F13. TCP, UDP, and Linux socket semantics
 
-Unix stream sockets support X11, [AF_PACKET raw sockets](network.md) exchange Ethernet, and [AF_INET raw ICMP sockets](ipv4.md) support ping. [IPv4 UDP sockets](udp.md) add datagrams with tested checksums, binding, queues, errors, readiness, and retained I/O. [NETLINK_ROUTE sockets](netlink.md) support bounded tagged IPv4 route control, dumps, and retained datagram I/O. Unix datagram descriptors currently support interface configuration only. TCP, IPv6 UDP, Unix datagram data, deadlines, ancillary data, and the complete socket contract remain planned.
+Unix stream sockets support X11, [AF_PACKET raw sockets](network.md) exchange Ethernet, and [AF_INET raw ICMP sockets](ipv4.md) support ping. [IPv4 UDP sockets](udp.md) add datagrams with tested checksums, binding, queues, errors, readiness, and retained I/O. [NETLINK_ROUTE sockets](netlink.md) support bounded tagged IPv4 route control, dumps, complete address updates, and retained datagram I/O. Unix datagram descriptors currently support interface configuration only. TCP, IPv6 UDP, Unix datagram data, deadlines, ancillary data, and the complete socket contract remain planned.
 
 Required work:
 
@@ -331,7 +331,7 @@ Acceptance evidence:
 
 ### F14. DHCP, DNS, and network configuration
 
-Linux interface/route ioctls and BusyBox `ifconfig`, `route`, and numeric `ping` support [static configuration](ipv4.md#configuration-and-routing). DHCP, DNS, saved configuration, downloads, and a resolver service remain required.
+Linux interface/route ioctls and BusyBox `ifconfig`, `route`, and numeric `ping` support [static configuration](ipv4.md#configuration-and-routing). [C++ configuration/DHCP modules](network-configuration.md) add saved profiles, journaled address/route ownership, packet decoding, lease state, and dedicated real-wire acquisition/renewal/rebinding/release tests. Normal manager startup, concurrent default clients, resolver publication, complete fault/reboot coverage, DNS resolution, and downloads remain required in [#66](https://github.com/frankischilling/Axiom64/issues/66) and the parent scope.
 
 Required work:
 

@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <linux/netlink.h>
+#include <linux/if_addr.h>
 #include <linux/rtnetlink.h>
 #include <poll.h>
 #include <string.h>
@@ -168,6 +169,35 @@ int Routing::change(const Route& route, bool remove) {
         attribute(packet, size, RTA_GATEWAY, htonl(route.gateway));
     attribute(packet, size, RTA_PRIORITY, route.metric);
     attribute(packet, size, RTA_OIF, route.index);
+    return acknowledge(packet, size);
+}
+
+int Routing::change(const Address& address, bool remove) {
+    uint32_t bits = ~address.mask;
+    unsigned first = address.address >> 24;
+    if ((bits & (bits + 1)) || !first || first == 127 || first >= 224 || !address.index ||
+        (bits >= 2 && (!(address.address & bits) || (address.address & bits) == bits)) ||
+        address.broadcast != (bits < 2 ? 0 : address.address | bits))
+        return EINVAL;
+    uint8_t packet[64]{};
+    nlmsghdr header{};
+    header.nlmsg_type = remove ? RTM_DELADDR : RTM_NEWADDR;
+    header.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK | (remove ? 0 : NLM_F_CREATE | NLM_F_EXCL);
+    ifaddrmsg body{};
+    body.ifa_family = AF_INET;
+    body.ifa_prefixlen = prefix(address.mask);
+    body.ifa_flags = IFA_F_PERMANENT;
+    body.ifa_index = address.index;
+    memcpy(packet, &header, sizeof(header));
+    memcpy(packet + sizeof(header), &body, sizeof(body));
+    size_t size = sizeof(header) + sizeof(body);
+    attribute(packet, size, IFA_LOCAL, htonl(address.address));
+    attribute(packet, size, IFA_ADDRESS, htonl(address.address));
+    attribute(packet, size, IFA_BROADCAST, htonl(address.broadcast));
+    return acknowledge(packet, size);
+}
+
+int Routing::acknowledge(void* packet, size_t size) {
     uint32_t sequence;
     uint64_t deadline;
     int error = reply_deadline(deadline);
@@ -176,6 +206,7 @@ int Routing::change(const Route& route, bool remove) {
     error = send(packet, size, sequence);
     if (error)
         return error;
+    nlmsghdr header;
     memcpy(&header, packet, sizeof(header));
     uint8_t reply[128];
     error = receive(reply, sizeof(reply), size, deadline);

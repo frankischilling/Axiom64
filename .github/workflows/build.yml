@@ -43,6 +43,20 @@ jobs:
         run: |
           make build/netlink-native
           sudo python3 scripts/netlink_native.py
+      - name: Test IPv4 address message validation with sanitizers
+        run: make test-address-codec
+      - name: Test complete IPv4 addresses and configuration recovery
+        run: make test-configuration
+      - name: Compare address messages with native Linux
+        run: |
+          make build/configuration-native
+          sudo python3 scripts/configuration_native.py
+      - name: Test DHCP codecs, lease state, and profiles with sanitizers
+        run: make test-dhcp-codec
+      - name: Test DHCP modules in Ring 3
+        run: make test-dhcp-modules
+      - name: Test DHCP acquisition, renewal, rebinding, and owned configuration
+        run: make test-dhcp-transport
       - name: Test writable ext2 volumes and host fsck
         run: python3 scripts/ext2_test.py
       - name: Test normal desktop startup
@@ -112,6 +126,10 @@ jobs:
             build/udp-results.json
             build/netlink-*.log
             build/netlink*-results.json
+            build/configuration-*.log
+            build/configuration*-results.json
+            build/dhcp-*.log
+            build/dhcp*-results.json
             build/ext2-*.log
             build/ext2-results.json
             build/disk-root-*.log

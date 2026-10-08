@@ -25,7 +25,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/tests/` | Host tests grouped by module; excluded from kernel linking |
 | `userspace/init/` | Ring 3 init |
 | `userspace/desktop/` | Display sessions, Xorg and window-manager configuration |
-| `userspace/net/config/` | Ring 3 address/route adapter, ownership recovery, and saved profiles |
+| `userspace/net/config/` | Ring 3 address/route adapter, ownership recovery, saved profiles, and resolver metadata |
 | `userspace/net/dhcp/` | Bounded packet codec, lease state, and bootstrap/UDP transport |
 | `userspace/tests/` | ABI, filesystem, IPC, network, process, thread, storage, desktop, and native toolchain tests |
 

@@ -8,7 +8,7 @@ KERNEL_SOURCES = $(filter-out kernel/tests/%,$(call rwildcard,kernel/,*.cpp))
 KERNEL_OBJECTS = $(patsubst kernel/%.cpp,build/kernel/%.o,$(KERNEL_SOURCES)) build/kernel/arch/x86_64/entry.o
 FORMAT_SOURCES = $(foreach pattern,*.cpp *.hpp,$(call rwildcard,kernel/,$(pattern))) $(foreach pattern,*.c *.cpp *.hpp,$(call rwildcard,userspace/,$(pattern)))
 
-.PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-network test-ipv4 test-udp test-netlink test-netlink-codec test-address-codec test-configuration test-dhcp-codec test-dhcp-modules test-dhcp-transport test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
+.PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-network test-ipv4 test-udp test-netlink test-netlink-codec test-address-codec test-configuration test-dhcp-codec test-dhcp-modules test-dhcp-transport test-resolver test-resolver-native test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
 all: image
 deps:
 	$(PYTHON) scripts/fetch.py
@@ -98,6 +98,15 @@ DHCP_TRANSPORT_SOURCES = userspace/tests/net/dhcp-transport.cpp userspace/net/co
 build/dhcp-transport-tests: $(DHCP_TRANSPORT_SOURCES) $(CONFIGURATION_HEADERS)
 	@mkdir -p build
 	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(DHCP_TRANSPORT_SOURCES) -o $@
+RESOLVER_SOURCES = userspace/tests/net/resolver.cpp userspace/net/config/resolver.cpp userspace/net/config/profile.cpp
+RESOLVER_HEADERS = userspace/net/config/resolver.hpp userspace/net/config/profile.hpp userspace/net/dhcp/wire.hpp
+RESOLVER_FAULTS = -Wl,--wrap=rename,--wrap=fsync,--wrap=chmod,--wrap=fchmod
+build/resolver-tests: $(RESOLVER_SOURCES) $(RESOLVER_HEADERS)
+	@mkdir -p build
+	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace $(RESOLVER_SOURCES) $(RESOLVER_FAULTS) -o $@
+build/resolver-native: $(RESOLVER_SOURCES) $(RESOLVER_HEADERS)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace $(RESOLVER_SOURCES) $(RESOLVER_FAULTS) -o $@
 build/thread-static: userspace/tests/threads/pthreads.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -lm -o $@
@@ -175,6 +184,10 @@ test-dhcp-modules:
 	$(PYTHON) scripts/dhcp_modules_test.py
 test-dhcp-transport:
 	$(PYTHON) scripts/dhcp_transport_test.py
+test-resolver: build/resolver-tests
+	$(PYTHON) scripts/resolver_test.py
+test-resolver-native: build/resolver-native
+	$(PYTHON) scripts/resolver_native.py
 test-threads:
 	$(PYTHON) scripts/boot_test.py --suite threads --firmware both --timeout 170
 test-thread-io:

@@ -502,7 +502,7 @@
       "title": "DHCP, DNS, and network configuration",
       "milestone": "M3",
       "state": "partial",
-      "current": "Linux interface/route ioctls and BusyBox ifconfig, route add/delete, and numeric ping support static configuration. C++ modules add saved profiles, journaled address/route ownership, DHCP packet validation, lease state, and dedicated real-wire acquisition/renewal/rebinding/release tests. Normal manager startup, concurrent default clients, resolver publication, complete fault/reboot coverage, DNS resolution, and downloads remain required.",
+      "current": "Linux interface/route ioctls and BusyBox ifconfig, route add/delete, and numeric ping support static configuration. C++ modules add saved profiles, journaled address/route ownership, DHCP packet validation, lease state, and dedicated real-wire acquisition/renewal/rebinding/release tests. Resolver metadata merges bounded interface contributions and preserves manual files through checked publication/recovery. Normal manager startup, concurrent default clients, coordinated resolver updates, complete fault/reboot coverage, DNS resolution, and downloads remain required.",
       "scope": [
         "DHCP by default, lease renewal, saved configuration, and static override",
         "DNS resolver including UDP, TCP fallback, search rules, and timeouts",
@@ -538,7 +538,13 @@
         "scripts/dhcp_modules_test.py",
         "scripts/dhcp_transport_test.py",
         "scripts/dhcp_peer.py",
-        "docs/network-configuration.md"
+        "docs/network-configuration.md",
+        "userspace/net/config/resolver.hpp",
+        "userspace/net/config/resolver.cpp",
+        "userspace/tests/net/resolver.cpp",
+        "userspace/tests/net/resolver.sh",
+        "scripts/resolver_test.py",
+        "scripts/resolver_native.py"
       ],
       "branch": "feature/f14-dhcp-dns-and-network-configuration",
       "issue": "https://github.com/frankischilling/Axiom64/issues/14"

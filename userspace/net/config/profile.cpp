@@ -134,7 +134,7 @@ int sync_directory(const char* path) {
     return error;
 }
 
-int ensure_directory(const char* path) {
+int ensure_directory(const char* path, unsigned mode) {
     char current[256];
     size_t length = strnlen(path, sizeof(current));
     if (!length || length >= sizeof(current) || path[0] != '/')
@@ -145,7 +145,7 @@ int ensure_directory(const char* path) {
             continue;
         char saved = current[i];
         current[i] = 0;
-        bool created = mkdir(current, 0700) == 0;
+        bool created = mkdir(current, mode) == 0;
         if (!created && errno != EEXIST)
             return errno;
         struct stat information;
@@ -154,6 +154,8 @@ int ensure_directory(const char* path) {
         if (!S_ISDIR(information.st_mode))
             return ENOTDIR;
         if (created) {
+            if (mode != 0700 && chmod(current, mode) < 0)
+                return errno;
             char* slash = strrchr(current, '/');
             *slash = 0;
             int error = sync_directory(slash == current ? "/" : current);
@@ -162,6 +164,14 @@ int ensure_directory(const char* path) {
                 return error;
         }
         current[i] = saved;
+    }
+    if (mode == 0755) {
+        struct stat information;
+        if (lstat(path, &information) < 0)
+            return errno;
+        if ((information.st_mode & 0005) != 0005 || (information.st_mode & 0022) ||
+            information.st_uid != geteuid())
+            return EACCES;
     }
     return 0;
 }
@@ -447,12 +457,13 @@ int Store::read(const char* interface, const char* suffix, char* output, size_t 
     return error;
 }
 
-int Store::write(const char* interface, const char* suffix, const void* input, size_t size) const {
+int Store::write(const char* interface, const char* suffix, const void* input, size_t size,
+                 unsigned mode, unsigned directory_mode) const {
     char name[300], temporary[340];
     int error = path(interface, suffix, name, sizeof(name));
     if (error || !size || size >= maximum_text)
         return error ? error : EINVAL;
-    error = ensure_directory(directory_);
+    error = ensure_directory(directory_, directory_mode);
     if (error)
         return error;
     static unsigned serial = 0;
@@ -462,7 +473,7 @@ int Store::write(const char* interface, const char* suffix, const void* input, s
             snprintf(temporary, sizeof(temporary), "%s.tmp.%ld.%u", name, long(getpid()), ++serial);
         if (count < 0 || size_t(count) >= sizeof(temporary))
             return ENAMETOOLONG;
-        fd = open(temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+        fd = open(temporary, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode);
         if (fd >= 0)
             break;
         if (errno != EEXIST)
@@ -470,9 +481,11 @@ int Store::write(const char* interface, const char* suffix, const void* input, s
     }
     if (fd < 0)
         return EEXIST;
+    if (mode != 0600 && fchmod(fd, mode) < 0)
+        error = errno;
     size_t written = 0;
     auto bytes = static_cast<const uint8_t*>(input);
-    while (written < size) {
+    while (!error && written < size) {
         ssize_t count = ::write(fd, bytes + written, size - written);
         if (count < 0 && errno == EINTR)
             continue;

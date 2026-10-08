@@ -11,7 +11,7 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/mm/memory.cpp` | Physical allocation, page references, user page tables, validated user copies |
 | `kernel/drivers/platform/pci.cpp`, `kernel/drivers/virtio/` | PCI discovery, modern/legacy virtio transport, split-ring storage and descriptor ownership |
 | `kernel/drivers/block/block.cpp` | Virtio block request policy, raw sector I/O, flush, and filesystem claims |
-| `kernel/net/`, `kernel/drivers/net/` | Ethernet ownership, virtio-net/e1000 devices, interface ioctls, packet sockets, and IPv4/ARP/raw ICMP |
+| `kernel/net/`, `kernel/drivers/net/` | Ethernet ownership, virtio-net/e1000 devices, interface ioctls, packet sockets, IPv4/ARP/ICMP, and UDP |
 | `kernel/process/task.cpp` | Process/thread ownership, ELF loading, clone/fork/exec/exit/wait, scheduling, TLS, FPU state |
 | `kernel/process/futex.cpp` | Expected-value waits, wake/bitsets, requeue, deadlines, shared backing lifetime |
 | `kernel/io/io.cpp` | Retained I/O requests, captured vectors, wait completion, and interruption cleanup |
@@ -43,7 +43,7 @@ This is a development OS with a tested compatibility surface. Unsupported syscal
 - One CPU, 64 task slots, 128 descriptors per file table. Musl pthreads and C++ threads work within [the tested slice](threads.md); SMP and complete POSIX threading remain planned.
 - Root identity only. No multiuser permission enforcement, security boundary for untrusted workloads, or cryptographic random generator.
 - A RAM or [classic ext2 root](disk-root.md), independent RAM mounts, raw virtio disks, and [writable ext2 data volumes](ext2.md). Partitions, advanced filesystems/recovery, and a package installation service remain planned. See [mounts](vfs.md) and [storage](storage.md) for interfaces and limits.
-- Unix stream sockets, [raw Ethernet packet sockets](network.md), and [raw IPv4 ICMP sockets](ipv4.md) with static addresses, routes, ARP, loopback, and ping on virtio-net and QEMU e1000. TCP/UDP data, DHCP, DNS, IPv6, fragmentation/reassembly, ancillary data, and the complete socket contract remain planned. Unix/Internet datagram descriptors currently serve interface configuration only.
+- Unix stream sockets, [raw Ethernet packet sockets](network.md), [raw IPv4 ICMP sockets](ipv4.md), and [IPv4 UDP sockets](udp.md) with static addresses, routes, ARP, loopback, and ping on virtio-net and QEMU e1000. TCP, DHCP, DNS, IPv6, fragmentation/reassembly, ancillary data, and the complete socket contract remain planned. Unix datagram descriptors currently serve interface configuration only.
 - Eager copying on fork, bounded allocations, and no general `mremap` implementation.
 - Fixed framebuffer mode. No accelerated graphics, hardware gamma control, hotplug, or virtual-console switching.
 - Basic terminal discipline and job control; terminal and signal semantics continue to grow with tests.

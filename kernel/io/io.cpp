@@ -29,7 +29,6 @@ struct IoRequest {
     PacketAddress destination;
     unsigned destination_index;
     InetAddress inet_destination;
-    uint32_t destination_ipv4;
     uint8_t* packet_data;
     size_t packet_length;
     uint64_t address_pointer, address_length_pointer;
@@ -93,7 +92,7 @@ static int prepare_packet(Task& task, IoRequest& request) {
     if (request.write && request.handle->packet)
         request.destination_index = packet_interface(request.handle->packet);
     if (request.write && request.handle->inet)
-        request.destination_ipv4 = inet_peer(request.handle->inet);
+        request.inet_destination = inet_peer(request.handle->inet);
     uint64_t address = f.rax == 44 ? f.r8 : 0;
     uint64_t address_length = f.rax == 44 ? f.r9 : 0;
     if (f.rax == 19 || f.rax == 20) {
@@ -128,9 +127,6 @@ static int prepare_packet(Task& task, IoRequest& request) {
             if (!task.memory->space.copy_in(&request.inet_destination, address,
                                             sizeof(InetAddress)))
                 return -14;
-            if (request.inet_destination.family != 2)
-                return -97;
-            request.destination_ipv4 = __builtin_bswap32(request.inet_destination.address);
         } else {
             if (address_length < sizeof(PacketAddress))
                 return -22;
@@ -152,8 +148,9 @@ static int prepare_packet(Task& task, IoRequest& request) {
     if (!request.write)
         return 0;
     if (request.handle->inet) {
-        if (!request.destination_ipv4)
-            return -89;
+        int error = inet_target(request.handle->inet, request.inet_destination, address != 0);
+        if (error)
+            return error;
         if (request.packet_length > 65535 - 20)
             return -90;
     } else {
@@ -272,7 +269,7 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
     const auto& f = request.call;
     if (request.write) {
         if (request.handle->inet)
-            return inet_send(request.handle->inet, request.destination_ipv4, request.packet_data,
+            return inet_send(request.handle->inet, request.inet_destination, request.packet_data,
                              request.packet_length);
         int result = net_send(request.destination_index, request.packet_data, request.packet_length,
                               request.handle->packet);
@@ -288,7 +285,8 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
     if (!frame && !ip) {
         if (request.handle->inet) {
             int error = inet_error(request.handle->inet, true);
-            return error ? -error : -11;
+            bool blocking = !(request.handle->flags & 04000) && !(request.flags & 0x40);
+            return error ? -error : blocking && (inet_shutdown(request.handle->inet) & 1) ? 0 : -11;
         }
         auto info = net_info(packet_interface(request.handle->packet));
         return info && !info->live ? -5 : -11;

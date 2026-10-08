@@ -208,10 +208,15 @@ uint32_t readiness(Handle* h) {
             events |= 8;
     }
     if (h->inet) {
-        if (!inet_front(h->inet))
+        unsigned shutdown = inet_shutdown(h->inet);
+        if (!inet_front(h->inet) && !(shutdown & 1))
             events &= ~1u;
         if (inet_error(h->inet))
             events |= 8;
+        if (shutdown & 1)
+            events |= 0x2000;
+        if (shutdown == 3)
+            events |= 16;
     }
     if (h->pipe && !h->writer && !h->pipe->writers)
         events |= 16;

@@ -1,6 +1,6 @@
 # Ethernet and packet sockets
 
-The kernel has a shared Ethernet interface for PCI virtio-net and QEMU's Intel 82540EM e1000 model (`8086:100e`). Ring 3 programs can discover interfaces and exchange raw Ethernet frames through Linux `AF_PACKET`/`SOCK_RAW` sockets. The [initial IPv4 path](ipv4.md) adds static addresses, routes, ARP, and raw ICMP/ping. DHCP, DNS, TCP/UDP, downloads, and complete IPv4/IPv6 behavior remain in their full [protocol scopes](feature-roadmap.md). Both adapters are required for the first networking release.
+The kernel has a shared Ethernet interface for PCI virtio-net and QEMU's Intel 82540EM e1000 model (`8086:100e`). Ring 3 programs can discover interfaces and exchange raw Ethernet frames through Linux `AF_PACKET`/`SOCK_RAW` sockets. The [initial IPv4 path](ipv4.md) adds static addresses, routes, ARP, and raw ICMP/ping; [UDP sockets](udp.md) exchange datagrams. DHCP, DNS, TCP, downloads, and complete IPv4/IPv6 behavior remain in their full [protocol scopes](feature-roadmap.md). Both adapters are required for the first networking release.
 
 ## Devices and ownership
 

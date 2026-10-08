@@ -447,7 +447,7 @@
       "title": "TCP, UDP, and Linux socket semantics",
       "milestone": "M3",
       "state": "partial",
-      "current": "Unix stream sockets support X11, AF_PACKET exchanges Ethernet, and AF_INET raw ICMP supports the tested ping and retained-I/O contract. Unix/Internet datagram descriptors serve interface configuration only; TCP/UDP data, deadlines, ancillary data, and the complete socket contract remain planned.",
+      "current": "Unix stream sockets support X11, AF_PACKET exchanges Ethernet, and AF_INET supports raw ICMP/ping and IPv4 UDP datagrams with tested checksums, binding, queues, errors, readiness, and retained I/O. Unix datagram descriptors serve interface configuration only; TCP, IPv6 UDP, deadlines, ancillary data, and the complete socket contract remain planned.",
       "scope": [
         "AF_INET/AF_INET6 TCP/UDP socket lifecycle, options, and errors",
         "TCP sequence/window handling, retransmission, congestion, close, and reset",
@@ -470,7 +470,11 @@
         "userspace/tests/ipc/ipc.c",
         "kernel/net/ipv4/socket.cpp",
         "userspace/tests/net/ipv4.c",
-        "docs/ipv4.md"
+        "docs/ipv4.md",
+        "kernel/net/udp/core.cpp",
+        "userspace/tests/net/udp.c",
+        "scripts/udp_matrix.py",
+        "docs/udp.md"
       ],
       "branch": "feature/f13-tcp-udp-and-linux-socket-semantics",
       "issue": "https://github.com/frankischilling/Axiom64/issues/13"

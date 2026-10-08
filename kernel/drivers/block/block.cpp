@@ -75,14 +75,25 @@ static int request(Disk& d, uint32_t type, uint64_t sector, size_t length) {
     if (head < 0 || !d.pci.notify(d.queue))
         return failed(d);
     VirtioCompletion completed{};
-    if (d.pci.wait(d.queue, completed) || completed.head != head ||
-        completed.cookie != d.request_physical)
+    int waited = d.pci.wait(d.queue, completed);
+    if (waited || completed.head != head || completed.cookie != d.request_physical) {
+        log("[DEBUG-root-io] completion type=%u sector=%u bytes=%u wait=%d head=%u expected=%u "
+            "cookie=%x\n",
+            uint64_t(type), sector, uint64_t(length), int64_t(waited), uint64_t(completed.head),
+            uint64_t(head), completed.cookie);
         return failed(d);
+    }
     // Legacy devices historically report the used length inconsistently.
     uint32_t written = completed.length;
     if (d.pci.modern() && (!written || written > (type == 0 ? length + 1 : 1) ||
-                           (*d.status == 0 && written != (type == 0 ? length + 1 : 1))))
+                           (*d.status == 0 && written != (type == 0 ? length + 1 : 1)))) {
+        log("[DEBUG-root-io] length type=%u sector=%u bytes=%u used=%u status=%u\n", uint64_t(type),
+            sector, uint64_t(length), uint64_t(written), uint64_t(*d.status));
         return failed(d);
+    }
+    if (*d.status)
+        log("[DEBUG-root-io] status type=%u sector=%u bytes=%u status=%u\n", uint64_t(type), sector,
+            uint64_t(length), uint64_t(*d.status));
     if (*d.status == 0)
         return 0;
     if (*d.status == 1)

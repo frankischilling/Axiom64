@@ -59,6 +59,7 @@ jobs:
           path: |
             build/axiom64-disk.iso
             build/root-disk.raw
+            build/disk-root-*-boot-*.raw
       - name: Upload boot image and evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

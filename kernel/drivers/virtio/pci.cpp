@@ -302,8 +302,11 @@ int VirtioPci::wait(SplitQueue& queue, VirtioCompletion& completion) const {
     uint64_t started = timestamp();
     for (unsigned spins = 0; !expired(started, spins); spins++) {
         int result = queue.complete(completion);
-        if (result < 0 || !healthy())
+        if (result < 0 || !healthy()) {
+            log("[DEBUG-root-io] transport result=%d healthy=%u\n", int64_t(result),
+                uint64_t(healthy()));
             return -5;
+        }
         if (result) {
             if (modern())
                 isr_.r8(0);
@@ -313,6 +316,8 @@ int VirtioPci::wait(SplitQueue& queue, VirtioCompletion& completion) const {
         }
         asm volatile("pause");
     }
+    log("[DEBUG-root-io] deadline cycles=%u frequency=%u queue=%u\n", timestamp() - started,
+        tsc_frequency, uint64_t(queue.layout().size));
     return -5;
 }
 

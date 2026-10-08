@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install boot tools
-        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 ovmf xorriso e2fsprogs make gcc
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 ovmf xorriso e2fsprogs make gcc g++ nasm
       - name: Replay captured archive
         env:
           ARTIFACT_TOKEN: ${{ github.token }}
@@ -36,6 +36,7 @@ jobs:
           PY
           xorriso -osirrox on -indev build/axiom64.iso -extract /boot/rootfs.cpio build/rootfs.cpio
           python3 scripts/disk_root.py --verify-reproducible
+          make build/axiom64.elf
           python3 scripts/image.py --test --suite abi --root-device /dev/vda --output-name root-probe.iso
       - name: Probe full root mount
         run: |

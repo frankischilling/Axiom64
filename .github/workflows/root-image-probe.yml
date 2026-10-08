@@ -19,11 +19,16 @@ jobs:
         run: |
           python3 - <<'PY'
           import io, os, pathlib, urllib.request, zipfile
+          class ArtifactRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+                  redirected.remove_header('Authorization')
+                  return redirected
           request = urllib.request.Request(
               'https://api.github.com/repos/frankischilling/Axiom64/actions/artifacts/11522076104/zip',
               headers={'Authorization': 'Bearer ' + os.environ['ARTIFACT_TOKEN'],
                        'Accept': 'application/vnd.github+json'})
-          with urllib.request.urlopen(request) as response:
+          with urllib.request.build_opener(ArtifactRedirect()).open(request) as response:
               archive = zipfile.ZipFile(io.BytesIO(response.read()))
           pathlib.Path('build').mkdir(exist_ok=True)
           for name in ['axiom64.elf', 'axiom64.iso']:

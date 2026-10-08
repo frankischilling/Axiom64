@@ -5,6 +5,7 @@
 #include "drivers/platform/devices.hpp"
 #include "process/task.hpp"
 #include "net/ethernet.hpp"
+#include "core/time.hpp"
 
 namespace ax {
 [[gnu::used, gnu::section(".limine_requests_start")]] static volatile uint64_t requests_start[] =
@@ -25,6 +26,8 @@ namespace ax {
     LIMINE_EXECUTABLE_CMDLINE_REQUEST_ID, 0, nullptr};
 [[gnu::used, gnu::section(".limine_requests")]] static volatile limine_firmware_type_request
     firmware_request = {LIMINE_FIRMWARE_TYPE_REQUEST_ID, 0, nullptr};
+[[gnu::used, gnu::section(".limine_requests")]] static volatile limine_rsdp_request rsdp_request = {
+    LIMINE_RSDP_REQUEST_ID, 0, nullptr};
 [[gnu::used, gnu::section(".limine_requests_end")]] static volatile uint64_t requests_end[] =
     LIMINE_REQUESTS_END_MARKER;
 
@@ -85,6 +88,7 @@ extern "C" [[noreturn]] void kernel_main() {
         test_phase = "AXIOM64_PHASE=pressure";
     memory_init();
     arch_init();
+    clock_init(rsdp_request.response ? uint64_t(rsdp_request.response->address) : 0);
     auto modules = module_request.response;
     if (!modules || !modules->module_count)
         panic("missing root filesystem");

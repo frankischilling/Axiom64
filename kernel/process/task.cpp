@@ -6,11 +6,11 @@
 #include "process/futex.hpp"
 #include "io/io.hpp"
 #include "net/ethernet.hpp"
+#include "core/time.hpp"
 
 namespace ax {
 Task tasks[max_tasks];
 Task* current;
-uint64_t ticks;
 bool trace_syscalls, test_mode;
 const char* test_suite = "AXIOM64_SUITE=full";
 const char* test_phase = "AXIOM64_PHASE=none";
@@ -693,7 +693,7 @@ void start_init(const char* path) {
 
 extern "C" Frame* handle_trap(Frame* f) {
     if (f->vector == 32) {
-        ticks++;
+        clock_refresh(true);
         devices_poll();
         epoll_notify();
         signal_tick();

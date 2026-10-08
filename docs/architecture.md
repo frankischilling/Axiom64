@@ -2,7 +2,7 @@
 
 Axiom64 uses one repository and build system. The kernel is a modular monolith: memory, scheduling, files, signals, IPC, and devices execute in Ring 0 behind internal interfaces. Init, shells, compilers, Xorg, and desktop clients execute as separate Ring 3 processes.
 
-Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies a memory map, direct physical mapping, and framebuffer. The kernel installs its GDT, TSS, IDT, syscall entry, and 100 Hz PIT, discovers block devices, and selects either the initramfs or an [ext2 disk root](disk-root.md) before executing `/sbin/init`.
+Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies a memory map, direct physical mapping, and framebuffer. The kernel installs its GDT, TSS, IDT, syscall entry, and 100 Hz PIT, selects an [elapsed counter clock](time.md), discovers block devices, and selects either the initramfs or an [ext2 disk root](disk-root.md) before executing `/sbin/init`.
 
 | Module | Responsibility |
 | --- | --- |
@@ -48,6 +48,6 @@ This is a development OS with a tested compatibility surface. Unsupported syscal
 - Eager copying on fork, bounded allocations, and no general `mremap` implementation.
 - Fixed framebuffer mode. No accelerated graphics, hardware gamma control, hotplug, or virtual-console switching.
 - Basic terminal discipline and job control; terminal and signal semantics continue to grow with tests.
-- 10 ms timer resolution and boot-relative clocks; no calibrated wall clock.
+- 10 ms timer resolution and boot-relative clocks, with HPET or fixed-frequency TSC elapsed accounting; no calibrated wall clock. See [clock selection and limits](time.md).
 
 The harness tests the guest's own kernel paths. It does not substitute host syscalls for guest operations.

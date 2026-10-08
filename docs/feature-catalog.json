@@ -50,7 +50,7 @@
       "title": "Firmware, buses, and interrupt routing",
       "milestone": "M1",
       "state": "partial",
-      "current": "Limine BIOS/UEFI boot, legacy PIT/PIC interrupts, PCI configuration-mechanism-1 enumeration, shared modern/legacy virtio PCI setup, and split-queue DMA ownership work. PCIe ECAM, ACPI, and interrupt routing remain planned.",
+      "current": "Limine BIOS/UEFI boot, legacy PIT/PIC interrupts, PCI configuration-mechanism-1 enumeration, shared modern/legacy virtio PCI setup, split-queue DMA ownership, and bounded ACPI HPET discovery work. PCIe ECAM, general ACPI/firmware handoff, and interrupt routing remain planned.",
       "scope": [
         "PCI/PCIe enumeration and driver binding",
         "MMIO mapping, DMA allocation, address limits, and cache attributes",
@@ -79,7 +79,11 @@
         "kernel/include/drivers/virtio/queue.hpp",
         "kernel/tests/drivers/virtio/queue.cpp",
         "scripts/virtio_test.py",
-        "docs/virtio.md"
+        "docs/virtio.md",
+        "kernel/firmware/acpi.cpp",
+        "kernel/include/firmware/acpi.hpp",
+        "kernel/arch/x86_64/clock.cpp",
+        "docs/time.md"
       ],
       "branch": "feature/f01-firmware-buses-and-interrupt-routing",
       "issue": "https://github.com/frankischilling/Axiom64/issues/1"
@@ -584,7 +588,7 @@
       "title": "Clocks, timers, and power management",
       "milestone": "M6",
       "state": "partial",
-      "current": "PIT timing is 100 Hz and clocks are boot-relative.",
+      "current": "Boot-relative clocks use checked 64-bit HPET elapsed accounting or a calibrated fixed-frequency single-CPU TSC fallback. PIT scheduling and clock resolution remain 100 Hz/10 ms. Elapsed storage waits and overdue absolute futex/interval timers have controlled guest checks; RTC/calendar time, complete clock-ID semantics, higher-resolution deadlines, ACPI PM timer, SMP and power transitions remain required.",
       "scope": [
         "RTC wall clock, monotonic/realtime clocks, and clock setting permissions",
         "HPET, ACPI PM timer, calibrated TSC, and higher-resolution deadlines",
@@ -605,7 +609,20 @@
       ],
       "evidence": [
         "kernel/arch/x86_64/arch.cpp",
-        "kernel/process/signals.cpp"
+        "kernel/process/signals.cpp",
+        "kernel/arch/x86_64/clock.cpp",
+        "kernel/core/time.cpp",
+        "kernel/include/core/time.hpp",
+        "kernel/firmware/acpi.cpp",
+        "kernel/include/firmware/acpi.hpp",
+        "kernel/boot/main.cpp",
+        "kernel/abi/linux/syscall.cpp",
+        "kernel/process/task.cpp",
+        "kernel/tests/time/counter.cpp",
+        "userspace/tests/time/elapsed.c",
+        "userspace/tests/time/elapsed.sh",
+        "scripts/clock_test.py",
+        "docs/time.md"
       ],
       "branch": "feature/f16-clocks-timers-and-power-management",
       "issue": "https://github.com/frankischilling/Axiom64/issues/16"

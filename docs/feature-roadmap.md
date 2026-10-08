@@ -85,7 +85,7 @@ Use the development kernel branch as the integration base until it reaches main.
 
 ### F01. Firmware, buses, and interrupt routing
 
-Limine BIOS/UEFI boot, legacy PIT/PIC interrupts, PCI configuration-mechanism-1 enumeration, and virtio DMA work. PCIe ECAM, ACPI, and interrupt routing remain planned. [The first storage delivery](https://github.com/frankischilling/Axiom64/issues/40) adds the PCI and MMIO support used by raw virtio disks.
+Limine BIOS/UEFI boot, legacy PIT/PIC interrupts, PCI configuration-mechanism-1 enumeration, virtio DMA, and [bounded ACPI HPET discovery](time.md) work. PCIe ECAM, general ACPI/firmware handoff, and interrupt routing remain planned. [The first storage delivery](https://github.com/frankischilling/Axiom64/issues/40) adds the PCI and MMIO support used by raw virtio disks.
 
 Required work:
 
@@ -368,7 +368,7 @@ Acceptance evidence:
 
 ### F16. Clocks, timers, and power management
 
-PIT timing is 100 Hz and clocks are boot-relative.
+Boot-relative clocks use [checked HPET elapsed accounting or a calibrated fixed-frequency single-CPU TSC fallback](time.md). PIT scheduling and resolution remain 100 Hz/10 ms. [Child #73](https://github.com/frankischilling/Axiom64/issues/73) checks delayed storage intervals and overdue absolute futex/interval timers. RTC/calendar time, complete clock-ID semantics, higher-resolution deadlines, ACPI PM timer, SMP, and power transitions remain required.
 
 Required work:
 

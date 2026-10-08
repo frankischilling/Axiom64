@@ -30,6 +30,7 @@ The harness boots QEMU under BIOS and UEFI, checks firmware identity, requires e
 | IPv4 netlink routes | Four mixed-NIC boots, native Linux namespace comparison, sanitized message fixtures/mutations, tagged ownership and unrelated-route preservation, actual routed packets, descriptor lifetime, malformed requests, and route/socket/reply quotas |
 | IPv4 address/configuration | Four mixed-NIC boots, native address-message comparison, sanitized parser fixtures/mutations, complete tuples, owned replacement/recovery, manual preservation, malformed journals, publication failure, six partial intents, and actual route-quota rollback |
 | DHCP modules | Twelve codec/state/profile boots plus four independently checked real-wire acquisition/renewal/rebinding/release boots; normal daemon startup remains required |
+| Private saved network files | Native GNU sanitizer and static/dynamic musl under ordinary/root UIDs, real foreign owners, writerless FIFOs and atomic publication failures; eight static/dynamic guest RAM/ext2 boots with ABI checks, unmount, seed preservation and host fsck |
 | Resolver metadata | Native sanitizer checks and four guest boots for bounded eight-interface merging, complete search names, manual preservation, permissions, ownership/intent recovery, checked publication failures, and resource retry |
 | VFS mounts | Independent RAM volumes, hidden/restored contents, directory identity, read-only policy, cross-filesystem errors, executable loading, mappings, sockets, busy unmounts, slot reuse |
 | Writable ext2 | Four disk layouts across firmware/transports, guest files and executable loading, fresh-boot reads, host file/metadata comparisons and fsck, full allocation, rejected formats, and I/O retries |
@@ -55,6 +56,7 @@ python3 scripts/udp_test.py --firmware bios --transport modern
 python3 scripts/netlink_test.py --firmware bios --transport modern
 python3 scripts/configuration_test.py --firmware bios --transport modern
 python3 scripts/dhcp_modules_test.py --suite state --firmware bios --transport modern
+python3 scripts/profile_test.py --volume ext2 --firmware bios --transport modern
 python3 scripts/dhcp_transport_test.py --firmware bios --transport modern
 ```
 

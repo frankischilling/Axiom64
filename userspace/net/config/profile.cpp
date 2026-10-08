@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/config/profile.hpp"
+#include "net/config/saved.hpp"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -421,11 +422,13 @@ int Store::path(const char* interface, const char* suffix, char* output, size_t 
 }
 
 int Store::read(const char* interface, const char* suffix, char* output, size_t capacity,
-                size_t& size) const {
+                size_t& size, bool saved) const {
     char name[300];
     int error = path(interface, suffix, name, sizeof(name));
     if (error)
         return error;
+    if (saved)
+        return saved::read(directory_, strrchr(name, '/') + 1, output, capacity, size);
     int fd = open(name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0)
         return errno;
@@ -458,11 +461,13 @@ int Store::read(const char* interface, const char* suffix, char* output, size_t 
 }
 
 int Store::write(const char* interface, const char* suffix, const void* input, size_t size,
-                 unsigned mode, unsigned directory_mode) const {
+                 unsigned mode, unsigned directory_mode, bool saved) const {
     char name[300], temporary[340];
     int error = path(interface, suffix, name, sizeof(name));
     if (error || !size || size >= maximum_text)
         return error ? error : EINVAL;
+    if (saved)
+        return saved::write(directory_, strrchr(name, '/') + 1, input, size);
     error = ensure_directory(directory_, directory_mode);
     if (error)
         return error;
@@ -511,21 +516,21 @@ int Store::write(const char* interface, const char* suffix, const void* input, s
 int Store::read_profile(const char* interface, Profile& output) const {
     char bytes[maximum_text];
     size_t size = 0;
-    int error = read(interface, ".conf", bytes, sizeof(bytes), size);
+    int error = read(interface, ".conf", bytes, sizeof(bytes), size, true);
     return error ? error : parse_profile(bytes, size, output) ? 0 : EINVAL;
 }
 
 int Store::write_profile(const char* interface, const Profile& profile) const {
     char bytes[maximum_text];
     size_t size = format_profile(profile, bytes, sizeof(bytes));
-    return size ? write(interface, ".conf", bytes, size) : EINVAL;
+    return size ? write(interface, ".conf", bytes, size, 0600, 0700, true) : EINVAL;
 }
 
 int Store::read_hint(const char* interface, const dhcp::Identity& identity,
                      uint32_t& output) const {
     char bytes[maximum_text];
     size_t size = 0;
-    int error = read(interface, ".lease", bytes, sizeof(bytes), size);
+    int error = read(interface, ".lease", bytes, sizeof(bytes), size, true);
     if (error)
         return error;
     if (!size || size >= sizeof(bytes) || memchr(bytes, 0, size))
@@ -575,20 +580,22 @@ int Store::write_hint(const char* interface, const dhcp::Identity& identity, uin
                mac[2], mac[3], mac[4], mac[5]);
     writer.ip(value);
     writer.put("\n");
-    return writer.good ? write(interface, ".lease", bytes, writer.used) : EINVAL;
+    return writer.good ? write(interface, ".lease", bytes, writer.used, 0600, 0700, true) : EINVAL;
 }
 
-int Store::remove(const char* interface, const char* suffix) const {
+int Store::remove(const char* interface, const char* suffix, bool saved) const {
     char name[300];
     int error = path(interface, suffix, name, sizeof(name));
     if (error)
         return error;
+    if (saved)
+        return saved::remove(directory_, strrchr(name, '/') + 1);
     if (unlink(name) < 0)
         return errno == ENOENT ? 0 : errno;
     return sync_directory(directory_);
 }
 
 int Store::forget_hint(const char* interface) const {
-    return remove(interface, ".lease");
+    return remove(interface, ".lease", true);
 }
 } // namespace ax::net

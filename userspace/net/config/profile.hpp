@@ -42,11 +42,12 @@ class Store {
 
     int path(const char* interface, const char* suffix, char*, size_t) const;
 
-    int read(const char* interface, const char* suffix, char*, size_t, size_t&) const;
+    int read(const char* interface, const char* suffix, char*, size_t, size_t&,
+             bool saved = false) const;
 
     int write(const char* interface, const char* suffix, const void*, size_t, unsigned mode = 0600,
-              unsigned directory_mode = 0700) const;
+              unsigned directory_mode = 0700, bool saved = false) const;
 
-    int remove(const char* interface, const char* suffix) const;
+    int remove(const char* interface, const char* suffix, bool saved = false) const;
 };
 } // namespace ax::net

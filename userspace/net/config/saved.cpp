@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -226,5 +227,65 @@ int remove(const char* directory, const char* name) {
     if (!error && fsync(parent.fd) < 0)
         error = errno;
     return parent.close(error);
+}
+
+int lock(const char* directory, const char* name, int& descriptor) {
+    if (!directory || !name)
+        return EINVAL;
+    size_t length = strnlen(name, 64);
+    if (!length || length == 64 || strchr(name, '/') || strchr(name, '\\') || !strcmp(name, ".") ||
+        !strcmp(name, ".."))
+        return EINVAL;
+    Directory parent;
+    int error = parent.open(directory, true), fd = -1;
+    if (error)
+        return error;
+    struct stat before, after, named;
+    bool created = false;
+    for (unsigned attempt = 0; attempt < 8; attempt++) {
+        if (fstatat(parent.fd, name, &before, AT_SYMLINK_NOFOLLOW) == 0) {
+            error = file_policy(before);
+            if (error)
+                break;
+            fd = openat(parent.fd, name, O_RDWR | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
+        } else if (errno == ENOENT) {
+            fd = openat(parent.fd, name,
+                        O_RDWR | O_CREAT | O_EXCL | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC, 0600);
+            if (fd < 0 && errno == EEXIST)
+                continue;
+            created = fd >= 0;
+        } else {
+            error = errno;
+            break;
+        }
+        if (fd < 0)
+            error = errno;
+        break;
+    }
+    if (!error && fd < 0)
+        error = EAGAIN;
+    if (!error && created && fchmod(fd, 0600) < 0)
+        error = errno;
+    if (!error && fstat(fd, &after) < 0)
+        error = errno;
+    if (!error)
+        error = file_policy(after);
+    if (!error && !created && (before.st_dev != after.st_dev || before.st_ino != after.st_ino))
+        error = ESTALE;
+    if (!error && flock(fd, LOCK_EX | LOCK_NB) < 0)
+        error = errno;
+    if (!error && created && (fsync(fd) < 0 || fsync(parent.fd) < 0))
+        error = errno;
+    if (!error && fstatat(parent.fd, name, &named, AT_SYMLINK_NOFOLLOW) < 0)
+        error = errno;
+    if (!error)
+        error = file_policy(named);
+    if (!error && (named.st_dev != after.st_dev || named.st_ino != after.st_ino))
+        error = ESTALE;
+    error = parent.close(error);
+    if (error)
+        return fd < 0 ? error : finish(fd, error);
+    descriptor = fd;
+    return 0;
 }
 } // namespace ax::net::saved

@@ -23,7 +23,7 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/drivers/platform/devices.cpp` | Serial terminal, PTYs, framebuffer, PS/2 events, Linux block-device file operations |
 | `kernel/drivers/platform/power.cpp` | PIIX4 power off after filesystem synchronization on the tested QEMU platform |
 | `userspace/init/main.c` | Desktop and serial shell startup, child reaping, console shell restart |
-| `userspace/net/` | C++ configuration ownership, saved profiles, and DHCP packet/state/transport modules; normal manager startup remains required |
+| `userspace/net/` | C++ configuration ownership, saved profiles, resolver metadata, and DHCP packet/state/transport modules; normal manager startup remains required |
 
 Sources and public headers use matching subsystem folders. Desktop configuration is under `userspace/desktop/`; guest and host tests are grouped by the subsystem they exercise. [Source layout and build discovery](source-layout.md) describe the paths and conventions.
 
@@ -44,7 +44,7 @@ This is a development OS with a tested compatibility surface. Unsupported syscal
 - One CPU, 64 task slots, 128 descriptors per file table. Musl pthreads and C++ threads work within [the tested slice](threads.md); SMP and complete POSIX threading remain planned.
 - Root identity only. No multiuser permission enforcement, security boundary for untrusted workloads, or cryptographic random generator.
 - A RAM or [classic ext2 root](disk-root.md), independent RAM mounts, raw virtio disks, and [writable ext2 data volumes](ext2.md). Partitions, advanced filesystems/recovery, and a package installation service remain planned. See [mounts](vfs.md) and [storage](storage.md) for interfaces and limits.
-- Unix stream sockets, [raw Ethernet packet sockets](network.md), [raw IPv4 ICMP sockets](ipv4.md), and [IPv4 UDP sockets](udp.md) with static addresses, routes, ARP, loopback, and ping on virtio-net and QEMU e1000. [Netlink sockets](netlink.md) add bounded IPv4 route dumps, tagged route control, and complete address updates. [DHCP/configuration modules](network-configuration.md) have dedicated guest checks; normal DHCP startup, DNS, TCP, IPv6, fragmentation/reassembly, ancillary data, and the complete socket contract remain required. Unix datagram descriptors currently serve interface configuration only.
+- Unix stream sockets, [raw Ethernet packet sockets](network.md), [raw IPv4 ICMP sockets](ipv4.md), and [IPv4 UDP sockets](udp.md) with static addresses, routes, ARP, loopback, and ping on virtio-net and QEMU e1000. [Netlink sockets](netlink.md) add bounded IPv4 route dumps, tagged route control, and complete address updates. [DHCP/configuration and resolver metadata modules](network-configuration.md) have dedicated guest checks; normal DHCP startup, DNS queries, TCP, IPv6, fragmentation/reassembly, ancillary data, and the complete socket contract remain required. Unix datagram descriptors currently serve interface configuration only.
 - Eager copying on fork, bounded allocations, and no general `mremap` implementation.
 - Fixed framebuffer mode. No accelerated graphics, hardware gamma control, hotplug, or virtual-console switching.
 - Basic terminal discipline and job control; terminal and signal semantics continue to grow with tests.

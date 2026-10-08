@@ -37,13 +37,15 @@ class Store {
 
   private:
     friend class Configuration;
+    friend class Resolver;
     char directory_[256]{};
 
     int path(const char* interface, const char* suffix, char*, size_t) const;
 
     int read(const char* interface, const char* suffix, char*, size_t, size_t&) const;
 
-    int write(const char* interface, const char* suffix, const void*, size_t) const;
+    int write(const char* interface, const char* suffix, const void*, size_t, unsigned mode = 0600,
+              unsigned directory_mode = 0700) const;
 
     int remove(const char* interface, const char* suffix) const;
 };

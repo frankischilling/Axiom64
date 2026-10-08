@@ -331,7 +331,7 @@ Acceptance evidence:
 
 ### F14. DHCP, DNS, and network configuration
 
-Linux interface/route ioctls and BusyBox `ifconfig`, `route`, and numeric `ping` support [static configuration](ipv4.md#configuration-and-routing). [C++ configuration/DHCP modules](network-configuration.md) add saved profiles, journaled address/route ownership, packet decoding, lease state, and dedicated real-wire acquisition/renewal/rebinding/release tests. Normal manager startup, concurrent default clients, resolver publication, complete fault/reboot coverage, DNS resolution, and downloads remain required in [#66](https://github.com/frankischilling/Axiom64/issues/66) and the parent scope.
+Linux interface/route ioctls and BusyBox `ifconfig`, `route`, and numeric `ping` support [static configuration](ipv4.md#configuration-and-routing). [C++ configuration/DHCP modules](network-configuration.md) add saved profiles, journaled address/route ownership, packet decoding, lease state, and dedicated real-wire acquisition/renewal/rebinding/release tests. [Resolver metadata](network-configuration.md#owned-resolver-metadata) merges bounded interface contributions and preserves manual files through checked publication/recovery. Normal manager startup, concurrent default clients, coordinated resolver updates, complete fault/reboot coverage, DNS resolution, and downloads remain required in [#66](https://github.com/frankischilling/Axiom64/issues/66) and the parent scope.
 
 Required work:
 

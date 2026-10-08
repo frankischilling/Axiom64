@@ -57,6 +57,10 @@ jobs:
         run: make test-dhcp-modules
       - name: Test DHCP acquisition, renewal, rebinding, and owned configuration
         run: make test-dhcp-transport
+      - name: Test resolver metadata and publication failures with sanitizers
+        run: make test-resolver-native
+      - name: Test resolver metadata, manual settings, and ownership recovery in Ring 3
+        run: make test-resolver
       - name: Test writable ext2 volumes and host fsck
         run: python3 scripts/ext2_test.py
       - name: Test normal desktop startup
@@ -130,6 +134,8 @@ jobs:
             build/configuration*-results.json
             build/dhcp-*.log
             build/dhcp*-results.json
+            build/resolver-*.log
+            build/resolver*-results.json
             build/ext2-*.log
             build/ext2-results.json
             build/disk-root-*.log

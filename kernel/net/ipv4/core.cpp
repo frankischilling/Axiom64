@@ -2,7 +2,8 @@
 #include "net/ipv4.hpp"
 #include "net/inet.hpp"
 #include "process/task.hpp"
-#include "wire.hpp"
+#include "net/ipv4_wire.hpp"
+#include "net/udp.hpp"
 
 namespace ax {
 namespace {
@@ -267,13 +268,13 @@ static int select(uint32_t source, uint32_t destination, unsigned bound, Selecti
 }
 
 static void protocol_error(unsigned index, uint32_t source, uint32_t destination,
-                           const uint8_t* bytes, size_t length) {
+                           const uint8_t* bytes, size_t length, uint8_t code = 2) {
     if (ticks < next_icmp_error[index])
         return;
     // IPv4 header plus the first eight original payload bytes, bounded by RX length.
     uint8_t error[36]{};
     error[0] = 3;
-    error[1] = 2;
+    error[1] = code;
     size_t quoted = min(length, size_t(28));
     memcpy(error + 8, bytes, quoted);
     ip4::put16(error + 2, ip4::checksum(error, 8 + quoted));
@@ -286,8 +287,11 @@ static void quoted_error(unsigned index, const uint8_t* payload, size_t length) 
         return;
     const auto quote = payload + 8;
     if (quote[0] != 0x45 || ip4::get16(quote + 2) < 28 || ip4::checksum(quote, 20) ||
-        (ip4::get16(quote + 6) & ~uint16_t(0x4000)) || quote[9] != 1 ||
+        (ip4::get16(quote + 6) & ~uint16_t(0x4000)) || (quote[9] != 1 && quote[9] != 17) ||
         !ipv4_local(ip4::get32(quote + 12)) || !ip4::unicast(ip4::get32(quote + 16)))
+        return;
+    if (quote[9] == 17 &&
+        (ip4::get16(quote + 24) < 8 || ip4::get16(quote + 24) > ip4::get16(quote + 2) - 20))
         return;
     int error = 0;
     if (payload[0] == 12 && !payload[1])
@@ -301,7 +305,7 @@ static void quoted_error(unsigned index, const uint8_t* payload, size_t length) 
             error = 90; // EMSGSIZE: fragmentation needed
     }
     if (error)
-        inet_icmp_error(index, ip4::get32(quote + 12), ip4::get32(quote + 16), error);
+        inet_icmp_error(index, quote, error);
 }
 
 static void input(unsigned index, const uint8_t* bytes, size_t length,
@@ -320,6 +324,13 @@ static void input(unsigned index, const uint8_t* bytes, size_t length,
         (index != ipv4_loopback &&
          (is_loopback(source) || is_loopback(destination) || directed_broadcast(*config, source))))
         return;
+    if (bytes[9] == 17) {
+        if (udp_receive(index, source, destination, broadcast, bytes + 20, length - 20) ==
+                UdpInput::unbound &&
+            local && !broadcast && !link_broadcast)
+            protocol_error(index, source, destination, bytes, length, 3);
+        return;
+    }
     if (bytes[9] != 1) {
         if (local && !broadcast && !link_broadcast)
             protocol_error(index, source, destination, bytes, length);

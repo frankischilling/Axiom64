@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+// IPv4 wire primitives shared by transport protocols.
 #include "core/base.hpp"
 
 namespace ax::ip4 {

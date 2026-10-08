@@ -688,9 +688,9 @@ static void limits(unsigned lane) {
     check(control >= 0 &&
               sendto(control, bytes, sizeof(bytes), 0, (struct sockaddr*)&destination,
                      sizeof(destination)) == -1 &&
-              errno == EOPNOTSUPP && recv(control, bytes, sizeof(bytes), MSG_DONTWAIT) == -1 &&
-              errno == EOPNOTSUPP,
-          "UDP control descriptor rejects unimplemented data I/O");
+              errno == EINVAL && recv(control, bytes, sizeof(bytes), MSG_DONTWAIT) == -1 &&
+              errno == EAGAIN,
+          "UDP descriptor validates destination port and nonblocking empty receive");
     check(close(control) == 0, "UDP control close");
     check(socket(AF_INET, SOCK_STREAM, IPPROTO_TCP) == -1 && errno == EPROTONOSUPPORT &&
               socket(AF_INET, SOCK_RAW, IPPROTO_UDP) == -1 && errno == EPROTONOSUPPORT,

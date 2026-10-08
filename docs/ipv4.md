@@ -1,10 +1,10 @@
 # IPv4, ARP, routing, and ping
 
-The initial IPv4 host path runs over [virtio-net and QEMU e1000](network.md). It supports static addresses, loopback, connected and explicit routes, bounded ARP resolution, kernel ICMP echo replies, and Linux raw ICMP sockets. BusyBox `ifconfig`, route add/delete, and numeric `ping` exercise the guest implementation. DHCP, DNS, TCP/UDP data, downloads, IPv6, and complete IPv4 conformance remain required by the [networking roadmap](feature-roadmap.md).
+The initial IPv4 host path runs over [virtio-net and QEMU e1000](network.md). It supports static addresses, loopback, connected and explicit routes, bounded ARP resolution, kernel ICMP echo replies, Linux raw ICMP sockets, and [UDP datagrams](udp.md). BusyBox `ifconfig`, route add/delete, and numeric `ping` exercise the guest implementation. DHCP, DNS, TCP, downloads, IPv6, and complete IPv4 conformance remain required by the [networking roadmap](feature-roadmap.md).
 
 ## Ownership and progress
 
-`kernel/net/ipv4/core.cpp` owns configuration, 32 explicit routes, 128 interface/address-scoped neighbors, and 32 pending outputs. `socket.cpp` owns raw ICMP descriptions and receive queues. `kernel/net/ioctl.cpp` translates the Linux interface and legacy route structures. Wire helpers stay within the IPv4 module.
+`kernel/net/ipv4/core.cpp` owns configuration, 32 explicit routes, 128 interface/address-scoped neighbors, and 32 pending outputs. `socket.cpp` owns raw ICMP and UDP descriptions and receive queues. `kernel/net/udp/core.cpp` validates and constructs UDP datagrams. `kernel/net/ioctl.cpp` translates the Linux interface and legacy route structures. `kernel/include/net/ipv4_wire.hpp` shares wire access and checksum helpers between protocol modules.
 
 Output owns a heap copy of the complete Ethernet/IP frame before waiting for ARP or driver capacity. A successful send means the bounded queue accepted the bytes. The driver then copies the frame into its own DMA storage and retains it until completion. Closing the socket detaches pending error/accounting references; accepted output keeps its bytes without referring to a reused socket slot. RX validates its bounds and copies each selected datagram into an independent listener queue before recycling the hardware buffer.
 
@@ -20,7 +20,7 @@ Ethernet interfaces start administratively down and without an IPv4 address. The
 
 The x86-64 Linux `ifreq` controls support address, netmask, broadcast, name/index, MAC, flags, and MTU. Masks must be contiguous; invalid updates leave the configuration intact. Address zero disables that interface's IPv4 configuration. A mask shorter than /31 derives the directed broadcast unless explicitly supplied; /31 and /32 have no directed broadcast. Reconfiguration clears that interface's neighbor cache and rejects its pending output with `ENETDOWN`.
 
-`SIOCGIFCONF` returns whole 40-byte entries for assigned Ethernet addresses and loopback. A null buffer queries the required size. Configuration-only `AF_INET/SOCK_DGRAM` and `AF_UNIX/SOCK_DGRAM` descriptors support the interface ioctl path used by libc/BusyBox. Their data and socket-lifecycle operations return `EOPNOTSUPP`; UDP and Unix datagram transport are still required.
+`SIOCGIFCONF` returns whole 40-byte entries for assigned Ethernet addresses and loopback. A null buffer queries the required size. `AF_INET/SOCK_DGRAM` and configuration-only `AF_UNIX/SOCK_DGRAM` descriptors support the interface ioctl path used by libc/BusyBox. Internet datagrams implement [IPv4 UDP](udp.md); Unix datagram transport remains required.
 
 `SIOCADDRT` and `SIOCDELRT` implement the initial 120-byte Linux `rtentry` contract: connected routes, on-link routes, gateways, default routes, host routes, and metrics. Selection chooses the longest matching prefix, then the lower metric. An omitted device is inferred from a directly connected destination or gateway. A gateway must be a nonlocal unicast address on the selected interface's subnet. Duplicate routes, missing routes, invalid masks/families, and unreachable gateways return explicit errors. Netlink, `/proc/net/route`, aliases, policy routing, and route-listing support remain planned.
 
@@ -53,7 +53,7 @@ Each listener holds at most 32 datagrams and 65536 bytes, dropping new arrivals 
 
 Receive supports `MSG_PEEK`, `MSG_TRUNC`, and `MSG_DONTWAIT`; sends also accept `MSG_NOSIGNAL`. Poll/epoll and `FIONREAD` expose queue state. An ordinary failed receive copy consumes the selected datagram; a failed peek retains it. This behavior is checked against Linux and leaves the separate packet-socket contract intact. Blocking I/O captures vectors, addresses, and TX bytes and retains the original description through close/reuse. Socket errors take precedence over queued input; a failed `SO_ERROR` copy does not clear the pending error.
 
-TCP, UDP data, other raw protocols, listen/accept/shutdown, deadlines, ancillary data, `IP_HDRINCL`, error queues, and other unsupported options return explicit errors. Current tasks run as root. Accounts, permission enforcement, and secure randomness remain prerequisites for exposing services.
+TCP, other raw protocols, raw listen/accept/shutdown, deadlines, ancillary data, `IP_HDRINCL`, error queues, and other unsupported options return explicit errors. [UDP](udp.md) has its own datagram and shutdown contract. Current tasks run as root. Accounts, permission enforcement, and secure randomness remain prerequisites for exposing services.
 
 ## Verification
 

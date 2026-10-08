@@ -33,7 +33,11 @@ const InetFrame* inet_front(InetSocket*);
 
 void inet_consume(InetSocket*);
 
-uint32_t inet_peer(InetSocket*);
+InetAddress inet_peer(InetSocket*);
+
+int inet_target(InetSocket*, InetAddress&, bool named);
+
+unsigned inet_shutdown(InetSocket*);
 
 size_t inet_available(InetSocket*);
 
@@ -41,14 +45,18 @@ int inet_error(InetSocket*, bool clear = false);
 
 void inet_failed(InetSocket*, int error);
 
-void inet_icmp_error(unsigned index, uint32_t local, uint32_t peer, int error);
+void inet_icmp_error(unsigned index, const uint8_t* quote, int error);
 
 void inet_reclaim(InetSocket*, size_t length);
 
 void inet_deliver(unsigned index, uint32_t source, uint32_t destination, uint8_t protocol,
                   const void*, size_t);
 
-int64_t inet_send(InetSocket*, uint32_t destination, const void*, size_t);
+bool inet_datagram_deliver(unsigned index, uint32_t source, uint32_t destination,
+                           uint16_t source_port, uint16_t destination_port, bool broadcast,
+                           const void*, size_t);
+
+int64_t inet_send(InetSocket*, const InetAddress&, const void*, size_t);
 
 int64_t inet_read(InetSocket*, void*, size_t);
 

@@ -312,7 +312,7 @@ Acceptance evidence:
 
 ### F13. TCP, UDP, and Linux socket semantics
 
-Unix stream sockets support X11, [AF_PACKET raw sockets](network.md) exchange Ethernet, and [AF_INET raw ICMP sockets](ipv4.md) support ping and the tested retained-I/O contract. Unix and Internet datagram descriptors currently support interface configuration only. TCP/UDP data, Unix datagram data, deadlines, ancillary data, and the complete socket contract remain planned.
+Unix stream sockets support X11, [AF_PACKET raw sockets](network.md) exchange Ethernet, and [AF_INET raw ICMP sockets](ipv4.md) support ping. [IPv4 UDP sockets](udp.md) add datagrams with tested checksums, binding, queues, errors, readiness, and retained I/O. Unix datagram descriptors currently support interface configuration only. TCP, IPv6 UDP, Unix datagram data, deadlines, ancillary data, and the complete socket contract remain planned.
 
 Required work:
 

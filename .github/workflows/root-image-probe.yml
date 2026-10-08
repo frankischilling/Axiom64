@@ -38,7 +38,9 @@ jobs:
           python3 scripts/disk_root.py --verify-reproducible
           python3 scripts/image.py --test --suite abi --root-device /dev/vda --output-name root-probe.iso
       - name: Probe full root mount
-        run: python3 scripts/root_mount_test.py --image build/root-probe.iso --disk build/root-disk.raw
+        run: |
+          python3 scripts/root_mount_test.py --image build/root-probe.iso --disk build/root-disk.raw
+          python3 scripts/root_mount_test.py --image build/root-probe.iso --disk build/root-disk.raw --copy-disk
       - name: Retain fixture and mount evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -48,4 +50,5 @@ jobs:
             build/root-disk.raw
             build/root-probe.iso
             build/root-mount-*.log
-            build/root-mount-results.json
+            build/root-mount-*.json
+            build/root-mount-*.raw

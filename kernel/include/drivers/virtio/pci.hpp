@@ -25,7 +25,7 @@ class VirtioPci {
 
     bool notify(const SplitQueue&) const;
 
-    int wait(SplitQueue&, VirtioCompletion&) const;
+    int wait(SplitQueue&, VirtioCompletion&, unsigned timeout_seconds) const;
 
     bool stop();
 

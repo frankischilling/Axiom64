@@ -33,8 +33,11 @@ static void calibrate_timeout() {
     out8(0x61, speaker);
 }
 
-static bool expired(uint64_t started, unsigned spins) {
-    return spins >= 20000000 || (tsc_frequency && timestamp() - started >= tsc_frequency * 2);
+static bool expired(uint64_t started, unsigned spins, unsigned seconds = 2) {
+    // The spin bound is a fallback when PIT calibration failed. A calibrated
+    // deadline must not expire early merely because the CPU polls quickly.
+    return tsc_frequency ? timestamp() - started >= tsc_frequency * seconds
+                         : uint64_t(spins) >= uint64_t(seconds) * 10000000;
 }
 } // namespace
 
@@ -293,20 +296,20 @@ bool VirtioPci::notify(const SplitQueue& queue) const {
     return false;
 }
 
-int VirtioPci::wait(SplitQueue& queue, VirtioCompletion& completion) const {
+int VirtioPci::wait(SplitQueue& queue, VirtioCompletion& completion,
+                    unsigned timeout_seconds) const {
+    if (!timeout_seconds || timeout_seconds > 60)
+        return -22;
     bool bound = false;
     for (const auto& item : queues_)
         bound |= item.queue == &queue;
     if (!bound || !healthy())
         return -5;
     uint64_t started = timestamp();
-    for (unsigned spins = 0; !expired(started, spins); spins++) {
+    for (unsigned spins = 0; !expired(started, spins, timeout_seconds); spins++) {
         int result = queue.complete(completion);
-        if (result < 0 || !healthy()) {
-            log("[DEBUG-root-io] transport result=%d healthy=%u\n", int64_t(result),
-                uint64_t(healthy()));
+        if (result < 0 || !healthy())
             return -5;
-        }
         if (result) {
             if (modern())
                 isr_.r8(0);
@@ -316,9 +319,7 @@ int VirtioPci::wait(SplitQueue& queue, VirtioCompletion& completion) const {
         }
         asm volatile("pause");
     }
-    log("[DEBUG-root-io] deadline cycles=%u frequency=%u queue=%u\n", timestamp() - started,
-        tsc_frequency, uint64_t(queue.layout().size));
-    return -5;
+    return -110;
 }
 
 bool VirtioPci::stop() {

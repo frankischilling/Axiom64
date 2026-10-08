@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install build and emulation tools
-        run: sudo apt-get update && sudo apt-get install -y g++ make musl-tools linux-libc-dev nasm python3 xorriso qemu-system-x86 ovmf xfonts-utils e2fsprogs clang-format-20
+        run: sudo apt-get update && sudo apt-get install -y g++ make musl-tools linux-libc-dev nasm python3 xorriso qemu-system-x86 ovmf xfonts-utils e2fsprogs clang-format-20 nbdkit nbdkit-plugin-python
       - name: Check C and C++ formatting
         run: make check-format
       - name: Build standalone image
@@ -35,6 +35,10 @@ jobs:
         run: make test-disk-root
       - name: Build reproducible full ext2 root
         run: make disk-root
+      - name: Test delayed root flushes and bounded request timeout
+        run: |
+          python3 scripts/root_io_test.py
+          python3 scripts/root_io_test.py --firmware bios --transport modern --delay 35 --expect-timeout
       - name: Test full userspace from ext2 root
         run: |
           python3 scripts/boot_test.py --disk-root --transport modern --firmware both --timeout 900
@@ -89,4 +93,7 @@ jobs:
             build/disk-root-results.json
             build/root-mount-*.log
             build/root-mount-results.json
+            build/root-io-*.log
+            build/root-io-*.trace
+            build/root-io-*-results.json
             build/busybox-build.log

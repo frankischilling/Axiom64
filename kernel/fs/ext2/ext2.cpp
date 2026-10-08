@@ -1663,11 +1663,8 @@ int ext2_mount(Mount* mount, Node* device) {
     v->claimed = true;
     uint8_t header[1024], inode[inode_bytes];
     result = block_read(v->device, 2, header, 2);
-    if (!result && !layout(*v, header, *info)) {
+    if (!result && !layout(*v, header, *info))
         result = v->error;
-        log("[DEBUG-root-io] ext2 validation errno=%d blocks=%u inodes=%u groups=%u\n",
-            int64_t(-result), uint64_t(v->blocks), uint64_t(v->inodes), uint64_t(v->group_count));
-    }
     if (!result && !v->load_inode(2, inode))
         result = v->error;
     if (!result) {
@@ -1691,8 +1688,6 @@ int ext2_mount(Mount* mount, Node* device) {
         if (u16(header + 52) != UINT16_MAX)
             set16(header + 52, u16(header + 52) + 1);
         result = v->finish(v->save_super(header));
-        if (result)
-            log("[DEBUG-root-io] ext2 mount write errno=%d\n", int64_t(-result));
     }
     if (result)
         destroy(mount);

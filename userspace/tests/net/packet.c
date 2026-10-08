@@ -57,7 +57,8 @@ static void frame(unsigned char* bytes, size_t length, const unsigned char mac[6
 
 static void received(const unsigned char* bytes, const unsigned char* sent, size_t length,
                      const struct sockaddr_ll* address, const unsigned char mac[6], int index) {
-    unsigned char expected[1518];
+    unsigned char expected[9018];
+    check(length <= sizeof(expected), "bounded expected frame");
     memcpy(expected, sent, length);
     memcpy(expected, mac, 6);
     memcpy(expected + 6, peer, 6);
@@ -72,6 +73,8 @@ static void received(const unsigned char* bytes, const unsigned char* sent, size
 }
 
 static void link_state(int control, struct ifreq* request, int index) {
+    if (getenv("AXIOM64_LINK_TEST") && !strcmp(getenv("AXIOM64_LINK_TEST"), "0"))
+        return;
     printf("PACKET_LINK_DOWN index=%d\n", index);
     unsigned retries = 0;
     do {
@@ -207,6 +210,30 @@ static int retained_receive(int fd, int index, const unsigned char mac[6], unsig
     return original;
 }
 
+static unsigned mtu_test(int control, struct ifreq* request, int fd, int index,
+                         const unsigned char mac[6], unsigned sequence) {
+    request->ifr_mtu = 67;
+    check(ioctl(control, SIOCSIFMTU, request) == -1 && errno == EINVAL, "minimum MTU");
+    request->ifr_mtu = 65536;
+    check(ioctl(control, SIOCSIFMTU, request) == -1 && errno == EINVAL, "maximum MTU");
+    request->ifr_mtu = 9000;
+    if (ioctl(control, SIOCSIFMTU, request) < 0) {
+        check(errno == EINVAL, "unsupported jumbo MTU");
+        return 0;
+    }
+    check(ioctl(control, SIOCGIFMTU, request) == 0 && request->ifr_mtu == 9000, "jumbo MTU query");
+    unsigned char *sent = malloc(9014), *bytes = malloc(9018);
+    check(sent && bytes, "jumbo buffers");
+    frame(sent, 9014, mac, index - 1, sequence);
+    check(write(fd, sent, 9014) == 9014 && read(fd, bytes, 9018) == 9014, "jumbo frame exchange");
+    received(bytes, sent, 9014, NULL, mac, index);
+    free(bytes);
+    free(sent);
+    request->ifr_mtu = 1500;
+    check(ioctl(control, SIOCSIFMTU, request) == 0, "restore MTU");
+    return 1;
+}
+
 static void nic(int control, int index, unsigned sequences) {
     struct ifreq request = {0};
     request.ifr_ifindex = index;
@@ -291,9 +318,24 @@ static void nic(int control, int index, unsigned sequences) {
             check(recv(fd, bytes, 7, MSG_PEEK | MSG_TRUNC) == (ssize_t)length &&
                       !memcmp(bytes, mac, 6),
                   "peek truncated length");
+            if (sequence == 0) {
+                check(recv(fd, (void*)1, length, MSG_DONTWAIT) == -1 && errno == EFAULT,
+                      "failed RX copy retains frame");
+                struct iovec short_vector = {bytes, 7};
+                struct msghdr short_message = {.msg_iov = &short_vector, .msg_iovlen = 1};
+                check(recvmsg(fd, &short_message, MSG_PEEK) == 7 &&
+                          (short_message.msg_flags & MSG_TRUNC),
+                      "recvmsg truncation flag");
+            }
             struct sockaddr_ll source;
             socklen_t source_length = sizeof(source);
-            if (sequence % 3 == 0) {
+            if (sequence % 7 == 5) {
+                check(read(fd, bytes, 0) == 0, "zero descriptor read");
+                check(recv(fd, bytes, 0, MSG_PEEK | MSG_TRUNC) == (ssize_t)length,
+                      "zero receive peek preserves frame");
+                check(recv(fd, bytes, 0, MSG_TRUNC) == (ssize_t)length,
+                      "zero receive consumes one frame");
+            } else if (sequence % 3 == 0) {
                 check(recvfrom(fd, bytes, sizeof(bytes), 0, (struct sockaddr*)&source,
                                &source_length) == (ssize_t)length &&
                           source_length == sizeof(source),
@@ -333,6 +375,7 @@ static void nic(int control, int index, unsigned sequences) {
           "I/O after original close");
     received(bytes, sent, 64, NULL, mac, index);
     duplicate = retained_receive(duplicate, index, mac, sequences + 49);
+    unsigned jumbo = mtu_test(control, &request, duplicate, index, mac, sequences + 51);
     check(close(duplicate) == 0, "last socket close");
     check(ioctl(control, SIOCGIFFLAGS, &request) == 0, "read flags");
     request.ifr_flags &= ~IFF_UP;
@@ -340,7 +383,56 @@ static void nic(int control, int index, unsigned sequences) {
               ioctl(control, SIOCGIFFLAGS, &request) == 0 && !(request.ifr_flags & IFF_UP) &&
               (request.ifr_flags & IFF_RUNNING),
           "admin down preserves carrier");
-    printf("PACKET_NIC_PASS index=%d frames=%u\n", index, sequences + 51);
+    printf("PACKET_NIC_PASS index=%d frames=%u\n", index, sequences + 51 + jumbo);
+}
+
+static void transmit_pressure(void) {
+    int control = socket(AF_PACKET, SOCK_RAW, 0);
+    check(control >= 0, "pressure control socket");
+    struct ifreq request = {.ifr_ifindex = 1};
+    check(ioctl(control, SIOCGIFNAME, &request) == 0 &&
+              ioctl(control, SIOCGIFHWADDR, &request) == 0,
+          "pressure interface discovery");
+    unsigned char mac[6], sent[128], bytes[128];
+    memcpy(mac, request.ifr_hwaddr.sa_data, 6);
+    request.ifr_flags = IFF_UP;
+    check(ioctl(control, SIOCSIFFLAGS, &request) == 0, "pressure interface up");
+    int fd = raw(1, PROTOCOL, 0);
+    printf("PACKET_PRESSURE_READY\n");
+    frame(sent, 64, mac, 0, 0);
+    check(write(fd, sent, 64) == 64 && read(fd, bytes, sizeof(bytes)) == 64, "pressure handshake");
+    received(bytes, sent, 64, NULL, mac, 1);
+    unsigned accepted = 0;
+    for (unsigned sequence = 1; sequence <= 100; sequence++) {
+        frame(sent, sizeof(sent), mac, 0, sequence);
+        ssize_t result = send(fd, sent, sizeof(sent), MSG_DONTWAIT);
+        if (result == -1) {
+            check(errno == EAGAIN, "full TX returns EAGAIN");
+            break;
+        }
+        check(result == sizeof(sent), "whole pressure TX");
+        accepted++;
+        memset(sent, 0xa5, sizeof(sent));
+    }
+    check(accepted == 63 || accepted == 64, "bounded TX payload ownership");
+    struct pollfd poller = {.fd = fd, .events = POLLOUT};
+    check(poll(&poller, 1, 0) == 0, "full TX is not writable");
+    frame(sent, sizeof(sent), mac, 0, accepted + 1);
+    check(send(fd, sent, sizeof(sent), MSG_DONTWAIT) == -1 && errno == EAGAIN,
+          "unreclaimed TX remains full");
+    int epoll = epoll_create1(EPOLL_CLOEXEC);
+    struct epoll_event event = {.events = EPOLLOUT, .data.u64 = 73};
+    check(epoll >= 0 && epoll_ctl(epoll, EPOLL_CTL_ADD, fd, &event) == 0, "pressure epoll setup");
+    printf("PACKET_PRESSURE_FULL slots=%u\n", accepted);
+    check(epoll_wait(epoll, &event, 1, 5000) == 1 && event.events == EPOLLOUT &&
+              event.data.u64 == 73,
+          "TX completion wakes idle sender");
+    check(write(fd, sent, sizeof(sent)) == sizeof(sent) &&
+              read(fd, bytes, sizeof(bytes)) == sizeof(sent),
+          "TX recovery after reclamation");
+    received(bytes, sent, sizeof(sent), NULL, mac, 1);
+    check(close(epoll) == 0 && close(fd) == 0 && close(control) == 0, "pressure socket teardown");
+    printf("PACKET_PRESSURE_PASS slots=%u\n", accepted);
 }
 
 static void fault_test(int bad_id) {
@@ -377,10 +469,16 @@ static void fault_test(int bad_id) {
 
 int main(int argc, char** argv) {
     setbuf(stdout, NULL);
+    if (argc > 1 && !strcmp(argv[1], "pressure")) {
+        transmit_pressure();
+        return 0;
+    }
     if (argc > 1 && (!strcmp(argv[1], "fault-id") || !strcmp(argv[1], "fault-length"))) {
         fault_test(!strcmp(argv[1], "fault-id"));
         return 0;
     }
+    check(socket(AF_PACKET, SOCK_DGRAM, htons(PROTOCOL)) == -1 && errno == EOPNOTSUPP,
+          "unsupported cooked packet socket");
     unsigned sequences = argc > 1 ? (unsigned)strtoul(argv[1], NULL, 10) : 16;
     check(sequences > 0 && sequences <= 100000, "frame count");
     int control = socket(AF_PACKET, SOCK_RAW, 0);

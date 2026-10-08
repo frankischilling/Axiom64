@@ -29,14 +29,24 @@ Receive supports `MSG_DONTWAIT`, `MSG_PEEK`, and `MSG_TRUNC`. Truncated receives
 ## Verification
 
 ```sh
+make test-network
 python3 scripts/network_test.py --firmware both --models virtio e1000
 python3 scripts/network_test.py --firmware both --transport legacy --queue 512 --wrap
 python3 scripts/network_test.py --firmware both --models virtio --fault id
 python3 scripts/network_test.py --firmware both --models e1000 --fault length
+python3 scripts/network_test.py --firmware both --models e1000 --pressure
+python3 scripts/network_test.py --firmware both --models virtio --no-status
+python3 scripts/network_test.py --firmware both --models virtio e1000 --mtu 9000
 ```
+
+The complete matrix runs 46 dedicated boots: 12 mixed-adapter firmware/transport/queue-size cases, four eight-interface boots, four rollover boots, ten malformed-completion boots, six TX pressure boots, four absent-status boots, four mixed-adapter jumbo-MTU boots, and two explicitly offered 1500-MTU boots. GDB is a host test dependency. Results accumulate in `build/network-results.json`; a failed case stops the matrix and retains its evidence.
 
 The harness gives each NIC an isolated loopback TCP peer. It checks the QEMU framing prefix, interface-specific MACs, experimental EtherType, sequence, length, and every payload byte before returning a reply. Firmware-generated traffic is counted separately. Guest checks cover address metadata, vectors, peek/truncation, filters, nonblocking behavior, poll/epoll while idle, duplicate/fork lifetime, and blocked `recvmsg` after descriptor and metadata reuse. A lagging listener retains 32 of 48 replies and records exactly 16 drops while the active listener receives all replies. QMP controls physical carrier down/up independently of the administrator flag.
 
-The wrap phase exchanges 65,621 host-validated frames per NIC. Fault cases use GDB to alter one actual RX completion at its validation boundary in a dedicated VM: oversized virtio/e1000 lengths are dropped before valid traffic resumes; an invalid virtio head quarantines the adapter and wakes the socket with an error. These tests alter the emulated device's completion memory, without adding production test hooks. Evidence uses `build/network-*`; full ABI/thread/compiler/signal/VFS/desktop/input, storage, ext2, disk-root, formatting, sanitizer, and source-bundle checks remain required before integration.
+The wrap phase exchanges 65,621 host-validated frames per NIC. Fault cases use GDB to alter one actual RX completion at its validation boundary in a dedicated VM: oversized virtio/e1000 lengths are dropped before valid traffic resumes; an invalid virtio head quarantines the adapter and wakes the socket with an error. These tests alter the emulated device's completion memory, without adding production test hooks.
+
+TX pressure tests defer driver polling through GDB while the real device transmits and writes completions. They fill all 64 virtio buffers or 63 e1000 descriptors, verify `EAGAIN` and absent write readiness, then resume polling and require epoll to wake an idle sender. The test leaves device-written completions intact and compares every transmitted byte after the caller overwrites its original buffer. This covers delayed completion observation; it does not claim a fault-injected physical DMA engine stall.
+
+Optional-feature tests validate the negotiated bits, carrier fallback without STATUS, and MTU bounds. A 9000-byte offered virtio MTU sends and receives a 9014-byte frame alongside e1000's 1500-byte limit. Failed receive copies retain a queued frame; zero-length descriptor reads, zero-length receives, and peek/truncation behavior are checked separately. Evidence uses `build/network-*`; full ABI/thread/compiler/signal/VFS/desktop/input, storage, ext2, disk-root, formatting, sanitizer, and source-bundle checks remain required before integration.
 
 The contracts follow [virtio 1.2](https://docs.oasis-open.org/virtio/virtio/v1.2/virtio-v1.2.html), [Linux packet sockets](https://man7.org/linux/man-pages/man7/packet.7.html), [Linux interface ioctls](https://man7.org/linux/man-pages/man7/netdevice.7.html), and [QEMU's e1000 model](https://github.com/qemu/qemu/blob/v8.2.2/hw/net/e1000.c). The controlled peer uses [QEMU's socket framing](https://github.com/qemu/qemu/blob/v8.2.2/net/socket.c).

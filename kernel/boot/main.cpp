@@ -81,6 +81,8 @@ extern "C" [[noreturn]] void kernel_main() {
         test_phase = "AXIOM64_PHASE=cond";
     else if (word(cmd, "phase=io"))
         test_phase = "AXIOM64_PHASE=io";
+    else if (word(cmd, "phase=pressure"))
+        test_phase = "AXIOM64_PHASE=pressure";
     memory_init();
     arch_init();
     auto modules = module_request.response;

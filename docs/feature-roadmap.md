@@ -45,7 +45,7 @@ The first three milestones define the next core sequence. Later milestones descr
 | F08 | [Linux syscall and libc compatibility](https://github.com/frankischilling/Axiom64/issues/8) | partial | M4 | F05, F06, F13 |
 | F09 | [Accounts, permissions, and process credentials](https://github.com/frankischilling/Axiom64/issues/9) | planned | M3 | F03, F04 |
 | F10 | [Secure random number generation](https://github.com/frankischilling/Axiom64/issues/10) | planned | M3 | F03, F09 |
-| F11 | [Ethernet devices and link management](https://github.com/frankischilling/Axiom64/issues/11) | planned | M3 | F01, F05 |
+| F11 | [Ethernet devices and link management](https://github.com/frankischilling/Axiom64/issues/11) | partial | M3 | F01, F05 |
 | F12 | [IPv4, IPv6, routing, and ICMP](https://github.com/frankischilling/Axiom64/issues/12) | planned | M3 | F11 |
 | F13 | [TCP, UDP, and Linux socket semantics](https://github.com/frankischilling/Axiom64/issues/13) | partial | M3 | F12, F15 |
 | F14 | [DHCP, DNS, and network configuration](https://github.com/frankischilling/Axiom64/issues/14) | planned | M3 | F09, F10, F13 |
@@ -276,7 +276,7 @@ Acceptance evidence:
 
 ### F11. Ethernet devices and link management
 
-No Ethernet driver is present.
+[PCI virtio-net and QEMU 82540EM e1000](network.md) share bounded Ethernet ownership and Linux raw packet sockets. Modern/legacy transport, multiple interfaces, carrier/MTU controls, rollover, and controlled-peer tests cover this slice; wider hardware, interrupt-driven completion, and advanced networking remain planned. [Children #51](https://github.com/frankischilling/Axiom64/issues/51) and [#54](https://github.com/frankischilling/Axiom64/issues/54) track the paired adapters. The usable network release still requires the complete protocol and configuration work below.
 
 Required work:
 
@@ -312,7 +312,7 @@ Acceptance evidence:
 
 ### F13. TCP, UDP, and Linux socket semantics
 
-Unix stream sockets support X11; Internet and Unix datagram sockets are missing.
+Unix stream sockets support X11, and [AF_PACKET raw sockets](network.md) exchange Ethernet through virtio-net and e1000. Internet and Unix datagram sockets, deadlines, ancillary data, and the complete socket contract remain planned.
 
 Required work:
 

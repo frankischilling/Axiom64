@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 case "${AXIOM64_PHASE:-verify}" in
+    pressure) /bin/net-tests pressure ;;
     queue) /bin/net-tests 65570 ;;
     error) /bin/net-tests fault-length ;;
     invalid) /bin/net-tests fault-id ;;

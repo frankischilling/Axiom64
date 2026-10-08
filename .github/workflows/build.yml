@@ -1,111 +1,71 @@
 name: Build and boot
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+defaults:
+  run:
+    shell: bash
 jobs:
-  qemu:
+  build:
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install build and emulation tools
         run: sudo apt-get update && sudo apt-get install -y g++ make musl-tools linux-libc-dev nasm python3 xorriso qemu-system-x86 ovmf xfonts-utils e2fsprogs clang-format-20 nbdkit nbdkit-plugin-python gdb iproute2
+      - name: Cache locked dependency and source archives
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          key: ${{ runner.os }}-downloads-v1-${{ hashFiles('dependencies.json', 'ports.lock.json', 'sources.lock.json') }}
+          path: |
+            downloads/*.tar.*
+            downloads/ports
+            downloads/sources
       - name: Check C and C++ formatting
         run: make check-format
-      - name: Build standalone image
-        run: make -j2 image
-      - name: Test split-queue ownership with sanitizers
-        run: make test-virtqueue
-      - name: Test BIOS and UEFI userspace
-        run: python3 scripts/boot_test.py --firmware both
-      - name: Test pthread lifecycle, futexes, and blocked I/O
-        run: make test-threads
-      - name: Test virtio disks and reboot persistence
-        run: python3 scripts/storage_test.py
-      - name: Test virtio queue sizes and offered features
-        run: make test-virtio
-      - name: Test virtio and e1000 Ethernet with packet sockets
-        run: make test-network
-      - name: Test IPv4 routes, ARP, raw ICMP, ping, and failed-device sockets
-        run: make test-ipv4
-      - name: Test IPv4 UDP, datagram lifetime, checksums, and failed-device sockets
-        run: make test-udp
-      - name: Compare common UDP socket behavior with native Linux
-        run: ./build/udp-tests
-      - name: Test route message validation with sanitizers
-        run: make test-netlink-codec
-      - name: Test NETLINK_ROUTE ownership, lifetime, limits, and routed packets
-        run: make test-netlink
-      - name: Compare route socket behavior with native Linux
-        run: |
-          make build/netlink-native
-          sudo python3 scripts/netlink_native.py
-      - name: Test IPv4 address message validation with sanitizers
-        run: make test-address-codec
-      - name: Test complete IPv4 addresses and configuration recovery
-        run: make test-configuration
-      - name: Compare address messages with native Linux
-        run: |
-          make build/configuration-native
-          sudo python3 scripts/configuration_native.py
-      - name: Test DHCP codecs, lease state, and profiles with sanitizers
-        run: make test-dhcp-codec
-      - name: Test DHCP modules in Ring 3
-        run: make test-dhcp-modules
-      - name: Test DHCP acquisition, renewal, rebinding, and owned configuration
-        run: make test-dhcp-transport
-      - name: Test resolver metadata and publication failures with sanitizers
-        run: make test-resolver-native
-      - name: Test resolver metadata, manual settings, and ownership recovery in Ring 3
-        run: make test-resolver
-      - name: Test counter scaling and ACPI discovery with sanitizers
-        shell: bash
-        run: make test-clock-codec 2>&1 | tee build/clock-codec.log
-      - name: Test elapsed clocks and deadlines across delayed storage
-        run: make test-clock
-      - name: Compare Linux file locks and test RAM/ext2 description lifetime
-        run: make test-file-locks
-      - name: Test writable ext2 volumes and host fsck
-        run: python3 scripts/ext2_test.py
-      - name: Test normal desktop startup
-        run: python3 scripts/boot_test.py --interactive --firmware both --timeout 180
-      - name: Test ext2 root, data mounts, rejection, and reboot persistence
-        run: make test-disk-root
-      - name: Build reproducible full ext2 root
-        run: make disk-root
-      - name: Test delayed root flushes and bounded request timeout
-        run: |
-          python3 scripts/root_io_test.py
-          python3 scripts/root_io_test.py --firmware bios --transport modern --delay 35 --expect-timeout
-      - name: Test full userspace from ext2 root
-        run: |
-          python3 scripts/boot_test.py --disk-root --transport modern --firmware both --timeout 900
-          python3 scripts/boot_test.py --disk-root --transport legacy --firmware both --timeout 900
-      - name: Test normal desktop startup from ext2 root
-        run: |
-          python3 scripts/boot_test.py --disk-root --interactive --transport modern --firmware both --timeout 180
-          python3 scripts/boot_test.py --disk-root --interactive --transport legacy --firmware both --timeout 180
       - name: Bundle corresponding sources
         run: make sources
+      - name: Build standalone image and both userspace profiles
+        run: |
+          make -j2 image
+          make build/rootfs-desktop.cpio
+      - name: Test split-queue ownership with sanitizers
+        run: make test-virtqueue
       - name: Upload sources and recipes
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: axiom64-sources
           compression-level: 0
+          if-no-files-found: error
           path: build/axiom64-sources.tar
-      - name: Upload ext2 root image
-        if: always()
+      - name: Pack this run's test inputs
+        # Keep source/output timestamps and executable modes together so make
+        # can reuse this commit's build in each isolated test workspace.
+        run: |
+          busybox_dir=$(python3 -c "import json; print('build/busybox-' + json.load(open('dependencies.json'))['busybox']['version'])")
+          tar -cf "$RUNNER_TEMP/ci-inputs.tar" \
+            --exclude='./.git' --exclude='./.local' --exclude='__pycache__' \
+            --exclude='./downloads/sources' --exclude='./build/axiom64-sources.tar' \
+            --exclude='./build/axiom64.iso' --exclude='./build/iso*' \
+            --exclude='./build/busybox-*' --exclude='./build/uapi' \
+            . "$busybox_dir/busybox" "$busybox_dir/.config" "$busybox_dir/LICENSE"
+          gzip -1 "$RUNNER_TEMP/ci-inputs.tar"
+      - name: Share test inputs with isolated jobs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: axiom64-disk-root
-          path: |
-            build/axiom64-disk.iso
-            build/root-disk.raw
-            build/disk-root-*-boot-*.raw
-      - name: Upload boot image and evidence
+          name: axiom64-ci-inputs
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+          path: ${{ runner.temp }}/ci-inputs.tar.gz
+      - name: Upload boot image and kernel
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -113,51 +73,161 @@ jobs:
           path: |
             build/axiom64.iso
             build/axiom64.elf
-            build/boot-*.log
-            build/boot-results.json
-            build/threads-*.log
-            build/threads-*-results.json
-            build/desktop-*.png
-            build/interactive-*.log
-            build/interactive-*.png
-            build/interactive-results.json
-            build/storage-*.log
-            build/storage-*.trace
-            build/storage-results.json
-            build/virtio-image-*.log
-            build/virtio-results.json
-            build/network-*.log
-            build/network-*.gdb
-            build/network-results.json
-            build/ipv4-*.log
-            build/ipv4-*.gdb
-            build/ipv4-results.json
-            build/udp-*.log
-            build/udp-*.gdb
-            build/udp-results.json
-            build/netlink-*.log
-            build/netlink*-results.json
-            build/configuration-*.log
-            build/configuration*-results.json
-            build/dhcp-*.log
-            build/dhcp*-results.json
-            build/resolver-*.log
-            build/resolver*-results.json
-            build/clock-*.log
-            build/clock-*.trace
-            build/clock-results.json
-            build/file-lock-*.log
-            build/file-lock-*.dump
-            build/file-lock*-results.json
-            build/ext2-*.log
-            build/ext2-results.json
-            build/disk-root-*.log
-            build/disk-root-*.png
-            build/disk-root-*-results.json
-            build/disk-root-results.json
-            build/root-mount-*.log
-            build/root-mount-results.json
-            build/root-io-*.log
-            build/root-io-*.trace
-            build/root-io-*-results.json
             build/busybox-build.log
+
+  tests:
+    name: Test ${{ matrix.suite }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [boot, network, configuration, storage, root, root-userspace]
+    steps:
+      - name: Download this run's test inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: axiom64-ci-inputs
+          path: ${{ runner.temp }}/ci-inputs
+      - name: Restore source and build together
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
+      - name: Install build and emulation tools
+        run: sudo apt-get update && sudo apt-get install -y g++ make musl-tools linux-libc-dev nasm python3 xorriso qemu-system-x86 ovmf xfonts-utils e2fsprogs clang-format-20 nbdkit nbdkit-plugin-python gdb iproute2
+
+      - name: Test BIOS and UEFI userspace
+        if: matrix.suite == 'boot'
+        run: python3 scripts/boot_test.py --firmware both
+      - name: Test pthread lifecycle, futexes, and blocked I/O
+        if: matrix.suite == 'boot'
+        run: make test-threads
+      - name: Test virtio queue sizes and offered features
+        if: matrix.suite == 'boot'
+        run: make test-virtio
+      - name: Test normal desktop startup
+        if: matrix.suite == 'boot'
+        run: python3 scripts/boot_test.py --interactive --firmware both --timeout 180
+
+      - name: Test virtio and e1000 Ethernet with packet sockets
+        if: matrix.suite == 'network'
+        run: make test-network
+      - name: Test IPv4 routes, ARP, raw ICMP, ping, and failed-device sockets
+        if: matrix.suite == 'network'
+        run: make test-ipv4
+      - name: Test IPv4 UDP, datagram lifetime, checksums, and failed-device sockets
+        if: matrix.suite == 'network'
+        run: make test-udp
+      - name: Compare common UDP socket behavior with native Linux
+        if: matrix.suite == 'network'
+        run: ./build/udp-tests
+      - name: Test route message validation with sanitizers
+        if: matrix.suite == 'network'
+        run: make test-netlink-codec
+      - name: Test NETLINK_ROUTE ownership, lifetime, limits, and routed packets
+        if: matrix.suite == 'network'
+        run: make test-netlink
+      - name: Compare route socket behavior with native Linux
+        if: matrix.suite == 'network'
+        run: |
+          make build/netlink-native
+          sudo python3 scripts/netlink_native.py
+
+      - name: Test IPv4 address message validation with sanitizers
+        if: matrix.suite == 'configuration'
+        run: make test-address-codec
+      - name: Test complete IPv4 addresses and configuration recovery
+        if: matrix.suite == 'configuration'
+        run: make test-configuration
+      - name: Compare address messages with native Linux
+        if: matrix.suite == 'configuration'
+        run: |
+          make build/configuration-native
+          sudo python3 scripts/configuration_native.py
+      - name: Test DHCP codecs, lease state, and profiles with sanitizers
+        if: matrix.suite == 'configuration'
+        run: make test-dhcp-codec
+      - name: Test DHCP modules in Ring 3
+        if: matrix.suite == 'configuration'
+        run: make test-dhcp-modules
+      - name: Test DHCP acquisition, renewal, rebinding, and owned configuration
+        if: matrix.suite == 'configuration'
+        run: make test-dhcp-transport
+      - name: Test resolver metadata and publication failures with sanitizers
+        if: matrix.suite == 'configuration'
+        run: make test-resolver-native
+      - name: Test resolver metadata, manual settings, and ownership recovery in Ring 3
+        if: matrix.suite == 'configuration'
+        run: make test-resolver
+      - name: Test counter scaling and ACPI discovery with sanitizers
+        if: matrix.suite == 'configuration'
+        run: make test-clock-codec 2>&1 | tee build/clock-codec.log
+      - name: Test elapsed clocks and deadlines across delayed storage
+        if: matrix.suite == 'configuration'
+        run: make test-clock
+      - name: Compare Linux file locks and test RAM/ext2 description lifetime
+        if: matrix.suite == 'configuration'
+        run: make test-file-locks
+
+      - name: Test virtio disks and reboot persistence
+        if: matrix.suite == 'storage'
+        run: python3 scripts/storage_test.py
+      - name: Test writable ext2 volumes and host fsck
+        if: matrix.suite == 'storage'
+        run: python3 scripts/ext2_test.py
+
+      - name: Test ext2 root, data mounts, rejection, and reboot persistence
+        if: matrix.suite == 'root'
+        run: make test-disk-root
+      - name: Build reproducible full ext2 root
+        if: matrix.suite == 'root' || matrix.suite == 'root-userspace'
+        run: make disk-root
+      - name: Test delayed root flushes and bounded request timeout
+        if: matrix.suite == 'root'
+        run: |
+          python3 scripts/root_io_test.py
+          python3 scripts/root_io_test.py --firmware bios --transport modern --delay 35 --expect-timeout
+      - name: Test full userspace from ext2 root
+        if: matrix.suite == 'root-userspace'
+        run: |
+          python3 scripts/boot_test.py --disk-root --transport modern --firmware both --timeout 900
+          python3 scripts/boot_test.py --disk-root --transport legacy --firmware both --timeout 900
+      - name: Test normal desktop startup from ext2 root
+        if: matrix.suite == 'root-userspace'
+        run: |
+          python3 scripts/boot_test.py --disk-root --interactive --transport modern --firmware both --timeout 180
+          python3 scripts/boot_test.py --disk-root --interactive --transport legacy --firmware both --timeout 180
+      - name: Upload ext2 root image
+        if: always() && matrix.suite == 'root-userspace'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-disk-root
+          path: |
+            build/axiom64-disk.iso
+            build/root-disk.raw
+            build/disk-root-*-boot-*.raw
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-evidence-${{ matrix.suite }}
+          path: |
+            build/*.log
+            build/*.trace
+            build/*.gdb
+            build/*results.json
+            build/*.png
+            build/*.dump
+
+  qemu:
+    needs: [build, tests]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require the build and every test suite to pass
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          TEST_RESULT: ${{ needs.tests.result }}
+        run: |
+          test "$BUILD_RESULT" = success
+          test "$TEST_RESULT" = success

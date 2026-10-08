@@ -15,6 +15,7 @@ The harness boots QEMU under BIOS and UEFI, checks firmware identity, requires e
 | Blocking I/O | Static/dynamic retained descriptions across close/dup2/reuse, captured vectors, socket transfers/accept, nested/restarted/abandoned signal contexts, errors, failed/successful exec, and endpoint/resource cleanup |
 | IPC | Unix sockets, edge and one-shot epoll, batches of 256 events, select/pselect, anonymous/file/SysV shared memory |
 | Signals | Masks, alternate stacks, return frames, interrupted and restarted I/O, caught faults, SIGCHLD, alarms, stop/continue |
+| Elapsed clocks | Sanitized counter arithmetic/ACPI parsing, 24 firmware/transport/HPET-TSC/delay boots, independently timed flushes, and absolute futex/interval-timer deadlines across storage |
 | PTYs | Sign-extended ioctls, raw I/O, controlling-terminal lookup, foreground groups, Ctrl-C and resize signals |
 | BusyBox, Bash, zsh | Real shells, substitutions, pipelines, filesystem commands, exit statuses |
 | Native GNU tools | Guest compiler, assembler, linker, Make, executed C/C++ results, C++ threads and condition timeouts, standard library, exceptions, rejected-source diagnostics |
@@ -85,3 +86,5 @@ Run `make test-address-codec` and `make test-configuration` for the [complete ad
 Run `make test-dhcp-codec` for host codec/state/profile sanitizers, `make test-dhcp-modules` for their 12 guest cases, and `make test-dhcp-transport` for four real-wire cases. Evidence uses `build/dhcp-*`; the [configuration documentation](network-configuration.md) describes exact counts and remaining normal-service/reboot/fault coverage. These module fixtures do not run the normal startup daemon.
 
 Run `make test-resolver-native` for native Linux file/ownership contracts with sanitizers and `make test-resolver` for four guest cases. Logs/results use `build/resolver-*`, including the native kernel version. The [resolver metadata contract](network-configuration.md#owned-resolver-metadata) describes output bounds, permissions, manual ownership, and the controlled publication failures. These tests publish metadata in isolated directories; working DNS queries and normal manager integration remain required.
+
+Run `make test-clock-codec` and `make test-clock` for [counter clocks and elapsed-wait checks](time.md#verification). Native sanitizers check scaling and bounded ACPI parsing; 24 guest cases independently time storage flushes across firmware, transports, normal HPET, absent/unsupported HPET fallback, and zero/three-second delay. Delayed cases require absolute futex and interval-timer expiry. Results and traces use `build/clock-*`; the ordinary full OS/thread/storage suites remain required.

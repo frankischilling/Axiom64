@@ -9,6 +9,7 @@
 #include "net/packet.hpp"
 #include "net/inet.hpp"
 #include "net/netlink.hpp"
+#include "core/time.hpp"
 
 namespace ax {
 struct LinuxStat {
@@ -1232,11 +1233,13 @@ static int64_t dispatch(Frame* f) {
 
 extern "C" Frame* handle_syscall(Frame* f) {
     asm volatile("fxsave64 %0" : "=m"(current->fpu));
+    clock_refresh();
     uint64_t number = f->rax;
     if (trace_syscalls)
         log("sys pid=%u nr=%u a=%x b=%x c=%x\n", uint64_t(current->pid), number, f->rdi, f->rsi,
             f->rdx);
     int64_t result = dispatch(f);
+    clock_refresh();
     epoll_notify();
     if (trace_syscalls)
         log("sys result=%d\n", result);

@@ -150,7 +150,10 @@ size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply
     bool is_dump = request.type == 26;
     unsigned allowed = 1 | 4 | (is_dump ? 0x300 : request.type == 24 ? 0x600 : 0);
     Ipv4Route value;
-    if ((request.type == 24 || request.type == 25 || is_dump) && !(request.flags & ~allowed)) {
+    if ((request.type == 20 || request.type == 21) &&
+        !(request.flags & ~(1u | 4u | (request.type == 20 ? 0x600u : 0u))))
+        error = netlink_address_change(packet, request);
+    else if ((request.type == 24 || request.type == 25 || is_dump) && !(request.flags & ~allowed)) {
         if (is_dump && (request.flags & 0x300) != 0x300)
             error = -95;
         else

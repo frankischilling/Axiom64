@@ -26,6 +26,8 @@ The harness boots QEMU under BIOS and UEFI, checks firmware identity, requires e
 | IPv4, ARP, and raw ICMP | Eight mixed-NIC boots covering firmware/transports, loopback, static configuration/routes, cache expiry/replacement, malformed input, link loss, bounded queues, retained descriptions, kernel echo/errors, BusyBox ping, and isolated device failure |
 | IPv4 UDP | Eight mixed-NIC boots covering firmware/transports, native Linux comparisons, datagram boundaries, checksums and malformed input, client/server traffic, reuse and broadcast, queue pressure, retained I/O, signals, fork, link changes, and isolated device failure |
 | IPv4 netlink routes | Four mixed-NIC boots, native Linux namespace comparison, sanitized message fixtures/mutations, tagged ownership and unrelated-route preservation, actual routed packets, descriptor lifetime, malformed requests, and route/socket/reply quotas |
+| IPv4 address/configuration | Four mixed-NIC boots, native address-message comparison, sanitized parser fixtures/mutations, complete tuples, owned replacement/recovery, manual preservation, malformed journals, publication failure, six partial intents, and actual route-quota rollback |
+| DHCP modules | Twelve codec/state/profile boots plus four independently checked real-wire acquisition/renewal/rebinding/release boots; normal daemon startup remains required |
 | VFS mounts | Independent RAM volumes, hidden/restored contents, directory identity, read-only policy, cross-filesystem errors, executable loading, mappings, sockets, busy unmounts, slot reuse |
 | Writable ext2 | Four disk layouts across firmware/transports, guest files and executable loading, fresh-boot reads, host file/metadata comparisons and fsck, full allocation, rejected formats, and I/O retries |
 | Ext2 root | Root and data-volume reboot persistence, software/hardware read-only policy, rejected configuration/boot files/backend failures, full userspace and normal desktop startup across firmware/transports, reproducible fixtures and host fsck |
@@ -48,11 +50,14 @@ python3 scripts/network_test.py --firmware bios --models virtio e1000
 python3 scripts/ipv4_test.py --firmware bios --transport modern
 python3 scripts/udp_test.py --firmware bios --transport modern
 python3 scripts/netlink_test.py --firmware bios --transport modern
+python3 scripts/configuration_test.py --firmware bios --transport modern
+python3 scripts/dhcp_modules_test.py --suite state --firmware bios --transport modern
+python3 scripts/dhcp_transport_test.py --firmware bios --transport modern
 ```
 
 The ABI, desktop, condition-only, and I/O-only profiles omit large native development packages from a separate root filesystem. The full and complete threads suites use the full root filesystem. `--trace` logs syscall entry and results; `--gdb` exposes QEMU debugging on local TCP port 1234.
 
-GitHub Actions builds the normal ISO and runs the full firmware and threads suites, sanitizer queue/route-message checks, raw-storage, queue-geometry, Ethernet, IPv4, UDP, netlink route control, and ext2 matrices, normal desktop checks, and the complete [disk-root suites](disk-root.md#verification) on Ubuntu 24.04. The `axiom64-boot` artifact contains the image, kernel, logs, results, and screenshots. A separate source artifact carries upstream archives and exact package recipes. A green run applies to its tested commit; check that commit when comparing results with local changes.
+GitHub Actions builds the normal ISO and runs the full firmware and threads suites, sanitizer queue/route/address/DHCP checks, raw-storage, queue-geometry, Ethernet, IPv4, UDP, netlink, configuration/DHCP, and ext2 matrices, normal desktop checks, and the complete [disk-root suites](disk-root.md#verification) on Ubuntu 24.04. The `axiom64-boot` artifact contains the image, kernel, logs, results, and screenshots. A separate source artifact carries upstream archives and exact package recipes. A green run applies to its tested commit; check that commit when comparing results with local changes.
 
 Run `make test-storage` for the complete disk matrix. The harness creates and overwrites only its generated fixtures under `build/`. [Storage verification](storage.md#verification) describes the phases, host comparisons, evidence files, and paths that are not yet fault-injected.
 
@@ -73,3 +78,7 @@ Run `make test-ipv4` for the [initial IPv4 and raw ICMP matrix](ipv4.md#verifica
 Run `make test-udp` for the [IPv4 UDP matrix](udp.md#verification). Independent Ethernet peers inspect checksums, ports, lengths, and exact bytes; the guest exercises client/server and socket lifetime behavior. Results accumulate in `build/udp-results.json`; CI retains logs and fault-injection commands. TCP, DHCP, DNS, downloads, and the complete networking release remain required.
 
 Run `make test-netlink-codec` and `make test-netlink` for the [route-control checks](netlink.md#verification). Build `build/netlink-native` and run `sudo python3 scripts/netlink_native.py` for the common Linux comparison in an isolated network namespace. Guest/native logs and results use `build/netlink-*`; the native comparison records its kernel version.
+
+Run `make test-address-codec` and `make test-configuration` for the [complete address and ownership/recovery checks](network-configuration.md#verification-and-remaining-integration). Build `build/configuration-native` and run `sudo python3 scripts/configuration_native.py` for common Linux address messages in a private network namespace. Native checks exclude Axiom64-specific journal recovery and quotas. Guest/native evidence uses `build/configuration-*`.
+
+Run `make test-dhcp-codec` for host codec/state/profile sanitizers, `make test-dhcp-modules` for their 12 guest cases, and `make test-dhcp-transport` for four real-wire cases. Evidence uses `build/dhcp-*`; the [configuration documentation](network-configuration.md) describes exact counts and remaining normal-service/reboot/fault coverage. These module fixtures do not run the normal startup daemon.

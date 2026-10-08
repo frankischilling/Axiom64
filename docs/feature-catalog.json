@@ -415,7 +415,7 @@
       "title": "IPv4, IPv6, routing, and ICMP",
       "milestone": "M3",
       "state": "partial",
-      "current": "The initial IPv4 host path supports static addresses, routes, bounded ARP, loopback, raw ICMP sockets, and ping on both adapters. NETLINK_ROUTE adds bounded main-table dumps and protocol/scope-filtered route control. Options and fragments are rejected; complete IPv4, IPv6, reassembly, multicast, and path MTU behavior remain planned.",
+      "current": "The initial IPv4 host path supports static addresses, routes, bounded ARP, loopback, raw ICMP sockets, and ping on both adapters. NETLINK_ROUTE adds bounded main-table dumps, protocol/scope-filtered route control, and complete address updates. Options and fragments are rejected; complete IPv4, IPv6, reassembly, multicast, and path MTU behavior remain planned.",
       "scope": [
         "Ethernet framing, ARP, IPv4 checksums, loopback, routing, aliases, and gateways",
         "ICMP errors and echo/ping",
@@ -439,7 +439,13 @@
         "scripts/ipv4_matrix.py",
         "docs/ipv4.md",
         "kernel/net/netlink/routes.cpp",
-        "docs/netlink.md"
+        "docs/netlink.md",
+        "kernel/net/netlink/addresses.cpp",
+        "kernel/tests/net/address.cpp",
+        "userspace/tests/net/configuration.cpp",
+        "scripts/configuration_test.py",
+        "scripts/configuration_native.py",
+        "docs/network-configuration.md"
       ],
       "branch": "feature/f12-ipv4-ipv6-routing-and-icmp",
       "issue": "https://github.com/frankischilling/Axiom64/issues/12"
@@ -449,7 +455,7 @@
       "title": "TCP, UDP, and Linux socket semantics",
       "milestone": "M3",
       "state": "partial",
-      "current": "Unix stream sockets support X11, AF_PACKET exchanges Ethernet, and AF_INET supports raw ICMP/ping and IPv4 UDP datagrams with tested checksums, binding, queues, errors, readiness, and retained I/O. Bounded NETLINK_ROUTE sockets support tagged IPv4 route control and dumps with retained datagram I/O. Unix datagram descriptors serve interface configuration only; TCP, IPv6 UDP, deadlines, ancillary data, and the complete socket contract remain planned.",
+      "current": "Unix stream sockets support X11, AF_PACKET exchanges Ethernet, and AF_INET supports raw ICMP/ping and IPv4 UDP datagrams with tested checksums, binding, queues, errors, readiness, and retained I/O. Bounded NETLINK_ROUTE sockets support tagged IPv4 route control, dumps, complete address updates, and retained datagram I/O. Unix datagram descriptors serve interface configuration only; TCP, IPv6 UDP, deadlines, ancillary data, and the complete socket contract remain planned.",
       "scope": [
         "AF_INET/AF_INET6 TCP/UDP socket lifecycle, options, and errors",
         "TCP sequence/window handling, retransmission, congestion, close, and reset",
@@ -482,7 +488,11 @@
         "userspace/tests/net/netlink.cpp",
         "scripts/netlink_test.py",
         "scripts/netlink_native.py",
-        "docs/netlink.md"
+        "docs/netlink.md",
+        "userspace/tests/net/configuration.cpp",
+        "scripts/configuration_test.py",
+        "scripts/configuration_native.py",
+        "docs/network-configuration.md"
       ],
       "branch": "feature/f13-tcp-udp-and-linux-socket-semantics",
       "issue": "https://github.com/frankischilling/Axiom64/issues/13"
@@ -492,7 +502,7 @@
       "title": "DHCP, DNS, and network configuration",
       "milestone": "M3",
       "state": "partial",
-      "current": "Linux interface/route ioctls and BusyBox ifconfig, route add/delete, and numeric ping support static configuration. DHCP, DNS, saved configuration, downloads, and a resolver service remain planned.",
+      "current": "Linux interface/route ioctls and BusyBox ifconfig, route add/delete, and numeric ping support static configuration. C++ modules add saved profiles, journaled address/route ownership, DHCP packet validation, lease state, and dedicated real-wire acquisition/renewal/rebinding/release tests. Normal manager startup, concurrent default clients, resolver publication, complete fault/reboot coverage, DNS resolution, and downloads remain required.",
       "scope": [
         "DHCP by default, lease renewal, saved configuration, and static override",
         "DNS resolver including UDP, TCP fallback, search rules, and timeouts",
@@ -514,7 +524,21 @@
         "kernel/net/ioctl.cpp",
         "userspace/tests/net/ipv4.sh",
         "scripts/ipv4_matrix.py",
-        "docs/ipv4.md"
+        "docs/ipv4.md",
+        "userspace/net/config/configuration.cpp",
+        "userspace/net/config/profile.cpp",
+        "userspace/net/dhcp/wire.cpp",
+        "userspace/net/dhcp/state.cpp",
+        "userspace/net/dhcp/transport.cpp",
+        "userspace/tests/net/dhcp.cpp",
+        "userspace/tests/net/dhcp-state.cpp",
+        "userspace/tests/net/dhcp-profile.cpp",
+        "userspace/tests/net/dhcp-transport.cpp",
+        "scripts/configuration_test.py",
+        "scripts/dhcp_modules_test.py",
+        "scripts/dhcp_transport_test.py",
+        "scripts/dhcp_peer.py",
+        "docs/network-configuration.md"
       ],
       "branch": "feature/f14-dhcp-dns-and-network-configuration",
       "issue": "https://github.com/frankischilling/Axiom64/issues/14"

@@ -165,7 +165,7 @@
       "title": "VFS, mounts, and pseudo filesystems",
       "milestone": "M1",
       "state": "partial",
-      "current": "RAM and classic ext2 mounts, filesystem dispatch, directory identity, read-only policy, mount-aware statfs, rename, links, pipes, and selected synthetic device metadata work.",
+      "current": "RAM and classic ext2 mounts, filesystem dispatch, directory identity, read-only policy, mount-aware statfs, rename, links, pipes, and selected synthetic device metadata work. Local advisory flock supports canonical inode ownership, descriptor lifetime, retained waits, and tested signal restart on the single-CPU kernel.",
       "scope": [
         "Mount graph, filesystem operations, vnode/dentry lifetime, and pathname traversal",
         "File descriptions, descriptor lifetime, close-on-exec, and robust directory enumeration",
@@ -190,7 +190,12 @@
         "kernel/abi/linux/syscall.cpp",
         "userspace/tests/fs/vfs.c",
         "userspace/tests/fs/ext2.c",
-        "docs/vfs.md"
+        "docs/vfs.md",
+        "kernel/fs/file_lock.cpp",
+        "kernel/include/fs/file_lock.hpp",
+        "userspace/tests/fs/file-lock.c",
+        "scripts/file_lock_test.py",
+        "docs/file-locks.md"
       ],
       "branch": "feature/f04-vfs-mounts-and-pseudo-filesystems",
       "issue": "https://github.com/frankischilling/Axiom64/issues/4"
@@ -297,7 +302,7 @@
       "title": "Linux syscall and libc compatibility",
       "milestone": "M4",
       "state": "partial",
-      "current": "Static/dynamic musl programs and a tested syscall subset work, including retained blocking I/O and tested restart behavior. Unsupported calls return ENOSYS; complete Linux conformance remains planned.",
+      "current": "Static/dynamic musl programs and a tested syscall subset work, including retained blocking I/O and tested restart behavior. Unsupported calls return ENOSYS; complete Linux conformance remains planned. Local advisory flock supports canonical inode ownership, descriptor lifetime, retained waits, and tested signal restart on the single-CPU kernel.",
       "scope": [
         "Machine-readable Linux x86-64 syscall/structure/flag/error matrix with tests",
         "Extend musl coverage without silent successful stubs",
@@ -323,7 +328,12 @@
         "userspace/tests/process/signals.c",
         "kernel/io/io.cpp",
         "userspace/tests/threads/io.c",
-        "docs/io.md"
+        "docs/io.md",
+        "kernel/fs/file_lock.cpp",
+        "kernel/include/fs/file_lock.hpp",
+        "userspace/tests/fs/file-lock.c",
+        "scripts/file_lock_test.py",
+        "docs/file-locks.md"
       ],
       "branch": "feature/f08-linux-syscall-and-libc-compatibility",
       "issue": "https://github.com/frankischilling/Axiom64/issues/8"

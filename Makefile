@@ -8,7 +8,7 @@ KERNEL_SOURCES = $(filter-out kernel/tests/%,$(call rwildcard,kernel/,*.cpp))
 KERNEL_OBJECTS = $(patsubst kernel/%.cpp,build/kernel/%.o,$(KERNEL_SOURCES)) build/kernel/arch/x86_64/entry.o
 FORMAT_SOURCES = $(foreach pattern,*.cpp *.hpp,$(call rwildcard,kernel/,$(pattern))) $(foreach pattern,*.c *.cpp *.hpp,$(call rwildcard,userspace/,$(pattern)))
 
-.PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-network test-ipv4 test-udp test-netlink test-netlink-codec test-address-codec test-configuration test-dhcp-codec test-dhcp-modules test-dhcp-transport test-resolver test-resolver-native test-clock-codec test-clock test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
+.PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-network test-ipv4 test-udp test-netlink test-netlink-codec test-address-codec test-configuration test-dhcp-codec test-dhcp-modules test-dhcp-transport test-resolver test-resolver-native test-clock-codec test-clock test-file-locks test-file-locks-native test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
 all: image
 deps:
 	$(PYTHON) scripts/fetch.py
@@ -29,6 +29,19 @@ build/axiom64.elf: $(KERNEL_OBJECTS) kernel/arch/x86_64/linker.ld
 build/abi-static: userspace/tests/abi/abi.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+build/file-lock-static: userspace/tests/fs/file-lock.c
+	@mkdir -p build
+	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
+build/file-lock-dynamic: userspace/tests/fs/file-lock.c
+	@mkdir -p build
+	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DLOCK_LINKAGE='"dynamic"' $< -o $@
+build/file-lock-native: userspace/tests/fs/file-lock.c Makefile
+	@mkdir -p build
+	gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -fsanitize=address,undefined -fno-omit-frame-pointer -DLOCK_LINKAGE='"gnu"' $< -o $@
+test-file-locks-native:
+	$(PYTHON) scripts/file_lock_native.py
+test-file-locks:
+	$(PYTHON) scripts/file_lock_test.py
 build/clock-codec-tests: kernel/tests/time/counter.cpp kernel/core/time.cpp kernel/firmware/acpi.cpp kernel/include/core/time.hpp kernel/include/firmware/acpi.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/time/counter.cpp kernel/core/time.cpp kernel/firmware/acpi.cpp -o $@

@@ -11,6 +11,7 @@ Axiom64 retains the open file description selected by an I/O syscall while that 
 | `recvfrom`, `sendto` | Connected Unix streams, including receive-address output; a send destination is unsupported |
 | `recvmsg`, `sendmsg` | Nameless Unix stream messages with copied iovec metadata; ancillary sending is unsupported and receive control length is zero |
 | `accept`, `accept4` | Existing Unix listeners, optional address output, and accepted-descriptor nonblocking/close-on-exec flags |
+| `flock` | [Local advisory file locks](file-locks.md), retaining the original description during an uninterrupted blocking attempt |
 
 Socket transfers support `MSG_DONTWAIT`, receive `MSG_PEEK`, and send `MSG_NOSIGNAL`. Peeking advances across the captured vectors without consuming bytes. Unsupported transfer flags, `MSG_WAITALL`, named messages, and ancillary sending return `EOPNOTSUPP`. Socket receive/send timeout options remain unsupported and return `ENOPROTOOPT`; there is no accepted I/O deadline requiring a retained request. Poll/select/epoll have separate wait state and are not handled by this module.
 

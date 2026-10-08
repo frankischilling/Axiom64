@@ -145,6 +145,8 @@ Acceptance evidence:
 
 RAM and classic ext2 mounts, filesystem dispatch, directory identity, read-only policy, mount-aware statfs, rename, links, pipes, and selected synthetic device metadata work. [Mount tests and limits](vfs.md) describe the mount interface from [#42](https://github.com/frankischilling/Axiom64/issues/42) and the [ext2 delivery](https://github.com/frankischilling/Axiom64/issues/45); the remaining requirements below stay open.
 
+[Local advisory file locks](file-locks.md) add canonical inode ownership, fork/dup lifetime, retained waits and checked process teardown in [#76](https://github.com/frankischilling/Axiom64/issues/76). Record locks, anonymous descriptions, network filesystems, SMP synchronization and the full area remain required.
+
 Required work:
 
 - Mount graph, filesystem operations, vnode/dentry lifetime, and pathname traversal.
@@ -221,6 +223,8 @@ Acceptance evidence:
 ### F08. Linux syscall and libc compatibility
 
 Static/dynamic musl programs and a tested syscall subset work; unsupported calls return ENOSYS.
+
+[Local flock](file-locks.md) is compared with actual Linux for descriptor ownership, conversion, restart, stop/continue and process lifetime. Four guest boots compare both linkages on RAM/ext2. The complete syscall matrix and every requirement below remain open.
 
 Required work:
 

@@ -15,6 +15,7 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/process/task.cpp` | Process/thread ownership, ELF loading, clone/fork/exec/exit/wait, scheduling, TLS, FPU state |
 | `kernel/process/futex.cpp` | Expected-value waits, wake/bitsets, requeue, deadlines, shared backing lifetime |
 | `kernel/io/io.cpp` | Retained I/O requests, captured vectors, wait completion, and interruption cleanup |
+| `kernel/fs/file_lock.cpp` | Canonical-node advisory locks owned by open descriptions |
 | `kernel/fs/vfs.cpp`, `ramfs.cpp` | Filesystem dispatch, mount namespace, RAM volumes, initramfs, file descriptions, pipes |
 | `kernel/fs/ext2/ext2.cpp` | Classic ext2 volumes, mount validation, allocation, file/directory operations, synchronous commits |
 | `kernel/abi/linux/syscall.cpp` | Linux syscall numbers, ABI structures, errors, blocking operations |
@@ -32,6 +33,8 @@ Each memory context has four-level user page tables with user, write, and execut
 The ELF loader validates ELF64 segments, loads a `PT_INTERP` musl interpreter, and supplies argv, environment, and the auxiliary vector. Failed exec preserves the old address space. Successful exec ends other group members and unshares the descriptor/disposition tables. File descriptions share offsets across fork and dup; close-on-exec belongs to descriptors. Each thread preserves FS base and FPU state. [Thread ownership and futexes](threads.md) describe exit/reaping, clear-TID, supported clone flags, and synchronization limits.
 
 [Blocking I/O](io.md) retains the selected file description and captured vector metadata while an attempt waits. Completion updates the owner's saved frame before signal delivery. Caught signals release the attempt; an `SA_RESTART` entry selects a descriptor again. Task teardown releases saved operations before memory and file tables.
+
+[Advisory file locks](file-locks.md) use that retained lifetime for blocking flock calls. Independent descriptions conflict on canonical local nodes; dup/fork ownership and final-close release follow the description's references.
 
 Signals use the Linux x86-64 frame layout and a userspace return trampoline. Supported behavior includes caught faults, masks, alternate stacks, restartable I/O, alarms, SIGCHLD, and stop/continue reporting. PTYs track controlling sessions and foreground process groups, translate terminal input, and deliver terminal interrupt and resize signals.
 

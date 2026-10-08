@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "boot/boot.hpp"
+#include "boot/root.hpp"
 #include "drivers/block/block.hpp"
 #include "drivers/platform/devices.hpp"
 #include "process/task.hpp"
@@ -55,6 +56,8 @@ extern "C" [[noreturn]] void kernel_main() {
         test_suite = "AXIOM64_SUITE=storage";
     else if (word(cmd, "suite=ext2"))
         test_suite = "AXIOM64_SUITE=ext2";
+    else if (word(cmd, "suite=root"))
+        test_suite = "AXIOM64_SUITE=root";
     else if (word(cmd, "suite=threads"))
         test_suite = "AXIOM64_SUITE=threads";
     if (word(cmd, "phase=write"))
@@ -82,6 +85,7 @@ extern "C" [[noreturn]] void kernel_main() {
         panic("missing root filesystem");
     vfs_init(modules->modules[0]->address, modules->modules[0]->size);
     block_init();
+    boot_root_init(cmd);
     devices_init();
     log("Entering userspace in Ring 3\n");
     start_init("/sbin/init");

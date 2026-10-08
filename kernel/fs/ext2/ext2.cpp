@@ -6,7 +6,7 @@
 namespace ax {
 namespace {
 constexpr size_t max_block_size = 4096, inode_bytes = 128;
-constexpr unsigned max_changes = 4096, max_entries = 8192;
+constexpr unsigned max_changes = 4096, max_entries = 8192, cached_blocks = 128;
 
 static uint16_t u16(const uint8_t* p) {
     return uint16_t(p[0]) | (uint16_t(p[1]) << 8);
@@ -81,6 +81,12 @@ struct Entry {
     bool atime_dirty;
 };
 
+struct CachedBlock {
+    uint32_t block;
+    bool valid;
+    uint8_t data[max_block_size];
+};
+
 struct Volume {
     Mount* mount;
     unsigned device, block_size, inode_size, group_count, change_count, entry_count;
@@ -90,6 +96,7 @@ struct Volume {
     Group* groups;
     Change* changes;
     Entry* entries;
+    CachedBlock* cache;
     uint32_t touched[64];
     unsigned touched_count;
     int error;
@@ -134,9 +141,21 @@ struct Volume {
                 memcpy(data, change->data, block_size);
                 return true;
             }
+        auto cached = cache ? &cache[block % cached_blocks] : nullptr;
+        if (cached && cached->valid && cached->block == block) {
+            memcpy(data, cached->data, block_size);
+            return true;
+        }
         int result = block_read(device, uint64_t(block) * (block_size / sector_size), data,
                                 block_size / sector_size);
-        return result ? fail(result) : true;
+        if (result)
+            return fail(result);
+        if (cached) {
+            cached->block = block;
+            cached->valid = true;
+            memcpy(cached->data, data, block_size);
+        }
+        return true;
     }
 
     bool write_block(uint32_t block, const void* data, unsigned rank) {
@@ -294,6 +313,13 @@ struct Volume {
         for (unsigned rank = 0; rank <= 5; rank++)
             for (auto change = changes; change; change = change->next)
                 if (change->rank == rank) {
+                    // Invalidate before submission, including failed or partial writes.
+                    // Pending changes take precedence until their flush completes.
+                    if (cache) {
+                        auto& cached = cache[change->block % cached_blocks];
+                        if (cached.block == change->block)
+                            cached.valid = false;
+                    }
                     int result =
                         block_write(device, uint64_t(change->block) * (block_size / sector_size),
                                     change->data, block_size / sector_size, this);
@@ -1144,6 +1170,20 @@ static int prepare_unmount(Mount* mount) {
     auto& v = *static_cast<Volume*>(mount->data);
     if (!v.begin())
         return v.error;
+    // Unmount has no live users; terminal shutdown never resumes the tasks.
+    // Reclaim open unlinked inodes before declaring their filesystem clean.
+    for (auto entry = v.entries; entry; entry = entry->next) {
+        if (!entry->number || entry->node.hardlink)
+            continue;
+        uint8_t inode[inode_bytes];
+        if (!v.load_inode(entry->number, inode))
+            return v.error;
+        if (!u16(inode + 26)) {
+            int result = v.finish(v.delete_inode(entry->number, inode));
+            if (result)
+                return result;
+        }
+    }
     return v.finish(v.state(true));
 }
 
@@ -1160,6 +1200,7 @@ static void destroy(Mount* mount) {
     if (v->claimed)
         block_unclaim(v->device, v);
     release(v->groups);
+    release(v->cache);
     release(v);
     mount->root = nullptr;
     mount->data = nullptr;
@@ -1632,6 +1673,14 @@ int ext2_mount(Mount* mount, Node* device) {
             result = v->error;
         else
             mount->root = v->add_entry(root, 2, nullptr, "", inode);
+    }
+    // Validate the disk through actual backend reads before enabling the cache.
+    if (!result) {
+        v->cache = (CachedBlock*)alloc(sizeof(CachedBlock) * cached_blocks);
+        if (!v->cache)
+            result = -12;
+        else
+            memset(v->cache, 0, sizeof(CachedBlock) * cached_blocks);
     }
     if (!result && !mount->readonly) {
         set16(header + 58, u16(header + 58) & ~1u);

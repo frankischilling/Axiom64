@@ -5,7 +5,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | Folder | Contents |
 | --- | --- |
 | `kernel/arch/x86_64/` | CPU setup, assembly entry, linker layout |
-| `kernel/boot/` | Boot protocol and kernel startup |
+| `kernel/boot/` | Boot protocol, kernel startup, and root selection |
 | `kernel/core/` | Freestanding runtime and diagnostics |
 | `kernel/abi/linux/` | Linux syscall dispatch and ABI structures |
 | `kernel/mm/` | Physical and virtual memory |
@@ -13,7 +13,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/fs/` | VFS and RAM filesystems; ext2 has its own subfolder |
 | `kernel/io/` | Retained blocking I/O requests |
 | `kernel/ipc/` | Sockets, readiness, shared memory |
-| `kernel/drivers/platform/` | PCI and current platform device interfaces |
+| `kernel/drivers/platform/` | PCI, PIIX4 power off, and current platform device interfaces |
 | `kernel/drivers/block/` | Block request policy and raw I/O |
 | `kernel/drivers/virtio/` | Shared PCI transport and split queues |
 | `kernel/include/` | Public internal headers with matching module paths |

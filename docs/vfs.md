@@ -1,6 +1,6 @@
 # Filesystems and mounts
 
-The boot initramfs supplies the RAM root. Ring 3 programs can mount independent `ramfs` volumes or [classic ext2 disks](ext2.md) on existing directories, remount them read-only or writable, and unmount them when unused.
+The boot initramfs supplies the initial RAM root; [disk-root selection](disk-root.md) can replace it with ext2 before Ring 3 starts. User programs can mount independent `ramfs` volumes or [classic ext2 disks](ext2.md) on existing directories, remount them read-only or writable, and unmount them when unused.
 
 ## Kernel interface
 

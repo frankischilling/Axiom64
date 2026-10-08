@@ -1,6 +1,6 @@
 # Writable ext2 volumes
 
-Axiom64 mounts classic ext2 data volumes from whole virtio disks. The initramfs remains the boot root. Guest-created files persist after a clean unmount and can be read by host filesystem tools. The complete filesystem work remains tracked in [#3](https://github.com/frankischilling/Axiom64/issues/3).
+Axiom64 mounts classic ext2 data volumes and can boot an [ext2 root](disk-root.md) from whole virtio disks. Guest-created files persist after a clean unmount or shutdown and can be read by host filesystem tools. The complete filesystem work remains tracked in [#3](https://github.com/frankischilling/Axiom64/issues/3).
 
 ## Create and mount a volume
 
@@ -39,11 +39,13 @@ The layout follows the Linux kernel's [superblock](https://www.kernel.org/doc/ht
 
 Each mutation stages its changed blocks in a bounded overlay. Allocation or validation failure discards that operation before disk writes. Successful staging writes data, pointer blocks, inodes, directory records, allocation metadata, and the superblock, then flushes the device. Ordinary writes currently perform this flush too. Read access times are retained until filesystem sync. There is no permanent copy of the disk volume in RAM.
 
-Backend errors reach the caller. After an I/O error during commit, the complete overlay remains available to reads and to a later sync retry. An operation that returned `EIO` may therefore have changed the visible file or completed some disk writes. A successful retry flushes all staged blocks again. Writable mounting clears the clean flag; clean unmount or a successful read-only remount restores it after sync.
+Each mounted volume has a read cache of 128 filesystem blocks, with up to 512 KiB of payload plus tags. Mount validation reads the backend before enabling this cache. Successful reads enter the cache; collisions replace an entry. Staged changes take precedence over cached bytes. Submitting a write invalidates its matching entry before the backend can succeed or fail. Unmount discards the cache, and a new mount reads and validates the disk again. Raw block reads still go directly to the device. The whole-disk claim prevents another guest writer from invalidating filesystem data behind the cache.
 
-This is a non-journaled development filesystem. The overlay does not make a multi-block write or rename atomic across power loss. There is no recovery implementation, dirty-volume repair, or production release claim. General clean shutdown, power-loss testing, ext4 journaling/recovery, and repair tooling remain part of the roadmap.
+Cache misses and commits propagate backend errors to the caller. Failed reads are not cached. After an I/O error during commit, the complete overlay remains available to reads and to a later sync retry. An operation that returned `EIO` may therefore have changed the visible file or completed some disk writes. A successful retry flushes all staged blocks again. Writable mounting clears the clean flag; clean unmount, terminal shutdown, or a successful read-only remount restores it after sync. Terminal shutdown reclaims unlinked inodes even when a task still holds an open description, since those tasks will never resume.
 
-Limits are 4,096 block groups, 8,192 cached directory/inode identities per mount, and 4,096 changed blocks per operation. The mount scan uses temporary memory proportional to filesystem block/inode counts; unavailable memory returns `ENOMEM`. Removed identities remain cached until unmount. Filesystem calls are serialized on one CPU. Disk-backed root, partitions, caching/writeback, namespaces, permission enforcement, special-file import, broader date support, and advanced ext2/ext4 features remain planned. Private mappings copy file bytes; ext2 shared mappings return `ENODEV`.
+This is a non-journaled development filesystem. The overlay does not make a multi-block write or rename atomic across power loss. There is no recovery implementation, dirty-volume repair, or production release claim. General platform power management, power-loss testing, ext4 journaling/recovery, and repair tooling remain part of the roadmap.
+
+Limits are 4,096 block groups, 8,192 cached directory/inode identities per mount, and 4,096 changed blocks per operation. The mount scan uses temporary memory proportional to filesystem block/inode counts; unavailable memory returns `ENOMEM`. Removed identities remain cached until unmount. Filesystem calls are serialized on one CPU. Partitions, general block caching and writeback, namespaces, permission enforcement, special-file import, broader date support, and advanced ext2/ext4 features remain planned. Private mappings copy file bytes; ext2 shared mappings return `ENODEV`.
 
 ## Verification
 

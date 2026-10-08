@@ -34,6 +34,6 @@ make -C /root/toolchain-test test
 zsh -f
 ```
 
-The example Makefile compiles and runs C and C++ programs, exercises exceptions, threads, synchronization, and the standard library, and checks a rejected C source file. Files in the boot root are held in RAM and disappear when the guest exits. Use a [mounted ext2 data volume](ext2.md) for persistent files. The initial target is QEMU's emulated PC with PS/2 input and a 1024x768 boot framebuffer.
+The example Makefile compiles and runs C and C++ programs, exercises exceptions, threads, synchronization, and the standard library, and checks a rejected C source file. The default image uses a RAM root whose files disappear when the guest exits. Use a [mounted ext2 data volume](ext2.md) or build and boot an [ext2 disk root](disk-root.md) for persistent files. The initial target is QEMU's emulated PC with PS/2 input and a 1024x768 boot framebuffer.
 
 On the host, `make test-thread-io` runs the focused BIOS/UEFI [blocking I/O tests](io.md#verification-and-limits). `make test-threads` and `make test` include those tests alongside their broader suites.

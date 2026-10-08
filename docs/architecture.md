@@ -2,11 +2,12 @@
 
 Axiom64 uses one repository and build system. The kernel is a modular monolith: memory, scheduling, files, signals, IPC, and devices execute in Ring 0 behind internal interfaces. Init, shells, compilers, Xorg, and desktop clients execute as separate Ring 3 processes.
 
-Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies a memory map, direct physical mapping, and framebuffer. The kernel installs its GDT, TSS, IDT, syscall entry, and 100 Hz PIT before executing `/sbin/init`.
+Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies a memory map, direct physical mapping, and framebuffer. The kernel installs its GDT, TSS, IDT, syscall entry, and 100 Hz PIT, discovers block devices, and selects either the initramfs or an [ext2 disk root](disk-root.md) before executing `/sbin/init`.
 
 | Module | Responsibility |
 | --- | --- |
 | `kernel/arch/x86_64/arch.cpp`, `entry.asm` | CPU tables, interrupts, syscall entry, register frames, return to Ring 3 |
+| `kernel/boot/root.cpp` | Root-device selection, required boot paths, and volatile runtime mounts |
 | `kernel/mm/memory.cpp` | Physical allocation, page references, user page tables, validated user copies |
 | `kernel/drivers/platform/pci.cpp`, `kernel/drivers/virtio/` | PCI discovery, modern/legacy virtio transport, split-ring storage and descriptor ownership |
 | `kernel/drivers/block/block.cpp` | Virtio block request policy, raw sector I/O, flush, and filesystem claims |
@@ -19,6 +20,7 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/process/signals.cpp` | Queues, masks, actions, signal frames, return, alternate stacks, timers |
 | `kernel/ipc/ipc.cpp`, `shared_memory.cpp` | Unix stream sockets, readiness, epoll, select, shared mappings, SysV segments |
 | `kernel/drivers/platform/devices.cpp` | Serial terminal, PTYs, framebuffer, PS/2 events, Linux block-device file operations |
+| `kernel/drivers/platform/power.cpp` | PIIX4 power off after filesystem synchronization on the tested QEMU platform |
 | `userspace/init/main.c` | Desktop and serial shell startup, child reaping, console shell restart |
 
 Sources and public headers use matching subsystem folders. Desktop configuration is under `userspace/desktop/`; guest and host tests are grouped by the subsystem they exercise. [Source layout and build discovery](source-layout.md) describe the paths and conventions.
@@ -39,7 +41,7 @@ This is a development OS with a tested compatibility surface. Unsupported syscal
 
 - One CPU, 64 task slots, 128 descriptors per file table. Musl pthreads and C++ threads work within [the tested slice](threads.md); SMP and complete POSIX threading remain planned.
 - Root identity only. No multiuser permission enforcement, security boundary for untrusted workloads, or cryptographic random generator.
-- A RAM root, independent RAM mounts, raw virtio disks, and [writable classic ext2 data volumes](ext2.md). Disk-backed root, advanced filesystems/recovery, a network stack, and a package installation service remain planned. See [mounts](vfs.md) and [storage](storage.md) for interfaces and limits.
+- A RAM or [classic ext2 root](disk-root.md), independent RAM mounts, raw virtio disks, and [writable ext2 data volumes](ext2.md). Partitions, advanced filesystems/recovery, a network stack, and a package installation service remain planned. See [mounts](vfs.md) and [storage](storage.md) for interfaces and limits.
 - Unix stream sockets without descriptor passing. No TCP/UDP, datagram sockets, or complete socket option support.
 - Eager copying on fork, bounded allocations, and no general `mremap` implementation.
 - Fixed framebuffer mode. No accelerated graphics, hardware gamma control, hotplug, or virtual-console switching.

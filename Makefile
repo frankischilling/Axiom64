@@ -8,7 +8,7 @@ KERNEL_SOURCES = $(filter-out kernel/tests/%,$(call rwildcard,kernel/,*.cpp))
 KERNEL_OBJECTS = $(patsubst kernel/%.cpp,build/kernel/%.o,$(KERNEL_SOURCES)) build/kernel/arch/x86_64/entry.o
 FORMAT_SOURCES = $(call rwildcard,kernel/,*.cpp) $(call rwildcard,kernel/include/,*.hpp) $(foreach pattern,*.c *.cpp,$(call rwildcard,userspace/,$(pattern)))
 
-.PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
+.PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
 all: image
 deps:
 	$(PYTHON) scripts/fetch.py
@@ -102,6 +102,9 @@ test-ext2:
 	$(PYTHON) scripts/ext2_test.py
 test-disk-root:
 	$(PYTHON) scripts/disk_root_test.py
+test-root-io: disk-root
+	$(PYTHON) scripts/root_io_test.py
+	$(PYTHON) scripts/root_io_test.py --firmware bios --transport modern --delay 35 --expect-timeout
 test-threads:
 	$(PYTHON) scripts/boot_test.py --suite threads --firmware both --timeout 170
 test-thread-io:

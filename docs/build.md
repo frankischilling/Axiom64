@@ -5,7 +5,7 @@ Use Ubuntu 24.04 x86-64, directly or through WSL Ubuntu. Static userspace is bui
 ```sh
 sudo apt-get update
 sudo apt-get install -y g++ make musl-tools linux-libc-dev nasm python3 \
-    xorriso qemu-system-x86 ovmf xfonts-utils e2fsprogs
+    xorriso qemu-system-x86 ovmf xfonts-utils e2fsprogs nbdkit nbdkit-plugin-python
 make -j2 image
 make run
 ```

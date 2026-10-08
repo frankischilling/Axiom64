@@ -44,10 +44,13 @@ Ordinary boots on QEMU's `pc` machine discover the enabled PIIX4 power-managemen
 
 The [ext2 validation and error policy](ext2.md) applies to the root. Invalid metadata is rejected before writable mounting. A backend failure can leave a volume marked unclean even when its inode structure remains valid; writable mounting then requires host repair. A failed shutdown is not persistence evidence. Abruptly closing QEMU, losing power, crash recovery, ext4, partitions, stable root identifiers, and a disk installer remain separate roadmap work.
 
+Block requests, including mount-time flushes, have a 30-second deadline. A host flush can cover the copied full image even when the guest changed only a small amount of metadata. Device-reset acknowledgement keeps its separate two-second limit. An expired request is logged with its type, sector, length, and timeout errno, then the device is reset and quarantined.
+
 ## Verification
 
 ```sh
 make test-disk-root
+make test-root-io
 python3 scripts/disk_root_test.py --checks files --firmware bios --transport modern
 python3 scripts/disk_root_test.py --checks errors --firmware uefi --transport legacy
 python3 scripts/boot_test.py --disk-root --transport modern --firmware both
@@ -59,6 +62,8 @@ python3 scripts/boot_test.py --disk-root --interactive --transport legacy --firm
 The persistence matrix has 16 boots: write, fresh-VM verification, software read-only policy on writable hardware, and read-only hardware for each BIOS/UEFI and modern/legacy pairing. The guest writes files, links, names, modes, and timestamps on both root and a separate data volume. It checks overwrite and truncation visibility through independent descriptions, then powers off with both volumes mounted and deleted files still open. Host `debugfs` compares payloads and metadata, checks the symlink, and runs `e2fsck`. Both disks must be marked clean after writable shutdown and remain byte-identical during both read-only phases.
 
 Another 88 boots reject 22 cases under each pairing: invalid configuration, unavailable devices, writable selection of read-only hardware, a bad superblock, missing or nonexecutable boot files, missing runtime mount points, and injected mount-read, mount-write, and flush failures. Host checks require byte invariance where mounting never wrote, intact filesystem structure after required-file failures, and an unchanged seed fixture. A flush failure may retain the unclean mount marker.
+
+The root I/O regression uses a Unix-socket [nbdkit Python backend](https://libguestfs.org/nbdkit-python-plugin.3.html) behind QEMU's actual virtio disk. It delays successful flushes by three seconds under all four firmware/transport pairings. A separate 35-second backend delay must produce the driver's 30-second timeout and a failed root selection. These mount probes stop before userspace, operate on disposable copies, and check that the seed is unchanged; they do not establish clean shutdown. Their logs, backend timings, and result files use `build/root-io-*`.
 
 The full disk-root boot suite separately requires the complete ABI, thread, IPC, signal, VFS, native C/C++ build, Xorg drawing, window manager, and keyboard-input markers under all four pairings. The normal startup suite checks the interactive desktop under the same pairings, performs a guest shutdown without the test-only exit device, requires QEMU to exit successfully, and checks the disk with host fsck. Each boot uses its own copy of the generated fixture.
 

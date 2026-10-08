@@ -3,6 +3,7 @@
 #include "core/base.hpp"
 
 namespace ax {
+struct Task;
 constexpr unsigned max_net_devices = 8;
 constexpr size_t ethernet_header = 14, max_ethernet_frame = 65535 + 18;
 
@@ -52,4 +53,6 @@ void net_receive(NetAdapter&, const void*, size_t);
 void net_tx_complete(NetAdapter&, size_t, bool error = false);
 
 void net_rx_error(NetAdapter&);
+
+int64_t net_ioctl(Task&, uint64_t request, uint64_t argument);
 } // namespace ax

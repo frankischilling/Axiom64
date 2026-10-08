@@ -7,6 +7,7 @@
 #include "process/futex.hpp"
 #include "io/io.hpp"
 #include "net/packet.hpp"
+#include "net/inet.hpp"
 
 namespace ax {
 struct LinuxStat {
@@ -464,7 +465,11 @@ static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
         int size = packet_available(h->packet);
         return copy_result(arg, &size, 4);
     }
-    if ((h->socket || h->packet) && request >= 0x8910 && request <= 0x89ff)
+    if (request == 0x541b && h->inet) {
+        int size = inet_available(h->inet);
+        return copy_result(arg, &size, sizeof(size));
+    }
+    if ((h->socket || h->packet || h->inet) && request >= 0x890b && request <= 0x89ff)
         return net_ioctl(*current, request, arg);
     if (!h->node ||
         ((h->node->mode & 0170000) != character && (h->node->mode & 0170000) != block_device))
@@ -536,9 +541,9 @@ static int64_t dispatch(Frame* f) {
         auto h = fd_handle(a);
         if (!h)
             return -9;
-        if (h->pipe || h->socket || h->packet || h->epoll) {
+        if (h->pipe || h->socket || h->packet || h->inet || h->epoll) {
             LinuxStat s{};
-            s.mode = h->socket || h->packet ? 0140777 : 0010600;
+            s.mode = h->socket || h->packet || h->inet ? 0140777 : 0010600;
             s.nlink = 1;
             return copy_result(b, &s, sizeof(s));
         }

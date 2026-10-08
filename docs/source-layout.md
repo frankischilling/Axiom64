@@ -13,7 +13,8 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/fs/` | VFS and RAM filesystems; ext2 has its own subfolder |
 | `kernel/io/` | Retained blocking I/O requests |
 | `kernel/ipc/` | Sockets, readiness, shared memory |
-| `kernel/net/` | Ethernet interfaces and Linux raw packet sockets |
+| `kernel/net/` | Ethernet interfaces, interface/route ioctls, and Linux raw packet sockets |
+| `kernel/net/ipv4/` | IPv4 routes/output, ARP cache/timers, ICMP, raw Internet sockets, and wire helpers |
 | `kernel/drivers/platform/` | PCI, PIIX4 power off, and current platform device interfaces |
 | `kernel/drivers/block/` | Block request policy and raw I/O |
 | `kernel/drivers/net/` | PCI virtio-net and QEMU e1000 adapters |

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ipc/ipc.hpp"
 #include "net/packet.hpp"
+#include "net/inet.hpp"
 
 namespace ax {
 static Socket sockets[256];
@@ -26,9 +27,9 @@ static Socket* allocate_socket(unsigned type = 1) {
             socket = {};
             socket.used = true;
             socket.type = type;
-            socket.capacity = 65536;
-            socket.bytes = (uint8_t*)alloc(socket.capacity);
-            if (!socket.bytes) {
+            socket.capacity = type == 1 ? 65536 : 0;
+            socket.bytes = type == 1 ? (uint8_t*)alloc(socket.capacity) : nullptr;
+            if (type == 1 && !socket.bytes) {
                 socket.used = false;
                 return nullptr;
             }
@@ -67,6 +68,8 @@ bool socket_ready(Socket* s, bool write) {
 }
 
 int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_offset) {
+    if (s->type != 1)
+        return -95;
     if (s->listener || !s->connected)
         return -107;
     if (!len || s->read_closed)
@@ -86,6 +89,8 @@ int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_of
 }
 
 int64_t socket_write(Socket* s, const void* data, size_t len) {
+    if (s->type != 1)
+        return -95;
     if (!s->connected)
         return -107;
     if (s->write_closed || !s->peer || s->peer->read_closed)
@@ -200,6 +205,12 @@ uint32_t readiness(Handle* h) {
     if (h->packet) {
         auto info = net_info(packet_interface(h->packet));
         if (info && !info->live)
+            events |= 8;
+    }
+    if (h->inet) {
+        if (!inet_front(h->inet))
+            events &= ~1u;
+        if (inet_error(h->inet))
             events |= 8;
     }
     if (h->pipe && !h->writer && !h->pipe->writers)
@@ -322,6 +333,13 @@ int64_t ipc_syscall(Frame* f) {
     auto a = f->rdi, b = f->rsi, c = f->rdx, d = f->r10;
     auto h = handle(a);
     Socket* s = h ? h->socket : nullptr;
+    if (s && s->type != 1 && (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50))
+        return -95;
+    if ((f->rax == 41 && a == 2) ||
+        (h && h->inet &&
+         (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50 || f->rax == 51 ||
+          f->rax == 52 || f->rax == 54 || f->rax == 55)))
+        return inet_syscall(*current, *f);
     if ((f->rax == 41 && a == 17) ||
         (h && h->packet &&
          (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50 || f->rax == 51 ||
@@ -331,9 +349,11 @@ int64_t ipc_syscall(Frame* f) {
     case 41: {
         if (a != 1)
             return -97;
-        if ((b & 0xf) != 1 || (b & ~uint64_t(0x8080f)) || c)
+        if (((b & 0xf) != 1 && (b & 0xf) != 2) || (b & ~uint64_t(0x8080f)) || c)
             return -93;
-        s = allocate_socket();
+        // libc also uses unbound Unix datagram descriptors for interface ioctls.
+        // Datagram data/lifecycle operations remain explicitly unsupported.
+        s = allocate_socket(b & 0xf);
         return s ? install_socket(*current, s,
                                   ((b & 0x800) ? 04000 : 0) | ((b & 0x80000) ? 02000000 : 0))
                  : -12;

@@ -3,6 +3,7 @@
 #include "ipc/ipc.hpp"
 #include "process/signals.hpp"
 #include "net/packet.hpp"
+#include "net/inet.hpp"
 
 namespace ax {
 struct Iovec {
@@ -27,6 +28,8 @@ struct IoRequest {
     bool write, socket, accept, positioned;
     PacketAddress destination;
     unsigned destination_index;
+    InetAddress inet_destination;
+    uint32_t destination_ipv4;
     uint8_t* packet_data;
     size_t packet_length;
     uint64_t address_pointer, address_length_pointer;
@@ -79,14 +82,18 @@ static int import_vectors(Task& task, IoRequest& request, uint64_t pointer, size
 
 static int prepare_packet(Task& task, IoRequest& request) {
     const auto& f = request.call;
+    if (request.handle->inet && !inet_payload(request.handle->inet))
+        return -95;
     if (request.accept)
         return -95;
     if (request.positioned)
         return -29;
     if (request.flags & ~unsigned(request.write ? 0x4040 : 2 | 0x20 | 0x40))
         return -95;
-    if (request.write)
+    if (request.write && request.handle->packet)
         request.destination_index = packet_interface(request.handle->packet);
+    if (request.write && request.handle->inet)
+        request.destination_ipv4 = inet_peer(request.handle->inet);
     uint64_t address = f.rax == 44 ? f.r8 : 0;
     uint64_t address_length = f.rax == 44 ? f.r9 : 0;
     if (f.rax == 19 || f.rax == 20) {
@@ -115,13 +122,24 @@ static int prepare_packet(Task& task, IoRequest& request) {
         request.count = 1;
     }
     if (request.write && address) {
-        if (address_length < sizeof(PacketAddress))
-            return -22;
-        if (!task.memory->space.copy_in(&request.destination, address, sizeof(PacketAddress)))
-            return -14;
-        if (request.destination.family != 17 || request.destination.length > 8)
-            return -22;
-        request.destination_index = request.destination.index;
+        if (request.handle->inet) {
+            if (address_length < sizeof(InetAddress))
+                return -22;
+            if (!task.memory->space.copy_in(&request.inet_destination, address,
+                                            sizeof(InetAddress)))
+                return -14;
+            if (request.inet_destination.family != 2)
+                return -97;
+            request.destination_ipv4 = __builtin_bswap32(request.inet_destination.address);
+        } else {
+            if (address_length < sizeof(PacketAddress))
+                return -22;
+            if (!task.memory->space.copy_in(&request.destination, address, sizeof(PacketAddress)))
+                return -14;
+            if (request.destination.family != 17 || request.destination.length > 8)
+                return -22;
+            request.destination_index = request.destination.index;
+        }
     }
     if (f.rax == 45 && f.r8) {
         request.address_pointer = f.r8;
@@ -133,15 +151,24 @@ static int prepare_packet(Task& task, IoRequest& request) {
         request.packet_length += request.vectors[i].length;
     if (!request.write)
         return 0;
-    if (!request.destination_index || !net_info(request.destination_index))
-        return -6;
-    if (request.packet_length > max_ethernet_frame)
-        return -90;
-    if (request.packet_length < ethernet_header)
-        return -22;
-    request.packet_data = static_cast<uint8_t*>(alloc(request.packet_length));
-    if (!request.packet_data)
-        return -12;
+    if (request.handle->inet) {
+        if (!request.destination_ipv4)
+            return -89;
+        if (request.packet_length > 65535 - 20)
+            return -90;
+    } else {
+        if (!request.destination_index || !net_info(request.destination_index))
+            return -6;
+        if (request.packet_length > max_ethernet_frame)
+            return -90;
+        if (request.packet_length < ethernet_header)
+            return -22;
+    }
+    if (request.packet_length) {
+        request.packet_data = static_cast<uint8_t*>(alloc(request.packet_length));
+        if (!request.packet_data)
+            return -12;
+    }
     size_t at = 0;
     for (size_t i = 0; i < request.count; i++) {
         const auto& vector = request.vectors[i];
@@ -155,18 +182,21 @@ static int prepare_packet(Task& task, IoRequest& request) {
 
 static int prepare(Task& task, IoRequest& request) {
     const auto& f = request.call;
+    if (request.handle->socket && request.handle->socket->type != 1)
+        return -95;
     request.write = f.rax == 1 || f.rax == 18 || f.rax == 20 || f.rax == 44 || f.rax == 46;
     request.socket = f.rax == 44 || f.rax == 45 || f.rax == 46 || f.rax == 47;
     request.accept = f.rax == 43 || f.rax == 288;
     request.positioned = f.rax == 17 || f.rax == 18;
-    if ((request.socket || request.accept) && !request.handle->socket && !request.handle->packet)
+    if ((request.socket || request.accept) && !request.handle->socket && !request.handle->packet &&
+        !request.handle->inet)
         return -88;
     if (!request.socket && !request.accept &&
         ((request.handle->flags & 3) == (request.write ? 0u : 1u)))
         return -9;
     if (request.socket)
         request.flags = f.rax == 46 || f.rax == 47 ? f.rdx : f.r10;
-    if (request.handle->packet)
+    if (request.handle->packet || request.handle->inet)
         return prepare_packet(task, request);
     if (request.accept) {
         if (f.rax == 288 && (f.r10 & ~uint64_t(0x80800)))
@@ -241,35 +271,55 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
     net_poll();
     const auto& f = request.call;
     if (request.write) {
+        if (request.handle->inet)
+            return inet_send(request.handle->inet, request.destination_ipv4, request.packet_data,
+                             request.packet_length);
         int result = net_send(request.destination_index, request.packet_data, request.packet_length,
                               request.handle->packet);
         return result ? result : int64_t(request.packet_length);
     }
     if (!request.socket && !request.packet_length)
         return 0;
-    auto frame = packet_front(request.handle->packet);
-    if (!frame) {
+    if (request.handle->inet)
+        if (int error = inet_error(request.handle->inet, true))
+            return -error;
+    auto frame = request.handle->packet ? packet_front(request.handle->packet) : nullptr;
+    auto ip = request.handle->inet ? inet_front(request.handle->inet) : nullptr;
+    if (!frame && !ip) {
+        if (request.handle->inet) {
+            int error = inet_error(request.handle->inet, true);
+            return error ? -error : -11;
+        }
         auto info = net_info(packet_interface(request.handle->packet));
         return info && !info->live ? -5 : -11;
     }
-    size_t remaining = min(frame->length, request.packet_length), at = 0;
+    size_t length = ip ? ip->length : frame->length;
+    const auto bytes = ip ? inet_bytes(ip) : packet_bytes(frame);
+    const void* source = ip ? static_cast<const void*>(&ip->source) : &frame->source;
+    const auto copy_fault = [&request]() -> int64_t {
+        // Linux raw Internet receives dequeue even when a non-peek copy faults.
+        if (request.handle->inet && !(request.flags & 2))
+            inet_consume(request.handle->inet);
+        return -14;
+    };
+    size_t remaining = min(length, request.packet_length), at = 0;
     for (size_t i = 0; i < request.count && remaining; i++) {
         const auto& vector = request.vectors[i];
         size_t count = min(remaining, size_t(vector.length));
-        if (count && !task.memory->space.copy_out(vector.base, packet_bytes(frame) + at, count))
-            return -14;
+        if (count && !task.memory->space.copy_out(vector.base, bytes + at, count))
+            return copy_fault();
         at += count;
         remaining -= count;
     }
-    uint32_t actual_address = sizeof(PacketAddress);
+    uint32_t actual_address = ip ? sizeof(InetAddress) : sizeof(PacketAddress);
     if (request.address_pointer &&
-        (!task.memory->space.copy_out(request.address_pointer, &frame->source,
+        (!task.memory->space.copy_out(request.address_pointer, source,
                                       min(request.address_capacity, actual_address)) ||
          (request.address_length_pointer &&
           !task.memory->space.copy_out(request.address_length_pointer, &actual_address, 4))))
-        return -14;
+        return copy_fault();
     if (f.rax == 47) {
-        uint32_t flags = frame->length > request.packet_length ? 0x20 : 0;
+        uint32_t flags = length > request.packet_length ? 0x20 : 0;
         uint64_t control_length = 0;
         uint32_t address_length = request.address_pointer ? actual_address : 0;
         if (!task.memory->space.copy_out(f.rsi + offsetof(Message, name_length), &address_length,
@@ -277,18 +327,22 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
             !task.memory->space.copy_out(f.rsi + offsetof(Message, control_length), &control_length,
                                          8) ||
             !task.memory->space.copy_out(f.rsi + offsetof(Message, flags), &flags, 4))
-            return -14;
+            return copy_fault();
     }
-    int64_t result = request.flags & 0x20 ? frame->length : at;
-    if (!(request.flags & 2))
-        packet_consume(request.handle->packet);
+    int64_t result = request.flags & 0x20 ? length : at;
+    if (!(request.flags & 2)) {
+        if (request.handle->inet)
+            inet_consume(request.handle->inet);
+        else
+            packet_consume(request.handle->packet);
+    }
     return result;
 }
 
 static int64_t attempt(Task& task, IoRequest& request) {
     auto h = request.handle;
     const auto& f = request.call;
-    if (h->packet) {
+    if (h->packet || h->inet) {
         int64_t result = packet_attempt(task, request);
         if (result == -11 && !(h->flags & 04000) && !(request.flags & 0x40))
             return would_block;
@@ -368,8 +422,8 @@ bool io_resume(Task& task) {
     auto request = task.io;
     if (!request)
         panic("blocked I/O without request");
-    if (!request->handle->packet && !handle_ready(request->handle, request->write) &&
-        !(request->handle->flags & 04000))
+    if (!request->handle->packet && !request->handle->inet &&
+        !handle_ready(request->handle, request->write) && !(request->handle->flags & 04000))
         return false;
     int64_t result = attempt(task, *request);
     if (result == would_block)

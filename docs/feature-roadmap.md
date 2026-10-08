@@ -46,9 +46,9 @@ The first three milestones define the next core sequence. Later milestones descr
 | F09 | [Accounts, permissions, and process credentials](https://github.com/frankischilling/Axiom64/issues/9) | planned | M3 | F03, F04 |
 | F10 | [Secure random number generation](https://github.com/frankischilling/Axiom64/issues/10) | planned | M3 | F03, F09 |
 | F11 | [Ethernet devices and link management](https://github.com/frankischilling/Axiom64/issues/11) | partial | M3 | F01, F05 |
-| F12 | [IPv4, IPv6, routing, and ICMP](https://github.com/frankischilling/Axiom64/issues/12) | planned | M3 | F11 |
+| F12 | [IPv4, IPv6, routing, and ICMP](https://github.com/frankischilling/Axiom64/issues/12) | partial | M3 | F11 |
 | F13 | [TCP, UDP, and Linux socket semantics](https://github.com/frankischilling/Axiom64/issues/13) | partial | M3 | F12, F15 |
-| F14 | [DHCP, DNS, and network configuration](https://github.com/frankischilling/Axiom64/issues/14) | planned | M3 | F09, F10, F13 |
+| F14 | [DHCP, DNS, and network configuration](https://github.com/frankischilling/Axiom64/issues/14) | partial | M3 | F09, F10, F13 |
 | F15 | [IPC and event notification](https://github.com/frankischilling/Axiom64/issues/15) | partial | M2 | F05 |
 | F16 | [Clocks, timers, and power management](https://github.com/frankischilling/Axiom64/issues/16) | partial | M6 | F01, F03, F05 |
 | F17 | [AHCI, NVMe, and other storage devices](https://github.com/frankischilling/Axiom64/issues/17) | planned | M6 | F02, F03, F19 |
@@ -294,7 +294,7 @@ Acceptance evidence:
 
 ### F12. IPv4, IPv6, routing, and ICMP
 
-No IP stack is present.
+The [initial IPv4 host path](ipv4.md) supports static addresses, connected and explicit routes, loopback, bounded ARP, raw ICMP sockets, and echo/ping on both Ethernet adapters. Options and fragments are rejected; complete IPv4, IPv6, reassembly, multicast, and path MTU behavior remain required. [The implementation task](https://github.com/frankischilling/Axiom64/issues/61) covers this initial slice.
 
 Required work:
 
@@ -312,7 +312,7 @@ Acceptance evidence:
 
 ### F13. TCP, UDP, and Linux socket semantics
 
-Unix stream sockets support X11, and [AF_PACKET raw sockets](network.md) exchange Ethernet through virtio-net and e1000. Internet and Unix datagram sockets, deadlines, ancillary data, and the complete socket contract remain planned.
+Unix stream sockets support X11, [AF_PACKET raw sockets](network.md) exchange Ethernet, and [AF_INET raw ICMP sockets](ipv4.md) support ping and the tested retained-I/O contract. Unix and Internet datagram descriptors currently support interface configuration only. TCP/UDP data, Unix datagram data, deadlines, ancillary data, and the complete socket contract remain planned.
 
 Required work:
 
@@ -331,7 +331,7 @@ Acceptance evidence:
 
 ### F14. DHCP, DNS, and network configuration
 
-No network configuration or resolver service is available.
+Linux interface/route ioctls and BusyBox `ifconfig`, `route`, and numeric `ping` support [static configuration](ipv4.md#configuration-and-routing). DHCP, DNS, saved configuration, downloads, and a resolver service remain required.
 
 Required work:
 

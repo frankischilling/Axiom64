@@ -52,6 +52,7 @@ jobs:
           compression-level: 0
           path: build/axiom64-sources.tar
       - name: Upload ext2 root image
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: axiom64-disk-root
@@ -85,4 +86,6 @@ jobs:
             build/disk-root-*.png
             build/disk-root-*-results.json
             build/disk-root-results.json
+            build/root-mount-*.log
+            build/root-mount-results.json
             build/busybox-build.log

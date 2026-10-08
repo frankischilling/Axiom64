@@ -1,0 +1,46 @@
+name: Disk root image probe
+on:
+  push:
+    branches: [feature/ext2-root-boot]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  root-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install boot tools
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 ovmf xorriso e2fsprogs make gcc
+      - name: Replay captured archive
+        env:
+          ARTIFACT_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import io, os, pathlib, urllib.request, zipfile
+          request = urllib.request.Request(
+              'https://api.github.com/repos/frankischilling/Axiom64/actions/artifacts/11522076104/zip',
+              headers={'Authorization': 'Bearer ' + os.environ['ARTIFACT_TOKEN'],
+                       'Accept': 'application/vnd.github+json'})
+          with urllib.request.urlopen(request) as response:
+              archive = zipfile.ZipFile(io.BytesIO(response.read()))
+          pathlib.Path('build').mkdir(exist_ok=True)
+          for name in ['axiom64.elf', 'axiom64.iso']:
+              pathlib.Path('build', name).write_bytes(archive.read(name))
+          PY
+          xorriso -osirrox on -indev build/axiom64.iso -extract /boot/rootfs.cpio build/rootfs.cpio
+          python3 scripts/disk_root.py --verify-reproducible
+          python3 scripts/image.py --test --suite abi --root-device /dev/vda --output-name root-probe.iso
+      - name: Probe full root mount
+        run: python3 scripts/root_mount_test.py --image build/root-probe.iso --disk build/root-disk.raw
+      - name: Retain fixture and mount evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: root-image-probe
+          path: |
+            build/root-disk.raw
+            build/root-probe.iso
+            build/root-mount-*.log
+            build/root-mount-results.json

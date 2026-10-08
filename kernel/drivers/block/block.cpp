@@ -75,9 +75,14 @@ static int request(Disk& d, uint32_t type, uint64_t sector, size_t length) {
     if (head < 0 || !d.pci.notify(d.queue))
         return failed(d);
     VirtioCompletion completed{};
-    if (d.pci.wait(d.queue, completed) || completed.head != head ||
-        completed.cookie != d.request_physical)
+    // A flush may cover a newly copied full root image. Its backend latency is
+    // independent of the transport's short reset acknowledgement deadline.
+    int waited = d.pci.wait(d.queue, completed, 30);
+    if (waited || completed.head != head || completed.cookie != d.request_physical) {
+        log("virtio-blk: completion failed type=%u sector=%u bytes=%u errno=%u\n", uint64_t(type),
+            sector, uint64_t(length), uint64_t(waited ? -waited : 5));
         return failed(d);
+    }
     // Legacy devices historically report the used length inconsistently.
     uint32_t written = completed.length;
     if (d.pci.modern() && (!written || written > (type == 0 ? length + 1 : 1) ||

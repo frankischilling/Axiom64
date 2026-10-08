@@ -118,6 +118,9 @@ extern size_t node_count;
 
 void vfs_init(const void*, size_t);
 
+// Boot-only root replacement, before any task or file description exists.
+int vfs_disk_root(unsigned device, bool readonly);
+
 bool normalize(const char* cwd, const char* path, char* result, size_t capacity);
 
 Node* lookup(const char*, bool follow = true, unsigned depth = 0);
@@ -161,6 +164,8 @@ int node_readdir(Node*, uint64_t, DirectoryEntry&);
 int node_sync(Node*, bool data_only = false);
 
 int sync_filesystems();
+
+int shutdown_filesystems();
 
 int node_map_shared(Node*, uint64_t, size_t, bool write, uint64_t&);
 

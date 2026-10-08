@@ -451,6 +451,19 @@ int sync_filesystems() {
     return error;
 }
 
+int shutdown_filesystems() {
+    int error = sync_filesystems();
+    if (error)
+        return error;
+    for (auto& mount : mounts)
+        if (mount.active && mount.ops->prepare_unmount) {
+            int result = mount.ops->prepare_unmount(&mount);
+            if (result && !error)
+                error = result;
+        }
+    return error;
+}
+
 int node_map_shared(Node* node, uint64_t offset, size_t length, bool write, uint64_t& address) {
     if (write && node_readonly(node))
         return -30;
@@ -574,6 +587,29 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
             return 0;
         }
     return -28;
+}
+
+int vfs_disk_root(unsigned device, bool readonly) {
+    if (current || !mounts[0].active || mounts[0].ops != &ramfs_ops)
+        return -16;
+    for (size_t i = 1; i < sizeof(mounts) / sizeof(mounts[0]); i++)
+        if (mounts[i].active)
+            return -16;
+    Node source{};
+    source.device = Device::block;
+    source.device_id = device;
+    auto& mount = mounts[1];
+    mount = {next_mount_id++, nullptr, nullptr, nullptr, &ext2_ops, nullptr, false, readonly};
+    int error = ext2_mount(&mount, &source);
+    if (error) {
+        mount = {};
+        return error;
+    }
+    mount.active = true;
+    root_node = mount.root;
+    mounts[0].ops->destroy(&mounts[0]);
+    mounts[0] = {};
+    return 0;
 }
 
 int unmount(const Path& path, uint64_t flags) {

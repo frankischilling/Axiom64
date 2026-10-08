@@ -105,7 +105,7 @@ Acceptance evidence:
 
 ### F02. Block layer and virtio disk
 
-Modern and legacy virtio block devices provide persistent sector I/O, Linux block nodes, explicit flushes, and exclusive filesystem claims. [Storage tests](storage.md#verification) cover host disk bytes, fresh guest boots, read-only disks, queue rollover, and backend errors. [The first raw-disk delivery](https://github.com/frankischilling/Axiom64/issues/40) and [ext2 follow-up](https://github.com/frankischilling/Axiom64/issues/45) leave partitions, caching, and stable root identifiers for later work.
+Modern and legacy virtio block devices provide persistent sector I/O, Linux block nodes, explicit flushes, and exclusive filesystem claims. Ext2 volumes have a bounded [read cache](ext2.md#write-and-error-behavior). [Storage tests](storage.md#verification) cover host disk bytes, fresh guest boots, read-only disks, queue rollover, and backend errors. [The first raw-disk delivery](https://github.com/frankischilling/Axiom64/issues/40) and [ext2 follow-up](https://github.com/frankischilling/Axiom64/issues/45) leave partitions, general block caching and writeback, and stable root identifiers for later work.
 
 Required work:
 
@@ -124,7 +124,7 @@ Acceptance evidence:
 
 ### F03. Writable ext2 and later ext4
 
-Classic ext2 data volumes support persistent files, directories, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and reboot verification. Root still uses RAM; advanced formats and recovery remain planned. [The data-volume delivery](https://github.com/frankischilling/Axiom64/issues/45) and [format/test limits](ext2.md) describe this slice. Every requirement below remains in the complete filesystem area.
+Classic ext2 root and data volumes support persistent files, directories, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and reboot verification. [The data-volume delivery](https://github.com/frankischilling/Axiom64/issues/45), [disk-root delivery](https://github.com/frankischilling/Axiom64/issues/55), and [format/test limits](ext2.md) describe this slice. Advanced formats and recovery remain planned. Every requirement below remains in the complete filesystem area.
 
 Required work:
 
@@ -577,7 +577,7 @@ Acceptance evidence:
 
 ### F27. Live image and simple disk installer
 
-A live ISO boots; changes are lost when the guest stops.
+A live ISO boots with a RAM root or an [ext2 disk root](disk-root.md). Data mounts and disk-root files can persist after clean shutdown. A disk installer remains planned.
 
 Required work:
 

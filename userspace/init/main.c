@@ -28,6 +28,7 @@ int main(void) {
     const char* suite = getenv("AXIOM64_SUITE");
     if (test && *test == '1') {
         const char* script = suite && !strcmp(suite, "storage")   ? "/etc/storage-test.sh"
+                             : suite && !strcmp(suite, "root")    ? "/etc/root-test.sh"
                              : suite && !strcmp(suite, "ext2")    ? "/etc/ext2-test.sh"
                              : suite && !strcmp(suite, "threads") ? "/etc/thread-test.sh"
                              : suite && !strcmp(suite, "desktop") ? "/etc/desktop-test.sh"

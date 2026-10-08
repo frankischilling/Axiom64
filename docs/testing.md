@@ -24,6 +24,7 @@ The harness boots QEMU under BIOS and UEFI, checks firmware identity, requires e
 | Shared virtio queues | Sanitizer host simulation, concurrent chains and malformed completions; separate 24-boot real queue-size/feature matrix with host byte checks |
 | VFS mounts | Independent RAM volumes, hidden/restored contents, directory identity, read-only policy, cross-filesystem errors, executable loading, mappings, sockets, busy unmounts, slot reuse |
 | Writable ext2 | Four disk layouts across firmware/transports, guest files and executable loading, fresh-boot reads, host file/metadata comparisons and fsck, full allocation, rejected formats, and I/O retries |
+| Ext2 root | Root and data-volume reboot persistence, software/hardware read-only policy, rejected configuration/boot files/backend failures, full userspace and normal desktop startup across firmware/transports, reproducible fixtures and host fsck |
 
 The host captures `build/desktop-bios.png` and `desktop-uefi.png` after input succeeds. Logs are `build/boot-bios.log` and `boot-uefi.log`; results are in `build/boot-results.json`.
 
@@ -43,7 +44,7 @@ python3 scripts/ext2_test.py --quick --firmware bios --transport modern
 
 The ABI, desktop, condition-only, and I/O-only profiles omit large native development packages from a separate root filesystem. The full and complete threads suites use the full root filesystem. `--trace` logs syscall entry and results; `--gdb` exposes QEMU debugging on local TCP port 1234.
 
-GitHub Actions builds the normal ISO and runs the full firmware and threads suites, sanitizer queue checks, raw-storage, queue-geometry and ext2 matrices, and normal desktop checks on Ubuntu 24.04. The `axiom64-boot` artifact contains the image, kernel, logs, results, and screenshots. A separate source artifact carries upstream archives and exact package recipes. A green run applies to its tested commit; check that commit when comparing results with local changes.
+GitHub Actions builds the normal ISO and runs the full firmware and threads suites, sanitizer queue checks, raw-storage, queue-geometry and ext2 matrices, normal desktop checks, and the complete [disk-root suites](disk-root.md#verification) on Ubuntu 24.04. The `axiom64-boot` artifact contains the image, kernel, logs, results, and screenshots. A separate source artifact carries upstream archives and exact package recipes. A green run applies to its tested commit; check that commit when comparing results with local changes.
 
 Run `make test-storage` for the complete disk matrix. The harness creates and overwrites only its generated fixtures under `build/`. [Storage verification](storage.md#verification) describes the phases, host comparisons, evidence files, and paths that are not yet fault-injected.
 
@@ -54,3 +55,5 @@ Run `make test-threads` for the dedicated static/dynamic musl, futex, lifecycle,
 Run `make test-thread-io` for the focused [blocking I/O suite](io.md#verification-and-limits). The full and complete thread suites also require its static/dynamic tests.
 
 Run `make test-virtqueue` and `make test-virtio` for the [shared virtio queue and transport checks](virtio.md#verification). The host simulation exercises production queue logic with sanitizers; actual guest runs cover register access, negotiated geometry, disk payloads, and persistence.
+
+Run `make test-disk-root` for the [root and data-volume persistence/rejection matrix](disk-root.md#verification). Full and normal desktop boot tests accept `--disk-root --transport modern` or `legacy`; they build a matching root fixture, copy it for each firmware boot, require the selected ext2 root, perform clean shutdown, and run host fsck.

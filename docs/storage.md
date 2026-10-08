@@ -1,6 +1,6 @@
 # Storage
 
-The kernel discovers PCI virtio block devices at boot and exposes whole disks as `/dev/vda` through `/dev/vdh`. Raw disk writes persist when flushed. [Writable ext2 data mounts](ext2.md) provide persistent ordinary files; the boot root remains in RAM.
+The kernel discovers PCI virtio block devices at boot and exposes whole disks as `/dev/vda` through `/dev/vdh`. Raw disk writes persist when flushed. [Writable ext2 data mounts](ext2.md) and an optional [ext2 root](disk-root.md) provide persistent ordinary files.
 
 ## Attach a disk
 
@@ -23,7 +23,7 @@ Use `disable-modern=on` to exercise the legacy PCI transport. To attach a read-o
 
 The implementation copies through private, physically contiguous DMA buffers. User addresses never become device descriptors. The [shared virtio transport and queue modules](virtio.md) handle modern/legacy registers, configuration, queue geometry, descriptor ownership, and reset. The PCI module handles configuration mechanism 1, multifunction discovery, and assigned 32/64-bit memory BARs. Unsupported capabilities, invalid mappings, unavailable queues, and failed feature negotiation prevent a disk from being registered.
 
-Both transports use a split queue with one outstanding request. The driver negotiates read-only and flush features, plus `VIRTIO_F_VERSION_1` for modern devices. It uses memory barriers when publishing descriptors and reading completions, suppresses interrupts, and polls with a calibrated two-second deadline plus a fixed iteration limit. A timeout or invalid completion resets the device and makes subsequent operations fail with `EIO`; DMA pages remain allocated. Backend `IOERR` returns `EIO` while keeping the queue usable. Unsupported requests return `EOPNOTSUPP`.
+Both transports use a split queue with one outstanding request. The driver negotiates read-only and flush features, plus `VIRTIO_F_VERSION_1` for modern devices. It uses memory barriers when publishing descriptors and reading completions, suppresses interrupts, and polls with a calibrated 30-second request deadline. Reset acknowledgement retains a separate two-second deadline. A fixed iteration bound is used only if PIT calibration fails. A timeout or invalid completion resets the device and makes subsequent operations fail with `EIO`; DMA pages remain allocated. Backend `IOERR` returns `EIO` while keeping the queue usable. Unsupported requests return `EOPNOTSUPP`.
 
 Block nodes support these Linux x86-64 operations:
 
@@ -37,9 +37,9 @@ Block nodes support these Linux x86-64 operations:
 | `fsync`, `fdatasync`, `BLKFLSBUF` | Wait for a virtio flush completion when supported |
 | `O_SYNC`, `O_DSYNC` | Flush completed writes before reporting success |
 
-Reads at or beyond capacity return EOF. A write that crosses the end returns the completed prefix; a write starting at the end returns `ENOSPC`. Opening a read-only disk for writing returns `EROFS`. Device truncation and unsupported `O_DIRECT` return `EINVAL`; unsupported ioctls return `ENOTTY`. There is no kernel block cache. If flush was not negotiated, the driver relies on the virtio writethrough contract.
+Reads at or beyond capacity return EOF. A write that crosses the end returns the completed prefix; a write starting at the end returns `ENOSPC`. Opening a read-only disk for writing returns `EROFS`. Device truncation and unsupported `O_DIRECT` return `EINVAL`; unsupported ioctls return `ENOTTY`. Raw I/O is uncached; mounted ext2 volumes have a bounded [filesystem read cache](ext2.md#write-and-error-behavior). If flush was not negotiated, the driver relies on the virtio writethrough contract.
 
-Syscalls currently run on one CPU with interrupts masked, which serializes access to the queue and partial-sector writes. The driver is not ready for concurrent kernel callers or SMP. Limits include eight device initialization attempts, no hotplug or capacity-change handling, and no ECAM, IOMMU, partition parser, or disk-backed root. [Filesystem dispatch](vfs.md) supports RAM and classic ext2 mounts. Partitioning, caching, and stable root identifiers remain in [the block roadmap](https://github.com/frankischilling/Axiom64/issues/2); advanced filesystems and recovery remain in [the filesystem roadmap](https://github.com/frankischilling/Axiom64/issues/3).
+Syscalls currently run on one CPU with interrupts masked, which serializes access to the queue and partial-sector writes. The driver is not ready for concurrent kernel callers or SMP. Limits include eight device initialization attempts, no hotplug or capacity-change handling, and no ECAM, IOMMU, or partition parser. [Filesystem dispatch](vfs.md) supports RAM and classic ext2 root/data mounts. Partitioning, general block caching and writeback, and stable root identifiers remain in [the block roadmap](https://github.com/frankischilling/Axiom64/issues/2); advanced filesystems and recovery remain in [the filesystem roadmap](https://github.com/frankischilling/Axiom64/issues/3).
 
 ## Verification
 
@@ -57,6 +57,6 @@ The default matrix performs four independent boots for each BIOS/UEFI and modern
 
 Every boot also checks an independent read-only second disk, Linux block metadata, invalid user pointers, descriptor access modes, negative offsets, and disk bounds. After each boot the host compares every byte of both disk images with the expected contents. The failure-injection sectors lie away from firmware's disk probes so boot-time reads do not consume the one-shot errors.
 
-The harness creates its own fixtures under `build/` and takes no user disk path. Evidence is in `build/storage-*.log`, the error-phase QEMU traces, and `build/storage-results.json`, including host-verified SHA-256 hashes. The normal ABI, native toolchain, and desktop tests remain separate regression checks. The timeout and malformed-completion paths have bounded handling in the driver but are not fault-injected by this matrix.
+The harness creates its own fixtures under `build/` and takes no user disk path. Evidence is in `build/storage-*.log`, the error-phase QEMU traces, and `build/storage-results.json`, including host-verified SHA-256 hashes. The normal ABI, native toolchain, and desktop tests remain separate regression checks. The [root I/O tests](disk-root.md#verification) exercise delayed successful flushes and an expired request through actual virtio disks. Malformed completions are not fault-injected by this raw-disk matrix.
 
 The transport follows the [OASIS virtio 1.2 specification](https://docs.oasis-open.org/virtio/virtio/v1.2/virtio-v1.2.html). The backend failure tests use [QEMU's blkdebug rules](https://www.qemu.org/docs/master/devel/testing/blkdebug.html).

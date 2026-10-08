@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/base.hpp"
+#include "drivers/platform/power.hpp"
+#include "fs/vfs.hpp"
 #include <stdarg.h>
 
 extern "C" void* memcpy(void* d, const void* s, size_t n) {
@@ -141,9 +143,14 @@ void log(const char* s, ...) {
 }
 
 [[noreturn]] void poweroff(int status) {
+    int error = shutdown_filesystems();
+    if (error) {
+        log("FILESYSTEM_SHUTDOWN_FAIL errno=%d\n", int64_t(-error));
+        status = 1;
+    }
     log("AXIOM64_EXIT status=%d\n", int64_t(status));
     out32(0xf4, status ? 1 : 0);
-    out8(0x604, 0);
+    platform_poweroff();
     asm volatile("cli");
     for (;;)
         asm volatile("hlt");

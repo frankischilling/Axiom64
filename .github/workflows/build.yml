@@ -8,11 +8,11 @@ permissions:
 jobs:
   qemu:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install build and emulation tools
-        run: sudo apt-get update && sudo apt-get install -y g++ make musl-tools linux-libc-dev nasm python3 xorriso qemu-system-x86 ovmf xfonts-utils e2fsprogs clang-format-20
+        run: sudo apt-get update && sudo apt-get install -y g++ make musl-tools linux-libc-dev nasm python3 xorriso qemu-system-x86 ovmf xfonts-utils e2fsprogs clang-format-20 nbdkit nbdkit-plugin-python
       - name: Check C and C++ formatting
         run: make check-format
       - name: Build standalone image
@@ -31,6 +31,22 @@ jobs:
         run: python3 scripts/ext2_test.py
       - name: Test normal desktop startup
         run: python3 scripts/boot_test.py --interactive --firmware both --timeout 180
+      - name: Test ext2 root, data mounts, rejection, and reboot persistence
+        run: make test-disk-root
+      - name: Build reproducible full ext2 root
+        run: make disk-root
+      - name: Test delayed root flushes and bounded request timeout
+        run: |
+          python3 scripts/root_io_test.py
+          python3 scripts/root_io_test.py --firmware bios --transport modern --delay 35 --expect-timeout
+      - name: Test full userspace from ext2 root
+        run: |
+          python3 scripts/boot_test.py --disk-root --transport modern --firmware both --timeout 900
+          python3 scripts/boot_test.py --disk-root --transport legacy --firmware both --timeout 900
+      - name: Test normal desktop startup from ext2 root
+        run: |
+          python3 scripts/boot_test.py --disk-root --interactive --transport modern --firmware both --timeout 180
+          python3 scripts/boot_test.py --disk-root --interactive --transport legacy --firmware both --timeout 180
       - name: Bundle corresponding sources
         run: make sources
       - name: Upload sources and recipes
@@ -39,6 +55,15 @@ jobs:
           name: axiom64-sources
           compression-level: 0
           path: build/axiom64-sources.tar
+      - name: Upload ext2 root image
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-disk-root
+          path: |
+            build/axiom64-disk.iso
+            build/root-disk.raw
+            build/disk-root-*-boot-*.raw
       - name: Upload boot image and evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -62,4 +87,13 @@ jobs:
             build/virtio-results.json
             build/ext2-*.log
             build/ext2-results.json
+            build/disk-root-*.log
+            build/disk-root-*.png
+            build/disk-root-*-results.json
+            build/disk-root-results.json
+            build/root-mount-*.log
+            build/root-mount-results.json
+            build/root-io-*.log
+            build/root-io-*.trace
+            build/root-io-*-results.json
             build/busybox-build.log

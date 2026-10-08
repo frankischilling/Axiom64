@@ -11,10 +11,17 @@ from fetch import ROOT, fetch
 parser = argparse.ArgumentParser()
 parser.add_argument("--test", action="store_true")
 parser.add_argument("--trace", action="store_true")
-parser.add_argument("--suite", choices=["full", "abi", "desktop", "storage", "ext2", "threads"], default="full")
+parser.add_argument("--suite", choices=["full", "abi", "desktop", "storage", "ext2", "threads", "root"], default="full")
 parser.add_argument("--phase", choices=["write", "verify", "readonly", "error", "queue", "invalid", "full", "all", "cond", "io"], default="verify")
 parser.add_argument("--output-name", help="ISO filename under build/ for an isolated test run")
+parser.add_argument("--root-device", choices=[f"/dev/vd{letter}" for letter in "abcdefgh"])
+parser.add_argument("--root-readonly", action="store_true")
+parser.add_argument("--kernel-option", action="append", default=[], help="one additional kernel command-line token")
 args = parser.parse_args()
+if args.root_readonly and not args.root_device:
+    parser.error("--root-readonly requires --root-device")
+if any(not token or any(character.isspace() for character in token) for token in args.kernel_option):
+    parser.error("--kernel-option must be a nonempty token without whitespace")
 if args.output_name and (Path(args.output_name).name != args.output_name or
                          not args.output_name.endswith(".iso") or "\\" in args.output_name):
     parser.error("--output-name must be an ISO filename without directory components")
@@ -27,7 +34,7 @@ if not (limine / "limine.c").exists():
     if extracted.exists() and extracted != limine:
         extracted.rename(limine)
 subprocess.run(["make", "-C", str(limine)], check=True, stdout=subprocess.DEVNULL)
-disk_suite = args.test and args.suite in ["storage", "ext2"]
+disk_suite = args.test and args.suite in ["storage", "ext2", "root"]
 staging = ROOT / "build" / ("iso-" + args.output_name[:-4] if args.output_name else
                             "iso-" + args.suite + "-" + args.phase if disk_suite else "iso")
 (staging / "boot" / "limine").mkdir(parents=True, exist_ok=True)
@@ -35,6 +42,8 @@ staging = ROOT / "build" / ("iso-" + args.output_name[:-4] if args.output_name e
 for filename in ["axiom64.elf", "rootfs.cpio"]:
     desktop_profile = args.suite not in ["full", "threads"] or (args.suite == "threads" and args.phase in ["cond", "io"])
     source = ROOT / "build" / ("rootfs-desktop.cpio" if filename == "rootfs.cpio" and args.test and desktop_profile else filename)
+    if filename == "rootfs.cpio" and args.root_device:
+        source = ROOT / "build/rootfs-bootstrap.cpio"
     target = staging / "boot" / filename
     if target.exists():
         target.unlink()
@@ -52,6 +61,10 @@ if args.test:
     options += " suite=" + args.suite
     if disk_suite or args.suite == "threads":
         options += " phase=" + args.phase
+if args.root_device:
+    options += " root=" + args.root_device + " rootfstype=ext2 rootflags=" + ("ro" if args.root_readonly else "rw")
+for token in args.kernel_option:
+    options += " " + token
 config = config.replace("cmdline: init=/sbin/init", "cmdline: init=/sbin/init" + options)
 (staging / "boot" / "limine" / "limine.conf").write_text(config)
 destination = ROOT / "build" / (args.output_name if args.output_name else

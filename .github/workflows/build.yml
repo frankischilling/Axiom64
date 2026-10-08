@@ -8,11 +8,11 @@ permissions:
 jobs:
   qemu:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install build and emulation tools
-        run: sudo apt-get update && sudo apt-get install -y g++ make musl-tools linux-libc-dev nasm python3 xorriso qemu-system-x86 ovmf xfonts-utils e2fsprogs clang-format-20 nbdkit nbdkit-plugin-python
+        run: sudo apt-get update && sudo apt-get install -y g++ make musl-tools linux-libc-dev nasm python3 xorriso qemu-system-x86 ovmf xfonts-utils e2fsprogs clang-format-20 nbdkit nbdkit-plugin-python gdb
       - name: Check C and C++ formatting
         run: make check-format
       - name: Build standalone image
@@ -27,6 +27,8 @@ jobs:
         run: python3 scripts/storage_test.py
       - name: Test virtio queue sizes and offered features
         run: make test-virtio
+      - name: Test virtio and e1000 Ethernet with packet sockets
+        run: make test-network
       - name: Test writable ext2 volumes and host fsck
         run: python3 scripts/ext2_test.py
       - name: Test normal desktop startup
@@ -85,6 +87,9 @@ jobs:
             build/storage-results.json
             build/virtio-image-*.log
             build/virtio-results.json
+            build/network-*.log
+            build/network-*.gdb
+            build/network-results.json
             build/ext2-*.log
             build/ext2-results.json
             build/disk-root-*.log

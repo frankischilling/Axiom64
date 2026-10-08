@@ -5,6 +5,7 @@
 #include "process/signals.hpp"
 #include "process/futex.hpp"
 #include "io/io.hpp"
+#include "net/ethernet.hpp"
 
 namespace ax {
 Task tasks[max_tasks];
@@ -363,6 +364,8 @@ Frame* schedule(Frame* f, bool yield) {
         return &current->frame;
     unsigned start = current ? unsigned(current - tasks) + 1 : 0;
     for (;;) {
+        net_poll();
+        epoll_notify();
         for (unsigned i = 0; i < max_tasks; i++) {
             Task* t = &tasks[(start + i) % max_tasks];
             if (!awaken(*t))

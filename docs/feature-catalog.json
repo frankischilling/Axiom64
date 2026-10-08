@@ -380,8 +380,8 @@
       "id": "F11",
       "title": "Ethernet devices and link management",
       "milestone": "M3",
-      "state": "planned",
-      "current": "No Ethernet driver is present.",
+      "state": "partial",
+      "current": "PCI virtio-net and QEMU 82540EM e1000 share bounded Ethernet ownership and Linux raw packet sockets. Modern/legacy transport, multiple interfaces, carrier/MTU controls, rollover, and controlled-peer tests cover this slice; wider hardware, interrupt-driven completion, and advanced networking remain planned.",
       "scope": [
         "Network-device interface, packet buffers, statistics, MTU, and link state",
         "Virtio-net first on QEMU",
@@ -398,7 +398,15 @@
         "F01",
         "F05"
       ],
-      "evidence": [],
+      "evidence": [
+        "kernel/net/ethernet.cpp",
+        "kernel/net/packet.cpp",
+        "kernel/drivers/net/virtio.cpp",
+        "kernel/drivers/net/e1000.cpp",
+        "userspace/tests/net/packet.c",
+        "scripts/network_matrix.py",
+        "docs/network.md"
+      ],
       "branch": "feature/f11-ethernet-devices-and-link-management",
       "issue": "https://github.com/frankischilling/Axiom64/issues/11"
     },
@@ -432,7 +440,7 @@
       "title": "TCP, UDP, and Linux socket semantics",
       "milestone": "M3",
       "state": "partial",
-      "current": "Unix stream sockets support X11; Internet and Unix datagram sockets are missing.",
+      "current": "Unix stream sockets support X11, and AF_PACKET raw sockets exchange Ethernet through virtio-net and e1000. Internet and Unix datagram sockets, deadlines, ancillary data, and the complete socket contract remain planned.",
       "scope": [
         "AF_INET/AF_INET6 TCP/UDP socket lifecycle, options, and errors",
         "TCP sequence/window handling, retransmission, congestion, close, and reset",

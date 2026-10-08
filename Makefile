@@ -8,7 +8,7 @@ KERNEL_SOURCES = $(filter-out kernel/tests/%,$(call rwildcard,kernel/,*.cpp))
 KERNEL_OBJECTS = $(patsubst kernel/%.cpp,build/kernel/%.o,$(KERNEL_SOURCES)) build/kernel/arch/x86_64/entry.o
 FORMAT_SOURCES = $(call rwildcard,kernel/,*.cpp) $(call rwildcard,kernel/include/,*.hpp) $(foreach pattern,*.c *.cpp,$(call rwildcard,userspace/,$(pattern)))
 
-.PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
+.PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-network test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
 all: image
 deps:
 	$(PYTHON) scripts/fetch.py
@@ -53,6 +53,9 @@ build/ext2-tests: userspace/tests/fs/ext2.c
 build/root-tests: userspace/tests/fs/root.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+build/net-tests: userspace/tests/net/packet.c
+	@mkdir -p build
+	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
 build/thread-static: userspace/tests/threads/pthreads.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -lm -o $@
@@ -81,7 +84,7 @@ build/x11-probe: userspace/tests/desktop/probe.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 USERSPACE_DATA = $(foreach pattern,*.sh *.conf *.twmrc,$(call rwildcard,userspace/,$(pattern))) $(wildcard userspace/tests/toolchain/*)
-ROOTFS_INPUTS = build/thread-io-static build/thread-io-dynamic build/lifecycle-static build/lifecycle-dynamic build/futex-static build/futex-dynamic build/thread-static build/thread-dynamic build/abi-static build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/x11-probe build/licenses/.stamp $(USERSPACE_DATA) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/build_busybox.py scripts/fetch.py
+ROOTFS_INPUTS = build/thread-io-static build/thread-io-dynamic build/lifecycle-static build/lifecycle-dynamic build/futex-static build/futex-dynamic build/thread-static build/thread-dynamic build/abi-static build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/net-tests build/x11-probe build/licenses/.stamp $(USERSPACE_DATA) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/build_busybox.py scripts/fetch.py
 build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox
@@ -102,6 +105,8 @@ test-disk-root:
 test-root-io: disk-root
 	$(PYTHON) scripts/root_io_test.py
 	$(PYTHON) scripts/root_io_test.py --firmware bios --transport modern --delay 35 --expect-timeout
+test-network:
+	$(PYTHON) scripts/network_matrix.py
 test-threads:
 	$(PYTHON) scripts/boot_test.py --suite threads --firmware both --timeout 170
 test-thread-io:

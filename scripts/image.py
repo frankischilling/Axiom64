@@ -11,8 +11,8 @@ from fetch import ROOT, fetch
 parser = argparse.ArgumentParser()
 parser.add_argument("--test", action="store_true")
 parser.add_argument("--trace", action="store_true")
-parser.add_argument("--suite", choices=["full", "abi", "desktop", "storage", "ext2", "threads", "root"], default="full")
-parser.add_argument("--phase", choices=["write", "verify", "readonly", "error", "queue", "invalid", "full", "all", "cond", "io"], default="verify")
+parser.add_argument("--suite", choices=["full", "abi", "desktop", "storage", "ext2", "threads", "root", "network"], default="full")
+parser.add_argument("--phase", choices=["write", "verify", "readonly", "error", "queue", "invalid", "full", "all", "cond", "io", "pressure"], default="verify")
 parser.add_argument("--output-name", help="ISO filename under build/ for an isolated test run")
 parser.add_argument("--root-device", choices=[f"/dev/vd{letter}" for letter in "abcdefgh"])
 parser.add_argument("--root-readonly", action="store_true")
@@ -42,6 +42,8 @@ staging = ROOT / "build" / ("iso-" + args.output_name[:-4] if args.output_name e
 for filename in ["axiom64.elf", "rootfs.cpio"]:
     desktop_profile = args.suite not in ["full", "threads"] or (args.suite == "threads" and args.phase in ["cond", "io"])
     source = ROOT / "build" / ("rootfs-desktop.cpio" if filename == "rootfs.cpio" and args.test and desktop_profile else filename)
+    if filename == 'rootfs.cpio' and args.test and args.suite == 'network':
+        source = ROOT / 'build/rootfs-network.cpio'
     if filename == "rootfs.cpio" and args.root_device:
         source = ROOT / "build/rootfs-bootstrap.cpio"
     target = staging / "boot" / filename
@@ -59,7 +61,7 @@ config = (ROOT / "boot" / "limine.conf").read_text()
 options = (" test" if args.test else "") + (" trace" if args.trace else "")
 if args.test:
     options += " suite=" + args.suite
-    if disk_suite or args.suite == "threads":
+    if disk_suite or args.suite in ["threads", "network"]:
         options += " phase=" + args.phase
 if args.root_device:
     options += " root=" + args.root_device + " rootfstype=ext2 rootflags=" + ("ro" if args.root_readonly else "rw")

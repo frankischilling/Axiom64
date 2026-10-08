@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ipc/ipc.hpp"
+#include "net/packet.hpp"
 
 namespace ax {
 static Socket sockets[256];
@@ -196,6 +197,11 @@ uint32_t readiness(Handle* h) {
         events |= 1;
     if (handle_ready(h, true))
         events |= 4;
+    if (h->packet) {
+        auto info = net_info(packet_interface(h->packet));
+        if (info && !info->live)
+            events |= 8;
+    }
     if (h->pipe && !h->writer && !h->pipe->writers)
         events |= 16;
     if (h->socket && !h->socket->listener &&
@@ -316,6 +322,11 @@ int64_t ipc_syscall(Frame* f) {
     auto a = f->rdi, b = f->rsi, c = f->rdx, d = f->r10;
     auto h = handle(a);
     Socket* s = h ? h->socket : nullptr;
+    if ((f->rax == 41 && a == 17) ||
+        (h && h->packet &&
+         (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50 || f->rax == 51 ||
+          f->rax == 52 || f->rax == 54 || f->rax == 55)))
+        return packet_syscall(*current, *f);
     switch (f->rax) {
     case 41: {
         if (a != 1)

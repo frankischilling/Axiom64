@@ -13,14 +13,16 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/fs/` | VFS and RAM filesystems; ext2 has its own subfolder |
 | `kernel/io/` | Retained blocking I/O requests |
 | `kernel/ipc/` | Sockets, readiness, shared memory |
+| `kernel/net/` | Ethernet interfaces and Linux raw packet sockets |
 | `kernel/drivers/platform/` | PCI, PIIX4 power off, and current platform device interfaces |
 | `kernel/drivers/block/` | Block request policy and raw I/O |
+| `kernel/drivers/net/` | PCI virtio-net and QEMU e1000 adapters |
 | `kernel/drivers/virtio/` | Shared PCI transport and split queues |
 | `kernel/include/` | Public internal headers with matching module paths |
 | `kernel/tests/` | Host tests grouped by module; excluded from kernel linking |
 | `userspace/init/` | Ring 3 init |
 | `userspace/desktop/` | Display sessions, Xorg and window-manager configuration |
-| `userspace/tests/` | ABI, filesystem, IPC, process, thread, storage, desktop, and native toolchain tests |
+| `userspace/tests/` | ABI, filesystem, IPC, network, process, thread, storage, desktop, and native toolchain tests |
 
 Make discovers kernel C++ sources recursively, excluding `kernel/tests/`. Object and dependency files mirror the source folders under `build/kernel/`. Compiler-generated dependencies select the headers that each object uses. New sources added to a module folder participate in the next build.
 

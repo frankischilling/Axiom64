@@ -4,6 +4,7 @@
 #include "drivers/block/block.hpp"
 #include "drivers/platform/devices.hpp"
 #include "process/task.hpp"
+#include "net/ethernet.hpp"
 
 namespace ax {
 [[gnu::used, gnu::section(".limine_requests_start")]] static volatile uint64_t requests_start[] =
@@ -60,6 +61,8 @@ extern "C" [[noreturn]] void kernel_main() {
         test_suite = "AXIOM64_SUITE=root";
     else if (word(cmd, "suite=threads"))
         test_suite = "AXIOM64_SUITE=threads";
+    else if (word(cmd, "suite=network"))
+        test_suite = "AXIOM64_SUITE=network";
     if (word(cmd, "phase=write"))
         test_phase = "AXIOM64_PHASE=write";
     else if (word(cmd, "phase=verify"))
@@ -78,6 +81,8 @@ extern "C" [[noreturn]] void kernel_main() {
         test_phase = "AXIOM64_PHASE=cond";
     else if (word(cmd, "phase=io"))
         test_phase = "AXIOM64_PHASE=io";
+    else if (word(cmd, "phase=pressure"))
+        test_phase = "AXIOM64_PHASE=pressure";
     memory_init();
     arch_init();
     auto modules = module_request.response;
@@ -87,6 +92,7 @@ extern "C" [[noreturn]] void kernel_main() {
     block_init();
     boot_root_init(cmd);
     devices_init();
+    net_init();
     log("Entering userspace in Ring 3\n");
     start_init("/sbin/init");
     __builtin_unreachable();

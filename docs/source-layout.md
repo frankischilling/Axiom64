@@ -16,6 +16,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/net/` | Ethernet interfaces, interface/route ioctls, and Linux raw packet sockets |
 | `kernel/net/ipv4/` | IPv4 routes/output, ARP cache/timers, ICMP, and Internet socket descriptions |
 | `kernel/net/udp/` | UDP lengths, pseudo-header checksums, payload delivery, and transmission |
+| `kernel/net/netlink/` | Route-message validation, owned replies, and route socket lifecycle |
 | `kernel/drivers/platform/` | PCI, PIIX4 power off, and current platform device interfaces |
 | `kernel/drivers/block/` | Block request policy and raw I/O |
 | `kernel/drivers/net/` | PCI virtio-net and QEMU e1000 adapters |
@@ -24,6 +25,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/tests/` | Host tests grouped by module; excluded from kernel linking |
 | `userspace/init/` | Ring 3 init |
 | `userspace/desktop/` | Display sessions, Xorg and window-manager configuration |
+| `userspace/net/config/` | Ring 3 route configuration adapter |
 | `userspace/tests/` | ABI, filesystem, IPC, network, process, thread, storage, desktop, and native toolchain tests |
 
 Make discovers kernel C++ sources recursively, excluding `kernel/tests/`. Object and dependency files mirror the source folders under `build/kernel/`. Compiler-generated dependencies select the headers that each object uses. New sources added to a module folder participate in the next build.

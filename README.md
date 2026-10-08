@@ -13,6 +13,7 @@ The QEMU image supports BIOS and UEFI boot. It includes BusyBox ash, Bash, zsh, 
 - [Ethernet and packet sockets](docs/network.md)
 - [IPv4, ARP, routing, and ping](docs/ipv4.md)
 - [IPv4 UDP sockets](docs/udp.md)
+- [IPv4 netlink route control](docs/netlink.md)
 - [Userspace ports, licenses, and source bundles](docs/ports.md)
 - [Development milestones](docs/milestones.md)
 - [Full feature and application roadmap](docs/feature-roadmap.md)

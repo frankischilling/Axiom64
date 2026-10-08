@@ -16,6 +16,8 @@ Socket transfers support `MSG_DONTWAIT`, receive `MSG_PEEK`, and send `MSG_NOSIG
 
 ## Kernel interface
 
+[Packet sockets](network.md#linux-socket-contract), [IPv4 raw sockets](ipv4.md#raw-icmp-socket-contract), [UDP](udp.md), and [netlink route sockets](netlink.md#socket-ownership-and-bounds) also use retained requests. Their linked contracts describe datagram boundaries, supported named addresses, copy-fault behavior, and queue limits.
+
 `kernel/io/io.cpp` owns request import, transfer, completion, and release behind three functions in `kernel/include/io/io.hpp`:
 
 | Function | Contract |

@@ -4,6 +4,7 @@
 #include "ipc/ipc.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
+#include "net/netlink.hpp"
 #include "process/task.hpp"
 #include "drivers/block/block.hpp"
 #include "fs/ext2/ext2.hpp"
@@ -752,6 +753,8 @@ void close_handle(Handle* h) {
         packet_close(h->packet);
     if (h->inet)
         inet_close(h->inet);
+    if (h->netlink)
+        netlink_close(h->netlink);
     if (h->epoll)
         epoll_close(h->epoll);
     if (h->pipe) {
@@ -776,6 +779,8 @@ bool handle_ready(Handle* h, bool write) {
         return packet_ready(h->packet, write);
     if (h->inet)
         return inet_ready(h->inet, write);
+    if (h->netlink)
+        return netlink_ready(h->netlink, write);
     if (h->epoll)
         return true;
     if (h->pipe)
@@ -797,6 +802,8 @@ int64_t read_handle(Handle* h, void* buf, size_t len) {
         return packet_read(h->packet, buf, len);
     if (h->inet)
         return inet_read(h->inet, buf, len);
+    if (h->netlink)
+        return netlink_read(h->netlink, buf, len);
     auto data = (uint8_t*)buf;
     if (h->pipe) {
         auto p = h->pipe;
@@ -834,6 +841,8 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
         return packet_write(h->packet, buf, len);
     if (h->inet)
         return inet_send(h->inet, inet_peer(h->inet), buf, len);
+    if (h->netlink)
+        return netlink_send(h->netlink, current->process->pid, buf, len);
     auto data = (const uint8_t*)buf;
     if (h->pipe) {
         auto p = h->pipe;

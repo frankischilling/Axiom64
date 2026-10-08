@@ -2,6 +2,7 @@
 #include "ipc/ipc.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
+#include "net/netlink.hpp"
 
 namespace ax {
 static Socket sockets[256];
@@ -338,6 +339,11 @@ int64_t ipc_syscall(Frame* f) {
     auto a = f->rdi, b = f->rsi, c = f->rdx, d = f->r10;
     auto h = handle(a);
     Socket* s = h ? h->socket : nullptr;
+    if ((f->rax == 41 && a == 16) ||
+        (h && h->netlink &&
+         (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50 || f->rax == 51 ||
+          f->rax == 52 || f->rax == 54 || f->rax == 55)))
+        return netlink_syscall(*current, *f);
     if (s && s->type != 1 && (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50))
         return -95;
     if ((f->rax == 41 && a == 2) ||

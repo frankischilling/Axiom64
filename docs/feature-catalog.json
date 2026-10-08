@@ -415,7 +415,7 @@
       "title": "IPv4, IPv6, routing, and ICMP",
       "milestone": "M3",
       "state": "partial",
-      "current": "The initial IPv4 host path supports static addresses, routes, bounded ARP, loopback, raw ICMP sockets, and ping on both adapters. Options and fragments are rejected; complete IPv4, IPv6, reassembly, multicast, and path MTU behavior remain planned.",
+      "current": "The initial IPv4 host path supports static addresses, routes, bounded ARP, loopback, raw ICMP sockets, and ping on both adapters. NETLINK_ROUTE adds bounded main-table dumps and protocol/scope-filtered route control. Options and fragments are rejected; complete IPv4, IPv6, reassembly, multicast, and path MTU behavior remain planned.",
       "scope": [
         "Ethernet framing, ARP, IPv4 checksums, loopback, routing, aliases, and gateways",
         "ICMP errors and echo/ping",
@@ -437,7 +437,9 @@
         "kernel/net/ioctl.cpp",
         "userspace/tests/net/ipv4.c",
         "scripts/ipv4_matrix.py",
-        "docs/ipv4.md"
+        "docs/ipv4.md",
+        "kernel/net/netlink/routes.cpp",
+        "docs/netlink.md"
       ],
       "branch": "feature/f12-ipv4-ipv6-routing-and-icmp",
       "issue": "https://github.com/frankischilling/Axiom64/issues/12"
@@ -447,7 +449,7 @@
       "title": "TCP, UDP, and Linux socket semantics",
       "milestone": "M3",
       "state": "partial",
-      "current": "Unix stream sockets support X11, AF_PACKET exchanges Ethernet, and AF_INET supports raw ICMP/ping and IPv4 UDP datagrams with tested checksums, binding, queues, errors, readiness, and retained I/O. Unix datagram descriptors serve interface configuration only; TCP, IPv6 UDP, deadlines, ancillary data, and the complete socket contract remain planned.",
+      "current": "Unix stream sockets support X11, AF_PACKET exchanges Ethernet, and AF_INET supports raw ICMP/ping and IPv4 UDP datagrams with tested checksums, binding, queues, errors, readiness, and retained I/O. Bounded NETLINK_ROUTE sockets support tagged IPv4 route control and dumps with retained datagram I/O. Unix datagram descriptors serve interface configuration only; TCP, IPv6 UDP, deadlines, ancillary data, and the complete socket contract remain planned.",
       "scope": [
         "AF_INET/AF_INET6 TCP/UDP socket lifecycle, options, and errors",
         "TCP sequence/window handling, retransmission, congestion, close, and reset",
@@ -474,7 +476,13 @@
         "kernel/net/udp/core.cpp",
         "userspace/tests/net/udp.c",
         "scripts/udp_matrix.py",
-        "docs/udp.md"
+        "docs/udp.md",
+        "kernel/net/netlink/socket.cpp",
+        "userspace/net/config/routing.cpp",
+        "userspace/tests/net/netlink.cpp",
+        "scripts/netlink_test.py",
+        "scripts/netlink_native.py",
+        "docs/netlink.md"
       ],
       "branch": "feature/f13-tcp-udp-and-linux-socket-semantics",
       "issue": "https://github.com/frankischilling/Axiom64/issues/13"

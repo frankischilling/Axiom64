@@ -8,7 +8,7 @@ KERNEL_SOURCES = $(filter-out kernel/tests/%,$(call rwildcard,kernel/,*.cpp))
 KERNEL_OBJECTS = $(patsubst kernel/%.cpp,build/kernel/%.o,$(KERNEL_SOURCES)) build/kernel/arch/x86_64/entry.o
 FORMAT_SOURCES = $(foreach pattern,*.cpp *.hpp,$(call rwildcard,kernel/,$(pattern))) $(foreach pattern,*.c *.cpp *.hpp,$(call rwildcard,userspace/,$(pattern)))
 
-.PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-network test-ipv4 test-udp test-netlink test-netlink-codec test-address-codec test-configuration test-dhcp-codec test-dhcp-modules test-dhcp-transport test-resolver test-resolver-native test-clock-codec test-clock test-file-locks test-file-locks-native test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
+.PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-network test-ipv4 test-udp test-netlink test-netlink-codec test-address-codec test-configuration test-dhcp-codec test-dhcp-modules test-dhcp-transport test-profiles test-resolver test-resolver-native test-clock-codec test-clock test-file-locks test-file-locks-native test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
 all: image
 deps:
 	$(PYTHON) scripts/fetch.py
@@ -91,8 +91,11 @@ build/netlink-tests: userspace/tests/net/netlink.cpp userspace/net/config/routin
 build/netlink-native: userspace/tests/net/netlink.cpp userspace/net/config/routing.cpp userspace/net/config/routing.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -pthread -Iuserspace userspace/tests/net/netlink.cpp userspace/net/config/routing.cpp -o $@
-CONFIGURATION_SOURCES = userspace/tests/net/configuration.cpp userspace/net/config/configuration.cpp userspace/net/config/routing.cpp userspace/net/config/profile.cpp userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp
-CONFIGURATION_HEADERS = userspace/net/config/configuration.hpp userspace/net/config/routing.hpp userspace/net/config/profile.hpp userspace/net/dhcp/transport.hpp userspace/net/dhcp/wire.hpp userspace/net/dhcp/state.hpp
+PROFILE_SOURCES = userspace/net/config/profile.cpp userspace/net/config/saved.cpp
+PROFILE_HEADERS = userspace/net/config/profile.hpp userspace/net/config/saved.hpp userspace/net/dhcp/wire.hpp
+PROFILE_FAULTS = -Wl,--wrap=write,--wrap=read,--wrap=close,--wrap=fsync,--wrap=fchmod,--wrap=fchmodat,--wrap=renameat
+CONFIGURATION_SOURCES = userspace/tests/net/configuration.cpp userspace/net/config/configuration.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp
+CONFIGURATION_HEADERS = userspace/net/config/configuration.hpp userspace/net/config/routing.hpp $(PROFILE_HEADERS) userspace/net/dhcp/transport.hpp userspace/net/dhcp/wire.hpp userspace/net/dhcp/state.hpp
 build/configuration-tests: $(CONFIGURATION_SOURCES) $(CONFIGURATION_HEADERS)
 	@mkdir -p build
 	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(CONFIGURATION_SOURCES) -o $@
@@ -111,18 +114,27 @@ build/dhcp-state-tests: userspace/tests/net/dhcp-state.cpp userspace/net/dhcp/st
 build/dhcp-state-host: userspace/tests/net/dhcp-state.cpp userspace/net/dhcp/state.cpp userspace/net/dhcp/state.hpp userspace/net/dhcp/wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace userspace/tests/net/dhcp-state.cpp userspace/net/dhcp/state.cpp -o $@
-build/dhcp-profile-tests: userspace/tests/net/dhcp-profile.cpp userspace/net/config/profile.cpp userspace/net/config/profile.hpp userspace/net/dhcp/wire.hpp
+build/dhcp-profile-tests: userspace/tests/net/dhcp-profile.cpp $(PROFILE_SOURCES) $(PROFILE_HEADERS) userspace/net/dhcp/wire.hpp
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace userspace/tests/net/dhcp-profile.cpp userspace/net/config/profile.cpp -o $@
-build/dhcp-profile-host: userspace/tests/net/dhcp-profile.cpp userspace/net/config/profile.cpp userspace/net/config/profile.hpp userspace/net/dhcp/wire.hpp
+	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace userspace/tests/net/dhcp-profile.cpp $(PROFILE_SOURCES) -o $@
+build/dhcp-profile-host: userspace/tests/net/dhcp-profile.cpp $(PROFILE_SOURCES) $(PROFILE_HEADERS) userspace/net/dhcp/wire.hpp
 	@mkdir -p build
-	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace userspace/tests/net/dhcp-profile.cpp userspace/net/config/profile.cpp -o $@
-DHCP_TRANSPORT_SOURCES = userspace/tests/net/dhcp-transport.cpp userspace/net/config/configuration.cpp userspace/net/config/routing.cpp userspace/net/config/profile.cpp userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp userspace/net/dhcp/state.cpp
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace userspace/tests/net/dhcp-profile.cpp $(PROFILE_SOURCES) -o $@
+build/profile-privacy-host: userspace/tests/net/profile-privacy.cpp $(PROFILE_SOURCES) $(PROFILE_HEADERS)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace userspace/tests/net/profile-privacy.cpp $(PROFILE_SOURCES) $(PROFILE_FAULTS) -o $@
+build/profile-privacy-tests: userspace/tests/net/profile-privacy.cpp $(PROFILE_SOURCES) $(PROFILE_HEADERS)
+	@mkdir -p build
+	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace userspace/tests/net/profile-privacy.cpp $(PROFILE_SOURCES) $(PROFILE_FAULTS) -o $@
+build/profile-privacy-dynamic: userspace/tests/net/profile-privacy.cpp $(PROFILE_SOURCES) $(PROFILE_HEADERS)
+	@mkdir -p build
+	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -Iuserspace -DPROFILE_LINKAGE='"dynamic"' userspace/tests/net/profile-privacy.cpp $(PROFILE_SOURCES) $(PROFILE_FAULTS) -o $@
+DHCP_TRANSPORT_SOURCES = userspace/tests/net/dhcp-transport.cpp userspace/net/config/configuration.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp userspace/net/dhcp/state.cpp
 build/dhcp-transport-tests: $(DHCP_TRANSPORT_SOURCES) $(CONFIGURATION_HEADERS)
 	@mkdir -p build
 	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(DHCP_TRANSPORT_SOURCES) -o $@
-RESOLVER_SOURCES = userspace/tests/net/resolver.cpp userspace/net/config/resolver.cpp userspace/net/config/profile.cpp
-RESOLVER_HEADERS = userspace/net/config/resolver.hpp userspace/net/config/profile.hpp userspace/net/dhcp/wire.hpp
+RESOLVER_SOURCES = userspace/tests/net/resolver.cpp userspace/net/config/resolver.cpp $(PROFILE_SOURCES)
+RESOLVER_HEADERS = userspace/net/config/resolver.hpp $(PROFILE_HEADERS) userspace/net/dhcp/wire.hpp
 RESOLVER_FAULTS = -Wl,--wrap=rename,--wrap=fsync,--wrap=chmod,--wrap=fchmod
 build/resolver-tests: $(RESOLVER_SOURCES) $(RESOLVER_HEADERS)
 	@mkdir -p build
@@ -205,6 +217,8 @@ test-dhcp-codec: build/dhcp-codec-host build/dhcp-state-host build/dhcp-profile-
 	./build/dhcp-profile-host
 test-dhcp-modules:
 	$(PYTHON) scripts/dhcp_modules_test.py
+test-profiles:
+	$(PYTHON) scripts/profile_test.py
 test-dhcp-transport:
 	$(PYTHON) scripts/dhcp_transport_test.py
 test-resolver: build/resolver-tests

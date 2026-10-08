@@ -147,6 +147,14 @@ jobs:
       - name: Test DHCP codecs, lease state, and profiles with sanitizers
         if: matrix.suite == 'configuration'
         run: make test-dhcp-codec
+      - name: Test private saved files with sanitizers and musl under ordinary/root UIDs
+        if: matrix.suite == 'configuration'
+        run: |
+          make -j2 build/profile-privacy-host build/profile-privacy-tests build/profile-privacy-dynamic
+          sudo python3 scripts/profile_native.py
+      - name: Test private saved profiles on guest RAM and ext2
+        if: matrix.suite == 'configuration'
+        run: make test-profiles
       - name: Test DHCP modules in Ring 3
         if: matrix.suite == 'configuration'
         run: make test-dhcp-modules

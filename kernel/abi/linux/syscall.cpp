@@ -951,14 +951,19 @@ static int64_t dispatch(Frame* f) {
         return readlink_path(-100, a, b, c);
     case 267:
         return readlink_path(a, b, c, d);
-    case 90: {
+    case 90:
+    case 268: {
         Path path;
-        if (!path_at(-100, a, path))
+        if (!path_at(f->rax == 90 ? -100 : int(a), f->rax == 90 ? a : b, path))
             return path.error;
-        auto node = file_node(lookup(path));
-        if (!node)
-            return -2;
-        return node_setattr(node, (node->mode & 0170000) | (b & 07777), node->atime, node->mtime);
+        Node* node = nullptr;
+        int error = resolve_path(path, node);
+        if (error)
+            return error;
+        node = file_node(node);
+        uint32_t mode = f->rax == 90 ? b : c;
+        return node_setattr(node, (node->mode & 0170000) | (mode & 07777), node->atime,
+                            node->mtime);
     }
     case 91: {
         auto h = fd_handle(a);

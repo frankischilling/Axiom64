@@ -35,6 +35,40 @@ static void child_status(pid_t child, int expected) {
     CHECK(WEXITSTATUS(status) == expected);
 }
 
+static void relative_modes(void) {
+    CHECK(mkdir("/tmp/abi-chmod", 0700) == 0);
+    int parent = open("/tmp/abi-chmod", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    CHECK(parent >= 0);
+    int file = openat(parent, "file", O_CREAT | O_EXCL | O_RDWR, 0600);
+    CHECK(file >= 0);
+    CHECK(fchmodat(parent, "file", 0640, 0) == 0);
+    struct stat information;
+    CHECK(fstat(file, &information) == 0 && S_ISREG(information.st_mode) &&
+          (information.st_mode & 07777) == 0640);
+    CHECK(symlinkat("file", parent, "alias") == 0);
+    CHECK(fchmodat(parent, "alias", 0610, 0) == 0);
+    CHECK(fstat(file, &information) == 0 && (information.st_mode & 07777) == 0610);
+    CHECK(fstatat(parent, "alias", &information, AT_SYMLINK_NOFOLLOW) == 0 &&
+          S_ISLNK(information.st_mode));
+    CHECK(fchmodat(999, "/tmp/abi-chmod/file", 0660, 0) == 0);
+    CHECK(fstat(file, &information) == 0 && (information.st_mode & 07777) == 0660);
+    CHECK(fchmodat(999, "file", 0600, 0) == -1 && errno == EBADF);
+    CHECK(fchmodat(file, "file", 0600, 0) == -1 && errno == ENOTDIR);
+    CHECK(fchmodat(parent, "file/child", 0600, 0) == -1 && errno == ENOTDIR);
+    CHECK(fchmodat(parent, "missing", 0600, 0) == -1 && errno == ENOENT);
+    CHECK(symlinkat("loop", parent, "loop") == 0);
+    CHECK(fchmodat(parent, "loop", 0600, 0) == -1 && errno == ELOOP);
+    CHECK(unlinkat(parent, "loop", 0) == 0);
+    CHECK(syscall(SYS_fchmodat, parent, (void*)(uintptr_t)0xffff800000000000, 0600) == -1 &&
+          errno == EFAULT);
+    CHECK(fchmodat(AT_FDCWD, "/tmp/abi-chmod", 0750, 0) == 0);
+    CHECK(fstat(parent, &information) == 0 && S_ISDIR(information.st_mode) &&
+          (information.st_mode & 07777) == 0750);
+    CHECK(unlinkat(parent, "alias", 0) == 0 && unlinkat(parent, "file", 0) == 0);
+    CHECK(close(file) == 0 && close(parent) == 0 && rmdir("/tmp/abi-chmod") == 0);
+    puts("ABI_RELATIVE_MODES_PASS linkage=" ABI_LINKAGE);
+}
+
 int main(int argc, char** argv) {
     if (argc > 1 && !strcmp(argv[1], "child"))
         return 17;
@@ -49,6 +83,7 @@ int main(int argc, char** argv) {
     CHECK(syscall(SYS_write, 1, (void*)(uintptr_t)0xffff800000000000, 4) == -1 && errno == EFAULT);
     CHECK(syscall(SYS_read, 999, (void*)0, 1) == -1 && errno == EBADF);
     CHECK(syscall(SYS_write, 1, (void*)(uintptr_t)0x7ffffffffffe, 8) == -1 && errno == EFAULT);
+    relative_modes();
 
     char* memory = mmap(0, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     CHECK(memory != MAP_FAILED);

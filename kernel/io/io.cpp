@@ -4,6 +4,7 @@
 #include "process/signals.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
+#include "net/netlink.hpp"
 
 namespace ax {
 struct Iovec {
@@ -29,6 +30,7 @@ struct IoRequest {
     PacketAddress destination;
     unsigned destination_index;
     InetAddress inet_destination;
+    NetlinkAddress netlink_destination;
     uint8_t* packet_data;
     size_t packet_length;
     uint64_t address_pointer, address_length_pointer;
@@ -121,7 +123,13 @@ static int prepare_packet(Task& task, IoRequest& request) {
         request.count = 1;
     }
     if (request.write && address) {
-        if (request.handle->inet) {
+        if (request.handle->netlink) {
+            if (address_length < sizeof(NetlinkAddress))
+                return -22;
+            if (!task.memory->space.copy_in(&request.netlink_destination, address,
+                                            sizeof(NetlinkAddress)))
+                return -14;
+        } else if (request.handle->inet) {
             if (address_length < sizeof(InetAddress))
                 return -22;
             if (!task.memory->space.copy_in(&request.inet_destination, address,
@@ -147,7 +155,12 @@ static int prepare_packet(Task& task, IoRequest& request) {
         request.packet_length += request.vectors[i].length;
     if (!request.write)
         return 0;
-    if (request.handle->inet) {
+    if (request.handle->netlink) {
+        if (int error = netlink_target(request.netlink_destination))
+            return error;
+        if (request.packet_length > netlink_max_request)
+            return -90;
+    } else if (request.handle->inet) {
         int error = inet_target(request.handle->inet, request.inet_destination, address != 0);
         if (error)
             return error;
@@ -186,14 +199,14 @@ static int prepare(Task& task, IoRequest& request) {
     request.accept = f.rax == 43 || f.rax == 288;
     request.positioned = f.rax == 17 || f.rax == 18;
     if ((request.socket || request.accept) && !request.handle->socket && !request.handle->packet &&
-        !request.handle->inet)
+        !request.handle->inet && !request.handle->netlink)
         return -88;
     if (!request.socket && !request.accept &&
         ((request.handle->flags & 3) == (request.write ? 0u : 1u)))
         return -9;
     if (request.socket)
         request.flags = f.rax == 46 || f.rax == 47 ? f.rdx : f.r10;
-    if (request.handle->packet || request.handle->inet)
+    if (request.handle->packet || request.handle->inet || request.handle->netlink)
         return prepare_packet(task, request);
     if (request.accept) {
         if (f.rax == 288 && (f.r10 & ~uint64_t(0x80800)))
@@ -268,6 +281,9 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
     net_poll();
     const auto& f = request.call;
     if (request.write) {
+        if (request.handle->netlink)
+            return netlink_send(request.handle->netlink, task.process->pid, request.packet_data,
+                                request.packet_length);
         if (request.handle->inet)
             return inet_send(request.handle->inet, request.inet_destination, request.packet_data,
                              request.packet_length);
@@ -282,7 +298,10 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
             return -error;
     auto frame = request.handle->packet ? packet_front(request.handle->packet) : nullptr;
     auto ip = request.handle->inet ? inet_front(request.handle->inet) : nullptr;
-    if (!frame && !ip) {
+    auto nl = request.handle->netlink ? netlink_front(request.handle->netlink) : nullptr;
+    if (!frame && !ip && !nl) {
+        if (request.handle->netlink)
+            return -11;
         if (request.handle->inet) {
             int error = inet_error(request.handle->inet, true);
             bool blocking = !(request.handle->flags & 04000) && !(request.flags & 0x40);
@@ -291,13 +310,17 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
         auto info = net_info(packet_interface(request.handle->packet));
         return info && !info->live ? -5 : -11;
     }
-    size_t length = ip ? ip->length : frame->length;
-    const auto bytes = ip ? inet_bytes(ip) : packet_bytes(frame);
-    const void* source = ip ? static_cast<const void*>(&ip->source) : &frame->source;
+    size_t length = nl ? nl->length : ip ? ip->length : frame->length;
+    const auto bytes = nl ? netlink_bytes(nl) : ip ? inet_bytes(ip) : packet_bytes(frame);
+    const void* source = nl   ? static_cast<const void*>(&nl->source)
+                         : ip ? static_cast<const void*>(&ip->source)
+                              : &frame->source;
     const auto copy_fault = [&request]() -> int64_t {
         // Linux raw Internet receives dequeue even when a non-peek copy faults.
         if (request.handle->inet && !(request.flags & 2))
             inet_consume(request.handle->inet);
+        if (request.handle->netlink && !(request.flags & 2))
+            netlink_consume(request.handle->netlink);
         return -14;
     };
     size_t remaining = min(length, request.packet_length), at = 0;
@@ -309,7 +332,9 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
         at += count;
         remaining -= count;
     }
-    uint32_t actual_address = ip ? sizeof(InetAddress) : sizeof(PacketAddress);
+    uint32_t actual_address = nl   ? sizeof(NetlinkAddress)
+                              : ip ? sizeof(InetAddress)
+                                   : sizeof(PacketAddress);
     if (request.address_pointer &&
         (!task.memory->space.copy_out(request.address_pointer, source,
                                       min(request.address_capacity, actual_address)) ||
@@ -329,7 +354,9 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
     }
     int64_t result = request.flags & 0x20 ? length : at;
     if (!(request.flags & 2)) {
-        if (request.handle->inet)
+        if (request.handle->netlink)
+            netlink_consume(request.handle->netlink);
+        else if (request.handle->inet)
             inet_consume(request.handle->inet);
         else
             packet_consume(request.handle->packet);
@@ -340,7 +367,7 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
 static int64_t attempt(Task& task, IoRequest& request) {
     auto h = request.handle;
     const auto& f = request.call;
-    if (h->packet || h->inet) {
+    if (h->packet || h->inet || h->netlink) {
         int64_t result = packet_attempt(task, request);
         if (result == -11 && !(h->flags & 04000) && !(request.flags & 0x40))
             return would_block;
@@ -420,7 +447,7 @@ bool io_resume(Task& task) {
     auto request = task.io;
     if (!request)
         panic("blocked I/O without request");
-    if (!request->handle->packet && !request->handle->inet &&
+    if (!request->handle->packet && !request->handle->inet && !request->handle->netlink &&
         !handle_ready(request->handle, request->write) && !(request->handle->flags & 04000))
         return false;
     int64_t result = attempt(task, *request);

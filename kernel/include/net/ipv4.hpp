@@ -13,6 +13,7 @@ struct Ipv4Config {
 struct Ipv4Route {
     uint32_t destination = 0, mask = 0, gateway = 0;
     unsigned index = 0, metric = 0;
+    uint8_t protocol = 3, scope = 255;
 };
 
 constexpr unsigned ipv4_loopback = max_net_devices + 1;
@@ -22,6 +23,11 @@ const Ipv4Config* ipv4_config(unsigned index);
 int ipv4_configure(unsigned index, const Ipv4Config&);
 
 int ipv4_route(const Ipv4Route&, bool remove);
+
+// Routing control retains protocol/scope and applies Linux deletion filters.
+int ipv4_route_control(const Ipv4Route&, bool remove, bool exclusive);
+
+size_t ipv4_routes(Ipv4Route*, size_t capacity);
 
 bool ipv4_local(uint32_t address);
 

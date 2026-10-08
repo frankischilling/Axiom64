@@ -294,7 +294,7 @@ Acceptance evidence:
 
 ### F12. IPv4, IPv6, routing, and ICMP
 
-The [initial IPv4 host path](ipv4.md) supports static addresses, connected and explicit routes, loopback, bounded ARP, raw ICMP sockets, and echo/ping on both Ethernet adapters. Options and fragments are rejected; complete IPv4, IPv6, reassembly, multicast, and path MTU behavior remain required. [The implementation task](https://github.com/frankischilling/Axiom64/issues/61) covers this initial slice.
+The [initial IPv4 host path](ipv4.md) supports static addresses, connected and explicit routes, loopback, bounded ARP, raw ICMP sockets, and echo/ping on both Ethernet adapters. [Netlink route control](netlink.md) adds bounded main-table dumps and protocol/scope-filtered mutations. Options and fragments are rejected; complete IPv4, IPv6, reassembly, multicast, and path MTU behavior remain required. [The initial implementation task](https://github.com/frankischilling/Axiom64/issues/61) and [route-control prerequisite](https://github.com/frankischilling/Axiom64/issues/67) cover these slices.
 
 Required work:
 
@@ -312,7 +312,7 @@ Acceptance evidence:
 
 ### F13. TCP, UDP, and Linux socket semantics
 
-Unix stream sockets support X11, [AF_PACKET raw sockets](network.md) exchange Ethernet, and [AF_INET raw ICMP sockets](ipv4.md) support ping. [IPv4 UDP sockets](udp.md) add datagrams with tested checksums, binding, queues, errors, readiness, and retained I/O. Unix datagram descriptors currently support interface configuration only. TCP, IPv6 UDP, Unix datagram data, deadlines, ancillary data, and the complete socket contract remain planned.
+Unix stream sockets support X11, [AF_PACKET raw sockets](network.md) exchange Ethernet, and [AF_INET raw ICMP sockets](ipv4.md) support ping. [IPv4 UDP sockets](udp.md) add datagrams with tested checksums, binding, queues, errors, readiness, and retained I/O. [NETLINK_ROUTE sockets](netlink.md) support bounded tagged IPv4 route control, dumps, and retained datagram I/O. Unix datagram descriptors currently support interface configuration only. TCP, IPv6 UDP, Unix datagram data, deadlines, ancillary data, and the complete socket contract remain planned.
 
 Required work:
 

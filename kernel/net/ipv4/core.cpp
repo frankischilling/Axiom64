@@ -389,7 +389,7 @@ int ipv4_configure(unsigned index, const Ipv4Config& config) {
     return 0;
 }
 
-int ipv4_route(const Ipv4Route& input, bool remove) {
+static int change_route(const Ipv4Route& input, bool remove, bool control, bool exclusive) {
     auto value = input;
     if (!ip4::mask_valid(value.mask) || (value.destination & value.mask) != value.destination)
         return -22;
@@ -398,7 +398,9 @@ int ipv4_route(const Ipv4Route& input, bool remove) {
             if (route.used && (!value.index || route.value.index == value.index) &&
                 route.value.destination == value.destination && route.value.mask == value.mask &&
                 (!value.gateway || route.value.gateway == value.gateway) &&
-                (!value.metric || route.value.metric == value.metric)) {
+                (!value.metric || route.value.metric == value.metric) &&
+                (!control || ((!value.protocol || route.value.protocol == value.protocol) &&
+                              (value.scope == 255 || route.value.scope == value.scope)))) {
                 route = {};
                 return 0;
             }
@@ -428,8 +430,20 @@ int ipv4_route(const Ipv4Route& input, bool remove) {
           directed_broadcast(*config, value.gateway) || value.gateway == config->address ||
           (value.gateway & config->mask) != (config->address & config->mask))))
         return -101;
+    if (value.scope == 255)
+        value.scope = value.gateway ? 0 : 253;
+    if (exclusive && !value.metric)
+        for (unsigned index = 1; index <= ipv4_loopback; index++) {
+            auto connected = ipv4_config(index);
+            if (connected && connected->address && connected->mask == value.mask &&
+                (connected->address & connected->mask) == value.destination)
+                return -17;
+        }
     Route* empty = nullptr;
     for (auto& route : routes) {
+        if (exclusive && route.used && route.value.destination == value.destination &&
+            route.value.mask == value.mask && route.value.metric == value.metric)
+            return -17;
         if (route.used && route.value.index == value.index &&
             route.value.destination == value.destination && route.value.mask == value.mask &&
             route.value.gateway == value.gateway && route.value.metric == value.metric) {
@@ -442,6 +456,27 @@ int ipv4_route(const Ipv4Route& input, bool remove) {
         return -105;
     *empty = {value, true};
     return 0;
+}
+
+int ipv4_route(const Ipv4Route& value, bool remove) {
+    return change_route(value, remove, false, false);
+}
+
+int ipv4_route_control(const Ipv4Route& value, bool remove, bool exclusive) {
+    return change_route(value, remove, true, exclusive);
+}
+
+size_t ipv4_routes(Ipv4Route* output, size_t capacity) {
+    size_t count = 0;
+    for (unsigned index = 1; index <= ipv4_loopback; index++) {
+        auto config = ipv4_config(index);
+        if (config && config->address && count < capacity)
+            output[count++] = {config->address & config->mask, config->mask, 0, index, 0, 2, 253};
+    }
+    for (const auto& route : routes)
+        if (route.used && count < capacity)
+            output[count++] = route.value;
+    return count;
 }
 
 bool ipv4_local(uint32_t address) {

@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install build and emulation tools
-        run: sudo apt-get update && sudo apt-get install -y g++ make musl-tools linux-libc-dev nasm python3 xorriso qemu-system-x86 ovmf xfonts-utils e2fsprogs clang-format-20 nbdkit nbdkit-plugin-python gdb
+        run: sudo apt-get update && sudo apt-get install -y g++ make musl-tools linux-libc-dev nasm python3 xorriso qemu-system-x86 ovmf xfonts-utils e2fsprogs clang-format-20 nbdkit nbdkit-plugin-python gdb iproute2
       - name: Check C and C++ formatting
         run: make check-format
       - name: Build standalone image
@@ -35,6 +35,14 @@ jobs:
         run: make test-udp
       - name: Compare common UDP socket behavior with native Linux
         run: ./build/udp-tests
+      - name: Test route message validation with sanitizers
+        run: make test-netlink-codec
+      - name: Test NETLINK_ROUTE ownership, lifetime, limits, and routed packets
+        run: make test-netlink
+      - name: Compare route socket behavior with native Linux
+        run: |
+          make build/netlink-native
+          sudo python3 scripts/netlink_native.py
       - name: Test writable ext2 volumes and host fsck
         run: python3 scripts/ext2_test.py
       - name: Test normal desktop startup
@@ -102,6 +110,8 @@ jobs:
             build/udp-*.log
             build/udp-*.gdb
             build/udp-results.json
+            build/netlink-*.log
+            build/netlink*-results.json
             build/ext2-*.log
             build/ext2-results.json
             build/disk-root-*.log

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/ethernet.hpp"
 #include "net/packet.hpp"
+#include "net/ipv4.hpp"
 #include "drivers/platform/pci.hpp"
 
 namespace ax {
@@ -49,9 +50,11 @@ void net_poll() {
     for (unsigned i = 0; i < count; i++)
         if (devices[i]->info.live)
             devices[i]->poll(*devices[i]);
+    ipv4_poll();
 }
 
 void net_shutdown() {
+    ipv4_shutdown();
     for (unsigned i = 0; i < count; i++) {
         devices[i]->stop(*devices[i]);
         devices[i]->info.live = devices[i]->info.carrier = false;
@@ -120,6 +123,7 @@ void net_receive(NetAdapter& adapter, const void* frame, size_t length) {
         broadcast &= bytes[i] == 0xff;
     unsigned type = broadcast ? 1 : (bytes[0] & 1) ? 2 : !memcmp(bytes, info.mac, 6) ? 0 : 3;
     packet_deliver(info, frame, length, type, nullptr);
+    ipv4_receive(info, frame, length);
 }
 
 void net_tx_complete(NetAdapter& adapter, size_t length, bool error) {

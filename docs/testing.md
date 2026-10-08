@@ -23,6 +23,7 @@ The harness boots QEMU under BIOS and UEFI, checks firmware identity, requires e
 | Virtio storage | Separate 16-boot firmware/transport matrix, host disk-byte comparison, fresh-boot persistence, read-only disks, index rollover, backend read/write/flush errors |
 | Shared virtio queues | Sanitizer host simulation, concurrent chains and malformed completions; separate 24-boot real queue-size/feature matrix with host byte checks |
 | Ethernet and packet sockets | 46 boots covering both NICs, firmware/transports, queue sizes, eight interfaces, rollover, link transitions, optional features, malformed completions, TX backpressure, raw socket behavior, and host byte comparisons |
+| IPv4, ARP, and raw ICMP | Eight mixed-NIC boots covering firmware/transports, loopback, static configuration/routes, cache expiry/replacement, malformed input, link loss, bounded queues, retained descriptions, kernel echo/errors, BusyBox ping, and isolated device failure |
 | VFS mounts | Independent RAM volumes, hidden/restored contents, directory identity, read-only policy, cross-filesystem errors, executable loading, mappings, sockets, busy unmounts, slot reuse |
 | Writable ext2 | Four disk layouts across firmware/transports, guest files and executable loading, fresh-boot reads, host file/metadata comparisons and fsck, full allocation, rejected formats, and I/O retries |
 | Ext2 root | Root and data-volume reboot persistence, software/hardware read-only policy, rejected configuration/boot files/backend failures, full userspace and normal desktop startup across firmware/transports, reproducible fixtures and host fsck |
@@ -42,11 +43,12 @@ make test-virtqueue
 python3 scripts/virtio_test.py --firmware bios --transport modern
 python3 scripts/ext2_test.py --quick --firmware bios --transport modern
 python3 scripts/network_test.py --firmware bios --models virtio e1000
+python3 scripts/ipv4_test.py --firmware bios --transport modern
 ```
 
 The ABI, desktop, condition-only, and I/O-only profiles omit large native development packages from a separate root filesystem. The full and complete threads suites use the full root filesystem. `--trace` logs syscall entry and results; `--gdb` exposes QEMU debugging on local TCP port 1234.
 
-GitHub Actions builds the normal ISO and runs the full firmware and threads suites, sanitizer queue checks, raw-storage, queue-geometry, Ethernet and ext2 matrices, normal desktop checks, and the complete [disk-root suites](disk-root.md#verification) on Ubuntu 24.04. The `axiom64-boot` artifact contains the image, kernel, logs, results, and screenshots. A separate source artifact carries upstream archives and exact package recipes. A green run applies to its tested commit; check that commit when comparing results with local changes.
+GitHub Actions builds the normal ISO and runs the full firmware and threads suites, sanitizer queue checks, raw-storage, queue-geometry, Ethernet, IPv4, and ext2 matrices, normal desktop checks, and the complete [disk-root suites](disk-root.md#verification) on Ubuntu 24.04. The `axiom64-boot` artifact contains the image, kernel, logs, results, and screenshots. A separate source artifact carries upstream archives and exact package recipes. A green run applies to its tested commit; check that commit when comparing results with local changes.
 
 Run `make test-storage` for the complete disk matrix. The harness creates and overwrites only its generated fixtures under `build/`. [Storage verification](storage.md#verification) describes the phases, host comparisons, evidence files, and paths that are not yet fault-injected.
 
@@ -60,4 +62,6 @@ Run `make test-virtqueue` and `make test-virtio` for the [shared virtio queue an
 
 Run `make test-disk-root` for the [root and data-volume persistence/rejection matrix](disk-root.md#verification). Full and normal desktop boot tests accept `--disk-root --transport modern` or `legacy`; they build a matching root fixture, copy it for each firmware boot, require the selected ext2 root, perform clean shutdown, and run host fsck.
 
-Run `make test-network` for the complete [Ethernet and packet-socket matrix](network.md#verification). Each NIC communicates with its own loopback peer; fault and backpressure cases use a local GDB session. Results accumulate in `build/network-results.json`, and CI retains logs and debugger commands. Internet protocols and the complete networking release remain planned.
+Run `make test-network` for the complete [Ethernet and packet-socket matrix](network.md#verification). Each NIC communicates with its own loopback peer; fault and backpressure cases use a local GDB session. Results accumulate in `build/network-results.json`, and CI retains logs and debugger commands.
+
+Run `make test-ipv4` for the [initial IPv4 and raw ICMP matrix](ipv4.md#verification). It uses both adapters together, controlled Ethernet peers, QMP link changes, and GDB cache/backpressure/device-fault probes. Results accumulate in `build/ipv4-results.json`; CI retains the logs and debugger commands. TCP/UDP, DHCP, DNS, downloads, and the complete networking release remain required.

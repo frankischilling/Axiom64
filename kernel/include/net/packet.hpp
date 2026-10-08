@@ -42,7 +42,5 @@ int64_t packet_write(PacketSocket*, const void*, size_t);
 
 int64_t packet_syscall(Task&, const Frame&);
 
-int64_t net_ioctl(Task&, uint64_t request, uint64_t argument);
-
 size_t packet_available(PacketSocket*);
 } // namespace ax

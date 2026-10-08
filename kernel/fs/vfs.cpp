@@ -3,6 +3,7 @@
 #include "drivers/platform/devices.hpp"
 #include "ipc/ipc.hpp"
 #include "net/packet.hpp"
+#include "net/inet.hpp"
 #include "process/task.hpp"
 #include "drivers/block/block.hpp"
 #include "fs/ext2/ext2.hpp"
@@ -749,6 +750,8 @@ void close_handle(Handle* h) {
         socket_close(h->socket);
     if (h->packet)
         packet_close(h->packet);
+    if (h->inet)
+        inet_close(h->inet);
     if (h->epoll)
         epoll_close(h->epoll);
     if (h->pipe) {
@@ -771,6 +774,8 @@ bool handle_ready(Handle* h, bool write) {
         return socket_ready(h->socket, write);
     if (h->packet)
         return packet_ready(h->packet, write);
+    if (h->inet)
+        return inet_ready(h->inet, write);
     if (h->epoll)
         return true;
     if (h->pipe)
@@ -790,6 +795,8 @@ int64_t read_handle(Handle* h, void* buf, size_t len) {
         return socket_read(h->socket, buf, len);
     if (h->packet)
         return packet_read(h->packet, buf, len);
+    if (h->inet)
+        return inet_read(h->inet, buf, len);
     auto data = (uint8_t*)buf;
     if (h->pipe) {
         auto p = h->pipe;
@@ -825,6 +832,8 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
         return socket_write(h->socket, buf, len);
     if (h->packet)
         return packet_write(h->packet, buf, len);
+    if (h->inet)
+        return inet_send(h->inet, inet_peer(h->inet), buf, len);
     auto data = (const uint8_t*)buf;
     if (h->pipe) {
         auto p = h->pipe;

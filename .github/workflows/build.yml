@@ -29,6 +29,8 @@ jobs:
         run: make test-virtio
       - name: Test virtio and e1000 Ethernet with packet sockets
         run: make test-network
+      - name: Test IPv4 routes, ARP, raw ICMP, ping, and failed-device sockets
+        run: make test-ipv4
       - name: Test writable ext2 volumes and host fsck
         run: python3 scripts/ext2_test.py
       - name: Test normal desktop startup
@@ -90,6 +92,9 @@ jobs:
             build/network-*.log
             build/network-*.gdb
             build/network-results.json
+            build/ipv4-*.log
+            build/ipv4-*.gdb
+            build/ipv4-results.json
             build/ext2-*.log
             build/ext2-results.json
             build/disk-root-*.log

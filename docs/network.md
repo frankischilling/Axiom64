@@ -1,6 +1,6 @@
 # Ethernet and packet sockets
 
-The kernel has a shared Ethernet interface for PCI virtio-net and QEMU's Intel 82540EM e1000 model (`8086:100e`). Ring 3 programs can discover interfaces and exchange raw Ethernet frames through Linux `AF_PACKET`/`SOCK_RAW` sockets. IP, ARP, routing, ICMP, DHCP, DNS, TCP/UDP, and downloads remain in their full [protocol scopes](feature-roadmap.md). Both adapters are required for the first networking release.
+The kernel has a shared Ethernet interface for PCI virtio-net and QEMU's Intel 82540EM e1000 model (`8086:100e`). Ring 3 programs can discover interfaces and exchange raw Ethernet frames through Linux `AF_PACKET`/`SOCK_RAW` sockets. The [initial IPv4 path](ipv4.md) adds static addresses, routes, ARP, and raw ICMP/ping. DHCP, DNS, TCP/UDP, downloads, and complete IPv4/IPv6 behavior remain in their full [protocol scopes](feature-roadmap.md). Both adapters are required for the first networking release.
 
 ## Devices and ownership
 
@@ -22,7 +22,7 @@ Network polling runs with serialized callers on one CPU, in syscall attempts and
 
 Receive supports `MSG_DONTWAIT`, `MSG_PEEK`, and `MSG_TRUNC`. Truncated receives consume one frame unless peeking; `MSG_TRUNC` returns its wire length, and `recvmsg` reports the truncation flag. Source `sockaddr_ll` contains the interface, protocol, Ethernet hardware type, packet type, and source MAC. Each listener owns its copy: at most 32 frames and 65536 payload bytes. A full listener drops new frames without affecting another listener. `PACKET_STATISTICS` reports and resets delivered-plus-dropped packet and drop counts. `PACKET_IGNORE_OUTGOING` disables locally transmitted frames for that listener; the originating socket does not receive its own send.
 
-`poll` and epoll report receive availability and TX readiness. A permanently failed bound adapter reports `POLLERR` and I/O returns `EIO`; carrier or administrative down returns `ENETDOWN` on transmission. Nonblocking exhaustion returns `EAGAIN`. `FIONREAD` reports the next frame length. Interface ioctls support name/index, MAC, MTU, and flags; `SIOCGIFCONF` returns an empty IPv4 list because addresses are not assigned yet.
+`poll` and epoll report receive availability and TX readiness. A permanently failed bound adapter reports `POLLERR` and I/O returns `EIO`; carrier or administrative down returns `ENETDOWN` on transmission. Nonblocking exhaustion returns `EAGAIN`. `FIONREAD` reports the next frame length. Interface ioctls support name/index, MAC, MTU, flags, and [IPv4 address controls](ipv4.md#configuration-and-routing). `SIOCGIFCONF` lists configured IPv4 interfaces and the fixed loopback address.
 
 `getsockname`, socket type/domain/protocol, and the fixed buffer-size queries are supported. Datagram packet sockets, connect/listen/accept/shutdown, socket deadlines, ancillary data, packet mmap rings, BPF, memberships, advanced interface flags, and other unimplemented options return explicit errors. Current tasks run as root; capability-based raw-socket authorization is part of the planned accounts and permissions work. Exposed services still require that work and secure randomness.
 

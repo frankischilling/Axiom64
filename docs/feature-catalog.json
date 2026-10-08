@@ -414,8 +414,8 @@
       "id": "F12",
       "title": "IPv4, IPv6, routing, and ICMP",
       "milestone": "M3",
-      "state": "planned",
-      "current": "No IP stack is present.",
+      "state": "partial",
+      "current": "The initial IPv4 host path supports static addresses, routes, bounded ARP, loopback, raw ICMP sockets, and ping on both adapters. Options and fragments are rejected; complete IPv4, IPv6, reassembly, multicast, and path MTU behavior remain planned.",
       "scope": [
         "Ethernet framing, ARP, IPv4 checksums, loopback, routing, aliases, and gateways",
         "ICMP errors and echo/ping",
@@ -431,7 +431,14 @@
       "dependencies": [
         "F11"
       ],
-      "evidence": [],
+      "evidence": [
+        "kernel/net/ipv4/core.cpp",
+        "kernel/net/ipv4/socket.cpp",
+        "kernel/net/ioctl.cpp",
+        "userspace/tests/net/ipv4.c",
+        "scripts/ipv4_matrix.py",
+        "docs/ipv4.md"
+      ],
       "branch": "feature/f12-ipv4-ipv6-routing-and-icmp",
       "issue": "https://github.com/frankischilling/Axiom64/issues/12"
     },
@@ -440,7 +447,7 @@
       "title": "TCP, UDP, and Linux socket semantics",
       "milestone": "M3",
       "state": "partial",
-      "current": "Unix stream sockets support X11, and AF_PACKET raw sockets exchange Ethernet through virtio-net and e1000. Internet and Unix datagram sockets, deadlines, ancillary data, and the complete socket contract remain planned.",
+      "current": "Unix stream sockets support X11, AF_PACKET exchanges Ethernet, and AF_INET raw ICMP supports the tested ping and retained-I/O contract. Unix/Internet datagram descriptors serve interface configuration only; TCP/UDP data, deadlines, ancillary data, and the complete socket contract remain planned.",
       "scope": [
         "AF_INET/AF_INET6 TCP/UDP socket lifecycle, options, and errors",
         "TCP sequence/window handling, retransmission, congestion, close, and reset",
@@ -460,7 +467,10 @@
       ],
       "evidence": [
         "kernel/ipc/ipc.cpp",
-        "userspace/tests/ipc/ipc.c"
+        "userspace/tests/ipc/ipc.c",
+        "kernel/net/ipv4/socket.cpp",
+        "userspace/tests/net/ipv4.c",
+        "docs/ipv4.md"
       ],
       "branch": "feature/f13-tcp-udp-and-linux-socket-semantics",
       "issue": "https://github.com/frankischilling/Axiom64/issues/13"
@@ -469,8 +479,8 @@
       "id": "F14",
       "title": "DHCP, DNS, and network configuration",
       "milestone": "M3",
-      "state": "planned",
-      "current": "No network configuration or resolver service is available.",
+      "state": "partial",
+      "current": "Linux interface/route ioctls and BusyBox ifconfig, route add/delete, and numeric ping support static configuration. DHCP, DNS, saved configuration, downloads, and a resolver service remain planned.",
       "scope": [
         "DHCP by default, lease renewal, saved configuration, and static override",
         "DNS resolver including UDP, TCP fallback, search rules, and timeouts",
@@ -488,7 +498,12 @@
         "F10",
         "F13"
       ],
-      "evidence": [],
+      "evidence": [
+        "kernel/net/ioctl.cpp",
+        "userspace/tests/net/ipv4.sh",
+        "scripts/ipv4_matrix.py",
+        "docs/ipv4.md"
+      ],
       "branch": "feature/f14-dhcp-dns-and-network-configuration",
       "issue": "https://github.com/frankischilling/Axiom64/issues/14"
     },

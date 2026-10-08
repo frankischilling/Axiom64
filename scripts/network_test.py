@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 import selectors
 import shutil
+import shlex
 import socket
 import struct
 import subprocess
@@ -17,17 +18,22 @@ from qmp import Qmp
 from network_fault import defer_tx, inject
 
 
-def fixture(status=True):
-    subprocess.run(['make', 'build/axiom64.elf', 'build/init', 'build/net-tests', 'busybox'],
+def fixture(status=True, program='net-tests', script='userspace/tests/net/run.sh', environment=None):
+    subprocess.run(['make', 'build/axiom64.elf', 'build/init', f'build/{program}', 'busybox'],
                    cwd=ROOT, check=True)
     files = {name: (0o40755, b'') for name in ['bin', 'sbin', 'etc', 'dev', 'proc', 'sys', 'tmp', 'run', 'root']}
     for name, source in [('sbin/init', ROOT / 'build/init'),
-                         ('bin/net-tests', ROOT / 'build/net-tests'),
+                         (f'bin/{program}', ROOT / 'build' / program),
                          ('bin/busybox', ROOT / 'build/busybox-1.37.0/busybox'),
-                         ('etc/net-test.sh', ROOT / 'userspace/tests/net/run.sh')]:
+                         ('etc/net-test.sh', ROOT / script)]:
         data = source.read_bytes()
         if name == 'etc/net-test.sh' and not status:
             data = b'export AXIOM64_LINK_TEST=0\n' + data
+        if name == 'etc/net-test.sh' and environment:
+            for key, value in environment.items():
+                if not re.fullmatch(r'[A-Z][A-Z0-9_]*', key):
+                    raise ValueError('invalid test environment key')
+                data = f'export {key}={shlex.quote(value)}\n'.encode() + data
         files[name] = (0o100755, data)
     destination = ROOT / 'build/rootfs-network.cpio'
     with destination.open('wb') as output:

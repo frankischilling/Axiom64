@@ -10,6 +10,11 @@ FORMAT_SOURCES = $(foreach pattern,*.cpp *.hpp,$(call rwildcard,kernel/,$(patter
 
 .PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-network test-ipv4 test-udp test-netlink test-netlink-codec test-address-codec test-configuration test-dhcp-codec test-dhcp-modules test-dhcp-transport test-profiles test-resolver test-resolver-native test-clock-codec test-clock test-file-locks test-file-locks-native test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
 all: image
+.PHONY: test-ownership test-ownership-native
+test-ownership:
+	$(PYTHON) scripts/ownership_test.py
+test-ownership-native:
+	$(PYTHON) scripts/ownership_native.py
 deps:
 	$(PYTHON) scripts/fetch.py
 busybox:
@@ -94,6 +99,18 @@ build/netlink-native: userspace/tests/net/netlink.cpp userspace/net/config/routi
 PROFILE_SOURCES = userspace/net/config/profile.cpp userspace/net/config/saved.cpp
 PROFILE_HEADERS = userspace/net/config/profile.hpp userspace/net/config/saved.hpp userspace/net/dhcp/wire.hpp
 PROFILE_FAULTS = -Wl,--wrap=write,--wrap=read,--wrap=close,--wrap=fsync,--wrap=fchmod,--wrap=fchmodat,--wrap=renameat
+OWNERSHIP_SOURCES = userspace/tests/net/ownership.cpp userspace/net/manager/ownership.cpp userspace/net/config/saved.cpp
+OWNERSHIP_HEADERS = userspace/net/manager/ownership.hpp userspace/net/config/saved.hpp
+OWNERSHIP_FAULTS = -Wl,--wrap=flock
+build/ownership-host: $(OWNERSHIP_SOURCES) $(OWNERSHIP_HEADERS)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace $(OWNERSHIP_SOURCES) $(OWNERSHIP_FAULTS) -o $@
+build/ownership-tests: $(OWNERSHIP_SOURCES) $(OWNERSHIP_HEADERS)
+	@mkdir -p build
+	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace $(OWNERSHIP_SOURCES) $(OWNERSHIP_FAULTS) -o $@
+build/ownership-dynamic: $(OWNERSHIP_SOURCES) $(OWNERSHIP_HEADERS)
+	@mkdir -p build
+	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -Iuserspace $(OWNERSHIP_SOURCES) $(OWNERSHIP_FAULTS) -o $@
 CONFIGURATION_SOURCES = userspace/tests/net/configuration.cpp userspace/net/config/configuration.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp
 CONFIGURATION_HEADERS = userspace/net/config/configuration.hpp userspace/net/config/routing.hpp $(PROFILE_HEADERS) userspace/net/dhcp/transport.hpp userspace/net/dhcp/wire.hpp userspace/net/dhcp/state.hpp
 build/configuration-tests: $(CONFIGURATION_SOURCES) $(CONFIGURATION_HEADERS)

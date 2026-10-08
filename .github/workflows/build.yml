@@ -155,6 +155,12 @@ jobs:
       - name: Test private saved profiles on guest RAM and ext2
         if: matrix.suite == 'configuration'
         run: make test-profiles
+      - name: Test singleton ownership with native processes and both musl linkages
+        if: matrix.suite == 'configuration'
+        run: sudo make test-ownership-native
+      - name: Test singleton ownership on guest RAM and ext2
+        if: matrix.suite == 'configuration'
+        run: make test-ownership
       - name: Test DHCP modules in Ring 3
         if: matrix.suite == 'configuration'
         run: make test-dhcp-modules

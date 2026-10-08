@@ -6,6 +6,7 @@
 #include "process/task.hpp"
 #include "process/futex.hpp"
 #include "io/io.hpp"
+#include "net/packet.hpp"
 
 namespace ax {
 struct LinuxStat {
@@ -459,6 +460,12 @@ static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
         int size = h->socket ? h->socket->size : h->pipe->size;
         return copy_result(arg, &size, 4);
     }
+    if (request == 0x541b && h->packet) {
+        int size = packet_available(h->packet);
+        return copy_result(arg, &size, 4);
+    }
+    if ((h->socket || h->packet) && request >= 0x8910 && request <= 0x89ff)
+        return net_ioctl(*current, request, arg);
     if (!h->node ||
         ((h->node->mode & 0170000) != character && (h->node->mode & 0170000) != block_device))
         return -25;
@@ -529,9 +536,9 @@ static int64_t dispatch(Frame* f) {
         auto h = fd_handle(a);
         if (!h)
             return -9;
-        if (h->pipe || h->socket || h->epoll) {
+        if (h->pipe || h->socket || h->packet || h->epoll) {
             LinuxStat s{};
-            s.mode = h->socket ? 0140777 : 0010600;
+            s.mode = h->socket || h->packet ? 0140777 : 0010600;
             s.nlink = 1;
             return copy_result(b, &s, sizeof(s));
         }

@@ -2,6 +2,7 @@
 #include "core/base.hpp"
 #include "drivers/platform/power.hpp"
 #include "fs/vfs.hpp"
+#include "net/ethernet.hpp"
 #include <stdarg.h>
 
 extern "C" void* memcpy(void* d, const void* s, size_t n) {
@@ -143,6 +144,7 @@ void log(const char* s, ...) {
 }
 
 [[noreturn]] void poweroff(int status) {
+    net_shutdown();
     int error = shutdown_filesystems();
     if (error) {
         log("FILESYSTEM_SHUTDOWN_FAIL errno=%d\n", int64_t(-error));

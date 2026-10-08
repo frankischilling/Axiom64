@@ -6,6 +6,7 @@ namespace ax {
 enum class Device;
 struct Pty;
 struct Socket;
+struct PacketSocket;
 struct Epoll;
 struct Mount;
 
@@ -108,6 +109,7 @@ struct Handle {
     bool writer;
     Pty* pty = nullptr;
     Socket* socket = nullptr;
+    PacketSocket* packet = nullptr;
     Epoll* epoll = nullptr;
     uint64_t generation = 0;
 };

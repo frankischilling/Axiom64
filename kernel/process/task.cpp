@@ -313,6 +313,7 @@ static bool awaken(Task& t) {
     switch (t.wait) {
     case Wait::read:
     case Wait::write:
+    case Wait::file_lock:
         return io_resume(t);
     case Wait::child:
         for (auto& c : tasks)

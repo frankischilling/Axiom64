@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "io/io.hpp"
+#include "fs/file_lock.hpp"
 #include "ipc/ipc.hpp"
 #include "process/signals.hpp"
 #include "net/packet.hpp"
@@ -26,7 +27,7 @@ struct IoRequest {
     Iovec single, *vectors;
     size_t count;
     unsigned flags;
-    bool write, socket, accept, positioned;
+    bool write, socket, accept, positioned, locking;
     PacketAddress destination;
     unsigned destination_index;
     InetAddress inet_destination;
@@ -192,6 +193,10 @@ static int prepare_packet(Task& task, IoRequest& request) {
 
 static int prepare(Task& task, IoRequest& request) {
     const auto& f = request.call;
+    if (f.rax == 73) {
+        request.locking = true;
+        return 0;
+    }
     if (request.handle->socket && request.handle->socket->type != 1)
         return -95;
     request.write = f.rax == 1 || f.rax == 18 || f.rax == 20 || f.rax == 44 || f.rax == 46;
@@ -367,6 +372,10 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
 static int64_t attempt(Task& task, IoRequest& request) {
     auto h = request.handle;
     const auto& f = request.call;
+    if (request.locking) {
+        int result = file_lock_try(h, uint32_t(f.rsi));
+        return result == -11 && !(f.rsi & 4) ? would_block : result;
+    }
     if (h->packet || h->inet || h->netlink) {
         int64_t result = packet_attempt(task, request);
         if (result == -11 && !(h->flags & 04000) && !(request.flags & 0x40))
@@ -418,6 +427,9 @@ static int64_t attempt(Task& task, IoRequest& request) {
 }
 
 int64_t io_syscall(Task& task, const Frame& frame) {
+    // Linux validates the operation before looking up the descriptor.
+    if (frame.rax == 73 && !file_lock_operation(uint32_t(frame.rsi)))
+        return -22;
     int fd = int(frame.rdi);
     Handle* h = fd >= 0 && unsigned(fd) < max_fds ? task.files->entries[fd].handle : nullptr;
     if (!h)
@@ -436,7 +448,7 @@ int64_t io_syscall(Task& task, const Frame& frame) {
     if (result == would_block) {
         task.io = request;
         task.state = State::blocked;
-        task.wait = request->write ? Wait::write : Wait::read;
+        task.wait = request->locking ? Wait::file_lock : request->write ? Wait::write : Wait::read;
         task.wait_fd = fd;
     } else
         destroy(request);
@@ -447,8 +459,9 @@ bool io_resume(Task& task) {
     auto request = task.io;
     if (!request)
         panic("blocked I/O without request");
-    if (!request->handle->packet && !request->handle->inet && !request->handle->netlink &&
-        !handle_ready(request->handle, request->write) && !(request->handle->flags & 04000))
+    if (!request->locking && !request->handle->packet && !request->handle->inet &&
+        !request->handle->netlink && !handle_ready(request->handle, request->write) &&
+        !(request->handle->flags & 04000))
         return false;
     int64_t result = attempt(task, *request);
     if (result == would_block)

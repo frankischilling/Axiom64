@@ -5,7 +5,7 @@
 namespace ax {
 constexpr unsigned max_tasks = 64, max_fds = 128;
 enum class State { empty, runnable, blocked, zombie, stopped };
-enum class Wait { none, read, write, child, sleep, poll, vfork, signal, futex };
+enum class Wait { none, read, write, child, sleep, poll, vfork, signal, futex, file_lock };
 
 struct Descriptor {
     Handle* handle;

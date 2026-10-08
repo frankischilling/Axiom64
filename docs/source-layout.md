@@ -11,7 +11,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/abi/linux/` | Linux syscall dispatch and ABI structures |
 | `kernel/mm/` | Physical and virtual memory |
 | `kernel/process/` | Tasks, scheduling, signals, futexes |
-| `kernel/fs/` | VFS and RAM filesystems; ext2 has its own subfolder |
+| `kernel/fs/` | VFS, RAM filesystems and advisory file locks; ext2 has its own subfolder |
 | `kernel/io/` | Retained blocking I/O requests |
 | `kernel/ipc/` | Sockets, readiness, shared memory |
 | `kernel/net/` | Ethernet interfaces, interface/route ioctls, and Linux raw packet sockets |

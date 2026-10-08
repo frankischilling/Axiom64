@@ -11,6 +11,7 @@ struct InetSocket;
 struct NetlinkSocket;
 struct Epoll;
 struct Mount;
+struct Handle;
 
 struct Timestamp {
     int64_t sec;
@@ -42,6 +43,8 @@ struct Node {
     Timestamp atime, mtime, ctime;
     Mount* mount;
     void* filesystem_data;
+    unsigned lock_readers;
+    Handle* lock_writer;
 };
 
 // Relative paths retain their directory identity even when a mount covers it.
@@ -116,6 +119,7 @@ struct Handle {
     NetlinkSocket* netlink = nullptr;
     Epoll* epoll = nullptr;
     uint64_t generation = 0;
+    uint8_t file_lock = 0;
 };
 
 extern Node* root_node;

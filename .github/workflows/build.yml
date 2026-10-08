@@ -66,6 +66,8 @@ jobs:
         run: make test-clock-codec 2>&1 | tee build/clock-codec.log
       - name: Test elapsed clocks and deadlines across delayed storage
         run: make test-clock
+      - name: Compare Linux file locks and test RAM/ext2 description lifetime
+        run: make test-file-locks
       - name: Test writable ext2 volumes and host fsck
         run: python3 scripts/ext2_test.py
       - name: Test normal desktop startup
@@ -144,6 +146,9 @@ jobs:
             build/clock-*.log
             build/clock-*.trace
             build/clock-results.json
+            build/file-lock-*.log
+            build/file-lock-*.dump
+            build/file-lock*-results.json
             build/ext2-*.log
             build/ext2-results.json
             build/disk-root-*.log

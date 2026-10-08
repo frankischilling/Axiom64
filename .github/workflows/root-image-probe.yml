@@ -41,6 +41,7 @@ jobs:
         run: |
           python3 scripts/root_mount_test.py --image build/root-probe.iso --disk build/root-disk.raw
           python3 scripts/root_mount_test.py --image build/root-probe.iso --disk build/root-disk.raw --copy-disk
+          python3 scripts/root_mount_test.py --image build/root-probe.iso --disk build/root-disk.raw --copy-disk --default-nic
       - name: Retain fixture and mount evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

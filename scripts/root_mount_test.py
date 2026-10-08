@@ -9,8 +9,8 @@ import time
 from fetch import ROOT
 
 
-def probe(image, disk, firmware, transport, timeout, copy_disk=False):
-    prefix = f'root-mount-{"copy-" if copy_disk else ""}{firmware}-{transport}'
+def probe(image, disk, firmware, transport, timeout, copy_disk=False, default_nic=False):
+    prefix = f'root-mount-{"copy-" if copy_disk else ""}{"nic-" if default_nic else ""}{firmware}-{transport}'
     if copy_disk:
         copied = ROOT / 'build' / (prefix + '.raw')
         shutil.copyfile(disk, copied)
@@ -18,13 +18,15 @@ def probe(image, disk, firmware, transport, timeout, copy_disk=False):
     log = ROOT / 'build' / (prefix + '.log')
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '2G',
                '-vga', 'std', '-cdrom', str(image), '-display', 'none', '-serial', 'stdio',
-               '-monitor', 'none', '-nic', 'none', '-no-reboot',
+               '-monitor', 'none', '-no-reboot',
                '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04',
                '-drive', f'if=none,id=root,format=raw,cache=writeback,file={disk}',
                '-device', 'virtio-blk-pci,drive=root,addr=5,rerror=report,werror=report,' +
                ('disable-legacy=on' if transport == 'modern' else 'disable-modern=on')]
     if not copy_disk:
         command.append('-snapshot')
+    if not default_nic:
+        command += ['-nic', 'none']
     if firmware == 'uefi':
         variables = ROOT / 'build' / (prefix + '-OVMF_VARS.fd')
         shutil.copyfile('/usr/share/OVMF/OVMF_VARS_4M.fd', variables)
@@ -52,6 +54,7 @@ def probe(image, disk, firmware, transport, timeout, copy_disk=False):
     text = log.read_text(errors='replace')
     selected |= 'VFS_ROOT_PASS filesystem=ext2 device=/dev/vda readonly=0' in text
     result = dict(firmware=firmware, transport=transport, backend='copy' if copy_disk else 'snapshot',
+                  default_nic=default_nic,
                   passed=selected and not timed_out and 'BOOT_ROOT_FAIL' not in text,
                   timed_out=timed_out, seconds=round(time.monotonic() - started, 2),
                   markers=[line for line in text.splitlines()
@@ -69,10 +72,11 @@ if __name__ == '__main__':
     parser.add_argument('--timeout', type=int, default=30)
     parser.add_argument('--copy-disk', action='store_true',
                         help='test a disposable copy with its actual host flush behavior')
+    parser.add_argument('--default-nic', action='store_true', help='include QEMU default network hardware')
     args = parser.parse_args()
     results = [probe(args.image.resolve(), args.disk.resolve(), firmware, args.transport,
-                     args.timeout, args.copy_disk)
+                     args.timeout, args.copy_disk, args.default_nic)
                for firmware in (['bios', 'uefi'] if args.firmware == 'both' else [args.firmware])]
-    name = 'root-mount-copy-results.json' if args.copy_disk else 'root-mount-results.json'
+    name = f'root-mount-{"copy-" if args.copy_disk else ""}{"nic-" if args.default_nic else ""}results.json'
     (ROOT / 'build' / name).write_text(json.dumps(results, indent=2) + '\n')
     raise SystemExit(0 if all(result['passed'] for result in results) else 1)

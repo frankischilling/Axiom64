@@ -323,6 +323,17 @@ static void encoding(void) {
         check(bool(find(bytes, size, 55, length)) ==
                   (mode != Mode::decline && mode != Mode::release),
               "decline and release do not carry a parameter request list");
+        if (const auto list = find(bytes, size, 55, length)) {
+            size_t classless = length, router = length;
+            for (size_t i = 0; i < length; i++) {
+                if (list[i] == 121)
+                    classless = i;
+                if (list[i] == 3)
+                    router = i;
+            }
+            check(classless < router && router < length,
+                  "RFC 3442 classless route request precedes Router in every request mode");
+        }
         check(bool(find(bytes, size, 12, length)) ==
                       (mode != Mode::decline && mode != Mode::release) &&
                   word(bytes + 10) == (mode == Mode::discover || mode == Mode::selecting ||

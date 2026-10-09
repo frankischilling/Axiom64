@@ -269,8 +269,9 @@ size_t encode_message(const Request& request, void* output, size_t capacity) {
             return 0;
     }
     if (request.mode != Mode::decline && request.mode != Mode::release) {
-        const uint8_t all[]{1, 3, 6, 15, 51, 58, 59, 119, 121};
-        const uint8_t inform[]{1, 3, 6, 15, 119, 121};
+        // RFC 3442 requires requesting classless routes before Router.
+        const uint8_t all[]{121, 1, 3, 6, 15, 51, 58, 59, 119};
+        const uint8_t inform[]{121, 1, 3, 6, 15, 119};
         const uint8_t maximum[]{2, 64}; // 576 octets
         bool information = request.mode == Mode::inform;
         if (!append(55, information ? inform : all, information ? sizeof(inform) : sizeof(all)) ||

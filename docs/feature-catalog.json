@@ -35,8 +35,8 @@
     },
     {
       "id": "M7",
-      "title": "Additional binary compatibility",
-      "outcome": "Support BSD, System V, SunOS, Xenix, and ELKS programs, with explicit ABI and loader tests."
+      "title": "Linux executable and runtime compatibility",
+      "outcome": "Validate Linux executable formats, interpreter/runtime contracts and architecture boundaries; Linux is the only ABI target."
     },
     {
       "id": "M8",
@@ -1021,24 +1021,11 @@
       "id": "F30",
       "title": "BSD executable personalities",
       "milestone": "M7",
-      "state": "planned",
-      "current": "There is no BSD syscall personality.",
-      "scope": [
-        "Separate FreeBSD, NetBSD, and OpenBSD syscall/error/flag mappings",
-        "ELF OSABI/interpreter recognition and personality-specific runtime roots",
-        "Signal frames, TLS, metadata, sysctl/kinfo, and native synchronization requests",
-        "Static and dynamic executables with their own runtime libraries",
-        "Per-target architecture/bitness matrix and documented implementation limits"
-      ],
-      "acceptance": [
-        "Run lawful test fixtures for each claimed target with observable guest behavior",
-        "Exercise its own dynamic loader, signals, filesystem calls, and process lifecycle",
-        "Keep syscall layouts and failures isolated between personalities"
-      ],
-      "dependencies": [
-        "F29",
-        "F33"
-      ],
+      "state": "excluded",
+      "current": "Excluded by the 2026-10-09 Linux-only ABI decision. This personality will not be implemented.",
+      "scope": [],
+      "acceptance": [],
+      "dependencies": [],
       "evidence": [],
       "branch": "feature/f30-bsd-executable-personalities",
       "issue": "https://github.com/frankischilling/Axiom64/issues/31"
@@ -1047,27 +1034,11 @@
       "id": "F31",
       "title": "System V and SunOS personalities",
       "milestone": "M7",
-      "state": "planned",
-      "current": "There is no System V or SunOS personality.",
-      "scope": [
-        "System V Release 3 COFF and Release 4 ELF execution",
-        "Call-gate entry, ABI-specific flags/errors, signal frames, and process setup",
-        "Static shared libraries and vendor runtime search rules",
-        "STREAMS transport providers, pseudo-terminals, IPC, and X11 client transport",
-        "SunOS 4.x a.out executable/syscall/terminal behavior",
-        "BSD/System V filesystem and process metadata differences"
-      ],
-      "acceptance": [
-        "Run shells and utilities for each claimed target against their own runtimes",
-        "Demonstrate STREAMS socket and X11 transport behavior",
-        "Validate signal/terminal frames and reject malformed COFF/a.out libraries"
-      ],
-      "dependencies": [
-        "F13",
-        "F20",
-        "F29",
-        "F33"
-      ],
+      "state": "excluded",
+      "current": "Excluded by the 2026-10-09 Linux-only ABI decision. This personality will not be implemented.",
+      "scope": [],
+      "acceptance": [],
+      "dependencies": [],
       "evidence": [],
       "branch": "feature/f31-system-v-and-sunos-personalities",
       "issue": "https://github.com/frankischilling/Axiom64/issues/32"
@@ -1076,47 +1047,32 @@
       "id": "F32",
       "title": "ELKS and Xenix legacy programs",
       "milestone": "M7",
-      "state": "planned",
-      "current": "There is no segmented 16-bit or Xenix execution support.",
-      "scope": [
-        "ELKS 16-bit a.out execution, syscall tables, and process metadata",
-        "Xenix x.out 8086/286/386 loaders and ABI selection",
-        "LDT/segmented execution or an explicit emulation path for modes unavailable in long mode",
-        "int/call-gate entry, segment limits, signals, terminal behavior, and IPC",
-        "Legacy runtime trees, compiler/utilities, and mixed-format process lifetimes"
-      ],
-      "acceptance": [
-        "Run 16-bit and 32-bit fixtures with their expected segmentation and system-call entry",
-        "Demonstrate invalid selectors/segment bounds fault safely",
-        "Run representative utilities and compile/execute a small program where toolchains are available"
-      ],
-      "dependencies": [
-        "F29",
-        "F31",
-        "F33"
-      ],
+      "state": "excluded",
+      "current": "Excluded by the 2026-10-09 Linux-only ABI decision. This personality will not be implemented.",
+      "scope": [],
+      "acceptance": [],
+      "dependencies": [],
       "evidence": [],
       "branch": "feature/f32-elks-and-xenix-legacy-programs",
       "issue": "https://github.com/frankischilling/Axiom64/issues/33"
     },
     {
       "id": "F33",
-      "title": "Executable formats and compatibility adapters",
+      "title": "Linux executable loading and runtime compatibility",
       "milestone": "M7",
       "state": "partial",
-      "current": "ELF64, musl PT_INTERP, and script execution are supported.",
+      "current": "ELF64 Linux x86-64, musl PT_INTERP, and script execution are supported. Linux is the only ABI target; Linux i386 remains planned.",
       "scope": [
-        "ELF32/ELF64, PIE, interpreter contracts, permissions, and malformed-input validation",
-        "a.out, ELKS a.out, COFF, x.out, and static shared-library formats",
-        "Shebang execution and personality selection without global ABI state",
-        "Experimental PE/MZ loader research, explicitly separate from a claim of Windows compatibility",
-        "NTSYNC-compatible mutex/semaphore/event operations for Wine research",
-        "Runtime/library isolation, executable branding tools, and architecture mismatch errors"
+        "Linux ELF32/ELF64, PIE, interpreter contracts, permissions, and malformed-input validation",
+        "Linux i386 a.out execution and runtime contracts where required by the Linux compatibility matrix",
+        "Shebang execution, Linux process setup and architecture selection without global ABI state",
+        "Linux NTSYNC device ioctls for mutex/semaphore/event operations used by Linux applications",
+        "Linux runtime/library isolation, executable metadata tools, and architecture mismatch errors"
       ],
       "acceptance": [
-        "Test each claimed loader with valid, truncated, overlapping, and wrong-architecture fixtures",
-        "Verify a failed exec preserves the prior address space",
-        "Record PE/Wine research as experimental until actual guest applications pass"
+        "Test each claimed Linux loader with valid, truncated, overlapping, and wrong-architecture fixtures",
+        "Verify a failed exec preserves the prior address space and waiting sibling operations",
+        "Run Linux applications through their Linux loaders and require guest evidence for every claimed runtime or device ioctl"
       ],
       "dependencies": [
         "F06"
@@ -1125,7 +1081,7 @@
         "kernel/process/task.cpp",
         "userspace/tests/abi/abi.c"
       ],
-      "branch": "feature/f33-executable-formats-and-compatibility-adapters",
+      "branch": "feature/f33-linux-executable-loading-and-runtime-compatibility",
       "issue": "https://github.com/frankischilling/Axiom64/issues/34"
     },
     {
@@ -1782,9 +1738,9 @@
       "name": "ldtctl",
       "kind": "base-command",
       "state": "planned",
-      "owner": "F32",
-      "issue": "https://github.com/frankischilling/Axiom64/issues/33",
-      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+      "owner": "F29",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/29",
+      "acceptance": "Test Linux i386 modify_ldt behavior in the guest, including valid descriptors, limits and rejected requests."
     },
     {
       "name": "ln",
@@ -2477,10 +2433,10 @@
     {
       "name": "xenix",
       "kind": "base-command",
-      "state": "planned",
+      "state": "excluded",
       "owner": "F32",
       "issue": "https://github.com/frankischilling/Axiom64/issues/33",
-      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+      "acceptance": "Excluded by the 2026-10-09 Linux-only ABI decision; no Xenix personality or guest port is planned."
     },
     {
       "name": "yacc",
@@ -5086,5 +5042,24 @@
       "issue": "https://github.com/frankischilling/Axiom64/issues/23",
       "acceptance": "Run a usable KDE session with its window manager, panel, terminal, menus, fonts, application launching, physical input, filesystem and required network/audio services."
     }
-  ]
+  ],
+  "abi_policy": {
+    "family": "linux",
+    "current_architecture": "x86_64",
+    "planned_architectures": [
+      "i386"
+    ],
+    "decision_date": "2026-10-09",
+    "excluded_personalities": [
+      "FreeBSD",
+      "NetBSD",
+      "OpenBSD",
+      "System V",
+      "SunOS",
+      "Xenix",
+      "ELKS",
+      "Windows"
+    ],
+    "scope": "Implement Linux syscall, structure, flag, error, loader and runtime compatibility only. POSIX APIs and Linux application libraries remain in scope."
+  }
 }

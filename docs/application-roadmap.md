@@ -1,14 +1,14 @@
 # Application and library roadmap
 
-Every entry below remains in scope. A standard package may provide a required command or library API; a duplicate Axiom64 implementation is not required when the behavior matches. Native ABI adapters and custom utilities still need their own tests.
+The catalog retains all inventory entries. Entries marked `excluded` are outside the implementation scope under the 2026-10-09 Linux-only ABI decision. A standard package may provide a required command or library API; a duplicate Axiom64 implementation is not required when the behavior matches. Linux ABI adapters and custom utilities still need their own tests.
 
-`demonstrated` means a program or package-level scenario ran in the tested baseline. It does not imply every option or library API works. `bundled` means an archive is in the package lock; it has no independent compatibility claim. `planned` means there is no such current evidence. Host tools and test helpers are recorded separately from guest applications.
+`demonstrated` means a program or package-level scenario ran in the tested baseline. It does not imply every option or library API works. `bundled` means an archive is in the package lock; it has no independent compatibility claim. `planned` means there is no such current evidence. `excluded` records a target removed by the Linux-only ABI decision and makes no implementation claim. Host tools and test helpers are recorded separately from guest applications.
 
 The machine-readable catalog records locked provider aliases for MPC (`mpc1`), `libgcc`, `libstdc++`, and `liblzma` (`xz-libs`). These components are bundled. The `xz` and `zstd` commands remain planned even when a related library is bundled. Existing package names cover Xlib through `libX11`, GObject through `glib2`, SQLite through `sqlite3`, and TrueType fonts through the listed font packages.
 
 Developer tools receive the first new application compatibility work. Each entry needs a guest smoke or conformance test, documented runtime dependencies, pinned source/binary inputs, and retained license notices. [Base userland coverage](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) tracks the wider catalog; [self-hosting](feature-roadmap.md#f28-native-development-and-full-self-hosting) tracks development tools.
 
-The catalog contains 479 entries. A project can occur in more than one role; counts are inventory entries, not a promise of that many distinct runnable applications.
+The catalog contains 479 inventory entries, of which 478 remain in scope. A project can occur in more than one role; counts are inventory entries, not a promise of that many distinct runnable applications.
 
 ## Application and dependency ports
 
@@ -368,7 +368,7 @@ The catalog contains 479 entries. A project can occur in more than one role; cou
 | `last` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `ld.so` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `ldd` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
-| `ldtctl` | planned | [F32](https://github.com/frankischilling/Axiom64/issues/33) |
+| `ldtctl` | planned | [F29](https://github.com/frankischilling/Axiom64/issues/29) |
 | `ln` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `login` | planned | [F25](https://github.com/frankischilling/Axiom64/issues/25) |
 | `ls` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
@@ -455,7 +455,7 @@ The catalog contains 479 entries. A project can occur in more than one role; cou
 | `write` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `xargs` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `xawdemo` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
-| `xenix` | planned | [F32](https://github.com/frankischilling/Axiom64/issues/33) |
+| `xenix` | excluded | [F32](https://github.com/frankischilling/Axiom64/issues/33) |
 | `yacc` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `yes` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 

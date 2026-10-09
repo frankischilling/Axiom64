@@ -1,6 +1,6 @@
 # Feature roadmap
 
-Axiom64 targets a modular monolith kernel in C++ and Assembly with services and applications in Ring 3. Linux x86-64 is the primary userspace ABI. This roadmap preserves the complete requested feature scope, including legacy binary formats and the application catalog.
+Axiom64 targets a modular monolith kernel in C++ and Assembly with services and applications in Ring 3. Linux is the only userspace ABI target. Linux x86-64 is supported in part; Linux i386 remains planned. The 2026-10-09 scope decision excludes non-Linux executable personalities while retaining the required OS features and application catalog.
 
 The next implementation order is persistent storage, threads, then networking. Start with virtio block and writable ext2; add ext4 later. Provide POSIX pthreads and futexes before SMP. The first usable network release must acquire a DHCP lease, resolve DNS, exchange TCP/UDP traffic, answer ping, and download a file. Static network configuration must also work. Default DHCP configures every connected Ethernet adapter, with saved static settings taking precedence for each interface.
 
@@ -14,7 +14,7 @@ Plan all service and reliability work: supervision, logging, time synchronizatio
 
 [Commit ba768b4](https://github.com/frankischilling/Axiom64/commit/ba768b40b8d55e1abae43b331f931bfff1bec4e2) has [successful CI evidence](https://github.com/frankischilling/Axiom64/actions/runs/37607497820) for BIOS/UEFI boot, static/dynamic musl, IPC, signals, BusyBox, Bash, zsh, native GNU C/C++ tools, Xorg drawing, a window manager, and emulated input into interactive Bash. [Current limits](architecture.md#current-limits) remain part of the compatibility contract. This evidence does not prove disk, network, thread, or complete Linux support.
 
-The inventory date is 2026-10-07. `partial` means some behavior exists and the issue lists what remains. `planned` means the required capability has not been demonstrated. A catalog entry is not a claim that a driver or application works.
+The inventory date is 2026-10-07. `partial` means some behavior exists and the issue lists what remains. `planned` means the required capability has not been demonstrated. `excluded` records a non-Linux personality removed by the 2026-10-09 scope decision. The inventory retains 34 in-scope feature areas and three excluded historical areas. A catalog entry is not a claim that a driver or application works.
 
 ## Milestones
 
@@ -26,7 +26,7 @@ The inventory date is 2026-10-07. `partial` means some behavior exists and the i
 | M4 | [Developer system](https://github.com/frankischilling/Axiom64/milestone/4) | Expand musl compatibility, add glibc and Linux i386, run developer tools, and build the OS inside itself. |
 | M5 | [Desktop and sessions](https://github.com/frankischilling/Axiom64/milestone/5) | Use Bash with a lightweight window manager; develop X11 and Wayland as parallel tracks. |
 | M6 | [Devices and real PCs](https://github.com/frankischilling/Axiom64/milestone/6) | Add AHCI/NVMe, USB input/storage, HD Audio, virtio GPU, and ordinary UEFI desktop hardware. |
-| M7 | [Additional binary compatibility](https://github.com/frankischilling/Axiom64/milestone/7) | Support BSD, System V, SunOS, Xenix, and ELKS programs, with explicit ABI and loader tests. |
+| M7 | [Linux executable and runtime compatibility](https://github.com/frankischilling/Axiom64/milestone/7) | Validate Linux executable formats, interpreter/runtime contracts and architecture boundaries; Linux is the only ABI target. |
 | M8 | [Installable distribution](https://github.com/frankischilling/Axiom64/milestone/8) | Deliver a live image, simple installer, signed package manager, reproducible sources, and recovery tools. |
 
 The first three milestones define the next core sequence. Later milestones describe complete tracks, not an instruction to defer prerequisites. Credentials and randomness precede remote services; verification and provenance apply to every milestone. Dependencies below describe interfaces that the full feature needs. Child tasks should be split so that, for example, storage PCI discovery does not wait for every secondary boot mode, and AHCI does not wait for USB storage.
@@ -64,10 +64,10 @@ The first three milestones define the next core sequence. Later milestones descr
 | F27 | [Live image and simple disk installer](https://github.com/frankischilling/Axiom64/issues/27) | planned | M8 | F03, F09, F16, F26 |
 | F28 | [Native development and full self-hosting](https://github.com/frankischilling/Axiom64/issues/28) | partial | M4 | F03, F05, F08, F14, F34 |
 | F29 | [Linux i386 compatibility](https://github.com/frankischilling/Axiom64/issues/29) | planned | M4 | F01, F08 |
-| F30 | [BSD executable personalities](https://github.com/frankischilling/Axiom64/issues/31) | planned | M7 | F29, F33 |
-| F31 | [System V and SunOS personalities](https://github.com/frankischilling/Axiom64/issues/32) | planned | M7 | F13, F20, F29, F33 |
-| F32 | [ELKS and Xenix legacy programs](https://github.com/frankischilling/Axiom64/issues/33) | planned | M7 | F29, F31, F33 |
-| F33 | [Executable formats and compatibility adapters](https://github.com/frankischilling/Axiom64/issues/34) | partial | M7 | F06 |
+| F30 | [BSD executable personalities](https://github.com/frankischilling/Axiom64/issues/31) | excluded | M7 | Excluded by scope decision |
+| F31 | [System V and SunOS personalities](https://github.com/frankischilling/Axiom64/issues/32) | excluded | M7 | Excluded by scope decision |
+| F32 | [ELKS and Xenix legacy programs](https://github.com/frankischilling/Axiom64/issues/33) | excluded | M7 | Excluded by scope decision |
+| F33 | [Linux executable loading and runtime compatibility](https://github.com/frankischilling/Axiom64/issues/34) | partial | M7 | F06 |
 | F34 | [Debugging, tracing, and profiling](https://github.com/frankischilling/Axiom64/issues/35) | partial | M4 | F05, F06 |
 | F35 | [Reliability and compatibility verification](https://github.com/frankischilling/Axiom64/issues/36) | partial | M8 | Across all tracks |
 | F36 | [Base commands and runtime library coverage](https://github.com/frankischilling/Axiom64/issues/37) | partial | M4 | F04, F08, F23, F28 |
@@ -637,77 +637,35 @@ Acceptance evidence:
 
 ### F30. BSD executable personalities
 
-There is no BSD syscall personality.
-
-Required work:
-
-- Separate FreeBSD, NetBSD, and OpenBSD syscall/error/flag mappings.
-- ELF OSABI/interpreter recognition and personality-specific runtime roots.
-- Signal frames, TLS, metadata, sysctl/kinfo, and native synchronization requests.
-- Static and dynamic executables with their own runtime libraries.
-- Per-target architecture/bitness matrix and documented implementation limits.
-
-Acceptance evidence:
-
-- Run lawful test fixtures for each claimed target with observable guest behavior.
-- Exercise its own dynamic loader, signals, filesystem calls, and process lifecycle.
-- Keep syscall layouts and failures isolated between personalities.
+Excluded by the 2026-10-09 Linux-only ABI decision. This personality will not be implemented.
 
 ### F31. System V and SunOS personalities
 
-There is no System V or SunOS personality.
-
-Required work:
-
-- System V Release 3 COFF and Release 4 ELF execution.
-- Call-gate entry, ABI-specific flags/errors, signal frames, and process setup.
-- Static shared libraries and vendor runtime search rules.
-- STREAMS transport providers, pseudo-terminals, IPC, and X11 client transport.
-- SunOS 4.x a.out executable/syscall/terminal behavior.
-- BSD/System V filesystem and process metadata differences.
-
-Acceptance evidence:
-
-- Run shells and utilities for each claimed target against their own runtimes.
-- Demonstrate STREAMS socket and X11 transport behavior.
-- Validate signal/terminal frames and reject malformed COFF/a.out libraries.
+Excluded by the 2026-10-09 Linux-only ABI decision. This personality will not be implemented.
 
 ### F32. ELKS and Xenix legacy programs
 
-There is no segmented 16-bit or Xenix execution support.
+Excluded by the 2026-10-09 Linux-only ABI decision. This personality will not be implemented.
+
+### F33. Linux executable loading and runtime compatibility
+
+ELF64 Linux x86-64, musl PT_INTERP, and script execution are supported. Linux is the only ABI target; Linux i386 remains planned.
+
+The synchronization-device work follows the [Linux NTSYNC userspace API](https://github.com/torvalds/linux/blob/v6.14/Documentation/userspace-api/ntsync.rst).
 
 Required work:
 
-- ELKS 16-bit a.out execution, syscall tables, and process metadata.
-- Xenix x.out 8086/286/386 loaders and ABI selection.
-- LDT/segmented execution or an explicit emulation path for modes unavailable in long mode.
-- int/call-gate entry, segment limits, signals, terminal behavior, and IPC.
-- Legacy runtime trees, compiler/utilities, and mixed-format process lifetimes.
+- Linux ELF32/ELF64, PIE, interpreter contracts, permissions, and malformed-input validation.
+- Linux i386 a.out execution and runtime contracts where required by the Linux compatibility matrix.
+- Shebang execution, Linux process setup and architecture selection without global ABI state.
+- Linux NTSYNC device ioctls for mutex/semaphore/event operations used by Linux applications.
+- Linux runtime/library isolation, executable metadata tools, and architecture mismatch errors.
 
 Acceptance evidence:
 
-- Run 16-bit and 32-bit fixtures with their expected segmentation and system-call entry.
-- Demonstrate invalid selectors/segment bounds fault safely.
-- Run representative utilities and compile/execute a small program where toolchains are available.
-
-### F33. Executable formats and compatibility adapters
-
-ELF64, musl PT_INTERP, and script execution are supported.
-
-Required work:
-
-- ELF32/ELF64, PIE, interpreter contracts, permissions, and malformed-input validation.
-- a.out, ELKS a.out, COFF, x.out, and static shared-library formats.
-- Shebang execution and personality selection without global ABI state.
-- Experimental PE/MZ loader research, explicitly separate from a claim of Windows compatibility.
-- NTSYNC-compatible mutex/semaphore/event operations for Wine research.
-- Runtime/library isolation, executable branding tools, and architecture mismatch errors.
-
-Acceptance evidence:
-
-- Test each claimed loader with valid, truncated, overlapping, and wrong-architecture fixtures.
-- Verify a failed exec preserves the prior address space.
-- Record PE/Wine research as experimental until actual guest applications pass.
+- Test each claimed Linux loader with valid, truncated, overlapping, and wrong-architecture fixtures.
+- Verify a failed exec preserves the prior address space and waiting sibling operations.
+- Run Linux applications through their Linux loaders and require guest evidence for every claimed runtime or device ioctl.
 
 ### F34. Debugging, tracing, and profiling
 

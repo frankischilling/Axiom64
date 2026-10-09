@@ -2,6 +2,8 @@
 
 The implemented contracts in [#66](https://github.com/frankischilling/Axiom64/issues/66) and [#78](https://github.com/frankischilling/Axiom64/issues/78) have been checked against production code and the published evidence from [run 37993069063](https://github.com/frankischilling/Axiom64/actions/runs/37993069063). All 47 required jobs pass. [PR #95](https://github.com/frankischilling/Axiom64/pull/95) merged the identical tested tree; the subsequent Linux-only catalog and desktop-harness update leaves the kernel, installed userspace and network fixture sources unchanged.
 
+The complete matrix was repeated after [PR #102](https://github.com/frankischilling/Axiom64/pull/102) added Linux socket deadlines. [Run 38003204812](https://github.com/frankischilling/Axiom64/actions/runs/38003204812) passes all 47 required jobs at the identical merged tree. Its independent audit again verifies all 1162 records, current source/input/boot payloads, 31 published ext2 roots, seven fixture images and 32 normal-startup desktop cases. The installed manager and network fixture implementations are unchanged.
+
 The independent audit retains all 842 earlier records and adds the complete 320-case carrier/device matrix: 71 reports and 1162 passing records. Records include host checks and paired-boot summaries as well as guest cases. The actual-process matrices cover both Ethernet drivers together, both musl linkages, BIOS/UEFI and modern/legacy virtio. Protocol and carrier matrices also exercise both affected adapter roles.
 
 | #66 requirement | Production implementation | Accepted evidence |

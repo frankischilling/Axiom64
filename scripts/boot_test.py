@@ -166,6 +166,12 @@ for firmware in firmwares:
     if args.suite == "full" and not args.interactive:
         required += ["NATIVE_C_PASS", "NATIVE_CPP_PASS", "NATIVE_THREADS_PASS",
                      "NATIVE_DIAGNOSTICS_PASS", "NATIVE_TOOLCHAIN_PASS"]
+    if not args.interactive and (args.suite in ["full", "abi"] or
+                                (args.suite == "threads" and args.phase != "cond")):
+        required += [f"THREAD_IO_TIMEOUTS_PASS linkage={linkage} operations=10 signals=4 families=4 cycles=300"
+                     for linkage in ["static", "dynamic"]]
+        required += [f"THREAD_IO_TIMEOUTS_UNMAPPED_PASS linkage={linkage} operations=8 readable_faults=2"
+                     for linkage in ["static", "dynamic"]]
     if args.suite == "threads":
         required += (["THREAD_MUTEX_COND_PASS"] if args.phase == "cond" else
                      ["THREAD_IO_TESTS_PASS linkage=static", "THREAD_IO_TESTS_PASS linkage=dynamic"] if args.phase == "io" else

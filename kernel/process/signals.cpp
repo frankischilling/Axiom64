@@ -96,7 +96,7 @@ void signal_interrupt(Task& task) {
         return; // Default delivery chooses group stop or termination.
     }
     bool restart =
-        (flags & 0x10000000) &&
+        (flags & 0x10000000) && io_restartable(task) &&
         (task.wait == Wait::read || task.wait == Wait::write || task.wait == Wait::child ||
          task.wait == Wait::file_lock || task.wait == Wait::random);
     // A caught signal ends this attempt. SA_RESTART re-enters with a fresh fd lookup.
@@ -167,6 +167,10 @@ bool signal_deliver(Task& task) {
                         if (member.state != State::empty && member.state != State::zombie &&
                             member.process == task.process) {
                             if (member.io) {
+                                if (!io_restartable(member)) {
+                                    member.frame.rip += 2;
+                                    member.frame.rax = uint64_t(-4);
+                                }
                                 io_discard(member);
                                 member.wait = Wait::none;
                             }

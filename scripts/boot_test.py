@@ -10,6 +10,7 @@ import sys
 import time
 from fetch import ROOT
 from qmp import Qmp
+from desktop_console import desktop_complete, desktop_test_command
 
 
 parser = argparse.ArgumentParser()
@@ -98,11 +99,7 @@ for firmware in firmwares:
                         tail = log.read()
                     lines = {line.strip() for line in tail.splitlines()}
                     if args.interactive and not serial_sent and b"Starting Xorg" in tail:
-                        process.stdin.write(b"while ! test -f /tmp/xterm-ready; do sleep .1; done; "
-                            b"/bin/x11-probe --desktop && echo DESKTOP_INPUT_READY; "
-                            b"while ! test -f /tmp/x11-input-pass; do sleep .1; done; "
-                            b"echo X11_KEYBOARD_PASS; echo DESKTOP_CAPTURE_READY; "
-                            b"sleep 2; echo NORMAL_BOOT_PASS\n")
+                        process.stdin.write(desktop_test_command())
                         process.stdin.flush()
                         serial_sent = True
                     if b"DESKTOP_INPUT_READY" in lines and not input_sent:
@@ -126,7 +123,7 @@ for firmware in firmwares:
                         qmp.command("screendump", {"filename": str(screenshot), "format": "png"})
                         qmp.close()
                         qmp = None
-                    if args.interactive and b"NORMAL_BOOT_PASS" in lines:
+                    if args.interactive and desktop_complete(lines, input_sent, screenshot.exists()):
                         if args.disk_root:
                             if not shutdown_sent:
                                 process.stdin.write(b"/bin/busybox poweroff -f\n")
@@ -153,7 +150,8 @@ for firmware in firmwares:
     if args.disk_root:
         required += ["VFS_ROOT_PASS filesystem=ext2 device=/dev/vda readonly=0", "AXIOM64_EXIT status=0"]
     if args.interactive:
-        required += ["NORMAL_BOOT_PASS", "WINDOW_MANAGER_PASS", "XTERM_WINDOW_PASS", "X11_KEYBOARD_PASS"]
+        required += ["NORMAL_BOOT_PASS", "WINDOW_MANAGER_PASS", "XTERM_WINDOW_PASS",
+                     "X11_KEYBOARD_PASS", "DESKTOP_CAPTURE_READY"]
         if args.disk_root:
             required += ["PLATFORM_POWEROFF method=piix4"]
     else:

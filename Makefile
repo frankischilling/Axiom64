@@ -308,6 +308,10 @@ test-resolver-native: build/resolver-native
 	$(PYTHON) scripts/resolver_native.py
 test-threads:
 	$(PYTHON) scripts/boot_test.py --suite threads --firmware both --timeout 170
+.PHONY: test-thread-io-native
+test-thread-io-native: build/thread-io-static build/thread-io-dynamic
+	./build/thread-io-static
+	./build/thread-io-dynamic
 test-thread-io:
 	$(PYTHON) scripts/boot_test.py --suite threads --phase io --firmware both --timeout 90
 build/virtqueue-tests: kernel/tests/drivers/virtio/queue.cpp kernel/drivers/virtio/queue.cpp kernel/include/drivers/virtio/queue.hpp kernel/include/core/base.hpp

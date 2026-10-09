@@ -105,6 +105,11 @@ struct Pipe {
     unsigned readers, writers;
 };
 
+struct SocketTimeout {
+    uint64_t ticks = 0;
+    bool finite = false;
+};
+
 struct Handle {
     Node* node;
     Pipe* pipe;
@@ -120,6 +125,7 @@ struct Handle {
     Epoll* epoll = nullptr;
     uint64_t generation = 0;
     uint8_t file_lock = 0;
+    SocketTimeout receive_timeout{}, send_timeout{};
 };
 
 extern Node* root_node;

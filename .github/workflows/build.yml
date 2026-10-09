@@ -153,6 +153,9 @@ jobs:
       - name: Test pthread lifecycle, futexes, and blocked I/O
         if: matrix.suite == 'boot'
         run: make test-threads
+      - name: Compare retained I/O and socket timeouts with native Linux
+        if: matrix.suite == 'boot'
+        run: sudo -n make test-thread-io-native
       - name: Test virtio queue sizes and offered features
         if: matrix.suite == 'boot'
         run: make test-virtio

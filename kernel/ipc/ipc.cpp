@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ipc/ipc.hpp"
+#include "io/socket_timeout.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
 #include "net/netlink.hpp"
@@ -339,6 +340,9 @@ int64_t ipc_syscall(Frame* f) {
     auto a = f->rdi, b = f->rsi, c = f->rdx, d = f->r10;
     auto h = handle(a);
     Socket* s = h ? h->socket : nullptr;
+    int64_t timeout_result;
+    if (socket_timeout_syscall(*current, *f, h, timeout_result))
+        return timeout_result;
     if ((f->rax == 41 && a == 16) ||
         (h && h->netlink &&
          (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50 || f->rax == 51 ||

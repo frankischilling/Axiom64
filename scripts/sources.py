@@ -130,8 +130,9 @@ def bundle(inputs):
                 archive.add(path, arcname=f"ports/{origin}/{path.name}")
         for path in ["sources.lock.json", "ports.lock.json", "dependencies.json", "LICENSE", "Makefile", "README.md", ".clang-format"]:
             archive.add(ROOT / path, arcname=f"Axiom64/{path}")
-        for path in sorted((ROOT / "scripts").glob("*.py")):
-            archive.add(path, arcname=f"Axiom64/scripts/{path.name}")
+        for path in sorted((ROOT / "scripts").rglob("*")):
+            if path.is_file() and path.suffix in (".py", ".sh"):
+                archive.add(path, arcname=f"Axiom64/{path.relative_to(ROOT).as_posix()}")
         archive.add(ROOT / "build" / "busybox-1.37.0" / ".config", arcname="Axiom64/BusyBox.config")
         for folder in ["kernel", "userspace", "boot", "vendor", "docs"]:
             archive.add(ROOT / folder, arcname=f"Axiom64/{folder}")

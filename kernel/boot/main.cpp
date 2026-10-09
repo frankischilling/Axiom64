@@ -6,6 +6,7 @@
 #include "process/task.hpp"
 #include "net/ethernet.hpp"
 #include "core/time.hpp"
+#include "core/random.hpp"
 
 namespace ax {
 [[gnu::used, gnu::section(".limine_requests_start")]] static volatile uint64_t requests_start[] =
@@ -89,6 +90,7 @@ extern "C" [[noreturn]] void kernel_main() {
     memory_init();
     arch_init();
     clock_init(rsdp_request.response ? uint64_t(rsdp_request.response->address) : 0);
+    random_init(!word(cmd, "random.trust_cpu=off"));
     auto modules = module_request.response;
     if (!modules || !modules->module_count)
         panic("missing root filesystem");

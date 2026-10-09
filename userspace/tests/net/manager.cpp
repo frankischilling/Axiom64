@@ -72,14 +72,23 @@ struct Fixture {
     Fixture(const char* executable, const char* selected, const char* root)
         : binary(executable), scenario(selected) {
         const char* linkage = strstr(binary, "dynamic") ? "dynamic" : "static";
+        bool reboot = !strcmp(scenario, "persist-reboot");
+        const char* key = !strncmp(scenario, "persist-", 8) ? "persistent" : scenario;
         char directory[220];
-        snprintf(directory, sizeof(directory), "%s/manager-%s-%s", root, scenario, linkage);
-        check(mkdir(directory, 0700) == 0, "private observer fixture");
+        snprintf(directory, sizeof(directory), "%s/manager-%s-%s", root, key, linkage);
+        if (reboot) {
+            struct stat before;
+            check(lstat(directory, &before) == 0 && S_ISDIR(before.st_mode) &&
+                      (before.st_mode & 07777) == 0700 && before.st_uid == geteuid(),
+                  "fresh boot retains the private persistent fixture");
+            serial = 2;
+        } else
+            check(mkdir(directory, 0700) == 0, "private observer fixture");
         snprintf(saved, sizeof(saved), "%s/saved", directory);
-        snprintf(runtime, sizeof(runtime), "/run/manager-%s-%s", scenario, linkage);
-        snprintf(resolver, sizeof(resolver), "/run/manager-resolver-%s-%s", scenario, linkage);
-        snprintf(target, sizeof(target), "/etc/manager-%s-%s.conf", scenario, linkage);
-        snprintf(log, sizeof(log), "%s/child-%u.log", directory, serial);
+        snprintf(runtime, sizeof(runtime), "/run/manager-%s-%s", key, linkage);
+        snprintf(resolver, sizeof(resolver), "/run/manager-resolver-%s-%s", key, linkage);
+        snprintf(target, sizeof(target), "/etc/manager-%s-%s.conf", key, linkage);
+        snprintf(log, sizeof(log), "%s/child-0.log", directory);
         for (unsigned i = 0; i < 2; i++)
             check(ax::dhcp::query_interface(i + 1, interfaces[i]) == 0,
                   "observer Ethernet identity");
@@ -258,6 +267,92 @@ static void profiles(Fixture& fixture) {
     }
 }
 
+static bool persistent_scenario(const char* scenario) {
+    return !strcmp(scenario, "persist-prime") || !strcmp(scenario, "persist-reboot");
+}
+
+static void persistent_before(Fixture& fixture) {
+    check(!fixture.address(0) && !fixture.address(1),
+          "fresh kernel begins with neither previous IPv4 address");
+    fixture.routes(false, false, false);
+    check(access(fixture.runtime, F_OK) < 0 && errno == ENOENT,
+          "fresh boot has no previous volatile lock, marker, or ownership journal");
+    check(access(fixture.resolver, F_OK) < 0 && errno == ENOENT,
+          "fresh boot has no previous volatile resolver record or deadlines");
+    ax::net::Store saved(fixture.saved);
+    ax::net::Profile profile;
+    if (!strcmp(fixture.scenario, "persist-prime")) {
+        memcpy(profile.hostname, "saved-reboot", 13);
+        check(saved.write_profile(fixture.interfaces[0].name, profile) == 0,
+              "persistent DHCP profile is written by the production Store");
+    } else {
+        check(saved.read_profile(fixture.interfaces[0].name, profile) == 0 &&
+                  profile.method == ax::net::Method::dhcp &&
+                  !strcmp(profile.hostname, "saved-reboot"),
+              "fresh boot reads the prior complete saved profile");
+        for (unsigned lane = 0; lane < 2; lane++) {
+            uint32_t address = 0;
+            check(saved.read_hint(fixture.interfaces[lane].name, fixture.interfaces[lane].identity,
+                                  address) == 0 &&
+                      address == (lane ? 0x0a170228U : 0x0a170128U),
+                  "fresh boot reads each private MAC/address hint without a saved deadline");
+        }
+    }
+}
+
+static void persistent(Fixture& fixture, uint64_t began) {
+    bool reboot = !strcmp(fixture.scenario, "persist-reboot");
+    while (!fixture.marker(
+               "NETWORK_MANAGER_BOUND index=1 method=dhcp address=0a170128 generation=1") ||
+           !fixture.marker(
+               "NETWORK_MANAGER_BOUND index=2 method=dhcp address=0a170228 generation=1")) {
+        check(milliseconds() < began + 60000, "both adapters validate and acquire after root boot");
+        pause_ms(20);
+    }
+    pause_ms(2200);
+    for (unsigned lane = 0; lane < 2; lane++) {
+        uint32_t mask = 0;
+        check(fixture.address(lane, &mask) == (lane ? 0x0a170228U : 0x0a170128U) &&
+                  mask == (reboot ? 0xffffff80U : 0xffffff00U),
+              "fresh ACK determines the complete tuple rather than a saved lease");
+        ax::net::Store saved(fixture.saved);
+        uint32_t hint = 0;
+        check(saved.read_hint(fixture.interfaces[lane].name, fixture.interfaces[lane].identity,
+                              hint) == 0 &&
+                  hint == (lane ? 0x0a170228U : 0x0a170128U),
+              "successful installation leaves a complete synchronized hint");
+    }
+    fixture.routes(true, true, false);
+    char path[300], bytes[1024];
+    snprintf(path, sizeof(path), "%s/resolv.conf", fixture.resolver);
+    text(path, bytes, sizeof(bytes));
+    check(strstr(bytes, reboot ? "nameserver 10.23.1.54\n" : "nameserver 10.23.1.53\n") &&
+              strstr(bytes, reboot ? "nameserver 10.23.2.54\n" : "nameserver 10.23.2.53\n"),
+          "fresh ACK determines both resolver contributions");
+    if (!reboot) {
+        snprintf(path, sizeof(path), "%s/boot-marker", fixture.runtime);
+        int marker = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+        check(marker >= 0 && write(marker, "volatile\n", 9) == 9 && fsync(marker) == 0 &&
+                  close(marker) == 0,
+              "first boot writes a real marker under the volatile runtime mount");
+        check(kill(fixture.process, SIGKILL) == 0, "terminate manager without releasing hints");
+        int status = fixture.wait(fixture.process);
+        fixture.evidence(fixture.primary);
+        check(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL,
+              "first boot reaps killed process before root shutdown");
+        puts("MANAGER_PERSIST_PRIME_PASS saved=profile-and-hints runtime=volatile");
+    } else {
+        fixture.stop();
+        check(!fixture.address(0) && !fixture.address(1),
+              "fresh-boot process releases both tuples");
+        fixture.routes(false, false, false);
+        fixture.clean();
+        puts("MANAGER_PERSIST_REBOOT_PASS hints=revalidated ack=fresh runtime=empty");
+    }
+    printf("MANAGER_TEST_PASS scenario=%s processes=checked resolver=merged manual=preserved\n",
+           fixture.scenario);
+}
+
 static void overrides(Fixture& fixture, uint64_t began) {
     const char* scenario = fixture.scenario;
     bool fixed = !strcmp(scenario, "static") || !strcmp(scenario, "conflict") ||
@@ -349,9 +444,12 @@ int main(int argc, char** argv) {
               !strcmp(argv[2], "static") || !strcmp(argv[2], "conflict") ||
               !strcmp(argv[2], "defense") || !strcmp(argv[2], "disabled") ||
               !strcmp(argv[2], "unsafe") || !strcmp(argv[2], "manual") ||
-              !strcmp(argv[2], "restart") || fault_scenario(argv[2]),
+              !strcmp(argv[2], "restart") || fault_scenario(argv[2]) ||
+              persistent_scenario(argv[2]),
           "known manager scenario");
     profiles(fixture);
+    if (persistent_scenario(argv[2]))
+        persistent_before(fixture);
     printf("MANAGER_TEST_READY scenario=%s\n", argv[2]);
     uint64_t began = milliseconds();
     fixture.start();
@@ -362,7 +460,11 @@ int main(int argc, char** argv) {
     pid_t competing = fixture.start(true);
     int status = fixture.wait(competing);
     check(WIFEXITED(status) && WEXITSTATUS(status) == 1, "second real manager rejects singleton");
-    fixture.evidence(2);
+    fixture.evidence(fixture.serial);
+    if (persistent_scenario(argv[2])) {
+        persistent(fixture, began);
+        return 0;
+    }
     if (strcmp(argv[2], "concurrent") && strcmp(argv[2], "restart") &&
         strcmp(argv[2], "hint-remove") && strcmp(argv[2], "close")) {
         overrides(fixture, began);

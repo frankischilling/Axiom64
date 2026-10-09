@@ -7,6 +7,9 @@ class ManagerPeer(Peer):
     def __init__(self, lane, scenario):
         super().__init__(lane)
         self.scenario = scenario
+        if scenario.startswith('persist-'):
+            # Saved-state checks complete within 120 s; lease renewal is a separate fixture.
+            self.lease_timers = self.rebound_timers = (300, 150, 262)
         self.reboots = self.conflicts = 0
 
     def send(self, frame):
@@ -45,7 +48,8 @@ class ManagerPeer(Peer):
                 options[code] = message[at:at + size]
                 at += size
             if options.get(53) == b'\x03' and 50 in options and 54 not in options:
-                check((self.scenario == 'restart' or self.scenario == 'hint-remove' and self.lane == 0) and
+                check((self.scenario in ('restart', 'persist-reboot') or
+                       self.scenario == 'hint-remove' and self.lane == 0) and
                       ip[0] == 0x45 and ip[9] == 17 and
                       checksum(ip) == 0 and ip[12:20] == bytes(4) + bytes([255]) * 4 and
                       frame[6:12] == self.guest and udp[:4] == struct.pack('!HH', 68, 67) and
@@ -57,7 +61,7 @@ class ManagerPeer(Peer):
                       'independent INIT-REBOOT packet/source/identity/checksum')
                 self.reboots += 1
                 self.transaction = message[4:8]
-                self.answer(5, self.transaction)
+                self.answer(5, self.transaction, changed=self.scenario == 'persist-reboot')
                 return
         previous = self.probes, self.announcements
         super().packet(frame)
@@ -98,12 +102,25 @@ class ManagerPeer(Peer):
         elif self.scenario == 'restart':
             check(self.reboots == 1 and self.selecting == 1 and self.probes == 6 and self.releases == 1,
                   'new actual process revalidates hints and probes before reacquisition')
+        elif self.scenario == 'persist-prime':
+            check(self.discovers == 2 and self.selecting == 1 and self.probes == 3 and
+                  self.announcements == 2 and not self.releases and not self.reboots and
+                  not self.renewals and not self.rebindings,
+                  'first boot synchronizes hints and dies without lease release')
+        elif self.scenario == 'persist-reboot':
+            check(not self.discovers and not self.selecting and self.reboots == 1 and
+                  self.probes == 3 and self.announcements == 2 and self.releases == 1 and
+                  not self.renewals and not self.rebindings,
+                  'new kernel revalidates persistent hints before installing fresh ACK metadata')
         else:
             check(self.discovers == 2 and self.selecting == 1 and self.probes == 3 and self.releases == 1,
                   f'healthy concurrent adapter completes acquisition and signal release: {self.counts()}')
         return self.counts()
 
     def counts(self):
-        return {name: getattr(self, name) for name in
+        result = {name: getattr(self, name) for name in
                 ('discovers', 'selecting', 'renewals', 'rebindings', 'releases', 'probes', 'announcements',
                  'resolutions', 'reboots', 'conflicts')}
+        if self.scenario.startswith('persist-'):
+            result['transaction'] = self.transaction.hex() if self.transaction else None
+        return result

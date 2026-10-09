@@ -42,7 +42,32 @@ def acquired(peer, transaction):
     peer.packet(frame(peer, transaction, 3, server=peer.ip, requested=True))
 
 
+def reply_timers(peer, changed):
+    peer.answer(5, bytes.fromhex('12345678'), changed=changed)
+    packet = bytes(peer.output[4:])
+    assert int.from_bytes(peer.output[:4], 'big') == len(packet)
+    assert checksum(packet[14:34]) == 0
+    options, at = {}, 14 + 20 + 8 + 240
+    while packet[at] != 255:
+        code, size = packet[at:at + 2]
+        options[code] = packet[at + 2:at + 2 + size]
+        at += 2 + size
+    return tuple(int.from_bytes(options[code], 'big') for code in (51, 58, 59))
+
+
 class LeaseLifetime(unittest.TestCase):
+    def test_saved_root_lease_outlasts_the_observer_deadline(self):
+        for scenario in ('persist-prime', 'persist-reboot'):
+            for changed in (False, True):
+                with self.subTest(scenario=scenario, changed=changed):
+                    timers = reply_timers(ManagerPeer(0, scenario), changed)
+                    self.assertEqual(timers, (300, 150, 262))
+                    self.assertGreater(timers[1], 120)
+
+    def test_existing_renewal_and_rebinding_timers_remain_exact(self):
+        self.assertEqual(reply_timers(Peer(0), False), (30, 8, 15))
+        self.assertEqual(reply_timers(Peer(0), True), (100, 50, 87))
+
     def test_release_after_second_selecting_ack(self):
         peer = Peer(0)
         old, new = bytes.fromhex('12345678'), bytes.fromhex('87654321')

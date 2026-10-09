@@ -4,6 +4,7 @@
 #include "boot/boot.hpp"
 #include "process/signals.hpp"
 #include "process/task.hpp"
+#include "core/random.hpp"
 
 namespace ax {
 static limine_framebuffer* framebuffer;
@@ -375,6 +376,8 @@ bool device_ready(Handle* h, bool write) {
                h->offset < (kind == Device::keyboard ? keyboard_events : mouse_events).sequence;
     if (kind == Device::serial || kind == Device::tty || kind == Device::vt)
         return write || canonical_ready(console_input, console_terminal);
+    if (kind == Device::random && h->node->device_id == 8)
+        return write ? !random_ready() : random_ready();
     return true;
 }
 
@@ -443,15 +446,9 @@ int64_t device_read(Handle* h, void* data, size_t len) {
         memset(data, 0, len);
         return len;
     case Device::random: {
-        static uint64_t state = 0x4158494f4d3634;
-        auto bytes = (uint8_t*)data;
-        for (size_t i = 0; i < len; i++) {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            bytes[i] = state;
-        }
-        return len;
+        size_t count = min(len, size_t(256));
+        int error = random_read(data, count, h->node->device_id == 9);
+        return error ? int64_t(error) : int64_t(count);
     }
     case Device::keyboard:
     case Device::mouse: {
@@ -503,6 +500,10 @@ int64_t device_write(Handle* h, const void* data, size_t len) {
     }
     if (h->node->device == Device::null || h->node->device == Device::zero)
         return len;
+    if (h->node->device == Device::random) {
+        random_mix(data, len);
+        return len;
+    }
     if (h->node->device == Device::serial || h->node->device == Device::tty ||
         h->node->device == Device::vt) {
         for (size_t i = 0; i < len; i++)
@@ -543,6 +544,17 @@ static int64_t output(uint64_t dst, const void* data, size_t len) {
 
 int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     auto kind = h->node->device;
+    if (kind == Device::random) {
+        if (request == 0x80045200) { // RNDGETENTCNT; readiness has a 256-bit threshold.
+            int count = random_ready() ? 256 : 0;
+            return output(arg, &count, sizeof(count));
+        }
+        // Crediting user-provided entropy requires the unfinished credential/seed policy.
+        if (request == 0x40045201 || request == 0x40085203 || request == 0x5204 ||
+            request == 0x5206 || request == 0x5207)
+            return -95;
+        return -25;
+    }
     if (kind == Device::block) {
         const auto info = block_info(h->node->device_id);
         if (!info)

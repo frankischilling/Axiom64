@@ -118,6 +118,8 @@ for package, archive in packages():
                     raise RuntimeError(f"unresolved package hard link: {path} -> {target}")
                 files[path] = files[target]
 
+# Saved profiles use the manager's private directory policy.
+files["etc/network"] = (0o40700, b"")
 # Keep the shell built from our pinned upstream source after importing packages.
 regular("bin/busybox", busybox)
 files["bin/sh"] = (0o120777, b"/bin/busybox")

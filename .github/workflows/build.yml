@@ -39,6 +39,7 @@ jobs:
           make build/rootfs-desktop.cpio
           make -j2 build/network-manager-dynamic build/network-manager-faults build/network-manager-dynamic-faults build/manager-tests
           make -j2 build/random-static build/random-dynamic
+          make build/init-supervision
       - name: Test split-queue ownership with sanitizers
         run: make test-virtqueue
       - name: Upload sources and recipes
@@ -86,7 +87,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [boot, network, configuration, storage, root, root-userspace, manager-bios-modern, manager-bios-legacy, manager-uefi-modern, manager-uefi-legacy, random]
+        suite: [boot, network, configuration, storage, root, root-userspace, manager-bios-modern, manager-bios-legacy, manager-uefi-modern, manager-uefi-legacy, random, normal-init-bios, normal-init-uefi]
     steps:
       - name: Download this run's test inputs
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -250,6 +251,24 @@ jobs:
             build/axiom64-disk.iso
             build/root-disk.raw
             build/disk-root-*-boot-*.raw
+      - name: Verify normal init recovery with the same desktop and console
+        if: startsWith(matrix.suite, 'normal-init-')
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          firmware=${SUITE#normal-init-}
+          case "$firmware" in bios|uefi) ;; *) exit 1 ;; esac
+          python3 scripts/normal_manager_peer_test.py 2>&1 | tee build/normal-init-peer.log
+          python3 scripts/normal_manager_test.py --firmware "$firmware"
+      - name: Upload normal init root fixtures
+        if: always() && startsWith(matrix.suite, 'normal-init-')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-root-${{ matrix.suite }}
+          if-no-files-found: error
+          path: |
+            build/normal-init-*.raw
+            build/axiom64-normal-init-*.iso
       - name: Upload saved-state root fixtures
         if: always() && matrix.suite == 'random'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -33,6 +33,15 @@ static int monotonic(struct timespec* now) {
     return 0;
 }
 
+static unsigned long long milliseconds(const struct timespec* now) {
+    return (unsigned long long)now->tv_sec * 1000 + (unsigned long long)now->tv_nsec / 1000000;
+}
+
+static void spawned(pid_t child, const struct timespec* now) {
+    printf("INIT_MANAGER_SPAWN pid=%d monotonic_ms=%llu\n", child, milliseconds(now));
+    fflush(stdout);
+}
+
 static pid_t console(void) {
     pid_t child = fork();
     if (!child) {
@@ -65,9 +74,11 @@ int main(void) {
         struct timespec retry;
         if (monotonic(&retry) < 0)
             return 1;
-        retry.tv_sec++;
         if (manager < 0)
             perror("init: network manager fork");
+        else
+            spawned(manager, &retry);
+        retry.tv_sec++;
         pid_t desktop = fork();
         if (!desktop) {
             int input = open("/dev/null", O_RDONLY);
@@ -109,6 +120,9 @@ int main(void) {
                 manager = -1;
                 if (monotonic(&retry) < 0)
                     return 1;
+                printf("INIT_MANAGER_REAP pid=%d status=%d monotonic_ms=%llu\n", child, status,
+                       milliseconds(&retry));
+                fflush(stdout);
                 retry.tv_sec++;
             }
             struct timespec now;
@@ -119,6 +133,8 @@ int main(void) {
                 manager = network();
                 if (manager < 0)
                     perror("init: network manager fork");
+                else
+                    spawned(manager, &now);
                 retry = now;
                 retry.tv_sec++;
             }

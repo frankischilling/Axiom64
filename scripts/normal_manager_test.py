@@ -29,6 +29,19 @@ class SupervisionPeer(ManagerPeer):
         self.lease_timers = self.rebound_timers = (600, 300, 525)
         self.initial_transaction = self.restart_transaction = self.pending = None
         self.approved = False
+        self.discover_transactions = []
+        self.initial_discovers = None
+        self.restart_discover_transaction = None
+
+    def packet(self, frame):
+        before = self.discovers
+        super().packet(frame)
+        if self.discovers != before:
+            self.discover_transactions.append(self.transaction.hex())
+            if (self.initial_discovers is not None and
+                    self.transaction.hex() not in self.initial_discovers and
+                    self.restart_discover_transaction is None):
+                self.restart_discover_transaction = self.transaction
 
     def send(self, frame):
         if self.healthy:
@@ -58,7 +71,9 @@ class SupervisionPeer(ManagerPeer):
 
     def counts(self):
         return dict(super().counts(), initial_transaction=(self.initial_transaction or b'').hex(),
-                    restart_transaction=(self.restart_transaction or b'').hex())
+                    restart_transaction=(self.restart_transaction or b'').hex(),
+                    discover_transactions=self.discover_transactions.copy(),
+                    restart_discover_transaction=(self.restart_discover_transaction or b'').hex())
 
     def verify_initial(self):
         if self.healthy:
@@ -69,6 +84,7 @@ class SupervisionPeer(ManagerPeer):
             check(self.discovers >= 1 and not any((self.selecting, self.probes, self.announcements,
                                                   self.releases, self.reboots)),
                   'missing peer remains unconfigured while the desktop works')
+        self.initial_discovers = tuple(self.discover_transactions)
         return self.counts()
 
     def verify(self):
@@ -79,7 +95,8 @@ class SupervisionPeer(ManagerPeer):
                   self.initial_transaction != self.restart_transaction and self.pending is None,
                   'real restarted process revalidates, probes and releases the fresh ACK')
         else:
-            check(self.discovers >= 2 and not any((self.selecting, self.reboots, self.probes,
+            check(self.discovers >= 2 and self.restart_discover_transaction and
+                  not any((self.selecting, self.reboots, self.probes,
                                                   self.announcements, self.releases)),
                   'missing peer remains isolated through both actual manager processes')
         return self.counts()
@@ -305,7 +322,8 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout):
                     check(second != first and 1000 <= spawns[1][1] - reaps[0][2] <= 10000,
                           'actual monotonic restart backoff is at least one second and bounded')
                     if (f'NETWORK_MANAGER_READY pid={second} interfaces={interfaces}' in text and
-                            all(not peer.healthy or peer.pending is not None for peer in peers)):
+                            all(peer.pending is not None if peer.healthy else
+                                peer.restart_discover_transaction is not None for peer in peers)):
                         check(f'exec pid={second} /sbin/network-manager (static ELF)' in text,
                               'PID1 execs the installed manager binary')
                         send(process, f'/bin/init-supervision revalidating {second} {mask} {interfaces}')

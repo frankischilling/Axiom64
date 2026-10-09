@@ -5,6 +5,18 @@ from normal_manager_test import SupervisionPeer
 
 
 class HeldRestartAck(unittest.TestCase):
+    def test_missing_peer_requires_a_new_process_discovery(self):
+        peer = SupervisionPeer(1, False)
+        old, new = bytes.fromhex('12345678'), bytes.fromhex('87654321')
+        peer.packet(frame(peer, old, 1))
+        peer.verify_initial()
+        peer.packet(frame(peer, old, 1))
+        self.assertFalse(peer.restart_discover_transaction)
+        peer.packet(frame(peer, new, 1))
+        self.assertEqual(peer.restart_discover_transaction, new)
+        self.assertEqual(peer.discover_transactions, [old.hex(), old.hex(), new.hex()])
+        self.assertFalse(peer.output)
+
     def test_same_transaction_retries_remain_pending(self):
         peer = SupervisionPeer(0, True)
         old, new = bytes.fromhex('12345678'), bytes.fromhex('87654321')

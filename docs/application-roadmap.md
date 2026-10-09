@@ -1,12 +1,14 @@
 # Application and library roadmap
 
-Every entry below remains in scope. A standard package may provide a required command or library API; a duplicate Axiom64 implementation is not required when the behavior matches. Native ABI adapters and custom utilities still need their own tests.
+The catalog retains all inventory entries. Entries marked `excluded` are outside the implementation scope under the 2026-10-09 Linux-only ABI decision. A standard package may provide a required command or library API; a duplicate Axiom64 implementation is not required when the behavior matches. Linux ABI adapters and custom utilities still need their own tests.
 
-`demonstrated` means a program or package-level scenario ran in the tested baseline. It does not imply every option or library API works. `bundled` means an archive is in the package lock; it has no independent compatibility claim. `planned` means there is no such current evidence. Host tools and test helpers are recorded separately from guest applications.
+`demonstrated` means a program or package-level scenario ran in the tested baseline. It does not imply every option or library API works. `bundled` means an archive is in the package lock; it has no independent compatibility claim. `planned` means there is no such current evidence. `excluded` records a target removed by the Linux-only ABI decision and makes no implementation claim. Host tools and test helpers are recorded separately from guest applications.
+
+The machine-readable catalog records locked provider aliases for MPC (`mpc1`), `libgcc`, `libstdc++`, and `liblzma` (`xz-libs`). These components are bundled. The `xz` and `zstd` commands remain planned even when a related library is bundled. Existing package names cover Xlib through `libX11`, GObject through `glib2`, SQLite through `sqlite3`, and TrueType fonts through the listed font packages.
 
 Developer tools receive the first new application compatibility work. Each entry needs a guest smoke or conformance test, documented runtime dependencies, pinned source/binary inputs, and retained license notices. [Base userland coverage](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) tracks the wider catalog; [self-hosting](feature-roadmap.md#f28-native-development-and-full-self-hosting) tracks development tools.
 
-The catalog contains 449 entries. A project can occur in more than one role; counts are inventory entries, not a promise of that many distinct runnable applications.
+The catalog contains 479 inventory entries, of which 478 remain in scope. A project can occur in more than one role; counts are inventory entries, not a promise of that many distinct runnable applications.
 
 ## Application and dependency ports
 
@@ -22,21 +24,27 @@ The catalog contains 449 entries. A project can occur in more than one role; cou
 | `bdftopcf` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `beforelight` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `binutils` | demonstrated | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
+| `bison` | planned | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
 | `bitmap` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `brotli` | bundled | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `bzip2` | bundled | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
+| `c-ares` | planned | [F14](https://github.com/frankischilling/Axiom64/issues/14) |
 | `ca-certificates` | planned | [F14](https://github.com/frankischilling/Axiom64/issues/14) |
 | `cairo` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `cde` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `cjson` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `cmake` | planned | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
+| `codex` | planned | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
 | `constype` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
+| `coreutils` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `ctwm` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `curl` | planned | [F14](https://github.com/frankischilling/Axiom64/issues/14) |
 | `dbus` | planned | [F25](https://github.com/frankischilling/Axiom64/issues/25) |
+| `diffutils` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `disasterparty` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `e2fsprogs` | planned | [F18](https://github.com/frankischilling/Axiom64/issues/18) |
 | `e2tools` | planned | [F18](https://github.com/frankischilling/Axiom64/issues/18) |
+| `editline` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `editres` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `elinks` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `encodings` | bundled | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
@@ -45,6 +53,7 @@ The catalog contains 449 entries. A project can occur in more than one role; cou
 | `faad2` | planned | [F24](https://github.com/frankischilling/Axiom64/issues/24) |
 | `fdk-aac` | planned | [F24](https://github.com/frankischilling/Axiom64/issues/24) |
 | `file` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
+| `findutils` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `flac` | planned | [F24](https://github.com/frankischilling/Axiom64/issues/24) |
 | `flex` | planned | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
 | `font-adobe-100dpi` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
@@ -65,9 +74,11 @@ The catalog contains 449 entries. A project can occur in more than one role; cou
 | `fslsfonts` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `fstobdf` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `fvwm3` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
+| `gawk` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `gcc` | demonstrated | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
 | `gdb` | planned | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
 | `gdk-pixbuf` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
+| `gettext` | planned | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
 | `glib` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `glib1` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `glib2` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
@@ -76,12 +87,15 @@ The catalog contains 449 entries. A project can occur in more than one role; cou
 | `grub` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `gtk1` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `gtk2` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
+| `guile` | planned | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
 | `gzip` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `harfbuzz` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `hexchat` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `iceauth` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `ico` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
+| `icu` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `inetutils` | planned | [F14](https://github.com/frankischilling/Axiom64/issues/14) |
+| `kde` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `ldns` | planned | [F14](https://github.com/frankischilling/Axiom64/issues/14) |
 | `less` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `libarchive` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
@@ -92,15 +106,19 @@ The catalog contains 449 entries. A project can occur in more than one role; cou
 | `libffi` | bundled | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `libfontenc` | bundled | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `libFS` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
+| `libgcc` | bundled | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
 | `libhubbub` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `libICE` | bundled | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `libiconv` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `libjpeg` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
+| `liblzma` | bundled | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `libogg` | planned | [F24](https://github.com/frankischilling/Axiom64/issues/24) |
 | `libopus` | planned | [F24](https://github.com/frankischilling/Axiom64/issues/24) |
 | `libparserutils` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `libpng` | bundled | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `libSM` | bundled | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
+| `libssh2` | planned | [F14](https://github.com/frankischilling/Axiom64/issues/14) |
+| `libstdc++` | bundled | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
 | `libtirpc` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `libtool` | planned | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
 | `liburcu` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
@@ -137,10 +155,14 @@ The catalog contains 449 entries. A project can occur in more than one role; cou
 | `libXtst` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `libXv` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `libXxf86vm` | bundled | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
+| `lightdm` | planned | [F25](https://github.com/frankischilling/Axiom64/issues/25) |
 | `links` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `listres` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `lmdb` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
+| `lua` | planned | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
 | `luit` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
+| `lxdm` | planned | [F25](https://github.com/frankischilling/Axiom64/issues/25) |
+| `ly` | planned | [F25](https://github.com/frankischilling/Axiom64/issues/25) |
 | `m4` | planned | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
 | `make` | demonstrated | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
 | `mandoc` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
@@ -150,6 +172,7 @@ The catalog contains 449 entries. A project can occur in more than one role; cou
 | `mksh` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `motif` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `motifgpt` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
+| `mpc` | bundled | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
 | `mpfr` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `mpg123` | planned | [F24](https://github.com/frankischilling/Axiom64/issues/24) |
 | `musl` | bundled | [F08](https://github.com/frankischilling/Axiom64/issues/8) |
@@ -164,7 +187,11 @@ The catalog contains 449 entries. A project can occur in more than one role; cou
 | `openssl` | planned | [F14](https://github.com/frankischilling/Axiom64/issues/14) |
 | `opusfile` | planned | [F24](https://github.com/frankischilling/Axiom64/issues/24) |
 | `pango` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
+| `patch` | planned | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
+| `pcre` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
+| `pcre2` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `perl` | planned | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
+| `php` | planned | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
 | `pixman` | bundled | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `pkg-config` | planned | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
 | `posixtestsuite` | planned | [F35](https://github.com/frankischilling/Axiom64/issues/36) |
@@ -177,6 +204,8 @@ The catalog contains 449 entries. A project can occur in more than one role; cou
 | `rgb` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `rogue` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `rpcbind` | planned | [F25](https://github.com/frankischilling/Axiom64/issues/25) |
+| `ruby` | planned | [F28](https://github.com/frankischilling/Axiom64/issues/28) |
+| `screen` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `sdl12-compat` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `sdl2-compat` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `sdl3` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
@@ -203,6 +232,7 @@ The catalog contains 449 entries. A project can occur in more than one role; cou
 | `vim` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `wayland` | bundled | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `weston` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
+| `wget` | planned | [F14](https://github.com/frankischilling/Axiom64/issues/14) |
 | `x11perf` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `xauth` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `xbacklight` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
@@ -263,8 +293,10 @@ The catalog contains 449 entries. A project can occur in more than one role; cou
 | `xwd` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `xwininfo` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `xwud` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
+| `xz` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `zlib` | bundled | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `zsh` | demonstrated | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
+| `zstd` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 
 ## Base commands and demonstrations
 
@@ -336,7 +368,7 @@ The catalog contains 449 entries. A project can occur in more than one role; cou
 | `last` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `ld.so` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `ldd` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
-| `ldtctl` | planned | [F32](https://github.com/frankischilling/Axiom64/issues/33) |
+| `ldtctl` | planned | [F29](https://github.com/frankischilling/Axiom64/issues/29) |
 | `ln` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `login` | planned | [F25](https://github.com/frankischilling/Axiom64/issues/25) |
 | `ls` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
@@ -423,7 +455,7 @@ The catalog contains 449 entries. A project can occur in more than one role; cou
 | `write` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `xargs` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
 | `xawdemo` | planned | [F23](https://github.com/frankischilling/Axiom64/issues/23) |
-| `xenix` | planned | [F32](https://github.com/frankischilling/Axiom64/issues/33) |
+| `xenix` | excluded | [F32](https://github.com/frankischilling/Axiom64/issues/33) |
 | `yacc` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 | `yes` | planned | [F36](https://github.com/frankischilling/Axiom64/issues/37) |
 

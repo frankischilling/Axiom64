@@ -37,7 +37,7 @@ jobs:
         run: |
           make -j2 image
           make build/rootfs-desktop.cpio
-          make -j2 build/network-manager-dynamic build/network-manager-faults build/network-manager-dynamic-faults build/manager-tests
+          make -j2 build/network-manager-dynamic build/network-manager-faults build/network-manager-dynamic-faults build/manager-tests build/manager-protocol
           make -j2 build/random-static build/random-dynamic
           make build/init-supervision
       - name: Test split-queue ownership with sanitizers
@@ -87,7 +87,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [boot, network, configuration, storage, root, root-userspace, manager-bios-modern, manager-bios-legacy, manager-uefi-modern, manager-uefi-legacy, random, normal-init-bios, normal-init-uefi]
+        suite:
+          - boot
+          - network
+          - configuration
+          - storage
+          - root
+          - root-userspace
+          - manager-bios-modern
+          - manager-bios-legacy
+          - manager-uefi-modern
+          - manager-uefi-legacy
+          - random
+          - normal-init-bios
+          - normal-init-uefi
+          - protocol-bios-modern-lane0
+          - protocol-bios-modern-lane1
+          - protocol-bios-legacy-lane0
+          - protocol-bios-legacy-lane1
+          - protocol-uefi-modern-lane0
+          - protocol-uefi-modern-lane1
+          - protocol-uefi-legacy-lane0
+          - protocol-uefi-legacy-lane1
     steps:
       - name: Download this run's test inputs
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -204,6 +225,22 @@ jobs:
             *) exit 2 ;;
           esac
           python3 scripts/manager_test.py --firmware "$firmware" --transport "$transport"
+      - name: Test protocol peer packet shapes and serial controller barriers
+        if: startsWith(matrix.suite, 'protocol-')
+        run: python3 scripts/manager_protocol_peer_test.py 2>&1 | tee build/manager-protocol-peer.log
+      - name: Test actual manager DHCP rejection, lease lifetimes, and conflict recovery
+        if: startsWith(matrix.suite, 'protocol-')
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          case "$SUITE" in
+            protocol-bios-modern-lane[01]|protocol-bios-legacy-lane[01]|protocol-uefi-modern-lane[01]|protocol-uefi-legacy-lane[01]) ;;
+            *) exit 2 ;;
+          esac
+          firmware=${SUITE#protocol-}; firmware=${firmware%%-*}
+          transport=${SUITE#protocol-"$firmware"-}; transport=${transport%%-*}
+          affected=${SUITE##*-lane}
+          python3 scripts/manager_protocol_test.py --firmware "$firmware" --transport "$transport" --affected "$affected"
       - name: Test counter scaling and ACPI discovery with sanitizers
         if: matrix.suite == 'configuration'
         run: make test-clock-codec 2>&1 | tee build/clock-codec.log
@@ -288,6 +325,7 @@ jobs:
             build/*.trace
             build/*.gdb
             build/*results.json
+            build/manager-protocol-*-packets.json
             build/*.png
             build/*.dump
 

@@ -387,6 +387,9 @@ static int64_t attempt(Task& task, IoRequest& request) {
     size_t done = 0;
     int64_t result = 0;
     uint64_t old_offset = h->offset;
+    // Scalar empty reads reach device readiness; empty readv requests keep their shortcut.
+    if (f.rax == 0 && !request.single.length)
+        result = f.rsi >= user_limit ? -14 : read_handle(h, nullptr, 0);
     if (request.positioned)
         h->offset = f.r10;
     for (size_t i = 0; i < request.count; i++) {

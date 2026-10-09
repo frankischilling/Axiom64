@@ -263,7 +263,7 @@ Acceptance evidence:
 
 ### F10. Secure random number generation
 
-Current random bytes are not a cryptographic random generator.
+[Kernel randomness](random.md) replaces the fixed stream with a BLAKE2s/ChaCha20 generator, trusted RDSEED seeding/reseeding, and checked initialization semantics. Child #84 covers this slice and fresh-root transaction regression evidence. The full feature remains open for persisted seed rotation, further validated entropy sources, credential-gated administration, and real cryptographic clients.
 
 Required work:
 

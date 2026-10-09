@@ -38,6 +38,7 @@ jobs:
           make -j2 image
           make build/rootfs-desktop.cpio
           make -j2 build/network-manager-dynamic build/network-manager-faults build/network-manager-dynamic-faults build/manager-tests
+          make -j2 build/random-static build/random-dynamic
       - name: Test split-queue ownership with sanitizers
         run: make test-virtqueue
       - name: Upload sources and recipes
@@ -85,7 +86,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [boot, network, configuration, storage, root, root-userspace, manager-bios-modern, manager-bios-legacy, manager-uefi-modern, manager-uefi-legacy]
+        suite: [boot, network, configuration, storage, root, root-userspace, manager-bios-modern, manager-bios-legacy, manager-uefi-modern, manager-uefi-legacy, random]
     steps:
       - name: Download this run's test inputs
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -177,6 +178,15 @@ jobs:
       - name: Test static address transitions and checked completion with sanitizers
         if: matrix.suite == 'manager-bios-modern'
         run: make test-static-address
+      - name: Test cryptographic vectors and random source transitions with sanitizers
+        if: matrix.suite == 'random'
+        run: make test-random-native 2>&1 | tee build/random-native.log
+      - name: Test initialized and early random interfaces with both musl linkages
+        if: matrix.suite == 'random'
+        run: python3 scripts/random_test.py --reseed --timeout 150
+      - name: Test saved manager hints across independent ext2-root kernel boots
+        if: matrix.suite == 'random'
+        run: python3 scripts/manager_reboot_test.py
       - name: Test peer release validation across process and lease lifetimes
         if: matrix.suite == 'manager-bios-modern'
         run: python3 scripts/manager_peer_test.py
@@ -240,6 +250,15 @@ jobs:
             build/axiom64-disk.iso
             build/root-disk.raw
             build/disk-root-*-boot-*.raw
+      - name: Upload saved-state root fixtures
+        if: always() && matrix.suite == 'random'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-manager-persistent-root
+          if-no-files-found: error
+          path: |
+            build/manager-persistent-*.raw
+            build/axiom64-manager-persistent-*.iso
       - name: Upload test evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

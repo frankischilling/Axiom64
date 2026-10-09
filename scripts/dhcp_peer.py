@@ -31,6 +31,8 @@ class Peer:
         self.probes = self.announcements = self.resolutions = 0
         self.transaction = None
         self.ack_server = None
+        self.lease_timers = (30, 8, 15)
+        self.rebound_timers = (100, 50, 87)
 
     def send(self, frame):
         self.output += struct.pack('!I', len(frame)) + frame
@@ -42,13 +44,13 @@ class Peer:
         message[16:20] = self.address
         message[28:34] = self.guest
         message[236:240] = bytes.fromhex('63825363')
+        lease, renewal, rebinding = self.rebound_timers if changed else self.lease_timers
         options = [(53, bytes([kind])), (54, self.other if changed else self.ip),
             (61, b'\x01' + self.guest), (1, bytes.fromhex('ffffff80' if changed else 'ffffff00')),
             (3, self.other if changed else self.ip),
             (6, bytes([10, 23, self.lane + 1, 99 if kind == 2 else 54 if changed else 53])),
-            (15, b'lab.example'), (51, struct.pack('!I', 100 if changed else 30)),
-            (58, struct.pack('!I', 50 if changed else 8)),
-            (59, struct.pack('!I', 87 if changed else 15))]
+            (15, b'lab.example'), (51, struct.pack('!I', lease)),
+            (58, struct.pack('!I', renewal)), (59, struct.pack('!I', rebinding))]
         for code, data in options:
             message += bytes([code, len(data)]) + data
         message += b'\xff'

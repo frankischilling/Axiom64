@@ -14,7 +14,7 @@ SCENARIOS = ('concurrent', 'missing', 'static', 'conflict', 'defense', 'disabled
              'hint-sync', 'resolver', 'hint-remove', 'close')
 
 
-def fixture(linkage, scenario):
+def fixture(linkage, scenario, root='/tmp', build_image=True):
     subprocess.run(['make', '-j2', 'build/axiom64.elf', 'build/init', 'busybox',
                     'build/manager-tests', 'build/network-manager',
                     'build/network-manager-dynamic', 'build/network-manager-faults',
@@ -35,7 +35,7 @@ def fixture(linkage, scenario):
                          ('lib/ld-musl-x86_64.so.1', Path('/lib/ld-musl-x86_64.so.1').resolve())]:
         files[name] = (0o100755, Path(source).read_bytes())
     binary = 'network-manager-dynamic' if linkage == 'dynamic' else 'network-manager'
-    script = f'#!/bin/sh\nset -e\n/bin/manager-tests /sbin/{binary} {scenario} /tmp\necho AXIOM64_TESTS_PASS\n'
+    script = f'#!/bin/sh\nset -e\n/bin/manager-tests /sbin/{binary} {scenario} {root}\necho AXIOM64_TESTS_PASS\n'
     files['etc/net-test.sh'] = (0o100755, script.encode())
     with (ROOT / 'build/rootfs-network.cpio').open('wb') as output:
         for inode, (name, (mode, data)) in enumerate([*sorted(files.items()), ('TRAILER!!!', (0, b''))], 1):
@@ -45,19 +45,24 @@ def fixture(linkage, scenario):
             output.write(bytes(-output.tell() % 4))
             output.write(data)
             output.write(bytes(-output.tell() % 4))
-    subprocess.run(['python3', 'scripts/image.py', '--test', '--suite', 'network',
-                    '--output-name', f'axiom64-manager-{linkage}.iso'], cwd=ROOT, check=True)
+    if build_image:
+        subprocess.run(['python3', 'scripts/image.py', '--test', '--suite', 'network',
+                        '--output-name', f'axiom64-manager-{linkage}.iso'], cwd=ROOT, check=True)
 
 
-def run(linkage, scenario, firmware, transport, timeout, repetition=0):
+def run(linkage, scenario, firmware, transport, timeout, repetition=0, root_disk=None, image=None):
     label = f'manager-{scenario}-{linkage}-{firmware}-{transport}' + (f'-repeat{repetition}' if repetition else '')
     log = ROOT / 'build' / (label + '.log')
     selector = selectors.DefaultSelector()
     servers, peers = [], [ManagerPeer(0, scenario), ManagerPeer(1, scenario)]
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '512M',
-               '-cdrom', str(ROOT / 'build' / f'axiom64-manager-{linkage}.iso'), '-nic', 'none',
+               '-cdrom', str(image or ROOT / 'build' / f'axiom64-manager-{linkage}.iso'), '-nic', 'none',
                '-display', 'none', '-serial', 'stdio', '-monitor', 'none', '-no-reboot',
                '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
+    if root_disk:
+        mode = 'disable-legacy=on' if transport == 'modern' else 'disable-modern=on'
+        command += ['-drive', f'if=none,id=root,format=raw,cache=writeback,file={root_disk}',
+                    '-device', f'virtio-blk-pci,drive=root,{mode},rerror=report,werror=report,addr=6']
     for lane, model in enumerate(['virtio-net-pci', 'e1000']):
         server = socket.socket()
         server.bind(('127.0.0.1', 0))
@@ -140,8 +145,13 @@ def run(linkage, scenario, firmware, transport, timeout, repetition=0):
                     peer.connection.close()
     text = log.read_text(errors='replace')
     required = [f'MANAGER_TEST_PASS scenario={scenario} processes=checked resolver=merged manual=preserved',
-                'NETWORK_MANAGER_EXIT status=0', 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0',
+                'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0',
                 f'Firmware: {firmware.upper()}']
+    if scenario != 'persist-prime':
+        required.append('NETWORK_MANAGER_EXIT status=0')
+    if root_disk:
+        required += ['VFS_ROOT_PASS filesystem=ext2 device=/dev/vda readonly=0',
+                     'MANAGER_PERSIST_PRIME_PASS' if scenario == 'persist-prime' else 'MANAGER_PERSIST_REBOOT_PASS']
     missing = [marker for marker in required if marker not in text]
     counts = [peer.counts() for peer in peers]
     if error is None and returncode == 1 and not missing:

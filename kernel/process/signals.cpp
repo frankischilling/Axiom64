@@ -96,8 +96,9 @@ void signal_interrupt(Task& task) {
         return; // Default delivery chooses group stop or termination.
     }
     bool restart =
-        (flags & 0x10000000) && (task.wait == Wait::read || task.wait == Wait::write ||
-                                 task.wait == Wait::child || task.wait == Wait::file_lock);
+        (flags & 0x10000000) &&
+        (task.wait == Wait::read || task.wait == Wait::write || task.wait == Wait::child ||
+         task.wait == Wait::file_lock || task.wait == Wait::random);
     // A caught signal ends this attempt. SA_RESTART re-enters with a fresh fd lookup.
     io_discard(task);
     if (task.handlers->signal_actions[signal - 1][0] > 1 && !restart) {

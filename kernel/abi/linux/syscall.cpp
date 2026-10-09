@@ -10,6 +10,8 @@
 #include "net/inet.hpp"
 #include "net/netlink.hpp"
 #include "core/time.hpp"
+#include "core/random.hpp"
+#include "core/random/primitives.hpp"
 
 namespace ax {
 struct LinuxStat {
@@ -1216,17 +1218,31 @@ static int64_t dispatch(Frame* f) {
         return d ? copy_result(d, limit, sizeof(limit)) : 0;
     }
     case 318: {
-        if (c & ~7)
+        unsigned flags = c;
+        if ((flags & ~7u) || (flags & 6u) == 6u)
             return -22;
-        if (!current->memory->space.valid(a, b, true))
+        if (!random_ready() && !(flags & 4u))
+            return flags & 1u ? -11 : block(Wait::random);
+        uint64_t length = min(b, uint64_t(0x7ffff000)); // Linux MAX_RW_COUNT.
+        if (a >= user_limit || length > user_limit - a)
             return -14;
+        // Small ready reads complete atomically. Large reads may return a short result.
+        if (b > 256 && signal_wakes(*current))
+            return -4;
         uint8_t bytes[256];
         size_t done = 0;
-        Handle temporary{lookup("/dev/urandom"), nullptr, 0, 0, 1, false};
-        while (done < b) {
-            size_t n = min(size_t(b - done), sizeof(bytes));
-            read_handle(&temporary, bytes, n);
-            current->memory->space.copy_out(a + done, bytes, n);
+        size_t wanted = min(size_t(length), size_t(4096));
+        while (done < wanted) {
+            size_t n = min(wanted - done, sizeof(bytes));
+            if (!current->memory->space.valid(a + done, n, true))
+                return done ? int64_t(done) : -14;
+            int error = random_read(bytes, n, flags & 4u);
+            if (error)
+                return done ? int64_t(done) : error;
+            bool copied = current->memory->space.copy_out(a + done, bytes, n);
+            random::erase(bytes, sizeof(bytes));
+            if (!copied)
+                return done ? int64_t(done) : -14;
             done += n;
         }
         return done;

@@ -7,6 +7,8 @@
 #include "io/io.hpp"
 #include "net/ethernet.hpp"
 #include "core/time.hpp"
+#include "core/random.hpp"
+#include "core/random/primitives.hpp"
 
 namespace ax {
 Task tasks[max_tasks];
@@ -342,6 +344,9 @@ static bool awaken(Task& t) {
         break;
     case Wait::signal:
         break;
+    case Wait::random:
+        ready = random_ready();
+        break;
     case Wait::futex:
         ready = futex_ready(t);
         break;
@@ -365,6 +370,7 @@ Frame* schedule(Frame* f, bool yield) {
         return &current->frame;
     unsigned start = current ? unsigned(current - tasks) + 1 : 0;
     for (;;) {
+        random_refresh(ticks);
         net_poll();
         epoll_notify();
         for (unsigned i = 0; i < max_tasks; i++) {
@@ -552,17 +558,13 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
     }
     uint64_t platform = push_string("x86_64"), execfn = push_string(path);
     uint8_t random[16];
-    uint64_t seed;
-    asm volatile("rdtsc" : "=a"(seed)::"rdx");
-    for (auto& byte : random) {
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
-        byte = seed;
-    }
+    // Like early Linux exec, AT_RANDOM must not prevent init from bootstrapping entropy.
+    // Before readiness these bytes have the same explicit limitation as GRND_INSECURE.
+    random_read(random, sizeof(random), true);
     sp -= 16;
     uint64_t randptr = sp;
     memory.copy_out(sp, random, 16);
+    ax::random::erase(random, sizeof(random));
     uint64_t aux[] = {3,  image.phdr,
                       4,  sizeof(ProgramHeader),
                       5,  image.phnum,

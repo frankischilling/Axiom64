@@ -30,6 +30,7 @@ class Peer:
         self.discovers = self.selecting = self.renewals = self.rebindings = self.releases = 0
         self.probes = self.announcements = self.resolutions = 0
         self.transaction = None
+        self.ack_server = None
 
     def send(self, frame):
         self.output += struct.pack('!I', len(frame)) + frame
@@ -53,6 +54,8 @@ class Peer:
         message += b'\xff'
         udp = bytearray(struct.pack('!HHHH', 67, 68, len(message) + 8, 0) + message)
         source = self.other if changed else self.ip
+        if kind == 5:
+            self.ack_server = source
         destination = b'\xff' * 4
         pseudo = source + destination + bytes([0, 17]) + struct.pack('!H', len(udp))
         struct.pack_into('!H', udp, 6, checksum(pseudo + udp) or 65535)
@@ -135,7 +138,7 @@ class Peer:
             self.answer(5, transaction, changed=True)
         elif kind == b'\x07':
             self.releases += 1
-            server = self.other if self.rebindings else self.ip
+            server = self.ack_server
             check(configured and ip[12:16] == self.address and ip[16:20] == server and
                   options.get(54) == server and 50 not in options and 55 not in options and
                   12 not in options and message[10:12] == b'\0\0', 'RELEASE fields for the last ACK server')

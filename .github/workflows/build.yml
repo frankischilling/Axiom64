@@ -177,6 +177,9 @@ jobs:
       - name: Test static address transitions and checked completion with sanitizers
         if: matrix.suite == 'manager-bios-modern'
         run: make test-static-address
+      - name: Test peer release validation across process and lease lifetimes
+        if: matrix.suite == 'manager-bios-modern'
+        run: python3 scripts/manager_peer_test.py
       - name: Test actual concurrent manager processes, wire exchanges, and publication/teardown failures
         if: startsWith(matrix.suite, 'manager-')
         env:

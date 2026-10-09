@@ -9,44 +9,9 @@ import shutil
 import socket
 import subprocess
 import time
-from fetch import ROOT, LOCK
+from fetch import ROOT
 from manager_protocol_peer import ProtocolPeer, SCENARIOS, check
-
-
-def fixture(linkage, scenario, affected):
-    subprocess.run(['make', '-j2', 'build/axiom64.elf', 'build/init', 'busybox',
-                    'build/manager-protocol', 'build/network-manager',
-                    'build/network-manager-dynamic'], cwd=ROOT, check=True)
-    expected = json.loads((ROOT / 'sources.lock.json').read_text())['build_musl']['version']
-    check(subprocess.check_output(['dpkg-query', '-W', '-f=${Version}', 'musl-dev'], text=True) == expected,
-          'fixture uses the pinned musl build version')
-    files = {name: (0o40755, b'') for name in
-             ['bin', 'sbin', 'etc', 'dev', 'proc', 'sys', 'tmp', 'run', 'root', 'lib']}
-    sources = [('sbin/init', ROOT / 'build/init'),
-               ('bin/busybox', ROOT / 'build' / f"busybox-{LOCK['busybox']['version']}" / 'busybox'),
-               ('bin/manager-protocol', ROOT / 'build/manager-protocol'),
-               ('sbin/network-manager', ROOT / 'build/network-manager'),
-               ('sbin/network-manager-dynamic', ROOT / 'build/network-manager-dynamic'),
-               ('lib/ld-musl-x86_64.so.1', Path('/lib/ld-musl-x86_64.so.1').resolve())]
-    files.update({name: (0o100755, source.read_bytes()) for name, source in sources})
-    binary = 'network-manager-dynamic' if linkage == 'dynamic' else 'network-manager'
-    script = (f'#!/bin/sh\nset -e\n/bin/manager-protocol /sbin/{binary} {scenario} /tmp {affected}\n'
-              'echo AXIOM64_TESTS_PASS\n')
-    files['etc/net-test.sh'] = (0o100755, script.encode())
-    temporary = ROOT / 'build/rootfs-manager-protocol.cpio'
-    with temporary.open('wb') as output:
-        for inode, (name, (mode, data)) in enumerate([*sorted(files.items()), ('TRAILER!!!', (0, b''))], 1):
-            encoded = name.encode() + b'\0'
-            fields = [inode, mode, 0, 0, 1, 0, len(data), 0, 0, 0, 0, len(encoded), 0]
-            output.write(b'070701' + b''.join(f'{value:08x}'.encode() for value in fields) + encoded)
-            output.write(bytes(-output.tell() % 4))
-            output.write(data)
-            output.write(bytes(-output.tell() % 4))
-    temporary.replace(ROOT / 'build/rootfs-network.cpio')
-    image = f'axiom64-manager-protocol-{scenario}-{linkage}-lane{affected}.iso'
-    subprocess.run(['python3', 'scripts/image.py', '--test', '--suite', 'network',
-                    '--output-name', image], cwd=ROOT, check=True)
-    return ROOT / 'build' / image
+from manager_image import fixture
 
 
 class Controller:

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "io/io.hpp"
+#include "core/time.hpp"
 #include "fs/file_lock.hpp"
 #include "ipc/ipc.hpp"
 #include "process/signals.hpp"
@@ -28,6 +29,8 @@ struct IoRequest {
     size_t count;
     unsigned flags;
     bool write, socket, accept, positioned, locking;
+    bool timed;
+    uint64_t deadline;
     PacketAddress destination;
     unsigned destination_index;
     InetAddress inet_destination;
@@ -52,6 +55,29 @@ void io_discard(Task& task) {
     auto request = task.io;
     task.io = nullptr;
     destroy(request);
+}
+
+bool io_restartable(const Task& task) {
+    return !task.io || !task.io->timed;
+}
+
+static void capture_timeout(IoRequest& request) {
+    auto h = request.handle;
+    if (request.locking || (!h->socket && !h->inet && !h->packet && !h->netlink))
+        return;
+    auto timeout = request.write ? h->send_timeout : h->receive_timeout;
+    if (!timeout.finite)
+        return;
+    clock_refresh();
+    request.timed = true;
+    request.deadline = timeout.ticks > UINT64_MAX - ticks ? UINT64_MAX : ticks + timeout.ticks;
+}
+
+static bool timeout_expired(const IoRequest& request) {
+    if (!request.timed)
+        return false;
+    clock_refresh();
+    return ticks >= request.deadline;
 }
 
 static int import_vectors(Task& task, IoRequest& request, uint64_t pointer, size_t count) {
@@ -447,7 +473,11 @@ int64_t io_syscall(Task& task, const Frame& frame) {
     request->call = frame;
     retain(h);
     int error = prepare(task, *request);
+    if (!error)
+        capture_timeout(*request);
     int64_t result = error ? error : attempt(task, *request);
+    if (result == would_block && timeout_expired(*request))
+        result = -11;
     if (result == would_block) {
         task.io = request;
         task.state = State::blocked;
@@ -464,11 +494,14 @@ bool io_resume(Task& task) {
         panic("blocked I/O without request");
     if (!request->locking && !request->handle->packet && !request->handle->inet &&
         !request->handle->netlink && !handle_ready(request->handle, request->write) &&
-        !(request->handle->flags & 04000))
+        !(request->handle->flags & 04000) && !timeout_expired(*request))
         return false;
     int64_t result = attempt(task, *request);
-    if (result == would_block)
-        return false;
+    if (result == would_block) {
+        if (!timeout_expired(*request))
+            return false;
+        result = -11;
+    }
     // Commit the result before signal delivery; handlers have their own syscall state.
     task.frame.rip += 2;
     task.frame.rax = result;

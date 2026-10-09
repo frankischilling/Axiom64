@@ -7,8 +7,9 @@ class ManagerPeer(Peer):
     def __init__(self, lane, scenario):
         super().__init__(lane)
         self.scenario = scenario
-        if scenario.startswith('persist-'):
-            # Saved-state checks complete within 120 s; lease renewal is a separate fixture.
+        if scenario != 'concurrent':
+            # Composition checks stop/restart within 110 s; saved-state checks
+            # finish within 120 s. Renewal/rebinding has its own fixture.
             self.lease_timers = self.rebound_timers = (300, 150, 262)
         self.reboots = self.conflicts = 0
 

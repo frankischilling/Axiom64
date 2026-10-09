@@ -33,11 +33,18 @@ case "${1:-}" in
           awk '$0 != "installed" {missing = 1} END {exit missing}'; then
         exit 0
       fi
-      echo 'Shared packages do not satisfy this runner; installing from Ubuntu repositories.'
+      echo 'Local install needs repository resolution; reusing shared packages.'
     fi
-    # A runner image change can require dependencies absent from the build host.
+    # Repository metadata or runner dependencies may differ from the build host.
+    # Keep verified archives available so APT only downloads missing packages.
+    cache="${RUNNER_TEMP:?RUNNER_TEMP is required}/axiom64-apt"
+    mkdir -p "$cache/partial"
+    if ((${#packages[@]})); then
+      cp "${packages[@]}" "$cache/"
+    fi
     sudo apt-get update
-    sudo apt-get install -y --no-install-recommends "${tools[@]}"
+    sudo apt-get -o "Dir::Cache::archives=$cache" \
+      install -y --no-install-recommends "${tools[@]}"
     ;;
   *)
     echo 'Usage: tools.sh prepare|restore' >&2

@@ -41,7 +41,7 @@ class Routing {
     int fd_ = -1;
     uint32_t port_ = 0, sequence_ = 0;
 
-    void close();
+    int close();
 
     int send(void*, size_t, uint32_t&);
 

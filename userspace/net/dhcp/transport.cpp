@@ -94,14 +94,16 @@ Transport::~Transport() {
     close();
 }
 
-void Transport::close() {
+int Transport::close() {
+    int error = 0;
     const int descriptors[]{unicast_, broadcast_, packet_, control_};
     for (int fd : descriptors)
-        if (fd >= 0)
-            ::close(fd);
+        if (fd >= 0 && ::close(fd) < 0 && !error)
+            error = errno;
     control_ = packet_ = broadcast_ = unicast_ = -1;
     address_ = 0;
     local_count_ = 0;
+    return error;
 }
 
 int Transport::udp(uint32_t address) {
@@ -128,7 +130,9 @@ int Transport::udp(uint32_t address) {
 }
 
 int Transport::open(const Interface& information) {
-    close();
+    int closed = close();
+    if (closed)
+        return closed;
     interface_ = information;
     if (!information.index || information.index > 8 || !information.name[0] ||
         strnlen(information.name, 16) == 16)
@@ -184,8 +188,11 @@ int Transport::configured(uint32_t address) {
     if (address == address_)
         return 0;
     if (unicast_ >= 0) {
-        ::close(unicast_);
+        int result = ::close(unicast_);
         unicast_ = -1;
+        address_ = 0;
+        if (result < 0)
+            return errno;
     }
     address_ = 0;
     if (!address)

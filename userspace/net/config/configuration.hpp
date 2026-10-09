@@ -24,7 +24,7 @@ class Configuration {
 
     int open(const dhcp::Interface&, const Store& runtime);
 
-    void close();
+    int close();
 
     int apply(uint32_t address, const dhcp::Parameters&, unsigned metric = 0,
               uint8_t protocol = 16);

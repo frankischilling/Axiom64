@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install build and emulation tools
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends g++ make musl-tools linux-libc-dev nasm python3 xorriso qemu-system-x86 ovmf xfonts-utils e2fsprogs clang-format-20 nbdkit nbdkit-plugin-python gdb iproute2
+        run: bash scripts/ci/tools.sh prepare
       - name: Cache locked dependency and source archives
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -126,7 +126,7 @@ jobs:
       - name: Restore source and build together
         run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
       - name: Install build and emulation tools
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends g++ make musl-tools linux-libc-dev nasm python3 xorriso qemu-system-x86 ovmf xfonts-utils e2fsprogs nbdkit nbdkit-plugin-python gdb iproute2
+        run: bash scripts/ci/tools.sh restore
 
       - name: Test BIOS and UEFI userspace
         if: matrix.suite == 'boot'

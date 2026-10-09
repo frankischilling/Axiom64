@@ -797,7 +797,7 @@ int64_t read_handle(Handle* h, void* buf, size_t len) {
     if ((h->flags & 3) == 1)
         return -9;
     if (!len)
-        return 0;
+        return h->node && h->node->device == Device::random ? device_read(h, buf, 0) : 0;
     if (h->socket)
         return socket_read(h->socket, buf, len);
     if (h->packet)

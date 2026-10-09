@@ -81,6 +81,7 @@ static void generator() {
         seed[i] = i;
     memset(output, 0xa5, sizeof(output));
     assert(!unready.ready() && unready.read(output, sizeof(output)) == -11);
+    assert(unready.read(nullptr, 0) == -11);
     for (auto byte : output)
         assert(byte == 0xa5);
     unready.mix(seed, sizeof(seed));

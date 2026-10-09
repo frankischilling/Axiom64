@@ -83,7 +83,7 @@ def run(linkage, mode, firmware, repetition, timeout, reseed=False):
     else:
         markers += ['RANDOM_UNREADY_PASS'] + [
             f'RANDOM_WAIT_PASS operation={operation} restart={restart} result={"retry" if operation == "getentropy" else "EINTR"} observer=progress'
-            for operation in ('getrandom', 'getentropy', 'device') for restart in (0, 1)]
+            for operation in ('getrandom', 'getentropy', 'device', 'device-zero') for restart in (0, 1)]
     missing = [marker for marker in markers if marker not in text]
     sample = re.findall(rf'RANDOM_SAMPLE linkage={linkage} value=([0-9a-f]{{64}})', text)
     if mode == 'cpu' and len(sample) != 1:

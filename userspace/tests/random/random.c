@@ -13,6 +13,7 @@
 #include <sys/mman.h>
 #include <sys/random.h>
 #include <sys/syscall.h>
+#include <sys/uio.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -81,15 +82,16 @@ static void interrupted(const char* operation, int restart) {
         action.sa_flags = 0;
         check(sigaction(SIGUSR2, &action, NULL) == 0, "final interrupt handler");
         int fd = -1;
-        if (!strcmp(operation, "device")) {
+        if (!strcmp(operation, "device") || !strcmp(operation, "device-zero")) {
             fd = open("/dev/random", O_RDONLY);
             check(fd >= 0, "blocking random device");
         }
         check(write(event_fd, "R", 1) == 1, "wait observer ready");
         uint8_t bytes[16];
-        ssize_t result = fd >= 0                            ? read(fd, bytes, sizeof(bytes))
-                         : !strcmp(operation, "getentropy") ? getentropy(bytes, sizeof(bytes))
-                                                            : getrandom(bytes, sizeof(bytes), 0);
+        ssize_t result =
+            fd >= 0 ? read(fd, bytes, !strcmp(operation, "device-zero") ? 0 : sizeof(bytes))
+            : !strcmp(operation, "getentropy") ? getentropy(bytes, sizeof(bytes))
+                                               : getrandom(bytes, sizeof(bytes), 0);
         check(result == -1 && errno == EINTR && caught == (restart ? 2 : 1),
               "interrupted uninitialized operation");
         if (fd >= 0)
@@ -139,6 +141,14 @@ static void unready(int random_fd, int urandom_fd) {
     check(getrandom(NULL, 0, GRND_NONBLOCK) == -1 && errno == EAGAIN,
           "zero-length initialized request still observes readiness");
     check(read(random_fd, bytes, 16) == -1 && errno == EAGAIN, "nonblocking random device");
+    check(read(random_fd, NULL, 0) == -1 && errno == EAGAIN,
+          "zero-length random device read still observes readiness");
+    check(read(random_fd, (void*)UINTPTR_MAX, 0) == -1 && errno == EFAULT,
+          "zero-length device destination remains a user address");
+    check(read(urandom_fd, NULL, 0) == 0, "zero-length early urandom read");
+    struct iovec empty = {NULL, 0};
+    check(readv(random_fd, &empty, 1) == 0 && readv(random_fd, NULL, 0) == 0,
+          "empty readv completes before device dispatch");
     struct pollfd both[] = {{random_fd, POLLIN | POLLOUT, 0}, {urandom_fd, POLLIN, 0}};
     check(poll(both, 2, 0) == 2 && !(both[0].revents & POLLIN) && (both[0].revents & POLLOUT) &&
               (both[1].revents & POLLIN),
@@ -153,12 +163,11 @@ static void unready(int random_fd, int urandom_fd) {
               write(urandom_fd, previous, sizeof(previous)) == sizeof(previous) &&
               entropy(random_fd) == 0,
           "ordinary device writes never establish readiness");
-    for (unsigned operation = 0; operation < 3; operation++)
+    const char* operations[] = {"getrandom", "getentropy", "device", "device-zero"};
+    for (unsigned operation = 0; operation < sizeof(operations) / sizeof(operations[0]);
+         operation++)
         for (int restart = 0; restart <= 1; restart++)
-            interrupted(operation == 0   ? "getrandom"
-                        : operation == 1 ? "getentropy"
-                                         : "device",
-                        restart);
+            interrupted(operations[operation], restart);
     check(entropy(random_fd) == 0, "signals and elapsed time never credit entropy");
     puts("RANDOM_UNREADY_PASS nonblock=EAGAIN writes=uncredited insecure=explicit poll=checked");
 }
@@ -197,6 +206,10 @@ static void concurrent(void) {
 static void ready(int random_fd, int urandom_fd) {
     uint8_t bytes[8192], previous[32];
     check(entropy(random_fd) == 256, "trusted seed established readiness");
+    check(read(random_fd, NULL, 0) == 0 && read(urandom_fd, NULL, 0) == 0,
+          "zero-length initialized device reads");
+    check(read(random_fd, (void*)UINTPTR_MAX, 0) == -1 && errno == EFAULT,
+          "initialized empty read still validates the user address");
     const unsigned valid[] = {0, 1, 2, 3, 4, 5};
     for (unsigned i = 0; i < sizeof(valid) / sizeof(valid[0]); i++)
         check(getrandom(bytes, 256, valid[i]) == 256, "all valid flags return a full small read");

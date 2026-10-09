@@ -402,7 +402,7 @@ def main():
     if args.timeout <= 0:
         parser.error('timeout must be positive')
     results = []
-    report = ROOT / 'build' / f'manager-link-{args.firmware}-{args.transport}-lane{args.affected}-results.json'
+    report = ROOT / 'build' / f'manager-link-{args.firmware}-{args.transport}-lane{args.affected}-{args.linkage}-results.json'
     original = ROOT / 'build/rootfs-network.cpio'
     previous = original.read_bytes() if original.exists() else None
     try:

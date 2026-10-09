@@ -67,6 +67,27 @@ class LeaseLifetime(unittest.TestCase):
     def test_existing_renewal_and_rebinding_timers_remain_exact(self):
         self.assertEqual(reply_timers(Peer(0), False), (30, 8, 15))
         self.assertEqual(reply_timers(Peer(0), True), (100, 50, 87))
+        self.assertEqual(reply_timers(ManagerPeer(0, 'concurrent'), False), (30, 8, 15))
+        self.assertEqual(reply_timers(ManagerPeer(0, 'concurrent'), True), (100, 50, 87))
+
+    def test_composition_leases_outlast_the_process_observer(self):
+        # These scenarios stop/restart the process within 110 seconds. An ACK
+        # racing SIGTERM must not turn a valid old-lease RELEASE into a failure.
+        scenarios = ('missing', 'static', 'conflict', 'defense', 'disabled', 'unsafe',
+                     'manual', 'restart', 'hint-sync', 'resolver', 'hint-remove', 'close')
+        for scenario in scenarios:
+            for lane in (0, 1):
+                for changed in (False, True):
+                    with self.subTest(scenario=scenario, lane=lane, changed=changed):
+                        peer = ManagerPeer(lane, scenario)
+                        if scenario == 'missing' and lane == 0:
+                            peer.answer(5, bytes.fromhex('12345678'), changed=changed)
+                            self.assertFalse(peer.output)
+                            continue
+                        lease, renewal, rebinding = reply_timers(peer, changed)
+                        self.assertGreater(renewal, 110)
+                        self.assertLess(renewal, rebinding)
+                        self.assertLess(rebinding, lease)
 
     def test_release_after_second_selecting_ack(self):
         peer = Peer(0)

@@ -113,7 +113,7 @@ class Peer:
             self.discovers += 1
             check(ip[12:16] == b'\0' * 4 and ip[16:20] == b'\xff' * 4 and
                   message[10:12] == b'\x80\x00' and 50 not in options and 54 not in options and
-                  options.get(55) == bytes([1, 3, 6, 15, 51, 58, 59, 119, 121]),
+                  options.get(55) == bytes([121, 1, 3, 6, 15, 51, 58, 59, 119]),
                   'initial discover fields and consistent requested parameters')
             self.transaction = transaction
             if self.discovers == 1:

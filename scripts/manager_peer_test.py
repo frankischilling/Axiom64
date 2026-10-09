@@ -16,7 +16,7 @@ def frame(peer, transaction, kind, configured=False, destination=None, server=No
     message[236:240] = bytes.fromhex('63825363')
     options = [(53, bytes([kind])), (61, b'\x01' + peer.guest)]
     if kind == 1:
-        options.append((55, bytes([1, 3, 6, 15, 51, 58, 59, 119, 121])))
+        options.append((55, bytes([121, 1, 3, 6, 15, 51, 58, 59, 119])))
     if server:
         options.append((54, server))
     if requested:

@@ -71,19 +71,19 @@ static void* io_worker(void* pointer) {
         operation->result = readv(operation->fd, operation->vectors, 2);
         break;
     case RECV:
-        operation->result = recv(operation->fd, operation->bytes, 5, 0);
+        operation->result = recv(operation->fd, operation->buffer, 5, 0);
         break;
     case RECVMSG:
         operation->result = recvmsg(operation->fd, &operation->message, 0);
         break;
     case WRITE:
-        operation->result = write(operation->fd, operation->bytes, 5);
+        operation->result = write(operation->fd, operation->buffer, 5);
         break;
     case WRITEV:
         operation->result = writev(operation->fd, operation->vectors, 2);
         break;
     case SEND:
-        operation->result = send(operation->fd, operation->bytes, 5, MSG_NOSIGNAL);
+        operation->result = send(operation->fd, operation->buffer, 5, MSG_NOSIGNAL);
         break;
     case SENDMSG:
         operation->result = sendmsg(operation->fd, &operation->message, MSG_NOSIGNAL);
@@ -698,6 +698,53 @@ static void timeout_reuse(enum Kind kind) {
     CHECK(close(original[1]) == 0 && close(replacement[0]) == 0 && close(replacement[1]) == 0);
 }
 
+static void timeout_unmapped(enum Kind kind, int wake) {
+    int original[2], replacement[2];
+    pair(original, 1);
+    int writing = kind >= WRITE;
+    set_timeout(original[0], writing ? SNDTIMEO_OLD : RCVTIMEO_OLD, 200);
+    size_t filled = writing ? fill(original[0]) : 0;
+    char* mapping = mmap(0, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(mapping != MAP_FAILED);
+    memcpy(mapping, "right", 5);
+    struct Operation operation;
+    prepare(&operation, original[0], kind);
+    operation.buffer = mapping;
+    operation.vectors[0] = (struct iovec){mapping, 2};
+    operation.vectors[1] = (struct iovec){mapping + 2, 3};
+    pthread_t thread;
+    CHECK(pthread_create(&thread, 0, timed_worker, &operation) == 0);
+    await_entry(&operation);
+    pair(replacement, 0);
+    CHECK(dup2(replacement[writing], original[0]) == original[0]);
+    CHECK(close(replacement[writing]) == 0);
+    replacement[writing] = original[0];
+    if (!writing)
+        CHECK(write(replacement[1], "wrong", 5) == 5);
+    CHECK(munmap(mapping, 4096) == 0);
+    if (wake) {
+        CHECK(!writing);
+        CHECK(write(original[1], "right", 5) == 5);
+    }
+    CHECK(pthread_join(thread, 0) == 0 && operation.result == -1);
+    CHECK(operation.error == (wake ? EFAULT : EAGAIN));
+    if (!wake)
+        CHECK(operation.finished - operation.began >= 180 &&
+              operation.finished - operation.began < 2000);
+    char bytes[5];
+    if (writing) {
+        drain(original[1], filled);
+        int flags = fcntl(replacement[0], F_GETFL);
+        CHECK(fcntl(replacement[0], F_SETFL, flags | O_NONBLOCK) == 0);
+        CHECK(read(replacement[0], bytes, 5) == -1 && errno == EAGAIN);
+    } else
+        CHECK(read(replacement[0], bytes, 5) == 5 && !memcmp(bytes, "wrong", 5));
+    ssize_t closed = read(original[1], bytes, 1);
+    // Linux reports reset when the last close discards the readable fault's queued data.
+    CHECK(closed == 0 || (!guest && wake && closed == -1 && errno == ECONNRESET));
+    CHECK(close(original[1]) == 0 && close(replacement[0]) == 0 && close(replacement[1]) == 0);
+}
+
 static int timed_listener(struct sockaddr* address) {
     static unsigned sequence;
     *address = (struct sockaddr){.sa_family = AF_UNIX};
@@ -922,6 +969,12 @@ static void socket_timeouts(void) {
 
     for (unsigned i = 0; i < sizeof(kinds) / sizeof(kinds[0]); i++)
         timeout_reuse(kinds[i]);
+    for (unsigned i = 0; i < sizeof(kinds) / sizeof(kinds[0]); i++)
+        timeout_unmapped(kinds[i], 0);
+    timeout_unmapped(READ, 1);
+    timeout_unmapped(READV, 1);
+    printf("THREAD_IO_TIMEOUTS_UNMAPPED_PASS linkage=%s operations=8 readable_faults=2\n",
+           IO_LINKAGE);
     timeout_accept(ACCEPT);
     timeout_accept(ACCEPT4);
     timeout_signal(READ);
@@ -946,7 +999,8 @@ static void socket_timeouts(void) {
         CHECK(recv(endpoints[1], &byte, 1, MSG_DONTWAIT) == 0);
         CHECK(close(endpoints[1]) == 0);
     }
-    CHECK(!guest || families == 4);
+    // Every guest and privileged native CI run must exercise the raw/packet families.
+    CHECK((!guest && geteuid() != 0) || families == 4);
     printf("THREAD_IO_TIMEOUTS_PASS linkage=%s operations=10 signals=4 families=%u cycles=300\n",
            IO_LINKAGE, families);
 }

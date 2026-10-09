@@ -12,7 +12,7 @@ The harness boots QEMU under BIOS and UEFI, checks firmware identity, requires e
 | --- | --- |
 | Static and dynamic musl ABI | Files, hard links and unlink lifetime, directories, isolation, fork/exec/wait, mappings, pipes, descriptors |
 | Threads and futexes | Static/dynamic musl lifecycle, TLS/FPU, shared resources, mutex/condition/semaphore contention and timeouts, bitset/requeue, mapping lifetime, cross-process wake, worker fork/exec, and group teardown |
-| Blocking I/O | Static/dynamic retained descriptions across close/dup2/reuse, captured vectors, socket transfers/accept, finite Linux socket deadlines across four families, nested/restarted/abandoned signal contexts, errors, failed/successful exec, and endpoint/resource cleanup; matching native Linux comparisons |
+| Blocking I/O | Static/dynamic retained descriptions across close/dup2/reuse, captured vectors, socket transfers/accept, finite Linux socket deadlines across four families, expiry after buffer unmap and readable copy faults, nested/restarted/abandoned signal contexts, errors, failed/successful exec, and endpoint/resource cleanup; matching native Linux comparisons |
 | IPC | Unix sockets, edge and one-shot epoll, batches of 256 events, select/pselect, anonymous/file/SysV shared memory |
 | Signals | Masks, alternate stacks, return frames, interrupted and restarted I/O, caught faults, SIGCHLD, alarms, stop/continue |
 | Elapsed clocks | Sanitized counter arithmetic/ACPI parsing, 24 firmware/transport/HPET-TSC/delay boots, independently timed flushes, and absolute futex/interval-timer deadlines across storage |

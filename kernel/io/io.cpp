@@ -492,11 +492,12 @@ bool io_resume(Task& task) {
     auto request = task.io;
     if (!request)
         panic("blocked I/O without request");
-    if (!request->locking && !request->handle->packet && !request->handle->inet &&
-        !request->handle->netlink && !handle_ready(request->handle, request->write) &&
-        !(request->handle->flags & 04000) && !timeout_expired(*request))
-        return false;
-    int64_t result = attempt(task, *request);
+    // An unavailable handle cannot make progress or access an expired wait's buffers.
+    int64_t result = would_block;
+    if (request->locking || request->handle->packet || request->handle->inet ||
+        request->handle->netlink || handle_ready(request->handle, request->write) ||
+        (request->handle->flags & 04000))
+        result = attempt(task, *request);
     if (result == would_block) {
         if (!timeout_expired(*request))
             return false;

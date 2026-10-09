@@ -1,14 +1,17 @@
 """Boot IPv4 route-control tests with isolated peers for both Ethernet drivers."""
 import argparse
 import json
+import os
 import selectors
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
 from fetch import ROOT
 from network_test import fixture
 from netlink_peer import Peer
+from qmp import Qmp
 
 
 def run(firmware, transport, timeout):
@@ -16,9 +19,12 @@ def run(firmware, transport, timeout):
     log = ROOT / 'build' / (label + '.log')
     selector = selectors.DefaultSelector()
     servers, peers = [], [Peer(0), Peer(1)]
+    temporary = tempfile.TemporaryDirectory(prefix='axiom64-netlink-')
+    control = temporary.name + '/qmp.sock'
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '2G',
         '-cdrom', str(ROOT / 'build/axiom64-netlink.iso'), '-nic', 'none',
-        '-display', 'none', '-serial', 'stdio', '-monitor', 'none', '-no-reboot',
+        '-display', 'none', '-serial', 'stdio', '-monitor', 'none', '-no-reboot', '-S',
+        '-qmp', f'unix:{control},server=on,wait=off',
         '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
     for lane, model in enumerate(['virtio-net-pci', 'e1000']):
         server = socket.socket()
@@ -27,7 +33,7 @@ def run(firmware, transport, timeout):
         server.setblocking(False)
         servers.append(server)
         selector.register(server, selectors.EVENT_READ, ('server', lane))
-        device = f'{model},netdev=peer{lane},addr={lane + 4:x},mac={peers[lane].guest.hex(":")}'
+        device = f'{model},netdev=peer{lane},id=nic{lane},addr={lane + 4:x},mac={peers[lane].guest.hex(":")}'
         if lane == 0:
             device += ',disable-legacy=on' if transport == 'modern' else ',disable-modern=on'
         command += ['-netdev', f'socket,id=peer{lane},connect=127.0.0.1:{server.getsockname()[1]}',
@@ -41,10 +47,20 @@ def run(firmware, transport, timeout):
     error = None
     exited_at = None
     ready = False
+    monitor = None
+    carrier_restored = False
     with log.open('wb') as output:
         process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT,
                                    stdin=subprocess.DEVNULL)
         try:
+            while not os.path.exists(control):
+                if process.poll() is not None or time.monotonic() - started >= 5:
+                    raise RuntimeError('route-control monitor startup failed')
+                time.sleep(.01)
+            monitor = Qmp(control)
+            for lane in range(2):
+                monitor.command('set_link', {'name': f'nic{lane}', 'up': False})
+            monitor.command('cont')
             while True:
                 now = time.monotonic()
                 if process.poll() is not None:
@@ -56,6 +72,10 @@ def run(firmware, transport, timeout):
                     raise RuntimeError('route-control boot deadline exceeded')
                 if not ready:
                     ready = b'NETLINK_READY' in log.read_bytes()
+                if not carrier_restored and b'NETLINK_EARLY_ROUTES_PASS count=2' in log.read_bytes():
+                    for lane in range(2):
+                        monitor.command('set_link', {'name': f'nic{lane}', 'up': True})
+                    carrier_restored = True
                 for key, events in selector.select(.01):
                     kind, lane = key.data
                     peer = peers[lane]
@@ -105,8 +125,11 @@ def run(firmware, transport, timeout):
             for peer in peers:
                 if peer.connection:
                     peer.connection.close()
+            if monitor:
+                monitor.close()
+            temporary.cleanup()
     text = log.read_text(errors='replace')
-    names = ['LIFECYCLE', 'FORK_LIFETIME', 'MESSAGE_IO', 'UNCAPPED_REPLY', 'ROUTE_OWNERSHIP',
+    names = ['CARRIER_DOWN', 'EARLY_ROUTES', 'CARRIER_UP', 'LIFECYCLE', 'FORK_LIFETIME', 'MESSAGE_IO', 'UNCAPPED_REPLY', 'ROUTE_OWNERSHIP',
              'CONFIGURATION_ADAPTER', 'MALFORMED', 'ROUTE_LIMITS', 'BYTE_QUOTA', 'PRESSURE_LIFETIME',
              'SOCKET_LIMITS', 'ROUTED_PACKETS', 'TESTS']
     missing = [f'NETLINK_{name}_PASS' for name in names if f'NETLINK_{name}_PASS' not in text]
@@ -118,7 +141,8 @@ def run(firmware, transport, timeout):
         except Exception as exception:
             error = str(exception)
     result = dict(firmware=firmware, transport=transport, returncode=returncode, error=error,
-                  missing=missing, counts=counts, seconds=round(time.monotonic() - started, 3),
+                  missing=missing, counts=counts, carrier_restored=carrier_restored,
+                  seconds=round(time.monotonic() - started, 3),
                   passed=error is None and returncode == 1 and not missing)
     print(json.dumps(result), flush=True)
     if not result['passed']:

@@ -424,11 +424,10 @@ static int change_route(const Ipv4Route& input, bool remove, bool control, bool 
     auto config = ipv4_config(value.index);
     if (!config || value.index == ipv4_loopback)
         return -19;
-    if (!config->address ||
-        (value.gateway &&
-         (!ip4::unicast(value.gateway) || is_loopback(value.gateway) ||
-          directed_broadcast(*config, value.gateway) || value.gateway == config->address ||
-          (value.gateway & config->mask) != (config->address & config->mask))))
+    if (value.gateway &&
+        (!config->address || !ip4::unicast(value.gateway) || is_loopback(value.gateway) ||
+         directed_broadcast(*config, value.gateway) || value.gateway == config->address ||
+         (value.gateway & config->mask) != (config->address & config->mask)))
         return -101;
     if (value.scope == 255)
         value.scope = value.gateway ? 0 : 253;

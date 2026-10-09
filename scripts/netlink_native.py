@@ -17,8 +17,10 @@ def main():
     if libc.unshare(0x40000000) != 0:  # CLONE_NEWNET; never change host interfaces/routes.
         error = ctypes.get_errno()
         raise OSError(error, os.strerror(error))
-    for name in ['eth0', 'eth1']:
-        subprocess.run(['ip', 'link', 'add', name, 'type', 'dummy'], check=True)
+    for lane in range(2):
+        # Leave the peer down so the actual selected interface has no carrier.
+        subprocess.run(['ip', 'link', 'add', f'eth{lane}', 'type', 'veth', 'peer',
+                        'name', f'peer{lane}'], check=True)
     started = time.monotonic()
     process = subprocess.run([str(ROOT / 'build/netlink-native'), '--native'],
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
@@ -26,7 +28,7 @@ def main():
     log.write_bytes(process.stdout)
     text = process.stdout.decode(errors='replace')
     print(text, end='', flush=True)
-    names = ['LIFECYCLE', 'FORK_LIFETIME', 'MESSAGE_IO', 'UNCAPPED_REPLY',
+    names = ['CARRIER_DOWN', 'EARLY_ROUTES', 'LIFECYCLE', 'FORK_LIFETIME', 'MESSAGE_IO', 'UNCAPPED_REPLY',
              'ROUTE_OWNERSHIP', 'CONFIGURATION_ADAPTER', 'TESTS']
     missing = [f'NETLINK_{name}_PASS' for name in names if f'NETLINK_{name}_PASS' not in text]
     result = dict(kernel=platform.release(), returncode=process.returncode, missing=missing,

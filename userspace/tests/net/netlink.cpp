@@ -136,6 +136,9 @@ static void acknowledgment(int fd, const Packet& request, int expected) {
     memcpy(&header, bytes, sizeof(header));
     memcpy(&error, bytes + sizeof(header), 4);
     memcpy(&echoed, bytes + sizeof(header) + 4, sizeof(echoed));
+    if (error != -expected)
+        fprintf(stderr, "NETLINK_ACK_ERROR type=%u sequence=%u expected=%d actual=%d\n",
+                request.header.nlmsg_type, request.header.nlmsg_seq, expected, -error);
     check(size == 36 && header.nlmsg_len == size && header.nlmsg_type == NLMSG_ERROR &&
               header.nlmsg_flags == NLM_F_CAPPED && header.nlmsg_seq == request.header.nlmsg_seq &&
               header.nlmsg_pid == port(fd) && error == -expected &&
@@ -384,6 +387,163 @@ static Route onlink(unsigned lane, uint32_t destination, unsigned prefix, unsign
     result.index = indexes[lane];
     result.metric = metric;
     return result;
+}
+
+static unsigned interface_flags(unsigned lane) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    ifreq request{};
+    check(fd >= 0 && if_indextoname(indexes[lane], request.ifr_name), "query physical interface");
+    check(ioctl(fd, SIOCGIFFLAGS, &request) == 0 && close(fd) == 0,
+          "query actual administrative and carrier flags");
+    return static_cast<unsigned short>(request.ifr_flags);
+}
+
+static uint32_t interface_address(unsigned lane) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    ifreq request{};
+    check(fd >= 0 && if_indextoname(indexes[lane], request.ifr_name), "query interface address");
+    int result = ioctl(fd, SIOCGIFADDR, &request);
+    int error = errno;
+    check(close(fd) == 0, "close address query");
+    if (result < 0) {
+        check(error == EADDRNOTAVAIL, "unconfigured interface has no assigned IPv4 address");
+        return 0;
+    }
+    sockaddr_in address{};
+    memcpy(&address, &request.ifr_addr, sizeof(address));
+    check(address.sin_family == AF_INET, "queried address retains its family");
+    return ntohl(address.sin_addr.s_addr);
+}
+
+static void early_route_state(int fd, unsigned lane, const Route& expected, const char* phase,
+                              bool present) {
+    Route entries[64];
+    size_t count = routes(fd, entries, 64, RTPROT_STATIC, indexes[lane]);
+    check(count == (present ? 1u : 0u) && (!present || same(entries[0], expected)),
+          "direct route retains exact independent protocol, scope, metric and interface");
+    Route value{};
+    value.protocol = value.scope = 0;
+    if (count)
+        value = entries[0];
+    uint32_t address = interface_address(lane);
+    unsigned flags = interface_flags(lane);
+    bool configured = !strcmp(phase, "configured") || (native && !present);
+    check(address == (configured ? 0x0a170128 + (lane << 8) : 0) && (flags & IFF_UP) &&
+              !(flags & IFF_RUNNING),
+          "route snapshot has the exact address and retains real carrier absence");
+    printf("NETLINK_EARLY_ROUTE phase=%s index=%u count=%zu address=%08x flags=%x "
+           "destination=%08x prefix=%u gateway=%08x metric=%u protocol=%u scope=%u\n",
+           phase, indexes[lane], count, address, flags, value.destination, value.prefix,
+           value.gateway, value.metric, value.protocol, value.scope);
+}
+
+static void unconfigured_send(unsigned lane) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    char name[IF_NAMESIZE];
+    check(fd >= 0 && if_indextoname(indexes[lane], name) &&
+              setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, name, strlen(name) + 1) == 0,
+          "bind source-guard probe to the selected physical interface");
+    sockaddr_in target{};
+    target.sin_family = AF_INET;
+    target.sin_port = htons(18000 + lane);
+    target.sin_addr.s_addr = htonl(0xc6336401);
+    char payload = 'x';
+    check(sendto(fd, &payload, 1, 0, reinterpret_cast<sockaddr*>(&target), sizeof(target)) == -1 &&
+              errno == ENETUNREACH,
+          "direct route without a source address does not permit packet transmission");
+    check(close(fd) == 0, "close source-guard probe");
+}
+
+static void unconfigured_gateway(int fd, unsigned lane) {
+    Route gateway = onlink(lane, 0, 0, 1101 + lane);
+    gateway.gateway = 0x0a170101 + (lane << 8);
+    gateway.scope = RT_SCOPE_UNIVERSE;
+    change(fd, gateway, false, ENETUNREACH);
+    Route entries[64];
+    check(routes(fd, entries, 64, RTPROT_DHCP, indexes[lane]) == 0,
+          "unconfigured gateway rejection leaves no route");
+}
+
+static void early_address(unsigned lane, bool remove) {
+    ax::net::Routing adapter;
+    ax::net::Address address;
+    address.index = indexes[lane];
+    address.address = 0x0a170128 + (lane << 8);
+    address.mask = 0xffffff00;
+    address.broadcast = address.address | ~address.mask;
+    check(adapter.open() == 0 && adapter.change(address, remove) == 0,
+          "atomically change the complete early interface address tuple");
+}
+
+static void early_routes(int fd) {
+    Route direct[2];
+    for (unsigned lane = 0; lane < 2; lane++) {
+        unsigned flags = interface_flags(lane);
+        check((flags & IFF_UP) && !interface_address(lane),
+              "direct-route fixture starts administratively up without an IPv4 address");
+        check(!(flags & IFF_RUNNING), "both physical carriers are absent before route insertion");
+        direct[lane] = onlink(lane, 0xc6336400, 24, 901 + lane);
+        direct[lane].protocol = RTPROT_STATIC;
+        change(fd, direct[lane], false);
+        change(fd, direct[lane], false, EEXIST);
+        Route wrong = direct[lane];
+        wrong.protocol = RTPROT_DHCP;
+        change(fd, wrong, true, ESRCH);
+        early_route_state(fd, lane, direct[lane], "unconfigured", true);
+        if (!native) {
+            unconfigured_gateway(fd, lane);
+            unconfigured_send(lane);
+        }
+    }
+    if (!native) {
+        int control = socket(AF_INET, SOCK_DGRAM, 0);
+        rtentry request{};
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(0xcb007100);
+        memcpy(&request.rt_dst, &address, sizeof(address));
+        address.sin_addr.s_addr = htonl(0xffffff00);
+        memcpy(&request.rt_genmask, &address, sizeof(address));
+        request.rt_flags = RTF_UP;
+        check(control >= 0 && ioctl(control, SIOCADDRT, &request) == -1 && errno == ENETUNREACH,
+              "an unconfigured network cannot infer the omitted physical interface");
+        check(close(control) == 0, "close omitted-interface probe");
+    }
+    for (unsigned lane = 0; lane < 2; lane++) {
+        early_address(lane, false);
+        early_route_state(fd, lane, direct[lane], "configured", true);
+    }
+    for (unsigned lane = 0; lane < 2; lane++) {
+        if (!native) {
+            early_address(lane, true);
+            early_route_state(fd, lane, direct[lane], "withdrawn", true);
+            unconfigured_gateway(fd, lane);
+            unconfigured_send(lane);
+        }
+        change(fd, direct[lane], true);
+        change(fd, direct[lane], true, ESRCH);
+        early_route_state(fd, lane, direct[lane], "removed", false);
+        // Linux removes device routes with its last address; compare explicit deletion first.
+        if (native)
+            early_address(lane, true);
+        check(!interface_address(lane), "early fixture leaves both interfaces unconfigured");
+    }
+    puts("NETLINK_EARLY_ROUTES_PASS count=2");
+}
+
+static void await_carrier(bool up) {
+    for (unsigned attempt = 0; attempt < 1000; attempt++) {
+        if (bool(interface_flags(0) & IFF_RUNNING) == up &&
+            bool(interface_flags(1) & IFF_RUNNING) == up) {
+            for (unsigned lane = 0; lane < 2; lane++)
+                printf("NETLINK_CARRIER_%s index=%u flags=%x\n", up ? "UP" : "DOWN", indexes[lane],
+                       interface_flags(lane));
+            printf("NETLINK_CARRIER_%s_PASS count=2\n", up ? "UP" : "DOWN");
+            return;
+        }
+        usleep(10000);
+    }
+    check(false, "both actual interface carrier flags reach the requested state");
 }
 
 static void ownership(int fd) {
@@ -827,6 +987,14 @@ int main(int argc, char** argv) {
     indexes[0] = if_nametoindex("eth0");
     indexes[1] = if_nametoindex("eth1");
     check(indexes[0] && indexes[1] && indexes[0] != indexes[1], "two isolated Ethernet interfaces");
+    for (unsigned lane = 0; lane < 2; lane++)
+        configuration(lane, SIOCSIFFLAGS, 0);
+    await_carrier(false);
+    int early = open_socket();
+    early_routes(early);
+    check(close(early) == 0, "close early-route socket before existing lifetime tests");
+    if (!native)
+        await_carrier(true);
     for (unsigned lane = 0; lane < 2; lane++) {
         configuration(lane, SIOCSIFFLAGS, 0);
         configuration(lane, SIOCSIFADDR, 0x0a170128 + (lane << 8));

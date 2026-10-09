@@ -101,14 +101,22 @@ jobs:
           - random
           - normal-init-bios
           - normal-init-uefi
-          - protocol-bios-modern-lane0
-          - protocol-bios-modern-lane1
-          - protocol-bios-legacy-lane0
-          - protocol-bios-legacy-lane1
-          - protocol-uefi-modern-lane0
-          - protocol-uefi-modern-lane1
-          - protocol-uefi-legacy-lane0
-          - protocol-uefi-legacy-lane1
+          - protocol-bios-modern-lane0-static
+          - protocol-bios-modern-lane0-dynamic
+          - protocol-bios-modern-lane1-static
+          - protocol-bios-modern-lane1-dynamic
+          - protocol-bios-legacy-lane0-static
+          - protocol-bios-legacy-lane0-dynamic
+          - protocol-bios-legacy-lane1-static
+          - protocol-bios-legacy-lane1-dynamic
+          - protocol-uefi-modern-lane0-static
+          - protocol-uefi-modern-lane0-dynamic
+          - protocol-uefi-modern-lane1-static
+          - protocol-uefi-modern-lane1-dynamic
+          - protocol-uefi-legacy-lane0-static
+          - protocol-uefi-legacy-lane0-dynamic
+          - protocol-uefi-legacy-lane1-static
+          - protocol-uefi-legacy-lane1-dynamic
     steps:
       - name: Download this run's test inputs
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -234,13 +242,18 @@ jobs:
           SUITE: ${{ matrix.suite }}
         run: |
           case "$SUITE" in
-            protocol-bios-modern-lane[01]|protocol-bios-legacy-lane[01]|protocol-uefi-modern-lane[01]|protocol-uefi-legacy-lane[01]) ;;
+            protocol-bios-modern-lane[01]-static|protocol-bios-modern-lane[01]-dynamic|\
+            protocol-bios-legacy-lane[01]-static|protocol-bios-legacy-lane[01]-dynamic|\
+            protocol-uefi-modern-lane[01]-static|protocol-uefi-modern-lane[01]-dynamic|\
+            protocol-uefi-legacy-lane[01]-static|protocol-uefi-legacy-lane[01]-dynamic) ;;
             *) exit 2 ;;
           esac
           firmware=${SUITE#protocol-}; firmware=${firmware%%-*}
           transport=${SUITE#protocol-"$firmware"-}; transport=${transport%%-*}
-          affected=${SUITE##*-lane}
-          python3 scripts/manager_protocol_test.py --firmware "$firmware" --transport "$transport" --affected "$affected"
+          cell=${SUITE##*-lane}
+          affected=${cell%%-*}
+          linkage=${cell#*-}
+          python3 scripts/manager_protocol_test.py --firmware "$firmware" --transport "$transport" --affected "$affected" --linkage "$linkage"
       - name: Test counter scaling and ACPI discovery with sanitizers
         if: matrix.suite == 'configuration'
         run: make test-clock-codec 2>&1 | tee build/clock-codec.log

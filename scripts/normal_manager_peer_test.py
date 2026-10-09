@@ -5,6 +5,21 @@ from normal_manager_test import SupervisionPeer
 
 
 class HeldRestartAck(unittest.TestCase):
+    def test_firmware_traffic_is_counted_before_manager_and_rejected_after(self):
+        peer = SupervisionPeer(0, True)
+        header = bytes.fromhex('3333ff12341052540012341086dd6000000000200001'
+                               '00000000000000000000000000000000ff0200000000000000000001ff123410')
+        firmware = header + bytes(86 - len(header))
+        peer.deliver(firmware, False)
+        self.assertEqual(peer.before_manager, {'86dd': 1})
+        self.assertFalse(peer.discovers)
+        with self.assertRaisesRegex(RuntimeError, 'protocol=86dd'):
+            peer.deliver(firmware, True)
+        discover = frame(peer, bytes.fromhex('12345678'), 1)
+        peer.deliver(discover, True)
+        self.assertEqual(peer.discovers, 1)
+        self.assertEqual(peer.before_manager, {'86dd': 1})
+
     def test_missing_peer_requires_a_new_process_discovery(self):
         peer = SupervisionPeer(1, False)
         old, new = bytes.fromhex('12345678'), bytes.fromhex('87654321')

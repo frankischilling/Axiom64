@@ -32,6 +32,14 @@ class SupervisionPeer(ManagerPeer):
         self.discover_transactions = []
         self.initial_discovers = None
         self.restart_discover_transaction = None
+        self.before_manager = {}
+
+    def deliver(self, frame, manager_ready):
+        if not manager_ready:
+            protocol = frame[12:14].hex()
+            self.before_manager[protocol] = self.before_manager.get(protocol, 0) + 1
+        else:
+            self.packet(frame)
 
     def packet(self, frame):
         before = self.discovers
@@ -72,6 +80,7 @@ class SupervisionPeer(ManagerPeer):
     def counts(self):
         return dict(super().counts(), initial_transaction=(self.initial_transaction or b'').hex(),
                     restart_transaction=(self.restart_transaction or b'').hex(),
+                    before_manager=self.before_manager.copy(),
                     discover_transactions=self.discover_transactions.copy(),
                     restart_discover_transaction=(self.restart_discover_transaction or b'').hex())
 
@@ -230,6 +239,7 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout):
             while process.poll() is None:
                 now = time.monotonic()
                 check(now - started < timeout, 'normal-init guest deadline exceeded at ' + stage)
+                manager_ready = 'NETWORK_MANAGER_READY pid=' in log.read_text(errors='replace')
                 for key, ready in selector.select(.01):
                     kind, lane = key.data
                     peer = peers[lane]
@@ -253,7 +263,7 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout):
                             check(14 <= size <= 1518, 'QEMU Ethernet frame bounds')
                             if len(peer.input) < size + 4:
                                 break
-                            peer.packet(bytes(peer.input[4:size + 4]))
+                            peer.deliver(bytes(peer.input[4:size + 4]), manager_ready)
                             del peer.input[:size + 4]
                     if peer.output:
                         try:

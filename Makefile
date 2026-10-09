@@ -136,9 +136,12 @@ build/network-manager: $(MANAGER_SOURCES) $(MANAGER_HEADERS)
 build/network-manager-dynamic: $(MANAGER_SOURCES) $(MANAGER_HEADERS)
 	@mkdir -p build
 	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(MANAGER_SOURCES) -o $@
-build/manager-tests: userspace/tests/net/manager.cpp userspace/net/config/routing.cpp userspace/net/config/profile.cpp userspace/net/config/saved.cpp userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
+build/manager-tests: userspace/tests/net/manager.cpp userspace/tests/net/manager-fixture.hpp userspace/net/config/routing.cpp userspace/net/config/profile.cpp userspace/net/config/saved.cpp userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
 	@mkdir -p build
 	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/manager.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
+build/manager-protocol: userspace/tests/net/manager-protocol.cpp userspace/tests/net/manager-fixture.hpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
+	@mkdir -p build
+	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/manager-protocol.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
 build/init-supervision: userspace/tests/net/init-supervision.cpp userspace/net/manager/ownership.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
 	@mkdir -p build
 	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/init-supervision.cpp userspace/net/manager/ownership.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
@@ -151,6 +154,10 @@ test-static-address: build/static-address-host
 .PHONY: test-manager
 test-manager:
 	$(PYTHON) scripts/manager_test.py
+.PHONY: test-manager-protocol
+test-manager-protocol:
+	$(PYTHON) scripts/manager_protocol_peer_test.py
+	$(PYTHON) scripts/manager_protocol_test.py
 build/ownership-host: $(OWNERSHIP_SOURCES) $(OWNERSHIP_HEADERS)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace $(OWNERSHIP_SOURCES) $(OWNERSHIP_FAULTS) -o $@

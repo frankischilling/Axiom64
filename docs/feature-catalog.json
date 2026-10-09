@@ -820,7 +820,7 @@
         "Bash as the default interactive shell while retaining ash and zsh",
         "Lightweight FVWM/Openbox-style window manager next",
         "Additional window managers: ctwm and matwm2",
-        "CDE and TDE desktop environments in the wider roadmap",
+        "CDE, TDE and KDE desktop environments in the wider roadmap",
         "X11 tools, fonts, fontconfig, locale/input support, and session selection",
         "GTK/Motif/Tk/SDL applications and desktop application catalog"
       ],
@@ -880,7 +880,7 @@
         "Logging/syslog, time synchronization, cron/at/batch, and accounting",
         "SSH, controlled inetd/telnet compatibility, HTTP server, and network daemons",
         "DHCP/network setup, device discovery, RPC/rpcbind, and D-Bus",
-        "Desktop login greeter, display manager, sessions, and logout",
+        "Desktop login greeter, ly as the preferred display manager, LightDM/LXDM alternatives, sessions and logout",
         "Service privilege separation, configuration, dependency ordering, and persistent state"
       ],
       "acceptance": [
@@ -4841,6 +4841,250 @@
       "owner": "F35",
       "issue": "https://github.com/frankischilling/Axiom64/issues/36",
       "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "coreutils",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add guest smoke or conformance tests for its normal features and dependencies; archive presence alone is insufficient."
+    },
+    {
+      "name": "findutils",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add guest smoke or conformance tests for its normal features and dependencies; archive presence alone is insufficient."
+    },
+    {
+      "name": "diffutils",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add guest smoke or conformance tests for its normal features and dependencies; archive presence alone is insufficient."
+    },
+    {
+      "name": "gawk",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add guest smoke or conformance tests for its normal features and dependencies; archive presence alone is insufficient."
+    },
+    {
+      "name": "screen",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Run guest PTY sessions with job control, resize, detach/reattach and checked process teardown."
+    },
+    {
+      "name": "xz",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add guest smoke or conformance tests for its normal features and dependencies; archive presence alone is insufficient."
+    },
+    {
+      "name": "zstd",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add guest smoke or conformance tests for its normal features and dependencies; archive presence alone is insufficient."
+    },
+    {
+      "name": "pcre",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add guest smoke or conformance tests for its normal features and dependencies; archive presence alone is insufficient."
+    },
+    {
+      "name": "pcre2",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add guest smoke or conformance tests for its normal features and dependencies; archive presence alone is insufficient."
+    },
+    {
+      "name": "icu",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add guest smoke or conformance tests for its normal features and dependencies; archive presence alone is insufficient."
+    },
+    {
+      "name": "editline",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Add guest smoke or conformance tests for its normal features and dependencies; archive presence alone is insufficient."
+    },
+    {
+      "name": "liblzma",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F36",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/37",
+      "acceptance": "Compile and run guest compression/decompression API tests with exact round trips, malformed input and streamed data.",
+      "provider_package": "xz-libs"
+    },
+    {
+      "name": "mpc",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Compile and run native guest arithmetic/API tests against the pinned MPC library; imported files alone do not establish compatibility.",
+      "provider_package": "mpc1"
+    },
+    {
+      "name": "libgcc",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Run guest compiler-runtime arithmetic and unwind tests, including static/shared linking and exception propagation.",
+      "provider_package": "libgcc"
+    },
+    {
+      "name": "libstdc++",
+      "kind": "port",
+      "state": "bundled",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Run native guest C++ library tests including threads, TLS, static/shared linking and exceptions across shared libraries.",
+      "provider_package": "libstdc++"
+    },
+    {
+      "name": "patch",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add guest smoke or conformance tests for its normal features and dependencies; archive presence alone is insufficient."
+    },
+    {
+      "name": "gettext",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add guest smoke or conformance tests for its normal features and dependencies; archive presence alone is insufficient."
+    },
+    {
+      "name": "bison",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add guest smoke or conformance tests for its normal features and dependencies; archive presence alone is insufficient."
+    },
+    {
+      "name": "lua",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add guest smoke or conformance tests for its normal features and dependencies; archive presence alone is insufficient."
+    },
+    {
+      "name": "ruby",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add guest smoke or conformance tests for its normal features and dependencies; archive presence alone is insufficient."
+    },
+    {
+      "name": "php",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add guest smoke or conformance tests for its normal features and dependencies; archive presence alone is insufficient."
+    },
+    {
+      "name": "guile",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add guest smoke or conformance tests for its normal features and dependencies; archive presence alone is insufficient."
+    },
+    {
+      "name": "codex",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Add guest smoke or conformance tests for its normal features and dependencies; archive presence alone is insufficient."
+    },
+    {
+      "name": "wget",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F14",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/14",
+      "acceptance": "Download from the guest through real DNS, TCP and HTTPS with trusted certificates; reject invalid certificates and interrupted transfers."
+    },
+    {
+      "name": "libssh2",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F14",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/14",
+      "acceptance": "Run a guest SSH client against a controlled peer with host-key verification and successful and rejected authentication."
+    },
+    {
+      "name": "c-ares",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F14",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/14",
+      "acceptance": "Resolve real DNS replies from the guest over UDP and TCP, including malformed input, deadlines and concurrent queries."
+    },
+    {
+      "name": "ly",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F25",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/25",
+      "acceptance": "Start the preferred display manager, authenticate a non-root user, launch and stop the actual desktop session and recover a failed session."
+    },
+    {
+      "name": "lightdm",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F25",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/25",
+      "acceptance": "Authenticate a non-root user and exercise actual desktop startup, logout, greeter/session failure and restart."
+    },
+    {
+      "name": "lxdm",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F25",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/25",
+      "acceptance": "Authenticate a non-root user and exercise actual desktop startup, logout, greeter/session failure and restart."
+    },
+    {
+      "name": "kde",
+      "kind": "port",
+      "state": "planned",
+      "owner": "F23",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/23",
+      "acceptance": "Run a usable KDE session with its window manager, panel, terminal, menus, fonts, application launching, physical input, filesystem and required network/audio services."
     }
   ]
 }

@@ -512,7 +512,7 @@ Required work:
 - Bash as the default interactive shell while retaining ash and zsh.
 - Lightweight FVWM/Openbox-style window manager next.
 - Additional window managers: ctwm and matwm2.
-- CDE and TDE desktop environments in the wider roadmap.
+- CDE, TDE and KDE desktop environments in the wider roadmap.
 - X11 tools, fonts, fontconfig, locale/input support, and session selection.
 - GTK/Motif/Tk/SDL applications and desktop application catalog.
 
@@ -551,7 +551,7 @@ Required work:
 - Logging/syslog, time synchronization, cron/at/batch, and accounting.
 - SSH, controlled inetd/telnet compatibility, HTTP server, and network daemons.
 - DHCP/network setup, device discovery, RPC/rpcbind, and D-Bus.
-- Desktop login greeter, display manager, sessions, and logout.
+- Desktop login greeter, ly as the preferred display manager, LightDM/LXDM alternatives, sessions and logout.
 - Service privilege separation, configuration, dependency ordering, and persistent state.
 
 Acceptance evidence:

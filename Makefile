@@ -27,6 +27,9 @@ build/random-dynamic: userspace/tests/random/random.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -DRANDOM_LINKAGE='"dynamic"' $< -o $@
 .PHONY: test-ownership test-ownership-native
+.PHONY: test-normal-manager
+test-normal-manager:
+	$(PYTHON) scripts/normal_manager_test.py
 test-ownership:
 	$(PYTHON) scripts/ownership_test.py
 test-ownership-native:
@@ -136,6 +139,9 @@ build/network-manager-dynamic: $(MANAGER_SOURCES) $(MANAGER_HEADERS)
 build/manager-tests: userspace/tests/net/manager.cpp userspace/net/config/routing.cpp userspace/net/config/profile.cpp userspace/net/config/saved.cpp userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
 	@mkdir -p build
 	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/manager.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
+build/init-supervision: userspace/tests/net/init-supervision.cpp userspace/net/manager/ownership.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
+	@mkdir -p build
+	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/init-supervision.cpp userspace/net/manager/ownership.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
 build/static-address-host: userspace/tests/net/static-address.cpp userspace/net/manager/static.cpp userspace/net/manager/static.hpp $(PROFILE_SOURCES) $(PROFILE_HEADERS) userspace/net/dhcp/state.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace userspace/tests/net/static-address.cpp userspace/net/manager/static.cpp $(PROFILE_SOURCES) -o $@

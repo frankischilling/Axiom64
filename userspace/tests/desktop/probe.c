@@ -187,6 +187,7 @@ int main(int argc, char** argv) {
         free(response(fd, reply, &length));
         CHECK(u32(reply + 8) == terminal);
         puts("XTERM_WINDOW_PASS");
+        printf("XTERM_WINDOW_ID window=%u\n", terminal);
         close(fd);
         free(setup);
         return 0;

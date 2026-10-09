@@ -72,14 +72,16 @@ Configuration::~Configuration() {
     close();
 }
 
-void Configuration::close() {
-    if (control_ >= 0)
-        ::close(control_);
+int Configuration::close() {
+    int error = control_ >= 0 && ::close(control_) < 0 ? errno : 0;
     control_ = -1;
     store_ = nullptr;
-    routing_.close();
+    int closed = routing_.close();
+    if (!error)
+        error = closed;
     active_ = before_ = after_ = {};
     pending_ = false;
+    return error;
 }
 
 int Configuration::open(const dhcp::Interface& interface, const Store& runtime) {

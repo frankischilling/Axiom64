@@ -102,6 +102,33 @@ PROFILE_FAULTS = -Wl,--wrap=write,--wrap=read,--wrap=close,--wrap=fsync,--wrap=f
 OWNERSHIP_SOURCES = userspace/tests/net/ownership.cpp userspace/net/manager/ownership.cpp userspace/net/config/saved.cpp
 OWNERSHIP_HEADERS = userspace/net/manager/ownership.hpp userspace/net/config/saved.hpp
 OWNERSHIP_FAULTS = -Wl,--wrap=flock
+MANAGER_SOURCES = userspace/net/manager/main.cpp userspace/net/manager/runtime.cpp userspace/net/manager/static.cpp userspace/net/manager/ownership.cpp userspace/net/config/configuration.cpp userspace/net/config/routing.cpp userspace/net/config/resolver.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/state.cpp userspace/net/dhcp/wire.cpp
+MANAGER_HEADERS = userspace/net/manager/runtime.hpp userspace/net/manager/static.hpp userspace/net/manager/ownership.hpp userspace/net/config/configuration.hpp userspace/net/config/routing.hpp userspace/net/config/resolver.hpp $(PROFILE_HEADERS) userspace/net/dhcp/transport.hpp userspace/net/dhcp/state.hpp
+MANAGER_FAULTS = -Wl,--wrap=renameat,--wrap=fsync,--wrap=rename,--wrap=unlinkat,--wrap=close
+build/network-manager-faults: $(MANAGER_SOURCES) $(MANAGER_HEADERS) userspace/tests/net/manager-faults.cpp
+	@mkdir -p build
+	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(MANAGER_SOURCES) userspace/tests/net/manager-faults.cpp $(MANAGER_FAULTS) -o $@
+build/network-manager-dynamic-faults: $(MANAGER_SOURCES) $(MANAGER_HEADERS) userspace/tests/net/manager-faults.cpp
+	@mkdir -p build
+	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(MANAGER_SOURCES) userspace/tests/net/manager-faults.cpp $(MANAGER_FAULTS) -o $@
+build/network-manager: $(MANAGER_SOURCES) $(MANAGER_HEADERS)
+	@mkdir -p build
+	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(MANAGER_SOURCES) -o $@
+build/network-manager-dynamic: $(MANAGER_SOURCES) $(MANAGER_HEADERS)
+	@mkdir -p build
+	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(MANAGER_SOURCES) -o $@
+build/manager-tests: userspace/tests/net/manager.cpp userspace/net/config/routing.cpp userspace/net/config/profile.cpp userspace/net/config/saved.cpp userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
+	@mkdir -p build
+	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/manager.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
+build/static-address-host: userspace/tests/net/static-address.cpp userspace/net/manager/static.cpp userspace/net/manager/static.hpp $(PROFILE_SOURCES) $(PROFILE_HEADERS) userspace/net/dhcp/state.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace userspace/tests/net/static-address.cpp userspace/net/manager/static.cpp $(PROFILE_SOURCES) -o $@
+.PHONY: test-static-address
+test-static-address: build/static-address-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/static-address-host
+.PHONY: test-manager
+test-manager:
+	$(PYTHON) scripts/manager_test.py
 build/ownership-host: $(OWNERSHIP_SOURCES) $(OWNERSHIP_HEADERS)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace $(OWNERSHIP_SOURCES) $(OWNERSHIP_FAULTS) -o $@
@@ -188,6 +215,7 @@ build/x11-probe: userspace/tests/desktop/probe.c
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 USERSPACE_DATA = $(foreach pattern,*.sh *.conf *.twmrc,$(call rwildcard,userspace/,$(pattern))) $(wildcard userspace/tests/toolchain/*)
 ROOTFS_INPUTS = build/thread-io-static build/thread-io-dynamic build/lifecycle-static build/lifecycle-dynamic build/futex-static build/futex-dynamic build/thread-static build/thread-dynamic build/abi-static build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/net-tests build/ipv4-tests build/udp-tests build/x11-probe build/licenses/.stamp $(USERSPACE_DATA) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/build_busybox.py scripts/fetch.py
+ROOTFS_INPUTS += build/network-manager
 build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox

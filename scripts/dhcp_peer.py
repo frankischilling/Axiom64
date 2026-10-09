@@ -135,9 +135,10 @@ class Peer:
             self.answer(5, transaction, changed=True)
         elif kind == b'\x07':
             self.releases += 1
-            check(configured and ip[12:16] == self.address and ip[16:20] == self.other and
-                  options.get(54) == self.other and 50 not in options and 55 not in options and
-                  12 not in options and message[10:12] == b'\0\0', 'RELEASE fields after changed ACK')
+            server = self.other if self.rebindings else self.ip
+            check(configured and ip[12:16] == self.address and ip[16:20] == server and
+                  options.get(54) == server and 50 not in options and 55 not in options and
+                  12 not in options and message[10:12] == b'\0\0', 'RELEASE fields for the last ACK server')
         else:
             raise RuntimeError('unexpected DHCP request mode')
 

@@ -30,7 +30,7 @@ class Transport {
 
     int open(const Interface&);
 
-    void close();
+    int close();
 
     int configured(uint32_t address);
 

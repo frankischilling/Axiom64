@@ -7,7 +7,31 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
+
+static pid_t network(void) {
+    pid_t child = fork();
+    if (!child) {
+        int input = open("/dev/null", O_RDONLY);
+        if (input >= 0) {
+            dup2(input, 0);
+            close(input);
+        }
+        execl("/sbin/network-manager", "network-manager", (char*)0);
+        perror("init: network manager exec");
+        _exit(1);
+    }
+    return child;
+}
+
+static int monotonic(struct timespec* now) {
+    if (clock_gettime(CLOCK_MONOTONIC, now) < 0) {
+        perror("init: monotonic clock");
+        return -1;
+    }
+    return 0;
+}
 
 static pid_t console(void) {
     pid_t child = fork();
@@ -37,6 +61,13 @@ int main(void) {
         execl("/bin/busybox", "busybox", "sh", script, (char*)0);
     } else {
         puts("Axiom64. Starting Xorg, twm, and Bash; ash is available on the serial console.");
+        pid_t manager = network();
+        struct timespec retry;
+        if (monotonic(&retry) < 0)
+            return 1;
+        retry.tv_sec++;
+        if (manager < 0)
+            perror("init: network manager fork");
         pid_t desktop = fork();
         if (!desktop) {
             int input = open("/dev/null", O_RDONLY);
@@ -59,7 +90,7 @@ int main(void) {
         }
         for (;;) {
             int status;
-            pid_t child = waitpid(-1, &status, 0);
+            pid_t child = waitpid(-1, &status, WNOHANG);
             if (child < 0) {
                 if (errno == EINTR)
                     continue;
@@ -73,6 +104,30 @@ int main(void) {
                     return 1;
             } else if (child == desktop) {
                 puts("Desktop session ended. Run startx from the console to open it again.");
+            } else if (child > 0 && child == manager) {
+                printf("Network manager exited status=%d; retrying after one second.\n", status);
+                manager = -1;
+                if (monotonic(&retry) < 0)
+                    return 1;
+                retry.tv_sec++;
+            }
+            struct timespec now;
+            if (monotonic(&now) < 0)
+                return 1;
+            if (manager < 0 && (now.tv_sec > retry.tv_sec ||
+                                (now.tv_sec == retry.tv_sec && now.tv_nsec >= retry.tv_nsec))) {
+                manager = network();
+                if (manager < 0)
+                    perror("init: network manager fork");
+                retry = now;
+                retry.tv_sec++;
+            }
+            if (!child) {
+                struct timespec interval = {0, 100000000};
+                if (nanosleep(&interval, NULL) < 0 && errno != EINTR) {
+                    perror("init: wait interval");
+                    return 1;
+                }
             }
         }
     }

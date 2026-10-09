@@ -57,15 +57,17 @@ Routing::~Routing() {
     close();
 }
 
-void Routing::close() {
-    if (fd_ >= 0)
-        ::close(fd_);
+int Routing::close() {
+    int error = fd_ >= 0 && ::close(fd_) < 0 ? errno : 0;
     fd_ = -1;
     port_ = 0;
+    return error;
 }
 
 int Routing::open() {
-    close();
+    int closed = close();
+    if (closed)
+        return closed;
     fd_ = socket(AF_NETLINK, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, NETLINK_ROUTE);
     if (fd_ < 0)
         return errno;

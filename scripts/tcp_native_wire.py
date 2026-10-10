@@ -154,6 +154,8 @@ def run(linkage, firmware, transport, timeout):
                 'TCP_ACCEPT_DESCRIPTORS_PASS ', 'TCP_ACCEPT_RESERVATION_PASS ',
                 'TCP_ACCEPT_LIFETIME_PASS cases=2', 'TCP_ACCEPT_SIGNALS_PASS cases=3',
                 'TCP_ACCEPT_TEARDOWN_PASS cases=2',
+                'TCP_RETAINED_SEND_PASS cases=2', 'TCP_SEND_DEADLINES_PASS cases=3',
+                'TCP_SEND_SIGNALS_PASS cases=2', 'TCP_SEND_NONBLOCKING_PASS cases=2',
                 f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
     for lane in range(2):
         required += [f'TCP_NATIVE_SERVER_PASS index={lane + 1} bytes_each={BYTES}',

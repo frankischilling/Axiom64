@@ -21,6 +21,7 @@
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #define CHECK(value)                                                                               \
@@ -822,6 +823,195 @@ static void accept_teardown(const char* executable) {
     puts("TCP_ACCEPT_TEARDOWN_PASS cases=2 exec_private_slot fatal_group listener_owner_release");
 }
 
+static void limited_pair(int pair[2]) {
+    pair_sockets(pair);
+    int size = 4096, enabled = 1;
+    CHECK(setsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)) == 0);
+    CHECK(setsockopt(pair[1], SOL_SOCKET, SO_RCVBUF, &size, sizeof(size)) == 0);
+    CHECK(setsockopt(pair[0], IPPROTO_TCP, TCP_NODELAY, &enabled, sizeof(enabled)) == 0);
+    CHECK(fcntl(pair[0], F_SETFL, fcntl(pair[0], F_GETFL) & ~O_NONBLOCK) == 0);
+}
+
+static uint8_t* send_pattern(size_t size) {
+    uint8_t* bytes = malloc(size);
+    CHECK(bytes != NULL);
+    for (size_t at = 0; at < size; at++)
+        bytes[at] = pattern(at);
+    return bytes;
+}
+
+static size_t receive_pattern(int fd, size_t maximum) {
+    uint8_t bytes[4096];
+    size_t received = 0;
+    for (;;) {
+        readable(fd);
+        ssize_t count = recv(fd, bytes, sizeof(bytes), 0);
+        CHECK(count >= 0);
+        if (!count)
+            return received;
+        for (ssize_t at = 0; at < count; at++) {
+            CHECK(received < maximum && bytes[at] == pattern(received));
+            received++;
+        }
+    }
+}
+
+struct RetainedSend {
+    int fd, message;
+    struct iovec vectors[2];
+    struct msghdr header;
+    ssize_t result;
+    atomic_int entered, done;
+};
+
+static void* retained_sender(void* opaque) {
+    struct RetainedSend* operation = opaque;
+    atomic_store(&operation->entered, 1);
+    operation->result = operation->message
+                            ? sendmsg(operation->fd, &operation->header, MSG_NOSIGNAL)
+                            : writev(operation->fd, operation->vectors, 2);
+    atomic_store(&operation->done, 1);
+    return NULL;
+}
+
+static void retained_sends(void) {
+    const size_t size = 262149;
+    for (unsigned replace = 0; replace < 2; replace++) {
+        int original[2], replacement[2];
+        limited_pair(original);
+        uint8_t* bytes = send_pattern(size);
+        struct RetainedSend operation = {.fd = original[0], .message = replace};
+        operation.vectors[0] = (struct iovec){bytes, 5000};
+        operation.vectors[1] = (struct iovec){bytes + 5000, size - 5000};
+        operation.header = (struct msghdr){.msg_iov = operation.vectors, .msg_iovlen = 2};
+        pthread_t thread;
+        CHECK(pthread_create(&thread, NULL, retained_sender, &operation) == 0);
+        int available = 0;
+        for (unsigned attempt = 0; !atomic_load(&operation.entered) || !available; attempt++) {
+            if (atomic_load(&operation.done))
+                fprintf(stderr, "TCP_BLOCKED_SEND_FAIL expected=%zu returned=%zd flags=%x\n", size,
+                        operation.result, fcntl(original[0], F_GETFL));
+            CHECK(!atomic_load(&operation.done) && attempt < 2000);
+            CHECK(ioctl(original[1], FIONREAD, &available) == 0 && usleep(1000) == 0);
+        }
+        CHECK(usleep(20000) == 0 && !atomic_load(&operation.done));
+        int alias = dup(original[0]);
+        CHECK(alias >= 0 && fcntl(alias, F_SETFL, fcntl(alias, F_GETFL) | O_NONBLOCK) == 0);
+        CHECK(usleep(20000) == 0 && !atomic_load(&operation.done) && close(alias) == 0);
+        if (replace) {
+            pair_sockets(replacement);
+            CHECK(dup2(replacement[0], original[0]) == original[0] && close(replacement[0]) == 0);
+            replacement[0] = original[0];
+        } else {
+            CHECK(close(original[0]) == 0);
+            pair_sockets(replacement);
+            CHECK(replacement[0] == original[0]);
+        }
+        uint8_t poison[64];
+        memset(poison, '!', sizeof(poison));
+        operation.vectors[0] = (struct iovec){poison, sizeof(poison)};
+        operation.vectors[1] = (struct iovec){poison, sizeof(poison)};
+        operation.header.msg_iovlen = 1;
+        CHECK(receive_pattern(original[1], size) == size);
+        CHECK(pthread_join(thread, NULL) == 0 && operation.result == (ssize_t)size);
+        errno = 0;
+        CHECK(recv(replacement[1], poison, sizeof(poison), MSG_DONTWAIT) == -1 && errno == EAGAIN);
+        CHECK(close(original[1]) == 0 && close(replacement[0]) == 0 && close(replacement[1]) == 0);
+        free(bytes);
+    }
+    puts("TCP_RETAINED_SEND_PASS cases=2 blocking_prefix captured_vectors captured_nonblocking "
+         "writev sendmsg fd_replacement exact_bytes owner_release");
+}
+
+static uint64_t monotonic_ms(void) {
+    struct timespec now;
+    CHECK(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+    return (uint64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+static void send_deadlines(void) {
+    const size_t size = 262149;
+    for (unsigned operation = 0; operation < 3; operation++) {
+        int pair[2];
+        limited_pair(pair);
+        struct timeval timeout = {0, 50000};
+        CHECK(setsockopt(pair[0], SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) == 0);
+        uint8_t* bytes = send_pattern(size);
+        struct iovec vectors[2] = {{bytes, 5000}, {bytes + 5000, size - 5000}};
+        uint64_t started = monotonic_ms();
+        ssize_t count = operation == 0   ? send(pair[0], bytes, size, MSG_NOSIGNAL)
+                        : operation == 1 ? write(pair[0], bytes, size)
+                                         : writev(pair[0], vectors, 2);
+        uint64_t elapsed = monotonic_ms() - started;
+        CHECK(count > 0 && (size_t)count < size && elapsed >= 40 && elapsed < 2000);
+        memset(bytes, '!', size);
+        free(bytes);
+        CHECK(close(pair[0]) == 0);
+        CHECK(receive_pattern(pair[1], count) == (size_t)count && close(pair[1]) == 0);
+    }
+    puts("TCP_SEND_DEADLINES_PASS cases=3 send write writev waited partial_bytes owned_queue "
+         "exact_eof");
+}
+
+static void send_signals(void) {
+    const size_t size = 262149;
+    struct sigaction previous, action = {.sa_handler = interruption};
+    sigemptyset(&action.sa_mask);
+    CHECK(sigaction(SIGUSR1, NULL, &previous) == 0);
+    for (unsigned restart = 0; restart < 2; restart++) {
+        action.sa_flags = restart ? SA_RESTART : 0;
+        CHECK(sigaction(SIGUSR1, &action, NULL) == 0);
+        int pair[2];
+        limited_pair(pair);
+        uint8_t* bytes = send_pattern(size);
+        struct RetainedSend operation = {.fd = pair[0], .message = restart};
+        operation.vectors[0] = (struct iovec){bytes, 5000};
+        operation.vectors[1] = (struct iovec){bytes + 5000, size - 5000};
+        operation.header = (struct msghdr){.msg_iov = operation.vectors, .msg_iovlen = 2};
+        pthread_t thread;
+        interrupted = 0;
+        CHECK(pthread_create(&thread, NULL, retained_sender, &operation) == 0);
+        int available = 0;
+        for (unsigned attempt = 0; !atomic_load(&operation.entered) || !available; attempt++) {
+            CHECK(!atomic_load(&operation.done) && attempt < 2000);
+            CHECK(ioctl(pair[1], FIONREAD, &available) == 0 && usleep(1000) == 0);
+        }
+        CHECK(usleep(20000) == 0 && !atomic_load(&operation.done));
+        CHECK(pthread_kill(thread, SIGUSR1) == 0);
+        for (unsigned attempt = 0; !atomic_load(&operation.done); attempt++)
+            CHECK(attempt < 2000 && usleep(1000) == 0);
+        CHECK(pthread_join(thread, NULL) == 0 && interrupted == 1 && operation.result > 0 &&
+              (size_t)operation.result < size);
+        memset(bytes, '!', size);
+        free(bytes);
+        CHECK(close(pair[0]) == 0);
+        CHECK(receive_pattern(pair[1], operation.result) == (size_t)operation.result &&
+              close(pair[1]) == 0);
+    }
+    CHECK(sigaction(SIGUSR1, &previous, NULL) == 0);
+    puts("TCP_SEND_SIGNALS_PASS cases=2 writev sendmsg partial_bytes sa_restart_on_off owned_queue "
+         "exact_eof");
+}
+
+static void send_nonblocking(void) {
+    const size_t size = 262149;
+    for (unsigned flag = 0; flag < 2; flag++) {
+        int pair[2];
+        limited_pair(pair);
+        if (!flag)
+            CHECK(fcntl(pair[0], F_SETFL, fcntl(pair[0], F_GETFL) | O_NONBLOCK) == 0);
+        uint8_t* bytes = send_pattern(size);
+        ssize_t count = send(pair[0], bytes, size, MSG_NOSIGNAL | (flag ? MSG_DONTWAIT : 0));
+        CHECK(count > 0 && (size_t)count < size);
+        memset(bytes, '!', size);
+        free(bytes);
+        CHECK(close(pair[0]) == 0);
+        CHECK(receive_pattern(pair[1], count) == (size_t)count && close(pair[1]) == 0);
+    }
+    puts("TCP_SEND_NONBLOCKING_PASS cases=2 o_nonblock msg_dontwait partial_bytes owned_queue "
+         "exact_eof");
+}
+
 static uint8_t wire_byte(size_t position, unsigned lane, unsigned phase) {
     return pattern(position) ^ (phase * 73) ^ (lane * 11);
 }
@@ -924,6 +1114,10 @@ int main(int argc, char** argv) {
     accept_lifetime();
     accept_signals();
     accept_teardown(argv[0]);
+    retained_sends();
+    send_deadlines();
+    send_signals();
+    send_nonblocking();
     connection_cycles();
     fflush(stdout);
     loopback();

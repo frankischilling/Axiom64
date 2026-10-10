@@ -64,6 +64,8 @@ def run(linkage, firmware, timeout, image):
                 'TCP_ACCEPT_DESCRIPTORS_PASS ', 'TCP_ACCEPT_RESERVATION_PASS ',
                 'TCP_ACCEPT_LIFETIME_PASS cases=2', 'TCP_ACCEPT_SIGNALS_PASS cases=3',
                 'TCP_ACCEPT_TEARDOWN_PASS cases=2',
+                'TCP_RETAINED_SEND_PASS cases=2', 'TCP_SEND_DEADLINES_PASS cases=3',
+                'TCP_SEND_SIGNALS_PASS cases=2', 'TCP_SEND_NONBLOCKING_PASS cases=2',
                 'TCP_CLIENT_PASS ', 'TCP_LOOPBACK_PASS bytes=262144',
                 'TCP_TEST_PASS', 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}')
     missing = [marker for marker in required if marker not in text]

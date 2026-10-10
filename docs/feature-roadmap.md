@@ -316,7 +316,7 @@ Acceptance evidence:
 
 ### F13. TCP, UDP, and Linux socket semantics
 
-Unix stream sockets support X11, [AF_PACKET raw sockets](network.md) exchange Ethernet, and [AF_INET raw ICMP sockets](ipv4.md) support ping. [IPv4 UDP sockets](udp.md) add datagrams with tested checksums, binding, queues, errors, readiness, and retained I/O. [NETLINK_ROUTE sockets](netlink.md) support bounded tagged IPv4 route control, dumps, complete address updates, and retained datagram I/O. Unix datagram descriptors currently support interface configuration only. TCP, IPv6 UDP, Unix datagram data, deadlines, ancillary data, and the complete socket contract remain planned.
+Unix stream sockets support X11, [AF_PACKET raw sockets](network.md) exchange Ethernet, and [AF_INET raw ICMP sockets](ipv4.md) support ping. [IPv4 UDP sockets](udp.md) add datagrams with tested checksums, binding, queues, errors, readiness, and retained I/O. [NETLINK_ROUTE sockets](netlink.md) support bounded tagged IPv4 route control, dumps, complete address updates, and retained datagram I/O. [Shared Linux receive/send socket timeouts](io.md) capture finite monotonic deadlines and release retained descriptions on expiry and interruption. Unix datagram descriptors currently support interface configuration only. TCP, IPv6 UDP, Unix datagram data, connect deadlines, ancillary data, and the complete socket contract remain planned.
 
 Required work:
 
@@ -335,7 +335,7 @@ Acceptance evidence:
 
 ### F14. DHCP, DNS, and network configuration
 
-Linux interface/route control and BusyBox tools support [static configuration](ipv4.md#configuration-and-routing). [Ring 3 configuration/DHCP modules](network-configuration.md) and the [normal network manager](network-manager.md) implement concurrent default DHCP, saved static/disabled overrides, owned address/route/resolver updates, synchronized profiles/hints and fresh-boot validation. The complete [client/service acceptance matrices](network-manager-acceptance.md) pass for [#66](https://github.com/frankischilling/Axiom64/issues/66) and [#78](https://github.com/frankischilling/Axiom64/issues/78). Working DNS resolution including TCP fallback, downloads and the complete first network release remain required in the parent scope.
+Linux interface/route control and BusyBox tools support [static configuration](ipv4.md#configuration-and-routing). [Ring 3 configuration/DHCP modules](network-configuration.md) and the [normal network manager](network-manager.md) implement concurrent default DHCP, saved static/disabled overrides, owned address/route/resolver updates, synchronized profiles/hints and fresh-boot validation. The complete [client/service acceptance matrices](network-manager-acceptance.md) pass for [#66](https://github.com/frankischilling/Axiom64/issues/66) and [#78](https://github.com/frankischilling/Axiom64/issues/78). [Actual musl IPv4 UDP lookups](dns.md) have controlled query/search/error/retry and driver-receipt tests on both Ethernet adapters. DNS TCP fallback, the normal DHCP-to-query release integration, downloads and the complete first network release remain required.
 
 Required work:
 

@@ -469,7 +469,7 @@
       "title": "TCP, UDP, and Linux socket semantics",
       "milestone": "M3",
       "state": "partial",
-      "current": "Unix stream sockets support X11, AF_PACKET exchanges Ethernet, and AF_INET supports raw ICMP/ping and IPv4 UDP datagrams with tested checksums, binding, queues, errors, readiness, and retained I/O. Bounded NETLINK_ROUTE sockets support tagged IPv4 route control, dumps, complete address updates, and retained datagram I/O. Unix datagram descriptors serve interface configuration only; TCP, IPv6 UDP, deadlines, ancillary data, and the complete socket contract remain planned.",
+      "current": "Unix stream sockets support X11, AF_PACKET exchanges Ethernet, and AF_INET supports raw ICMP/ping and IPv4 UDP datagrams with tested checksums, binding, queues, errors, readiness, and retained I/O. Bounded NETLINK_ROUTE sockets support tagged IPv4 route control, dumps, complete address updates, and retained datagram I/O. Shared Linux receive/send socket timeouts capture finite monotonic I/O deadlines and reclaim retained descriptions on expiry and interruption. Unix datagram descriptors serve interface configuration only; TCP, IPv6 UDP, connect deadlines, ancillary data, and the complete socket contract remain planned.",
       "scope": [
         "AF_INET/AF_INET6 TCP/UDP socket lifecycle, options, and errors",
         "TCP sequence/window handling, retransmission, congestion, close, and reset",
@@ -506,7 +506,10 @@
         "userspace/tests/net/configuration.cpp",
         "scripts/configuration_test.py",
         "scripts/configuration_native.py",
-        "docs/network-configuration.md"
+        "docs/network-configuration.md",
+        "kernel/io/socket_timeout.cpp",
+        "userspace/tests/threads/io.c",
+        "docs/io.md"
       ],
       "branch": "feature/f13-tcp-udp-and-linux-socket-semantics",
       "issue": "https://github.com/frankischilling/Axiom64/issues/13"
@@ -516,7 +519,7 @@
       "title": "DHCP, DNS, and network configuration",
       "milestone": "M3",
       "state": "partial",
-      "current": "Linux interface/route control and BusyBox tools support static configuration. Ring 3 C++ modules and the normal network manager implement concurrent default DHCP, saved static/disabled overrides, owned address/route/resolver updates, synchronized profiles/hints and fresh-boot validation. Complete client/service protocol, carrier/device, restart and saved-root matrices pass. Working DNS resolution including TCP fallback, downloads and the complete first network release remain required.",
+      "current": "Linux interface/route control and BusyBox tools support static configuration. Ring 3 C++ modules and the normal network manager implement concurrent default DHCP, saved static/disabled overrides, owned address/route/resolver updates, synchronized profiles/hints and fresh-boot validation. Complete client/service protocol, carrier/device, restart and saved-root matrices pass. Actual static/dynamic musl IPv4 UDP lookups have controlled tests for nameserver/search rules, CNAME/A answers, failures, filtering, retries, concurrency and description reclamation on both Ethernet drivers. DNS TCP fallback, the normal DHCP-to-query release integration, downloads and the complete first network release remain required.",
       "scope": [
         "DHCP by default, lease renewal, saved configuration, and static override",
         "DNS resolver including UDP, TCP fallback, search rules, and timeouts",
@@ -569,7 +572,12 @@
         "scripts/manager_reboot_test.py",
         "scripts/normal_manager_test.py",
         "docs/network-manager.md",
-        "docs/network-manager-acceptance.md"
+        "docs/network-manager-acceptance.md",
+        "userspace/tests/net/dns.c",
+        "scripts/dns_peer.py",
+        "scripts/dns_test.py",
+        "scripts/dns_native.py",
+        "docs/dns.md"
       ],
       "branch": "feature/f14-dhcp-dns-and-network-configuration",
       "issue": "https://github.com/frankischilling/Axiom64/issues/14"

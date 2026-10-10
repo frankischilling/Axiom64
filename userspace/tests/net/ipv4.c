@@ -692,9 +692,9 @@ static void limits(unsigned lane) {
               errno == EAGAIN,
           "UDP descriptor validates destination port and nonblocking empty receive");
     check(close(control) == 0, "UDP control close");
-    check(socket(AF_INET, SOCK_STREAM, IPPROTO_TCP) == -1 && errno == EPROTONOSUPPORT &&
+    check(socket(AF_INET, SOCK_STREAM, IPPROTO_UDP) == -1 && errno == EPROTONOSUPPORT &&
               socket(AF_INET, SOCK_RAW, IPPROTO_UDP) == -1 && errno == EPROTONOSUPPORT,
-          "unimplemented Internet protocols are explicit");
+          "invalid stream and unimplemented raw protocols are explicit");
     printf("IPV4_LIMITS_PASS index=%u\n", lane + 1);
 }
 

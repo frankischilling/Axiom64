@@ -112,6 +112,7 @@ void signal_interrupt(Task& task) {
         (task.wait == Wait::read || task.wait == Wait::write || task.wait == Wait::child ||
          task.wait == Wait::file_lock || task.wait == Wait::random);
     // A caught signal ends this attempt. SA_RESTART re-enters with a fresh fd lookup.
+    int64_t interrupted_result = io_interrupted_result(task);
     io_discard(task);
     if (task.handlers->signal_actions[signal - 1][0] > 1 && !restart) {
         if (task.wait == Wait::futex)
@@ -122,7 +123,7 @@ void signal_interrupt(Task& task) {
             task.memory->space.copy_out(task.frame.rsi, time, sizeof(time));
         }
         task.frame.rip += 2;
-        task.frame.rax = uint64_t(-4);
+        task.frame.rax = uint64_t(interrupted_result);
         task.deadline = 0;
     }
     task.wait = Wait::none;
@@ -181,7 +182,7 @@ bool signal_deliver(Task& task) {
                             if (member.io) {
                                 if (!io_restartable(member)) {
                                     member.frame.rip += 2;
-                                    member.frame.rax = uint64_t(-4);
+                                    member.frame.rax = uint64_t(io_interrupted_result(member));
                                 }
                                 io_discard(member);
                                 member.wait = Wait::none;

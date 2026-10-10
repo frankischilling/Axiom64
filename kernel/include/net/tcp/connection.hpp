@@ -2,6 +2,7 @@
 #pragma once
 #include "net/tcp/sender.hpp"
 #include "net/tcp/wire.hpp"
+#include "net/tcp/time_wait.hpp"
 
 namespace ax::tcp {
 constexpr size_t stream_capacity = 32768;
@@ -51,6 +52,11 @@ class Connection {
 
     size_t writable() const;
     uint16_t window() const;
+
+    // Capture only after pending output has been copied, in State::time_wait.
+    TimeWait time_wait_state() const {
+        return {send_next, receive_next, window(), expiration};
+    }
 
     bool eof() const {
         return received_fin || read_closed;

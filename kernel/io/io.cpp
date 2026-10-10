@@ -28,6 +28,7 @@ struct IoRequest {
     Frame call;
     Iovec single, *vectors;
     size_t count;
+    size_t cursor, cursor_offset, progress;
     unsigned flags;
     bool write, socket, accept, positioned, locking, connect, started;
     bool timed;
@@ -59,7 +60,11 @@ void io_discard(Task& task) {
 }
 
 bool io_restartable(const Task& task) {
-    return !task.io || !task.io->timed;
+    return !task.io || (!task.io->timed && !task.io->progress);
+}
+
+int64_t io_interrupted_result(const Task& task) {
+    return task.io && task.io->progress ? int64_t(task.io->progress) : -4;
 }
 
 static void capture_timeout(IoRequest& request) {
@@ -79,6 +84,10 @@ static bool timeout_expired(const IoRequest& request) {
         return false;
     clock_refresh();
     return ticks >= request.deadline;
+}
+
+static int64_t timeout_result(const IoRequest& request) {
+    return request.progress ? int64_t(request.progress) : request.connect ? -115 : -11;
 }
 
 static int import_vectors(Task& task, IoRequest& request, uint64_t pointer, size_t count) {
@@ -263,7 +272,10 @@ static int prepare(Task& task, IoRequest& request) {
     }
     if (request.socket) {
         request.flags = f.rax == 46 || f.rax == 47 ? f.rdx : f.r10;
-        if (request.flags & ~unsigned(2 | 0x40 | 0x4000))
+        unsigned allowed = 2 | 0x40 | 0x4000;
+        if (inet_stream(request.handle->inet))
+            allowed |= 0x100;
+        if (request.flags & ~allowed)
             return -95;
         if (f.rax == 44 && f.r8)
             return -106;
@@ -409,6 +421,31 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
     return result;
 }
 
+static int64_t wait_all_attempt(Task& task, IoRequest& request) {
+    net_poll();
+    while (request.cursor < request.count) {
+        const auto& original = request.vectors[request.cursor];
+        Iovec vector{original.base + request.cursor_offset,
+                     original.length - request.cursor_offset};
+        if (!vector.length) {
+            request.cursor++;
+            request.cursor_offset = 0;
+            continue;
+        }
+        int64_t count = transfer(task, request, vector, request.progress);
+        if (count < 0) {
+            if (count == -11 && !(request.handle->flags & 04000) && !(request.flags & 0x40))
+                return would_block;
+            return request.progress ? int64_t(request.progress) : count;
+        }
+        if (!count)
+            return request.progress;
+        request.progress += count;
+        request.cursor_offset += count;
+    }
+    return request.progress;
+}
+
 static int64_t attempt(Task& task, IoRequest& request) {
     auto h = request.handle;
     const auto& f = request.call;
@@ -444,7 +481,11 @@ static int64_t attempt(Task& task, IoRequest& request) {
         result = f.rsi >= user_limit ? -14 : read_handle(h, nullptr, 0);
     if (request.positioned)
         h->offset = f.r10;
-    for (size_t i = 0; i < request.count; i++) {
+    bool wait_all =
+        request.socket && !request.write && inet_stream(h->inet) && (request.flags & 0x100);
+    if (wait_all)
+        result = wait_all_attempt(task, request);
+    for (size_t i = 0; !wait_all && i < request.count; i++) {
         auto& vector = request.vectors[i];
         if (!vector.length)
             continue;
@@ -511,7 +552,7 @@ int64_t io_syscall(Task& task, const Frame& frame) {
         capture_timeout(*request);
     int64_t result = error ? error : attempt(task, *request);
     if (result == would_block && timeout_expired(*request))
-        result = request->connect ? -115 : -11;
+        result = timeout_result(*request);
     if (result == would_block) {
         task.io = request;
         task.state = State::blocked;
@@ -535,7 +576,7 @@ bool io_resume(Task& task) {
     if (result == would_block) {
         if (!timeout_expired(*request))
             return false;
-        result = request->connect ? -115 : -11;
+        result = timeout_result(*request);
     }
     // Commit the result before signal delivery; handlers have their own syscall state.
     task.frame.rip += 2;

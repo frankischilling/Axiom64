@@ -6,8 +6,10 @@
 #include <netinet/tcp.h>
 #include <net/if.h>
 #include <poll.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -332,6 +334,184 @@ static void refused(void) {
     puts("TCP_REFUSED_PASS nonblocking poll so_error clear");
 }
 
+static volatile sig_atomic_t interrupted;
+
+static void interruption(int signal) {
+    (void)signal;
+    interrupted++;
+}
+
+static void wait_child(pid_t child) {
+    int status;
+    CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && !WEXITSTATUS(status));
+}
+
+static void wait_all(void) {
+    for (unsigned peek = 0; peek < 2; peek++) {
+        int pair[2];
+        pair_sockets(pair);
+        CHECK(fcntl(pair[1], F_SETFL, fcntl(pair[1], F_GETFL) & ~O_NONBLOCK) == 0);
+        pid_t child = fork();
+        CHECK(child >= 0);
+        if (!child) {
+            CHECK(close(pair[1]) == 0);
+            send_all(pair[0], (const uint8_t*)"part", 4);
+            CHECK(usleep(30000) == 0);
+            send_all(pair[0], (const uint8_t*)"full", 4);
+            CHECK(shutdown(pair[0], SHUT_WR) == 0 && close(pair[0]) == 0);
+            _exit(0);
+        }
+        CHECK(close(pair[0]) == 0);
+        uint8_t bytes[8];
+        CHECK(recv(pair[1], bytes, sizeof(bytes), MSG_WAITALL | (peek ? MSG_PEEK : 0)) == 8 &&
+              !memcmp(bytes, "partfull", sizeof(bytes)));
+        if (peek)
+            CHECK(recv(pair[1], bytes, sizeof(bytes), MSG_WAITALL) == 8 &&
+                  !memcmp(bytes, "partfull", 8));
+        CHECK(recv(pair[1], bytes, 1, 0) == 0 && close(pair[1]) == 0);
+        wait_child(child);
+    }
+    int pair[2];
+    pair_sockets(pair);
+    send_all(pair[0], (const uint8_t*)"part", 4);
+    readable(pair[1]);
+    uint8_t bytes[8];
+    CHECK(recv(pair[1], bytes, sizeof(bytes), MSG_WAITALL | MSG_DONTWAIT) == 4 &&
+          !memcmp(bytes, "part", 4));
+    send_all(pair[0], (const uint8_t*)"time", 4);
+    readable(pair[1]);
+    struct timeval deadline = {0, 50000};
+    CHECK(setsockopt(pair[1], SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof(deadline)) == 0);
+    CHECK(fcntl(pair[1], F_SETFL, fcntl(pair[1], F_GETFL) & ~O_NONBLOCK) == 0);
+    CHECK(recv(pair[1], bytes, sizeof(bytes), MSG_WAITALL) == 4 && !memcmp(bytes, "time", 4));
+    errno = 0;
+    CHECK(recv(pair[1], bytes, 1, MSG_DONTWAIT) == -1 && errno == EAGAIN);
+    CHECK(close(pair[0]) == 0 && close(pair[1]) == 0);
+    puts("TCP_WAITALL_PASS delayed_chunks peek nonblocking timeout_partial");
+}
+
+static void wait_all_signals(void) {
+    struct sigaction previous, action = {.sa_handler = interruption};
+    sigemptyset(&action.sa_mask);
+    CHECK(sigaction(SIGUSR1, NULL, &previous) == 0);
+    for (unsigned restart = 0; restart < 2; restart++) {
+        action.sa_flags = restart ? SA_RESTART : 0;
+        CHECK(sigaction(SIGUSR1, &action, NULL) == 0);
+        int pair[2], ready[2];
+        pair_sockets(pair);
+        CHECK(pipe(ready) == 0);
+        CHECK(fcntl(pair[1], F_SETFL, fcntl(pair[1], F_GETFL) & ~O_NONBLOCK) == 0);
+        pid_t parent = getpid(), child = fork();
+        CHECK(child >= 0);
+        if (!child) {
+            CHECK(close(pair[1]) == 0 && close(ready[1]) == 0);
+            send_all(pair[0], (const uint8_t*)"part", 4);
+            uint8_t byte;
+            CHECK(read(ready[0], &byte, 1) == 1 && usleep(30000) == 0);
+            CHECK(kill(parent, SIGUSR1) == 0 && usleep(30000) == 0);
+            send_all(pair[0], (const uint8_t*)"late", 4);
+            CHECK(shutdown(pair[0], SHUT_WR) == 0 && close(pair[0]) == 0 && close(ready[0]) == 0);
+            _exit(0);
+        }
+        CHECK(close(pair[0]) == 0 && close(ready[0]) == 0);
+        readable(pair[1]);
+        uint8_t bytes[8];
+        CHECK(recv(pair[1], bytes, 4, MSG_PEEK | MSG_DONTWAIT) == 4);
+        interrupted = 0;
+        CHECK(write(ready[1], "x", 1) == 1);
+        CHECK(recv(pair[1], bytes, sizeof(bytes), MSG_WAITALL) == 4 && !memcmp(bytes, "part", 4));
+        CHECK(interrupted == 1);
+        CHECK(recv(pair[1], bytes, 4, MSG_WAITALL) == 4 && !memcmp(bytes, "late", 4));
+        CHECK(recv(pair[1], bytes, 1, 0) == 0 && close(pair[1]) == 0 && close(ready[1]) == 0);
+        wait_child(child);
+    }
+    CHECK(sigaction(SIGUSR1, &previous, NULL) == 0);
+    puts("TCP_WAITALL_SIGNALS_PASS partial_bytes sa_restart_on_off remaining_data");
+}
+
+struct RetainedRead {
+    int fd;
+    uint8_t bytes[8];
+    struct iovec vectors[2];
+    struct msghdr message;
+    atomic_int entered, done;
+    ssize_t result;
+};
+
+static void* retained_reader(void* opaque) {
+    struct RetainedRead* operation = opaque;
+    atomic_store(&operation->entered, 1);
+    operation->result = recvmsg(operation->fd, &operation->message, MSG_WAITALL);
+    atomic_store(&operation->done, 1);
+    return NULL;
+}
+
+static void retained_reads(void) {
+    for (unsigned replace = 0; replace < 2; replace++) {
+        int original[2], replacement[2];
+        pair_sockets(original);
+        CHECK(fcntl(original[1], F_SETFL, fcntl(original[1], F_GETFL) & ~O_NONBLOCK) == 0);
+        struct RetainedRead operation = {.fd = original[1]};
+        operation.vectors[0] = (struct iovec){operation.bytes, 2};
+        operation.vectors[1] = (struct iovec){operation.bytes + 2, 6};
+        operation.message = (struct msghdr){.msg_iov = operation.vectors, .msg_iovlen = 2};
+        pthread_t thread;
+        send_all(original[0], (const uint8_t*)"part", 4);
+        CHECK(pthread_create(&thread, NULL, retained_reader, &operation) == 0);
+        int available = 1;
+        unsigned waits = 0;
+        while (!atomic_load(&operation.entered) || available) {
+            CHECK(!atomic_load(&operation.done) && waits++ < 2000);
+            CHECK(ioctl(original[1], FIONREAD, &available) == 0 && usleep(1000) == 0);
+        }
+        // FIONREAD reaches zero only after this call has consumed the first prefix.
+        CHECK(!atomic_load(&operation.done));
+        if (replace) {
+            pair_sockets(replacement);
+            CHECK(dup2(replacement[0], original[1]) == original[1]);
+            CHECK(close(replacement[0]) == 0);
+            replacement[0] = original[1];
+        } else {
+            CHECK(close(original[1]) == 0);
+            pair_sockets(replacement);
+            CHECK(replacement[0] == original[1]);
+        }
+        uint8_t poison[8];
+        memset(poison, '.', sizeof(poison));
+        operation.vectors[0] = (struct iovec){poison, 8};
+        operation.vectors[1] = (struct iovec){poison, 8};
+        operation.message.msg_iovlen = 1;
+        send_all(replacement[1], (const uint8_t*)"wrong", 5);
+        CHECK(usleep(20000) == 0 && !atomic_load(&operation.done));
+        send_all(original[0], (const uint8_t*)"late", 4);
+        CHECK(pthread_join(thread, NULL) == 0 && operation.result == 8 &&
+              !memcmp(operation.bytes, "partlate", 8) && !memcmp(poison, "........", 8));
+        readable(original[0]);
+        uint8_t bytes[8];
+        CHECK(recv(original[0], bytes, 1, 0) == 0);
+        readable(replacement[0]);
+        CHECK(recv(replacement[0], bytes, sizeof(bytes), 0) == 5 && !memcmp(bytes, "wrong", 5));
+        CHECK(close(original[0]) == 0 && close(replacement[0]) == 0 && close(replacement[1]) == 0);
+    }
+    puts("TCP_RETAINED_READ_PASS cases=2 captured_vectors fd_close_reuse dup2 exact_bytes");
+}
+
+static void connection_cycles(void) {
+    for (unsigned cycle = 0; cycle < 300; cycle++) {
+        int pair[2];
+        pair_sockets(pair);
+        uint8_t byte;
+        CHECK(shutdown(pair[0], SHUT_WR) == 0);
+        readable(pair[1]);
+        CHECK(recv(pair[1], &byte, 1, 0) == 0);
+        CHECK(shutdown(pair[1], SHUT_WR) == 0);
+        readable(pair[0]);
+        CHECK(recv(pair[0], &byte, 1, 0) == 0);
+        CHECK(close(pair[0]) == 0 && close(pair[1]) == 0);
+    }
+    puts("TCP_RESOURCE_CYCLES_PASS count=300 completed_half_closes pool_reclamation");
+}
+
 static uint8_t wire_byte(size_t position, unsigned lane, unsigned phase) {
     return pattern(position) ^ (phase * 73) ^ (lane * 11);
 }
@@ -418,6 +598,10 @@ int main(int argc, char** argv) {
     options();
     refused();
     vectors();
+    wait_all();
+    wait_all_signals();
+    retained_reads();
+    connection_cycles();
     fflush(stdout);
     loopback();
     if (argc == 4 && !strcmp(argv[1], "--wire")) {

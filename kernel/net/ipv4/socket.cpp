@@ -85,6 +85,8 @@ unsigned inet_shutdown(InetSocket* socket) {
 }
 
 static bool port_conflict(InetSocket* socket, uint32_t local, uint16_t port) {
+    if (socket->type == 1 && tcp_port_busy(local, port, socket->index, socket->reuse))
+        return true;
     for (auto& other : inet_sockets)
         if (other.used && &other != socket && other.type == socket->type &&
             other.local_port == port &&
@@ -99,8 +101,10 @@ int inet_bind_port(InetSocket* socket, uint32_t local, uint16_t port) {
         if (port_conflict(socket, local, port))
             return -98;
     } else {
-        // At most 255 other UDP sockets can occupy distinct conflicting ports.
-        for (unsigned attempt = 0; attempt < inet_socket_count; attempt++) {
+        // Include completed TCP tuples as well as every live socket. One more
+        // candidate than the maximum number of owners guarantees a free port.
+        unsigned attempts = inet_socket_count + (socket->type == 1 ? tcp_time_wait_count : 0);
+        for (unsigned attempt = 0; attempt < attempts; attempt++) {
             uint16_t candidate = next_port;
             next_port = next_port == 60999 ? 32768 : next_port + 1;
             if (!port_conflict(socket, local, candidate)) {

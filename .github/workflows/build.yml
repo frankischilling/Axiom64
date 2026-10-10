@@ -42,6 +42,7 @@ jobs:
           make -j2 build/dns-static build/dns-dynamic
           make -j2 build/normal-dns-static build/normal-dns-dynamic
           make -j2 build/credentials-native build/credentials-static build/credentials-dynamic
+          make -j2 build/tcp-native build/tcp-static build/tcp-dynamic
           make build/init-supervision
       - name: Test split-queue ownership with sanitizers
         run: make test-virtqueue
@@ -50,7 +51,7 @@ jobs:
       - name: Test TCP wire, sender and connection policies with sanitizers
         run: |
           mkdir -p build/tcp-policy
-          make test-tcp-wire test-tcp-sender test-tcp-connection 2>&1 | tee build/tcp-policy/host.log
+          make test-tcp-wire test-tcp-sender test-tcp-connection test-tcp-isn 2>&1 | tee build/tcp-policy/host.log
       - name: Upload TCP policy evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -122,6 +123,7 @@ jobs:
           - manager-uefi-legacy
           - random
           - credentials
+          - tcp
           - normal-init-bios
           - normal-init-uefi
           - protocol-bios-modern-lane0
@@ -160,6 +162,18 @@ jobs:
       - name: Test ordinary identities, privilege-dropped exec and RAM/ext2 permissions
         if: matrix.suite == 'credentials'
         run: make test-credentials
+      - name: Compare TCP stream sockets with native Linux and both musl linkages
+        if: matrix.suite == 'tcp'
+        run: make test-tcp-native
+      - name: Test static and dynamic TCP loopback with BIOS and UEFI
+        if: matrix.suite == 'tcp'
+        run: make test-tcp-sockets
+      - name: Test native host TCP client/server transfers and independent NIC captures
+        if: matrix.suite == 'tcp'
+        run: make test-tcp-native-wire
+      - name: Reject damaged actual TCP captures
+        if: matrix.suite == 'tcp'
+        run: python3 scripts/tests/tcp_capture_test.py 2>&1 | tee build/tcp-capture-checker.log
       - name: Test desktop serial acceptance decisions
         if: matrix.suite == 'boot'
         run: python3 scripts/tests/desktop_console_test.py
@@ -387,6 +401,14 @@ jobs:
             build/paired-network/**
             build/*.png
             build/*.dump
+            build/tcp-*.pcap
+      - name: Upload TCP boot fixtures
+        if: always() && matrix.suite == 'tcp'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-tcp-fixtures
+          if-no-files-found: error
+          path: build/axiom64-tcp-*.iso
       - name: Upload credential filesystem and boot fixtures
         if: always() && matrix.suite == 'credentials'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

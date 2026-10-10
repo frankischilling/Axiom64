@@ -1,6 +1,6 @@
 # IPv4, ARP, routing, and ping
 
-The initial IPv4 host path runs over [virtio-net and QEMU e1000](network.md). It supports static addresses, loopback, connected and explicit routes, bounded ARP resolution, kernel ICMP echo replies, Linux raw ICMP sockets, and [UDP datagrams](udp.md). BusyBox `ifconfig`, route add/delete, and numeric `ping` exercise the guest implementation. DHCP, DNS, TCP, downloads, IPv6, and complete IPv4 conformance remain required by the [networking roadmap](feature-roadmap.md).
+The IPv4 host path runs over [virtio-net and QEMU e1000](network.md). It supports static addresses, loopback, connected and explicit routes, bounded ARP resolution, kernel ICMP echo replies, Linux raw ICMP sockets, [UDP datagrams](udp.md) and ordinary [TCP streams](tcp.md). BusyBox `ifconfig`, route add/delete, and numeric `ping` exercise the guest implementation. [DHCP](network-manager.md) and [DNS](dns.md) have their own contracts. Full TCP fault/lifetime acceptance, DNS TCP fallback, downloads, IPv6 and complete IPv4 conformance remain required by the [networking roadmap](feature-roadmap.md).
 
 ## Ownership and progress
 
@@ -53,7 +53,7 @@ Each listener holds at most 32 datagrams and 65536 bytes, dropping new arrivals 
 
 Receive supports `MSG_PEEK`, `MSG_TRUNC`, and `MSG_DONTWAIT`; sends also accept `MSG_NOSIGNAL`. Poll/epoll and `FIONREAD` expose queue state. An ordinary failed receive copy consumes the selected datagram; a failed peek retains it. This behavior is checked against Linux and leaves the separate packet-socket contract intact. Blocking I/O captures vectors, addresses, and TX bytes and retains the original description through close/reuse. Socket errors take precedence over queued input; a failed `SO_ERROR` copy does not clear the pending error.
 
-TCP, other raw protocols, raw listen/accept/shutdown, deadlines, ancillary data, `IP_HDRINCL`, error queues, and other unsupported options return explicit errors. [UDP](udp.md) has its own datagram and shutdown contract. Current tasks run as root. Accounts, permission enforcement, and secure randomness remain prerequisites for exposing services.
+Other raw protocols, raw listen/accept/shutdown, ancillary data, `IP_HDRINCL`, error queues and unsupported options return explicit errors. [UDP](udp.md) and [TCP](tcp.md) have their own data and shutdown contracts, using common finite [socket deadlines](io.md). [Task credentials and permission checks](credentials.md) support numeric identities; persistent accounts/login, full isolation, file capabilities and complete secure-randomness acceptance remain prerequisites for the service release.
 
 ## Verification
 

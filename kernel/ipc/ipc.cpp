@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ipc/ipc.hpp"
 #include "io/socket_timeout.hpp"
+#include "net/tcp/socket.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
 #include "net/netlink.hpp"
@@ -212,6 +213,8 @@ uint32_t readiness(Handle* h) {
             events |= 8;
     }
     if (h->inet) {
+        if (inet_stream(h->inet))
+            return tcp_events(h->inet);
         unsigned shutdown = inet_shutdown(h->inet);
         if (!inet_front(h->inet) && !(shutdown & 1))
             events &= ~1u;

@@ -4,6 +4,7 @@
 #include "process/task.hpp"
 #include "net/ipv4_wire.hpp"
 #include "net/udp.hpp"
+#include "net/tcp/socket.hpp"
 
 namespace ax {
 namespace {
@@ -331,6 +332,11 @@ static void input(unsigned index, const uint8_t* bytes, size_t length,
             protocol_error(index, source, destination, bytes, length, 3);
         return;
     }
+    if (bytes[9] == 6) {
+        if (local && !broadcast && !link_broadcast)
+            tcp_receive(index, source, destination, bytes + 20, length - 20);
+        return;
+    }
     if (bytes[9] != 1) {
         if (local && !broadcast && !link_broadcast)
             protocol_error(index, source, destination, bytes, length);
@@ -499,6 +505,14 @@ int ipv4_source(uint32_t source, uint32_t destination, unsigned bound_index, uin
     return error;
 }
 
+int ipv4_path(uint32_t source, uint32_t destination, unsigned bound_index, Ipv4Path& path) {
+    Selection route;
+    int error = select(source, destination, bound_index, route);
+    if (!error)
+        path = {route.source, route.local ? 65535u : net_info(route.index)->mtu, route.index};
+    return error;
+}
+
 int ipv4_send(InetSocket* owner, uint32_t source, uint32_t destination, unsigned bound_index,
               uint8_t protocol, uint8_t ttl, bool broadcast, const void* payload, size_t length) {
     if (!ttl)
@@ -629,6 +643,7 @@ void ipv4_poll() {
             clear(item, error < 0 ? -error : 0);
     }
     polling = false;
+    tcp_poll();
 }
 
 void ipv4_shutdown() {

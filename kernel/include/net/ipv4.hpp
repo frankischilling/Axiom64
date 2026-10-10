@@ -33,6 +33,13 @@ bool ipv4_local(uint32_t address);
 
 bool ipv4_output_ready();
 
+struct Ipv4Path {
+    uint32_t source, mtu;
+    unsigned index;
+};
+
+int ipv4_path(uint32_t source, uint32_t destination, unsigned bound_index, Ipv4Path&);
+
 int ipv4_source(uint32_t source, uint32_t destination, unsigned bound_index, uint32_t& selected);
 
 int ipv4_send(InetSocket*, uint32_t source, uint32_t destination, unsigned bound_index,

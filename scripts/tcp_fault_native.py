@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Compare controlled TCP loss with Linux in nested private network namespaces."""
+"""Compare controlled TCP faults with Linux in nested private network namespaces."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -12,8 +13,8 @@ import tempfile
 import threading
 import time
 from fetch import ROOT
-from tcp_fault_peer import Peer, check
-from tcp_fault_test import exercise
+from tcp_fault_peer import check
+from tcp_fault_test import exercise, wire_configuration
 
 
 class Capture:
@@ -83,7 +84,8 @@ def client(scratch, linkage):
     raise SystemExit(completed.returncode)
 
 
-def namespace(scratch):
+def namespace(scratch, wire='loss'):
+    peer_type, wire_prefix = wire_configuration(wire)
     parent = (scratch / 'parent-netns').read_text()
     fixture_namespace = os.readlink('/proc/self/ns/net')
     check(parent != fixture_namespace, 'raw peer requires an isolated network namespace')
@@ -95,8 +97,8 @@ def namespace(scratch):
                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    start_new_session=True)
         channels, monitors, result = [], [], None
-        peers = [Peer(lane, minimum_fin_ms=180) for lane in range(2)]
-        label = f'tcp-fault-linux-{linkage}'
+        peers = [peer_type(lane, minimum_fin_ms=180) for lane in range(2)]
+        label = f'{wire_prefix}-linux-{linkage}'
         began = time.monotonic()
         try:
             while not (scratch / 'client-ready').exists():
@@ -132,7 +134,7 @@ def namespace(scratch):
             missing = [marker for marker in required if marker not in text]
             peer_path = ROOT / 'build' / f'{label}-peer.json'
             peer_path.write_text(json.dumps([dict(lane=peer.lane, frames=peer.frames) for peer in peers], indent=2) + '\n')
-            result = dict(linkage=linkage, returncode=returncode, error=error, missing=missing,
+            result = dict(wire=wire, linkage=linkage, returncode=returncode, error=error, missing=missing,
                           parent_namespace=parent, peer_namespace=fixture_namespace, client_namespace=client_namespace,
                           peers=[{key: value for key, value in peer.items() if key != 'frames'} for peer in results],
                           peer=peer_path.name, captures=[f'{label}-lane{lane}.pcap' for lane in range(2)],
@@ -174,7 +176,7 @@ def namespace(scratch):
                         pass
                     process.wait()
         rows.append(result)
-        (ROOT / 'build/tcp-fault-native-results.json').write_text(json.dumps(rows, indent=2) + '\n')
+        (ROOT / 'build' / f'{wire_prefix}-native-results.json').write_text(json.dumps(rows, indent=2) + '\n')
         print(json.dumps(result), flush=True)
         if not result['passed']:
             print(text[-5000:], flush=True)
@@ -185,17 +187,19 @@ def main():
     if len(sys.argv) == 4 and sys.argv[1] == '--client':
         client(Path(sys.argv[2]), sys.argv[3])
         return
-    if len(sys.argv) == 3 and sys.argv[1] == '--namespace':
-        namespace(Path(sys.argv[2]))
+    if len(sys.argv) in (3, 4) and sys.argv[1] == '--namespace':
+        namespace(Path(sys.argv[2]), sys.argv[3] if len(sys.argv) == 4 else 'loss')
         return
-    check(len(sys.argv) == 1, 'known native controlled TCP arguments')
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--wire', choices=('loss', 'reordering'), default='loss')
+    args = parser.parse_args()
     subprocess.run(['make', '-s', '-j2', 'build/tcp-fault-native', 'build/tcp-fault-static',
                     'build/tcp-fault-dynamic'], cwd=ROOT, check=True)
     original = os.readlink('/proc/self/ns/net')
-    with tempfile.TemporaryDirectory(prefix='axiom64-tcp-loss-') as temporary:
+    with tempfile.TemporaryDirectory(prefix=f'axiom64-tcp-{args.wire}-') as temporary:
         scratch = Path(temporary)
         (scratch / 'parent-netns').write_text(original)
-        completed = subprocess.run(['unshare', '--net', sys.executable, __file__, '--namespace', str(scratch)],
+        completed = subprocess.run(['unshare', '--net', sys.executable, __file__, '--namespace', str(scratch), args.wire],
                                    capture_output=True, text=True, timeout=480)
     check(os.readlink('/proc/self/ns/net') == original, 'native loss comparison preserves the host network namespace')
     print(completed.stdout, end='', flush=True)

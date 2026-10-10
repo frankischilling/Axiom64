@@ -155,7 +155,8 @@ int64_t netlink_send(NetlinkSocket* socket, unsigned process, const void* data, 
         reply->source = {};
         reply->reserved = capacities[i];
         reply->length =
-            routing_reply(bytes + positions[i], socket->port, socket->capped, reply + 1);
+            routing_reply(bytes + positions[i], socket->port, socket->capped, reply + 1,
+                          current && capable(current->credentials, Capability::net_admin));
         if (!reply->length) {
             release(reply);
             continue;

@@ -124,6 +124,10 @@ static int list(Task& task, uint64_t pointer) {
 } // namespace
 
 int64_t net_ioctl(Task& task, uint64_t request, uint64_t pointer) {
+    if ((request == 0x890b || request == 0x890c || request == 0x8914 || request == 0x8916 ||
+         request == 0x891a || request == 0x891c || request == 0x8922) &&
+        !capable(task.credentials, Capability::net_admin))
+        return -1;
     net_poll();
     if (request == 0x890b || request == 0x890c)
         return routes(task, request, pointer);

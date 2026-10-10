@@ -52,7 +52,7 @@ static size_t evaluate(const uint8_t* packet, bool capped, uint8_t* saved) {
     auto output = static_cast<uint8_t*>(std::malloc(capacity + 16));
     check(output, "bounded response allocation");
     memset(output, 0xa5, capacity + 16);
-    size_t result = routing_reply(packet, 0x12345678, capped, output);
+    size_t result = routing_reply(packet, 0x12345678, capped, output, true);
     check(result <= capacity, "response remains inside preallocated capacity");
     for (size_t i = 0; i < 16; i++)
         check(output[capacity + i] == 0xa5, "response canary retained");
@@ -70,6 +70,15 @@ static size_t evaluate(const uint8_t* packet, bool capped, uint8_t* saved) {
 }
 
 int main() {
+    const uint16_t mutation_types[] = {20, 21, 24, 25};
+    for (uint16_t type : mutation_types) {
+        NetlinkHeader request{16, type, 5, 17, 0};
+        uint8_t denied[64]{};
+        size_t size = routing_reply(&request, 1, true, denied, false);
+        int error = 0;
+        memcpy(&error, denied + 16, 4);
+        check(size == 36 && error == -1, "ordinary task cannot mutate routes or addresses");
+    }
     uint8_t packet[4096]{}, result[netlink_max_reply]{};
     NetlinkHeader header{52, 24, 1 | 4 | 0x600, 0x89abcdef, 0x76543210};
     const uint8_t route[]{2, 16, 0, 0, 254, 16, 253, 1, 0, 0, 0, 0};

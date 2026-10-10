@@ -12,6 +12,7 @@
 #include "core/time.hpp"
 #include "core/random.hpp"
 #include "core/random/primitives.hpp"
+#include "abi/linux/credentials.hpp"
 
 namespace ax {
 struct LinuxStat {
@@ -52,7 +53,7 @@ static bool path_at(int fd, uint64_t user, Path& path) {
         path.error = -2;
         return false;
     }
-    path.base = root_node;
+    path.base = current->fs->root_node;
     if (path.text[0] != '/') {
         if (fd == -100)
             path.base = current->fs->cwd_node;
@@ -78,11 +79,14 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
     if (!path_at(dirfd, path, name))
         return name.error;
     Node* n = nullptr;
+    bool created = false;
     int error = resolve_path(name, n, !(flags & 0400000) && !((flags & 0300) == 0300));
     if (!error && (flags & 0300) == 0300)
         return -17;
-    if (error == -2 && (flags & 0100))
-        error = create_node(name, regular_file | ((mode & 0777) & ~current->fs->umask), n);
+    if (error == -2 && (flags & 0100)) {
+        error = create_node(name, regular_file | ((mode & 07777) & ~current->fs->umask), n);
+        created = !error;
+    }
     if (error)
         return error;
     if ((flags & 0200000) && (n->mode & 0170000) != directory)
@@ -92,7 +96,15 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
     if ((n->mode & 0170000) == directory && (flags & 3))
         return -21;
     n = file_node(n);
-    if ((flags & 3) && (n->mode & 0170000) == regular_file && node_readonly(n))
+    unsigned mask = (flags & 3) == 0 ? 4 : (flags & 3) == 1 ? 2 : 6;
+    if ((flags & 01000) && (n->mode & 0170000) == regular_file)
+        mask |= 2;
+    if (!created && (error = node_access(n, mask)))
+        return error;
+    if (n->mount->nodev &&
+        ((n->mode & 0170000) == character || (n->mode & 0170000) == block_device))
+        return -13;
+    if (((flags & 3) || (flags & 01000)) && (n->mode & 0170000) == regular_file && node_readonly(n))
         return -30;
     if (n->device == Device::block && (flags & 3) && block_info(n->device_id)->readonly)
         return -30;
@@ -103,7 +115,7 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
     if (n->device == Device::tty && !current->process->controlling_pty &&
         !current->process->controlling_console)
         return -6;
-    if ((flags & 01000) && (flags & 3) && (n->mode & 0170000) == regular_file) {
+    if ((flags & 01000) && (n->mode & 0170000) == regular_file) {
         error = node_truncate(n, 0);
         if (error)
             return error;
@@ -115,6 +127,40 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
     if (fd < 0)
         close_handle(h);
     return fd;
+}
+
+static int path_node_at(int fd, uint64_t user, uint64_t flags, Node*& node, bool real = false) {
+    if (flags & ~uint64_t(0x100 | 0x200 | 0x1000))
+        return -22;
+    Path path;
+    if (flags & 0x1000) {
+        if (!current->memory->space.string(user, path.text, sizeof(path.text)))
+            return -14;
+        if (!path.text[0]) {
+            auto handle = fd_handle(fd);
+            node = fd == -100 ? current->fs->cwd_node : handle ? handle->node : nullptr;
+            return node ? 0 : -9;
+        }
+    }
+    if (!path_at(fd, user, path))
+        return path.error;
+    path.real_access = real;
+    return resolve_path(path, node, !(flags & 0x100));
+}
+
+static int access_file(int fd, uint64_t user, uint32_t mask, uint64_t flags) {
+    if (mask & ~7u)
+        return -22;
+    Node* node = nullptr;
+    bool real = !(flags & 0x200);
+    int error = path_node_at(fd, user, flags, node, real);
+    if (error)
+        return error;
+    if ((mask & 2) && node_readonly(node))
+        return -30;
+    if ((mask & 1) && (node->mode & 0170000) == regular_file && node->mount->noexec)
+        return -13;
+    return node_access(node, mask, real);
 }
 
 static int64_t stat_node(Node* n, uint64_t dst) {
@@ -187,6 +233,8 @@ static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd,
             return -19;
         if ((h->flags & 3) == 1)
             return -13;
+        if ((prot & 4) && h->node->mount->noexec)
+            return -1;
     }
     if (h && (flags & 1)) {
         if ((prot & 2) && (h->flags & 3) != 2)
@@ -201,6 +249,9 @@ static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd,
             for (uint64_t page = addr; page < addr + len; page += page_size)
                 *current->memory->space.entry(page) |=
                     0x800; // Shared mapping may never gain write access.
+        if (h->node->mount->noexec)
+            for (uint64_t page = addr; page < addr + len; page += page_size)
+                *current->memory->space.entry(page) |= page_no_execute;
         return addr;
     }
     if (!current->memory->space.map(addr, len, 3))
@@ -222,6 +273,9 @@ static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd,
             done += result;
         }
     }
+    if (h && h->node->mount->noexec)
+        for (uint64_t page = addr; page < addr + len; page += page_size)
+            *current->memory->space.entry(page) |= page_no_execute;
     if (!current->memory->space.protect(addr, len, prot))
         return -12;
     return addr;
@@ -580,12 +634,13 @@ static int64_t dispatch(Frame* f) {
     case 9:
         return mmap_call(a, b, c, d, e, g);
     case 10:
-        if (c & 2) {
+        if (c & (2 | 4)) {
             if (a >= user_limit || b > user_limit - a)
                 return -22;
             for (uint64_t p = a; p < a + b; p += page_size) {
                 auto entry = current->memory->space.entry(p);
-                if (entry && (*entry & 0x800))
+                if (entry &&
+                    (((c & 2) && (*entry & 0x800)) || ((c & 4) && (*entry & page_no_execute))))
                     return -13;
             }
         }
@@ -653,13 +708,7 @@ static int64_t dispatch(Frame* f) {
     case 234:
         return signal_syscall(f);
     case 21: {
-        Path path;
-        if (!path_at(-100, a, path))
-            return path.error;
-        auto n = lookup(path);
-        if (!n)
-            return -2;
-        return (b & 2) && node_readonly(n) ? -30 : (b & 1) && !(n->mode & 0111) ? -13 : 0;
+        return access_file(-100, a, b, 0);
     }
     case 22:
         return create_pipe(a, 0);
@@ -850,9 +899,12 @@ static int64_t dispatch(Frame* f) {
         Path path;
         if (!path_at(-100, a, path))
             return path.error;
-        auto n = lookup(path);
-        if (!n)
-            return -2;
+        Node* n = nullptr;
+        int error = resolve_path(path, n);
+        if (error)
+            return error;
+        if ((error = node_access(n, 2)))
+            return error;
         if ((n->mode & 0170000) == block_device)
             return -22;
         return node_truncate(n, b);
@@ -878,11 +930,14 @@ static int64_t dispatch(Frame* f) {
         Path path;
         if (!path_at(-100, a, path))
             return path.error;
-        auto n = lookup(path);
-        if (!n)
-            return -2;
+        Node* n = nullptr;
+        int error = resolve_path(path, n);
+        if (error)
+            return error;
         if ((n->mode & 0170000) != directory)
             return -20;
+        if ((error = node_access(n, 1)))
+            return error;
         current->fs->cwd_node = n;
         node_path(n, current->fs->cwd, sizeof(current->fs->cwd));
         return 0;
@@ -893,6 +948,9 @@ static int64_t dispatch(Frame* f) {
             return -9;
         if (!h->node || (h->node->mode & 0170000) != directory)
             return -20;
+        int error = node_access(h->node, 1);
+        if (error)
+            return error;
         current->fs->cwd_node = h->node;
         node_path(h->node, current->fs->cwd, sizeof(current->fs->cwd));
         return 0;
@@ -904,7 +962,7 @@ static int64_t dispatch(Frame* f) {
             return path.error;
         Node* node = nullptr;
         return create_node(
-            path, directory | (((f->rax == 83 ? b : c) & 0777) & ~current->fs->umask), node);
+            path, directory | (((f->rax == 83 ? b : c) & 07777) & ~current->fs->umask), node);
     }
     case 85:
         return open_file(-100, a, 01000 | 0100 | 1, b);
@@ -964,8 +1022,7 @@ static int64_t dispatch(Frame* f) {
             return error;
         node = file_node(node);
         uint32_t mode = f->rax == 90 ? b : c;
-        return node_setattr(node, (node->mode & 0170000) | (mode & 07777), node->atime,
-                            node->mtime);
+        return node_chmod(node, mode);
     }
     case 91: {
         auto h = fd_handle(a);
@@ -974,7 +1031,7 @@ static int64_t dispatch(Frame* f) {
         if (!h->node)
             return -22;
         auto node = h->node;
-        return node_setattr(node, (node->mode & 0170000) | (b & 07777), node->atime, node->mtime);
+        return node_chmod(node, b);
     }
     case 95: {
         uint32_t old = current->fs->umask;
@@ -984,18 +1041,23 @@ static int64_t dispatch(Frame* f) {
     case 92:
     case 93:
     case 94: {
-        if ((uint32_t(b) != 0 && uint32_t(b) != UINT32_MAX) ||
-            (uint32_t(c) != 0 && uint32_t(c) != UINT32_MAX))
-            return -1;
         if (f->rax == 93) {
             auto h = fd_handle(a);
-            return !h ? -9 : node_readonly(h->node) ? -30 : 0;
+            return !h ? -9 : node_chown(h->node, b, c);
         }
         Path path;
         if (!path_at(-100, a, path))
             return path.error;
-        auto node = lookup(path, f->rax == 92);
-        return !node ? -2 : node_readonly(node) ? -30 : 0;
+        Node* node = nullptr;
+        int error = resolve_path(path, node, f->rax == 92);
+        return error ? error : node_chown(node, b, c);
+    }
+    case 260: {
+        if (e & ~uint64_t(0x100 | 0x1000))
+            return -22;
+        Node* node = nullptr;
+        int error = path_node_at(a, b, e, node);
+        return error ? error : node_chown(node, c, d);
     }
     case 96: {
         uint64_t time[] = {ticks / 100, (ticks % 100) * 10000};
@@ -1006,34 +1068,48 @@ static int64_t dispatch(Frame* f) {
                             a == 7 ? max_fds : 0x7fffffffffffffffull};
         return copy_result(b, limit, sizeof(limit));
     }
+    case 101: {
+        if (!a)
+            return -38;
+        Task* target = nullptr;
+        for (auto& task : tasks)
+            if (task.state != State::empty && task.state != State::zombie && task.pid == int(b))
+                target = &task;
+        if (!target)
+            return -3;
+        const auto& from = current->credentials;
+        const auto& to = target->credentials;
+        if (target->process != current->process && !capable(from, Capability::sys_ptrace) &&
+            (from.user.real != to.user.real || from.user.real != to.user.effective ||
+             from.user.real != to.user.saved || from.group.real != to.group.real ||
+             from.group.real != to.group.effective || from.group.real != to.group.saved ||
+             !target->memory->dumpable || (to.permitted & ~from.permitted)))
+            return -1;
+        return -38; // Tracing requests remain unimplemented; permissions precede any future access.
+    }
     case 102:
     case 104:
     case 107:
     case 108:
-        return 0;
     case 105:
     case 106:
-        // The initial image has a single root identity.
-        return uint32_t(a) == 0 ? 0 : -1;
     case 113:
     case 114:
-        return (uint32_t(a) == 0 || uint32_t(a) == UINT32_MAX) &&
-                       (uint32_t(b) == 0 || uint32_t(b) == UINT32_MAX)
-                   ? 0
-                   : -1;
     case 117:
     case 119:
-        return (uint32_t(a) == 0 || uint32_t(a) == UINT32_MAX) &&
-                       (uint32_t(b) == 0 || uint32_t(b) == UINT32_MAX) &&
-                       (uint32_t(c) == 0 || uint32_t(c) == UINT32_MAX)
-                   ? 0
-                   : -1;
     case 118:
-    case 120: {
-        uint32_t id = 0;
-        return copy_result(a, &id, 4) || copy_result(b, &id, 4) || copy_result(c, &id, 4) ? -14 : 0;
-    }
+    case 120:
+    case 122:
+    case 123:
+    case 115:
+    case 116:
+    case 125:
+    case 126:
+    case 157:
+        return credential_syscall(f);
     case 109: {
+        if (int32_t(b) < 0)
+            return -22;
         Task* target = nullptr;
         for (auto& t : tasks)
             if (t.state != State::empty && t.process->leader == &t &&
@@ -1041,7 +1117,28 @@ static int64_t dispatch(Frame* f) {
                 target = &t;
         if (!target)
             return -3;
-        target->process->pgid = b ? b : target->process->pid;
+        auto process = target->process;
+        if (process != current->process) {
+            if (process->parent != current->process->pid)
+                return -3;
+            if (process->sid != current->process->sid)
+                return -1;
+            if (process->executed)
+                return -13;
+        }
+        if (process->sid == process->pid)
+            return -1;
+        int group = b ? b : process->pid;
+        if (group != process->pid) {
+            bool found = false;
+            for (const auto& task : tasks)
+                if (task.state != State::empty && task.process->pgid == group &&
+                    task.process->sid == current->process->sid)
+                    found = true;
+            if (!found)
+                return -1;
+        }
+        process->pgid = group;
         return 0;
     }
     case 110:
@@ -1061,13 +1158,6 @@ static int64_t dispatch(Frame* f) {
                 t.process->pid == int(a ? a : current->process->pid))
                 return t.process->sid;
         return -3;
-    case 122:
-    case 123:
-        return uint32_t(a) == 0 || uint32_t(a) == UINT32_MAX ? 0 : -1;
-    case 115:
-        if (!a)
-            return 0;
-        return 0;
     case 121:
         for (auto& t : tasks)
             if (t.state != State::empty && t.process->leader == &t &&
@@ -1086,6 +1176,8 @@ static int64_t dispatch(Frame* f) {
             return copy_result(b, &current->fs_base, 8);
         return -22;
     case 169:
+        if (!capable(current->credentials, Capability::sys_boot))
+            return -1;
         if (a != 0xfee1dead || b != 672274793 || c != 0x4321fedc)
             return -22;
         poweroff(0);
@@ -1116,7 +1208,9 @@ static int64_t dispatch(Frame* f) {
         Path path;
         if (!path_at(-100, a, path))
             return path.error;
-        return statfs_node(lookup(path), b);
+        Node* node = nullptr;
+        int error = resolve_path(path, node);
+        return error ? error : statfs_node(node, b);
     }
     case 138: {
         auto h = fd_handle(a);
@@ -1155,13 +1249,21 @@ static int64_t dispatch(Frame* f) {
         return stat_path(a, b, c, !(d & 0x100));
     case 269:
     case 439: {
-        Path path;
-        if (!path_at(a, b, path))
-            return path.error;
-        auto n = lookup(path);
-        if (!n)
-            return -2;
-        return (c & 2) && node_readonly(n) ? -30 : (c & 1) && !(n->mode & 0111) ? -13 : 0;
+        return access_file(a, b, c, f->rax == 439 ? d : 0);
+    }
+    case 161: {
+        if (!capable(current->credentials, Capability::sys_chroot))
+            return -1;
+        Node* node = nullptr;
+        int error = path_node_at(-100, a, 0, node);
+        if (error)
+            return error;
+        if ((node->mode & 0170000) != directory)
+            return -20;
+        if ((error = node_access(node, 1)))
+            return error;
+        current->fs->root_node = node;
+        return 0;
     }
     case 273:
         return -38;
@@ -1173,9 +1275,9 @@ static int64_t dispatch(Frame* f) {
             Path path;
             if (!path_at(a, b, path))
                 return path.error;
-            node = lookup(path, !(d & 0x100));
-            if (!node)
-                return -2;
+            int error = resolve_path(path, node, !(d & 0x100));
+            if (error)
+                return error;
         } else {
             auto h = fd_handle(a);
             if (!h || !h->node)
@@ -1199,6 +1301,15 @@ static int64_t dispatch(Frame* f) {
                     return -22;
                 update[i] = {input[i].sec, uint64_t(input[i].nsec)};
             }
+        }
+        if (changed && current->credentials.user.filesystem != node->uid &&
+            !capable(current->credentials, Capability::fowner)) {
+            bool now = !c || (input[0].nsec == 1073741823 && input[1].nsec == 1073741823);
+            if (!now)
+                return -1;
+            int error = node_access(node, 2);
+            if (error)
+                return error;
         }
         return changed ? node_setattr(node, node->mode, update[0], update[1]) : 0;
     }

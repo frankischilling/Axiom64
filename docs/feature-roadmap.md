@@ -43,7 +43,7 @@ The first three milestones define the next core sequence. Later milestones descr
 | F06 | [Demand paging, copy-on-write, and swap](https://github.com/frankischilling/Axiom64/issues/6) | partial | M2 | F03, F05 |
 | F07 | [SMP scheduling and kernel synchronization](https://github.com/frankischilling/Axiom64/issues/7) | planned | M2 | F01, F05, F06 |
 | F08 | [Linux syscall and libc compatibility](https://github.com/frankischilling/Axiom64/issues/8) | partial | M4 | F05, F06, F13 |
-| F09 | [Accounts, permissions, and process credentials](https://github.com/frankischilling/Axiom64/issues/9) | planned | M3 | F03, F04 |
+| F09 | [Accounts, permissions, and process credentials](https://github.com/frankischilling/Axiom64/issues/9) | partial | M3 | F03, F04 |
 | F10 | [Secure random number generation](https://github.com/frankischilling/Axiom64/issues/10) | planned | M3 | F03, F09 |
 | F11 | [Ethernet devices and link management](https://github.com/frankischilling/Axiom64/issues/11) | partial | M3 | F01, F05 |
 | F12 | [IPv4, IPv6, routing, and ICMP](https://github.com/frankischilling/Axiom64/issues/12) | partial | M3 | F11 |
@@ -244,7 +244,7 @@ Acceptance evidence:
 
 ### F09. Accounts, permissions, and process credentials
 
-All tasks currently use root identity without multiuser permission enforcement.
+[Task credentials and permission enforcement](credentials.md) provide real/effective/saved/filesystem IDs, supplementary groups, capability transitions, DAC, ownership, sticky/set-ID rules, chroot and process/IPC/network guards. Child #114 verifies actual ordinary identities and privilege-dropped exec across both musl linkages, firmware types and RAM/ext2. The complete account, authentication, session and isolation requirements below remain open.
 
 Required work:
 

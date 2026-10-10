@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/ext2/ext2.hpp"
+#include "process/task.hpp"
 #include "drivers/block/block.hpp"
 #include "drivers/platform/devices.hpp"
 
@@ -860,6 +861,14 @@ static int create(Node* parent, const char* name, uint32_t mode, const char* tar
     uint32_t number = v.allocate(true, (parent->inode - 1) / v.inodes_per_group, dir);
     uint8_t inode[inode_bytes]{};
     set16(inode, mode);
+    uint32_t uid = current ? current->credentials.user.filesystem : 0;
+    uint32_t gid = (parent->mode & 02000) ? parent->gid
+                   : current              ? current->credentials.group.filesystem
+                                          : 0;
+    set16(inode + 2, uid);
+    set16(inode + 24, gid);
+    set16(inode + 120, uid >> 16);
+    set16(inode + 122, gid >> 16);
     set16(inode + 26, dir ? 2 : 1);
     set32(inode + 8, node_now().sec);
     set32(inode + 12, node_now().sec);
@@ -1047,7 +1056,8 @@ static int truncate(Node* node, size_t length) {
     return v.finish(success);
 }
 
-static int setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime) {
+static int setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime, uint32_t uid,
+                   uint32_t gid) {
     if (atime.sec < INT32_MIN || atime.sec > INT32_MAX || mtime.sec < INT32_MIN ||
         mtime.sec > INT32_MAX)
         return -22;
@@ -1058,6 +1068,10 @@ static int setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime) 
     bool success = v.load_inode(node->inode, inode);
     if (success) {
         set16(inode, mode);
+        set16(inode + 2, uid);
+        set16(inode + 24, gid);
+        set16(inode + 120, uid >> 16);
+        set16(inode + 122, gid >> 16);
         set32(inode + 8, atime.sec);
         set32(inode + 16, mtime.sec);
         set32(inode + 12, node_now().sec);

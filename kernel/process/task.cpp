@@ -59,6 +59,7 @@ static FileTable* copy_files(const FileTable* source) {
 }
 
 static void release_resources(Task* t) {
+    credential_release(t->credentials);
     io_discard(*t);
     futex_discard(*t);
     release_memory(t);
@@ -78,6 +79,7 @@ Task* new_task() {
     for (auto& t : tasks)
         if (t.state == State::empty) {
             memset(&t, 0, sizeof(t));
+            t.credentials = Credentials{};
             t.process = make_resource<Process>();
             t.memory = make_resource<MemoryContext>();
             t.files = make_resource<FileTable>();
@@ -95,6 +97,7 @@ Task* new_task() {
             t.state = State::runnable;
             t.fs->cwd[0] = '/';
             t.fs->cwd_node = root_node;
+            t.fs->root_node = root_node;
             t.fpu[0] = 0x7f;
             t.fpu[1] = 3;
             *reinterpret_cast<uint32_t*>(t.fpu + 24) = 0x1f80;
@@ -150,6 +153,7 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
     Task* child = new_task();
     if (!child)
         return -11;
+    credential_inherit(child->credentials, current->credentials);
     if (vm) {
         release_memory(child);
         child->memory = current->memory;
@@ -164,6 +168,7 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         }
         child->memory->brk_base = current->memory->brk_base;
         child->memory->brk_end = current->memory->brk_end;
+        child->memory->dumpable = current->memory->dumpable;
         shared_memory_fork(child, current);
     }
     if (flags & clone_files) {
@@ -505,6 +510,18 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
     file = file_node(file);
     if (!file)
         return -2;
+    if ((file->mode & 0170000) != regular_file)
+        return -13;
+    int access_error = credential_access(t->credentials, file->uid, file->gid, file->mode, 1);
+    if (access_error)
+        return access_error;
+    if (file->mount->noexec)
+        return -13;
+    auto credentials =
+        credential_exec(t->credentials, file->uid, file->gid, file->mode, file->mount->nosuid);
+    bool secure = credentials.user.real != credentials.user.effective ||
+                  credentials.group.real != credentials.group.effective ||
+                  (credentials.permitted & ~t->credentials.permitted);
     AddressSpace memory;
     if (!memory.create())
         return -12;
@@ -516,7 +533,20 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
     }
     uint64_t entry = image.entry;
     if (image.interpreter[0]) {
-        error = load_image(memory, file_node(lookup(image.interpreter)), 0x7000000000, interp);
+        Path interpreter_path;
+        interpreter_path.base = t->fs->cwd_node;
+        memcpy(interpreter_path.text, image.interpreter, strlen(image.interpreter) + 1);
+        Node* interpreter = nullptr;
+        error = resolve_path(interpreter_path, interpreter);
+        if (!error) {
+            interpreter = file_node(interpreter);
+            error = (interpreter->mode & 0170000) != regular_file || interpreter->mount->noexec
+                        ? -13
+                        : credential_access(t->credentials, interpreter->uid, interpreter->gid,
+                                            interpreter->mode, 1);
+        }
+        if (!error)
+            error = load_image(memory, interpreter, 0x7000000000, interp);
         if (error || interp.interpreter[0]) {
             memory.destroy();
             return error ? error : -8;
@@ -572,13 +602,13 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
                       7,  interp.base,
                       8,  0,
                       9,  image.entry,
-                      11, 0,
-                      12, 0,
-                      13, 0,
-                      14, 0,
+                      11, credentials.user.real,
+                      12, credentials.user.effective,
+                      13, credentials.group.real,
+                      14, credentials.group.effective,
                       15, platform,
                       17, 100,
-                      23, 0,
+                      23, uint64_t(secure),
                       25, randptr,
                       31, execfn,
                       0,  0};
@@ -634,6 +664,9 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
         write_cr3(memory.root);
     release_memory(t);
     t->memory = replacement;
+    t->memory->dumpable = !secure;
+    t->credentials = credentials;
+    process->executed = true;
     if (files) {
         release_files(t->files);
         t->files = files;

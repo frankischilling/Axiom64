@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "fs/vfs.hpp"
+#include "security/credentials.hpp"
 
 namespace ax {
 constexpr unsigned max_tasks = 64, max_fds = 128;
@@ -20,10 +21,12 @@ struct SharedAttachment {
 struct SignalData {
     int sender, code, status;
     uint64_t address;
+    uint32_t uid = 0;
 };
 
 struct MemoryContext {
     unsigned references = 1;
+    bool dumpable = true;
     AddressSpace space;
     uint64_t brk_base = 0, brk_end = 0;
     SharedAttachment shared[64]{};
@@ -38,6 +41,7 @@ struct FsContext {
     unsigned references = 1;
     char cwd[1024]{};
     Node* cwd_node = nullptr;
+    Node* root_node = nullptr;
     uint32_t umask = 0022;
 };
 
@@ -54,6 +58,7 @@ struct Process {
     Task* leader = nullptr;
     Pty* controlling_pty = nullptr;
     bool controlling_console = false, stop_reported = false, continued = false, stopped = false;
+    bool executed = false;
     char executable[1024]{};
     uint64_t alarm_deadline = 0, alarm_interval = 0, pending_signals = 0;
     SignalData signal_data[64]{};
@@ -75,6 +80,7 @@ struct Task {
     FileTable* files;
     FsContext* fs;
     SignalHandlers* handlers;
+    Credentials credentials;
     uint64_t fs_base, tid_address, signal_mask;
     uint64_t pending_signals, altstack_base, altstack_size;
     SignalData signal_data[64];

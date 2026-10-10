@@ -7,10 +7,27 @@ struct Segment {
     uint64_t physical, size, created, attached, detached;
     unsigned attachments, mode;
     bool removed;
+    uint32_t uid = 0, gid = 0, cuid = 0, cgid = 0;
 };
 
 static Segment segments[64];
 static int next_id = 1;
+
+static int access(const Segment& segment, unsigned requested) {
+    const auto& cred = current->credentials;
+    unsigned allowed = segment.mode;
+    if (cred.user.effective == segment.uid || cred.user.effective == segment.cuid)
+        allowed >>= 6;
+    else if (credential_group(cred, segment.gid) || credential_group(cred, segment.cgid))
+        allowed >>= 3;
+    return (requested & ~allowed & 7) && !capable(cred, Capability::ipc_owner) ? -13 : 0;
+}
+
+static bool controls(const Segment& segment) {
+    const auto& cred = current->credentials;
+    return cred.user.effective == segment.uid || cred.user.effective == segment.cuid ||
+           capable(cred, Capability::sys_admin);
+}
 
 static Segment* find(int id) {
     if (id <= 0)
@@ -78,6 +95,9 @@ int64_t shared_memory_syscall(Frame* f) {
                     return -17;
                 if (b > segment.size)
                     return -22;
+                int error = access(segment, (c >> 6) | (c >> 3) | c);
+                if (error)
+                    return error;
                 return segment.id;
             }
         if (a && !(c & 0x200))
@@ -92,6 +112,8 @@ int64_t shared_memory_syscall(Frame* f) {
                 segment = {next_id++, int(a), current->process->pid, current->process->pid,
                            address,   b,      ticks / 100,           0,
                            0,         0,      unsigned(c & 0777),    false};
+                segment.uid = segment.cuid = current->credentials.user.effective;
+                segment.gid = segment.cgid = current->credentials.group.effective;
                 return segment.id;
             }
         return -28;
@@ -100,6 +122,9 @@ int64_t shared_memory_syscall(Frame* f) {
         auto segment = find(a);
         if (!segment)
             return -22;
+        int error = access(*segment, ((c & 0x1000) ? 4 : 6) | ((c & 0x8000) ? 1 : 0));
+        if (error)
+            return error;
         uint64_t base = b;
         if (c & 0x2000)
             base = align_down(base);
@@ -156,13 +181,22 @@ int64_t shared_memory_syscall(Frame* f) {
             return -22;
         unsigned command = b & 0xff;
         if (command == 0) {
+            if (!controls(*segment))
+                return -1;
             segment->removed = true;
             collect(segment);
             return 0;
         }
         if (command == 2) {
+            int error = access(*segment, 4);
+            if (error)
+                return error;
             Shmid info{};
             info.permission.key = segment->key;
+            info.permission.uid = segment->uid;
+            info.permission.gid = segment->gid;
+            info.permission.cuid = segment->cuid;
+            info.permission.cgid = segment->cgid;
             info.permission.mode = segment->mode | (segment->removed ? 0x200 : 0);
             info.size = segment->size;
             info.atime = segment->attached;
@@ -174,10 +208,17 @@ int64_t shared_memory_syscall(Frame* f) {
             return current->memory->space.copy_out(c, &info, sizeof(info)) ? 0 : -14;
         }
         if (command == 1) {
+            if (!controls(*segment))
+                return -1;
             Shmid info;
             if (!current->memory->space.copy_in(&info, c, sizeof(info)))
                 return -14;
+            if (info.permission.uid == UINT32_MAX || info.permission.gid == UINT32_MAX)
+                return -22;
+            segment->uid = info.permission.uid;
+            segment->gid = info.permission.gid;
             segment->mode = info.permission.mode & 0777;
+            segment->created = ticks / 100;
             return 0;
         }
         return -22;

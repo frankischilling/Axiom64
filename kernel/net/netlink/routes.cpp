@@ -139,7 +139,7 @@ size_t routing_capacity(const NetlinkHeader& request) {
     return request.type == 26 ? netlink_max_reply : aligned(request.length) + 20;
 }
 
-size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply) {
+size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply, bool privileged) {
     auto input = static_cast<const uint8_t*>(packet);
     auto output = static_cast<uint8_t*>(reply);
     NetlinkHeader request;
@@ -150,8 +150,11 @@ size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply
     bool is_dump = request.type == 26;
     unsigned allowed = 1 | 4 | (is_dump ? 0x300 : request.type == 24 ? 0x600 : 0);
     Ipv4Route value;
-    if ((request.type == 20 || request.type == 21) &&
-        !(request.flags & ~(1u | 4u | (request.type == 20 ? 0x600u : 0u))))
+    if (!privileged &&
+        (request.type == 20 || request.type == 21 || request.type == 24 || request.type == 25))
+        error = -1;
+    else if ((request.type == 20 || request.type == 21) &&
+             !(request.flags & ~(1u | 4u | (request.type == 20 ? 0x600u : 0u))))
         error = netlink_address_change(packet, request);
     else if ((request.type == 24 || request.type == 25 || is_dump) && !(request.flags & ~allowed)) {
         if (is_dump && (request.flags & 0x300) != 0x300)

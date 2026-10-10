@@ -127,6 +127,8 @@ int64_t packet_syscall(Task& task, const Frame& frame) {
     auto handle = a < max_fds ? task.files->entries[a].handle : nullptr;
     auto socket = handle ? handle->packet : nullptr;
     if (frame.rax == 41) {
+        if (!capable(task.credentials, Capability::net_raw))
+            return -1;
         if ((b & 0xf) != 3)
             return -95;
         if ((b & ~uint64_t(0x8080f)) || c > UINT16_MAX)

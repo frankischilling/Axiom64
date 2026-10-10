@@ -11,6 +11,25 @@ FORMAT_SOURCES = $(foreach pattern,*.cpp *.hpp,$(call rwildcard,kernel/,$(patter
 .PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-network test-ipv4 test-udp test-netlink test-netlink-codec test-address-codec test-configuration test-dhcp-codec test-dhcp-modules test-dhcp-transport test-profiles test-resolver test-resolver-native test-clock-codec test-clock test-file-locks test-file-locks-native test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
 all: image
 .PHONY: test-random-native test-random
+.PHONY: test-credentials-policy test-credentials-native test-credentials
+build/credentials-policy: kernel/tests/security/credentials.cpp kernel/security/credentials.cpp kernel/include/security/credentials.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/security/credentials.cpp kernel/security/credentials.cpp -o $@
+test-credentials-policy: build/credentials-policy
+	ASAN_OPTIONS=detect_leaks=1 ./build/credentials-policy
+build/credentials-native: userspace/tests/security/credentials.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DCREDENTIAL_LINKAGE='"native"' $< -o $@
+build/credentials-static: userspace/tests/security/credentials.c
+	@mkdir -p build
+	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -static -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $< -o $@
+build/credentials-dynamic: userspace/tests/security/credentials.c
+	@mkdir -p build
+	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DCREDENTIAL_LINKAGE='"dynamic"' -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $< -o $@
+test-credentials-native: build/credentials-native build/credentials-static build/credentials-dynamic
+	$(PYTHON) scripts/credentials_native.py
+test-credentials:
+	$(PYTHON) scripts/credentials_test.py
 RANDOM_CORE = kernel/core/random/primitives.cpp kernel/core/random/engine.cpp
 RANDOM_HEADERS = kernel/include/core/random/primitives.hpp kernel/include/core/random/engine.hpp
 build/random-native: kernel/tests/random/generator.cpp $(RANDOM_CORE) $(RANDOM_HEADERS)

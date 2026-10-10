@@ -43,6 +43,18 @@ static void control_signal(Process* process, int signal) {
     }
 }
 
+static uint32_t sender_uid(int sender) {
+    if (!sender)
+        return 0;
+    if (current && current->process->pid == sender)
+        return current->credentials.user.real;
+    for (const auto& task : tasks)
+        if (task.state != State::empty && task.process->pid == sender &&
+            task.process->leader == &task)
+            return task.credentials.user.real;
+    return 0;
+}
+
 void queue_signal(Task* task, int signal, int sender, int code, int status, uint64_t address) {
     if (signal < 1 || signal > 64 || task->state == State::empty || task->state == State::zombie)
         return;
@@ -50,7 +62,7 @@ void queue_signal(Task* task, int signal, int sender, int code, int status, uint
     if (task->handlers->signal_actions[signal - 1][0] == 1 && signal != 9 && signal != 19)
         return;
     task->pending_signals |= 1ull << (signal - 1);
-    task->signal_data[signal - 1] = {sender, code, status, address};
+    task->signal_data[signal - 1] = {sender, code, status, address, sender_uid(sender)};
 }
 
 void queue_process_signal(Process* process, int signal, int sender, int code, int status,
@@ -63,7 +75,7 @@ void queue_process_signal(Process* process, int signal, int sender, int code, in
             if (task.handlers->signal_actions[signal - 1][0] == 1 && signal != 9 && signal != 19)
                 return;
             process->pending_signals |= 1ull << (signal - 1);
-            process->signal_data[signal - 1] = {sender, code, status, address};
+            process->signal_data[signal - 1] = {sender, code, status, address, sender_uid(sender)};
             return;
         }
 }
@@ -240,6 +252,7 @@ bool signal_deliver(Task& task) {
                 memcpy(saved.info + 16, &task.signal_data[signal - 1].address, 8);
             else {
                 memcpy(saved.info + 16, &task.signal_data[signal - 1].sender, 4);
+                memcpy(saved.info + 20, &task.signal_data[signal - 1].uid, 4);
                 memcpy(saved.info + 24, &task.signal_data[signal - 1].status, 4);
             }
             if (!task.memory->space.copy_out(frame, &saved, sizeof(saved)) ||
@@ -402,7 +415,7 @@ int64_t signal_syscall(Frame* f) {
     int signal = f->rax == 234 ? int(c) : int(b);
     if (signal < 0 || signal > 64)
         return -22;
-    bool found = false;
+    bool found = false, permitted = false;
     for (auto& task : tasks)
         if (task.state != State::empty &&
             (f->rax == 234
@@ -413,6 +426,11 @@ int64_t signal_syscall(Frame* f) {
                                     (int(a) == 0 && task.process->pgid == current->process->pgid) ||
                                     (int(a) < -1 && task.process->pgid == -int(a))))) {
             found = true;
+            if (task.process != current->process &&
+                !credential_signal(current->credentials, task.credentials,
+                                   task.process->sid == current->process->sid, signal))
+                continue;
+            permitted = true;
             if (signal) {
                 if (f->rax == 234 || f->rax == 200)
                     queue_signal(&task, signal, current->process->pid, f->rax == 234 ? -6 : 0);
@@ -420,6 +438,6 @@ int64_t signal_syscall(Frame* f) {
                     queue_process_signal(task.process, signal, current->process->pid);
             }
         }
-    return found ? 0 : -3;
+    return permitted ? 0 : found ? -1 : -3;
 }
 } // namespace ax

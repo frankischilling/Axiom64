@@ -305,6 +305,8 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
         if (b & ~uint64_t(0x8080f))
             return -22;
         const unsigned type = b & 0xf;
+        if (type == 3 && !capable(task.credentials, Capability::net_raw))
+            return -1;
         if (!((type == 3 && c == 1) || (type == 2 && (c == 0 || c == 17))))
             return -93;
         socket = nullptr;
@@ -366,6 +368,9 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             if (value && !ipv4_local(value))
                 return -99;
             if (socket->type == 2) {
+                unsigned port = __builtin_bswap16(address.port);
+                if (port && port < 1024 && !capable(task.credentials, Capability::net_bind_service))
+                    return -13;
                 error = bind_port(socket, value, __builtin_bswap16(address.port));
                 if (error)
                     return error;

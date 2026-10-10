@@ -41,9 +41,12 @@ jobs:
           make -j2 build/random-static build/random-dynamic
           make -j2 build/dns-static build/dns-dynamic
           make -j2 build/normal-dns-static build/normal-dns-dynamic
+          make -j2 build/credentials-native build/credentials-static build/credentials-dynamic
           make build/init-supervision
       - name: Test split-queue ownership with sanitizers
         run: make test-virtqueue
+      - name: Test credential policy ownership and allocation failures with sanitizers
+        run: make test-credentials-policy
       - name: Test paired network workspace isolation and failure evidence
         run: python3 scripts/tests/paired_network_test.py
       - name: Test PCI removal preserves interrupted guest reads
@@ -107,6 +110,7 @@ jobs:
           - manager-uefi-modern
           - manager-uefi-legacy
           - random
+          - credentials
           - normal-init-bios
           - normal-init-uefi
           - protocol-bios-modern-lane0
@@ -139,6 +143,12 @@ jobs:
       - name: Test BIOS and UEFI userspace
         if: matrix.suite == 'boot'
         run: python3 scripts/boot_test.py --firmware both
+      - name: Compare identities and permissions with native Linux and both musl linkages
+        if: matrix.suite == 'credentials'
+        run: sudo -n make test-credentials-native
+      - name: Test ordinary identities, privilege-dropped exec and RAM/ext2 permissions
+        if: matrix.suite == 'credentials'
+        run: make test-credentials
       - name: Test desktop serial acceptance decisions
         if: matrix.suite == 'boot'
         run: python3 scripts/tests/desktop_console_test.py
@@ -366,6 +376,15 @@ jobs:
             build/paired-network/**
             build/*.png
             build/*.dump
+      - name: Upload credential filesystem and boot fixtures
+        if: always() && matrix.suite == 'credentials'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-credentials-fixtures
+          if-no-files-found: error
+          path: |
+            build/credentials-*.img
+            build/axiom64-credentials-*.iso
 
   qemu:
     needs: [build, tests]

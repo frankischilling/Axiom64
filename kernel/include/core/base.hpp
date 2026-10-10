@@ -19,6 +19,8 @@ namespace ax {
 constexpr uint64_t page_size = 4096;
 constexpr uint64_t user_limit = 0x0000800000000000;
 constexpr uint64_t page_mask = 0x000ffffffffff000;
+// Software bit outside the x86-64 physical-address field: mapping may not gain execution.
+constexpr uint64_t page_no_execute = 1ull << 52;
 
 constexpr uint64_t align_down(uint64_t x) {
     return x & ~(page_size - 1);

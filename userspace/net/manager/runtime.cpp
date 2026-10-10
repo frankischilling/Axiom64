@@ -45,6 +45,9 @@ struct Entry {
     int last_error = 0, cleanup_error = 0;
     bool active = false, disabled = false, configuration_open = false;
     bool carrier = false, installed = false, stop_sent = false;
+    // A fresh Client during a failed-interface retry has no accepted lease.
+    // Preserve the previous accepted hint until install or explicit invalidation.
+    bool interrupted_hint = false;
 
     bool is_fixed() const {
         return profile.method == Method::fixed;
@@ -71,6 +74,9 @@ class Manager {
     int run(const volatile sig_atomic_t& stopping);
 
   private:
+#ifdef AXIOM64_MANAGER_RUNTIME_TEST
+    friend struct RuntimeTests;
+#endif
     ManagerPaths paths_;
     Store runtime_, saved_, resolver_store_;
     Ownership ownership_;
@@ -90,6 +96,7 @@ class Manager {
     void actions(Entry&, dhcp::Action, unsigned& budget);
     void event(Entry&, const dhcp::Event&, unsigned& budget);
     void receive(Entry&, unsigned& budget);
+    void stop(Entry&, unsigned& budget);
     int finish(int error);
 };
 
@@ -116,6 +123,8 @@ void Manager::report(Entry& entry, const char* operation, int error) {
 }
 
 int Manager::withdraw(Entry& entry, bool forget) {
+    if (!forget && !entry.is_fixed() && entry.installed)
+        entry.interrupted_hint = true;
     int error = entry.configuration_open ? entry.configuration.withdraw() : 0;
     int result = entry.transport.configured(0);
     if (!error)
@@ -127,6 +136,8 @@ int Manager::withdraw(Entry& entry, bool forget) {
     }
     if (forget && !entry.is_fixed()) {
         result = saved_.forget_hint(entry.interface.name);
+        if (!result)
+            entry.interrupted_hint = false;
         if (!error)
             error = result;
     }
@@ -205,10 +216,14 @@ void Manager::prepare(Entry& entry, unsigned index) {
     uint32_t hint = 0;
     if (!entry.is_fixed()) {
         error = saved_.read_hint(information.name, entry.interface.identity, hint);
-        if (error == EINVAL || error == ESTALE)
+        if (error == EINVAL || error == ESTALE) {
             error = saved_.forget_hint(information.name);
-        else if (error == ENOENT)
+            if (!error)
+                entry.interrupted_hint = false;
+        } else if (error == ENOENT) {
+            entry.interrupted_hint = false;
             error = 0;
+        }
     }
     if (!error)
         error = entry.transport.open(entry.interface);
@@ -240,8 +255,12 @@ int Manager::execute(Entry& entry, const dhcp::Action& action) {
     if (action.operation == Operation::transmit || action.operation == Operation::probe ||
         action.operation == Operation::announce)
         return entry.transport.transmit(action);
-    if (action.operation == Operation::forget)
-        return saved_.forget_hint(entry.interface.name);
+    if (action.operation == Operation::forget) {
+        int error = saved_.forget_hint(entry.interface.name);
+        if (!error)
+            entry.interrupted_hint = false;
+        return error;
+    }
     if (action.operation == Operation::withdraw)
         return withdraw(entry, action.forget_hint);
     if (action.operation != Operation::install)
@@ -268,6 +287,7 @@ int Manager::execute(Entry& entry, const dhcp::Action& action) {
         return cleanup ? cleanup : error;
     }
     entry.installed = true;
+    entry.interrupted_hint = false;
     printf("NETWORK_MANAGER_BOUND index=%u method=%s address=%08x generation=%u\n",
            entry.interface.index, method(entry.profile.method), action.lease.address,
            ++entry.generation);
@@ -342,6 +362,15 @@ int Manager::finish(int error) {
     return error ? error : closed;
 }
 
+void Manager::stop(Entry& entry, unsigned& budget) {
+    entry.stop_sent = true;
+    if (entry.interrupted_hint && !entry.is_fixed() && !entry.client.configured()) {
+        retire(entry);
+        return;
+    }
+    event(entry, {dhcp::Input::stop}, budget);
+}
+
 int Manager::run(const volatile sig_atomic_t& stopping) {
     int error = ownership_.open(paths_.runtime);
     if (error)
@@ -372,10 +401,8 @@ int Manager::run(const volatile sig_atomic_t& stopping) {
                 continue;
             }
             unsigned budget = 2;
-            if (shutting && !entry.stop_sent) {
-                entry.stop_sent = true;
-                event(entry, {dhcp::Input::stop}, budget);
-            }
+            if (shutting && !entry.stop_sent)
+                stop(entry, budget);
             if (now_ >= entry.carrier_at && entry.active) {
                 bool carrier;
                 error = entry.transport.carrier(carrier);

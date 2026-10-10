@@ -150,10 +150,10 @@ struct Observer {
                 if (end && error && error < end)
                     found = true;
             }
-            if (found)
+            frames();
+            if (found && capture_failed[affected])
                 break;
             check(milliseconds() < until, "actual manager observes permanent driver EIO");
-            frames();
             pause_ms(10);
         }
         printf("MANAGER_LINK_MANAGER_FAILED index=%u errno=5 monotonic_ms=%llu\n", affected + 1,

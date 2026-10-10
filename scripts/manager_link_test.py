@@ -16,6 +16,7 @@ from manager_link_hardware import Hardware
 from manager_link_peer import LinkPeer, SCENARIOS, check
 from network_fault import inject
 from qmp import Qmp
+from qemu_acceleration import Acceleration
 
 
 class Controller:
@@ -226,7 +227,8 @@ def run(linkage, scenario, affected, firmware, transport, timeout, image):
     control = tempfile.TemporaryDirectory(prefix='axiom64-manager-link-')
     monitor_path, test_path = (Path(control.name) / name for name in ('qmp.sock', 'qtest.sock'))
     debug_port = None
-    command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '512M', '-S',
+    acceleration = Acceleration()
+    command = ['qemu-system-x86_64', '-machine', acceleration.machine, '-cpu', 'max', '-m', '512M', '-S',
                '-cdrom', str(image), '-nic', 'none', '-display', 'none', '-serial', 'stdio',
                '-monitor', 'none', '-no-reboot', '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04',
                '-qmp', f'unix:{monitor_path},server=on,wait=off',
@@ -266,6 +268,7 @@ def run(linkage, scenario, affected, firmware, transport, timeout, image):
                       'actual emulator hardware controls become available')
                 time.sleep(.01)
             monitor = Qmp(monitor_path)
+            acceleration.observe(monitor)
             hardware = Hardware(monitor, test_path, affected, transport)
             if scenario.endswith('initial'):
                 hardware.carrier(False)
@@ -379,7 +382,7 @@ def run(linkage, scenario, affected, firmware, transport, timeout, image):
                                                    received=peer.received) for peer in peers]), indent=2) + '\n')
     result = dict(linkage=linkage, scenario=scenario, affected=affected, firmware=firmware,
                   transport=transport, returncode=returncode, error=error, missing=missing,
-                  counts=counts, log=log.name, packets=evidence.name,
+                  counts=counts, log=log.name, packets=evidence.name, acceleration=acceleration.evidence,
                   seconds=round(time.monotonic() - began, 3),
                   passed=returncode == 1 and error is None and not missing and controller is not None and
                   controller.finished and not any(marker in text for marker in

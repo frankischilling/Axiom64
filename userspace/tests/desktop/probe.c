@@ -13,6 +13,10 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#ifndef AXIOM64_X11_SOCKET
+#define AXIOM64_X11_SOCKET "/tmp/.X11-unix/X0"
+#endif
+
 #define CHECK(expr)                                                                                \
     do {                                                                                           \
         if (!(expr)) {                                                                             \
@@ -115,7 +119,8 @@ int main(int argc, char** argv) {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     CHECK(fd >= 0);
     struct sockaddr_un address = {.sun_family = AF_UNIX};
-    strcpy(address.sun_path, "/tmp/.X11-unix/X0");
+    CHECK(sizeof(AXIOM64_X11_SOCKET) <= sizeof(address.sun_path));
+    strcpy(address.sun_path, AXIOM64_X11_SOCKET);
     if (connect(fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
         if (ready)
             return 2;
@@ -171,14 +176,29 @@ int main(int argc, char** argv) {
               height <= u16(screen + 22));
         uint32_t get_image[] = {5u << 16 | 2u << 8 | 73u, terminal, 0, height << 16 | width,
                                 0xffffffff};
-        transfer(fd, get_image, sizeof(get_image), 1);
-        unsigned char* pixels = response(fd, reply, &length);
-        CHECK(length == width * height * 4);
-        unsigned different = 0;
-        for (size_t i = 4; i < length; i += 4)
-            different += u32(pixels + i) != u32(pixels);
-        free(pixels);
+        // Mapping exposes the background before xterm paints its contents.
+        // Keep checking the selected window; a uniform image must still fail.
+        unsigned different = 0, attempts = 0;
+        for (; attempts < 20; ++attempts) {
+            transfer(fd, get_image, sizeof(get_image), 1);
+            unsigned char* pixels = response(fd, reply, &length);
+            CHECK(length == width * height * 4);
+            different = 0;
+            for (size_t i = 4; i < length; i += 4)
+                different += u32(pixels + i) != u32(pixels);
+            free(pixels);
+            if (different > 100)
+                break;
+            if (!attempts) {
+                printf("XTERM_IMAGE_WAIT window=%u different=%u\n", terminal, different);
+                fflush(stdout);
+            }
+            if (attempts < 19)
+                usleep(100000);
+        }
         CHECK(different > 100);
+        printf("XTERM_IMAGE_READY window=%u attempts=%u different=%u\n", terminal, attempts + 1,
+               different);
         uint32_t warp[] = {6u << 16 | 41u, 0, terminal, 0, 0, 100u << 16 | 100u};
         transfer(fd, warp, sizeof(warp), 1);
         uint32_t set_focus[] = {3u << 16 | 42u, terminal, 0};

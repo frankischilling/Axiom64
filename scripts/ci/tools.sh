@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -euo pipefail
 
-tools=(g++ make musl-tools linux-libc-dev nasm python3 xorriso qemu-system-x86
+tools=(g++ make musl-tools linux-libc-dev nasm python3 xorriso qemu-system-x86 xvfb libx11-6
        ovmf xfonts-utils e2fsprogs nbdkit nbdkit-plugin-python gdb iproute2 ethtool)
 bundle=build/ci-packages
 shopt -s nullglob

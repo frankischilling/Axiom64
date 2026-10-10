@@ -39,6 +39,8 @@ jobs:
         run: make check-format
       - name: Test QEMU accelerator selection and actual monitor evidence
         run: python3 scripts/tests/qemu_acceleration_test.py
+      - name: Test init supervision observes complete serial records
+        run: python3 scripts/tests/normal_manager_events_test.py -v
       - name: Test manager runtime hint provenance and explicit invalidation with sanitizers
         run: make test-manager-runtime-native
       - name: Test actual desktop image readiness and bounded uniform-image rejection

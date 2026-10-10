@@ -182,11 +182,11 @@ def send(process, command):
 
 def events(text):
     spawns = [(int(pid), int(tick)) for pid, tick in
-              re.findall(r'^INIT_MANAGER_SPAWN pid=(\d+) monotonic_ms=(\d+)\r?$', text, re.M)]
+              re.findall(r'^INIT_MANAGER_SPAWN pid=(\d+) monotonic_ms=(\d+)\r?\n', text, re.M)]
     reaps = [(int(pid), int(status), int(tick)) for pid, status, tick in
-             re.findall(r'^INIT_MANAGER_REAP pid=(\d+) status=(\d+) monotonic_ms=(\d+)\r?$', text, re.M)]
+             re.findall(r'^INIT_MANAGER_REAP pid=(\d+) status=(\d+) monotonic_ms=(\d+)\r?\n', text, re.M)]
     passed = {phase: (int(pid), int(tick)) for phase, pid, tick in
-              re.findall(r'^INIT_OBSERVER_PASS phase=([a-z-]+) pid=(\d+) monotonic_ms=(\d+)\r?$', text, re.M)}
+              re.findall(r'^INIT_OBSERVER_PASS phase=([a-z-]+) pid=(\d+) monotonic_ms=(\d+)\r?\n', text, re.M)}
     return spawns, reaps, passed
 
 

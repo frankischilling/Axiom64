@@ -8,6 +8,8 @@ make test
 
 The harness boots QEMU under BIOS and UEFI, checks firmware identity, requires every userspace marker, and checks the guest's explicit exit status. Fault diagnostics and failed assertions reject a run. QEMU exit code 1 represents guest success through `isa-debug-exit`.
 
+CI builds the source and both userspace profiles once, then runs 29 test jobs and a final aggregate check. Protocol and carrier jobs each run static and dynamic musl concurrently in independent source/build workspaces. Each QEMU instance retains the original scenarios, packet verification and deadlines. Both workers must pass. Their separate logs and packet/results files are retained under `build/paired-network/<suite>/<linkage>/`, with a combined `results.json`; either worker failure rejects the aggregate gate. `python3 scripts/tests/paired_network_test.py` checks actual concurrency, workspace isolation, failure propagation and retained evidence.
+
 Normal desktop acceptance sends a serial command whose `printf` acknowledgements contain no complete marker in their input echo. Interleaved console output therefore cannot turn echoed command text into a completion acknowledgement. The host ends the boot only after the window manager, mapped terminal, keyboard acknowledgement, input injection and captured screenshot have all completed. `python3 scripts/tests/desktop_console_test.py` replays premature acknowledgements, missing readiness and actual generated shell output. The BIOS/UEFI boots still exercise the real X11 probe and keyboard/mouse paths.
 
 | Test | Evidence |

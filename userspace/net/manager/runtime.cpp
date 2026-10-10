@@ -74,6 +74,9 @@ class Manager {
     int run(const volatile sig_atomic_t& stopping);
 
   private:
+#ifdef AXIOM64_MANAGER_RUNTIME_TEST
+    friend struct RuntimeTests;
+#endif
     ManagerPaths paths_;
     Store runtime_, saved_, resolver_store_;
     Ownership ownership_;
@@ -93,6 +96,7 @@ class Manager {
     void actions(Entry&, dhcp::Action, unsigned& budget);
     void event(Entry&, const dhcp::Event&, unsigned& budget);
     void receive(Entry&, unsigned& budget);
+    void stop(Entry&, unsigned& budget);
     int finish(int error);
 };
 
@@ -119,6 +123,8 @@ void Manager::report(Entry& entry, const char* operation, int error) {
 }
 
 int Manager::withdraw(Entry& entry, bool forget) {
+    if (!forget && !entry.is_fixed() && entry.installed)
+        entry.interrupted_hint = true;
     int error = entry.configuration_open ? entry.configuration.withdraw() : 0;
     int result = entry.transport.configured(0);
     if (!error)
@@ -144,8 +150,6 @@ int Manager::withdraw(Entry& entry, bool forget) {
 }
 
 void Manager::retire(Entry& entry, bool forget) {
-    if (!forget && !entry.is_fixed() && entry.installed)
-        entry.interrupted_hint = true;
     int error = withdraw(entry, forget);
     int result = entry.transport.close();
     if (!error)
@@ -358,6 +362,15 @@ int Manager::finish(int error) {
     return error ? error : closed;
 }
 
+void Manager::stop(Entry& entry, unsigned& budget) {
+    entry.stop_sent = true;
+    if (entry.interrupted_hint && !entry.is_fixed() && !entry.client.configured()) {
+        retire(entry);
+        return;
+    }
+    event(entry, {dhcp::Input::stop}, budget);
+}
+
 int Manager::run(const volatile sig_atomic_t& stopping) {
     int error = ownership_.open(paths_.runtime);
     if (error)
@@ -388,14 +401,8 @@ int Manager::run(const volatile sig_atomic_t& stopping) {
                 continue;
             }
             unsigned budget = 2;
-            if (shutting && !entry.stop_sent) {
-                entry.stop_sent = true;
-                if (entry.interrupted_hint && !entry.is_fixed() && !entry.client.configured()) {
-                    retire(entry);
-                    continue;
-                }
-                event(entry, {dhcp::Input::stop}, budget);
-            }
+            if (shutting && !entry.stop_sent)
+                stop(entry, budget);
             if (now_ >= entry.carrier_at && entry.active) {
                 bool carrier;
                 error = entry.transport.carrier(carrier);

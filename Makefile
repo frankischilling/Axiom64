@@ -159,6 +159,13 @@ OWNERSHIP_HEADERS = userspace/net/manager/ownership.hpp userspace/net/config/sav
 OWNERSHIP_FAULTS = -Wl,--wrap=flock
 MANAGER_SOURCES = userspace/net/manager/main.cpp userspace/net/manager/runtime.cpp userspace/net/manager/static.cpp userspace/net/manager/ownership.cpp userspace/net/config/configuration.cpp userspace/net/config/routing.cpp userspace/net/config/resolver.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/state.cpp userspace/net/dhcp/wire.cpp
 MANAGER_HEADERS = userspace/net/manager/runtime.hpp userspace/net/manager/static.hpp userspace/net/manager/ownership.hpp userspace/net/config/configuration.hpp userspace/net/config/routing.hpp userspace/net/config/resolver.hpp $(PROFILE_HEADERS) userspace/net/dhcp/transport.hpp userspace/net/dhcp/state.hpp
+MANAGER_NATIVE_SOURCES = $(filter-out userspace/net/manager/main.cpp userspace/net/manager/runtime.cpp,$(MANAGER_SOURCES))
+.PHONY: test-manager-runtime-native
+build/manager-runtime-native: userspace/tests/net/manager-runtime.cpp userspace/net/manager/runtime.cpp $(MANAGER_NATIVE_SOURCES) $(MANAGER_HEADERS)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace $< $(MANAGER_NATIVE_SOURCES) -o $@
+test-manager-runtime-native: build/manager-runtime-native
+	ASAN_OPTIONS=detect_leaks=1 ./build/manager-runtime-native
 MANAGER_FAULTS = -Wl,--wrap=renameat,--wrap=fsync,--wrap=rename,--wrap=unlinkat,--wrap=close
 build/network-manager-faults: $(MANAGER_SOURCES) $(MANAGER_HEADERS) userspace/tests/net/manager-faults.cpp
 	@mkdir -p build

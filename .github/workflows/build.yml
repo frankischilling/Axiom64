@@ -47,6 +47,17 @@ jobs:
         run: make test-virtqueue
       - name: Test credential policy ownership and allocation failures with sanitizers
         run: make test-credentials-policy
+      - name: Test TCP wire, sender and connection policies with sanitizers
+        run: |
+          mkdir -p build/tcp-policy
+          make test-tcp-wire test-tcp-sender test-tcp-connection 2>&1 | tee build/tcp-policy/host.log
+      - name: Upload TCP policy evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: tcp-policy
+          if-no-files-found: warn
+          path: build/tcp-policy
       - name: Test paired network workspace isolation and failure evidence
         run: python3 scripts/tests/paired_network_test.py
       - name: Test PCI removal preserves interrupted guest reads

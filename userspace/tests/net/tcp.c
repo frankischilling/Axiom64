@@ -17,6 +17,7 @@
 #include <sys/epoll.h>
 #include <sys/uio.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
@@ -1012,6 +1013,158 @@ static void send_nonblocking(void) {
          "exact_eof");
 }
 
+static uint8_t* guarded_buffer(void) {
+    uint8_t* bytes = mmap(NULL, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(bytes != MAP_FAILED && munmap(bytes + 4096, 4096) == 0);
+    return bytes;
+}
+
+static ssize_t receive_buffer(int fd, uint8_t* bytes, size_t length, unsigned operation) {
+    if (!operation)
+        return read(fd, bytes, length);
+    if (operation == 1)
+        return recv(fd, bytes, length, 0);
+    size_t first = length < 5000 ? length / 2 : 5000;
+    struct iovec vectors[2] = {{bytes, first}, {bytes + first, length - first}};
+    if (operation == 2)
+        return readv(fd, vectors, 2);
+    struct msghdr message = {.msg_iov = vectors, .msg_iovlen = 2};
+    return recvmsg(fd, &message, 0);
+}
+
+static ssize_t transmit_buffer(int fd, const uint8_t* bytes, size_t length, unsigned operation) {
+    if (!operation)
+        return write(fd, bytes, length);
+    if (operation == 1)
+        return send(fd, bytes, length, MSG_NOSIGNAL);
+    size_t first = length < 5000 ? length / 2 : 5000;
+    struct iovec vectors[2] = {{(void*)bytes, first}, {(void*)(bytes + first), length - first}};
+    if (operation == 2)
+        return writev(fd, vectors, 2);
+    struct msghdr message = {.msg_iov = vectors, .msg_iovlen = 2};
+    return sendmsg(fd, &message, MSG_NOSIGNAL);
+}
+
+static void unavailable_copy(void) {
+    uint8_t* bytes = guarded_buffer();
+    for (unsigned operation = 0; operation < 4; operation++) {
+        int pair[2];
+        pair_sockets(pair);
+        struct timeval timeout = {0, 50000};
+        CHECK(setsockopt(pair[1], SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0);
+        for (unsigned nonblocking = 0; nonblocking < 2; nonblocking++) {
+            int flags = fcntl(pair[1], F_GETFL);
+            CHECK(fcntl(pair[1], F_SETFL, nonblocking ? flags | O_NONBLOCK : flags & ~O_NONBLOCK) ==
+                  0);
+            uint64_t started = monotonic_ms();
+            errno = 0;
+            CHECK(receive_buffer(pair[1], bytes + 4096, 16, operation) == -1 && errno == EAGAIN);
+            uint64_t elapsed = monotonic_ms() - started;
+            CHECK(elapsed < 2000 && (nonblocking || elapsed >= 40));
+        }
+        CHECK(close(pair[0]) == 0 && close(pair[1]) == 0);
+    }
+    CHECK(munmap(bytes, 4096) == 0);
+    puts("TCP_UNAVAILABLE_COPY_PASS cases=8 read recv readv recvmsg deadline nonblocking "
+         "no_buffer_access");
+}
+
+static void unavailable_sends(void) {
+    const size_t size = 262149;
+    uint8_t* inaccessible = guarded_buffer();
+    for (unsigned operation = 0; operation < 4; operation++) {
+        int pair[2];
+        limited_pair(pair);
+        uint8_t* bytes = send_pattern(size);
+        size_t sent = 0;
+        for (unsigned quiet = 0; quiet < 100;) {
+            ssize_t count = send(pair[0], bytes + sent, size - sent, MSG_DONTWAIT | MSG_NOSIGNAL);
+            if (count > 0) {
+                sent += count;
+                CHECK(sent < size);
+                quiet = 0;
+            } else {
+                CHECK(count == -1 && errno == EAGAIN && usleep(1000) == 0);
+                quiet++;
+            }
+        }
+        CHECK(sent > 0);
+        struct timeval timeout = {0, 50000};
+        CHECK(setsockopt(pair[0], SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) == 0);
+        for (unsigned nonblocking = 0; nonblocking < 2; nonblocking++) {
+            int flags = fcntl(pair[0], F_GETFL);
+            CHECK(fcntl(pair[0], F_SETFL, nonblocking ? flags | O_NONBLOCK : flags & ~O_NONBLOCK) ==
+                  0);
+            uint64_t started = monotonic_ms();
+            errno = 0;
+            CHECK(transmit_buffer(pair[0], inaccessible + 4096, 16, operation) == -1 &&
+                  errno == EAGAIN);
+            uint64_t elapsed = monotonic_ms() - started;
+            CHECK(elapsed < 2000 && (nonblocking || elapsed >= 40));
+        }
+        free(bytes);
+        CHECK(close(pair[0]) == 0);
+        CHECK(receive_pattern(pair[1], sent) == sent && close(pair[1]) == 0);
+    }
+    CHECK(munmap(inaccessible, 4096) == 0);
+    puts("TCP_UNAVAILABLE_SEND_PASS cases=8 write send writev sendmsg full_queue deadline "
+         "nonblocking owned_bytes");
+}
+
+static void receive_copy_faults(void) {
+    for (unsigned operation = 0; operation < 4; operation++) {
+        int pair[2];
+        pair_sockets(pair);
+        uint8_t* bytes = guarded_buffer();
+        uint8_t* source = send_pattern(4100);
+        send_all(pair[0], source, 4100);
+        int available = 0;
+        for (unsigned attempt = 0; available != 4100; attempt++)
+            CHECK(attempt < 2000 && ioctl(pair[1], FIONREAD, &available) == 0 && usleep(1000) == 0);
+        errno = 0;
+        CHECK(receive_buffer(pair[1], bytes + 4096, 4, operation) == -1 && errno == EFAULT);
+        CHECK(ioctl(pair[1], FIONREAD, &available) == 0 && available == 4100);
+        errno = 0;
+        CHECK(recv(pair[1], bytes + 4096, 4, MSG_PEEK | MSG_DONTWAIT) == -1 && errno == EFAULT);
+        CHECK(ioctl(pair[1], FIONREAD, &available) == 0 && available == 4100);
+        ssize_t copied = receive_buffer(pair[1], bytes, 8192, operation);
+        CHECK((copied == -1 && errno == EFAULT) || (copied > 0 && copied <= 4096));
+        size_t prefix = copied < 0 ? 0 : (size_t)copied;
+        for (size_t at = 0; at < prefix; at++)
+            CHECK(bytes[at] == pattern(at));
+        CHECK(ioctl(pair[1], FIONREAD, &available) == 0 && available == (int)(4100 - prefix));
+        CHECK(recv(pair[1], source, 4100 - prefix, 0) == (ssize_t)(4100 - prefix));
+        for (size_t at = 0; at < 4100 - prefix; at++)
+            CHECK(source[at] == pattern(prefix + at));
+        for (size_t at = 0; at < 4; at++)
+            source[at] = pattern(at);
+        send_all(pair[0], source, 4);
+        readable(pair[1]);
+        CHECK(receive_buffer(pair[1], bytes, 8192, operation) == 4 && !memcmp(bytes, source, 4));
+        CHECK(close(pair[0]) == 0 && close(pair[1]) == 0 && munmap(bytes, 4096) == 0);
+        free(source);
+    }
+    puts("TCP_RECEIVE_COPY_PASS modes=4 first_fault peek_fault partial_fault short_prefix "
+         "queued_ownership");
+}
+
+static void send_copy_faults(void) {
+    for (unsigned operation = 0; operation < 4; operation++) {
+        int pair[2];
+        pair_sockets(pair);
+        uint8_t* bytes = guarded_buffer();
+        for (size_t at = 0; at < 4096; at++)
+            bytes[at] = pattern(at);
+        ssize_t copied = transmit_buffer(pair[0], bytes, 8192, operation);
+        CHECK((copied == -1 && errno == EFAULT) || (copied > 0 && copied <= 4096));
+        size_t prefix = copied < 0 ? 0 : (size_t)copied;
+        CHECK(munmap(bytes, 4096) == 0 && close(pair[0]) == 0);
+        CHECK(receive_pattern(pair[1], prefix) == prefix && close(pair[1]) == 0);
+    }
+    puts("TCP_SEND_COPY_PASS modes=4 write send writev sendmsg partial_fault owned_bytes "
+         "after_unmap exact_eof");
+}
+
 static uint8_t wire_byte(size_t position, unsigned lane, unsigned phase) {
     return pattern(position) ^ (phase * 73) ^ (lane * 11);
 }
@@ -1118,6 +1271,10 @@ int main(int argc, char** argv) {
     send_deadlines();
     send_signals();
     send_nonblocking();
+    unavailable_copy();
+    unavailable_sends();
+    receive_copy_faults();
+    send_copy_faults();
     connection_cycles();
     fflush(stdout);
     loopback();

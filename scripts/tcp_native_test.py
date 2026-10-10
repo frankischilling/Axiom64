@@ -17,6 +17,8 @@ def main():
                 'TCP_ACCEPT_TEARDOWN_PASS cases=2',
                 'TCP_RETAINED_SEND_PASS cases=2', 'TCP_SEND_DEADLINES_PASS cases=3',
                 'TCP_SEND_SIGNALS_PASS cases=2', 'TCP_SEND_NONBLOCKING_PASS cases=2',
+                'TCP_UNAVAILABLE_COPY_PASS cases=8', 'TCP_UNAVAILABLE_SEND_PASS cases=8',
+                'TCP_RECEIVE_COPY_PASS modes=4', 'TCP_SEND_COPY_PASS modes=4',
                 'TCP_CLIENT_PASS ', 'TCP_LOOPBACK_PASS bytes=262144', 'TCP_TEST_PASS')
     results = []
     with (ROOT / 'build/tcp-native.log').open('w') as log:

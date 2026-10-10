@@ -17,6 +17,8 @@ int64_t tcp_accept(Task&, Handle*, uint64_t address, uint64_t length, unsigned f
                    int reserved_fd);
 int tcp_address(Task&, InetSocket*, bool peer, uint64_t address, uint64_t length);
 int64_t tcp_read(InetSocket*, void*, size_t, bool peek = false, size_t offset = 0);
+// Check stream errors and send capacity before copying user bytes; consumes a pending error.
+int tcp_write_check(InetSocket*);
 int64_t tcp_write(InetSocket*, const void*, size_t);
 bool tcp_ready(InetSocket*, bool write);
 uint32_t tcp_events(InetSocket*);

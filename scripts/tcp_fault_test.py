@@ -13,29 +13,43 @@ from fetch import ROOT, LOCK
 from tcp_fault_peer import Peer, check
 from tcp_reordering_peer import Peer as ReorderingPeer
 from tcp_persist_peer import Peer as PersistPeer
+from tcp_timeout_peer import Peer as TimeoutPeer
 
 
 def wire_configuration(wire):
     profiles = {'loss': (Peer, 'tcp-fault'), 'reordering': (ReorderingPeer, 'tcp-reordering'),
-                'persist': (PersistPeer, 'tcp-persist')}
+                'persist': (PersistPeer, 'tcp-persist'), 'timeout': (TimeoutPeer, 'tcp-timeout')}
     check(wire in profiles, 'known controlled TCP wire profile')
     return profiles[wire]
 
 
+def application_configuration(wire):
+    if wire == 'timeout':
+        markers = ['TCP_TIMEOUT_PASS flows=8 queued_each=2048']
+        markers += [f'TCP_TIMEOUT_FLOW_PASS lane={lane} role={role} control={control}'
+                    for lane in range(2) for control in range(2) for role in range(2)]
+        return 'tcp-timeout', markers
+    markers = ['TCP_FAULT_PASS flows=4 bytes_each=65536']
+    markers += [f'TCP_FAULT_FLOW_PASS lane={lane} role={role} bytes_each=65536'
+                for lane in range(2) for role in range(2)]
+    return 'tcp-fault', markers
+
+
 def fixture(linkage, wire='loss'):
     _, prefix = wire_configuration(wire)
+    program, _ = application_configuration(wire)
     subprocess.run(['make', '-s', '-j2', 'build/axiom64.elf', 'build/init',
-                    f'build/tcp-fault-{linkage}', 'busybox'], cwd=ROOT, check=True)
+                    f'build/{program}-{linkage}', 'busybox'], cwd=ROOT, check=True)
     actual = subprocess.check_output(['dpkg-query', '-W', '-f=${Version}', 'musl-dev'], text=True)
     expected = json.loads((ROOT / 'sources.lock.json').read_text())['build_musl']['version']
     check(actual == expected, 'controlled TCP fixture uses locked musl')
     files = {name: (0o40755, b'') for name in ('bin', 'sbin', 'lib', 'etc', 'dev', 'proc', 'tmp', 'run')}
     for name, source in (('sbin/init', ROOT / 'build/init'),
-                         ('bin/tcp-fault', ROOT / 'build' / f'tcp-fault-{linkage}'),
+                         (f'bin/{program}', ROOT / 'build' / f'{program}-{linkage}'),
                          ('bin/busybox', ROOT / 'build' / f"busybox-{LOCK['busybox']['version']}" / 'busybox'),
                          ('lib/ld-musl-x86_64.so.1', Path('/lib/ld-musl-x86_64.so.1').resolve())):
         files[name] = (0o100755, source.read_bytes())
-    files['etc/net-test.sh'] = (0o100755, b'#!/bin/sh\nset -e\n/bin/tcp-fault\necho AXIOM64_TESTS_PASS\n')
+    files['etc/net-test.sh'] = (0o100755, f'#!/bin/sh\nset -e\n/bin/{program}\necho AXIOM64_TESTS_PASS\n'.encode())
     original = ROOT / 'build/rootfs-network.cpio'
     with original.open('wb') as output:
         for inode, (name, (mode, data)) in enumerate([*sorted(files.items()), ('TRAILER!!!', (0, b''))], 1):
@@ -90,6 +104,9 @@ def exercise(process, peers, servers, timeout, log, raw=False):
                                 check(connections[index] is not None, 'independent TCP peer connected before passive open')
                                 peers[index].flows[1].start()
                                 started_roles.add(index)
+                        for peer in peers:
+                            if hasattr(peer, 'line'):
+                                peer.line(line)
                     continue
                 if kind == 'server':
                     channel, _ = key.fileobj.accept()
@@ -121,6 +138,8 @@ def exercise(process, peers, servers, timeout, log, raw=False):
                 channel = connections[lane]
                 if channel is None:
                     continue
+                if hasattr(peer, 'tick'):
+                    peer.tick()
                 if raw:
                     while peer.outgoing:
                         frame = peer.outgoing.pop(0)
@@ -192,11 +211,10 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
             server.close()
     peer_path = ROOT / 'build' / f'{label}-peer.json'
     peer_path.write_text(json.dumps([dict(lane=peer.lane, frames=peer.frames) for peer in peers], indent=2) + '\n')
-    required = ['TCP_FAULT_CONFIG_PASS nics=2', 'TCP_FAULT_PASS flows=4 bytes_each=65536',
+    program, required = application_configuration(wire)
+    required += [f'{"TCP_TIMEOUT" if wire == "timeout" else "TCP_FAULT"}_CONFIG_PASS nics=2',
                 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
                 f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
-    required += [f'TCP_FAULT_FLOW_PASS lane={lane} role={role} bytes_each=65536'
-                 for lane in range(2) for role in range(2)]
     missing = [marker for marker in required if marker not in text]
     result = dict(wire=wire, linkage=linkage, firmware=firmware, transport=transport, returncode=returncode,
                   error=error, missing=missing, peers=[{key: value for key, value in peer.items() if key != 'frames'}
@@ -204,7 +222,7 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
                   peer=peer_path.name, captures=[path.name for path in captures], log=log_path.name,
                   seconds=round(time.monotonic() - began, 3),
                   passed=not error and not missing and returncode == 1 and
-                  not any(marker in text for marker in ('TCP_FAULT_FAIL', 'PANIC:', 'FAULT pid=')))
+                  not any(marker in text for marker in ('TCP_FAULT_FAIL', 'TCP_TIMEOUT_FAIL', 'PANIC:', 'FAULT pid=')))
     print(json.dumps(result), flush=True)
     if not result['passed']:
         print(text[-5000:], flush=True)
@@ -213,7 +231,7 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist'), default='loss')
+    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist', 'timeout'), default='loss')
     for name, choices in (('linkage', ('static', 'dynamic')), ('firmware', ('bios', 'uefi')),
                           ('transport', ('modern', 'legacy'))):
         parser.add_argument(f'--{name}', choices=(*choices, 'both'), default='both')

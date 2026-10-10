@@ -58,6 +58,7 @@ jobs:
           make -j2 build/credentials-native build/credentials-static build/credentials-dynamic
           make -j2 build/tcp-native build/tcp-static build/tcp-dynamic
           make -j2 build/tcp-fault-native build/tcp-fault-static build/tcp-fault-dynamic
+          make -j2 build/tcp-timeout-native build/tcp-timeout-static build/tcp-timeout-dynamic
           make build/init-supervision
       - name: Test split-queue ownership with sanitizers
         run: make test-virtqueue
@@ -229,6 +230,17 @@ jobs:
         run: |
           python3 scripts/tcp_persist_capture.py 2>&1 | tee build/tcp-persist-capture.log
           python3 scripts/tests/tcp_persist_capture_test.py 2>&1 | tee build/tcp-persist-capture-checker.log
+      - name: Compare configured TCP user timeout with isolated native Linux
+        if: matrix.suite == 'tcp-fault'
+        run: sudo -n make test-tcp-timeout-native
+      - name: Verify TCP timeout errors and disabled-timeout recovery on both emulated NICs
+        if: matrix.suite == 'tcp-fault'
+        run: make test-tcp-timeout
+      - name: Independently verify TCP deadline evidence and reject damaged captures
+        if: matrix.suite == 'tcp-fault'
+        run: |
+          python3 scripts/tcp_timeout_capture.py 2>&1 | tee build/tcp-timeout-capture.log
+          python3 scripts/tests/tcp_timeout_capture_test.py 2>&1 | tee build/tcp-timeout-capture-checker.log
       - name: Test desktop serial acceptance decisions
         if: matrix.suite == 'boot'
         run: python3 scripts/tests/desktop_console_test.py
@@ -463,6 +475,7 @@ jobs:
             build/tcp-fault-*-peer.json
             build/tcp-reordering-*-peer.json
             build/tcp-persist-*-peer.json
+            build/tcp-timeout-*-peer.json
       - name: Upload TCP boot fixtures
         if: always() && matrix.suite == 'tcp'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -480,6 +493,7 @@ jobs:
             build/axiom64-tcp-fault-*.iso
             build/axiom64-tcp-reordering-*.iso
             build/axiom64-tcp-persist-*.iso
+            build/axiom64-tcp-timeout-*.iso
       - name: Upload credential filesystem and boot fixtures
         if: always() && matrix.suite == 'credentials'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

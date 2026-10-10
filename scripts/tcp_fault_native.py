@@ -14,7 +14,7 @@ import threading
 import time
 from fetch import ROOT
 from tcp_fault_peer import check
-from tcp_fault_test import exercise, wire_configuration
+from tcp_fault_test import exercise, wire_configuration, application_configuration
 
 
 class Capture:
@@ -78,13 +78,14 @@ def command(*args):
     subprocess.run(list(args), check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
 
-def client(scratch, linkage):
+def client(scratch, linkage, wire='loss'):
     (scratch / 'client-ready').write_text(os.readlink('/proc/self/ns/net'))
     began = time.monotonic()
     while not (scratch / 'client-go').exists():
         check(time.monotonic() - began < 10, 'private client namespace setup deadline')
         time.sleep(.005)
-    binary = ROOT / 'build' / f'tcp-fault-{linkage}'
+    program, _ = application_configuration(wire)
+    binary = ROOT / 'build' / f'{program}-{linkage}'
     completed = subprocess.run([str(binary), '--native'])
     print(f'TCP_FAULT_NATIVE_DONE status={completed.returncode}', flush=True)
     began = time.monotonic()
@@ -103,7 +104,7 @@ def namespace(scratch, wire='loss'):
     for linkage in ('native', 'static', 'dynamic'):
         for name in ('client-ready', 'client-go', 'client-release'):
             (scratch / name).unlink(missing_ok=True)
-        process = subprocess.Popen(['unshare', '--net', sys.executable, __file__, '--client', str(scratch), linkage],
+        process = subprocess.Popen(['unshare', '--net', sys.executable, __file__, '--client', str(scratch), linkage, wire],
                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    start_new_session=True)
         channels, monitors, result = [], [], None
@@ -138,9 +139,7 @@ def namespace(scratch, wire='loss'):
             log_path = ROOT / 'build' / f'{label}.log'
             with log_path.open('wb') as log:
                 text, results, error, returncode = exercise(process, peers, channels, 150, log, raw=True)
-            required = ['TCP_FAULT_PASS flows=4 bytes_each=65536']
-            required += [f'TCP_FAULT_FLOW_PASS lane={lane} role={role} bytes_each=65536'
-                         for lane in range(2) for role in range(2)]
+            _, required = application_configuration(wire)
             missing = [marker for marker in required if marker not in text]
             peer_path = ROOT / 'build' / f'{label}-peer.json'
             peer_path.write_text(json.dumps([dict(lane=peer.lane, frames=peer.frames) for peer in peers], indent=2) + '\n')
@@ -149,7 +148,8 @@ def namespace(scratch, wire='loss'):
                           peers=[{key: value for key, value in peer.items() if key != 'frames'} for peer in results],
                           peer=peer_path.name, captures=[f'{label}-lane{lane}.pcap' for lane in range(2)],
                           log=log_path.name, seconds=round(time.monotonic() - began, 3),
-                          passed=not error and not missing and returncode == 0 and 'TCP_FAULT_FAIL' not in text)
+                          passed=not error and not missing and returncode == 0 and
+                          not any(marker in text for marker in ('TCP_FAULT_FAIL', 'TCP_TIMEOUT_FAIL')))
         finally:
             try:
                 statistics, failures = [], []
@@ -194,17 +194,18 @@ def namespace(scratch, wire='loss'):
 
 
 def main():
-    if len(sys.argv) == 4 and sys.argv[1] == '--client':
-        client(Path(sys.argv[2]), sys.argv[3])
+    if len(sys.argv) in (4, 5) and sys.argv[1] == '--client':
+        client(Path(sys.argv[2]), sys.argv[3], sys.argv[4] if len(sys.argv) == 5 else 'loss')
         return
     if len(sys.argv) in (3, 4) and sys.argv[1] == '--namespace':
         namespace(Path(sys.argv[2]), sys.argv[3] if len(sys.argv) == 4 else 'loss')
         return
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist'), default='loss')
+    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist', 'timeout'), default='loss')
     args = parser.parse_args()
-    subprocess.run(['make', '-s', '-j2', 'build/tcp-fault-native', 'build/tcp-fault-static',
-                    'build/tcp-fault-dynamic'], cwd=ROOT, check=True)
+    program, _ = application_configuration(args.wire)
+    subprocess.run(['make', '-s', '-j2', *(f'build/{program}-{linkage}' for linkage in
+                                        ('native', 'static', 'dynamic'))], cwd=ROOT, check=True)
     original = os.readlink('/proc/self/ns/net')
     with tempfile.TemporaryDirectory(prefix=f'axiom64-tcp-{args.wire}-') as temporary:
         scratch = Path(temporary)

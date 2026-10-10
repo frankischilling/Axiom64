@@ -20,4 +20,6 @@ The next [strict-KVM run](https://github.com/frankischilling/Axiom64/actions/run
 
 The separately measured [normal-init fixture compression work](ci-artifact-compression.md) retains every image and saved disk while reducing packaging CPU. Its archive size and hosted upload timing are separate from VM accelerator measurements.
 
+The [complete TCP profile matrix](ci-tcp-profiles.md) distributes the five independent wire profiles across isolated jobs while retaining their original commands, waits and evidence. Its hosted comparison measures the serial TCP critical path separately from setup, queue time and the remaining manager suites.
+
 The available mechanisms follow [QEMU's accelerator documentation](https://www.qemu.org/docs/master/system/qemu-manpage.html) and [GitHub's hosted-runner KVM guidance](https://github.blog/changelog/2024-04-02-github-actions-hardware-accelerated-android-virtualization-now-available/). This work concerns VM development infrastructure; HP work still follows the required VM prerequisites.

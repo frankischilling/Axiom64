@@ -140,7 +140,11 @@ jobs:
           - random
           - credentials
           - tcp
-          - tcp-fault
+          - tcp-fault-loss
+          - tcp-fault-reordering
+          - tcp-fault-persist
+          - tcp-fault-timeout
+          - tcp-fault-old-ack
           - normal-init-bios
           - normal-init-uefi
           - protocol-bios-modern-lane0
@@ -198,57 +202,57 @@ jobs:
         if: matrix.suite == 'tcp'
         run: python3 scripts/tests/tcp_capture_test.py 2>&1 | tee build/tcp-capture-checker.log
       - name: Compare controlled TCP loss with isolated native Linux
-        if: matrix.suite == 'tcp-fault'
+        if: matrix.suite == 'tcp-fault-loss'
         run: sudo -n make test-tcp-fault-native
       - name: Verify actual TCP retransmissions on both emulated NICs
-        if: matrix.suite == 'tcp-fault'
+        if: matrix.suite == 'tcp-fault-loss'
         run: make test-tcp-fault
       - name: Independently verify TCP loss captures and reject damaged evidence
-        if: matrix.suite == 'tcp-fault'
+        if: matrix.suite == 'tcp-fault-loss'
         run: |
           python3 scripts/tcp_fault_capture.py 2>&1 | tee build/tcp-fault-capture.log
           python3 scripts/tests/tcp_fault_capture_test.py 2>&1 | tee build/tcp-fault-capture-checker.log
       - name: Compare receive reordering with isolated native Linux
-        if: matrix.suite == 'tcp-fault'
+        if: matrix.suite == 'tcp-fault-reordering'
         run: sudo -n make test-tcp-reordering-native
       - name: Verify receive holes, duplicates and overlaps on both emulated NICs
-        if: matrix.suite == 'tcp-fault'
+        if: matrix.suite == 'tcp-fault-reordering'
         run: make test-tcp-reordering
       - name: Independently verify receive ordering and reject damaged evidence
-        if: matrix.suite == 'tcp-fault'
+        if: matrix.suite == 'tcp-fault-reordering'
         run: |
           python3 scripts/tcp_reordering_capture.py 2>&1 | tee build/tcp-reordering-capture.log
           python3 scripts/tests/tcp_reordering_capture_test.py 2>&1 | tee build/tcp-reordering-capture-checker.log
       - name: Compare zero-window persist with isolated native Linux
-        if: matrix.suite == 'tcp-fault'
+        if: matrix.suite == 'tcp-fault-persist'
         run: sudo -n make test-tcp-persist-native
       - name: Verify stopped-window probes and recovery on both emulated NICs
-        if: matrix.suite == 'tcp-fault'
+        if: matrix.suite == 'tcp-fault-persist'
         run: make test-tcp-persist
       - name: Independently verify persist timing and reject damaged evidence
-        if: matrix.suite == 'tcp-fault'
+        if: matrix.suite == 'tcp-fault-persist'
         run: |
           python3 scripts/tcp_persist_capture.py 2>&1 | tee build/tcp-persist-capture.log
           python3 scripts/tests/tcp_persist_capture_test.py 2>&1 | tee build/tcp-persist-capture-checker.log
       - name: Compare configured TCP user timeout with isolated native Linux
-        if: matrix.suite == 'tcp-fault'
+        if: matrix.suite == 'tcp-fault-timeout'
         run: sudo -n make test-tcp-timeout-native
       - name: Verify TCP timeout errors and disabled-timeout recovery on both emulated NICs
-        if: matrix.suite == 'tcp-fault'
+        if: matrix.suite == 'tcp-fault-timeout'
         run: make test-tcp-timeout
       - name: Independently verify TCP deadline evidence and reject damaged captures
-        if: matrix.suite == 'tcp-fault'
+        if: matrix.suite == 'tcp-fault-timeout'
         run: |
           python3 scripts/tcp_timeout_capture.py 2>&1 | tee build/tcp-timeout-capture.log
           python3 scripts/tests/tcp_timeout_capture_test.py 2>&1 | tee build/tcp-timeout-capture-checker.log
       - name: Compare old-ACK rejection with isolated native Linux
-        if: matrix.suite == 'tcp-fault'
+        if: matrix.suite == 'tcp-fault-old-ack'
         run: sudo -n make test-tcp-old-ack-native
       - name: Reject poisoned old-ACK payload and FIN on both emulated NICs
-        if: matrix.suite == 'tcp-fault'
+        if: matrix.suite == 'tcp-fault-old-ack'
         run: make test-tcp-old-ack
       - name: Independently verify ACK boundaries and reject damaged evidence
-        if: matrix.suite == 'tcp-fault'
+        if: matrix.suite == 'tcp-fault-old-ack'
         run: |
           python3 scripts/tcp_old_ack_capture.py 2>&1 | tee build/tcp-old-ack-capture.log
           python3 scripts/tests/tcp_old_ack_capture_test.py 2>&1 | tee build/tcp-old-ack-capture-checker.log
@@ -495,11 +499,11 @@ jobs:
           name: axiom64-tcp-fixtures
           if-no-files-found: error
           path: build/axiom64-tcp-*.iso
-      - name: Upload controlled TCP loss boot fixtures
-        if: always() && matrix.suite == 'tcp-fault'
+      - name: Upload controlled TCP wire boot fixtures
+        if: always() && startsWith(matrix.suite, 'tcp-fault-')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: axiom64-tcp-fault-fixtures
+          name: axiom64-${{ matrix.suite }}-fixtures
           if-no-files-found: error
           path: |
             build/axiom64-tcp-fault-*.iso

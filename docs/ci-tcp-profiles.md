@@ -1,0 +1,11 @@
+# Complete TCP profiles in parallel CI jobs
+
+The CI test matrix runs loss, receive ordering, zero-window persist, configured user timeout and old-ACK rejection in five isolated jobs. Each receives the same exact source/build artifact from the build job. Each retains its original three native libc comparisons, eight VM firmware/transport/linkage cases, both adapters, full streams, actual protocol waits and independent positive/negative packet checks. The ordinary TCP socket suite remains a separate job.
+
+The matrix uses `tcp-fault-loss`, `tcp-fault-reordering`, `tcp-fault-persist`, `tcp-fault-timeout` and `tcp-fault-old-ack`. Each keeps its three established commands and records. It publishes `axiom64-evidence-<suite>` and `axiom64-<suite>-fixtures`, where `<suite>` is its complete matrix name. The fixtures contain the profile's static and dynamic boot images. The build job supplies source archives, exact test inputs and compiled products. Download all five evidence/fixture pairs when auditing the complete TCP acceptance; one profile's success cannot establish the others.
+
+Every earlier non-profile suite remains present, including manager/startup, filesystem, UDP/DNS, desktop and native compiler evidence. `fail-fast: false` allows other profiles to preserve their evidence when one fails. The required `qemu` aggregate checks the build and the entire test matrix. The complete workflow now requires 38 successful jobs. Failed, cancelled, missing or skipped profile acceptance blocks integration.
+
+The accepted [four-profile serial run](https://github.com/frankischilling/Axiom64/actions/runs/38078168225) spent 1,436 seconds in the controlled TCP job, including 1,383 seconds in its native/VM/checker steps. Persist accounted for 534 seconds; the next-longest complete job took 806 seconds. These observations establish the serial bottleneck. They do not prove a speedup for this candidate. The final comparison must use the complete five-profile serial run from [#151](https://github.com/frankischilling/Axiom64/pull/151) and a complete passing parallel run, reporting setup/queue effects, profile feedback and whole-workflow elapsed time.
+
+[#149](https://github.com/frankischilling/Axiom64/issues/149) tracks the measured change under #133. Protocol bounds, TCG default, the full manager matrix and VM-before-hardware requirements remain unchanged.

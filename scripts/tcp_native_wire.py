@@ -162,6 +162,9 @@ def run(linkage, firmware, transport, timeout):
                 'TCP_SEND_SIGNALS_PASS cases=2', 'TCP_SEND_NONBLOCKING_PASS cases=2',
                 'TCP_UNAVAILABLE_COPY_PASS cases=8', 'TCP_UNAVAILABLE_SEND_PASS cases=8',
                 'TCP_RECEIVE_COPY_PASS modes=4', 'TCP_SEND_COPY_PASS modes=4',
+                'TCP_CONNECT_COMPLETION_PASS cases=3', 'TCP_CONNECT_FAILURES_PASS cases=4',
+                'TCP_RETAINED_CONNECT_PASS cases=2', 'TCP_CONNECT_DEADLINES_PASS cases=2',
+                'TCP_CONNECT_SIGNALS_PASS cases=3',
                 f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
     for lane in range(2):
         required += [f'TCP_NATIVE_SERVER_PASS index={lane + 1} bytes_each={BYTES}',

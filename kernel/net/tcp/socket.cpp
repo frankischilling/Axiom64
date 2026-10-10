@@ -93,6 +93,34 @@ void reclaim(InetSocket* socket) {
     inet_dispose(socket);
 }
 
+void release_automatic_port(InetSocket* socket) {
+    if (!socket->port_locked && socket->local_port) {
+        // Linux releases the bind owner but keeps inet_sport for getsockname.
+        socket->reported_port = socket->local_port;
+        socket->local_port = 0;
+        socket->order = 0;
+    }
+}
+
+void reset_connect(InetSocket* socket) {
+    // Owned packets may outlive this attempt; their callbacks cannot reach its successor.
+    ipv4_detach_owner(socket);
+    socket->stream->~Connection();
+    release(socket->stream);
+    socket->stream = nullptr;
+    release_automatic_port(socket);
+    if (!socket->bound)
+        socket->local = 0;
+    socket->peer = 0;
+    socket->peer_port = 0;
+    socket->stream_index = 0;
+    socket->transmitted = 0;
+    socket->shutdown = 0;
+    socket->error = 0;
+    socket->error_seen = false;
+    socket->connect_pending = false;
+}
+
 bool compact_time_wait(InetSocket* socket) {
     for (auto& record : time_waits)
         if (!record.used) {
@@ -218,11 +246,12 @@ void tcp_failed(InetSocket* socket, int error) {
 int tcp_connect(InetSocket* socket, const InetAddress& address) {
     if (socket->listening)
         return -106;
-    if (socket->stream)
-        return socket->stream->state() == tcp::State::syn_sent ||
-                       socket->stream->state() == tcp::State::syn_received
-                   ? -114
-                   : -106;
+    if (socket->stream) {
+        if (!socket->connect_pending)
+            return -106;
+        int64_t result = tcp_connect_result(socket);
+        return result == would_block ? -114 : int(result);
+    }
     if (address.family != 2)
         return -97;
     uint32_t peer = __builtin_bswap32(address.address);
@@ -261,6 +290,7 @@ int tcp_connect(InetSocket* socket, const InetAddress& address) {
         return -12;
     uint16_t mss = min(socket->maximum_segment, uint16_t(path.mtu > 40 ? path.mtu - 40 : 1));
     socket->stream->active(initial, now, mss);
+    socket->connect_pending = true;
     tcp_poll();
     return -115;
 }
@@ -271,7 +301,13 @@ int64_t tcp_connect_result(InetSocket* socket) {
     auto state = socket->stream->state();
     if (state == tcp::State::syn_sent || state == tcp::State::syn_received)
         return would_block;
-    return socket->stream->error() ? -socket->stream->error() : 0;
+    if (state == tcp::State::closed) {
+        int error = tcp_error(socket, true);
+        reset_connect(socket);
+        return error ? -error : -103;
+    }
+    socket->connect_pending = false;
+    return 0;
 }
 
 int tcp_listen(InetSocket* socket, int backlog) {
@@ -298,8 +334,9 @@ int tcp_listen(InetSocket* socket, int backlog) {
 int tcp_address(Task& task, InetSocket* socket, bool peer, uint64_t pointer, uint64_t length) {
     if (peer && !synchronized(socket))
         return -107;
+    uint16_t local_port = socket->local_port ? socket->local_port : socket->reported_port;
     InetAddress address{2,
-                        uint16_t(peer ? socket->peer_port : __builtin_bswap16(socket->local_port)),
+                        uint16_t(peer ? socket->peer_port : __builtin_bswap16(local_port)),
                         __builtin_bswap32(peer ? socket->peer : socket->local),
                         {}};
     return address_out(task, address, pointer, length);
@@ -585,6 +622,8 @@ void tcp_poll() {
             socket.stream->emitted(now);
             pending = socket.stream->next(now, segment);
         }
+        if (!pending && socket.connect_pending && socket.stream->state() == tcp::State::closed)
+            release_automatic_port(&socket);
         if (!pending && socket.detached && socket.stream->state() == tcp::State::time_wait)
             compact_time_wait(&socket);
         else if (!pending && socket.stream->state() == tcp::State::closed &&

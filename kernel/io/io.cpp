@@ -35,6 +35,7 @@ struct IoRequest {
     unsigned flags;
     bool write, socket, accept, positioned, locking, connect, started;
     bool timed, stream_blocking;
+    int connect_error;
     uint64_t deadline;
     PacketAddress destination;
     unsigned destination_index;
@@ -92,7 +93,9 @@ static bool timeout_expired(const IoRequest& request) {
 }
 
 static int64_t timeout_result(const IoRequest& request) {
-    return request.progress ? int64_t(request.progress) : request.connect ? -115 : -11;
+    return request.progress  ? int64_t(request.progress)
+           : request.connect ? request.connect_error
+                             : -11;
 }
 
 static int import_vectors(Task& task, IoRequest& request, uint64_t pointer, size_t count) {
@@ -504,8 +507,9 @@ static int64_t attempt(Task& task, IoRequest& request) {
         if (!request.started) {
             request.started = true;
             int result = tcp_connect(h->inet, request.inet_destination);
-            if (result != -115 || (h->flags & 04000))
+            if ((result != -115 && result != -114) || !request.stream_blocking)
                 return result;
+            request.connect_error = result;
         }
         return tcp_connect_result(h->inet);
     }

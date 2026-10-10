@@ -20,7 +20,7 @@ struct InetSocket {
     int error = 0;
     uint8_t ttl = 64;
     uint8_t type = 3, protocol = 1;
-    uint16_t peer_port = 0, local_port = 0;
+    uint16_t peer_port = 0, local_port = 0, reported_port = 0;
     unsigned shutdown = 0;
     uint64_t order = 0;
     InetFrame* queue[inet_queue_count]{};
@@ -30,6 +30,7 @@ struct InetSocket {
     InetSocket* accepted[inet_queue_count]{};
     unsigned accept_head = 0, accept_count = 0, children = 0, backlog = 0;
     bool listening = false, detached = false, error_seen = false, nodelay = false;
+    bool connect_pending = false;
     uint32_t user_timeout = 0;
     uint16_t maximum_segment = 1460;
     unsigned stream_index = 0;

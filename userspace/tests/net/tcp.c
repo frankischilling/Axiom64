@@ -1165,6 +1165,312 @@ static void send_copy_faults(void) {
          "after_unmap exact_eof");
 }
 
+static void connected_wait(int fd) {
+    struct pollfd item = {.fd = fd, .events = POLLOUT};
+    CHECK(poll(&item, 1, 2000) == 1 && (item.revents & POLLOUT) && !(item.revents & POLLERR));
+}
+
+static void connect_completions(void) {
+    for (unsigned blocking = 0; blocking < 2; blocking++) {
+        struct sockaddr_in local;
+        int listener = tcp_listener(&local);
+        int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+        CHECK(fd >= 0 && connect(fd, (struct sockaddr*)&local, sizeof(local)) == -1 &&
+              errno == EINPROGRESS);
+        connected_wait(fd);
+        int alias = dup(fd);
+        CHECK(alias >= 0 && close(fd) == 0);
+        fd = alias;
+        if (blocking)
+            CHECK(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK) == 0);
+        CHECK(connect(fd, (struct sockaddr*)&local, sizeof(local)) == 0);
+        errno = 0;
+        CHECK(connect(fd, (struct sockaddr*)&local, sizeof(local)) == -1 && errno == EISCONN);
+        readable(listener);
+        int accepted = accept4(listener, NULL, NULL, SOCK_NONBLOCK);
+        CHECK(accepted >= 0 && close(fd) == 0 && close(accepted) == 0 && close(listener) == 0);
+    }
+    struct sockaddr_in local;
+    int listener = tcp_listener(&local), fd = socket(AF_INET, SOCK_STREAM, 0);
+    CHECK(fd >= 0 && connect(fd, (struct sockaddr*)&local, sizeof(local)) == 0);
+    errno = 0;
+    CHECK(connect(fd, (struct sockaddr*)&local, sizeof(local)) == -1 && errno == EISCONN);
+    int accepted = accept4(listener, NULL, NULL, SOCK_NONBLOCK);
+    CHECK(accepted >= 0 && close(fd) == 0 && close(accepted) == 0 && close(listener) == 0);
+    puts("TCP_CONNECT_COMPLETION_PASS cases=3 nonblocking_completion dup_description "
+         "blocking_completion already_connected");
+}
+
+static void connect_failures(void) {
+    for (unsigned mode = 0; mode < 4; mode++) {
+        unsigned diagnostic = mode & 1, explicit_binding = mode >> 1;
+        struct sockaddr_in refused_address, local;
+        int closed = tcp_listener(&refused_address);
+        CHECK(close(closed) == 0);
+        int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+        CHECK(fd >= 0);
+        struct sockaddr_in binding = {.sin_family = AF_INET};
+        if (explicit_binding) {
+            closed = tcp_listener(&binding);
+            CHECK(close(closed) == 0 && bind(fd, (struct sockaddr*)&binding, sizeof(binding)) == 0);
+        }
+        int value = 1;
+        CHECK(setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &value, sizeof(value)) == 0);
+        value = 5000;
+        CHECK(setsockopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &value, sizeof(value)) == 0);
+        timeouts(fd);
+        CHECK(connect(fd, (struct sockaddr*)&refused_address, sizeof(refused_address)) == -1 &&
+              errno == EINPROGRESS);
+        struct pollfd item = {.fd = fd, .events = POLLOUT};
+        CHECK(poll(&item, 1, 2000) == 1 && (item.revents & POLLERR));
+        struct sockaddr_in peer, attempted;
+        socklen_t length = sizeof(attempted);
+        CHECK(getsockname(fd, (struct sockaddr*)&attempted, &length) == 0 && attempted.sin_port);
+        int competitor = socket(AF_INET, SOCK_STREAM, 0);
+        CHECK(competitor >= 0);
+        int bound = bind(competitor, (struct sockaddr*)&attempted, sizeof(attempted));
+        CHECK(explicit_binding ? bound == -1 && errno == EADDRINUSE : bound == 0);
+        length = sizeof(peer);
+        CHECK(getpeername(fd, (struct sockaddr*)&peer, &length) == -1 && errno == ENOTCONN);
+        if (diagnostic) {
+            int error = 0;
+            length = sizeof(error);
+            CHECK(getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &length) == 0 &&
+                  error == ECONNREFUSED);
+        }
+        errno = 0;
+        CHECK(connect(fd, (struct sockaddr*)&refused_address, sizeof(refused_address)) == -1 &&
+              errno == (diagnostic ? ECONNABORTED : ECONNREFUSED));
+        length = sizeof(peer);
+        CHECK(getsockname(fd, (struct sockaddr*)&peer, &length) == 0 &&
+              peer.sin_port == attempted.sin_port &&
+              peer.sin_addr.s_addr == binding.sin_addr.s_addr);
+        value = -1;
+        length = sizeof(value);
+        CHECK(getsockopt(fd, SOL_SOCKET, SO_ERROR, &value, &length) == 0 && value == 0);
+        length = sizeof(value);
+        CHECK(getsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &value, &length) == 0 && value == 1);
+        length = sizeof(value);
+        CHECK(getsockopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &value, &length) == 0 && value == 5000);
+        struct timeval timeout;
+        length = sizeof(timeout);
+        CHECK(getsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, &length) == 0 &&
+              timeout.tv_sec == 5 && timeout.tv_usec == 0);
+        int listener = tcp_listener(&local);
+        CHECK(connect(fd, (struct sockaddr*)&local, sizeof(local)) == -1 && errno == EINPROGRESS);
+        connected_wait(fd);
+        CHECK(connect(fd, (struct sockaddr*)&local, sizeof(local)) == 0);
+        length = sizeof(peer);
+        CHECK(getsockname(fd, (struct sockaddr*)&peer, &length) == 0 && peer.sin_port &&
+              (explicit_binding ? peer.sin_port == binding.sin_port
+                                : peer.sin_port != attempted.sin_port));
+        errno = 0;
+        CHECK(connect(fd, (struct sockaddr*)&local, sizeof(local)) == -1 && errno == EISCONN);
+        int accepted = accept4(listener, NULL, NULL, SOCK_NONBLOCK);
+        CHECK(accepted >= 0 && close(fd) == 0 && close(accepted) == 0 && close(listener) == 0 &&
+              close(competitor) == 0);
+    }
+    puts("TCP_CONNECT_FAILURES_PASS cases=4 refused cleared_error aborted retry_same_socket "
+         "explicit_binding automatic_release preserved_options new_connection");
+}
+
+struct PendingConnect {
+    int listener, clients[8];
+    unsigned count;
+    struct sockaddr_in destination, local;
+};
+
+static struct PendingConnect pending_connect(void) {
+    struct PendingConnect group = {0};
+    group.listener = tcp_listener(&group.destination);
+    CHECK(listen(group.listener, 1) == 0);
+    // Fill the real accept queue. Linux and the guest may admit different numbers.
+    for (unsigned at = 0; at < 8; at++) {
+        int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+        CHECK(fd >= 0 &&
+              connect(fd, (struct sockaddr*)&group.destination, sizeof(group.destination)) == -1 &&
+              errno == EINPROGRESS);
+        group.clients[group.count++] = fd;
+        struct pollfd item = {.fd = fd, .events = POLLOUT};
+        int ready = poll(&item, 1, 100);
+        CHECK(ready >= 0 && !(item.revents & POLLERR));
+        if (!ready) {
+            socklen_t length = sizeof(group.local);
+            CHECK(getsockname(fd, (struct sockaddr*)&group.local, &length) == 0 &&
+                  group.local.sin_port);
+            CHECK(connect(fd, (struct sockaddr*)&group.destination, sizeof(group.destination)) ==
+                      -1 &&
+                  errno == EALREADY);
+            return group;
+        }
+        CHECK((item.revents & POLLOUT) &&
+              connect(fd, (struct sockaddr*)&group.destination, sizeof(group.destination)) == 0);
+    }
+    CHECK(!"full listener did not retain a pending handshake");
+    return group;
+}
+
+struct RetainedConnect {
+    int fd, result, error;
+    struct sockaddr_in* destination;
+    atomic_int entered, done;
+};
+
+static void* retained_connector(void* opaque) {
+    struct RetainedConnect* operation = opaque;
+    atomic_store(&operation->entered, 1);
+    operation->result = connect(operation->fd, (struct sockaddr*)operation->destination,
+                                sizeof(*operation->destination));
+    operation->error = errno;
+    atomic_store(&operation->done, 1);
+    return NULL;
+}
+
+static void connect_waiting(struct RetainedConnect* operation) {
+    for (unsigned attempt = 0; !atomic_load(&operation->entered); attempt++)
+        CHECK(attempt < 2000 && usleep(1000) == 0);
+    CHECK(usleep(20000) == 0 && !atomic_load(&operation->done));
+}
+
+static void release_backlog(struct PendingConnect* group) {
+    readable(group->listener);
+    struct sockaddr_in peer;
+    socklen_t length = sizeof(peer);
+    int first = accept4(group->listener, (struct sockaddr*)&peer, &length, SOCK_NONBLOCK);
+    CHECK(first >= 0 && peer.sin_port != group->local.sin_port && close(first) == 0);
+}
+
+static int pending_child(struct PendingConnect* group) {
+    int pending = -1;
+    for (unsigned at = 1; at < group->count; at++) {
+        readable(group->listener);
+        struct sockaddr_in peer;
+        socklen_t length = sizeof(peer);
+        int child = accept4(group->listener, (struct sockaddr*)&peer, &length, SOCK_NONBLOCK);
+        CHECK(child >= 0);
+        if (peer.sin_port == group->local.sin_port) {
+            CHECK(pending == -1);
+            pending = child;
+        } else
+            CHECK(close(child) == 0);
+    }
+    CHECK(pending >= 0);
+    return pending;
+}
+
+static void retained_connects(void) {
+    for (unsigned replace = 0; replace < 2; replace++) {
+        struct PendingConnect group = pending_connect();
+        int fd = group.clients[group.count - 1], alias = dup(fd);
+        CHECK(alias >= 0 && fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK) == 0);
+        timeouts(fd);
+        struct sockaddr_in* destination =
+            mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        CHECK(destination != MAP_FAILED);
+        *destination = group.destination;
+        struct RetainedConnect operation = {.fd = fd, .destination = destination};
+        pthread_t thread;
+        CHECK(pthread_create(&thread, NULL, retained_connector, &operation) == 0);
+        connect_waiting(&operation);
+        CHECK(fcntl(alias, F_SETFL, fcntl(alias, F_GETFL) | O_NONBLOCK) == 0 && close(alias) == 0);
+        int replacement;
+        if (replace) {
+            replacement = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+            CHECK(replacement >= 0 && dup2(replacement, fd) == fd && close(replacement) == 0);
+            replacement = fd;
+        } else {
+            CHECK(close(fd) == 0);
+            replacement = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+            CHECK(replacement == fd);
+        }
+        CHECK(munmap(destination, 4096) == 0 && !atomic_load(&operation.done));
+        release_backlog(&group);
+        CHECK(pthread_join(thread, NULL) == 0 && operation.result == 0);
+        struct sockaddr_in peer;
+        socklen_t length = sizeof(peer);
+        CHECK(getpeername(replacement, (struct sockaddr*)&peer, &length) == -1 &&
+              errno == ENOTCONN);
+        int child = pending_child(&group);
+        readable(child);
+        uint8_t byte;
+        CHECK(recv(child, &byte, 1, 0) == 0);
+        CHECK(close(child) == 0 && close(replacement) == 0 && close(group.listener) == 0);
+        for (unsigned at = 0; at + 1 < group.count; at++)
+            CHECK(close(group.clients[at]) == 0);
+    }
+    puts("TCP_RETAINED_CONNECT_PASS cases=2 pending_handshake blocking_repeat close_reuse dup2 "
+         "captured_destination alias_nonblocking replacement_untouched last_owner_eof");
+}
+
+static void connect_signals(void) {
+    struct sigaction previous, action = {.sa_handler = interruption};
+    CHECK(sigemptyset(&action.sa_mask) == 0);
+    for (unsigned mode = 0; mode < 3; mode++) {
+        struct PendingConnect group = pending_connect();
+        int fd = group.clients[group.count - 1];
+        CHECK(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK) == 0);
+        if (mode < 2) {
+            struct timeval timeout = {2, 0};
+            CHECK(setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) == 0);
+        }
+        action.sa_flags = mode ? SA_RESTART : 0;
+        CHECK(sigaction(SIGUSR1, &action, mode ? NULL : &previous) == 0);
+        interrupted = 0;
+        struct RetainedConnect operation = {.fd = fd, .destination = &group.destination};
+        pthread_t thread;
+        CHECK(pthread_create(&thread, NULL, retained_connector, &operation) == 0);
+        connect_waiting(&operation);
+        CHECK(pthread_kill(thread, SIGUSR1) == 0);
+        for (unsigned attempt = 0; !interrupted; attempt++)
+            CHECK(attempt < 2000 && usleep(1000) == 0);
+        if (mode < 2) {
+            CHECK(pthread_join(thread, NULL) == 0 && operation.result == -1 &&
+                  operation.error == EINTR && interrupted == 1);
+            operation = (struct RetainedConnect){.fd = fd, .destination = &group.destination};
+            CHECK(pthread_create(&thread, NULL, retained_connector, &operation) == 0);
+            connect_waiting(&operation);
+        } else
+            CHECK(usleep(20000) == 0 && !atomic_load(&operation.done) && interrupted == 1);
+        release_backlog(&group);
+        CHECK(pthread_join(thread, NULL) == 0 && operation.result == 0 && close(fd) == 0);
+        int child = pending_child(&group);
+        readable(child);
+        uint8_t byte;
+        CHECK(recv(child, &byte, 1, 0) == 0 && close(child) == 0 && close(group.listener) == 0);
+        for (unsigned at = 0; at + 1 < group.count; at++)
+            CHECK(close(group.clients[at]) == 0);
+    }
+    CHECK(sigaction(SIGUSR1, &previous, NULL) == 0);
+    puts("TCP_CONNECT_SIGNALS_PASS cases=3 finite_interrupted restart_on_off pending_retry "
+         "infinite_restart one_child final_eof");
+}
+
+static void connect_deadlines(void) {
+    struct PendingConnect group = pending_connect();
+    int old = group.clients[group.count - 1];
+    CHECK(close(old) == 0);
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    CHECK(fd >= 0);
+    struct timeval timeout = {0, 50000};
+    CHECK(setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) == 0);
+    for (unsigned repeated = 0; repeated < 2; repeated++) {
+        uint64_t start = monotonic_ms();
+        CHECK(connect(fd, (struct sockaddr*)&group.destination, sizeof(group.destination)) == -1 &&
+              errno == (repeated ? EALREADY : EINPROGRESS));
+        uint64_t elapsed = monotonic_ms() - start;
+        CHECK(elapsed >= 40 && elapsed < 2000);
+    }
+    CHECK(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK) == 0);
+    uint64_t start = monotonic_ms();
+    CHECK(connect(fd, (struct sockaddr*)&group.destination, sizeof(group.destination)) == -1 &&
+          errno == EALREADY && monotonic_ms() - start < 40);
+    CHECK(close(fd) == 0 && close(group.listener) == 0);
+    for (unsigned at = 0; at + 1 < group.count; at++)
+        CHECK(close(group.clients[at]) == 0);
+    puts("TCP_CONNECT_DEADLINES_PASS cases=2 initial_progress repeated_already monotonic_pending "
+         "nonblocking");
+}
+
 static uint8_t wire_byte(size_t position, unsigned lane, unsigned phase) {
     return pattern(position) ^ (phase * 73) ^ (lane * 11);
 }
@@ -1275,6 +1581,11 @@ int main(int argc, char** argv) {
     unavailable_sends();
     receive_copy_faults();
     send_copy_faults();
+    connect_completions();
+    connect_failures();
+    retained_connects();
+    connect_signals();
+    connect_deadlines();
     connection_cycles();
     fflush(stdout);
     loopback();

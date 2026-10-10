@@ -86,6 +86,10 @@ def mutations(path, lane, evidence, native, destination):
 
 def main():
     directory = Path(__file__).resolve().parents[2] / 'build'
+    report = json.loads((directory / 'tcp-fault-capture-results.json').read_text())
+    assert report['passed'] and report['captures'] == 22 and len(report['results']) == 11
+    verified = {(row['report'], row['linkage'], row['firmware'], row['transport']): row['captures']
+                for row in report['results']}
     captures, negatives = 0, 0
     with tempfile.TemporaryDirectory(prefix='axiom64-tcp-loss-captures-') as temporary:
         for name in ('tcp-fault-native-results.json', 'tcp-fault-results.json'):
@@ -93,12 +97,13 @@ def main():
             if not report.exists():
                 continue
             for row in json.loads(report.read_text()):
-                assert row['passed'] and len(row['verified_captures']) == 2
+                captures_verified = verified[name, row['linkage'], row.get('firmware'), row.get('transport')]
+                assert row['passed'] and len(captures_verified) == 2
                 peers = json.loads((directory / row['peer']).read_text())
                 for lane, capture in enumerate(row['captures']):
                     path = directory / capture
                     native = name == 'tcp-fault-native-results.json'
-                    assert verify(path, lane, peers[lane], native=native) == row['verified_captures'][lane]
+                    assert verify(path, lane, peers[lane], native=native) == captures_verified[lane]
                     negatives += mutations(path, lane, peers[lane], native, Path(temporary))
                     captures += 1
     assert captures

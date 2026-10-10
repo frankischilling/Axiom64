@@ -154,7 +154,7 @@ def verify(path, lane, peer_rows, native=False):
 
 
 def check_results(directory):
-    count = 0
+    count, verified = 0, []
     for name in ('tcp-fault-native-results.json', 'tcp-fault-results.json'):
         path = directory / name
         require(path.exists(), 'both full native and VM controlled TCP result reports exist')
@@ -171,14 +171,18 @@ def check_results(directory):
             require(Path(row['peer']).name == row['peer'], 'bounded peer evidence path')
             peers = json.loads((directory / row['peer']).read_text())
             require(len(peers) == len(row['captures']) == 2, 'both controlled TCP adapters captured')
-            row['verified_captures'] = []
+            captures = []
             for lane, capture in enumerate(row['captures']):
                 require(Path(capture).name == capture, 'bounded independent PCAP path')
-                row['verified_captures'].append(verify(directory / capture, lane, peers[lane],
-                                                     native=name == 'tcp-fault-native-results.json'))
+                captures.append(verify(directory / capture, lane, peers[lane],
+                                       native=name == 'tcp-fault-native-results.json'))
                 count += 1
-        path.write_text(json.dumps(rows, indent=2) + '\n')
+            verified.append(dict(report=name, report_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                                 linkage=row['linkage'], firmware=row.get('firmware'),
+                                 transport=row.get('transport'), captures=captures))
     require(count == 22, 'all twenty-two controlled TCP captures exist')
+    (directory / 'tcp-fault-capture-results.json').write_text(
+        json.dumps(dict(passed=True, captures=count, results=verified), indent=2) + '\n')
     return count
 
 

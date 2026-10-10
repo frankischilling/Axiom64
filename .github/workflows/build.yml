@@ -43,6 +43,7 @@ jobs:
           make -j2 build/normal-dns-static build/normal-dns-dynamic
           make -j2 build/credentials-native build/credentials-static build/credentials-dynamic
           make -j2 build/tcp-native build/tcp-static build/tcp-dynamic
+          make -j2 build/tcp-fault-native build/tcp-fault-static build/tcp-fault-dynamic
           make build/init-supervision
       - name: Test split-queue ownership with sanitizers
         run: make test-virtqueue
@@ -124,6 +125,7 @@ jobs:
           - random
           - credentials
           - tcp
+          - tcp-fault
           - normal-init-bios
           - normal-init-uefi
           - protocol-bios-modern-lane0
@@ -174,6 +176,17 @@ jobs:
       - name: Reject damaged actual TCP captures
         if: matrix.suite == 'tcp'
         run: python3 scripts/tests/tcp_capture_test.py 2>&1 | tee build/tcp-capture-checker.log
+      - name: Compare controlled TCP loss with isolated native Linux
+        if: matrix.suite == 'tcp-fault'
+        run: sudo -n make test-tcp-fault-native
+      - name: Verify actual TCP retransmissions on both emulated NICs
+        if: matrix.suite == 'tcp-fault'
+        run: make test-tcp-fault
+      - name: Independently verify TCP loss captures and reject damaged evidence
+        if: matrix.suite == 'tcp-fault'
+        run: |
+          python3 scripts/tcp_fault_capture.py 2>&1 | tee build/tcp-fault-capture.log
+          python3 scripts/tests/tcp_fault_capture_test.py 2>&1 | tee build/tcp-fault-capture-checker.log
       - name: Test desktop serial acceptance decisions
         if: matrix.suite == 'boot'
         run: python3 scripts/tests/desktop_console_test.py
@@ -402,6 +415,7 @@ jobs:
             build/*.png
             build/*.dump
             build/tcp-*.pcap
+            build/tcp-fault-*-peer.json
       - name: Upload TCP boot fixtures
         if: always() && matrix.suite == 'tcp'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -409,6 +423,13 @@ jobs:
           name: axiom64-tcp-fixtures
           if-no-files-found: error
           path: build/axiom64-tcp-*.iso
+      - name: Upload controlled TCP loss boot fixtures
+        if: always() && matrix.suite == 'tcp-fault'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-tcp-fault-fixtures
+          if-no-files-found: error
+          path: build/axiom64-tcp-fault-*.iso
       - name: Upload credential filesystem and boot fixtures
         if: always() && matrix.suite == 'credentials'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

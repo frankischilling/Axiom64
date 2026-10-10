@@ -470,6 +470,105 @@ static void bounded_transfer() {
         actual.size(), packets);
 }
 
+static Packet injection(Segment segment) {
+    segment.source = 80;
+    segment.destination = 49152;
+    Packet packet{std::vector<uint8_t>(60 + segment.length), false};
+    size_t size = encode(0xc6336402, 0xc0000201, segment, packet.bytes.data(), packet.bytes.size());
+    assert(size);
+    packet.bytes.resize(size);
+    return packet;
+}
+
+static uint64_t acknowledge_history(Connection& client, Connection& server, size_t bytes) {
+    client.nodelay(true);
+    char payload[4096], received[4096];
+    std::memset(payload, 'h', sizeof(payload));
+    uint64_t now = 20;
+    for (size_t total = 0; total < bytes; total += sizeof(payload)) {
+        assert(client.write(payload, sizeof(payload), now) == sizeof(payload));
+        size_t sent = 0;
+        while (sent < sizeof(payload)) {
+            Packet packet = require_output(client, now);
+            auto segment = packet.segment();
+            assert(segment.length && sent + segment.length <= sizeof(payload));
+            server.input(segment, now + 1);
+            assert(server.read(received, sizeof(received)) == segment.length);
+            assert(std::memcmp(received, payload, segment.length) == 0);
+            client.input(require_output(server, now + 2, false).segment(), now + 3);
+            sent += segment.length;
+            now += 10;
+        }
+    }
+    return now;
+}
+
+static void stale_acknowledgments() {
+    for (bool wrapped : {false, true}) {
+        for (size_t history : {size_t(0), size_t(4096), size_t(65536)}) {
+            for (bool grown : {false, true}) {
+                for (int boundary : {-1, 0, 1}) {
+                    for (bool finish : {false, true}) {
+                        Connection client, server;
+                        establish(client, server, wrapped ? 0xfffffff0 : 100,
+                                  wrapped ? 0xffffffd0 : 500);
+                        uint64_t now = acknowledge_history(client, server, history);
+                        if (grown) {
+                            auto update = inbound(client, client.next_receive());
+                            update.window = 65535;
+                            client.input(injection(update).segment(), now);
+                            update.window = 0;
+                            client.input(injection(update).segment(), now + 1);
+                        }
+                        uint32_t distance = std::min(uint32_t(grown ? 65535 : stream_capacity),
+                                                     uint32_t(history + 1));
+                        uint32_t receive = client.next_receive();
+                        auto segment = inbound(client, receive, "bad", ack | (finish ? fin : 0));
+                        segment.acknowledgment = client.next_send() - distance + boundary;
+                        segment.window = 65535;
+                        client.input(injection(segment).segment(), now + 2);
+                        char bytes[4]{};
+                        if (boundary < 0) {
+                            assert(client.read(bytes, sizeof(bytes)) == 0);
+                            assert(client.next_receive() == receive && !client.eof());
+                            assert(client.state() == State::established && client.error() == 0);
+                            auto challenge = require_output(client, now + 2).segment();
+                            assert(challenge.flags == ack &&
+                                   challenge.sequence == client.next_send() &&
+                                   challenge.acknowledgment == receive && !challenge.length);
+                            auto recovery = inbound(client, receive, "ok");
+                            client.input(injection(recovery).segment(), now + 3);
+                            assert(client.read(bytes, sizeof(bytes)) == 2 &&
+                                   std::memcmp(bytes, "ok", 2) == 0 && !client.eof());
+                        } else {
+                            assert(client.read(bytes, sizeof(bytes)) == 3 &&
+                                   std::memcmp(bytes, "bad", 3) == 0);
+                            assert(client.next_receive() == receive + 3 + unsigned(finish));
+                            assert(client.eof() == finish && client.error() == 0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Connection client, server;
+    establish(client, server);
+    client.user_timeout(2500);
+    assert(client.write("wait", 4, 20) == 4);
+    auto sent = require_output(client, 20).segment();
+    assert(sent.length == 4);
+    auto attack = inbound(client, client.next_receive(), "bad", ack | fin);
+    attack.acknowledgment = sent.sequence - 2;
+    attack.window = 65535;
+    client.input(injection(attack).segment(), 2000);
+    assert(client.available() == 0 && !client.eof() && client.queued() == 4 && !client.error());
+    Segment pending;
+    client.next(2520, pending);
+    assert(client.state() == State::closed && client.error() == 110);
+    std::puts("TCP_OLD_ACK_BOUNDS_PASS cases=73 history window_growth wrap payload fin recovery "
+              "deadline");
+}
+
 int main() {
     handshakes();
     reassembly();
@@ -480,6 +579,7 @@ int main() {
     persist_transition();
     closing();
     bounded_transfer();
+    stale_acknowledgments();
     std::puts("TCP_CONNECTION_PASS handshake refusal simultaneous overlap gaps fin ack_validation "
               "reset loss persist deadlines close ownership");
 }

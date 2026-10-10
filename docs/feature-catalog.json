@@ -553,7 +553,11 @@
         "scripts/tcp_timeout_peer.py",
         "scripts/tcp_timeout_capture.py",
         "scripts/tests/tcp_timeout_capture_test.py",
-        "docs/tcp-user-timeout.md"
+        "docs/tcp-user-timeout.md",
+        "scripts/tcp_old_ack_peer.py",
+        "scripts/tcp_old_ack_capture.py",
+        "scripts/tests/tcp_old_ack_capture_test.py",
+        "docs/tcp-old-ack.md"
       ],
       "branch": "feature/f13-tcp-udp-and-linux-socket-semantics",
       "issue": "https://github.com/frankischilling/Axiom64/issues/13"

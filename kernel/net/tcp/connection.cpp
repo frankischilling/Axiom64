@@ -228,6 +228,8 @@ void Connection::acknowledge(const Segment& segment, uint64_t now) {
     send_head = (send_head + bytes) % stream_capacity;
     send_size -= bytes;
     send_base += bytes;
+    acknowledged_history += uint16_t(
+        minimum(acknowledged - send_unacknowledged, uint32_t(UINT16_MAX - acknowledged_history)));
     send_unacknowledged = acknowledged;
     congestion.acknowledged(bytes);
     if (!before(acknowledged, timeout_end))
@@ -388,7 +390,10 @@ void Connection::input(const Segment& segment, uint64_t now) {
     }
     if (!(segment.flags & ack))
         return;
-    if (before(send_next, segment.acknowledgment)) {
+    uint32_t history = minimum(uint32_t(maximum_peer_window), uint32_t(acknowledged_history));
+    if (before(send_next, segment.acknowledgment) ||
+        (status != State::syn_received &&
+         before(segment.acknowledgment, send_unacknowledged - history))) {
         if (status == State::syn_received)
             reset_reply(segment);
         else

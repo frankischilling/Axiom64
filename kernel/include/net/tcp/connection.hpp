@@ -109,6 +109,7 @@ class Connection {
     uint32_t send_unacknowledged = 0, send_next = 0, receive_next = 0, finish_sequence = 0;
     uint32_t window_sequence = 0, window_ack = 0, pending_fin_sequence = 0;
     uint16_t peer_window = 0, maximum_peer_window = 0, mss = 536, local_mss = 1460;
+    uint16_t acknowledged_history = 0;
     uint32_t timeout_ms = 0, persist_interval = 1000;
     uint64_t opened_at = 0, progress_at = 0, retransmit_at = 0, persist_at = 0;
     uint64_t sample_at = 0, expiration = 0, last_send = 0;

@@ -308,6 +308,62 @@ static void persist() {
     assert(finite.state() == State::closed && finite.error() == 110);
 }
 
+static void persist_transition() {
+    for (bool lose : {false, true}) {
+        Connection client, server;
+        server.limits(4, stream_capacity);
+        establish(client, server, 100, 500, 4);
+        assert(client.write("abcdefgh", 8, 50) == 8);
+        Packet original = require_output(client, 50);
+        assert(original.segment().length == 4);
+        uint64_t received = 60;
+        if (lose) {
+            no_output(client, 1049);
+            original = require_output(client, 1050);
+            received = 1060;
+        }
+        server.input(original.segment(), received);
+        Packet closed = require_output(server, received, false);
+        assert(closed.segment().window == 0);
+        uint64_t changed = received + 10, interval = lose ? 2000 : 1000;
+        client.input(closed.segment(), changed);
+        no_output(client, changed);
+        client.input(closed.segment(), changed + 5); // A repeated zero ACK preserves the timer.
+        no_output(client, changed + interval - 1);
+        Packet probe = require_output(client, changed + interval);
+        assert(probe.segment().length == 1 && probe.segment().sequence == 105);
+        server.input(probe.segment(), changed + interval + 10);
+        client.input(require_output(server, changed + interval + 10, false).segment(),
+                     changed + interval + 20);
+        no_output(client, changed + 3 * interval - 1);
+        probe = require_output(client, changed + 3 * interval);
+        assert(probe.segment().length == 1 && probe.segment().sequence == 105);
+        assert(client.queued() == 4 && client.error() == 0);
+        server.limits(8, stream_capacity);
+        client.input(require_output(server, changed + 3 * interval + 10, false).segment(),
+                     changed + 3 * interval + 20);
+        for (unsigned at = 0; at < 4 && client.queued(); at++) {
+            uint64_t sent = changed + 3 * interval + 20 + at * 30;
+            Packet remaining = require_output(client, sent);
+            server.input(remaining.segment(), sent + 10);
+            client.input(require_output(server, sent + 10, false).segment(), sent + 20);
+        }
+        char bytes[8];
+        assert(server.read(bytes, sizeof(bytes)) == 8 && !std::memcmp(bytes, "abcdefgh", 8));
+        assert(client.queued() == 0 && client.error() == 0);
+    }
+    Connection late, shut;
+    shut.limits(0, stream_capacity);
+    late.active(100, 0);
+    require_output(late, 0); // A lost SYN leaves the established RTO at three seconds.
+    assert(shut.passive(500, require_output(late, 1000).segment(), 1005));
+    late.input(require_output(shut, 1005, false).segment(), 1010);
+    shut.input(require_output(late, 1010).segment(), 1015);
+    assert(late.write("x", 1, 1050) == 1);
+    no_output(late, 4049);
+    assert(require_output(late, 4050).segment().length == 1);
+}
+
 static void closing() {
     Connection client, server;
     establish(client, server);
@@ -421,6 +477,7 @@ int main() {
     sizing();
     loss();
     persist();
+    persist_transition();
     closing();
     bounded_transfer();
     std::puts("TCP_CONNECTION_PASS handshake refusal simultaneous overlap gaps fin ack_validation "

@@ -12,11 +12,14 @@ import time
 from fetch import ROOT, LOCK
 from tcp_fault_peer import Peer, check
 from tcp_reordering_peer import Peer as ReorderingPeer
+from tcp_persist_peer import Peer as PersistPeer
 
 
 def wire_configuration(wire):
-    check(wire in ('loss', 'reordering'), 'known controlled TCP wire profile')
-    return (Peer, 'tcp-fault') if wire == 'loss' else (ReorderingPeer, 'tcp-reordering')
+    profiles = {'loss': (Peer, 'tcp-fault'), 'reordering': (ReorderingPeer, 'tcp-reordering'),
+                'persist': (PersistPeer, 'tcp-persist')}
+    check(wire in profiles, 'known controlled TCP wire profile')
+    return profiles[wire]
 
 
 def fixture(linkage, wire='loss'):
@@ -210,7 +213,7 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--wire', choices=('loss', 'reordering'), default='loss')
+    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist'), default='loss')
     for name, choices in (('linkage', ('static', 'dynamic')), ('firmware', ('bios', 'uefi')),
                           ('transport', ('modern', 'legacy'))):
         parser.add_argument(f'--{name}', choices=(*choices, 'both'), default='both')

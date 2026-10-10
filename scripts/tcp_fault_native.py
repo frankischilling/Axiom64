@@ -26,6 +26,9 @@ class Capture:
         self.buffer_bytes = self.socket.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
         check(self.buffer_bytes >= 4 * 1024 * 1024, 'independent capture reserves its packet burst budget')
         self.socket.bind((interface, 0))
+        # Linux SO_TIMESTAMPNS_NEW returns two signed 64-bit values, including
+        # the receipt time of packets queued while this reader is descheduled.
+        self.socket.setsockopt(socket.SOL_SOCKET, 64, 1)
         self.socket.settimeout(.05)
         self.output = path.open('wb')
         self.output.write(struct.pack('<IHHIIII', 0xa1b2c3d4, 2, 4, 0, 0, 65535, 1))
@@ -38,12 +41,19 @@ class Capture:
         try:
             while True:
                 try:
-                    frame = self.socket.recv(65535)
+                    frame, ancillary, flags, _ = self.socket.recvmsg(65535, socket.CMSG_SPACE(16))
                 except socket.timeout:
                     if self.stopping.is_set():
                         break
                     continue
-                timestamp = time.time_ns()
+                check(not flags & (socket.MSG_TRUNC | socket.MSG_CTRUNC),
+                      'independent capture receives complete frame and receipt timestamp')
+                stamps = [value for level, kind, value in ancillary
+                          if level == socket.SOL_SOCKET and kind == 64]
+                check(len(stamps) == 1 and len(stamps[0]) == 16, 'one actual kernel packet receipt timestamp')
+                seconds, nanoseconds = struct.unpack('=qq', stamps[0])
+                check(seconds >= 0 and 0 <= nanoseconds < 1000000000, 'kernel receipt timestamp bounds')
+                timestamp = seconds * 1000000000 + nanoseconds
                 self.output.write(struct.pack('<IIII', timestamp // 1000000000,
                                               timestamp // 1000 % 1000000, len(frame), len(frame)) + frame)
         except Exception as exception:
@@ -191,7 +201,7 @@ def main():
         namespace(Path(sys.argv[2]), sys.argv[3] if len(sys.argv) == 4 else 'loss')
         return
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--wire', choices=('loss', 'reordering'), default='loss')
+    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist'), default='loss')
     args = parser.parse_args()
     subprocess.run(['make', '-s', '-j2', 'build/tcp-fault-native', 'build/tcp-fault-static',
                     'build/tcp-fault-dynamic'], cwd=ROOT, check=True)

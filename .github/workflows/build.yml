@@ -218,6 +218,17 @@ jobs:
         run: |
           python3 scripts/tcp_reordering_capture.py 2>&1 | tee build/tcp-reordering-capture.log
           python3 scripts/tests/tcp_reordering_capture_test.py 2>&1 | tee build/tcp-reordering-capture-checker.log
+      - name: Compare zero-window persist with isolated native Linux
+        if: matrix.suite == 'tcp-fault'
+        run: sudo -n make test-tcp-persist-native
+      - name: Verify stopped-window probes and recovery on both emulated NICs
+        if: matrix.suite == 'tcp-fault'
+        run: make test-tcp-persist
+      - name: Independently verify persist timing and reject damaged evidence
+        if: matrix.suite == 'tcp-fault'
+        run: |
+          python3 scripts/tcp_persist_capture.py 2>&1 | tee build/tcp-persist-capture.log
+          python3 scripts/tests/tcp_persist_capture_test.py 2>&1 | tee build/tcp-persist-capture-checker.log
       - name: Test desktop serial acceptance decisions
         if: matrix.suite == 'boot'
         run: python3 scripts/tests/desktop_console_test.py
@@ -451,6 +462,7 @@ jobs:
             build/tcp-*.pcap
             build/tcp-fault-*-peer.json
             build/tcp-reordering-*-peer.json
+            build/tcp-persist-*-peer.json
       - name: Upload TCP boot fixtures
         if: always() && matrix.suite == 'tcp'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -467,6 +479,7 @@ jobs:
           path: |
             build/axiom64-tcp-fault-*.iso
             build/axiom64-tcp-reordering-*.iso
+            build/axiom64-tcp-persist-*.iso
       - name: Upload credential filesystem and boot fixtures
         if: always() && matrix.suite == 'credentials'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

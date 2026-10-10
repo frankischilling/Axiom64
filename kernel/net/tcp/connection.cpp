@@ -66,6 +66,8 @@ void Connection::synchronize(uint64_t now) {
     congestion.established(syn_retransmitted);
     retransmit_active = false;
     progress_at = now;
+    persist_interval = timer.interval();
+    persist_at = after(now, persist_interval);
 }
 
 size_t Connection::writable() const {
@@ -92,6 +94,7 @@ size_t Connection::write(const void* data, size_t length, uint64_t now) {
         return 0;
     if (!send_size && !sent_fin) {
         progress_at = now;
+        persist_interval = timer.interval();
         persist_at = after(now, persist_interval);
     }
     const auto bytes = static_cast<const uint8_t*>(data);
@@ -188,6 +191,11 @@ void Connection::acknowledge(const Segment& segment, uint64_t now) {
     uint32_t acknowledged = segment.acknowledgment;
     if (before(acknowledged, send_unacknowledged))
         return;
+    if (sample_pending && !before(acknowledged, sample_end)) {
+        uint64_t duration = now >= sample_at ? now - sample_at : 0;
+        timer.sample(duration > UINT32_MAX ? UINT32_MAX : duration, false);
+        sample_pending = false;
+    }
     uint16_t previous_window = peer_window;
     if (before(window_sequence, segment.sequence) ||
         (window_sequence == segment.sequence && !before(acknowledged, window_ack))) {
@@ -198,8 +206,10 @@ void Connection::acknowledge(const Segment& segment, uint64_t now) {
         window_ack = acknowledged;
         if (peer_window && !previous_window && send_unacknowledged != send_next)
             retransmit_pending = true;
-        if (peer_window) {
-            persist_interval = 1000;
+        if (peer_window || previous_window) {
+            // A newly closed window starts a fresh RTO-based persist period.
+            // Repeated zero-window ACKs leave its exponential backoff intact.
+            persist_interval = timer.interval();
             persist_at = after(now, persist_interval);
         }
     }
@@ -210,11 +220,6 @@ void Connection::acknowledge(const Segment& segment, uint64_t now) {
         else
             congestion.acknowledged(0);
         return;
-    }
-    if (sample_pending && !before(acknowledged, sample_end)) {
-        uint64_t duration = now >= sample_at ? now - sample_at : 0;
-        timer.sample(duration > UINT32_MAX ? UINT32_MAX : duration, false);
-        sample_pending = false;
     }
     size_t bytes = minimum(size_t(acknowledged - send_base), send_size);
     // SYN/FIN sequence numbers are not bytes in the application send queue.

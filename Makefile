@@ -381,7 +381,7 @@ build/tcp-fault-static: userspace/tests/net/tcp_fault.c
 build/tcp-fault-dynamic: userspace/tests/net/tcp_fault.c
 	@mkdir -p build
 	musl-gcc -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
-.PHONY: test-tcp-fault test-tcp-fault-native test-tcp-reordering test-tcp-reordering-native
+.PHONY: test-tcp-fault test-tcp-fault-native test-tcp-reordering test-tcp-reordering-native test-tcp-persist test-tcp-persist-native
 test-tcp-fault:
 	$(PYTHON) scripts/tcp_fault_test.py
 test-tcp-fault-native:
@@ -391,6 +391,10 @@ test-tcp-reordering:
 	$(PYTHON) scripts/tcp_fault_test.py --wire reordering
 test-tcp-reordering-native:
 	$(PYTHON) scripts/tcp_fault_native.py --wire reordering
+test-tcp-persist:
+	$(PYTHON) scripts/tcp_fault_test.py --wire persist
+test-tcp-persist-native:
+	$(PYTHON) scripts/tcp_fault_native.py --wire persist
 build/address-codec-host: kernel/tests/net/address.cpp kernel/net/netlink/addresses.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp kernel/include/net/ipv4_wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/address.cpp kernel/net/netlink/addresses.cpp -o $@

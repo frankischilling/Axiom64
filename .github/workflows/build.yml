@@ -47,7 +47,9 @@ jobs:
       - name: Test paired network workspace isolation and failure evidence
         run: python3 scripts/tests/paired_network_test.py
       - name: Test PCI removal preserves interrupted guest reads
-        run: python3 scripts/tests/manager_link_hardware_test.py
+        run: |
+          python3 scripts/manager_link_peer_test.py
+          python3 scripts/tests/manager_link_hardware_test.py
       - name: Upload sources and recipes
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

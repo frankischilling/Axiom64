@@ -34,7 +34,7 @@ struct IoRequest {
     size_t cursor, cursor_offset, progress;
     unsigned flags;
     bool write, socket, accept, positioned, locking, connect, started;
-    bool timed;
+    bool timed, stream_blocking;
     uint64_t deadline;
     PacketAddress destination;
     unsigned destination_index;
@@ -430,7 +430,7 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
     return result;
 }
 
-static int64_t wait_all_attempt(Task& task, IoRequest& request) {
+static int64_t stream_attempt(Task& task, IoRequest& request) {
     net_poll();
     while (request.cursor < request.count) {
         const auto& original = request.vectors[request.cursor];
@@ -443,7 +443,7 @@ static int64_t wait_all_attempt(Task& task, IoRequest& request) {
         }
         int64_t count = transfer(task, request, vector, request.progress);
         if (count < 0) {
-            if (count == -11 && !(request.handle->flags & 04000) && !(request.flags & 0x40))
+            if (count == -11 && request.stream_blocking)
                 return would_block;
             return request.progress ? int64_t(request.progress) : count;
         }
@@ -491,11 +491,12 @@ static int64_t attempt(Task& task, IoRequest& request) {
         result = f.rsi >= user_limit ? -14 : read_handle(h, nullptr, 0);
     if (request.positioned)
         h->offset = f.r10;
-    bool wait_all =
-        request.socket && !request.write && inet_stream(h->inet) && (request.flags & 0x100);
-    if (wait_all)
-        result = wait_all_attempt(task, request);
-    for (size_t i = 0; !wait_all && i < request.count; i++) {
+    bool completion =
+        inet_stream(h->inet) &&
+        (request.write ? request.stream_blocking : request.socket && (request.flags & 0x100));
+    if (completion)
+        result = stream_attempt(task, request);
+    for (size_t i = 0; !completion && i < request.count; i++) {
         auto& vector = request.vectors[i];
         if (!vector.length)
             continue;
@@ -558,8 +559,12 @@ int64_t io_syscall(Task& task, const Frame& frame) {
     request->call = frame;
     retain(h);
     int error = prepare(task, *request);
-    if (!error)
+    if (!error) {
+        // Linux captures O_NONBLOCK for this call; an alias cannot alter a retained cursor.
+        request->stream_blocking =
+            inet_stream(h->inet) && !(h->flags & 04000) && !(request->flags & 0x40);
         capture_timeout(*request);
+    }
     int64_t result = error ? error : attempt(task, *request);
     if (result == would_block && timeout_expired(*request))
         result = timeout_result(*request);

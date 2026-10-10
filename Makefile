@@ -337,6 +337,28 @@ build/tcp-connection-host: kernel/tests/net/tcp_connection.cpp kernel/net/tcp/co
 .PHONY: test-tcp-connection
 test-tcp-connection: build/tcp-connection-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/tcp-connection-host
+build/tcp-isn-host: kernel/tests/net/tcp_isn.cpp kernel/net/tcp/isn.cpp kernel/core/random/primitives.cpp kernel/include/net/tcp/isn.hpp kernel/include/core/random/primitives.hpp kernel/include/net/ipv4_wire.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_isn.cpp kernel/net/tcp/isn.cpp kernel/core/random/primitives.cpp -o $@
+.PHONY: test-tcp-isn
+test-tcp-isn: build/tcp-isn-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/tcp-isn-host
+build/tcp-native: userspace/tests/net/tcp.c
+	@mkdir -p build
+	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-static: userspace/tests/net/tcp.c
+	@mkdir -p build
+	musl-gcc -std=gnu11 -static -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-dynamic: userspace/tests/net/tcp.c
+	@mkdir -p build
+	musl-gcc -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+.PHONY: test-tcp-native test-tcp-sockets test-tcp-native-wire
+test-tcp-native:
+	$(PYTHON) scripts/tcp_native_test.py
+test-tcp-sockets:
+	$(PYTHON) scripts/tcp_test.py
+test-tcp-native-wire:
+	$(PYTHON) scripts/tcp_native_wire.py
 build/address-codec-host: kernel/tests/net/address.cpp kernel/net/netlink/addresses.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp kernel/include/net/ipv4_wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/address.cpp kernel/net/netlink/addresses.cpp -o $@

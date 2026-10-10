@@ -7,6 +7,7 @@
 #include "net/packet.hpp"
 #include "net/inet.hpp"
 #include "net/netlink.hpp"
+#include "net/tcp/socket.hpp"
 
 namespace ax {
 struct Iovec {
@@ -28,7 +29,7 @@ struct IoRequest {
     Iovec single, *vectors;
     size_t count;
     unsigned flags;
-    bool write, socket, accept, positioned, locking;
+    bool write, socket, accept, positioned, locking, connect, started;
     bool timed;
     uint64_t deadline;
     PacketAddress destination;
@@ -223,6 +224,14 @@ static int prepare(Task& task, IoRequest& request) {
         request.locking = true;
         return 0;
     }
+    if (f.rax == 42 && inet_stream(request.handle->inet)) {
+        request.connect = request.write = true;
+        if (f.rdx < sizeof(InetAddress))
+            return -22;
+        if (!task.memory->space.copy_in(&request.inet_destination, f.rsi, sizeof(InetAddress)))
+            return -14;
+        return 0;
+    }
     if (request.handle->socket && request.handle->socket->type != 1)
         return -95;
     request.write = f.rax == 1 || f.rax == 18 || f.rax == 20 || f.rax == 44 || f.rax == 46;
@@ -237,7 +246,8 @@ static int prepare(Task& task, IoRequest& request) {
         return -9;
     if (request.socket)
         request.flags = f.rax == 46 || f.rax == 47 ? f.rdx : f.r10;
-    if (request.handle->packet || request.handle->inet || request.handle->netlink)
+    if (request.handle->packet || (request.handle->inet && !inet_stream(request.handle->inet)) ||
+        request.handle->netlink)
         return prepare_packet(task, request);
     if (request.accept) {
         if (f.rax == 288 && (f.r10 & ~uint64_t(0x80800)))
@@ -245,7 +255,7 @@ static int prepare(Task& task, IoRequest& request) {
         return 0;
     }
     if (request.positioned) {
-        if (request.handle->pipe || request.handle->socket ||
+        if (request.handle->pipe || request.handle->socket || inet_stream(request.handle->inet) ||
             (request.handle->node && (request.handle->node->mode & 0170000) == character))
             return -29;
         if (int64_t(f.r10) < 0)
@@ -264,7 +274,7 @@ static int prepare(Task& task, IoRequest& request) {
         Message message;
         if (!task.memory->space.copy_in(&message, f.rsi, sizeof(message)))
             return -14;
-        if (message.name)
+        if (message.name && !(f.rax == 47 && inet_stream(request.handle->inet)))
             return -95;
         if (message.control_length && f.rax == 46)
             return -95;
@@ -288,7 +298,11 @@ static int64_t transfer(Task& task, IoRequest& request, const Iovec& vector, siz
             return done ? int64_t(done) : -14;
         int64_t n;
         if (request.socket)
-            n = request.write
+            n = inet_stream(h->inet)
+                    ? request.write
+                          ? tcp_write(h->inet, buffer, count)
+                          : tcp_read(h->inet, buffer, count, request.flags & 2, peek_offset + done)
+                : request.write
                     ? socket_write(h->socket, buffer, count)
                     : socket_read(h->socket, buffer, count, request.flags & 2, peek_offset + done);
         else
@@ -398,18 +412,30 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
 static int64_t attempt(Task& task, IoRequest& request) {
     auto h = request.handle;
     const auto& f = request.call;
+    if (request.connect) {
+        net_poll();
+        if (!request.started) {
+            request.started = true;
+            int result = tcp_connect(h->inet, request.inet_destination);
+            if (result != -115 || (h->flags & 04000))
+                return result;
+        }
+        return tcp_connect_result(h->inet);
+    }
     if (request.locking) {
         int result = file_lock_try(h, uint32_t(f.rsi));
         return result == -11 && !(f.rsi & 4) ? would_block : result;
     }
-    if (h->packet || h->inet || h->netlink) {
+    if (h->packet || (h->inet && !inet_stream(h->inet)) || h->netlink) {
         int64_t result = packet_attempt(task, request);
         if (result == -11 && !(h->flags & 04000) && !(request.flags & 0x40))
             return would_block;
         return result;
     }
     if (request.accept)
-        return socket_accept(task, h, f.rsi, f.rdx, f.rax == 288 ? f.r10 : 0);
+        return inet_stream(h->inet)
+                   ? tcp_accept(task, h, f.rsi, f.rdx, f.rax == 288 ? f.r10 : 0)
+                   : socket_accept(task, h, f.rsi, f.rdx, f.rax == 288 ? f.r10 : 0);
     size_t done = 0;
     int64_t result = 0;
     uint64_t old_offset = h->offset;
@@ -439,8 +465,11 @@ static int64_t attempt(Task& task, IoRequest& request) {
     if (result == -11 && !(h->flags & 04000) && !(request.flags & 0x40) && !request.positioned)
         return would_block;
     if (result >= 0 && f.rax == 45 && f.r8) {
-        int error =
-            socket_output_address(task, h->socket->peer ? h->socket->peer : h->socket, f.r8, f.r9);
+        uint32_t length = 0;
+        int error = inet_stream(h->inet)
+                        ? task.memory->space.copy_out(f.r9, &length, sizeof(length)) ? 0 : -14
+                        : socket_output_address(task, h->socket->peer ? h->socket->peer : h->socket,
+                                                f.r8, f.r9);
         if (error)
             return error;
     }
@@ -451,6 +480,11 @@ static int64_t attempt(Task& task, IoRequest& request) {
                                          8) ||
             !task.memory->space.copy_out(f.rsi + offsetof(Message, flags), &flags, 4))
             return -14;
+        if (inet_stream(h->inet)) {
+            uint32_t length = 0;
+            if (!task.memory->space.copy_out(f.rsi + offsetof(Message, name_length), &length, 4))
+                return -14;
+        }
     }
     return result;
 }
@@ -477,7 +511,7 @@ int64_t io_syscall(Task& task, const Frame& frame) {
         capture_timeout(*request);
     int64_t result = error ? error : attempt(task, *request);
     if (result == would_block && timeout_expired(*request))
-        result = -11;
+        result = request->connect ? -115 : -11;
     if (result == would_block) {
         task.io = request;
         task.state = State::blocked;
@@ -501,7 +535,7 @@ bool io_resume(Task& task) {
     if (result == would_block) {
         if (!timeout_expired(*request))
             return false;
-        result = -11;
+        result = request->connect ? -115 : -11;
     }
     // Commit the result before signal delivery; handlers have their own syscall state.
     task.frame.rip += 2;

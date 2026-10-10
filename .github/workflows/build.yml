@@ -39,6 +39,7 @@ jobs:
           make build/rootfs-desktop.cpio
           make -j2 build/network-manager-dynamic build/network-manager-faults build/network-manager-dynamic-faults build/manager-tests build/manager-protocol build/manager-link
           make -j2 build/random-static build/random-dynamic
+          make -j2 build/dns-static build/dns-dynamic
           make build/init-supervision
       - name: Test split-queue ownership with sanitizers
         run: make test-virtqueue
@@ -175,6 +176,12 @@ jobs:
       - name: Compare common UDP socket behavior with native Linux
         if: matrix.suite == 'network'
         run: ./build/udp-tests
+      - name: Compare actual musl DNS with native Linux in private namespaces
+        if: matrix.suite == 'network'
+        run: sudo -n make test-dns-native
+      - name: Test musl DNS queries, search rules, retries, and deadlines on both adapters
+        if: matrix.suite == 'network'
+        run: make test-dns
       - name: Test route message validation with sanitizers
         if: matrix.suite == 'network'
         run: make test-netlink-codec
@@ -385,6 +392,7 @@ jobs:
             build/*results.json
             build/manager-protocol-*-packets.json
             build/manager-link-*-packets.json
+            build/dns-*-packets.json
             build/*.png
             build/*.dump
 

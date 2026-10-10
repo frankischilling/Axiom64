@@ -28,6 +28,11 @@ build/random-dynamic: userspace/tests/random/random.c
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -DRANDOM_LINKAGE='"dynamic"' $< -o $@
 .PHONY: test-ownership test-ownership-native
 .PHONY: test-normal-manager
+.PHONY: test-dns test-dns-native
+test-dns:
+	$(PYTHON) scripts/dns_test.py
+test-dns-native:
+	$(PYTHON) scripts/dns_native.py
 test-normal-manager:
 	$(PYTHON) scripts/normal_manager_test.py
 test-ownership:
@@ -109,6 +114,12 @@ build/ipv4-tests: userspace/tests/net/ipv4.c
 build/udp-tests: userspace/tests/net/udp.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
+build/dns-static: userspace/tests/net/dns.c
+	@mkdir -p build
+	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
+build/dns-dynamic: userspace/tests/net/dns.c
+	@mkdir -p build
+	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DDNS_LINKAGE='"dynamic"' $< -o $@
 build/netlink-tests: userspace/tests/net/netlink.cpp userspace/net/config/routing.cpp userspace/net/config/routing.hpp
 	@mkdir -p build
 	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -pthread -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/netlink.cpp userspace/net/config/routing.cpp -o $@

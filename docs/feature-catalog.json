@@ -469,7 +469,7 @@
       "title": "TCP, UDP, and Linux socket semantics",
       "milestone": "M3",
       "state": "partial",
-      "current": "Unix stream sockets support X11, AF_PACKET exchanges Ethernet, and AF_INET supports raw ICMP/ping and IPv4 UDP datagrams with tested checksums, binding, queues, errors, readiness, and retained I/O. Bounded NETLINK_ROUTE sockets support tagged IPv4 route control, dumps, complete address updates, and retained datagram I/O. Unix datagram descriptors serve interface configuration only; TCP, IPv6 UDP, deadlines, ancillary data, and the complete socket contract remain planned.",
+      "current": "Unix stream sockets support X11, AF_PACKET exchanges Ethernet, and AF_INET supports raw ICMP/ping and IPv4 UDP datagrams with tested checksums, binding, queues, errors, readiness, and retained I/O. Bounded NETLINK_ROUTE sockets support tagged IPv4 route control, dumps, complete address updates, and retained datagram I/O. Shared Linux receive/send socket timeouts capture finite monotonic I/O deadlines and reclaim retained descriptions on expiry and interruption. Unix datagram descriptors serve interface configuration only; TCP, IPv6 UDP, connect deadlines, ancillary data, and the complete socket contract remain planned.",
       "scope": [
         "AF_INET/AF_INET6 TCP/UDP socket lifecycle, options, and errors",
         "TCP sequence/window handling, retransmission, congestion, close, and reset",
@@ -506,7 +506,10 @@
         "userspace/tests/net/configuration.cpp",
         "scripts/configuration_test.py",
         "scripts/configuration_native.py",
-        "docs/network-configuration.md"
+        "docs/network-configuration.md",
+        "kernel/io/socket_timeout.cpp",
+        "userspace/tests/threads/io.c",
+        "docs/io.md"
       ],
       "branch": "feature/f13-tcp-udp-and-linux-socket-semantics",
       "issue": "https://github.com/frankischilling/Axiom64/issues/13"
@@ -516,7 +519,7 @@
       "title": "DHCP, DNS, and network configuration",
       "milestone": "M3",
       "state": "partial",
-      "current": "Linux interface/route ioctls and BusyBox ifconfig, route add/delete, and numeric ping support static configuration. C++ modules add saved profiles, journaled address/route ownership, DHCP packet validation, lease state, and dedicated real-wire acquisition/renewal/rebinding/release tests. Resolver metadata merges bounded interface contributions and preserves manual files through checked publication/recovery. Normal manager startup, concurrent default clients, coordinated resolver updates, complete fault/reboot coverage, DNS resolution, and downloads remain required.",
+      "current": "Linux interface/route control and BusyBox tools support static configuration. Ring 3 C++ modules and the normal network manager implement concurrent default DHCP, saved static/disabled overrides, owned address/route/resolver updates, synchronized profiles/hints and fresh-boot validation. Complete client/service protocol, carrier/device, restart and saved-root matrices pass. Actual static/dynamic musl IPv4 UDP lookups have controlled tests for nameserver/search rules, CNAME/A answers, failures, filtering, retries, concurrency and description reclamation on both Ethernet drivers. DNS TCP fallback, the normal DHCP-to-query release integration, downloads and the complete first network release remain required.",
       "scope": [
         "DHCP by default, lease renewal, saved configuration, and static override",
         "DNS resolver including UDP, TCP fallback, search rules, and timeouts",
@@ -558,7 +561,23 @@
         "userspace/tests/net/resolver.cpp",
         "userspace/tests/net/resolver.sh",
         "scripts/resolver_test.py",
-        "scripts/resolver_native.py"
+        "scripts/resolver_native.py",
+        "userspace/net/manager/main.cpp",
+        "userspace/net/manager/runtime.cpp",
+        "userspace/net/manager/ownership.cpp",
+        "userspace/net/manager/static.cpp",
+        "scripts/manager_test.py",
+        "scripts/manager_protocol_test.py",
+        "scripts/manager_link_test.py",
+        "scripts/manager_reboot_test.py",
+        "scripts/normal_manager_test.py",
+        "docs/network-manager.md",
+        "docs/network-manager-acceptance.md",
+        "userspace/tests/net/dns.c",
+        "scripts/dns_peer.py",
+        "scripts/dns_test.py",
+        "scripts/dns_native.py",
+        "docs/dns.md"
       ],
       "branch": "feature/f14-dhcp-dns-and-network-configuration",
       "issue": "https://github.com/frankischilling/Axiom64/issues/14"
@@ -874,7 +893,7 @@
       "title": "Init, login, and system services",
       "milestone": "M3",
       "state": "partial",
-      "current": "Init starts desktop/serial processes and reaps children; general services are missing.",
+      "current": "Init starts desktop/serial processes, reaps children and independently supervises the normal network manager with one-second restart delay. Complete manager crash/recovery and unchanged-desktop startup matrices pass. General service ordering/supervision, login, credentials, daemons and clean system shutdown remain required.",
       "scope": [
         "Minimal init, ordered startup, service supervision, restart, and clean shutdown",
         "Logging/syslog, time synchronization, cron/at/batch, and accounting",
@@ -894,7 +913,13 @@
         "F14"
       ],
       "evidence": [
-        "userspace/init/main.c"
+        "userspace/init/main.c",
+        "userspace/net/manager/main.cpp",
+        "userspace/net/manager/runtime.cpp",
+        "userspace/tests/net/init-supervision.cpp",
+        "scripts/normal_manager_test.py",
+        "docs/network-manager.md",
+        "docs/network-manager-acceptance.md"
       ],
       "branch": "feature/f25-init-login-and-system-services",
       "issue": "https://github.com/frankischilling/Axiom64/issues/25"

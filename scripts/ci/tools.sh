@@ -3,7 +3,7 @@
 set -euo pipefail
 
 tools=(g++ make musl-tools linux-libc-dev nasm python3 xorriso qemu-system-x86
-       ovmf xfonts-utils e2fsprogs nbdkit nbdkit-plugin-python gdb iproute2)
+       ovmf xfonts-utils e2fsprogs nbdkit nbdkit-plugin-python gdb iproute2 ethtool)
 bundle=build/ci-packages
 shopt -s nullglob
 

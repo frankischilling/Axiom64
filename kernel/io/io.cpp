@@ -307,8 +307,53 @@ static int prepare(Task& task, IoRequest& request) {
     return 0;
 }
 
+static int64_t stream_transfer(Task& task, IoRequest& request, const Iovec& vector,
+                               size_t peek_offset) {
+    if (vector.base >= user_limit || vector.length > user_limit - vector.base)
+        return -14;
+    auto socket = request.handle->inet;
+    uint8_t buffer[4096];
+    size_t done = 0;
+    while (done < vector.length) {
+        uint64_t address = vector.base + done;
+        size_t count = min(size_t(vector.length - done),
+                           min(sizeof(buffer), size_t(page_size - address % page_size)));
+        int64_t result;
+        if (request.write) {
+            result = tcp_write_check(socket);
+            if (!result) {
+                if (!task.memory->space.copy_in(buffer, address, count))
+                    return done ? int64_t(done) : -14;
+                result = tcp_write(socket, buffer, count);
+            }
+        } else {
+            bool peek = request.flags & 2;
+            result = tcp_read(socket, buffer, count, true, peek ? peek_offset + done : 0);
+            if (result > 0) {
+                if (!task.memory->space.copy_out(address, buffer, result))
+                    return done ? int64_t(done) : -14;
+                // The current single-CPU I/O path cannot change this queue during the copy.
+                if (!peek && tcp_read(socket, buffer, result, false) != result)
+                    panic("TCP receive changed during copy");
+            }
+        }
+        if (result < 0) {
+            if (result == -32 && request.write && !done && !request.progress &&
+                !(request.socket && (request.flags & 0x4000)))
+                queue_signal(&task, 13, task.process->pid);
+            return done ? int64_t(done) : result;
+        }
+        done += result;
+        if (size_t(result) < count)
+            break;
+    }
+    return done;
+}
+
 static int64_t transfer(Task& task, IoRequest& request, const Iovec& vector, size_t peek_offset) {
     auto h = request.handle;
+    if (inet_stream(h->inet))
+        return stream_transfer(task, request, vector, peek_offset);
     if (!task.memory->space.valid(vector.base, vector.length, !request.write))
         return -14;
     uint8_t buffer[4096];
@@ -319,11 +364,7 @@ static int64_t transfer(Task& task, IoRequest& request, const Iovec& vector, siz
             return done ? int64_t(done) : -14;
         int64_t n;
         if (request.socket)
-            n = inet_stream(h->inet)
-                    ? request.write
-                          ? tcp_write(h->inet, buffer, count)
-                          : tcp_read(h->inet, buffer, count, request.flags & 2, peek_offset + done)
-                : request.write
+            n = request.write
                     ? socket_write(h->socket, buffer, count)
                     : socket_read(h->socket, buffer, count, request.flags & 2, peek_offset + done);
         else

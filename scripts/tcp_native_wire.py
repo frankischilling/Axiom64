@@ -38,7 +38,7 @@ class NativePeer:
         self.forward_port = reservation.getsockname()[1]
         reservation.close()
         self.connections, self.threads = [], []
-        self.client_started = False
+        self.client_started = self.server_started = False
 
     @property
     def port(self):
@@ -107,7 +107,6 @@ def run(linkage, firmware, transport, timeout):
             captures.append(capture)
             command += ['-netdev', network, '-device', nic, '-object',
                         f'filter-dump,id=capture{lane},netdev=peer{lane},file={capture}']
-            peer.start('server')
         if firmware == 'uefi':
             variables = ROOT / 'build' / f'{label}-OVMF_VARS.fd'
             shutil.copyfile('/usr/share/OVMF/OVMF_VARS_4M.fd', variables)
@@ -122,6 +121,11 @@ def run(linkage, firmware, transport, timeout):
                     break
                 text = log.read_text(errors='replace')
                 for lane, peer in enumerate(peers):
+                    ready = ('TCP_CONFIG_PASS nics=2' if lane == 0
+                             else f'TCP_NATIVE_CLIENT_PASS index={lane}')
+                    if not peer.server_started and ready in text:
+                        peer.server_started = True
+                        peer.start('server')
                     if not peer.client_started and f'TCP_SERVER_READY index={lane + 1}' in text:
                         peer.client_started = True
                         peer.start('client')
@@ -156,6 +160,8 @@ def run(linkage, firmware, transport, timeout):
                 'TCP_ACCEPT_TEARDOWN_PASS cases=2',
                 'TCP_RETAINED_SEND_PASS cases=2', 'TCP_SEND_DEADLINES_PASS cases=3',
                 'TCP_SEND_SIGNALS_PASS cases=2', 'TCP_SEND_NONBLOCKING_PASS cases=2',
+                'TCP_UNAVAILABLE_COPY_PASS cases=8', 'TCP_UNAVAILABLE_SEND_PASS cases=8',
+                'TCP_RECEIVE_COPY_PASS modes=4', 'TCP_SEND_COPY_PASS modes=4',
                 f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
     for lane in range(2):
         required += [f'TCP_NATIVE_SERVER_PASS index={lane + 1} bytes_each={BYTES}',

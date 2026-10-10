@@ -351,7 +351,7 @@ int64_t tcp_read(InetSocket* socket, void* data, size_t length, bool peek, size_
     return length ? -11 : 0;
 }
 
-int64_t tcp_write(InetSocket* socket, const void* data, size_t length) {
+static int write_error(InetSocket* socket) {
     if (int error = tcp_error(socket, true))
         return -error;
     if (!socket->stream || (socket->shutdown & 2) ||
@@ -360,6 +360,18 @@ int64_t tcp_write(InetSocket* socket, const void* data, size_t length) {
         return -32;
     if (!synchronized(socket))
         return -11;
+    return 0;
+}
+
+int tcp_write_check(InetSocket* socket) {
+    if (int error = write_error(socket))
+        return error;
+    return socket->stream->writable() ? 0 : -11;
+}
+
+int64_t tcp_write(InetSocket* socket, const void* data, size_t length) {
+    if (int error = write_error(socket))
+        return error;
     if (!length)
         return 0;
     size_t count = socket->stream->write(data, length, now_ms());

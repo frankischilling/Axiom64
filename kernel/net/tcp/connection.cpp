@@ -168,6 +168,16 @@ void Connection::reset_reply(const Segment& segment) {
     response_pending = true;
 }
 
+void Connection::challenge(uint64_t now) {
+    // Invalid control segments share a per-connection interval. Ordinary data ACKs
+    // remain independent, and a failed output enqueue leaves the permitted ACK pending.
+    if (challenge_sent && !elapsed(now, challenge_at, 500))
+        return;
+    challenge_sent = true;
+    challenge_at = now;
+    ack_pending = true;
+}
+
 void Connection::wait(uint64_t now) {
     status = State::time_wait;
     expiration = after(now, 120000);
@@ -372,8 +382,12 @@ void Connection::input(const Segment& segment, uint64_t now) {
         return;
     }
     if (!acceptable(segment.sequence, sequence_length(segment), receive_next, window())) {
-        if (!(segment.flags & rst))
-            ack_pending = true;
+        if (!(segment.flags & rst)) {
+            if (!(segment.flags & syn) && sequence_length(segment))
+                ack_pending = true;
+            else
+                challenge(now);
+        }
         return;
     }
     if (segment.flags & rst) {
@@ -381,11 +395,11 @@ void Connection::input(const Segment& segment, uint64_t now) {
         if (decision == Reset::accept)
             abort(104);
         else if (decision == Reset::challenge)
-            ack_pending = true;
+            challenge(now);
         return;
     }
     if (segment.flags & syn) {
-        ack_pending = true;
+        challenge(now);
         return;
     }
     if (!(segment.flags & ack))
@@ -397,7 +411,7 @@ void Connection::input(const Segment& segment, uint64_t now) {
         if (status == State::syn_received)
             reset_reply(segment);
         else
-            ack_pending = true;
+            challenge(now);
         return;
     }
     if (status == State::syn_received) {

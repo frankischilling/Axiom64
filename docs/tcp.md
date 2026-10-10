@@ -66,6 +66,11 @@ CI retains the host log in `tcp-policy`, native/guest JSON results and full PCAP
 
 ## Sources and remaining work
 
+[Per-connection challenge ACK intervals](tcp-challenge-ack.md) bound rejected control
+replies to one per 500 ms while preserving valid data ACKs, exact resets and independent
+connections. Its concurrent native/VM packet profile observes mixed bursts, full silence
+and exact recovery separately from the earlier five fault profiles.
+
 The wire/state contract follows [RFC 9293](https://www.rfc-editor.org/rfc/rfc9293.html), retransmission timing follows [RFC 6298](https://www.rfc-editor.org/rfc/rfc6298.html), and sender congestion control follows [RFC 5681](https://www.rfc-editor.org/rfc/rfc5681.html). Linux behavior is checked against [`tcp.c`](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/net/ipv4/tcp.c), [`net/ipv4/tcp_input.c`](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/net/ipv4/tcp_input.c), [`tcp_output.c`](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/net/ipv4/tcp_output.c), [`tcp_timer.c`](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/net/ipv4/tcp_timer.c), [`tcp_minisocks.c`](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/net/ipv4/tcp_minisocks.c) and [`net/socket.c`](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/net/socket.c) and [`net/core/datagram.c`](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/net/core/datagram.c) at that pinned revision. The compact close policy preserves this engine's conservative completed-state behavior; this subset does not establish every Linux TIME-WAIT reuse policy.
 
 [Controlled TCP loss acceptance](tcp-loss.md) adds actual active/passive SYN/SYN-ACK, data and FIN loss/retry observations, exact streams and peer sequence wrap over both NICs, firmware modes and virtio transports. The independent peer records and packet captures establish this first loss subset; hostile-segment, reordering, persist and complete deadline/fault acceptance remain open.

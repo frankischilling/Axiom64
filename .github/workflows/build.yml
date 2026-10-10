@@ -58,6 +58,7 @@ jobs:
           make -j2 build/credentials-native build/credentials-static build/credentials-dynamic
           make -j2 build/tcp-native build/tcp-static build/tcp-dynamic
           make -j2 build/tcp-fault-native build/tcp-fault-static build/tcp-fault-dynamic
+          make -j2 build/tcp-challenge-native build/tcp-challenge-static build/tcp-challenge-dynamic
           make -j2 build/tcp-timeout-native build/tcp-timeout-static build/tcp-timeout-dynamic
           make build/init-supervision
       - name: Test split-queue ownership with sanitizers
@@ -145,6 +146,7 @@ jobs:
           - tcp-fault-persist
           - tcp-fault-timeout
           - tcp-fault-old-ack
+          - tcp-fault-challenge
           - normal-init-bios
           - normal-init-uefi
           - protocol-bios-modern-lane0
@@ -256,6 +258,17 @@ jobs:
         run: |
           python3 scripts/tcp_old_ack_capture.py 2>&1 | tee build/tcp-old-ack-capture.log
           python3 scripts/tests/tcp_old_ack_capture_test.py 2>&1 | tee build/tcp-old-ack-capture-checker.log
+      - name: Compare challenge ACK intervals with isolated native Linux
+        if: matrix.suite == 'tcp-fault-challenge'
+        run: sudo -n make test-tcp-challenge-native
+      - name: Observe control bursts and per-connection silence on both emulated NICs
+        if: matrix.suite == 'tcp-fault-challenge'
+        run: make test-tcp-challenge
+      - name: Independently verify challenge silence and reject damaged evidence
+        if: matrix.suite == 'tcp-fault-challenge'
+        run: |
+          python3 scripts/tcp_challenge_capture.py 2>&1 | tee build/tcp-challenge-capture.log
+          python3 scripts/tests/tcp_challenge_capture_test.py 2>&1 | tee build/tcp-challenge-capture-checker.log
       - name: Test desktop serial acceptance decisions
         if: matrix.suite == 'boot'
         run: python3 scripts/tests/desktop_console_test.py
@@ -492,6 +505,7 @@ jobs:
             build/tcp-persist-*-peer.json
             build/tcp-timeout-*-peer.json
             build/tcp-old-ack-*-peer.json
+            build/tcp-challenge-*-peer.json
       - name: Upload TCP boot fixtures
         if: always() && matrix.suite == 'tcp'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -511,6 +525,7 @@ jobs:
             build/axiom64-tcp-persist-*.iso
             build/axiom64-tcp-timeout-*.iso
             build/axiom64-tcp-old-ack-*.iso
+            build/axiom64-tcp-challenge-*.iso
       - name: Upload credential filesystem and boot fixtures
         if: always() && matrix.suite == 'credentials'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

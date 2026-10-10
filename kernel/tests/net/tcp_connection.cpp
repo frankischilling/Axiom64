@@ -199,7 +199,7 @@ static void validation() {
     auto reset = inbound(client, first + 1, nullptr, rst);
     client.input(reset, 40);
     assert(client.state() == State::established && !client.error());
-    assert(require_output(client, 40).segment().flags == ack);
+    no_output(client, 40); // The future ACK at 30 already consumed this connection's interval.
     reset.sequence = first + stream_capacity;
     client.input(reset, 50);
     no_output(client, 50);
@@ -569,7 +569,136 @@ static void stale_acknowledgments() {
               "deadline");
 }
 
+static Segment invalid_challenge(const Connection& endpoint, unsigned kind) {
+    auto segment = inbound(endpoint, endpoint.next_receive(), "bad", ack | fin);
+    switch (kind) {
+    case 0:
+        segment.acknowledgment = endpoint.next_send() - 2;
+        break;
+    case 1:
+        segment.acknowledgment = endpoint.next_send() + 1;
+        break;
+    case 2:
+        segment.flags = syn | ack;
+        break;
+    case 3:
+        segment.flags = syn | ack;
+        segment.sequence += stream_capacity;
+        break;
+    case 4:
+        segment.flags = rst;
+        segment.sequence++;
+        break;
+    case 5:
+        segment.sequence += stream_capacity;
+        segment.payload = nullptr;
+        segment.length = 0;
+        segment.flags = ack;
+        break;
+    case 6:
+    case 7:
+        segment.payload = nullptr;
+        segment.length = 0;
+        segment.flags = kind == 6 ? syn : rst;
+        segment.sequence++;
+        break;
+    }
+    return segment;
+}
+
+static void challenge_intervals() {
+    unsigned cases = 0;
+    for (bool wrapped : {false, true}) {
+        for (uint64_t start : {uint64_t(0), uint64_t(20), UINT64_MAX - 1000}) {
+            for (unsigned kind = 0; kind < 8; kind++) {
+                Connection client, server, independent, other;
+                establish(client, server, wrapped ? 0xfffffff0 : 100, wrapped ? 0xfffffff0 : 500);
+                establish(independent, other);
+                uint32_t receive = client.next_receive(), send = client.next_send();
+                auto challenge = invalid_challenge(client, kind);
+                client.input(injection(challenge).segment(), start);
+                auto reply = require_output(client, start).segment();
+                assert(reply.flags == ack && !reply.length && reply.sequence == send &&
+                       reply.acknowledgment == receive);
+                for (uint64_t offset : {uint64_t(1), uint64_t(249), uint64_t(499)}) {
+                    // All invalid kinds consume the same connection-local interval.
+                    client.input(injection(invalid_challenge(client, (kind + 1) % 8)).segment(),
+                                 start + offset);
+                    no_output(client, start + offset);
+                    assert(client.state() == State::established && client.error() == 0 &&
+                           client.next_receive() == receive && client.next_send() == send &&
+                           client.available() == 0 && !client.eof());
+                }
+                independent.input(injection(invalid_challenge(independent, kind)).segment(),
+                                  start + 499);
+                require_output(independent, start + 499);
+                client.input(injection(challenge).segment(), start + 500);
+                require_output(client, start + 500);
+                client.input(injection(challenge).segment(), start + 999);
+                no_output(client, start + 999);
+                no_output(client, start + 1000); // Suppressed input does not schedule a late ACK.
+                client.input(injection(challenge).segment(), start + 1000);
+                require_output(client, start + 1000);
+                cases++;
+            }
+        }
+    }
+
+    Connection client, server;
+    establish(client, server);
+    auto challenge = invalid_challenge(client, 0);
+    client.input(injection(challenge).segment(), 20);
+    Packet pending;
+    assert(output(client, 20, true, pending, false));
+    client.input(injection(challenge).segment(), 21);
+    assert(output(client, 21, true, pending, false));
+    client.emitted(21); // Failed enqueue keeps one owned candidate; it does not admit a new ACK.
+    client.input(injection(challenge).segment(), 22);
+    no_output(client, 22);
+    client.input(injection(challenge).segment(), 19); // A backward clock cannot reopen the quota.
+    no_output(client, 19);
+
+    auto valid = inbound(client, client.next_receive(), "ok");
+    client.input(injection(valid).segment(), 23);
+    char bytes[4]{};
+    assert(client.read(bytes, sizeof(bytes)) == 2 && std::memcmp(bytes, "ok", 2) == 0);
+    require_output(client, 23); // Valid data and receive-window updates are never throttled.
+    auto duplicate = inbound(client, client.next_receive() - 2, "ok");
+    for (uint64_t now : {uint64_t(24), uint64_t(25)}) {
+        client.input(injection(duplicate).segment(), now);
+        require_output(client, now); // Out-of-window data retransmissions need immediate ACKs.
+    }
+    auto finish = inbound(client, client.next_receive() + stream_capacity, nullptr, ack | fin);
+    client.input(injection(finish).segment(), 26);
+    require_output(client, 26); // FIN retransmissions also consume sequence space.
+    auto reset = inbound(client, client.next_receive(), nullptr, rst);
+    client.input(injection(reset).segment(), 27);
+    assert(client.state() == State::closed && client.error() == 104);
+    no_output(client, 27);
+
+    Connection timed, peer;
+    establish(timed, peer);
+    timed.user_timeout(2500);
+    assert(timed.write("wait", 4, 20) == 4);
+    require_output(timed, 20);
+    for (uint64_t now = 30; now < 2500; now += 100) {
+        auto attack = invalid_challenge(timed, 0);
+        attack.acknowledgment =
+            99; // Below SND.UNA - acknowledged history, even with data in flight.
+        timed.input(injection(attack).segment(), now);
+        Packet packet;
+        output(timed, now, true, packet);
+    }
+    timed.input(injection(invalid_challenge(timed, 0)).segment(), 2520);
+    assert(timed.state() == State::closed && timed.error() == 110);
+    no_output(timed, 2520);
+    std::printf("TCP_CHALLENGE_INTERVAL_PASS cases=%u first shared_kinds independent zero limit "
+                "wrap boundary silence ownership data retransmit reset deadline\n",
+                cases + 2);
+}
+
 int main() {
+    challenge_intervals();
     handshakes();
     reassembly();
     validation();

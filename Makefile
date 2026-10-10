@@ -384,6 +384,15 @@ build/tcp-fault-dynamic: userspace/tests/net/tcp_fault.c
 build/tcp-timeout-native: userspace/tests/net/tcp_timeout.c
 	@mkdir -p build
 	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-challenge-native: userspace/tests/net/tcp_fault.c
+	@mkdir -p build
+	$(CC) -DTCP_CHALLENGE -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-challenge-static: userspace/tests/net/tcp_fault.c
+	@mkdir -p build
+	musl-gcc -DTCP_CHALLENGE -std=gnu11 -static -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-challenge-dynamic: userspace/tests/net/tcp_fault.c
+	@mkdir -p build
+	musl-gcc -DTCP_CHALLENGE -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
 build/tcp-timeout-static: userspace/tests/net/tcp_timeout.c
 	@mkdir -p build
 	musl-gcc -std=gnu11 -static -O2 -g -Wall -Wextra -Werror $< -o $@
@@ -395,6 +404,11 @@ test-tcp-timeout:
 	$(PYTHON) scripts/tcp_fault_test.py --wire timeout
 test-tcp-timeout-native:
 	$(PYTHON) scripts/tcp_fault_native.py --wire timeout
+.PHONY: test-tcp-challenge test-tcp-challenge-native
+test-tcp-challenge:
+	$(PYTHON) scripts/tcp_fault_test.py --wire challenge
+test-tcp-challenge-native:
+	$(PYTHON) scripts/tcp_fault_native.py --wire challenge
 .PHONY: test-tcp-old-ack test-tcp-old-ack-native
 test-tcp-old-ack:
 	$(PYTHON) scripts/tcp_fault_test.py --wire old-ack

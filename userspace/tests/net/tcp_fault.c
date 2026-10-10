@@ -13,6 +13,9 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef TCP_CHALLENGE
+#include <sys/wait.h>
+#endif
 
 #define CHECK(value)                                                                               \
     do {                                                                                           \
@@ -117,9 +120,38 @@ int main(int argc, char** argv) {
         configure();
     else
         CHECK(argc == 2 && !strcmp(argv[1], "--native"));
+#ifdef TCP_CHALLENGE
+    if (argc == 1) {
+        // QEMU's e1000 receive-control write starts a one-second queue flush delay.
+        // Settle both adapters before simultaneous opens; all loss timers remain observed.
+        uint64_t setup = milliseconds();
+        CHECK(usleep(1200000) == 0 && milliseconds() - setup >= 1200);
+        printf("TCP_CHALLENGE_SETUP_WAIT_PASS elapsed_ms=%llu\n",
+               (unsigned long long)(milliseconds() - setup));
+    }
+    pid_t children[4];
+    for (unsigned lane = 0; lane < 2; lane++) {
+        for (unsigned role = 0; role < 2; role++) {
+            pid_t child = fork();
+            CHECK(child >= 0);
+            if (!child) {
+                alarm(120);
+                flow(lane, role);
+                return 0;
+            }
+            children[lane * 2 + role] = child;
+        }
+    }
+    for (unsigned at = 0; at < 4; at++) {
+        int status;
+        CHECK(waitpid(children[at], &status, 0) == children[at] && WIFEXITED(status) &&
+              WEXITSTATUS(status) == 0);
+    }
+#else
     for (unsigned lane = 0; lane < 2; lane++)
         for (unsigned role = 0; role < 2; role++)
             flow(lane, role);
+#endif
     CHECK(usleep(200000) == 0);
     puts("TCP_FAULT_PASS flows=4 bytes_each=65536");
     return 0;

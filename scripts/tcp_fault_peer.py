@@ -77,10 +77,11 @@ class Flow:
     def guest_next(self):
         return (self.guest_origin + len(self.received) + int(self.fin_received)) & MASK
 
-    def send(self, flags=ACK, sequence=None, data=b'', window=8192):
+    def send(self, flags=ACK, sequence=None, data=b'', window=8192, acknowledgment=None):
         options = bytes.fromhex('02040218') if flags & SYN else b''
         sequence = self.origin + self.sent + int(self.fin_sent) if sequence is None else sequence
-        acknowledgment = 0 if self.guest_origin is None else self.guest_next
+        if acknowledgment is None:
+            acknowledgment = 0 if self.guest_origin is None else self.guest_next
         if flags == SYN:
             acknowledgment = 0
         tcp = bytearray(struct.pack('!HHIIHHHH', self.local_port, self.guest_port, sequence & MASK,

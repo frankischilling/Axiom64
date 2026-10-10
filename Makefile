@@ -395,6 +395,11 @@ test-tcp-timeout:
 	$(PYTHON) scripts/tcp_fault_test.py --wire timeout
 test-tcp-timeout-native:
 	$(PYTHON) scripts/tcp_fault_native.py --wire timeout
+.PHONY: test-tcp-old-ack test-tcp-old-ack-native
+test-tcp-old-ack:
+	$(PYTHON) scripts/tcp_fault_test.py --wire old-ack
+test-tcp-old-ack-native:
+	$(PYTHON) scripts/tcp_fault_native.py --wire old-ack
 .PHONY: test-tcp-fault test-tcp-fault-native test-tcp-reordering test-tcp-reordering-native test-tcp-persist test-tcp-persist-native
 test-tcp-fault:
 	$(PYTHON) scripts/tcp_fault_test.py

@@ -14,11 +14,13 @@ from tcp_fault_peer import Peer, check
 from tcp_reordering_peer import Peer as ReorderingPeer
 from tcp_persist_peer import Peer as PersistPeer
 from tcp_timeout_peer import Peer as TimeoutPeer
+from tcp_old_ack_peer import Peer as OldAckPeer
 
 
 def wire_configuration(wire):
     profiles = {'loss': (Peer, 'tcp-fault'), 'reordering': (ReorderingPeer, 'tcp-reordering'),
-                'persist': (PersistPeer, 'tcp-persist'), 'timeout': (TimeoutPeer, 'tcp-timeout')}
+                'persist': (PersistPeer, 'tcp-persist'), 'timeout': (TimeoutPeer, 'tcp-timeout'),
+                'old-ack': (OldAckPeer, 'tcp-old-ack')}
     check(wire in profiles, 'known controlled TCP wire profile')
     return profiles[wire]
 
@@ -231,7 +233,7 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist', 'timeout'), default='loss')
+    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist', 'timeout', 'old-ack'), default='loss')
     for name, choices in (('linkage', ('static', 'dynamic')), ('firmware', ('bios', 'uefi')),
                           ('transport', ('modern', 'legacy'))):
         parser.add_argument(f'--{name}', choices=(*choices, 'both'), default='both')

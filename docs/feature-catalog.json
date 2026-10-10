@@ -516,7 +516,7 @@
       "title": "DHCP, DNS, and network configuration",
       "milestone": "M3",
       "state": "partial",
-      "current": "Linux interface/route ioctls and BusyBox ifconfig, route add/delete, and numeric ping support static configuration. C++ modules add saved profiles, journaled address/route ownership, DHCP packet validation, lease state, and dedicated real-wire acquisition/renewal/rebinding/release tests. Resolver metadata merges bounded interface contributions and preserves manual files through checked publication/recovery. Normal manager startup, concurrent default clients, coordinated resolver updates, complete fault/reboot coverage, DNS resolution, and downloads remain required.",
+      "current": "Linux interface/route control and BusyBox tools support static configuration. Ring 3 C++ modules and the normal network manager implement concurrent default DHCP, saved static/disabled overrides, owned address/route/resolver updates, synchronized profiles/hints and fresh-boot validation. Complete client/service protocol, carrier/device, restart and saved-root matrices pass. Working DNS resolution including TCP fallback, downloads and the complete first network release remain required.",
       "scope": [
         "DHCP by default, lease renewal, saved configuration, and static override",
         "DNS resolver including UDP, TCP fallback, search rules, and timeouts",
@@ -558,7 +558,18 @@
         "userspace/tests/net/resolver.cpp",
         "userspace/tests/net/resolver.sh",
         "scripts/resolver_test.py",
-        "scripts/resolver_native.py"
+        "scripts/resolver_native.py",
+        "userspace/net/manager/main.cpp",
+        "userspace/net/manager/runtime.cpp",
+        "userspace/net/manager/ownership.cpp",
+        "userspace/net/manager/static.cpp",
+        "scripts/manager_test.py",
+        "scripts/manager_protocol_test.py",
+        "scripts/manager_link_test.py",
+        "scripts/manager_reboot_test.py",
+        "scripts/normal_manager_test.py",
+        "docs/network-manager.md",
+        "docs/network-manager-acceptance.md"
       ],
       "branch": "feature/f14-dhcp-dns-and-network-configuration",
       "issue": "https://github.com/frankischilling/Axiom64/issues/14"
@@ -874,7 +885,7 @@
       "title": "Init, login, and system services",
       "milestone": "M3",
       "state": "partial",
-      "current": "Init starts desktop/serial processes and reaps children; general services are missing.",
+      "current": "Init starts desktop/serial processes, reaps children and independently supervises the normal network manager with one-second restart delay. Complete manager crash/recovery and unchanged-desktop startup matrices pass. General service ordering/supervision, login, credentials, daemons and clean system shutdown remain required.",
       "scope": [
         "Minimal init, ordered startup, service supervision, restart, and clean shutdown",
         "Logging/syslog, time synchronization, cron/at/batch, and accounting",
@@ -894,7 +905,13 @@
         "F14"
       ],
       "evidence": [
-        "userspace/init/main.c"
+        "userspace/init/main.c",
+        "userspace/net/manager/main.cpp",
+        "userspace/net/manager/runtime.cpp",
+        "userspace/tests/net/init-supervision.cpp",
+        "scripts/normal_manager_test.py",
+        "docs/network-manager.md",
+        "docs/network-manager-acceptance.md"
       ],
       "branch": "feature/f25-init-login-and-system-services",
       "issue": "https://github.com/frankischilling/Axiom64/issues/25"

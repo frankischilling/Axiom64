@@ -17,7 +17,7 @@ def require(value, reason):
         raise ValueError(reason)
 
 
-def decode(frame, lane):
+def decode(frame, lane, ports=None):
     if len(frame) < 34 or frame[12:14] != b'\x08\x00' or frame[23] != 6:
         return None
     ip = frame[14:]
@@ -46,12 +46,13 @@ def decode(frame, lane):
         at += tcp[at + 1]
     outgoing = ip[12:16] == guest
     remote = target if outgoing else source
-    require(remote in (44000 + lane, 45000 + lane), 'independent TCP role port')
-    return dict(outgoing=outgoing, role=int(remote == 45000 + lane), seq=seq, ack=ack,
+    ports = (44000 + lane, 45000 + lane) if ports is None else ports
+    require(remote in ports, 'independent TCP role port')
+    return dict(outgoing=outgoing, role=ports.index(remote), seq=seq, ack=ack,
                 flags=bits & 0x1ff, window=window, data=tcp[length:], frame=frame)
 
 
-def packets(path, lane):
+def packets(path, lane, ports=None):
     data = path.read_bytes()
     require(len(data) >= 24 and data[:4] in (bytes.fromhex('d4c3b2a1'), bytes.fromhex('a1b2c3d4')),
             'independent PCAP magic')
@@ -65,7 +66,7 @@ def packets(path, lane):
         offset += 16
         require(micros < 1000000 and size == original and 14 <= size <= snap and offset + size <= len(data),
                 'independent PCAP packet bounds')
-        row = decode(data[offset:offset + size], lane)
+        row = decode(data[offset:offset + size], lane, ports)
         offset += size
         if row is not None:
             row['ms'] = seconds * 1000 + micros / 1000

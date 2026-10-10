@@ -381,6 +381,20 @@ build/tcp-fault-static: userspace/tests/net/tcp_fault.c
 build/tcp-fault-dynamic: userspace/tests/net/tcp_fault.c
 	@mkdir -p build
 	musl-gcc -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-timeout-native: userspace/tests/net/tcp_timeout.c
+	@mkdir -p build
+	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-timeout-static: userspace/tests/net/tcp_timeout.c
+	@mkdir -p build
+	musl-gcc -std=gnu11 -static -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-timeout-dynamic: userspace/tests/net/tcp_timeout.c
+	@mkdir -p build
+	musl-gcc -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+.PHONY: test-tcp-timeout test-tcp-timeout-native
+test-tcp-timeout:
+	$(PYTHON) scripts/tcp_fault_test.py --wire timeout
+test-tcp-timeout-native:
+	$(PYTHON) scripts/tcp_fault_native.py --wire timeout
 .PHONY: test-tcp-fault test-tcp-fault-native test-tcp-reordering test-tcp-reordering-native test-tcp-persist test-tcp-persist-native
 test-tcp-fault:
 	$(PYTHON) scripts/tcp_fault_test.py

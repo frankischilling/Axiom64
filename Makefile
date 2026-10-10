@@ -331,12 +331,18 @@ build/tcp-sender-host: kernel/tests/net/tcp_sender.cpp kernel/net/tcp/sender.cpp
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_sender.cpp kernel/net/tcp/sender.cpp -o $@
 test-tcp-sender: build/tcp-sender-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/tcp-sender-host
-build/tcp-connection-host: kernel/tests/net/tcp_connection.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp kernel/include/net/tcp/connection.hpp kernel/include/net/tcp/sender.hpp kernel/include/net/tcp/wire.hpp kernel/include/net/ipv4_wire.hpp
+build/tcp-connection-host: kernel/tests/net/tcp_connection.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp kernel/include/net/tcp/connection.hpp kernel/include/net/tcp/time_wait.hpp kernel/include/net/tcp/sender.hpp kernel/include/net/tcp/wire.hpp kernel/include/net/ipv4_wire.hpp
 	@mkdir -p build
-	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_connection.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp -o $@
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_connection.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp -o $@
 .PHONY: test-tcp-connection
 test-tcp-connection: build/tcp-connection-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/tcp-connection-host
+build/tcp-time-wait-host: kernel/tests/net/tcp_time_wait.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/wire.cpp kernel/include/net/tcp/time_wait.hpp kernel/include/net/tcp/wire.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_time_wait.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/wire.cpp -o $@
+.PHONY: test-tcp-time-wait
+test-tcp-time-wait: build/tcp-time-wait-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/tcp-time-wait-host
 build/tcp-isn-host: kernel/tests/net/tcp_isn.cpp kernel/net/tcp/isn.cpp kernel/core/random/primitives.cpp kernel/include/net/tcp/isn.hpp kernel/include/core/random/primitives.hpp kernel/include/net/ipv4_wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_isn.cpp kernel/net/tcp/isn.cpp kernel/core/random/primitives.cpp -o $@
@@ -345,13 +351,13 @@ test-tcp-isn: build/tcp-isn-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/tcp-isn-host
 build/tcp-native: userspace/tests/net/tcp.c
 	@mkdir -p build
-	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread $< -o $@
 build/tcp-static: userspace/tests/net/tcp.c
 	@mkdir -p build
-	musl-gcc -std=gnu11 -static -O2 -g -Wall -Wextra -Werror $< -o $@
+	musl-gcc -std=gnu11 -static -O2 -g -Wall -Wextra -Werror -pthread $< -o $@
 build/tcp-dynamic: userspace/tests/net/tcp.c
 	@mkdir -p build
-	musl-gcc -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+	musl-gcc -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread $< -o $@
 .PHONY: test-tcp-native test-tcp-sockets test-tcp-native-wire
 test-tcp-native:
 	$(PYTHON) scripts/tcp_native_test.py

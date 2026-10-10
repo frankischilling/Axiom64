@@ -354,10 +354,14 @@ void Connection::input(const Segment& segment, uint64_t now) {
         syn_pending = true;
         return;
     }
-    if (status == State::time_wait && (segment.flags & fin) && !(segment.flags & rst) &&
-        segment.sequence + segment.length + 1 == receive_next) {
-        ack_pending = true;
-        expiration = after(now, 120000);
+    if (status == State::time_wait) {
+        auto record = time_wait_state();
+        auto action = time_wait_input(record, segment, now);
+        expiration = record.deadline;
+        if (action == TimeWaitAction::remove)
+            abort(104);
+        else if (action == TimeWaitAction::acknowledge)
+            ack_pending = true;
         return;
     }
     if (!acceptable(segment.sequence, sequence_length(segment), receive_next, window())) {

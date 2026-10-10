@@ -328,10 +328,15 @@ static void closing() {
     assert(server.state() == State::last_ack);
     client.input(finish.segment(), 70);
     assert(client.state() == State::time_wait && client.eof());
+    auto compact = client.time_wait_state();
+    assert(compact.send == client.next_send() && compact.receive == client.next_receive() &&
+           compact.window == client.window() && compact.deadline == 120070);
     server.input(require_output(client, 70).segment(), 80);
     assert(server.state() == State::closed);
     client.input(finish.segment(),
                  1000); // A lost final ACK restarts TIME-WAIT on retransmitted FIN.
+    assert(time_wait_input(compact, finish.segment(), 1000) == TimeWaitAction::acknowledge &&
+           compact.deadline == client.time_wait_state().deadline);
     require_output(client, 1000);
     no_output(client, 120999);
     assert(client.state() == State::time_wait);

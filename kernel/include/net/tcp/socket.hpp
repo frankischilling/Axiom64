@@ -3,8 +3,10 @@
 #include "net/inet.hpp"
 
 namespace ax {
+constexpr unsigned tcp_time_wait_count = 1024;
 struct Handle;
 bool inet_stream(InetSocket*);
+bool tcp_port_busy(uint32_t local, uint16_t port, unsigned index, bool reuse);
 void tcp_close(InetSocket*);
 void tcp_poll();
 void tcp_receive(unsigned index, uint32_t source, uint32_t destination, const void*, size_t);

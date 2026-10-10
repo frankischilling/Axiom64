@@ -17,9 +17,27 @@ bool sequence_seeded;
 uint64_t sequence_clock;
 bool polling;
 
+struct TimeWaitRecord {
+    tcp::TimeWait state;
+    uint32_t local = 0, peer = 0;
+    uint16_t local_port = 0, peer_port = 0;
+    unsigned index = 0, binding_index = 0;
+    uint8_t ttl = 64;
+    bool used = false, pending = false, reuse = false;
+};
+
+static_assert(sizeof(TimeWaitRecord) <= 64);
+TimeWaitRecord time_waits[tcp_time_wait_count];
+
 uint64_t now_ms() {
     clock_refresh();
     return ticks > UINT64_MAX / 10 ? UINT64_MAX : ticks * 10;
+}
+
+void expire_time_wait(uint64_t now) {
+    for (auto& record : time_waits)
+        if (record.used && now >= record.state.deadline)
+            record.used = false;
 }
 
 int sequence(InetSocket* socket, uint32_t& value, uint64_t now) {
@@ -74,6 +92,27 @@ void reclaim(InetSocket* socket) {
     inet_dispose(socket);
 }
 
+bool compact_time_wait(InetSocket* socket) {
+    for (auto& record : time_waits)
+        if (!record.used) {
+            record = {};
+            record.state = socket->stream->time_wait_state();
+            record.local = socket->local;
+            record.peer = socket->peer;
+            record.local_port = socket->local_port;
+            record.peer_port = socket->peer_port;
+            record.index = socket->stream_index;
+            record.binding_index = socket->index;
+            record.ttl = socket->ttl;
+            record.reuse = socket->reuse;
+            record.used = true;
+            reclaim(socket);
+            return true;
+        }
+    // A full compact table keeps the original endpoint; never evict live sequence space.
+    return false;
+}
+
 void stop_listener(InetSocket* socket) {
     socket->listening = false;
     for (auto& child : inet_sockets)
@@ -116,6 +155,17 @@ bool synchronized(const InetSocket* socket) {
 
 bool inet_stream(InetSocket* socket) {
     return socket && socket->type == 1;
+}
+
+bool tcp_port_busy(uint32_t local, uint16_t port, unsigned index, bool reuse) {
+    expire_time_wait(now_ms());
+    for (auto& record : time_waits)
+        if (record.used && record.local_port == port &&
+            (!local || !record.local || local == record.local) &&
+            (!index || !record.binding_index || index == record.binding_index) &&
+            !(reuse && record.reuse))
+            return true;
+    return false;
 }
 
 void tcp_limits(InetSocket* socket) {
@@ -190,6 +240,12 @@ int tcp_connect(InetSocket* socket, const InetAddress& address) {
         if (other.used && &other != socket && other.type == 1 && other.stream &&
             other.local == path.source && other.peer == peer &&
             other.local_port == socket->local_port && other.peer_port == address.port)
+            return -99;
+    expire_time_wait(now_ms());
+    for (auto& record : time_waits)
+        if (record.used && record.local == path.source && record.peer == peer &&
+            record.local_port == socket->local_port && record.peer_port == address.port &&
+            record.index == path.index)
             return -99;
     socket->local = path.source;
     socket->peer = peer;
@@ -285,8 +341,11 @@ int64_t tcp_read(InetSocket* socket, void* data, size_t length, bool peek, size_
     auto stream = socket->stream;
     if (!stream)
         return -107;
-    if (stream->available())
-        return stream->read(data, length, peek, peek ? offset : 0);
+    if (stream->available()) {
+        size_t count = stream->read(data, length, peek, peek ? offset : 0);
+        if (count || !length)
+            return count;
+    }
     if (int error = tcp_error(socket, true))
         return -error;
     if (stream->eof() || stream->state() == tcp::State::closed ||
@@ -403,6 +462,18 @@ void tcp_receive(unsigned index, uint32_t source, uint32_t destination, const vo
     if (!tcp::decode(source, destination, data, size, segment))
         return;
     uint64_t now = now_ms();
+    expire_time_wait(now);
+    for (auto& record : time_waits)
+        if (record.used && record.local == destination && record.peer == source &&
+            record.index == index && record.local_port == segment.destination &&
+            record.peer_port == __builtin_bswap16(segment.source)) {
+            auto action = tcp::time_wait_input(record.state, segment, now);
+            if (action == tcp::TimeWaitAction::remove)
+                record.used = false;
+            else if (action == tcp::TimeWaitAction::acknowledge)
+                record.pending = true;
+            return;
+        }
     InetSocket* listener = nullptr;
     for (auto& socket : inet_sockets) {
         if (!socket.used || socket.type != 1 || socket.local_port != segment.destination ||
@@ -479,6 +550,7 @@ void tcp_poll() {
         return;
     polling = true;
     uint64_t now = now_ms();
+    expire_time_wait(now);
     for (auto& socket : inet_sockets) {
         if (!socket.used || socket.type != 1 || !socket.stream)
             continue;
@@ -504,9 +576,25 @@ void tcp_poll() {
             socket.stream->emitted(now);
             pending = socket.stream->next(now, segment);
         }
-        if (!pending && socket.stream->state() == tcp::State::closed &&
-            (socket.detached || (socket.listener && !socket.accept_queued)))
+        if (!pending && socket.detached && socket.stream->state() == tcp::State::time_wait)
+            compact_time_wait(&socket);
+        else if (!pending && socket.stream->state() == tcp::State::closed &&
+                 (socket.detached || (socket.listener && !socket.accept_queued)))
             reclaim(&socket);
+    }
+    for (auto& record : time_waits) {
+        if (!record.used || !record.pending)
+            continue;
+        tcp::Segment segment{};
+        segment.source = record.local_port;
+        segment.destination = __builtin_bswap16(record.peer_port);
+        segment.sequence = record.state.send;
+        segment.acknowledgment = record.state.receive;
+        segment.window = record.state.window;
+        segment.flags = tcp::ack;
+        int error = emit(nullptr, record.index, record.local, record.peer, segment, record.ttl);
+        if (!error || (error != -11 && error != -12 && error != -105))
+            record.pending = false;
     }
     polling = false;
 }

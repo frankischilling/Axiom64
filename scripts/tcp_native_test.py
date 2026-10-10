@@ -10,7 +10,9 @@ def main():
     subprocess.run(['make', '-s', '-j2', *(f'build/tcp-{profile}' for profile in profiles)],
                    cwd=ROOT, check=True)
     required = ('TCP_CREATE_PASS variants=8', 'TCP_BINDINGS_PASS ', 'TCP_OPTIONS_PASS ', 'TCP_REFUSED_PASS ',
-                'TCP_VECTORS_PASS ', 'TCP_CLIENT_PASS ', 'TCP_LOOPBACK_PASS bytes=262144', 'TCP_TEST_PASS')
+                'TCP_VECTORS_PASS ', 'TCP_WAITALL_PASS ', 'TCP_WAITALL_SIGNALS_PASS ',
+                'TCP_RETAINED_READ_PASS cases=2', 'TCP_RESOURCE_CYCLES_PASS count=300',
+                'TCP_CLIENT_PASS ', 'TCP_LOOPBACK_PASS bytes=262144', 'TCP_TEST_PASS')
     results = []
     with (ROOT / 'build/tcp-native.log').open('w') as log:
         for profile in profiles:

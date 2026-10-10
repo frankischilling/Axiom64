@@ -148,7 +148,9 @@ def run(linkage, firmware, transport, timeout):
     text = log.read_text(errors='replace') if log.exists() else ''
     required = ['TCP_CONFIG_PASS nics=2', 'TCP_TEST_PASS', 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0',
                 f'Firmware: {firmware.upper()}', 'TCP_CREATE_PASS variants=8', 'TCP_OPTIONS_PASS ',
-                'TCP_BINDINGS_PASS ', 'TCP_REFUSED_PASS ', 'TCP_VECTORS_PASS ', 'TCP_LOOPBACK_PASS bytes=262144',
+                'TCP_BINDINGS_PASS ', 'TCP_REFUSED_PASS ', 'TCP_VECTORS_PASS ',
+                'TCP_WAITALL_PASS ', 'TCP_WAITALL_SIGNALS_PASS ', 'TCP_RETAINED_READ_PASS cases=2',
+                'TCP_RESOURCE_CYCLES_PASS count=300', 'TCP_LOOPBACK_PASS bytes=262144',
                 f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
     for lane in range(2):
         required += [f'TCP_NATIVE_SERVER_PASS index={lane + 1} bytes_each={BYTES}',

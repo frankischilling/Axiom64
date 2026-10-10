@@ -477,7 +477,7 @@
       "title": "TCP, UDP, and Linux socket semantics",
       "milestone": "M3",
       "state": "partial",
-      "current": "Unix stream sockets support X11, AF_PACKET exchanges Ethernet, and AF_INET supports raw ICMP/ping and IPv4 UDP datagrams with tested checksums, binding, queues, errors, readiness and retained I/O. Ordinary IPv4 TCP streams add active/passive connections, vector/peek I/O, half-close, nonblocking refusal/readiness and native host client/server transfers on both emulated NICs. Bounded NETLINK_ROUTE sockets support tagged IPv4 route control, dumps, complete address updates and retained datagram I/O. Shared Linux receive/send socket timeouts capture finite monotonic I/O deadlines and reclaim retained descriptions on expiry and interruption. Unix datagram descriptors serve interface configuration only. Full TCP retained-call, reclamation and controlled fault acceptance, IPv6 UDP, complete connect interruption/deadline semantics, ancillary data and the complete socket contract remain required.",
+      "current": "Unix stream sockets support X11, AF_PACKET exchanges Ethernet, and AF_INET supports raw ICMP/ping and IPv4 UDP datagrams with tested checksums, binding, queues, errors, readiness and retained I/O. Ordinary IPv4 TCP streams add active/passive connections, vector/peek I/O, half-close, nonblocking refusal/readiness and native host client/server transfers on both emulated NICs. TCP MSG_WAITALL retains vector progress across delayed input and descriptor replacement, returns transferred bytes on deadline/signals, and completed detached endpoints use bounded compact TIME-WAIT records; native comparisons and VM cycles exceed the general socket capacity. Bounded NETLINK_ROUTE sockets support tagged IPv4 route control, dumps, complete address updates and retained datagram I/O. Shared Linux receive/send socket timeouts capture finite monotonic I/O deadlines and reclaim retained descriptions on expiry and interruption. Unix datagram descriptors serve interface configuration only. Full TCP retained-call, reclamation and controlled fault acceptance, IPv6 UDP, complete connect interruption/deadline semantics, ancillary data and the complete socket contract remain required.",
       "scope": [
         "AF_INET/AF_INET6 TCP/UDP socket lifecycle, options, and errors",
         "TCP sequence/window handling, retransmission, congestion, close, and reset",
@@ -527,7 +527,10 @@
         "scripts/tcp_native_wire.py",
         "scripts/tcp_capture.py",
         "scripts/tests/tcp_capture_test.py",
-        "docs/tcp.md"
+        "docs/tcp.md",
+        "kernel/include/net/tcp/time_wait.hpp",
+        "kernel/net/tcp/time_wait.cpp",
+        "kernel/tests/net/tcp_time_wait.cpp"
       ],
       "branch": "feature/f13-tcp-udp-and-linux-socket-semantics",
       "issue": "https://github.com/frankischilling/Axiom64/issues/13"

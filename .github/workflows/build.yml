@@ -51,7 +51,7 @@ jobs:
       - name: Test TCP wire, sender and connection policies with sanitizers
         run: |
           mkdir -p build/tcp-policy
-          make test-tcp-wire test-tcp-sender test-tcp-connection test-tcp-isn 2>&1 | tee build/tcp-policy/host.log
+          make test-tcp-wire test-tcp-sender test-tcp-connection test-tcp-isn test-tcp-time-wait 2>&1 | tee build/tcp-policy/host.log
       - name: Upload TCP policy evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

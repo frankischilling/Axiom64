@@ -251,12 +251,13 @@ bool AddressSpace::protect(uint64_t va, size_t len, int prot) {
         return false;
     for (uint64_t p = va; p < va + len; p += page_size) {
         auto e = entry(p);
-        if (!e || !(*e & page_mask) || ((prot & 2) && (*e & 0x800)))
+        if (!e || !(*e & page_mask) || ((prot & 2) && (*e & 0x800)) ||
+            ((prot & 4) && (*e & page_no_execute)))
             return false;
     }
     for (uint64_t p = va; p < va + len; p += page_size) {
         auto e = entry(p);
-        *e = (*e & (page_mask | 0xe00)) | permissions(prot);
+        *e = (*e & (page_mask | 0xe00 | page_no_execute)) | permissions(prot);
     }
     if (read_cr3() == root)
         write_cr3(root);

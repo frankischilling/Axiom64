@@ -58,7 +58,7 @@ Saved profiles and hints use the private policy in `userspace/net/config/saved.c
 
 Writes validate the existing destination, create a mode-0600 exclusive temporary file, check every write and close, synchronize the file, rename it relative to the validated directory, and synchronize the directory. Newly created directories are restored to mode 0700 and temporary files to mode 0600 even under a restrictive umask. Existing unsafe paths are rejected rather than repaired. Hint removal applies the same private directory and file validation before unlinking. Missing hints remain safe to forget repeatedly. Configuration and resolver journals retain their separate Store contracts, including the resolver's public directory and text modes.
 
-A lease hint contains only version, MAC, and previous address. It never preserves an old monotonic lease deadline; a changed MAC returns `ESTALE`. This saved-file policy does not replace kernel account/permission enforcement. Axiom64 currently exposes a root identity; native Linux checks exercise real foreign owners and permission denial. A process with the same effective UID remains within the trusted writer domain.
+A lease hint contains only version, MAC, and previous address. It never preserves an old monotonic lease deadline; a changed MAC returns `ESTALE`. The saved-file policy works alongside [kernel credentials and access checks](credentials.md). Native and credential guest checks exercise real foreign owners and permission denial. A process with the same effective UID remains within the trusted writer domain. The normal manager still starts with root identity; daemon privilege separation and authenticated sessions remain required.
 
 ## Owned resolver metadata
 

@@ -52,6 +52,7 @@ struct Path {
     Node* base = nullptr;
     char text[1024]{};
     int error = -14;
+    bool real_access = false;
 };
 
 struct DirectoryEntry {
@@ -75,7 +76,7 @@ struct FilesystemOps {
     int64_t (*read)(Node*, uint64_t, void*, size_t);
     int64_t (*write)(Node*, uint64_t, const void*, size_t);
     int (*truncate)(Node*, size_t);
-    int (*setattr)(Node*, uint32_t, Timestamp, Timestamp);
+    int (*setattr)(Node*, uint32_t, Timestamp, Timestamp, uint32_t, uint32_t);
     int (*readdir)(Node*, uint64_t, DirectoryEntry&);
     int (*sync)(Mount*, Node*, bool);
     int (*map_shared)(Node*, uint64_t, size_t, uint64_t&);
@@ -93,6 +94,7 @@ struct Mount {
     const FilesystemOps* ops;
     void* data;
     bool active, readonly;
+    bool nosuid = false, nodev = false, noexec = false;
 };
 
 extern const FilesystemOps ramfs_ops;
@@ -172,6 +174,9 @@ bool node_resize(Node*, size_t);
 int node_truncate(Node*, uint64_t);
 
 int node_setattr(Node*, uint32_t, Timestamp, Timestamp);
+int node_access(Node*, unsigned mask, bool real = false);
+int node_chmod(Node*, uint32_t);
+int node_chown(Node*, uint32_t, uint32_t);
 
 int64_t node_read(Node*, uint64_t, void*, size_t);
 

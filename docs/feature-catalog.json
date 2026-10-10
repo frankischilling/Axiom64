@@ -342,8 +342,8 @@
       "id": "F09",
       "title": "Accounts, permissions, and process credentials",
       "milestone": "M3",
-      "state": "planned",
-      "current": "All tasks currently use root identity without multiuser permission enforcement.",
+      "state": "partial",
+      "current": "Task identities, supplementary groups, capability transitions, DAC, chroot and process/IPC/network permission guards work. Account databases, authentication, login/session policy and complete isolation remain required.",
       "scope": [
         "UID/GID, supplementary groups, real/effective/saved credentials, and umask",
         "File/directory access checks, ownership, sticky bits, set-ID, and chroot",
@@ -361,7 +361,15 @@
         "F03",
         "F04"
       ],
-      "evidence": [],
+      "evidence": [
+        "kernel/security/credentials.cpp",
+        "kernel/abi/linux/credentials.cpp",
+        "kernel/tests/security/credentials.cpp",
+        "userspace/tests/security/credentials.c",
+        "scripts/credentials_native.py",
+        "scripts/credentials_test.py",
+        "docs/credentials.md"
+      ],
       "branch": "feature/f09-accounts-permissions-and-process-credentials",
       "issue": "https://github.com/frankischilling/Axiom64/issues/9"
     },

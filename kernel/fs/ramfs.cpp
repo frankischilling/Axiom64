@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/vfs.hpp"
+#include "process/task.hpp"
 
 namespace ax {
 static uint64_t next_inode = 1;
@@ -60,6 +61,10 @@ static int create(Node* parent, const char* name, uint32_t mode, const char* tar
         release(data);
         return -28;
     }
+    node->uid = current ? current->credentials.user.filesystem : 0;
+    node->gid = (parent->mode & 02000) ? parent->gid
+                : current              ? current->credentials.group.filesystem
+                                       : 0;
     attach(node, parent, name);
     if (target) {
         node->data = data;
@@ -169,11 +174,14 @@ static int64_t write(Node* node, uint64_t offset, const void* buffer, size_t len
     return length;
 }
 
-static int setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime) {
+static int setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime, uint32_t uid,
+                   uint32_t gid) {
     node->mode = mode;
     node->atime = atime;
     node->mtime = mtime;
     node->ctime = node_now();
+    node->uid = uid;
+    node->gid = gid;
     return 0;
 }
 

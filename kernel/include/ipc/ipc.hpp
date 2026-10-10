@@ -3,6 +3,11 @@
 #include "process/task.hpp"
 
 namespace ax {
+struct PeerCredentials {
+    int32_t pid = 0;
+    uint32_t uid = UINT32_MAX, gid = UINT32_MAX;
+};
+
 struct Socket {
     bool used, listener, pending, connected, read_closed, write_closed, peer_closed;
     uint16_t type;
@@ -14,6 +19,7 @@ struct Socket {
     size_t queue_head, queue_size, backlog;
     uint8_t* bytes;
     size_t head, size, capacity;
+    PeerCredentials credentials{}, peer_credentials{};
 };
 
 struct [[gnu::packed]] EpollEvent {

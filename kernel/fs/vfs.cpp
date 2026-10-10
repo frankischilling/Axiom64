@@ -83,6 +83,8 @@ static Mount* mounted_on(Node* point) {
 }
 
 Node* directory_parent(Node* node) {
+    if (current && node == current->fs->root_node)
+        return node;
     if (node == node->mount->root && node->mount->point)
         return node->mount->point->parent;
     return node->parent ? node->parent : node;
@@ -94,7 +96,8 @@ void node_path(Node* node, char* result, size_t cap) {
     result[0] = 0;
     Node* chain[128];
     size_t count = 0;
-    while (node && node != root_node && count < 128) {
+    Node* root = current ? current->fs->root_node : root_node;
+    while (node && node != root && count < 128) {
         if (node == node->mount->root && node->mount->point) {
             node = node->mount->point;
             continue;
@@ -104,7 +107,7 @@ void node_path(Node* node, char* result, size_t cap) {
         chain[count++] = node;
         node = node->parent;
     }
-    if (node != root_node)
+    if (node != root)
         return;
     size_t offset = 0;
     if (!count) {
@@ -134,7 +137,8 @@ int resolve_path(const Path& path, Node*& result, bool follow) {
         return -2;
     char pending[2048];
     memcpy(pending, path.text, strlen(path.text) + 1);
-    Node* node = pending[0] == '/' ? root_node : path.base;
+    Node* boundary = current ? current->fs->root_node : root_node;
+    Node* node = pending[0] == '/' ? boundary : path.base;
     if (!node)
         return -2;
     unsigned links = 0;
@@ -146,6 +150,9 @@ int resolve_path(const Path& path, Node*& result, bool follow) {
             return -20;
         if (!pending[p])
             break;
+        int access = node_access(node, 1, path.real_access);
+        if (access)
+            return access;
         size_t begin = p;
         while (pending[p] && pending[p] != '/')
             p++;
@@ -168,6 +175,9 @@ int resolve_path(const Path& path, Node*& result, bool follow) {
         if (auto mount = mounted_on(child))
             child = mount->root;
         if ((child->mode & 0170000) == symlink && (follow || pending[p])) {
+            if (current && (node->mode & 01002) == 01002 &&
+                current->credentials.user.filesystem != child->uid && node->uid != child->uid)
+                return -13;
             if (++links > 40)
                 return -40;
             auto target = file_node(child);
@@ -185,7 +195,7 @@ int resolve_path(const Path& path, Node*& result, bool follow) {
             memcpy(link + count, pending + p, tail + 1);
             memcpy(pending, link, size_t(count) + tail + 1);
             if (pending[0] == '/')
-                node = root_node;
+                node = boundary;
             p = 0;
             continue;
         }
@@ -242,6 +252,29 @@ bool node_readonly(Node* node) {
     return node && node->mount->readonly;
 }
 
+int node_access(Node* node, unsigned mask, bool real) {
+    node = file_node(node);
+    if (!node)
+        return -2;
+    const Credentials boot{};
+    return credential_access(current ? current->credentials : boot, node->uid, node->gid,
+                             node->mode, mask, real);
+}
+
+static int parent_write(Node* parent, Node* victim = nullptr) {
+    if (node_readonly(parent))
+        return -30;
+    int error = node_access(parent, 3);
+    if (error)
+        return error;
+    if (current && victim && (parent->mode & 01000) &&
+        current->credentials.user.filesystem != parent->uid &&
+        current->credentials.user.filesystem != file_node(victim)->uid &&
+        !capable(current->credentials, Capability::fowner))
+        return -1;
+    return 0;
+}
+
 int create_node(const Path& path, uint32_t mode, Node*& node, const char* target) {
     Node* existing = nullptr;
     int error = resolve_path(path, existing, false);
@@ -256,8 +289,8 @@ int create_node(const Path& path, uint32_t mode, Node*& node, const char* target
         return error;
     if (parent->removed)
         return -2;
-    if (node_readonly(parent))
-        return -30;
+    if ((error = parent_write(parent)))
+        return error;
     error = parent->mount->ops->lookup(parent, name, existing);
     if (!error)
         return -17;
@@ -266,6 +299,8 @@ int create_node(const Path& path, uint32_t mode, Node*& node, const char* target
     size_t len = strlen(path.text);
     if ((mode & 0170000) != directory && len && path.text[len - 1] == '/')
         return -21;
+    if ((parent->mode & 02000) && (mode & 0170000) == directory)
+        mode |= 02000;
     return parent->mount->ops->create(parent, name, mode, target, node);
 }
 
@@ -291,6 +326,11 @@ int link_node(const Path& from, const Path& to, bool follow) {
         return -2;
     if ((target->mode & 0170000) == directory)
         return -1;
+    if (current && current->credentials.user.filesystem != target->uid &&
+        !capable(current->credentials, Capability::fowner) &&
+        ((target->mode & 0170000) != regular_file || (target->mode & 04000) ||
+         (target->mode & 02010) == 02010 || node_access(target, 6)))
+        return -1;
     Node* parent = nullptr;
     char name[256];
     error = parent_path(to, parent, name);
@@ -298,8 +338,8 @@ int link_node(const Path& from, const Path& to, bool follow) {
         return error;
     if (target->mount != parent->mount)
         return -18;
-    if (node_readonly(parent))
-        return -30;
+    if ((error = parent_write(parent)))
+        return error;
     Node* existing = nullptr;
     error = parent->mount->ops->lookup(parent, name, existing);
     if (!error)
@@ -352,6 +392,8 @@ int remove_node(const Path& path, bool dir) {
         return -16;
     if (node_readonly(node))
         return -30;
+    if ((error = parent_write(directory_parent(node), node)))
+        return error;
     if (dir) {
         if ((node->mode & 0170000) != directory)
             return -20;
@@ -381,9 +423,13 @@ int rename_node(const Path& from, const Path& to) {
         return -16;
     if (node_readonly(node))
         return -30;
+    if ((error = parent_write(directory_parent(node), node)))
+        return error;
     Node* replaced = nullptr;
     error = parent->mount->ops->lookup(parent, name, replaced);
     if (error && error != -2)
+        return error;
+    if ((error = parent_write(parent, replaced)))
         return error;
     if (to.text[strlen(to.text) - 1] == '/' && !replaced)
         return -2;
@@ -413,6 +459,16 @@ int node_truncate(Node* node, uint64_t size) {
         return node && (node->mode & 0170000) == directory ? -21 : -22;
     if (node_readonly(node))
         return -30;
+    if (current && !capable(current->credentials, Capability::fsetid)) {
+        uint32_t mode = node->mode & ~04000;
+        if (mode & 010)
+            mode &= ~02000;
+        if (mode != node->mode) {
+            int error = node_setattr(node, mode, node->atime, node->mtime);
+            if (error)
+                return error;
+        }
+    }
     return node->mount->ops->truncate(node, size);
 }
 
@@ -424,7 +480,42 @@ int node_setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime) {
     node = file_node(node);
     if (node_readonly(node))
         return -30;
-    return node->mount->ops->setattr(node, mode, atime, mtime);
+    return node->mount->ops->setattr(node, mode, atime, mtime, node->uid, node->gid);
+}
+
+int node_chmod(Node* node, uint32_t mode) {
+    node = file_node(node);
+    if (current && current->credentials.user.filesystem != node->uid &&
+        !capable(current->credentials, Capability::fowner))
+        return -1;
+    mode &= 07777;
+    if (current && !credential_group(current->credentials, node->gid) &&
+        !capable(current->credentials, Capability::fsetid))
+        mode &= ~02000;
+    return node_setattr(node, (node->mode & 0170000) | mode, node->atime, node->mtime);
+}
+
+int node_chown(Node* node, uint32_t uid, uint32_t gid) {
+    node = file_node(node);
+    if (!node)
+        return -22;
+    if (uid == UINT32_MAX)
+        uid = node->uid;
+    if (gid == UINT32_MAX)
+        gid = node->gid;
+    if (current && !capable(current->credentials, Capability::chown) &&
+        (current->credentials.user.filesystem != node->uid || uid != node->uid ||
+         (gid != node->gid && !credential_group(current->credentials, gid))))
+        return -1;
+    if (node_readonly(node))
+        return -30;
+    uint32_t mode = node->mode;
+    if ((mode & 0170000) != directory) {
+        mode &= ~04000;
+        if (mode & 010)
+            mode &= ~02000;
+    }
+    return node->mount->ops->setattr(node, mode, node->atime, node->mtime, uid, gid);
 }
 
 int64_t node_read(Node* node, uint64_t offset, void* buffer, size_t length) {
@@ -498,7 +589,7 @@ bool node_referenced(Node* node) {
             return true;
     for (auto& task : tasks)
         if (task.state != State::empty && task.state != State::zombie &&
-            references(task.fs->cwd_node))
+            (references(task.fs->cwd_node) || references(task.fs->root_node)))
             return true;
     return socket_node_busy(node) ||
            (node->backing_physical &&
@@ -514,7 +605,8 @@ static bool mount_busy(Mount* mount, bool writers_only) {
             return true;
     for (auto& task : tasks)
         if (!writers_only && task.state != State::empty && task.state != State::zombie &&
-            task.fs->cwd_node && task.fs->cwd_node->mount == mount)
+            ((task.fs->cwd_node && task.fs->cwd_node->mount == mount) ||
+             (task.fs->root_node && task.fs->root_node->mount == mount)))
             return true;
     // Shared file pages outlive file descriptors, including after fork.
     for (size_t i = 0; i < node_count; i++) {
@@ -527,7 +619,9 @@ static bool mount_busy(Mount* mount, bool writers_only) {
 }
 
 int mount_filesystem(const Path& path, const Path& source, const char* type, uint64_t flags) {
-    if (flags & ~uint64_t(1 | 32 | 32768)) // MS_SILENT is used by the mount utility.
+    if (current && !capable(current->credentials, Capability::sys_admin))
+        return -1;
+    if (flags & ~uint64_t(1 | 2 | 4 | 8 | 32 | 32768)) // MS_SILENT is used by mount.
         return -22;
     Node* point = nullptr;
     int error = resolve_path(path, point);
@@ -550,6 +644,9 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
                 return error;
         }
         mount->readonly = flags & 1;
+        mount->nosuid = flags & 2;
+        mount->nodev = flags & 4;
+        mount->noexec = flags & 8;
         return 0;
     }
     bool ram = type && !strcmp(type, "ramfs"), disk = type && !strcmp(type, "ext2");
@@ -588,6 +685,9 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
                 }
             }
             mount.active = true;
+            mount.nosuid = flags & 2;
+            mount.nodev = flags & 4;
+            mount.noexec = flags & 8;
             return 0;
         }
     return -28;
@@ -617,6 +717,8 @@ int vfs_disk_root(unsigned device, bool readonly) {
 }
 
 int unmount(const Path& path, uint64_t flags) {
+    if (current && !capable(current->credentials, Capability::sys_admin))
+        return -1;
     if (flags)
         return -22;
     Node* node = nullptr;
@@ -686,6 +788,8 @@ void vfs_init(const void* archive, size_t length) {
         if (!n)
             panic("invalid archive hierarchy");
         n->mode = mode;
+        n->uid = hex(h + 22);
+        n->gid = hex(h + 30);
         if ((mode & 0170000) == symlink) {
             n->data = (uint8_t*)alloc(size + 1);
             if (!n->data)
@@ -869,6 +973,16 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
         h->offset = n->size;
     if (node_readonly(n))
         return -30;
+    if (current && !capable(current->credentials, Capability::fsetid)) {
+        uint32_t mode = n->mode & ~04000;
+        if (mode & 010)
+            mode &= ~02000;
+        if (mode != n->mode) {
+            int error = node_setattr(n, mode, n->atime, n->mtime);
+            if (error)
+                return error;
+        }
+    }
     int64_t count = n->mount->ops->write(n, h->offset, buf, len);
     if (count > 0) {
         h->offset += count;

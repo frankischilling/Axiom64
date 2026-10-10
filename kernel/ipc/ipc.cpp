@@ -28,6 +28,8 @@ static Socket* allocate_socket(unsigned type = 1) {
         if (!socket.used) {
             socket = {};
             socket.used = true;
+            socket.credentials = {current->process->pid, current->credentials.user.effective,
+                                  current->credentials.group.effective};
             socket.type = type;
             socket.capacity = type == 1 ? 65536 : 0;
             socket.bytes = type == 1 ? (uint8_t*)alloc(socket.capacity) : nullptr;
@@ -393,7 +395,7 @@ int64_t ipc_syscall(Frame* f) {
             memcpy(path.text, addr.path, len);
             if (lookup(path, false))
                 return -98;
-            error = create_node(path, 0140000 | 0777, s->bound_node);
+            error = create_node(path, 0140000 | (0777 & ~current->fs->umask), s->bound_node);
             if (error)
                 return error;
         }
@@ -407,6 +409,8 @@ int64_t ipc_syscall(Frame* f) {
         if (!s->local_length || s->connected)
             return -22;
         s->listener = true;
+        s->credentials = {current->process->pid, current->credentials.user.effective,
+                          current->credentials.group.effective};
         s->backlog = min(max(size_t(b), size_t(1)), size_t(32));
         return 0;
     case 42: {
@@ -428,6 +432,8 @@ int64_t ipc_syscall(Frame* f) {
             error = resolve_path(path, target);
             if (error)
                 return error;
+            if ((error = node_access(target, 2)))
+                return error;
         }
         for (auto& other : sockets)
             if (other.used && other.listener &&
@@ -442,6 +448,9 @@ int64_t ipc_syscall(Frame* f) {
         if (!server)
             return -12;
         server->connected = true;
+        server->peer_credentials = {current->process->pid, current->credentials.user.effective,
+                                    current->credentials.group.effective};
+        s->peer_credentials = listener->credentials;
         server->pending = true;
         server->peer = s;
         server->local_length = listener->local_length;
@@ -487,6 +496,8 @@ int64_t ipc_syscall(Frame* f) {
         left->peer = right;
         right->peer = left;
         left->connected = right->connected = true;
+        left->peer_credentials = right->credentials;
+        right->peer_credentials = left->credentials;
         int flags = ((b & 0x800) ? 04000 : 0) | ((b & 0x80000) ? 02000000 : 0);
         int result[2] = {install_socket(*current, left, flags), -1};
         if (result[0] >= 0)
@@ -515,6 +526,16 @@ int64_t ipc_syscall(Frame* f) {
             return -88;
         if (b != 1)
             return -92;
+        if (c == 17) {
+            uint32_t length;
+            if (!current->memory->space.copy_in(&length, f->r8, 4))
+                return -14;
+            length = min(length, uint32_t(sizeof(PeerCredentials)));
+            if (!current->memory->space.copy_out(d, &s->peer_credentials, length) ||
+                !current->memory->space.copy_out(f->r8, &length, 4))
+                return -14;
+            return 0;
+        }
         int value = c == 3 ? s->type : c == 4 ? 0 : c == 7 || c == 8 ? int(s->capacity) : -1;
         if (value < 0)
             return -92;

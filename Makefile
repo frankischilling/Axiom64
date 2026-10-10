@@ -365,6 +365,20 @@ test-tcp-sockets:
 	$(PYTHON) scripts/tcp_test.py
 test-tcp-native-wire:
 	$(PYTHON) scripts/tcp_native_wire.py
+build/tcp-fault-native: userspace/tests/net/tcp_fault.c
+	@mkdir -p build
+	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-fault-static: userspace/tests/net/tcp_fault.c
+	@mkdir -p build
+	musl-gcc -std=gnu11 -static -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-fault-dynamic: userspace/tests/net/tcp_fault.c
+	@mkdir -p build
+	musl-gcc -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+.PHONY: test-tcp-fault test-tcp-fault-native
+test-tcp-fault:
+	$(PYTHON) scripts/tcp_fault_test.py
+test-tcp-fault-native:
+	$(PYTHON) scripts/tcp_fault_native.py
 build/address-codec-host: kernel/tests/net/address.cpp kernel/net/netlink/addresses.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp kernel/include/net/ipv4_wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/address.cpp kernel/net/netlink/addresses.cpp -o $@

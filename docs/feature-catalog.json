@@ -539,6 +539,7 @@
         "scripts/tcp_fault_native.py",
         "scripts/tcp_fault_capture.py",
         "scripts/tests/tcp_fault_capture_test.py",
+        "scripts/tests/tcp_fault_native_test.py",
         "docs/tcp-loss.md"
       ],
       "branch": "feature/f13-tcp-udp-and-linux-socket-semantics",

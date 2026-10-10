@@ -168,6 +168,10 @@ def check_results(directory):
                     'all eight controlled TCP VM profiles')
         for row in rows:
             require(row['passed'] and not row['error'] and not row['missing'], 'successful controlled TCP result')
+            if name == 'tcp-fault-native-results.json':
+                require(len(row['capture_statistics']) == 2 and
+                        all(item['dropped'] == 0 and item['packets'] > 0 and item['buffer_bytes'] >= 4 * 1024 * 1024
+                            for item in row['capture_statistics']), 'both native capture sockets report no kernel drops')
             require(Path(row['peer']).name == row['peer'], 'bounded peer evidence path')
             peers = json.loads((directory / row['peer']).read_text())
             require(len(peers) == len(row['captures']) == 2, 'both controlled TCP adapters captured')

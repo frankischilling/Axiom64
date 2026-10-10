@@ -378,6 +378,7 @@ build/tcp-fault-dynamic: userspace/tests/net/tcp_fault.c
 test-tcp-fault:
 	$(PYTHON) scripts/tcp_fault_test.py
 test-tcp-fault-native:
+	$(PYTHON) scripts/tests/tcp_fault_native_test.py
 	$(PYTHON) scripts/tcp_fault_native.py
 build/address-codec-host: kernel/tests/net/address.cpp kernel/net/netlink/addresses.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp kernel/include/net/ipv4_wire.hpp
 	@mkdir -p build

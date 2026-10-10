@@ -46,6 +46,7 @@ def exercise(process, peers, servers, timeout, log, raw=False):
     connections = [None, None]
     buffers, started_roles = [bytearray(), bytearray()], set()
     began, text, lines, error = time.monotonic(), bytearray(), bytearray(), None
+    native_status = None
     selector.register(process.stdout, selectors.EVENT_READ, ('serial', None))
     for lane, server in enumerate(servers):
         server.setblocking(False)
@@ -69,6 +70,10 @@ def exercise(process, peers, servers, timeout, log, raw=False):
                     while b'\n' in lines:
                         line, _, rest = lines.partition(b'\n')
                         lines = bytearray(rest)
+                        if raw and line.startswith(b'TCP_FAULT_NATIVE_DONE status='):
+                            check(native_status is None, 'one actual native client exit status')
+                            native_status = int(line.split(b'=', 1)[1])
+                            check(native_status == 0, 'actual native TCP client exits successfully')
                         for index in range(2):
                             marker = f'TCP_FAULT_READY lane={index} role=1'.encode()
                             if marker in line and index not in started_roles:
@@ -120,21 +125,25 @@ def exercise(process, peers, servers, timeout, log, raw=False):
                             del peer.output[:count]
                         except BlockingIOError:
                             pass
+            if raw and native_status is not None and all(flow.done for peer in peers for flow in peer.flows):
+                break
             if process.poll() is not None and not selector.get_map().get(process.stdout.fileno()):
                 break
-        process.wait()
+        if not raw:
+            process.wait()
         results = [peer.result() for peer in peers]
     except Exception as exception:
         error, results = str(exception), []
     finally:
-        if process.poll() is None:
-            process.kill()
-        process.wait()
+        if not raw:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
         selector.close()
         for channel in connections:
             if channel is not None and not raw:
                 channel.close()
-    return text.decode(errors='replace'), results, error
+    return text.decode(errors='replace'), results, error, native_status if raw else process.returncode
 
 
 def run(linkage, firmware, transport, image, timeout):
@@ -166,7 +175,7 @@ def run(linkage, firmware, transport, image, timeout):
     try:
         with log_path.open('wb') as log:
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            text, results, error = exercise(process, peers, servers, timeout, log)
+            text, results, error, returncode = exercise(process, peers, servers, timeout, log)
     finally:
         for server in servers:
             server.close()
@@ -178,12 +187,12 @@ def run(linkage, firmware, transport, image, timeout):
     required += [f'TCP_FAULT_FLOW_PASS lane={lane} role={role} bytes_each=65536'
                  for lane in range(2) for role in range(2)]
     missing = [marker for marker in required if marker not in text]
-    result = dict(linkage=linkage, firmware=firmware, transport=transport, returncode=process.returncode,
+    result = dict(linkage=linkage, firmware=firmware, transport=transport, returncode=returncode,
                   error=error, missing=missing, peers=[{key: value for key, value in peer.items() if key != 'frames'}
                                                      for peer in results],
                   peer=peer_path.name, captures=[path.name for path in captures], log=log_path.name,
                   seconds=round(time.monotonic() - began, 3),
-                  passed=not error and not missing and process.returncode == 1 and
+                  passed=not error and not missing and returncode == 1 and
                   not any(marker in text for marker in ('TCP_FAULT_FAIL', 'PANIC:', 'FAULT pid=')))
     print(json.dumps(result), flush=True)
     if not result['passed']:

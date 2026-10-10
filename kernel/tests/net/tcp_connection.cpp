@@ -112,10 +112,15 @@ static void handshakes() {
     reset.flags = rst;
     refused.input(reset, 10);
     assert(refused.state() == State::syn_sent);
+    Segment invalid_ack{};
+    invalid_ack.flags = ack;
+    invalid_ack.acknowledgment = 12;
+    refused.input(invalid_ack, 15); // Queue a rejection, then receive the valid reset first.
     reset.flags = rst | ack;
     reset.acknowledgment = 11;
     refused.input(reset, 20);
     assert(refused.state() == State::closed && refused.error() == 111);
+    no_output(refused, 20); // An abort cancels a stale pending rejection.
 
     Connection a, b;
     a.active(1, 0);

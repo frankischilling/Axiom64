@@ -145,6 +145,7 @@ void Connection::detach(uint64_t now) {
 
 void Connection::abort(int error, bool send_reset) {
     candidate = Output::none;
+    response_pending = false;
     if (send_reset && status != State::closed) {
         response = {};
         response.sequence = send_next;

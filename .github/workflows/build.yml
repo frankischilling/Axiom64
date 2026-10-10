@@ -5,6 +5,12 @@ on:
     tags: ['**']
   pull_request:
   workflow_dispatch:
+    inputs:
+      manager_accelerator:
+        description: Accelerator for measured normal-init and carrier/failure VM runs
+        type: choice
+        default: tcg
+        options: [tcg, auto, kvm]
 permissions:
   contents: read
 concurrency:
@@ -31,6 +37,8 @@ jobs:
             downloads/sources
       - name: Check C and C++ formatting
         run: make check-format
+      - name: Test QEMU accelerator selection and actual monitor evidence
+        run: python3 scripts/tests/qemu_acceleration_test.py
       - name: Bundle corresponding sources
         run: make sources
       - name: Build standalone image and both userspace profiles
@@ -152,6 +160,12 @@ jobs:
         run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
       - name: Install build and emulation tools
         run: bash scripts/ci/tools.sh restore
+      - name: Prepare optional KVM access for measured manager VM runs
+        if: (startsWith(matrix.suite, 'link-') || startsWith(matrix.suite, 'normal-init-')) && (inputs.manager_accelerator == 'auto' || inputs.manager_accelerator == 'kvm')
+        run: |
+          if [ -e /dev/kvm ]; then
+            sudo chmod a+rw /dev/kvm
+          fi
 
       - name: Test BIOS and UEFI userspace
         if: matrix.suite == 'boot'
@@ -307,6 +321,7 @@ jobs:
         if: startsWith(matrix.suite, 'link-')
         env:
           SUITE: ${{ matrix.suite }}
+          AXIOM64_QEMU_ACCELERATOR: ${{ inputs.manager_accelerator || 'tcg' }}
         run: |
           python3 scripts/ci/paired_network.py --suite "$SUITE" \
             --archive "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz" --temporary-parent "$RUNNER_TEMP"
@@ -361,6 +376,7 @@ jobs:
         if: startsWith(matrix.suite, 'normal-init-')
         env:
           SUITE: ${{ matrix.suite }}
+          AXIOM64_QEMU_ACCELERATOR: ${{ inputs.manager_accelerator || 'tcg' }}
         run: |
           firmware=${SUITE#normal-init-}
           case "$firmware" in bios|uefi) ;; *) exit 1 ;; esac

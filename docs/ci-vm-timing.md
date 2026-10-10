@@ -1,0 +1,11 @@
+# VM timing and accelerator benchmarks
+
+[#133](https://github.com/frankischilling/Axiom64/issues/133) tracks the longest manager VM suites. The successful [baseline CI run](https://github.com/frankischilling/Axiom64/actions/runs/38042782851) spent 746 seconds in normal-init UEFI acceptance and 761 seconds in a paired UEFI/modern/lane1 carrier/failure suite. These runs retain actual lease clocks, independent packets, device faults and desktop/keyboard checks.
+
+The normal-init and carrier/failure harnesses accept `AXIOM64_QEMU_ACCELERATOR=tcg`, `auto` or `kvm`. Their default remains TCG. `auto` asks QEMU to initialize KVM and permits its initialization fallback to TCG; `kvm` requires KVM. QEMU's `query-kvm` response records the accelerator actually used in each result. A guest failure is a failed case, with no second emulator attempt. No guest clock or acceptance deadline changes.
+
+The manual Build and boot workflow exposes the same `manager_accelerator` choice for measuring these two suite families. Other suites keep their current configuration. KVM access depends on the runner; the requested accelerator alone does not establish that KVM ran or improved performance. A local device-node probe could not initialize KVM, so local TCG fallback evidence cannot establish a KVM speedup.
+
+Measure focused profiles before changing the CI default. Preserve every scenario, linkage, firmware, transport, adapter lane and root type, explicit TCG coverage and all full CI gates. Publish exact sources/products and complete before/after timings. The healthy adapter's measured twenty-second T1 barrier remains required. #107 retains its separate keyboard diagnosis requirements.
+
+The available mechanisms follow [QEMU's accelerator documentation](https://www.qemu.org/docs/master/system/qemu-manpage.html) and [GitHub's hosted-runner KVM guidance](https://github.blog/changelog/2024-04-02-github-actions-hardware-accelerated-android-virtualization-now-available/). This work concerns VM development infrastructure; HP work still follows the required VM prerequisites.

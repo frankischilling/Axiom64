@@ -16,6 +16,7 @@ from fetch import ROOT
 from manager_peer import ManagerPeer
 from normal_dns_peer import NormalDns
 from qmp import Qmp
+from qemu_acceleration import Acceleration
 
 SCENARIOS = {'no-nic': (0, 0), 'no-server': (2, 0), 'missing': (2, 2), 'healthy': (2, 3)}
 PHASES = ('desktop-before', 'initial', 'kill', 'revalidating', 'recovered', 'desktop-after', 'stop')
@@ -211,7 +212,8 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout):
     peers = [SupervisionPeer(lane, mask & (1 << lane), mask) for lane in range(interfaces)]
     servers = []
     disk = None
-    command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '2G', '-nic', 'none',
+    acceleration = Acceleration()
+    command = ['qemu-system-x86_64', '-machine', acceleration.machine, '-cpu', 'max', '-m', '2G', '-nic', 'none',
                '-cdrom', str(images[root]), '-display', 'none', '-serial', 'stdio', '-monitor', 'none',
                '-no-reboot', '-qmp', f'unix:{control},server=on,wait=off']
     mode = 'disable-legacy=on' if transport == 'modern' else 'disable-modern=on'
@@ -306,6 +308,7 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout):
                     needed = 1 if stage == 'desktop-before' else 2
                     if len(re.findall(r'^XTERM_WINDOW_ID window=\d+\r?$', text, re.M)) == needed:
                         qmp = Qmp(control)
+                        acceleration.observe(qmp)
                         qmp.command('input-send-event', {'events': [
                             {'type': 'rel', 'data': {'axis': 'x', 'value': 4}},
                             {'type': 'rel', 'data': {'axis': 'y', 'value': 4}},
@@ -420,7 +423,8 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout):
     result = dict(scenario=scenario, firmware=firmware, transport=transport, root=root, log=log.name,
                   returncode=returncode, stage=stage, error=error, spawns=spawns, reaps=reaps, phases=passed,
                   initial_counts=initial_counts, counts=[peer.counts() for peer in peers], screenshots=screenshots,
-                  desktop=before_desktop, seconds=round(time.monotonic() - started, 3), passed=False)
+                  desktop=before_desktop, seconds=round(time.monotonic() - started, 3), passed=False,
+                  acceleration=acceleration.evidence)
     if failure_screenshot or capture_error:
         result.update(failure_screenshot=failure_screenshot, capture_error=capture_error)
     dns = [peer.dns.evidence() for peer in peers]

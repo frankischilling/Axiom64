@@ -540,7 +540,11 @@
         "scripts/tcp_fault_capture.py",
         "scripts/tests/tcp_fault_capture_test.py",
         "scripts/tests/tcp_fault_native_test.py",
-        "docs/tcp-loss.md"
+        "docs/tcp-loss.md",
+        "scripts/tcp_reordering_peer.py",
+        "scripts/tcp_reordering_capture.py",
+        "scripts/tests/tcp_reordering_capture_test.py",
+        "docs/tcp-reordering.md"
       ],
       "branch": "feature/f13-tcp-udp-and-linux-socket-semantics",
       "issue": "https://github.com/frankischilling/Axiom64/issues/13"

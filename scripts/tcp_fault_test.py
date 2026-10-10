@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Exercise real Linux TCP sockets against independently constructed loss peers."""
+"""Exercise real Linux TCP sockets against independently constructed fault peers."""
 import argparse
 import json
 from pathlib import Path
@@ -11,9 +11,16 @@ import subprocess
 import time
 from fetch import ROOT, LOCK
 from tcp_fault_peer import Peer, check
+from tcp_reordering_peer import Peer as ReorderingPeer
 
 
-def fixture(linkage):
+def wire_configuration(wire):
+    check(wire in ('loss', 'reordering'), 'known controlled TCP wire profile')
+    return (Peer, 'tcp-fault') if wire == 'loss' else (ReorderingPeer, 'tcp-reordering')
+
+
+def fixture(linkage, wire='loss'):
+    _, prefix = wire_configuration(wire)
     subprocess.run(['make', '-s', '-j2', 'build/axiom64.elf', 'build/init',
                     f'build/tcp-fault-{linkage}', 'busybox'], cwd=ROOT, check=True)
     actual = subprocess.check_output(['dpkg-query', '-W', '-f=${Version}', 'musl-dev'], text=True)
@@ -35,7 +42,7 @@ def fixture(linkage):
             output.write(bytes(-output.tell() % 4))
             output.write(data)
             output.write(bytes(-output.tell() % 4))
-    image = ROOT / 'build' / f'axiom64-tcp-fault-{linkage}.iso'
+    image = ROOT / 'build' / f'axiom64-{prefix}-{linkage}.iso'
     subprocess.run(['python3', 'scripts/image.py', '--test', '--suite', 'network', '--output-name', image.name],
                    cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
     return image
@@ -146,10 +153,11 @@ def exercise(process, peers, servers, timeout, log, raw=False):
     return text.decode(errors='replace'), results, error, native_status if raw else process.returncode
 
 
-def run(linkage, firmware, transport, image, timeout):
-    label = f'tcp-fault-{linkage}-{firmware}-{transport}'
+def run(linkage, firmware, transport, image, timeout, wire='loss'):
+    peer_type, prefix = wire_configuration(wire)
+    label = f'{prefix}-{linkage}-{firmware}-{transport}'
     log_path = ROOT / 'build' / f'{label}.log'
-    peers, servers, captures = [Peer(lane) for lane in range(2)], [], []
+    peers, servers, captures = [peer_type(lane) for lane in range(2)], [], []
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '512M', '-nic', 'none',
                '-cdrom', str(image), '-display', 'none', '-serial', 'stdio', '-monitor', 'none',
                '-no-reboot', '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
@@ -187,7 +195,7 @@ def run(linkage, firmware, transport, image, timeout):
     required += [f'TCP_FAULT_FLOW_PASS lane={lane} role={role} bytes_each=65536'
                  for lane in range(2) for role in range(2)]
     missing = [marker for marker in required if marker not in text]
-    result = dict(linkage=linkage, firmware=firmware, transport=transport, returncode=returncode,
+    result = dict(wire=wire, linkage=linkage, firmware=firmware, transport=transport, returncode=returncode,
                   error=error, missing=missing, peers=[{key: value for key, value in peer.items() if key != 'frames'}
                                                      for peer in results],
                   peer=peer_path.name, captures=[path.name for path in captures], log=log_path.name,
@@ -202,11 +210,13 @@ def run(linkage, firmware, transport, image, timeout):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--wire', choices=('loss', 'reordering'), default='loss')
     for name, choices in (('linkage', ('static', 'dynamic')), ('firmware', ('bios', 'uefi')),
                           ('transport', ('modern', 'legacy'))):
         parser.add_argument(f'--{name}', choices=(*choices, 'both'), default='both')
     parser.add_argument('--timeout', type=float, default=150)
     args = parser.parse_args()
+    _, prefix = wire_configuration(args.wire)
     if args.timeout <= 0:
         parser.error('timeout must be positive')
     original = ROOT / 'build/rootfs-network.cpio'
@@ -214,12 +224,12 @@ def main():
     results = []
     try:
         for linkage in ('static', 'dynamic') if args.linkage == 'both' else (args.linkage,):
-            image = fixture(linkage)
+            image = fixture(linkage, args.wire)
             for firmware in ('bios', 'uefi') if args.firmware == 'both' else (args.firmware,):
                 for transport in ('modern', 'legacy') if args.transport == 'both' else (args.transport,):
-                    result = run(linkage, firmware, transport, image, args.timeout)
+                    result = run(linkage, firmware, transport, image, args.timeout, args.wire)
                     results.append(result)
-                    (ROOT / 'build/tcp-fault-results.json').write_text(json.dumps(results, indent=2) + '\n')
+                    (ROOT / 'build' / f'{prefix}-results.json').write_text(json.dumps(results, indent=2) + '\n')
                     if not result['passed']:
                         raise SystemExit('Controlled guest TCP loss acceptance failed')
     finally:

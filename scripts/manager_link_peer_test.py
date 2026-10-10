@@ -126,7 +126,7 @@ class Monitor:
 
 class Ports:
     def __init__(self, monitor):
-        self.monitor, self.address = monitor, None
+        self.monitor, self.address = monitor, 0
         self.requests, self.response = [], None
 
     def write(self, data):
@@ -141,8 +141,12 @@ class Ports:
             for slot in tuple(self.monitor.identities):
                 if mask & (1 << slot):
                     del self.monitor.identities[slot]
-        self.response = (f'OK {self.monitor.identities.get((self.address >> 11) & 31, 0xffffffff):#x}'
-                         if values[0] == 'inl' else 'OK').encode() + b'\n'
+        response = 'OK'
+        if values[:2] == ['inl', '0xcf8']:
+            response += f' {self.address:#x}'
+        elif values[:2] == ['inl', '0xcfc']:
+            response += f' {self.monitor.identities.get((self.address >> 11) & 31, 0xffffffff):#x}'
+        self.response = response.encode() + b'\n'
 
     def flush(self):
         pass
@@ -169,7 +173,9 @@ class PhysicalRemoval(unittest.TestCase):
                     self.assertFalse(hardware.monitor.paused)
                     self.assertEqual(list(hardware.monitor.identities), [5 - affected])
                     self.assertIn(f'outl 0xae08 {1 << (affected + 4):#x}', hardware.stream.requests)
-                    self.assertEqual(hardware.records[-1]['after'][affected], 0xffffffff)
+                    removal = next(row for row in hardware.records if row.get('operation') == 'remove')
+                    self.assertEqual(removal['after'][affected], 0xffffffff)
+                    self.assertEqual(hardware.stream.address, 0)
 
     def test_unexpected_healthy_identity_aborts_before_any_device_deletion(self):
         hardware = self.hardware(0, 'modern')

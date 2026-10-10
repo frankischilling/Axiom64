@@ -40,9 +40,14 @@ class Hardware:
 
     def remove(self):
         # CF8 is shared with the guest's PCI access; stop it for this short I/O
-        # sequence and resume it afterward. Its clock is never advanced by us.
+        # sequence and restore its selector before resuming an in-flight read.
+        # Its clock is never advanced by us.
         self.monitor.command('stop')
+        address = None
         try:
+            response = self.io('inl 0xcf8').split()
+            check(len(response) == 2, 'complete saved PCI address response')
+            address = int(response[1], 0)
             before = [self.identity(lane) for lane in (0, 1)]
             check(before == [self.expected(lane) for lane in (0, 1)],
                   'both real PCI identities match the configured adapters')
@@ -63,7 +68,11 @@ class Hardware:
                                      pending=pending, after=after, pci=pci,
                                      host_monotonic=time.monotonic()))
         finally:
-            self.monitor.command('cont')
+            try:
+                if address is not None:
+                    self.io(f'outl 0xcf8 {address:#x}')
+            finally:
+                self.monitor.command('cont')
 
     def close(self):
         self.stream.close()

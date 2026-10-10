@@ -44,6 +44,12 @@ jobs:
           make build/init-supervision
       - name: Test split-queue ownership with sanitizers
         run: make test-virtqueue
+      - name: Test paired network workspace isolation and failure evidence
+        run: python3 scripts/tests/paired_network_test.py
+      - name: Test PCI removal preserves interrupted guest reads
+        run: |
+          python3 scripts/manager_link_peer_test.py
+          python3 scripts/tests/manager_link_hardware_test.py
       - name: Upload sources and recipes
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -103,38 +109,22 @@ jobs:
           - random
           - normal-init-bios
           - normal-init-uefi
-          - protocol-bios-modern-lane0-static
-          - protocol-bios-modern-lane0-dynamic
-          - protocol-bios-modern-lane1-static
-          - protocol-bios-modern-lane1-dynamic
-          - protocol-bios-legacy-lane0-static
-          - protocol-bios-legacy-lane0-dynamic
-          - protocol-bios-legacy-lane1-static
-          - protocol-bios-legacy-lane1-dynamic
-          - protocol-uefi-modern-lane0-static
-          - protocol-uefi-modern-lane0-dynamic
-          - protocol-uefi-modern-lane1-static
-          - protocol-uefi-modern-lane1-dynamic
-          - protocol-uefi-legacy-lane0-static
-          - protocol-uefi-legacy-lane0-dynamic
-          - protocol-uefi-legacy-lane1-static
-          - protocol-uefi-legacy-lane1-dynamic
-          - link-bios-modern-lane0-static
-          - link-bios-modern-lane0-dynamic
-          - link-bios-modern-lane1-static
-          - link-bios-modern-lane1-dynamic
-          - link-bios-legacy-lane0-static
-          - link-bios-legacy-lane0-dynamic
-          - link-bios-legacy-lane1-static
-          - link-bios-legacy-lane1-dynamic
-          - link-uefi-modern-lane0-static
-          - link-uefi-modern-lane0-dynamic
-          - link-uefi-modern-lane1-static
-          - link-uefi-modern-lane1-dynamic
-          - link-uefi-legacy-lane0-static
-          - link-uefi-legacy-lane0-dynamic
-          - link-uefi-legacy-lane1-static
-          - link-uefi-legacy-lane1-dynamic
+          - protocol-bios-modern-lane0
+          - protocol-bios-modern-lane1
+          - protocol-bios-legacy-lane0
+          - protocol-bios-legacy-lane1
+          - protocol-uefi-modern-lane0
+          - protocol-uefi-modern-lane1
+          - protocol-uefi-legacy-lane0
+          - protocol-uefi-legacy-lane1
+          - link-bios-modern-lane0
+          - link-bios-modern-lane1
+          - link-bios-legacy-lane0
+          - link-bios-legacy-lane1
+          - link-uefi-modern-lane0
+          - link-uefi-modern-lane1
+          - link-uefi-legacy-lane0
+          - link-uefi-legacy-lane1
     steps:
       - name: Download this run's test inputs
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -271,19 +261,8 @@ jobs:
         env:
           SUITE: ${{ matrix.suite }}
         run: |
-          case "$SUITE" in
-            protocol-bios-modern-lane[01]-static|protocol-bios-modern-lane[01]-dynamic|\
-            protocol-bios-legacy-lane[01]-static|protocol-bios-legacy-lane[01]-dynamic|\
-            protocol-uefi-modern-lane[01]-static|protocol-uefi-modern-lane[01]-dynamic|\
-            protocol-uefi-legacy-lane[01]-static|protocol-uefi-legacy-lane[01]-dynamic) ;;
-            *) exit 2 ;;
-          esac
-          firmware=${SUITE#protocol-}; firmware=${firmware%%-*}
-          transport=${SUITE#protocol-"$firmware"-}; transport=${transport%%-*}
-          cell=${SUITE##*-lane}
-          affected=${cell%%-*}
-          linkage=${cell#*-}
-          python3 scripts/manager_protocol_test.py --firmware "$firmware" --transport "$transport" --affected "$affected" --linkage "$linkage"
+          python3 scripts/ci/paired_network.py --suite "$SUITE" \
+            --archive "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz" --temporary-parent "$RUNNER_TEMP"
       - name: Test carrier peer packets, physical removal, and observation barriers
         if: startsWith(matrix.suite, 'link-')
         run: |
@@ -294,19 +273,8 @@ jobs:
         env:
           SUITE: ${{ matrix.suite }}
         run: |
-          case "$SUITE" in
-            link-bios-modern-lane[01]-static|link-bios-modern-lane[01]-dynamic|\
-            link-bios-legacy-lane[01]-static|link-bios-legacy-lane[01]-dynamic|\
-            link-uefi-modern-lane[01]-static|link-uefi-modern-lane[01]-dynamic|\
-            link-uefi-legacy-lane[01]-static|link-uefi-legacy-lane[01]-dynamic) ;;
-            *) exit 2 ;;
-          esac
-          firmware=${SUITE#link-}; firmware=${firmware%%-*}
-          transport=${SUITE#link-"$firmware"-}; transport=${transport%%-*}
-          cell=${SUITE##*-lane}
-          affected=${cell%%-*}
-          linkage=${cell#*-}
-          python3 scripts/manager_link_test.py --firmware "$firmware" --transport "$transport" --affected "$affected" --linkage "$linkage"
+          python3 scripts/ci/paired_network.py --suite "$SUITE" \
+            --archive "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz" --temporary-parent "$RUNNER_TEMP"
       - name: Test counter scaling and ACPI discovery with sanitizers
         if: matrix.suite == 'configuration'
         run: make test-clock-codec 2>&1 | tee build/clock-codec.log
@@ -395,6 +363,7 @@ jobs:
             build/manager-link-*-packets.json
             build/dns-*-packets.json
             build/normal-init-*-dns-packets.json
+            build/paired-network/**
             build/*.png
             build/*.dump
 

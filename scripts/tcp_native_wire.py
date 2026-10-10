@@ -38,7 +38,7 @@ class NativePeer:
         self.forward_port = reservation.getsockname()[1]
         reservation.close()
         self.connections, self.threads = [], []
-        self.client_started = False
+        self.client_started = self.server_started = False
 
     @property
     def port(self):
@@ -107,7 +107,6 @@ def run(linkage, firmware, transport, timeout):
             captures.append(capture)
             command += ['-netdev', network, '-device', nic, '-object',
                         f'filter-dump,id=capture{lane},netdev=peer{lane},file={capture}']
-            peer.start('server')
         if firmware == 'uefi':
             variables = ROOT / 'build' / f'{label}-OVMF_VARS.fd'
             shutil.copyfile('/usr/share/OVMF/OVMF_VARS_4M.fd', variables)
@@ -122,6 +121,11 @@ def run(linkage, firmware, transport, timeout):
                     break
                 text = log.read_text(errors='replace')
                 for lane, peer in enumerate(peers):
+                    ready = ('TCP_CONFIG_PASS nics=2' if lane == 0
+                             else f'TCP_NATIVE_CLIENT_PASS index={lane}')
+                    if not peer.server_started and ready in text:
+                        peer.server_started = True
+                        peer.start('server')
                     if not peer.client_started and f'TCP_SERVER_READY index={lane + 1}' in text:
                         peer.client_started = True
                         peer.start('client')

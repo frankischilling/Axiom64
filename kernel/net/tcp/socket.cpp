@@ -7,6 +7,7 @@
 #include "core/random.hpp"
 #include "core/time.hpp"
 #include "process/task.hpp"
+#include "fs/descriptor.hpp"
 #include "../ipv4/socket.hpp"
 #include <new>
 
@@ -304,7 +305,8 @@ int tcp_address(Task& task, InetSocket* socket, bool peer, uint64_t pointer, uin
     return address_out(task, address, pointer, length);
 }
 
-int64_t tcp_accept(Task& task, Handle* handle, uint64_t address, uint64_t length, unsigned flags) {
+int64_t tcp_accept(Task& task, Handle* handle, uint64_t address, uint64_t length, unsigned flags,
+                   int fd) {
     auto socket = handle->inet;
     if (!socket || !socket->listening)
         return -22;
@@ -319,12 +321,7 @@ int64_t tcp_accept(Task& task, Handle* handle, uint64_t address, uint64_t length
     if (!opened)
         return -23;
     opened->inet = accepted;
-    int fd = allocate_fd(&task, opened, 0, flags & 0x80000);
-    if (fd < 0) {
-        opened->inet = nullptr;
-        close_handle(opened);
-        return fd;
-    }
+    install_reserved_fd(*task.files, fd, opened);
     unqueue(accepted);
     if (address) {
         int error = tcp_address(task, accepted, true, address, length);

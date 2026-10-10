@@ -54,7 +54,8 @@ int64_t socket_read(Socket*, void*, size_t, bool peek = false, size_t peek_offse
 
 int64_t socket_write(Socket*, const void*, size_t);
 
-int64_t socket_accept(Task&, Handle*, uint64_t address, uint64_t length, unsigned flags);
+int64_t socket_accept(Task&, Handle*, uint64_t address, uint64_t length, unsigned flags,
+                      int reserved_fd);
 
 int socket_output_address(Task&, Socket*, uint64_t address, uint64_t length);
 

@@ -13,7 +13,8 @@ void tcp_receive(unsigned index, uint32_t source, uint32_t destination, const vo
 int tcp_connect(InetSocket*, const InetAddress&);
 int64_t tcp_connect_result(InetSocket*);
 int tcp_listen(InetSocket*, int backlog);
-int64_t tcp_accept(Task&, Handle*, uint64_t address, uint64_t length, unsigned flags);
+int64_t tcp_accept(Task&, Handle*, uint64_t address, uint64_t length, unsigned flags,
+                   int reserved_fd);
 int tcp_address(Task&, InetSocket*, bool peer, uint64_t address, uint64_t length);
 int64_t tcp_read(InetSocket*, void*, size_t, bool peek = false, size_t offset = 0);
 int64_t tcp_write(InetSocket*, const void*, size_t);

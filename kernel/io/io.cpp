@@ -2,6 +2,7 @@
 #include "io/io.hpp"
 #include "core/time.hpp"
 #include "fs/file_lock.hpp"
+#include "fs/descriptor.hpp"
 #include "ipc/ipc.hpp"
 #include "process/signals.hpp"
 #include "net/packet.hpp"
@@ -25,6 +26,8 @@ static_assert(sizeof(Iovec) == 16 && sizeof(Message) == 56);
 
 struct IoRequest {
     Handle* handle;
+    FileTable* reserved_table = nullptr;
+    int reserved_fd = -1;
     Frame call;
     Iovec single, *vectors;
     size_t count;
@@ -46,6 +49,8 @@ struct IoRequest {
 static void destroy(IoRequest* request) {
     if (!request)
         return;
+    if (request->reserved_table)
+        discard_reserved_fd(*request->reserved_table, request->reserved_fd);
     if (request->vectors != &request->single)
         release(request->vectors);
     release(request->packet_data);
@@ -261,6 +266,10 @@ static int prepare(Task& task, IoRequest& request) {
     if (request.accept) {
         if (f.rax == 288 && (f.r10 & ~uint64_t(0x80800)))
             return -22;
+        request.reserved_fd = reserve_fd(*task.files, 0, f.rax == 288 && (f.r10 & 0x80000));
+        if (request.reserved_fd < 0)
+            return request.reserved_fd;
+        request.reserved_table = task.files;
         return 0;
     }
     if (request.positioned) {
@@ -470,9 +479,10 @@ static int64_t attempt(Task& task, IoRequest& request) {
         return result;
     }
     if (request.accept)
-        return inet_stream(h->inet)
-                   ? tcp_accept(task, h, f.rsi, f.rdx, f.rax == 288 ? f.r10 : 0)
-                   : socket_accept(task, h, f.rsi, f.rdx, f.rax == 288 ? f.r10 : 0);
+        return inet_stream(h->inet) ? tcp_accept(task, h, f.rsi, f.rdx, f.rax == 288 ? f.r10 : 0,
+                                                 request.reserved_fd)
+                                    : socket_accept(task, h, f.rsi, f.rdx, f.rax == 288 ? f.r10 : 0,
+                                                    request.reserved_fd);
     size_t done = 0;
     int64_t result = 0;
     uint64_t old_offset = h->offset;

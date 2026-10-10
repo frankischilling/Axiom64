@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ipc/ipc.hpp"
+#include "fs/descriptor.hpp"
 #include "io/socket_timeout.hpp"
 #include "net/tcp/socket.hpp"
 #include "net/packet.hpp"
@@ -117,7 +118,7 @@ static Handle* handle(int fd) {
     return fd >= 0 && unsigned(fd) < max_fds ? current->files->entries[fd].handle : nullptr;
 }
 
-static int install_socket(Task& task, Socket* socket, int flags = 0) {
+static int install_socket(Task& task, Socket* socket, int flags = 0, int reserved = -1) {
     Handle* h = open_handle(nullptr, 2 | (flags & 04000));
     if (!h) {
         if (!socket->pending)
@@ -125,7 +126,11 @@ static int install_socket(Task& task, Socket* socket, int flags = 0) {
         return -23;
     }
     h->socket = socket;
-    int fd = allocate_fd(&task, h, 0, flags & 02000000);
+    int fd = reserved;
+    if (fd >= 0)
+        install_reserved_fd(*task.files, fd, h);
+    else
+        fd = allocate_fd(&task, h, 0, flags & 02000000);
     if (fd < 0) {
         h->socket = nullptr;
         close_handle(h);
@@ -176,7 +181,8 @@ int socket_output_address(Task& task, Socket* s, uint64_t pointer, uint64_t leng
     return 0;
 }
 
-int64_t socket_accept(Task& task, Handle* h, uint64_t address, uint64_t length, unsigned flags) {
+int64_t socket_accept(Task& task, Handle* h, uint64_t address, uint64_t length, unsigned flags,
+                      int reserved) {
     auto s = h->socket;
     if (!s->listener)
         return -22;
@@ -190,7 +196,8 @@ int64_t socket_accept(Task& task, Handle* h, uint64_t address, uint64_t length, 
             return error;
     }
     int fd = install_socket(task, accepted,
-                            ((flags & 0x800) ? 04000 : 0) | ((flags & 0x80000) ? 02000000 : 0));
+                            ((flags & 0x800) ? 04000 : 0) | ((flags & 0x80000) ? 02000000 : 0),
+                            reserved);
     if (fd < 0)
         return fd;
     accepted->pending = false;

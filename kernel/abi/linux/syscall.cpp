@@ -287,6 +287,8 @@ static int64_t dup_fd(int old, int target, int flags = 0) {
         return -9;
     if (target < 0 || unsigned(target) >= max_fds)
         return -9;
+    if (current->files->entries[target].reserved)
+        return -16;
     if (target != old) {
         close_handle(current->files->entries[target].handle);
         retain(h);

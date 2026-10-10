@@ -1,0 +1,418 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "net/tcp/connection.hpp"
+#include <algorithm>
+#include <cassert>
+#include <cstdio>
+#include <cstring>
+#include <deque>
+#include <vector>
+
+using namespace ax::tcp;
+
+// Packets cross the real production encoder/checksum/decoder. Each queued packet owns bytes.
+struct Packet {
+    std::vector<uint8_t> bytes;
+    bool from_client;
+
+    Segment segment() const {
+        Segment result;
+        assert(decode(from_client ? 0xc0000201 : 0xc6336402, from_client ? 0xc6336402 : 0xc0000201,
+                      bytes.data(), bytes.size(), result));
+        assert(result.source == (from_client ? 49152 : 80));
+        assert(result.destination == (from_client ? 80 : 49152));
+        return result;
+    }
+};
+
+static bool output(Connection& endpoint, uint64_t now, bool client, Packet& packet,
+                   bool enqueue = true) {
+    Segment segment;
+    if (!endpoint.next(now, segment))
+        return false;
+    segment.source = client ? 49152 : 80;
+    segment.destination = client ? 80 : 49152;
+    packet = {std::vector<uint8_t>(60 + segment.length), client};
+    size_t length = encode(client ? 0xc0000201 : 0xc6336402, client ? 0xc6336402 : 0xc0000201,
+                           segment, packet.bytes.data(), packet.bytes.size());
+    assert(length);
+    packet.bytes.resize(length);
+    if (enqueue)
+        endpoint.emitted(now);
+    return true;
+}
+
+static Packet require_output(Connection& endpoint, uint64_t now, bool client = true) {
+    Packet packet;
+    assert(output(endpoint, now, client, packet));
+    return packet;
+}
+
+static void no_output(Connection& endpoint, uint64_t now) {
+    Packet packet;
+    assert(!output(endpoint, now, true, packet));
+}
+
+static void establish(Connection& client, Connection& server, uint32_t client_seq = 100,
+                      uint32_t server_seq = 500, uint16_t mss = 1460) {
+    client.active(client_seq, 0, mss);
+    Packet candidate;
+    assert(output(client, 0, true, candidate, false));
+    assert(client.next_send() == client_seq); // Failed enqueue consumes no sequence space.
+    assert(output(client, 0, true, candidate, false));
+    assert(client.next_send() == client_seq);
+    client.emitted(0);
+    auto request = candidate.segment();
+    assert(request.flags == syn && request.sequence == client_seq &&
+           request.maximum_segment == mss);
+    assert(server.passive(server_seq, request, 5, mss));
+    Packet reply_packet = require_output(server, 5, false);
+    auto reply = reply_packet.segment();
+    assert(reply.flags == (syn | ack) && reply.sequence == server_seq &&
+           reply.acknowledgment == client_seq + 1);
+    client.input(reply, 10);
+    assert(client.state() == State::established);
+    auto acknowledgment = require_output(client, 10).segment();
+    assert(acknowledgment.flags == ack && acknowledgment.acknowledgment == server_seq + 1);
+    server.input(acknowledgment, 15);
+    assert(server.state() == State::established && server.next_receive() == client_seq + 1);
+    assert(client.next_receive() == server_seq + 1);
+    no_output(client, 15);
+    no_output(server, 15);
+}
+
+static Segment inbound(const Connection& endpoint, uint32_t sequence, const char* data = nullptr,
+                       uint8_t flags = ack) {
+    Segment result{};
+    result.sequence = sequence;
+    result.acknowledgment = endpoint.next_send();
+    result.window = stream_capacity;
+    result.flags = flags;
+    result.payload = reinterpret_cast<const uint8_t*>(data);
+    result.length = data ? std::strlen(data) : 0;
+    return result;
+}
+
+static void handshakes() {
+    Connection lost;
+    lost.active(0xfffffff0, 0);
+    auto original = require_output(lost, 0).segment();
+    no_output(lost, 999);
+    auto retransmitted = require_output(lost, 1000).segment();
+    assert(retransmitted.flags == syn && retransmitted.sequence == original.sequence);
+    no_output(lost, 2999);
+    retransmitted = require_output(lost, 3000).segment();
+    assert(retransmitted.sequence == original.sequence);
+    no_output(lost, 60000);
+    assert(lost.state() == State::closed && lost.error() == 110);
+
+    Connection refused;
+    refused.active(10, 0);
+    require_output(refused, 0);
+    Segment reset{};
+    reset.flags = rst;
+    refused.input(reset, 10);
+    assert(refused.state() == State::syn_sent);
+    reset.flags = rst | ack;
+    reset.acknowledgment = 11;
+    refused.input(reset, 20);
+    assert(refused.state() == State::closed && refused.error() == 111);
+
+    Connection a, b;
+    a.active(1, 0);
+    b.active(77, 0);
+    Packet pa = require_output(a, 0), pb = require_output(b, 0, false);
+    a.input(pb.segment(), 10);
+    b.input(pa.segment(), 10);
+    assert(a.state() == State::syn_received && b.state() == State::syn_received);
+    pa = require_output(a, 10);
+    pb = require_output(b, 10, false);
+    a.input(pb.segment(), 20);
+    b.input(pa.segment(), 20);
+    // SYN/ACKs are answered by challenge ACKs; their ACK is then validated at RCV.NXT.
+    assert(a.state() == State::syn_received && b.state() == State::syn_received);
+    pa = require_output(a, 20);
+    pb = require_output(b, 20, false);
+    a.input(pb.segment(), 30);
+    b.input(pa.segment(), 30);
+    assert(a.state() == State::established && b.state() == State::established);
+
+    Connection client, server;
+    establish(client, server, 0xfffffff0, 0xffffffff);
+    assert(client.next_receive() == 0);
+}
+
+static void reassembly() {
+    Connection client, server;
+    establish(client, server, 0xfffffff0, 0xfffffff8);
+    uint32_t first = client.next_receive();
+    client.input(inbound(client, first + 6, "GHI"), 30);
+    assert(client.available() == 0 && client.next_receive() == first);
+    auto gap_ack = require_output(client, 30).segment();
+    assert(gap_ack.acknowledgment == first);
+    client.input(inbound(client, first + 3, "DEFghi"), 40);
+    require_output(client, 40);
+    client.input(inbound(client, first - 2, "xxABC"), 50);
+    assert(client.available() == 9 && client.next_receive() == first + 9);
+    auto ending = inbound(client, first + 12, "MNO", ack | fin);
+    client.input(ending, 60);
+    assert(!client.eof() && client.available() == 9);
+    client.input(inbound(client, first + 9, "JKL"), 70);
+    assert(client.eof() && client.available() == 15 && client.next_receive() == first + 16);
+    assert(client.state() == State::close_wait);
+    char bytes[32]{};
+    assert(client.read(bytes, 3, true, 2) == 3 && !std::memcmp(bytes, "CDE", 3));
+    assert(client.available() == 15);
+    assert(client.read(bytes, 4) == 4 && !std::memcmp(bytes, "ABCD", 4));
+    assert(client.read(bytes, sizeof(bytes)) == 11 && !std::memcmp(bytes, "EFGHIJKLMNO", 11));
+    client.input(inbound(client, first + 16, "afterEOF"), 80);
+    assert(client.available() == 0 && client.next_receive() == first + 16);
+    assert(client.read(nullptr, 10) == 0);
+    client.close_read();
+    assert(client.eof());
+}
+
+static void validation() {
+    Connection client, server;
+    establish(client, server);
+    assert(client.write("queued", 6, 20) == 6);
+    Packet data = require_output(client, 20);
+    uint32_t first = client.next_receive();
+    Segment future = inbound(client, first);
+    future.acknowledgment = client.next_send() + 1;
+    client.input(future, 30);
+    assert(client.queued() == 6);
+    require_output(client, 30);
+    auto stale = inbound(client, first);
+    stale.acknowledgment = 100;
+    stale.window = 0;
+    client.input(stale, 31);
+    uint8_t more[1460]{};
+    assert(client.write(more, sizeof(more), 31) == sizeof(more));
+    assert(require_output(client, 31).segment().length == sizeof(more));
+    assert(client.queued() ==
+           sizeof(more) + 6); // A stale ACK neither frees data nor closes the window.
+    auto reset = inbound(client, first + 1, nullptr, rst);
+    client.input(reset, 40);
+    assert(client.state() == State::established && !client.error());
+    assert(require_output(client, 40).segment().flags == ack);
+    reset.sequence = first + stream_capacity;
+    client.input(reset, 50);
+    no_output(client, 50);
+    reset.sequence = first;
+    client.input(reset, 60);
+    assert(client.state() == State::closed && client.error() == 104);
+    no_output(client, 60);
+}
+
+static void sizing() {
+    Connection client, server;
+    establish(client, server);
+    assert(client.write("abc", 3, 20) == 3);
+    Packet first = require_output(client, 20);
+    assert(client.write("de", 2, 30) == 2);
+    no_output(client, 30); // Default Nagle coalesces a small write until existing data is ACKed.
+    client.nodelay(true);
+    Packet second = require_output(client, 30);
+    assert(second.segment().length == 2 &&
+           second.segment().sequence == first.segment().sequence + 3);
+    server.input(first.segment(), 40);
+    server.input(second.segment(), 40);
+    assert(server.available() == 5);
+
+    Connection limited, peer;
+    establish(limited, peer);
+    auto update = inbound(limited, limited.next_receive());
+    update.window = 1;
+    limited.input(update, 20);
+    std::vector<uint8_t> bytes(stream_capacity + 1, 'x');
+    assert(limited.write(bytes.data(), bytes.size(), 20) == stream_capacity);
+    assert(limited.writable() == 0 && limited.write("x", 1, 20) == 0);
+    no_output(limited, 199); // A tiny window does not cause immediate one-byte segmentation.
+    assert(require_output(limited, 200).segment().length == 1); // Bounded SWS override timer.
+    limited.input(inbound(limited, limited.next_receive() + 100, "discarded"), 210);
+    assert(limited.available() == 0);
+    limited.close_read();
+    limited.input(inbound(limited, limited.next_receive(), "read_shutdown"), 220);
+    assert(limited.available() == 0 && limited.eof());
+}
+
+static void loss() {
+    Connection client, server;
+    establish(client, server, 100, 500, 4);
+    assert(client.write("ABCDEFGHIJKLMNOPQRSTUVWX", 24, 20) == 24);
+    Packet lost = require_output(client, 20);
+    assert(lost.segment().length == 4);
+    for (unsigned at = 0; at < 3; at++) {
+        Packet packet = require_output(client, 20);
+        server.input(packet.segment(), 30 + at);
+        client.input(require_output(server, 30 + at, false).segment(), 40 + at);
+    }
+    Packet fast = require_output(client, 50);
+    assert(fast.segment().sequence == lost.segment().sequence && fast.segment().length == 4);
+    Packet extra = require_output(client, 999); // Recovery permits one additional MSS here.
+    assert(extra.segment().sequence == lost.segment().sequence + 16);
+    no_output(client, 1019); // Fast retransmission did not restart the oldest packet's RTO.
+    Packet timed = require_output(client, 1020);
+    assert(timed.segment().sequence == lost.segment().sequence);
+    no_output(client, 1020); // Congestion collapsed to one MSS, with 16 bytes still outstanding.
+    server.input(timed.segment(), 1030);
+    assert(server.available() == 16);
+    server.input(extra.segment(), 1030);
+    assert(server.available() == 20);
+    client.input(require_output(server, 1030, false).segment(), 1040);
+    assert(client.queued() == 4);
+    char bytes[32]{};
+    assert(server.read(bytes, sizeof(bytes)) == 20 &&
+           !std::memcmp(bytes, "ABCDEFGHIJKLMNOPQRST", 20));
+    assert(require_output(client, 1040).segment().length == 4);
+}
+
+static void persist() {
+    Connection client, server;
+    server.limits(0, stream_capacity);
+    establish(client, server);
+    assert(client.write("hello", 5, 50) == 5);
+    no_output(client, 1049);
+    Packet probe = require_output(client, 1050);
+    assert(probe.segment().length == 1);
+    server.input(probe.segment(), 1060);
+    client.input(require_output(server, 1060, false).segment(), 1070);
+    no_output(client, 3049);
+    probe = require_output(client, 3050);
+    server.input(probe.segment(), 3060);
+    client.input(require_output(server, 3060, false).segment(), 3070);
+    assert(!client.error() && client.queued() == 5);
+    server.limits(1, stream_capacity);
+    client.input(require_output(server, 3080, false).segment(), 3090);
+    char bytes[8]{};
+    for (unsigned at = 0; at < 5; at++) {
+        Packet packet = require_output(client, 3100 + at);
+        assert(packet.segment().length == 1);
+        server.input(packet.segment(), 3100 + at);
+        client.input(require_output(server, 3100 + at, false).segment(), 3100 + at);
+        assert(server.read(bytes + at, 1) == 1);
+        client.input(require_output(server, 3100 + at, false).segment(), 3100 + at);
+    }
+    assert(!std::memcmp(bytes, "hello", 5) && client.queued() == 0);
+    Connection finite, shut;
+    shut.limits(0, stream_capacity);
+    establish(finite, shut);
+    finite.user_timeout(2500);
+    assert(finite.write("x", 1, 50) == 1);
+    no_output(finite, 2550);
+    assert(finite.state() == State::closed && finite.error() == 110);
+}
+
+static void closing() {
+    Connection client, server;
+    establish(client, server);
+    assert(client.write("abc", 3, 20) == 3);
+    client.close_write();
+    Packet text = require_output(client, 20), end = require_output(client, 20);
+    assert(end.segment().flags == (ack | fin));
+    server.input(end.segment(), 30); // FIN arrives before data and must wait for the gap.
+    assert(!server.eof());
+    server.input(text.segment(), 40);
+    assert(server.eof() && server.available() == 3 && server.state() == State::close_wait);
+    client.input(require_output(server, 40, false).segment(), 50);
+    assert(client.state() == State::fin_wait_2);
+    char bytes[3];
+    assert(server.read(bytes, 3) == 3 && !std::memcmp(bytes, "abc", 3));
+    server.close_write();
+    Packet finish = require_output(server, 60, false);
+    assert(server.state() == State::last_ack);
+    client.input(finish.segment(), 70);
+    assert(client.state() == State::time_wait && client.eof());
+    server.input(require_output(client, 70).segment(), 80);
+    assert(server.state() == State::closed);
+    client.input(finish.segment(),
+                 1000); // A lost final ACK restarts TIME-WAIT on retransmitted FIN.
+    require_output(client, 1000);
+    no_output(client, 120999);
+    assert(client.state() == State::time_wait);
+    no_output(client, 121000);
+    assert(client.state() == State::closed);
+
+    Connection a, b;
+    establish(a, b);
+    a.close_write();
+    b.close_write();
+    Packet fa = require_output(a, 20), fb = require_output(b, 20, false);
+    a.input(fb.segment(), 30);
+    b.input(fa.segment(), 30);
+    assert(a.state() == State::closing && b.state() == State::closing);
+    Packet aa = require_output(a, 30), ab = require_output(b, 30, false);
+    a.input(ab.segment(), 40);
+    b.input(aa.segment(), 40);
+    assert(a.state() == State::time_wait && b.state() == State::time_wait);
+
+    Connection detached, peer;
+    establish(detached, peer);
+    detached.detach(20);
+    peer.input(require_output(detached, 20).segment(), 30);
+    detached.input(require_output(peer, 30, false).segment(), 40);
+    assert(detached.state() == State::fin_wait_2);
+    no_output(detached, 60040);
+    assert(detached.state() == State::closed);
+}
+
+static void bounded_transfer() {
+    Connection client, server;
+    establish(client, server, 0xfffffff0, 12345);
+    std::vector<uint8_t> original(300000), actual;
+    for (size_t at = 0; at < original.size(); at++)
+        original[at] = uint8_t((at * 37) ^ (at >> 8));
+    size_t written = 0, packets = 0;
+    std::deque<Packet> network;
+    uint8_t read[1024];
+    for (uint64_t now = 20; now < 1000000 && actual.size() < original.size(); now += 10) {
+        written += client.write(original.data() + written, original.size() - written, now);
+        for (unsigned at = 0; at < 4; at++) {
+            Packet packet;
+            if (output(client, now, true, packet)) {
+                packets++;
+                if (packets % 17)
+                    network.push_back(packet);
+                if (packets % 13 == 0)
+                    network.push_back(packet);
+            }
+            if (output(server, now, false, packet)) {
+                packets++;
+                if (packets % 11)
+                    network.push_back(packet);
+            }
+        }
+        if (!network.empty()) {
+            Packet packet = packets % 5 ? network.front() : network.back();
+            if (packets % 5)
+                network.pop_front();
+            else
+                network.pop_back();
+            (packet.from_client ? server : client).input(packet.segment(), now);
+        }
+        if (now % 30 == 0) {
+            size_t count = server.read(read, sizeof(read));
+            actual.insert(actual.end(), read, read + count);
+        }
+        assert(!client.error() && !server.error());
+        assert(client.queued() <= stream_capacity && server.available() <= stream_capacity);
+        assert(network.size() < 1000);
+    }
+    assert(written == original.size() && actual == original);
+    std::printf(
+        "TCP_TRANSFER_PASS bytes=%zu packets=%zu loss_duplicate_reorder wrap bounded_queues\n",
+        actual.size(), packets);
+}
+
+int main() {
+    handshakes();
+    reassembly();
+    validation();
+    sizing();
+    loss();
+    persist();
+    closing();
+    bounded_transfer();
+    std::puts("TCP_CONNECTION_PASS handshake refusal simultaneous overlap gaps fin ack_validation "
+              "reset loss persist deadlines close ownership");
+}

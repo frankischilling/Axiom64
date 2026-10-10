@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 // IPv4 wire primitives shared by transport protocols.
-#include "core/base.hpp"
+#include <cstddef>
+#include <cstdint>
 
 namespace ax::ip4 {
 inline uint16_t get16(const uint8_t* bytes) {

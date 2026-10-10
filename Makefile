@@ -319,6 +319,24 @@ build/netlink-codec-host: kernel/tests/net/netlink.cpp kernel/net/netlink/routes
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/netlink.cpp kernel/net/netlink/routes.cpp -o $@
 test-netlink-codec: build/netlink-codec-host
 	./build/netlink-codec-host
+.PHONY: test-tcp-wire
+build/tcp-wire-host: kernel/tests/net/tcp_wire.cpp kernel/net/tcp/wire.cpp kernel/include/net/tcp/wire.hpp kernel/include/net/ipv4_wire.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_wire.cpp kernel/net/tcp/wire.cpp -o $@
+test-tcp-wire: build/tcp-wire-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/tcp-wire-host
+.PHONY: test-tcp-sender
+build/tcp-sender-host: kernel/tests/net/tcp_sender.cpp kernel/net/tcp/sender.cpp kernel/include/net/tcp/sender.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_sender.cpp kernel/net/tcp/sender.cpp -o $@
+test-tcp-sender: build/tcp-sender-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/tcp-sender-host
+build/tcp-connection-host: kernel/tests/net/tcp_connection.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp kernel/include/net/tcp/connection.hpp kernel/include/net/tcp/sender.hpp kernel/include/net/tcp/wire.hpp kernel/include/net/ipv4_wire.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_connection.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp -o $@
+.PHONY: test-tcp-connection
+test-tcp-connection: build/tcp-connection-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/tcp-connection-host
 build/address-codec-host: kernel/tests/net/address.cpp kernel/net/netlink/addresses.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp kernel/include/net/ipv4_wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/address.cpp kernel/net/netlink/addresses.cpp -o $@

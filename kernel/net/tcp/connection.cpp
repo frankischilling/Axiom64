@@ -3,6 +3,9 @@
 
 namespace ax::tcp {
 namespace {
+// Elapsed threshold from the Linux default 15-retry, 200 ms/120 s model.
+constexpr uint32_t default_delivery_timeout_ms = 924600;
+
 template <class T> T minimum(T a, T b) {
     return a < b ? a : b;
 }
@@ -158,6 +161,7 @@ void Connection::abort(int error, bool send_reset) {
     failure = error;
     status = State::closed;
     syn_pending = ack_pending = retransmit_pending = retransmit_active = false;
+    delivery_active = false;
     sample_pending = false;
 }
 
@@ -192,8 +196,12 @@ void Connection::advance(uint64_t now) {
     if (handshake() && elapsed(now, opened_at, 60000))
         abort(110);
     if (!handshake() && status != State::closed && status != State::time_wait && timeout_ms &&
-        (send_size || (sent_fin && send_unacknowledged != send_next)) &&
+        (send_size || (sent_fin && send_unacknowledged != send_next) ||
+         (write_closed && !sent_fin && delivery_active)) &&
         elapsed(now, progress_at, timeout_ms))
+        abort(110);
+    if (!handshake() && status != State::closed && status != State::time_wait && !timeout_ms &&
+        delivery_active && elapsed(now, delivery_at, default_delivery_timeout_ms))
         abort(110);
 }
 
@@ -216,6 +224,13 @@ void Connection::acknowledge(const Segment& segment, uint64_t now) {
         window_ack = acknowledged;
         if (peer_window && !previous_window && send_unacknowledged != send_next)
             retransmit_pending = true;
+        if (peer_window && !previous_window && delivery_active) {
+            // A responsive receiver can stay closed beyond the default period.
+            // Reopening begins a fresh delivery period for already owned sequence.
+            if (now > delivery_at)
+                delivery_at = now;
+            delivery_active = send_unacknowledged != send_next;
+        }
         if (peer_window || previous_window) {
             // A newly closed window starts a fresh RTO-based persist period.
             // Repeated zero-window ACKs leave its exponential backoff intact.
@@ -224,6 +239,10 @@ void Connection::acknowledge(const Segment& segment, uint64_t now) {
         }
     }
     if (acknowledged == send_unacknowledged) {
+        // Default persist survives while a validated receiver answers probes.
+        // Explicit user timeout still observes progress_at independently.
+        if (!peer_window && delivery_active && now > delivery_at)
+            delivery_at = now;
         if (send_unacknowledged != send_next && send_size && !segment.length &&
             !(segment.flags & (syn | fin)) && previous_window == segment.window && peer_window)
             retransmit_pending |= congestion.duplicate(send_next - send_unacknowledged);
@@ -247,6 +266,9 @@ void Connection::acknowledge(const Segment& segment, uint64_t now) {
     retransmit_pending = false;
     progress_at = now;
     retransmit_active = send_unacknowledged != send_next;
+    delivery_active = retransmit_active;
+    if (delivery_active && now > delivery_at)
+        delivery_at = now;
     if (retransmit_active)
         retransmit_at = after(now, timer.interval());
     if (sent_fin && acknowledged == finish_sequence + 1) {
@@ -538,6 +560,14 @@ void Connection::emitted(uint64_t now) {
         ack_pending = false;
     if (kind == Output::acknowledgment)
         return;
+    if (!handshake() && !delivery_active) {
+        // Failed enqueue never reaches this ownership boundary. Retries cannot
+        // restart an active period, including an unanswered zero-window probe.
+        delivery_at = now;
+        if (kind == Output::probe && !send_size && write_closed && !sent_fin)
+            progress_at = now; // An empty FIN queued behind a closed window is now being probed.
+        delivery_active = true;
+    }
     uint32_t end = produced.sequence + sequence_length(produced);
     bool retransmitted = kind == Output::retransmit || (kind == Output::handshake && syn_emitted) ||
                          (kind == Output::probe && before(produced.sequence, send_next));

@@ -697,7 +697,205 @@ static void challenge_intervals() {
                 cases + 2);
 }
 
+static void default_lifetimes() {
+    // The pinned Linux default retry model gives 924600 ms. These policy clocks
+    // complement, rather than replace, the complete actual NIC observations.
+    constexpr uint64_t lifetime = 924600;
+    unsigned cases = 0;
+    for (bool wrapped : {false, true}) {
+        for (bool finish : {false, true}) {
+            for (uint64_t start : {uint64_t(0), uint64_t(20), UINT64_MAX - lifetime}) {
+                Connection client, server;
+                establish(client, server, wrapped ? 0xfffffff0 : 100);
+                if (finish)
+                    client.close_write();
+                else
+                    assert(client.write("x", 1, start) == 1);
+                Packet owned = require_output(client, start);
+                assert(finish ? bool(owned.segment().flags & fin) : owned.segment().length == 1);
+                // Repeated failed retries cannot refresh the original owned period.
+                for (unsigned at = 0; at < 3; at++) {
+                    Packet pending;
+                    assert(output(client, start + lifetime - 1, true, pending, false));
+                }
+                assert(client.error() == 0);
+                no_output(client, start + lifetime);
+                assert(client.state() == State::closed && client.error() == 110);
+                cases++;
+            }
+        }
+    }
+
+    Connection delayed, receiver;
+    establish(delayed, receiver);
+    assert(delayed.write("x", 1, 20) == 1);
+    for (uint64_t now : {uint64_t(20), lifetime + 21, 2 * lifetime + 22}) {
+        Packet pending;
+        assert(output(delayed, now, true, pending, false));
+        assert(delayed.next_send() == 101 && delayed.error() == 0);
+    }
+    uint64_t committed = 2 * lifetime + 22;
+    delayed.emitted(committed);
+    Packet retry;
+    assert(output(delayed, committed + lifetime - 1, true, retry, false));
+    no_output(delayed, committed + lifetime);
+    assert(delayed.error() == 110);
+    cases++;
+
+    Connection partial, other;
+    establish(partial, other);
+    assert(partial.write("xy", 2, 20) == 2);
+    require_output(partial, 20);
+    auto progress = inbound(partial, partial.next_receive());
+    progress.acknowledgment = 102;
+    partial.input(injection(progress).segment(), lifetime + 19);
+    assert(partial.queued() == 1 && partial.error() == 0);
+    assert(output(partial, 2 * lifetime + 18, true, retry, false));
+    no_output(partial, 2 * lifetime + 19);
+    assert(partial.error() == 110);
+    cases++;
+
+    Connection renewed, peer;
+    establish(renewed, peer);
+    assert(renewed.write("x", 1, 20) == 1);
+    require_output(renewed, 20);
+    renewed.input(injection(inbound(renewed, renewed.next_receive())).segment(), lifetime + 19);
+    assert(renewed.queued() == 0);
+    no_output(renewed, 2 * lifetime);
+    assert(renewed.write("y", 1, 2 * lifetime + 20) == 1);
+    require_output(renewed, 2 * lifetime + 20);
+    assert(output(renewed, 3 * lifetime + 19, true, retry, false));
+    no_output(renewed, 3 * lifetime + 20);
+    assert(renewed.error() == 110);
+    cases++;
+
+    Connection finite, limit;
+    establish(finite, limit);
+    finite.user_timeout(lifetime + 2000);
+    assert(finite.write("x", 1, 20) == 1);
+    require_output(finite, 20);
+    assert(output(finite, lifetime + 20, true, retry, false));
+    assert(finite.error() == 0);
+    no_output(finite, lifetime + 2020);
+    assert(finite.error() == 110);
+    cases++;
+
+    Connection duplicate, ignored;
+    establish(duplicate, ignored);
+    assert(duplicate.write("x", 1, 20) == 1);
+    require_output(duplicate, 20);
+    auto unchanged = inbound(duplicate, duplicate.next_receive());
+    unchanged.acknowledgment = 101;
+    for (uint64_t now : {lifetime - 100, lifetime - 50, lifetime - 25})
+        duplicate.input(injection(unchanged).segment(), now);
+    auto invalid = invalid_challenge(duplicate, 1);
+    duplicate.input(injection(invalid).segment(), lifetime);
+    no_output(duplicate, lifetime + 20);
+    assert(duplicate.error() == 110);
+    cases++;
+
+    for (bool responsive : {false, true}) {
+        Connection stopped, closed;
+        closed.limits(0, stream_capacity);
+        establish(stopped, closed);
+        assert(stopped.write("hello", 5, 50) == 5);
+        no_output(stopped, 1049);
+        Packet probe = require_output(stopped, 1050);
+        uint64_t last = 1050;
+        if (responsive) {
+            for (uint64_t now = 1050; now < 2 * lifetime; now += 60000) {
+                if (now != 1050)
+                    probe = require_output(stopped, now);
+                closed.input(probe.segment(), now + 1);
+                stopped.input(require_output(closed, now + 1, false).segment(), now + 2);
+                assert(stopped.queued() == 5 && stopped.error() == 0);
+                last = now + 10;
+            }
+            closed.limits(stream_capacity, stream_capacity);
+            stopped.input(require_output(closed, last, false).segment(), last + 1);
+            for (unsigned at = 0; at < 4 && stopped.queued(); at++) {
+                Packet packet = require_output(stopped, last + 2 + at * 10);
+                closed.input(packet.segment(), last + 3 + at * 10);
+                stopped.input(require_output(closed, last + 3 + at * 10, false).segment(),
+                              last + 4 + at * 10);
+            }
+            char bytes[8]{};
+            assert(stopped.queued() == 0 && closed.read(bytes, sizeof(bytes)) == 5 &&
+                   !std::memcmp(bytes, "hello", 5));
+            no_output(stopped, last + lifetime);
+            assert(stopped.state() == State::established && stopped.error() == 0);
+        } else {
+            assert(output(stopped, 1050 + lifetime - 1, true, retry, false));
+            no_output(stopped, 1050 + lifetime);
+            assert(stopped.error() == 110);
+        }
+        cases++;
+    }
+    Connection independent, waiting, live, live_peer;
+    establish(independent, waiting);
+    establish(live, live_peer);
+    assert(independent.write("x", 1, 20) == 1);
+    require_output(independent, 20);
+    assert(live.write("y", 1, lifetime) == 1);
+    require_output(live, lifetime);
+    no_output(independent, lifetime + 20);
+    no_output(live, lifetime + 20);
+    assert(independent.error() == 110 && live.error() == 0);
+    cases++;
+
+    Connection backward, zero;
+    zero.limits(0, stream_capacity);
+    establish(backward, zero);
+    assert(backward.write("x", 1, 50) == 1);
+    Packet probe = require_output(backward, 1050);
+    zero.input(probe.segment(), 1060);
+    Packet answer = require_output(zero, 1060, false);
+    backward.input(answer.segment(), 1100);
+    backward.input(answer.segment(), 1000); // A regressed reading cannot shorten the live period.
+    assert(output(backward, 1100 + lifetime - 1, true, retry, false));
+    no_output(backward, 1100 + lifetime);
+    assert(backward.error() == 110);
+    cases++;
+
+    for (uint32_t timeout : {uint32_t(0), uint32_t(2500)}) {
+        Connection finish, closed;
+        closed.limits(0, stream_capacity);
+        establish(finish, closed);
+        finish.user_timeout(timeout);
+        finish.close_write();
+        Packet owned = require_output(finish, 1010);
+        assert(owned.segment().length == 0 && !(owned.segment().flags & fin));
+        uint64_t interval = timeout ? timeout : lifetime;
+        assert(output(finish, 1010 + interval - 1, true, retry, false));
+        no_output(finish, 1010 + interval);
+        assert(finish.error() == 110);
+        cases++;
+    }
+    for (bool wrapped : {false, true}) {
+        for (bool future : {false, true}) {
+            Connection poisoned, stopped;
+            stopped.limits(0, stream_capacity);
+            establish(poisoned, stopped, wrapped ? 0xfffffff0 : 100);
+            assert(poisoned.write("x", 1, 50) == 1);
+            Packet first = require_output(poisoned, 1050);
+            auto rejected = inbound(poisoned, poisoned.next_receive());
+            rejected.window = 0;
+            rejected.acknowledgment =
+                future ? poisoned.next_send() + 1 : first.segment().sequence - 1;
+            poisoned.input(injection(rejected).segment(), 1050 + lifetime - 1);
+            no_output(poisoned, 1050 + lifetime);
+            assert(poisoned.error() == 110);
+            cases++;
+        }
+    }
+    std::printf(
+        "TCP_DEFAULT_LIFETIME_PASS cases=%u data fin zero ownership progress custom duplicate "
+        "persist responsive recovery independent backward empty_fin wrap limit\n",
+        cases);
+}
+
 int main() {
+    default_lifetimes();
     challenge_intervals();
     handshakes();
     reassembly();

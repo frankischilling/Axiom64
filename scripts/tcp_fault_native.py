@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import platform
 import socket
 import signal
 import struct
@@ -95,13 +96,13 @@ def client(scratch, linkage, wire='loss'):
     raise SystemExit(completed.returncode)
 
 
-def namespace(scratch, wire='loss'):
+def namespace(scratch, wire='loss', linkages=('native', 'static', 'dynamic')):
     peer_type, wire_prefix = wire_configuration(wire)
     parent = (scratch / 'parent-netns').read_text()
     fixture_namespace = os.readlink('/proc/self/ns/net')
     check(parent != fixture_namespace, 'raw peer requires an isolated network namespace')
     rows = []
-    for linkage in ('native', 'static', 'dynamic'):
+    for linkage in linkages:
         for name in ('client-ready', 'client-go', 'client-release'):
             (scratch / name).unlink(missing_ok=True)
         process = subprocess.Popen(['unshare', '--net', sys.executable, __file__, '--client', str(scratch), linkage, wire],
@@ -138,7 +139,7 @@ def namespace(scratch, wire='loss'):
             (scratch / 'client-go').write_text('go\n')
             log_path = ROOT / 'build' / f'{label}.log'
             with log_path.open('wb') as log:
-                text, results, error, returncode = exercise(process, peers, channels, 150, log, raw=True)
+                text, results, error, returncode = exercise(process, peers, channels, 1600 if wire == 'lifetime' else 150, log, raw=True)
             _, required = application_configuration(wire)
             missing = [marker for marker in required if marker not in text]
             peer_path = ROOT / 'build' / f'{label}-peer.json'
@@ -149,7 +150,13 @@ def namespace(scratch, wire='loss'):
                           peer=peer_path.name, captures=[f'{label}-lane{lane}.pcap' for lane in range(2)],
                           log=log_path.name, seconds=round(time.monotonic() - began, 3),
                           passed=not error and not missing and returncode == 0 and
-                          not any(marker in text for marker in ('TCP_FAULT_FAIL', 'TCP_TIMEOUT_FAIL')))
+                          not any(marker in text for marker in ('TCP_FAULT_FAIL', 'TCP_TIMEOUT_FAIL', 'TCP_LIFETIME_FAIL')))
+            if wire == 'lifetime':
+                result['kernel'] = platform.release()
+                result['defaults'] = {name: int(subprocess.check_output(
+                    ['nsenter', '-t', str(process.pid), '-n', '/usr/sbin/sysctl', '-n', f'net.ipv4.{name}']))
+                    for name in ('tcp_retries1', 'tcp_retries2', 'tcp_syn_retries', 'tcp_synack_retries')}
+                result['host_configuration_changed'] = False
         finally:
             try:
                 statistics, failures = [], []
@@ -186,7 +193,8 @@ def namespace(scratch, wire='loss'):
                         pass
                     process.wait()
         rows.append(result)
-        (ROOT / 'build' / f'{wire_prefix}-native-results.json').write_text(json.dumps(rows, indent=2) + '\n')
+        result_suffix = f'-{linkages[0]}' if len(linkages) == 1 else ''
+        (ROOT / 'build' / f'{wire_prefix}-native{result_suffix}-results.json').write_text(json.dumps(rows, indent=2) + '\n')
         print(json.dumps(result), flush=True)
         if not result['passed']:
             print(text[-5000:], flush=True)

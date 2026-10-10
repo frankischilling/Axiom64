@@ -60,6 +60,7 @@ jobs:
           make -j2 build/tcp-fault-native build/tcp-fault-static build/tcp-fault-dynamic
           make -j2 build/tcp-challenge-native build/tcp-challenge-static build/tcp-challenge-dynamic
           make -j2 build/tcp-timeout-native build/tcp-timeout-static build/tcp-timeout-dynamic
+          make -j2 build/tcp-lifetime-native build/tcp-lifetime-static build/tcp-lifetime-dynamic
           make build/init-supervision
       - name: Test split-queue ownership with sanitizers
         run: make test-virtqueue
@@ -147,6 +148,11 @@ jobs:
           - tcp-fault-timeout
           - tcp-fault-old-ack
           - tcp-fault-challenge
+          - tcp-lifetime-native
+          - tcp-lifetime-bios-modern
+          - tcp-lifetime-bios-legacy
+          - tcp-lifetime-uefi-modern
+          - tcp-lifetime-uefi-legacy
           - normal-init-bios
           - normal-init-uefi
           - protocol-bios-modern-lane0
@@ -182,6 +188,24 @@ jobs:
             sudo chmod a+rw /dev/kvm
           fi
 
+      - name: Observe complete default TCP lifetimes with all three native linkages
+        if: matrix.suite == 'tcp-lifetime-native'
+        run: |
+          sudo -n make test-tcp-lifetime-native
+          python3 scripts/tcp_lifetime/capture.py --report tcp-lifetime-native-results.json 2>&1 | tee build/tcp-lifetime-capture.log
+          python3 scripts/tcp_lifetime/damaged.py 2>&1 | tee build/tcp-lifetime-damage.log
+      - name: Observe complete default TCP lifetimes with both guest linkages and NICs
+        if: startsWith(matrix.suite, 'tcp-lifetime-') && matrix.suite != 'tcp-lifetime-native'
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          case "$SUITE" in tcp-lifetime-bios-modern|tcp-lifetime-bios-legacy|tcp-lifetime-uefi-modern|tcp-lifetime-uefi-legacy) ;; *) exit 1 ;; esac
+          configuration=${SUITE#tcp-lifetime-}
+          firmware=${configuration%-*}
+          transport=${configuration##*-}
+          python3 scripts/tcp_lifetime/acceptance.py guest --firmware "$firmware" --transport "$transport"
+          python3 scripts/tcp_lifetime/capture.py --report "tcp-lifetime-${configuration}-results.json" 2>&1 | tee build/tcp-lifetime-capture.log
+          python3 scripts/tcp_lifetime/damaged.py 2>&1 | tee build/tcp-lifetime-damage.log
       - name: Test BIOS and UEFI userspace
         if: matrix.suite == 'boot'
         run: python3 scripts/boot_test.py --firmware both
@@ -506,6 +530,7 @@ jobs:
             build/tcp-timeout-*-peer.json
             build/tcp-old-ack-*-peer.json
             build/tcp-challenge-*-peer.json
+            build/tcp-lifetime-*-peer.json
       - name: Upload TCP boot fixtures
         if: always() && matrix.suite == 'tcp'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -514,7 +539,7 @@ jobs:
           if-no-files-found: error
           path: build/axiom64-tcp-*.iso
       - name: Upload controlled TCP wire boot fixtures
-        if: always() && startsWith(matrix.suite, 'tcp-fault-')
+        if: always() && (startsWith(matrix.suite, 'tcp-fault-') || (startsWith(matrix.suite, 'tcp-lifetime-') && matrix.suite != 'tcp-lifetime-native'))
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: axiom64-${{ matrix.suite }}-fixtures
@@ -526,6 +551,7 @@ jobs:
             build/axiom64-tcp-timeout-*.iso
             build/axiom64-tcp-old-ack-*.iso
             build/axiom64-tcp-challenge-*.iso
+            build/axiom64-tcp-lifetime-*.iso
       - name: Upload credential filesystem and boot fixtures
         if: always() && matrix.suite == 'credentials'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

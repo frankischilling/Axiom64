@@ -120,6 +120,12 @@ build/dns-static: userspace/tests/net/dns.c
 build/dns-dynamic: userspace/tests/net/dns.c
 	@mkdir -p build
 	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DDNS_LINKAGE='"dynamic"' $< -o $@
+build/normal-dns-static: userspace/tests/net/normal-dns.c
+	@mkdir -p build
+	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+build/normal-dns-dynamic: userspace/tests/net/normal-dns.c
+	@mkdir -p build
+	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -DDNS_LINKAGE='"dynamic"' $< -o $@
 build/netlink-tests: userspace/tests/net/netlink.cpp userspace/net/config/routing.cpp userspace/net/config/routing.hpp
 	@mkdir -p build
 	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -pthread -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/netlink.cpp userspace/net/config/routing.cpp -o $@

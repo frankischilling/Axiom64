@@ -40,6 +40,7 @@ jobs:
           make -j2 build/network-manager-dynamic build/network-manager-faults build/network-manager-dynamic-faults build/manager-tests build/manager-protocol build/manager-link
           make -j2 build/random-static build/random-dynamic
           make -j2 build/dns-static build/dns-dynamic
+          make -j2 build/normal-dns-static build/normal-dns-dynamic
           make build/init-supervision
       - name: Test split-queue ownership with sanitizers
         run: make test-virtqueue
@@ -393,6 +394,7 @@ jobs:
             build/manager-protocol-*-packets.json
             build/manager-link-*-packets.json
             build/dns-*-packets.json
+            build/normal-init-*-dns-packets.json
             build/*.png
             build/*.dump
 

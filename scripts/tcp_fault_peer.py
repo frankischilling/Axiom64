@@ -185,6 +185,8 @@ class Flow:
 
 
 class Peer:
+    flow_type = Flow
+
     def __init__(self, lane, minimum_fin_ms=850):
         self.lane = lane
         self.minimum_fin_ms = minimum_fin_ms
@@ -194,7 +196,7 @@ class Peer:
         self.input, self.output = bytearray(), bytearray()
         self.frames, self.outgoing = [], []
         self.began = time.monotonic()
-        self.flows = [Flow(self, role) for role in range(2)]
+        self.flows = [self.flow_type(self, role) for role in range(2)]
 
     def send(self, frame):
         frame = bytes(frame)

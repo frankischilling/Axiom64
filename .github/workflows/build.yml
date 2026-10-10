@@ -429,6 +429,7 @@ jobs:
         with:
           name: axiom64-root-${{ matrix.suite }}
           if-no-files-found: error
+          compression-level: 1
           path: |
             build/normal-init-*.raw
             build/axiom64-normal-init-*.iso

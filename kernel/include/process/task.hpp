@@ -11,6 +11,7 @@ enum class Wait { none, read, write, child, sleep, poll, vfork, signal, futex, f
 struct Descriptor {
     Handle* handle;
     bool cloexec;
+    bool reserved = false;
 };
 
 struct SharedAttachment {

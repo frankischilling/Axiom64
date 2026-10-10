@@ -52,7 +52,7 @@ static FileTable* copy_files(const FileTable* source) {
     auto table = make_resource<FileTable>();
     if (table)
         for (unsigned i = 0; i < max_fds; i++) {
-            table->entries[i] = source->entries[i];
+            table->entries[i] = source->entries[i].handle ? source->entries[i] : Descriptor{};
             retain(table->entries[i].handle);
         }
     return table;
@@ -104,17 +104,6 @@ Task* new_task() {
             return &t;
         }
     return nullptr;
-}
-
-int allocate_fd(Task* t, Handle* h, int start, bool cloexec) {
-    if (start < 0)
-        return -22;
-    for (unsigned i = start; i < max_fds; i++)
-        if (!t->files->entries[i].handle) {
-            t->files->entries[i] = {h, cloexec};
-            return i;
-        }
-    return -24;
 }
 
 static constexpr uint64_t clone_vm = 0x100, clone_fs = 0x200, clone_files = 0x400,
@@ -177,7 +166,8 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         child->files->references++;
     } else
         for (unsigned i = 0; i < max_fds; i++) {
-            child->files->entries[i] = current->files->entries[i];
+            child->files->entries[i] =
+                current->files->entries[i].handle ? current->files->entries[i] : Descriptor{};
             retain(child->files->entries[i].handle);
         }
     if (flags & clone_fs) {

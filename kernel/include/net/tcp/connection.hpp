@@ -112,7 +112,7 @@ class Connection {
     uint16_t acknowledged_history = 0;
     uint32_t timeout_ms = 0, persist_interval = 1000;
     uint64_t opened_at = 0, progress_at = 0, retransmit_at = 0, persist_at = 0;
-    uint64_t sample_at = 0, expiration = 0, last_send = 0;
+    uint64_t sample_at = 0, expiration = 0, last_send = 0, challenge_at = 0;
     uint32_t sample_end = 0, timeout_end = 0;
     int failure = 0;
     bool initialized = false, syn_pending = false, syn_emitted = false, syn_retransmitted = false;
@@ -121,7 +121,7 @@ class Connection {
     bool received_fin = false, pending_fin = false, sent_fin = false;
     bool write_closed = false, read_closed = false, detached = false;
     bool no_delay = false;
-    bool timeout_candidate = false;
+    bool timeout_candidate = false, challenge_sent = false;
     void initialize(uint32_t, uint64_t, uint16_t);
     void negotiate(const Segment&);
     void synchronize(uint64_t);
@@ -132,6 +132,7 @@ class Connection {
     void advance(uint64_t);
     void discard(size_t);
     void reset_reply(const Segment&);
+    void challenge(uint64_t);
     bool handshake() const;
     bool present(size_t) const;
     void mark(size_t, bool);

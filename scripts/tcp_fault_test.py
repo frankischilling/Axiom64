@@ -8,6 +8,7 @@ import shutil
 import socket
 import struct
 import subprocess
+import tempfile
 import time
 from fetch import ROOT, LOCK
 from tcp_fault_peer import Peer, check
@@ -15,12 +16,14 @@ from tcp_reordering_peer import Peer as ReorderingPeer
 from tcp_persist_peer import Peer as PersistPeer
 from tcp_timeout_peer import Peer as TimeoutPeer
 from tcp_old_ack_peer import Peer as OldAckPeer
+from tcp_challenge_peer import Peer as ChallengePeer
 
 
 def wire_configuration(wire):
     profiles = {'loss': (Peer, 'tcp-fault'), 'reordering': (ReorderingPeer, 'tcp-reordering'),
                 'persist': (PersistPeer, 'tcp-persist'), 'timeout': (TimeoutPeer, 'tcp-timeout'),
-                'old-ack': (OldAckPeer, 'tcp-old-ack')}
+                'old-ack': (OldAckPeer, 'tcp-old-ack'),
+                'challenge': (ChallengePeer, 'tcp-challenge')}
     check(wire in profiles, 'known controlled TCP wire profile')
     return profiles[wire]
 
@@ -34,7 +37,7 @@ def application_configuration(wire):
     markers = ['TCP_FAULT_PASS flows=4 bytes_each=65536']
     markers += [f'TCP_FAULT_FLOW_PASS lane={lane} role={role} bytes_each=65536'
                 for lane in range(2) for role in range(2)]
-    return 'tcp-fault', markers
+    return 'tcp-challenge' if wire == 'challenge' else 'tcp-fault', markers
 
 
 def fixture(linkage, wire='loss'):
@@ -182,6 +185,7 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
     label = f'{prefix}-{linkage}-{firmware}-{transport}'
     log_path = ROOT / 'build' / f'{label}.log'
     peers, servers, captures = [peer_type(lane) for lane in range(2)], [], []
+    capture_workspace = tempfile.TemporaryDirectory(prefix='axiom64-tcp-challenge-packets-') if wire == 'challenge' else None
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '512M', '-nic', 'none',
                '-cdrom', str(image), '-display', 'none', '-serial', 'stdio', '-monitor', 'none',
                '-no-reboot', '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
@@ -196,8 +200,9 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
         capture = ROOT / 'build' / f'{label}-lane{lane}.pcap'
         capture.unlink(missing_ok=True)
         captures.append(capture)
+        wire_capture = Path(capture_workspace.name) / capture.name if capture_workspace else capture
         command += ['-netdev', f'socket,id=peer{lane},connect=127.0.0.1:{server.getsockname()[1]}',
-                    '-device', nic, '-object', f'filter-dump,id=capture{lane},netdev=peer{lane},file={capture}']
+                    '-device', nic, '-object', f'filter-dump,id=capture{lane},netdev=peer{lane},file={wire_capture}']
     if firmware == 'uefi':
         variables = ROOT / 'build' / f'{label}-OVMF_VARS.fd'
         shutil.copyfile('/usr/share/OVMF/OVMF_VARS_4M.fd', variables)
@@ -211,6 +216,14 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
     finally:
         for server in servers:
             server.close()
+        if capture_workspace:
+            try:
+                for capture in captures:
+                    actual = Path(capture_workspace.name) / capture.name
+                    if actual.is_file():
+                        shutil.copyfile(actual, capture)
+            finally:
+                capture_workspace.cleanup()
     peer_path = ROOT / 'build' / f'{label}-peer.json'
     peer_path.write_text(json.dumps([dict(lane=peer.lane, frames=peer.frames) for peer in peers], indent=2) + '\n')
     program, required = application_configuration(wire)
@@ -233,7 +246,7 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist', 'timeout', 'old-ack'), default='loss')
+    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist', 'timeout', 'old-ack', 'challenge'), default='loss')
     for name, choices in (('linkage', ('static', 'dynamic')), ('firmware', ('bios', 'uefi')),
                           ('transport', ('modern', 'legacy'))):
         parser.add_argument(f'--{name}', choices=(*choices, 'both'), default='both')

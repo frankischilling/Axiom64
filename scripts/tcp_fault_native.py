@@ -201,7 +201,7 @@ def main():
         namespace(Path(sys.argv[2]), sys.argv[3] if len(sys.argv) == 4 else 'loss')
         return
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist', 'timeout', 'old-ack'), default='loss')
+    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist', 'timeout', 'old-ack', 'challenge'), default='loss')
     args = parser.parse_args()
     program, _ = application_configuration(args.wire)
     subprocess.run(['make', '-s', '-j2', *(f'build/{program}-{linkage}' for linkage in

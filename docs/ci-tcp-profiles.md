@@ -1,17 +1,18 @@
 # Complete TCP profiles in parallel CI jobs
 
 The CI matrix runs loss, receive ordering, zero-window persist, configured user timeout,
-old-ACK rejection and [challenge ACK intervals](tcp-challenge-ack.md) in six isolated
+old-ACK rejection, [challenge ACK intervals](tcp-challenge-ack.md) and
+[quoted ICMP errors](tcp-icmp-acceptance.md) in seven isolated
 jobs. Each receives the exact source/build artifact and retains three native libc
 comparisons, eight VM firmware/transport/linkage cases, both adapters, real protocol
 waits and independent positive/negative packet checks. Ordinary TCP sockets remain a
-separate job. The earlier five profiles keep their established commands and records.
+separate job. The earlier six profiles keep their established commands and records.
 
 The profile matrix names are `tcp-fault-loss`, `tcp-fault-reordering`,
 `tcp-fault-persist`, `tcp-fault-timeout`, `tcp-fault-old-ack` and
-`tcp-fault-challenge`. Each publishes `axiom64-evidence-<suite>` and
+`tcp-fault-challenge` and `tcp-fault-icmp`. Each publishes `axiom64-evidence-<suite>` and
 `axiom64-<suite>-fixtures`, where `<suite>` is the complete matrix name. Download all
-six pairs to audit complete TCP acceptance, including twelve static/dynamic images.
+seven pairs to audit complete TCP acceptance, including fourteen static/dynamic images.
 The build job publishes corresponding source, test inputs and compiled products.
 
 The [full default-lifetime profile](tcp-default-lifetime.md) adds `tcp-lifetime-native`
@@ -24,7 +25,7 @@ profile's 22 captures, 264 flows and 374 damaged-evidence cases.
 
 All earlier non-profile suites remain present. `fail-fast: false` preserves evidence
 from other jobs when one fails. The required `qemu` aggregate checks the build and
-entire matrix: 44 successful jobs are required. Failed, cancelled, missing or skipped
+entire matrix: 45 successful jobs are required. Failed, cancelled, missing or skipped
 profile acceptance blocks integration.
 
 The accepted [five-profile serial run](https://github.com/frankischilling/Axiom64/actions/runs/38082099595)

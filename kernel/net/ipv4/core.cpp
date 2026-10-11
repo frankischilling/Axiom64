@@ -287,6 +287,10 @@ static void quoted_error(unsigned index, const uint8_t* payload, size_t length) 
     if (length < 36)
         return;
     const auto quote = payload + 8;
+    if (quote[9] == 6) {
+        tcp_icmp_error(index, payload, length);
+        return;
+    }
     if (quote[0] != 0x45 || ip4::get16(quote + 2) < 28 || ip4::checksum(quote, 20) ||
         (ip4::get16(quote + 6) & ~uint16_t(0x4000)) || (quote[9] != 1 && quote[9] != 17) ||
         !ipv4_local(ip4::get32(quote + 12)) || !ip4::unicast(ip4::get32(quote + 16)))
@@ -349,7 +353,8 @@ static void input(unsigned index, const uint8_t* bytes, size_t length,
     inet_deliver(index, source, destination, 1, bytes, length);
     if (ip4::checksum(payload, payload_length))
         return;
-    if (local && !broadcast && !link_broadcast && (payload[0] == 3 || payload[0] == 12))
+    if (local && !broadcast && !link_broadcast &&
+        (payload[0] == 3 || payload[0] == 11 || payload[0] == 12))
         quoted_error(index, payload, payload_length);
     if (!local || broadcast || link_broadcast || payload[0] != 8 || payload[1])
         return;

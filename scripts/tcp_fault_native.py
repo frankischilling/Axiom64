@@ -87,7 +87,14 @@ def client(scratch, linkage, wire='loss'):
         time.sleep(.005)
     program, _ = application_configuration(wire)
     binary = ROOT / 'build' / f'{program}-{linkage}'
-    completed = subprocess.run([str(binary), '--native'])
+    command_line = [str(binary), '--native']
+    if wire == 'icmp' and linkage == 'dynamic':
+        from build_musl import loader
+        command_line.insert(0, str(loader('build')))
+    if wire == 'icmp':
+        from tcp_icmp_inputs import record
+        record(linkage, native=True)
+    completed = subprocess.run(command_line)
     print(f'TCP_FAULT_NATIVE_DONE status={completed.returncode}', flush=True)
     began = time.monotonic()
     while not (scratch / 'client-release').exists():
@@ -150,13 +157,16 @@ def namespace(scratch, wire='loss', linkages=('native', 'static', 'dynamic')):
                           peer=peer_path.name, captures=[f'{label}-lane{lane}.pcap' for lane in range(2)],
                           log=log_path.name, seconds=round(time.monotonic() - began, 3),
                           passed=not error and not missing and returncode == 0 and
-                          not any(marker in text for marker in ('TCP_FAULT_FAIL', 'TCP_TIMEOUT_FAIL', 'TCP_LIFETIME_FAIL')))
+                          not any(marker in text for marker in ('TCP_FAULT_FAIL', 'TCP_TIMEOUT_FAIL', 'TCP_LIFETIME_FAIL', 'TCP_ICMP_FAIL')))
             if wire == 'lifetime':
                 result['kernel'] = platform.release()
                 result['defaults'] = {name: int(subprocess.check_output(
                     ['nsenter', '-t', str(process.pid), '-n', '/usr/sbin/sysctl', '-n', f'net.ipv4.{name}']))
                     for name in ('tcp_retries1', 'tcp_retries2', 'tcp_syn_retries', 'tcp_synack_retries')}
                 result['host_configuration_changed'] = False
+            if wire == 'icmp':
+                result['kernel'] = platform.release()
+                result['inputs'] = f'tcp-icmp-linux-{linkage}-inputs.json'
         finally:
             try:
                 statistics, failures = [], []
@@ -209,7 +219,7 @@ def main():
         namespace(Path(sys.argv[2]), sys.argv[3] if len(sys.argv) == 4 else 'loss')
         return
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist', 'timeout', 'old-ack', 'challenge'), default='loss')
+    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist', 'timeout', 'old-ack', 'challenge', 'icmp'), default='loss')
     args = parser.parse_args()
     program, _ = application_configuration(args.wire)
     subprocess.run(['make', '-s', '-j2', *(f'build/{program}-{linkage}' for linkage in

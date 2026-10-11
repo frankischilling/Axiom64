@@ -18,6 +18,7 @@ from tcp_persist_peer import Peer as PersistPeer
 from tcp_timeout_peer import Peer as TimeoutPeer
 from tcp_old_ack_peer import Peer as OldAckPeer
 from tcp_challenge_peer import Peer as ChallengePeer
+from tcp_icmp_peer import Peer as IcmpPeer, CASES as ICMP_CASES
 from tcp_lifetime.peer import Peer as LifetimePeer
 
 
@@ -26,12 +27,18 @@ def wire_configuration(wire):
                 'persist': (PersistPeer, 'tcp-persist'), 'timeout': (TimeoutPeer, 'tcp-timeout'),
                 'old-ack': (OldAckPeer, 'tcp-old-ack'),
                 'challenge': (ChallengePeer, 'tcp-challenge'),
+                'icmp': (IcmpPeer, 'tcp-icmp'),
                 'lifetime': (LifetimePeer, 'tcp-lifetime')}
     check(wire in profiles, 'known controlled TCP wire profile')
     return profiles[wire]
 
 
 def application_configuration(wire):
+    if wire == 'icmp':
+        markers = [f'TCP_ICMP_PASS cases={len(ICMP_CASES)} nics=2 cycles=128']
+        markers += [f'ICMP_CASE_PASS lane={lane} case={ordinal} name={case["name"]}'
+                    for lane in range(2) for ordinal, case in enumerate(ICMP_CASES)]
+        return 'tcp-icmp', markers
     if wire == 'lifetime':
         markers = ['TCP_LIFETIME_PASS flows=24 default_ms=924600 longer_ms=984600']
         markers += [f'TCP_LIFETIME_FLOW_PASS lane={lane} role={role} kind={kind}'
@@ -75,10 +82,16 @@ def fixture(linkage, wire='loss'):
     image = ROOT / 'build' / f'axiom64-{prefix}-{linkage}.iso'
     subprocess.run(['python3', 'scripts/image.py', '--test', '--suite', 'network', '--output-name', image.name],
                    cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
+    if wire == 'icmp':
+        from tcp_icmp_inputs import record
+        record(linkage, image=image)
     return image
 
 
 def exercise(process, peers, servers, timeout, log, raw=False):
+    for peer in peers:
+        if hasattr(peer, 'bind_peers'):
+            peer.bind_peers(peers)
     selector = selectors.DefaultSelector()
     connections = [None, None]
     buffers, started_roles = [bytearray(), bytearray()], set()
@@ -193,7 +206,7 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
     label = f'{prefix}-{linkage}-{firmware}-{transport}'
     log_path = ROOT / 'build' / f'{label}.log'
     peers, servers, captures = [peer_type(lane) for lane in range(2)], [], []
-    capture_workspace = tempfile.TemporaryDirectory(prefix=f'axiom64-tcp-{wire}-packets-') if wire in ('challenge', 'lifetime') else None
+    capture_workspace = tempfile.TemporaryDirectory(prefix=f'axiom64-tcp-{wire}-packets-') if wire in ('challenge', 'lifetime', 'icmp') else None
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '512M', '-nic', 'none',
                '-cdrom', str(image), '-display', 'none', '-serial', 'stdio', '-monitor', 'none',
                '-no-reboot', '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
@@ -235,7 +248,7 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
     peer_path = ROOT / 'build' / f'{label}-peer.json'
     peer_path.write_text(json.dumps([dict(lane=peer.lane, frames=peer.frames) for peer in peers], indent=2) + '\n')
     program, required = application_configuration(wire)
-    application_prefix = {'timeout': 'TCP_TIMEOUT', 'lifetime': 'TCP_LIFETIME'}.get(wire, 'TCP_FAULT')
+    application_prefix = {'timeout': 'TCP_TIMEOUT', 'lifetime': 'TCP_LIFETIME', 'icmp': 'TCP_ICMP'}.get(wire, 'TCP_FAULT')
     required += [f'{application_prefix}_CONFIG_PASS nics=2',
                 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
                 f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
@@ -246,7 +259,9 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
                   peer=peer_path.name, captures=[path.name for path in captures], log=log_path.name,
                   seconds=round(time.monotonic() - began, 3),
                   passed=not error and not missing and returncode == 1 and
-                  not any(marker in text for marker in ('TCP_FAULT_FAIL', 'TCP_TIMEOUT_FAIL', 'TCP_LIFETIME_FAIL', 'PANIC:', 'FAULT pid=')))
+                  not any(marker in text for marker in ('TCP_FAULT_FAIL', 'TCP_TIMEOUT_FAIL', 'TCP_LIFETIME_FAIL', 'TCP_ICMP_FAIL', 'PANIC:', 'FAULT pid=')))
+    if wire == 'icmp':
+        result['inputs'] = f'tcp-icmp-{linkage}-inputs.json'
     print(json.dumps(result), flush=True)
     if not result['passed']:
         print(text[-5000:], flush=True)
@@ -255,12 +270,14 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist', 'timeout', 'old-ack', 'challenge'), default='loss')
+    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist', 'timeout', 'old-ack', 'challenge', 'icmp'), default='loss')
     for name, choices in (('linkage', ('static', 'dynamic')), ('firmware', ('bios', 'uefi')),
                           ('transport', ('modern', 'legacy'))):
         parser.add_argument(f'--{name}', choices=(*choices, 'both'), default='both')
-    parser.add_argument('--timeout', type=float, default=150)
+    parser.add_argument('--timeout', type=float)
     args = parser.parse_args()
+    if args.timeout is None:
+        args.timeout = 240 if args.wire == 'icmp' else 150
     _, prefix = wire_configuration(args.wire)
     if args.timeout <= 0:
         parser.error('timeout must be positive')

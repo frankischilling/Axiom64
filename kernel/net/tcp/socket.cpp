@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/tcp/socket.hpp"
 #include "net/tcp/connection.hpp"
+#include "net/tcp/icmp.hpp"
 #include "net/tcp/isn.hpp"
 #include "net/ipv4.hpp"
 #include "net/ipv4_wire.hpp"
@@ -249,6 +250,28 @@ void tcp_failed(InetSocket* socket, int error) {
         socket->error = error;
     if (socket->stream && socket->stream->state() != tcp::State::closed)
         socket->stream->abort(error);
+}
+
+int tcp_so_error(InetSocket* socket, bool clear) {
+    int error = tcp_error(socket, clear);
+    if (!error && socket->stream)
+        error = socket->stream->network_error(clear);
+    return error;
+}
+
+void tcp_icmp_error(unsigned index, const uint8_t* bytes, size_t length) {
+    tcp::IcmpError quote;
+    if (!tcp::decode_icmp_error(bytes, length, quote))
+        return;
+    for (auto& socket : inet_sockets) {
+        if (!socket.used || socket.type != 1 || !socket.stream || socket.listening ||
+            socket.local != quote.local || socket.peer != quote.peer ||
+            socket.local_port != quote.source ||
+            __builtin_bswap16(socket.peer_port) != quote.destination ||
+            (socket.index && socket.index != index))
+            continue;
+        socket.stream->quoted_error(quote.sequence, quote.error, quote.abort_request);
+    }
 }
 
 int tcp_connect(InetSocket* socket, const InetAddress& address) {

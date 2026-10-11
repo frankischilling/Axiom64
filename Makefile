@@ -351,6 +351,12 @@ build/tcp-connection-host: kernel/tests/net/tcp_connection.cpp kernel/net/tcp/co
 .PHONY: test-tcp-connection
 test-tcp-connection: build/tcp-connection-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/tcp-connection-host
+build/tcp-icmp-host: kernel/tests/net/tcp_icmp.cpp kernel/net/tcp/icmp.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp kernel/include/net/tcp/icmp.hpp kernel/include/net/tcp/connection.hpp kernel/include/net/tcp/time_wait.hpp kernel/include/net/tcp/sender.hpp kernel/include/net/tcp/wire.hpp kernel/include/net/ipv4_wire.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_icmp.cpp kernel/net/tcp/icmp.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp -o $@
+.PHONY: test-tcp-icmp
+test-tcp-icmp: build/tcp-icmp-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/tcp-icmp-host
 build/tcp-time-wait-host: kernel/tests/net/tcp_time_wait.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/wire.cpp kernel/include/net/tcp/time_wait.hpp kernel/include/net/tcp/wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_time_wait.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/wire.cpp -o $@
@@ -391,6 +397,20 @@ build/tcp-fault-dynamic: userspace/tests/net/tcp_fault.c
 build/tcp-timeout-native: userspace/tests/net/tcp_timeout.c
 	@mkdir -p build
 	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-icmp-native: userspace/tests/net/tcp_icmp.c userspace/tests/net/tcp_icmp_cases.h
+	@mkdir -p build
+	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread $< -o $@
+build/tcp-icmp-static: userspace/tests/net/tcp_icmp.c userspace/tests/net/tcp_icmp_cases.h
+	@mkdir -p build
+	$(MUSL_CC) -std=gnu11 -static -O2 -g -Wall -Wextra -Werror -pthread $< -o $@
+build/tcp-icmp-dynamic: userspace/tests/net/tcp_icmp.c userspace/tests/net/tcp_icmp_cases.h
+	@mkdir -p build
+	$(MUSL_CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread $< -o $@
+.PHONY: test-tcp-icmp-native test-tcp-icmp-sockets
+test-tcp-icmp-native:
+	$(PYTHON) scripts/tcp_fault_native.py --wire icmp
+test-tcp-icmp-sockets:
+	$(PYTHON) scripts/tcp_fault_test.py --wire icmp
 build/tcp-lifetime-native: userspace/tests/net/tcp_lifetime.c
 	@mkdir -p build
 	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
@@ -503,6 +523,7 @@ clean:
 # All guest programs share the checked source-built build provider.
 MUSL_INPUTS = sources.lock.json scripts/build_musl.py scripts/musl_cc.py $(wildcard vendor/musl/patches/*.patch)
 MUSL_PROGRAMS = build/credentials-static build/credentials-dynamic build/random-static build/random-dynamic build/abi-static build/file-lock-static build/file-lock-dynamic build/clock-elapsed-tests build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/net-tests build/ipv4-tests build/udp-tests build/dns-static build/dns-dynamic build/normal-dns-static build/normal-dns-dynamic build/netlink-tests build/network-manager-faults build/network-manager-dynamic-faults build/network-manager build/network-manager-dynamic build/manager-tests build/manager-protocol build/manager-link build/init-supervision build/ownership-tests build/ownership-dynamic build/configuration-tests build/dhcp-codec-tests build/dhcp-state-tests build/dhcp-profile-tests build/profile-privacy-tests build/profile-privacy-dynamic build/dhcp-transport-tests build/resolver-tests build/thread-static build/thread-io-static build/thread-io-dynamic build/thread-dynamic build/futex-static build/futex-dynamic build/lifecycle-static build/lifecycle-dynamic build/x11-probe build/tcp-static build/tcp-dynamic build/tcp-fault-static build/tcp-fault-dynamic build/tcp-lifetime-static build/tcp-lifetime-dynamic build/tcp-challenge-static build/tcp-challenge-dynamic build/tcp-timeout-static build/tcp-timeout-dynamic
+MUSL_PROGRAMS += build/tcp-icmp-static build/tcp-icmp-dynamic
 $(MUSL_PROGRAMS): $(MUSL_INPUTS) | musl-toolchain
 build/rootfs.cpio build/rootfs-desktop.cpio: $(MUSL_INPUTS)
 .PHONY: musl-toolchain

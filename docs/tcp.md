@@ -66,6 +66,16 @@ CI retains the host log in `tcp-policy`, native/guest JSON results and full PCAP
 
 ## Sources and remaining work
 
+Native failed-connect comparisons select a known unused automatic source port with
+Linux [IP_LOCAL_PORT_RANGE](https://man7.org/linux/man-pages/man2/IP_LOCAL_PORT_RANGE.2const.html), then restore the default range before retrying. Linux
+can otherwise share an automatically selected port with an unrelated TIME_WAIT
+tuple, which makes an exclusive bind fail even after the refused socket releases
+its ownership. The original release, explicit-binding, option and same-description
+retry assertions remain. `sudo -n python3 scripts/tests/tcp_auto_port_test.py`
+constructs that actual TIME_WAIT collision in a private namespace, checks an unused
+control, and runs all four ownership/retry cases with all three native libc variants.
+It preserves the parent namespace. This native fixture requires Linux 6.3 or later.
+
 [Per-connection challenge ACK intervals](tcp-challenge-ack.md) bound rejected control
 replies to one per 500 ms while preserving valid data ACKs, exact resets and independent
 connections. Its concurrent native/VM packet profile observes mixed bursts, full silence
@@ -77,4 +87,4 @@ The wire/state contract follows [RFC 9293](https://www.rfc-editor.org/rfc/rfc929
 
 [Controlled zero-window acceptance](tcp-persist.md) adds stopped-window probes, elapsed backoff and exact recovery to the loss and receive-ordering profiles. [Configured user-timeout acceptance](tcp-user-timeout.md) separately checks real socket errors, independent elapsed deadlines and disabled-timeout recovery. [Old-ACK acceptance](tcp-old-ack.md) rejects poisoned in-window payload/FIN before window learning, then verifies actual challenge ACKs and exact recovery. Other #121 requirements remain open.
 
-Additional message/address/reconnect/option behavior, ICMP/MTU error integration and complete Linux TCP options remain required, along with #121's controlled NIC and lifetime tests. Actual libc DNS TCP fallback and response ownership are covered by the [resolver tests](dns.md). IPv6 transport, urgent/OOB handling, TLS, full entropy/ISN acceptance and SMP are separate outstanding work. The VM operating system and required workloads come first; HP-specific development follows the readiness review in [#74](https://github.com/frankischilling/Axiom64/issues/74), after most roadmap issues and all prerequisite issues have closed with evidence. Physical boot tests and installation readiness follow the required HP driver work.
+[Quoted ICMP acceptance](tcp-icmp-acceptance.md) adds bounded quote decoding, emitted tuple/sequence ownership, pending connection failures, established soft diagnostics and their timeout/consumption policy. Additional message/address/reconnect/option behavior, PMTU recovery, error queues and complete Linux TCP options remain required, along with #121's controlled NIC and lifetime tests. Actual libc DNS TCP fallback and response ownership are covered by the [resolver tests](dns.md). IPv6 transport, urgent/OOB handling, TLS, full entropy/ISN acceptance and SMP are separate outstanding work. The VM operating system and required workloads come first; HP-specific development follows the readiness review in [#74](https://github.com/frankischilling/Axiom64/issues/74), after most roadmap issues and all prerequisite issues have closed with evidence. Physical boot tests and installation readiness follow the required HP driver work.

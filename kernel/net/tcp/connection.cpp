@@ -55,6 +55,7 @@ bool Connection::passive(uint32_t initial, const Segment& segment, uint64_t now,
         (segment.flags & (ack | rst | fin)))
         return false;
     initialize(initial, now, maximum_segment);
+    passive_open = true;
     initial_receive = segment.sequence;
     receive_next = segment.sequence + 1;
     negotiate(segment);
@@ -64,6 +65,7 @@ bool Connection::passive(uint32_t initial, const Segment& segment, uint64_t now,
 
 void Connection::synchronize(uint64_t now) {
     status = State::established;
+    soft_error = 0;
     syn_pending = false;
     timer.established(syn_retransmitted);
     congestion.established(syn_retransmitted);
@@ -165,6 +167,23 @@ void Connection::abort(int error, bool send_reset) {
     sample_pending = false;
 }
 
+void Connection::quoted_error(uint32_t sequence, int error, bool abort_request) {
+    if (!error || !syn_emitted || status == State::closed || status == State::time_wait ||
+        before(sequence, send_unacknowledged) || before(send_next, sequence))
+        return;
+    if (handshake()) {
+        // An unaccepted passive request owns only its SYN-ACK ISN. Linux leaves
+        // it pending for errors other than parameter, TTL, network and host errors.
+        if (passive_open && (!abort_request || sequence != initial_send))
+            return;
+        abort(error);
+        return;
+    }
+    // Default Linux TCP keeps established streams alive. SO_ERROR can consume
+    // this diagnostic; otherwise delivery timeout promotes it to a hard error.
+    soft_error = error;
+}
+
 void Connection::reset_reply(const Segment& segment) {
     response = {};
     response.flags = rst;
@@ -194,21 +213,22 @@ void Connection::advance(uint64_t now) {
         now >= expiration)
         status = State::closed;
     if (handshake() && elapsed(now, opened_at, 60000))
-        abort(110);
+        abort(soft_error ? soft_error : 110);
     if (!handshake() && status != State::closed && status != State::time_wait && timeout_ms &&
         (send_size || (sent_fin && send_unacknowledged != send_next) ||
          (write_closed && !sent_fin && delivery_active)) &&
         elapsed(now, progress_at, timeout_ms))
-        abort(110);
+        abort(soft_error ? soft_error : 110);
     if (!handshake() && status != State::closed && status != State::time_wait && !timeout_ms &&
         delivery_active && elapsed(now, delivery_at, default_delivery_timeout_ms))
-        abort(110);
+        abort(soft_error ? soft_error : 110);
 }
 
 void Connection::acknowledge(const Segment& segment, uint64_t now) {
     uint32_t acknowledged = segment.acknowledgment;
     if (before(acknowledged, send_unacknowledged))
         return;
+    soft_error = 0;
     if (sample_pending && !before(acknowledged, sample_end)) {
         uint64_t duration = now >= sample_at ? now - sample_at : 0;
         timer.sample(duration > UINT32_MAX ? UINT32_MAX : duration, false);

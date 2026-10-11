@@ -34,6 +34,8 @@
         }                                                                                          \
     } while (0)
 
+static int native;
+
 static void creation(void) {
     const int flags[] = {0, SOCK_NONBLOCK, SOCK_CLOEXEC, SOCK_NONBLOCK | SOCK_CLOEXEC};
     const int protocols[] = {0, IPPROTO_TCP};
@@ -1205,20 +1207,32 @@ static void connect_failures(void) {
     for (unsigned mode = 0; mode < 4; mode++) {
         unsigned diagnostic = mode & 1, explicit_binding = mode >> 1;
         struct sockaddr_in refused_address, local;
-        int closed = tcp_listener(&refused_address);
-        CHECK(close(closed) == 0);
+        int refused_listener = tcp_listener(&refused_address);
         int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
         CHECK(fd >= 0);
         struct sockaddr_in binding = {.sin_family = AF_INET};
+        uint16_t automatic_port = 0;
         if (explicit_binding) {
-            closed = tcp_listener(&binding);
+            int closed = tcp_listener(&binding);
             CHECK(close(closed) == 0 && bind(fd, (struct sockaddr*)&binding, sizeof(binding)) == 0);
+        } else if (native) {
+            // Linux may automatically share a port with unrelated TIME_WAIT
+            // tuples. Select an unused port without binding this connection,
+            // so the competitor measures this failed socket's bind ownership.
+            struct sockaddr_in unused;
+            int reservation = tcp_listener(&unused);
+            uint32_t port = ntohs(unused.sin_port), range = port | (port << 16);
+            automatic_port = port;
+            CHECK(setsockopt(fd, IPPROTO_IP, 51, &range, sizeof(range)) == 0);
+            CHECK(close(reservation) == 0);
+            printf("TCP_AUTOMATIC_PORT_READY mode=%u port=%u\n", mode, port);
         }
         int value = 1;
         CHECK(setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &value, sizeof(value)) == 0);
         value = 5000;
         CHECK(setsockopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &value, sizeof(value)) == 0);
         timeouts(fd);
+        CHECK(close(refused_listener) == 0);
         CHECK(connect(fd, (struct sockaddr*)&refused_address, sizeof(refused_address)) == -1 &&
               errno == EINPROGRESS);
         struct pollfd item = {.fd = fd, .events = POLLOUT};
@@ -1226,6 +1240,7 @@ static void connect_failures(void) {
         struct sockaddr_in peer, attempted;
         socklen_t length = sizeof(attempted);
         CHECK(getsockname(fd, (struct sockaddr*)&attempted, &length) == 0 && attempted.sin_port);
+        CHECK(!automatic_port || attempted.sin_port == htons(automatic_port));
         int competitor = socket(AF_INET, SOCK_STREAM, 0);
         CHECK(competitor >= 0);
         int bound = bind(competitor, (struct sockaddr*)&attempted, sizeof(attempted));
@@ -1256,6 +1271,10 @@ static void connect_failures(void) {
         length = sizeof(timeout);
         CHECK(getsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, &length) == 0 &&
               timeout.tv_sec == 5 && timeout.tv_usec == 0);
+        if (automatic_port) {
+            uint32_t range = 0;
+            CHECK(setsockopt(fd, IPPROTO_IP, 51, &range, sizeof(range)) == 0);
+        }
         int listener = tcp_listener(&local);
         CHECK(connect(fd, (struct sockaddr*)&local, sizeof(local)) == -1 && errno == EINPROGRESS);
         connected_wait(fd);
@@ -1560,6 +1579,13 @@ int main(int argc, char** argv) {
     }
     signal(SIGPIPE, SIG_IGN);
     alarm(60);
+    native =
+        argc == 2 && (!strcmp(argv[1], "--native") || !strcmp(argv[1], "--connect-port-check"));
+    if (native && !strcmp(argv[1], "--connect-port-check")) {
+        connect_failures();
+        puts("TCP_AUTOMATIC_PORT_CHECK_PASS cases=4");
+        return 0;
+    }
     creation();
     bindings();
     options();
@@ -1599,7 +1625,7 @@ int main(int argc, char** argv) {
         }
         CHECK(usleep(100000) == 0);
     } else
-        CHECK(argc == 1);
+        CHECK(argc == 1 || native);
     puts("TCP_TEST_PASS");
     return 0;
 }

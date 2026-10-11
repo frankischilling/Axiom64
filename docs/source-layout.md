@@ -17,6 +17,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/net/` | Ethernet interfaces, interface/route ioctls, and Linux raw packet sockets |
 | `kernel/net/ipv4/` | IPv4 routes/output, ARP cache/timers, ICMP, and Internet socket descriptions |
 | `kernel/net/udp/` | UDP lengths, pseudo-header checksums, payload delivery, and transmission |
+| `kernel/net/tcp/` | TCP wire/state/sender policy, socket ownership, timers, ISNs, TIME_WAIT and quoted ICMP errors |
 | `kernel/net/netlink/` | Route/address message validation, owned replies, and control socket lifecycle |
 | `kernel/drivers/platform/` | PCI, PIIX4 power off, and current platform device interfaces |
 | `kernel/drivers/block/` | Block request policy and raw I/O |

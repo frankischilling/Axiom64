@@ -510,7 +510,7 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             else if (c == 3)
                 value = socket->type;
             else if (c == 4)
-                value = inet_error(socket);
+                value = inet_stream(socket) ? tcp_so_error(socket, false) : inet_error(socket);
             else if (c == 6)
                 value = socket->broadcast;
             else if (c == 7)
@@ -544,8 +544,12 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             !task.memory->space.copy_out(d, &value, min(length, actual)) ||
             !task.memory->space.copy_out(frame.r8, &actual, 4))
             return -14;
-        if (b == 1 && c == 4)
-            inet_error(socket, true);
+        if (b == 1 && c == 4) {
+            if (inet_stream(socket))
+                tcp_so_error(socket, true);
+            else
+                inet_error(socket, true);
+        }
         return 0;
     }
     default:

@@ -34,6 +34,15 @@ class Connection {
         return failure;
     }
 
+    // SO_ERROR observes and consumes a soft network error without closing TCP
+    // or making normal reads/writes fail. A failed user copy must only peek.
+    int network_error(bool clear = false) {
+        int result = soft_error;
+        if (clear)
+            soft_error = 0;
+        return result;
+    }
+
     uint32_t next_receive() const {
         return receive_next;
     }
@@ -74,6 +83,9 @@ class Connection {
     void close_read();
     void detach(uint64_t now);
     void abort(int error, bool send_reset = false);
+    // The caller validates the quote and tuple. Sequence ownership and handshake
+    // versus established error policy remain with the connection.
+    void quoted_error(uint32_t sequence, int error, bool abort_request);
     void limits(size_t receive_bytes, size_t send_bytes);
 
     void nodelay(bool enabled) {
@@ -115,7 +127,7 @@ class Connection {
     uint64_t sample_at = 0, expiration = 0, last_send = 0, challenge_at = 0;
     uint64_t delivery_at = 0;
     uint32_t sample_end = 0, timeout_end = 0;
-    int failure = 0;
+    int failure = 0, soft_error = 0;
     bool initialized = false, syn_pending = false, syn_emitted = false, syn_retransmitted = false;
     bool ack_pending = false, response_pending = false, retransmit_pending = false;
     bool retransmit_active = false, sample_pending = false, repeated_timeout = false;
@@ -124,6 +136,7 @@ class Connection {
     bool no_delay = false;
     bool timeout_candidate = false, challenge_sent = false;
     bool delivery_active = false;
+    bool passive_open = false;
     void initialize(uint32_t, uint64_t, uint16_t);
     void negotiate(const Segment&);
     void synchronize(uint64_t);

@@ -62,6 +62,7 @@ jobs:
           make -j2 build/tcp-challenge-native build/tcp-challenge-static build/tcp-challenge-dynamic
           make -j2 build/tcp-timeout-native build/tcp-timeout-static build/tcp-timeout-dynamic
           make -j2 build/tcp-lifetime-native build/tcp-lifetime-static build/tcp-lifetime-dynamic
+          make -j2 build/tcp-icmp-native build/tcp-icmp-static build/tcp-icmp-dynamic
           make build/init-supervision
       - name: Test split-queue ownership with sanitizers
         run: make test-virtqueue
@@ -70,7 +71,7 @@ jobs:
       - name: Test TCP wire, sender and connection policies with sanitizers
         run: |
           mkdir -p build/tcp-policy
-          make test-tcp-wire test-tcp-sender test-tcp-connection test-tcp-isn test-tcp-time-wait 2>&1 | tee build/tcp-policy/host.log
+          make test-tcp-wire test-tcp-sender test-tcp-connection test-tcp-isn test-tcp-time-wait test-tcp-icmp 2>&1 | tee build/tcp-policy/host.log
       - name: Upload TCP policy evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -149,6 +150,7 @@ jobs:
           - tcp-fault-timeout
           - tcp-fault-old-ack
           - tcp-fault-challenge
+          - tcp-fault-icmp
           - tcp-lifetime-native
           - tcp-lifetime-bios-modern
           - tcp-lifetime-bios-legacy
@@ -218,7 +220,9 @@ jobs:
         run: make test-credentials
       - name: Compare TCP stream sockets with native Linux and both musl linkages
         if: matrix.suite == 'tcp'
-        run: make test-tcp-native
+        run: |
+          sudo -n python3 scripts/tests/tcp_auto_port_test.py
+          make test-tcp-native
       - name: Test static and dynamic TCP loopback with BIOS and UEFI
         if: matrix.suite == 'tcp'
         run: make test-tcp-sockets
@@ -294,6 +298,16 @@ jobs:
         run: |
           python3 scripts/tcp_challenge_capture.py 2>&1 | tee build/tcp-challenge-capture.log
           python3 scripts/tests/tcp_challenge_capture_test.py 2>&1 | tee build/tcp-challenge-capture-checker.log
+      - name: Compare quoted ICMP failures across Linux and the complete guest matrix
+        if: matrix.suite == 'tcp-fault-icmp'
+        run: |
+          dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' libc6:amd64 > build/tcp-icmp-native-package.txt
+          cp /usr/share/doc/libc6/copyright build/tcp-icmp-native-copyright.txt
+          sudo -n python3 scripts/tests/tcp_icmp_error_order_test.py
+          sudo -n make test-tcp-icmp-native
+          make test-tcp-icmp-sockets
+          python3 scripts/tcp_icmp_capture.py 2>&1 | tee build/tcp-icmp-capture.log
+          python3 scripts/tests/tcp_icmp_capture_test.py 2>&1 | tee build/tcp-icmp-damage.log
       - name: Test desktop serial acceptance decisions
         if: matrix.suite == 'boot'
         run: python3 scripts/tests/desktop_console_test.py
@@ -539,6 +553,10 @@ jobs:
             build/tcp-old-ack-*-peer.json
             build/tcp-challenge-*-peer.json
             build/tcp-lifetime-*-peer.json
+            build/tcp-icmp-*-peer.json
+            build/tcp-icmp-*-inputs.json
+            build/tcp-icmp-*.txt
+            build/tcp-icmp-damaged/**
       - name: Upload TCP boot fixtures
         if: always() && matrix.suite == 'tcp'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -575,6 +593,7 @@ jobs:
             build/axiom64-tcp-old-ack-*.iso
             build/axiom64-tcp-challenge-*.iso
             build/axiom64-tcp-lifetime-*.iso
+            build/axiom64-tcp-icmp-*.iso
       - name: Upload credential filesystem and boot fixtures
         if: always() && matrix.suite == 'credentials'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -26,7 +26,7 @@ def main():
     results = []
     with (ROOT / 'build/tcp-native.log').open('w') as log:
         for profile in profiles:
-            process = subprocess.run([ROOT / 'build' / f'tcp-{profile}'], cwd=ROOT,
+            process = subprocess.run([ROOT / 'build' / f'tcp-{profile}', '--native'], cwd=ROOT,
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      text=True, timeout=75)
             log.write(f'PROFILE {profile}\n{process.stdout}')

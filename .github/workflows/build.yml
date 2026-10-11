@@ -577,6 +577,20 @@ jobs:
             build/tcp-icmp-*-inputs.json
             build/tcp-icmp-*.txt
             build/tcp-icmp-damaged/**
+      - name: Upload actual raw storage and ext2 volume and boot fixtures
+        if: always() && matrix.suite == 'storage'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-storage-fixtures
+          if-no-files-found: error
+          path: |
+            build/storage-*.raw
+            build/storage-*.iso
+            build/storage-*.conf
+            build/ext2-*.raw
+            build/ext2-*.iso
+            build/ext2-*.conf
+            build/ext2-*-acl.bin
       - name: Upload TCP boot fixtures
         if: always() && matrix.suite == 'tcp'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

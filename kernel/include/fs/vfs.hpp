@@ -12,6 +12,8 @@ struct NetlinkSocket;
 struct Epoll;
 struct Mount;
 struct Handle;
+struct Xattr;
+struct XattrName;
 
 struct Timestamp {
     int64_t sec;
@@ -43,6 +45,7 @@ struct Node {
     Timestamp atime, mtime, ctime;
     Mount* mount;
     void* filesystem_data;
+    Xattr* xattrs = nullptr;
     unsigned lock_readers;
     Handle* lock_writer;
 };
@@ -84,6 +87,10 @@ struct FilesystemOps {
     void (*destroy)(Mount*);
     int (*remount)(Mount*, bool);
     int (*prepare_unmount)(Mount*);
+    int64_t (*getxattr)(Node*, const XattrName&, void*, size_t) = nullptr;
+    int64_t (*listxattr)(Node*, void*, size_t, bool trusted) = nullptr;
+    int (*setxattr)(Node*, const XattrName&, const void*, size_t, unsigned) = nullptr;
+    int (*removexattr)(Node*, const XattrName&) = nullptr;
 };
 
 struct Mount {

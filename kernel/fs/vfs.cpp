@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/vfs.hpp"
+#include "fs/xattr.hpp"
 #include "fs/file_lock.hpp"
 #include "drivers/platform/devices.hpp"
 #include "ipc/ipc.hpp"
@@ -459,6 +460,8 @@ int node_truncate(Node* node, uint64_t size) {
         return node && (node->mode & 0170000) == directory ? -21 : -22;
     if (node_readonly(node))
         return -30;
+    if (int error = node_drop_file_capabilities(node))
+        return error;
     if (current && !capable(current->credentials, Capability::fsetid)) {
         uint32_t mode = node->mode & ~04000;
         if (mode & 010)
@@ -509,6 +512,8 @@ int node_chown(Node* node, uint32_t uid, uint32_t gid) {
         return -1;
     if (node_readonly(node))
         return -30;
+    if (int error = node_drop_file_capabilities(node))
+        return error;
     uint32_t mode = node->mode;
     if ((mode & 0170000) != directory) {
         mode &= ~04000;
@@ -872,8 +877,10 @@ void close_handle(Handle* h) {
         if (!p->readers && !p->writers)
             release(p);
     }
+    auto retired_node = h->node;
     h->node = nullptr;
     h->pipe = nullptr;
+    node_retire_xattrs(retired_node);
 }
 
 bool handle_ready(Handle* h, bool write) {
@@ -973,6 +980,8 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
         h->offset = n->size;
     if (node_readonly(n))
         return -30;
+    if (int error = node_drop_file_capabilities(n))
+        return error;
     if (current && !capable(current->credentials, Capability::fsetid)) {
         uint32_t mode = n->mode & ~04000;
         if (mode & 010)

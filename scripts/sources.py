@@ -111,7 +111,8 @@ def prepare():
     ports = lock["ports"]
     with ThreadPoolExecutor(max_workers=8) as pool:
         inputs = list(pool.map(port_sources, ports))
-    inputs += [("BusyBox-upstream", [fetch("busybox")]), ("Limine", [fetch("limine")])]
+    inputs += [("BusyBox-upstream", [fetch("busybox")]), ("Limine", [fetch("limine")]),
+               ("libcap", [fetch("libcap")])]
     musl = [verify(download(item["url"], CACHE / "build-musl" / item["name"]),
                    item["sha256"], "sha256") for item in lock["build_musl"]["files"]]
     inputs.append(("build-musl", musl))

@@ -30,6 +30,7 @@ The full image includes these commands:
 
 ```sh
 gcc --version
+getcap /usr/bin/gcc
 make -C /root/toolchain-test test
 zsh -f
 ```

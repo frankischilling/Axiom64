@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/ext2/ext2.hpp"
+#include "fs/ext2/xattr.hpp"
 #include "process/task.hpp"
 #include "drivers/block/block.hpp"
 #include "drivers/platform/devices.hpp"
@@ -41,6 +42,11 @@ static void setbit(uint8_t* p, uint32_t n, bool value) {
 static uint64_t file_size(const uint8_t* inode) {
     return u32(inode + 4) |
            ((u16(inode) & 0170000) == regular_file ? uint64_t(u32(inode + 108)) << 32 : 0);
+}
+
+static bool fast_symlink(const uint8_t* inode, unsigned block_size) {
+    return (u16(inode) & 0170000) == symlink &&
+           u32(inode + 28) == (u32(inode + 104) ? block_size / sector_size : 0);
 }
 
 static uint8_t file_type(uint32_t mode) {
@@ -620,9 +626,31 @@ struct Volume {
         return true;
     }
 
+    bool xattr_block(const uint8_t* inode, uint8_t* data, uint32_t& references) {
+        uint32_t block = u32(inode + 104);
+        references = 0;
+        if (!block)
+            return true;
+        if (!data_block(block) || !read_block(block, data))
+            return false;
+        return ext2_xattr_valid(data, block_size, references) ? true : fail();
+    }
+
+    bool release_xattr(uint32_t block, uint8_t* data, uint32_t references) {
+        if (references == 1)
+            return free_number(block, false);
+        set32(data + 4, references - 1);
+        return write_block(block, data, 1);
+    }
+
     bool delete_inode(uint32_t number, uint8_t* inode) {
         bool dir = (u16(inode) & 0170000) == directory;
-        if (!((u16(inode) & 0170000) == symlink && !u32(inode + 28)) && !size(inode, 0))
+        if (!fast_symlink(inode, block_size) && !size(inode, 0))
+            return false;
+        uint32_t block = u32(inode + 104), references;
+        uint8_t data[max_block_size];
+        if (block &&
+            (!xattr_block(inode, data, references) || !release_xattr(block, data, references)))
             return false;
         memset(inode, 0, inode_bytes);
         return save_inode(number, inode, true) && free_number(number, true, dir);
@@ -983,7 +1011,7 @@ static int64_t read(Node* node, uint64_t offset, void* buffer, size_t length) {
     if (!v.load_inode(node->inode, inode))
         return v.error;
     auto out = static_cast<uint8_t*>(buffer);
-    if ((node->mode & 0170000) == symlink && !u32(inode + 28)) {
+    if (fast_symlink(inode, v.block_size)) {
         if (node->size > 60)
             return -117;
         memcpy(out, inode + 40 + offset, count);
@@ -1078,6 +1106,92 @@ static int setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime, 
         success = v.save_inode(node->inode, inode);
     }
     return v.finish(success);
+}
+
+static int64_t getxattr(Node* node, const XattrName& name, void* buffer, size_t size) {
+    auto& v = volume(node);
+    v.error = 0;
+    uint8_t inode[inode_bytes], block[max_block_size];
+    uint32_t references;
+    if (!v.load_inode(node->inode, inode) || !v.xattr_block(inode, block, references))
+        return v.error;
+    return references ? ext2_xattr_get(block, v.block_size, name, buffer, size) : -61;
+}
+
+static int64_t listxattr(Node* node, void* buffer, size_t size, bool trusted) {
+    auto& v = volume(node);
+    v.error = 0;
+    uint8_t inode[inode_bytes], block[max_block_size];
+    uint32_t references;
+    if (!v.load_inode(node->inode, inode) || !v.xattr_block(inode, block, references))
+        return v.error;
+    return references ? ext2_xattr_list(block, v.block_size, buffer, size, trusted) : 0;
+}
+
+static int change_xattr(Node* node, const XattrName& name, const void* value, size_t size,
+                        unsigned flags, bool remove) {
+    auto& v = volume(node);
+    if (size > v.block_size)
+        return -34;
+    if (!v.begin())
+        return v.error;
+    uint8_t inode[inode_bytes], old[max_block_size], replacement[max_block_size];
+    uint32_t references;
+    if (!v.load_inode(node->inode, inode) || !v.xattr_block(inode, old, references))
+        return v.finish(false);
+    bool empty;
+    int error = ext2_xattr_change(references ? old : nullptr, v.block_size, name, value, size,
+                                  flags, remove, replacement, empty);
+    if (error) {
+        v.fail(error);
+        return v.finish(false);
+    }
+    uint32_t block = u32(inode + 104), target = block;
+    bool success = true;
+    if (empty) {
+        success = v.release_xattr(block, old, references) && v.add_blocks(inode, -1);
+        target = 0;
+    } else {
+        if (references != 1) {
+            target = v.allocate(false, (node->inode - 1) / v.inodes_per_group);
+            success = target &&
+                      (block ? v.release_xattr(block, old, references) : v.add_blocks(inode, 1));
+        }
+        success = success && v.write_block(target, replacement, 0);
+        uint8_t header[1024];
+        if (success && !(v.compatible & 8)) {
+            success = v.super(header);
+            if (success) {
+                if (!v.revision) {
+                    set32(header + 76, 1);
+                    set32(header + 84, v.first_inode);
+                    set16(header + 88, v.inode_size);
+                }
+                set32(header + 92, u32(header + 92) | 8);
+                success = v.save_super(header);
+            }
+        }
+    }
+    if (success) {
+        set32(inode + 104, target);
+        set32(inode + 12, node_now().sec);
+        success = v.save_inode(node->inode, inode);
+    }
+    int result = v.finish(success);
+    if (success && !empty) {
+        v.revision = 1;
+        v.compatible |= 8;
+    }
+    return result;
+}
+
+static int setxattr(Node* node, const XattrName& name, const void* value, size_t size,
+                    unsigned flags) {
+    return change_xattr(node, name, value, size, flags, false);
+}
+
+static int removexattr(Node* node, const XattrName& name) {
+    return change_xattr(node, name, nullptr, 0, 0, true);
 }
 
 static int readdir(Node* node, uint64_t cookie, DirectoryEntry& entry) {
@@ -1226,6 +1340,7 @@ struct Validation {
     Volume& v;
     uint8_t *block_bits = nullptr, *inode_bits = nullptr, *owners = nullptr;
     uint16_t *modes = nullptr, *links = nullptr;
+    uint16_t* xattr_references = nullptr;
     uint32_t *references = nullptr, *parents = nullptr, *dotdots = nullptr;
     uint8_t inode_table[max_block_size]{};
     uint32_t cached_table = UINT32_MAX;
@@ -1239,6 +1354,7 @@ struct Validation {
         release(owners);
         release(modes);
         release(links);
+        release(xattr_references);
         release(references);
         release(parents);
         release(dotdots);
@@ -1252,17 +1368,19 @@ struct Validation {
         owners = (uint8_t*)alloc(block_bytes);
         modes = (uint16_t*)alloc(inode_count * sizeof(uint16_t));
         links = (uint16_t*)alloc(inode_count * sizeof(uint16_t));
+        xattr_references = (uint16_t*)alloc(uint64_t(v.blocks) * sizeof(uint16_t));
         references = (uint32_t*)alloc(inode_count * sizeof(uint32_t));
         parents = (uint32_t*)alloc(inode_count * sizeof(uint32_t));
         dotdots = (uint32_t*)alloc(inode_count * sizeof(uint32_t));
-        if (!block_bits || !inode_bits || !owners || !modes || !links || !references || !parents ||
-            !dotdots)
+        if (!block_bits || !inode_bits || !owners || !modes || !links || !xattr_references ||
+            !references || !parents || !dotdots)
             return v.fail(-12);
         memset(block_bits, 0, block_bytes);
         memset(owners, 0, block_bytes);
         memset(inode_bits, 0, inode_bytes);
         memset(modes, 0, inode_count * sizeof(uint16_t));
         memset(links, 0, inode_count * sizeof(uint16_t));
+        memset(xattr_references, 0, uint64_t(v.blocks) * sizeof(uint16_t));
         memset(references, 0, inode_count * sizeof(uint32_t));
         memset(parents, 0, inode_count * sizeof(uint32_t));
         memset(dotdots, 0, inode_count * sizeof(uint32_t));
@@ -1327,6 +1445,15 @@ struct Validation {
                 return false;
             cached_table = block;
         }
+        if (v.inode_size > ax::inode_bytes) {
+            auto full = inode_table + offset % v.block_size;
+            unsigned extra = u16(full + ax::inode_bytes);
+            if (extra > v.inode_size - ax::inode_bytes || (extra & 3))
+                return v.fail(-95);
+            if (ax::inode_bytes + extra + 4 <= v.inode_size &&
+                u32(full + ax::inode_bytes + extra) == 0xea020000)
+                return v.fail(-95); // ext4 inode-body EAs need their own layout policy.
+        }
         memcpy(data, inode_table + offset % v.block_size, ax::inode_bytes);
         return true;
     }
@@ -1381,7 +1508,7 @@ struct Validation {
                 bool reserved = number < v.first_inode && number != 2;
                 bool resize = number == 7 && (v.compatible & 16);
                 if (reserved && !resize) {
-                    if (mode || file_size(data) || u32(data + 28))
+                    if (mode || file_size(data) || u32(data + 28) || u32(data + 104))
                         return v.fail(-95);
                     for (unsigned slot = 0; slot < 15; slot++)
                         if (u32(data + 40 + slot * 4))
@@ -1390,11 +1517,31 @@ struct Validation {
                 }
                 if (type != regular_file && type != directory && type != symlink && type != 0140000)
                     return v.fail(-95);
-                // Inode flags, ACL blocks and fragments need separate policy/layout support.
-                if (u32(data + 32) || u32(data + 104) || u32(data + 112) || u16(data + 116) ||
+                // Inode flags and fragments need separate policy/layout support.
+                if (u32(data + 32) || u32(data + 112) || u16(data + 116) ||
                     (type != regular_file && u32(data + 108)))
                     return v.fail(-95);
                 uint64_t length = file_size(data), count = 0, leaves = 0;
+                uint32_t attribute = u32(data + 104);
+                if (attribute) {
+                    if (resize || !(v.compatible & 8) || attribute < v.first ||
+                        attribute >= v.blocks || v.metadata(attribute) ||
+                        !bit(block_bits, attribute) ||
+                        (bit(owners, attribute) && !xattr_references[attribute]))
+                        return v.fail();
+                    uint8_t block[max_block_size];
+                    uint32_t actual;
+                    if (!v.read_block(attribute, block))
+                        return false;
+                    if (!ext2_xattr_valid(block, v.block_size, actual))
+                        return v.fail();
+                    if (!ext2_xattr_supported(block, v.block_size))
+                        return v.fail(-95);
+                    if (++xattr_references[attribute] > actual)
+                        return v.fail();
+                    setbit(owners, attribute, true);
+                    count++;
+                }
                 if (length > v.capacity() || (type == regular_file && length > INT32_MAX &&
                                               (v.revision == 0 || !(v.readonly_features & 2))))
                     return v.fail();
@@ -1403,7 +1550,8 @@ struct Validation {
                     return v.fail();
                 if (type == symlink && (!length || length > 4095))
                     return v.fail();
-                if (type == 0140000 && (length || u32(data + 28)))
+                if (type == 0140000 &&
+                    (length || u32(data + 28) != count * (v.block_size / sector_size)))
                     return v.fail();
                 if (resize) {
                     if (type != regular_file || !u32(data + 92))
@@ -1412,7 +1560,7 @@ struct Validation {
                         if (slot != 13 && u32(data + 40 + slot * 4))
                             return v.fail();
                 }
-                bool fast_link = type == symlink && !u32(data + 28);
+                bool fast_link = fast_symlink(data, v.block_size);
                 if (fast_link && length > 60)
                     return v.fail();
                 if (!fast_link) {
@@ -1446,9 +1594,17 @@ struct Validation {
             if (dirs != u16(desc + 16))
                 return v.fail();
         }
-        for (uint32_t block = v.first; block < v.blocks; block++)
+        for (uint32_t block = v.first; block < v.blocks; block++) {
+            if (xattr_references[block]) {
+                uint8_t data[max_block_size];
+                if (!v.read_block(block, data))
+                    return false;
+                if (xattr_references[block] != u32(data + 4))
+                    return v.fail();
+            }
             if (bit(block_bits, block) && !v.metadata(block) && !bit(owners, block))
                 return v.fail();
+        }
         return (modes[2] & 0170000) == directory ? true : v.fail();
     }
 
@@ -1652,9 +1808,10 @@ static bool layout(Volume& v, const uint8_t* header, const BlockInfo& disk) {
 
 } // namespace
 
-const FilesystemOps ext2_ops = {lookup, create,   link,    remove,         rename, read,
-                                write,  truncate, setattr, readdir,        sync,   nullptr,
-                                stats,  destroy,  remount, prepare_unmount};
+const FilesystemOps ext2_ops = {lookup,   create,     link,    remove,          rename,   read,
+                                write,    truncate,   setattr, readdir,         sync,     nullptr,
+                                stats,    destroy,    remount, prepare_unmount, getxattr, listxattr,
+                                setxattr, removexattr};
 
 int ext2_mount(Mount* mount, Node* device) {
     auto info = block_info(device->device_id);

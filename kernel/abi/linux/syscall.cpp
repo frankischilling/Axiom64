@@ -13,6 +13,7 @@
 #include "core/random.hpp"
 #include "core/random/primitives.hpp"
 #include "abi/linux/credentials.hpp"
+#include "abi/linux/xattr.hpp"
 
 namespace ax {
 struct LinuxStat {
@@ -572,6 +573,19 @@ static int64_t poll_call(uint64_t pointer, size_t count, int timeout) {
 static int64_t dispatch(Frame* f) {
     uint64_t a = f->rdi, b = f->rsi, c = f->rdx, d = f->r10, e = f->r8, g = f->r9;
     switch (f->rax) {
+    case 188:
+    case 189:
+    case 190:
+    case 191:
+    case 192:
+    case 193:
+    case 194:
+    case 195:
+    case 196:
+    case 197:
+    case 198:
+    case 199:
+        return linux_xattr(f->rax, a, b, c, d, e);
     case 0:
     case 1:
     case 17:

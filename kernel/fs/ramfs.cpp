@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/vfs.hpp"
+#include "fs/xattr.hpp"
 #include "process/task.hpp"
 
 namespace ax {
@@ -97,6 +98,7 @@ static int remove(Node* node) {
         file_node(node)->links--;
     file_node(node)->ctime = node_now();
     node->parent->mtime = node->parent->ctime = node_now();
+    node_retire_xattrs(node);
     return 0;
 }
 
@@ -201,7 +203,10 @@ static int readdir(Node* parent, uint64_t cookie, DirectoryEntry& entry) {
     return 0;
 }
 
-static int sync(Mount*, Node*, bool) {
+static int sync(Mount* mount, Node*, bool) {
+    for (size_t i = 0; i < node_count; i++)
+        if (nodes[i].mount == mount && !nodes[i].hardlink)
+            node_retire_xattrs(&nodes[i]);
     return 0;
 }
 
@@ -240,6 +245,8 @@ static void destroy(Mount* mount) {
         auto& node = nodes[i];
         if (node.mount != mount)
             continue;
+        if (!node.hardlink)
+            xattr_store_destroy(node.xattrs);
         if (!node.hardlink && node.owned) {
             if (node.backing_physical)
                 page_free(node.backing_physical, node.capacity / page_size);
@@ -250,7 +257,30 @@ static void destroy(Mount* mount) {
     }
 }
 
-const FilesystemOps ramfs_ops = {find,  create,   link,    remove,  rename, read,
-                                 write, truncate, setattr, readdir, sync,   map_shared,
-                                 stats, destroy,  nullptr, nullptr};
+static int64_t getxattr(Node* node, const XattrName& name, void* buffer, size_t size) {
+    return xattr_store_get(node->xattrs, name, buffer, size);
+}
+
+static int64_t listxattr(Node* node, void* buffer, size_t size, bool trusted) {
+    return xattr_store_list(node->xattrs, buffer, size, trusted);
+}
+
+static int setxattr(Node* node, const XattrName& name, const void* value, size_t size,
+                    unsigned flags) {
+    int error = xattr_store_set(node->xattrs, name, value, size, flags);
+    if (!error)
+        node->ctime = node_now();
+    return error;
+}
+
+static int removexattr(Node* node, const XattrName& name) {
+    int error = xattr_store_remove(node->xattrs, name);
+    if (!error)
+        node->ctime = node_now();
+    return error;
+}
+
+const FilesystemOps ramfs_ops = {
+    find, create,     link,  remove,  rename,  read,    write,    truncate,  setattr,  readdir,
+    sync, map_shared, stats, destroy, nullptr, nullptr, getxattr, listxattr, setxattr, removexattr};
 } // namespace ax

@@ -4,7 +4,9 @@ The kernel implements the Linux x86-64 ABI itself. Static tests, init and BusyBo
 
 Native development tools are GCC 14.2.0, binutils 2.44, and Make 4.4.1. Desktop packages include Xorg 21.1.19, fbdev and evdev, twm, xterm 399, xeyes, bitmap fonts, Bash 5.2.37, and zsh 5.9. Tests compile and execute new programs with the imported native toolchain.
 
-`dependencies.json` pins the bootloader, protocol header, and BusyBox by SHA-256. `ports.lock.json` pins APK URLs, versions, SHA-256, license labels, upstream sites, origins, and source commits. Root filesystem assembly treats package contents as data and never runs installation hooks. Font indexes are generated explicitly. Mesa's renderer, LLVM, and SPIR-V payloads are omitted because the image uses fbdev with GLX disabled.
+`dependencies.json` pins the bootloader, protocol header, BusyBox and libcap by SHA-256. `ports.lock.json` pins APK URLs, versions, SHA-256, license labels, upstream sites, origins, and source commits. Root filesystem assembly treats package contents as data and never runs installation hooks. Font indexes are generated explicitly. Mesa's renderer, LLVM, and SPIR-V payloads are omitted because the image uses fbdev with GLX disabled.
+
+Upstream libcap 2.78 supplies installed `getcap` and `setcap` tools, linked against the runtime musl provider. The build elects libcap's BSD-3-Clause option, retains its complete upstream `License`, and includes the SHA256-verified archive in the source bundle. Static and dynamic fixture tools use the explicit build provider; native Linux tools retain their actual libc and startup inputs. [File capability verification](file-capabilities.md#upstream-tools-and-verification) records the tool, source and runtime provenance.
 
 `sources.lock.json` pins exact Alpine APKBUILD recipes and their source and patch checksums. Sources come from Alpine's distfile cache or the recipe's exact repository commit and are checked with SHA-512. Recipe bodies are preserved as text and never executed by the fetcher. The lock also pins Ubuntu's source package for static programs' musl.
 

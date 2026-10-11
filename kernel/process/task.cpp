@@ -9,6 +9,8 @@
 #include "core/time.hpp"
 #include "core/random.hpp"
 #include "core/random/primitives.hpp"
+#include "fs/xattr.hpp"
+#include "security/file_capabilities.hpp"
 
 namespace ax {
 Task tasks[max_tasks];
@@ -507,11 +509,26 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
         return access_error;
     if (file->mount->noexec)
         return -13;
-    auto credentials =
-        credential_exec(t->credentials, file->uid, file->gid, file->mode, file->mount->nosuid);
-    bool secure = credentials.user.real != credentials.user.effective ||
-                  credentials.group.real != credentials.group.effective ||
-                  (credentials.permitted & ~t->credentials.permitted);
+    FileCapabilities capabilities;
+    if (!file->mount->nosuid && file->mount->ops->getxattr) {
+        uint8_t value[24];
+        XattrName key{6, "capability"};
+        int64_t length = file->mount->ops->getxattr(file, key, value, sizeof(value));
+        if (length >= 0) {
+            int error = file_capabilities_decode(value, length, capabilities);
+            if (error)
+                return error;
+        } else if (length != -61 && length != -95)
+            return length;
+    }
+    auto candidate = credential_exec_file(t->credentials, file->uid, file->gid, file->mode,
+                                          file->mount->nosuid, capabilities);
+    if (candidate.error)
+        return candidate.error;
+    auto credentials = candidate.value;
+    bool secure = candidate.secure;
+    bool dumpable = candidate.dumpable &&
+                    !credential_access(t->credentials, file->uid, file->gid, file->mode, 4);
     AddressSpace memory;
     if (!memory.create())
         return -12;
@@ -537,6 +554,9 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
         }
         if (!error)
             error = load_image(memory, interpreter, 0x7000000000, interp);
+        if (!error && credential_access(t->credentials, interpreter->uid, interpreter->gid,
+                                        interpreter->mode, 4))
+            dumpable = false;
         if (error || interp.interpreter[0]) {
             memory.destroy();
             return error ? error : -8;
@@ -654,7 +674,7 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
         write_cr3(memory.root);
     release_memory(t);
     t->memory = replacement;
-    t->memory->dumpable = !secure;
+    t->memory->dumpable = dumpable;
     t->credentials = credentials;
     process->executed = true;
     if (files) {

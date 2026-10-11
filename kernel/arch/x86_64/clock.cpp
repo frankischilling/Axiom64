@@ -128,6 +128,7 @@ void clock_init(uint64_t rsdp) {
         log("Clock: calibrated TSC, fixed-frequency fallback, 100 Hz accounting\n");
     else
         log("Clock: PIT IRQ-only fallback, elapsed waits unavailable\n");
+    clock_realtime_init();
 }
 
 void clock_refresh(bool timer) {

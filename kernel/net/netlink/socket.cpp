@@ -126,7 +126,8 @@ int64_t netlink_send(NetlinkSocket* socket, unsigned process, const void* data, 
         if (count == queue_count)
             return -90;
         positions[count] = at;
-        capacities[count] = socket->capped && header.type != 26 ? 36 : routing_capacity(header);
+        capacities[count] =
+            socket->capped && !routing_dump(header.type) ? 36 : routing_capacity(header);
         total += capacities[count++];
         if (header.length == length - at)
             break;
@@ -154,9 +155,9 @@ int64_t netlink_send(NetlinkSocket* socket, unsigned process, const void* data, 
         auto reply = replies[i];
         reply->source = {};
         reply->reserved = capacities[i];
-        reply->length =
-            routing_reply(bytes + positions[i], socket->port, socket->capped, reply + 1,
-                          current && capable(current->credentials, Capability::net_admin));
+        reply->length = routing_reply(
+            bytes + positions[i], socket->port, socket->capped, reply + 1,
+            current && capable(current->credentials, Capability::net_admin), socket->strict);
         if (!reply->length) {
             release(reply);
             continue;

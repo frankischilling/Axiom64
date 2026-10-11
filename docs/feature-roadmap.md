@@ -44,7 +44,7 @@ The first three milestones define the next core sequence. Later milestones descr
 | F07 | [SMP scheduling and kernel synchronization](https://github.com/frankischilling/Axiom64/issues/7) | planned | M2 | F01, F05, F06 |
 | F08 | [Linux syscall and libc compatibility](https://github.com/frankischilling/Axiom64/issues/8) | partial | M4 | F05, F06, F13 |
 | F09 | [Accounts, permissions, and process credentials](https://github.com/frankischilling/Axiom64/issues/9) | partial | M3 | F03, F04 |
-| F10 | [Secure random number generation](https://github.com/frankischilling/Axiom64/issues/10) | planned | M3 | F03, F09 |
+| F10 | [Secure random number generation](https://github.com/frankischilling/Axiom64/issues/10) | partial | M3 | F03, F09 |
 | F11 | [Ethernet devices and link management](https://github.com/frankischilling/Axiom64/issues/11) | partial | M3 | F01, F05 |
 | F12 | [IPv4, IPv6, routing, and ICMP](https://github.com/frankischilling/Axiom64/issues/12) | partial | M3 | F11 |
 | F13 | [TCP, UDP, and Linux socket semantics](https://github.com/frankischilling/Axiom64/issues/13) | partial | M3 | F12, F15 |
@@ -263,7 +263,7 @@ Acceptance evidence:
 
 ### F10. Secure random number generation
 
-[Kernel randomness](random.md) replaces the fixed stream with a BLAKE2s/ChaCha20 generator, trusted RDSEED seeding/reseeding, and checked initialization semantics. Child #84 covers this slice and fresh-root transaction regression evidence. The full feature remains open for persisted seed rotation, further validated entropy sources, credential-gated administration, and real cryptographic clients.
+[Kernel randomness](random.md) replaces the fixed stream with a BLAKE2s/ChaCha20 generator, trusted RDSEED seeding/reseeding, and checked initialization semantics. Child #84 covers the integrated baseline and fresh-root transaction regression evidence. Current #10 work adds partial credit and administration, modern/legacy virtio entropy, uncredited persisted-seed rotation and detected QEMU generation changes. The full feature remains open for complete seed failure/recovery, ordinary startup and real cryptographic-client acceptance.
 
 Required work:
 

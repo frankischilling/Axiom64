@@ -377,8 +377,8 @@
       "id": "F10",
       "title": "Secure random number generation",
       "milestone": "M3",
-      "state": "planned",
-      "current": "Current random bytes are not a cryptographic random generator.",
+      "state": "partial",
+      "current": "A BLAKE2s/ChaCha20 generator supplies shared Linux randomness, validated RDSEED and opt-in modern/legacy virtio input, initialization credit and privileged administration. Stored seeds load without credit and rotate through a private userspace service. QEMU generation changes rekey initialized state. Maintained OpenSSL builds and actual TLS, key, signature, ordinary-startup and complete seed failure/recovery matrices are implemented; final current-source CI and published acceptance remain required.",
       "scope": [
         "Entropy pool and a documented cryptographic generator",
         "Boot seeding, persisted seed rotation, hardware-source validation, and reseeding",
@@ -394,7 +394,16 @@
         "F03",
         "F09"
       ],
-      "evidence": [],
+      "evidence": [
+        "https://github.com/frankischilling/Axiom64/pull/85",
+        "https://github.com/frankischilling/Axiom64/actions/runs/37870593084",
+        "docs/random.md",
+        "kernel/drivers/random/virtio.cpp",
+        "kernel/firmware/generation.cpp",
+        "userspace/services/random_seed.c",
+        "scripts/random_crypto_test.py",
+        "scripts/random_installed_test.py"
+      ],
       "branch": "feature/f10-secure-random-number-generation",
       "issue": "https://github.com/frankischilling/Axiom64/issues/10"
     },
@@ -437,7 +446,7 @@
       "title": "IPv4, IPv6, routing, and ICMP",
       "milestone": "M3",
       "state": "partial",
-      "current": "The initial IPv4 host path supports static addresses, routes, bounded ARP, loopback, raw ICMP sockets, and ping on both adapters. NETLINK_ROUTE adds bounded main-table dumps, protocol/scope-filtered route control, and complete address updates. Options and fragments are rejected; complete IPv4, IPv6, reassembly, multicast, and path MTU behavior remain planned.",
+      "current": "The initial IPv4 host path supports static addresses, routes, bounded ARP, loopback, raw ICMP sockets, and ping on both adapters. NETLINK_ROUTE adds bounded main-table dumps, protocol/scope-filtered route control, complete address updates, and bounded link/address inventories used by libc interface discovery. Complete inventory acceptance is being revalidated with crypto clients. Options and fragments are rejected; complete IPv4, IPv6, reassembly, multicast, and path MTU behavior remain planned.",
       "scope": [
         "Ethernet framing, ARP, IPv4 checksums, loopback, routing, aliases, and gateways",
         "ICMP errors and echo/ping",
@@ -467,7 +476,9 @@
         "userspace/tests/net/configuration.cpp",
         "scripts/configuration_test.py",
         "scripts/configuration_native.py",
-        "docs/network-configuration.md"
+        "docs/network-configuration.md",
+        "kernel/net/netlink/inventory.cpp",
+        "scripts/netlink_inventory_test.py"
       ],
       "branch": "feature/f12-ipv4-ipv6-routing-and-icmp",
       "issue": "https://github.com/frankischilling/Axiom64/issues/12"
@@ -682,7 +693,7 @@
       "title": "Clocks, timers, and power management",
       "milestone": "M6",
       "state": "partial",
-      "current": "Boot-relative clocks use checked 64-bit HPET elapsed accounting or a calibrated fixed-frequency single-CPU TSC fallback. PIT scheduling and clock resolution remain 100 Hz/10 ms. Elapsed storage waits and overdue absolute futex/interval timers have controlled guest checks; RTC/calendar time, complete clock-ID semantics, higher-resolution deadlines, ACPI PM timer, SMP and power transitions remain required.",
+      "current": "Boot-relative clocks use checked 64-bit HPET elapsed accounting or a calibrated fixed-frequency single-CPU TSC fallback. PIT scheduling and clock resolution remain 100 Hz/10 ms. Elapsed storage waits and overdue absolute futex/interval timers have controlled guest checks; A checked UTC RTC supplies boot calendar time for TLS certificate validation; complete calendar acceptance is being revalidated. Clock setting, synchronization, complete clock-ID semantics, higher-resolution deadlines, ACPI PM timer, SMP and power transitions remain required.",
       "scope": [
         "RTC wall clock, monotonic/realtime clocks, and clock setting permissions",
         "HPET, ACPI PM timer, calibrated TSC, and higher-resolution deadlines",
@@ -716,7 +727,10 @@
         "userspace/tests/time/elapsed.c",
         "userspace/tests/time/elapsed.sh",
         "scripts/clock_test.py",
-        "docs/time.md"
+        "docs/time.md",
+        "kernel/arch/x86_64/rtc.cpp",
+        "kernel/firmware/rtc.cpp",
+        "scripts/clock_wall_test.py"
       ],
       "branch": "feature/f16-clocks-timers-and-power-management",
       "issue": "https://github.com/frankischilling/Axiom64/issues/16"

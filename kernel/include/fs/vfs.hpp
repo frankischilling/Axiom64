@@ -144,7 +144,7 @@ extern size_t node_count;
 void vfs_init(const void*, size_t);
 
 // Boot-only root replacement, before any task or file description exists.
-int vfs_disk_root(unsigned device, bool readonly);
+int vfs_disk_root(unsigned device, bool readonly, bool check_dirty = false);
 
 bool normalize(const char* cwd, const char* path, char* result, size_t capacity);
 
@@ -164,7 +164,7 @@ int remove_node(const Path&, bool directory);
 
 int rename_node(const Path&, const Path&);
 
-int mount_filesystem(const Path&, const Path&, const char*, uint64_t);
+int mount_filesystem(const Path&, const Path&, const char*, uint64_t, bool check_dirty = false);
 
 int unmount(const Path&, uint64_t);
 

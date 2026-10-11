@@ -90,7 +90,7 @@ extern "C" [[noreturn]] void kernel_main() {
     memory_init();
     arch_init();
     clock_init(rsdp_request.response ? uint64_t(rsdp_request.response->address) : 0);
-    random_init(!word(cmd, "random.trust_cpu=off"));
+    random_init(!word(cmd, "random.trust_cpu=off"), word(cmd, "random.trust_virtio=on"));
     auto modules = module_request.response;
     if (!modules || !modules->module_count)
         panic("missing root filesystem");

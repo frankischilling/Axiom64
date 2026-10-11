@@ -32,7 +32,15 @@ inline const uint8_t* netlink_bytes(const NetlinkFrame* frame) {
 // Caller reserves this capacity before invoking route mutation/reply generation.
 size_t routing_capacity(const NetlinkHeader&);
 
-size_t routing_reply(const void*, uint32_t port, bool capped, void* output, bool privileged);
+size_t routing_reply(const void*, uint32_t port, bool capped, void* output, bool privileged,
+                     bool strict = false);
+
+constexpr bool routing_dump(uint16_t type) {
+    return type == 18 || type == 22 || type == 26;
+}
+
+int netlink_inventory_reply(const void*, const NetlinkHeader&, uint32_t port, void*, bool strict,
+                            size_t& size);
 
 int netlink_address_change(const void*, const NetlinkHeader&);
 

@@ -1076,8 +1076,12 @@ static int64_t dispatch(Frame* f) {
         return error ? error : node_chown(node, c, d);
     }
     case 96: {
-        uint64_t time[] = {ticks / 100, (ticks % 100) * 10000};
-        return a ? copy_result(a, time, sizeof(time)) : 0;
+        uint64_t now = clock_realtime_ticks();
+        uint64_t time[] = {now / 100, (now % 100) * 10000};
+        if (a && copy_result(a, time, sizeof(time)))
+            return -14;
+        const uint32_t timezone[2]{};
+        return b ? copy_result(b, timezone, sizeof(timezone)) : 0;
     }
     case 97: {
         uint64_t limit[] = {a == 7 ? max_fds : 0x7fffffffffffffffull,
@@ -1199,6 +1203,12 @@ static int64_t dispatch(Frame* f) {
         poweroff(0);
     case 202:
         return futex_syscall(f);
+    case 201: {
+        int64_t seconds = clock_realtime_ticks() / 100;
+        if (a && copy_result(a, &seconds, sizeof(seconds)))
+            return -14;
+        return seconds;
+    }
     case 204: {
         if (b < 8)
             return -22;
@@ -1213,12 +1223,15 @@ static int64_t dispatch(Frame* f) {
     case 228: {
         if (a > 7)
             return -22;
-        Timespec ts{int64_t(ticks / 100), int64_t(ticks % 100) * 10000000};
+        uint64_t now = a == 0 || a == 5 ? clock_realtime_ticks() : ticks;
+        Timespec ts{int64_t(now / 100), int64_t(now % 100) * 10000000};
         return copy_result(b, &ts, sizeof(ts));
     }
     case 229: {
+        if (a > 7)
+            return -22;
         Timespec ts{0, 10000000};
-        return copy_result(b, &ts, sizeof(ts));
+        return b ? copy_result(b, &ts, sizeof(ts)) : 0;
     }
     case 137: {
         Path path;
@@ -1241,17 +1254,21 @@ static int64_t dispatch(Frame* f) {
         char type[64]{};
         if (c && !current->memory->space.string(c, type, sizeof(type)))
             return -14;
+        bool check_dirty = false;
         if (e) {
             char options[1024];
             if (!current->memory->space.string(e, options, sizeof(options)))
                 return -14;
-            if (options[0])
-                return -22;
+            if (options[0]) {
+                if (strcmp(type, "ext2") || (d & 32) || strcmp(options, "recovery=check"))
+                    return -22;
+                check_dirty = true;
+            }
         }
         Path source;
         if (!(d & 32) && !strcmp(type, "ext2") && !path_at(-100, a, source))
             return source.error;
-        return mount_filesystem(path, source, type, d);
+        return mount_filesystem(path, source, type, d, check_dirty);
     }
     case 166: {
         Path path;

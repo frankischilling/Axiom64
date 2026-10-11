@@ -6,6 +6,7 @@ from fetch import ROOT, LOCK
 from ports import packages
 from build_musl import loader, runtime_files
 from build_libcap import runtime_files as capability_files
+from build_openssl import runtime_files as crypto_files
 import tarfile
 import argparse
 import tempfile
@@ -60,6 +61,7 @@ regular("bin/lifecycle-static", ROOT / "build" / "lifecycle-static")
 regular("bin/lifecycle-dynamic", ROOT / "build" / "lifecycle-dynamic")
 regular("sbin/init", ROOT / "build" / "init")
 regular("sbin/network-manager", ROOT / "build" / "network-manager")
+regular("sbin/random-seed", ROOT / "build" / "random-seed-static")
 regular("etc/boot-test.sh", ROOT / "userspace/tests/boot.sh")
 regular("etc/desktop-test.sh", ROOT / "userspace/tests/desktop/run.sh")
 regular("etc/storage-test.sh", ROOT / "userspace/tests/storage/block.sh")
@@ -121,7 +123,7 @@ for package, archive in packages():
                 files[path] = files[target]
 
 # Override both the installed interpreter and native development libc after APK imports.
-for path, value in {**runtime_files(), **capability_files()}.items():
+for path, value in {**runtime_files(), **capability_files(), **crypto_files()}.items():
     for parent in reversed(Path(path).parents):
         if str(parent) != '.':
             files.setdefault(str(parent), (0o40755, b''))
@@ -138,6 +140,8 @@ regular("etc/xterm-session.sh", ROOT / "userspace/desktop/xterm-session.sh")
 regular("bin/x11-probe", ROOT / "build" / "x11-probe")
 for path in ["etc/X11", "tmp/.X11-unix", "var", "var/log", "var/lib", "var/lib/xkb", "usr/share/licenses/Xorg"]:
     directory(path)
+directory("var/lib/axiom64")
+files["var/lib/axiom64/random"] = (0o40700, b"")
 files["tmp"] = (0o41777, b"")
 files["tmp/.X11-unix"] = (0o41777, b"")
 

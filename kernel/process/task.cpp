@@ -597,10 +597,15 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
         }
     }
     uint64_t platform = push_string("x86_64"), execfn = push_string(path);
-    uint8_t random[16];
+    uint8_t random[16]{};
     // Like early Linux exec, AT_RANDOM must not prevent init from bootstrapping entropy.
     // Before readiness these bytes have the same explicit limitation as GRND_INSECURE.
-    random_read(random, sizeof(random), true);
+    int random_error = random_read(random, sizeof(random), true);
+    if (random_error) {
+        ax::random::erase(random, sizeof(random));
+        memory.destroy();
+        return random_error;
+    }
     sp -= 16;
     uint64_t randptr = sp;
     memory.copy_out(sp, random, 16);

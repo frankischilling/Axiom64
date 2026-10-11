@@ -6,7 +6,7 @@ namespace ax::random {
 // Internal pool/generator seam: the x86 adapter and deterministic fixtures share it.
 class Generator {
     uint8_t pool_[32]{}, key_[32]{};
-    bool ready_ = false;
+    unsigned initialization_bits_ = 0;
     void rekey();
 
   public:
@@ -15,11 +15,17 @@ class Generator {
     Generator& operator=(const Generator&) = delete;
 
     bool ready() const {
-        return ready_;
+        return initialization_bits_ == 256;
+    }
+
+    unsigned entropy_count() const {
+        return initialization_bits_;
     }
 
     void mix(const void*, size_t);        // Never credits entropy, including user writes.
     void seed(const uint8_t trusted[32]); // Only the validated trusted-source adapter calls this.
+    void credit(unsigned bits);           // Trusted-source or privileged administrator assertion.
+    int reseed();                         // Re-extract the pool; -ENODATA before initialization.
     int read(void*, size_t, bool insecure = false); // 0 or negative errno; no partial output.
 };
 
@@ -36,5 +42,6 @@ class SeedSource {
     }
 
     bool seed(Generator&); // At most 40 instruction attempts; failed samples are erased.
+    bool feed(Generator&, bool trusted); // Validated but untrusted samples only mix.
 };
 } // namespace ax::random

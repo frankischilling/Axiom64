@@ -29,8 +29,11 @@ Limine's kernel command line selects the root:
 | `rootfstype=ext2` | Select the supported disk filesystem; omission also selects ext2 |
 | `rootflags=rw` | Writable root; also the default for a selected disk |
 | `rootflags=ro` | Read-only root; use `readonly=on` on QEMU's drive to enforce it in hardware too |
+| `rootflags=rw,recovery=check` or `ro,recovery=check` | Permit a structurally consistent dirty root after the complete ext2 validation scan; reject damaged metadata, error flags and orphan chains |
 
 Empty, duplicate, oversized, and unsupported root options fail with a `BOOT_ROOT_FAIL` diagnostic naming the stage and Linux errno. Filesystem type or flags require a disk selection. A missing disk or rejected ext2 volume also stops boot; the kernel does not silently use the bootstrap as a successful disk root. Device names follow PCI discovery order and are not stable disk identifiers.
+
+For a generated recovery boot image, pass `--root-recovery` with `--root-device` to `scripts/image.py`. This selects the checked policy above. The ordinary image keeps the default clean-volume requirement. [Ext2 recovery limits](ext2.md#supported-format-and-operations) explain which interrupted volumes can be used without repair.
 
 The disk must contain executable regular files at `/sbin/init`, `/bin/busybox`, and `/lib/ld-musl-x86_64.so.1`, plus directories at `/dev`, `/proc`, `/sys`, `/tmp`, and `/run`. Required paths are checked through the disk filesystem. The ELF loader and dynamic linker use the selected root. Relative paths, cwd, mount ownership, and `stat.st_dev` follow that root too.
 

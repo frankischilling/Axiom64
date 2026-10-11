@@ -17,6 +17,8 @@ class Counter {
 namespace ax {
 extern uint64_t ticks;
 void clock_init(uint64_t rsdp);
+void clock_realtime_init();
+uint64_t clock_realtime_ticks();
 // Called with interrupts disabled; timer=true supplies the IRQ-only fallback.
 void clock_refresh(bool timer = false);
 } // namespace ax

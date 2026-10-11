@@ -11,6 +11,8 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/mm/memory.cpp` | Physical allocation, page references, user page tables, validated user copies |
 | `kernel/drivers/platform/pci.cpp`, `kernel/drivers/virtio/` | PCI discovery, modern/legacy virtio transport, split-ring storage and descriptor ownership |
 | `kernel/drivers/block/block.cpp` | Virtio block request policy, raw sector I/O, flush, and filesystem claims |
+| `kernel/core/random/`, `kernel/drivers/random/` | Shared generator, initialization credit, source validation, and virtio entropy ownership |
+| `kernel/firmware/`, `kernel/arch/x86_64/rtc.cpp` | Bounded generation-ID discovery and boot UTC calendar sampling |
 | `kernel/net/`, `kernel/drivers/net/` | Ethernet ownership, virtio-net/e1000 devices, interface ioctls, packet sockets, IPv4/ARP/ICMP, UDP, TCP state/socket/error ownership, and netlink route/address control |
 | `kernel/process/task.cpp` | Process/thread ownership, ELF loading, clone/fork/exec/exit/wait, scheduling, TLS, FPU state |
 | `kernel/process/futex.cpp` | Expected-value waits, wake/bitsets, requeue, deadlines, shared backing lifetime |
@@ -24,6 +26,7 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/drivers/platform/devices.cpp` | Serial terminal, PTYs, framebuffer, PS/2 events, Linux block-device file operations |
 | `kernel/drivers/platform/power.cpp` | PIIX4 power off after filesystem synchronization on the tested QEMU platform |
 | `userspace/init/main.c` | Desktop and serial shell startup, child reaping, console shell restart |
+| `userspace/services/random_seed.c` | Private persisted seed loading, rotation, and interrupted-operation recovery |
 | `userspace/net/` | C++ configuration ownership, saved profiles, resolver metadata, and DHCP packet/state/transport modules; normal manager startup remains required |
 
 Sources and public headers use matching subsystem folders. Desktop configuration is under `userspace/desktop/`; guest and host tests are grouped by the subsystem they exercise. [Source layout and build discovery](source-layout.md) describe the paths and conventions.
@@ -45,12 +48,12 @@ The framebuffer maps Limine's physical pixel storage into userspace. Xorg's fbde
 This is a development OS with a tested compatibility surface. Unsupported syscalls return `ENOSYS`; these working programs do not imply complete Linux compatibility.
 
 - One CPU, 64 task slots, 128 descriptors per file table. Musl pthreads and C++ threads work within [the tested slice](threads.md); SMP and complete POSIX threading remain planned.
-- [Task credentials and permissions](credentials.md) support ordinary numeric identities, capability transitions, filesystem access and privilege-dropped exec. Account databases, authentication, login policy and complete isolation remain required. [Kernel randomness](random.md) shares a BLAKE2s/ChaCha20 generator and trusted RDSEED initialization across the Linux interfaces; persisted seed management and real cryptographic clients remain required in #10.
+- [Task credentials and permissions](credentials.md) support ordinary numeric identities, capability transitions, filesystem access and privilege-dropped exec. Account databases, authentication, login policy and complete isolation remain required. [Kernel randomness](random.md) shares a BLAKE2s/ChaCha20 generator across the Linux interfaces. The current branch adds validated virtio input, administration, persisted seeds and generation-change handling; complete lifecycle and cryptographic-client acceptance remain required in #10.
 - A RAM or [classic ext2 root](disk-root.md), independent RAM mounts, raw virtio disks, and [writable ext2 data volumes](ext2.md). Partitions, advanced filesystems/recovery, and a package installation service remain planned. See [mounts](vfs.md) and [storage](storage.md) for interfaces and limits.
 - Unix stream sockets, [raw Ethernet packet sockets](network.md), [raw IPv4 ICMP sockets](ipv4.md), [IPv4 UDP sockets](udp.md) and ordinary [IPv4 TCP streams](tcp.md), with static addresses, routes, ARP, loopback and ping on virtio-net and QEMU e1000. [Netlink sockets](netlink.md) add bounded IPv4 route dumps, tagged route control and complete address updates. [DHCP/configuration and resolver metadata modules](network-configuration.md), the [normal manager](network-manager.md) and [DNS queries with TCP fallback](dns.md) have guest checks. [Quoted TCP ICMP errors](tcp-icmp-acceptance.md) validate emitted ownership and Linux hard/soft diagnostics. Full TCP fault/lifetime acceptance, PMTU recovery, IPv6, fragmentation/reassembly, ancillary data and the complete socket contract remain required. Unix datagram descriptors currently serve interface configuration only.
 - Eager copying on fork, bounded allocations, and no general `mremap` implementation.
 - Fixed framebuffer mode. No accelerated graphics, hardware gamma control, hotplug, or virtual-console switching.
 - Basic terminal discipline and job control; terminal and signal semantics continue to grow with tests.
-- 10 ms timer resolution and boot-relative clocks, with HPET or fixed-frequency TSC elapsed accounting; no calibrated wall clock. See [clock selection and limits](time.md).
+- 10 ms timer resolution with HPET or fixed-frequency TSC elapsed accounting. The current branch samples a checked UTC RTC calendar at boot; synchronization, clock setting and complete Linux clock-ID semantics remain required. See [clock selection and limits](time.md).
 
 The harness tests the guest's own kernel paths. It does not substitute host syscalls for guest operations.

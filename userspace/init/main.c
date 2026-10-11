@@ -42,6 +42,27 @@ static void spawned(pid_t child, const struct timespec* now) {
     fflush(stdout);
 }
 
+static pid_t seed_service(const struct timespec* now) {
+    pid_t child = fork();
+    if (!child) {
+        int input = open("/dev/null", O_RDONLY);
+        if (input >= 0) {
+            dup2(input, 0);
+            close(input);
+        }
+        execl("/sbin/random-seed", "random-seed", "boot", "--nonblock", (char*)0);
+        perror("init: random seed service exec");
+        _exit(1);
+    }
+    if (child < 0)
+        perror("init: random seed service fork");
+    else {
+        printf("INIT_RANDOM_SEED_SPAWN pid=%d monotonic_ms=%llu\n", child, milliseconds(now));
+        fflush(stdout);
+    }
+    return child;
+}
+
 static pid_t console(void) {
     pid_t child = fork();
     if (!child) {
@@ -78,6 +99,10 @@ int main(void) {
             perror("init: network manager fork");
         else
             spawned(manager, &retry);
+        struct timespec seed_retry = retry;
+        pid_t seeder = seed_service(&seed_retry);
+        int seeded = 0;
+        seed_retry.tv_sec++;
         retry.tv_sec++;
         pid_t desktop = fork();
         if (!desktop) {
@@ -124,6 +149,15 @@ int main(void) {
                        milliseconds(&retry));
                 fflush(stdout);
                 retry.tv_sec++;
+            } else if (child > 0 && child == seeder) {
+                seeder = -1;
+                if (monotonic(&seed_retry) < 0)
+                    return 1;
+                printf("INIT_RANDOM_SEED_REAP pid=%d status=%d monotonic_ms=%llu\n", child, status,
+                       milliseconds(&seed_retry));
+                fflush(stdout);
+                seeded = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+                seed_retry.tv_sec++;
             }
             struct timespec now;
             if (monotonic(&now) < 0)
@@ -137,6 +171,13 @@ int main(void) {
                     spawned(manager, &now);
                 retry = now;
                 retry.tv_sec++;
+            }
+            if (!seeded && seeder < 0 &&
+                (now.tv_sec > seed_retry.tv_sec ||
+                 (now.tv_sec == seed_retry.tv_sec && now.tv_nsec >= seed_retry.tv_nsec))) {
+                seeder = seed_service(&now);
+                seed_retry = now;
+                seed_retry.tv_sec++;
             }
             if (!child) {
                 struct timespec interval = {0, 100000000};

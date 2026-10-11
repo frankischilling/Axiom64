@@ -4,10 +4,11 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 
 | Folder | Contents |
 | --- | --- |
-| `kernel/arch/x86_64/` | CPU setup, counter clock selection, assembly entry, linker layout |
+| `kernel/arch/x86_64/` | CPU setup, counter clock selection, RTC I/O, assembly entry, linker layout |
 | `kernel/boot/` | Boot protocol, kernel startup, and root selection |
 | `kernel/core/` | Freestanding runtime, diagnostics, and counter arithmetic |
-| `kernel/firmware/` | Bounded ACPI table parsing |
+| `kernel/core/random/` | Cryptographic primitives, entropy pool and generator state |
+| `kernel/firmware/` | Bounded ACPI table parsing and QEMU generation-ID discovery |
 | `kernel/abi/linux/` | Linux syscall dispatch and ABI structures |
 | `kernel/mm/` | Physical and virtual memory |
 | `kernel/process/` | Tasks, scheduling, signals, futexes |
@@ -19,14 +20,16 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/net/ipv4/` | IPv4 routes/output, ARP cache/timers, ICMP, and Internet socket descriptions |
 | `kernel/net/udp/` | UDP lengths, pseudo-header checksums, payload delivery, and transmission |
 | `kernel/net/tcp/` | TCP wire/state/sender policy, socket ownership, timers, ISNs, TIME_WAIT and quoted ICMP errors |
-| `kernel/net/netlink/` | Route/address message validation, owned replies, and control socket lifecycle |
+| `kernel/net/netlink/` | Link/address inventories, route/address message validation, owned replies, and control socket lifecycle |
 | `kernel/drivers/platform/` | PCI, PIIX4 power off, and current platform device interfaces |
 | `kernel/drivers/block/` | Block request policy and raw I/O |
 | `kernel/drivers/net/` | PCI virtio-net and QEMU e1000 adapters |
+| `kernel/drivers/random/` | Virtio entropy input, completion validation and source lifetime |
 | `kernel/drivers/virtio/` | Shared PCI transport and split queues |
 | `kernel/include/` | Public internal headers with matching module paths |
 | `kernel/tests/` | Host tests grouped by module; excluded from kernel linking |
 | `userspace/init/` | Ring 3 init |
+| `userspace/services/` | Persisted seed ownership, rotation and recovery |
 | `userspace/desktop/` | Display sessions, Xorg and window-manager configuration |
 | `userspace/net/config/` | Ring 3 address/route adapter, ownership recovery, saved profiles, and resolver metadata |
 | `userspace/net/dhcp/` | Bounded packet codec, lease state, and bootstrap/UDP transport |

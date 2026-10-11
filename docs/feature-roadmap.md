@@ -244,7 +244,7 @@ Acceptance evidence:
 
 ### F09. Accounts, permissions, and process credentials
 
-[Task credentials and permission enforcement](credentials.md) provide real/effective/saved/filesystem IDs, supplementary groups, capability transitions, DAC, ownership, sticky/set-ID rules, chroot and process/IPC/network guards. Child #114 verifies actual ordinary identities and privilege-dropped exec across both musl linkages, firmware types and RAM/ext2. The complete account, authentication, session and isolation requirements below remain open.
+[Task credentials and permission enforcement](credentials.md) provide real/effective/saved/filesystem IDs, supplementary groups, capability transitions, DAC, ownership, sticky/set-ID rules, chroot and process/IPC/network guards. Child #114 verifies actual ordinary identities and privilege-dropped exec across both musl linkages, firmware types and RAM/ext2. [Linux xattrs and file capabilities](file-capabilities.md) add actual file-capability exec and upstream getcap/setcap administration. The complete account, authentication, session and isolation requirements below remain open.
 
 Required work:
 

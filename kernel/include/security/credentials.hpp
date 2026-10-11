@@ -14,6 +14,7 @@ enum class Capability : unsigned {
     setgid = 6,
     setuid = 7,
     setpcap = 8,
+    setfcap = 31,
     net_bind_service = 10,
     net_admin = 12,
     net_raw = 13,
@@ -45,6 +46,15 @@ struct Credentials {
     bool no_new_privileges = false;
 };
 
+struct FileCapabilities;
+
+struct ExecCredentials {
+    Credentials value;
+    bool secure = false;
+    bool dumpable = true;
+    int error = 0;
+};
+
 enum class IdentityChange { single, real_effective, real_effective_saved };
 
 bool capable(const Credentials&, Capability);
@@ -62,6 +72,8 @@ int credential_capabilities(Credentials&, uint64_t effective, uint64_t permitted
 int64_t credential_control(Credentials&, unsigned option, uint64_t, uint64_t, uint64_t, uint64_t);
 Credentials credential_exec(const Credentials&, uint32_t uid, uint32_t gid, uint32_t mode,
                             bool nosuid);
+ExecCredentials credential_exec_file(const Credentials&, uint32_t uid, uint32_t gid, uint32_t mode,
+                                     bool nosuid, const FileCapabilities&);
 // DAC masks use Linux R_OK/W_OK/X_OK bits. The caller supplies inode identity.
 int credential_access(const Credentials&, uint32_t uid, uint32_t gid, uint32_t mode, unsigned mask,
                       bool real = false);

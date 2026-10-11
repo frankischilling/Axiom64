@@ -18,9 +18,42 @@ build/credentials-policy: kernel/tests/security/credentials.cpp kernel/security/
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/security/credentials.cpp kernel/security/credentials.cpp -o $@
 test-credentials-policy: build/credentials-policy
 	ASAN_OPTIONS=detect_leaks=1 ./build/credentials-policy
+.PHONY: test-file-capabilities-policy
+.PHONY: test-file-capabilities test-file-capabilities-native
+test-file-capabilities:
+	$(PYTHON) scripts/file_capabilities/guest.py
+	$(PYTHON) scripts/file_capabilities/metadata.py
+test-file-capabilities-native: build/file-capabilities-native build/file-capabilities-static build/file-capabilities-dynamic
+	$(PYTHON) scripts/file_capabilities/native.py
+build/file-capabilities-policy: kernel/tests/security/file_capabilities.cpp kernel/security/file_capabilities.cpp kernel/security/credentials.cpp kernel/include/security/file_capabilities.hpp kernel/include/security/credentials.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/security/file_capabilities.cpp kernel/security/file_capabilities.cpp kernel/security/credentials.cpp -o $@
+test-file-capabilities-policy: build/file-capabilities-policy
+	ASAN_OPTIONS=detect_leaks=1 ./build/file-capabilities-policy
+.PHONY: test-xattr-store
+build/xattr-store: kernel/tests/fs/xattr.cpp kernel/fs/xattr_store.cpp kernel/include/fs/xattr.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/fs/xattr.cpp kernel/fs/xattr_store.cpp -o $@
+test-xattr-store: build/xattr-store
+	ASAN_OPTIONS=detect_leaks=1 ./build/xattr-store
+.PHONY: test-ext2-xattr-codec
+build/ext2-xattr-codec-test: kernel/tests/fs/ext2_xattr.cpp kernel/fs/ext2/xattr.cpp kernel/fs/xattr_store.cpp kernel/include/fs/ext2/xattr.hpp kernel/include/fs/xattr.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/fs/ext2_xattr.cpp kernel/fs/ext2/xattr.cpp kernel/fs/xattr_store.cpp -o $@
+test-ext2-xattr-codec: build/ext2-xattr-codec-test
+	ASAN_OPTIONS=detect_leaks=1 $(PYTHON) scripts/tests/ext2_xattr_codec_test.py
 build/credentials-native: userspace/tests/security/credentials.c
 	@mkdir -p build
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DCREDENTIAL_LINKAGE='"native"' $< -o $@
+build/file-capabilities-native: userspace/tests/security/file-capabilities.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DFILECAP_LINKAGE='"native"' $< -o $@
+build/file-capabilities-static: userspace/tests/security/file-capabilities.c
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+build/file-capabilities-dynamic: userspace/tests/security/file-capabilities.c
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DFILECAP_LINKAGE='"dynamic"' $< -o $@
 build/credentials-static: userspace/tests/security/credentials.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -static -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $< -o $@
@@ -302,6 +335,7 @@ build/x11-probe: userspace/tests/desktop/probe.c
 USERSPACE_DATA = $(foreach pattern,*.sh *.conf *.twmrc,$(call rwildcard,userspace/,$(pattern))) $(wildcard userspace/tests/toolchain/*)
 ROOTFS_INPUTS = build/thread-io-static build/thread-io-dynamic build/lifecycle-static build/lifecycle-dynamic build/futex-static build/futex-dynamic build/thread-static build/thread-dynamic build/abi-static build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/net-tests build/ipv4-tests build/udp-tests build/x11-probe build/licenses/.stamp $(USERSPACE_DATA) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/build_busybox.py scripts/fetch.py
 ROOTFS_INPUTS += build/network-manager
+ROOTFS_INPUTS += scripts/build_libcap.py scripts/build_musl.py sources.lock.json
 build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox

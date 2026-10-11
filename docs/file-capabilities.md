@@ -1,0 +1,49 @@
+# Linux extended attributes and file capabilities
+
+The twelve Linux path, no-follow and descriptor xattr calls work on RAM and classic ext2. `security.capability` supplies candidate credentials for actual ELF exec, and upstream libcap 2.78 `getcap` and `setcap` are installed in both userspace profiles. Account databases, authentication, ACL permission policy, user namespaces and security modules remain work under [F09](https://github.com/frankischilling/Axiom64/issues/9) and [F04](https://github.com/frankischilling/Axiom64/issues/4).
+
+## Attribute interface and lifetime
+
+`setxattr/lsetxattr/fsetxattr`, `getxattr/lgetxattr/fgetxattr`, `listxattr/llistxattr/flistxattr` and `removexattr/lremovexattr/fremovexattr` use the Linux x86-64 syscall numbers and conventions. A zero-sized get/list queries the required length without touching the output pointer. Short buffers return `ERANGE` without a partial copy. Names include their namespace prefix, have at most 255 bytes, and cannot have an empty suffix. Values may contain arbitrary bytes or be empty. The ABI bounds values and lists to 65,536 bytes; ext2 additionally limits combined names/values to its packed EA block. An attribute that cannot fit returns `ENOSPC`, including a value larger than the filesystem block, as in the recorded native Linux 6.17 comparison. The classic Linux ext2 implementation instead uses `ERANGE` for a value larger than its block; the native compatibility backend's packed-space behavior is the supported contract here.
+
+Create/replace flags preserve Linux behavior, including the combined flags: an absent attribute returns `ENODATA` when replace is requested, and an existing attribute returns `EEXIST` when create is requested. Unknown flag bits return `EINVAL`. User-pointer faults return `EFAULT`. An `O_PATH` descriptor returns `EBADF`; a normal read-only descriptor can administer attributes if the caller's current credentials permit it.
+
+`user.*` uses the inode's current filesystem UID/GID and read/write DAC checks. Sticky directory writes require the owner or `CAP_FOWNER`. User attributes on symlinks are hidden on read and denied on write; no-follow security attributes can describe the symlink itself. Public `security.*` reads and public lists do not require file-read permission, although path traversal still requires search permission. Administration of `security.capability` requires `CAP_SETFCAP`; other security attributes require `CAP_SYS_ADMIN`. Trusted attributes require `CAP_SYS_ADMIN`, are hidden from unprivileged reads and lists, and deny unprivileged writes. Read-only mounts reject mutation with `EROFS`, including malformed capability values and unsupported namespace names.
+
+Hardlinks share the inode's attribute store. Rename preserves it. Open descriptions retain it after unlink, including descriptor get/set operations; the last reference permits reclamation. RAM attribute replacements allocate their complete successor before changing the old store. Ext2 uses external EA blocks, counts references by distinct inode, and copies a shared block before modifying one inode. Binary and empty values, opaque unknown namespaces, unrelated file bytes, full-width ownership and inline symlink contents survive supported mutations. Stored ACL namespaces and ext4 inode-body EAs return `EOPNOTSUPP` at mount before disk writes, because those layouts require additional permission or storage policy.
+
+Before enabling ext2 writes, mount validation checks allocated EA pointers, metadata/data aliases, distinct inode reference counts, `i_blocks`, header fields, sorted names, value bounds/alignment/overlap and stored hashes. A malformed block returns `EUCLEAN`. The first EA on an original revision-zero volume upgrades it to revision one and records the `ext_attr` feature. Fresh mounts read and validate the stored format again. The existing [ext2 overlay and I/O error contract](ext2.md#write-and-error-behavior) also applies to attributes: pre-commit failures preserve the old store; commit I/O errors retain the complete overlay for an explicit later sync. This remains a non-journaled filesystem.
+
+## Capability words and exec
+
+The wire decoder bounds Linux v1/v2/v3 capability records to 12/20/24 bytes. Public administration accepts v2/v3; a root-zero v3 read exports the v2 form. A foreign root ID remains stored and readable without granting privileges in the initial namespace. The all-ones root ID is rejected on write, returns `EOVERFLOW` on public read and grants nothing at exec. Legacy on-disk v1 words can participate in exec even though their public read/write conversion returns `EINVAL`. Unknown capability numbers are masked to the supported 0–40 range. A stored bit does not implement an absent subsystem.
+
+For an applicable marking, candidate permitted capabilities are `(old.inheritable & file.inheritable) | (old.bounding & file.permitted)`. The effective flag promotes the candidate permitted set to effective. A marking requesting effective capabilities outside the bounding set fails with `EPERM` before the caller's credentials change. Ambient capabilities survive ordinary exec, and applicable file markings or privilege-changing IDs clear them. `nosuid` ignores file markings, including malformed words. No-new-privileges suppresses set-ID changes and intersects the candidate permitted set with the caller's old permitted set. Root compatibility, `SECBIT_NOROOT`, securebits locks and the bounding/inheritable exception retain their existing Linux policy. Exec clears keep-caps.
+
+The replacement program receives the final UID/GID auxiliary values and `AT_SECURE`. Secure-exec policy and dumpability are computed separately: an inherited capability can require a secure loader without acquiring new privileges or disabling normal dumpability. Changes to effective/filesystem identities, permitted-set gains or an unreadable program/interpreter restrict dumpability. Credentials, ambient state and dumpability commit only after the complete replacement image succeeds. An invalid ELF, malformed applicable marking or bounded effective marking preserves the caller's previous state.
+
+Ordinary content writes, truncation and ownership changes strip an existing file marking. Zero-length writes, opening a file, chmod and a shared mapping store preserve it as in the recorded native Linux comparison. Mark removal does not require the writer to administer capabilities separately. The applicable normal write/ownership permission checks still run.
+
+Policy was checked against Linux commit [`3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0`](https://github.com/torvalds/linux/tree/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0), especially [common capabilities](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/security/commoncap.c), [xattr adaptation](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/fs/xattr.c), [ext2 EA storage](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/fs/ext2/xattr.c), [exec](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/fs/exec.c) and [credential commit](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/kernel/cred.c). The kernel implementation is independently authored.
+
+## Upstream tools and verification
+
+`/usr/sbin/getcap` and `/usr/sbin/setcap` come from the SHA256-pinned [libcap 2.78 release](https://www.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-2.78.tar.xz). The build elects upstream's BSD-3-Clause option and preserves the complete upstream `License`, archive and relinkable `libcap.a`. Runtime tools link against the pinned runtime musl provider; test fixtures retain static and dynamic tools built against the separate build provider. Native tests retain the actual glibc libraries/startup objects, notices, and matching source authenticated through Ubuntu's signed archive indices.
+
+```sh
+make test-file-capabilities-policy test-xattr-store test-ext2-xattr-codec
+make -j2 build/file-capabilities-native build/file-capabilities-static build/file-capabilities-dynamic
+python3 scripts/build_libcap.py --provider all
+mkdir -p build/file-capabilities
+sudo -n python3 scripts/file_capabilities/native.py
+python3 scripts/file_capabilities/guest.py
+python3 scripts/file_capabilities/metadata.py
+python3 scripts/file_capabilities/installed.py
+python3 scripts/file_capabilities/check.py
+```
+
+Native tests require every selected profile to pass; a host filesystem without xattrs is a failure, and no unsupported profile is silently skipped. The explicit `--filesystem tmpfs` option runs only the generic Linux ABI/exec comparison on hosts whose ext2 driver cannot store xattrs. Complete acceptance additionally requires the full native ext2 run.
+
+Guest fixtures exercise both musl linkages, BIOS/UEFI and modern/legacy virtio, RAM and four ext2 format combinations. Ext2 fixtures boot the stored helper in a new kernel, then independently export attributes, ELF bytes and ownership with e2fsprogs. Metadata fixtures exercise shared blocks, non-ASCII names, opaque attributes, unlinked descriptions, malformed mounts, legacy/foreign/malformed capability words, disk exhaustion and deliberate block-write/flush faults. Sanitizers exercise allocation failures, bounded codecs and lifetime. The independent checker verifies actual syscall/exec/tool receipts, frozen policy expectations, original deadlines, source/library/product fingerprints, bytes extracted from the tested ISO and stored metadata. Deliberately damaged evidence must be rejected.
+
+Evidence directories under `build/file-capabilities` refuse overwrites. A failed run retains its original logs, images, inputs and deadlines; a corrected implementation or fixture uses a new directory. The full acceptance job and all existing repository checks must pass on the same candidate before merging.

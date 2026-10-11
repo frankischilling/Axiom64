@@ -57,6 +57,8 @@ jobs:
           make -j2 build/dns-tcp-static build/dns-tcp-dynamic
           make -j2 build/normal-dns-static build/normal-dns-dynamic
           make -j2 build/credentials-native build/credentials-static build/credentials-dynamic
+          make -j2 build/file-capabilities-native build/file-capabilities-static build/file-capabilities-dynamic
+          python3 scripts/build_libcap.py --provider all
           make -j2 build/tcp-native build/tcp-static build/tcp-dynamic
           make -j2 build/tcp-fault-native build/tcp-fault-static build/tcp-fault-dynamic
           make -j2 build/tcp-challenge-native build/tcp-challenge-static build/tcp-challenge-dynamic
@@ -68,6 +70,10 @@ jobs:
         run: make test-virtqueue
       - name: Test credential policy ownership and allocation failures with sanitizers
         run: make test-credentials-policy
+      - name: Test bounded file-capability policy, xattr allocation and actual ext2 EA codecs
+        run: |
+          make test-file-capabilities-policy test-xattr-store test-ext2-xattr-codec
+          python3 scripts/tests/file_capabilities_disk_test.py
       - name: Test TCP wire, sender and connection policies with sanitizers
         run: |
           mkdir -p build/tcp-policy
@@ -143,6 +149,7 @@ jobs:
           - manager-uefi-legacy
           - random
           - credentials
+          - file-capabilities
           - tcp
           - tcp-fault-loss
           - tcp-fault-reordering
@@ -218,6 +225,19 @@ jobs:
       - name: Test ordinary identities, privilege-dropped exec and RAM/ext2 permissions
         if: matrix.suite == 'credentials'
         run: make test-credentials
+      - name: Compare all three libc profiles with native Linux tmpfs and ext2 xattrs
+        if: matrix.suite == 'file-capabilities'
+        run: |
+          mkdir -p build/file-capabilities
+          sudo -n make test-file-capabilities-native
+      - name: Test actual file-capability exec, fresh boots, malformed disks and metadata failure recovery
+        if: matrix.suite == 'file-capabilities'
+        run: |
+          python3 scripts/file_capabilities/guest.py
+          python3 scripts/file_capabilities/metadata.py
+          python3 scripts/file_capabilities/installed.py
+          python3 scripts/file_capabilities/check.py 2>&1 | tee build/file-capabilities-independent.log
+          python3 scripts/tests/file_capabilities_evidence_test.py 2>&1 | tee build/file-capabilities-damage.log
       - name: Compare TCP stream sockets with native Linux and both musl linkages
         if: matrix.suite == 'tcp'
         run: |
@@ -557,6 +577,20 @@ jobs:
             build/tcp-icmp-*-inputs.json
             build/tcp-icmp-*.txt
             build/tcp-icmp-damaged/**
+      - name: Upload actual raw storage and ext2 volume and boot fixtures
+        if: always() && matrix.suite == 'storage'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-storage-fixtures
+          if-no-files-found: error
+          path: |
+            build/storage-*.raw
+            build/storage-*.iso
+            build/storage-*.conf
+            build/ext2-*.raw
+            build/ext2-*.iso
+            build/ext2-*.conf
+            build/ext2-*-acl.bin
       - name: Upload TCP boot fixtures
         if: always() && matrix.suite == 'tcp'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -603,6 +637,16 @@ jobs:
           path: |
             build/credentials-*.img
             build/axiom64-credentials-*.iso
+      - name: Upload complete file-capability source, library, tool, boot and disk evidence
+        if: always() && matrix.suite == 'file-capabilities'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-file-capabilities-evidence
+          if-no-files-found: error
+          path: |
+            build/file-capabilities
+            build/file-capabilities-independent.log
+            build/file-capabilities-damage.log
 
   qemu:
     needs: [build, tests]

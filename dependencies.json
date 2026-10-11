@@ -11,6 +11,14 @@
     "archive": "busybox-1.37.0.tar.bz2",
     "sha256": "3311dff32e746499f4df0d5df04d7eb396382d7e108bb9250e7b519b837043a4"
   },
+  "libcap": {
+    "version": "2.78",
+    "url": "https://www.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-2.78.tar.xz",
+    "archive": "libcap-2.78.tar.xz",
+    "sha256": "0d621e562fd932ccf67b9660fb018e468a683d7b827541df27813228c996bb11",
+    "license": "BSD-3-Clause",
+    "upstream_license": "BSD-3-Clause OR GPL-2.0-only"
+  },
   "limine_header": {
     "revision": "3a0526b700e356f0eac1b71a77697b3fd1c707a3",
     "path": "vendor/limine.h",

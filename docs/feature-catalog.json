@@ -132,7 +132,7 @@
       "title": "Writable ext2 and later ext4",
       "milestone": "M1",
       "state": "partial",
-      "current": "Classic ext2 root and data volumes support persistent files, directories, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and reboot verification. Advanced formats and recovery remain planned.",
+      "current": "Classic ext2 root and data volumes support persistent files, external xattrs and file capabilities, shared EA copy-on-write, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and fresh kernel reboot verification. ACLs, inline/ext4 attributes, advanced formats and recovery remain planned.",
       "scope": [
         "Writable ext2 inodes, directories, indirect blocks, allocation, and links",
         "Mount, unmount, sync, truncation, rename, permissions, and timestamps",
@@ -165,7 +165,7 @@
       "title": "VFS, mounts, and pseudo filesystems",
       "milestone": "M1",
       "state": "partial",
-      "current": "RAM and classic ext2 mounts, filesystem dispatch, directory identity, read-only policy, mount-aware statfs, rename, links, pipes, and selected synthetic device metadata work. Local advisory flock supports canonical inode ownership, descriptor lifetime, retained waits, and tested signal restart on the single-CPU kernel.",
+      "current": "RAM and classic ext2 mounts, Linux path/no-follow/descriptor xattrs, filesystem dispatch, directory identity, read-only policy, mount-aware statfs, rename, links, pipes, and selected synthetic device metadata work. Local advisory flock supports canonical inode ownership, descriptor lifetime, retained waits, and tested signal restart on the single-CPU kernel.",
       "scope": [
         "Mount graph, filesystem operations, vnode/dentry lifetime, and pathname traversal",
         "File descriptions, descriptor lifetime, close-on-exec, and robust directory enumeration",
@@ -343,7 +343,7 @@
       "title": "Accounts, permissions, and process credentials",
       "milestone": "M3",
       "state": "partial",
-      "current": "Task identities, supplementary groups, capability transitions, DAC, chroot and process/IPC/network permission guards work. Account databases, authentication, login/session policy and complete isolation remain required.",
+      "current": "Task identities, supplementary groups, capability transitions, RAM/ext2 file-capability exec, maintained getcap/setcap tools, DAC, chroot and process/IPC/network permission guards work. Account databases, authentication, login/session policy and complete isolation remain required.",
       "scope": [
         "UID/GID, supplementary groups, real/effective/saved credentials, and umask",
         "File/directory access checks, ownership, sticky bits, set-ID, and chroot",

@@ -148,12 +148,14 @@ def invalid_volumes(prefix):
                 ("free-count", 117), ("metadata-bit", 117), ("duplicate-block", 117),
                 ("directory-record", 117), ("directory-inode", 117), ("extents", 95),
                 ("journal", 95), ("checksum", 95), ("inode-flags", 95), ("acl", 95),
+                ("ea-pointer", 117),
                 ("block-size", 95), ("inode-size", 95), ("duplicate-name", 117),
                 ("directory-parent", 117), ("entry-type", 117), ("links", 117),
                 ("beyond-eof", 117), ("zero-links", 117), ("resize-pointer", 117)]
     seed_number = int(re.search(r"Inode:\s+(\d+)", debugfs(base, "stat /seed.txt"))[1])
     for name, expected in variants:
         data = bytearray(original)
+        disk = Path(str(prefix) + "-" + name + ".raw")
         if name == "magic": struct.pack_into("<H", data, 1024 + 56, 0)
         elif name == "capacity": struct.pack_into("<I", data, 1024 + 4, CAPACITY // 1024 + 1)
         elif name == "bitmap-location": struct.pack_into("<I", data, 2048, CAPACITY // 1024 + 1)
@@ -175,7 +177,19 @@ def invalid_volumes(prefix):
         elif name == "journal": struct.pack_into("<I", data, 1024 + 92, 0x3c)
         elif name == "checksum": struct.pack_into("<I", data, 1024 + 100, 0x403)
         elif name == "inode-flags": struct.pack_into("<I", data, inode_offset(data, seed_number) + 32, 0x80000)
-        elif name == "acl": struct.pack_into("<I", data, inode_offset(data, seed_number) + 104, 400)
+        elif name == "acl":
+            disk.write_bytes(data)
+            acl = Path(str(prefix) + "-acl.bin")
+            # debugfs converts Linux's ACL xattr into ext2's compact on-disk format.
+            acl.write_bytes(struct.pack("<I" + "HHI" * 5, 2, 1, 6, 0xffffffff, 2, 4, 1000,
+                                        4, 4, 0xffffffff, 16, 4, 0xffffffff, 32, 4, 0xffffffff))
+            debugfs(disk, f"ea_set -f {acl} /seed.txt system.posix_acl_access", write=True)
+            if "system.posix_acl_access" not in debugfs(disk, "ea_list /seed.txt"):
+                raise RuntimeError("host did not create the unsupported ACL fixture")
+            check_fs(disk, disk.stem + "-valid-acl")
+            data = bytearray(disk.read_bytes())
+        elif name == "ea-pointer":
+            struct.pack_into("<I", data, inode_offset(data, seed_number) + 104, 400)
         elif name == "block-size": struct.pack_into("<I", data, 1024 + 24, 3)
         elif name == "inode-size": struct.pack_into("<H", data, 1024 + 88, 512)
         elif name in ["duplicate-name", "entry-type"]:
@@ -201,7 +215,6 @@ def invalid_volumes(prefix):
             struct.pack_into("<I", data, inode_offset(data, 7) + 92, bitmap)
         marker = f"AXIOM64_EXT2_EXPECT={expected}\n".encode()
         data[:len(marker)] = marker
-        disk = Path(str(prefix) + "-" + name + ".raw")
         disk.write_bytes(data)
         yield disk
 

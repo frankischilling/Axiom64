@@ -28,12 +28,13 @@ The kernel enforces the following capability checks at implemented interfaces:
 | Address/route/link mutation through ioctl or route netlink | `CAP_NET_ADMIN` |
 | System V shared-memory permission override/control | `CAP_IPC_OWNER` / `CAP_SYS_ADMIN` |
 | Mount/remount/unmount, chroot, reboot | `CAP_SYS_ADMIN`, `CAP_SYS_CHROOT`, `CAP_SYS_BOOT` respectively |
+| File capability administration; other security/trusted attributes | `CAP_SETFCAP`; `CAP_SYS_ADMIN` respectively |
 
 ELF exec checks directory search, regular-file type, executable mode and `noexec` for both the program and its interpreter. An interpreter can be executable without being readable by the caller. Set-UID and executable set-GID mode bits produce candidate credentials; `nosuid` and no-new-privileges suppress those changes. Exec computes saved/filesystem IDs, capability sets and the UID/GID/secure auxiliary values. It commits credentials only after the replacement image and task resources succeed. Failed exec preserves the caller's credentials.
 
-Ordinary exec preserves valid ambient capabilities. A privilege-changing set-ID exec clears them; root compatibility uses the bounding and inheritable sets. Keep-caps is cleared at exec. Identity or filesystem-identity changes, and acquisition of permitted capabilities, reset the shared memory context's dumpability. Privileged exec supplies `AT_SECURE` and disables dumpability.
+Ordinary exec preserves valid ambient capabilities. An applicable file capability or privilege-changing set-ID exec clears them; root compatibility uses the bounding and inheritable sets. Keep-caps is cleared at exec. Identity or filesystem-identity changes, and acquisition of permitted capabilities, restrict the shared memory context's dumpability. `AT_SECURE` and dumpability use separate Linux rules: a secure loader can run with normal dumpability when exec does not acquire privileges. The [file capability contract](file-capabilities.md) records wire formats, attribute permissions and actual exec transitions.
 
-This is the task capability model. [File capability xattrs (#116)](https://github.com/frankischilling/Axiom64/issues/116), user namespaces, security modules, ACLs, auditing, seccomp and a complete tracing engine are not implemented. Stored capability bits do not establish support for an absent syscall or subsystem. These gaps remain required work for [F09](https://github.com/frankischilling/Axiom64/issues/9), [F04](https://github.com/frankischilling/Axiom64/issues/4) and [F34](https://github.com/frankischilling/Axiom64/issues/35).
+RAM and classic ext2 xattrs supply Linux file capabilities and upstream `getcap`/`setcap` administration. User namespaces, security modules, ACLs, auditing, seccomp and a complete tracing engine remain required work for [F09](https://github.com/frankischilling/Axiom64/issues/9), [F04](https://github.com/frankischilling/Axiom64/issues/4) and [F34](https://github.com/frankischilling/Axiom64/issues/35). Stored capability bits do not establish support for an absent syscall or subsystem.
 
 ## Filesystem access and retained resources
 

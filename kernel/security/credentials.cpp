@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "security/credentials.hpp"
+#include "security/file_capabilities.hpp"
 #include "core/base.hpp"
 
 namespace ax {
@@ -263,7 +264,13 @@ int64_t credential_control(Credentials& cred, unsigned option, uint64_t a, uint6
 
 Credentials credential_exec(const Credentials& old, uint32_t uid, uint32_t gid, uint32_t mode,
                             bool nosuid) {
-    Credentials next = old;
+    return credential_exec_file(old, uid, gid, mode, nosuid, FileCapabilities{}).value;
+}
+
+ExecCredentials credential_exec_file(const Credentials& old, uint32_t uid, uint32_t gid,
+                                     uint32_t mode, bool nosuid, const FileCapabilities& file) {
+    ExecCredentials result{old};
+    auto& next = result.value;
     if (!nosuid && !old.no_new_privileges) {
         if (mode & 04000)
             next.user.effective = uid;
@@ -272,20 +279,44 @@ Credentials credential_exec(const Credentials& old, uint32_t uid, uint32_t gid, 
     }
     next.user.saved = next.user.filesystem = next.user.effective;
     next.group.saved = next.group.filesystem = next.group.effective;
-    if (next.user.effective != old.user.effective || !credential_group(old, next.group.effective))
-        next.ambient = 0;
-    next.permitted = next.effective = next.ambient;
-    if (!(old.securebits & noroot) && (!next.user.real || !next.user.effective)) {
-        next.permitted |= old.bounding | old.inheritable;
+    bool id_changed =
+        next.user.effective != old.user.effective || !credential_group(old, next.group.effective);
+    bool has_caps = file.present && !file.root_id && !nosuid;
+    bool effective = has_caps && file.effective;
+    next.permitted = 0;
+    if (has_caps) {
+        uint64_t permitted = file.permitted & all_capabilities;
+        next.permitted = (old.bounding & permitted) | (old.inheritable & file.inheritable);
+        if (effective && (permitted & ~next.permitted)) {
+            result.error = -1;
+            return result;
+        }
+    }
+    // A non-root caller of a set-UID-root file with file capabilities receives
+    // the file's capability policy. Root compatibility otherwise applies.
+    bool setuid_root_caps = has_caps && next.user.real && !next.user.effective;
+    if (!(old.securebits & noroot) && !setuid_root_caps) {
+        if (!next.user.real || !next.user.effective)
+            next.permitted = old.bounding | old.inheritable;
         if (!next.user.effective)
-            next.effective = next.permitted;
+            effective = true;
     }
-    if (old.no_new_privileges) {
+    if (old.no_new_privileges)
         next.permitted &= old.permitted;
-        next.effective &= next.permitted;
-    }
+    if (has_caps || id_changed)
+        next.ambient = 0;
+    next.permitted |= next.ambient;
+    next.effective = effective ? next.permitted : next.ambient;
+    result.secure = id_changed || next.user.effective != old.user.real ||
+                    next.group.effective != old.group.real ||
+                    (next.user.real && (effective || (next.permitted & ~next.ambient)));
+    result.dumpable =
+        old.user.effective == old.user.real && old.group.effective == old.group.real &&
+        next.user.effective == old.user.effective && next.group.effective == old.group.effective &&
+        next.user.filesystem == old.user.filesystem &&
+        next.group.filesystem == old.group.filesystem && !(next.permitted & ~old.permitted);
     next.securebits &= ~keep_caps;
-    return next;
+    return result;
 }
 
 int credential_access(const Credentials& cred, uint32_t uid, uint32_t gid, uint32_t mode,

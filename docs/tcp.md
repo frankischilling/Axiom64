@@ -66,6 +66,16 @@ CI retains the host log in `tcp-policy`, native/guest JSON results and full PCAP
 
 ## Sources and remaining work
 
+Native failed-connect comparisons select a known unused automatic source port with
+Linux [IP_LOCAL_PORT_RANGE](https://man7.org/linux/man-pages/man2/IP_LOCAL_PORT_RANGE.2const.html), then restore the default range before retrying. Linux
+can otherwise share an automatically selected port with an unrelated TIME_WAIT
+tuple, which makes an exclusive bind fail even after the refused socket releases
+its ownership. The original release, explicit-binding, option and same-description
+retry assertions remain. `sudo -n python3 scripts/tests/tcp_auto_port_test.py`
+constructs that actual TIME_WAIT collision in a private namespace, checks an unused
+control, and runs all four ownership/retry cases with all three native libc variants.
+It preserves the parent namespace. This native fixture requires Linux 6.3 or later.
+
 [Per-connection challenge ACK intervals](tcp-challenge-ack.md) bound rejected control
 replies to one per 500 ms while preserving valid data ACKs, exact resets and independent
 connections. Its concurrent native/VM packet profile observes mixed bursts, full silence

@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import time
 from fetch import ROOT, LOCK
+from build_musl import loader as musl_loader
 
 
 def fixture(linkage, filesystem):
@@ -21,7 +22,7 @@ def fixture(linkage, filesystem):
     for name, source in [('sbin/init', ROOT / 'build/init'),
                          ('bin/credentials-tests', ROOT / 'build' / f'credentials-{linkage}'),
                          ('bin/busybox', ROOT / 'build' / f"busybox-{LOCK['busybox']['version']}" / 'busybox'),
-                         ('lib/ld-musl-x86_64.so.1', Path('/lib/ld-musl-x86_64.so.1').resolve())]:
+                         ('lib/ld-musl-x86_64.so.1', musl_loader())]:
         files[name] = (0o100755, source.read_bytes())
     script = '#!/bin/sh\nset -e\n'
     if filesystem == 'ext2':

@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 from fetch import ROOT
+from build_musl import loader as musl_loader
 from dns_peer import Answers, check
 
 
@@ -56,7 +57,10 @@ def namespace(scratch):
         for linkage in ('static', 'dynamic'):
             output = scratch / f'dns-native-{linkage}.log'
             with output.open('wb') as stream:
-                process = subprocess.Popen([str(ROOT / 'build' / f'dns-{linkage}'), '--native'],
+                command = [str(ROOT / 'build' / f'dns-{linkage}'), '--native']
+                if linkage == 'dynamic':
+                    command.insert(0, str(musl_loader()))
+                process = subprocess.Popen(command,
                                             stdout=stream, stderr=subprocess.STDOUT)
                 started = time.monotonic()
                 try:

@@ -1,6 +1,6 @@
 # Build and run
 
-Use Ubuntu 24.04 x86-64, directly or through WSL Ubuntu. Static userspace is built with Ubuntu musl 1.2.4-2; the guest dynamic loader comes from the separately pinned musl port.
+Use Ubuntu 24.04 x86-64, directly or through WSL Ubuntu. Static userspace and BusyBox use a source-built Ubuntu musl 1.2.4-2 provider. The installed interpreter and development libraries use the pinned Alpine musl 1.2.5-r12 source and distribution patches. Both providers apply the checked [local DNS transport patch](../vendor/musl/README.md); the host libc and compiler installation stay unchanged.
 
 ```sh
 sudo apt-get update

@@ -1,0 +1,123 @@
+--- a/src/network/res_msend.c
++++ b/src/network/res_msend.c
+@@ -29,6 +29,57 @@
+ 		clock_gettime(CLOCK_REALTIME, &ts);
+ 	return (unsigned long)ts.tv_sec * 1000
+ 		+ ts.tv_nsec / 1000000;
++}
++
++/* Expand question labels without losing their boundaries.  Compression
++ * consumes only the original pointer bytes; traversal and output are bounded. */
++static int question_name(const unsigned char *msg, int len, int *pos,
++	unsigned char *name)
++{
++	int cursor = *pos, end = -1, used = 0;
++	for (int hops=0; cursor<len && hops<len; hops++) {
++		int label = msg[cursor++];
++		if ((label & 0xc0) == 0xc0) {
++			if (cursor == len) return -1;
++			if (end < 0) end = cursor+1;
++			cursor = (label & 63)*256 + msg[cursor];
++			continue;
++		}
++		if (label & 0xc0 || cursor+label>len || used+label+1>255 ||
++			(label && used+label+1==255))
++			return -1;
++		name[used++] = label;
++		if (!label) {
++			*pos = end < 0 ? cursor : end;
++			return used;
++		}
++		for (int k=0; k<label; k++) {
++			int ch = msg[cursor++];
++			name[used++] = ch>='A' && ch<='Z' ? ch+('a'-'A') : ch;
++		}
++	}
++	return -1;
++}
++
++static int matching_response(const unsigned char *a, int alen,
++	const unsigned char *q, int qlen)
++{
++	if (alen<12 || qlen<12 || a[0]!=q[0] || a[1]!=q[1] ||
++		(a[2] & 0xf8) != ((q[2] & 0x78) | 0x80)) return 0;
++	/* Some servers omit the question.  If present, match every question. */
++	if (!a[4] && !a[5]) return 1;
++	if (a[4]!=q[4] || a[5]!=q[5]) return 0;
++	int ap=12, qp=12, count=q[4]*256+q[5];
++	for (int k=0; k<count; k++) {
++		unsigned char aname[255], qname[255];
++		int as = question_name(a, alen, &ap, aname);
++		int qs = question_name(q, qlen, &qp, qname);
++		if (as<0 || as!=qs || memcmp(aname, qname, as) ||
++			ap+4>alen || qp+4>qlen || memcmp(a+ap, q+qp, 4)) return 0;
++		ap += 4;
++		qp += 4;
++	}
++	return 1;
+ }
+ 
+ static int start_tcp(struct pollfd *pfd, int family, const void *sa, socklen_t sl, const unsigned char *q, int ql)
+@@ -222,6 +273,8 @@
+ 				answers[next][1] != queries[i][1] ); i++);
+ 			if (i==nqueries) continue;
+ 			if (alens[i]) continue;
++			if (!matching_response(answers[next], rlen, queries[i], qlens[i]))
++				continue;
+ 
+ 			/* Only accept positive or negative responses;
+ 			 * retry immediately on server failure, and ignore
+@@ -280,21 +333,41 @@
+ 		}
+ 
+ 		for (i=0; i<nqueries; i++) if (pfd[i].revents & POLLIN) {
+-			struct msghdr mh = {
+-				.msg_iovlen = 2,
+-				.msg_iov = (struct iovec [2]){
+-					{ .iov_base = alen_buf[i], .iov_len = 2 },
+-					{ .iov_base = answers[i], .iov_len = asize } }
+-			};
+-			step_mh(&mh, apos[i]);
+-			r = recvmsg(pfd[i].fd, &mh, 0);
++			/* Read exactly one length prefix or one part of its body.
++			 * Never consume a following frame into this answer's slot. */
++			unsigned char discard[256];
++			void *target;
++			int size;
++			int alen = 0;
++			if (apos[i] < 2) {
++				target = alen_buf[i]+apos[i];
++				size = 2-apos[i];
++			} else {
++				alen = alen_buf[i][0]*256 + alen_buf[i][1];
++				if (alen < 12) goto out;
++				int stored = apos[i]-2;
++				size = alen-stored;
++				if (stored < asize) {
++					target = answers[i]+stored;
++					if (size > asize-stored) size = asize-stored;
++				} else {
++					target = discard;
++					if (size > sizeof discard) size = sizeof discard;
++				}
++			}
++			r = recv(pfd[i].fd, target, size, 0);
++			if (r < 0 && (errno == EAGAIN || errno == EINTR)) continue;
+ 			if (r <= 0) goto out;
+ 			apos[i] += r;
+-			if (apos[i] < 2) continue;
+-			int alen = alen_buf[i][0]*256 + alen_buf[i][1];
+-			if (alen < 13) goto out;
+-			if (apos[i] < alen+2 && apos[i] < asize+2)
++			if (!alen || apos[i] < alen+2) continue;
++			/* Discard unowned frames and keep the original query deadline. */
++			if (!matching_response(answers[i], alen<asize ? alen : asize,
++				queries[i], qlens[i])) {
++				apos[i] = 0;
+ 				continue;
++			}
++			if (answers[i][2] & 2) goto out;
++
+ 			int rcode = answers[i][3] & 15;
+ 			if (rcode != 0 && rcode != 3)
+ 				goto out;

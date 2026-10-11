@@ -1,3 +1,5 @@
 * text=auto eol=lf
 *.iso binary
 *.cpio binary
+# Preserve checked patch bytes and the whitespace required by unified context.
+vendor/musl/patches/*.patch -text -whitespace

@@ -103,6 +103,11 @@ def notices(origin, paths):
 
 def prepare():
     lock = json.loads(SOURCE_LOCK.read_text())
+    for item in lock.get('musl_local_patches', []):
+        patch = (ROOT / item['path']).resolve()
+        if not patch.is_relative_to((ROOT / 'vendor/musl').resolve()):
+            raise RuntimeError('local musl patch escapes its vendor folder')
+        verify(patch, item['sha256'], 'sha256')
     ports = lock["ports"]
     with ThreadPoolExecutor(max_workers=8) as pool:
         inputs = list(pool.map(port_sources, ports))
@@ -118,6 +123,8 @@ def prepare():
     manifest = NOTICES / "sources.lock.json"
     manifest.write_bytes(SOURCE_LOCK.read_bytes())
     (NOTICES / "ports.lock.json").write_bytes((ROOT / "ports.lock.json").read_bytes())
+    (NOTICES / 'musl' / 'Axiom64-patches.json').write_text(json.dumps(
+        lock.get('musl_local_patches', []), indent=2) + '\n')
     stamp.write_text(digest)
     return inputs
 
@@ -128,7 +135,7 @@ def bundle(inputs):
         for origin, paths in inputs:
             for path in paths:
                 archive.add(path, arcname=f"ports/{origin}/{path.name}")
-        for path in ["sources.lock.json", "ports.lock.json", "dependencies.json", "LICENSE", "Makefile", "README.md", ".clang-format"]:
+        for path in ["sources.lock.json", "ports.lock.json", "dependencies.json", "LICENSE", "Makefile", "README.md", ".clang-format", ".gitattributes"]:
             archive.add(ROOT / path, arcname=f"Axiom64/{path}")
         for path in sorted((ROOT / "scripts").rglob("*")):
             if path.is_file() and path.suffix in (".py", ".sh"):

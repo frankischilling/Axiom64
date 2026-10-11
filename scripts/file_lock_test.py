@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import time
 from fetch import ROOT, LOCK
+from build_musl import loader as musl_loader
 from ext2_test import create_volume, check_fs, dump, SEED
 from file_lock_native import MARKERS, run as native
 
@@ -25,7 +26,7 @@ def fixture():
     for name, source in [('sbin/init', ROOT / 'build/init'),
                          ('bin/file-lock-static', ROOT / 'build/file-lock-static'),
                          ('bin/file-lock-dynamic', ROOT / 'build/file-lock-dynamic'),
-                         ('lib/ld-musl-x86_64.so.1', Path('/lib/ld-musl-x86_64.so.1').resolve()),
+                         ('lib/ld-musl-x86_64.so.1', musl_loader()),
                          ('bin/busybox', ROOT / 'build' / f"busybox-{LOCK['busybox']['version']}" / 'busybox'),
                          ('etc/net-test.sh', ROOT / 'userspace/tests/fs/file-lock.sh')]:
         files[name] = (0o100755, source.read_bytes())

@@ -54,6 +54,7 @@ jobs:
           make -j2 build/network-manager-dynamic build/network-manager-faults build/network-manager-dynamic-faults build/manager-tests build/manager-protocol build/manager-link
           make -j2 build/random-static build/random-dynamic
           make -j2 build/dns-static build/dns-dynamic
+          make -j2 build/dns-tcp-static build/dns-tcp-dynamic
           make -j2 build/normal-dns-static build/normal-dns-dynamic
           make -j2 build/credentials-native build/credentials-static build/credentials-dynamic
           make -j2 build/tcp-native build/tcp-static build/tcp-dynamic
@@ -100,7 +101,7 @@ jobs:
             --exclude='./downloads/sources' --exclude='./build/axiom64-sources.tar' \
             --exclude='./build/axiom64.iso' --exclude='./build/iso*' \
             --exclude='./build/busybox-*' --exclude='./build/uapi' \
-            . "$busybox_dir/busybox" "$busybox_dir/.config" "$busybox_dir/LICENSE"
+            . "$busybox_dir/busybox" "$busybox_dir/.config" "$busybox_dir/LICENSE" "$busybox_dir/.axiom64-toolchain"
           gzip -1 "$RUNNER_TEMP/ci-inputs.tar"
       - name: Share test inputs with isolated jobs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -327,6 +328,12 @@ jobs:
       - name: Test musl DNS queries, search rules, retries, and deadlines on both adapters
         if: matrix.suite == 'network'
         run: make test-dns
+      - name: Compare actual patched musl DNS TCP framing with native glibc
+        if: matrix.suite == 'network'
+        run: sudo -n make test-dns-tcp-native
+      - name: Test actual DNS TCP fallback, independently decoded captures and synchronized damage
+        if: matrix.suite == 'network'
+        run: make test-dns-tcp
       - name: Test route message validation with sanitizers
         if: matrix.suite == 'network'
         run: make test-netlink-codec
@@ -519,6 +526,7 @@ jobs:
             build/manager-protocol-*-packets.json
             build/manager-link-*-packets.json
             build/dns-*-packets.json
+            build/dns-tcp-*
             build/normal-init-*-dns-packets.json
             build/paired-network/**
             build/*.png
@@ -538,6 +546,21 @@ jobs:
           name: axiom64-tcp-fixtures
           if-no-files-found: error
           path: build/axiom64-tcp-*.iso
+      - name: Upload DNS TCP boot fixtures and providers
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-dns-tcp-fixtures
+          if-no-files-found: error
+          path: |
+            build/axiom64-dns-tcp-*.iso
+            build/dns-tcp-static
+            build/dns-tcp-dynamic
+            build/musl/**/manifest.json
+            build/musl/**/COPYRIGHT
+            build/musl/**/res_msend.c
+            build/musl/**/sysroot/lib/ld-musl-x86_64.so.1
+            build/musl/**/sysroot/usr/lib/libc.a
       - name: Upload controlled TCP wire boot fixtures
         if: always() && (startsWith(matrix.suite, 'tcp-fault-') || (startsWith(matrix.suite, 'tcp-lifetime-') && matrix.suite != 'tcp-lifetime-native'))
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

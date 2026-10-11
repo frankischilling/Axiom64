@@ -8,6 +8,7 @@ import socket
 import subprocess
 import time
 from fetch import ROOT, LOCK
+from build_musl import loader as musl_loader
 from manager_peer import ManagerPeer
 
 SCENARIOS = ('concurrent', 'missing', 'static', 'conflict', 'defense', 'disabled', 'unsafe', 'manual', 'restart',
@@ -32,7 +33,7 @@ def fixture(linkage, scenario, root='/tmp', build_image=True):
                          ('sbin/network-manager-dynamic', ROOT / 'build/network-manager-dynamic'),
                          ('sbin/network-manager-faults', ROOT / 'build/network-manager-faults'),
                          ('sbin/network-manager-dynamic-faults', ROOT / 'build/network-manager-dynamic-faults'),
-                         ('lib/ld-musl-x86_64.so.1', Path('/lib/ld-musl-x86_64.so.1').resolve())]:
+                         ('lib/ld-musl-x86_64.so.1', musl_loader())]:
         files[name] = (0o100755, Path(source).read_bytes())
     binary = 'network-manager-dynamic' if linkage == 'dynamic' else 'network-manager'
     script = f'#!/bin/sh\nset -e\n/bin/manager-tests /sbin/{binary} {scenario} {root}\necho AXIOM64_TESTS_PASS\n'

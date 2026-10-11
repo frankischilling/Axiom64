@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""Build the upstream BusyBox release against the host's musl toolchain."""
+"""Build the upstream BusyBox release against the checked local musl provider."""
 import os
+import json
 from pathlib import Path
+import shlex
 import subprocess
 from fetch import ROOT, LOCK, extract
+from build_musl import compiler_args, ensure
 
 version = LOCK["busybox"]["version"]
 source = ROOT / "build" / f"busybox-{version}"
 binary = source / "busybox"
-if not binary.exists():
-    if not source.exists():
+toolchain = ensure()
+identity = json.loads((toolchain / 'manifest.json').read_text())['identity']
+stamp = source / '.axiom64-toolchain'
+if not binary.exists() or not stamp.exists() or stamp.read_text() != identity:
+    # Shared CI caches retain the executable and configuration without source files.
+    if not (source / 'Makefile').exists():
         extract("busybox", ROOT / "build")
     uapi = ROOT / "build" / "uapi"
     uapi.mkdir(exist_ok=True)
@@ -31,7 +38,11 @@ if not binary.exists():
         config.write_text("\n".join(lines) + "\n")
         try:
             run(["make", "oldconfig"])
-            run(["make", f"-j{min(os.cpu_count() or 2, 8)}", "CC=musl-gcc", "HOSTCC=gcc", f"EXTRA_CFLAGS=-I{uapi}"])
+            # Recompile cached objects when their linked libc provider changes.
+            run(["make", "clean"])
+            run(["make", f"-j{min(os.cpu_count() or 2, 8)}",
+                 "CC=" + shlex.join(compiler_args()), "HOSTCC=gcc", f"EXTRA_CFLAGS=-I{uapi}"])
+            stamp.write_text(identity)
         except subprocess.CalledProcessError:
             output.flush()
             print("\n".join(logfile.read_text().splitlines()[-50:]))

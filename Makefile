@@ -1,12 +1,13 @@
 CXX = g++
 NASM = nasm
 PYTHON = python3
+MUSL_CC = gcc -specs="$(CURDIR)/build/musl/build/compiler.specs"
 CLANG_FORMAT ?= clang-format-20
 CXXFLAGS = -std=c++20 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pie -fno-threadsafe-statics -fno-use-cxa-atexit -fno-builtin -m64 -mno-red-zone -mcmodel=kernel -mgeneral-regs-only -Ikernel/include -Ivendor
 rwildcard = $(foreach entry,$(wildcard $1*),$(call rwildcard,$(entry)/,$2) $(filter $(subst *,%,$2),$(entry)))
 KERNEL_SOURCES = $(filter-out kernel/tests/%,$(call rwildcard,kernel/,*.cpp))
 KERNEL_OBJECTS = $(patsubst kernel/%.cpp,build/kernel/%.o,$(KERNEL_SOURCES)) build/kernel/arch/x86_64/entry.o
-FORMAT_SOURCES = $(foreach pattern,*.cpp *.hpp,$(call rwildcard,kernel/,$(pattern))) $(foreach pattern,*.c *.cpp *.hpp,$(call rwildcard,userspace/,$(pattern)))
+FORMAT_SOURCES = $(foreach pattern,*.cpp *.hpp,$(call rwildcard,kernel/,$(pattern))) $(foreach pattern,*.c *.h *.cpp *.hpp,$(call rwildcard,userspace/,$(pattern)))
 
 .PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-network test-ipv4 test-udp test-netlink test-netlink-codec test-address-codec test-configuration test-dhcp-codec test-dhcp-modules test-dhcp-transport test-profiles test-resolver test-resolver-native test-clock-codec test-clock test-file-locks test-file-locks-native test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
 all: image
@@ -22,10 +23,10 @@ build/credentials-native: userspace/tests/security/credentials.c
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DCREDENTIAL_LINKAGE='"native"' $< -o $@
 build/credentials-static: userspace/tests/security/credentials.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -static -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -static -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $< -o $@
 build/credentials-dynamic: userspace/tests/security/credentials.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DCREDENTIAL_LINKAGE='"dynamic"' -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DCREDENTIAL_LINKAGE='"dynamic"' -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $< -o $@
 test-credentials-native: build/credentials-native build/credentials-static build/credentials-dynamic
 	$(PYTHON) scripts/credentials_native.py
 test-credentials:
@@ -41,17 +42,23 @@ test-random:
 	$(PYTHON) scripts/random_test.py
 build/random-static: userspace/tests/random/random.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 build/random-dynamic: userspace/tests/random/random.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -DRANDOM_LINKAGE='"dynamic"' $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DRANDOM_LINKAGE='"dynamic"' $< -o $@
 .PHONY: test-ownership test-ownership-native
 .PHONY: test-normal-manager
-.PHONY: test-dns test-dns-native
+.PHONY: test-dns test-dns-native test-dns-tcp test-dns-tcp-native
 test-dns:
 	$(PYTHON) scripts/dns_test.py
 test-dns-native:
 	$(PYTHON) scripts/dns_native.py
+test-dns-tcp-native:
+	$(PYTHON) scripts/tests/musl_dns_tcp_test.py --patched --compare-glibc --output build/dns-tcp-native-sockets-$(shell date +%s%N)
+test-dns-tcp:
+	$(PYTHON) scripts/dns_tcp_test.py
+	$(PYTHON) scripts/dns_tcp_capture.py
+	$(PYTHON) scripts/dns_tcp_damaged.py
 test-normal-manager:
 	$(PYTHON) scripts/normal_manager_test.py
 test-ownership:
@@ -76,13 +83,13 @@ build/axiom64.elf: $(KERNEL_OBJECTS) kernel/arch/x86_64/linker.ld
 	ld -nostdlib -static -z max-page-size=0x1000 -T kernel/arch/x86_64/linker.ld $(KERNEL_OBJECTS) -o $@
 build/abi-static: userspace/tests/abi/abi.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 build/file-lock-static: userspace/tests/fs/file-lock.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
 build/file-lock-dynamic: userspace/tests/fs/file-lock.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DLOCK_LINKAGE='"dynamic"' $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DLOCK_LINKAGE='"dynamic"' $< -o $@
 build/file-lock-native: userspace/tests/fs/file-lock.c Makefile
 	@mkdir -p build
 	gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -fsanitize=address,undefined -fno-omit-frame-pointer -DLOCK_LINKAGE='"gnu"' $< -o $@
@@ -97,57 +104,57 @@ test-clock-codec: build/clock-codec-tests
 	ASAN_OPTIONS=detect_leaks=1 ./build/clock-codec-tests
 build/clock-elapsed-tests: userspace/tests/time/elapsed.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 test-clock:
 	$(PYTHON) scripts/clock_test.py
 build/abi-dynamic: userspace/tests/abi/abi.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -DABI_LINKAGE='"dynamic"' $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DABI_LINKAGE='"dynamic"' $< -o $@
 build/init: userspace/init/main.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 build/ipc-tests: userspace/tests/ipc/ipc.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 build/signal-tests: userspace/tests/process/signals.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 build/storage-tests: userspace/tests/storage/block.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 build/vfs-tests: userspace/tests/fs/vfs.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 build/ext2-tests: userspace/tests/fs/ext2.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 build/root-tests: userspace/tests/fs/root.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 build/net-tests: userspace/tests/net/packet.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
 build/ipv4-tests: userspace/tests/net/ipv4.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
 build/udp-tests: userspace/tests/net/udp.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
 build/dns-static: userspace/tests/net/dns.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
 build/dns-dynamic: userspace/tests/net/dns.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DDNS_LINKAGE='"dynamic"' $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DDNS_LINKAGE='"dynamic"' $< -o $@
 build/normal-dns-static: userspace/tests/net/normal-dns.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 build/normal-dns-dynamic: userspace/tests/net/normal-dns.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -DDNS_LINKAGE='"dynamic"' $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DDNS_LINKAGE='"dynamic"' $< -o $@
 build/netlink-tests: userspace/tests/net/netlink.cpp userspace/net/config/routing.cpp userspace/net/config/routing.hpp
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -pthread -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/netlink.cpp userspace/net/config/routing.cpp -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -pthread -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/netlink.cpp userspace/net/config/routing.cpp -o $@
 build/netlink-native: userspace/tests/net/netlink.cpp userspace/net/config/routing.cpp userspace/net/config/routing.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -pthread -Iuserspace userspace/tests/net/netlink.cpp userspace/net/config/routing.cpp -o $@
@@ -169,28 +176,28 @@ test-manager-runtime-native: build/manager-runtime-native
 MANAGER_FAULTS = -Wl,--wrap=renameat,--wrap=fsync,--wrap=rename,--wrap=unlinkat,--wrap=close
 build/network-manager-faults: $(MANAGER_SOURCES) $(MANAGER_HEADERS) userspace/tests/net/manager-faults.cpp
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(MANAGER_SOURCES) userspace/tests/net/manager-faults.cpp $(MANAGER_FAULTS) -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(MANAGER_SOURCES) userspace/tests/net/manager-faults.cpp $(MANAGER_FAULTS) -o $@
 build/network-manager-dynamic-faults: $(MANAGER_SOURCES) $(MANAGER_HEADERS) userspace/tests/net/manager-faults.cpp
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(MANAGER_SOURCES) userspace/tests/net/manager-faults.cpp $(MANAGER_FAULTS) -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(MANAGER_SOURCES) userspace/tests/net/manager-faults.cpp $(MANAGER_FAULTS) -o $@
 build/network-manager: $(MANAGER_SOURCES) $(MANAGER_HEADERS)
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(MANAGER_SOURCES) -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(MANAGER_SOURCES) -o $@
 build/network-manager-dynamic: $(MANAGER_SOURCES) $(MANAGER_HEADERS)
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(MANAGER_SOURCES) -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(MANAGER_SOURCES) -o $@
 build/manager-tests: userspace/tests/net/manager.cpp userspace/tests/net/manager-fixture.hpp userspace/net/config/routing.cpp userspace/net/config/profile.cpp userspace/net/config/saved.cpp userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/manager.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/manager.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
 build/manager-protocol: userspace/tests/net/manager-protocol.cpp userspace/tests/net/manager-fixture.hpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/manager-protocol.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/manager-protocol.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
 build/manager-link: userspace/tests/net/manager-link.cpp userspace/tests/net/manager-fixture.hpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/manager-link.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/manager-link.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
 build/init-supervision: userspace/tests/net/init-supervision.cpp userspace/net/manager/ownership.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/init-supervision.cpp userspace/net/manager/ownership.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/init-supervision.cpp userspace/net/manager/ownership.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
 build/static-address-host: userspace/tests/net/static-address.cpp userspace/net/manager/static.cpp userspace/net/manager/static.hpp $(PROFILE_SOURCES) $(PROFILE_HEADERS) userspace/net/dhcp/state.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace userspace/tests/net/static-address.cpp userspace/net/manager/static.cpp $(PROFILE_SOURCES) -o $@
@@ -213,33 +220,33 @@ build/ownership-host: $(OWNERSHIP_SOURCES) $(OWNERSHIP_HEADERS)
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace $(OWNERSHIP_SOURCES) $(OWNERSHIP_FAULTS) -o $@
 build/ownership-tests: $(OWNERSHIP_SOURCES) $(OWNERSHIP_HEADERS)
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace $(OWNERSHIP_SOURCES) $(OWNERSHIP_FAULTS) -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace $(OWNERSHIP_SOURCES) $(OWNERSHIP_FAULTS) -o $@
 build/ownership-dynamic: $(OWNERSHIP_SOURCES) $(OWNERSHIP_HEADERS)
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -Iuserspace $(OWNERSHIP_SOURCES) $(OWNERSHIP_FAULTS) -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -Iuserspace $(OWNERSHIP_SOURCES) $(OWNERSHIP_FAULTS) -o $@
 CONFIGURATION_SOURCES = userspace/tests/net/configuration.cpp userspace/net/config/configuration.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp
 CONFIGURATION_HEADERS = userspace/net/config/configuration.hpp userspace/net/config/routing.hpp $(PROFILE_HEADERS) userspace/net/dhcp/transport.hpp userspace/net/dhcp/wire.hpp userspace/net/dhcp/state.hpp
 build/configuration-tests: $(CONFIGURATION_SOURCES) $(CONFIGURATION_HEADERS)
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(CONFIGURATION_SOURCES) -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(CONFIGURATION_SOURCES) -o $@
 build/configuration-native: $(CONFIGURATION_SOURCES) $(CONFIGURATION_HEADERS)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -Iuserspace $(CONFIGURATION_SOURCES) -o $@
 build/dhcp-codec-tests: userspace/tests/net/dhcp.cpp userspace/net/dhcp/wire.cpp userspace/net/dhcp/wire.hpp
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace userspace/tests/net/dhcp.cpp userspace/net/dhcp/wire.cpp -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace userspace/tests/net/dhcp.cpp userspace/net/dhcp/wire.cpp -o $@
 build/dhcp-codec-host: userspace/tests/net/dhcp.cpp userspace/net/dhcp/wire.cpp userspace/net/dhcp/wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace userspace/tests/net/dhcp.cpp userspace/net/dhcp/wire.cpp -o $@
 build/dhcp-state-tests: userspace/tests/net/dhcp-state.cpp userspace/net/dhcp/state.cpp userspace/net/dhcp/state.hpp userspace/net/dhcp/wire.hpp
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace userspace/tests/net/dhcp-state.cpp userspace/net/dhcp/state.cpp -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace userspace/tests/net/dhcp-state.cpp userspace/net/dhcp/state.cpp -o $@
 build/dhcp-state-host: userspace/tests/net/dhcp-state.cpp userspace/net/dhcp/state.cpp userspace/net/dhcp/state.hpp userspace/net/dhcp/wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace userspace/tests/net/dhcp-state.cpp userspace/net/dhcp/state.cpp -o $@
 build/dhcp-profile-tests: userspace/tests/net/dhcp-profile.cpp $(PROFILE_SOURCES) $(PROFILE_HEADERS) userspace/net/dhcp/wire.hpp
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace userspace/tests/net/dhcp-profile.cpp $(PROFILE_SOURCES) -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace userspace/tests/net/dhcp-profile.cpp $(PROFILE_SOURCES) -o $@
 build/dhcp-profile-host: userspace/tests/net/dhcp-profile.cpp $(PROFILE_SOURCES) $(PROFILE_HEADERS) userspace/net/dhcp/wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace userspace/tests/net/dhcp-profile.cpp $(PROFILE_SOURCES) -o $@
@@ -248,50 +255,50 @@ build/profile-privacy-host: userspace/tests/net/profile-privacy.cpp $(PROFILE_SO
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace userspace/tests/net/profile-privacy.cpp $(PROFILE_SOURCES) $(PROFILE_FAULTS) -o $@
 build/profile-privacy-tests: userspace/tests/net/profile-privacy.cpp $(PROFILE_SOURCES) $(PROFILE_HEADERS)
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace userspace/tests/net/profile-privacy.cpp $(PROFILE_SOURCES) $(PROFILE_FAULTS) -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace userspace/tests/net/profile-privacy.cpp $(PROFILE_SOURCES) $(PROFILE_FAULTS) -o $@
 build/profile-privacy-dynamic: userspace/tests/net/profile-privacy.cpp $(PROFILE_SOURCES) $(PROFILE_HEADERS)
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -Iuserspace -DPROFILE_LINKAGE='"dynamic"' userspace/tests/net/profile-privacy.cpp $(PROFILE_SOURCES) $(PROFILE_FAULTS) -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -Iuserspace -DPROFILE_LINKAGE='"dynamic"' userspace/tests/net/profile-privacy.cpp $(PROFILE_SOURCES) $(PROFILE_FAULTS) -o $@
 DHCP_TRANSPORT_SOURCES = userspace/tests/net/dhcp-transport.cpp userspace/net/config/configuration.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp userspace/net/dhcp/state.cpp
 build/dhcp-transport-tests: $(DHCP_TRANSPORT_SOURCES) $(CONFIGURATION_HEADERS)
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(DHCP_TRANSPORT_SOURCES) -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(DHCP_TRANSPORT_SOURCES) -o $@
 RESOLVER_SOURCES = userspace/tests/net/resolver.cpp userspace/net/config/resolver.cpp $(PROFILE_SOURCES)
 RESOLVER_HEADERS = userspace/net/config/resolver.hpp $(PROFILE_HEADERS) userspace/net/dhcp/wire.hpp
 RESOLVER_FAULTS = -Wl,--wrap=rename,--wrap=fsync,--wrap=chmod,--wrap=fchmod
 build/resolver-tests: $(RESOLVER_SOURCES) $(RESOLVER_HEADERS)
 	@mkdir -p build
-	musl-gcc -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace $(RESOLVER_SOURCES) $(RESOLVER_FAULTS) -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace $(RESOLVER_SOURCES) $(RESOLVER_FAULTS) -o $@
 build/resolver-native: $(RESOLVER_SOURCES) $(RESOLVER_HEADERS)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace $(RESOLVER_SOURCES) $(RESOLVER_FAULTS) -o $@
 build/thread-static: userspace/tests/threads/pthreads.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -lm -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -lm -o $@
 build/thread-io-static: userspace/tests/threads/io.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
 build/thread-io-dynamic: userspace/tests/threads/io.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DIO_LINKAGE='"dynamic"' $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DIO_LINKAGE='"dynamic"' $< -o $@
 build/thread-dynamic: userspace/tests/threads/pthreads.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DTHREAD_LINKAGE='"dynamic"' $< -lm -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DTHREAD_LINKAGE='"dynamic"' $< -lm -o $@
 build/futex-static: userspace/tests/threads/futex.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
 build/futex-dynamic: userspace/tests/threads/futex.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DFUTEX_LINKAGE='"dynamic"' $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DFUTEX_LINKAGE='"dynamic"' $< -o $@
 build/lifecycle-static: userspace/tests/threads/lifecycle.c userspace/tests/threads/clone.S
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $^ -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $(filter %.c %.S %.s,$^) -o $@
 build/lifecycle-dynamic: userspace/tests/threads/lifecycle.c userspace/tests/threads/clone.S
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DLIFE_LINKAGE='"dynamic"' $^ -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DLIFE_LINKAGE='"dynamic"' $(filter %.c %.S %.s,$^) -o $@
 build/x11-probe: userspace/tests/desktop/probe.c
 	@mkdir -p build
-	musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 USERSPACE_DATA = $(foreach pattern,*.sh *.conf *.twmrc,$(call rwildcard,userspace/,$(pattern))) $(wildcard userspace/tests/toolchain/*)
 ROOTFS_INPUTS = build/thread-io-static build/thread-io-dynamic build/lifecycle-static build/lifecycle-dynamic build/futex-static build/futex-dynamic build/thread-static build/thread-dynamic build/abi-static build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/net-tests build/ipv4-tests build/udp-tests build/x11-probe build/licenses/.stamp $(USERSPACE_DATA) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/build_busybox.py scripts/fetch.py
 ROOTFS_INPUTS += build/network-manager
@@ -361,10 +368,10 @@ build/tcp-native: userspace/tests/net/tcp.c
 	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread $< -o $@
 build/tcp-static: userspace/tests/net/tcp.c
 	@mkdir -p build
-	musl-gcc -std=gnu11 -static -O2 -g -Wall -Wextra -Werror -pthread $< -o $@
+	$(MUSL_CC) -std=gnu11 -static -O2 -g -Wall -Wextra -Werror -pthread $< -o $@
 build/tcp-dynamic: userspace/tests/net/tcp.c
 	@mkdir -p build
-	musl-gcc -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread $< -o $@
+	$(MUSL_CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread $< -o $@
 .PHONY: test-tcp-native test-tcp-sockets test-tcp-native-wire
 test-tcp-native:
 	$(PYTHON) scripts/tcp_native_test.py
@@ -377,10 +384,10 @@ build/tcp-fault-native: userspace/tests/net/tcp_fault.c
 	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
 build/tcp-fault-static: userspace/tests/net/tcp_fault.c
 	@mkdir -p build
-	musl-gcc -std=gnu11 -static -O2 -g -Wall -Wextra -Werror $< -o $@
+	$(MUSL_CC) -std=gnu11 -static -O2 -g -Wall -Wextra -Werror $< -o $@
 build/tcp-fault-dynamic: userspace/tests/net/tcp_fault.c
 	@mkdir -p build
-	musl-gcc -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+	$(MUSL_CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
 build/tcp-timeout-native: userspace/tests/net/tcp_timeout.c
 	@mkdir -p build
 	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
@@ -389,10 +396,10 @@ build/tcp-lifetime-native: userspace/tests/net/tcp_lifetime.c
 	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
 build/tcp-lifetime-static: userspace/tests/net/tcp_lifetime.c
 	@mkdir -p build
-	musl-gcc -std=gnu11 -static -O2 -g -Wall -Wextra -Werror $< -o $@
+	$(MUSL_CC) -std=gnu11 -static -O2 -g -Wall -Wextra -Werror $< -o $@
 build/tcp-lifetime-dynamic: userspace/tests/net/tcp_lifetime.c
 	@mkdir -p build
-	musl-gcc -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+	$(MUSL_CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
 .PHONY: test-tcp-lifetime test-tcp-lifetime-native
 test-tcp-lifetime:
 	$(PYTHON) scripts/tcp_lifetime/acceptance.py guest
@@ -403,16 +410,16 @@ build/tcp-challenge-native: userspace/tests/net/tcp_fault.c
 	$(CC) -DTCP_CHALLENGE -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
 build/tcp-challenge-static: userspace/tests/net/tcp_fault.c
 	@mkdir -p build
-	musl-gcc -DTCP_CHALLENGE -std=gnu11 -static -O2 -g -Wall -Wextra -Werror $< -o $@
+	$(MUSL_CC) -DTCP_CHALLENGE -std=gnu11 -static -O2 -g -Wall -Wextra -Werror $< -o $@
 build/tcp-challenge-dynamic: userspace/tests/net/tcp_fault.c
 	@mkdir -p build
-	musl-gcc -DTCP_CHALLENGE -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+	$(MUSL_CC) -DTCP_CHALLENGE -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
 build/tcp-timeout-static: userspace/tests/net/tcp_timeout.c
 	@mkdir -p build
-	musl-gcc -std=gnu11 -static -O2 -g -Wall -Wextra -Werror $< -o $@
+	$(MUSL_CC) -std=gnu11 -static -O2 -g -Wall -Wextra -Werror $< -o $@
 build/tcp-timeout-dynamic: userspace/tests/net/tcp_timeout.c
 	@mkdir -p build
-	musl-gcc -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+	$(MUSL_CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
 .PHONY: test-tcp-timeout test-tcp-timeout-native
 test-tcp-timeout:
 	$(PYTHON) scripts/tcp_fault_test.py --wire timeout
@@ -492,3 +499,20 @@ clean:
 	$(PYTHON) scripts/clean.py
 
 -include $(KERNEL_OBJECTS:.o=.d)
+
+# All guest programs share the checked source-built build provider.
+MUSL_INPUTS = sources.lock.json scripts/build_musl.py scripts/musl_cc.py $(wildcard vendor/musl/patches/*.patch)
+MUSL_PROGRAMS = build/credentials-static build/credentials-dynamic build/random-static build/random-dynamic build/abi-static build/file-lock-static build/file-lock-dynamic build/clock-elapsed-tests build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/net-tests build/ipv4-tests build/udp-tests build/dns-static build/dns-dynamic build/normal-dns-static build/normal-dns-dynamic build/netlink-tests build/network-manager-faults build/network-manager-dynamic-faults build/network-manager build/network-manager-dynamic build/manager-tests build/manager-protocol build/manager-link build/init-supervision build/ownership-tests build/ownership-dynamic build/configuration-tests build/dhcp-codec-tests build/dhcp-state-tests build/dhcp-profile-tests build/profile-privacy-tests build/profile-privacy-dynamic build/dhcp-transport-tests build/resolver-tests build/thread-static build/thread-io-static build/thread-io-dynamic build/thread-dynamic build/futex-static build/futex-dynamic build/lifecycle-static build/lifecycle-dynamic build/x11-probe build/tcp-static build/tcp-dynamic build/tcp-fault-static build/tcp-fault-dynamic build/tcp-lifetime-static build/tcp-lifetime-dynamic build/tcp-challenge-static build/tcp-challenge-dynamic build/tcp-timeout-static build/tcp-timeout-dynamic
+$(MUSL_PROGRAMS): $(MUSL_INPUTS) | musl-toolchain
+build/rootfs.cpio build/rootfs-desktop.cpio: $(MUSL_INPUTS)
+.PHONY: musl-toolchain
+musl-toolchain:
+	$(PYTHON) scripts/build_musl.py --provider build --compiler-specs
+
+build/dns-static build/dns-dynamic: userspace/tests/net/dns/contract.h
+build/dns-tcp-static: userspace/tests/net/dns-tcp.c userspace/tests/net/dns/contract.h $(MUSL_INPUTS) | musl-toolchain
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
+build/dns-tcp-dynamic: userspace/tests/net/dns-tcp.c userspace/tests/net/dns/contract.h $(MUSL_INPUTS) | musl-toolchain
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DDNS_LINKAGE='"dynamic"' $< -o $@

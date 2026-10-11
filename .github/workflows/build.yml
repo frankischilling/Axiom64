@@ -300,6 +300,8 @@ jobs:
         if: matrix.suite == 'tcp-fault-icmp'
         run: |
           sudo -n make test-tcp-icmp-native
+          dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' libc6:amd64 > build/tcp-icmp-native-package.txt
+          cp /usr/share/doc/libc6/copyright build/tcp-icmp-native-copyright.txt
           make test-tcp-icmp-sockets
           python3 scripts/tcp_icmp_capture.py 2>&1 | tee build/tcp-icmp-capture.log
           python3 scripts/tests/tcp_icmp_capture_test.py 2>&1 | tee build/tcp-icmp-damage.log
@@ -550,6 +552,7 @@ jobs:
             build/tcp-lifetime-*-peer.json
             build/tcp-icmp-*-peer.json
             build/tcp-icmp-*-inputs.json
+            build/tcp-icmp-*.txt
             build/tcp-icmp-damaged/**
       - name: Upload TCP boot fixtures
         if: always() && matrix.suite == 'tcp'

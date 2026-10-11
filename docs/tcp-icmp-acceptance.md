@@ -59,6 +59,8 @@ uses the recorded source-built loader. Guest static/dynamic musl cover all eight
 BIOS/UEFI and modern/legacy virtio combinations, each with both NICs. Kernel, init,
 client, provider manifest/library/loader, source and boot-image hashes identify the
 actual inputs. Native glibc and loader hashes identify the installed comparison.
+CI also retains the installed native libc package version and its copyright notice,
+so downloaded distribution libraries can be checked against those actual hashes.
 
 The auditor independently decodes captured Ethernet/IPv4/TCP/ICMP bytes and checks
 checksums, exact earlier quote ownership, literal mutations, receiving devices,

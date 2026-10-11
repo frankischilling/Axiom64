@@ -132,12 +132,12 @@ def receipts(text, native=False, full=False, persisted=False, remount=False, ram
         30: ('readonly-path-set', 'readonly-nofollow-set', 'readonly-fd-set', 'readonly-capability-set',
              'readonly-invalid-capability', 'readonly-unknown-namespace', 'readonly-path-remove',
              'readonly-nofollow-remove', 'readonly-fd-remove'),
-        34: ('short-value', 'empty-name', 'long-name', 'short-list', 'ext2-value-too-large', 'max-value-short'),
+        34: ('short-value', 'empty-name', 'long-name', 'short-list', 'max-value-short'),
         61: ('missing-get', 'missing-remove', 'replace-absent', 'create-replace-absent', 'nofollow-user-get',
              'trusted-read-hidden', 'content-clears-marking', 'cow-owner-strips-mark', 'full-volume-unset',
              'full-volume-no-file-capability'),
         95: ('unknown-namespace',), 7: ('large-value', 'max-value-overflow'), 2: ('unlinked-path',), 8: ('failed-elf-exec',),
-        5: ('injected-xattr-io',), 28: ('ext2-block-full', 'full-volume-attribute', 'full-volume-file-capability'),
+        5: ('injected-xattr-io',), 28: ('ext2-block-full', 'ext2-value-too-large', 'full-volume-attribute', 'full-volume-file-capability'),
     }
     frozen_errors = {name: error for error, names in errors.items() for name in names}
     for row in observed:

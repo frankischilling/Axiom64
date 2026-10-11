@@ -1132,7 +1132,7 @@ static int change_xattr(Node* node, const XattrName& name, const void* value, si
                         unsigned flags, bool remove) {
     auto& v = volume(node);
     if (size > v.block_size)
-        return -34;
+        return -28;
     if (!v.begin())
         return v.error;
     uint8_t inode[inode_bytes], old[max_block_size], replacement[max_block_size];

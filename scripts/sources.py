@@ -112,11 +112,12 @@ def prepare():
     with ThreadPoolExecutor(max_workers=8) as pool:
         inputs = list(pool.map(port_sources, ports))
     inputs += [("BusyBox-upstream", [fetch("busybox")]), ("Limine", [fetch("limine")]),
-               ("libcap", [fetch("libcap")])]
+               ("libcap-upstream", [fetch("libcap")])]
     musl = [verify(download(item["url"], CACHE / "build-musl" / item["name"]),
                    item["sha256"], "sha256") for item in lock["build_musl"]["files"]]
     inputs.append(("build-musl", musl))
-    digest = hashlib.sha256(SOURCE_LOCK.read_bytes() + (ROOT / "dependencies.json").read_bytes()).hexdigest()
+    digest = hashlib.sha256(SOURCE_LOCK.read_bytes() + (ROOT / "dependencies.json").read_bytes() +
+                            Path(__file__).read_bytes()).hexdigest()
     stamp = NOTICES / ".stamp"
     if not stamp.exists() or stamp.read_text() != digest:
         for origin, paths in inputs:
@@ -133,9 +134,14 @@ def prepare():
 def bundle(inputs):
     destination = ROOT / "build" / "axiom64-sources.tar"
     with tarfile.open(destination, "w") as archive:
+        members = set()
         for origin, paths in inputs:
             for path in paths:
-                archive.add(path, arcname=f"ports/{origin}/{path.name}")
+                name = f"ports/{origin}/{path.name}"
+                if name in members:
+                    raise RuntimeError("duplicate source bundle input: " + name)
+                members.add(name)
+                archive.add(path, arcname=name)
         for path in ["sources.lock.json", "ports.lock.json", "dependencies.json", "LICENSE", "Makefile", "README.md", ".clang-format", ".gitattributes"]:
             archive.add(ROOT / path, arcname=f"Axiom64/{path}")
         for path in sorted((ROOT / "scripts").rglob("*")):

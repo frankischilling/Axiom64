@@ -854,7 +854,7 @@ static void metadata_bounds(void) {
     char* value = malloc(size + 1);
     CHECK(value != NULL);
     memset(value, 'B', size + 1);
-    ERROR("ext2-value-too-large", setxattr("bounds", "user.original", value, size + 1, 0), ERANGE);
+    ERROR("ext2-value-too-large", setxattr("bounds", "user.original", value, size + 1, 0), ENOSPC);
     ERROR("ext2-block-full", setxattr("bounds", "user.original", value, size, 0), ENOSPC);
     expect_value("bounds", "user.original", "preserved", 9);
     for (unsigned round = 0; round < 512; round++) {

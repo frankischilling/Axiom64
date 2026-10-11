@@ -227,7 +227,9 @@ jobs:
         run: make test-credentials
       - name: Compare all three libc profiles with native Linux tmpfs and ext2 xattrs
         if: matrix.suite == 'file-capabilities'
-        run: sudo -n make test-file-capabilities-native
+        run: |
+          mkdir -p build/file-capabilities
+          sudo -n make test-file-capabilities-native
       - name: Test actual file-capability exec, fresh boots, malformed disks and metadata failure recovery
         if: matrix.suite == 'file-capabilities'
         run: |

@@ -34,6 +34,7 @@ Policy was checked against Linux commit [`3857c2fe5449541e24afc5efdb0f81a8a8f9a3
 make test-file-capabilities-policy test-xattr-store test-ext2-xattr-codec
 make -j2 build/file-capabilities-native build/file-capabilities-static build/file-capabilities-dynamic
 python3 scripts/build_libcap.py --provider all
+mkdir -p build/file-capabilities
 sudo -n python3 scripts/file_capabilities/native.py
 python3 scripts/file_capabilities/guest.py
 python3 scripts/file_capabilities/metadata.py

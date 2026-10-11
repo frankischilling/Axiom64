@@ -217,7 +217,15 @@ void tcp_close(InetSocket* socket) {
     }
     unqueue(socket);
     socket->detached = true;
-    socket->stream->detach(now_ms());
+    uint64_t now = now_ms();
+    socket->stream->detach(now);
+    if (socket->stream->state() == tcp::State::closed) {
+        tcp::Segment pending;
+        // Last close releases a failed endpoint immediately. A reset that has
+        // not reached output ownership still needs the ordinary poll path.
+        if (!socket->stream->next(now, pending))
+            reclaim(socket);
+    }
 }
 
 int tcp_error(InetSocket* socket, bool clear) {

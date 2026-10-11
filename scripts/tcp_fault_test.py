@@ -17,18 +17,25 @@ from tcp_persist_peer import Peer as PersistPeer
 from tcp_timeout_peer import Peer as TimeoutPeer
 from tcp_old_ack_peer import Peer as OldAckPeer
 from tcp_challenge_peer import Peer as ChallengePeer
+from tcp_lifetime.peer import Peer as LifetimePeer
 
 
 def wire_configuration(wire):
     profiles = {'loss': (Peer, 'tcp-fault'), 'reordering': (ReorderingPeer, 'tcp-reordering'),
                 'persist': (PersistPeer, 'tcp-persist'), 'timeout': (TimeoutPeer, 'tcp-timeout'),
                 'old-ack': (OldAckPeer, 'tcp-old-ack'),
-                'challenge': (ChallengePeer, 'tcp-challenge')}
+                'challenge': (ChallengePeer, 'tcp-challenge'),
+                'lifetime': (LifetimePeer, 'tcp-lifetime')}
     check(wire in profiles, 'known controlled TCP wire profile')
     return profiles[wire]
 
 
 def application_configuration(wire):
+    if wire == 'lifetime':
+        markers = ['TCP_LIFETIME_PASS flows=24 default_ms=924600 longer_ms=984600']
+        markers += [f'TCP_LIFETIME_FLOW_PASS lane={lane} role={role} kind={kind}'
+                    for lane in range(2) for kind in range(6) for role in range(2)]
+        return 'tcp-lifetime', markers
     if wire == 'timeout':
         markers = ['TCP_TIMEOUT_PASS flows=8 queued_each=2048']
         markers += [f'TCP_TIMEOUT_FLOW_PASS lane={lane} role={role} control={control}'
@@ -185,7 +192,7 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
     label = f'{prefix}-{linkage}-{firmware}-{transport}'
     log_path = ROOT / 'build' / f'{label}.log'
     peers, servers, captures = [peer_type(lane) for lane in range(2)], [], []
-    capture_workspace = tempfile.TemporaryDirectory(prefix='axiom64-tcp-challenge-packets-') if wire == 'challenge' else None
+    capture_workspace = tempfile.TemporaryDirectory(prefix=f'axiom64-tcp-{wire}-packets-') if wire in ('challenge', 'lifetime') else None
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '512M', '-nic', 'none',
                '-cdrom', str(image), '-display', 'none', '-serial', 'stdio', '-monitor', 'none',
                '-no-reboot', '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
@@ -227,7 +234,8 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
     peer_path = ROOT / 'build' / f'{label}-peer.json'
     peer_path.write_text(json.dumps([dict(lane=peer.lane, frames=peer.frames) for peer in peers], indent=2) + '\n')
     program, required = application_configuration(wire)
-    required += [f'{"TCP_TIMEOUT" if wire == "timeout" else "TCP_FAULT"}_CONFIG_PASS nics=2',
+    application_prefix = {'timeout': 'TCP_TIMEOUT', 'lifetime': 'TCP_LIFETIME'}.get(wire, 'TCP_FAULT')
+    required += [f'{application_prefix}_CONFIG_PASS nics=2',
                 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
                 f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
     missing = [marker for marker in required if marker not in text]
@@ -237,7 +245,7 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
                   peer=peer_path.name, captures=[path.name for path in captures], log=log_path.name,
                   seconds=round(time.monotonic() - began, 3),
                   passed=not error and not missing and returncode == 1 and
-                  not any(marker in text for marker in ('TCP_FAULT_FAIL', 'TCP_TIMEOUT_FAIL', 'PANIC:', 'FAULT pid=')))
+                  not any(marker in text for marker in ('TCP_FAULT_FAIL', 'TCP_TIMEOUT_FAIL', 'TCP_LIFETIME_FAIL', 'PANIC:', 'FAULT pid=')))
     print(json.dumps(result), flush=True)
     if not result['passed']:
         print(text[-5000:], flush=True)

@@ -113,6 +113,7 @@ class Connection {
     uint32_t timeout_ms = 0, persist_interval = 1000;
     uint64_t opened_at = 0, progress_at = 0, retransmit_at = 0, persist_at = 0;
     uint64_t sample_at = 0, expiration = 0, last_send = 0, challenge_at = 0;
+    uint64_t delivery_at = 0;
     uint32_t sample_end = 0, timeout_end = 0;
     int failure = 0;
     bool initialized = false, syn_pending = false, syn_emitted = false, syn_retransmitted = false;
@@ -122,6 +123,7 @@ class Connection {
     bool write_closed = false, read_closed = false, detached = false;
     bool no_delay = false;
     bool timeout_candidate = false, challenge_sent = false;
+    bool delivery_active = false;
     void initialize(uint32_t, uint64_t, uint16_t);
     void negotiate(const Segment&);
     void synchronize(uint64_t);

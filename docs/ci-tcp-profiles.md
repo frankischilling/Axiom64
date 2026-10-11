@@ -14,9 +14,17 @@ The profile matrix names are `tcp-fault-loss`, `tcp-fault-reordering`,
 six pairs to audit complete TCP acceptance, including twelve static/dynamic images.
 The build job publishes corresponding source, test inputs and compiled products.
 
+The [full default-lifetime profile](tcp-default-lifetime.md) adds `tcp-lifetime-native`
+and `tcp-lifetime-{bios,uefi}-{modern,legacy}`. Its native job overlaps three isolated
+libc observations; each guest job overlaps two 512 MiB observations after sequential
+fixture construction. All observe the complete default interval. Each publishes its
+scoped evidence; the four guest jobs also publish their generated static/dynamic images.
+Download all five evidence artifacts and all four fixture artifacts to audit this
+profile's 22 captures, 264 flows and 374 damaged-evidence cases.
+
 All earlier non-profile suites remain present. `fail-fast: false` preserves evidence
 from other jobs when one fails. The required `qemu` aggregate checks the build and
-entire matrix: 39 successful jobs are required. Failed, cancelled, missing or skipped
+entire matrix: 44 successful jobs are required. Failed, cancelled, missing or skipped
 profile acceptance blocks integration.
 
 The accepted [five-profile serial run](https://github.com/frankischilling/Axiom64/actions/runs/38082099595)

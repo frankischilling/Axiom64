@@ -384,6 +384,20 @@ build/tcp-fault-dynamic: userspace/tests/net/tcp_fault.c
 build/tcp-timeout-native: userspace/tests/net/tcp_timeout.c
 	@mkdir -p build
 	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-lifetime-native: userspace/tests/net/tcp_lifetime.c
+	@mkdir -p build
+	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-lifetime-static: userspace/tests/net/tcp_lifetime.c
+	@mkdir -p build
+	musl-gcc -std=gnu11 -static -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-lifetime-dynamic: userspace/tests/net/tcp_lifetime.c
+	@mkdir -p build
+	musl-gcc -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+.PHONY: test-tcp-lifetime test-tcp-lifetime-native
+test-tcp-lifetime:
+	$(PYTHON) scripts/tcp_lifetime/acceptance.py guest
+test-tcp-lifetime-native:
+	$(PYTHON) scripts/tcp_lifetime/acceptance.py native
 build/tcp-challenge-native: userspace/tests/net/tcp_fault.c
 	@mkdir -p build
 	$(CC) -DTCP_CHALLENGE -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@

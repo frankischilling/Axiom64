@@ -93,8 +93,8 @@ def exercise(process, peers, servers, timeout, log, raw=False):
         if hasattr(peer, 'bind_peers'):
             peer.bind_peers(peers)
     selector = selectors.DefaultSelector()
-    connections = [None, None]
-    buffers, started_roles = [bytearray(), bytearray()], set()
+    connections = [None for _ in servers]
+    buffers, started_roles = [bytearray() for _ in servers], set()
     began, text, lines, error = time.monotonic(), bytearray(), bytearray(), None
     native_status = None
     selector.register(process.stdout, selectors.EVENT_READ, ('serial', None))
@@ -124,7 +124,7 @@ def exercise(process, peers, servers, timeout, log, raw=False):
                             check(native_status is None, 'one actual native client exit status')
                             native_status = int(line.split(b'=', 1)[1])
                             check(native_status == 0, 'actual native TCP client exits successfully')
-                        for index in range(2):
+                        for index in range(len(peers)):
                             marker = f'TCP_FAULT_READY lane={index} role=1'.encode()
                             if marker in line and index not in started_roles:
                                 check(connections[index] is not None, 'independent TCP peer connected before passive open')

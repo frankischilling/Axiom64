@@ -301,9 +301,10 @@ jobs:
       - name: Compare quoted ICMP failures across Linux and the complete guest matrix
         if: matrix.suite == 'tcp-fault-icmp'
         run: |
-          sudo -n make test-tcp-icmp-native
           dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' libc6:amd64 > build/tcp-icmp-native-package.txt
           cp /usr/share/doc/libc6/copyright build/tcp-icmp-native-copyright.txt
+          sudo -n python3 scripts/tests/tcp_icmp_error_order_test.py
+          sudo -n make test-tcp-icmp-native
           make test-tcp-icmp-sockets
           python3 scripts/tcp_icmp_capture.py 2>&1 | tee build/tcp-icmp-capture.log
           python3 scripts/tests/tcp_icmp_capture_test.py 2>&1 | tee build/tcp-icmp-damage.log

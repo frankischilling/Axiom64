@@ -29,6 +29,7 @@ guest `SO_ERROR` user copy preserves the pending value.
 
 ```sh
 make test-tcp-icmp
+sudo -n python3 scripts/tests/tcp_icmp_error_order_test.py
 sudo -n make test-tcp-icmp-native
 make test-tcp-icmp-sockets
 python3 scripts/tcp_icmp_capture.py
@@ -93,7 +94,15 @@ those literal native outcomes alongside the stricter guest results. It does not
 claim Linux parity for malformed quote admission.
 
 Linux can retain `POLLERR` from an asynchronous error-queue entry after `SO_ERROR`
-is consumed. Its retry comparison waits for `POLLOUT` and zero `SO_ERROR`, and records
+is consumed, or wake it before the socket error becomes readable. The native
+comparison waits for the expected error within its original three-second deadline
+and still requires the following read to consume it. A separate regression uses
+Linux software transmit timestamps to cause an earlier `POLLERR` with zero
+`SO_ERROR`, then checks the delayed ICMP error quoting actual application data.
+All three native linkages retain their logs, input hashes and zero-drop captures.
+This controlled ordering does not identify which error read failed in an earlier
+un-instrumented observation. Guest error delivery keeps its immediate assertions.
+The retry comparison waits for `POLLOUT` and zero `SO_ERROR`, and records
 any residual error readiness. Axiom64 does not yet implement `IP_RECVERR` or
 `MSG_ERRQUEUE`; complete ancillary and error-queue behavior remains required.
 
@@ -108,3 +117,6 @@ The policy uses [RFC 1122 section 4.2.3.9](https://www.rfc-editor.org/rfc/rfc112
 [Linux `tcp_ipv4.c`](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/net/ipv4/tcp_ipv4.c)
 and [the native kernel's TCP error handling](https://github.com/microsoft/WSL2-Linux-Kernel/blob/linux-msft-wsl-6.6.87.2/net/ipv4/tcp_ipv4.c)
 and [socket error consumption](https://github.com/microsoft/WSL2-Linux-Kernel/blob/linux-msft-wsl-6.6.87.2/net/core/sock.c).
+The native queue-before-error ordering is also present in
+[Linux v6.17 TCP ICMP handling](https://github.com/torvalds/linux/blob/v6.17/net/ipv4/tcp_ipv4.c)
+and [its error-queue insertion](https://github.com/torvalds/linux/blob/v6.17/net/ipv4/ip_sockglue.c).

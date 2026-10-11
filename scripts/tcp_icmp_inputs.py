@@ -12,14 +12,15 @@ SOURCES = ('Makefile', 'userspace/tests/net/tcp_icmp.c', 'userspace/tests/net/tc
            'scripts/tcp_fault_native.py', 'kernel/net/tcp/icmp.cpp', 'kernel/include/net/tcp/icmp.hpp',
            'kernel/net/tcp/connection.cpp', 'kernel/include/net/tcp/connection.hpp',
            'kernel/net/tcp/socket.cpp', 'kernel/include/net/tcp/socket.hpp',
-           'kernel/net/ipv4/core.cpp', 'kernel/net/ipv4/socket.cpp')
+           'kernel/net/ipv4/core.cpp', 'kernel/net/ipv4/socket.cpp',
+           'scripts/tests/tcp_icmp_error_order_test.py')
 
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def record(linkage, native=False, image=None):
+def record(linkage, native=False, image=None, label=None):
     binary = ROOT / 'build' / f'tcp-icmp-{linkage}'
     products = [binary]
     providers = {}
@@ -39,7 +40,7 @@ def record(linkage, native=False, image=None):
             if not path.is_file():
                 raise ValueError(f'actual glibc library is missing: {name}')
             host_libraries[name] = dict(path=str(path), sha256=digest(path))
-    label = f'tcp-icmp-linux-{linkage}' if native else f'tcp-icmp-{linkage}'
+    label = label or (f'tcp-icmp-linux-{linkage}' if native else f'tcp-icmp-{linkage}')
     value = dict(linkage=linkage, native=native,
                  compiler=subprocess.check_output(['gcc', '-dumpfullversion'], text=True).strip(),
                  sources={name: digest(ROOT / name) for name in SOURCES},

@@ -266,6 +266,24 @@ def verify_companions(packets, text, cases):
                         request['stamp'] < reply['stamp'], 'actual exact unaffected stream through ICMP attacks')
 
 
+def audit_inputs(inputs, input_root=None, host_libraries=None):
+    input_root = input_root or ROOT
+    for group in ('sources', 'products'):
+        require(inputs[group], 'nonempty source and compiled product fingerprints')
+        for name, digest in inputs[group].items():
+            require(not Path(name).is_absolute() and '..' not in Path(name).parts,
+                    'bounded source/product manifest paths')
+            require(hashlib.sha256((input_root / name).read_bytes()).hexdigest() == digest,
+                    f'actual {group} input: {name}')
+    if inputs['native'] and inputs['linkage'] == 'native':
+        require(set(inputs['host_libraries']) == {'libc.so.6', 'ld-linux-x86-64.so.2'},
+                'the native client records its actual glibc and loader')
+        for name, library in inputs['host_libraries'].items():
+            data = host_libraries[name] if host_libraries is not None else Path(library['path']).read_bytes()
+            require(hashlib.sha256(data).hexdigest() == library['sha256'],
+                    f'actual native shared library: {name}')
+
+
 def audit_row(root, row, cases, input_root=None, host_libraries=None):
     require(row['wire'] == 'icmp' and row['passed'] and not row['error'] and not row['missing'],
             'actual ICMP runner succeeds without omitted cases')
@@ -280,21 +298,7 @@ def audit_row(root, row, cases, input_root=None, host_libraries=None):
     inputs = json.loads((root / row['inputs']).read_text())
     require(inputs['linkage'] == row['linkage'] and inputs['native'] == native,
             'the reported client and linkage have their real input manifest')
-    input_root = input_root or ROOT
-    for group in ('sources', 'products'):
-        require(inputs[group], 'nonempty source and compiled product fingerprints')
-        for name, digest in inputs[group].items():
-            require(not Path(name).is_absolute() and '..' not in Path(name).parts,
-                    'bounded source/product manifest paths')
-            require(hashlib.sha256((input_root / name).read_bytes()).hexdigest() == digest,
-                    f'actual {group} input: {name}')
-    if native and row['linkage'] == 'native':
-        require(set(inputs['host_libraries']) == {'libc.so.6', 'ld-linux-x86-64.so.2'},
-                'the native client records its actual glibc and loader')
-        for name, library in inputs['host_libraries'].items():
-            data = host_libraries[name] if host_libraries is not None else Path(library['path']).read_bytes()
-            require(hashlib.sha256(data).hexdigest() == library['sha256'],
-                    f'actual native shared library: {name}')
+    audit_inputs(inputs, input_root, host_libraries)
     text = (root / row['log']).read_text()
     require('TCP_ICMP_FAIL' not in text and text.count('TCP_ICMP_PASS cases=57 nics=2 cycles=128') == 1,
             'one complete actual application verdict')

@@ -141,10 +141,50 @@ static void configure(void) {
     CHECK(close(fd) == 0);
 }
 
-static void wait_error(int fd, int expected) {
+static int complete_native_error(int fd, int value, uint64_t began, unsigned timeout,
+                                 unsigned* empty_reads) {
+    while (native && !value && milliseconds() - began < timeout) {
+        (*empty_reads)++;
+        CHECK(usleep(1000) == 0);
+        value = error(fd);
+    }
+    return value;
+}
+
+static unsigned wait_error(int fd, int expected) {
+    uint64_t began = milliseconds();
     struct pollfd item = {.fd = fd, .events = POLLOUT};
     CHECK(poll(&item, 1, 3000) == 1 && (item.revents & POLLERR));
-    CHECK(error(fd) == expected && error(fd) == 0);
+    unsigned empty_reads = 0;
+    int first = complete_native_error(fd, error(fd), began, 3000, &empty_reads);
+    int second = first == expected ? error(fd) : -1;
+    if (first != expected || second)
+        fprintf(stderr,
+                "ICMP_ERROR_READ fd=%d expected=%d events=%x first=%d second=%d empty_reads=%u\n",
+                fd, expected, item.revents, first, second, empty_reads);
+    CHECK(first == expected && second == 0);
+    return empty_reads;
+}
+
+static void native_error_order(void) {
+    int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    // Linux software transmit timestamps deliberately wake POLLERR before the quoted error.
+    int timestamps = (1 << 1) | (1 << 4) | (1 << 11);
+    struct sockaddr_in address = {
+        .sin_family = AF_INET, .sin_port = htons(49000), .sin_addr.s_addr = htonl(0x0a170101)};
+    struct sockaddr_in local = {
+        .sin_family = AF_INET, .sin_port = htons(41000), .sin_addr.s_addr = htonl(0x0a170102)};
+    CHECK(fd >= 0 && setsockopt(fd, SOL_SOCKET, 37, &timestamps, sizeof(timestamps)) == 0 &&
+          bind(fd, (struct sockaddr*)&local, sizeof(local)) == 0 &&
+          connect(fd, (struct sockaddr*)&address, sizeof(address)) == -1 && errno == EINPROGRESS);
+    struct pollfd ready = {.fd = fd, .events = POLLOUT};
+    CHECK(poll(&ready, 1, 3000) == 1 && !(ready.revents & POLLERR) && error(fd) == 0 &&
+          send(fd, "one", 3, MSG_NOSIGNAL) == 3);
+    uint64_t began = milliseconds();
+    unsigned empty_reads = wait_error(fd, ECONNREFUSED);
+    CHECK(empty_reads && close(fd) == 0);
+    printf("ICMP_ERROR_ORDER_PASS empty_reads=%u error=111 cleared=0 elapsed_ms=%llu\n",
+           empty_reads, (unsigned long long)(milliseconds() - began));
 }
 
 static void companions_start(void) {
@@ -315,6 +355,10 @@ static void active_case(unsigned lane, unsigned ordinal) {
             struct pollfd item = {.fd = fd, .events = POLLOUT};
             int ready = poll(&item, 1, 200);
             int reported = error(fd);
+            if (native && ready == 1 && (item.revents & POLLERR)) {
+                unsigned empty_reads = 0;
+                reported = complete_native_error(fd, reported, began, 200, &empty_reads);
+            }
             printf("ICMP_QUOTE_RESULT lane=%u case=%u native=%d poll=%d events=%x error=%d "
                    "elapsed_ms=%llu\n",
                    lane, ordinal, native, ready, item.revents, reported,
@@ -440,12 +484,17 @@ static void cycles(void) {
 
 int main(int argc, char** argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
-    CHECK(argc == 1 || (argc == 2 && !strcmp(argv[1], "--native")));
+    CHECK(argc == 1 || (argc == 2 && (!strcmp(argv[1], "--native") ||
+                                      !strcmp(argv[1], "--native-error-order-check"))));
     native = argc == 2;
     signal(SIGPIPE, SIG_IGN);
     struct sigaction action = {.sa_handler = on_signal};
     CHECK(sigemptyset(&action.sa_mask) == 0 && sigaction(SIGUSR1, &action, NULL) == 0);
     alarm(210);
+    if (native && !strcmp(argv[1], "--native-error-order-check")) {
+        native_error_order();
+        return 0;
+    }
     if (!native)
         configure();
     capture_start();

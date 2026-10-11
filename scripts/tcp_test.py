@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import time
 from fetch import ROOT, LOCK
+from build_musl import loader as musl_loader
 
 
 def fixture(linkage, script=None, image_name=None):
@@ -19,7 +20,7 @@ def fixture(linkage, script=None, image_name=None):
     for name, source in (('sbin/init', ROOT / 'build/init'),
                          ('bin/tcp-tests', ROOT / 'build' / f'tcp-{linkage}'),
                          ('bin/busybox', ROOT / 'build' / f"busybox-{LOCK['busybox']['version']}" / 'busybox'),
-                         ('lib/ld-musl-x86_64.so.1', Path('/lib/ld-musl-x86_64.so.1').resolve())):
+                         ('lib/ld-musl-x86_64.so.1', musl_loader())):
         files[name] = (0o100755, source.read_bytes())
     files['etc/net-test.sh'] = (0o100755, script or b'#!/bin/sh\nset -e\n/bin/tcp-tests\necho AXIOM64_TESTS_PASS\n')
     with (ROOT / 'build/rootfs-network.cpio').open('wb') as output:

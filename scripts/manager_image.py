@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import subprocess
 from fetch import ROOT, LOCK
+from build_musl import loader as musl_loader
 from dhcp_peer import check
 
 
@@ -22,7 +23,7 @@ def fixture(linkage, scenario, affected, observer='manager-protocol'):
                (f'bin/{observer}', ROOT / 'build' / observer),
                ('sbin/network-manager', ROOT / 'build/network-manager'),
                ('sbin/network-manager-dynamic', ROOT / 'build/network-manager-dynamic'),
-               ('lib/ld-musl-x86_64.so.1', Path('/lib/ld-musl-x86_64.so.1').resolve())]
+               ('lib/ld-musl-x86_64.so.1', musl_loader())]
     files.update({name: (0o100755, source.read_bytes()) for name, source in sources})
     binary = 'network-manager-dynamic' if linkage == 'dynamic' else 'network-manager'
     script = (f'#!/bin/sh\nset -e\n/bin/{observer} /sbin/{binary} {scenario} /tmp {affected}\n'

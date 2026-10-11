@@ -1,6 +1,6 @@
 # IPv4, ARP, routing, and ping
 
-The IPv4 host path runs over [virtio-net and QEMU e1000](network.md). It supports static addresses, loopback, connected and explicit routes, bounded ARP resolution, kernel ICMP echo replies, Linux raw ICMP sockets, [UDP datagrams](udp.md) and ordinary [TCP streams](tcp.md). BusyBox `ifconfig`, route add/delete, and numeric `ping` exercise the guest implementation. [DHCP](network-manager.md) and [DNS](dns.md) have their own contracts. Full TCP fault/lifetime acceptance, DNS TCP fallback, downloads, IPv6 and complete IPv4 conformance remain required by the [networking roadmap](feature-roadmap.md).
+The IPv4 host path runs over [virtio-net and QEMU e1000](network.md). It supports static addresses, loopback, connected and explicit routes, bounded ARP resolution, kernel ICMP echo replies, Linux raw ICMP sockets, [UDP datagrams](udp.md) and ordinary [TCP streams](tcp.md). BusyBox `ifconfig`, route add/delete, and numeric `ping` exercise the guest implementation. [DHCP](network-manager.md) and [DNS with TCP fallback](dns.md) have their own contracts. Full TCP fault/lifetime acceptance, downloads, IPv6 and complete IPv4 conformance remain required by the [networking roadmap](feature-roadmap.md).
 
 ## Ownership and progress
 

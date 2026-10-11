@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import time
 from fetch import ROOT, LOCK
+from build_musl import loader as musl_loader
 from ext2_test import SEED, create_volume, check_fs, dump
 
 
@@ -22,7 +23,7 @@ def fixture(volume):
                          ('bin/busybox', ROOT / 'build' / f"busybox-{LOCK['busybox']['version']}" / 'busybox'),
                          ('bin/ownership-tests', ROOT / 'build/ownership-tests'),
                          ('bin/ownership-dynamic', ROOT / 'build/ownership-dynamic'),
-                         ('lib/ld-musl-x86_64.so.1', Path('/lib/ld-musl-x86_64.so.1').resolve())]:
+                         ('lib/ld-musl-x86_64.so.1', musl_loader())]:
         files[name] = (0o100755, Path(source).read_bytes())
     script = (ROOT / 'userspace/tests/net/ownership.sh').read_bytes()
     files['etc/net-test.sh'] = (0o100755, f'export OWNERSHIP_VOLUME={volume}\n'.encode() + script)

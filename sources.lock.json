@@ -3302,5 +3302,11 @@
         "sha256": "953f9b71d1c1fd827a521725ead722fd3821ac208614cf99f8150dec070b1121"
       }
     ]
-  }
+  },
+  "musl_local_patches": [
+    {
+      "path": "vendor/musl/patches/0001-check-dns-tcp-response-ownership.patch",
+      "sha256": "139a1e9c3340bcf1fb60866e1b8090bf8b71d8e662975306a8c50f8d59fef642"
+    }
+  ]
 }

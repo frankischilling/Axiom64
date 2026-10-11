@@ -11,6 +11,7 @@ import socket
 import subprocess
 import time
 from fetch import ROOT, LOCK
+from build_musl import loader as musl_loader
 from dns_peer import Peer, check
 
 CASES = ('numeric', 'hosts', 'wire-lane0', 'wire-lane1', 'cname', 'search', 'search-bare',
@@ -59,7 +60,7 @@ def fixture():
                          ('bin/dns-static', ROOT / 'build/dns-static'),
                          ('bin/dns-dynamic', ROOT / 'build/dns-dynamic'),
                          ('bin/busybox', ROOT / 'build' / f"busybox-{LOCK['busybox']['version']}" / 'busybox'),
-                         ('lib/ld-musl-x86_64.so.1', Path('/lib/ld-musl-x86_64.so.1').resolve()),
+                         ('lib/ld-musl-x86_64.so.1', musl_loader()),
                          ('etc/net-test.sh', ROOT / 'userspace/tests/net/dns.sh')]:
         files[name] = (0o100755, source.read_bytes())
     files['etc/hosts'] = (0o100644, b'10.23.1.100 local-host.fixture\n')

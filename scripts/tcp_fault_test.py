@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import time
 from fetch import ROOT, LOCK
+from build_musl import loader as musl_loader
 from tcp_fault_peer import Peer, check
 from tcp_reordering_peer import Peer as ReorderingPeer
 from tcp_persist_peer import Peer as PersistPeer
@@ -59,7 +60,7 @@ def fixture(linkage, wire='loss'):
     for name, source in (('sbin/init', ROOT / 'build/init'),
                          (f'bin/{program}', ROOT / 'build' / f'{program}-{linkage}'),
                          ('bin/busybox', ROOT / 'build' / f"busybox-{LOCK['busybox']['version']}" / 'busybox'),
-                         ('lib/ld-musl-x86_64.so.1', Path('/lib/ld-musl-x86_64.so.1').resolve())):
+                         ('lib/ld-musl-x86_64.so.1', musl_loader())):
         files[name] = (0o100755, source.read_bytes())
     files['etc/net-test.sh'] = (0o100755, f'#!/bin/sh\nset -e\n/bin/{program}\necho AXIOM64_TESTS_PASS\n'.encode())
     original = ROOT / 'build/rootfs-network.cpio'

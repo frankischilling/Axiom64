@@ -1,6 +1,6 @@
 # IPv4 UDP sockets
 
-Ring 3 programs exchange UDP datagrams through `AF_INET/SOCK_DGRAM` with protocol zero or `IPPROTO_UDP`. The transport uses [IPv4 routes, ARP, and loopback](ipv4.md) and both [Ethernet adapters](network.md). TCP, IPv6 UDP, DHCP, DNS, and downloads remain required by the [networking roadmap](feature-roadmap.md).
+Ring 3 programs exchange UDP datagrams through `AF_INET/SOCK_DGRAM` with protocol zero or `IPPROTO_UDP`. The transport uses [IPv4 routes, ARP, and loopback](ipv4.md) and both [Ethernet adapters](network.md). Ordinary [TCP streams](tcp.md), [DHCP](network-manager.md) and [DNS with TCP fallback](dns.md) have separate acceptance. IPv6 UDP, downloads and the complete networking release remain required by the [networking roadmap](feature-roadmap.md).
 
 ## Ownership and binding
 

@@ -1,7 +1,7 @@
 {
-  "inventory_date": "2026-10-07",
-  "tested_baseline": "ba768b40b8d55e1abae43b331f931bfff1bec4e2",
-  "baseline_ci": "https://github.com/frankischilling/Axiom64/actions/runs/37607497820",
+  "inventory_date": "2026-10-11",
+  "tested_baseline": "292086327ce12fa1c704ae3b5aaff2357edf464b",
+  "baseline_ci": "https://github.com/frankischilling/Axiom64/actions/runs/38097635498",
   "milestones": [
     {
       "id": "M1",
@@ -571,7 +571,7 @@
       "title": "DHCP, DNS, and network configuration",
       "milestone": "M3",
       "state": "partial",
-      "current": "Linux interface/route control and BusyBox tools support static configuration. Ring 3 C++ modules and the normal network manager implement concurrent default DHCP, saved static/disabled overrides, owned address/route/resolver updates, synchronized profiles/hints and fresh-boot validation. Complete client/service protocol, carrier/device, restart and saved-root matrices pass. Actual static/dynamic musl IPv4 UDP lookups have controlled tests for nameserver/search rules, CNAME/A answers, failures, filtering, retries, concurrency and description reclamation on both Ethernet drivers. Normal-init fixtures also run both application linkages with DHCP-published resolver settings before and after actual PID1 manager restart, checking fresh ACK nameservers and controlled A answers while the same desktop remains usable. DNS TCP fallback, downloads and the complete first network release remain required.",
+      "current": "Linux interface/route control and BusyBox tools support static configuration. Ring 3 C++ modules and the normal network manager implement concurrent default DHCP, saved static/disabled overrides, owned address/route/resolver updates, synchronized profiles/hints and fresh-boot validation. Complete client/service protocol, carrier/device, restart and saved-root matrices pass. Actual static/dynamic musl IPv4 UDP lookups have controlled tests for nameserver/search rules, CNAME/A answers, failures, filtering, retries, concurrency and description reclamation on both Ethernet drivers. Normal-init fixtures also run both application linkages with DHCP-published resolver settings before and after actual PID1 manager restart, checking fresh ACK nameservers and controlled A answers while the same desktop remains usable. The bounded DNS TCP child #157 adds checked source-built musl providers, owned UDP-to-TCP fallback, complete framed reads, error/deadline controls, concurrent queries and reclaimed descriptions. Its matrix requires both adapters, both linkages, BIOS/UEFI, modern/legacy virtio, independent raw packet decoding and synchronized negative evidence. IPv6, DNSSEC, downloads, TLS and the complete first network release remain required.",
       "scope": [
         "DHCP by default, lease renewal, saved configuration, and static override",
         "DNS resolver including UDP, TCP fallback, search rules, and timeouts",
@@ -629,6 +629,17 @@
         "scripts/dns_peer.py",
         "scripts/dns_test.py",
         "scripts/dns_native.py",
+        "userspace/tests/net/dns-tcp.c",
+        "userspace/tests/net/dns-tcp-probe.c",
+        "userspace/tests/net/dns/contract.h",
+        "scripts/dns_tcp_peer.py",
+        "scripts/dns_tcp_test.py",
+        "scripts/dns_tcp_capture.py",
+        "scripts/dns_tcp_damaged.py",
+        "scripts/tests/musl_dns_tcp_test.py",
+        "scripts/build_musl.py",
+        "vendor/musl/README.md",
+        "vendor/musl/patches/0001-check-dns-tcp-response-ownership.patch",
         "docs/dns.md",
         "userspace/tests/net/normal-dns.c",
         "scripts/normal_dns_peer.py"

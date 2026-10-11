@@ -1,6 +1,6 @@
 # Userspace ports and provenance
 
-The kernel implements the Linux x86-64 ABI itself. Static musl tests and init use the pinned Ubuntu musl toolchain. BusyBox 1.37.0 is built from upstream with musl, without Axiom64-specific source patches. The full image also imports Linux-ABI, musl-linked packages from Alpine 3.22 x86-64. Their executables run against Axiom64's syscalls.
+The kernel implements the Linux x86-64 ABI itself. Static tests, init and BusyBox use source-built pinned Ubuntu musl. The installed interpreter and development libraries use source-built pinned Alpine musl. Both apply the checked [DNS transport patch](../vendor/musl/README.md), retain musl's MIT notices, and record input, patch and product hashes. BusyBox 1.37.0 is built from upstream without Axiom64-specific BusyBox patches. The full image also imports Linux-ABI, musl-linked packages from Alpine 3.22 x86-64. Their executables run against Axiom64's syscalls.
 
 Native development tools are GCC 14.2.0, binutils 2.44, and Make 4.4.1. Desktop packages include Xorg 21.1.19, fbdev and evdev, twm, xterm 399, xeyes, bitmap fonts, Bash 5.2.37, and zsh 5.9. Tests compile and execute new programs with the imported native toolchain.
 

@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 from fetch import ROOT, LOCK
 from ports import packages
+from build_musl import loader, runtime_files
 import tarfile
 import argparse
 import tempfile
@@ -69,7 +70,7 @@ regular("etc/udp-test.sh", ROOT / "userspace/tests/net/udp.sh")
 regular("etc/thread-test.sh", ROOT / "userspace/tests/threads/run.sh")
 regular("etc/x11-session.sh", ROOT / "userspace/desktop/x11-session.sh")
 regular("usr/bin/startx", ROOT / "userspace/desktop/startx.sh")
-regular("lib/ld-musl-x86_64.so.1", Path("/lib/ld-musl-x86_64.so.1").resolve())
+regular("lib/ld-musl-x86_64.so.1", loader())
 files["lib/libc.so"] = (0o120777, b"/lib/ld-musl-x86_64.so.1")
 regular("usr/share/licenses/Axiom64/LICENSE", ROOT / "LICENSE", 0o100644)
 regular("usr/share/licenses/BusyBox/LICENSE", busybox_dir / "LICENSE", 0o100644)
@@ -117,6 +118,13 @@ for package, archive in packages():
                 if target not in files:
                     raise RuntimeError(f"unresolved package hard link: {path} -> {target}")
                 files[path] = files[target]
+
+# Override both the installed interpreter and native development libc after APK imports.
+for path, value in runtime_files().items():
+    for parent in reversed(Path(path).parents):
+        if str(parent) != '.':
+            files.setdefault(str(parent), (0o40755, b''))
+    files[path] = value
 
 # Saved profiles use the manager's private directory policy.
 files["etc/network"] = (0o40700, b"")

@@ -118,6 +118,12 @@ def prepare():
                                 (crypto['archive'] + '.asc')),
                        crypto['signature_sha256'], 'sha256')
     inputs.append(('OpenSSL-upstream', [fetch('openssl'), signature]))
+    password = LOCK['libxcrypt']
+    signature = verify(download(password['signature_url'], CACHE / 'libxcrypt-upstream' /
+                                (password['archive'] + '.asc')), password['signature_sha256'], 'sha256')
+    public_key = verify(download(password['public_key_url'], CACHE / 'libxcrypt-upstream' /
+                                 'libxcrypt-gpgkey.asc'), password['public_key_sha256'], 'sha256')
+    inputs.append(('libxcrypt-upstream', [fetch('libxcrypt'), signature, public_key]))
     musl = [verify(download(item["url"], CACHE / "build-musl" / item["name"]),
                    item["sha256"], "sha256") for item in lock["build_musl"]["files"]]
     inputs.append(("build-musl", musl))

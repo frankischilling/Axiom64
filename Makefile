@@ -13,9 +13,15 @@ FORMAT_SOURCES = $(foreach pattern,*.cpp *.hpp,$(call rwildcard,kernel/,$(patter
 all: image
 .PHONY: test-rtc-codec test-clock-wall test-clock-wall-native
 .PHONY: test-random-crypto test-random-crypto-native test-random-crypto-wait test-random-crypto-wait-native
-.PHONY: openssl test-random-installed
+.PHONY: openssl libxcrypt test-password-library-native test-password-library test-random-installed
 openssl:
 	$(PYTHON) scripts/build_openssl.py --provider all
+libxcrypt:
+	$(PYTHON) scripts/build_libxcrypt.py --provider all
+test-password-library-native:
+	$(PYTHON) scripts/password_library_test.py
+test-password-library:
+	$(PYTHON) scripts/password_library_guest.py
 test-random-installed:
 	$(PYTHON) scripts/random_installed_test.py
 test-random-crypto:
@@ -496,6 +502,7 @@ ROOTFS_INPUTS = build/thread-io-static build/thread-io-dynamic build/lifecycle-s
 ROOTFS_INPUTS += build/network-manager
 ROOTFS_INPUTS += build/random-seed-static
 ROOTFS_INPUTS += scripts/build_libcap.py scripts/build_musl.py scripts/build_openssl.py sources.lock.json
+ROOTFS_INPUTS += scripts/build_libxcrypt.py scripts/linux_uapi.py
 build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox

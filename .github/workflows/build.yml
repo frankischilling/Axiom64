@@ -43,6 +43,8 @@ jobs:
         run: python3 scripts/tests/normal_manager_events_test.py -v
       - name: Test seed supervision observes complete ordinary-console records
         run: python3 scripts/tests/random_installed_records_test.py -v
+      - name: Test actual init seed records stay framed at every input-echo boundary
+        run: python3 scripts/tests/random_seed_records_producer_test.py -v
       - name: Test copied fixture executables retain Linux execution permissions
         run: python3 scripts/tests/random_executable_copy_test.py -v
       - name: Replay actual RTC firmware writes and reject damaged calendar observations

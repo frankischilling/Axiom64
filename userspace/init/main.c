@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
+#include "seed_records.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -57,8 +58,7 @@ static pid_t seed_service(const struct timespec* now) {
     if (child < 0)
         perror("init: random seed service fork");
     else {
-        printf("INIT_RANDOM_SEED_SPAWN pid=%d monotonic_ms=%llu\n", child, milliseconds(now));
-        fflush(stdout);
+        init_seed_spawned_record(child, milliseconds(now));
     }
     return child;
 }
@@ -153,9 +153,7 @@ int main(void) {
                 seeder = -1;
                 if (monotonic(&seed_retry) < 0)
                     return 1;
-                printf("INIT_RANDOM_SEED_REAP pid=%d status=%d monotonic_ms=%llu\n", child, status,
-                       milliseconds(&seed_retry));
-                fflush(stdout);
+                init_seed_reaped_record(child, status, milliseconds(&seed_retry));
                 seeded = WIFEXITED(status) && WEXITSTATUS(status) == 0;
                 seed_retry.tv_sec++;
             }

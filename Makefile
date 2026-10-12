@@ -302,7 +302,7 @@ test-clock:
 build/abi-dynamic: userspace/tests/abi/abi.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DABI_LINKAGE='"dynamic"' $< -o $@
-build/init: userspace/init/main.c
+build/init: userspace/init/main.c userspace/init/seed_records.h
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 build/ipc-tests: userspace/tests/ipc/ipc.c

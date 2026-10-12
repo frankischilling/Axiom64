@@ -16,15 +16,10 @@ from disk_root import archive_entries, build
 from fetch import ROOT
 from random_administration_test import copy_executable, fingerprint, snapshot
 from random_crypto.inputs import provider
+from random_installed_records import seed_records
 
 SEED = '/var/lib/axiom64/random'
 MESSAGE = b'Axiom64 installed seed service\n'
-
-
-def seed_records(text, event):
-    status = r' status=(\d+)' if event == 'REAP' else ''
-    return re.findall(r'^(?:/ # )?INIT_RANDOM_SEED_' + event + r' pid=(\d+)' + status +
-                      r' monotonic_ms=(\d+)\r?\n', text, re.MULTILINE)
 
 
 def record(text, name):
@@ -230,7 +225,8 @@ def main():
     subprocess.run(['make', '-s', '-j2', 'build/axiom64.elf', 'build/rootfs.cpio',
                     'build/rootfs-desktop.cpio'], cwd=ROOT, check=True)
     inputs = snapshot(out)
-    for name in ('userspace/init/main.c', 'userspace/services/random_seed.c', 'scripts/rootfs.py',
+    for name in ('userspace/init/main.c', 'userspace/init/seed_records.h', 'userspace/services/random_seed.c',
+                 'scripts/random_installed_records.py', 'scripts/rootfs.py',
                  'scripts/disk_root.py', 'scripts/image.py', 'scripts/random_installed_test.py'):
         inputs[name] = fingerprint(ROOT / name)
     (out / 'source-inputs.json').write_text(json.dumps(inputs, indent=2)+'\n')

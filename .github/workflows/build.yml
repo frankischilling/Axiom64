@@ -55,6 +55,8 @@ jobs:
         run: python3 scripts/tests/desktop_visual_test.py -v
       - name: Build all maintained OpenSSL providers from their pinned inputs
         run: python3 scripts/build_openssl.py --provider all
+      - name: Verify completed OpenSSL fingerprints and reject changed inputs and products
+        run: python3 scripts/tests/openssl_inputs_test.py -v
       - name: Build secure-random lifecycle and cryptographic prerequisite clients
         run: |
           make -j2 build/random-admin-native build/random-admin-static build/random-admin-dynamic

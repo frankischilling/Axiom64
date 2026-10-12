@@ -45,6 +45,8 @@ jobs:
         run: python3 scripts/tests/random_installed_records_test.py -v
       - name: Test copied fixture executables retain Linux execution permissions
         run: python3 scripts/tests/random_executable_copy_test.py -v
+      - name: Replay actual RTC firmware writes and reject damaged calendar observations
+        run: python3 scripts/tests/clock_wall_observer_test.py -v
       - name: Test manager runtime hint provenance and explicit invalidation with sanitizers
         run: make test-manager-runtime-native
       - name: Test actual desktop image readiness and bounded uniform-image rejection

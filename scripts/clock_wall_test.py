@@ -12,6 +12,7 @@ import tempfile
 import time
 
 from build_musl import loader
+from clock_wall_observer import calendar, check_hardware
 from fetch import ROOT
 from random_administration_test import checked_run, copy_executable, fingerprint, snapshot
 from random_seed_test import image
@@ -35,10 +36,6 @@ def firmware_date(date, firmware):
     return value.replace(year=2000+value.year % 100).isoformat()
 
 
-def calendar(value):
-    return int(datetime(value['tm_year']+1900, value['tm_mon']+1, value['tm_mday'],
-                        value['tm_hour'], value['tm_min'], value['tm_sec'],
-                        tzinfo=timezone.utc).timestamp())
 
 
 def guest_run(command, case, date, expected_date):
@@ -56,22 +53,44 @@ def guest_run(command, case, date, expected_date):
                 process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL,
                                            stdout=stream, stderr=subprocess.STDOUT)
                 monitor = QMP(socket, process, case / 'qmp.jsonl', 5)
+                initial_before = time.time_ns()
+                initial_monotonic_before = time.monotonic_ns()
                 initial = monitor.command('qom-get', dict(path='/machine', property='rtc-time'))
-                row['initial_hardware_calendar'] = initial
+                initial_monotonic_after = time.monotonic_ns()
+                initial_after = time.time_ns()
+                row.update(initial_hardware_calendar=initial,
+                           initial_hardware_interval_ns=[initial_before, initial_after],
+                           initial_hardware_monotonic_interval_ns=[initial_monotonic_before, initial_monotonic_after])
                 if date is not None:
                     expected = int(datetime.fromisoformat(date).replace(tzinfo=timezone.utc).timestamp())
                     if not expected <= calendar(initial) <= expected+5:
                         raise RuntimeError('the initial QEMU RTC differs from its requested date')
                 monitor.command('cont')
                 deadline = time.monotonic()+30
-                while b'CLOCK_WALL_RTC_OBSERVER' not in log.read_bytes():
-                    if process.poll() is not None or time.monotonic() >= deadline:
-                        raise RuntimeError('the calendar client did not reach hardware observation')
-                    time.sleep(.01)
+
+                def wait(marker):
+                    while marker not in log.read_bytes():
+                        if process.poll() is not None or time.monotonic() >= deadline:
+                            raise RuntimeError('the calendar client did not reach hardware observation')
+                        time.sleep(.01)
+
+                wait(b'Clock: RTC UTC seconds=')
+                reference_before = time.monotonic_ns()
+                reference = monitor.command('qom-get', dict(path='/machine', property='rtc-time'))
+                reference_after = time.monotonic_ns()
+                events = [json.loads(line)['value'] for line in (case/'qmp.jsonl').read_text().splitlines()
+                          if json.loads(line)['direction'] == 'receive']
+                row.update(reference_hardware_calendar=reference,
+                           reference_hardware_monotonic_interval_ns=[reference_before, reference_after],
+                           reference_firmware_changes=[event for event in events if event.get('event') == 'RTC_CHANGE'])
+                wait(b'CLOCK_WALL_RTC_OBSERVER')
                 sample_before = time.time_ns()
+                sample_monotonic_before = time.monotonic_ns()
                 sample = monitor.command('qom-get', dict(path='/machine', property='rtc-time'))
+                sample_monotonic_after = time.monotonic_ns()
                 sample_after = time.time_ns()
-                row.update(hardware_calendar=sample, hardware_interval_ns=[sample_before, sample_after])
+                row.update(hardware_calendar=sample, hardware_interval_ns=[sample_before, sample_after],
+                           hardware_monotonic_interval_ns=[sample_monotonic_before, sample_monotonic_after])
                 process.wait(timeout=max(.01, deadline-time.monotonic()))
                 after = time.time_ns()
             text = log.read_text()
@@ -80,15 +99,9 @@ def guest_run(command, case, date, expected_date):
                        firmware_expected_date=expected_date,
                        firmware_changed_century=date != expected_date)
             check(row, text, before, after, expected_date)
-            actual = calendar(sample)*1_000_000_000
-            base = sample_before if expected_date is None else int(datetime.fromisoformat(expected_date).replace(
-                   tzinfo=timezone.utc).timestamp())*1_000_000_000
-            maximum = sample_after if expected_date is None else base+sample_after-before
-            if not base-1_000_000_000 <= actual <= maximum+2_000_000_000:
-                raise RuntimeError('the actual QEMU RTC differs from the firmware calendar expectation')
-            observed = row['observed']['seconds']*1_000_000_000 + row['observed']['nanoseconds']
-            if not -1_000_000_000 <= actual-observed <= 2_000_000_000:
-                raise RuntimeError('the guest calendar differs from independently observed RTC hardware')
+            events = [json.loads(line)['value'] for line in (case/'qmp.jsonl').read_text().splitlines()
+                      if json.loads(line)['direction'] == 'receive']
+            check_hardware(row, before, expected_date, events)
             return row, text
         except BaseException as error:
             row.update(passed=False, error=repr(error))
@@ -147,7 +160,7 @@ def main():
                        ('clock-wall', 'random', 'random-seed', 'random-seed-probe')))],
                    cwd=ROOT, check=True)
     inputs = snapshot(out)
-    for name in ('scripts/clock_wall_test.py', 'userspace/tests/time/wall.c',
+    for name in ('scripts/clock_wall_test.py', 'scripts/clock_wall_observer.py', 'userspace/tests/time/wall.c',
                  'scripts/random_seed_test.py', 'scripts/image.py', 'scripts/random_snapshot_test.py'):
         inputs[name] = fingerprint(ROOT / name)
     (out / 'source-inputs.json').write_text(json.dumps(inputs, indent=2)+'\n')

@@ -109,7 +109,16 @@ day, dates beyond the 2038 boundary, and the 2100 century. Each of its 20 boots
 checks calendar calls against a host-observed interval and a real 200 ms
 absolute realtime futex wait against monotonic time. Read-only QMP observations
 record the requested RTC before firmware and its actual calendar after the
-client runs. OVMF's two-digit 2000–2099 year window rewrites the 1970 fixture
+client runs. A second hardware reference after firmware supplies the progress
+comparison. QEMU's `clock=rt` starts from a whole-second epoch and advances with
+host monotonic time; the RTC exposes one-second precision. Paired monotonic
+timestamps measure that progress separately from host UTC. Recorded
+`RTC_CHANGE` events retain firmware writes and must remain unchanged after the
+post-firmware reference. The original one-second lower and two-second upper
+tolerances, guest/hardware comparison, real waits and all 20 cells remain
+required. Captured hosted and local observations also run as regressions with
+damaged calendar and event controls.
+OVMF's two-digit 2000–2099 year window rewrites the 1970 fixture
 as 2070 and the 2100 fixture as 2000; those cells require the kernel calendar
 to match that independently observed hardware. BIOS and the native decoder
 exercise the original eras. This is a firmware limitation, and these cases

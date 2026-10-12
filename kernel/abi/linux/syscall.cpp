@@ -14,6 +14,8 @@
 #include "core/random/primitives.hpp"
 #include "abi/linux/credentials.hpp"
 #include "abi/linux/xattr.hpp"
+#include "fs/record_lock.hpp"
+#include "fs/descriptor.hpp"
 
 namespace ax {
 struct LinuxStat {
@@ -291,7 +293,7 @@ static int64_t dup_fd(int old, int target, int flags = 0) {
     if (current->files->entries[target].reserved)
         return -16;
     if (target != old) {
-        close_handle(current->files->entries[target].handle);
+        close_descriptor(*current->files, target);
         retain(h);
         current->files->entries[target] = {h, bool(flags & 02000000)};
     }
@@ -606,8 +608,7 @@ static int64_t dispatch(Frame* f) {
         auto h = fd_handle(a);
         if (!h)
             return -9;
-        close_handle(h);
-        current->files->entries[a] = {};
+        close_descriptor(*current->files, int(a));
         return 0;
     }
     case 4:
@@ -880,6 +881,8 @@ static int64_t dispatch(Frame* f) {
         return copy_result(a, name, sizeof(name));
     }
     case 72: {
+        if (record_lock_command(b))
+            return io_syscall(*current, *f);
         auto h = fd_handle(a);
         if (!h)
             return -9;

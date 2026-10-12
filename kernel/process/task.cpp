@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "process/task.hpp"
+#include "fs/record_lock.hpp"
+#include "fs/descriptor.hpp"
 #include "drivers/platform/devices.hpp"
 #include "ipc/ipc.hpp"
 #include "process/signals.hpp"
@@ -44,6 +46,7 @@ static void release_memory(Task* t) {
 
 static void release_files(FileTable* table) {
     if (table && !--table->references) {
+        record_lock_release(*table);
         for (auto& fd : table->entries)
             close_handle(fd.handle);
         release(table);
@@ -666,6 +669,13 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
         if (&member != t && member.state != State::empty && member.state != State::zombie &&
             member.process == process)
             exit_thread(&member, 0);
+    // Sibling exit can leave this file table exclusively owned. Keep it in that
+    // case: POSIX record locks belong to the table and must survive exec. A
+    // table still shared with a different process requires the prepared copy.
+    if (files && t->files->references == 1) {
+        release_files(files);
+        files = nullptr;
+    }
     if (process->leader != t) {
         process->leader->state = State::empty;
         process->leader->process = nullptr;
@@ -707,11 +717,9 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
         if (action[0] != 1)
             memset(action, 0, sizeof(action));
     memcpy(t->process->executable, path, min(strlen(path) + 1, sizeof(t->process->executable)));
-    for (auto& fd : t->files->entries)
-        if (fd.cloexec) {
-            close_handle(fd.handle);
-            fd = {};
-        }
+    for (unsigned fd = 0; fd < max_fds; fd++)
+        if (t->files->entries[fd].cloexec)
+            close_descriptor(*t->files, int(fd));
     if (t == current)
         arch_task(0);
     log("exec pid=%u %s (%s)\n", uint64_t(t->pid), path,

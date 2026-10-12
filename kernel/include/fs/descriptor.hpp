@@ -10,4 +10,7 @@ struct Handle;
 int reserve_fd(FileTable&, int start = 0, bool cloexec = false);
 void install_reserved_fd(FileTable&, int, Handle*);
 void discard_reserved_fd(FileTable&, int);
+// Closing or replacing a visible descriptor releases that table's POSIX locks
+// on the inode, independently of description references retained elsewhere.
+void close_descriptor(FileTable&, int);
 } // namespace ax

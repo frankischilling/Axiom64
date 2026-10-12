@@ -343,7 +343,7 @@
       "title": "Accounts, permissions, and process credentials",
       "milestone": "M3",
       "state": "partial",
-      "current": "Task identities, supplementary groups, capability transitions, RAM/ext2 file-capability exec, maintained getcap/setcap tools, DAC, chroot and process/IPC/network permission guards work. Account databases, authentication, login/session policy and complete isolation remain required.",
+      "current": "Task identities, supplementary groups, capability transitions, RAM/ext2 file-capability exec, maintained getcap/setcap tools, DAC, chroot and process/IPC/network guards work. The account branch adds atomic passwd/group/shadow storage, administration, maintained password verification, private terminals, supervised ordinary shells, protected login journals and interactive login/su/sudo/passwd. Normal-image persistent first-boot/later-login, complete lifecycle/fault acceptance and isolation remain required.",
       "scope": [
         "UID/GID, supplementary groups, real/effective/saved credentials, and umask",
         "File/directory access checks, ownership, sticky bits, set-ID, and chroot",
@@ -368,7 +368,11 @@
         "userspace/tests/security/credentials.c",
         "scripts/credentials_native.py",
         "scripts/credentials_test.py",
-        "docs/credentials.md"
+        "docs/credentials.md",
+        "docs/accounts.md",
+        "scripts/account_access_test.py",
+        "scripts/account_session_test.py",
+        "scripts/account_logbook_test.py"
       ],
       "branch": "feature/f09-accounts-permissions-and-process-credentials",
       "issue": "https://github.com/frankischilling/Axiom64/issues/9"

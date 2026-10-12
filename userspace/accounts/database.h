@@ -33,6 +33,7 @@ int account_database_begin(const char*, int provision, struct account_database**
 void account_database_end(struct account_database*);
 
 int account_database_fresh(const struct account_database*);
+const char* account_database_revision(const struct account_database*);
 
 // Borrowed records remain valid until the next mutation or end of transaction.
 const struct account_user* account_database_user(const struct account_database*, const char*);

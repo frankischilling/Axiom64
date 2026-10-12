@@ -22,6 +22,11 @@ The ELF loader and private file mappings read through the filesystem interface. 
 | `fsync`, `fdatasync`, `sync` | Filesystem sync delegation; raw block descriptors use the disk flush operation |
 | `truncate`, `ftruncate` | Filesystem delegation with negative-length, file-type, capacity, and mount checks |
 | `flock` | [Advisory shared/exclusive locks](file-locks.md) owned by a canonical local file description |
+| `fcntl` record locks | POSIX and open-file-description byte ranges, foreign conflict queries, blocking acquisition and descriptor lifetime; current account prerequisite branch |
+
+The account prerequisite branch adds `F_GETLK`, `F_SETLK`, `F_SETLKW` and their OFD equivalents. Ranges normalize SEEK_SET/CUR/END, negative lengths and zero lengths extending through future growth. Own locks split, convert and coalesce. POSIX locks belong to a file table and closing any descriptor for the inode releases them; OFD locks belong to an open file description and survive dup/fork until its final close. Multithreaded exec retains an exclusively owned table after sibling cleanup, preserving POSIX locks; a close-on-exec alias still releases them. These ownership rules follow [Linux's record-lock contract](https://man7.org/linux/man-pages/man2/fcntl_locking.2.html) and [Linux 6.17 exec ordering](https://github.com/torvalds/linux/blob/v6.17/fs/exec.c).
+
+The module stores at most 2,048 ranges and reports ENOLCK when an atomic replacement would exceed capacity. Invalid ranges, overflow, access modes and OFD owner fields fail explicitly. Node-less anonymous handles currently return EOPNOTSUPP. Native/guest controls cover range conversion, fork ownership, blocking wake, caught-signal interruption and exec/close-on-exec behavior. Complete deadlock, restart, shared-table descriptor-reuse, exhaustion and persistent-inode acceptance remain required for this new slice.
 
 A read-only mount rejects file writes and namespace or metadata mutations with `EROFS`. Read-only remount returns `EBUSY` while writable regular-file descriptions or shared file pages remain. Unmount returns `EBUSY` for open descriptions, live working directories, bound Unix sockets, shared pages, or nested mounts. Cross-filesystem links and renames return `EXDEV`. RAM files removed or replaced remain usable through existing descriptions.
 

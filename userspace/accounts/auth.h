@@ -12,6 +12,7 @@ struct account_profile {
     gid_t* groups;
     size_t group_count;
     int password_change_required;
+    char revision[35];
 };
 
 enum account_auth_result {

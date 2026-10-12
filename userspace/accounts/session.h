@@ -21,4 +21,12 @@ struct account_session_events {
 int account_session_run(const struct account_profile*, int terminal, const char* terminal_type,
                         char* const command[], const struct account_session_events*, int* status);
 
+// Bits 0/1/2 select standard descriptors to replace with the private terminal.
+// Unselected streams retain the caller's pipes/files. The command still owns
+// a private controlling terminal, including for separate /dev/tty prompts.
+int account_session_run_stdio(const struct account_profile*, int terminal,
+                              const char* terminal_type, unsigned terminal_streams,
+                              char* const command[], const struct account_session_events*,
+                              int* status);
+
 #endif

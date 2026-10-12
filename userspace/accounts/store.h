@@ -21,6 +21,8 @@ int account_store_begin(const char* path, int provision, struct account_store**)
 // NULL means an unprovisioned store; otherwise exactly ACCOUNT_FILE_COUNT entries.
 // The returned bytes remain owned by the transaction until account_store_end.
 const struct account_content* account_store_snapshot(const struct account_store*);
+// Public generation identity, not password data. NULL means unprovisioned.
+const char* account_store_revision(const struct account_store*);
 // One commit attempt per transaction. All three files must be complete text.
 // On failure, published distinguishes an unchanged current pointer from a visible
 // complete update whose durability/cleanup did not finish. Never assume rollback.

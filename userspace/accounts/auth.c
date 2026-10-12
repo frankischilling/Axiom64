@@ -35,6 +35,12 @@ static int profile_create(struct account_database* db, const struct account_user
     struct account_profile* profile = calloc(1, sizeof(*profile));
     if (!profile)
         return -1;
+    const char* revision = account_database_revision(db);
+    if (!revision || strlen(revision) != 34) {
+        free(profile);
+        return failed(EUCLEAN);
+    }
+    memcpy(profile->revision, revision, 35);
     profile->name = strdup(user->name);
     profile->home = strdup(user->home);
     profile->shell = strdup(*user->shell ? user->shell : "/bin/sh");

@@ -62,6 +62,10 @@ int account_database_fresh(const struct account_database* db) {
     return db && db->fresh;
 }
 
+const char* account_database_revision(const struct account_database* db) {
+    return db ? account_store_revision(db->store) : NULL;
+}
+
 int account_database_begin(const char* path, int provision, struct account_database** output) {
     if (!output)
         return failed(EINVAL);

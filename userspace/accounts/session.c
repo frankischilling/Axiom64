@@ -78,15 +78,16 @@ static int child_descriptors(int ready, int go) {
 }
 
 static void child(const struct account_profile* profile, int slave, int ready, int go,
-                  const char* terminal_type, char* const command[]) {
+                  const char* terminal_type, unsigned terminal_streams, char* const command[]) {
     int report = fcntl(ready, F_DUPFD_CLOEXEC, 5);
     int allowed_fd = fcntl(go, F_DUPFD_CLOEXEC, 5);
     int terminal_fd = fcntl(slave, F_DUPFD_CLOEXEC, 5);
     int error = report < 0 || allowed_fd < 0 || terminal_fd < 0 ? errno : 0;
-    if (!error &&
-        (setsid() < 0 || ioctl(terminal_fd, TIOCSCTTY, 0) < 0 || dup2(terminal_fd, 0) < 0 ||
-         dup2(terminal_fd, 1) < 0 || dup2(terminal_fd, 2) < 0))
+    if (!error && (setsid() < 0 || ioctl(terminal_fd, TIOCSCTTY, 0) < 0))
         error = errno;
+    for (unsigned fd = 0; !error && fd < 3; fd++)
+        if ((terminal_streams & (1u << fd)) && dup2(terminal_fd, (int)fd) < 0)
+            error = errno;
     if (!error) {
         if (child_descriptors(report, allowed_fd) < 0)
             error = errno;
@@ -269,11 +270,12 @@ static int relay(int terminal, int master, pid_t child, int* status, int* reaped
     }
 }
 
-int account_session_run(const struct account_profile* profile, int terminal,
-                        const char* terminal_type, char* const command[],
-                        const struct account_session_events* events, int* status) {
+int account_session_run_stdio(const struct account_profile* profile, int terminal,
+                              const char* terminal_type, unsigned terminal_streams,
+                              char* const command[], const struct account_session_events* events,
+                              int* status) {
     if (!profile || !command || !command[0] || !*command[0] || !status ||
-        (events && (!events->begin || !events->end)))
+        (events && (!events->begin || !events->end)) || terminal_streams > 7)
         return failed(EINVAL);
     if (geteuid() || getegid())
         return failed(EPERM);
@@ -332,7 +334,7 @@ int account_session_run(const struct account_profile* profile, int terminal,
     if (!error) {
         process = fork();
         if (!process)
-            child(profile, slave, ready[1], go[0], terminal_type, command);
+            child(profile, slave, ready[1], go[0], terminal_type, terminal_streams, command);
         if (process < 0)
             error = errno;
     }
@@ -426,4 +428,10 @@ int account_session_run(const struct account_profile* profile, int terminal,
             error = ECANCELED;
     }
     return error ? failed(error) : 0;
+}
+
+int account_session_run(const struct account_profile* profile, int terminal,
+                        const char* terminal_type, char* const command[],
+                        const struct account_session_events* events, int* status) {
+    return account_session_run_stdio(profile, terminal, terminal_type, 7, command, events, status);
 }

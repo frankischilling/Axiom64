@@ -2,6 +2,7 @@
 #include "fs/vfs.hpp"
 #include "fs/xattr.hpp"
 #include "fs/file_lock.hpp"
+#include "fs/record_lock.hpp"
 #include "drivers/platform/devices.hpp"
 #include "ipc/ipc.hpp"
 #include "net/packet.hpp"
@@ -867,6 +868,7 @@ void close_handle(Handle* h) {
     if (!h || !h->references || --h->references)
         return;
     file_lock_release(h);
+    record_lock_release(*h);
     device_close(h);
     if (h->socket)
         socket_close(h->socket);

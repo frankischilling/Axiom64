@@ -18,6 +18,8 @@ from fetch import LOCK, ROOT
 
 INPUTS = [*SOURCES, 'userspace/accounts/auth.c', 'userspace/accounts/auth.h',
           'userspace/accounts/session.c', 'userspace/accounts/session.h',
+          *(f'userspace/accounts/{name}.{suffix}' for name in
+            ('protected', 'login_record', 'logbook', 'recorded') for suffix in ('c', 'h')),
           'userspace/tests/security/account-session.c', 'userspace/tests/security/account-session-observe.c',
           'scripts/account_session_test.py', 'scripts/account_store_guest.py', 'Makefile',
           'scripts/image.py', 'userspace/init/main.c', 'userspace/init/seed_records.h', 'boot/limine.conf']
@@ -31,7 +33,8 @@ def build(provider, linkage, directory):
     command = [*compiler, '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
                '-I' + str(stage / 'usr/include'),
                *(str(ROOT / 'userspace/accounts' / name) for name in
-                 ('store.c', 'database.c', 'record.c', 'password.c', 'home.c', 'auth.c', 'session.c')),
+                 ('store.c', 'database.c', 'record.c', 'password.c', 'home.c', 'auth.c', 'session.c',
+                  'protected.c', 'login_record.c', 'logbook.c', 'recorded.c')),
                str(ROOT / 'userspace/tests/security/account-session.c'), '-o', str(program)]
     if linkage == 'static':
         command += ['-static', str(stage / 'usr/lib/libcrypt.a')]
@@ -74,8 +77,8 @@ def execute(command, log, firmware=None):
     lines = text.splitlines()
     count = sum(line.startswith('ACCOUNT_SESSION_OBSERVATION ') for line in lines)
     shells = [line for line in lines if line.startswith('ACCOUNT_SHELL_SESSION_PASS ')]
-    passed = (not timed_out and process.returncode == (1 if firmware else 0) and count == 10 and
-              lines.count('ACCOUNT_SESSION_PASS observations=10 authenticated_shells=2') == 1 and len(shells) == 2 and
+    passed = (not timed_out and process.returncode == (1 if firmware else 0) and count == 11 and
+              lines.count('ACCOUNT_SESSION_PASS observations=11 authenticated_shells=2') == 1 and len(shells) == 2 and
               any('user=alice uid=1000 gid=1000' in line for line in shells) and
               any('user=bob uid=1001 gid=1001' in line for line in shells) and
               all('foreground=1 private_tty=1 cross_user_denied=1' in line for line in shells) and
@@ -181,7 +184,7 @@ def main():
                     print('ACCOUNT_SESSION_GUEST_PASS ' + case.name + '/' + firmware, flush=True)
     if source != {name: digest(ROOT / name) for name in source}:
         raise RuntimeError('account session source changed during validation')
-    print('ACCOUNT_SESSION_MATRIX_PASS profiles=' + str(len(rows)) + ' observations=' + str(len(rows) * 10), flush=True)
+    print('ACCOUNT_SESSION_MATRIX_PASS profiles=' + str(len(rows)) + ' observations=' + str(len(rows) * 11), flush=True)
 
 
 if __name__ == '__main__':

@@ -281,6 +281,10 @@ const struct account_content* account_store_snapshot(const struct account_store*
     return store && store->initialized ? store->files : NULL;
 }
 
+const char* account_store_revision(const struct account_store* store) {
+    return store && store->initialized ? store->current : NULL;
+}
+
 static int random_name(char output[35]) {
     unsigned char bytes[16];
     for (size_t offset = 0; offset < sizeof(bytes);) {

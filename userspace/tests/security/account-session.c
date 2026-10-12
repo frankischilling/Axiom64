@@ -5,6 +5,7 @@
 #include "../../accounts/home.h"
 #include "../../accounts/password.h"
 #include "../../accounts/session.h"
+#include "../../accounts/recorded.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -28,6 +29,8 @@
     } while (0)
 
 static unsigned observations;
+static const char* session_database;
+static char session_records[4096];
 static const char secret[] = "Fixture-only-Session-Authentication-82";
 
 static void observed(const char* name) {
@@ -58,6 +61,7 @@ struct start {
 };
 
 struct frontend {
+    struct account_recorded_session recorded;
     struct account_profile* profile;
     pid_t pid;
     int master, slave, notice[2], allow[2];
@@ -89,7 +93,7 @@ static int begin(void* context, pid_t pid, const char* terminal) {
         errno = EACCES;
         return -1;
     }
-    return 0;
+    return account_recorded_begin(&front->recorded, pid, terminal);
 }
 
 static int end(void* context, pid_t pid, int status) {
@@ -100,12 +104,17 @@ static int end(void* context, pid_t pid, int status) {
     CHECK(record >= 0);
     CHECK(dprintf(record, "END pid=%d status=%d\n", (int)pid, status) > 0 && fsync(record) == 0 &&
           close(record) == 0);
-    return 0;
+    return account_recorded_end(&front->recorded, pid, status);
 }
 
 static void start(struct frontend* front, struct account_profile* profile, const char* record,
                   char* const command[], int expected_error, int expected_exit) {
     *front = (struct frontend){.profile = profile, .deny_begin = expected_error == EACCES};
+    front->recorded = (struct account_recorded_session){.database = session_database,
+                                                        .records = session_records,
+                                                        .target = profile,
+                                                        .operation = ACCOUNT_LOGIN_START,
+                                                        .actor = 0};
     CHECK(strlen(record) < sizeof(front->record));
     strcpy(front->record, record);
     front->master = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
@@ -147,6 +156,14 @@ static void allow(struct frontend* front) {
     char byte = 'x';
     transfer(front->allow[1], &byte, 1, 1);
     close(front->allow[1]);
+}
+
+static void active(int alice, int bob) {
+    struct account_logbook* book = NULL;
+    CHECK(account_logbook_open(session_records, 0, &book) == 0);
+    CHECK(account_logbook_active(book, 1000) == alice);
+    CHECK(account_logbook_active(book, 1001) == bob);
+    account_logbook_close(book);
 }
 
 static void until(struct frontend* front, const char* marker) {
@@ -210,6 +227,7 @@ static void process_failure(struct account_profile* profile, const char* record,
         close(front.master);
     close(front.slave);
     close(front.notice[0]);
+    active(0, 0);
 }
 
 int main(int argc, char** argv) {
@@ -217,6 +235,8 @@ int main(int argc, char** argv) {
     CHECK(mkdir(argv[1], 0755) == 0 && chmod(argv[1], 0755) == 0);
     char database[4096], homes[2][4096], private_files[2][4096], records[2][4096];
     path(database, argv[1], "db");
+    session_database = database;
+    path(session_records, argv[1], "login-records");
     char encoded[ACCOUNT_PASSWORD_HASH_SIZE];
     CHECK(account_password_hash(secret, encoded) == 0);
     struct account_database* db = NULL;
@@ -275,7 +295,8 @@ int main(int argc, char** argv) {
         transfer(fronts[i].master, command, (size_t)size, 1);
         until(&fronts[i], "ACCOUNT_SHELL_SESSION_PASS");
     }
-    observed("two_concurrent_real_shells_private_ptys_cross_user_file_process_denial");
+    active(1, 1);
+    observed("two_concurrent_real_shells_private_ptys_durable_records_cross_user_denial");
     for (unsigned i = 0; i < 2; i++) {
         char exit_command[] = "exit 0\n";
         transfer(fronts[i].master, exit_command, strlen(exit_command), 1);
@@ -286,7 +307,8 @@ int main(int argc, char** argv) {
         CHECK(stat(created, &value) == 0 && value.st_uid == 1000 + i && value.st_gid == 1000 + i);
         CHECK((value.st_mode & 0777) == 0600);
     }
-    observed("normal_logout_private_terminal_removed_supervisor_terminal_restored");
+    active(0, 0);
+    observed("normal_logout_durable_record_private_terminal_and_supervisor_cleanup");
     char denied_record[4096];
     path(denied_record, argv[1], "denied-record");
     char* denied_command[] = {argv[2], "sh", "-c", "echo FORBIDDEN_SESSION_EXEC", NULL};
@@ -336,7 +358,20 @@ int main(int argc, char** argv) {
     observed("caller_terminal_disconnect_cleans_private_session_without_output_hang");
     path(failed_record, argv[1], "killed-record");
     process_failure(profiles[0], failed_record, sleeping, SIGKILL);
-    observed("killed_supervisor_closes_sole_private_master_unlinks_and_hangs_up");
+    observed("killed_supervisor_hangs_up_and_recovers_its_stale_durable_record");
+    CHECK(account_database_begin(database, 0, &db) == 0);
+    struct account_user changed = *account_database_user(db, "alice");
+    changed.gecos = "Changed after authentication";
+    CHECK(account_database_put_user(db, "alice", &changed) == 0);
+    CHECK(account_database_commit(db, &published) == 0 && published);
+    account_database_end(db);
+    path(failed_record, argv[1], "stale-authentication-record");
+    struct frontend stale;
+    start(&stale, profiles[0], failed_record, denied_command, ESTALE, 0);
+    allow(&stale);
+    finish(&stale);
+    active(0, 0);
+    observed("changed_database_revision_denies_stale_authenticated_profile_before_exec");
     account_profile_free(profiles[0]);
     account_profile_free(profiles[1]);
     printf("ACCOUNT_SESSION_PASS observations=%u authenticated_shells=2\n", observations);

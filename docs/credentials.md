@@ -2,6 +2,8 @@
 
 Tasks carry real, effective, saved and filesystem UID/GID values, supplementary groups and Linux capability masks. Init starts with UID/GID zero and the initial capability set. Applications can create ordinary identities and drop privileges; [persistent accounts and authenticated login (#115)](https://github.com/frankischilling/Axiom64/issues/115) are separate work under [#9](https://github.com/frankischilling/Axiom64/issues/9) and [#25](https://github.com/frankischilling/Axiom64/issues/25).
 
+The account branch now has [validated records, root administration and password/credential helpers](accounts.md). Native and fresh guest fixtures exercise maintained hashing, actual libc lookup, supplementary groups and irreversible service privilege dropping. Normal-image login, terminal/session ownership, login records and complete failure/logout acceptance remain under implementation.
+
 ## Ownership and task transitions
 
 The production policy lives in `kernel/security/credentials.cpp`, with a narrow interface in `kernel/include/security/credentials.hpp`. Linux syscall adaptation lives in `kernel/abi/linux/credentials.cpp`. VFS, process, IPC and network code call this policy instead of inferring privilege from a zero UID.

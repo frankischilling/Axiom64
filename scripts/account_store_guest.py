@@ -13,17 +13,23 @@ from build_musl import loader
 from fetch import LOCK, ROOT
 
 
-def fixture(directory, provider, linkage):
-    program, provenance = build(provider, linkage, directory)
+def fixture(directory, provider, linkage, *, program_builder=build, filename='account-store',
+            command='/bin/account-store /run/account-store', extra_products=None):
+    program, provenance = program_builder(provider, linkage, directory)
     files = {name: (0o40755, b'') for name in ('bin', 'sbin', 'lib', 'etc', 'dev', 'proc', 'sys', 'tmp', 'run')}
-    products = {'sbin/init': ROOT / 'build/init', 'bin/account-store': program,
+    products = {'sbin/init': ROOT / 'build/init', 'bin/' + filename: program,
                 'bin/busybox': ROOT / ('build/busybox-' + LOCK['busybox']['version']) / 'busybox',
                 'lib/ld-musl-x86_64.so.1': loader(provider)}
+    products.update(extra_products or {})
+    for name in products:
+        for parent in Path(name).parents:
+            if str(parent) != '.':
+                files.setdefault(parent.as_posix(), (0o40755, b''))
     records = {}
     for name, path in products.items():
         files[name] = (0o100755, path.read_bytes())
         records[name] = dict(bytes=path.stat().st_size, sha256=digest(path))
-    files['etc/net-test.sh'] = (0o100755, b'#!/bin/sh\nset -e\n/bin/account-store /run/account-store\necho AXIOM64_TESTS_PASS\n')
+    files['etc/net-test.sh'] = (0o100755, ('#!/bin/sh\nset -e\n' + command + '\necho AXIOM64_TESTS_PASS\n').encode())
     cpio = directory / 'root.cpio'
     with cpio.open('wb') as stream:
         for inode, (name, (mode, data)) in enumerate([*sorted(files.items()), ('TRAILER!!!', (0, b''))], 1):
@@ -33,7 +39,7 @@ def fixture(directory, provider, linkage):
             stream.write(bytes(-stream.tell() % 4))
             stream.write(data)
             stream.write(bytes(-stream.tell() % 4))
-    name = 'account-store-' + provider + '-' + linkage + '.iso'
+    name = filename + '-' + provider + '-' + linkage + '.iso'
     subprocess.run(['python3', 'scripts/image.py', '--test', '--suite', 'network',
                     '--initramfs', str(cpio), '--output-name', name], cwd=ROOT,
                    stdout=subprocess.DEVNULL, check=True)

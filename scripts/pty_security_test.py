@@ -18,7 +18,8 @@ from fetch import ROOT
 INPUTS = ['userspace/tests/security/pty-security.c', 'scripts/pty_security_test.py',
           'scripts/account_store_guest.py', 'scripts/account_store_test.py', 'scripts/build_musl.py',
           'Makefile', 'sources.lock.json', 'dependencies.json', 'scripts/image.py',
-          'userspace/init/main.c', 'userspace/init/seed_records.h', 'boot/limine.conf']
+          'userspace/init/main.c', 'userspace/init/console.c', 'userspace/init/console.h',
+          'userspace/init/seed_records.h', 'boot/limine.conf']
 MARKER = 'PTY_SECURITY_PASS observations=9 recycled_pairs=512'
 
 

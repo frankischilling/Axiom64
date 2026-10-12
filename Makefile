@@ -24,6 +24,11 @@ test-account-secret:
 	$(PYTHON) scripts/account_secret_test.py
 test-account-secret-native:
 	$(PYTHON) scripts/account_secret_test.py --native --directory build/account-secret-native
+.PHONY: test-account-normal test-vm-state
+test-account-normal:
+	$(PYTHON) scripts/account_normal_test.py
+test-vm-state:
+	$(PYTHON) scripts/vm_test.py
 openssl:
 	$(PYTHON) scripts/build_openssl.py --provider all
 libxcrypt:
@@ -318,9 +323,9 @@ test-clock:
 build/abi-dynamic: userspace/tests/abi/abi.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DABI_LINKAGE='"dynamic"' $< -o $@
-build/init: userspace/init/main.c userspace/init/seed_records.h
+build/init: userspace/init/main.c userspace/init/console.c userspace/init/console.h userspace/init/seed_records.h
 	@mkdir -p build
-	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $(filter %.c,$^) -o $@
 build/ipc-tests: userspace/tests/ipc/ipc.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
@@ -513,6 +518,7 @@ ROOTFS_INPUTS += build/network-manager
 ROOTFS_INPUTS += build/random-seed-static
 ROOTFS_INPUTS += scripts/build_libcap.py scripts/build_musl.py scripts/build_openssl.py sources.lock.json
 ROOTFS_INPUTS += scripts/build_libxcrypt.py scripts/linux_uapi.py
+ROOTFS_INPUTS += scripts/build_accounts.py $(wildcard userspace/accounts/*.c userspace/accounts/*.h)
 build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox
@@ -722,10 +728,10 @@ format:
 	$(CLANG_FORMAT) -i $(FORMAT_SOURCES)
 check-format:
 	$(CLANG_FORMAT) --dry-run --Werror $(FORMAT_SOURCES)
-run: image
-	qemu-system-x86_64 -machine pc -cpu max -m 2G -cdrom build/axiom64.iso -serial stdio -no-reboot
-run-serial: image
-	qemu-system-x86_64 -machine pc -cpu max -m 2G -cdrom build/axiom64.iso -serial stdio -display none -no-reboot
+run: build/axiom64.elf build/rootfs.cpio
+	$(PYTHON) scripts/vm.py
+run-serial: build/axiom64.elf build/rootfs.cpio
+	$(PYTHON) scripts/vm.py --serial
 clean:
 	$(PYTHON) scripts/clean.py
 

@@ -39,6 +39,7 @@ def main():
     args.directory.mkdir(parents=True, exist_ok=False)
     names = [*SOURCES, 'scripts/account_management_guest.py', 'userspace/tests/security/account-management.c',
              'scripts/account_store_guest.py', 'scripts/image.py', 'Makefile', 'userspace/init/main.c',
+             'userspace/init/console.c', 'userspace/init/console.h',
              'userspace/init/seed_records.h', 'boot/limine.conf']
     names += [path.relative_to(ROOT).as_posix() for path in (ROOT / 'kernel').rglob('*')
               if path.is_file() and path.suffix in ('.cpp', '.hpp', '.asm')]

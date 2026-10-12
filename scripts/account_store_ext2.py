@@ -132,7 +132,8 @@ def main():
     names = [*SOURCES, 'scripts/account_store_guest.py', 'scripts/account_store_ext2.py',
              'userspace/tests/security/account-store-reboot.c', 'scripts/random_seed_test.py',
              'scripts/random_administration_test.py', 'scripts/image.py', 'Makefile',
-             'userspace/init/main.c', 'userspace/init/seed_records.h', 'boot/limine.conf']
+             'userspace/init/main.c', 'userspace/init/console.c', 'userspace/init/console.h',
+             'userspace/init/seed_records.h', 'boot/limine.conf']
     names += [path.relative_to(ROOT).as_posix() for path in (ROOT / 'kernel').rglob('*')
               if path.is_file() and path.suffix in ('.cpp', '.hpp', '.asm')]
     source = {name: digest(ROOT / name) for name in names}

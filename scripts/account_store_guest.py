@@ -59,7 +59,8 @@ def main():
     args = parser.parse_args()
     args.directory.mkdir(parents=True, exist_ok=False)
     names = [*SOURCES, 'scripts/account_store_guest.py', 'Makefile', 'dependencies.json', 'ports.lock.json',
-             'userspace/init/main.c', 'userspace/init/seed_records.h', 'scripts/image.py', 'boot/limine.conf']
+             'userspace/init/main.c', 'userspace/init/console.c', 'userspace/init/console.h',
+             'userspace/init/seed_records.h', 'scripts/image.py', 'boot/limine.conf']
     names += [path.relative_to(ROOT).as_posix() for path in (ROOT / 'kernel').rglob('*')
               if path.is_file() and path.suffix in ('.cpp', '.hpp', '.asm')]
     source = {name: digest(ROOT / name) for name in names}

@@ -67,6 +67,7 @@ def main():
              'scripts/password_library_guest.py', 'scripts/password_library_test.py',
              'userspace/accounts/password.c', 'userspace/accounts/password.h',
              'userspace/tests/security/password.c', 'userspace/init/main.c',
+             'userspace/init/console.c', 'userspace/init/console.h',
              'userspace/init/seed_records.h', 'scripts/image.py', 'boot/limine.conf']
     names += [path.relative_to(ROOT).as_posix() for path in (ROOT / 'kernel').rglob('*')
               if path.is_file() and path.suffix in ('.cpp', '.hpp', '.asm')]

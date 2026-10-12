@@ -12,18 +12,18 @@ make run
 
 The first build downloads verified archives, builds BusyBox, assembles the root filesystem, and produces `build/axiom64.iso`. Allow several gigabytes of free disk space. Host Linux provides the build tools and QEMU emulator; the guest runs Axiom64's kernel.
 
-`make run` boots through BIOS with a graphical QEMU window and serial console. The normal image starts Xorg, twm, xeyes, and xterm running interactive Bash. BusyBox ash remains available in the host terminal through the guest serial device. Closing the initial xterm ends the desktop session; run `startx` from ash to start it again.
+`make run` boots through BIOS with a graphical QEMU window and an authenticated serial console. First boot asks you to create an administrator and enter its password privately, then requires login. Later boots use the same account and require its password again. The administrator starts Bash with UID/GID 1000 and explicit `sudo` membership; root's password login is locked. Enter passwords in the guest. The [account documentation](accounts.md) describes the current commands and policy.
+
+The VM keeps its ext2 root in `.local/vm/root.ext2`. The launch helper creates that disk once, preserves it across builds and restarts, and prevents two instances from opening the same state directory. It rejects incomplete or damaged creation metadata instead of recreating accounts. Keep this directory to retain your accounts and files. Existing disks retain their installed userspace; to evaluate newly packaged userspace, select a new directory with `python3 scripts/vm.py --state-directory .local/vm-next`. In-guest upgrades remain future work.
+
+Authenticated graphical startup and seat access are still being integrated. The dedicated desktop tests retain Xorg, twm, xeyes and xterm/Bash coverage; the current normal startup enters the serial login session.
 
 On WSL, the graphical command requires a working WSLg display. `make run-serial` starts the same image with a hidden framebuffer and exposes the serial console.
 
-To boot the interactive image through UEFI:
+To boot the same persistent VM through UEFI:
 
 ```sh
-cp /usr/share/OVMF/OVMF_VARS_4M.fd build/OVMF_VARS.fd
-qemu-system-x86_64 -machine pc -cpu max -m 2G \
-    -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
-    -drive if=pflash,format=raw,file=build/OVMF_VARS.fd \
-    -cdrom build/axiom64.iso -serial stdio -no-reboot
+python3 scripts/vm.py --firmware uefi
 ```
 
 The full image includes these commands:
@@ -31,10 +31,10 @@ The full image includes these commands:
 ```sh
 gcc --version
 getcap /usr/bin/gcc
-make -C /root/toolchain-test test
+sudo make -C /root/toolchain-test test
 zsh -f
 ```
 
-The example Makefile compiles and runs C and C++ programs, exercises exceptions, threads, synchronization, and the standard library, and checks a rejected C source file. The default image uses a RAM root whose files disappear when the guest exits. Use a [mounted ext2 data volume](ext2.md) or build and boot an [ext2 disk root](disk-root.md) for persistent files. The initial target is QEMU's emulated PC with PS/2 input and a 1024x768 boot framebuffer.
+The example Makefile compiles and runs C and C++ programs, exercises exceptions, threads, synchronization, and the standard library, and checks a rejected C source file. The standalone `build/axiom64.iso` uses a disposable RAM root: directly booting it starts fresh and does not preserve accounts or files. The normal launch commands use the persistent disk described above. [Mounted ext2 data volumes](ext2.md) and [disk-root fixtures](disk-root.md) provide separate storage tests. The initial target is QEMU's emulated PC with PS/2 input and a 1024x768 boot framebuffer.
 
 On the host, `make test-thread-io` runs the focused BIOS/UEFI [blocking I/O tests](io.md#verification-and-limits). `make test-threads` and `make test` include those tests alongside their broader suites.

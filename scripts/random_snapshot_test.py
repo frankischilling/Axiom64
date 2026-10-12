@@ -318,7 +318,8 @@ def main():
                     *(f'build/random-snapshot-{linkage}' for linkage in linkages)], cwd=ROOT, check=True)
     inputs = snapshot(directory)
     for name in ('userspace/tests/random/snapshot.c', 'scripts/random_snapshot_test.py',
-                 'scripts/image.py', 'scripts/disk_root.py', 'userspace/init/main.c'):
+                 'scripts/image.py', 'scripts/disk_root.py', 'userspace/init/main.c',
+                 'userspace/init/console.c', 'userspace/init/console.h'):
         inputs[name] = fingerprint(ROOT / name)
     (directory / 'source-inputs.json').write_text(json.dumps(inputs, indent=2) + '\n')
     tools = {}

@@ -189,7 +189,8 @@ def main():
     inputs = snapshot(directory)
     for name in ('scripts/random_seed_test.py', 'userspace/services/random_seed.c',
                  'userspace/tests/random/seed_lifecycle.c', 'userspace/tests/random/random.c',
-                 'scripts/image.py', 'scripts/disk_root.py', 'userspace/init/main.c'):
+                 'scripts/image.py', 'scripts/disk_root.py', 'userspace/init/main.c',
+                 'userspace/init/console.c', 'userspace/init/console.h'):
         inputs[name] = fingerprint(ROOT / name)
     (directory / 'source-inputs.json').write_text(json.dumps(inputs, indent=2) + '\n')
     results = []

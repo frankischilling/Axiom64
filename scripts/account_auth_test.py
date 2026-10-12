@@ -18,7 +18,8 @@ from fetch import ROOT
 INPUTS = [*SOURCES, 'userspace/accounts/auth.c', 'userspace/accounts/auth.h',
           'userspace/tests/security/account-auth.c', 'userspace/tests/security/account-observe.c',
           'scripts/account_auth_test.py', 'scripts/account_store_guest.py', 'Makefile',
-          'scripts/image.py', 'userspace/init/main.c', 'userspace/init/seed_records.h', 'boot/limine.conf']
+          'scripts/image.py', 'userspace/init/main.c', 'userspace/init/console.c',
+          'userspace/init/console.h', 'userspace/init/seed_records.h', 'boot/limine.conf']
 
 
 def build(provider, linkage, directory):

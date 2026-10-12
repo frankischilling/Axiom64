@@ -22,7 +22,8 @@ INPUTS = [*SOURCES, 'userspace/tests/security/account-logbook.c', 'scripts/accou
           'userspace/tests/security/account-login-libc.c',
           'scripts/account_session_test.py', 'scripts/account_store_guest.py', 'scripts/account_store_test.py',
           'scripts/build_musl.py', 'Makefile', 'sources.lock.json', 'dependencies.json', 'scripts/image.py',
-          'userspace/init/main.c', 'userspace/init/seed_records.h', 'boot/limine.conf']
+          'userspace/init/main.c', 'userspace/init/console.c', 'userspace/init/console.h',
+          'userspace/init/seed_records.h', 'boot/limine.conf']
 
 
 def build(provider, linkage, directory):

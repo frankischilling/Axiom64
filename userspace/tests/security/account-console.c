@@ -102,7 +102,11 @@ static void start(struct call* call, uid_t uid, int no_terminal) {
             CHECK(dup2(call->slave, fd) == fd);
         if (call->slave > 2)
             close(call->slave);
-        if (no_terminal) {
+        if (no_terminal == 2) {
+            int input = open(tty, O_RDONLY | O_NOCTTY);
+            CHECK(input >= 0 && dup2(input, 0) == 0);
+            close(input);
+        } else if (no_terminal) {
             int null = open("/dev/null", O_RDWR);
             CHECK(null >= 0 && dup2(null, 0) == 0);
             close(null);
@@ -246,7 +250,7 @@ int main(int argc, char** argv) {
     frontend = actual_frontend;
     CHECK(unlink(duplicate) == 0);
     observed("unsafe_worker_mode_hardlink_foreign_owner_and_symlink_deny_before_password_entry");
-    start(&call, 0, 0);
+    start(&call, 0, 2);
     until(&call, "Administrator name: ");
     CHECK(!strstr(call.text, "$ "));
     send(&call, "bad:name", 0);

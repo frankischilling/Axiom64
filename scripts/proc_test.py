@@ -17,7 +17,8 @@ from fetch import ROOT
 INPUTS = ['userspace/tests/process/proc.c', 'scripts/proc_test.py', 'scripts/account_store_guest.py',
           'userspace/accounts/busy.c', 'userspace/accounts/busy.h',
           'scripts/account_store_test.py', 'scripts/build_musl.py', 'scripts/image.py', 'Makefile',
-          'sources.lock.json', 'dependencies.json', 'userspace/init/main.c', 'userspace/init/seed_records.h',
+          'sources.lock.json', 'dependencies.json', 'userspace/init/main.c', 'userspace/init/console.c',
+          'userspace/init/console.h', 'userspace/init/seed_records.h',
           'boot/limine.conf']
 
 

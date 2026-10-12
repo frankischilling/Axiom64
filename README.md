@@ -11,6 +11,7 @@ The QEMU image supports BIOS and UEFI boot. It includes BusyBox ash, Bash, zsh, 
 - [Filesystems and mounts](docs/vfs.md)
 - [Advisory file locks](docs/file-locks.md)
 - [Linux extended attributes and file capabilities](docs/file-capabilities.md)
+- [Accounts and authenticated sessions](docs/accounts.md)
 - [Threads and futexes](docs/threads.md)
 - [Clocks and elapsed kernel waits](docs/time.md)
 - [Ethernet and packet sockets](docs/network.md)

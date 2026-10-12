@@ -20,6 +20,7 @@ INPUTS += ['userspace/tests/security/account-secret.c', 'scripts/account_secret_
            'scripts/account_management_test.py', 'scripts/account_store_guest.py', 'scripts/account_store_test.py',
            'scripts/build_libxcrypt.py', 'scripts/build_musl.py', 'scripts/linux_uapi.py', 'Makefile',
            'dependencies.json', 'sources.lock.json', 'scripts/image.py', 'userspace/init/main.c',
+           'userspace/init/console.c', 'userspace/init/console.h',
            'userspace/init/seed_records.h', 'boot/limine.conf']
 
 

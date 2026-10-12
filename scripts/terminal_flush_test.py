@@ -16,7 +16,8 @@ from fetch import ROOT
 INPUTS = ['userspace/tests/process/terminal-flush.c', 'scripts/terminal_flush_test.py',
           'scripts/account_store_guest.py', 'scripts/account_store_test.py', 'scripts/build_musl.py',
           'scripts/image.py', 'Makefile', 'sources.lock.json', 'dependencies.json',
-          'userspace/init/main.c', 'userspace/init/seed_records.h', 'boot/limine.conf']
+          'userspace/init/main.c', 'userspace/init/console.c', 'userspace/init/console.h',
+          'userspace/init/seed_records.h', 'boot/limine.conf']
 
 
 def build(provider, linkage, directory, sanitize=False):

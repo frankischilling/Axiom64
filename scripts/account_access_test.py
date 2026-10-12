@@ -22,7 +22,8 @@ INPUTS = [*SOURCES, *(f'userspace/accounts/{name}.{suffix}' for name in MODULES 
           'userspace/accounts/access.c', 'userspace/tests/security/account-access.c',
           'userspace/tests/security/account-access-observe.c', 'scripts/account_access_test.py',
           'scripts/account_session_test.py', 'scripts/account_store_guest.py', 'scripts/account_store_test.py',
-          'Makefile', 'scripts/image.py', 'userspace/init/main.c', 'userspace/init/seed_records.h', 'boot/limine.conf']
+          'Makefile', 'scripts/image.py', 'userspace/init/main.c', 'userspace/init/console.c',
+          'userspace/init/console.h', 'userspace/init/seed_records.h', 'boot/limine.conf']
 
 
 def build(provider, linkage, directory, data, native_runtime=None):

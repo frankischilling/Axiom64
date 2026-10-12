@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import time
 
@@ -45,12 +46,14 @@ def execute(command, log, firmware=None):
     timed_out = False
     with log.open('wb') as output:
         process = subprocess.Popen(command, cwd=ROOT, env=environment(), stdin=subprocess.DEVNULL,
-                                   stdout=output, stderr=subprocess.STDOUT)
+                                   stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
         try:
             process.wait(timeout=90)
         except subprocess.TimeoutExpired:
             timed_out = True
-            process.kill()
+            # The unshare wrapper and its PID-namespace leader share this group.
+            # Killing only the wrapper can leave a blocked fixture alive.
+            os.killpg(process.pid, signal.SIGKILL)
             process.wait()
     text = log.read_text().replace('\r\n', '\n')
     lines = text.splitlines()

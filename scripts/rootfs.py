@@ -8,6 +8,7 @@ from build_musl import loader, runtime_files
 from build_libcap import runtime_files as capability_files
 from build_openssl import runtime_files as crypto_files
 from build_libxcrypt import runtime_files as password_files
+from build_accounts import runtime_files as account_files
 import tarfile
 import argparse
 import tempfile
@@ -32,7 +33,7 @@ def regular(path, source, mode=0o100755):
     files[path] = (mode, Path(source).read_bytes())
 
 
-for path in ["bin", "sbin", "lib", "etc", "dev", "proc", "tmp", "run", "root", "usr", "usr/bin", "usr/share", "usr/share/licenses", "usr/share/licenses/Axiom64", "usr/share/licenses/BusyBox", "usr/share/licenses/musl"]:
+for path in ["bin", "sbin", "lib", "etc", "dev", "proc", "sys", "tmp", "run", "root", "usr", "usr/bin", "usr/share", "usr/share/licenses", "usr/share/licenses/Axiom64", "usr/share/licenses/BusyBox", "usr/share/licenses/musl"]:
     directory(path)
 busybox_dir = ROOT / "build" / f"busybox-{LOCK['busybox']['version']}"
 busybox = busybox_dir / "busybox"
@@ -124,7 +125,7 @@ for package, archive in packages():
                 files[path] = files[target]
 
 # Override both the installed interpreter and native development libc after APK imports.
-for path, value in {**runtime_files(), **capability_files(), **crypto_files(), **password_files()}.items():
+for path, value in {**runtime_files(), **capability_files(), **crypto_files(), **password_files(), **account_files()}.items():
     for parent in reversed(Path(path).parents):
         if str(parent) != '.':
             files.setdefault(str(parent), (0o40755, b''))
@@ -140,6 +141,8 @@ for filename in ["xorg.conf", "system.twmrc"]:
 regular("etc/xterm-session.sh", ROOT / "userspace/desktop/xterm-session.sh")
 regular("bin/x11-probe", ROOT / "build" / "x11-probe")
 for path in ["etc/X11", "tmp/.X11-unix", "var", "var/log", "var/lib", "var/lib/xkb", "usr/share/licenses/Xorg"]:
+    directory(path)
+for path in ('home', 'etc/axiom64', 'etc/axiom64/accounts', 'var/log/axiom64', 'var/log/axiom64/login'):
     directory(path)
 directory("var/lib/axiom64")
 files["var/lib/axiom64/random"] = (0o40700, b"")

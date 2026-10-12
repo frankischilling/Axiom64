@@ -153,7 +153,13 @@ int main(int argc, char** argv) {
         else
             return 2;
     }
-    int terminal = fcntl(0, F_DUPFD_CLOEXEC, 3);
+    if (tcgetsid(0) != getsid(0) || tcgetpgrp(0) != getpgrp()) {
+        fputs("account-console: a foreground controlling terminal is required\n", stderr);
+        return 1;
+    }
+    // Init correctly supplies read-only stdin and write-only output streams.
+    // Prompts and input need a separate read/write controlling-terminal handle.
+    int terminal = open("/dev/tty", O_RDWR | O_NOCTTY | O_CLOEXEC);
     struct termios original = {0};
     if (terminal < 0 || tcgetattr(terminal, &original) < 0 || tcgetsid(terminal) != getsid(0) ||
         tcgetpgrp(terminal) != getpgrp() || !(original.c_lflag & ICANON)) {

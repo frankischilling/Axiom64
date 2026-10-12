@@ -225,7 +225,8 @@ def main():
     subprocess.run(['make', '-s', '-j2', 'build/axiom64.elf', 'build/rootfs.cpio',
                     'build/rootfs-desktop.cpio'], cwd=ROOT, check=True)
     inputs = snapshot(out)
-    for name in ('userspace/init/main.c', 'userspace/init/seed_records.h', 'userspace/services/random_seed.c',
+    for name in ('userspace/init/main.c', 'userspace/init/console.c', 'userspace/init/console.h',
+                 'userspace/init/seed_records.h', 'userspace/services/random_seed.c',
                  'scripts/random_installed_records.py', 'scripts/rootfs.py',
                  'scripts/disk_root.py', 'scripts/image.py', 'scripts/random_installed_test.py'):
         inputs[name] = fingerprint(ROOT / name)

@@ -6,6 +6,7 @@ import hashlib
 import itertools
 import json
 from pathlib import Path
+import struct
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -20,6 +21,9 @@ def ports(lane):
 def identify(row):
     if row is not None:
         row['kind'], row['role'] = divmod(row['role'], 2)
+        frame = row['frame']
+        source, target = struct.unpack_from('!HH', frame, 14 + (frame[14] & 15) * 4)
+        row['local_port'] = source if row['outgoing'] else target
     return row
 
 
@@ -54,6 +58,9 @@ def stream(rows, origin, expected):
 def period(rows, lane, role, kind, native):
     require(rows and all(b['ms'] >= a['ms'] for a, b in zip(rows, rows[1:])),
             'lifetime clock records preserve actual packet order')
+    expected_local = (44010 if role else 46000) + lane + kind * 20
+    require(all(row['local_port'] == expected_local for row in rows),
+            'each lifetime case retains its exclusive local endpoint')
     guest_syn = [row for row in rows if row['outgoing'] and row['flags'] & 2]
     peer_syn = [row for row in rows if not row['outgoing'] and row['flags'] & 2]
     require(len(guest_syn) == len(peer_syn) == 1 and

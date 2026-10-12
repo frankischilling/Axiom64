@@ -17,8 +17,8 @@ This follows the per-socket default in [pinned Linux TCP input](https://github.c
 and [its initialization](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/net/ipv4/tcp_ipv4.c).
 [RFC 5961 section 7](https://www.rfc-editor.org/rfc/rfc5961.html#section-7) describes ACK
 throttling. This implementation uses the fixed default. Remaining lifetime, TIME-WAIT
-and hostile-input acceptance stays in [#121](https://github.com/frankischilling/Axiom64/issues/121)
-and [#109](https://github.com/frankischilling/Axiom64/issues/109).
+and hostile-input acceptance stays in [TCP reliability](tcp.md)
+and [TCP sockets](tcp.md).
 
 ## Verification
 

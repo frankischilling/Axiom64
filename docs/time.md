@@ -63,8 +63,7 @@ clock semantics. Absolute `FUTEX_WAIT_BITSET` deadlines with
 deadlines and expected-word error ordering preserved. Complete
 Linux clock-ID semantics, realtime setting and permissions, ACPI PM timer,
 higher-resolution deadlines, SMP clock handling, power transitions,
-suspend/resume, and synchronization remain in
-[the clocks/timers/power scope](https://github.com/frankischilling/Axiom64/issues/16).
+suspend/resume, and synchronization remain unfinished.
 
 ## Boot calendar
 

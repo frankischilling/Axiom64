@@ -1,6 +1,6 @@
 # Threads and futexes
 
-Axiom64 runs Linux x86-64 musl pthreads on one CPU. Threads share selected process resources and retain their own TID, registers, FS base, FPU state, signal mask, alternate stack, and wait state. This is the first implementation slice of [the threading area](https://github.com/frankischilling/Axiom64/issues/5), tracked by [#47](https://github.com/frankischilling/Axiom64/issues/47).
+Axiom64 runs Linux x86-64 musl pthreads on one CPU. Threads share selected process resources and retain their own TID, registers, FS base, FPU state, signal mask, alternate stack, and wait state.
 
 ## Resource ownership
 
@@ -72,4 +72,4 @@ Evidence is saved in `build/threads-all-{bios,uefi}.log` and `build/threads-all-
 
 The limit is one CPU, 64 task slots, and 128 descriptors per file table. FPU switching uses FXSAVE/FXRSTOR for x87/SSE state, without extended XSAVE state. Caught signals currently return `EINTR` from futex waits even with `SA_RESTART`.
 
-Robust owner-death lists, priority inheritance, `FUTEX_WAKE_OP`, newer wait-vector operations, cancellation coverage, rwlocks/barriers, complete process-shared POSIX synchronization, thread-targeted timers, and full fork/exec/signal semantics remain in #5 and its related areas. SysV semaphore undo and complete resource limits are also pending. Working musl and C++ tests do not establish complete POSIX threading or Linux compatibility. [SMP](https://github.com/frankischilling/Axiom64/issues/7) follows the tested single-CPU interface.
+Robust owner-death lists, priority inheritance, `FUTEX_WAKE_OP`, newer wait-vector operations, cancellation coverage, rwlocks/barriers, complete process-shared POSIX synchronization, thread-targeted timers, and full fork/exec/signal semantics remain unfinished. SysV semaphore undo and complete resource limits are also pending. Working musl and C++ tests do not establish complete POSIX threading or Linux compatibility. [SMP](feature-roadmap.md#f07-smp-scheduling-and-kernel-synchronization) follows the tested single-CPU interface.

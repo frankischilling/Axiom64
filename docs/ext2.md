@@ -1,6 +1,6 @@
 # Writable ext2 volumes
 
-Axiom64 mounts classic ext2 data volumes and can boot an [ext2 root](disk-root.md) from whole virtio disks. Guest-created files persist after a clean unmount or shutdown and can be read by host filesystem tools. The complete filesystem work remains tracked in [#3](https://github.com/frankischilling/Axiom64/issues/3).
+Axiom64 mounts classic ext2 data volumes and can boot an [ext2 root](disk-root.md) from whole virtio disks. Guest-created files persist after a clean unmount or shutdown and can be read by host filesystem tools. The advanced filesystem and recovery support remain planned.
 
 ## Create and mount a volume
 

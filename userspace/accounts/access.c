@@ -32,6 +32,16 @@ static int failed(int error) {
     return -1;
 }
 
+static const char* alias(const char* executable) {
+    const char* name = strrchr(executable, '/');
+    name = name ? name + 1 : executable;
+    static const char* names[] = {"login", "su", "sudo", "passwd"};
+    for (size_t i = 0; i < sizeof(names) / sizeof(*names); i++)
+        if (!strcmp(name, names[i]))
+            return names[i];
+    return NULL;
+}
+
 static void usage(void) {
     fputs("usage: account-access [--database PATH] [--records PATH] COMMAND\n"
           "  login [NAME] | su [NAME] [-c COMMAND] | sudo [-u NAME] COMMAND...\n"
@@ -182,6 +192,8 @@ static int streams(int terminal, unsigned* mask) {
 }
 
 int main(int argc, char** argv) {
+    if (argc < 1 || !argv || !argv[0])
+        return 2;
     uid_t caller = getuid();
     if (geteuid()) {
         fputs("account-access: privileged installation is required\n", stderr);
@@ -198,11 +210,13 @@ int main(int argc, char** argv) {
             records = argv[first + 1];
         first += 2;
     }
-    if (argc <= first) {
+    const char* mode = alias(argv[0]);
+    if (!mode && argc <= first) {
         usage();
         return 2;
     }
-    const char* mode = argv[first++];
+    if (!mode)
+        mode = argv[first++];
     int login = !strcmp(mode, "login"), su = !strcmp(mode, "su"), sudo = !strcmp(mode, "sudo");
     int passwd = !strcmp(mode, "passwd"), provision = !strcmp(mode, "provision");
     if ((!login && !su && !sudo && !passwd && !provision) || (caller && (login || provision))) {
@@ -250,6 +264,8 @@ int main(int argc, char** argv) {
         else
             target = argc == first ? name : argv[first];
     } else if (!error && (su || passwd)) {
+        if (su && argc > first && (!strcmp(argv[first], "-") || !strcmp(argv[first], "--login")))
+            first++;
         target = passwd ? actor : "root";
         if (argc > first && strcmp(argv[first], "-c"))
             target = argv[first++];

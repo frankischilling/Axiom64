@@ -90,8 +90,8 @@ def execute(command, log, firmware=None):
     text = log.read_text().replace('\r\n', '\n')
     lines = text.splitlines()
     count = sum(line.startswith('ACCOUNT_ACCESS_OBSERVATION ') for line in lines)
-    passed = (not timed_out and process.returncode == (1 if firmware else 0) and count == 12 and
-              lines.count('ACCOUNT_ACCESS_PASS observations=12') == 1 and
+    passed = (not timed_out and process.returncode == (1 if firmware else 0) and count == 16 and
+              lines.count('ACCOUNT_ACCESS_PASS observations=16') == 1 and
               not any(marker in text for marker in ('ACCOUNT_ACCESS_FAIL', 'PANIC:', 'FAULT pid=',
                                                     'Fixture-Access-Password-82', 'Fixture-Access-Changed-93')))
     if firmware:
@@ -179,7 +179,7 @@ def main():
                 print('ACCOUNT_ACCESS_NATIVE_PASS ' + case.name, flush=True)
     if source != {name: digest(ROOT / name) for name in source}:
         raise RuntimeError('account access source changed during validation')
-    print('ACCOUNT_ACCESS_MATRIX_PASS profiles=' + str(len(rows)) + ' observations=' + str(len(rows) * 12), flush=True)
+    print('ACCOUNT_ACCESS_MATRIX_PASS profiles=' + str(len(rows)) + ' observations=' + str(len(rows) * 16), flush=True)
 
 
 if __name__ == '__main__':

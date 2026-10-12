@@ -11,6 +11,9 @@ int account_directory_open(const char*, mode_t mode, int create);
 // One-component names, regular root-owned single-link files and exact modes.
 // Creation never changes the ownership/mode of an existing entry.
 int account_file_open(int directory, const char* name, int flags, mode_t mode, int create);
+// A separate read-only check for a root-owned, single-link mode-04755 worker.
+// It never creates an executable or changes an existing entry's metadata.
+int account_executable_open(int directory, const char* name);
 // Validate an existing entry; a missing entry is permitted for publication.
 int account_file_check(int directory, const char* name, mode_t mode);
 // Write a new inode, synchronize it, publish by rename and synchronize its

@@ -379,7 +379,11 @@
         "userspace/accounts/busy.c",
         "userspace/accounts/guard.c",
         "scripts/account_management_test.py",
-        "scripts/account_update_test.py"
+        "scripts/account_update_test.py",
+        "userspace/accounts/console.c",
+        "scripts/build_accounts.py",
+        "scripts/account_console_test.py",
+        "scripts/terminal_flush_test.py"
       ],
       "branch": "feature/f09-accounts-permissions-and-process-credentials",
       "issue": "https://github.com/frankischilling/Axiom64/issues/9"

@@ -297,6 +297,53 @@ int main(int argc, char** argv) {
     finish(&call, 0);
     verify("admin", password, ACCOUNT_AUTH_ACCEPTED);
     observed("forced_private_password_change_reauthenticates_before_login_shell");
+    char aliases[4096], names[4][4096];
+    path(aliases, argv[1], "aliases");
+    CHECK(mkdir(aliases, 0755) == 0 && chmod(aliases, 0755) == 0);
+    const char* modes[] = {"login", "su", "sudo", "passwd"};
+    const char* actual = frontend;
+    for (unsigned i = 0; i < 4; i++) {
+        path(names[i], aliases, modes[i]);
+        CHECK(symlink(actual, names[i]) == 0);
+    }
+    frontend = names[0];
+    char* alias_login[] = {names[0], "admin", NULL};
+    start(&call, 0, alias_login, NULL);
+    quiet_password(&call, password);
+    until(&call, "$ ");
+    send(&call, "exit 0", 0);
+    finish(&call, 0);
+    observed("installed_login_alias_authenticates_before_starting_the_shell");
+    frontend = names[1];
+    CHECK(snprintf(command, sizeof(command), "%s 1000 %s", observer, home) < (int)sizeof(command));
+    char* alias_su[] = {names[1], "-", "admin", "-c", command, NULL};
+    start(&call, 0, alias_su, NULL);
+    finish(&call, 0);
+    CHECK(strstr(call.text, "ACCOUNT_ACCESS_EXEC_PASS uid=1000"));
+    observed("installed_su_alias_accepts_login_flag_and_installs_complete_target_identity");
+    frontend = names[2];
+    char* alias_sudo[] = {names[2], (char*)observer, "0", "/root", NULL};
+    start(&call, 1000, alias_sudo, NULL);
+    quiet_password(&call, password);
+    finish(&call, 0);
+    CHECK(strstr(call.text, "ACCOUNT_ACCESS_EXEC_PASS uid=0"));
+    observed("installed_sudo_alias_uses_actual_setuid_password_and_membership_policy");
+    CHECK(account_database_begin(database, 0, &db) == 0);
+    user = *account_database_user(db, "admin");
+    user.age[1] = 0;
+    CHECK(account_database_put_user(db, "admin", &user) == 0 &&
+          account_database_commit(db, &published) == 0 && published);
+    account_database_end(db);
+    frontend = names[3];
+    char* alias_passwd[] = {names[3], NULL};
+    start(&call, 1000, alias_passwd, NULL);
+    quiet_password(&call, password);
+    confirmation(&call, changed, changed);
+    finish(&call, 0);
+    verify("admin", password, ACCOUNT_AUTH_DENIED);
+    verify("admin", changed, ACCOUNT_AUTH_ACCEPTED);
+    observed("installed_passwd_alias_privately_authenticates_confirms_and_publishes_own_password");
+    frontend = actual;
     printf("ACCOUNT_ACCESS_PASS observations=%u\n", observations);
     return 0;
 }

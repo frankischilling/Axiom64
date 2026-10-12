@@ -112,6 +112,22 @@ static int regular_policy(int fd, mode_t mode) {
     return 0;
 }
 
+int account_executable_open(int directory, const char* name) {
+    if (root() < 0)
+        return -1;
+    if (!name_valid(name))
+        return failed(EINVAL);
+    int fd = openat(directory, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0)
+        return -1;
+    if (regular_policy(fd, 04755) < 0) {
+        int error = errno;
+        close(fd);
+        return failed(error);
+    }
+    return fd;
+}
+
 int account_file_open(int directory, const char* name, int flags, mode_t mode, int create) {
     if (root() < 0)
         return -1;

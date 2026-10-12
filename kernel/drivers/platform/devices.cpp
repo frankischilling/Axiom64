@@ -787,8 +787,32 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
         return output(arg, term, sizeof(*term));
     case 0x5402:
     case 0x5403:
-    case 0x5404:
-        return current->memory->space.copy_in(term, arg, sizeof(*term)) ? 0 : -14;
+    case 0x5404: {
+        Terminal next{};
+        if (!current->memory->space.copy_in(&next, arg, sizeof(next)))
+            return -14;
+        if (request == 0x5404) {
+            // Termios on either PTY endpoint configures the slave. Discard
+            // its received input only after the complete new state is valid.
+            auto& input = h->pty ? h->pty->input : console_input;
+            memset(input.bytes, 0, sizeof(input.bytes));
+            input.head = input.size = 0;
+        }
+        *term = next;
+        return 0;
+    }
+    case 0x540b: {
+        if (arg > 2)
+            return -22;
+        if (arg != 1) {
+            auto& input = h->pty ? (h->writer ? h->pty->output : h->pty->input) : console_input;
+            memset(input.bytes, 0, sizeof(input.bytes));
+            input.head = input.size = 0;
+        }
+        // Writes deliver directly to the peer's received queue or UART.
+        // There is no separate unsent driver buffer to discard for TCOFLUSH.
+        return 0;
+    }
     case 0x540f:
         if (!h->writer && (h->pty ? current->process->controlling_pty != h->pty
                                   : !current->process->controlling_console))

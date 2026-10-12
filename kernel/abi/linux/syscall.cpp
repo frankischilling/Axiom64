@@ -121,9 +121,9 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
         if (error)
             return error;
     }
-    Handle* h = open_handle(n, flags);
+    Handle* h = open_handle(n, flags, &error);
     if (!h)
-        return -23;
+        return error;
     int fd = allocate_fd(current, h, 0, flags & 02000000);
     if (fd < 0)
         close_handle(h);

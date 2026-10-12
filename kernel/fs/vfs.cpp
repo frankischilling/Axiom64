@@ -824,15 +824,22 @@ void vfs_init(const void* archive, size_t length) {
     log("VFS: imported %u nodes from initramfs\n", uint64_t(node_count));
 }
 
-Handle* open_handle(Node* n, uint32_t flags) {
+Handle* open_handle(Node* n, uint32_t flags, int* error) {
+    if (error)
+        *error = -23;
     for (auto& h : handles)
         if (!h.references) {
             h = {file_node(n), nullptr, 0, flags, 1, false};
             h.generation = next_generation++;
-            if (!device_open(&h)) {
+            int result = device_open(&h);
+            if (result) {
                 h.references = 0;
+                if (error)
+                    *error = result;
                 return nullptr;
             }
+            if (error)
+                *error = 0;
             return &h;
         }
     return nullptr;

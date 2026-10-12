@@ -13,7 +13,7 @@ static Pty ptys[32];
 static Terminal console_terminal{0x500,  5, 0xbf,
                                  0x8a3b, 0, {3, 28, 127, 21, 4, 0, 1, 0, 17, 19, 26}};
 static ByteQueue console_input;
-static int console_pgid = 1, vt_mode = 0, keyboard_mode = 1;
+static int console_pgid = 1, console_sid = 1, vt_mode = 0, keyboard_mode = 1;
 
 struct InputEvent {
     int64_t sec, usec;
@@ -41,33 +41,71 @@ static void terminal_signal(int pgid, int signal) {
             queue_process_signal(task.process, signal);
 }
 
-static void detach_pty(Pty* p) {
-    terminal_signal(p->pgid, 1);
-    terminal_signal(p->pgid, 18);
+static void detach_pty(Pty* p, bool hangup = true) {
+    if (hangup) {
+        terminal_signal(p->pgid, 1);
+        terminal_signal(p->pgid, 18);
+    }
     for (auto& task : tasks)
         if (task.state != State::empty && task.process->controlling_pty == p)
             task.process->controlling_pty = nullptr;
     p->sid = p->pgid = 0;
 }
 
+static void detach_console(bool hangup) {
+    if (hangup) {
+        terminal_signal(console_pgid, 1);
+        terminal_signal(console_pgid, 18);
+    }
+    for (auto& task : tasks)
+        if (task.state != State::empty)
+            task.process->controlling_console = false;
+    console_sid = console_pgid = 0;
+}
+
+static int64_t attach_console(Handle* h, bool force) {
+    auto process = current->process;
+    if (process->pid == process->sid && process->controlling_console && process->sid == console_sid)
+        return 0;
+    if (process->pid != process->sid || process->controlling_pty || process->controlling_console)
+        return -1;
+    if (console_sid && console_sid != process->sid) {
+        if (!force || !capable(current->credentials, Capability::sys_admin))
+            return -1;
+        detach_console(false);
+    }
+    if ((h->flags & 3) == 1 && !capable(current->credentials, Capability::sys_admin))
+        return -1;
+    console_sid = process->sid;
+    console_pgid = process->pgid;
+    process->controlling_console = true;
+    return 0;
+}
+
 void terminal_exit(Task* task) {
     if (task->process->controlling_pty && task->process->pid == task->process->sid)
         detach_pty(task->process->controlling_pty);
+    if (task->process->controlling_console && task->process->pid == task->process->sid &&
+        task->process->sid == console_sid)
+        detach_console(true);
     task->process->controlling_pty = nullptr;
     task->process->controlling_console = false;
 }
 
-static int64_t attach_pty(Pty* p, bool force) {
-    if (current->process->controlling_pty == p)
+static int64_t attach_pty(Handle* h, bool force) {
+    auto p = h->pty;
+    if (current->process->pid == current->process->sid && current->process->controlling_pty == p)
         return 0;
     if (current->process->pid != current->process->sid || current->process->controlling_pty ||
         current->process->controlling_console)
         return -1;
     if (p->sid && p->sid != current->process->sid) {
-        if (!force)
+        if (!force || !capable(current->credentials, Capability::sys_admin))
             return -1;
-        detach_pty(p);
+        detach_pty(p, false);
     }
+    if ((h->flags & 3) == 1 && !capable(current->credentials, Capability::sys_admin))
+        return -1;
     p->sid = current->process->sid;
     p->pgid = current->process->pgid;
     current->process->controlling_pty = p;
@@ -167,6 +205,11 @@ static void tag(const char* path, Device type, unsigned id = 0) {
         panic("device creation");
     n->device = type;
     n->device_id = id;
+    if (type == Device::serial || type == Device::vt || type == Device::keyboard ||
+        type == Device::mouse || type == Device::framebuffer) {
+        n->mode = character | 0600;
+        n->uid = n->gid = 0;
+    }
 }
 
 static void number_path(char* out, const char* prefix, unsigned number) {
@@ -300,54 +343,88 @@ uint64_t device_number(Node* node) {
     }
 }
 
-bool device_open(Handle* h) {
+int device_open(Handle* h) {
     if (!h->node)
-        return true;
+        return 0;
     auto kind = h->node->device;
     if (kind == Device::tty) {
         if (!current ||
             (!current->process->controlling_pty && !current->process->controlling_console))
-            return false;
+            return -6;
         if (current->process->controlling_pty) {
             h->pty = current->process->controlling_pty;
             h->pty->slaves++;
         }
-        return true;
+        return 0;
     }
     if (kind == Device::keyboard || kind == Device::mouse)
         h->offset = (kind == Device::keyboard ? keyboard_events : mouse_events).sequence;
+    if ((kind == Device::serial || kind == Device::vt) && current && !(h->flags & 0400) &&
+        (h->flags & 3) != 1 && !console_sid && !current->process->controlling_pty &&
+        !current->process->controlling_console && current->process->pid == current->process->sid)
+        attach_console(h, false);
     if (kind == Device::ptmx) {
         for (auto& p : ptys)
             if (!p.used) {
                 p = {};
                 p.used = true;
                 p.id = &p - ptys;
+                p.locked = true;
                 p.terminal = console_terminal;
                 p.rows = 24;
                 p.columns = 80;
+                char name[16];
+                number_path(name, "", p.id);
+                auto parent = lookup("/dev/pts");
+                if (!parent || (parent->mode & 0170000) != directory) {
+                    p.used = false;
+                    return -2;
+                }
+                if (node_readonly(parent)) {
+                    p.used = false;
+                    return -30;
+                }
+                Node* existing = nullptr;
+                int error = parent->mount->ops->lookup(parent, name, existing);
+                if (error != -2) {
+                    p.used = false;
+                    return error ? error : -17;
+                }
+                error =
+                    parent->mount->ops->create(parent, name, character | 0600, nullptr, p.slave);
+                if (error) {
+                    p.used = false;
+                    return error;
+                }
+                p.slave->uid = current ? current->credentials.user.filesystem : 0;
+                p.slave->gid = current ? current->credentials.group.filesystem : 0;
+                p.slave->device = Device::pty_slave;
+                p.slave->device_id = p.id;
                 p.masters = 1;
-                char path[32];
-                number_path(path, "/dev/pts/", p.id);
-                tag(path, Device::pty_slave, p.id);
                 h->pty = &p;
                 h->writer = true;
-                return true;
+                return 0;
             }
-        return false;
+        return -28;
     }
     if (kind == Device::pty_slave) {
         auto id = h->node->device_id;
-        if (id >= 32 || !ptys[id].used)
-            return false;
+        if (id >= 32 || !ptys[id].used || ptys[id].slave != h->node || !ptys[id].masters)
+            return -5;
+        if (ptys[id].locked) {
+            ptys[id].io_error = true;
+            return -5;
+        }
+        ptys[id].io_error = false;
         h->pty = &ptys[id];
         h->pty->slaves++;
         h->writer = false;
         if (current && !(h->flags & 0400) && !current->process->controlling_pty &&
             !current->process->controlling_console &&
             current->process->pid == current->process->sid && !h->pty->sid)
-            attach_pty(h->pty, false);
+            attach_pty(h, false);
     }
-    return true;
+    return 0;
 }
 
 void device_close(Handle* h) {
@@ -355,17 +432,25 @@ void device_close(Handle* h) {
         return;
     auto p = h->pty;
     if (h->writer) {
-        if (!--p->masters)
+        if (!--p->masters) {
             detach_pty(p);
+            if (p->slave && !p->slave->removed)
+                p->slave->mount->ops->remove(p->slave);
+            p->input = p->output = {};
+        }
     } else
         p->slaves--;
-    if (!p->masters && !p->slaves)
+    if (!p->masters && !p->slaves) {
+        ramfs_reclaim_device(p->slave);
         p->used = false;
+    }
 }
 
 bool device_ready(Handle* h, bool write) {
     if (h->pty) {
         auto p = h->pty;
+        if (!h->writer && p->io_error)
+            return true;
         if (write)
             return (h->writer ? p->input : p->output).size < sizeof(ByteQueue::bytes);
         return h->writer ? p->output.size || !p->slaves
@@ -436,8 +521,10 @@ int64_t device_read(Handle* h, void* data, size_t len) {
             return p->output.size ? int64_t(queue_read(p->output, data, len))
                    : p->slaves    ? -11
                                   : -5;
-        if (!p->masters && !p->input.size)
+        if (!p->masters)
             return 0;
+        if (p->io_error)
+            return -5;
         return terminal_read(p->input, p->terminal, data, len);
     }
     switch (h->node->device) {
@@ -483,7 +570,7 @@ int64_t device_write(Handle* h, const void* data, size_t len) {
     if (h->pty) {
         auto p = h->pty;
         auto& queue = h->writer ? p->input : p->output;
-        if (!h->writer && !p->masters)
+        if (!h->writer && (!p->masters || p->io_error))
             return -5;
         size_t n = min(len, sizeof(queue.bytes) - queue.size);
         if (!n && len)
@@ -691,6 +778,8 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
             return -22;
         return output(arg, buffer, size) ? -14 : int64_t(size);
     }
+    if (!h->pty && kind != Device::serial && kind != Device::tty && kind != Device::vt)
+        return -25;
     Terminal* term = h->pty ? &h->pty->terminal : &console_terminal;
     int* group = h->pty ? &h->pty->pgid : &console_pgid;
     switch (request) {
@@ -701,8 +790,16 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     case 0x5404:
         return current->memory->space.copy_in(term, arg, sizeof(*term)) ? 0 : -14;
     case 0x540f:
+        if (!h->writer && (h->pty ? current->process->controlling_pty != h->pty
+                                  : !current->process->controlling_console))
+            return -25;
         return output(arg, group, 4);
     case 0x5410: {
+        if (h->pty
+                ? (current->process->controlling_pty != h->pty ||
+                   current->process->sid != h->pty->sid)
+                : (!current->process->controlling_console || current->process->sid != console_sid))
+            return -25;
         int next_group;
         if (!current->memory->space.copy_in(&next_group, arg, 4))
             return -14;
@@ -720,20 +817,29 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     }
     case 0x540e:
         if (h->pty)
-            return attach_pty(h->pty, arg != 0);
-        current->process->controlling_console = true;
-        console_pgid = current->process->pgid;
-        return 0;
+            return attach_pty(h, arg == 1);
+        return attach_console(h, arg == 1);
     case 0x5422:
+        if (h->pty && current->process->controlling_pty != h->pty)
+            return -25;
         if (h->pty && current->process->controlling_pty == h->pty) {
             if (current->process->pid == current->process->sid)
                 detach_pty(h->pty);
             current->process->controlling_pty = nullptr;
-        } else
+        } else if (current->process->controlling_console && current->process->sid == console_sid) {
+            if (current->process->pid == current->process->sid)
+                detach_console(true);
             current->process->controlling_console = false;
+        } else
+            return -25;
         return 0;
     case 0x5429: {
-        int sid = h->pty ? h->pty->sid : current->process->sid;
+        if (!h->writer && (h->pty ? current->process->controlling_pty != h->pty
+                                  : !current->process->controlling_console))
+            return -25;
+        int sid = h->pty ? h->pty->sid : console_sid;
+        if (!sid)
+            return -25;
         return output(arg, &sid, sizeof(sid));
     }
     case 0x5413: {
@@ -766,7 +872,19 @@ int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     case 0x40045431:
         if (!h->pty || !h->writer)
             return -25;
-        return current->memory->space.valid(arg, 4) ? 0 : -14;
+        {
+            int locked;
+            if (!current->memory->space.copy_in(&locked, arg, sizeof(locked)))
+                return -14;
+            h->pty->locked = locked != 0;
+            return 0;
+        }
+    case 0x80045439: {
+        if (!h->pty || !h->writer)
+            return -25;
+        int locked = h->pty->locked;
+        return output(arg, &locked, sizeof(locked));
+    }
     case 0x5600: {
         int free_vt = 1;
         return output(arg, &free_vt, 4);

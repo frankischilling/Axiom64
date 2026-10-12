@@ -14,6 +14,16 @@ all: image
 .PHONY: test-rtc-codec test-clock-wall test-clock-wall-native
 .PHONY: test-random-crypto test-random-crypto-native test-random-crypto-wait test-random-crypto-wait-native
 .PHONY: openssl libxcrypt test-password-library-native test-password-library test-random-installed
+.PHONY: test-pty-security test-pty-security-native
+test-pty-security:
+	$(PYTHON) scripts/pty_security_test.py
+test-pty-security-native:
+	$(PYTHON) scripts/pty_security_test.py --native --directory build/pty-security-native
+.PHONY: test-account-secret test-account-secret-native
+test-account-secret:
+	$(PYTHON) scripts/account_secret_test.py
+test-account-secret-native:
+	$(PYTHON) scripts/account_secret_test.py --native --directory build/account-secret-native
 openssl:
 	$(PYTHON) scripts/build_openssl.py --provider all
 libxcrypt:

@@ -108,6 +108,9 @@ extern const FilesystemOps ramfs_ops;
 
 Node* ramfs_root(Mount*, uint32_t);
 
+// Release an unlinked, unreferenced kernel-created character device.
+void ramfs_reclaim_device(Node*);
+
 struct Pipe {
     uint8_t bytes[16384];
     size_t head, size;
@@ -201,7 +204,7 @@ int node_stats(Node*, FilesystemStats&);
 
 bool node_referenced(Node*);
 
-Handle* open_handle(Node*, uint32_t);
+Handle* open_handle(Node*, uint32_t, int* error = nullptr);
 
 Handle* pipe_handle(Pipe*, bool);
 

@@ -66,7 +66,7 @@ static pid_t seed_service(const struct timespec* now) {
 static pid_t console(void) {
     pid_t child = fork();
     if (!child) {
-        if (setsid() < 0 || ioctl(0, TIOCSCTTY, 0) < 0) {
+        if (setsid() < 0 || ioctl(0, TIOCSCTTY, 1) < 0) {
             perror("init: console session");
             _exit(1);
         }

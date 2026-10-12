@@ -1131,7 +1131,7 @@
         "static",
         "dynamic"
       ],
-      "status": "in-development"
+      "status": "runtime-verified"
     }
   ]
 }

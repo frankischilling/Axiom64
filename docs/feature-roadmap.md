@@ -263,7 +263,7 @@ Acceptance evidence:
 
 ### F10. Secure random number generation
 
-[Kernel randomness](random.md) replaces the fixed stream with a BLAKE2s/ChaCha20 generator, trusted RDSEED seeding/reseeding, and checked initialization semantics. Child #84 covers the integrated baseline and fresh-root transaction regression evidence. Current #10 work adds partial credit and administration, modern/legacy virtio entropy, uncredited persisted-seed rotation and detected QEMU generation changes. The full feature remains open for complete seed failure/recovery, ordinary startup and real cryptographic-client acceptance.
+[Kernel randomness](random.md) provides a BLAKE2s/ChaCha20 generator, validated RDSEED and opt-in modern/legacy virtio seeding/reseeding, partial credit and capability-gated administration. Persisted seeds rotate without supplying initialization credit; QEMU generation changes rekey initialized state. The complete F10 acceptance covers readiness and errors, deterministic state transitions, seed faults/crashes/recovery, ordinary startup, and real TLS/key-generation/package-signature clients. [PR #162](https://github.com/frankischilling/Axiom64/pull/162) records the implementation, complete hosted matrix and independent published evidence for #10. General filesystem repair, broader credential services and physical-device acceptance remain in their own feature areas.
 
 Required work:
 

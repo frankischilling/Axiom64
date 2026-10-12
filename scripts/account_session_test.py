@@ -11,6 +11,7 @@ import tarfile
 import time
 
 from account_management_test import SOURCES, crypt, invocation
+from account_management_test import build as management_build
 from account_store_guest import fixture
 from account_store_test import digest, environment
 from build_musl import compiler_args
@@ -34,7 +35,7 @@ def build(provider, linkage, directory):
                '-I' + str(stage / 'usr/include'),
                *(str(ROOT / 'userspace/accounts' / name) for name in
                  ('store.c', 'database.c', 'record.c', 'password.c', 'home.c', 'auth.c', 'session.c',
-                  'protected.c', 'login_record.c', 'logbook.c', 'recorded.c')),
+                  'protected.c', 'login_record.c', 'logbook.c', 'recorded.c', 'busy.c')),
                str(ROOT / 'userspace/tests/security/account-session.c'), '-o', str(program)]
     if linkage == 'static':
         command += ['-static', str(stage / 'usr/lib/libcrypt.a')]
@@ -77,8 +78,8 @@ def execute(command, log, firmware=None):
     lines = text.splitlines()
     count = sum(line.startswith('ACCOUNT_SESSION_OBSERVATION ') for line in lines)
     shells = [line for line in lines if line.startswith('ACCOUNT_SHELL_SESSION_PASS ')]
-    passed = (not timed_out and process.returncode == (1 if firmware else 0) and count == 11 and
-              lines.count('ACCOUNT_SESSION_PASS observations=11 authenticated_shells=2') == 1 and len(shells) == 2 and
+    passed = (not timed_out and process.returncode == (1 if firmware else 0) and count == 15 and
+              lines.count('ACCOUNT_SESSION_PASS observations=15 authenticated_shells=2') == 1 and len(shells) == 2 and
               any('user=alice uid=1000 gid=1000' in line for line in shells) and
               any('user=bob uid=1001 gid=1001' in line for line in shells) and
               all('foreground=1 private_tty=1 cross_user_denied=1' in line for line in shells) and
@@ -137,18 +138,29 @@ def main():
         for linkage in ('static', 'dynamic'):
             case = args.directory / (provider + '-' + linkage)
             case.mkdir()
-            program, observer, library, inputs = build(provider, linkage, case)
-            inputs['busybox_sha256'] = digest(busybox)
-            if args.native:
-                native_case = args.fixtures / case.name
+            native_case = args.fixtures / case.name if args.native else None
+            if native_case:
                 native_case.mkdir(mode=0o755)
                 native_case.chmod(0o755)
+            program, observer, library, inputs = build(provider, linkage, case)
+            management_directory = case / 'management'
+            management_directory.mkdir()
+            manager, _, management_inputs = management_build(provider, linkage, management_directory,
+                                native_case / 'lib' if native_case else None)
+            inputs['management'] = management_inputs
+            inputs['busybox_sha256'] = digest(busybox)
+            if args.native:
                 native_observer = native_case / 'account-session-observe'
                 shutil.copyfile(observer, native_observer)
                 native_observer.chmod(0o755)
                 assert digest(native_observer) == inputs['observer_sha256']
+                native_manager = native_case / 'accountctl'
+                shutil.copyfile(manager, native_manager)
+                native_manager.chmod(0o755)
+                assert digest(native_manager) == management_inputs['binary_sha256']
                 command = invocation(program, library, provider, linkage) + [str(native_case / 'data'),
-                            str(busybox), str(native_observer)]
+                            str(busybox), str(native_observer), str(native_manager)]
+                command = ['unshare', '--mount', '--pid', '--fork', '--mount-proc', *command]
                 row = execute(command, case / 'native.log')
                 row.update(provider=provider, linkage=linkage, inputs=inputs)
                 row['native_exports'] = retain_native(case, native_case)
@@ -160,11 +172,11 @@ def main():
             else:
                 def builder(_provider, _linkage, _directory):
                     return program, inputs
-                products = {'bin/account-session-observe': observer}
+                products = {'bin/account-session-observe': observer, 'bin/accountctl': manager}
                 if linkage == 'dynamic':
                     products['usr/lib/libcrypt.so.2'] = library / 'dynamic/stage/usr/lib/libcrypt.so.2.0.0'
                 image = fixture(case, provider, linkage, program_builder=builder, filename='account-session',
-                                command='/bin/account-session /run/account-session /bin/busybox /bin/account-session-observe',
+                                command='/bin/account-session /run/account-session /bin/busybox /bin/account-session-observe /bin/accountctl',
                                 extra_products=products)
                 for firmware in ('bios', 'uefi'):
                     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '256M', '-nic', 'none',
@@ -184,7 +196,7 @@ def main():
                     print('ACCOUNT_SESSION_GUEST_PASS ' + case.name + '/' + firmware, flush=True)
     if source != {name: digest(ROOT / name) for name in source}:
         raise RuntimeError('account session source changed during validation')
-    print('ACCOUNT_SESSION_MATRIX_PASS profiles=' + str(len(rows)) + ' observations=' + str(len(rows) * 11), flush=True)
+    print('ACCOUNT_SESSION_MATRIX_PASS profiles=' + str(len(rows)) + ' observations=' + str(len(rows) * 15), flush=True)
 
 
 if __name__ == '__main__':

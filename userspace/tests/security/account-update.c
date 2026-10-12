@@ -4,6 +4,7 @@
 #include "../../accounts/database.h"
 #include "../../accounts/update.h"
 #include <errno.h>
+#include <grp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,12 +50,45 @@ static void age(int64_t last, int64_t minimum) {
     account_database_end(db);
 }
 
+static void bootstrap_busy_identity(void) {
+    int published;
+    int started[2], finish[2];
+    CHECK(pipe(started) == 0 && pipe(finish) == 0);
+    pid_t service = fork();
+    CHECK(service >= 0);
+    if (!service) {
+        close(started[0]);
+        close(finish[1]);
+        CHECK(setgroups(0, NULL) == 0 && setresgid(1000, 1000, 1000) == 0 &&
+              setresuid(1000, 1000, 1000) == 0);
+        char byte = 'x';
+        CHECK(write(started[1], &byte, 1) == 1 && read(finish[0], &byte, 1) == 1);
+        _exit(0);
+    }
+    close(started[1]);
+    close(finish[0]);
+    char byte;
+    CHECK(read(started[0], &byte, 1) == 1);
+    CHECK(account_bootstrap(database, records, "admin", home, "/bin/sh", first, &published) == -1 &&
+          errno == EBUSY && !published);
+    struct stat untouched_home;
+    CHECK(stat(home, &untouched_home) == -1 && errno == ENOENT);
+    CHECK(write(finish[1], &byte, 1) == 1);
+    int service_status;
+    CHECK(waitpid(service, &service_status, 0) == service && WIFEXITED(service_status) &&
+          !WEXITSTATUS(service_status));
+    close(started[0]);
+    close(finish[1]);
+    observed("first_administrator_ids_in_use_deny_bootstrap_without_publication_or_home");
+}
+
 int main(int argc, char** argv) {
     CHECK(argc == 2 && !getuid() && !geteuid() && !getegid());
     CHECK(mkdir(argv[1], 0755) == 0 && chmod(argv[1], 0755) == 0);
     CHECK(snprintf(database, sizeof(database), "%s/db", argv[1]) < (int)sizeof(database));
     CHECK(snprintf(records, sizeof(records), "%s/records", argv[1]) < (int)sizeof(records));
     CHECK(snprintf(home, sizeof(home), "%s/admin", argv[1]) < (int)sizeof(home));
+    bootstrap_busy_identity();
     int published;
     CHECK(account_bootstrap(database, records, "admin", home, "/bin/sh", first, &published) == 0 &&
           published);

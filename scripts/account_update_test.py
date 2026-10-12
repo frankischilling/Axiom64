@@ -55,8 +55,8 @@ def execute(command, log, firmware=None):
     text = log.read_text().replace('\r\n', '\n')
     lines = text.splitlines()
     count = sum(line.startswith('ACCOUNT_UPDATE_OBSERVATION ') for line in lines)
-    passed = (not timed_out and process.returncode == (1 if firmware else 0) and count == 6 and
-              lines.count('ACCOUNT_UPDATE_PASS observations=6') == 1 and
+    passed = (not timed_out and process.returncode == (1 if firmware else 0) and count == 7 and
+              lines.count('ACCOUNT_UPDATE_PASS observations=7') == 1 and
               not any(marker in text for marker in ('ACCOUNT_UPDATE_FAIL', 'PANIC:', 'FAULT pid=',
                                                     'AddressSanitizer', 'runtime error:')))
     if firmware:
@@ -100,7 +100,9 @@ def main():
             native_case = args.fixtures / case.name
             native_case.mkdir(mode=0o755)
             native_case.chmod(0o755)
-            row = execute(invocation(program, library, provider, linkage) + [str(native_case / 'data')], case / 'native.log')
+            command = ['unshare', '--mount', '--pid', '--fork', '--mount-proc',
+                       *invocation(program, library, provider, linkage), str(native_case / 'data')]
+            row = execute(command, case / 'native.log')
             row.update(provider=provider, linkage=linkage, inputs=inputs)
             row['native_exports'] = retain_native(case, native_case)
             rows.append(row)
@@ -135,7 +137,7 @@ def main():
             print('ACCOUNT_UPDATE_NATIVE_PASS ' + case.name, flush=True)
     if source != {name: digest(ROOT / name) for name in source}:
         raise RuntimeError('account update source changed during validation')
-    print('ACCOUNT_UPDATE_MATRIX_PASS profiles=' + str(len(rows)) + ' observations=' + str(len(rows) * 6), flush=True)
+    print('ACCOUNT_UPDATE_MATRIX_PASS profiles=' + str(len(rows)) + ' observations=' + str(len(rows) * 7), flush=True)
 
 
 if __name__ == '__main__':

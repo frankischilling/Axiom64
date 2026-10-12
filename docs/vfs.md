@@ -23,6 +23,7 @@ The ELF loader and private file mappings read through the filesystem interface. 
 | `truncate`, `ftruncate` | Filesystem delegation with negative-length, file-type, capacity, and mount checks |
 | `flock` | [Advisory shared/exclusive locks](file-locks.md) owned by a canonical local file description |
 | `fcntl` record locks | POSIX and open-file-description byte ranges, foreign conflict queries, blocking acquisition and descriptor lifetime; current account prerequisite branch |
+| `proc` mounts | Real process/thread status and enumeration, caller-relative self links and description-owned read buffers; current account prerequisite branch |
 
 The account prerequisite branch adds `F_GETLK`, `F_SETLK`, `F_SETLKW` and their OFD equivalents. Ranges normalize SEEK_SET/CUR/END, negative lengths and zero lengths extending through future growth. Own locks split, convert and coalesce. POSIX locks belong to a file table and closing any descriptor for the inode releases them; OFD locks belong to an open file description and survive dup/fork until its final close. Multithreaded exec retains an exclusively owned table after sibling cleanup, preserving POSIX locks; a close-on-exec alias still releases them. These ownership rules follow [Linux's record-lock contract](https://man7.org/linux/man-pages/man2/fcntl_locking.2.html) and [Linux 6.17 exec ordering](https://github.com/torvalds/linux/blob/v6.17/fs/exec.c).
 

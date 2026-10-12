@@ -27,6 +27,11 @@ const struct account_user* account_database_uid(const struct account_database* d
     return NULL;
 }
 
+const struct account_user* account_database_user_at(const struct account_database* db,
+                                                    size_t index) {
+    return db && index < db->user_count ? &db->users[index] : NULL;
+}
+
 const struct account_group* account_database_group(const struct account_database* db,
                                                    const char* name) {
     if (db && name)

@@ -50,7 +50,7 @@ static void required(const char* name, uint32_t kind, bool executable = false) {
 static void volatile_mount(const char* name) {
     required(name, directory);
     Path destination = path(name), source = path("");
-    int error = mount_filesystem(destination, source, "ramfs", 0);
+    int error = mount_filesystem(destination, source, !strcmp(name, "/proc") ? "proc" : "ramfs", 0);
     if (error)
         failure(name, error);
 }
@@ -66,6 +66,7 @@ void boot_root_init(const char* command) {
     if (!selected || !strcmp(root, "ramfs")) {
         if (filesystem || policy)
             failure("configuration", -22);
+        volatile_mount("/proc");
         return;
     }
     if (strlen(root) != 8 || memcmp(root, "/dev/vd", 7) || root[7] < 'a' || root[7] > 'h')

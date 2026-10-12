@@ -37,6 +37,8 @@ The ELF loader validates ELF64 segments, loads a `PT_INTERP` musl interpreter, a
 
 [Blocking I/O](io.md) retains the selected file description and captured vector metadata while an attempt waits. Completion updates the owner's saved frame before signal delivery. Caught signals release the attempt; an `SA_RESTART` entry selects a descriptor again. Task teardown releases saved operations before memory and file tables.
 
+The account branch adds `kernel/fs/proc.cpp` behind the VFS filesystem interface. Both RAM-root and ext2-root boots mount actual process/thread metadata at `/proc`. Numeric process directories and per-process task directories expose live kernel identities, groups, state, signal masks and capabilities. `self` and `thread-self` resolve relative to the caller. Status reads retain a description-owned buffer; an exited task can finish already buffered bytes, while a previously unread description reports ESRCH. Cached nodes keep PID/TID identity across task-slot reuse and retire only after descriptions and directory references end. Complete procfs, namespaces and process diagnostics remain roadmap work.
+
 [Advisory file locks](file-locks.md) use that retained lifetime for blocking flock calls. Independent descriptions conflict on canonical local nodes; dup/fork ownership and final-close release follow the description's references.
 
 Signals use the Linux x86-64 frame layout and a userspace return trampoline. Supported behavior includes caught faults, masks, alternate stacks, restartable I/O, alarms, SIGCHLD, and stop/continue reporting. PTYs track controlling sessions and foreground process groups, translate terminal input, and deliver terminal interrupt and resize signals.

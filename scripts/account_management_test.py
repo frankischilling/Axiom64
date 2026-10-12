@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import time
 
@@ -14,36 +15,56 @@ from build_musl import compiler_args, ensure as musl, loader
 from fetch import ROOT
 
 SOURCES = ['userspace/accounts/' + name for name in ('store.c', 'store.h', 'database.c', 'database.h',
-           'record.c', 'record.h', 'password.c', 'password.h', 'home.c', 'home.h', 'manage.c')]
+           'record.c', 'record.h', 'password.c', 'password.h', 'home.c', 'home.h', 'manage.c',
+           'protected.c', 'protected.h', 'login_record.c', 'login_record.h', 'logbook.c', 'logbook.h',
+           'busy.c', 'busy.h', 'guard.c', 'guard.h', 'auth.h')]
 SOURCES += ['scripts/account_management_test.py', 'scripts/account_store_test.py', 'scripts/build_libxcrypt.py',
             'scripts/build_musl.py', 'scripts/linux_uapi.py', 'dependencies.json', 'sources.lock.json']
 SECRET = b'Fixture-only-Administrator-42\n'
 
 
-def build(provider, linkage, directory):
+def build(provider, linkage, directory, native_runtime=None):
     library = crypt(provider)
     stage = library / linkage / 'stage'
     program = directory / ('accountctl-' + provider + '-' + linkage)
     command = ['gcc'] if provider == 'native' else compiler_args(provider)
     command += ['-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror', '-I' + str(stage / 'usr/include'),
                 *(str(ROOT / 'userspace/accounts' / name) for name in
-                  ('store.c', 'database.c', 'record.c', 'password.c', 'home.c', 'manage.c')),
+                  ('store.c', 'database.c', 'record.c', 'password.c', 'home.c', 'manage.c',
+                   'protected.c', 'login_record.c', 'logbook.c', 'busy.c', 'guard.c')),
                 '-o', str(program)]
     if linkage == 'static':
         command += ['-static', str(stage / 'usr/lib/libcrypt.a')]
     else:
         command += ['-L' + str(stage / 'usr/lib'), '-lcrypt']
+    runtime_inputs = {}
+    if native_runtime and linkage == 'dynamic':
+        native_runtime.mkdir(mode=0o755)
+        native_runtime.chmod(0o755)
+        libraries = {'libcrypt.so.2': stage / 'usr/lib/libcrypt.so.2.0.0'}
+        if provider != 'native':
+            libraries['libc.so'] = loader(provider)
+        for name, source in libraries.items():
+            destination = native_runtime / name
+            shutil.copyfile(source, destination)
+            destination.chmod(0o755)
+            runtime_inputs[name] = dict(source=str(source), sha256=digest(destination))
+        command += ['-Wl,-rpath=' + str(native_runtime)]
+        if provider != 'native':
+            command += ['-Wl,--dynamic-linker=' + str(native_runtime / 'libc.so')]
     subprocess.run(command, env=environment(), check=True)
     headers = subprocess.check_output(['readelf', '-W', '-l', str(program)], text=True)
     dynamic = subprocess.check_output(['readelf', '-W', '-d', str(program)], text=True)
     if linkage == 'static':
         assert 'INTERP' not in headers and '(NEEDED)' not in dynamic
     else:
-        assert 'libcrypt.so.2' in dynamic and 'RPATH' not in dynamic and 'RUNPATH' not in dynamic
-        if provider != 'native':
+        assert 'libcrypt.so.2' in dynamic
+        if not native_runtime:
+            assert 'RPATH' not in dynamic and 'RUNPATH' not in dynamic
+        if provider != 'native' and not native_runtime:
             assert '/lib/ld-musl-x86_64.so.1' in headers
     provenance = dict(command=command, binary_sha256=digest(program), headers=headers, dynamic=dynamic,
-                      password_library_manifest_sha256=digest(library / 'manifest.json'))
+                      password_library_manifest_sha256=digest(library / 'manifest.json'), native_runtime=runtime_inputs)
     return program, library, provenance
 
 
@@ -84,22 +105,26 @@ def native(directory, fixtures):
             database = root / 'db'
             home = root / 'home/admin'
             program, library, inputs = build(provider, linkage, case)
-            prefix = invocation(program, library, provider, linkage) + ['--database', str(database)]
+            prefix = ['unshare', '--mount', '--pid', '--fork', '--mount-proc',
+                      *invocation(program, library, provider, linkage), '--database', str(database),
+                      '--records', str(root / 'records')]
             cases = []
 
             def run(label, arguments, *, expected=0, secret=None, ordinary=False, unchanged=False):
                 before = payloads(database) if unchanged else None
                 started = time.monotonic_ns()
-                credentials = dict(user=1000, group=1000, extra_groups=[]) if ordinary else {}
-                result = subprocess.run([*prefix, *arguments], input=secret, capture_output=True,
-                                        env=environment(), timeout=60, **credentials)
+                command = [*prefix, *arguments]
+                if ordinary:
+                    command[5:5] = ['setpriv', '--reuid=1000', '--regid=1000', '--clear-groups']
+                result = subprocess.run(command, input=secret, capture_output=True,
+                                        env=environment(), timeout=60)
                 log = case / (label + '.log')
                 log.write_bytes(result.stdout + result.stderr)
                 assert result.returncode == expected, (label, result.returncode, log.read_text())
                 assert SECRET.strip() not in log.read_bytes() and b'$y$' not in log.read_bytes()
                 if unchanged:
                     assert before == payloads(database)
-                cases.append(dict(label=label, arguments=arguments, returncode=result.returncode,
+                cases.append(dict(label=label, arguments=arguments, command=command, returncode=result.returncode,
                                   elapsed_ns=time.monotonic_ns() - started, log=log.name,
                                   log_sha256=digest(log), ordinary=ordinary, unchanged=unchanged, passed=True))
                 return result.stdout.decode()

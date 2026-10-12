@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
 #include "../../accounts/auth.h"
+#include "../../accounts/busy.h"
 #include "../../accounts/database.h"
 #include "../../accounts/home.h"
 #include "../../accounts/password.h"
@@ -31,6 +32,8 @@
 static unsigned observations;
 static const char* session_database;
 static char session_records[4096];
+static const char* manager;
+static int delay_next_end;
 static const char secret[] = "Fixture-only-Session-Authentication-82";
 
 static void observed(const char* name) {
@@ -66,7 +69,7 @@ struct frontend {
     pid_t pid;
     int master, slave, notice[2], allow[2];
     struct start session;
-    int begin_count, end_count, deny_begin;
+    int begin_count, end_count, deny_begin, delay_end;
     char record[4096];
 };
 
@@ -104,12 +107,20 @@ static int end(void* context, pid_t pid, int status) {
     CHECK(record >= 0);
     CHECK(dprintf(record, "END pid=%d status=%d\n", (int)pid, status) > 0 && fsync(record) == 0 &&
           close(record) == 0);
+    if (front->delay_end) {
+        char byte = 'x';
+        transfer(front->notice[1], &byte, 1, 1);
+        transfer(front->allow[0], &byte, 1, 0);
+        CHECK(byte == 'x');
+    }
     return account_recorded_end(&front->recorded, pid, status);
 }
 
 static void start(struct frontend* front, struct account_profile* profile, const char* record,
                   char* const command[], int expected_error, int expected_exit) {
-    *front = (struct frontend){.profile = profile, .deny_begin = expected_error == EACCES};
+    *front = (struct frontend){
+        .profile = profile, .deny_begin = expected_error == EACCES, .delay_end = delay_next_end};
+    delay_next_end = 0;
     front->recorded = (struct account_recorded_session){.database = session_database,
                                                         .records = session_records,
                                                         .target = profile,
@@ -155,7 +166,6 @@ static void start(struct frontend* front, struct account_profile* profile, const
 static void allow(struct frontend* front) {
     char byte = 'x';
     transfer(front->allow[1], &byte, 1, 1);
-    close(front->allow[1]);
 }
 
 static void active(int alice, int bob) {
@@ -164,6 +174,31 @@ static void active(int alice, int bob) {
     CHECK(account_logbook_active(book, 1000) == alice);
     CHECK(account_logbook_active(book, 1001) == bob);
     account_logbook_close(book);
+}
+
+static void administration(const char* operation, const char* name, const char* extra, int expected,
+                           int unchanged) {
+    struct account_database* db = NULL;
+    char revision[35];
+    CHECK(account_database_begin(session_database, 0, &db) == 0);
+    strcpy(revision, account_database_revision(db));
+    account_database_end(db);
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        char* arguments[] = {(char*)manager, "--database",    (char*)session_database,
+                             "--records",    session_records, (char*)operation,
+                             (char*)name,    (char*)extra,    NULL};
+        execv(manager, arguments);
+        _exit(99);
+    }
+    int status;
+    CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+          WEXITSTATUS(status) == expected);
+    CHECK(account_database_begin(session_database, 0, &db) == 0);
+    if (unchanged)
+        CHECK(!strcmp(revision, account_database_revision(db)));
+    account_database_end(db);
 }
 
 static void until(struct frontend* front, const char* marker) {
@@ -192,6 +227,7 @@ static void finish(struct frontend* front) {
     close(front->master);
     close(front->slave);
     close(front->notice[0]);
+    close(front->allow[1]);
 }
 
 static void process_failure(struct account_profile* profile, const char* record,
@@ -227,11 +263,13 @@ static void process_failure(struct account_profile* profile, const char* record,
         close(front.master);
     close(front.slave);
     close(front.notice[0]);
+    close(front.allow[1]);
     active(0, 0);
 }
 
 int main(int argc, char** argv) {
-    CHECK(argc == 4 && !getuid() && !geteuid() && !getegid());
+    CHECK(argc == 5 && !getuid() && !geteuid() && !getegid());
+    manager = argv[4];
     CHECK(mkdir(argv[1], 0755) == 0 && chmod(argv[1], 0755) == 0);
     char database[4096], homes[2][4096], private_files[2][4096], records[2][4096];
     path(database, argv[1], "db");
@@ -279,10 +317,15 @@ int main(int argc, char** argv) {
     close(null);
     observed("nonterminal_session_denied_without_exec");
     struct frontend fronts[2];
+    delay_next_end = 1;
     start(&fronts[0], profiles[0], records[0], shell, 0, 0);
     start(&fronts[1], profiles[1], records[1], shell, 0, 0);
     CHECK(fronts[0].session.pid != fronts[1].session.pid);
     CHECK(strcmp(fronts[0].session.terminal, fronts[1].session.terminal) != 0);
+    administration("user-delete", "alice", NULL, 1, 1);
+    administration("group-rename", "shared", "renamed", 1, 1);
+    active(0, 0);
+    observed("installed_identity_before_session_registration_still_blocks_structural_changes");
     allow(&fronts[0]);
     allow(&fronts[1]);
     for (unsigned i = 0; i < 2; i++) {
@@ -297,9 +340,29 @@ int main(int argc, char** argv) {
     }
     active(1, 1);
     observed("two_concurrent_real_shells_private_ptys_durable_records_cross_user_denial");
+    administration("user-delete", "alice", NULL, 1, 1);
+    administration("user-rename", "alice", "renamed", 1, 1);
+    administration("user-home", "alice", "/home/changed", 1, 1);
+    administration("group-rename", "shared", "renamed", 1, 1);
+    administration("group-delete", "shared", NULL, 1, 1);
+    administration("lock", "alice", NULL, 0, 0);
+    administration("unlock", "alice", NULL, 0, 0);
+    administration("member-delete", "shared", "alice", 0, 0);
+    administration("member-add", "shared", "alice", 0, 0);
+    observed(
+        "live_identity_changes_denied_without_publication_policy_revocation_remains_available");
     for (unsigned i = 0; i < 2; i++) {
         char exit_command[] = "exit 0\n";
         transfer(fronts[i].master, exit_command, strlen(exit_command), 1);
+        if (!i) {
+            char byte;
+            transfer(fronts[i].notice[0], &byte, 1, 0);
+            CHECK(byte == 'x' && account_process_busy(1000, (gid_t)-1) == 0);
+            active(1, 1);
+            administration("user-delete", "alice", NULL, 1, 1);
+            allow(&fronts[i]);
+            observed("live_supervisor_lease_blocks_removal_after_child_exit_before_logout_record");
+        }
         finish(&fronts[i]);
         char created[4096];
         path(created, homes[i], "session-created");
@@ -309,6 +372,16 @@ int main(int argc, char** argv) {
     }
     active(0, 0);
     observed("normal_logout_durable_record_private_terminal_and_supervisor_cleanup");
+    administration("user-home", "alice", homes[0], 0, 0);
+    administration("group-rename", "shared", "sharing", 0, 0);
+    administration("group-rename", "sharing", "shared", 0, 0);
+    for (unsigned i = 0; i < 2; i++) {
+        account_profile_free(profiles[i]);
+        profiles[i] = NULL;
+        CHECK(account_auth_password(database, i ? "bob" : "alice", secret, 0, &profiles[i]) ==
+              ACCOUNT_AUTH_ACCEPTED);
+    }
+    observed("structural_updates_resume_after_logout_and_require_fresh_authenticated_generation");
     char denied_record[4096];
     path(denied_record, argv[1], "denied-record");
     char* denied_command[] = {argv[2], "sh", "-c", "echo FORBIDDEN_SESSION_EXEC", NULL};

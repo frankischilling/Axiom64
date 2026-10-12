@@ -3,6 +3,7 @@
 #include "fs/xattr.hpp"
 #include "fs/file_lock.hpp"
 #include "fs/record_lock.hpp"
+#include "fs/proc.hpp"
 #include "drivers/platform/devices.hpp"
 #include "ipc/ipc.hpp"
 #include "net/packet.hpp"
@@ -258,6 +259,8 @@ int node_access(Node* node, unsigned mask, bool real) {
     node = file_node(node);
     if (!node)
         return -2;
+    if (node->mount->ops->refresh)
+        node->mount->ops->refresh(node);
     const Credentials boot{};
     return credential_access(current ? current->credentials : boot, node->uid, node->gid,
                              node->mode, mask, real);
@@ -529,6 +532,12 @@ int64_t node_read(Node* node, uint64_t offset, void* buffer, size_t length) {
     return node->mount->ops->read(node, offset, buffer, length);
 }
 
+int64_t description_read(Handle* handle, uint64_t offset, void* buffer, size_t length) {
+    auto operation = handle->node->mount->ops->read_description;
+    return operation ? operation(handle, offset, buffer, length)
+                     : node_read(handle->node, offset, buffer, length);
+}
+
 int node_readdir(Node* node, uint64_t cookie, DirectoryEntry& entry) {
     return node->mount->ops->readdir(node, cookie, entry);
 }
@@ -659,7 +668,8 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
         return 0;
     }
     bool ram = type && !strcmp(type, "ramfs"), disk = type && !strcmp(type, "ext2");
-    if (!ram && !disk)
+    bool proc = type && !strcmp(type, "proc");
+    if (!ram && !disk && !proc)
         return -19;
     Node* device = nullptr;
     if (disk) {
@@ -678,14 +688,18 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
                      nullptr,
                      point,
                      point->mount,
-                     ram ? &ramfs_ops : &ext2_ops,
+                     ram    ? &ramfs_ops
+                     : proc ? &procfs_ops
+                            : &ext2_ops,
                      nullptr,
                      false,
                      bool(flags & 1)};
-            if (ram) {
-                mount.root = ramfs_root(&mount, 0755);
-                if (!mount.root)
+            if (ram || proc) {
+                mount.root = ram ? ramfs_root(&mount, 0755) : procfs_root(&mount);
+                if (!mount.root) {
+                    mount = {};
                     return -28;
+                }
             } else {
                 error = ext2_mount(&mount, device, check_dirty);
                 if (error) {
@@ -694,9 +708,9 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
                 }
             }
             mount.active = true;
-            mount.nosuid = flags & 2;
-            mount.nodev = flags & 4;
-            mount.noexec = flags & 8;
+            mount.nosuid = proc || (flags & 2);
+            mount.nodev = proc || (flags & 4);
+            mount.noexec = proc || (flags & 8);
             return 0;
         }
     return -28;
@@ -869,6 +883,8 @@ void close_handle(Handle* h) {
         return;
     file_lock_release(h);
     record_lock_release(*h);
+    if (h->node && h->node->mount->ops->close_description)
+        h->node->mount->ops->close_description(h);
     device_close(h);
     if (h->socket)
         socket_close(h->socket);
@@ -949,7 +965,7 @@ int64_t read_handle(Handle* h, void* buf, size_t len) {
         return -21;
     if ((n->mode & 0170000) == character || (n->mode & 0170000) == block_device)
         return device_read(h, buf, len);
-    int64_t count = node_read(n, h->offset, buf, len);
+    int64_t count = description_read(h, h->offset, buf, len);
     if (count > 0)
         h->offset += count;
     return count;

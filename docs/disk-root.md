@@ -37,7 +37,7 @@ For a generated recovery boot image, pass `--root-recovery` with `--root-device`
 
 The disk must contain executable regular files at `/sbin/init`, `/bin/busybox`, and `/lib/ld-musl-x86_64.so.1`, plus directories at `/dev`, `/proc`, `/sys`, `/tmp`, and `/run`. Required paths are checked through the disk filesystem. The ELF loader and dynamic linker use the selected root. Relative paths, cwd, mount ownership, and `stat.st_dev` follow that root too.
 
-The kernel mounts independent RAM volumes on those five directories. Devices, synthetic process metadata, framebuffer metadata, sockets, and scratch files can therefore work with a read-only root. `/tmp` has mode `01777`. Ordinary files elsewhere use ext2; `/tmp` and `/run` do not persist. These RAM mount points are not complete Linux procfs, sysfs, or devtmpfs implementations.
+The kernel mounts independent RAM volumes on `/dev`, `/sys`, `/tmp` and `/run`, and a process filesystem on `/proc`. Devices, process status, framebuffer metadata, sockets and scratch files can therefore work with a read-only root. `/tmp` has mode `01777`. Ordinary files elsewhere use ext2; `/tmp` and `/run` do not persist. Procfs currently supplies process/thread enumeration, caller-relative self links and actual identity/group/state status; wider procfs, sysfs and devtmpfs interfaces remain required.
 
 ## Shutdown and errors
 

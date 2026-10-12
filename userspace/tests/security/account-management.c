@@ -45,7 +45,17 @@ static void command(char* const* arguments, int expected, int password, int ordi
         close(descriptors[0]);
         if (ordinary)
             CHECK(setgroups(0, NULL) == 0 && setgid(1000) == 0 && setuid(1000) == 0);
-        execv("/bin/accountctl", arguments);
+        size_t count = 0;
+        while (arguments[count])
+            count++;
+        CHECK(count < 32);
+        char* registered[36];
+        registered[0] = arguments[0];
+        registered[1] = "--records";
+        registered[2] = "/run/accounts/records";
+        for (size_t i = 1; i <= count; i++)
+            registered[i + 2] = arguments[i];
+        execv("/bin/accountctl", registered);
         _exit(99);
     }
     close(descriptors[0]);

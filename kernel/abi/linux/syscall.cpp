@@ -15,6 +15,7 @@
 #include "abi/linux/credentials.hpp"
 #include "abi/linux/xattr.hpp"
 #include "fs/record_lock.hpp"
+#include "fs/proc.hpp"
 #include "fs/descriptor.hpp"
 
 namespace ax {
@@ -171,6 +172,8 @@ static int64_t stat_node(Node* n, uint64_t dst) {
         return -2;
     n = file_node(n);
     LinuxStat s{};
+    if (n->mount->ops->refresh)
+        n->mount->ops->refresh(n);
     s.dev = n->mount->id;
     s.ino = n->inode;
     s.nlink = n->links;
@@ -233,6 +236,8 @@ static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd,
         if (h->node && h->node->device == Device::framebuffer)
             return framebuffer_map(current->memory->space, addr, len, prot, off);
         if (!h->node || (h->node->mode & 0170000) != regular_file)
+            return -19;
+        if (h->node->mount->ops == &procfs_ops)
             return -19;
         if ((h->flags & 3) == 1)
             return -13;

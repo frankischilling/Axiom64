@@ -17,7 +17,7 @@ from build_musl import compiler_args, loader
 from fetch import LOCK, ROOT
 
 MODULES = ('store', 'database', 'record', 'password', 'home', 'auth', 'secret', 'session',
-           'protected', 'login_record', 'logbook', 'recorded', 'update')
+           'protected', 'login_record', 'logbook', 'recorded', 'update', 'busy', 'guard')
 INPUTS = [*SOURCES, *(f'userspace/accounts/{name}.{suffix}' for name in MODULES for suffix in ('c', 'h')),
           'userspace/accounts/access.c', 'userspace/tests/security/account-access.c',
           'userspace/tests/security/account-access-observe.c', 'scripts/account_access_test.py',
@@ -142,6 +142,7 @@ def main():
                     assert digest(destination) == digest(binary)
                 command = invocation(program, library, provider, linkage) + [str(data),
                     str(native_case / access.name), str(busybox), str(native_case / observer.name)]
+                command = ['unshare', '--mount', '--pid', '--fork', '--mount-proc', *command]
                 row = execute(command, case / 'native.log')
                 row.update(provider=provider, linkage=linkage, inputs=inputs)
                 row['native_exports'] = retain_native(case, native_case)

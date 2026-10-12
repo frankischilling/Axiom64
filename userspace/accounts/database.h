@@ -39,6 +39,8 @@ const char* account_database_revision(const struct account_database*);
 const struct account_user* account_database_user(const struct account_database*, const char*);
 
 const struct account_user* account_database_uid(const struct account_database*, uid_t);
+// Enumeration follows the current transaction's owned record order.
+const struct account_user* account_database_user_at(const struct account_database*, size_t);
 
 const struct account_group* account_database_group(const struct account_database*, const char*);
 

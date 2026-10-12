@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #include "update.h"
 #include "database.h"
+#include "guard.h"
 #include "home.h"
 #include "logbook.h"
 #include "password.h"
@@ -117,8 +118,12 @@ int account_bootstrap(const char* database, const char* records, const char* nam
     if (!error && account_logbook_open(records, 1, &book) < 0)
         error = errno;
     int intended = 0, created = 0;
+    if (!error && (account_guard_new_ids(book, 1000, 1000) < 0 ||
+                   account_guard_new_ids(book, (uid_t)-1, 27) < 0))
+        error = errno;
     if (!error) {
-        if (account_logbook_audit(book, ACCOUNT_LOGIN_ADMIN, "root", 0, name, "", EINPROGRESS) < 0)
+        if (account_logbook_audit(book, ACCOUNT_LOGIN_BOOTSTRAP, "root", 0, name, "", EINPROGRESS) <
+            0)
             error = errno;
         else
             intended = 1;
@@ -129,7 +134,8 @@ int account_bootstrap(const char* database, const char* records, const char* nam
     if (error && created && !*published && account_home_rollback(home, 1000, 1000) < 0)
         error = errno;
     if (intended &&
-        account_logbook_audit(book, ACCOUNT_LOGIN_ADMIN, "root", 0, name, "", error) < 0 && !error)
+        account_logbook_audit(book, ACCOUNT_LOGIN_BOOTSTRAP, "root", 0, name, "", error) < 0 &&
+        !error)
         error = errno;
     account_logbook_close(book);
     account_database_end(db);

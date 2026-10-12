@@ -13,9 +13,13 @@ static int failed(int error) {
 }
 
 const char* account_login_kind_name(enum account_login_kind kind) {
-    static const char* names[] = {"",     "login",    "logout", "denied", "su",
-                                  "sudo", "password", "admin",  "boot",   "recovered"};
-    return kind >= ACCOUNT_LOGIN_START && kind <= ACCOUNT_LOGIN_RECOVERED ? names[kind] : NULL;
+    static const char* names[] = {
+        "",          "login",        "logout",       "denied",     "su",
+        "sudo",      "password",     "admin",        "boot",       "recovered",
+        "user-add",  "user-delete",  "user-rename",  "user-home",  "user-shell",
+        "group-add", "group-delete", "group-rename", "member-add", "member-delete",
+        "lock",      "unlock",       "bootstrap"};
+    return kind >= ACCOUNT_LOGIN_START && kind <= ACCOUNT_LOGIN_BOOTSTRAP ? names[kind] : NULL;
 }
 
 int account_login_terminal(const char* input, char output[32]) {

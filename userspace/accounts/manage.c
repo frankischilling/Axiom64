@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
 #include "database.h"
+#include "guard.h"
 #include "home.h"
 #include "password.h"
 #include <errno.h>
@@ -11,7 +12,7 @@
 #include <unistd.h>
 
 static void usage(void) {
-    fputs("usage: accountctl [--database PATH] COMMAND ARGUMENTS\n"
+    fputs("usage: accountctl [--database PATH] [--records PATH] COMMAND ARGUMENTS\n"
           "  bootstrap NAME HOME SHELL --password-fd FD\n"
           "  group-add NAME GID | group-delete NAME | group-rename NAME NEW\n"
           "  user-add NAME UID GROUP HOME SHELL | user-delete NAME\n"
@@ -189,16 +190,74 @@ static int operation(struct account_database* db, int argc, char** argv, int* cr
     return failed(EINVAL);
 }
 
+static enum account_login_kind event(const char* command) {
+    static const struct {
+        const char* name;
+        enum account_login_kind kind;
+    } commands[] = {{"bootstrap", ACCOUNT_LOGIN_BOOTSTRAP},
+                    {"user-add", ACCOUNT_LOGIN_USER_ADD},
+                    {"user-delete", ACCOUNT_LOGIN_USER_DELETE},
+                    {"user-rename", ACCOUNT_LOGIN_USER_RENAME},
+                    {"user-home", ACCOUNT_LOGIN_USER_HOME},
+                    {"user-shell", ACCOUNT_LOGIN_USER_SHELL},
+                    {"group-add", ACCOUNT_LOGIN_GROUP_ADD},
+                    {"group-delete", ACCOUNT_LOGIN_GROUP_DELETE},
+                    {"group-rename", ACCOUNT_LOGIN_GROUP_RENAME},
+                    {"member-add", ACCOUNT_LOGIN_MEMBER_ADD},
+                    {"member-delete", ACCOUNT_LOGIN_MEMBER_DELETE},
+                    {"password", ACCOUNT_LOGIN_PASSWORD},
+                    {"lock", ACCOUNT_LOGIN_LOCK},
+                    {"unlock", ACCOUNT_LOGIN_UNLOCK}};
+
+    for (size_t i = 0; i < sizeof(commands) / sizeof(*commands); i++)
+        if (!strcmp(command, commands[i].name))
+            return commands[i].kind;
+    return 0;
+}
+
+static int guard(struct account_database* db, const struct account_logbook* book, int argc,
+                 char** argv) {
+    const char* command = argv[0];
+    if ((!strcmp(command, "user-delete") && argc == 2) ||
+        ((!strcmp(command, "user-rename") || !strcmp(command, "user-home")) && argc == 3))
+        return account_guard_user(db, book, argv[1]);
+    if ((!strcmp(command, "group-delete") && argc == 2) ||
+        (!strcmp(command, "group-rename") && argc == 3))
+        return account_guard_group(db, book, argv[1]);
+    uint32_t id;
+    if (!strcmp(command, "user-add") && argc == 6) {
+        if (account_id_parse(argv[2], &id) < 0)
+            return -1;
+        return account_guard_new_ids(book, id, (gid_t)-1);
+    }
+    if (!strcmp(command, "group-add") && argc == 3) {
+        if (account_id_parse(argv[2], &id) < 0)
+            return -1;
+        return account_guard_new_ids(book, (uid_t)-1, id);
+    }
+    if (!strcmp(command, "bootstrap") && argc == 6) {
+        if (account_guard_new_ids(book, 1000, 1000) < 0)
+            return -1;
+        return account_guard_new_ids(book, (uid_t)-1, 27);
+    }
+    return 0;
+}
+
 int main(int argc, char** argv) {
     if (getuid() || geteuid() || getegid()) {
         fputs("accountctl: root administration is required\n", stderr);
         return 1;
     }
     const char* path = "/etc/axiom64/accounts";
+    const char* records = "/var/log/axiom64/login";
     int first = 1;
-    if (argc > 3 && !strcmp(argv[1], "--database")) {
-        path = argv[2];
-        first = 3;
+    while (argc > first + 2 &&
+           (!strcmp(argv[first], "--database") || !strcmp(argv[first], "--records"))) {
+        if (!strcmp(argv[first], "--database"))
+            path = argv[first + 1];
+        else
+            records = argv[first + 1];
+        first += 2;
     }
     if (argc <= first) {
         usage();
@@ -224,7 +283,21 @@ int main(int argc, char** argv) {
         return result;
     }
     int create_home = 0, created = 0, published = 0;
-    int error = operation(db, argc - first, argv + first, &create_home) < 0 ? errno : 0;
+    struct account_logbook* book = NULL;
+    enum account_login_kind kind = event(argv[first]);
+    const char* target =
+        argc > first + 1 && account_name_valid(argv[first + 1]) ? argv[first + 1] : NULL;
+    int error = !kind ? EINVAL : account_logbook_open(records, 1, &book) < 0 ? errno : 0;
+    int intended = 0;
+    if (!error) {
+        if (account_logbook_audit(book, kind, "root", 0, target, "", EINPROGRESS) < 0)
+            error = errno;
+        else
+            intended = 1;
+    }
+    if (!error && (guard(db, book, argc - first, argv + first) < 0 ||
+                   operation(db, argc - first, argv + first, &create_home) < 0))
+        error = errno;
     const struct account_user* user =
         create_home ? account_database_user(db, argv[first + 1]) : NULL;
     if (!error && create_home &&
@@ -238,6 +311,9 @@ int main(int argc, char** argv) {
               stderr);
     if (error && published)
         fputs("accountctl: the complete update is visible; durability or cleanup failed\n", stderr);
+    if (intended && account_logbook_audit(book, kind, "root", 0, target, "", error) < 0 && !error)
+        error = errno;
+    account_logbook_close(book);
     account_database_end(db);
     if (error) {
         if (error == EINVAL)

@@ -75,11 +75,11 @@ The first three milestones define the next core sequence. Later milestones descr
 
 ## Implementation workflow
 
-Use descriptive feature branches and substantial PRs with guest tests and documentation. Complete an issue's full checklist in one coherent PR when its requirements are actionable. Use child issues when dependencies require separate implementation, and keep unrelated changes separate. Branch suggestions and acceptance requirements are in [the catalog](feature-catalog.json). Refine dependencies to the actual task so unrelated later work does not block an early milestone.
+Develop each feature as one coherent change with guest tests and documentation. Complete its full checklist when the requirements are actionable. Use child issues when dependencies require separate implementation, and keep unrelated changes separate. Acceptance requirements are in [the catalog](feature-catalog.json). Refine dependencies to the actual task so unrelated later work does not block an early milestone.
 
-Link a PR to the exact tasks it completes. Keep an area issue open until every requirement has evidence. Report an application as bundled separately from demonstrated. Preserve the full firmware suite; add disk reboot, controlled network peer, threading, audio, and real hardware evidence when the corresponding feature is claimed. Do not substitute host operations for the guest behavior being tested.
+Record the exact requirements each change completes. Keep an area issue open until every requirement has evidence. Report an application as bundled separately from demonstrated. Preserve the full firmware suite; add disk reboot, controlled network peer, threading, audio, and real hardware evidence when the corresponding feature is claimed. Host checks must observe the guest's actual behavior.
 
-Start from current `main` after checking remote updates, open PRs and CI. Preserve unrelated local changes and use an isolated worktree when needed. Keep private answers under `.local/`; do not copy the questionnaire or private inputs into commits or source bundles.
+Start from current `main` after checking remote updates, ongoing work and CI. Preserve unrelated local changes and use an isolated worktree when needed. Keep private answers under `.local/`; do not copy the questionnaire or private inputs into commits or source bundles.
 
 ## Detailed scope
 
@@ -263,7 +263,7 @@ Acceptance evidence:
 
 ### F10. Secure random number generation
 
-[Kernel randomness](random.md) provides a BLAKE2s/ChaCha20 generator, validated RDSEED and opt-in modern/legacy virtio seeding/reseeding, partial credit and capability-gated administration. Persisted seeds rotate without supplying initialization credit; QEMU generation changes rekey initialized state. The complete F10 acceptance covers readiness and errors, deterministic state transitions, seed faults/crashes/recovery, ordinary startup, and real TLS/key-generation/package-signature clients. [PR #162](https://github.com/frankischilling/Axiom64/pull/162) records the implementation, complete hosted matrix and independent published evidence for #10. General filesystem repair, broader credential services and physical-device acceptance remain in their own feature areas.
+[Kernel randomness](random.md) provides a BLAKE2s/ChaCha20 generator, validated RDSEED and opt-in modern/legacy virtio seeding/reseeding, partial credit and capability-gated administration. Persisted seeds rotate without supplying initialization credit; QEMU generation changes rekey initialized state. The complete F10 acceptance covers readiness and errors, deterministic state transitions, seed faults/crashes/recovery, ordinary startup, and real TLS/key-generation/package-signature clients. The [complete hosted workflow](https://github.com/frankischilling/Axiom64/actions/runs/38206186991) and independent published checks establish the scope completed in [#10](https://github.com/frankischilling/Axiom64/issues/10). General filesystem repair, broader credential services and physical-device acceptance remain in their own feature areas.
 
 Required work:
 

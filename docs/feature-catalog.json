@@ -406,7 +406,6 @@
         "F09"
       ],
       "evidence": [
-        "https://github.com/frankischilling/Axiom64/pull/85",
         "https://github.com/frankischilling/Axiom64/actions/runs/37870593084",
         "docs/random.md",
         "kernel/drivers/random/virtio.cpp",
@@ -414,8 +413,7 @@
         "userspace/services/random_seed.c",
         "scripts/random_crypto_test.py",
         "scripts/random_installed_test.py",
-        "https://github.com/frankischilling/Axiom64/pull/162",
-        "https://github.com/frankischilling/Axiom64/actions/runs/38196404397"
+        "https://github.com/frankischilling/Axiom64/actions/runs/38206186991"
       ],
       "branch": "feature/f10-secure-random-number-generation",
       "issue": "https://github.com/frankischilling/Axiom64/issues/10"

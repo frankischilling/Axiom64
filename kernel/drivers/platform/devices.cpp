@@ -5,6 +5,7 @@
 #include "process/signals.hpp"
 #include "process/task.hpp"
 #include "core/random.hpp"
+#include "core/random/primitives.hpp"
 
 namespace ax {
 static limine_framebuffer* framebuffer;
@@ -545,15 +546,59 @@ static int64_t output(uint64_t dst, const void* data, size_t len) {
 int64_t device_ioctl(Handle* h, uint64_t request, uint64_t arg) {
     auto kind = h->node->device;
     if (kind == Device::random) {
-        if (request == 0x80045200) { // RNDGETENTCNT; readiness has a 256-bit threshold.
-            int count = random_ready() ? 256 : 0;
+        if (request == 0x80045200) { // RNDGETENTCNT reports partial initialization credit.
+            int count = random_entropy_count();
             return output(arg, &count, sizeof(count));
         }
-        // Crediting user-provided entropy requires the unfinished credential/seed policy.
-        if (request == 0x40045201 || request == 0x40085203 || request == 0x5204 ||
-            request == 0x5206 || request == 0x5207)
-            return -95;
-        return -25;
+        switch (request) {
+        case 0x40045201: // RNDADDTOENTCNT
+        case 0x40085203: // RNDADDENTROPY
+        case 0x5204:     // RNDZAPENTCNT
+        case 0x5206:     // RNDCLEARPOOL
+        case 0x5207:     // RNDRESEEDCRNG
+            if (!capable(current->credentials, Capability::sys_admin))
+                return -1;
+            break;
+        default:
+            return -22;
+        }
+        // Current Linux keeps initialization monotonic; these historical commands are no-ops.
+        if (request == 0x5204 || request == 0x5206)
+            return 0;
+        if (request == 0x5207)
+            return random_reseed();
+        int count;
+        if (!current->memory->space.copy_in(&count, arg, sizeof(count)))
+            return -14;
+        if (count < 0)
+            return -22;
+        if (request == 0x40085203) {
+            int length;
+            if (!current->memory->space.copy_in(&length, arg + 4, sizeof(length)))
+                return -14;
+            // import_ubuf clamps MAX_RW_COUNT, then the ioctl requires the full signed length.
+            size_t size = min(size_t(int64_t(length)), size_t(0x7ffff000));
+            uint64_t address = arg + 8;
+            if (address >= user_limit || size > user_limit - address)
+                return -14;
+            uint8_t buffer[256];
+            size_t done = 0;
+            while (done < size) {
+                size_t amount = min(sizeof(buffer), size - done);
+                amount = min(amount, page_size - (address + done) % page_size);
+                if (!current->memory->space.copy_in(buffer, address + done, amount)) {
+                    random::erase(buffer, sizeof(buffer));
+                    return -14;
+                }
+                random_mix(buffer, amount); // Failed later copies leave this prefix uncredited.
+                random::erase(buffer, sizeof(buffer));
+                done += amount;
+            }
+            if (int64_t(done) != length)
+                return -14;
+        }
+        random_credit(unsigned(count));
+        return 0;
     }
     if (kind == Device::block) {
         const auto info = block_info(h->node->device_id);

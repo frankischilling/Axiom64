@@ -29,11 +29,23 @@ void Generator::mix(const void* data, size_t size) {
 
 void Generator::seed(const uint8_t trusted[32]) {
     mix(trusted, 32);
-    ready_ = true;
+    credit(256);
+}
+
+void Generator::credit(unsigned bits) {
+    unsigned remaining = 256 - initialization_bits_;
+    initialization_bits_ += bits < remaining ? bits : remaining;
+}
+
+int Generator::reseed() {
+    if (!ready())
+        return -61;
+    rekey();
+    return 0;
 }
 
 int Generator::read(void* data, size_t size, bool insecure) {
-    if (!ready_ && !insecure)
+    if (!ready() && !insecure)
         return -11;
     auto bytes = static_cast<uint8_t*>(data);
     while (size) {
@@ -53,6 +65,10 @@ int Generator::read(void* data, size_t size, bool insecure) {
 }
 
 bool SeedSource::seed(Generator& generator) {
+    return feed(generator, true);
+}
+
+bool SeedSource::feed(Generator& generator, bool trusted) {
     if (!available_ || !word_)
         return false;
     uint64_t words[4]{};
@@ -72,7 +88,10 @@ bool SeedSource::seed(Generator& generator) {
             seed[i] = words[i / 8] >> ((i % 8) * 8);
         previous_ = words[3];
         seen_ = true;
-        generator.seed(seed);
+        if (trusted)
+            generator.seed(seed);
+        else
+            generator.mix(seed, sizeof(seed));
         erase(seed, sizeof(seed));
     }
     erase(words, sizeof(words));

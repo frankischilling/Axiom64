@@ -116,6 +116,41 @@ static void generator() {
         "RANDOM_GENERATOR_PASS unready=checked insecure=uncredited rekey=independent pool=checked");
 }
 
+static void credit() {
+    Generator partial, untouched;
+    uint8_t actual[32], expected[32];
+    assert(partial.entropy_count() == 0 && partial.reseed() == -61);
+    assert(partial.read(actual, sizeof(actual), true) == 0 &&
+           untouched.read(expected, sizeof(expected), true) == 0);
+    assert(!memcmp(actual, expected, sizeof(actual))); // Rejected reseeding preserves state.
+    partial.credit(0);
+    assert(!partial.ready() && partial.entropy_count() == 0);
+    partial.credit(1);
+    partial.mix("uncredited", 10);
+    assert(!partial.ready() && partial.entropy_count() == 1 && partial.reseed() == -61);
+    partial.credit(127);
+    assert(partial.entropy_count() == 128 && partial.read(actual, 1) == -11);
+    partial.credit(127);
+    assert(partial.entropy_count() == 255 && partial.read(nullptr, 0) == -11);
+    partial.credit(UINT32_MAX);
+    assert(partial.ready() && partial.entropy_count() == 256);
+    assert(partial.read(actual, sizeof(actual)) == 0);
+    partial.credit(UINT32_MAX);
+    assert(partial.entropy_count() == 256 && partial.reseed() == 0);
+    assert(partial.read(expected, sizeof(expected)) == 0 &&
+           memcmp(actual, expected, sizeof(actual)));
+
+    uint8_t seed[32]{};
+    Generator seeded, reextracted;
+    seeded.seed(seed);
+    reextracted.seed(seed);
+    assert(reextracted.reseed() == 0);
+    assert(seeded.read(actual, sizeof(actual)) == 0 &&
+           reextracted.read(expected, sizeof(expected)) == 0);
+    assert(memcmp(actual, expected, sizeof(actual)));
+    puts("RANDOM_CREDIT_PASS partial=1,128,255 threshold=256 overflow=clamped reseed=checked");
+}
+
 struct Hardware {
     uint64_t words[4] = {0x0123456789abcdef, 0xfedcba9876543210, 0x1701280017022800,
                          0x4158494f4d363431};
@@ -179,6 +214,7 @@ static void sources() {
 int main() {
     primitives();
     generator();
+    credit();
     sources();
     puts("RANDOM_NATIVE_PASS");
 }

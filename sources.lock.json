@@ -3308,5 +3308,17 @@
       "path": "vendor/musl/patches/0001-check-dns-tcp-response-ownership.patch",
       "sha256": "139a1e9c3340bcf1fb60866e1b8090bf8b71d8e662975306a8c50f8d59fef642"
     }
-  ]
+  ],
+  "openssl_upstream": {
+    "version": "3.5.9",
+    "archive": "openssl-3.5.9.tar.gz",
+    "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
+    "sha256": "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a",
+    "license": "Apache-2.0",
+    "license_sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+    "recipe": "scripts/build_openssl.py",
+    "signing_primary_fingerprint": "B146647E45A7B33947AB226B2A2C87D161692D40",
+    "signature_url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz.asc",
+    "signature_sha256": "bdccf2057a7c4ae377b40e832cb8c632ae8b532d4fb64cc7b843066eee748f89"
+  }
 }

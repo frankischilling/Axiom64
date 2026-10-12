@@ -199,6 +199,10 @@ int64_t net_ioctl(Task& task, uint64_t request, uint64_t pointer) {
     case 0x8921:
         memcpy(req.value, &info->mtu, 4);
         break;
+    case 0x8942:
+        memset(req.value, 0,
+               4); // Software queuing is absent; the driver owns bounded TX descriptors.
+        break;
     case 0x8922: {
         uint32_t mtu;
         memcpy(&mtu, req.value, 4);

@@ -5,5 +5,5 @@
 namespace ax {
 extern const FilesystemOps ext2_ops;
 
-int ext2_mount(Mount*, Node* device);
+int ext2_mount(Mount*, Node* device, bool check_dirty = false);
 } // namespace ax

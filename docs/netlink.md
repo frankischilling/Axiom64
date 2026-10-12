@@ -1,4 +1,4 @@
-# IPv4 route and address control over netlink
+# Link inventories and IPv4 control over netlink
 
 Ring 3 programs can inspect, add, and remove the supported IPv4 routes through `AF_NETLINK` with `NETLINK_ROUTE`. Routes retain their Linux protocol and scope, allowing the network configuration adapter to remove an owned on-link route while preserving an unrelated gateway route. This implements the route-control prerequisite tracked by [#67](https://github.com/frankischilling/Axiom64/issues/67). The DHCP service and full routing interface remain in [#66](https://github.com/frankischilling/Axiom64/issues/66) and [#13](https://github.com/frankischilling/Axiom64/issues/13).
 
@@ -6,7 +6,9 @@ Ring 3 programs can inspect, add, and remove the supported IPv4 routes through `
 
 | Operation | Supported contract |
 | --- | --- |
-| `RTM_NEWROUTE` | `NLM_F_REQUEST`, `NLM_F_CREATE`, and `NLM_F_EXCL`; optional `NLM_F_ACK`; IPv4 main-table unicast with an explicit physical interface and canonical destination/prefix |
+| `RTM_GETLINK` | Multipart link inventory for unspecified, IPv4, or packet family; physical interfaces and loopback, with name, flags, MTU, hardware/broadcast address, operational state, and software transmit queue length |
+| `RTM_GETADDR` | Multipart IPv4 address inventory with local/peer address, prefix, label, derived broadcast, and permanent flags |
+| `RTM_NEWROUTE` | `NLM_F_REQUEST`, `NLM_F_CREATE`, and `NLM_F_EXCL`; optional `NLM_F_ACK`; IPv4 main-table unicast with a canonical destination/prefix; direct routes require an explicit physical interface and gateway routes can infer it from a configured subnet |
 | `RTM_DELROUTE` | Matching destination/prefix with optional interface, gateway, priority, protocol, and scope filters; optional acknowledgment |
 | `RTM_GETROUTE` | Multipart dump with `NLM_F_DUMP`; IPv4 or unspecified family, optional protocol/interface filters; main-table unicast records followed by `NLMSG_DONE` and status |
 | `RTM_NEWADDR` | Create/exclusive IPv4 local address, prefix, and derived broadcast in one checked tuple on an explicit physical interface |
@@ -16,7 +18,9 @@ Attributes are checked, aligned, four-byte scalars: `RTA_DST`, `RTA_GATEWAY`, `R
 
 The route table has 32 explicit entries, plus the configured Ethernet subnets and fixed loopback subnet. Connected entries report `RTPROT_KERNEL` and `RT_SCOPE_LINK`; they are derived from interface configuration and cannot be deleted through this interface. New on-link routes require link scope; gateway routes require universe scope. An explicitly indexed direct route can be installed before the Ethernet interface has an IPv4 address, including while physical carrier is absent. It retains its protocol, scope and metric across address assignment and withdrawal, until explicitly deleted. Routed unicast transmission still requires a configured source address and an operational interface. An omitted interface can only be inferred from a configured subnet. A gateway must currently be a nonlocal unicast address on the selected interface's configured subnet. Address messages complement the existing [IPv4 ioctls](ipv4.md#configuration-and-routing); the complete tuple and [ownership/recovery contract](network-configuration.md) avoid intermediate address/netmask changes. The direct-route prerequisite is tracked by [#93](https://github.com/frankischilling/Axiom64/issues/93).
 
-Address requests validate the eight-byte `ifaddrmsg`, universe scope, zero/permanent flags, and aligned `IFA_LOCAL`, `IFA_ADDRESS`, and optional `IFA_BROADCAST` attributes. Local and address must agree; the broadcast must match the supplied prefix. Attribute addresses use network byte order and the interface index uses native byte order. Physical interfaces retain one address each. Validation precedes one backend update; unsupported aliases, address dumps/lifetimes, and notifications remain required.
+Address mutation requests validate the eight-byte `ifaddrmsg`, universe scope, zero/permanent flags, and aligned `IFA_LOCAL`, `IFA_ADDRESS`, and optional `IFA_BROADCAST` attributes. New local and address values must agree; deletion also accepts an exact `IFA_LOCAL` without a peer attribute. The broadcast must match the supplied prefix. Attribute addresses use network byte order and the interface index uses native byte order. Physical interfaces retain one address each. Validation precedes one backend update; unsupported aliases, address lifetimes, and notifications remain required.
+
+Link and address dumps accept complete zero-filter headers. With strict checking disabled, all three supported dump types also accept the legacy family-only `rtgenmsg` request used by BusyBox. Its alignment padding is ignored, as on Linux; padding bytes are not filter fields. Strict checking requires the complete header. Unsupported filters, attributes, and families fail before a reply is published. Inventories contain at most eight physical interfaces and one loopback record, followed by checked multipart completion. The software transmit queue length is zero because output goes directly to bounded driver descriptors; `SIOCGIFTXQLEN` reports that same value.
 
 Create/exclusive rejects an existing destination/prefix with the same priority, including a connected route at priority zero. Existing route ioctls retain their earlier behavior and report `RTPROT_BOOT` in dumps. Delete's zero gateway/priority/interface/protocol and nowhere scope are wildcard filters; callers managing ownership should supply explicit filters. Protocol tags describe routes and do not establish a security boundary between root processes.
 
@@ -30,7 +34,7 @@ There are at most 64 socket descriptions. A socket owns at most 32 reply datagra
 
 Descriptor reads/writes, vectors, and message calls share the [retained I/O path](io.md). A blocked send retains its original description, destination, vectors, and complete payload through descriptor reuse. Dup and fork preserve port identity and queued replies until final close. Receive supports nonblocking, peek, and truncation; a zero-length descriptor read retains the datagram, while a zero-length receive consumes it. A non-peek receive copy fault consumes the selected datagram; a failed peek retains it. `recvmsg` reports kernel sender metadata and zero control length.
 
-Poll and epoll report read availability and capacity for a minimum acknowledgment. Write readiness does not promise space for every larger request or dump. `SO_TYPE`, `SO_DOMAIN`, `SO_PROTOCOL`, `SO_ERROR`, fixed buffer-size queries, `NETLINK_CAP_ACK`, and `NETLINK_GET_STRICT_CHK` are supported. The supported route/address subset always validates requests strictly, including when the strict-check option is disabled. Other options, socket deadlines, multicast, address dumps/lifetimes and link messages, lookup requests without dump flags, replacement, multiple tables, IPv6, policy routing, and general Linux netlink behavior remain required.
+Poll and epoll report read availability and capacity for a minimum acknowledgment. Write readiness does not promise space for every larger request or dump. `SO_TYPE`, `SO_DOMAIN`, `SO_PROTOCOL`, `SO_ERROR`, fixed buffer-size queries, `NETLINK_CAP_ACK`, and `NETLINK_GET_STRICT_CHK` are supported. Route/address mutations retain complete validation independently of the strict dump option. Other options, socket deadlines, multicast, address lifetimes, link mutations over netlink, lookup requests without dump flags, replacement, multiple tables, IPv6, policy routing, and general Linux netlink behavior remain required.
 
 ## Ring 3 configuration adapter
 
@@ -44,12 +48,25 @@ Poll and epoll report read availability and capacity for a minimum acknowledgmen
 make test-netlink-codec
 make test-netlink
 make test-address-codec
+make test-netlink-inventory-codec
+make test-netlink-inventory
+sudo make test-netlink-inventory-native
 make test-configuration
 make build/netlink-native
 sudo python3 scripts/netlink_native.py
 ```
 
 The sanitizer test uses independent route-message fixtures and 20000 bounded mutations of valid route/dump requests. The guest matrix runs four boots: BIOS/UEFI and modern/legacy virtio, with virtio-net and e1000 together. Both carriers start down. Before either address is assigned, real route requests install independent direct routes, reject exclusive duplicates and mismatched deletion filters, and preserve exact dump metadata. Atomic address assignment and withdrawal retain those routes, which can then be deleted. Unconfigured gateways, omitted-interface inference and UDP unicast without a source remain rejected. Actual guest carrier flags gate these checks; QMP restores the links only after they pass. Each boot then retains the existing protocol/scope ownership, dump, legacy alias, unsupported-message, 32-route, 64-socket, packet-count and reserved-byte pressure, vector, copy-fault, epoll, fork/dup, and blocked-writer checks.
+
+The separate inventory codec checks all nine records, strict/legacy requests,
+caller-buffer canaries, 15 valid forms, and 16000 bounded mutations. The actual
+BusyBox `ip` sequence lists links, raises an interface, assigns and lists an
+address, infers a default gateway route, lists and removes it, then removes
+the address. A separate raw client compares every inventory with ioctl
+observations before configuration, after configuration, and after withdrawal.
+Static/dynamic musl, BIOS/UEFI, and modern/legacy virtio produce eight guest
+cases, with 30 raw dumps per case. Three native libc profiles run the same
+BusyBox sequence in isolated Linux network namespaces.
 
 Each boot exchanges six routed UDP packets with two independent Ethernet peers. The peers verify checksums, ports, payload, IP destination/source, and ARP next hop for default, on-link, and preserved unowned gateway routes. Firmware traffic is separated by the Ring 3 readiness marker. Evidence is in `build/netlink-*.log` and `build/netlink-results.json`.
 

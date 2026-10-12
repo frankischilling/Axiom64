@@ -62,6 +62,13 @@ int main() {
     check(evaluate(fixture) == 0 && changes == 2 && !configurations[1].address &&
               configurations[1].mask == 0xffffff00 && !configurations[1].broadcast,
           "exact delete restores the disabled interface's default mask in one call");
+    configurations[1] = {0x0a170128, 0xffffff00, 0x0a1701ff};
+    uint8_t local_only[32];
+    memcpy(local_only, fixture, sizeof(local_only));
+    NetlinkHeader local_header{32, 21, 5, 1, 0};
+    memcpy(local_only, &local_header, sizeof(local_header));
+    check(evaluate(local_only) == 0 && changes == 3 && !configurations[1].address,
+          "Linux local-only deletion removes the exact primary address");
     header.type = 20;
     header.flags = 0x605;
     memcpy(fixture, &header, sizeof(header));

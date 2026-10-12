@@ -57,7 +57,7 @@ static void volatile_mount(const char* name) {
 } // namespace
 
 void boot_root_init(const char* command) {
-    char root[32]{}, type[16]{}, flags[16]{};
+    char root[32]{}, type[16]{}, flags[32]{};
     int selected = option(command, "root=", root, sizeof(root));
     int filesystem = option(command, "rootfstype=", type, sizeof(type));
     int policy = option(command, "rootflags=", flags, sizeof(flags));
@@ -72,10 +72,12 @@ void boot_root_init(const char* command) {
         failure("root-device", -19);
     if (filesystem && strcmp(type, "ext2"))
         failure("rootfstype", -19);
-    if (policy && strcmp(flags, "ro") && strcmp(flags, "rw"))
+    bool checked =
+        policy && (!strcmp(flags, "ro,recovery=check") || !strcmp(flags, "rw,recovery=check"));
+    if (policy && strcmp(flags, "ro") && strcmp(flags, "rw") && !checked)
         failure("rootflags", -22);
-    bool readonly = policy && !strcmp(flags, "ro");
-    int error = vfs_disk_root(unsigned(root[7] - 'a'), readonly);
+    bool readonly = policy && (!strcmp(flags, "ro") || !strcmp(flags, "ro,recovery=check"));
+    int error = vfs_disk_root(unsigned(root[7] - 'a'), readonly, checked);
     if (error)
         failure(root, error);
     required("/sbin/init", regular_file, true);

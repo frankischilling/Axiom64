@@ -16,6 +16,10 @@ static void check(bool condition, const char* reason) {
 }
 
 namespace ax {
+int netlink_inventory_reply(const void*, const NetlinkHeader&, uint32_t, void*, bool, size_t&) {
+    return -95; // Interface inventories have a separate bounded codec fixture.
+}
+
 int netlink_address_change(const void*, const NetlinkHeader&) {
     return -95; // This fixture covers route messages; address validation has its own suite.
 }

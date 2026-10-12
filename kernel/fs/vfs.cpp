@@ -623,10 +623,13 @@ static bool mount_busy(Mount* mount, bool writers_only) {
     return false;
 }
 
-int mount_filesystem(const Path& path, const Path& source, const char* type, uint64_t flags) {
+int mount_filesystem(const Path& path, const Path& source, const char* type, uint64_t flags,
+                     bool check_dirty) {
     if (current && !capable(current->credentials, Capability::sys_admin))
         return -1;
     if (flags & ~uint64_t(1 | 2 | 4 | 8 | 32 | 32768)) // MS_SILENT is used by mount.
+        return -22;
+    if (check_dirty && ((flags & 32) || !type || strcmp(type, "ext2")))
         return -22;
     Node* point = nullptr;
     int error = resolve_path(path, point);
@@ -683,7 +686,7 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
                 if (!mount.root)
                     return -28;
             } else {
-                error = ext2_mount(&mount, device);
+                error = ext2_mount(&mount, device, check_dirty);
                 if (error) {
                     mount = {};
                     return error;
@@ -698,7 +701,7 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
     return -28;
 }
 
-int vfs_disk_root(unsigned device, bool readonly) {
+int vfs_disk_root(unsigned device, bool readonly, bool check_dirty) {
     if (current || !mounts[0].active || mounts[0].ops != &ramfs_ops)
         return -16;
     for (size_t i = 1; i < sizeof(mounts) / sizeof(mounts[0]); i++)
@@ -709,7 +712,7 @@ int vfs_disk_root(unsigned device, bool readonly) {
     source.device_id = device;
     auto& mount = mounts[1];
     mount = {next_mount_id++, nullptr, nullptr, nullptr, &ext2_ops, nullptr, false, readonly};
-    int error = ext2_mount(&mount, &source);
+    int error = ext2_mount(&mount, &source, check_dirty);
     if (error) {
         mount = {};
         return error;

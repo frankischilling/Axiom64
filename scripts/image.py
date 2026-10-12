@@ -14,12 +14,22 @@ parser.add_argument("--trace", action="store_true")
 parser.add_argument("--suite", choices=["full", "abi", "desktop", "storage", "ext2", "threads", "root", "network"], default="full")
 parser.add_argument("--phase", choices=["write", "verify", "readonly", "error", "queue", "invalid", "full", "all", "cond", "io", "pressure"], default="verify")
 parser.add_argument("--output-name", help="ISO filename under build/ for an isolated test run")
+parser.add_argument("--initramfs", type=Path, help="explicit initramfs for an isolated fixture")
 parser.add_argument("--root-device", choices=[f"/dev/vd{letter}" for letter in "abcdefgh"])
 parser.add_argument("--root-readonly", action="store_true")
+parser.add_argument("--root-recovery", action="store_true", help="validate a structurally consistent dirty ext2 root")
 parser.add_argument("--kernel-option", action="append", default=[], help="one additional kernel command-line token")
 args = parser.parse_args()
 if args.root_readonly and not args.root_device:
     parser.error("--root-readonly requires --root-device")
+if args.root_recovery and not args.root_device:
+    parser.error("--root-recovery requires --root-device")
+if args.initramfs and args.root_device:
+    parser.error("--initramfs cannot replace the disk-root bootstrap")
+if args.initramfs:
+    args.initramfs = args.initramfs.resolve()
+    if not args.initramfs.is_file():
+        parser.error("--initramfs must name an existing file")
 if any(not token or any(character.isspace() for character in token) for token in args.kernel_option):
     parser.error("--kernel-option must be a nonempty token without whitespace")
 if args.output_name and (Path(args.output_name).name != args.output_name or
@@ -44,6 +54,8 @@ for filename in ["axiom64.elf", "rootfs.cpio"]:
     source = ROOT / "build" / ("rootfs-desktop.cpio" if filename == "rootfs.cpio" and args.test and desktop_profile else filename)
     if filename == 'rootfs.cpio' and args.test and args.suite == 'network':
         source = ROOT / 'build/rootfs-network.cpio'
+    if filename == 'rootfs.cpio' and args.initramfs:
+        source = args.initramfs
     if filename == "rootfs.cpio" and args.root_device:
         source = ROOT / "build/rootfs-bootstrap.cpio"
     target = staging / "boot" / filename
@@ -65,6 +77,8 @@ if args.test:
         options += " phase=" + args.phase
 if args.root_device:
     options += " root=" + args.root_device + " rootfstype=ext2 rootflags=" + ("ro" if args.root_readonly else "rw")
+    if args.root_recovery:
+        options += ",recovery=check"
 for token in args.kernel_option:
     options += " " + token
 config = config.replace("cmdline: init=/sbin/init", "cmdline: init=/sbin/init" + options)

@@ -41,10 +41,38 @@ jobs:
         run: python3 scripts/tests/qemu_acceleration_test.py
       - name: Test init supervision observes complete serial records
         run: python3 scripts/tests/normal_manager_events_test.py -v
+      - name: Test seed supervision observes complete ordinary-console records
+        run: python3 scripts/tests/random_installed_records_test.py -v
+      - name: Test actual init seed records stay framed at every input-echo boundary
+        run: python3 scripts/tests/random_seed_records_producer_test.py -v
+      - name: Test copied fixture executables retain Linux execution permissions
+        run: python3 scripts/tests/random_executable_copy_test.py -v
+      - name: Replay actual RTC firmware writes and reject damaged calendar observations
+        run: python3 scripts/tests/clock_wall_observer_test.py -v
       - name: Test manager runtime hint provenance and explicit invalidation with sanitizers
         run: make test-manager-runtime-native
       - name: Test actual desktop image readiness and bounded uniform-image rejection
         run: python3 scripts/tests/desktop_visual_test.py -v
+      - name: Build all maintained OpenSSL providers from their pinned inputs
+        run: python3 scripts/build_openssl.py --provider all
+      - name: Build secure-random lifecycle and cryptographic prerequisite clients
+        run: |
+          make -j2 build/random-admin-native build/random-admin-static build/random-admin-dynamic
+          make -j2 build/random-seed-native build/random-seed-static build/random-seed-dynamic
+          make -j2 build/random-seed-probe-native build/random-seed-probe-static build/random-seed-probe-dynamic
+          make -j2 build/random-seed-fault-static build/random-seed-fault-dynamic
+          make -j2 build/random-seed-stop-static build/random-seed-stop-dynamic
+          make -j2 build/random-seed-crash-static build/random-seed-crash-dynamic
+          make -j2 build/random-seed-recovery-static build/random-seed-recovery-dynamic
+          make -j2 build/random-snapshot-static build/random-snapshot-dynamic
+          make -j2 build/generation-exec-static build/generation-exec-dynamic
+          make -j2 build/crypto-wait-native build/crypto-wait-static build/crypto-wait-dynamic
+          make -j2 build/clock-wall-native build/clock-wall-static build/clock-wall-dynamic
+          make -j2 build/netlink-inventory-native build/netlink-inventory-static build/netlink-inventory-dynamic
+      - name: Test entropy, generation, calendar and inventory policies with sanitizers
+        run: |
+          make test-random-native test-random-virtio-native test-random-generation-native
+          make test-rtc-codec test-netlink-inventory-codec
       - name: Bundle corresponding sources
         run: make sources
       - name: Build standalone image and both userspace profiles
@@ -108,6 +136,11 @@ jobs:
             --exclude='./downloads/sources' --exclude='./build/axiom64-sources.tar' \
             --exclude='./build/axiom64.iso' --exclude='./build/iso*' \
             --exclude='./build/busybox-*' --exclude='./build/uapi' \
+            --exclude='./build/openssl/source' \
+            --exclude='./build/openssl/*/*/*/build/test' \
+            --exclude='./build/openssl/*/*/*/build/fuzz' \
+            --exclude='./build/openssl/*/*/*/build/*.o' \
+            --exclude='./build/openssl/*/*/*/build/*.a' \
             . "$busybox_dir/busybox" "$busybox_dir/.config" "$busybox_dir/LICENSE" "$busybox_dir/.axiom64-toolchain"
           gzip -1 "$RUNNER_TEMP/ci-inputs.tar"
       - name: Share test inputs with isolated jobs
@@ -148,6 +181,18 @@ jobs:
           - manager-uefi-modern
           - manager-uefi-legacy
           - random
+          - random-devices
+          - random-seeds-native
+          - random-seeds-bios-modern
+          - random-seeds-bios-legacy
+          - random-seeds-uefi-modern
+          - random-seeds-uefi-legacy
+          - random-crypto-native
+          - random-crypto-bios
+          - random-crypto-uefi
+          - random-crypto-prerequisites
+          - random-installed-bios
+          - random-installed-uefi
           - credentials
           - file-capabilities
           - tcp
@@ -197,6 +242,66 @@ jobs:
           if [ -e /dev/kvm ]; then
             sudo chmod a+rw /dev/kvm
           fi
+
+      - name: Compare randomness administration and validate complete entropy-device and memory-restore matrices
+        if: matrix.suite == 'random-devices'
+        run: |
+          mkdir -p build/random-lifecycle
+          sudo -n python3 scripts/random_administration_test.py --native --output build/random-lifecycle/admin-native
+          python3 scripts/random_administration_test.py --output build/random-lifecycle/admin-guest
+          python3 scripts/random_virtio_test.py --output build/random-lifecycle/virtio
+          python3 scripts/random_virtio_test.py --case trusted --linkage static --reseed --timeout 150 --output build/random-lifecycle/virtio-reseed
+          python3 scripts/random_snapshot_test.py --output build/random-lifecycle/snapshot
+          python3 scripts/random_generation_exec_test.py --output build/random-lifecycle/generation-exec
+      - name: Compare persisted seed ownership and actual ext2 process crashes with three native libc profiles
+        if: matrix.suite == 'random-seeds-native'
+        run: |
+          mkdir -p build/random-lifecycle
+          sudo -n python3 scripts/random_seed_native.py --output build/random-lifecycle/seed-native
+          sudo -n unshare --mount --propagation private python3 scripts/random_seed_crash_test.py --native --output build/random-lifecycle/crash-native
+      - name: Verify seed reboot, device errors, full disks, real VM crashes and checked recovery
+        if: startsWith(matrix.suite, 'random-seeds-') && matrix.suite != 'random-seeds-native'
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          configuration=${SUITE#random-seeds-}
+          firmware=${configuration%-*}
+          transport=${configuration##*-}
+          case "$configuration" in bios-modern|bios-legacy|uefi-modern|uefi-legacy) ;; *) exit 1 ;; esac
+          python3 scripts/random_seed_test.py --firmware "$firmware" --transport "$transport" --output build/random-lifecycle/seed
+          python3 scripts/random_seed_fault_test.py --firmware "$firmware" --transport "$transport" --output build/random-lifecycle/fault
+          python3 scripts/random_seed_crash_test.py --firmware "$firmware" --transport "$transport" --output build/random-lifecycle/crash
+          python3 scripts/random_seed_recovery_test.py --firmware "$firmware" --transport "$transport" --output build/random-lifecycle/recovery
+      - name: Compare actual OpenSSL key, signature, certificate and TLS clients with native Linux
+        if: matrix.suite == 'random-crypto-native'
+        run: |
+          python3 scripts/random_crypto_test.py --native --output build/random-lifecycle/crypto-native
+          python3 scripts/random_crypto_wait_test.py --native --output build/random-lifecycle/crypto-wait-native
+      - name: Verify guest TLS, key generation, signatures and actual cryptographic initialization waits
+        if: startsWith(matrix.suite, 'random-crypto-') && (matrix.suite == 'random-crypto-bios' || matrix.suite == 'random-crypto-uefi')
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          firmware=${SUITE#random-crypto-}
+          case "$firmware" in bios|uefi) ;; *) exit 1 ;; esac
+          python3 scripts/random_crypto_test.py --firmware "$firmware" --output build/random-lifecycle/crypto
+          python3 scripts/random_crypto_wait_test.py --firmware "$firmware" --output build/random-lifecycle/crypto-wait
+      - name: Compare and verify real UTC clocks and libc interface inventories needed by crypto clients
+        if: matrix.suite == 'random-crypto-prerequisites'
+        run: |
+          mkdir -p build/random-lifecycle
+          sudo -n python3 scripts/netlink_inventory_test.py --native --output build/random-lifecycle/inventory-native
+          python3 scripts/netlink_inventory_test.py --output build/random-lifecycle/inventory-guest
+          python3 scripts/clock_wall_test.py --native --output build/random-lifecycle/calendar-native
+          python3 scripts/clock_wall_test.py --output build/random-lifecycle/calendar-guest
+      - name: Verify ordinary init seed supervision, installed crypto tools and fresh disk-root rotation
+        if: startsWith(matrix.suite, 'random-installed-')
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          firmware=${SUITE#random-installed-}
+          case "$firmware" in bios|uefi) ;; *) exit 1 ;; esac
+          python3 scripts/random_installed_test.py --firmware "$firmware" --output build/random-lifecycle/installed
 
       - name: Observe complete default TCP lifetimes with all three native linkages
         if: matrix.suite == 'tcp-lifetime-native'
@@ -577,6 +682,14 @@ jobs:
             build/tcp-icmp-*-inputs.json
             build/tcp-icmp-*.txt
             build/tcp-icmp-damaged/**
+      - name: Upload complete entropy, seed, cryptographic and ordinary-init evidence
+        if: always() && startsWith(matrix.suite, 'random-')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-${{ matrix.suite }}-evidence
+          if-no-files-found: error
+          compression-level: 1
+          path: build/random-lifecycle
       - name: Upload actual raw storage and ext2 volume and boot fixtures
         if: always() && matrix.suite == 'storage'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

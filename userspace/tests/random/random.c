@@ -255,18 +255,20 @@ static void ready(int random_fd, int urandom_fd) {
 
 int main(int argc, char** argv) {
     check(argc == 2 && (!strcmp(argv[1], "ready") || !strcmp(argv[1], "ready-reseed") ||
-                        !strcmp(argv[1], "unready")),
+                        !strcmp(argv[1], "unready") || !strcmp(argv[1], "unready-delayed")),
           "fixture mode");
     flags();
     int random_fd = open("/dev/random", O_RDWR | O_NONBLOCK);
     int urandom_fd = open("/dev/urandom", O_RDWR | O_NONBLOCK);
     check(random_fd >= 0 && urandom_fd >= 0, "both real random devices");
-    int count;
+    int pool_info[2] = {0, 0};
     check(ioctl(random_fd, 0x80045200, (void*)1) == -1 && errno == EFAULT,
           "ioctl user-copy failure");
-    check(ioctl(random_fd, 0x40085203, &count) == -1 && errno == EOPNOTSUPP,
-          "unimplemented credited-seed administration stays explicit");
-    if (strcmp(argv[1], "unready"))
+    check(ioctl(random_fd, 0x40085203, pool_info) == 0,
+          "empty uncredited input preserves readiness");
+    if (!strcmp(argv[1], "unready-delayed"))
+        pause_ms(3000);
+    if (strcmp(argv[1], "unready") && strcmp(argv[1], "unready-delayed"))
         ready(random_fd, urandom_fd);
     else
         unready(random_fd, urandom_fd);

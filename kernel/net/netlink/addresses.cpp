@@ -59,7 +59,10 @@ int netlink_address_change(const void* data, const NetlinkHeader& message) {
             desired.broadcast = value;
         at += 8;
     }
-    if ((seen & 6) != 6 || local != peer || !ip4::unicast(local) || (local >> 24) == 127)
+    if (message.type == 21 && (seen & 6) == 4)
+        peer = local; // Linux address deletion permits IFA_LOCAL without a peer attribute.
+    if (!(seen & 4) || (!(seen & 2) && message.type != 21) || local != peer ||
+        !ip4::unicast(local) || (local >> 24) == 127)
         return -22;
     uint32_t bits = ~desired.mask, host = local & bits;
     if (bits >= 2 && (!host || host == bits))

@@ -11,7 +11,58 @@ FORMAT_SOURCES = $(foreach pattern,*.cpp *.hpp,$(call rwildcard,kernel/,$(patter
 
 .PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-network test-ipv4 test-udp test-netlink test-netlink-codec test-address-codec test-configuration test-dhcp-codec test-dhcp-modules test-dhcp-transport test-profiles test-resolver test-resolver-native test-clock-codec test-clock test-file-locks test-file-locks-native test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
 all: image
+.PHONY: test-rtc-codec test-clock-wall test-clock-wall-native
+.PHONY: test-random-crypto test-random-crypto-native test-random-crypto-wait test-random-crypto-wait-native
+.PHONY: openssl test-random-installed
+openssl:
+	$(PYTHON) scripts/build_openssl.py --provider all
+test-random-installed:
+	$(PYTHON) scripts/random_installed_test.py
+test-random-crypto:
+	$(PYTHON) scripts/random_crypto_test.py
+test-random-crypto-native:
+	$(PYTHON) scripts/random_crypto_test.py --native
+test-random-crypto-wait:
+	$(PYTHON) scripts/random_crypto_wait_test.py
+test-random-crypto-wait-native:
+	$(PYTHON) scripts/random_crypto_wait_test.py --native
+build/crypto-wait-native: userspace/tests/random/crypto_wait.c
+	@mkdir -p build
+	$(CC) -std=gnu11 -O2 -Wall -Wextra -Werror $< -o $@
+build/crypto-wait-static: userspace/tests/random/crypto_wait.c
+	@mkdir -p build
+	$(MUSL_CC) -static -std=gnu11 -O2 -Wall -Wextra -Werror $< -o $@
+build/crypto-wait-dynamic: userspace/tests/random/crypto_wait.c
+	@mkdir -p build
+	$(MUSL_CC) -std=gnu11 -O2 -Wall -Wextra -Werror $< -o $@
+build/rtc-codec: kernel/tests/time/rtc.cpp kernel/firmware/rtc.cpp kernel/include/firmware/rtc.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/time/rtc.cpp kernel/firmware/rtc.cpp -o $@
+test-rtc-codec: build/rtc-codec
+	ASAN_OPTIONS=detect_leaks=1 ./build/rtc-codec
+test-clock-wall:
+	$(PYTHON) scripts/clock_wall_test.py
+test-clock-wall-native:
+	$(PYTHON) scripts/clock_wall_test.py --native
+build/clock-wall-native: userspace/tests/time/wall.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/clock-wall-static: userspace/tests/time/wall.c scripts/compile_uapi_client.py scripts/build_openssl.py ports.lock.json
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -static $<
+build/clock-wall-dynamic: userspace/tests/time/wall.c scripts/compile_uapi_client.py scripts/build_openssl.py ports.lock.json
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $<
 .PHONY: test-random-native test-random
+.PHONY: test-random-generation-exec
+test-random-generation-exec:
+	$(PYTHON) scripts/random_generation_exec_test.py
+build/generation-exec-static: userspace/tests/random/generation_exec.c
+	@mkdir -p build
+	$(MUSL_CC) -std=gnu11 -O2 -Wall -Wextra -Werror -static $< -o $@
+build/generation-exec-dynamic: userspace/tests/random/generation_exec.c
+	@mkdir -p build
+	$(MUSL_CC) -std=gnu11 -O2 -Wall -Wextra -Werror $< -o $@
 .PHONY: test-credentials-policy test-credentials-native test-credentials
 build/credentials-policy: kernel/tests/security/credentials.cpp kernel/security/credentials.cpp kernel/include/security/credentials.hpp
 	@mkdir -p build
@@ -65,12 +116,43 @@ test-credentials-native: build/credentials-native build/credentials-static build
 test-credentials:
 	$(PYTHON) scripts/credentials_test.py
 RANDOM_CORE = kernel/core/random/primitives.cpp kernel/core/random/engine.cpp
+.PHONY: test-netlink-inventory test-netlink-inventory-native test-netlink-inventory-codec
+build/netlink-inventory-codec: kernel/tests/net/inventory.cpp kernel/net/netlink/inventory.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/inventory.cpp kernel/net/netlink/inventory.cpp -o $@
+test-netlink-inventory-codec: build/netlink-inventory-codec
+	ASAN_OPTIONS=detect_leaks=1 ./build/netlink-inventory-codec
+build/netlink-inventory-native: userspace/tests/net/inventory.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/netlink-inventory-static: userspace/tests/net/inventory.c scripts/compile_uapi_client.py scripts/build_openssl.py ports.lock.json
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -static $<
+build/netlink-inventory-dynamic: userspace/tests/net/inventory.c scripts/compile_uapi_client.py scripts/build_openssl.py ports.lock.json
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $<
+test-netlink-inventory:
+	$(PYTHON) scripts/netlink_inventory_test.py
+test-netlink-inventory-native:
+	$(PYTHON) scripts/netlink_inventory_test.py --native
 RANDOM_HEADERS = kernel/include/core/random/primitives.hpp kernel/include/core/random/engine.hpp
 build/random-native: kernel/tests/random/generator.cpp $(RANDOM_CORE) $(RANDOM_HEADERS)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/random/generator.cpp $(RANDOM_CORE) -o $@
 test-random-native: build/random-native
 	ASAN_OPTIONS=detect_leaks=1 ./build/random-native
+.PHONY: test-random-virtio-native
+build/random-virtio-native: kernel/tests/random/virtio_sample.cpp kernel/drivers/random/sample.cpp kernel/include/drivers/random/sample.hpp $(RANDOM_CORE) $(RANDOM_HEADERS)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/random/virtio_sample.cpp kernel/drivers/random/sample.cpp $(RANDOM_CORE) -o $@
+test-random-virtio-native: build/random-virtio-native
+	ASAN_OPTIONS=detect_leaks=1 ./build/random-virtio-native
+.PHONY: test-random-generation-native
+build/random-generation-native: kernel/tests/random/generation.cpp kernel/firmware/generation.cpp kernel/include/firmware/generation.hpp $(RANDOM_CORE) $(RANDOM_HEADERS)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/random/generation.cpp kernel/firmware/generation.cpp $(RANDOM_CORE) -o $@
+test-random-generation-native: build/random-generation-native
+	ASAN_OPTIONS=detect_leaks=1 ./build/random-generation-native
 test-random:
 	$(PYTHON) scripts/random_test.py
 build/random-static: userspace/tests/random/random.c
@@ -79,6 +161,83 @@ build/random-static: userspace/tests/random/random.c
 build/random-dynamic: userspace/tests/random/random.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DRANDOM_LINKAGE='"dynamic"' $< -o $@
+build/random-snapshot-static: userspace/tests/random/snapshot.c
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+build/random-snapshot-dynamic: userspace/tests/random/snapshot.c
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DRANDOM_LINKAGE='"dynamic"' $< -o $@
+build/random-admin-native: userspace/tests/random/administration.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/random-admin-static: userspace/tests/random/administration.c
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -DRANDOM_LINKAGE='"static"' $< -o $@
+build/random-admin-dynamic: userspace/tests/random/administration.c
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DRANDOM_LINKAGE='"dynamic"' $< -o $@
+build/random-seed-native: userspace/services/random_seed.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+build/random-seed-static: userspace/services/random_seed.c
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+build/random-seed-dynamic: userspace/services/random_seed.c
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/random-seed-probe-native: userspace/tests/random/seed_lifecycle.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+build/random-seed-probe-static: userspace/tests/random/seed_lifecycle.c
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -DRANDOM_LINKAGE='"static"' $< -o $@
+build/random-seed-probe-dynamic: userspace/tests/random/seed_lifecycle.c
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DRANDOM_LINKAGE='"dynamic"' $< -o $@
+build/random-seed-fault-static: userspace/tests/random/seed_fault.c
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+build/random-seed-fault-dynamic: userspace/tests/random/seed_fault.c
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DRANDOM_LINKAGE='"dynamic"' $< -o $@
+build/random-seed-stop-static: userspace/services/random_seed.c userspace/tests/random/seed_crash_stop.c
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $(filter %.c,$^) -Wl,--wrap=openat,--wrap=write,--wrap=fsync,--wrap=linkat,--wrap=renameat,--wrap=unlinkat -o $@
+build/random-seed-stop-dynamic: userspace/services/random_seed.c userspace/tests/random/seed_crash_stop.c
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror $(filter %.c,$^) -Wl,--wrap=openat,--wrap=write,--wrap=fsync,--wrap=linkat,--wrap=renameat,--wrap=unlinkat -o $@
+build/random-seed-crash-static: userspace/tests/random/seed_crash.c
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+build/random-seed-crash-dynamic: userspace/tests/random/seed_crash.c
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DRANDOM_LINKAGE='"dynamic"' $< -o $@
+build/random-seed-recovery-static: userspace/tests/random/seed_recovery.c
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+build/random-seed-recovery-dynamic: userspace/tests/random/seed_recovery.c
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DRANDOM_LINKAGE='"dynamic"' $< -o $@
+.PHONY: test-random-seed test-random-seed-native test-random-seed-fault test-random-seed-crash test-random-seed-crash-native test-random-seed-recovery
+test-random-seed:
+	$(PYTHON) scripts/random_seed_test.py
+test-random-seed-native:
+	$(PYTHON) scripts/random_seed_native.py
+test-random-seed-fault:
+	$(PYTHON) scripts/random_seed_fault_test.py
+test-random-seed-crash:
+	$(PYTHON) scripts/random_seed_crash_test.py
+test-random-seed-crash-native:
+	$(PYTHON) scripts/random_seed_crash_test.py --native
+test-random-seed-recovery:
+	$(PYTHON) scripts/random_seed_recovery_test.py
+.PHONY: test-random-administration test-random-administration-native test-random-virtio
+test-random-administration:
+	$(PYTHON) scripts/random_administration_test.py
+test-random-administration-native:
+	$(PYTHON) scripts/random_administration_test.py --native
+test-random-virtio:
+	$(PYTHON) scripts/random_virtio_test.py
 .PHONY: test-ownership test-ownership-native
 .PHONY: test-normal-manager
 .PHONY: test-dns test-dns-native test-dns-tcp test-dns-tcp-native
@@ -143,7 +302,7 @@ test-clock:
 build/abi-dynamic: userspace/tests/abi/abi.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DABI_LINKAGE='"dynamic"' $< -o $@
-build/init: userspace/init/main.c
+build/init: userspace/init/main.c userspace/init/seed_records.h
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 build/ipc-tests: userspace/tests/ipc/ipc.c
@@ -335,7 +494,8 @@ build/x11-probe: userspace/tests/desktop/probe.c
 USERSPACE_DATA = $(foreach pattern,*.sh *.conf *.twmrc,$(call rwildcard,userspace/,$(pattern))) $(wildcard userspace/tests/toolchain/*)
 ROOTFS_INPUTS = build/thread-io-static build/thread-io-dynamic build/lifecycle-static build/lifecycle-dynamic build/futex-static build/futex-dynamic build/thread-static build/thread-dynamic build/abi-static build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/net-tests build/ipv4-tests build/udp-tests build/x11-probe build/licenses/.stamp $(USERSPACE_DATA) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/build_busybox.py scripts/fetch.py
 ROOTFS_INPUTS += build/network-manager
-ROOTFS_INPUTS += scripts/build_libcap.py scripts/build_musl.py sources.lock.json
+ROOTFS_INPUTS += build/random-seed-static
+ROOTFS_INPUTS += scripts/build_libcap.py scripts/build_musl.py scripts/build_openssl.py sources.lock.json
 build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox
@@ -558,6 +718,18 @@ clean:
 MUSL_INPUTS = sources.lock.json scripts/build_musl.py scripts/musl_cc.py $(wildcard vendor/musl/patches/*.patch)
 MUSL_PROGRAMS = build/credentials-static build/credentials-dynamic build/random-static build/random-dynamic build/abi-static build/file-lock-static build/file-lock-dynamic build/clock-elapsed-tests build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/net-tests build/ipv4-tests build/udp-tests build/dns-static build/dns-dynamic build/normal-dns-static build/normal-dns-dynamic build/netlink-tests build/network-manager-faults build/network-manager-dynamic-faults build/network-manager build/network-manager-dynamic build/manager-tests build/manager-protocol build/manager-link build/init-supervision build/ownership-tests build/ownership-dynamic build/configuration-tests build/dhcp-codec-tests build/dhcp-state-tests build/dhcp-profile-tests build/profile-privacy-tests build/profile-privacy-dynamic build/dhcp-transport-tests build/resolver-tests build/thread-static build/thread-io-static build/thread-io-dynamic build/thread-dynamic build/futex-static build/futex-dynamic build/lifecycle-static build/lifecycle-dynamic build/x11-probe build/tcp-static build/tcp-dynamic build/tcp-fault-static build/tcp-fault-dynamic build/tcp-lifetime-static build/tcp-lifetime-dynamic build/tcp-challenge-static build/tcp-challenge-dynamic build/tcp-timeout-static build/tcp-timeout-dynamic
 MUSL_PROGRAMS += build/tcp-icmp-static build/tcp-icmp-dynamic
+MUSL_PROGRAMS += build/random-admin-static build/random-admin-dynamic
+MUSL_PROGRAMS += build/crypto-wait-static build/crypto-wait-dynamic
+MUSL_PROGRAMS += build/random-seed-static build/random-seed-dynamic
+MUSL_PROGRAMS += build/random-seed-probe-static build/random-seed-probe-dynamic
+MUSL_PROGRAMS += build/random-seed-fault-static build/random-seed-fault-dynamic
+MUSL_PROGRAMS += build/random-seed-stop-static build/random-seed-stop-dynamic
+MUSL_PROGRAMS += build/random-seed-crash-static build/random-seed-crash-dynamic
+MUSL_PROGRAMS += build/random-seed-recovery-static build/random-seed-recovery-dynamic
+MUSL_PROGRAMS += build/netlink-inventory-static build/netlink-inventory-dynamic
+MUSL_PROGRAMS += build/clock-wall-static build/clock-wall-dynamic
+MUSL_PROGRAMS += build/random-snapshot-static build/random-snapshot-dynamic
+MUSL_PROGRAMS += build/generation-exec-static build/generation-exec-dynamic
 $(MUSL_PROGRAMS): $(MUSL_INPUTS) | musl-toolchain
 build/rootfs.cpio build/rootfs-desktop.cpio: $(MUSL_INPUTS)
 .PHONY: musl-toolchain

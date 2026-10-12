@@ -116,9 +116,11 @@ int main(void) {
     report("sleep-after", before);
     struct timeval wall;
     require(!gettimeofday(&wall, NULL), "gettimeofday");
-    uint64_t mono = clock_ns(),
+    struct timespec realtime;
+    require(!clock_gettime(CLOCK_REALTIME, &realtime), "realtime agreement");
+    uint64_t real = (uint64_t)realtime.tv_sec * 1000000000 + (uint64_t)realtime.tv_nsec,
              wall_ns = (uint64_t)wall.tv_sec * 1000000000 + (uint64_t)wall.tv_usec * 1000;
-    require(mono >= wall_ns && mono - wall_ns <= 20000000, "boot-relative clock agreement");
+    require(real >= wall_ns && real - wall_ns <= 20000000, "wall clock interface agreement");
     int status;
     while (waitpid(child, &status, 0) < 0)
         require(errno == EINTR, "waitpid");

@@ -1111,5 +1111,27 @@
       "origin": "zstd",
       "source_commit": "fc7fd35c7bf99156ae31962877c074f679f45b73"
     }
+  ],
+  "source_builds": [
+    {
+      "name": "openssl",
+      "version": "3.5.9",
+      "provides": [
+        "openssl",
+        "libcrypto.so.3",
+        "libssl.so.3"
+      ],
+      "recipe": "scripts/build_openssl.py",
+      "providers": [
+        "build",
+        "runtime",
+        "native"
+      ],
+      "linkages": [
+        "static",
+        "dynamic"
+      ],
+      "status": "runtime-verified"
+    }
   ]
 }

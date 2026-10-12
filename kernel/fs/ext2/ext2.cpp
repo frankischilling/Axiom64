@@ -1728,7 +1728,7 @@ struct Validation {
     }
 };
 
-static bool layout(Volume& v, const uint8_t* header, const BlockInfo& disk) {
+static bool layout(Volume& v, const uint8_t* header, const BlockInfo& disk, bool check_dirty) {
     if (u16(header + 56) != 0xef53)
         return v.fail(-22);
     v.revision = u32(header + 76);
@@ -1799,8 +1799,9 @@ static bool layout(Volume& v, const uint8_t* header, const BlockInfo& disk) {
             u16(desc + 12) > g.blocks || u16(desc + 14) > g.inodes || u16(desc + 16) > g.inodes)
             return v.fail();
     }
-    v.writable_safe = u16(header + 58) == 1 && !u32(header + 232);
-    if (!v.mount->readonly && !v.writable_safe)
+    unsigned state = u16(header + 58);
+    v.writable_safe = (state == 1 || (check_dirty && state == 0)) && !u32(header + 232);
+    if ((check_dirty || !v.mount->readonly) && !v.writable_safe)
         return v.fail();
     Validation check{v};
     return check.allocate() && check.bitmaps(header) && check.inode_maps() && check.directories();
@@ -1813,7 +1814,7 @@ const FilesystemOps ext2_ops = {lookup,   create,     link,    remove,          
                                 stats,    destroy,    remount, prepare_unmount, getxattr, listxattr,
                                 setxattr, removexattr};
 
-int ext2_mount(Mount* mount, Node* device) {
+int ext2_mount(Mount* mount, Node* device, bool check_dirty) {
     auto info = block_info(device->device_id);
     if (!info)
         return -19;
@@ -1834,7 +1835,7 @@ int ext2_mount(Mount* mount, Node* device) {
     v->claimed = true;
     uint8_t header[1024], inode[inode_bytes];
     result = block_read(v->device, 2, header, 2);
-    if (!result && !layout(*v, header, *info))
+    if (!result && !layout(*v, header, *info, check_dirty))
         result = v->error;
     if (!result && !v->load_inode(2, inode))
         result = v->error;

@@ -1,4 +1,4 @@
-# Clocks and elapsed kernel waits
+# Calendar clocks and elapsed kernel waits
 
 The kernel exposes a boot-relative clock with 10 ms resolution. A free-running
 counter supplies elapsed time; the 100 Hz PIT continues to supply scheduling
@@ -54,19 +54,44 @@ this change does not promise that an overdue callback can run during them.
 The virtio transport's existing two-second reset and 30-second block-request
 deadlines retain their independently calibrated implementation and policy.
 
-`clock_getres(CLOCK_MONOTONIC)` remains 10 ms. The currently accepted
-`clock_gettime` IDs share the boot-relative clock; `CLOCK_REALTIME`,
-`gettimeofday`, and `time` do not supply an RTC-derived calendar date. Complete
-Linux clock-ID semantics, RTC/realtime setting and permissions, ACPI PM timer,
+`clock_getres` reports 10 ms for the accepted IDs and permits a null result
+pointer. `CLOCK_REALTIME`, `CLOCK_REALTIME_COARSE`, `gettimeofday`, and the raw
+Linux `time` syscall use the UTC calendar sampled at boot. Other currently
+accepted IDs retain boot-relative accounting; this does not establish CPU-time
+clock semantics. Absolute `FUTEX_WAIT_BITSET` deadlines with
+`FUTEX_CLOCK_REALTIME` are converted to remaining monotonic time, with expired
+deadlines and expected-word error ordering preserved. Complete
+Linux clock-ID semantics, realtime setting and permissions, ACPI PM timer,
 higher-resolution deadlines, SMP clock handling, power transitions,
 suspend/resume, and synchronization remain in
 [the clocks/timers/power scope](https://github.com/frankischilling/Axiom64/issues/16).
+
+## Boot calendar
+
+The x86 adapter reads the PC RTC through ports `0x70`/`0x71` without changing
+the calendar registers. It requires two identical complete samples, valid
+battery state, a running divider, clear update-in-progress and SET bits, and a
+valid Gregorian date. Reads and retries are bounded. The decoder accepts BCD
+or binary numbers and 12-hour or 24-hour time. Register `0x32` supplies the
+century; zero or `0xff` selects the legacy 1970–2069 window. Explicit centuries
+support 1970–9999, including the non-leap century in 2100. The RTC is assumed to
+contain UTC. Local-time RTCs and alternate century-register locations are not
+configured yet.
+
+The accepted seconds become a calendar offset over the existing elapsed
+counter. An unavailable or invalid RTC is reported and leaves calendar calls
+boot-relative; the kernel cannot infer a valid date from that hardware state.
+There is no NTP synchronization, RTC update, suspend correction, or wall-clock
+setting interface yet.
 
 ## Verification
 
 ```sh
 make test-clock-codec
+make test-rtc-codec
 make test-clock
+make test-clock-wall-native
+make test-clock-wall
 python3 scripts/clock_test.py --firmware bios --transport modern --counter tsc --delay 3
 ```
 
@@ -76,6 +101,31 @@ readings, wrap, and saturation. ACPI fixtures include five valid layouts,
 29 malformed cases, and 16000 bounded mutations. Invalid parsing preserves
 the caller's previous result.
 
+RTC sanitizer checks compare 14880 calendar/encoding cases against native
+UTC conversion, all 24 hour encodings, 100 legacy-century dates, 16000 bounded
+mutations, and six source progress/failure controls. The wall-clock matrix
+uses static/dynamic musl, BIOS/UEFI, current UTC, the Unix epoch, the 2000 leap
+day, dates beyond the 2038 boundary, and the 2100 century. Each of its 20 boots
+checks calendar calls against a host-observed interval and a real 200 ms
+absolute realtime futex wait against monotonic time. Read-only QMP observations
+record the requested RTC before firmware and its actual calendar after the
+client runs. A second hardware reference after firmware supplies the progress
+comparison. QEMU's `clock=rt` starts from a whole-second epoch and advances with
+host monotonic time; the RTC exposes one-second precision. Paired monotonic
+timestamps measure that progress separately from host UTC. Recorded
+`RTC_CHANGE` events retain firmware writes and must remain unchanged after the
+post-firmware reference. The original one-second lower and two-second upper
+tolerances, guest/hardware comparison, real waits and all 20 cells remain
+required. Captured hosted and local observations also run as regressions with
+damaged calendar and event controls.
+OVMF's two-digit 2000–2099 year window rewrites the 1970 fixture
+as 2070 and the 2100 fixture as 2000; those cells require the kernel calendar
+to match that independently observed hardware. BIOS and the native decoder
+exercise the original eras. This is a firmware limitation, and these cases
+do not claim that OVMF preserves a configured date outside its window. Three native libc
+profiles run the same client. The fixture selects QEMU's unscaled `clock=rt`:
+QEMU 8.2.2's custom-date `clock=host` offset overflows for the 2100 case.
+
 The guest matrix contains 24 boots: BIOS/UEFI, modern/legacy virtio, normal HPET,
 HPET disabled for TSC fallback, or an unsupported 32-comparator HPET requiring
 TSC fallback, and zero/three-second backend flush delay. Each
@@ -83,7 +133,7 @@ case starts from a byte-identical copy of one disposable ext2 seed. The host
 retains seven independently timed flushes and compares the guest's mount/fsync
 intervals with those durations. Delayed cases also require the child's absolute futex timeout and
 interval timer to expire, and every case verifies ordinary sleep intervals,
-boot-relative clock agreement, explicit guest success, and the selected
+monotonic/realtime API agreement, explicit guest success, and the selected
 counter. The child deliberately yields after reporting its absolute deadline,
 so entering the wait after storage must observe an already expired timeout.
 The seed must remain unchanged.
@@ -95,3 +145,7 @@ tests remain separate required gates.
 Primary references: [Limine protocol, base revision 3 and RSDP](https://github.com/limine-bootloader/limine-protocol/blob/trunk/PROTOCOL.md),
 [ACPI HPET table layout](https://github.com/torvalds/linux/blob/v6.12/include/acpi/actbl1.h),
 and [QEMU HPET counter implementation](https://github.com/qemu/qemu/blob/v8.2.2/hw/timer/hpet.c).
+The calendar checks follow the [Linux RTC reader](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/drivers/rtc/rtc-mc146818-lib.c),
+[QEMU RTC registers](https://github.com/qemu/qemu/blob/v8.2.2/hw/rtc/mc146818rtc.c),
+and [QEMU date offsets](https://github.com/qemu/qemu/blob/v8.2.2/system/rtc.c).
+The firmware era behavior is in the [EDK II RTC conversion and initialization](https://github.com/tianocore/edk2/blob/edk2-stable202402/PcAtChipsetPkg/PcatRealTimeClockRuntimeDxe/PcRtc.c).

@@ -36,6 +36,13 @@ void attribute(uint8_t* output, size_t& size, unsigned type, uint32_t value) {
 }
 
 int parse(const uint8_t* input, const NetlinkHeader& message, Ipv4Route& value, bool dump) {
+    if (dump && message.length >= sizeof(message) + 1 && message.length <= sizeof(message) + 4) {
+        if (input[sizeof(message)] != 0 && input[sizeof(message)] != 2)
+            return -97;
+        value = {};
+        value.mask = value.protocol = value.scope = 0;
+        return 0;
+    }
     if (message.length < sizeof(message) + sizeof(RouteHeader))
         return -22;
     RouteHeader route;
@@ -92,7 +99,8 @@ int parse(const uint8_t* input, const NetlinkHeader& message, Ipv4Route& value, 
     if (message.type == 24) {
         if (!(message.flags & 0x400) || !(message.flags & 0x200))
             return -95;
-        if (!value.index || !route.type || (value.gateway ? value.scope != 0 : value.scope != 253))
+        if ((!value.index && !value.gateway) || !route.type ||
+            (value.gateway ? value.scope != 0 : value.scope != 253))
             return -22;
         if (!value.protocol)
             value.protocol = 3;
@@ -136,10 +144,11 @@ size_t dump(const NetlinkHeader& request, uint32_t port, const Ipv4Route& filter
 } // namespace
 
 size_t routing_capacity(const NetlinkHeader& request) {
-    return request.type == 26 ? netlink_max_reply : aligned(request.length) + 20;
+    return routing_dump(request.type) ? netlink_max_reply : aligned(request.length) + 20;
 }
 
-size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply, bool privileged) {
+size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply, bool privileged,
+                     bool strict) {
     auto input = static_cast<const uint8_t*>(packet);
     auto output = static_cast<uint8_t*>(reply);
     NetlinkHeader request;
@@ -150,8 +159,13 @@ size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply
     bool is_dump = request.type == 26;
     unsigned allowed = 1 | 4 | (is_dump ? 0x300 : request.type == 24 ? 0x600 : 0);
     Ipv4Route value;
-    if (!privileged &&
-        (request.type == 20 || request.type == 21 || request.type == 24 || request.type == 25))
+    if (request.type == 18 || request.type == 22) {
+        size_t size = 0;
+        error = netlink_inventory_reply(packet, request, port, reply, strict, size);
+        if (!error)
+            return size;
+    } else if (!privileged && (request.type == 20 || request.type == 21 || request.type == 24 ||
+                               request.type == 25))
         error = -1;
     else if ((request.type == 20 || request.type == 21) &&
              !(request.flags & ~(1u | 4u | (request.type == 20 ? 0x600u : 0u))))
@@ -159,6 +173,8 @@ size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply
     else if ((request.type == 24 || request.type == 25 || is_dump) && !(request.flags & ~allowed)) {
         if (is_dump && (request.flags & 0x300) != 0x300)
             error = -95;
+        else if (is_dump && strict && request.length < sizeof(request) + sizeof(RouteHeader))
+            error = -22;
         else
             error = parse(input, request, value, is_dump);
         if (!error) {

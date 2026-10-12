@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "process/futex.hpp"
+#include "core/time.hpp"
 
 namespace ax {
 struct Key {
@@ -148,6 +149,11 @@ int64_t futex_syscall(Frame* frame) {
         if (time.sec < 0 || time.nsec < 0 || time.nsec >= 1000000000)
             return -22;
         uint64_t value = time_ticks(time.sec, time.nsec);
+        if (command == 9 && (op & 256)) {
+            uint64_t now = clock_realtime_ticks();
+            uint64_t remaining = value > now ? value - now : 0;
+            value = remaining > UINT64_MAX - ticks ? UINT64_MAX : ticks + remaining;
+        }
         deadline = command == 9 ? value : value > UINT64_MAX - ticks ? UINT64_MAX : ticks + value;
     }
     // SYSCALL masks interrupts; on the current single CPU this read and queue

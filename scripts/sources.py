@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import tarfile
 import urllib.error
-from fetch import ROOT, fetch
+from fetch import LOCK, ROOT, fetch
 from ports import download
 
 SOURCE_LOCK = ROOT / "sources.lock.json"
@@ -113,6 +113,11 @@ def prepare():
         inputs = list(pool.map(port_sources, ports))
     inputs += [("BusyBox-upstream", [fetch("busybox")]), ("Limine", [fetch("limine")]),
                ("libcap-upstream", [fetch("libcap")])]
+    crypto = LOCK['openssl']
+    signature = verify(download(crypto['signature_url'], CACHE / 'OpenSSL-upstream' /
+                                (crypto['archive'] + '.asc')),
+                       crypto['signature_sha256'], 'sha256')
+    inputs.append(('OpenSSL-upstream', [fetch('openssl'), signature]))
     musl = [verify(download(item["url"], CACHE / "build-musl" / item["name"]),
                    item["sha256"], "sha256") for item in lock["build_musl"]["files"]]
     inputs.append(("build-musl", musl))

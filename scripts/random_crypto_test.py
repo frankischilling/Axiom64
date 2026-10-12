@@ -17,7 +17,7 @@ import tarfile
 
 from build_musl import loader
 from fetch import LOCK, ROOT
-from random_administration_test import checked_run, fingerprint, snapshot
+from random_administration_test import checked_run, copy_executable, fingerprint, snapshot
 from random_crypto.inputs import products, provider
 from random_crypto.peer import PAYLOAD, Peer, certificates
 from random_crypto.wire import verify as verify_wire
@@ -139,7 +139,7 @@ def main():
     providers = {name: provider(name) for name in profiles}
     observer = providers['build'][0] if 'build' in providers else next(iter(providers.values()))[0]
     observer = observer / 'static/stage/usr/bin/openssl'
-    shutil.copyfile(observer, out / 'observer-openssl')
+    copy_executable(observer, out / 'observer-openssl')
     observer = out / 'observer-openssl'
     certs = out / 'certificates'
     certificates(certs, observer)

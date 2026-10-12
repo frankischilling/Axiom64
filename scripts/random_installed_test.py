@@ -14,11 +14,17 @@ import time
 
 from disk_root import archive_entries, build
 from fetch import ROOT
-from random_administration_test import fingerprint, snapshot
+from random_administration_test import copy_executable, fingerprint, snapshot
 from random_crypto.inputs import provider
 
 SEED = '/var/lib/axiom64/random'
 MESSAGE = b'Axiom64 installed seed service\n'
+
+
+def seed_records(text, event):
+    status = r' status=(\d+)' if event == 'REAP' else ''
+    return re.findall(r'^(?:/ # )?INIT_RANDOM_SEED_' + event + r' pid=(\d+)' + status +
+                      r' monotonic_ms=(\d+)\r?\n', text, re.MULTILINE)
 
 
 def record(text, name):
@@ -150,17 +156,14 @@ def boot(directory, iso, firmware, transport, ready, observer, disk=None, previo
             process.stdin.flush()
             wait(lambda text: '\nINSTALLED_RANDOM_CONSOLE\n' in text)
             if ready:
-                wait(lambda text: re.search(r'^INIT_RANDOM_SEED_REAP pid=\d+ status=0 '
-                                            r'monotonic_ms=\d+\n', text, re.MULTILINE))
+                wait(lambda text: any(row[1] == '0' for row in seed_records(text, 'REAP')))
             else:
-                wait(lambda text: len(re.findall(r'^INIT_RANDOM_SEED_REAP pid=\d+ status=256 '
-                                               r'monotonic_ms=\d+\n', text, re.MULTILINE)) >= 3)
+                wait(lambda text: sum(row[1] == '256' for row in seed_records(text, 'REAP')) >= 3)
             process.stdin.write(shell_check(ready))
             process.stdin.flush()
             text = wait(lambda text: '\nINSTALLED_RANDOM_CHECK ' + ('ready' if ready else 'unready') + '\n' in text)
-            spawn = re.findall(r'^INIT_RANDOM_SEED_SPAWN pid=(\d+) monotonic_ms=(\d+)\n', text, re.MULTILINE)
-            reaped = re.findall(r'^INIT_RANDOM_SEED_REAP pid=(\d+) status=(\d+) '
-                                r'monotonic_ms=(\d+)\n', text, re.MULTILINE)
+            spawn = seed_records(text, 'SPAWN')
+            reaped = seed_records(text, 'REAP')
             if not spawn or not reaped or (ready and (len(spawn) != 1 or len(reaped) != 1)):
                 raise RuntimeError('the actual init seed ownership records are incomplete')
             for index, (pid, status, when) in enumerate(reaped):
@@ -223,7 +226,7 @@ def main():
     out.mkdir(parents=True, exist_ok=False)
     observer_dir, _ = provider('build')
     observer = out / 'observer-openssl'
-    shutil.copyfile(observer_dir / 'static/stage/usr/bin/openssl', observer)
+    copy_executable(observer_dir / 'static/stage/usr/bin/openssl', observer)
     subprocess.run(['make', '-s', '-j2', 'build/axiom64.elf', 'build/rootfs.cpio',
                     'build/rootfs-desktop.cpio'], cwd=ROOT, check=True)
     inputs = snapshot(out)

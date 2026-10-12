@@ -13,7 +13,7 @@ import time
 
 from build_musl import loader
 from fetch import ROOT
-from random_administration_test import checked_run, fingerprint, snapshot
+from random_administration_test import checked_run, copy_executable, fingerprint, snapshot
 from random_crypto.inputs import products, provider
 from random_seed_test import image
 
@@ -166,9 +166,9 @@ def main():
                     try:
                         if args.native:
                             client = ROOT / ('build/crypto-wait-'+linkage)
-                            shutil.copyfile(client, case / 'crypto-wait')
+                            copy_executable(client, case / 'crypto-wait')
                             openssl = directory / 'static/stage/usr/bin/openssl'
-                            shutil.copyfile(openssl, case / 'openssl')
+                            copy_executable(openssl, case / 'openssl')
                             command = [str(case / 'crypto-wait'), 'ready', str(case / 'openssl'), str(case / 'random.bin')]
                             if linkage == 'dynamic':
                                 command.insert(0, str(loader()))

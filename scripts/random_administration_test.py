@@ -19,6 +19,10 @@ def fingerprint(path):
     return dict(bytes=path.stat().st_size, sha256=hashlib.sha256(path.read_bytes()).hexdigest())
 
 
+def copy_executable(source, destination):
+    shutil.copy2(source, destination)
+
+
 def snapshot(directory):
     inputs = ['Makefile', 'userspace/tests/random/administration.c',
               'kernel/include/core/random.hpp', 'kernel/include/core/random/engine.hpp',

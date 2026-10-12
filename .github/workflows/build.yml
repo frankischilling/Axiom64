@@ -41,6 +41,10 @@ jobs:
         run: python3 scripts/tests/qemu_acceleration_test.py
       - name: Test init supervision observes complete serial records
         run: python3 scripts/tests/normal_manager_events_test.py -v
+      - name: Test seed supervision observes complete ordinary-console records
+        run: python3 scripts/tests/random_installed_records_test.py -v
+      - name: Test copied fixture executables retain Linux execution permissions
+        run: python3 scripts/tests/random_executable_copy_test.py -v
       - name: Test manager runtime hint provenance and explicit invalidation with sanitizers
         run: make test-manager-runtime-native
       - name: Test actual desktop image readiness and bounded uniform-image rejection
@@ -129,6 +133,8 @@ jobs:
             --exclude='./build/axiom64.iso' --exclude='./build/iso*' \
             --exclude='./build/busybox-*' --exclude='./build/uapi' \
             --exclude='./build/openssl/source' \
+            --exclude='./build/openssl/*/*/*/build/test' \
+            --exclude='./build/openssl/*/*/*/build/fuzz' \
             --exclude='./build/openssl/*/*/*/build/*.o' \
             --exclude='./build/openssl/*/*/*/build/*.a' \
             . "$busybox_dir/busybox" "$busybox_dir/.config" "$busybox_dir/LICENSE" "$busybox_dir/.axiom64-toolchain"

@@ -13,7 +13,7 @@ import time
 
 from build_musl import loader
 from fetch import ROOT
-from random_administration_test import checked_run, fingerprint, snapshot
+from random_administration_test import checked_run, copy_executable, fingerprint, snapshot
 from random_seed_test import image
 from random_snapshot_test import QMP
 
@@ -157,7 +157,7 @@ def main():
         if args.native:
             case = out / linkage
             case.mkdir()
-            shutil.copyfile(client, case / 'clock-wall')
+            copy_executable(client, case / 'clock-wall')
             command = [str(case / 'clock-wall')]
             if linkage == 'dynamic':
                 command.insert(0, str(loader()))

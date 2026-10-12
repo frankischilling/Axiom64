@@ -10,7 +10,7 @@ import subprocess
 
 from build_musl import loader
 from fetch import LOCK, ROOT
-from random_administration_test import checked_run, fingerprint, snapshot
+from random_administration_test import checked_run, copy_executable, fingerprint, snapshot
 from random_seed_test import image
 
 COMMANDS = '''/bin/inventory
@@ -61,11 +61,11 @@ def main():
             case = out / linkage
             case.mkdir()
             copied = case / 'inventory'
-            shutil.copyfile(client, copied)
+            copy_executable(client, copied)
             script = case / 'namespace.sh'
             busybox = ROOT / 'build' / f"busybox-{LOCK['busybox']['version']}/busybox"
             copied_busybox = case / 'busybox'
-            shutil.copyfile(busybox, copied_busybox)
+            copy_executable(busybox, copied_busybox)
             script.write_text('set -eu\nbusybox=$1\nshift\nip link set lo up\n'
                               'ip link add eth0 type dummy\n' + COMMANDS.replace(
                                   '/bin/inventory', '"$@"').replace('/bin/busybox', '"$busybox"'))

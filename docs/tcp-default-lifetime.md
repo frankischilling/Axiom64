@@ -30,6 +30,14 @@ Last close releases the storage and binding of an already closed endpoint immedi
 when no output remains. A pending reset still awaiting output ownership stays on the
 poll path. The actual socket profile consumes errors, closes the failed description,
 and binds and listens on its former local port without a sleep or SO_REUSEADDR.
+Each active fixture binds a distinct local endpoint before connecting. Linux can
+share an automatically chosen ephemeral port across different remote endpoints;
+closing one such connection leaves another live connection's ownership intact.
+The native ownership regression forces that sharing in a disposable namespace,
+then checks immediate exclusive rebind with independently reserved endpoints.
+Packet inspection verifies each case's local port and rejects a synchronized,
+valid-checksum capture moved onto another live case's endpoint. Every earlier
+damaged-capture case and complete elapsed observation remains required.
 
 ## Actual socket and packet acceptance
 

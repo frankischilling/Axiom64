@@ -23,8 +23,10 @@ def native_one(linkage):
         (scratch / 'parent-netns').write_text(original)
         completed = subprocess.run(['unshare', '--net', sys.executable, '-u', __file__,
                                     '--namespace', str(scratch), linkage], timeout=1700)
-    check(os.readlink('/proc/self/ns/net') == original and completed.returncode == 0,
+    check(os.readlink('/proc/self/ns/net') == original,
           'full native lifetime comparison preserves the original network namespace')
+    check(completed.returncode == 0,
+          'full native lifetime client and peer complete successfully: ' + linkage)
     rows = json.loads((ROOT / 'build' / f'tcp-lifetime-native-{linkage}-results.json').read_text())
     check(len(rows) == 1 and rows[0]['linkage'] == linkage and rows[0]['passed'],
           'one complete unshortened native lifetime comparison')

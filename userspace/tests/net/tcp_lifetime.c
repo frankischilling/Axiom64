@@ -92,6 +92,13 @@ static void flow(unsigned lane, unsigned role, unsigned kind, int native) {
                                   .sin_addr.s_addr =
                                       htonl((role ? 0x0a170102 : 0x0a170101) + (lane << 8))};
     if (!role) {
+        // Linux connect may share an ephemeral local port across remote tuples.
+        // Reserve one endpoint per case so another live case cannot hold the
+        // port used by this case's immediate post-expiry reclamation check.
+        struct sockaddr_in source = {.sin_family = AF_INET,
+                                     .sin_port = htons(46000 + lane + kind * 20),
+                                     .sin_addr.s_addr = htonl(0x0a170102 + (lane << 8))};
+        CHECK(bind(fd, (struct sockaddr*)&source, sizeof(source)) == 0);
         CHECK(connect(fd, (struct sockaddr*)&address, sizeof(address)) == 0);
     } else {
         CHECK(bind(fd, (struct sockaddr*)&address, sizeof(address)) == 0 && listen(fd, 1) == 0);

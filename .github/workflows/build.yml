@@ -303,6 +303,9 @@ jobs:
           case "$firmware" in bios|uefi) ;; *) exit 1 ;; esac
           python3 scripts/random_installed_test.py --firmware "$firmware" --output build/random-lifecycle/installed
 
+      - name: Verify native shared-port ownership and exclusive lifetime endpoints
+        if: matrix.suite == 'tcp-lifetime-native'
+        run: sudo -n python3 scripts/tests/tcp_lifetime_ports_test.py 2>&1 | tee build/tcp-lifetime-port-ownership.log
       - name: Observe complete default TCP lifetimes with all three native linkages
         if: matrix.suite == 'tcp-lifetime-native'
         run: |
@@ -678,6 +681,7 @@ jobs:
             build/tcp-old-ack-*-peer.json
             build/tcp-challenge-*-peer.json
             build/tcp-lifetime-*-peer.json
+            build/tcp-lifetime-port-ownership.json
             build/tcp-icmp-*-peer.json
             build/tcp-icmp-*-inputs.json
             build/tcp-icmp-*.txt

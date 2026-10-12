@@ -94,7 +94,18 @@ def mutations(path, lane, evidence, native, directory):
                                opened[2]['ms'] - LONGER_MS + 1000, initial + 1000)
     next(flow for flow in adjusted['flows'] if flow['kind'] == 3 and flow['role'] == 0)['reopened_at'] = initial + 1000
     reject(bytes_, adjusted)
-    assert count == 17
+    # Move a whole flow onto another live case's endpoint, with valid checksums
+    # and matching peer records. The original seventeen controls stay intact.
+    bytes_, adjusted = original, copy.deepcopy(evidence)
+    for offset, frame in entries:
+        row = decode(frame, lane)
+        if row is not None and row['kind'] == 0 and row['role'] == 0:
+            modified = bytearray(frame)
+            tcp_at = 14 + (modified[14] & 15) * 4
+            struct.pack_into('!H', modified, tcp_at + (0 if row['outgoing'] else 2), 46080 + lane)
+            bytes_, adjusted = rewrite(bytes_, offset, repair(modified), adjusted, endian)
+    reject(bytes_, adjusted)
+    assert count == 18
     return count
 
 
@@ -116,7 +127,7 @@ def main():
                     assert verify(capture, lane, peers[lane], native) == verified[item]
                     negatives += mutations(capture, lane, peers[lane], native, Path(temporary))
                     captures += 1
-    assert captures == len(report['captures']) and negatives == captures * 17
+    assert captures == len(report['captures']) and negatives == captures * 18
     print(f'TCP_LIFETIME_CAPTURE_CHECKER_PASS captures={captures} negative_cases={negatives}')
     (directory / 'tcp-lifetime-damage-results.json').write_text(json.dumps(dict(captures=captures,
         negative_cases=negatives, complete_matrix=report['complete_matrix'], passed=True), indent=2) + '\n')

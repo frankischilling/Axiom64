@@ -44,7 +44,7 @@ The first three milestones define the next core sequence. Later milestones descr
 | F07 | [SMP scheduling and kernel synchronization](https://github.com/frankischilling/Axiom64/issues/7) | planned | M2 | F01, F05, F06 |
 | F08 | [Linux syscall and libc compatibility](https://github.com/frankischilling/Axiom64/issues/8) | partial | M4 | F05, F06, F13 |
 | F09 | [Accounts, permissions, and process credentials](https://github.com/frankischilling/Axiom64/issues/9) | partial | M3 | F03, F04 |
-| F10 | [Secure random number generation](https://github.com/frankischilling/Axiom64/issues/10) | partial | M3 | F03, F09 |
+| F10 | [Secure random number generation](https://github.com/frankischilling/Axiom64/issues/10) | complete | M3 | F03, F09 |
 | F11 | [Ethernet devices and link management](https://github.com/frankischilling/Axiom64/issues/11) | partial | M3 | F01, F05 |
 | F12 | [IPv4, IPv6, routing, and ICMP](https://github.com/frankischilling/Axiom64/issues/12) | partial | M3 | F11 |
 | F13 | [TCP, UDP, and Linux socket semantics](https://github.com/frankischilling/Axiom64/issues/13) | partial | M3 | F12, F15 |
@@ -75,11 +75,11 @@ The first three milestones define the next core sequence. Later milestones descr
 
 ## Implementation workflow
 
-Use small feature branches and PRs with guest tests and documentation. Each issue is a feature area with a checklist; split its work into child issues and small PRs as implementation starts. Branch suggestions and acceptance requirements are in [the catalog](feature-catalog.json). Issue dependencies must be refined to the specific child task so that unrelated later work does not block an early milestone.
+Use descriptive feature branches and substantial PRs with guest tests and documentation. Complete an issue's full checklist in one coherent PR when its requirements are actionable. Use child issues when dependencies require separate implementation, and keep unrelated changes separate. Branch suggestions and acceptance requirements are in [the catalog](feature-catalog.json). Refine dependencies to the actual task so unrelated later work does not block an early milestone.
 
 Link a PR to the exact tasks it completes. Keep an area issue open until every requirement has evidence. Report an application as bundled separately from demonstrated. Preserve the full firmware suite; add disk reboot, controlled network peer, threading, audio, and real hardware evidence when the corresponding feature is claimed. Do not substitute host operations for the guest behavior being tested.
 
-Use the development kernel branch as the integration base until it reaches main. Keep private answers under `.local/`; do not copy the questionnaire or private inputs into commits or source bundles.
+Start from current `main` after checking remote updates, open PRs and CI. Preserve unrelated local changes and use an isolated worktree when needed. Keep private answers under `.local/`; do not copy the questionnaire or private inputs into commits or source bundles.
 
 ## Detailed scope
 

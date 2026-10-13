@@ -132,7 +132,7 @@
       "title": "Writable ext2 and later ext4",
       "milestone": "M1",
       "state": "partial",
-      "current": "Classic ext2 root and data volumes support persistent files, external xattrs and file capabilities, shared EA copy-on-write, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and fresh kernel reboot verification. ACLs, inline/ext4 attributes, advanced formats and recovery remain planned.",
+      "current": "Classic ext2 root and data volumes support persistent files, external xattrs and file capabilities, shared EA copy-on-write, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and fresh kernel reboot verification. Writable checked dirty mounts reconcile in-range free counters from validated allocation maps after full inode, attribute and directory checks. ACLs, inline/ext4 attributes, advanced formats and general recovery after power loss remain planned.",
       "scope": [
         "Writable ext2 inodes, directories, indirect blocks, allocation, and links",
         "Mount, unmount, sync, truncation, rename, permissions, and timestamps",

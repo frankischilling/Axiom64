@@ -55,7 +55,7 @@ Normal desktop acceptance drives private administrator creation and login throug
 | Private saved network files | Native GNU sanitizer and static/dynamic musl under ordinary/root UIDs, real foreign owners, writerless FIFOs and atomic publication failures; eight static/dynamic guest RAM/ext2 boots with ABI checks, unmount, seed preservation and host fsck |
 | Resolver metadata | Native sanitizer checks and four guest boots for bounded eight-interface merging, complete search names, manual preservation, permissions, ownership/intent recovery, checked publication failures, and resource retry |
 | VFS mounts | Independent RAM volumes, hidden/restored contents, directory identity, read-only policy, cross-filesystem errors, executable loading, mappings, sockets, busy unmounts, slot reuse |
-| Writable ext2 | Four disk layouts across firmware/transports, guest files and executable loading, fresh-boot reads, host file/metadata comparisons and fsck, full allocation, rejected formats, and I/O retries |
+| Writable ext2 | Four disk layouts across firmware/transports, guest files and executable loading, fresh-boot reads, host file/metadata comparisons and fsck, full allocation, rejected formats, I/O retries, checked free-counter reconciliation and structural rejection |
 | Ext2 root | Root and data-volume reboot persistence, software/hardware read-only policy, rejected configuration/boot files/backend failures, full userspace and normal desktop startup across firmware/transports, reproducible fixtures and host fsck |
 
 The host captures `build/desktop-bios.png` and `desktop-uefi.png` after input succeeds. Logs are `build/boot-bios.log` and `boot-uefi.log`; results are in `build/boot-results.json`.

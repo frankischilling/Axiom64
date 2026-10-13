@@ -1334,10 +1334,13 @@ static void destroy(Mount* mount) {
     mount->data = nullptr;
 }
 
-// The mount scan checks allocation and ownership before any writable I/O. It
-// does not repair a damaged volume; recovery remains the filesystem checker's job.
+// Validate allocation, ownership and directories before staging any mount writes.
+// A checked writable dirty mount may reconcile only redundant free counters.
 struct Validation {
     Volume& v;
+    bool reconcile_counts;
+    uint16_t *group_free_blocks = nullptr, *group_free_inodes = nullptr;
+    uint64_t free_block_total = 0, free_inode_total = 0;
     uint8_t *block_bits = nullptr, *inode_bits = nullptr, *owners = nullptr;
     uint16_t *modes = nullptr, *links = nullptr;
     uint16_t* xattr_references = nullptr;
@@ -1345,10 +1348,12 @@ struct Validation {
     uint8_t inode_table[max_block_size]{};
     uint32_t cached_table = UINT32_MAX;
 
-    explicit Validation(Volume& value) : v(value) {
+    explicit Validation(Volume& value, bool reconcile) : v(value), reconcile_counts(reconcile) {
     }
 
     ~Validation() {
+        release(group_free_blocks);
+        release(group_free_inodes);
         release(block_bits);
         release(inode_bits);
         release(owners);
@@ -1372,8 +1377,13 @@ struct Validation {
         references = (uint32_t*)alloc(inode_count * sizeof(uint32_t));
         parents = (uint32_t*)alloc(inode_count * sizeof(uint32_t));
         dotdots = (uint32_t*)alloc(inode_count * sizeof(uint32_t));
+        if (reconcile_counts) {
+            group_free_blocks = (uint16_t*)alloc(v.group_count * sizeof(uint16_t));
+            group_free_inodes = (uint16_t*)alloc(v.group_count * sizeof(uint16_t));
+        }
         if (!block_bits || !inode_bits || !owners || !modes || !links || !xattr_references ||
-            !references || !parents || !dotdots)
+            !references || !parents || !dotdots ||
+            (reconcile_counts && (!group_free_blocks || !group_free_inodes)))
             return v.fail(-12);
         memset(block_bits, 0, block_bytes);
         memset(owners, 0, block_bytes);
@@ -1409,8 +1419,10 @@ struct Validation {
                 if (!used)
                     free++;
             }
-            if (free != u16(desc + 12))
+            if (!reconcile_counts && free != u16(desc + 12))
                 return v.fail();
+            if (reconcile_counts)
+                group_free_blocks[group] = free;
             free_blocks += free;
             if (!v.read_block(g.inode_bitmap, data))
                 return false;
@@ -1429,11 +1441,41 @@ struct Validation {
                 if (!used)
                     free++;
             }
-            if (free != u16(desc + 14))
+            if (!reconcile_counts && free != u16(desc + 14))
                 return v.fail();
+            if (reconcile_counts)
+                group_free_inodes[group] = free;
             free_inodes += free;
         }
-        return free_blocks == u32(header + 12) && free_inodes == u32(header + 16) ? true : v.fail();
+        free_block_total = free_blocks;
+        free_inode_total = free_inodes;
+        return reconcile_counts ||
+                       (free_blocks == u32(header + 12) && free_inodes == u32(header + 16))
+                   ? true
+                   : v.fail();
+    }
+
+    bool reconcile(uint8_t* header) {
+        if (!reconcile_counts)
+            return true;
+        // The complete structural scan has succeeded. All counts are derived
+        // from the validated bitmaps; layout bounds and directory counts stay strict.
+        uint8_t desc[32];
+        for (unsigned group = 0; group < v.group_count; group++) {
+            if (!v.descriptor(group, desc))
+                return false;
+            if (u16(desc + 12) == group_free_blocks[group] &&
+                u16(desc + 14) == group_free_inodes[group])
+                continue;
+            set16(desc + 12, group_free_blocks[group]);
+            set16(desc + 14, group_free_inodes[group]);
+            if (!v.save_descriptor(group, desc))
+                return false;
+        }
+        // The mount's final staged superblock write must use these same totals.
+        set32(header + 12, free_block_total);
+        set32(header + 16, free_inode_total);
+        return true;
     }
 
     bool inode(uint32_t number, uint8_t* data) {
@@ -1728,7 +1770,7 @@ struct Validation {
     }
 };
 
-static bool layout(Volume& v, const uint8_t* header, const BlockInfo& disk, bool check_dirty) {
+static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check_dirty) {
     if (u16(header + 56) != 0xef53)
         return v.fail(-22);
     v.revision = u32(header + 76);
@@ -1803,8 +1845,9 @@ static bool layout(Volume& v, const uint8_t* header, const BlockInfo& disk, bool
     v.writable_safe = (state == 1 || (check_dirty && state == 0)) && !u32(header + 232);
     if ((check_dirty || !v.mount->readonly) && !v.writable_safe)
         return v.fail();
-    Validation check{v};
-    return check.allocate() && check.bitmaps(header) && check.inode_maps() && check.directories();
+    Validation check{v, check_dirty && !v.mount->readonly && state == 0};
+    return check.allocate() && check.bitmaps(header) && check.inode_maps() && check.directories() &&
+           check.reconcile(header);
 }
 
 } // namespace

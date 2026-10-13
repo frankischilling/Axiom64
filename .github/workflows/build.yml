@@ -307,6 +307,7 @@ jobs:
         run: |
           firmware=${SUITE#random-installed-}
           case "$firmware" in bios|uefi) ;; *) exit 1 ;; esac
+          python3 scripts/tests/fixture_archive_test.py
           python3 scripts/random_installed_test.py --firmware "$firmware" --output build/random-lifecycle/installed
 
       - name: Verify native shared-port ownership and exclusive lifetime endpoints
@@ -450,7 +451,10 @@ jobs:
           python3 scripts/tests/tcp_icmp_capture_test.py 2>&1 | tee build/tcp-icmp-damage.log
       - name: Test desktop serial acceptance decisions
         if: matrix.suite == 'boot'
-        run: python3 scripts/tests/desktop_console_test.py
+        run: |
+          python3 scripts/tests/desktop_console_test.py
+          python3 scripts/tests/normal_login_test.py
+          python3 scripts/tests/fixture_archive_test.py
       - name: Test pthread lifecycle, futexes, and blocked I/O
         if: matrix.suite == 'boot'
         run: make test-threads
@@ -646,6 +650,7 @@ jobs:
         run: |
           firmware=${SUITE#normal-init-}
           case "$firmware" in bios|uefi) ;; *) exit 1 ;; esac
+          python3 scripts/tests/normal_manager_records_test.py
           python3 scripts/normal_manager_peer_test.py 2>&1 | tee build/normal-init-peer.log
           python3 scripts/normal_manager_test.py --firmware "$firmware"
       - name: Upload normal init root fixtures
@@ -706,6 +711,15 @@ jobs:
           if-no-files-found: error
           compression-level: 1
           path: build/random-lifecycle
+      - name: Upload authenticated normal boot fixtures
+        if: always() && (matrix.suite == 'boot' || matrix.suite == 'root-userspace' || startsWith(matrix.suite, 'normal-init-'))
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-normal-login-${{ matrix.suite }}
+          compression-level: 1
+          path: |
+            build/interactive-login-*/**
+            build/normal-init-login-*/**
       - name: Upload actual raw storage and ext2 volume and boot fixtures
         if: always() && matrix.suite == 'storage'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

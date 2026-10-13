@@ -85,8 +85,8 @@ def bootstrap(destination):
             output.write(bytes(-output.tell() % 4))
 
 
-def build(profile='full', verify_reproducible=False):
-    source = ROOT / 'build' / ('rootfs.cpio' if profile == 'full' else 'rootfs-desktop.cpio')
+def build(profile='full', verify_reproducible=False, source=None):
+    source = source or ROOT / 'build' / ('rootfs.cpio' if profile == 'full' else 'rootfs-desktop.cpio')
     entries = archive_entries(source)
     for name in ['dev', 'proc', 'run', 'sys', 'tmp']:
         entries.setdefault(name, (0o40755, b''))

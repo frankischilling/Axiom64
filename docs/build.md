@@ -16,7 +16,7 @@ The first build downloads verified archives, builds BusyBox, assembles the root 
 
 The VM keeps its ext2 root in `.local/vm/root.ext2`. The launch helper creates that disk once, preserves it across builds and restarts, and prevents two instances from opening the same state directory. It rejects incomplete or damaged creation metadata instead of recreating accounts. Keep this directory to retain your accounts and files. Existing disks retain their installed userspace; to evaluate newly packaged userspace, select a new directory with `python3 scripts/vm.py --state-directory .local/vm-next`. In-guest upgrades remain future work.
 
-Authenticated graphical startup and seat access are still being integrated. The dedicated desktop tests retain Xorg, twm, xeyes and xterm/Bash coverage; the current normal startup enters the serial login session.
+After authentication, normal startup launches Xorg, twm, xeyes and an ordinary-user terminal alongside the private serial shell. A fresh private X11 cookie controls display access. Local BIOS/UEFI RAM/ext2 checks cover input, logout and display/console failure; complete service and crash-recovery integration remains required. See [authenticated desktop sessions](accounts.md#authenticated-desktop).
 
 On WSL, the graphical command requires a working WSLg display. `make run-serial` starts the same image with a hidden framebuffer and exposes the serial console.
 

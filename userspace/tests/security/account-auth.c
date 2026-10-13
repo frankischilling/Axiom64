@@ -78,9 +78,9 @@ int main(int argc, char** argv) {
     CHECK(snprintf(bob_home, sizeof(bob_home), "%s/bob", argv[1]) < (int)sizeof(bob_home));
     CHECK(snprintf(private_file, sizeof(private_file), "%s/private", alice_home) <
           (int)sizeof(private_file));
-    int created;
-    CHECK(account_home_create(alice_home, 1000, 1000, &created) == 0 && created);
-    CHECK(account_home_create(bob_home, 1001, 1001, &created) == 0 && created);
+    struct account_home* created[2] = {NULL, NULL};
+    CHECK(account_home_create(alice_home, 1000, 1000, &created[0]) == 0 && created[0]);
+    CHECK(account_home_create(bob_home, 1001, 1001, &created[1]) == 0 && created[1]);
     int fd = open(private_file, O_WRONLY | O_CREAT | O_EXCL, 0600);
     CHECK(fd >= 0 && write(fd, "private", 7) == 7 && fchown(fd, 1000, 1000) == 0 && close(fd) == 0);
     struct account_database* db = NULL;
@@ -103,6 +103,8 @@ int main(int argc, char** argv) {
     CHECK(account_database_member(db, "sudo", "alice", 1) == 0);
     int published;
     CHECK(account_database_commit(db, &published) == 0 && published);
+    for (unsigned i = 0; i < 2; i++)
+        CHECK(account_home_finish(created[i], published) == 0);
     account_database_end(db);
     account_password_clear(encoded, sizeof(encoded));
     struct account_profile* profile = NULL;

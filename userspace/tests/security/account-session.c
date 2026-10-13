@@ -276,6 +276,7 @@ int main(int argc, char** argv) {
     session_database = database;
     path(session_records, argv[1], "login-records");
     char encoded[ACCOUNT_PASSWORD_HASH_SIZE];
+    struct account_home* created_homes[2] = {NULL, NULL};
     CHECK(account_password_hash(secret, encoded) == 0);
     struct account_database* db = NULL;
     CHECK(account_database_begin(database, 1, &db) == 0);
@@ -284,8 +285,8 @@ int main(int argc, char** argv) {
         path(homes[i], argv[1], name);
         path(private_files[i], homes[i], "private");
         path(records[i], argv[1], i ? "bob-record" : "alice-record");
-        int created;
-        CHECK(account_home_create(homes[i], 1000 + i, 1000 + i, &created) == 0 && created);
+        CHECK(account_home_create(homes[i], 1000 + i, 1000 + i, &created_homes[i]) == 0 &&
+              created_homes[i]);
         int file = open(private_files[i], O_WRONLY | O_CREAT | O_EXCL, 0600);
         CHECK(file >= 0 && fchown(file, 1000 + i, 1000 + i) == 0 && close(file) == 0);
         struct account_group group = {name, 1000 + i, NULL, 0};
@@ -300,6 +301,8 @@ int main(int argc, char** argv) {
     CHECK(account_database_member(db, "shared", "bob", 1) == 0);
     int published;
     CHECK(account_database_commit(db, &published) == 0 && published);
+    for (unsigned i = 0; i < 2; i++)
+        CHECK(account_home_finish(created_homes[i], published) == 0);
     account_database_end(db);
     account_password_clear(encoded, sizeof(encoded));
     struct account_profile* profiles[2] = {NULL, NULL};

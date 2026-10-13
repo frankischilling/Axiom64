@@ -16,6 +16,7 @@ from build_musl import compiler_args
 from fetch import ROOT
 
 INPUTS = [*SOURCES, 'userspace/accounts/auth.c', 'userspace/accounts/auth.h',
+          'userspace/accounts/protected.c', 'userspace/accounts/protected.h',
           'userspace/tests/security/account-auth.c', 'userspace/tests/security/account-observe.c',
           'scripts/account_auth_test.py', 'scripts/account_store_guest.py', 'Makefile',
           'scripts/image.py', 'userspace/init/main.c', 'userspace/init/console.c',
@@ -30,7 +31,7 @@ def build(provider, linkage, directory):
     command = [*compiler, '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
                '-I' + str(stage / 'usr/include'),
                *(str(ROOT / 'userspace/accounts' / name) for name in
-                 ('store.c', 'database.c', 'record.c', 'password.c', 'home.c', 'auth.c')),
+                 ('store.c', 'database.c', 'record.c', 'password.c', 'home.c', 'auth.c', 'protected.c')),
                str(ROOT / 'userspace/tests/security/account-auth.c'), '-o', str(program)]
     if linkage == 'static':
         command += ['-static', str(stage / 'usr/lib/libcrypt.a')]

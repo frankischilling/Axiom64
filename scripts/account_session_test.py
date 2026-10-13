@@ -151,6 +151,12 @@ def main():
             inputs['management'] = management_inputs
             inputs['busybox_sha256'] = digest(busybox)
             if args.native:
+                native_busybox = native_case / 'busybox'
+                shutil.copyfile(busybox, native_busybox)
+                native_busybox.chmod(0o755)
+                assert digest(native_busybox) == inputs['busybox_sha256']
+                inputs['native_busybox'] = dict(path=str(native_busybox), source=str(busybox),
+                                                sha256=digest(native_busybox))
                 native_observer = native_case / 'account-session-observe'
                 shutil.copyfile(observer, native_observer)
                 native_observer.chmod(0o755)
@@ -160,7 +166,7 @@ def main():
                 native_manager.chmod(0o755)
                 assert digest(native_manager) == management_inputs['binary_sha256']
                 command = invocation(program, library, provider, linkage) + [str(native_case / 'data'),
-                            str(busybox), str(native_observer), str(native_manager)]
+                            str(native_busybox), str(native_observer), str(native_manager)]
                 command = ['unshare', '--mount', '--pid', '--fork', '--mount-proc', *command]
                 row = execute(command, case / 'native.log')
                 row.update(provider=provider, linkage=linkage, inputs=inputs)

@@ -139,13 +139,19 @@ def main():
                                                               native_case / 'lib' if args.native else None)
             inputs['busybox_sha256'] = digest(busybox)
             if args.native:
+                native_busybox = native_case / 'busybox'
+                shutil.copyfile(busybox, native_busybox)
+                native_busybox.chmod(0o755)
+                assert digest(native_busybox) == inputs['busybox_sha256']
+                inputs['native_busybox'] = dict(path=str(native_busybox), source=str(busybox),
+                                                sha256=digest(native_busybox))
                 for binary in (access, observer):
                     destination = native_case / binary.name
                     shutil.copyfile(binary, destination)
                     destination.chmod(0o755)
                     assert digest(destination) == digest(binary)
                 command = invocation(program, library, provider, linkage) + [str(data),
-                    str(native_case / access.name), str(busybox), str(native_case / observer.name)]
+                    str(native_case / access.name), str(native_busybox), str(native_case / observer.name)]
                 command = ['unshare', '--mount', '--pid', '--fork', '--mount-proc', *command]
                 row = execute(command, case / 'native.log')
                 row.update(provider=provider, linkage=linkage, inputs=inputs)

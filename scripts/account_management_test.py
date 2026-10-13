@@ -105,9 +105,15 @@ def native(directory, fixtures):
             root.chmod(0o755)
             database = root / 'db'
             home = root / 'home/admin'
-            program, library, inputs = build(provider, linkage, case)
+            program, library, inputs = build(provider, linkage, case, native_runtime=root / 'lib')
+            native_program = root / 'accountctl'
+            shutil.copyfile(program, native_program)
+            native_program.chmod(0o755)
+            assert digest(native_program) == inputs['binary_sha256']
+            inputs['native_executable'] = dict(source=str(program), path=str(native_program),
+                                              sha256=digest(native_program), mode=0o755)
             prefix = ['unshare', '--mount', '--pid', '--fork', '--mount-proc',
-                      *invocation(program, library, provider, linkage), '--database', str(database),
+                      str(native_program), '--database', str(database),
                       '--records', str(root / 'records')]
             cases = []
 

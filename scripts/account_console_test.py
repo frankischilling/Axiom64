@@ -110,6 +110,12 @@ def main():
                                             native_case / 'lib' if native_case else None)
             inputs['busybox_sha256'] = digest(busybox)
             if args.native:
+                native_busybox = native_case / 'busybox'
+                shutil.copyfile(busybox, native_busybox)
+                native_busybox.chmod(0o755)
+                assert digest(native_busybox) == inputs['busybox_sha256']
+                inputs['native_busybox'] = dict(path=str(native_busybox), source=str(busybox),
+                                                sha256=digest(native_busybox))
                 installed = []
                 for product in (service, access, observer):
                     destination = native_case / product.name
@@ -119,7 +125,7 @@ def main():
                     installed.append(str(destination))
                 command = ['unshare', '--mount', '--pid', '--fork', '--mount-proc',
                            *invocation(driver, library, provider, linkage), str(data),
-                           installed[0], installed[1], str(busybox), installed[2]]
+                           installed[0], installed[1], str(native_busybox), installed[2]]
                 row = execute(command, case / 'native.log')
                 row.update(provider=provider, linkage=linkage, inputs=inputs,
                            native_exports=retain_native(case, native_case))

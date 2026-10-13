@@ -3,6 +3,7 @@
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import io
 import json
 from pathlib import Path
 import re
@@ -127,12 +128,20 @@ def prepare():
     musl = [verify(download(item["url"], CACHE / "build-musl" / item["name"]),
                    item["sha256"], "sha256") for item in lock["build_musl"]["files"]]
     inputs.append(("build-musl", musl))
+    from build_gnu_utmp_reader import PIN as gnu_reader_pin, source_inputs as gnu_reader_sources
+    inputs.append(gnu_reader_sources())
     digest = hashlib.sha256(SOURCE_LOCK.read_bytes() + (ROOT / "dependencies.json").read_bytes() +
-                            Path(__file__).read_bytes()).hexdigest()
+                            Path(__file__).read_bytes() + gnu_reader_pin.read_bytes()).hexdigest()
     stamp = NOTICES / ".stamp"
     if not stamp.exists() or stamp.read_text() != digest:
         for origin, paths in inputs:
             notices(origin, paths)
+            if origin == 'gnu-utmp-reader':
+                for path in paths:
+                    if path.parent == ROOT / 'vendor/gnu-utmp-reader' and path.name != 'inputs.json':
+                        target = NOTICES / origin / path.name
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(path.read_bytes())
     manifest = NOTICES / "sources.lock.json"
     manifest.write_bytes(SOURCE_LOCK.read_bytes())
     (NOTICES / "ports.lock.json").write_bytes((ROOT / "ports.lock.json").read_bytes())
@@ -140,6 +149,51 @@ def prepare():
         lock.get('musl_local_patches', []), indent=2) + '\n')
     stamp.write_text(digest)
     return inputs
+
+
+def gnu_reader_kit(archive):
+    """Publish the actual static reader inputs and a portable relinking kit."""
+    from build_gnu_utmp_reader import digest, ensure
+    directory, saved = ensure()
+    names = {'application.c', 'application.o', 'application.d', 'compile.log',
+             'linker-inputs.log', 'relink.sh', 'account-login-libc'}
+    names.update('licenses/' + name for name in saved['notices'])
+    names.update('sysroot/' + name for name in saved['source_inputs'])
+    names.update('sysroot/usr/include/' + name for name in saved['linux_uapi_inputs'])
+    linked = {str(Path(argument).relative_to(directory)) for argument in saved['commands'][-1]
+              if argument.endswith(('.a', '.o'))}
+    if not linked.issubset(names) or not names.issubset(saved['products']):
+        raise RuntimeError('GNU reader public kit omits an actual input')
+    # Original producer receipts stay untouched. Published commands, dependency
+    # paths and traces describe paths relative to the exported kit instead.
+    def portable(text):
+        return text.replace(str(directory), '.').replace(str(ROOT), 'Axiom64')
+    public = json.loads(portable(json.dumps(saved)))
+    public['publication'] = dict(source_manifest_sha256=digest(directory / 'manifest.json'),
+                               recipe_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                               paths='Producer paths are relative to this kit; host tool paths identify recorded executables.',
+                               contents='Actual application, header and linker inputs; complete packages and corresponding sources are under ports/gnu-utmp-reader.')
+    public['products'] = {}
+    public['symlinks'] = {}
+    prefix = 'verification/gnu-utmp-reader/'
+    for name in sorted(names):
+        path = directory / name
+        if path.is_symlink() or not path.is_file():
+            raise RuntimeError('GNU reader public input is not a regular file: ' + name)
+        if name in {'application.d', 'compile.log', 'linker-inputs.log'}:
+            content = portable(path.read_text()).encode()
+            info = archive.gettarinfo(str(path), arcname=prefix + name)
+            info.size = len(content)
+            archive.addfile(info, io.BytesIO(content))
+            public['products'][name] = hashlib.sha256(content).hexdigest()
+        else:
+            archive.add(path, arcname=prefix + name)
+            public['products'][name] = saved['products'][name]
+    content = (json.dumps(public, indent=2) + '\n').encode()
+    info = tarfile.TarInfo(prefix + 'manifest.json')
+    info.size = len(content)
+    info.mode = 0o644
+    archive.addfile(info, io.BytesIO(content))
 
 
 def bundle(inputs):
@@ -153,6 +207,7 @@ def bundle(inputs):
                     raise RuntimeError("duplicate source bundle input: " + name)
                 members.add(name)
                 archive.add(path, arcname=name)
+        gnu_reader_kit(archive)
         for path in ["sources.lock.json", "ports.lock.json", "dependencies.json", "LICENSE", "Makefile", "README.md", ".clang-format", ".gitattributes"]:
             archive.add(ROOT / path, arcname=f"Axiom64/{path}")
         for path in sorted((ROOT / "scripts").rglob("*")):

@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/statfs.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -152,6 +153,146 @@ static int foreign(uid_t uid, pid_t server, pid_t clients) {
     return 0;
 }
 
+struct seat_record {
+    uint64_t pid[3], birth[3], uid, gid;
+    char boot[37];
+};
+
+static int read_record(const char* path, char* bytes, size_t capacity, size_t* length, int proc) {
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    CHECK(fd >= 0);
+    if (proc) {
+        struct statfs filesystem;
+        CHECK(fstatfs(fd, &filesystem) == 0 && filesystem.f_type == 0x9fa0);
+    }
+    *length = 0;
+    for (;;) {
+        char extra;
+        ssize_t count = read(fd, *length < capacity - 1 ? bytes + *length : &extra,
+                             *length < capacity - 1 ? capacity - 1 - *length : 1);
+        if (count < 0 && errno == EINTR)
+            continue;
+        CHECK(count >= 0);
+        if (!count)
+            break;
+        CHECK(*length < capacity - 1);
+        *length += (size_t)count;
+    }
+    CHECK(close(fd) == 0 && !memchr(bytes, 0, *length));
+    bytes[*length] = 0;
+    return 0;
+}
+
+static int key(const char** cursor, const char* expected) {
+    size_t length = strlen(expected);
+    CHECK(!strncmp(*cursor, expected, length));
+    *cursor += length;
+    return 0;
+}
+
+static int number(const char** cursor, uint64_t maximum, uint64_t* output) {
+    const char* text = *cursor;
+    CHECK(*text >= '0' && *text <= '9');
+    CHECK(*text != '0' || text[1] < '0' || text[1] > '9');
+    uint64_t result = 0;
+    do {
+        unsigned digit = (unsigned)(*text++ - '0');
+        CHECK(result < maximum / 10 || (result == maximum / 10 && digit <= maximum % 10));
+        result = result * 10 + digit;
+    } while (*text >= '0' && *text <= '9');
+    *cursor = text;
+    *output = result;
+    return 0;
+}
+
+static int seat_record(const char* bytes, size_t length, struct seat_record* record) {
+    const char* cursor = bytes;
+    CHECK(key(&cursor, "axiom64-seat=2\nboot=") == 0 && strlen(cursor) >= 37);
+    memcpy(record->boot, cursor, 36);
+    record->boot[36] = 0;
+    for (size_t i = 0; i < 36; i++)
+        if (i == 8 || i == 13 || i == 18 || i == 23)
+            CHECK(record->boot[i] == '-');
+        else
+            CHECK((record->boot[i] >= '0' && record->boot[i] <= '9') ||
+                  (record->boot[i] >= 'a' && record->boot[i] <= 'f'));
+    cursor += 36;
+    CHECK(key(&cursor, "\n") == 0);
+    const char* keys[] = {"owner=", "server=", "clients="};
+    for (size_t i = 0; i < 3; i++) {
+        CHECK(key(&cursor, keys[i]) == 0 && number(&cursor, INT32_MAX, &record->pid[i]) == 0 &&
+              key(&cursor, ":") == 0 && number(&cursor, UINT64_MAX, &record->birth[i]) == 0 &&
+              key(&cursor, "\n") == 0 && record->pid[i] > 1);
+    }
+    CHECK(record->pid[0] != record->pid[1] && record->pid[0] != record->pid[2] &&
+          record->pid[1] != record->pid[2]);
+    CHECK(key(&cursor, "uid=") == 0 && number(&cursor, UINT32_MAX - 1u, &record->uid) == 0 &&
+          key(&cursor, "\ngid=") == 0 && number(&cursor, UINT32_MAX - 1u, &record->gid) == 0 &&
+          key(&cursor, "\n") == 0);
+    uint32_t crc = UINT32_MAX;
+    for (const char* byte = bytes; byte < cursor; byte++) {
+        crc ^= (unsigned char)*byte;
+        for (unsigned bit = 0; bit < 8; bit++)
+            crc = crc & 1 ? crc >> 1 ^ UINT32_C(0xedb88320) : crc >> 1;
+    }
+    CHECK(key(&cursor, "crc=") == 0 && length - (size_t)(cursor - bytes) == 9);
+    char expected[10];
+    CHECK(snprintf(expected, sizeof(expected), "%08x\n", crc ^ UINT32_MAX) == 9);
+    CHECK(!strcmp(cursor, expected));
+    return 0;
+}
+
+static int process_birth(uint64_t pid, uint64_t* output) {
+    char path[64], bytes[4096];
+    size_t length;
+    snprintf(path, sizeof(path), "/proc/%u/stat", (unsigned)pid);
+    CHECK(read_record(path, bytes, sizeof(bytes), &length, 1) == 0 && length > 4);
+    const char* cursor = bytes;
+    uint64_t identity;
+    CHECK(number(&cursor, INT32_MAX, &identity) == 0 && identity == pid && cursor[0] == ' ' &&
+          cursor[1] == '(');
+    cursor = strrchr(cursor, ')');
+    CHECK(cursor && strlen(cursor) > 4 && cursor[1] == ' ' && cursor[3] == ' ');
+    cursor += 4;
+    for (unsigned field = 4; field < 22; field++) {
+        const char* end = strchr(cursor, ' ');
+        CHECK(end && end != cursor);
+        cursor = end + 1;
+    }
+    CHECK(number(&cursor, UINT64_MAX, output) == 0 && *cursor == ' ');
+    return 0;
+}
+
+static int xorg_metadata(pid_t server) {
+    const char* logs[] = {"server.log", "clients.log"};
+    struct stat value;
+    for (size_t i = 0; i < sizeof(logs) / sizeof(*logs); i++) {
+        char path[128];
+        snprintf(path, sizeof(path), "/run/axiom64-seat/%s", logs[i]);
+        CHECK(lstat(path, &value) == 0 && S_ISREG(value.st_mode) && value.st_nlink == 1 &&
+              !value.st_uid && !value.st_gid && (value.st_mode & 07777) == 0600);
+    }
+    CHECK(lstat("/run/axiom64-seat/Xorg.log", &value) == -1 && errno == ENOENT);
+    CHECK(lstat("/run/axiom64-seat/Xorg.log.old", &value) == -1 && errno == ENOENT);
+    int log = open("/run/axiom64-seat/server.log", O_RDONLY | O_NOFOLLOW);
+    CHECK(log >= 0);
+    char diagnostic[4096] = {0};
+    ssize_t logged = read(log, diagnostic, sizeof(diagnostic) - 1);
+    CHECK(logged > 0 && close(log) == 0 && strstr(diagnostic, "X.Org X Server"));
+    CHECK(lstat("/tmp/.X11-unix", &value) == 0 && S_ISDIR(value.st_mode) && !value.st_uid &&
+          !value.st_gid && (value.st_mode & 07777) == 01777);
+    CHECK(lstat("/tmp/.X11-unix/X0", &value) == 0 && S_ISSOCK(value.st_mode) &&
+          value.st_nlink == 1 && !value.st_uid && !value.st_gid && (value.st_mode & 07777) == 0777);
+    CHECK(lstat("/tmp/.X0-lock", &value) == 0 && S_ISREG(value.st_mode) && value.st_nlink == 1 &&
+          !value.st_uid && !value.st_gid && (value.st_mode & 07777) == 0444 && value.st_size == 11);
+    char lock[12], expected[12];
+    size_t length;
+    CHECK(read_record("/tmp/.X0-lock", lock, sizeof(lock), &length, 0) == 0 && length == 11);
+    CHECK(snprintf(expected, sizeof(expected), "%10u\n", (unsigned)server) == 11 &&
+          !strcmp(lock, expected));
+    return 0;
+}
+
 static int privileged(void) {
     CHECK(!getuid() && !geteuid() && !getgid() && !getegid());
     pid_t normal = fork();
@@ -165,15 +306,24 @@ static int privileged(void) {
     struct stat info;
     CHECK(fd >= 0 && fstat(fd, &info) == 0 && S_ISREG(info.st_mode) && info.st_nlink == 1 &&
           !info.st_uid && !info.st_gid && (info.st_mode & 07777) == 0600);
-    char state[192] = {0};
-    ssize_t size = read(fd, state, sizeof(state) - 1);
-    close(fd);
-    int owner, server, clients, used = 0;
-    unsigned uid;
-    CHECK(size > 0 &&
-          sscanf(state, "axiom64-seat=1\nowner=%d\nserver=%d\nclients=%d\nuid=%u\n%n", &owner,
-                 &server, &clients, &uid, &used) == 4 &&
-          size == used && owner > 1 && server > 1 && clients > 1 && uid == 1000);
+    CHECK(close(fd) == 0);
+    char state[512], boot[38];
+    size_t size;
+    struct seat_record record;
+    CHECK(read_record("/run/axiom64-seat/state", state, sizeof(state), &size, 0) == 0 &&
+          seat_record(state, size, &record) == 0 && record.uid == 1000 && record.gid == 1000);
+    CHECK(read_record("/proc/sys/kernel/random/boot_id", boot, sizeof(boot), &size, 1) == 0 &&
+          size == 37 && boot[36] == '\n' && !memcmp(boot, record.boot, 36));
+    for (size_t i = 0; i < 3; i++) {
+        uint64_t birth;
+        CHECK(process_birth(record.pid[i], &birth) == 0 && birth == record.birth[i]);
+    }
+    int owner = (int)record.pid[0], server = (int)record.pid[1], clients = (int)record.pid[2];
+    CHECK(xorg_metadata(server) == 0);
+    printf("DESKTOP_SEAT_IDENTITY_PASS version=2 boot=%s owner=%d:%llu server=%d:%llu "
+           "clients=%d:%llu logs_mode=0600 xorg_lock_mode=0444 xorg_socket_mode=0777\n",
+           record.boot, owner, (unsigned long long)record.birth[0], server,
+           (unsigned long long)record.birth[1], clients, (unsigned long long)record.birth[2]);
     CHECK(kill(owner, 0) == 0 && kill(server, 0) == 0 && kill(clients, 0) == 0);
     CHECK(lstat("/run/axiom64-seat/server.auth", &info) == 0 && S_ISREG(info.st_mode) &&
           info.st_nlink == 1 && !info.st_uid && !info.st_gid && (info.st_mode & 07777) == 0600);

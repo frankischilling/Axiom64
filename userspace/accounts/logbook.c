@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
 #include "logbook.h"
+#include "logbook_internal.h"
 #include "protected.h"
 #include <dirent.h>
 #include <errno.h>
@@ -12,13 +13,6 @@
 #include <sys/fsuid.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-struct account_logbook {
-    int directory, lock, journal;
-    char* path;
-    struct account_login_frame* frames;
-    size_t count;
-};
 
 struct account_session_lease {
     int directory, descriptor;
@@ -87,13 +81,15 @@ static int fresh(int directory) {
     return error ? failed(error) : 0;
 }
 
-static int load(struct account_logbook* book) {
+int account_logbook_load(struct account_logbook* book) {
     struct stat value;
     if (fstat(book->journal, &value) < 0)
         return -1;
     if (value.st_size < 0 || value.st_size > ACCOUNT_LOGIN_JOURNAL_LIMIT)
         return failed(EFBIG);
     size_t count = (size_t)value.st_size / sizeof(struct account_login_frame);
+    if (book->state.carried > count || book->state.carried > ACCOUNT_LOGIN_LIVE_LIMIT)
+        return failed(EUCLEAN);
     struct account_login_frame* frames = count ? malloc(count * sizeof(*frames)) : NULL;
     if (count && !frames)
         return -1;
@@ -110,6 +106,9 @@ static int load(struct account_logbook* book) {
     }
     for (size_t i = 0; !error && i < count; i++)
         if (!account_login_frame_valid(&frames[i], i + 1))
+            error = EUCLEAN;
+    for (size_t i = 0; !error && i < book->state.carried; i++)
+        if (frames[i].kind != ACCOUNT_LOGIN_START)
             error = EUCLEAN;
     for (size_t i = 0; !error && i < count; i++) {
         const struct account_login_frame* frame = &frames[i];
@@ -136,9 +135,12 @@ static int load(struct account_logbook* book) {
                 error = EUCLEAN;
         }
     }
-    if (!error && (size_t)value.st_size != bytes &&
-        (ftruncate(book->journal, (off_t)bytes) < 0 || fsync(book->journal) < 0))
-        error = errno;
+    if (!error && (size_t)value.st_size != bytes) {
+        if (book->immutable)
+            error = EUCLEAN;
+        else if (ftruncate(book->journal, (off_t)bytes) < 0 || fsync(book->journal) < 0)
+            error = errno;
+    }
     if (error) {
         free(frames);
         return failed(error);
@@ -154,7 +156,7 @@ static int same_token(const struct account_login_frame* first,
     return !memcmp(first->token, second->token, 16);
 }
 
-static int ended(const struct account_logbook* book, size_t start) {
+int account_logbook_ended(const struct account_logbook* book, size_t start) {
     for (size_t i = start + 1; i < book->count; i++)
         if ((book->frames[i].kind == ACCOUNT_LOGIN_END ||
              book->frames[i].kind == ACCOUNT_LOGIN_RECOVERED) &&
@@ -165,8 +167,18 @@ static int ended(const struct account_logbook* book, size_t start) {
 
 static int append(struct account_logbook* book, struct account_login_frame* frame, int* published) {
     *published = 0;
-    if ((book->count + 1) * sizeof(*frame) > ACCOUNT_LOGIN_JOURNAL_LIMIT)
-        return failed(EFBIG);
+    if (book->failed)
+        return failed(EIO);
+    if (book->count >= ACCOUNT_LOGIN_JOURNAL_LIMIT / sizeof(*frame)) {
+        if (account_logbook_rotate(book) < 0) {
+            book->failed = 1;
+            return -1;
+        }
+    }
+    if (book->count >= ACCOUNT_LOGIN_JOURNAL_LIMIT / sizeof(*frame))
+        return failed(ENOSPC);
+    if (book->state.previous_events >= UINT64_MAX - (book->count - book->state.carried))
+        return failed(EOVERFLOW);
     struct account_login_frame* next = realloc(book->frames, (book->count + 1) * sizeof(*next));
     if (!next)
         return -1;
@@ -190,7 +202,7 @@ static int append(struct account_logbook* book, struct account_login_frame* fram
 
 static int recover(struct account_logbook* book) {
     for (size_t i = 0; i < book->count; i++) {
-        if (book->frames[i].kind != ACCOUNT_LOGIN_START || ended(book, i))
+        if (book->frames[i].kind != ACCOUNT_LOGIN_START || account_logbook_ended(book, i))
             continue;
         char name[35];
         account_nonce_name(name, 'l', book->frames[i].token);
@@ -222,17 +234,34 @@ static int recover(struct account_logbook* book) {
         }
         if (error)
             return failed(error);
+        // An append may rotate and replace the frame array. Restart the scan so
+        // no carried lease is skipped when its old index disappears.
+        i = (size_t)-1;
     }
     return 0;
 }
 
-struct projection {
-    struct account_logbook* book;
-    unsigned kind;
-};
+int account_logbook_auth_line(const struct account_logbook* book, size_t index, char* line,
+                              size_t capacity) {
+    const struct account_login_frame* frame = &book->frames[index];
+    char user[33] = {0}, target[257] = {0};
+    memcpy(user, frame->entry.user, 32);
+    memcpy(target, frame->entry.host, 256);
+    uint64_t offset = index - book->state.carried + 1;
+    if (book->state.previous_events > UINT64_MAX - offset)
+        return failed(EOVERFLOW);
+    int count = snprintf(line, capacity,
+                         "%lld.%06d seq=%llu event=%s user=%s uid=%u gid=%u pid=%d tty=%s "
+                         "target=%s status=%d\n",
+                         (long long)frame->seconds, frame->entry.microseconds,
+                         (unsigned long long)(book->state.previous_events + offset),
+                         account_login_kind_name(frame->kind), user, frame->uid, frame->gid,
+                         frame->entry.pid, frame->entry.line, target, frame->status);
+    return count < 0 || (size_t)count >= capacity ? failed(EOVERFLOW) : count;
+}
 
-static int write_projection(int fd, void* context) {
-    struct projection* projection = context;
+int account_logbook_write_projection(int fd, void* context) {
+    struct account_logbook_projection* projection = context;
     struct account_logbook* book = projection->book;
     if (projection->kind == 0) {
         // utmp keeps the latest occupant of each terminal. An older session's
@@ -267,7 +296,7 @@ static int write_projection(int fd, void* context) {
         free(slots);
         return error ? failed(error) : 0;
     }
-    for (size_t i = 0; i < book->count; i++) {
+    for (size_t i = book->state.carried; i < book->count; i++) {
         const struct account_login_frame* frame = &book->frames[i];
         if (projection->kind == 1 &&
             (frame->kind == ACCOUNT_LOGIN_START || frame->kind == ACCOUNT_LOGIN_END ||
@@ -281,18 +310,10 @@ static int write_projection(int fd, void* context) {
             if (write_all(fd, &frame->entry, sizeof(frame->entry), 0, 0) < 0)
                 return -1;
         } else if (projection->kind == 3) {
-            char user[33] = {0}, target[257] = {0}, line[512];
-            memcpy(user, frame->entry.user, 32);
-            memcpy(target, frame->entry.host, 256);
-            int count = snprintf(line, sizeof(line),
-                                 "%lld.%06d seq=%llu event=%s user=%s uid=%u gid=%u pid=%d tty=%s "
-                                 "target=%s status=%d\n",
-                                 (long long)frame->seconds, frame->entry.microseconds,
-                                 (unsigned long long)frame->sequence,
-                                 account_login_kind_name(frame->kind), user, frame->uid, frame->gid,
-                                 frame->entry.pid, frame->entry.line, target, frame->status);
-            if (count < 0 || count >= (int)sizeof(line))
-                return failed(EOVERFLOW);
+            char line[512];
+            int count = account_logbook_auth_line(book, i, line, sizeof(line));
+            if (count < 0)
+                return -1;
             if (write_all(fd, line, (size_t)count, 0, 0) < 0)
                 return -1;
         }
@@ -303,9 +324,9 @@ static int write_projection(int fd, void* context) {
 static int publish(struct account_logbook* book) {
     static const char* names[] = {"utmp", "wtmp", "btmp", "auth.log"};
     for (unsigned kind = 0; kind < 4; kind++) {
-        struct projection projection = {book, kind};
+        struct account_logbook_projection projection = {book, kind};
         if (account_file_publish(book->directory, names[kind], kind < 2 ? 0644 : 0600,
-                                 write_projection, &projection) < 0)
+                                 account_logbook_write_projection, &projection) < 0)
             return -1;
     }
     return 0;
@@ -335,7 +356,7 @@ static int collect(struct account_logbook* book) {
         if (lease) {
             int live = 0;
             for (size_t i = 0; i < book->count; i++) {
-                if (book->frames[i].kind != ACCOUNT_LOGIN_START || ended(book, i))
+                if (book->frames[i].kind != ACCOUNT_LOGIN_START || account_logbook_ended(book, i))
                     continue;
                 char name[35];
                 account_nonce_name(name, 'l', book->frames[i].token);
@@ -425,7 +446,10 @@ int account_logbook_open(const char* path, int create, struct account_logbook** 
     for (unsigned i = 0; !error && i < 4; i++)
         if (account_file_check(book->directory, projections[i], i < 2 ? 0644 : 0600) < 0)
             error = errno;
-    if (!error && (load(book) < 0 || recover(book) < 0 || publish(book) < 0 || collect(book) < 0))
+    if (!error && (account_logbook_rotation_open(book) < 0 || account_logbook_load(book) < 0 ||
+                   account_logbook_rotation_validate(book) < 0 ||
+                   account_logbook_rotation_collect(book) < 0 || recover(book) < 0 ||
+                   publish(book) < 0 || collect(book) < 0))
         error = errno;
     if (error) {
         account_logbook_close(book);
@@ -442,7 +466,7 @@ int account_logbook_active(const struct account_logbook* book, uid_t uid) {
         return failed(EINVAL);
     for (size_t i = 0; i < book->count; i++)
         if (book->frames[i].kind == ACCOUNT_LOGIN_START && book->frames[i].uid == uid &&
-            !ended(book, i))
+            !account_logbook_ended(book, i))
             return 1;
     return 0;
 }
@@ -455,6 +479,11 @@ int account_logbook_begin(struct account_logbook* book, const struct account_pro
     if (!book || !profile || !output || child <= 0)
         return failed(EINVAL);
     *output = NULL;
+    size_t active = 0;
+    for (size_t i = 0; i < book->count; i++)
+        active += book->frames[i].kind == ACCOUNT_LOGIN_START && !account_logbook_ended(book, i);
+    if (active >= ACCOUNT_LOGIN_LIVE_LIMIT)
+        return failed(ENOSPC);
     if (getsid(child) != child || getpgid(child) != child)
         return failed(EINVAL);
     struct account_session_lease* lease = calloc(1, sizeof(*lease));
@@ -544,7 +573,7 @@ int account_logbook_audit(struct account_logbook* book, enum account_login_kind 
         return failed(EINVAL);
     if (kind == ACCOUNT_LOGIN_BOOT)
         for (size_t i = 0; i < book->count; i++)
-            if (book->frames[i].kind == ACCOUNT_LOGIN_START && !ended(book, i))
+            if (book->frames[i].kind == ACCOUNT_LOGIN_START && !account_logbook_ended(book, i))
                 return failed(EBUSY);
     struct account_login_frame frame;
     if (account_login_frame_make(&frame, kind, name, uid,

@@ -91,6 +91,7 @@ def install_observer(files, directory):
     program, inputs = build_observer(directory)
     files['usr/bin/account-normal-observe'] = (0o100755, program.read_bytes())
     names = [*(f'userspace/accounts/{name}.c' for name in MODULES),
+             'userspace/accounts/logbook_rotation.c',
              *(str(path.relative_to(ROOT)) for path in (ROOT / 'userspace/accounts').glob('*.h')),
              'userspace/tests/security/account-normal-observe.c', 'scripts/build_accounts.py',
              'scripts/build_musl.py', 'scripts/build_libxcrypt.py', 'sources.lock.json']

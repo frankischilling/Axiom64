@@ -30,7 +30,7 @@ jobs:
       - name: Cache locked dependency and source archives
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
-          key: ${{ runner.os }}-downloads-v1-${{ hashFiles('dependencies.json', 'ports.lock.json', 'sources.lock.json') }}
+          key: ${{ runner.os }}-downloads-v1-${{ hashFiles('dependencies.json', 'ports.lock.json', 'sources.lock.json', 'vendor/gnu-utmp-reader/inputs.json') }}
           path: |
             downloads/*.tar.*
             downloads/ports
@@ -57,10 +57,24 @@ jobs:
         run: sudo -n python3 scripts/tests/desktop_authority_test.py --isolated
       - name: Test the selected shell starts only on a private owned foreground PTY
         run: sudo -n python3 scripts/tests/desktop_terminal_test.py
+      - name: Test desktop recovery ownership and saved process identity
+        run: |
+          mkdir -p build/accounts-policy
+          sudo -n python3 scripts/tests/desktop_seat_test.py 2>&1 | tee build/accounts-policy/seat.log
+          sudo -n python3 scripts/tests/desktop_seat_test.py --sanitize 2>&1 | tee build/accounts-policy/seat-sanitize.log
+      - name: Test process identity and exec capture failures with sanitizers
+        run: |
+          make test-proc-identity-policy test-exec-arguments-policy 2>&1 | tee build/accounts-policy/process.log
+      - name: Verify the portable GNU login-record reader and its pinned inputs
+        run: python3 scripts/tests/gnu_utmp_reader_test.py --directory build/gnu-reader-controls
       - name: Build all maintained OpenSSL providers from their pinned inputs
         run: python3 scripts/build_openssl.py --provider all
       - name: Verify completed OpenSSL fingerprints and reject changed inputs and products
         run: python3 scripts/tests/openssl_inputs_test.py -v
+      - name: Build maintained password providers and account programs
+        run: |
+          python3 scripts/build_libxcrypt.py --provider all
+          python3 scripts/build_accounts.py --provider all --linkage all
       - name: Build secure-random lifecycle and cryptographic prerequisite clients
         run: |
           make -j2 build/random-admin-native build/random-admin-static build/random-admin-dynamic
@@ -81,6 +95,18 @@ jobs:
           make test-rtc-codec test-netlink-inventory-codec
       - name: Bundle corresponding sources
         run: make sources
+      - name: Execute and relink the GNU reader extracted from this run's public source artifact
+        run: |
+          python3 scripts/tests/gnu_utmp_reader_test.py --directory build/gnu-reader-public-controls --source-archive build/axiom64-sources.tar
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          kit = Path('build/gnu-reader-public-controls/moved-kit')
+          manifest = json.loads((kit / 'manifest.json').read_text())
+          assert hashlib.sha256((kit / 'application.c').read_bytes()).hexdigest() == manifest['source_sha256']
+          print('GNU_UTMP_READER_PUBLIC_SOURCE_BINDING_PASS')
+          PY
       - name: Build standalone image and both userspace profiles
         run: |
           make -j2 image
@@ -119,6 +145,16 @@ jobs:
           name: tcp-policy
           if-no-files-found: warn
           path: build/tcp-policy
+      - name: Upload account policy and portable reader evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-account-policy
+          path: |
+            build/accounts-policy
+            build/gnu-reader-controls
+            build/gnu-reader-public-controls
+            build/gnu-utmp-reader
       - name: Test paired network workspace isolation and failure evidence
         run: python3 scripts/tests/paired_network_test.py
       - name: Test PCI removal preserves interrupted guest reads
@@ -232,6 +268,31 @@ jobs:
           - link-uefi-modern-lane1
           - link-uefi-legacy-lane0
           - link-uefi-legacy-lane1
+          - accounts-native-storage
+          - accounts-native-auth
+          - accounts-native-session
+          - accounts-native-frontends
+          - accounts-guest-storage
+          - accounts-store-ext2
+          - accounts-guest-auth
+          - accounts-guest-session
+          - accounts-guest-frontends
+          - accounts-process-native
+          - accounts-process-guest
+          - accounts-record-native
+          - accounts-record-bios-modern
+          - accounts-record-bios-legacy
+          - accounts-record-uefi-modern
+          - accounts-record-uefi-legacy
+          - accounts-rotation-native
+          - accounts-rotation-bios-modern
+          - accounts-rotation-bios-legacy
+          - accounts-rotation-uefi-modern
+          - accounts-rotation-uefi-legacy
+          - accounts-desktop-bios
+          - accounts-desktop-uefi
+          - accounts-console-full
+          - accounts-vm-state
     steps:
       - name: Download this run's test inputs
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -242,6 +303,124 @@ jobs:
         run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
       - name: Install build and emulation tools
         run: bash scripts/ci/tools.sh restore
+      - name: Compare account database publication and updates with native Linux
+        if: matrix.suite == 'accounts-native-storage'
+        run: |
+          sudo -n python3 scripts/account_store_test.py --fixtures /tmp/axiom64-ci-account-store
+          sudo -n python3 scripts/account_database_test.py --native --directory build/account-database-native --fixtures /tmp/axiom64-ci-account-database
+          sudo -n python3 scripts/account_update_test.py --native --directory build/account-update-native --fixtures /tmp/axiom64-ci-account-update
+          sudo -n python3 scripts/account_update_test.py --native --sanitize --directory build/account-update-sanitize --fixtures /tmp/axiom64-ci-account-update-sanitize
+      - name: Compare account management, password hashing and authentication with native Linux
+        if: matrix.suite == 'accounts-native-auth'
+        run: |
+          python3 scripts/password_library_test.py
+          sudo -n python3 scripts/account_management_test.py --fixtures /tmp/axiom64-ci-account-management
+          sudo -n python3 scripts/account_auth_test.py --native --directory build/account-auth-native --fixtures /tmp/axiom64-ci-account-auth
+          sudo -n python3 scripts/account_secret_test.py --native --directory build/account-secret-native
+      - name: Compare session credentials, leases and login-record projections with native Linux
+        if: matrix.suite == 'accounts-native-session'
+        run: |
+          sudo -n python3 scripts/account_session_test.py --native --directory build/account-session-native --fixtures /tmp/axiom64-ci-account-session
+          sudo -n python3 scripts/account_logbook_test.py --native --directory build/account-logbook-native --fixtures /tmp/axiom64-ci-account-logbook
+      - name: Compare login, su, sudo, passwd and console recovery with native Linux
+        if: matrix.suite == 'accounts-native-frontends'
+        run: |
+          sudo -n python3 scripts/account_access_test.py --native --directory build/account-access-native --fixtures /tmp/axiom64-ci-account-access
+          sudo -n python3 scripts/account_console_test.py --native --directory build/account-console-native --fixtures /tmp/axiom64-ci-account-console
+      - name: Verify account database publication and updates in fresh guest kernels
+        if: matrix.suite == 'accounts-guest-storage'
+        run: |
+          python3 scripts/account_store_guest.py
+          python3 scripts/account_database_test.py
+          python3 scripts/account_update_test.py
+      - name: Verify account generation transactions through persistent ext2 reboot pairs
+        if: matrix.suite == 'accounts-store-ext2'
+        run: python3 scripts/account_store_ext2.py
+      - name: Verify password hashing, account management and authentication in fresh guest kernels
+        if: matrix.suite == 'accounts-guest-auth'
+        run: |
+          python3 scripts/password_library_guest.py
+          python3 scripts/account_management_guest.py
+          python3 scripts/account_auth_test.py
+          python3 scripts/account_secret_test.py
+      - name: Verify session credentials, leases and GNU login-record interoperability in fresh guest kernels
+        if: matrix.suite == 'accounts-guest-session'
+        run: |
+          python3 scripts/account_session_test.py
+          python3 scripts/account_logbook_test.py
+      - name: Verify login aliases, elevation and console recovery in fresh guest kernels
+        if: matrix.suite == 'accounts-guest-frontends'
+        run: |
+          python3 scripts/account_access_test.py
+          python3 scripts/account_console_test.py
+      - name: Compare terminal ownership, parent death, signal waits, waitid, procfs and exec with native Linux
+        if: matrix.suite == 'accounts-process-native'
+        run: |
+          sudo -n make test-pty-security-native test-parent-death-native test-signal-wait-native
+          sudo -n make test-waitid-native test-proc-identity-native test-exec-arguments-native
+          sudo -n python3 scripts/proc_test.py --native --directory build/proc-native
+          sudo -n python3 scripts/terminal_flush_test.py --native --directory build/terminal-flush-native
+          sudo -n python3 scripts/terminal_flush_test.py --native --sanitize --directory build/terminal-flush-sanitize
+      - name: Verify terminal ownership, parent death, signal waits, waitid, procfs and exec in fresh guest kernels
+        if: matrix.suite == 'accounts-process-guest'
+        run: |
+          make test-pty-security test-parent-death test-signal-wait
+          make test-waitid test-proc-identity test-exec-arguments
+          python3 scripts/proc_test.py
+          python3 scripts/terminal_flush_test.py
+      - name: Compare POSIX and OFD record locks with actual native process lifetimes
+        if: matrix.suite == 'accounts-record-native'
+        run: |
+          sudo -n python3 scripts/record_lock_test.py --native --directory build/record-locks-native --fixtures /tmp/axiom64-ci-record-locks
+          sudo -n make test-record-lock-lifecycle-native
+      - name: Verify POSIX and OFD record-lock lifetime and ext2 reboot persistence
+        if: startsWith(matrix.suite, 'accounts-record-') && matrix.suite != 'accounts-record-native'
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          case "$SUITE" in
+            accounts-record-bios-modern) firmware=bios; transport=modern ;;
+            accounts-record-bios-legacy) firmware=bios; transport=legacy ;;
+            accounts-record-uefi-modern) firmware=uefi; transport=modern ;;
+            accounts-record-uefi-legacy) firmware=uefi; transport=legacy ;;
+            *) exit 2 ;;
+          esac
+          python3 scripts/record_lock_lifecycle_test.py --directory build/record-lock-lifecycle --firmware "$firmware" --transport "$transport"
+      - name: Preserve the original complete record-lock regression matrix
+        if: matrix.suite == 'accounts-record-bios-modern'
+        run: python3 scripts/record_lock_test.py --directory build/record-locks
+      - name: Verify native journal rotation at every publication, short-write and expiry boundary
+        if: matrix.suite == 'accounts-rotation-native'
+        run: |
+          sudo -n python3 scripts/account_logbook_rotation_test.py --native --directory build/account-rotation-native --fixtures /tmp/axiom64-ci-account-rotation
+          sudo -n python3 scripts/account_logbook_rotation_guest.py --native --directory build/account-rotation-observer-native
+      - name: Verify journal rotation, active sessions, retention and exact disk projections in real guest kernels
+        if: startsWith(matrix.suite, 'accounts-rotation-') && matrix.suite != 'accounts-rotation-native'
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          case "$SUITE" in
+            accounts-rotation-bios-modern) firmware=bios; transport=modern; default= ;;
+            accounts-rotation-bios-legacy) firmware=bios; transport=legacy; default=--skip-default ;;
+            accounts-rotation-uefi-modern) firmware=uefi; transport=modern; default=--skip-default ;;
+            accounts-rotation-uefi-legacy) firmware=uefi; transport=legacy; default=--skip-default ;;
+            *) exit 2 ;;
+          esac
+          sudo -n python3 scripts/account_logbook_rotation_guest.py --directory build/account-rotation-guest --firmware "$firmware" --transport "$transport" $default
+      - name: Verify authenticated graphical sessions and recovery on RAM and persistent roots
+        if: startsWith(matrix.suite, 'accounts-desktop-')
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          firmware=${SUITE#accounts-desktop-}
+          case "$firmware" in bios|uefi) ;; *) exit 2 ;; esac
+          python3 scripts/account_normal_test.py --directory build/account-desktop --graphical --firmware "$firmware"
+      - name: Verify authenticated full-profile console, persistence and reboot recovery
+        if: matrix.suite == 'accounts-console-full'
+        run: python3 scripts/account_normal_test.py --directory build/account-normal-full --profile full
+      - name: Verify disposable persistent VM setup, concurrent denial and authenticated reboot
+        if: matrix.suite == 'accounts-vm-state'
+        run: python3 scripts/vm_test.py
       - name: Prepare optional KVM access for measured manager VM runs
         if: (startsWith(matrix.suite, 'link-') || startsWith(matrix.suite, 'normal-init-')) && (inputs.manager_accelerator == 'auto' || inputs.manager_accelerator == 'kvm')
         run: |
@@ -703,6 +882,25 @@ jobs:
             build/tcp-icmp-*-inputs.json
             build/tcp-icmp-*.txt
             build/tcp-icmp-damaged/**
+      - name: Upload complete account source, process, filesystem and graphical evidence
+        if: always() && startsWith(matrix.suite, 'accounts-')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-${{ matrix.suite }}-evidence
+          if-no-files-found: error
+          compression-level: 1
+          path: |
+            build/account-*/**
+            build/password-library-*/**
+            build/record-lock*/**
+            build/pty-security*/**
+            build/terminal-flush*/**
+            build/parent-death*/**
+            build/signal-wait*/**
+            build/waitid*/**
+            build/proc*/**
+            build/exec-arguments*/**
+            build/vm-state-test/**
       - name: Upload complete entropy, seed, cryptographic and ordinary-init evidence
         if: always() && startsWith(matrix.suite, 'random-')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

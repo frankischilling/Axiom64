@@ -18,6 +18,7 @@ MODULES = ('store', 'database', 'record', 'password', 'home', 'auth', 'secret', 
 PROGRAMS = {'accountctl': 'manage', 'account-access': 'access', 'account-console': 'console'}
 DESKTOP_INPUTS = [f'userspace/desktop/{name}.{suffix}' for name in ('seat', 'authority') for suffix in ('c', 'h')]
 INPUTS = [*(f'userspace/accounts/{name}.{suffix}' for name in MODULES for suffix in ('c', 'h')),
+          'userspace/accounts/logbook_rotation.c', 'userspace/accounts/logbook_internal.h',
           *(f'userspace/accounts/{name}.c' for name in PROGRAMS.values()),
           'scripts/build_accounts.py', 'scripts/build_libxcrypt.py', 'scripts/build_musl.py',
           'scripts/linux_uapi.py', 'dependencies.json', 'sources.lock.json', *DESKTOP_INPUTS]
@@ -74,6 +75,7 @@ def ensure(provider='build', linkage='static'):
                        '-I' + str(stage / 'usr/include'),
                        '-ffile-prefix-map=' + str(ROOT) + '=/usr/src/axiom64',
                        *(str(ROOT / f'userspace/accounts/{name}.c') for name in MODULES),
+                       str(ROOT / 'userspace/accounts/logbook_rotation.c'),
                        *(str(ROOT / name) for name in DESKTOP_INPUTS if name.endswith('.c')),
                        str(ROOT / f'userspace/accounts/{main}.c'), '-o', str(output)]
             command += ['-static', str(stage / 'usr/lib/libcrypt.a')] if linkage == 'static' else [

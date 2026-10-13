@@ -165,7 +165,7 @@
       "title": "VFS, mounts, and pseudo filesystems",
       "milestone": "M1",
       "state": "partial",
-      "current": "RAM and classic ext2 mounts, Linux path/no-follow/descriptor xattrs, filesystem dispatch, directory identity, read-only policy, mount-aware statfs, rename, links, pipes, and selected synthetic device metadata work. Local advisory flock supports canonical inode ownership, descriptor lifetime, retained waits, and tested signal restart on the single-CPU kernel. Procfs provides actual procfs process/thread status and enumeration, caller-relative links, description-owned reads and retained inode lifetime; complete procfs remains unfinished.",
+      "current": "RAM and classic ext2 mounts, Linux path/no-follow/descriptor xattrs, filesystem dispatch, directory identity, read-only policy, mount-aware statfs, rename, links, pipes, and selected synthetic device metadata work. Local advisory flock supports canonical inode ownership, descriptor lifetime, retained waits, and tested signal restart on the single-CPU kernel. Procfs provides process/thread status, enumeration, caller-relative links, description-owned reads and retained inode lifetime. Stat records include actual process/thread birth ticks, and a secure UUID identifies each initialized kernel boot; accounting and complete procfs remain unfinished.",
       "scope": [
         "Mount graph, filesystem operations, vnode/dentry lifetime, and pathname traversal",
         "File descriptions, descriptor lifetime, close-on-exec, and robust directory enumeration",
@@ -198,7 +198,10 @@
         "docs/file-locks.md",
         "kernel/fs/proc.cpp",
         "userspace/tests/process/proc.c",
-        "scripts/proc_test.py"
+        "scripts/proc_test.py",
+        "kernel/tests/fs/proc_identity.cpp",
+        "userspace/tests/process/proc-identity.c",
+        "scripts/proc_identity_test.py"
       ],
       "branch": "feature/f04-vfs-mounts-and-pseudo-filesystems",
       "issue": "https://github.com/frankischilling/Axiom64/issues/4"
@@ -208,7 +211,7 @@
       "title": "POSIX threads and futexes",
       "milestone": "M2",
       "state": "partial",
-      "current": "Single-CPU musl pthread lifecycle, clone resource sharing, TLS/FPU isolation, mutex/condition/semaphore synchronization, futex wait/wake/bitsets/requeue, retained blocking I/O, group teardown, worker fork/exec, and guest-compiled C++ threads are implemented. Robust owner death, cancellation, remaining POSIX synchronization, full signal semantics, and SMP remain planned.",
+      "current": "Single-CPU musl pthread lifecycle, clone resource sharing, TLS/FPU isolation, mutex/condition/semaphore synchronization, futex wait/wake/bitsets/requeue, retained blocking I/O, group teardown, worker fork/exec, and guest-compiled C++ threads are implemented. Child-event waits support waitid selectors, stop/continue, interruption/restart and nonconsuming WNOWAIT observations. Robust owner death, cancellation, remaining POSIX synchronization, full signal semantics, and SMP remain planned.",
       "scope": [
         "Shared address-space lifetime and clone/clone3 thread flags",
         "Thread IDs, groups, exit_group, join, TLS, and per-thread FPU state",
@@ -237,7 +240,10 @@
         "userspace/tests/threads/io.c",
         "userspace/tests/toolchain/threads.cpp",
         "docs/threads.md",
-        "docs/io.md"
+        "docs/io.md",
+        "kernel/process/waitid.cpp",
+        "userspace/tests/process/waitid.c",
+        "scripts/waitid_test.py"
       ],
       "branch": "feature/f05-posix-threads-and-futexes",
       "issue": "https://github.com/frankischilling/Axiom64/issues/5"
@@ -305,7 +311,7 @@
       "title": "Linux syscall and libc compatibility",
       "milestone": "M4",
       "state": "partial",
-      "current": "Static/dynamic musl programs and a tested syscall subset work, including retained blocking I/O and tested restart behavior. Unsupported calls return ENOSYS; complete Linux conformance remains planned. Local advisory flock supports canonical inode ownership, descriptor lifetime, retained waits, and tested signal restart on the single-CPU kernel.",
+      "current": "Static/dynamic musl programs and a tested syscall subset work, including retained blocking I/O and tested restart behavior. Unsupported calls return ENOSYS; complete Linux conformance remains planned. Local advisory flock supports canonical inode ownership, descriptor lifetime, retained waits, and tested signal restart on the single-CPU kernel. POSIX/OFD record locks have native and RAM/ext2 lifetime, deadlock, restart, descriptor-replacement, exhaustion and reboot checks. Owned exec argument/environment capture and checked stack loading accept long Linux commands while preserving failed-exec state; complete resource-limit enforcement remains planned.",
       "scope": [
         "Machine-readable Linux x86-64 syscall/structure/flag/error matrix with tests",
         "Extend musl coverage without silent successful stubs",
@@ -336,7 +342,15 @@
         "kernel/include/fs/file_lock.hpp",
         "userspace/tests/fs/file-lock.c",
         "scripts/file_lock_test.py",
-        "docs/file-locks.md"
+        "docs/file-locks.md",
+        "kernel/process/exec_arguments.cpp",
+        "kernel/tests/process/exec_arguments.cpp",
+        "userspace/tests/process/exec-arguments.c",
+        "scripts/exec_arguments_test.py",
+        "userspace/tests/security/record-locks.c",
+        "scripts/record_lock_test.py",
+        "userspace/tests/security/record-lock-lifecycle.c",
+        "scripts/record_lock_lifecycle_test.py"
       ],
       "branch": "feature/f08-linux-syscall-and-libc-compatibility",
       "issue": "https://github.com/frankischilling/Axiom64/issues/8"
@@ -346,7 +360,7 @@
       "title": "Accounts, permissions, and process credentials",
       "milestone": "M3",
       "state": "partial",
-      "current": "Task identities, supplementary groups, capability transitions, RAM/ext2 file-capability exec, maintained getcap/setcap tools, DAC, chroot and process/IPC/network guards work. Account tools provide atomic passwd/group/shadow storage, administration, maintained password verification, private terminals, supervised ordinary shells, protected login journals and interactive login/su/sudo/passwd. Structural account administration and numeric identity reuse check live session leases and actual process/thread credentials under database/logbook locks. Normal-image persistent first-boot/later-login, complete lifecycle/fault acceptance and isolation remain required.",
+      "current": "Task identities, supplementary groups, capability transitions, RAM/ext2 file-capability exec, maintained getcap/setcap tools, DAC, chroot and process/IPC/network guards work. Account tools provide atomic passwd/group/shadow storage, administration, maintained password verification, private terminals, supervised ordinary shells, protected login journals and interactive login/su/sudo/passwd. Structural account administration and numeric identity reuse check live session leases and actual process/thread credentials under database/logbook locks. Normal images provision an administrator privately on a fresh disk and require login on later boots. Authenticated graphical clients use ordinary identities while trusted Xorg owns raw devices; saved seat state binds boot and process birth. Bounded journal rotation retains four closed generations and carries active leases. Complete persistent administration, storage/process/VM fault acceptance and wider isolation remain required.",
       "scope": [
         "UID/GID, supplementary groups, real/effective/saved credentials, and umask",
         "File/directory access checks, ownership, sticky bits, set-ID, and chroot",
@@ -383,7 +397,15 @@
         "userspace/accounts/console.c",
         "scripts/build_accounts.py",
         "scripts/account_console_test.py",
-        "scripts/terminal_flush_test.py"
+        "scripts/terminal_flush_test.py",
+        "userspace/accounts/logbook_rotation.c",
+        "scripts/account_logbook_rotation_test.py",
+        "scripts/account_logbook_rotation_guest.py",
+        "userspace/desktop/seat.c",
+        "userspace/tests/desktop/seat-recovery.c",
+        "scripts/tests/desktop_seat_test.py",
+        "userspace/tests/desktop/login-observe.c",
+        "scripts/account_normal_test.py"
       ],
       "branch": "feature/f09-accounts-permissions-and-process-credentials",
       "issue": "https://github.com/frankischilling/Axiom64/issues/9"
@@ -987,7 +1009,7 @@
       "title": "Init, login, and system services",
       "milestone": "M3",
       "state": "partial",
-      "current": "Init starts desktop/serial processes, reaps children and independently supervises the normal network manager with one-second restart delay. Complete manager crash/recovery and unchanged-desktop startup matrices pass. General service ordering/supervision, login, credentials, daemons and clean system shutdown remain required.",
+      "current": "Init starts desktop/serial processes, reaps children and independently supervises the normal network manager with one-second restart delay. Complete manager crash/recovery and unchanged-desktop startup matrices pass. The normal authenticated console provisions only fresh stores, requires login after provisioning and restart, restores terminal state and retires abandoned workers. Authenticated desktop supervision owns child publication, display authorization and seat recovery. General service ordering, daemons, broader lifecycle isolation and clean system shutdown remain required.",
       "scope": [
         "Minimal init, ordered startup, service supervision, restart, and clean shutdown",
         "Logging/syslog, time synchronization, cron/at/batch, and accounting",
@@ -1013,7 +1035,12 @@
         "userspace/tests/net/init-supervision.cpp",
         "scripts/normal_manager_test.py",
         "docs/network-manager.md",
-        "docs/network-manager-acceptance.md"
+        "docs/network-manager-acceptance.md",
+        "userspace/init/console.c",
+        "userspace/desktop/seat.c",
+        "scripts/account_normal_test.py",
+        "scripts/normal_login.py",
+        "scripts/vm_test.py"
       ],
       "branch": "feature/f25-init-login-and-system-services",
       "issue": "https://github.com/frankischilling/Axiom64/issues/25"
@@ -1318,7 +1345,12 @@
         "dependencies.json",
         "ports.lock.json",
         "sources.lock.json",
-        "scripts/sources.py"
+        "scripts/sources.py",
+        "vendor/gnu-utmp-reader/inputs.json",
+        "vendor/gnu-utmp-reader/README.md",
+        "scripts/build_gnu_utmp_reader.py",
+        "scripts/tests/gnu_utmp_reader_test.py",
+        "userspace/tests/security/account-login-libc.c"
       ],
       "branch": "feature/f37-reproducible-distribution-and-source-provenance",
       "issue": "https://github.com/frankischilling/Axiom64/issues/38"

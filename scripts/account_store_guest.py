@@ -14,7 +14,8 @@ from fetch import LOCK, ROOT
 
 
 def fixture(directory, provider, linkage, *, program_builder=build, filename='account-store',
-            command='/bin/account-store /run/account-store', extra_products=None):
+            command='/bin/account-store /run/account-store', extra_products=None,
+            kernel_options=()):
     program, provenance = program_builder(provider, linkage, directory)
     files = {name: (0o40755, b'') for name in ('bin', 'sbin', 'lib', 'etc', 'dev', 'proc', 'sys', 'tmp', 'run')}
     products = {'sbin/init': ROOT / 'build/init', 'bin/' + filename: program,
@@ -41,7 +42,8 @@ def fixture(directory, provider, linkage, *, program_builder=build, filename='ac
             stream.write(bytes(-stream.tell() % 4))
     name = filename + '-' + provider + '-' + linkage + '.iso'
     subprocess.run(['python3', 'scripts/image.py', '--test', '--suite', 'network',
-                    '--initramfs', str(cpio), '--output-name', name], cwd=ROOT,
+                    '--initramfs', str(cpio), '--output-name', name,
+                    *(argument for token in kernel_options for argument in ('--kernel-option', token))], cwd=ROOT,
                    stdout=subprocess.DEVNULL, check=True)
     image = directory / 'image.iso'
     shutil.copy2(ROOT / 'build' / name, image)

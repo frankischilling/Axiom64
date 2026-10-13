@@ -17,7 +17,8 @@ int desktop_seat_observe(struct desktop_seat*);
 int desktop_seat_stop(struct desktop_seat*);
 
 // Recover a dead supervisor's protected seat before showing a login prompt.
-// A live process, held lease, foreign display or damaged metadata fails closed.
+// A matching boot/process incarnation, held lease, foreign display or damaged
+// metadata fails closed. Recovery never signals saved numeric process IDs.
 int desktop_seat_recover(void);
 
 #endif

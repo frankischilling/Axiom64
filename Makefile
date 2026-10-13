@@ -25,6 +25,34 @@ test-account-secret:
 test-account-secret-native:
 	$(PYTHON) scripts/account_secret_test.py --native --directory build/account-secret-native
 .PHONY: test-parent-death test-parent-death-native test-signal-wait test-signal-wait-native test-account-desktop
+.PHONY: test-waitid test-waitid-native test-proc-identity test-proc-identity-native test-proc-identity-policy test-record-lock-lifecycle test-record-lock-lifecycle-native
+.PHONY: test-exec-arguments test-exec-arguments-native test-exec-arguments-policy
+test-exec-arguments:
+	$(PYTHON) scripts/exec_arguments_test.py --directory build/exec-arguments
+test-exec-arguments-native:
+	$(PYTHON) scripts/exec_arguments_test.py --native --directory build/exec-arguments-native
+build/exec-arguments-policy: kernel/tests/process/exec_arguments.cpp kernel/process/exec_arguments.cpp kernel/include/process/exec_arguments.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/process/exec_arguments.cpp kernel/process/exec_arguments.cpp -o $@
+test-exec-arguments-policy: build/exec-arguments-policy
+	ASAN_OPTIONS=detect_leaks=1 ./build/exec-arguments-policy
+test-waitid:
+	$(PYTHON) scripts/waitid_test.py --directory build/waitid
+test-waitid-native:
+	$(PYTHON) scripts/waitid_test.py --directory build/waitid-native --native
+test-proc-identity:
+	$(PYTHON) scripts/proc_identity_test.py --directory build/proc-identity
+test-proc-identity-native:
+	$(PYTHON) scripts/proc_identity_test.py --directory build/proc-identity-native --native
+build/proc-identity-policy: kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp kernel/include/fs/proc.hpp kernel/include/process/task.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp -o $@
+test-proc-identity-policy: build/proc-identity-policy
+	ASAN_OPTIONS=detect_leaks=1 ./build/proc-identity-policy
+test-record-lock-lifecycle:
+	$(PYTHON) scripts/record_lock_lifecycle_test.py --directory build/record-lock-lifecycle
+test-record-lock-lifecycle-native:
+	$(PYTHON) scripts/record_lock_lifecycle_test.py --native --fixtures /tmp/axiom64-record-lock-lifecycle --directory build/record-lock-lifecycle-native
 test-parent-death:
 	$(PYTHON) scripts/parent_death_test.py --directory build/parent-death
 test-parent-death-native:

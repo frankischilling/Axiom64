@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "process/task.hpp"
+#include "process/exec_arguments.hpp"
 #include "fs/record_lock.hpp"
+#include "process/waitid.hpp"
 #include "fs/descriptor.hpp"
 #include "drivers/platform/devices.hpp"
 #include "ipc/ipc.hpp"
@@ -97,7 +99,9 @@ Task* new_task() {
                 return nullptr;
             }
             t.pid = next_pid++;
+            t.start_ticks = ticks;
             t.process->pid = t.pid;
+            t.process->start_ticks = t.start_ticks;
             t.process->leader = &t;
             t.state = State::runnable;
             t.fs->cwd[0] = '/';
@@ -342,6 +346,10 @@ static bool awaken(Task& t) {
     case Wait::file_lock:
         return io_resume(t);
     case Wait::child:
+        if (t.frame.rax == 247) {
+            ready = wait_information_ready(t);
+            break;
+        }
         for (auto& c : tasks)
             if (c.state != State::empty && c.process->leader == &c &&
                 c.process->parent == t.process->pid &&
@@ -517,7 +525,8 @@ static int load_image(AddressSpace& mem, Node* file, uint64_t base, Image& image
     return 0;
 }
 
-int exec_task(Task* t, const char* path, const char* const* argv, const char* const* envp) {
+int exec_task(Task* t, const ExecArguments& arguments) {
+    const char* path = arguments.path();
     Path name;
     name.base = t->fs->cwd_node;
     if (strlen(path) >= sizeof(name.text))
@@ -591,10 +600,13 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
         }
         entry = interp.entry;
     }
-    constexpr uint64_t stack_top = 0x700000000000, stack_size = 2 * 1024 * 1024;
-    if (!memory.map(stack_top - stack_size, stack_size, 3)) {
+    constexpr uint64_t stack_top = 0x700000000000;
+    constexpr size_t auxiliary_size = 34 * sizeof(uint64_t);
+    ExecStack stack{};
+    int stack_error = arguments.layout(stack_top, auxiliary_size, stack);
+    if (stack_error || !memory.map(stack.bottom, stack.mapping_size, 3)) {
         memory.destroy();
-        return -12;
+        return stack_error ? stack_error : -12;
     }
     const uint8_t trampoline[] = {0x48, 0xc7, 0xc0, 15, 0, 0, 0, 0x0f, 0x05};
     if (!memory.map(signal_trampoline, page_size, 3) ||
@@ -603,28 +615,6 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
         memory.destroy();
         return -12;
     }
-    uint64_t sp = stack_top, args[128], env[128];
-    size_t argc = 0, envc = 0;
-    auto push_string = [&](const char* s) -> uint64_t {
-        size_t len = strlen(s) + 1;
-        if (len > sp - (stack_top - stack_size))
-            return 0;
-        sp -= len;
-        return memory.copy_out(sp, s, len) ? sp : 0;
-    };
-    for (; argv && argv[argc]; argc++) {
-        if (argc == 127 || !(args[argc] = push_string(argv[argc]))) {
-            memory.destroy();
-            return -7;
-        }
-    }
-    for (; envp && envp[envc]; envc++) {
-        if (envc == 127 || !(env[envc] = push_string(envp[envc]))) {
-            memory.destroy();
-            return -7;
-        }
-    }
-    uint64_t platform = push_string("x86_64"), execfn = push_string(path);
     uint8_t random[16]{};
     // Like early Linux exec, AT_RANDOM must not prevent init from bootstrapping entropy.
     // Before readiness these bytes have the same explicit limitation as GRND_INSECURE.
@@ -634,10 +624,6 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
         memory.destroy();
         return random_error;
     }
-    sp -= 16;
-    uint64_t randptr = sp;
-    memory.copy_out(sp, random, 16);
-    ax::random::erase(random, sizeof(random));
     uint64_t aux[] = {3,  image.phdr,
                       4,  sizeof(ProgramHeader),
                       5,  image.phnum,
@@ -649,31 +635,22 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
                       12, credentials.user.effective,
                       13, credentials.group.real,
                       14, credentials.group.effective,
-                      15, platform,
+                      15, stack.platform,
                       17, 100,
                       23, uint64_t(secure),
-                      25, randptr,
-                      31, execfn,
+                      25, stack.random,
+                      31, stack.filename,
                       0,  0};
-    size_t bytes = (1 + argc + 1 + envc + 1) * 8 + sizeof(aux);
-    sp = (sp - bytes) & ~15ull;
-    uint64_t cursor = sp, value = argc;
-    memory.copy_out(cursor, &value, 8);
-    cursor += 8;
-    for (size_t i = 0; i < argc; i++) {
-        memory.copy_out(cursor, &args[i], 8);
-        cursor += 8;
+    static_assert(sizeof(aux) == auxiliary_size);
+    auto write = [](void* context, uint64_t address, const void* input, size_t size) {
+        return static_cast<AddressSpace*>(context)->copy_out(address, input, size);
+    };
+    stack_error = arguments.write_stack(stack, write, &memory, random, aux, sizeof(aux));
+    ax::random::erase(random, sizeof(random));
+    if (stack_error) {
+        memory.destroy();
+        return stack_error;
     }
-    value = 0;
-    memory.copy_out(cursor, &value, 8);
-    cursor += 8;
-    for (size_t i = 0; i < envc; i++) {
-        memory.copy_out(cursor, &env[i], 8);
-        cursor += 8;
-    }
-    memory.copy_out(cursor, &value, 8);
-    cursor += 8;
-    memory.copy_out(cursor, aux, sizeof(aux));
     auto replacement = make_resource<MemoryContext>();
     bool private_files = t->files->references > 1, private_handlers = t->handlers->references > 1;
     auto files = private_files ? copy_files(t->files) : nullptr;
@@ -707,6 +684,7 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
         process->leader = t;
         int previous_tid = t->pid;
         t->pid = process->pid;
+        t->start_ticks = process->start_ticks;
         for (auto& child : tasks)
             if (child.state != State::empty && child.state != State::zombie &&
                 child.real_parent_tid == previous_tid)
@@ -742,7 +720,7 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
     t->vfork_parent = 0;
     t->frame = {};
     t->frame.rip = entry;
-    t->frame.rsp = sp;
+    t->frame.rsp = stack.pointer;
     t->frame.cs = 0x23;
     t->frame.ss = 0x1b;
     t->frame.rflags = 0x202;
@@ -782,7 +760,8 @@ void start_init(const char* path) {
                          test_suite,
                          test_phase,
                          nullptr};
-    if (exec_task(init, path, args, env))
+    ExecArguments arguments;
+    if (arguments.capture_kernel(path, args, env) || exec_task(init, arguments))
         panic("cannot execute init");
     enter_user(schedule(nullptr, true));
 }

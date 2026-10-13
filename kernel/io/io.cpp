@@ -544,8 +544,10 @@ static int64_t attempt(Task& task, IoRequest& request) {
             }
             if (!result && request.record_command < 36) {
                 int fd = int(f.rdi);
-                if (fd < 0 || unsigned(fd) >= max_fds || task.files->entries[fd].handle != h)
+                if (fd < 0 || unsigned(fd) >= max_fds || task.files->entries[fd].handle != h) {
                     record_lock_close(*task.files, h->node);
+                    return -9;
+                }
             }
             return result == -11 && (request.record_command == 7 || request.record_command == 38)
                        ? would_block
@@ -596,7 +598,11 @@ static int64_t attempt(Task& task, IoRequest& request) {
     }
     if (request.positioned)
         h->offset = old_offset;
-    if (result == -11 && !(h->flags & 04000) && !(request.flags & 0x40) && !request.positioned)
+    // Regular-file errors are results, including procfs readiness errors. They
+    // do not represent a stream operation to retain until a pollable event.
+    bool regular_file = h->node && (h->node->mode & 0170000) == 0100000;
+    if (result == -11 && !regular_file && !(h->flags & 04000) && !(request.flags & 0x40) &&
+        !request.positioned)
         return would_block;
     if (result >= 0 && f.rax == 45 && f.r8) {
         uint32_t length = 0;

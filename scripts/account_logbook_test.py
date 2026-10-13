@@ -14,12 +14,15 @@ from account_store_test import digest, environment
 from account_session_test import retain_native
 from build_musl import compiler_args, ensure, loader
 from fetch import ROOT
+from build_gnu_utmp_reader import build as build_reader
 
 SOURCES = ['userspace/accounts/' + name for name in ('store.c', 'store.h', 'database.c', 'database.h',
            'record.c', 'record.h', 'protected.c', 'protected.h', 'login_record.c', 'login_record.h',
-           'logbook.c', 'logbook.h', 'auth.h')]
+           'logbook.c', 'logbook.h', 'logbook_rotation.c', 'logbook_internal.h', 'auth.h')]
 INPUTS = [*SOURCES, 'userspace/tests/security/account-logbook.c', 'scripts/account_logbook_test.py',
           'userspace/tests/security/account-login-libc.c',
+          'scripts/build_gnu_utmp_reader.py', 'scripts/linux_uapi.py',
+          'vendor/gnu-utmp-reader/inputs.json',
           'scripts/account_session_test.py', 'scripts/account_store_guest.py', 'scripts/account_store_test.py',
           'scripts/build_musl.py', 'Makefile', 'sources.lock.json', 'dependencies.json', 'scripts/image.py',
           'userspace/init/main.c', 'userspace/init/console.c', 'userspace/init/console.h',
@@ -94,13 +97,7 @@ def main():
     if not args.native:
         subprocess.run(['make', '-s', '-j2', 'build/axiom64.elf', 'build/init', 'busybox'], cwd=ROOT, check=True)
     rows = []
-    reader = args.directory / 'account-login-libc'
-    reader_command = ['gcc', '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror', '-static',
-                      str(ROOT / 'userspace/tests/security/account-login-libc.c'), '-o', str(reader)]
-    subprocess.run(reader_command, env=environment(), check=True)
-    reader_inputs = dict(command=reader_command, sha256=digest(reader),
-                         headers=subprocess.check_output(['readelf', '-W', '-l', str(reader)], text=True))
-    assert 'INTERP' not in reader_inputs['headers']
+    reader, reader_inputs = build_reader(args.directory / 'gnu-reader')
     (args.directory / 'reader-inputs.json').write_text(json.dumps(reader_inputs, indent=2) + '\n')
     for provider in ('build', 'runtime', 'native') if args.native else ('build', 'runtime'):
         for linkage in ('static', 'dynamic'):
@@ -137,7 +134,9 @@ def main():
                     return program, inputs
                 image = fixture(case, provider, linkage, program_builder=builder, filename='account-logbook',
                                 command='/bin/account-logbook /run/account-logbook\n/bin/account-login-libc /run/account-logbook/records',
-                                extra_products={'bin/account-login-libc': reader})
+                                extra_products={'bin/account-login-libc': reader,
+                                                **{'usr/share/licenses/gnu-utmp-reader/' + path.name: path
+                                                   for path in (reader.parent / 'licenses').iterdir() if path.is_file()}})
                 for firmware in ('bios', 'uefi'):
                     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '256M', '-nic', 'none',
                                '-cdrom', str(image), '-display', 'none', '-serial', 'stdio', '-monitor', 'none',

@@ -36,7 +36,7 @@ def build(provider, linkage, directory):
                '-I' + str(stage / 'usr/include'),
                *(str(ROOT / 'userspace/accounts' / name) for name in
                  ('store.c', 'database.c', 'record.c', 'password.c', 'home.c', 'auth.c', 'session.c',
-                  'protected.c', 'login_record.c', 'logbook.c', 'recorded.c', 'busy.c')),
+                  'protected.c', 'login_record.c', 'logbook.c', 'logbook_rotation.c', 'recorded.c', 'busy.c')),
                str(ROOT / 'userspace/tests/security/account-session.c'), '-o', str(program)]
     if linkage == 'static':
         command += ['-static', str(stage / 'usr/lib/libcrypt.a')]

@@ -35,6 +35,7 @@ def build(provider, linkage, directory, data, native_runtime=None):
     common = [*compiler, '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
               '-I' + str(stage / 'usr/include')]
     modules = [str(ROOT / f'userspace/accounts/{name}.c') for name in MODULES]
+    modules.append(str(ROOT / 'userspace/accounts/logbook_rotation.c'))
     modules += [str(ROOT / name) for name in DESKTOP_INPUTS if name.endswith('.c')]
     link = ['-static', str(stage / 'usr/lib/libcrypt.a')] if linkage == 'static' else [
         '-L' + str(stage / 'usr/lib'), '-lcrypt']

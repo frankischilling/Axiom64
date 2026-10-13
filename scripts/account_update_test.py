@@ -29,6 +29,7 @@ def build(provider, linkage, directory, sanitizer=False):
     command = [*compiler, '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
                '-I' + str(stage / 'usr/include'),
                *(str(ROOT / f'userspace/accounts/{name}.c') for name in MODULES),
+               str(ROOT / 'userspace/accounts/logbook_rotation.c'),
                str(ROOT / 'userspace/tests/security/account-update.c'), '-o', str(program)]
     if sanitizer:
         command += ['-fsanitize=address,undefined', '-fno-omit-frame-pointer']

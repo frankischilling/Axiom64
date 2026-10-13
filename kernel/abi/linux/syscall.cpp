@@ -4,7 +4,9 @@
 #include "ipc/ipc.hpp"
 #include "process/signals.hpp"
 #include "process/task.hpp"
+#include "process/exec_arguments.hpp"
 #include "process/futex.hpp"
+#include "process/waitid.hpp"
 #include "io/io.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
@@ -383,46 +385,17 @@ static int64_t wait_child(int pid, uint64_t status, int options, uint64_t usage)
     return block(Wait::child, -1, pid);
 }
 
-struct ExecArgs {
-    char path[1024], args[128][1024], env[128][1024];
-    const char* argv[129];
-    const char* envp[129];
-};
-
 static int64_t exec_user(uint64_t path, uint64_t argv, uint64_t envp, Frame* frame) {
-    auto a = (ExecArgs*)alloc(sizeof(ExecArgs));
-    if (!a)
-        return -12;
-    int result = -14;
-    if (!current->memory->space.string(path, a->path, sizeof(a->path))) {
-        release(a);
-        return result;
-    }
-    auto vector = [&](uint64_t ptr, char (*strings)[1024], const char** result) -> bool {
-        if (!ptr) {
-            result[0] = nullptr;
-            return true;
-        }
-        for (unsigned i = 0; i < 128; i++) {
-            uint64_t p;
-            if (!current->memory->space.copy_in(&p, ptr + i * 8, 8))
-                return false;
-            if (!p) {
-                result[i] = nullptr;
-                return true;
-            }
-            if (!current->memory->space.string(p, strings[i], 1024))
-                return false;
-            result[i] = strings[i];
-        }
-        return false;
+    ExecArguments arguments;
+    auto read = [](void* context, uint64_t address, void* output, size_t size) {
+        return static_cast<AddressSpace*>(context)->copy_in(output, address, size);
     };
-    if (vector(argv, a->args, a->argv) && vector(envp, a->env, a->envp)) {
-        result = exec_task(current, a->path, a->argv, a->envp);
+    int result = arguments.capture(read, &current->memory->space, path, argv, envp);
+    if (!result) {
+        result = exec_task(current, arguments);
         if (!result)
             *frame = current->frame;
     }
-    release(a);
     return result;
 }
 
@@ -1284,6 +1257,15 @@ static int64_t dispatch(Frame* f) {
         if (!path_at(-100, a, path))
             return path.error;
         return unmount(path, b);
+    }
+    case 247: {
+        int selected;
+        int error =
+            wait_information_selector(*current, unsigned(a), uint32_t(b), unsigned(d), selected);
+        if (error)
+            return error;
+        int64_t result = wait_information(*current, unsigned(a), selected, c, unsigned(d), e);
+        return result == would_block ? block(Wait::child, -1, selected) : result;
     }
     case 257:
         return open_file(a, b, c, d);

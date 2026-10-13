@@ -38,6 +38,7 @@ def build_observer(directory):
     command = [*compiler_args('build'), '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
                '-static', '-I' + str(stage / 'usr/include'),
                *(str(ROOT / f'userspace/accounts/{name}.c') for name in MODULES),
+               str(ROOT / 'userspace/accounts/logbook_rotation.c'),
                str(ROOT / 'userspace/tests/security/account-normal-observe.c'),
                '-o', str(program), str(stage / 'usr/lib/libcrypt.a')]
     with (directory / 'observer-build.log').open('wb') as log:

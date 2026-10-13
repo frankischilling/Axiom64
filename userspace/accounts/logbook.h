@@ -5,13 +5,22 @@
 #include "auth.h"
 #include "login_record.h"
 
+#ifndef ACCOUNT_LOGIN_JOURNAL_LIMIT
 #define ACCOUNT_LOGIN_JOURNAL_LIMIT (32u * 1024 * 1024)
+#endif
+#ifndef ACCOUNT_LOGIN_LIVE_LIMIT
+#define ACCOUNT_LOGIN_LIVE_LIMIT 1024u
+#endif
+#define ACCOUNT_LOGIN_ARCHIVE_LIMIT 4u
 struct account_logbook;
 struct account_session_lease;
 
 // A root-only exclusive transaction validates the complete journal, repairs a
 // partial trailing write, recovers leases whose last holder died, and publishes
 // utmp/wtmp/btmp/auth.log projections. Complete corrupt frames fail closed.
+// A full journal rotates durably into four retained closed generations. Live
+// START records seed the new generation without duplicating historical events.
+// Expiry of older generations is the explicit bounded retention policy.
 int account_logbook_open(const char* directory, int create, struct account_logbook**);
 void account_logbook_close(struct account_logbook*);
 // Keep the book open while performing an administrative database transaction.

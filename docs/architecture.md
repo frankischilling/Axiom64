@@ -26,7 +26,7 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/ipc/ipc.cpp`, `shared_memory.cpp` | Unix stream sockets, readiness, epoll, select, shared mappings, SysV segments |
 | `kernel/drivers/platform/devices.cpp` | Serial terminal, PTYs, framebuffer, PS/2 events, Linux block-device file operations |
 | `kernel/drivers/platform/power.cpp` | PIIX4 power off after filesystem synchronization on the tested QEMU platform |
-| `userspace/init/main.c` | Desktop and serial shell startup, child reaping, console shell restart |
+| `userspace/init/main.c`, `console.c` | Seed/network supervision, authenticated console startup, child reaping and console recovery |
 | `userspace/desktop/seat.c`, `authority.c`, `terminal.c` | Authenticated display ownership, private X11 cookies, process recovery and ordinary-user terminals |
 | `userspace/services/random_seed.c` | Private persisted seed loading, rotation, and interrupted-operation recovery |
 | `userspace/net/` | C++ configuration ownership, saved profiles, resolver metadata, and DHCP packet/state/transport modules; normal manager startup remains required |
@@ -39,7 +39,7 @@ The ELF loader validates ELF64 segments, loads a `PT_INTERP` musl interpreter, a
 
 [Blocking I/O](io.md) retains the selected file description and captured vector metadata while an attempt waits. Completion updates the owner's saved frame before signal delivery. Caught signals release the attempt; an `SA_RESTART` entry selects a descriptor again. Task teardown releases saved operations before memory and file tables.
 
-Axiom64 provides `kernel/fs/proc.cpp` behind the VFS filesystem interface. Both RAM-root and ext2-root boots mount actual process/thread metadata at `/proc`. Numeric process directories and per-process task directories expose live kernel identities, groups, state, signal masks and capabilities. `self` and `thread-self` resolve relative to the caller. Status reads retain a description-owned buffer; an exited task can finish already buffered bytes, while a previously unread description reports ESRCH. Cached nodes keep PID/TID identity across task-slot reuse and retire only after descriptions and directory references end. Complete procfs, namespaces and process diagnostics remain roadmap work.
+Axiom64 provides `kernel/fs/proc.cpp` behind the VFS filesystem interface. Both RAM-root and ext2-root boots mount actual process/thread metadata at `/proc`. Numeric process directories and per-process task directories expose live kernel identities, groups, state, signal masks and capabilities. `self` and `thread-self` resolve relative to the caller. Status and stat reads retain a description-owned buffer; an exited task can finish already buffered bytes, while a previously unread description reports ESRCH. Cached nodes keep PID/TID identity across task-slot reuse and retire only after descriptions and directory references end. Stat field 22 records process/thread birth in actual 100 Hz clock ticks and remains stable across exec. CPU accounting, address/TTY statistics and broader procfs fields remain incomplete. The shared boot UUID uses initialized randomness and returns EAGAIN before initialization. Complete procfs, namespaces and process diagnostics remain roadmap work.
 
 [Advisory file locks](file-locks.md) use that retained lifetime for blocking flock calls. Independent descriptions conflict on canonical local nodes; dup/fork ownership and final-close release follow the description's references.
 

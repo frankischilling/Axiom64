@@ -1,10 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/proc.hpp"
 #include "process/task.hpp"
+#include "core/random.hpp"
+#include "core/random/primitives.hpp"
 
 namespace ax {
 namespace {
-enum class Kind { root, self, thread_self, process, task_list, thread, status };
+enum class Kind {
+    root,
+    self,
+    thread_self,
+    process,
+    task_list,
+    thread,
+    status,
+    stat,
+    sys,
+    kernel,
+    random,
+    boot_id
+};
+
+// Kernel execution serializes generation. Every proc mount observes this same boot.
+char boot_identifier[37]{};
 
 struct Entry {
     Node node{};
@@ -212,7 +230,8 @@ static Entry* make(Proc* state, Mount* mount, Node* parent, const char* name, Ki
     node->parent = parent;
     node->mount = mount;
     node->filesystem_data = item;
-    node->mode = kind == Kind::status                              ? regular_file | 0444
+    node->mode = kind == Kind::status || kind == Kind::stat || kind == Kind::boot_id
+                     ? regular_file | 0444
                  : kind == Kind::self || kind == Kind::thread_self ? symlink | 0777
                                                                    : directory | 0555;
     node->links = (node->mode & 0170000) == directory ? 2 : 1;
@@ -240,6 +259,14 @@ static int lookup(Node* parent, const char* name, Node*& output) {
         kind = Kind::self;
     else if (context->kind == Kind::root && !strcmp(name, "thread-self"))
         kind = Kind::thread_self;
+    else if (context->kind == Kind::root && !strcmp(name, "sys"))
+        kind = Kind::sys;
+    else if (context->kind == Kind::sys && !strcmp(name, "kernel"))
+        kind = Kind::kernel;
+    else if (context->kind == Kind::kernel && !strcmp(name, "random"))
+        kind = Kind::random;
+    else if (context->kind == Kind::random && !strcmp(name, "boot_id"))
+        kind = Kind::boot_id;
     else if (context->kind == Kind::root) {
         selected_pid = pid(name);
         auto selected = task(selected_pid);
@@ -250,6 +277,9 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     } else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
                !strcmp(name, "status"))
         kind = Kind::status;
+    else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
+             !strcmp(name, "stat"))
+        kind = Kind::stat;
     else if (context->kind == Kind::process && !strcmp(name, "task"))
         kind = Kind::task_list;
     else if (context->kind == Kind::task_list) {
@@ -340,6 +370,116 @@ static int status(Node* node, Snapshot& snapshot) {
     return 0;
 }
 
+static int stat(Node* node, Snapshot& snapshot) {
+    auto owner = task(entry(node)->pid);
+    if (!owner)
+        return -3;
+    constexpr size_t capacity = 2048;
+    auto bytes = static_cast<char*>(alloc(capacity));
+    if (!bytes)
+        return -12;
+    Text text{bytes, 0, capacity};
+    text.number(unsigned(owner->pid));
+    text.string(" (");
+    const char* name = owner->process->executable;
+    for (auto cursor = name; *cursor; cursor++)
+        if (*cursor == '/')
+            name = cursor + 1;
+    for (size_t i = 0; name[i] && i < 15; i++)
+        text.character(name[i]);
+    text.string(") ");
+    text.character(owner->state == State::zombie    ? 'Z'
+                   : owner->state == State::stopped ? 'T'
+                   : owner->state == State::blocked ? 'S'
+                                                    : 'R');
+    // Keep the Linux field positions through exit_code (52). Accounting and
+    // address-layout fields not yet collected by the kernel are zero.
+    for (unsigned field = 4; field <= 52; field++) {
+        text.character(' ');
+        uint64_t value = 0;
+        switch (field) {
+        case 4:
+            value = unsigned(owner->process->parent);
+            break;
+        case 5:
+            value = unsigned(owner->process->pgid);
+            break;
+        case 6:
+            value = unsigned(owner->process->sid);
+            break;
+        case 8:
+            text.string("-1");
+            continue;
+        case 18:
+            value = 20;
+            break;
+        case 20:
+            value = owner->process->live_threads ? owner->process->live_threads : 1;
+            break;
+        case 22:
+            value = owner->pid == owner->process->pid ? owner->process->start_ticks
+                                                      : owner->start_ticks;
+            break;
+        case 31:
+            value = owner->pending_signals & 0x7fffffff;
+            break;
+        case 32:
+            value = owner->signal_mask & 0x7fffffff;
+            break;
+        case 33:
+        case 34:
+            if (owner->handlers)
+                for (unsigned signal = 0; signal < 31; signal++) {
+                    uint64_t handler = owner->handlers->signal_actions[signal][0];
+                    if (field == 33 ? handler == 1 : handler > 1)
+                        value |= 1ull << signal;
+                }
+            break;
+        case 38:
+            value = owner->pid == owner->process->pid ? 17 : 0;
+            break;
+        case 52:
+            value = unsigned(owner->process->exit_status);
+            break;
+        }
+        text.number(value);
+    }
+    text.character('\n');
+    if (text.failed) {
+        release(bytes);
+        return -75;
+    }
+    snapshot = {bytes, text.length};
+    return 0;
+}
+
+static int boot_id() {
+    if (boot_identifier[0])
+        return 0;
+    uint8_t identifier[16]{};
+    int error = random_read(identifier, sizeof(identifier));
+    if (error) {
+        random::erase(identifier, sizeof(identifier));
+        return error;
+    }
+    identifier[6] = (identifier[6] & 15) | 0x40;
+    identifier[8] = (identifier[8] & 63) | 0x80;
+    Text text{boot_identifier, 0, sizeof(boot_identifier)};
+    for (unsigned i = 0; i < sizeof(identifier); i++) {
+        if (i == 4 || i == 6 || i == 8 || i == 10)
+            text.character('-');
+        text.character("0123456789abcdef"[identifier[i] >> 4]);
+        text.character("0123456789abcdef"[identifier[i] & 15]);
+    }
+    text.character('\n');
+    random::erase(identifier, sizeof(identifier));
+    return 0;
+}
+
+static int make_snapshot(Node* node, Snapshot& output) {
+    return entry(node)->kind == Kind::stat ? stat(node, output) : status(node, output);
+}
+
 static int64_t copy(const char* bytes, size_t size, uint64_t offset, void* output, size_t length) {
     if (offset >= size)
         return 0;
@@ -355,10 +495,15 @@ static int64_t read(Node* node, uint64_t offset, void* output, size_t length) {
         size_t size = link_target(kind, target);
         return copy(target, size, offset, output, length);
     }
-    if (kind != Kind::status)
+    if (kind == Kind::boot_id) {
+        int error = boot_id();
+        return error ? error
+                     : copy(boot_identifier, sizeof(boot_identifier), offset, output, length);
+    }
+    if (kind != Kind::status && kind != Kind::stat)
         return -21;
     Snapshot snapshot{};
-    int error = status(node, snapshot);
+    int error = make_snapshot(node, snapshot);
     if (error)
         return error;
     int64_t count = copy(snapshot.bytes, snapshot.length, offset, output, length);
@@ -367,7 +512,8 @@ static int64_t read(Node* node, uint64_t offset, void* output, size_t length) {
 }
 
 static int64_t read_description(Handle* handle, uint64_t offset, void* output, size_t length) {
-    if (entry(handle->node)->kind != Kind::status)
+    auto kind = entry(handle->node)->kind;
+    if (kind != Kind::status && kind != Kind::stat)
         return read(handle->node, offset, output, length);
     auto snapshot = static_cast<Snapshot*>(handle->filesystem_data);
     if (!snapshot) {
@@ -379,7 +525,7 @@ static int64_t read_description(Handle* handle, uint64_t offset, void* output, s
     }
     if (!snapshot->bytes || !offset) {
         Snapshot next{};
-        int error = status(handle->node, next);
+        int error = make_snapshot(handle->node, next);
         if (error)
             return error;
         release(snapshot->bytes);
@@ -410,20 +556,20 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
         return 1;
     }
     char name[16];
-    if (context->kind == Kind::root && cookie < 4) {
-        const char* link = cookie == 2 ? "self" : "thread-self";
+    if (context->kind == Kind::root && cookie < 5) {
+        const char* link = cookie == 2 ? "self" : cookie == 3 ? "thread-self" : "sys";
         Node* selected = nullptr;
         int error = lookup(node, link, selected);
         if (error)
             return error;
         result.inode = selected->inode;
         result.next = cookie + 1;
-        result.mode = symlink;
+        result.mode = selected->mode;
         memcpy(result.name, link, strlen(link) + 1);
         return 1;
     }
     if (context->kind == Kind::root || context->kind == Kind::task_list) {
-        uint64_t bias = context->kind == Kind::root ? 4 : 2;
+        uint64_t bias = context->kind == Kind::root ? 5 : 2;
         int selected_pid = 0;
         for (auto& candidate : tasks) {
             if (candidate.state == State::empty || !candidate.process ||
@@ -443,11 +589,23 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
         if (cookie == 2) {
             memcpy(name, "status", 7);
             result.next = 3;
-        } else if (cookie == 3 && context->kind == Kind::process) {
-            memcpy(name, "task", 5);
+        } else if (cookie == 3) {
+            memcpy(name, "stat", 5);
             result.next = 4;
+        } else if (cookie == 4 && context->kind == Kind::process) {
+            memcpy(name, "task", 5);
+            result.next = 5;
         } else
             return 0;
+    } else if (context->kind == Kind::sys || context->kind == Kind::kernel ||
+               context->kind == Kind::random) {
+        if (cookie != 2)
+            return 0;
+        const char* child = context->kind == Kind::sys      ? "kernel"
+                            : context->kind == Kind::kernel ? "random"
+                                                            : "boot_id";
+        memcpy(name, child, strlen(child) + 1);
+        result.next = 3;
     } else
         return -20;
     Node* selected = nullptr;

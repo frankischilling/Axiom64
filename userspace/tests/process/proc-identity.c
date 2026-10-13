@@ -153,6 +153,24 @@ static void pause_tick(void) {
         CHECK(errno == EINTR);
 }
 
+static void retired_thread(pid_t tid) {
+    struct timespec started, now;
+    CHECK(clock_gettime(CLOCK_MONOTONIC, &started) == 0);
+    for (;;) {
+        int fd = stat_file(getpid(), tid);
+        if (fd < 0) {
+            CHECK(errno == ENOENT);
+            return;
+        }
+        CHECK(close(fd) == 0 && clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+        CHECK((now.tv_sec - started.tv_sec) * 1000000000LL + now.tv_nsec - started.tv_nsec <
+              2000000000LL);
+        struct timespec interval = {0, 1000000};
+        while (nanosleep(&interval, &interval) < 0)
+            CHECK(errno == EINTR);
+    }
+}
+
 struct thread_context {
     int ready, finish;
 };
@@ -325,9 +343,14 @@ int main(int argc, char** argv) {
     CHECK(buffered >= 0 && unread >= 0 && read(buffered, text, 1) == 1);
     byte(finish[1], 1);
     CHECK(pthread_join(thread, NULL) == 0);
+    // Linux may wake the joiner before detaching the exiting task from procfs.
+    // Wait for kernel retirement before asserting fresh/rewound reads fail.
+    retired_thread(tid);
     read_all(buffered, text + 1, sizeof(text) - 1, 31);
     CHECK(parse(text).start == member.start);
     CHECK(read(unread, text, sizeof(text)) == -1 && errno == ESRCH);
+    CHECK(lseek(buffered, 0, SEEK_SET) == 0 && read(buffered, text, 1) == -1 && errno == ESRCH);
+    CHECK(stat_file(getpid(), tid) == -1 && errno == ENOENT);
     close(buffered);
     close(unread);
     for (unsigned i = 0; i < 2; i++) {

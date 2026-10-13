@@ -344,6 +344,7 @@ jobs:
           python3 scripts/account_update_test.py
           python3 scripts/rename_test.py --directory build/account-rename-guest
           python3 scripts/account_home_test.py --directory build/account-home-guest
+          python3 scripts/account_home_reboot_test.py --directory build/account-home-reboot
       - name: Verify account generation transactions through persistent ext2 reboot pairs
         if: matrix.suite == 'accounts-store-ext2'
         run: python3 scripts/account_store_ext2.py

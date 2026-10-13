@@ -9,12 +9,16 @@
 #include <sys/fsuid.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
 struct account_home {
     int directory, fd, attempted;
     char name[256], temporary[40];
+    struct account_home_key key;
 };
+
+static const char attribute[] = "trusted.axiom64.home";
 
 static int failed(int error) {
     errno = error;
@@ -91,7 +95,31 @@ static int entry(struct account_home* home, const char* name, const struct stat*
     return value.st_dev == expected->st_dev && value.st_ino == expected->st_ino ? 1 : 2;
 }
 
-int account_home_create(const char* path, uid_t uid, gid_t gid, struct account_home** output) {
+static int key_valid(const struct account_home_key* key) {
+    unsigned char value = 0;
+    if (key)
+        for (unsigned i = 0; i < sizeof(key->bytes); i++)
+            value |= key->bytes[i];
+    return value != 0;
+}
+
+int account_home_key_new(struct account_home_key* key) {
+    if (!key)
+        return failed(EINVAL);
+    if (account_nonce(key->bytes) < 0)
+        return -1;
+    return key_valid(key) ? 0 : failed(EIO);
+}
+
+static void temporary_name(char output[40], const struct account_home_key* key) {
+    char name[35];
+    account_nonce_name(name, 'h', key->bytes);
+    memcpy(output, ".home-", 6);
+    memcpy(output + 6, name + 2, 33);
+}
+
+static int create(const char* path, uid_t uid, gid_t gid, const struct account_home_key* key,
+                  struct account_home** output) {
     if (!output)
         return failed(EINVAL);
     *output = NULL;
@@ -116,14 +144,12 @@ int account_home_create(const char* path, uid_t uid, gid_t gid, struct account_h
         error = EEXIST;
     else if (errno != ENOENT)
         error = errno;
-    unsigned char nonce[16];
-    if (!error && account_nonce(nonce) < 0)
+    if (key)
+        home->key = *key;
+    if (!error && !key && account_home_key_new(&home->key) < 0)
         error = errno;
     if (!error) {
-        char name[35];
-        account_nonce_name(name, 'h', nonce);
-        memcpy(home->temporary, ".home-", 6);
-        memcpy(home->temporary + 6, name + 2, 33);
+        temporary_name(home->temporary, &home->key);
         if (mkdirat(home->directory, home->temporary, 0700) < 0) {
             error = errno;
             home->attempted = error != EEXIST;
@@ -139,6 +165,9 @@ int account_home_create(const char* path, uid_t uid, gid_t gid, struct account_h
         error = errno;
     if (!error && (!S_ISDIR(value.st_mode) || value.st_uid || value.st_gid))
         error = EACCES;
+    if (!error &&
+        fsetxattr(home->fd, attribute, home->key.bytes, sizeof(home->key.bytes), XATTR_CREATE) < 0)
+        error = errno;
     if (!error && (fchown(home->fd, uid, gid) < 0 || fchmod(home->fd, 0700) < 0 ||
                    fsync(home->fd) < 0 || fsync(home->directory) < 0))
         error = errno;
@@ -158,6 +187,20 @@ int account_home_create(const char* path, uid_t uid, gid_t gid, struct account_h
             error = errno;
     }
     return error ? failed(error) : 0;
+}
+
+int account_home_create(const char* path, uid_t uid, gid_t gid, struct account_home** output) {
+    return create(path, uid, gid, NULL, output);
+}
+
+int account_home_create_key(const char* path, uid_t uid, gid_t gid,
+                            const struct account_home_key* key, struct account_home** output) {
+    if (!key_valid(key)) {
+        if (output)
+            *output = NULL;
+        return failed(EINVAL);
+    }
+    return create(path, uid, gid, key, output);
 }
 
 int account_home_finish(struct account_home* home, int published) {
@@ -203,5 +246,61 @@ int account_home_finish(struct account_home* home, int published) {
     if (close(home->directory) < 0 && !error)
         error = errno;
     free(home);
+    return error ? failed(error) : 0;
+}
+
+static int recover_entry(struct account_home* home, const char* name, int published) {
+    int fd = openat(home->directory, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0)
+        return errno == ENOENT && !published        ? 0
+               : errno == ELOOP || errno == ENOTDIR ? failed(ESTALE)
+                                                    : -1;
+    struct account_home_key actual;
+    ssize_t length = fgetxattr(fd, attribute, actual.bytes, sizeof(actual.bytes));
+    int error = length < 0 ? errno : 0;
+    if (length >= 0 &&
+        ((size_t)length != sizeof(actual.bytes) || memcmp(&actual, &home->key, sizeof(actual))))
+        error = ESTALE;
+    if (error == ENODATA || error == ERANGE)
+        error = ESTALE;
+    struct stat value;
+    if (!error && fstat(fd, &value) < 0)
+        error = errno;
+    if (!error) {
+        int matched = entry(home, name, &value);
+        if (matched != 1)
+            error = matched < 0 ? errno : ESTALE;
+    }
+    if (!error && !published && unlinkat(home->directory, name, AT_REMOVEDIR) < 0)
+        error = errno;
+    if (close(fd) < 0 && !error)
+        error = errno;
+    return error ? failed(error) : 0;
+}
+
+int account_home_recover(const char* path, const struct account_home_key* key, int published) {
+    if (!key_valid(key) || (published != 0 && published != 1))
+        return failed(EINVAL);
+    if (geteuid() || getegid() || (uid_t)setfsuid(-1) || (gid_t)setfsgid(-1))
+        return failed(EPERM);
+    struct account_home home = {.fd = -1, .key = *key};
+    home.directory = parent(path, home.name, 0);
+    if (home.directory < 0)
+        return errno == ENOENT && !published ? 0 : -1;
+    temporary_name(home.temporary, key);
+    int error = 0;
+    if (published) {
+        if (recover_entry(&home, home.name, 1) < 0)
+            error = errno;
+    } else {
+        if (recover_entry(&home, home.temporary, 0) < 0)
+            error = errno;
+        if (recover_entry(&home, home.name, 0) < 0 && !error)
+            error = errno;
+        if (fsync(home.directory) < 0 && !error)
+            error = errno;
+    }
+    if (close(home.directory) < 0 && !error)
+        error = errno;
     return error ? failed(error) : 0;
 }

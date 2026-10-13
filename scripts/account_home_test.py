@@ -28,7 +28,7 @@ SOURCES = ['userspace/accounts/home.c', 'userspace/accounts/home.h',
            'Makefile', 'dependencies.json', 'sources.lock.json', 'ports.lock.json', 'boot/limine.conf',
            'userspace/init/main.c', 'userspace/init/console.c', 'userspace/init/console.h',
            'userspace/init/seed_records.h']
-MARKER = 'ACCOUNT_HOME_PASS observations=17'
+MARKER = 'ACCOUNT_HOME_PASS observations=24'
 
 
 def build(provider, linkage, directory, runtime=None, sanitize=False):
@@ -36,7 +36,7 @@ def build(provider, linkage, directory, runtime=None, sanitize=False):
     program = directory / 'account-home'
     command = [*compiler, '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
                *(str(ROOT / name) for name in (SOURCES[0], SOURCES[2], SOURCES[4])),
-               '-Wl,--wrap=mkdirat,--wrap=openat,--wrap=fchown,--wrap=fsync,--wrap=syscall,--wrap=unlinkat',
+               '-Wl,--wrap=mkdirat,--wrap=openat,--wrap=fchown,--wrap=fsync,--wrap=syscall,--wrap=unlinkat,--wrap=fsetxattr',
                '-o', str(program)]
     if linkage == 'static':
         command += ['-static']
@@ -67,7 +67,7 @@ def execute(command, log, firmware=None):
     text = log.read_text().replace('\r\n', '\n')
     lines = text.splitlines()
     observations = sum(line.startswith('ACCOUNT_HOME_OBSERVATION ') for line in lines)
-    passed = result.returncode == (1 if firmware else 0) and observations == 17 and lines.count(MARKER) == 1
+    passed = result.returncode == (1 if firmware else 0) and observations == 24 and lines.count(MARKER) == 1
     passed = passed and not any(marker in text for marker in (
         'ACCOUNT_HOME_FAIL', 'PANIC:', 'FAULT pid=', 'AddressSanitizer', 'runtime error:'))
     if firmware:

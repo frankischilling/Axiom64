@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
 #include "../../accounts/home.h"
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,6 +14,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
 #define CHECK(value)                                                                               \
@@ -34,7 +37,9 @@ enum failure {
     COLLISION,
     SUBSTITUTE,
     UNLINK_BEFORE,
-    UNLINK_AFTER
+    UNLINK_AFTER,
+    ATTRIBUTE_BEFORE,
+    ATTRIBUTE_AFTER
 };
 static enum failure failure;
 static int directory, sync_target, sync_count;
@@ -47,6 +52,7 @@ int __real_fchown(int, uid_t, gid_t);
 int __real_fsync(int);
 long __real_syscall(long, ...);
 int __real_unlinkat(int, const char*, int);
+int __real_fsetxattr(int, const char*, const void*, size_t, int);
 
 static int io_error(void) {
     failure = NONE;
@@ -137,6 +143,13 @@ int __wrap_unlinkat(int parent, const char* name, int flags) {
     return !result && failure == UNLINK_AFTER ? io_error() : result;
 }
 
+int __wrap_fsetxattr(int fd, const char* name, const void* value, size_t size, int flags) {
+    if (failure == ATTRIBUTE_BEFORE)
+        return io_error();
+    int result = __real_fsetxattr(fd, name, value, size, flags);
+    return !result && failure == ATTRIBUTE_AFTER ? io_error() : result;
+}
+
 static unsigned descriptors(void) {
     unsigned count = 0;
     // This controlled fixture starts with standard streams and opens only low
@@ -220,6 +233,153 @@ static void interrupted(const char* root, const char* name, enum failure selecte
         CHECK(absent(name) && absent(temporary));
     }
     CHECK(descriptors() == baseline);
+}
+
+static void killed_creator(const char* root, const char* name, const struct account_home_key* key,
+                           enum failure selected) {
+    path(root, name);
+    int gate[2];
+    CHECK(pipe(gate) == 0);
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        CHECK(close(gate[0]) == 0);
+        failure = selected;
+        struct account_home* home = NULL;
+        int result = account_home_create_key(pathname, 1000, 1000, key, &home);
+        CHECK(home && (selected == NONE ? result == 0 : result == -1 && errno == EIO));
+        CHECK(write(gate[1], "r", 1) == 1);
+        for (;;)
+            pause();
+    }
+    CHECK(close(gate[1]) == 0);
+    char ready;
+    CHECK(read(gate[0], &ready, 1) == 1 && close(gate[0]) == 0);
+    CHECK(kill(child, SIGKILL) == 0);
+    int status;
+    CHECK(waitpid(child, &status, 0) == child && WIFSIGNALED(status) &&
+          WTERMSIG(status) == SIGKILL);
+}
+
+static unsigned stages(void) {
+    int fd = openat(directory, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    CHECK(fd >= 0);
+    DIR* entries = fdopendir(fd);
+    CHECK(entries);
+    unsigned count = 0;
+    struct dirent* item;
+    errno = 0;
+    while ((item = readdir(entries)))
+        count += !strncmp(item->d_name, ".home-", 6);
+    CHECK(!errno && closedir(entries) == 0);
+    return count;
+}
+
+static void recovery(const char* root, unsigned baseline) {
+    struct account_home_key key;
+    CHECK(account_home_key_new(&key) == 0);
+    int saved = openat(directory, "intent-key", O_CREAT | O_EXCL | O_WRONLY, 0600);
+    CHECK(saved >= 0 && write(saved, &key, sizeof(key)) == sizeof(key) && fsync(saved) == 0 &&
+          close(saved) == 0 && fsync(directory) == 0);
+    struct account_home_key recovered;
+    saved = openat(directory, "intent-key", O_RDONLY);
+    CHECK(saved >= 0 && read(saved, &recovered, sizeof(recovered)) == sizeof(recovered) &&
+          close(saved) == 0 && !memcmp(&recovered, &key, sizeof(key)));
+    killed_creator(root, "recovery-empty", &key, NONE);
+    path(root, "recovery-empty");
+    CHECK(account_home_recover(pathname, &recovered, 0) == 0 && absent("recovery-empty"));
+    observed("persisted-key-recovers-after-creator-kill", baseline);
+
+    CHECK(account_home_key_new(&key) == 0);
+    killed_creator(root, "recovery-published", &key, NONE);
+    path(root, "recovery-published");
+    struct stat kept = metadata("recovery-published");
+    CHECK(account_home_recover(pathname, &key, 1) == 0);
+    identity("recovery-published", kept);
+    observed("recovery-keeps-attested-published-home", baseline);
+
+    struct account_home_key wrong;
+    CHECK(account_home_key_new(&wrong) == 0);
+    CHECK(account_home_recover(pathname, &wrong, 0) == -1 && errno == ESTALE);
+    CHECK(removexattr(pathname, "trusted.axiom64.home") == 0);
+    CHECK(account_home_recover(pathname, &key, 0) == -1 && errno == ESTALE);
+    CHECK(setxattr(pathname, "trusted.axiom64.home", "bad", 3, 0) == 0);
+    CHECK(account_home_recover(pathname, &key, 0) == -1 && errno == ESTALE);
+    CHECK(unlinkat(directory, "recovery-published", AT_REMOVEDIR) == 0 &&
+          mkdirat(directory, "recovery-published", 0700) == 0);
+    int replacement = openat(directory, "recovery-published", O_RDONLY | O_DIRECTORY);
+    CHECK(replacement >= 0 && fchown(replacement, 1000, 1000) == 0 && close(replacement) == 0);
+    kept = metadata("recovery-published");
+    CHECK(account_home_recover(pathname, &key, 0) == -1 && errno == ESTALE);
+    identity("recovery-published", kept);
+    CHECK(unlinkat(directory, "recovery-published", AT_REMOVEDIR) == 0);
+    data(directory, "recovery-published");
+    kept = metadata("recovery-published");
+    CHECK(account_home_recover(pathname, &key, 0) == -1 && errno == ESTALE);
+    identity("recovery-published", kept);
+    CHECK(unlinkat(directory, "recovery-published", 0) == 0 &&
+          symlinkat("recovery-empty", directory, "recovery-published") == 0);
+    kept = metadata("recovery-published");
+    CHECK(account_home_recover(pathname, &key, 0) == -1 && errno == ESTALE);
+    identity("recovery-published", kept);
+    observed("missing-wrong-malformed-and-recreated-claims-preserved", baseline);
+
+    CHECK(account_home_key_new(&key) == 0);
+    killed_creator(root, "recovery-data", &key, NONE);
+    int parent = openat(directory, "recovery-data", O_RDONLY | O_DIRECTORY);
+    CHECK(parent >= 0);
+    data(parent, "marker");
+    CHECK(close(parent) == 0);
+    path(root, "recovery-data");
+    CHECK(account_home_recover(pathname, &key, 0) == -1 && errno == ENOTEMPTY);
+    marker("recovery-data");
+    observed("recovery-preserves-attested-nonempty-home", baseline);
+
+    enum failure failed[] = {RENAME_BEFORE, CHOWN_AFTER, ATTRIBUTE_AFTER};
+
+    for (unsigned i = 0; i < 3; i++) {
+        char name[32];
+        snprintf(name, sizeof(name), "recovery-stage-%u", i);
+        CHECK(account_home_key_new(&key) == 0);
+        unsigned before = stages();
+        killed_creator(root, name, &key, failed[i]);
+        CHECK(stages() == before + 1);
+        path(root, name);
+        CHECK(account_home_recover(pathname, &key, 0) == 0 && absent(name) && stages() == before);
+    }
+    observed("recovery-removes-only-attested-prepared-stages", baseline);
+
+    CHECK(account_home_key_new(&key) == 0);
+    unsigned before = stages();
+    killed_creator(root, "recovery-unproven", &key, ATTRIBUTE_BEFORE);
+    CHECK(stages() == before + 1);
+    path(root, "recovery-unproven");
+    CHECK(account_home_recover(pathname, &key, 0) == -1 && errno == ESTALE &&
+          absent("recovery-unproven") && stages() == before + 1);
+    observed("recovery-reports-and-preserves-unproven-stage", baseline);
+
+    CHECK(account_home_key_new(&key) == 0);
+    killed_creator(root, "recovery-ordinary", &key, NONE);
+    int fd = openat(directory, "recovery-ordinary", O_RDONLY | O_DIRECTORY);
+    CHECK(fd >= 0);
+    pid_t ordinary = fork();
+    CHECK(ordinary >= 0);
+    if (!ordinary) {
+        CHECK(setgroups(0, NULL) == 0 && setgid(1000) == 0 && setuid(1000) == 0);
+        unsigned char bytes[16];
+        CHECK(fgetxattr(fd, "trusted.axiom64.home", bytes, sizeof(bytes)) == -1 &&
+              errno == ENODATA);
+        CHECK(fsetxattr(fd, "trusted.axiom64.home", &key, sizeof(key), 0) == -1 && errno == EPERM);
+        CHECK(fremovexattr(fd, "trusted.axiom64.home") == -1 && errno == EPERM);
+        CHECK(flistxattr(fd, (char*)bytes, sizeof(bytes)) == 0);
+        _exit(0);
+    }
+    int status;
+    CHECK(waitpid(ordinary, &status, 0) == ordinary && WIFEXITED(status) &&
+          WEXITSTATUS(status) == 0 && close(fd) == 0);
+    path(root, "recovery-ordinary");
+    CHECK(account_home_recover(pathname, &key, 0) == 0 && absent("recovery-ordinary"));
+    observed("ordinary-owner-cannot-read-copy-or-remove-claim", baseline);
 }
 
 int main(int argc, char** argv) {
@@ -378,6 +538,7 @@ int main(int argc, char** argv) {
     sync_target = 1;
     CHECK(account_home_finish(home, 0) == -1 && errno == EIO && absent("cleanup-sync"));
     observed("cleanup-durability-error-is-reported", baseline);
+    recovery(argv[1], baseline);
     CHECK(account_home_finish(NULL, 0) == 0 && fsync(directory) == 0 && close(directory) == 0);
     printf("ACCOUNT_HOME_PASS observations=%u\n", observations);
     return 0;

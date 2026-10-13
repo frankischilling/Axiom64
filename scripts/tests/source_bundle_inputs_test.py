@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Run the real prompt regression from a generated corresponding-source archive."""
+from contextlib import redirect_stdout
+import io
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import unittest
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import sources
+
+ROOT = Path(__file__).resolve().parents[2]
+FIXTURE = Path('scripts/tests/fixtures/normal-console/interrupted-prompt.txt')
+
+
+class SourceBundleInputsTests(unittest.TestCase):
+    def test_exported_prompt_test_keeps_its_exact_serial_input(self):
+        with tempfile.TemporaryDirectory(prefix='axiom64-source-inputs-') as name:
+            root = Path(name) / 'source'
+            root.mkdir()
+            for item in ('sources.lock.json', 'ports.lock.json', 'dependencies.json', 'LICENSE',
+                         'Makefile', 'README.md', '.clang-format', '.gitattributes'):
+                (root / item).write_bytes(b'fixture\n')
+            for folder in ('kernel', 'userspace', 'boot', 'vendor', 'docs'):
+                (root / folder).mkdir()
+            configuration = root / 'build/busybox-1.37.0/.config'
+            configuration.parent.mkdir(parents=True)
+            configuration.write_bytes(b'fixture\n')
+            for item in (Path('scripts/console_prompt.py'), Path('scripts/tests/console_prompt_test.py'), FIXTURE):
+                target = root / item
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / item, target)
+            # Third-party kit publication has separate execution/relink gates.
+            # This fixture isolates the archive's own scripts and their inputs.
+            with patch.object(sources, 'ROOT', root), patch.object(sources, 'gnu_reader_kit'), redirect_stdout(io.StringIO()):
+                sources.bundle([])
+            extracted = Path(name) / 'extracted'
+            with tarfile.open(root / 'build/axiom64-sources.tar') as archive:
+                member = archive.getmember('Axiom64/' + FIXTURE.as_posix())
+                self.assertEqual(archive.extractfile(member).read(), (ROOT / FIXTURE).read_bytes())
+                archive.extractall(extracted, filter='data')
+            result = subprocess.run([sys.executable, str(extracted / 'Axiom64/scripts/tests/console_prompt_test.py'), '-v'],
+                                    capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+if __name__ == '__main__':
+    unittest.main()

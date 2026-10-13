@@ -169,6 +169,7 @@ def fixture():
                   image_sha256={root: digest(path) for root, path in images.items()},
                   seed_sha256=digest(disk), source_sha256={name: digest(ROOT / name) for name in
                       ('scripts/normal_manager_test.py', 'scripts/normal_login.py',
+                       'scripts/console_prompt.py',
                        'scripts/account_normal_test.py', 'scripts/disk_root.py', 'scripts/image.py',
                        'scripts/fixture_archive.py',
                        'scripts/manager_peer.py', 'scripts/dhcp_peer.py', 'scripts/normal_dns_peer.py',

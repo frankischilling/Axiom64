@@ -4,9 +4,8 @@ import shlex
 
 from account_normal_test import PASSWORD, build_observer
 from build_accounts import MODULES, digest
+from console_prompt import shell_prompt_end
 from fetch import ROOT
-
-SHELL_PROMPT = re.compile(rb'\x1b\[\?2004hbash-[0-9]+\.[0-9]+\$ ')
 
 
 class ConsoleLogin:
@@ -69,9 +68,10 @@ class ConsoleLogin:
                 continue
             if self.stage == 'shell':
                 marker = re.search(rb'ACCOUNT_DESKTOP_READY uid=1000 server=\d+ clients=\d+\r?\n', remaining)
-                if not marker or b'$ ' not in remaining[marker.end():]:
+                prompt_end = shell_prompt_end(remaining, marker.end()) if marker else None
+                if prompt_end is None:
                     return False
-                self.cursor += marker.end()
+                self.cursor += prompt_end
                 self.stage, self.ready = 'ready', True
                 self.events.append('ordinary-desktop')
                 continue
@@ -80,10 +80,10 @@ class ConsoleLogin:
             if self.stage == 'command':
                 # Child progress can precede the session relay's exit. Only the
                 # ordinary Bash prompt proves the terminal has returned.
-                prompt = SHELL_PROMPT.search(remaining)
-                if not prompt:
+                prompt_end = shell_prompt_end(remaining)
+                if prompt_end is None:
                     return self.ready
-                self.cursor += prompt.end()
+                self.cursor += prompt_end
                 self.stage = 'ready'
                 if self.pending is not None:
                     command, elevated = self.pending

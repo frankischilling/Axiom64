@@ -43,6 +43,8 @@ jobs:
         run: python3 scripts/tests/normal_manager_events_test.py -v
       - name: Replay authenticated console prompts and command return ordering
         run: python3 scripts/tests/normal_login_test.py -v
+      - name: Replay actual kernel-interrupted ordinary Bash prompts
+        run: python3 scripts/tests/console_prompt_test.py -v
       - name: Test seed supervision observes complete ordinary-console records
         run: python3 scripts/tests/random_installed_records_test.py -v
       - name: Test actual init seed records stay framed at every input-echo boundary
@@ -312,6 +314,9 @@ jobs:
           sudo -n python3 scripts/account_database_test.py --native --directory build/account-database-native --fixtures /tmp/axiom64-ci-account-database
           sudo -n python3 scripts/account_update_test.py --native --directory build/account-update-native --fixtures /tmp/axiom64-ci-account-update
           sudo -n python3 scripts/account_update_test.py --native --sanitize --directory build/account-update-sanitize --fixtures /tmp/axiom64-ci-account-update-sanitize
+          sudo -n python3 scripts/rename_test.py --native --directory build/account-rename-native --fixtures /tmp/axiom64-ci-rename
+          sudo -n python3 scripts/account_home_test.py --native --directory build/account-home-native --fixtures /tmp/axiom64-ci-home
+          sudo -n python3 scripts/account_home_test.py --native --sanitize --directory build/account-home-sanitize --fixtures /tmp/axiom64-ci-home-sanitize
       - name: Compare account management, password hashing and authentication with native Linux
         if: matrix.suite == 'accounts-native-auth'
         run: |
@@ -335,6 +340,8 @@ jobs:
           python3 scripts/account_store_guest.py
           python3 scripts/account_database_test.py
           python3 scripts/account_update_test.py
+          python3 scripts/rename_test.py --directory build/account-rename-guest
+          python3 scripts/account_home_test.py --directory build/account-home-guest
       - name: Verify account generation transactions through persistent ext2 reboot pairs
         if: matrix.suite == 'accounts-store-ext2'
         run: python3 scripts/account_store_ext2.py

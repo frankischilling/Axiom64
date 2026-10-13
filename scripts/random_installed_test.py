@@ -263,6 +263,7 @@ def main():
                  'scripts/random_installed_records.py', 'scripts/rootfs.py',
                  'scripts/disk_root.py', 'scripts/image.py', 'scripts/random_installed_test.py',
                  'scripts/normal_login.py', 'scripts/account_normal_test.py',
+                 'scripts/console_prompt.py',
                  'scripts/fixture_archive.py',
                  'userspace/tests/security/account-normal-observe.c',
                  'userspace/tests/security/random-installed-unready.c'):

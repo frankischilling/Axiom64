@@ -410,9 +410,11 @@ int remove_node(const Path& path, bool dir) {
     return node->mount->ops->remove(node);
 }
 
-int rename_node(const Path& from, const Path& to) {
-    if (dot_component(from) || dot_component(to))
+int rename_node(const Path& from, const Path& to, bool no_replace) {
+    if (dot_component(from))
         return -16;
+    if (dot_component(to))
+        return no_replace ? -17 : -16;
     Node* node = nullptr;
     int error = resolve_path(from, node, false);
     if (error)
@@ -428,21 +430,27 @@ int rename_node(const Path& from, const Path& to) {
         return -16;
     if (node_readonly(node))
         return -30;
-    if ((error = parent_write(directory_parent(node), node)))
+    if (!no_replace && (error = parent_write(directory_parent(node), node)))
         return error;
     Node* replaced = nullptr;
     error = parent->mount->ops->lookup(parent, name, replaced);
     if (error && error != -2)
         return error;
+    // Filesystem calls do not yield or run concurrently on another CPU. Check
+    // the destination within this same serialized lookup/rename operation.
+    if (no_replace && replaced)
+        return -17;
+    if (no_replace && (error = parent_write(directory_parent(node), node)))
+        return error;
     if ((error = parent_write(parent, replaced)))
         return error;
-    if (to.text[strlen(to.text) - 1] == '/' && !replaced)
-        return -2;
+    bool dir = (node->mode & 0170000) == directory;
+    if (to.text[strlen(to.text) - 1] == '/' && !dir)
+        return -20;
     if (replaced && (mount_root(replaced) || mounted_on(replaced)))
         return -16;
     if (replaced && file_node(replaced) == file_node(node))
         return 0;
-    bool dir = (node->mode & 0170000) == directory;
     for (Node* n = parent; dir && n; n = n->parent)
         if (n == node)
             return -22;

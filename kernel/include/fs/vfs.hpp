@@ -170,7 +170,7 @@ int link_node(const Path&, const Path&, bool follow);
 
 int remove_node(const Path&, bool directory);
 
-int rename_node(const Path&, const Path&);
+int rename_node(const Path&, const Path&, bool no_replace = false);
 
 int mount_filesystem(const Path&, const Path&, const char*, uint64_t, bool check_dirty = false);
 

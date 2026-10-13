@@ -18,6 +18,7 @@ The ELF loader and private file mappings read through the filesystem interface. 
 | `umount2` | Flags zero; sync before detach and restore covered contents |
 | `openat`, `mkdirat`, `unlinkat`, `linkat`, `renameat`, `symlinkat`, `readlinkat` | Relative directory identity and filesystem dispatch |
 | `rename` | Atomic RAM namespace update, replacement, and retained open descriptions |
+| `renameat2` | Zero flags or `RENAME_NOREPLACE`; publish to an absent name without replacing files, directories, hardlinks or symlinks |
 | `statfs`, `fstatfs` | Filesystem type, mount identity, name limit, read-only flag, and backend capacity/allocation information |
 | `fsync`, `fdatasync`, `sync` | Filesystem sync delegation; raw block descriptors use the disk flush operation |
 | `truncate`, `ftruncate` | Filesystem delegation with negative-length, file-type, capacity, and mount checks |
@@ -31,9 +32,13 @@ The module stores at most 2,048 ranges and reports ENOLCK when an atomic replace
 
 A read-only mount rejects file writes and namespace or metadata mutations with `EROFS`. Read-only remount returns `EBUSY` while writable regular-file descriptions or shared file pages remain. Unmount returns `EBUSY` for open descriptions, live working directories, bound Unix sockets, shared pages, or nested mounts. Cross-filesystem links and renames return `EXDEV`. RAM files removed or replaced remain usable through existing descriptions.
 
+`RENAME_NOREPLACE` checks the destination during the serialized namespace operation and returns `EEXIST` if it already exists, including when both names refer to the same inode. Directory destinations may have a trailing slash; a regular-file source with a trailing destination slash returns `ENOTDIR`. `RENAME_EXCHANGE` and `RENAME_WHITEOUT` return `EOPNOTSUPP`; unknown bits and conflicting flag combinations return `EINVAL`. These rules follow [Linux 6.17 rename handling](https://github.com/torvalds/linux/blob/v6.17/fs/namei.c). Ext2 storage failures retain the [documented partial-write limitations](ext2.md); namespace exclusion does not establish crash durability.
+
 ## Verification and limits
 
 `userspace/tests/fs/vfs.c` runs from the ABI and full guest suites under both firmware types. It checks covered and restored contents, pre-existing directory descriptors, symlinks and loops, mount traversal, long names, directory enumeration, hard links, replacement and unlink lifetime, read-only operations, static/dynamic executable loading from a mounted volume, private/shared mappings, socket bindings, nested mounts, inherited working directories, and repeated mount-slot reuse. `VFS_TESTS_PASS` is mandatory. Existing ABI, native toolchain, desktop, and raw disk tests remain required.
+
+`scripts/rename_test.py` compares six native libc/linkage profiles with 32 RAM/ext2 guest cells across both maintained musl providers, linkage types, firmware paths and block transports. Each client checks ten behavior groups and 32 concurrent publications with exactly one winner. Existing destinations retain their inode and contents. Persistent cells retain their final images and require independent filesystem checks.
 
 There are 16 mount slots including the root, and a shared pool of 16,384 RAM nodes. Unmount frees a volume's owned data and nodes. Removed nodes on an active volume remain allocated, so repeated create/unlink can exhaust that pool. RAM files have a 256 MiB limit; growth that would relocate shared backing returns `EBUSY`. RAM statistics report zero block capacity because there is no fixed block allocation pool.
 

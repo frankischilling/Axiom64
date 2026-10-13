@@ -17,6 +17,7 @@ import time
 from build_accounts import MODULES, digest, environment
 from build_libxcrypt import ensure as password_library
 from build_musl import compiler_args
+from console_prompt import shell_prompt_end
 from disk_root import archive_entries, bootstrap, populate
 from fetch import ROOT
 from qmp import Qmp
@@ -239,10 +240,17 @@ def boot(directory, label, iso, firmware, fresh, disk=None, transport=None, grap
     def until(marker):
         nonlocal cursor, stage
         stage, wanted = marker, marker.encode()
-        while wanted not in text[cursor:]:
+
+        def end():
+            if marker == '$ ':
+                return shell_prompt_end(text, cursor)
+            found = text.find(wanted, cursor)
+            return found + len(wanted) if found >= 0 else None
+
+        while (matched := end()) is None:
             receive()
-            assert process.poll() is None or wanted in text[cursor:], 'VM exited before ' + marker
-        cursor = text.index(wanted, cursor) + len(wanted)
+            assert process.poll() is None or end() is not None, 'VM exited before ' + marker
+        cursor = matched
 
     def send(value):
         process.stdin.write(value + b'\n')

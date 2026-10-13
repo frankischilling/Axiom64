@@ -117,7 +117,8 @@ int account_bootstrap(const char* database, const char* records, const char* nam
         error = errno;
     if (!error && account_logbook_open(records, 1, &book) < 0)
         error = errno;
-    int intended = 0, created = 0;
+    int intended = 0;
+    struct account_home* created_home = NULL;
     if (!error && (account_guard_new_ids(book, 1000, 1000) < 0 ||
                    account_guard_new_ids(book, (uid_t)-1, 27) < 0))
         error = errno;
@@ -128,10 +129,10 @@ int account_bootstrap(const char* database, const char* records, const char* nam
         else
             intended = 1;
     }
-    if (!error && (account_home_create(home, 1000, 1000, &created) < 0 ||
+    if (!error && (account_home_create(home, 1000, 1000, &created_home) < 0 ||
                    account_database_commit(db, published) < 0))
         error = errno;
-    if (error && created && !*published && account_home_rollback(home, 1000, 1000) < 0)
+    if (account_home_finish(created_home, *published) < 0)
         error = errno;
     if (intended &&
         account_logbook_audit(book, ACCOUNT_LOGIN_BOOTSTRAP, "root", 0, name, "", error) < 0 &&

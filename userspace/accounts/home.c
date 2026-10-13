@@ -1,11 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
 #include "home.h"
+#include "protected.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/fsuid.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
+
+struct account_home {
+    int directory, fd, attempted;
+    char name[256], temporary[40];
+};
 
 static int failed(int error) {
     errno = error;
@@ -33,7 +42,7 @@ static int parent(const char* path, char name[256], int create) {
         struct stat value;
         if (fstat(fd, &value) < 0)
             error = errno;
-        else if (!S_ISDIR(value.st_mode) || value.st_uid ||
+        else if (!S_ISDIR(value.st_mode) || value.st_uid || value.st_gid ||
                  ((value.st_mode & 0022) && !(value.st_mode & S_ISVTX)))
             error = EACCES;
         end = start;
@@ -41,8 +50,11 @@ static int parent(const char* path, char name[256], int create) {
             end++;
         memcpy(name, path + start, end - start);
         name[end - start] = 0;
-        if (end == length)
+        if (end == length) {
+            if (!error && (value.st_mode & 0022))
+                error = EACCES;
             break;
+        }
         int created = !error && create && mkdirat(fd, name, 0755) == 0;
         if (!error && create && !created && errno != EEXIST)
             error = errno;
@@ -72,56 +84,124 @@ static int parent(const char* path, char name[256], int create) {
     return fd;
 }
 
-int account_home_create(const char* path, uid_t uid, gid_t gid, int* created) {
-    if (!created || uid == (uid_t)-1 || gid == (gid_t)-1)
+static int entry(struct account_home* home, const char* name, const struct stat* expected) {
+    struct stat value;
+    if (fstatat(home->directory, name, &value, AT_SYMLINK_NOFOLLOW) < 0)
+        return errno == ENOENT ? 0 : -1;
+    return value.st_dev == expected->st_dev && value.st_ino == expected->st_ino ? 1 : 2;
+}
+
+int account_home_create(const char* path, uid_t uid, gid_t gid, struct account_home** output) {
+    if (!output)
         return failed(EINVAL);
-    *created = 0;
-    if (geteuid() || getegid())
+    *output = NULL;
+    if (uid == (uid_t)-1 || gid == (gid_t)-1)
+        return failed(EINVAL);
+    if (geteuid() || getegid() || (uid_t)setfsuid(-1) || (gid_t)setfsgid(-1))
         return failed(EPERM);
-    char name[256];
-    int directory = parent(path, name, 1);
-    if (directory < 0)
+    struct account_home* home = calloc(1, sizeof(*home));
+    if (!home)
         return -1;
-    int error = 0, fd = -1;
-    if (mkdirat(directory, name, 0700) < 0)
+    home->fd = -1;
+    home->directory = parent(path, home->name, 1);
+    if (home->directory < 0) {
+        int error = errno;
+        free(home);
+        return failed(error);
+    }
+    *output = home;
+    struct stat value;
+    int error = 0;
+    if (fstatat(home->directory, home->name, &value, AT_SYMLINK_NOFOLLOW) == 0)
+        error = EEXIST;
+    else if (errno != ENOENT)
         error = errno;
-    else {
-        *created = 1;
-        if (fchmodat(directory, name, 0700, 0) < 0)
+    unsigned char nonce[16];
+    if (!error && account_nonce(nonce) < 0)
+        error = errno;
+    if (!error) {
+        char name[35];
+        account_nonce_name(name, 'h', nonce);
+        memcpy(home->temporary, ".home-", 6);
+        memcpy(home->temporary + 6, name + 2, 33);
+        if (mkdirat(home->directory, home->temporary, 0700) < 0) {
             error = errno;
-        if (!error) {
-            fd = openat(directory, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-            if (fd < 0)
+            home->attempted = error != EEXIST;
+        } else {
+            home->attempted = 1;
+            home->fd = openat(home->directory, home->temporary,
+                              O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+            if (home->fd < 0)
                 error = errno;
         }
-        if (!error && (fchown(fd, uid, gid) < 0 || fchmod(fd, 0700) < 0 || fsync(fd) < 0 ||
-                       fsync(directory) < 0))
+    }
+    if (!error && fstat(home->fd, &value) < 0)
+        error = errno;
+    if (!error && (!S_ISDIR(value.st_mode) || value.st_uid || value.st_gid))
+        error = EACCES;
+    if (!error && (fchown(home->fd, uid, gid) < 0 || fchmod(home->fd, 0700) < 0 ||
+                   fsync(home->fd) < 0 || fsync(home->directory) < 0))
+        error = errno;
+    if (!error) {
+        int matched = entry(home, home->temporary, &value);
+        if (matched != 1)
+            error = matched < 0 ? errno : ESTALE;
+    }
+    if (!error && syscall(SYS_renameat2, home->directory, home->temporary, home->directory,
+                          home->name, 1u) < 0)
+        error = errno;
+    if (!error) {
+        int matched = entry(home, home->name, &value);
+        if (matched != 1)
+            error = matched < 0 ? errno : ESTALE;
+        else if (fsync(home->directory) < 0)
             error = errno;
     }
-    if (fd >= 0 && close(fd) < 0 && !error)
-        error = errno;
-    if (close(directory) < 0 && !error)
-        error = errno;
     return error ? failed(error) : 0;
 }
 
-int account_home_rollback(const char* path, uid_t uid, gid_t gid) {
-    if (geteuid() || getegid())
-        return failed(EPERM);
-    char name[256];
-    int directory = parent(path, name, 0);
-    if (directory < 0)
-        return -1;
+int account_home_finish(struct account_home* home, int published) {
+    if (!home)
+        return 0;
+    int error = 0;
     struct stat value;
-    int error = fstatat(directory, name, &value, AT_SYMLINK_NOFOLLOW) < 0 ? errno : 0;
-    if (!error &&
-        (!S_ISDIR(value.st_mode) || ((value.st_uid != uid || value.st_gid != gid) && value.st_uid)))
-        error = EACCES;
-    if (!error && unlinkat(directory, name, AT_REMOVEDIR) < 0)
+    if (home->fd < 0) {
+        if (home->attempted) {
+            if (fstatat(home->directory, home->temporary, &value, AT_SYMLINK_NOFOLLOW) == 0)
+                error = EIO;
+            else if (errno != ENOENT)
+                error = errno;
+        }
+    } else if (fstat(home->fd, &value) < 0)
         error = errno;
-    if (!error && fsync(directory) < 0)
+    else if (published) {
+        int matched = entry(home, home->name, &value);
+        if (matched != 1)
+            error = matched < 0 ? errno : ESTALE;
+    } else {
+        int removed = 0;
+        const char* names[] = {home->temporary, home->name};
+        for (unsigned i = 0; i < 2; i++) {
+            int matched = entry(home, names[i], &value);
+            if (matched < 0 && !error)
+                error = errno;
+            if (matched != 1)
+                continue;
+            if (unlinkat(home->directory, names[i], AT_REMOVEDIR) < 0) {
+                if (!error)
+                    error = errno;
+            } else
+                removed = 1;
+        }
+        if (!removed && value.st_nlink && !error)
+            error = ESTALE;
+        if (home->attempted && fsync(home->directory) < 0 && !error)
+            error = errno;
+    }
+    if (home->fd >= 0 && close(home->fd) < 0 && !error)
         error = errno;
-    if (close(directory) < 0 && !error)
+    if (close(home->directory) < 0 && !error)
         error = errno;
+    free(home);
     return error ? failed(error) : 0;
 }

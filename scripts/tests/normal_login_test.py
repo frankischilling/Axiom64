@@ -11,7 +11,7 @@ PROVISION = (b'Administrator name: admin\r\nNew password: \r\nConfirm password: 
              b'Administrator created. Please log in.\r\n')
 SESSION = (b'login: admin\r\nPassword: \r\n'
            b'ACCOUNT_DESKTOP_READY uid=1000 server=9 clients=12\r\n'
-           b'exec pid=8 /bin/bash (dynamic musl)\r\nbash-5.2$ ')
+           b'exec pid=8 /bin/bash (dynamic musl)\r\n\x1b[?2004hbash-5.2$ ')
 
 
 class NormalLoginTests(unittest.TestCase):
@@ -99,6 +99,20 @@ class NormalLoginTests(unittest.TestCase):
         login.command('/bin/first')
         with self.assertRaises(RuntimeError):
             login.consume(SESSION + b'login: ')
+
+    def test_queued_command_waits_for_complete_interrupted_prompt(self):
+        login, writes = self.replay(SESSION)
+        login.command('/bin/first')
+        login.command('/bin/second')
+        count = len(writes)
+        raw = (Path(__file__).parent / 'fixtures/normal-console/interrupted-prompt.txt').read_bytes()
+        complete = raw.index(b' unimplemented syscall') + 1
+        for size in range(complete):
+            login.consume(SESSION + raw[:size])
+            self.assertEqual(len(writes), count)
+        login.consume(SESSION + raw[:complete])
+        self.assertEqual(writes[-1], b'/bin/second\n')
+        self.assertEqual(len(writes), count + 1)
 
 
 if __name__ == '__main__':

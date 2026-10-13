@@ -976,13 +976,19 @@ static int64_t dispatch(Frame* f) {
         return link_node(old_path, new_path, f->rax == 265 && (e & 0x400));
     }
     case 82:
-    case 264: {
+    case 264:
+    case 316: {
+        uint32_t flags = f->rax == 316 ? uint32_t(e) : 0;
+        if ((flags & ~7u) || ((flags & 2) && (flags & 5)))
+            return -22;
+        if (flags & ~1u)
+            return -95;
         Path old_path, new_path;
         if (!path_at(f->rax == 82 ? -100 : int(a), f->rax == 82 ? a : b, old_path))
             return old_path.error;
         if (!path_at(f->rax == 82 ? -100 : int(c), f->rax == 82 ? b : d, new_path))
             return new_path.error;
-        return rename_node(old_path, new_path);
+        return rename_node(old_path, new_path, flags & 1);
     }
     case 84:
     case 87:

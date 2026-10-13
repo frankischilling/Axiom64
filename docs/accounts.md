@@ -16,6 +16,8 @@ Renaming a user preserves numeric membership references; serialization emits the
 
 Bootstrap creates a locked root account, the administrator's private primary group, and the `sudo` group. It hashes the administrator's password with maintained libxcrypt yescrypt, creates a private mode-0700 home owned by that administrator, and publishes the complete account set once. Later bootstrap attempts fail. `accountctl` reads passwords from a descriptor supplied by a protected pipe or provisioning source. `account-access provision` uses private terminal entry and confirmation. Password values are never command-line arguments.
 
+Home creation prepares a temporary directory in the trusted, root-owned parent, sets ownership and mode, synchronizes it and publishes with `RENAME_NOREPLACE`. The parent cannot be writable by other identities, including a sticky directory. Existing final entries are preserved. A held directory descriptor identifies the created inode through the account commit. If the accounts remain unpublished, cleanup removes only that empty inode; replacements and directory contents are preserved. A late mkdir error or failed open can leave an unproven `.home-*` temporary entry. It is preserved and reported for root review, and never published as the requested final home. Recovery after process or VM interruption still requires durable home-creation intent and remains unfinished.
+
 Examples, with descriptor 3 prepared privately by the provisioning caller:
 
 ```sh

@@ -282,7 +282,8 @@ int main(int argc, char** argv) {
         account_database_end(db);
         return result;
     }
-    int create_home = 0, created = 0, published = 0;
+    int create_home = 0, published = 0;
+    struct account_home* home = NULL;
     struct account_logbook* book = NULL;
     enum account_login_kind kind = event(argv[first]);
     const char* target =
@@ -300,15 +301,17 @@ int main(int argc, char** argv) {
         error = errno;
     const struct account_user* user =
         create_home ? account_database_user(db, argv[first + 1]) : NULL;
-    if (!error && create_home &&
-        account_home_create(user->home, user->uid, user->gid, &created) < 0)
+    if (!error && create_home && account_home_create(user->home, user->uid, user->gid, &home) < 0)
         error = errno;
     if (!error && account_database_commit(db, &published) < 0)
         error = errno;
-    if (error && created && !published &&
-        account_home_rollback(user->home, user->uid, user->gid) < 0)
-        fputs("accountctl: the unpublished home could not be removed; root recovery is required\n",
-              stderr);
+    if (account_home_finish(home, published) < 0) {
+        int cleanup_error = errno;
+        if (!published)
+            fputs("accountctl: temporary home cleanup failed; root recovery is required\n", stderr);
+        if (!error)
+            error = cleanup_error;
+    }
     if (error && published)
         fputs("accountctl: the complete update is visible; durability or cleanup failed\n", stderr);
     if (intended && account_logbook_audit(book, kind, "root", 0, target, "", error) < 0 && !error)

@@ -51,6 +51,7 @@ if args.interactive:
                         kernel_sha256=digest(ROOT / 'build/axiom64.elf'),
                         source_sha256={name: digest(ROOT / name) for name in
                             ('scripts/boot_test.py', 'scripts/desktop_console.py', 'scripts/normal_login.py',
+                             'scripts/console_prompt.py',
                              'scripts/account_normal_test.py', 'scripts/disk_root.py',
                              'scripts/fixture_archive.py',
                              'userspace/tests/security/account-normal-observe.c')})

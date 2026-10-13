@@ -170,7 +170,7 @@ def boot(directory, iso, firmware, transport, ready, observer, disk=None, previo
 
             if ready:
                 wait(lambda text: login.ready)
-                console_write(b"/usr/bin/account-normal-observe identity && "
+                login.command(b"/usr/bin/account-normal-observe identity && "
                               b"printf '%s%s\\n' INSTALLED_RANDOM_ CONSOLE\n")
                 wait(lambda text: '\nINSTALLED_RANDOM_CONSOLE\n' in text)
                 wait(lambda text: any(row[1] == '0' for row in seed_records(text, 'REAP')))

@@ -132,7 +132,7 @@ for firmware in firmwares:
                     if args.interactive:
                         login.consume(logfile.read_bytes())
                     if args.interactive and not serial_sent and login.ready:
-                        console_write(desktop_test_command(authenticated=True))
+                        login.command(desktop_test_command(authenticated=True))
                         serial_sent = True
                     if b"DESKTOP_INPUT_READY" in lines and not input_sent:
                         qmp = Qmp(control)

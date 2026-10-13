@@ -6,6 +6,8 @@ from account_normal_test import PASSWORD, build_observer
 from build_accounts import MODULES, digest
 from fetch import ROOT
 
+SHELL_PROMPT = re.compile(rb'\x1b\[\?2004hbash-[0-9]+\.[0-9]+\$ ')
+
 
 class ConsoleLogin:
     """Consume a cumulative serial capture; never place a password in a command."""
@@ -17,6 +19,7 @@ class ConsoleLogin:
         self.ready = False
         self.length = 0
         self.events = []
+        self.pending = None
 
     def consume(self, text):
         if isinstance(text, str):
@@ -30,6 +33,8 @@ class ConsoleLogin:
             remaining = text[self.cursor:]
             if b'Authentication failed.' in remaining:
                 raise RuntimeError('normal fixture authentication was denied')
+            if self.ready and b'login: ' in remaining:
+                raise RuntimeError('the authenticated normal console session ended')
             if self.stage == 'discover':
                 candidates = [(remaining.find(marker), marker, following, value)
                     for marker, following, value in (
@@ -45,7 +50,7 @@ class ConsoleLogin:
             prompts = {'new': (b'New password: ', 'confirm'),
                        'confirm': (b'Confirm password: ', 'created'),
                        'password': (b'Password: ', 'shell'),
-                       'sudo': (b'Password: ', 'ready')}
+                       'sudo': (b'Password: ', 'command')}
             if self.stage in prompts:
                 marker, following = prompts[self.stage]
                 if marker not in remaining:
@@ -71,19 +76,48 @@ class ConsoleLogin:
                 self.events.append('ordinary-desktop')
                 continue
             if self.stage == 'ready':
-                if b'login: ' in remaining:
-                    raise RuntimeError('the authenticated normal console session ended')
+                return True
+            if self.stage == 'command':
+                # Child progress can precede the session relay's exit. Only the
+                # ordinary Bash prompt proves the terminal has returned.
+                prompt = SHELL_PROMPT.search(remaining)
+                if not prompt:
+                    return self.ready
+                self.cursor += prompt.end()
+                self.stage = 'ready'
+                if self.pending is not None:
+                    command, elevated = self.pending
+                    self.pending = None
+                    self._dispatch(command, elevated)
+                    continue
                 return True
             raise RuntimeError('unknown fixture login stage')
 
-    def elevate(self, command):
-        if not self.ready or self.stage != 'ready':
-            raise RuntimeError('elevation requires the authenticated ordinary session')
+    def _submit(self, command, elevated):
+        if not self.ready or self.stage not in ('ready', 'command'):
+            raise RuntimeError('commands require the authenticated ordinary session')
         if isinstance(command, bytes):
             command = command.decode()
+        command = command.rstrip('\n')
+        if self.pending is not None:
+            raise RuntimeError('the normal fixture already has a queued command')
+        if self.stage == 'command':
+            self.pending = command, elevated
+        else:
+            self._dispatch(command, elevated)
+
+    def _dispatch(self, command, elevated):
         self.cursor = self.length
-        self.stage = 'sudo'
-        self.send(('sudo /bin/busybox sh -c ' + shlex.quote(command) + '\n').encode())
+        self.stage = 'sudo' if elevated else 'command'
+        if elevated:
+            command = 'sudo /bin/busybox sh -c ' + shlex.quote(command)
+        self.send((command + '\n').encode())
+
+    def command(self, command):
+        self._submit(command, False)
+
+    def elevate(self, command):
+        self._submit(command, True)
 
 
 def install_observer(files, directory):

@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
+#include <sys/statfs.h>
 #include <unistd.h>
 
 #ifndef RANDOM_LINKAGE
@@ -45,6 +46,45 @@ static unsigned state(void) {
     return header[1082] | ((unsigned)header[1083] << 8);
 }
 
+static void reconciled(const char* device) {
+    char marker[128] = {0};
+    int fd = open(device, O_RDONLY | O_CLOEXEC);
+    int repair, expected, precheck;
+    unsigned free_blocks, free_inodes;
+    require(fd >= 0 && read(fd, marker, sizeof(marker) - 1) == sizeof(marker) - 1 &&
+                close(fd) == 0 &&
+                sscanf(marker, "AXIOM64_EXT2_RECOVER=%d,%d,%u,%u,%d", &repair, &expected,
+                       &free_blocks, &free_inodes, &precheck) == 5 &&
+                repair == 1 && expected == EUCLEAN && precheck == EUCLEAN,
+            "counter-volume-input");
+    rejected(device, "ext2", 0, NULL, EUCLEAN);
+    rejected(device, "ext2", MS_RDONLY, NULL, EUCLEAN);
+    rejected(device, "ext2", MS_RDONLY, "recovery=check", EUCLEAN);
+    require(mount(device, "/mnt/seed", "ext2", 0, "recovery=check") == 0,
+            "counter-checked-writable-mount");
+    struct statfs counts;
+    require(statfs("/mnt/seed", &counts) == 0 && counts.f_bfree == free_blocks &&
+                counts.f_ffree == free_inodes,
+            "independent-counter-totals");
+    read_seed();
+    fd = open("/mnt/seed/counter-created", O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC, 0600);
+    require(fd >= 0 && write(fd, "checked", 7) == 7 && fsync(fd) == 0 && close(fd) == 0 &&
+                unlink("/mnt/seed/counter-created") == 0,
+            "allocation-after-reconciliation");
+    sync();
+    require(statfs("/mnt/seed", &counts) == 0 && counts.f_bfree == free_blocks &&
+                counts.f_ffree == free_inodes && umount("/mnt/seed") == 0,
+            "counts-after-removal");
+    require(mount(device, "/mnt/seed", "ext2", MS_RDONLY, NULL) == 0,
+            "counter-clean-default-remount");
+    read_seed();
+    require(statfs("/mnt/seed", &counts) == 0 && counts.f_bfree == free_blocks &&
+                counts.f_ffree == free_inodes && umount("/mnt/seed") == 0,
+            "counter-clean-remount-totals");
+    printf("RANDOM_SEED_RECOVERY_COUNTER device=%s free_blocks=%u free_inodes=%u\n", device,
+           free_blocks, free_inodes);
+}
+
 int main(int argc, char** argv) {
     setbuf(stdout, NULL);
     require(argc >= 2 && argc <= 3, "arguments");
@@ -69,6 +109,16 @@ int main(int argc, char** argv) {
                 "default-mount-after-clean-unmount");
         require(umount("/mnt/seed") == 0, "default-unmount");
         checks = 9;
+    } else if (!strcmp(argv[1], "counters")) {
+        require(argc == 3, "counter-arguments");
+        unsigned volumes = (unsigned)strtoul(argv[2], NULL, 10);
+        require(volumes > 0 && volumes <= 8, "counter-volume-count");
+        for (unsigned index = 0; index < volumes; index++) {
+            char device[16];
+            snprintf(device, sizeof(device), "/dev/vd%c", 'a' + index);
+            reconciled(device);
+            checks++;
+        }
     } else if (!strcmp(argv[1], "invalid")) {
         require(argc == 3, "invalid-arguments");
         unsigned volumes = (unsigned)strtoul(argv[2], NULL, 10);

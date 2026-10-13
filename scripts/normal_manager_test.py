@@ -325,7 +325,7 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout, directo
                 spawns, reaps, passed = events(text)
                 if stage == 'boot' and login.ready and spawns and f'NETWORK_MANAGER_READY pid={spawns[0][0]} interfaces={interfaces}' in text:
                     first = spawns[0][0]
-                    send(process, '/usr/bin/account-normal-observe identity && /bin/x11-probe --desktop')
+                    login.command('/usr/bin/account-normal-observe identity && /bin/x11-probe --desktop')
                     stage = 'desktop-before'
                 if (stage in ('desktop-before', 'desktop-after') and stage != typing_phase and
                         not keyboard and qmp is None):
@@ -399,7 +399,7 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout, directo
                          f'/bin/normal-dns-static recovered {mask} && /bin/normal-dns-dynamic recovered {mask}')
                     stage = 'recovered'
                 if stage == 'recovered' and stage in passed and dns_passed(text, stage, mask):
-                    send(process, '/bin/x11-probe --desktop')
+                    login.command('/bin/x11-probe --desktop')
                     stage = 'desktop-after'
                 if stage == 'desktop-after' and stage in passed:
                     check(desktop_identity(text) == before_desktop, 'the same desktop processes survive manager death')

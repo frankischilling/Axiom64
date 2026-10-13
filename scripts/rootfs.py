@@ -138,7 +138,16 @@ regular("bin/busybox", busybox)
 files["bin/sh"] = (0o120777, b"/bin/busybox")
 for filename in ["xorg.conf", "system.twmrc"]:
     regular(f"etc/X11/{filename}", ROOT / "userspace/desktop" / filename, 0o100644)
+# Package shell-registration hooks are not run. Supply the conventional list
+# explicitly so clients using getusershell retain the authenticated shell.
+shells = [path for path in ('/bin/sh', '/bin/ash', '/bin/bash', '/bin/zsh',
+                           '/bin/ksh', '/bin/mksh', '/bin/dash', '/bin/csh', '/bin/tcsh')
+          if path.lstrip('/') in files]
+files['etc/shells'] = (0o100644, ('\n'.join(shells) + '\n').encode())
 regular("etc/xterm-session.sh", ROOT / "userspace/desktop/xterm-session.sh")
+regular('usr/libexec/desktop-terminal', ROOT / 'build/desktop-terminal')
+for filename in ('desktop-client-session.sh', 'desktop-console-session.sh'):
+    regular('etc/' + filename, ROOT / 'userspace/desktop' / filename)
 regular("bin/x11-probe", ROOT / "build" / "x11-probe")
 for path in ["etc/X11", "tmp/.X11-unix", "var", "var/log", "var/lib", "var/lib/xkb", "usr/share/licenses/Xorg"]:
     directory(path)

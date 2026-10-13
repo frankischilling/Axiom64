@@ -6,7 +6,20 @@
 namespace ax {
 constexpr unsigned max_tasks = 64, max_fds = 128;
 enum class State { empty, runnable, blocked, zombie, stopped };
-enum class Wait { none, read, write, child, sleep, poll, vfork, signal, futex, file_lock, random };
+enum class Wait {
+    none,
+    read,
+    write,
+    child,
+    sleep,
+    poll,
+    vfork,
+    signal,
+    signal_queue,
+    futex,
+    file_lock,
+    random
+};
 
 struct Descriptor {
     Handle* handle;
@@ -76,6 +89,14 @@ struct Task {
     State state;
     int pid; // Kernel TID; process->pid is the userspace thread-group ID.
     Process* process;
+    int real_parent_tid;
+    int parent_death_signal;
+
+    struct {
+        uint64_t mask, information, deadline;
+        bool finite;
+    } signal_wait;
+
     Frame frame;
     MemoryContext* memory;
     FileTable* files;

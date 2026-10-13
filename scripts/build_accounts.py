@@ -16,10 +16,11 @@ from fetch import ROOT
 MODULES = ('store', 'database', 'record', 'password', 'home', 'auth', 'secret', 'session',
            'protected', 'login_record', 'logbook', 'recorded', 'update', 'busy', 'guard')
 PROGRAMS = {'accountctl': 'manage', 'account-access': 'access', 'account-console': 'console'}
+DESKTOP_INPUTS = [f'userspace/desktop/{name}.{suffix}' for name in ('seat', 'authority') for suffix in ('c', 'h')]
 INPUTS = [*(f'userspace/accounts/{name}.{suffix}' for name in MODULES for suffix in ('c', 'h')),
           *(f'userspace/accounts/{name}.c' for name in PROGRAMS.values()),
           'scripts/build_accounts.py', 'scripts/build_libxcrypt.py', 'scripts/build_musl.py',
-          'scripts/linux_uapi.py', 'dependencies.json', 'sources.lock.json']
+          'scripts/linux_uapi.py', 'dependencies.json', 'sources.lock.json', *DESKTOP_INPUTS]
 
 
 def digest(path):
@@ -73,6 +74,7 @@ def ensure(provider='build', linkage='static'):
                        '-I' + str(stage / 'usr/include'),
                        '-ffile-prefix-map=' + str(ROOT) + '=/usr/src/axiom64',
                        *(str(ROOT / f'userspace/accounts/{name}.c') for name in MODULES),
+                       *(str(ROOT / name) for name in DESKTOP_INPUTS if name.endswith('.c')),
                        str(ROOT / f'userspace/accounts/{main}.c'), '-o', str(output)]
             command += ['-static', str(stage / 'usr/lib/libcrypt.a')] if linkage == 'static' else [
                 '-L' + str(stage / 'usr/lib'), '-lcrypt']

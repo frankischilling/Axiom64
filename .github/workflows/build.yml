@@ -53,6 +53,10 @@ jobs:
         run: make test-manager-runtime-native
       - name: Test actual desktop image readiness and bounded uniform-image rejection
         run: python3 scripts/tests/desktop_visual_test.py -v
+      - name: Test Xauthority records against an isolated real X server and ordinary users
+        run: sudo -n python3 scripts/tests/desktop_authority_test.py --isolated
+      - name: Test the selected shell starts only on a private owned foreground PTY
+        run: sudo -n python3 scripts/tests/desktop_terminal_test.py
       - name: Build all maintained OpenSSL providers from their pinned inputs
         run: python3 scripts/build_openssl.py --provider all
       - name: Verify completed OpenSSL fingerprints and reject changed inputs and products
@@ -335,6 +339,12 @@ jobs:
       - name: Test ordinary identities, privilege-dropped exec and RAM/ext2 permissions
         if: matrix.suite == 'credentials'
         run: make test-credentials
+      - name: Compare parent-thread death and synchronous signal waits with native Linux
+        if: matrix.suite == 'credentials'
+        run: sudo -n make test-parent-death-native test-signal-wait-native
+      - name: Test parent-thread death and captured signal waits with BIOS and UEFI
+        if: matrix.suite == 'credentials'
+        run: make test-parent-death test-signal-wait
       - name: Compare all three libc profiles with native Linux tmpfs and ext2 xattrs
         if: matrix.suite == 'file-capabilities'
         run: |

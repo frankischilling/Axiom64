@@ -15,10 +15,11 @@ from account_store_guest import fixture
 from account_store_test import digest, environment
 from build_musl import compiler_args, loader
 from fetch import LOCK, ROOT
+from build_accounts import DESKTOP_INPUTS
 
 MODULES = ('store', 'database', 'record', 'password', 'home', 'auth', 'secret', 'session',
            'protected', 'login_record', 'logbook', 'recorded', 'update', 'busy', 'guard')
-INPUTS = [*SOURCES, *(f'userspace/accounts/{name}.{suffix}' for name in MODULES for suffix in ('c', 'h')),
+INPUTS = [*SOURCES, *DESKTOP_INPUTS, *(f'userspace/accounts/{name}.{suffix}' for name in MODULES for suffix in ('c', 'h')),
           'userspace/accounts/access.c', 'userspace/tests/security/account-access.c',
           'userspace/tests/security/account-access-observe.c', 'scripts/account_access_test.py',
           'scripts/account_session_test.py', 'scripts/account_store_guest.py', 'scripts/account_store_test.py',
@@ -34,6 +35,7 @@ def build(provider, linkage, directory, data, native_runtime=None):
     common = [*compiler, '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
               '-I' + str(stage / 'usr/include')]
     modules = [str(ROOT / f'userspace/accounts/{name}.c') for name in MODULES]
+    modules += [str(ROOT / name) for name in DESKTOP_INPUTS if name.endswith('.c')]
     link = ['-static', str(stage / 'usr/lib/libcrypt.a')] if linkage == 'static' else [
         '-L' + str(stage / 'usr/lib'), '-lcrypt']
     access, driver, observer = (directory / name for name in ('account-access', 'account-access-test', 'account-access-observe'))

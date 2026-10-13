@@ -145,7 +145,7 @@ static void start(struct frontend* front, struct account_profile* profile, const
         CHECK(tcgetattr(front->slave, &before) == 0);
         int flags = fcntl(front->slave, F_GETFL), status;
         CHECK(flags >= 0 && setenv("SESSION_FORGED", "inherited", 1) == 0);
-        struct account_session_events events = {begin, end, front};
+        struct account_session_events events = {.begin = begin, .end = end, .context = front};
         int result = account_session_run(profile, front->slave, "vt100", command, &events, &status);
         if (expected_error)
             CHECK(result == -1 && errno == expected_error);

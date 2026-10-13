@@ -24,6 +24,17 @@ test-account-secret:
 	$(PYTHON) scripts/account_secret_test.py
 test-account-secret-native:
 	$(PYTHON) scripts/account_secret_test.py --native --directory build/account-secret-native
+.PHONY: test-parent-death test-parent-death-native test-signal-wait test-signal-wait-native test-account-desktop
+test-parent-death:
+	$(PYTHON) scripts/parent_death_test.py --directory build/parent-death
+test-parent-death-native:
+	$(PYTHON) scripts/parent_death_test.py --directory build/parent-death-native --native
+test-signal-wait:
+	$(PYTHON) scripts/signal_wait_test.py --directory build/signal-wait
+test-signal-wait-native:
+	$(PYTHON) scripts/signal_wait_test.py --directory build/signal-wait-native --native
+test-account-desktop:
+	$(PYTHON) scripts/account_normal_test.py --directory build/account-desktop --graphical
 .PHONY: test-account-normal test-vm-state
 test-account-normal:
 	$(PYTHON) scripts/account_normal_test.py
@@ -509,7 +520,10 @@ build/lifecycle-static: userspace/tests/threads/lifecycle.c userspace/tests/thre
 build/lifecycle-dynamic: userspace/tests/threads/lifecycle.c userspace/tests/threads/clone.S
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DLIFE_LINKAGE='"dynamic"' $(filter %.c %.S %.s,$^) -o $@
-build/x11-probe: userspace/tests/desktop/probe.c
+build/x11-probe: userspace/tests/desktop/probe.c userspace/desktop/authority.c userspace/desktop/authority.h
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $(filter %.c,$^) -o $@
+build/desktop-terminal: userspace/desktop/terminal.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 USERSPACE_DATA = $(foreach pattern,*.sh *.conf *.twmrc,$(call rwildcard,userspace/,$(pattern))) $(wildcard userspace/tests/toolchain/*)
@@ -519,6 +533,8 @@ ROOTFS_INPUTS += build/random-seed-static
 ROOTFS_INPUTS += scripts/build_libcap.py scripts/build_musl.py scripts/build_openssl.py sources.lock.json
 ROOTFS_INPUTS += scripts/build_libxcrypt.py scripts/linux_uapi.py
 ROOTFS_INPUTS += scripts/build_accounts.py $(wildcard userspace/accounts/*.c userspace/accounts/*.h)
+ROOTFS_INPUTS += $(wildcard userspace/desktop/*.c userspace/desktop/*.h)
+ROOTFS_INPUTS += build/desktop-terminal
 build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox

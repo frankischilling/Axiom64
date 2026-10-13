@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #include "database.h"
 #include "protected.h"
+#include "../desktop/seat.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -137,6 +138,7 @@ int main(int argc, char** argv) {
     }
     const char *database = "/etc/axiom64/accounts", *records = "/var/log/axiom64/login";
     const char *executable = "/usr/bin/account-access", *homes = "/home", *shell = "/bin/bash";
+    int graphical = 0;
     for (int index = 1; index < argc; index += 2) {
         if (index + 1 == argc)
             return 2;
@@ -150,7 +152,11 @@ int main(int argc, char** argv) {
             homes = argv[index + 1];
         else if (!strcmp(argv[index], "--shell"))
             shell = argv[index + 1];
-        else
+        else if (!strcmp(argv[index], "--session")) {
+            if (strcmp(argv[index + 1], "desktop") && strcmp(argv[index + 1], "shell"))
+                return 2;
+            graphical = !strcmp(argv[index + 1], "desktop");
+        } else
             return 2;
     }
     if (tcgetsid(0) != getsid(0) || tcgetpgrp(0) != getpgrp()) {
@@ -177,7 +183,21 @@ int main(int argc, char** argv) {
     if (sigaction(SIGHUP, &action, NULL) < 0 || sigaction(SIGTERM, &action, NULL) < 0)
         return 1;
     int error = 0;
-    while (!stopped) {
+    if (graphical) {
+        for (unsigned attempt = 0; !stopped; attempt++) {
+            if (desktop_seat_recover() == 0)
+                break;
+            if (errno != EBUSY || attempt == 9) {
+                error = errno;
+                break;
+            }
+            if (pause_retry() < 0) {
+                error = errno;
+                break;
+            }
+        }
+    }
+    while (!stopped && !error) {
         struct account_database* db = NULL;
         if (account_database_begin(database, 1, &db) < 0) {
             error = errno;
@@ -210,7 +230,9 @@ int main(int argc, char** argv) {
                              (char*)database,
                              "--records",
                              (char*)records,
-                             fresh ? "provision" : "login",
+                             fresh       ? "provision"
+                             : graphical ? "desktop"
+                                         : "login",
                              fresh ? name : NULL,
                              fresh ? home : NULL,
                              fresh ? (char*)shell : NULL,

@@ -174,11 +174,14 @@ static void signal_child(int master, pid_t child, int signal) {
     kill(child, signal);
 }
 
-static int relay(int terminal, int master, pid_t child, int* status, int* reaped) {
+static int relay(int terminal, int master, pid_t child, int* status, int* reaped,
+                 const struct account_session_events* events) {
     struct buffer input = {{0}, 0, 0}, output = {{0}, 0, 0};
     int finished = 0, reading = 1, master_open = 1;
     int64_t deadline = -1;
     for (;;) {
+        if (events && events->observe && events->observe(events->context) < 0)
+            return -1;
         if (!finished) {
             pid_t result = waitpid(child, status, WNOHANG);
             if (result == child) {
@@ -384,7 +387,7 @@ int account_session_run_stdio(const struct account_profile* profile, int termina
         close(go[1]);
     go[1] = -1;
     if (!error) {
-        if (relay(terminal, master, process, status, &reaped) < 0)
+        if (relay(terminal, master, process, status, &reaped, events) < 0)
             error = errno;
         else
             reaped = 1;

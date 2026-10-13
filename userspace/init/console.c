@@ -66,7 +66,7 @@ int init_console_update(struct init_console* console, pid_t reaped, int status,
         sigemptyset(&mask);
         if (sigprocmask(SIG_SETMASK, &mask, NULL) < 0 || setsid() < 0 || ioctl(0, TIOCSCTTY, 1) < 0)
             _exit(126);
-        execl("/sbin/account-console", "account-console", (char*)NULL);
+        execl("/sbin/account-console", "account-console", "--session", "desktop", (char*)NULL);
         perror("init: authenticated console exec");
         _exit(127);
     }

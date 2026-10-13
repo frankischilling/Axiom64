@@ -19,6 +19,7 @@ from build_libxcrypt import ensure as password_library
 from build_musl import compiler_args
 from disk_root import archive_entries, bootstrap, populate
 from fetch import ROOT
+from qmp import Qmp
 
 # This is a public, disposable test credential. Never use a person's password here.
 PASSWORD = b'Fixture-normal-console-private-2026'
@@ -44,6 +45,17 @@ def build_observer(directory):
                        stdout=log, stderr=subprocess.STDOUT)
     return program, dict(command=command, binary_sha256=digest(program),
                          library_manifest_sha256=digest(library / 'manifest.json'))
+
+
+def build_desktop_observer(directory):
+    program = directory / 'desktop-login-observe'
+    command = [*compiler_args('build'), '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
+               '-static', str(ROOT / 'userspace/tests/desktop/login-observe.c'),
+               str(ROOT / 'userspace/desktop/authority.c'), '-o', str(program)]
+    with (directory / 'desktop-observer-build.log').open('wb') as log:
+        subprocess.run(command, cwd=ROOT, env=environment(), check=True,
+                       stdout=log, stderr=subprocess.STDOUT)
+    return program, dict(command=command, binary_sha256=digest(program))
 
 
 def write_cpio(destination, files):
@@ -153,10 +165,14 @@ def inspect(disk, directory, label):
                 fsck_log_sha256=digest(fsck_log), disk_sha256=digest(disk))
 
 
-def boot(directory, label, iso, firmware, fresh, disk=None, transport=None):
+def boot(directory, label, iso, firmware, fresh, disk=None, transport=None, graphical=False):
+    control_directory = tempfile.TemporaryDirectory(prefix='axiom64-account-desktop-')
+    control = Path(control_directory.name) / 'qmp.sock'
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '1G', '-nic', 'none',
                '-cdrom', str(iso), '-display', 'none', '-serial', 'stdio', '-monitor', 'none', '-no-reboot',
                '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
+    if graphical:
+        command += ['-qmp', f'unix:{control},server=on,wait=off']
     if disk:
         command += ['-drive', 'if=none,format=raw,cache=writeback,file=' + str(disk) + ',id=accounts',
                     '-device', 'virtio-blk-pci,drive=accounts,' +
@@ -172,6 +188,36 @@ def boot(directory, label, iso, firmware, fresh, disk=None, transport=None):
     text, cursor, stage = bytearray(), 0, 'boot'
     log_path = directory / (label + '.log')
     log = log_path.open('wb')
+    monitor = None
+    captures, monitor_records, previous_desktop = [], [], []
+
+    def monitor_command(name, arguments=None):
+        nonlocal monitor
+        if monitor is None:
+            monitor = Qmp(control)
+        result = monitor.command(name, arguments)
+        monitor_records.append(dict(name=name, arguments=arguments, result=result))
+        save(directory / (label + '-qmp.json'), monitor_records)
+        return result
+
+    def capture(blank=False):
+        ppm = directory / f'{label}-screen-{len(captures)}.ppm'
+        png = ppm.with_suffix('.png')
+        monitor_command('screendump', dict(filename=str(ppm)))
+        monitor_command('screendump', dict(filename=str(png), format='png'))
+        magic, geometry, maximum, pixels = ppm.read_bytes().split(b'\n', 3)
+        width, height = map(int, geometry.split())
+        assert magic == b'P6' and maximum == b'255' and len(pixels) == width * height * 3
+        different = sum(any(pixels[offset:offset + 3]) for offset in range(0, len(pixels), 3))
+        assert different == 0 if blank else different > 100, 'actual framebuffer capture mismatch'
+        captures.append(dict(ppm=ppm.name, ppm_sha256=digest(ppm), png=png.name,
+            png_sha256=digest(png), width=width, height=height, nonblack_pixels=different, blank=blank))
+
+    def keyboard(command):
+        for character in command + '\n':
+            code = {' ': 'spc', '/': 'slash', '-': 'minus', '\n': 'ret'}.get(character, character)
+            monitor_command('send-key', dict(keys=[dict(type='qcode', data=code)], **{'hold-time': 30}))
+            time.sleep(.07)
 
     def receive():
         ready, _, _ = select.select([process.stdout], [], [], 1)
@@ -181,8 +227,12 @@ def boot(directory, label, iso, firmware, fresh, disk=None, transport=None):
             log.flush()
             text.extend(data)
         assert PASSWORD not in text and WRONG_PASSWORD not in text, 'password appeared on serial'
-        assert not any(marker in text for marker in (b'ACCOUNT_NORMAL_FAIL', b'PANIC:', b'FAULT pid=')), \
-            'actual guest check failed at ' + stage
+        complete = text[:text.rfind(b'\n') + 1]
+        failures = [line for line in complete.splitlines() if any(marker in line for marker in
+            (b'ACCOUNT_NORMAL_FAIL', b'DESKTOP_LOGIN_FAIL', b'PANIC:', b'FAULT pid='))]
+        if failures:
+            raise AssertionError('actual guest check failed at ' + stage + ': ' +
+                                 failures[-1].decode(errors='replace'))
         assert time.monotonic() - started < 180, 'normal boot deadline exceeded at ' + stage
 
     def until(marker):
@@ -199,6 +249,8 @@ def boot(directory, label, iso, firmware, fresh, disk=None, transport=None):
 
     def login(password=PASSWORD):
         until('login: ')
+        if graphical:
+            capture(blank=True)
         send(b'admin')
         until('Password: ')
         send(password)
@@ -217,6 +269,43 @@ def boot(directory, label, iso, firmware, fresh, disk=None, transport=None):
             until('ACCOUNT_NORMAL_PROTECTED_PASS ')
             until('$ ')
 
+    def desktop():
+        nonlocal previous_desktop
+        send(b'/usr/bin/desktop-login-observe authorization')
+        until('DESKTOP_AUTH_PASS valid=1 absent_denied=1 wrong_denied=1 rotated=')
+        until('$ ')
+        protected_command = 'sudo /usr/bin/desktop-login-observe protected'
+        if previous_desktop:
+            protected_command += ' ' + ' '.join(map(str, previous_desktop))
+        send(protected_command.encode())
+        until('Password: ')
+        send(PASSWORD)
+        if previous_desktop:
+            until('DESKTOP_RETIRED_PASS processes=')
+        until('ACCOUNT_NORMAL_PROTECTED_PASS ')
+        until('DESKTOP_PROTECTED_PASS foreign_uid=1001')
+        until('$ ')
+        send(b'/bin/x11-probe --desktop')
+        until('XTERM_WINDOW_ID window=')
+        until('$ ')
+        monitor_command('input-send-event', {'events': [
+            {'type': 'rel', 'data': {'axis': 'x', 'value': 4}},
+            {'type': 'rel', 'data': {'axis': 'y', 'value': 4}},
+            {'type': 'btn', 'data': {'button': 'left', 'down': True}}]})
+        monitor_command('input-send-event', {'events': [
+            {'type': 'btn', 'data': {'button': 'left', 'down': False}}]})
+        keyboard('/usr/bin/desktop-login-observe graphical')
+        send(b'while ! test -f graphical-done; do sleep .1; done; /usr/bin/desktop-login-observe result')
+        until('DESKTOP_KEYBOARD_IDENTITY_PASS uid=1000')
+        until('$ ')
+        capture()
+        owner, server, clients = map(int, re.findall(
+            rb'DESKTOP_PROTECTED_PASS [^\r\n]* owner=(\d+) server=(\d+) clients=(\d+)', text)[-1])
+        beginning = list(re.finditer(rb'ACCOUNT_DESKTOP_READY uid=1000 server=\d+', text))[-1].start()
+        descendants = [int(pid) for pid in re.findall(
+            rb'exec pid=(\d+) /(?:usr/bin/(?:twm|xeyes|xterm)|bin/bash) ', text[beginning:])]
+        previous_desktop = sorted(set([owner, server, clients, *descendants]))
+
     error = None
     try:
         if fresh:
@@ -232,8 +321,11 @@ def boot(directory, label, iso, firmware, fresh, disk=None, transport=None):
         until('Authentication failed.')
         login()
         identity()
+        if graphical:
+            desktop()
         assert text.count(b'Administrator created. Please log in.') == int(fresh)
-        privileged(b'protected')
+        if not graphical:
+            privileged(b'protected')
         console_pid = int(re.findall(rb'INIT_CONSOLE_SPAWN pid=(\d+) status=0', text)[-1])
         send(('sudo /bin/kill -KILL ' + str(console_pid)).encode())
         until('Password: ')
@@ -241,11 +333,28 @@ def boot(directory, label, iso, firmware, fresh, disk=None, transport=None):
         until('INIT_CONSOLE_REAP pid=' + str(console_pid) + ' status=9')
         login()
         identity()
-        privileged(b'protected')
+        if not graphical:
+            privileged(b'protected')
+        if graphical:
+            desktop()
+            server = int(re.findall(rb'ACCOUNT_DESKTOP_READY uid=1000 server=(\d+)', text)[-1])
+            send(('sudo /bin/kill -KILL ' + str(server)).encode())
+            until('Password: ')
+            send(PASSWORD)
+            login()
+            identity()
+            desktop()
+            keyboard('exit')
+            login()
+            identity()
+            desktop()
         send(b'exit')
         login()
         identity()
-        privileged(b'protected')
+        if graphical:
+            desktop()
+        if not graphical:
+            privileged(b'protected')
         privileged(b'poweroff')
         until('AXIOM64_EXIT status=0')
         process.wait(timeout=30)
@@ -259,18 +368,34 @@ def boot(directory, label, iso, firmware, fresh, disk=None, transport=None):
                   in re.findall(rb'INIT_CONSOLE_(SPAWN|REAP) pid=(\d+) status=(\d+) monotonic_ms=(\d+)', text)]
         reaped = next(index for index, event in enumerate(events) if event[0] == 'REAP' and event[1] == console_pid)
         assert events[reaped + 1][0] == 'SPAWN' and events[reaped + 1][3] - events[reaped][3] >= 1000
+        if graphical:
+            assert text.count(b'DESKTOP_KEYBOARD_IDENTITY_PASS ') == 5
+            assert text.count(b'DESKTOP_PROTECTED_PASS ') == 5
+            assert text.count(b'DESKTOP_RETIRED_PASS ') == 4
+            assert text.count(b'rotated=1') == 4 + int(disk is not None and not fresh)
+            assert sum(capture['blank'] for capture in captures) == 6
     except Exception as caught:
         error = str(caught)
+        if graphical and process.poll() is None:
+            try:
+                monitor_command('screendump', dict(filename=str(directory / (label + '-failure.png')),
+                                                 format='png'))
+            except Exception as capture_error:
+                error += '; capture: ' + str(capture_error)
     finally:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()
+        if monitor:
+            monitor.close()
+        control_directory.cleanup()
         log.close()
         process.stdin.close()
         process.stdout.close()
     return dict(command=command, returncode=process.returncode, firmware=firmware, fresh=fresh,
                 transport=transport, elapsed_seconds=time.monotonic() - started,
-                log_sha256=digest(log_path), passed=error is None, error=error, stage=stage)
+                log_sha256=digest(log_path), passed=error is None, error=error, stage=stage,
+                graphical=graphical, captures=captures, monitor_records=len(monitor_records))
 
 
 def main():
@@ -279,6 +404,8 @@ def main():
     parser.add_argument('--profile', choices=('desktop', 'full'), default='desktop')
     parser.add_argument('--firmware', choices=('bios', 'uefi', 'all'), default='all')
     parser.add_argument('--storage', choices=('ram', 'ext2', 'all'), default='all')
+    parser.add_argument('--graphical', action='store_true',
+                        help='verify real cookie denial, X11 pixels, keyboard identity and seat recovery')
     args = parser.parse_args()
     directory = args.directory.resolve()
     assert directory.is_relative_to((ROOT / 'build').resolve())
@@ -294,6 +421,10 @@ def main():
     program, inputs = build_observer(directory)
     files = archive_entries(rootfs)
     files['usr/bin/account-normal-observe'] = (0o100755, program.read_bytes())
+    if args.graphical:
+        graphical_program, graphical_inputs = build_desktop_observer(directory)
+        files['usr/bin/desktop-login-observe'] = (0o100755, graphical_program.read_bytes())
+        inputs['desktop_observer'] = graphical_inputs
     cpio = directory / 'root.cpio'
     write_cpio(cpio, files)
     inputs.update(normal_cpio_sha256=digest(rootfs), root_cpio_sha256=digest(cpio),
@@ -305,7 +436,7 @@ def main():
         iso = image(directory, cpio)
         inputs['ram_image_sha256'] = digest(iso)
         for firmware in firmware_values:
-            row = boot(directory, 'ram-' + firmware, iso, firmware, True)
+            row = boot(directory, 'ram-' + firmware, iso, firmware, True, graphical=args.graphical)
             rows.append(row)
             save(directory / 'results.json', rows)
             assert row['passed'], row
@@ -325,7 +456,7 @@ def main():
                 previous = None
                 for fresh in (True, False):
                     phase = 'create' if fresh else 'reboot'
-                    row = boot(case, phase, iso, firmware, fresh, disk, transport)
+                    row = boot(case, phase, iso, firmware, fresh, disk, transport, args.graphical)
                     rows.append(row)
                     save(directory / 'results.json', rows)
                     assert row['passed'], row

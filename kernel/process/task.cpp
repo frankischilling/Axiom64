@@ -204,6 +204,9 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
                sizeof(child->process->executable));
     }
     child->frame = *f;
+    // A new thread has the group's real parent. A new process belongs to the
+    // thread that created it, even while that thread's group remains alive.
+    child->real_parent_tid = thread ? current->real_parent_tid : current->pid;
     child->frame.rax = 0;
     if (stack)
         child->frame.rsp = stack;
@@ -266,10 +269,29 @@ static void clear_tid(Task* t) {
     t->tid_address = 0;
 }
 
+static void parent_departed(Task* parent) {
+    int reaper = 1;
+    for (const auto& task : tasks)
+        if (&task != parent && task.state != State::empty && task.state != State::zombie &&
+            task.process == parent->process) {
+            reaper = task.pid;
+            break;
+        }
+    for (auto& child : tasks)
+        if (child.state != State::empty && child.state != State::zombie &&
+            child.real_parent_tid == parent->pid) {
+            child.real_parent_tid = reaper;
+            if (child.parent_death_signal)
+                queue_process_signal(child.process, child.parent_death_signal,
+                                     parent->process->pid);
+        }
+}
+
 void exit_thread(Task* t, int status) {
     if (t->state == State::empty || t->state == State::zombie)
         return;
     auto process = t->process;
+    parent_departed(t);
     clear_tid(t);
     t->vfork_parent = 0;
     t->wait = Wait::none;
@@ -307,6 +329,8 @@ void reap_task(Task* t) {
 static bool awaken(Task& t) {
     if (t.state != State::blocked)
         return t.state == State::runnable;
+    if (t.wait == Wait::signal_queue && signal_wait_resume(t))
+        return true;
     if (signal_wakes(t)) {
         signal_interrupt(t);
         return true;
@@ -343,6 +367,7 @@ static bool awaken(Task& t) {
                 ready = false;
         break;
     case Wait::signal:
+    case Wait::signal_queue:
         break;
     case Wait::random:
         ready = random_ready();
@@ -680,7 +705,12 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
         process->leader->state = State::empty;
         process->leader->process = nullptr;
         process->leader = t;
+        int previous_tid = t->pid;
         t->pid = process->pid;
+        for (auto& child : tasks)
+            if (child.state != State::empty && child.state != State::zombie &&
+                child.real_parent_tid == previous_tid)
+                child.real_parent_tid = t->pid;
     }
     replacement->space = memory;
     clear_tid(t);
@@ -690,6 +720,13 @@ int exec_task(Task* t, const char* path, const char* const* argv, const char* co
     release_memory(t);
     t->memory = replacement;
     t->memory->dumpable = dumpable;
+    const auto& old_credentials = t->credentials;
+    if (secure || old_credentials.user.effective != credentials.user.effective ||
+        old_credentials.user.filesystem != credentials.user.filesystem ||
+        old_credentials.group.effective != credentials.group.effective ||
+        old_credentials.group.filesystem != credentials.group.filesystem ||
+        (credentials.permitted & ~old_credentials.permitted))
+        t->parent_death_signal = 0;
     t->credentials = credentials;
     process->executed = true;
     if (files) {

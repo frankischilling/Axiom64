@@ -17,6 +17,14 @@ Axiom64 runs Linux x86-64 musl pthreads on one CPU. Threads share selected proce
 
 Fork copies private pages, retains shared pages, and creates a process containing only the caller. Vfork shares memory and suspends the calling task until the child exits or execs. Successful exec terminates other threads in the group, gives a surviving worker the TGID, replaces memory, and unshares descriptor and signal-handler tables before applying close-on-exec and disposition resets. Loading or allocation failure preserves the existing process.
 
+## Parent death and synchronous signal waits
+
+`PR_SET_PDEATHSIG` and `PR_GET_PDEATHSIG` store the selected signal in the calling task. Fork and thread creation reset it. The creator thread's exit delivers the configured signal even while other threads in that process remain alive. A worker that becomes the process leader at exec retains its child relationships. Effective/filesystem UID or GID changes, permitted-capability gains and privileged exec clear the setting; ordinary exec preserves it. These transitions follow [Linux parent-death handling](https://github.com/torvalds/linux/blob/v6.17/kernel/exit.c).
+
+`rt_sigtimedwait` captures an eight-byte signal mask and an optional valid relative timeout. It selects thread-pending signals before shared process signals and synchronous fault numbers before other numbers. Timeout returns EAGAIN; caught signals return EINTR even with SA_RESTART. An invalid siginfo destination consumes the selected signal before returning EFAULT. Standard signals coalesce while preserving the first sender's information. Full queues for repeated real-time signals remain unfinished. The observable rules follow [Linux signal waiting](https://github.com/torvalds/linux/blob/v6.17/kernel/signal.c).
+
+`sudo -n make test-parent-death-native test-signal-wait-native` compares six native provider/linkage profiles. `make test-parent-death test-signal-wait` runs eight BIOS/UEFI guest profiles per interface. The retained cases include creator-thread exit, worker exec, credential transitions, 128 reuse cycles, signal ordering, failed copies, delayed ignored signals, relative and saturated timeouts, restart denial and stop/continue interruption.
+
 ## Clone interface
 
 The x86-64 `clone` syscall accepts these flags:

@@ -8,6 +8,7 @@
 #include "secret.h"
 #include "session.h"
 #include "update.h"
+#include "../desktop/seat.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -30,6 +31,33 @@
 static int failed(int error) {
     errno = error;
     return -1;
+}
+
+struct session_context {
+    struct account_recorded_session recorded;
+    struct desktop_seat* seat;
+    int graphical;
+};
+
+static int session_begin(void* opaque, pid_t child, const char* terminal) {
+    struct session_context* context = opaque;
+    if (account_recorded_begin(&context->recorded, child, terminal) < 0)
+        return -1;
+    return context->graphical ? desktop_seat_start(context->recorded.target, &context->seat) : 0;
+}
+
+static int session_observe(void* opaque) {
+    struct session_context* context = opaque;
+    return context->seat ? desktop_seat_observe(context->seat) : 0;
+}
+
+static int session_end(void* opaque, pid_t child, int status) {
+    struct session_context* context = opaque;
+    int error = desktop_seat_stop(context->seat) < 0 ? errno : 0;
+    context->seat = NULL;
+    if (account_recorded_end(&context->recorded, child, status) < 0 && !error)
+        error = errno;
+    return error ? failed(error) : 0;
 }
 
 static const char* alias(const char* executable) {
@@ -217,7 +245,9 @@ int main(int argc, char** argv) {
     }
     if (!mode)
         mode = argv[first++];
-    int login = !strcmp(mode, "login"), su = !strcmp(mode, "su"), sudo = !strcmp(mode, "sudo");
+    int graphical = !strcmp(mode, "desktop");
+    int login = !strcmp(mode, "login") || graphical, su = !strcmp(mode, "su"),
+        sudo = !strcmp(mode, "sudo");
     int passwd = !strcmp(mode, "passwd"), provision = !strcmp(mode, "provision");
     if ((!login && !su && !sudo && !passwd && !provision) || (caller && (login || provision))) {
         usage();
@@ -314,16 +344,22 @@ int main(int argc, char** argv) {
             }
         } else if (sudo)
             command = argv + first;
-        struct account_recorded_session context = {.database = database,
-                                                   .records = records,
-                                                   .target = profile,
-                                                   .authorization = authorization,
-                                                   .actor = caller,
-                                                   .operation = sudo ? ACCOUNT_LOGIN_SUDO
-                                                                : su ? ACCOUNT_LOGIN_SU
-                                                                     : ACCOUNT_LOGIN_START};
-        struct account_session_events events = {account_recorded_begin, account_recorded_end,
-                                                &context};
+        struct session_context context = {.graphical = graphical,
+                                          .recorded = {.database = database,
+                                                       .records = records,
+                                                       .target = profile,
+                                                       .authorization = authorization,
+                                                       .actor = caller,
+                                                       .operation = sudo ? ACCOUNT_LOGIN_SUDO
+                                                                    : su ? ACCOUNT_LOGIN_SU
+                                                                         : ACCOUNT_LOGIN_START}};
+        struct account_session_events events = {.begin = session_begin,
+                                                .end = session_end,
+                                                .context = &context,
+                                                .observe = session_observe};
+        char* desktop_command[] = {"/bin/busybox", "sh", "/etc/desktop-console-session.sh", NULL};
+        if (graphical)
+            command = desktop_command;
         unsigned mask = 7;
         int status = 0;
         if (!error && sudo && streams(terminal, &mask) < 0)

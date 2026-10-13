@@ -10,6 +10,7 @@ import subprocess
 import time
 
 from account_access_test import INPUTS, MODULES, build as access_build
+from build_accounts import DESKTOP_INPUTS
 from account_management_test import crypt, invocation
 from account_session_test import retain_native
 from account_store_guest import fixture
@@ -32,7 +33,8 @@ def build(provider, linkage, directory, data, native_runtime=None):
     link = ['-static', str(stage / 'usr/lib/libcrypt.a')] if linkage == 'static' else [
         '-L' + str(stage / 'usr/lib'), '-lcrypt']
     service, driver = directory / 'account-console', directory / 'account-console-test'
-    commands = [[*common, str(ROOT / 'userspace/accounts/console.c'), '-o', str(service), *link],
+    desktop = [str(ROOT / name) for name in DESKTOP_INPUTS if name.endswith('.c')]
+    commands = [[*common, *desktop, str(ROOT / 'userspace/accounts/console.c'), '-o', str(service), *link],
                 [*common, str(ROOT / 'userspace/tests/security/account-console.c'), '-o', str(driver), *link]]
     if native_runtime and linkage == 'dynamic':
         commands[0].append('-Wl,-rpath=' + str(native_runtime))

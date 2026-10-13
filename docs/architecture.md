@@ -22,10 +22,12 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/fs/ext2/ext2.cpp` | Classic ext2 volumes, mount validation, allocation, file/directory operations, synchronous commits |
 | `kernel/abi/linux/syscall.cpp` | Linux syscall numbers, ABI structures, errors, blocking operations |
 | `kernel/process/signals.cpp` | Queues, masks, actions, signal frames, return, alternate stacks, timers |
+| `kernel/process/signal_wait.cpp` | Captured Linux synchronous signal waits, dequeue order, timeout and interruption |
 | `kernel/ipc/ipc.cpp`, `shared_memory.cpp` | Unix stream sockets, readiness, epoll, select, shared mappings, SysV segments |
 | `kernel/drivers/platform/devices.cpp` | Serial terminal, PTYs, framebuffer, PS/2 events, Linux block-device file operations |
 | `kernel/drivers/platform/power.cpp` | PIIX4 power off after filesystem synchronization on the tested QEMU platform |
 | `userspace/init/main.c` | Desktop and serial shell startup, child reaping, console shell restart |
+| `userspace/desktop/seat.c`, `authority.c`, `terminal.c` | Authenticated display ownership, private X11 cookies, process recovery and ordinary-user terminals |
 | `userspace/services/random_seed.c` | Private persisted seed loading, rotation, and interrupted-operation recovery |
 | `userspace/net/` | C++ configuration ownership, saved profiles, resolver metadata, and DHCP packet/state/transport modules; normal manager startup remains required |
 

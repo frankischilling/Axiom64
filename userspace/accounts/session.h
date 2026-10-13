@@ -10,6 +10,9 @@ struct account_session_events {
     int (*begin)(void*, pid_t child, const char* terminal);
     int (*end)(void*, pid_t child, int wait_status);
     void* context;
+    // Optional service-lifetime observation while the ordinary shell runs.
+    // A failure terminates this session and still invokes end for cleanup.
+    int (*observe)(void*);
 };
 
 // Run a command on a private, owned PTY in a new session. Relay the caller's

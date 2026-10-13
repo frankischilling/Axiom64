@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import selectors
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -75,7 +76,14 @@ class DesktopVisualTests(unittest.TestCase):
                 if write_fd >= 0:
                     os.close(write_fd)
         cls.x = xlib()
-        cls.display = cls.x.XOpenDisplay(b':' + number)
+        previous_authority = os.environ.pop('XAUTHORITY', None)
+        try:
+            os.environ['XAUTHORITY'] = ''
+            cls.display = cls.x.XOpenDisplay(b':' + number)
+        finally:
+            os.environ.pop('XAUTHORITY', None)
+            if previous_authority is not None:
+                os.environ['XAUTHORITY'] = previous_authority
         if not cls.display:
             raise RuntimeError('cannot connect to owned Xvfb')
         cls.addClassCleanup(cls.x.XCloseDisplay, cls.display)
@@ -83,7 +91,8 @@ class DesktopVisualTests(unittest.TestCase):
         cls.binary = folder / 'probe'
         subprocess.run(['gcc', '-std=c11', '-Wall', '-Wextra', '-Werror', '-O2',
                         '-DAXIOM64_X11_SOCKET="/tmp/.X11-unix/X' + number.decode() + '"',
-                        str(ROOT / 'userspace/tests/desktop/probe.c'), '-o', str(cls.binary)],
+                        str(ROOT / 'userspace/tests/desktop/probe.c'),
+                        str(ROOT / 'userspace/desktop/authority.c'), '-o', str(cls.binary)],
                        check=True)
 
     @classmethod
@@ -123,7 +132,7 @@ class DesktopVisualTests(unittest.TestCase):
 
     def invoke(self):
         process = subprocess.Popen([str(self.binary), '--desktop'], stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE)
+                                   stderr=subprocess.PIPE, env=dict(os.environ, XAUTHORITY=''))
         self.addCleanup(self.stop_probe, process)
         return process
 
@@ -200,10 +209,17 @@ class DesktopVisualTests(unittest.TestCase):
         process = self.invoke()
         output, error = process.communicate(timeout=4)
         self.assertEqual(process.returncode, 1, (output + error).decode())
-        self.assertIn(b'length >= 12', error)
+        self.assertIn(b'X11_FAIL ', error)
         self.assertNotIn(b'WINDOW_MANAGER_PASS', output)
         self.assertNotIn(b'XTERM_WINDOW_ID', output)
 
 
 if __name__ == '__main__':
+    if sys.argv[1:] == ['--isolated']:
+        raise SystemExit(subprocess.run(['unshare', '--mount', '--net', '--pid', '--fork',
+            '--mount-proc', sys.executable, str(Path(__file__).resolve()), '--inside']).returncode)
+    if sys.argv[1:] == ['--inside']:
+        subprocess.run(['mount', '--make-rprivate', '/'], check=True)
+        subprocess.run(['mount', '-t', 'tmpfs', '-o', 'mode=1777', 'tmpfs', '/tmp'], check=True)
+        sys.argv = sys.argv[:1]
     unittest.main()

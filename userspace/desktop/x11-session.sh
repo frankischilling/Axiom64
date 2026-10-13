@@ -1,5 +1,5 @@
 #!/bin/sh
-# Shared startup for interactive boots and the desktop test.
+# Explicit isolated desktop fixture. Normal login uses an authenticated seat.
 x11_server() {
     mkdir -p /tmp/.X11-unix /var/log
     /usr/libexec/Xorg :0 -config /etc/X11/xorg.conf -nolisten tcp -noreset -ac -retro -dumbSched -extension GLX -logfile /var/log/Xorg.0.log > /tmp/xorg-output 2>&1 &

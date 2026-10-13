@@ -724,6 +724,7 @@ static int64_t dispatch(Frame* f) {
     case 38:
     case 62:
     case 127:
+    case 128:
     case 130:
     case 131:
     case 200:

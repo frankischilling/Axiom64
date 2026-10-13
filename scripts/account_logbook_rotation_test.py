@@ -18,7 +18,7 @@ import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = ['userspace/accounts/' + name for name in (
-    'store.c', 'store.h', 'database.c', 'database.h', 'record.c', 'record.h',
+    'store.c', 'store.h', 'transaction.c', 'transaction.h', 'home.c', 'home.h', 'database.c', 'database.h', 'record.c', 'record.h',
     'protected.c', 'protected.h', 'login_record.c', 'login_record.h', 'logbook.c',
     'logbook.h', 'logbook_rotation.c', 'logbook_internal.h', 'auth.h', 'password.h')]
 CLIENT = 'userspace/tests/security/account-logbook-rotation.c'

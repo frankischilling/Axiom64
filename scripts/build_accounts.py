@@ -13,7 +13,7 @@ from build_libxcrypt import ensure as password_library
 from build_musl import compiler_args
 from fetch import ROOT
 
-MODULES = ('store', 'database', 'record', 'password', 'home', 'auth', 'secret', 'session',
+MODULES = ('store', 'transaction', 'database', 'record', 'password', 'home', 'auth', 'secret', 'session',
            'protected', 'login_record', 'logbook', 'recorded', 'update', 'busy', 'guard')
 PROGRAMS = {'accountctl': 'manage', 'account-access': 'access', 'account-console': 'console'}
 DESKTOP_INPUTS = [f'userspace/desktop/{name}.{suffix}' for name in ('seat', 'authority') for suffix in ('c', 'h')]

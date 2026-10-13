@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
 #include "store.h"
+#include "transaction.h"
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -15,7 +16,7 @@
 static const char* names[ACCOUNT_FILE_COUNT] = {"passwd", "group", "shadow"};
 
 struct account_store {
-    int directory, lock, initialized, attempted;
+    int directory, lock, initialized, attempted, recovery_error;
     char current[35];
     struct account_content files[ACCOUNT_FILE_COUNT];
 };
@@ -114,6 +115,41 @@ static int generation_name(const char* name) {
         if (!((name[i] >= '0' && name[i] <= '9') || (name[i] >= 'a' && name[i] <= 'f')))
             return 0;
     return 1;
+}
+
+static int read_current(int directory, char output[35]) {
+    memset(output, 0, 35);
+    struct stat value;
+    if (fstatat(directory, "current", &value, AT_SYMLINK_NOFOLLOW) < 0)
+        return errno == ENOENT ? 0 : -1;
+    if (!S_ISLNK(value.st_mode) || value.st_uid || value.st_gid || value.st_nlink != 1)
+        return failed(EACCES);
+    ssize_t size = readlinkat(directory, "current", output, 35);
+    if (size < 0)
+        return -1;
+    if (size != 34)
+        return failed(EINVAL);
+    output[34] = 0;
+    return generation_name(output) ? 0 : failed(EINVAL);
+}
+
+static int remove_generation(int, const char*, const struct account_transaction*, int held);
+
+static int remove_pointer(int directory, const char* generation) {
+    char pointer[35], target[35];
+    memcpy(pointer, generation, 35);
+    pointer[0] = 'p';
+    struct stat value;
+    if (fstatat(directory, pointer, &value, AT_SYMLINK_NOFOLLOW) < 0)
+        return errno == ENOENT ? 0 : -1;
+    if (!S_ISLNK(value.st_mode) || value.st_uid || value.st_gid || value.st_nlink != 1)
+        return failed(EACCES);
+    ssize_t size = readlinkat(directory, pointer, target, sizeof(target));
+    if (size < 0)
+        return -1;
+    if (size != 34 || memcmp(target, generation, 34))
+        return failed(EUCLEAN);
+    return unlinkat(directory, pointer, 0);
 }
 
 static int load_file(int directory, unsigned kind, struct account_content* output) {
@@ -234,26 +270,10 @@ int account_store_begin(const char* path, int provision, struct account_store** 
     while (!error && flock(store->lock, LOCK_EX) < 0)
         if (errno != EINTR)
             error = errno;
-    struct stat link;
     int directory = -1;
-    if (!error && fstatat(store->directory, "current", &link, AT_SYMLINK_NOFOLLOW) < 0) {
-        if (errno != ENOENT || !provision)
-            error = errno;
-        else if (fresh_store(store->directory) < 0)
-            error = errno;
-    } else if (!error) {
-        if (!S_ISLNK(link.st_mode) || link.st_uid || link.st_gid || link.st_nlink != 1)
-            error = EACCES;
-        ssize_t length = error ? -1 : readlinkat(store->directory, "current", store->current, 35);
-        if (length < 0 && !error)
-            error = errno;
-        if (!error && length != 34)
-            error = EINVAL;
-        if (!error) {
-            store->current[34] = 0;
-            if (!generation_name(store->current))
-                error = EINVAL;
-        }
+    if (!error && read_current(store->directory, store->current) < 0)
+        error = errno;
+    if (!error && *store->current) {
         if (!error) {
             directory = openat(store->directory, store->current,
                                O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
@@ -269,6 +289,54 @@ int account_store_begin(const char* path, int provision, struct account_store** 
     }
     if (directory >= 0 && close(directory) < 0 && !error)
         error = errno;
+    struct account_transaction* transaction = NULL;
+    if (!error && account_transaction_recover(store->directory, store->current, &transaction) < 0)
+        error = errno;
+    if (error && transaction) {
+        if (store->initialized && account_transaction_published(transaction, store->current) == 0) {
+            store->recovery_error = error;
+            error = 0;
+        }
+        account_transaction_close(transaction);
+        transaction = NULL;
+    }
+    if (!error && transaction) {
+        int published = account_transaction_published(transaction, store->current);
+        if (published < 0)
+            error = errno;
+        else if (!published) {
+            const char* generation = account_transaction_generation(transaction);
+            if (remove_pointer(store->directory, generation) < 0 ||
+                remove_generation(store->directory, generation, transaction, -1) < 0)
+                error = errno;
+        } else {
+            int fd = openat(store->directory, store->current,
+                            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+            if (fd < 0)
+                error = errno;
+            else {
+                if (account_transaction_check_generation(transaction, fd) < 0)
+                    error = errno;
+                if (close(fd) < 0 && !error)
+                    error = errno;
+            }
+        }
+        if (!error) {
+            if (account_transaction_finish(transaction, store->current) < 0)
+                error = errno;
+        } else
+            account_transaction_close(transaction);
+        if (error && store->initialized && published == 0) {
+            store->recovery_error = error;
+            error = 0;
+        }
+    }
+    if (!error && !*store->current) {
+        if (!provision)
+            error = ENOENT;
+        else if (fresh_store(store->directory) < 0)
+            error = errno;
+    }
     if (error) {
         account_store_end(store);
         return failed(error);
@@ -283,6 +351,10 @@ const struct account_content* account_store_snapshot(const struct account_store*
 
 const char* account_store_revision(const struct account_store* store) {
     return store && store->initialized ? store->current : NULL;
+}
+
+int account_store_recovery_error(const struct account_store* store) {
+    return store ? store->recovery_error : EINVAL;
 }
 
 static int random_name(char output[35]) {
@@ -330,15 +402,24 @@ static int write_file(int directory, unsigned kind, struct account_content conte
     return error ? failed(error) : 0;
 }
 
-static int remove_generation(int parent, const char* name) {
+static int remove_generation(int parent, const char* name,
+                             const struct account_transaction* transaction, int held) {
     int fd = openat(parent, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0)
-        return -1;
+        return errno == ENOENT && transaction ? 0 : -1;
     struct stat value;
     int error = fstat(fd, &value) < 0 ? errno : 0;
     if (!error && (value.st_uid || value.st_gid ||
                    ((value.st_mode & 07777) != 0700 && (value.st_mode & 07777) != 0755)))
         error = EACCES;
+    if (!error && held >= 0) {
+        struct stat expected;
+        if (fstat(held, &expected) < 0)
+            error = errno;
+        else if (expected.st_dev != value.st_dev || expected.st_ino != value.st_ino)
+            error = ESTALE;
+    } else if (!error && transaction && account_transaction_check_generation(transaction, fd) < 0)
+        error = errno;
     int scan = error ? -1 : openat(fd, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (scan < 0 && !error)
         error = errno;
@@ -367,7 +448,8 @@ static int remove_generation(int parent, const char* name) {
                 error = errno;
         } else if (!S_ISREG(value.st_mode) || value.st_uid || value.st_gid || value.st_nlink != 1 ||
                    ((value.st_mode & 07777) != 0600 &&
-                    (i == ACCOUNT_SHADOW || (value.st_mode & 07777) != 0644)))
+                    (i == ACCOUNT_SHADOW || (value.st_mode & 07777) != 0644) &&
+                    (!transaction || (value.st_mode & 07777 & ~0600))))
             error = EACCES;
     }
     for (unsigned i = 0; !error && i < ACCOUNT_FILE_COUNT; i++)
@@ -402,7 +484,7 @@ static int collect(struct account_store* store, const char* current) {
         }
         if (generation_name(entry->d_name) && strcmp(entry->d_name, current) &&
             strcmp(entry->d_name, store->current) &&
-            remove_generation(store->directory, entry->d_name) < 0)
+            remove_generation(store->directory, entry->d_name, NULL, -1) < 0)
             error = errno;
         // An interrupted pointer publication may leave an unused root-owned
         // link. Check its exact spelling and target before removing it.
@@ -434,11 +516,14 @@ static int collect(struct account_store* store, const char* current) {
     return error ? failed(error) : 0;
 }
 
-int account_store_commit(struct account_store* store,
-                         const struct account_content files[ACCOUNT_FILE_COUNT], int* published) {
+static int commit(struct account_store* store,
+                  const struct account_content files[ACCOUNT_FILE_COUNT], const char* home,
+                  uid_t uid, gid_t gid, int* published) {
     if (!store || !files || !published)
         return failed(EINVAL);
     *published = 0;
+    if (store->recovery_error)
+        return failed(store->recovery_error);
     if (store->attempted)
         return failed(EALREADY);
     store->attempted = 1;
@@ -446,20 +531,39 @@ int account_store_commit(struct account_store* store,
         if (!files[i].data || !files[i].size || files[i].size > ACCOUNT_FILE_LIMIT ||
             files[i].data[files[i].size - 1] != '\n' || memchr(files[i].data, 0, files[i].size))
             return failed(EINVAL);
-    char generation[35], pointer[35];
+    char generation[35] = {0}, pointer[35] = {0}, observed[35] = {0};
     int directory = -1, created = 0, pointer_created = 0, error = 0;
-    for (unsigned attempt = 0; !created && attempt < 8; attempt++) {
-        if (random_name(generation) < 0)
+    struct account_transaction* transaction = NULL;
+    if (home) {
+        for (unsigned attempt = 0; attempt < 8; attempt++) {
+            struct stat value;
+            if (random_name(generation) < 0)
+                return -1;
+            if (fstatat(store->directory, generation, &value, AT_SYMLINK_NOFOLLOW) < 0) {
+                if (errno != ENOENT)
+                    return -1;
+                break;
+            }
+            generation[0] = 0;
+        }
+        if (!*generation)
+            return failed(EEXIST);
+        if (account_transaction_prepare(store->directory, store->current, generation, home, uid,
+                                        gid, &transaction) < 0)
+            error = errno;
+    }
+    for (unsigned attempt = 0; !error && !created && attempt < (home ? 1u : 8u); attempt++) {
+        if (!home && random_name(generation) < 0)
             return -1;
         created = mkdirat(store->directory, generation, 0700) == 0;
         if (!created && errno != EEXIST)
-            return -1;
+            error = errno;
     }
-    if (!created)
-        return failed(EEXIST);
+    if (!created && !error)
+        error = EEXIST;
     // The parent is root-owned and not writable by another user. Restore access
     // removed by umask before opening this new, exclusively created directory.
-    if (fchmodat(store->directory, generation, 0700, 0) < 0)
+    if (!error && fchmodat(store->directory, generation, 0700, 0) < 0)
         error = errno;
     if (!error) {
         directory =
@@ -467,6 +571,8 @@ int account_store_commit(struct account_store* store,
         if (directory < 0)
             error = errno;
     }
+    if (!error && transaction && account_transaction_mark_generation(transaction, directory) < 0)
+        error = errno;
     for (unsigned i = 0; !error && i < ACCOUNT_FILE_COUNT; i++)
         if (write_file(directory, i, files[i]) < 0)
             error = errno;
@@ -484,23 +590,55 @@ int account_store_commit(struct account_store* store,
         error = errno;
     if (!error && renameat(store->directory, pointer, store->directory, "current") < 0)
         error = errno;
-    else if (!error) {
-        *published = 1;
-        pointer_created = 0;
-        if (fsync(store->directory) < 0)
-            error = errno;
+    // A failed rename can still leave a visible update. Inspect the actual
+    // pointer before destroying any planned generation or home.
+    int uncertain = read_current(store->directory, observed) < 0;
+    if (uncertain && !error)
+        error = errno;
+    if (!uncertain) {
+        if (*generation && !strcmp(observed, generation)) {
+            *published = 1;
+            pointer_created = 0;
+            if (fsync(store->directory) < 0 && !error)
+                error = errno;
+        } else if (strcmp(observed, store->current)) {
+            uncertain = 1;
+            if (!error)
+                error = EUCLEAN;
+        }
     }
-    if (pointer_created)
-        unlinkat(store->directory, pointer, 0);
-    if (!*published) {
-        if (directory >= 0)
-            for (unsigned i = 0; i < ACCOUNT_FILE_COUNT; i++)
-                unlinkat(directory, names[i], 0);
-        unlinkat(store->directory, generation, AT_REMOVEDIR);
+    int cleanup_error = 0;
+    if (!uncertain && !*published) {
+        if ((pointer_created || transaction) && remove_pointer(store->directory, generation) < 0)
+            cleanup_error = errno;
+        if (!cleanup_error && (created || transaction) &&
+            remove_generation(store->directory, generation, transaction, directory) < 0)
+            cleanup_error = errno;
     }
     if (directory >= 0 && close(directory) < 0 && !error)
         error = errno;
     if (*published && !error && collect(store, generation) < 0)
         error = errno;
+    if (transaction) {
+        if (uncertain || cleanup_error)
+            account_transaction_close(transaction);
+        else if (account_transaction_finish(transaction, observed) < 0 && !error)
+            error = errno;
+    }
+    if (!error)
+        error = cleanup_error;
     return error ? failed(error) : 0;
+}
+
+int account_store_commit(struct account_store* store,
+                         const struct account_content files[ACCOUNT_FILE_COUNT], int* published) {
+    return commit(store, files, NULL, 0, 0, published);
+}
+
+int account_store_commit_home(struct account_store* store,
+                              const struct account_content files[ACCOUNT_FILE_COUNT],
+                              const char* home, uid_t uid, gid_t gid, int* published) {
+    if (!home)
+        return failed(EINVAL);
+    return commit(store, files, home, uid, gid, published);
 }

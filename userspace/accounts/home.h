@@ -14,6 +14,8 @@ struct account_home_key {
 };
 
 int account_home_key_new(struct account_home_key*);
+// Validate absolute path spelling without touching the filesystem.
+int account_home_path_valid(const char*);
 
 // Only trusted root-owned ancestors are followed. The final parent must not be
 // writable by another identity. Publish a prepared temporary directory without

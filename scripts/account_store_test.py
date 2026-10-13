@@ -12,9 +12,13 @@ import time
 from build_musl import compiler_args, ensure, loader
 from fetch import ROOT
 
+STORE_MODULES = tuple('userspace/accounts/' + name + '.c' for name in
+                      ('store', 'transaction', 'home', 'protected'))
+STORE_INPUTS = tuple('userspace/accounts/' + name + '.' + suffix for name in
+                     ('store', 'transaction', 'home', 'protected') for suffix in ('c', 'h'))
 SOURCES = ('userspace/accounts/store.c', 'userspace/accounts/store.h',
            'userspace/tests/security/account-store.c', 'scripts/account_store_test.py',
-           'scripts/build_musl.py', 'sources.lock.json')
+           'scripts/build_musl.py', 'sources.lock.json') + STORE_INPUTS
 MARKER = 'ACCOUNT_STORE_PASS generations=2 concurrent_updates=12 epoch=13 ordinary_denials=3 protected_rejections=5 fixture='
 
 
@@ -34,7 +38,7 @@ def build(provider, linkage, directory):
     compiler = ['gcc'] if provider == 'native' else compiler_args(provider)
     program = directory / ('account-store-' + provider + '-' + linkage)
     command = [*compiler, '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
-               str(ROOT / SOURCES[0]), str(ROOT / SOURCES[2]), '-o', str(program)]
+               *(str(ROOT / name) for name in STORE_MODULES), str(ROOT / SOURCES[2]), '-o', str(program)]
     if linkage == 'static':
         command += ['-static']
     subprocess.run(command, env=environment(), check=True)

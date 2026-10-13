@@ -17,7 +17,7 @@ from build_musl import compiler_args, loader
 from fetch import LOCK, ROOT
 from build_accounts import DESKTOP_INPUTS
 
-MODULES = ('store', 'database', 'record', 'password', 'home', 'auth', 'secret', 'session',
+MODULES = ('store', 'transaction', 'database', 'record', 'password', 'home', 'auth', 'secret', 'session',
            'protected', 'login_record', 'logbook', 'recorded', 'update', 'busy', 'guard')
 INPUTS = [*SOURCES, *DESKTOP_INPUTS, *(f'userspace/accounts/{name}.{suffix}' for name in MODULES for suffix in ('c', 'h')),
           'userspace/accounts/access.c', 'userspace/tests/security/account-access.c',

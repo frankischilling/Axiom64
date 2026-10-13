@@ -71,6 +71,10 @@ const char* account_database_revision(const struct account_database* db) {
     return db ? account_store_revision(db->store) : NULL;
 }
 
+int account_database_recovery_error(const struct account_database* db) {
+    return db ? account_store_recovery_error(db->store) : EINVAL;
+}
+
 int account_database_begin(const char* path, int provision, struct account_database** output) {
     if (!output)
         return failed(EINVAL);
@@ -317,17 +321,32 @@ int account_database_groups(const struct account_database* db, uid_t uid, gid_t*
     return count <= capacity ? 0 : failed(ERANGE);
 }
 
-int account_database_commit(struct account_database* db, int* published) {
+static int commit(struct account_database* db, const char* home_user, int* published) {
     if (!db || !published)
         return failed(EINVAL);
     *published = 0;
     if (account_record_validate(db) < 0)
         return -1;
+    const struct account_user* user = home_user ? account_database_user(db, home_user) : NULL;
+    if (home_user && !user)
+        return failed(ENOENT);
     struct account_content files[ACCOUNT_FILE_COUNT] = {0};
     int result = account_record_encode(db, files);
     if (!result)
-        result = account_store_commit(db->store, files, published);
+        result = user ? account_store_commit_home(db->store, files, user->home, user->uid,
+                                                  user->gid, published)
+                      : account_store_commit(db->store, files, published);
     int error = errno;
     account_record_free_files(files);
     return result < 0 ? failed(error) : 0;
+}
+
+int account_database_commit(struct account_database* db, int* published) {
+    return commit(db, NULL, published);
+}
+
+int account_database_commit_home(struct account_database* db, const char* user, int* published) {
+    if (!user)
+        return failed(EINVAL);
+    return commit(db, user, published);
 }

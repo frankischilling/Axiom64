@@ -15,7 +15,7 @@ from build_musl import compiler_args, ensure as musl, loader
 from fetch import ROOT
 
 SOURCES = ['userspace/accounts/' + name for name in ('store.c', 'store.h', 'database.c', 'database.h',
-           'record.c', 'record.h', 'password.c', 'password.h', 'home.c', 'home.h', 'manage.c',
+           'transaction.c', 'transaction.h', 'record.c', 'record.h', 'password.c', 'password.h', 'home.c', 'home.h', 'manage.c',
            'protected.c', 'protected.h', 'login_record.c', 'login_record.h', 'logbook.c', 'logbook.h',
            'logbook_rotation.c', 'logbook_internal.h',
            'busy.c', 'busy.h', 'guard.c', 'guard.h', 'auth.h')]
@@ -31,7 +31,7 @@ def build(provider, linkage, directory, native_runtime=None):
     command = ['gcc'] if provider == 'native' else compiler_args(provider)
     command += ['-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror', '-I' + str(stage / 'usr/include'),
                 *(str(ROOT / 'userspace/accounts' / name) for name in
-                  ('store.c', 'database.c', 'record.c', 'password.c', 'home.c', 'manage.c',
+                  ('store.c', 'transaction.c', 'database.c', 'record.c', 'password.c', 'home.c', 'manage.c',
                    'protected.c', 'login_record.c', 'logbook.c', 'logbook_rotation.c', 'busy.c', 'guard.c')),
                 '-o', str(program)]
     if linkage == 'static':

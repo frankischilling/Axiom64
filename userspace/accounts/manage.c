@@ -2,7 +2,6 @@
 #define _GNU_SOURCE
 #include "database.h"
 #include "guard.h"
-#include "home.h"
 #include "password.h"
 #include <errno.h>
 #include <stdio.h>
@@ -269,6 +268,10 @@ int main(int argc, char** argv) {
         perror("accountctl: open database");
         return 1;
     }
+    int recovery_error = account_database_recovery_error(db);
+    if (recovery_error)
+        fprintf(stderr, "accountctl: pending home recovery: %s; updates are blocked\n",
+                strerror(recovery_error));
     if (!strcmp(argv[first], "show") && argc == first + 2) {
         const struct account_user* user = account_database_user(db, argv[first + 1]);
         int result = user ? 0 : 1;
@@ -283,7 +286,6 @@ int main(int argc, char** argv) {
         return result;
     }
     int create_home = 0, published = 0;
-    struct account_home* home = NULL;
     struct account_logbook* book = NULL;
     enum account_login_kind kind = event(argv[first]);
     const char* target =
@@ -299,19 +301,9 @@ int main(int argc, char** argv) {
     if (!error && (guard(db, book, argc - first, argv + first) < 0 ||
                    operation(db, argc - first, argv + first, &create_home) < 0))
         error = errno;
-    const struct account_user* user =
-        create_home ? account_database_user(db, argv[first + 1]) : NULL;
-    if (!error && create_home && account_home_create(user->home, user->uid, user->gid, &home) < 0)
+    if (!error && (create_home ? account_database_commit_home(db, argv[first + 1], &published)
+                               : account_database_commit(db, &published)) < 0)
         error = errno;
-    if (!error && account_database_commit(db, &published) < 0)
-        error = errno;
-    if (account_home_finish(home, published) < 0) {
-        int cleanup_error = errno;
-        if (!published)
-            fputs("accountctl: temporary home cleanup failed; root recovery is required\n", stderr);
-        if (!error)
-            error = cleanup_error;
-    }
     if (error && published)
         fputs("accountctl: the complete update is visible; durability or cleanup failed\n", stderr);
     if (intended && account_logbook_audit(book, kind, "root", 0, target, "", error) < 0 && !error)

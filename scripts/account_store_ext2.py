@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 
 from account_store_guest import SOURCES
-from account_store_test import build, digest, environment
+from account_store_test import STORE_MODULES, build, digest, environment
 from build_musl import compiler_args, loader
 from fetch import LOCK, ROOT
 from random_administration_test import checked_run, fingerprint
@@ -20,7 +20,7 @@ def image(directory, provider, linkage, verify):
     if verify:
         program = directory / ('account-reboot-' + provider + '-' + linkage)
         command = [*compiler_args(provider), '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
-                   str(ROOT / 'userspace/accounts/store.c'),
+                   *(str(ROOT / name) for name in STORE_MODULES),
                    str(ROOT / 'userspace/tests/security/account-store-reboot.c'), '-o', str(program)]
         if linkage == 'static':
             command += ['-static']

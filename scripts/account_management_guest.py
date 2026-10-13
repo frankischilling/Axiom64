@@ -10,7 +10,7 @@ import time
 
 from account_management_test import SOURCES, build, crypt
 from account_store_guest import fixture
-from account_store_test import digest, environment
+from account_store_test import STORE_MODULES, digest, environment
 from build_musl import compiler_args
 from fetch import ROOT
 
@@ -21,7 +21,8 @@ def probe(provider, linkage, directory):
     program = directory / ('account-management-' + provider + '-' + linkage)
     command = [*compiler_args(provider), '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
                '-I' + str(stage / 'usr/include'),
-               *(str(ROOT / 'userspace/accounts' / name) for name in ('store.c', 'database.c', 'record.c', 'password.c')),
+               *(str(ROOT / name) for name in STORE_MODULES),
+               *(str(ROOT / 'userspace/accounts' / name) for name in ('database.c', 'record.c', 'password.c')),
                str(ROOT / 'userspace/tests/security/account-management.c'), '-o', str(program)]
     if linkage == 'static':
         command += ['-static', str(stage / 'usr/lib/libcrypt.a')]

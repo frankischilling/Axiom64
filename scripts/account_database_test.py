@@ -10,7 +10,7 @@ import subprocess
 import time
 
 from account_store_guest import fixture
-from account_store_test import digest, environment
+from account_store_test import STORE_INPUTS, STORE_MODULES, digest, environment
 from build_musl import compiler_args, ensure, loader
 from fetch import ROOT
 
@@ -21,14 +21,14 @@ SOURCES = ['userspace/accounts/store.c', 'userspace/accounts/store.h',
            'scripts/account_store_test.py', 'scripts/account_store_guest.py', 'scripts/build_musl.py',
            'sources.lock.json', 'Makefile', 'scripts/image.py', 'userspace/init/main.c',
            'userspace/init/console.c', 'userspace/init/console.h',
-           'userspace/init/seed_records.h', 'boot/limine.conf']
+           'userspace/init/seed_records.h', 'boot/limine.conf', *STORE_INPUTS]
 
 
 def build(provider, linkage, directory):
     command = ['gcc'] if provider == 'native' else compiler_args(provider)
     program = directory / ('account-database-' + provider + '-' + linkage)
     command += ['-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
-                *(str(ROOT / name) for name in ('userspace/accounts/store.c', 'userspace/accounts/database.c',
+                *(str(ROOT / name) for name in (*STORE_MODULES, 'userspace/accounts/database.c',
                   'userspace/accounts/record.c', 'userspace/tests/security/account-database.c')),
                 '-o', str(program)]
     if linkage == 'static':

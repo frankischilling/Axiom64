@@ -25,7 +25,7 @@ static int failed(int error) {
     return -1;
 }
 
-static int parent(const char* path, char name[256], int create) {
+int account_home_path_valid(const char* path) {
     size_t length = path ? strnlen(path, 4096) : 0;
     if (length < 2 || length == 4096 || path[0] != '/' || path[length - 1] == '/')
         return failed(EINVAL);
@@ -38,6 +38,13 @@ static int parent(const char* path, char name[256], int create) {
             (size == 2 && path[start] == '.' && path[start + 1] == '.'))
             return failed(EINVAL);
     }
+    return 0;
+}
+
+static int parent(const char* path, char name[256], int create) {
+    if (account_home_path_valid(path) < 0)
+        return -1;
+    size_t length = strlen(path);
     int fd = open("/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0)
         return -1;

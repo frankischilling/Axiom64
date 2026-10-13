@@ -34,6 +34,7 @@ void account_database_end(struct account_database*);
 
 int account_database_fresh(const struct account_database*);
 const char* account_database_revision(const struct account_database*);
+int account_database_recovery_error(const struct account_database*);
 
 // Borrowed records remain valid until the next mutation or end of transaction.
 const struct account_user* account_database_user(const struct account_database*, const char*);
@@ -68,6 +69,9 @@ int account_database_groups(const struct account_database*, uid_t, gid_t*, size_
                             size_t* size);
 
 int account_database_commit(struct account_database*, int* published);
+// Publish this user's new home and the complete generation through one durable
+// protected intent. Recovery runs under the store lock on the next open.
+int account_database_commit_home(struct account_database*, const char* user, int* published);
 
 int account_name_valid(const char*);
 

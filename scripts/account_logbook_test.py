@@ -10,7 +10,7 @@ import subprocess
 import time
 
 from account_store_guest import fixture
-from account_store_test import digest, environment
+from account_store_test import STORE_INPUTS, digest, environment
 from account_session_test import retain_native
 from build_musl import compiler_args, ensure, loader
 from fetch import ROOT
@@ -19,6 +19,7 @@ from build_gnu_utmp_reader import build as build_reader
 SOURCES = ['userspace/accounts/' + name for name in ('store.c', 'store.h', 'database.c', 'database.h',
            'record.c', 'record.h', 'protected.c', 'protected.h', 'login_record.c', 'login_record.h',
            'logbook.c', 'logbook.h', 'logbook_rotation.c', 'logbook_internal.h', 'auth.h')]
+SOURCES = list(dict.fromkeys([*SOURCES, *STORE_INPUTS]))
 INPUTS = [*SOURCES, 'userspace/tests/security/account-logbook.c', 'scripts/account_logbook_test.py',
           'userspace/tests/security/account-login-libc.c',
           'scripts/build_gnu_utmp_reader.py', 'scripts/linux_uapi.py',

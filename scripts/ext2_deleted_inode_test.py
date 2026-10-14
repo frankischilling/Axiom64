@@ -5,6 +5,7 @@ import gzip
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import struct
 import subprocess
@@ -22,6 +23,8 @@ from fixture_archive import archive_fixture
 CLIENT = 'userspace/tests/fs/ext2-deleted-recovery.c'
 INPUT = 'scripts/tests/fixtures/ext2-deleted-open-inode.raw.gz'
 RAW_SHA256 = 'd26bbe2752604ea777f829c422f35891f4ef5226fd21d8cf7b23a7e62a35e944'
+NAMED_INPUT = 'scripts/tests/fixtures/ext2-named-retirement.raw.gz'
+NAMED_SHA256 = '9561c8cd01f27dd7e606aa3b25c78678b550cfb1abf2296c09fde89027e92866'
 
 
 def build(directory):
@@ -204,6 +207,48 @@ def cases(raw, directory):
         yield ('deleted-layout-' + str(block_size) + '-' + str(inode_size) + '-' + features,
                generated_deleted(directory, block_size, inode_size, features), 'checked', 0)
     yield 'seventy-deleted-inodes', generated_deleted(directory, 1024, 128, 'default', 70), 'checked', 0
+    named = gzip.decompress((ROOT / NAMED_INPUT).read_bytes())
+    assert hashlib.sha256(named).hexdigest() == NAMED_SHA256
+    yield 'actual-named-retirement', named, 'checked', 0
+    yield 'named-retirement-default-rejected', named, 'default', 117
+    yield 'named-retirement-readonly-rejected', named, 'checked-ro', 117
+    inode = inode_offset(named, lookup(named, 'rotation/records/journal'))
+    assert struct.unpack_from('<H', named, inode + 26)[0] == 0
+    assert struct.unpack_from('<I', named, inode + 20)[0] == struct.unpack_from('<I', named, inode + 12)[0] != 0
+    changed = bytearray(named)
+    struct.pack_into('<I', changed, inode + 20, 0)
+    yield 'named-retirement-missing-marker', bytes(changed), 'checked', 117
+    changed = bytearray(named)
+    struct.pack_into('<I', changed, inode + 20, struct.unpack_from('<I', named, inode + 12)[0] + 1)
+    yield 'named-retirement-mismatched-time', bytes(changed), 'checked', 117
+    changed = bytearray(named)
+    struct.pack_into('<H', changed, inode + 26, 1)
+    yield 'named-retirement-positive-links', bytes(changed), 'checked', 117
+    changed = bytearray(named)
+    named_parent = lookup(named, 'rotation/records')
+    temporary, = [(position, number) for position, number, name in directory_entries(named, named_parent)
+                  if name.startswith(b't-')]
+    struct.pack_into('<I', changed, temporary[0], 0)
+    yield 'named-retirement-unrelated-unreferenced-inode', bytes(changed), 'checked', 117
+    linked = directory / 'named-retirement-two-names.raw'
+    linked.write_bytes(named)
+    debugfs(linked, 'link <17> /second-journal-name', True)
+    yield 'named-retirement-two-names', linked.read_bytes(), 'checked', 117
+    changed = bytearray(named)
+    other = inode_offset(named, lookup(named, 'rotation/records/auth.log'))
+    struct.pack_into('<I', changed, inode + 40, struct.unpack_from('<I', named, other + 40)[0])
+    yield 'named-retirement-overlapping-data', bytes(changed), 'checked', 117
+    changed = bytearray(named)
+    struct.pack_into('<H', changed, inode, 0o120600)
+    yield 'named-retirement-type-mismatch', bytes(changed), 'checked', 117
+    for block_size, inode_size, features in FORMATS[1:]:
+        changed = bytearray(generated_deleted(directory, block_size, inode_size, features))
+        inode = inode_offset(changed, lookup(changed, 'rotation/records/journal'))
+        struct.pack_into('<H', changed, inode + 26, 0)
+        struct.pack_into('<I', changed, inode + 12, 17)
+        struct.pack_into('<I', changed, inode + 20, 17)
+        yield ('named-retirement-layout-' + str(block_size) + '-' + str(inode_size) + '-' + features,
+               bytes(changed), 'checked', 0)
 
 
 def main():
@@ -211,12 +256,13 @@ def main():
     parser.add_argument('--directory', type=Path, required=True)
     parser.add_argument('--firmware', choices=('bios', 'uefi', 'both'), default='both')
     parser.add_argument('--transport', choices=('modern', 'legacy', 'both'), default='both')
+    parser.add_argument('--case', nargs='+', help='run only the named cases; the default runs every case')
     args = parser.parse_args()
     directory = args.directory.resolve()
     if not directory.is_relative_to((ROOT / 'build').resolve()):
         raise ValueError('use a fresh owned directory under build/')
     directory.mkdir(parents=True, exist_ok=False)
-    names = [CLIENT, INPUT, 'scripts/ext2_deleted_inode_test.py', 'scripts/account_store_guest.py',
+    names = [CLIENT, INPUT, NAMED_INPUT, 'scripts/ext2_deleted_inode_test.py', 'scripts/account_store_guest.py',
              'scripts/ext2_test.py', 'scripts/fixture_archive.py', 'scripts/build_musl.py',
              'scripts/image.py', 'Makefile', 'dependencies.json', 'sources.lock.json', 'ports.lock.json',
              'boot/limine.conf', 'vendor/limine.h', 'userspace/init/main.c', 'userspace/init/console.c',
@@ -236,7 +282,11 @@ def main():
     assert len(raw) == 16 * 1024 * 1024 and hashlib.sha256(raw).hexdigest() == RAW_SHA256
     subprocess.run(['make', '-s', '-j2', 'build/axiom64.elf', 'build/init', 'busybox'], cwd=ROOT, check=True)
     rows = []
+    selected = set()
     for name, data, mode, expected in cases(raw, directory):
+        if args.case and name not in args.case:
+            continue
+        selected.add(name)
         cell = directory / name
         cell.mkdir()
         image = fixture(cell, 'build', 'static', program_builder=lambda *unused: build(cell),
@@ -266,7 +316,16 @@ def main():
                         row.update(after_named_files={name: dict(bytes=len(contents), sha256=hashlib.sha256(contents).hexdigest())
                                                      for name, contents in after_files.items()},
                                    after_metadata=after_metadata, after_directories=after_directories)
-                        assert after_files == before_files and after_metadata == before_metadata
+                        expected_metadata = {path: dict(value) for path, value in before_metadata.items()}
+                        restored_name = name == 'actual-named-retirement' or name.startswith('named-retirement-layout-')
+                        if restored_name:
+                            assert expected_metadata['rotation/records/journal']['links'] == 0
+                            expected_metadata['rotation/records/journal']['links'] = 1
+                            recovered = disk.read_bytes()
+                            inode = inode_offset(data, lookup(data, 'rotation/records/journal'))
+                            assert struct.unpack_from('<I', recovered, inode + 20)[0] == 0
+                            row['restored_named_inode'] = lookup(data, 'rotation/records/journal')
+                        assert after_files == before_files and after_metadata == expected_metadata
                         assert after_directories == before_directories
                         if name == 'deleted-shared-attribute':
                             current = lookup(data, 'rotation/records/journal')
@@ -285,7 +344,9 @@ def main():
                         (phase / 'fsck.log').write_bytes(fsck.stdout + fsck.stderr)
                         row['fsck_returncode'] = fsck.returncode
                         assert fsck.returncode == 0, 'guest recovery did not produce a clean independent filesystem'
-                        row['named_files_and_metadata_unchanged'] = True
+                        assert not re.search(rb'count wrong|Fix\?|Clear\?|UNEXPECTED INCONSISTENCY|still has errors|corrupt|multiply.claimed|unattached inode',
+                                             fsck.stdout + fsck.stderr, re.IGNORECASE), 'independent checker reported refused damage'
+                        row['named_files_and_metadata_unchanged'] = not restored_name
                     row['retained_disk'] = archive_fixture(disk, remove=True)
                 except BaseException as error:
                     row.update(passed=False, host_error=repr(error))
@@ -297,11 +358,12 @@ def main():
                 finally:
                     (directory / 'results.json').write_text(json.dumps(rows, indent=2) + '\n')
                 print('EXT2_DELETED_RECOVERY_CELL_PASS ' + name + '/' + firmware + '/' + transport, flush=True)
+    assert not args.case or selected == set(args.case), 'unknown requested recovery case'
     stable = source == {name: digest(ROOT / name) for name in source}
     (directory / 'acceptance.json').write_text(json.dumps(dict(
         passed=stable and bool(rows) and all(row['passed'] for row in rows),
         source_stable=stable, cells=len(rows),
-        matrix_complete=args.firmware == args.transport == 'both',
+        matrix_complete=args.firmware == args.transport == 'both' and not args.case,
         unchanged_denials=sum(bool(row['expected_errno']) and row['before_sha256'] == row['after_sha256'] for row in rows),
         strict_post_recovery_checks=sum(row.get('fsck_returncode') == 0 for row in rows),
         host_repair_performed=False), indent=2) + '\n')

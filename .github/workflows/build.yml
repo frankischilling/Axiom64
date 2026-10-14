@@ -811,6 +811,7 @@ jobs:
         run: |
           python3 scripts/tests/ext2_inspection_test.py
           python3 scripts/tests/ext2_recovery_inspection_test.py
+          python3 scripts/tests/ext2_named_retirement_inspection_test.py
           python3 scripts/ext2_deleted_inode_test.py --directory build/ext2-deleted-recovery
 
       - name: Test ext2 root, data mounts, rejection, and reboot persistence

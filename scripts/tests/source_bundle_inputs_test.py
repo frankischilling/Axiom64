@@ -17,6 +17,7 @@ import sources
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = Path('scripts/tests/fixtures/normal-console/interrupted-prompt.txt')
 RECOVERY_FIXTURE = Path('scripts/tests/fixtures/ext2-deleted-open-inode.raw.gz')
+NAMED_RECOVERY_FIXTURE = Path('scripts/tests/fixtures/ext2-named-retirement.raw.gz')
 
 
 class SourceBundleInputsTests(unittest.TestCase):
@@ -33,7 +34,7 @@ class SourceBundleInputsTests(unittest.TestCase):
             configuration.parent.mkdir(parents=True)
             configuration.write_bytes(b'fixture\n')
             for item in (Path('scripts/console_prompt.py'), Path('scripts/tests/console_prompt_test.py'),
-                         FIXTURE, RECOVERY_FIXTURE):
+                         FIXTURE, RECOVERY_FIXTURE, NAMED_RECOVERY_FIXTURE):
                 target = root / item
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / item, target)
@@ -43,7 +44,7 @@ class SourceBundleInputsTests(unittest.TestCase):
                 sources.bundle([])
             extracted = Path(name) / 'extracted'
             with tarfile.open(root / 'build/axiom64-sources.tar') as archive:
-                for fixture in (FIXTURE, RECOVERY_FIXTURE):
+                for fixture in (FIXTURE, RECOVERY_FIXTURE, NAMED_RECOVERY_FIXTURE):
                     member = archive.getmember('Axiom64/' + fixture.as_posix())
                     self.assertEqual(archive.extractfile(member).read(), (ROOT / fixture).read_bytes())
                 archive.extractall(extracted, filter='data')

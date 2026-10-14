@@ -1350,7 +1350,8 @@ static void destroy(Mount* mount) {
 
 // Validate allocation, ownership and directories before staging any mount writes.
 // Checked writable dirty mounts may reconcile counters and reclaim completely
-// validated, unreferenced inodes carrying the on-disk deletion marker.
+// validated inodes carrying the on-disk deletion marker. A still-named ordinary
+// file can retain its validated namespace when retirement preceded its removal.
 struct Validation {
     Volume& v;
     bool reconcile_counts;
@@ -1706,7 +1707,8 @@ struct Validation {
                 if (r.inode) {
                     if (!bit(inode_bits, r.inode) || !modes[r.inode] ||
                         (r.type && r.type != file_type(modes[r.inode])) ||
-                        (!detached && deleted(r.inode))) {
+                        (!detached && deleted(r.inode) &&
+                         (modes[r.inode] & 0170000) != regular_file)) {
                         success = v.fail();
                         break;
                     }
@@ -1785,8 +1787,16 @@ struct Validation {
         for (uint32_t number = 2; number <= v.inodes; number++) {
             if (!modes[number])
                 continue;
-            if (references[number] != links[number])
-                return v.fail();
+            if (references[number] != links[number]) {
+                uint8_t data[ax::inode_bytes];
+                // Restore only a single existing name for a completely owned
+                // regular file. The retirement must match the inode change time;
+                // unrelated link discrepancies and unnamed live inodes stay errors.
+                if (!deleted(number) || references[number] != 1 ||
+                    (modes[number] & 0170000) != regular_file || !inode(number, data) ||
+                    u32(data + 20) != u32(data + 12))
+                    return v.fail();
+            }
             if ((modes[number] & 0170000) != ax::directory)
                 continue;
             if (deleted(number)) {
@@ -1829,9 +1839,19 @@ struct Validation {
         if (!v.save_super(header))
             return false;
         uint8_t data[ax::inode_bytes];
-        for (uint32_t number = v.first_inode; number <= v.inodes; number++)
-            if (deleted(number) && (!v.load_inode(number, data) || !v.delete_inode(number, data)))
+        for (uint32_t number = v.first_inode; number <= v.inodes; number++) {
+            if (!deleted(number))
+                continue;
+            if (!v.load_inode(number, data))
                 return false;
+            if (references[number]) {
+                set16(data + 26, 1);
+                set32(data + 20, 0);
+                if (!v.save_inode(number, data))
+                    return false;
+            } else if (!v.delete_inode(number, data))
+                return false;
+        }
         if (!v.super(header))
             return false;
         // Validate the complete proposed disk image before mount can commit it.

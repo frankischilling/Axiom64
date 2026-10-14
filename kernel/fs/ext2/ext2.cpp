@@ -859,7 +859,7 @@ static bool drop_inode(Volume& v, Node* node) {
     if (!u16(inode + 26)) {
         if (!node_referenced(node))
             return v.delete_inode(node->inode, inode);
-        set32(inode + 20, node_now().sec);
+        set32(inode + 20, u32(inode + 12));
     }
     return v.save_inode(node->inode, inode);
 }
@@ -1350,8 +1350,8 @@ static void destroy(Mount* mount) {
 
 // Validate allocation, ownership and directories before staging any mount writes.
 // Checked writable dirty mounts may reconcile counters and reclaim completely
-// validated inodes carrying the on-disk deletion marker. A still-named regular
-// file or symlink can retain its namespace when retirement preceded its removal.
+// validated inodes carrying the on-disk deletion marker. A named file, symlink
+// or empty directory can keep its checked namespace and bounded parent links.
 struct Validation {
     Volume& v;
     bool reconcile_counts;
@@ -1359,6 +1359,7 @@ struct Validation {
     uint64_t free_block_total = 0, free_inode_total = 0;
     uint8_t *block_bits = nullptr, *inode_bits = nullptr, *owners = nullptr;
     uint8_t* deleted_bits = nullptr;
+    uint8_t* named_directory_parents = nullptr;
     uint16_t *modes = nullptr, *links = nullptr;
     uint16_t* xattr_references = nullptr;
     uint32_t *references = nullptr, *parents = nullptr, *dotdots = nullptr;
@@ -1375,6 +1376,7 @@ struct Validation {
         release(inode_bits);
         release(owners);
         release(deleted_bits);
+        release(named_directory_parents);
         release(modes);
         release(links);
         release(xattr_references);
@@ -1397,18 +1399,22 @@ struct Validation {
         dotdots = (uint32_t*)alloc(inode_count * sizeof(uint32_t));
         if (reconcile_counts) {
             deleted_bits = (uint8_t*)alloc(inode_bytes);
+            named_directory_parents = (uint8_t*)alloc(inode_bytes);
             group_free_blocks = (uint16_t*)alloc(v.group_count * sizeof(uint16_t));
             group_free_inodes = (uint16_t*)alloc(v.group_count * sizeof(uint16_t));
         }
         if (!block_bits || !inode_bits || !owners || !modes || !links || !xattr_references ||
             !references || !parents || !dotdots ||
-            (reconcile_counts && (!deleted_bits || !group_free_blocks || !group_free_inodes)))
+            (reconcile_counts && (!deleted_bits || !named_directory_parents || !group_free_blocks ||
+                                  !group_free_inodes)))
             return v.fail(-12);
         memset(block_bits, 0, block_bytes);
         memset(owners, 0, block_bytes);
         memset(inode_bits, 0, inode_bytes);
         if (deleted_bits)
             memset(deleted_bits, 0, inode_bytes);
+        if (named_directory_parents)
+            memset(named_directory_parents, 0, inode_bytes);
         memset(modes, 0, inode_count * sizeof(uint16_t));
         memset(links, 0, inode_count * sizeof(uint16_t));
         memset(xattr_references, 0, uint64_t(v.blocks) * sizeof(uint16_t));
@@ -1709,7 +1715,8 @@ struct Validation {
                         (r.type && r.type != file_type(modes[r.inode])) ||
                         (!detached && deleted(r.inode) &&
                          (modes[r.inode] & 0170000) != regular_file &&
-                         (modes[r.inode] & 0170000) != symlink)) {
+                         (modes[r.inode] & 0170000) != symlink &&
+                         (modes[r.inode] & 0170000) != ax::directory)) {
                         success = v.fail();
                         break;
                     }
@@ -1785,18 +1792,38 @@ struct Validation {
         for (uint32_t number = 2; number <= v.inodes; number++)
             if ((modes[number] & 0170000) == ax::directory && !check_directory(number))
                 return false;
+        for (uint32_t number = v.first_inode; number <= v.inodes; number++) {
+            if (!deleted(number) || (modes[number] & 0170000) != ax::directory ||
+                !references[number])
+                continue;
+            uint32_t parent = parents[number];
+            uint8_t data[ax::inode_bytes];
+            // An empty directory can keep one existing parent name. Its dotdot
+            // must identify that live parent; only that known link may be missing.
+            if (references[number] != 1 || !parent || dotdots[number] != parent ||
+                deleted(parent) || (modes[parent] & 0170000) != ax::directory ||
+                bit(named_directory_parents, parent) || references[parent] == UINT16_MAX ||
+                !inode(number, data) || u32(data + 20) != u32(data + 12))
+                return v.fail();
+            setbit(named_directory_parents, parent, true);
+            references[number]++;
+            references[parent]++;
+        }
         for (uint32_t number = 2; number <= v.inodes; number++) {
             if (!modes[number])
                 continue;
             if (references[number] != links[number]) {
                 uint8_t data[ax::inode_bytes];
-                // Restore only a single existing name for a completely owned
-                // regular file or symlink. Retirement must match the change time;
-                // unrelated link discrepancies and unnamed live inodes stay errors.
-                if (!deleted(number) || references[number] != 1 ||
-                    ((modes[number] & 0170000) != regular_file &&
-                     (modes[number] & 0170000) != symlink) ||
-                    !inode(number, data) || u32(data + 20) != u32(data + 12))
+                unsigned type = modes[number] & 0170000;
+                bool parent_link = named_directory_parents &&
+                                   bit(named_directory_parents, number) && !deleted(number) &&
+                                   references[number] == uint32_t(links[number]) + 1;
+                bool retained =
+                    deleted(number) &&
+                    (((type == regular_file || type == symlink) && references[number] == 1) ||
+                     (type == ax::directory && references[number] == 2 && parents[number])) &&
+                    inode(number, data) && u32(data + 20) == u32(data + 12);
+                if (!parent_link && !retained)
                     return v.fail();
             }
             if ((modes[number] & 0170000) != ax::directory)
@@ -1841,13 +1868,22 @@ struct Validation {
         if (!v.save_super(header))
             return false;
         uint8_t data[ax::inode_bytes];
+        for (uint32_t number = 2; number <= v.inodes; number++) {
+            if (!bit(named_directory_parents, number))
+                continue;
+            if (!v.load_inode(number, data))
+                return false;
+            set16(data + 26, references[number]);
+            if (!v.save_inode(number, data))
+                return false;
+        }
         for (uint32_t number = v.first_inode; number <= v.inodes; number++) {
             if (!deleted(number))
                 continue;
             if (!v.load_inode(number, data))
                 return false;
             if (references[number]) {
-                set16(data + 26, 1);
+                set16(data + 26, references[number]);
                 set32(data + 20, 0);
                 if (!v.save_inode(number, data))
                     return false;

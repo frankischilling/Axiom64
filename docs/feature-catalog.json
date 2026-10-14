@@ -132,7 +132,7 @@
       "title": "Writable ext2 and later ext4",
       "milestone": "M1",
       "state": "partial",
-      "current": "Classic ext2 root and data volumes support persistent files, external xattrs and file capabilities, shared EA copy-on-write, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and fresh kernel reboot verification. Writable checked dirty mounts reconcile in-range free counters and reclaim validated, unreferenced deletion-marked inodes. A retired regular file or symlink with one validated name and matching change/deletion times can retain that name and its contents or target. Full allocation, inode, attribute and directory checks precede correction, followed by strict validation of the staged result. Named deleted directories and cleared inode bodies remain rejected. ACLs, inline/ext4 attributes, orphan chains, advanced formats and general recovery after power loss remain planned.",
+      "current": "Classic ext2 root and data volumes support persistent files, external xattrs and file capabilities, shared EA copy-on-write, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and fresh kernel reboot verification. Writable checked dirty mounts reconcile in-range free counters and reclaim validated, unreferenced deletion-marked inodes. A retired file or symlink with one validated name and matching change/deletion times can retain its name and contents or target. An empty retired directory can retain one live parent name and restore only that parent's bounded link contribution. Full allocation, inode, attribute and directory checks precede correction, followed by strict validation of the staged result. Nonempty retired directories, multiple retirements under one parent, unrelated link errors and cleared inode bodies remain rejected. ACLs, inline/ext4 attributes, orphan chains, advanced formats and general recovery after power loss remain planned.",
       "scope": [
         "Writable ext2 inodes, directories, indirect blocks, allocation, and links",
         "Mount, unmount, sync, truncation, rename, permissions, and timestamps",
@@ -163,6 +163,7 @@
         "scripts/tests/ext2_inspection_test.py",
         "scripts/tests/ext2_recovery_inspection_test.py",
         "scripts/tests/ext2_named_retirement_inspection_test.py",
+        "scripts/tests/ext2_directory_retirement_inspection_test.py",
         "docs/ext2.md"
       ],
       "branch": "feature/f03-writable-ext2-and-later-ext4",

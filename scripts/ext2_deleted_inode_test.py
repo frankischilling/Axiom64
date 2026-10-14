@@ -27,6 +27,9 @@ NAMED_INPUT = 'scripts/tests/fixtures/ext2-named-retirement.raw.gz'
 NAMED_SHA256 = '9561c8cd01f27dd7e606aa3b25c78678b550cfb1abf2296c09fde89027e92866'
 SYMLINK_INPUT = 'scripts/tests/fixtures/ext2-named-symlink-retirement.raw.gz'
 CLEARED_INPUT = 'scripts/tests/fixtures/ext2-cleared-named-symlink.raw.gz'
+DIRECTORY_INPUT = 'scripts/tests/fixtures/ext2-named-directory-retirement.raw.gz'
+DIRECTORY_PATH = 'build-static/db/g-ddf7c441df09912037b60d0ac8f2d736'
+CLEARED_DIRECTORY_INPUT = 'scripts/tests/fixtures/ext2-cleared-named-directory.raw.gz'
 
 
 def build(directory):
@@ -277,6 +280,65 @@ def cases(raw, directory):
         struct.pack_into('<H', changed, 1024 + 58, 0)
         yield ('named-symlink-layout-' + str(block_size) + '-' + str(inode_size) + '-' + features,
                bytes(changed), 'checked', 0)
+    named_directory = gzip.decompress((ROOT / DIRECTORY_INPUT).read_bytes())
+    assert hashlib.sha256(named_directory).hexdigest() == 'e97f38a3ccfd400e0700778f3c4d632c7c73cdc31e63784ef7d47eca425221cf'
+    yield 'named-directory-actual', named_directory, 'checked', 0
+    yield 'named-directory-default', named_directory, 'default', 117
+    yield 'named-directory-readonly', named_directory, 'checked-ro', 117
+    inode = inode_offset(named_directory, lookup(named_directory, DIRECTORY_PATH))
+    parent = inode_offset(named_directory, lookup(named_directory, 'build-static/db'))
+    for field, value, width, label in ((1082, 1, 2, 'clean-state'), (inode+20, 0, 4, 'missing-marker'),
+                                       (inode+20, 17, 4, 'mismatched-times'), (parent+26, 6, 2, 'parent-links-outside-bound')):
+        changed = bytearray(named_directory)
+        struct.pack_into('<I' if width == 4 else '<H', changed, field, value)
+        yield 'named-directory-' + label, bytes(changed), 'checked', 117
+    changed = bytearray(named_directory)
+    up, = [position for position, target, name in directory_entries(named_directory, 20) if name == b'..']
+    struct.pack_into('<I', changed, up, 20)
+    yield 'named-directory-parent-cycle', bytes(changed), 'checked', 117
+    changed = bytearray(named_directory)
+    block_size = 1024 << struct.unpack_from('<I', changed, 1048)[0]
+    struct.pack_into('<H', changed, up+4, 12)
+    added = up+12
+    struct.pack_into('<IHBB', changed, added, 16, block_size-(added % block_size), 7, 1)
+    changed[added+8:added+15] = b'foreign'
+    struct.pack_into('<H', changed, inode_offset(changed, 16)+26, 2)
+    yield 'named-directory-with-data', bytes(changed), 'checked', 117
+    alias = directory / 'named-directory-alias.raw'
+    alias.write_bytes(named_directory)
+    debugfs(alias, 'ln /' + DIRECTORY_PATH + ' /build-static/db/alias', True)
+    yield 'named-directory-multiple-names', alias.read_bytes(), 'checked', 117
+    duplicate = directory / 'named-directory-double-retirement.raw'
+    duplicate.write_bytes(named_directory)
+    debugfs(duplicate, 'mkdir /build-static/db/other-retired', True)
+    changed = bytearray(duplicate.read_bytes())
+    inode = inode_offset(changed, lookup(changed, 'build-static/db/other-retired'))
+    parent = inode_offset(changed, lookup(changed, 'build-static/db'))
+    struct.pack_into('<H', changed, inode+26, 0)
+    struct.pack_into('<I', changed, inode+12, 30)
+    struct.pack_into('<I', changed, inode+20, 30)
+    links = struct.unpack_from('<H', changed, parent+26)[0]
+    struct.pack_into('<H', changed, parent+26, links-1)
+    yield 'named-directory-two-retirements-one-parent', bytes(changed), 'checked', 117
+    cleared_directory = gzip.decompress((ROOT / CLEARED_DIRECTORY_INPUT).read_bytes())
+    assert hashlib.sha256(cleared_directory).hexdigest() == 'b9b4e0f215caae977c17bafb2158afdf692607cdbcb07d81607094b12bce8d6e'
+    yield 'named-directory-cleared-inode', cleared_directory, 'checked', 95
+    for block_size, inode_size, features in FORMATS:
+        disk = directory / ('named-directory-layout-' + str(block_size) + '-' + features + '.raw')
+        disk.write_bytes(generated_deleted(directory, block_size, inode_size, features))
+        debugfs(disk, 'mkdir /retired-directory', True)
+        changed = bytearray(disk.read_bytes())
+        inode = inode_offset(changed, lookup(changed, 'retired-directory'))
+        parent = inode_offset(changed, 2)
+        struct.pack_into('<H', changed, inode+26, 0)
+        struct.pack_into('<I', changed, inode+12, 17)
+        struct.pack_into('<I', changed, inode+20, 17)
+        struct.pack_into('<H', changed, 1082, 0)
+        label = 'named-directory-layout-' + str(block_size) + '-' + str(inode_size) + '-' + features
+        yield label + '-parent-before-decrement', bytes(changed), 'checked', 0
+        links = struct.unpack_from('<H', changed, parent+26)[0]
+        struct.pack_into('<H', changed, parent+26, links-1)
+        yield label, bytes(changed), 'checked', 0
     cleared = gzip.decompress((ROOT / CLEARED_INPUT).read_bytes())
     assert hashlib.sha256(cleared).hexdigest() == '679539adefb75e423e88a2a52a9ef5811c36534d6fb95a770ac3a936a8dbad15'
     yield 'named-symlink-cleared-inode', cleared, 'checked', 95
@@ -293,7 +355,7 @@ def main():
     if not directory.is_relative_to((ROOT / 'build').resolve()):
         raise ValueError('use a fresh owned directory under build/')
     directory.mkdir(parents=True, exist_ok=False)
-    names = [CLIENT, INPUT, NAMED_INPUT, SYMLINK_INPUT, CLEARED_INPUT, 'scripts/ext2_deleted_inode_test.py', 'scripts/account_store_guest.py',
+    names = [CLIENT, INPUT, NAMED_INPUT, SYMLINK_INPUT, CLEARED_INPUT, DIRECTORY_INPUT, CLEARED_DIRECTORY_INPUT, 'scripts/ext2_deleted_inode_test.py', 'scripts/account_store_guest.py',
              'scripts/ext2_test.py', 'scripts/fixture_archive.py', 'scripts/build_musl.py',
              'scripts/image.py', 'Makefile', 'dependencies.json', 'sources.lock.json', 'ports.lock.json',
              'boot/limine.conf', 'vendor/limine.h', 'userspace/init/main.c', 'userspace/init/console.c',
@@ -323,7 +385,8 @@ def main():
         image = fixture(cell, 'build', 'static', program_builder=lambda *unused: build(cell),
                         filename='ext2-deleted-recovery-' + name,
                         command='/bin/ext2-deleted-recovery-' + name + ' ' + mode + ' ' + str(expected) +
-                        (' symlink' if name == 'named-symlink-actual' else ''))
+                        (' directory' if name == 'named-directory-actual' else
+                         ' symlink' if name == 'named-symlink-actual' else ''))
         for firmware in ('bios', 'uefi') if args.firmware == 'both' else (args.firmware,):
             for transport in ('modern', 'legacy') if args.transport == 'both' else (args.transport,):
                 phase = cell / (firmware + '-' + transport)
@@ -349,13 +412,18 @@ def main():
                                                      for name, contents in after_files.items()},
                                    after_metadata=after_metadata, after_directories=after_directories)
                         expected_metadata = {path: dict(value) for path, value in before_metadata.items()}
-                        restored_name = name in ('actual-named-retirement', 'named-symlink-actual') or name.startswith(('named-retirement-layout-', 'named-symlink-layout-'))
+                        named_directory = name == 'named-directory-actual' or name.startswith('named-directory-layout-')
+                        restored_name = name in ('actual-named-retirement', 'named-symlink-actual') or named_directory or name.startswith(('named-retirement-layout-', 'named-symlink-layout-'))
                         if restored_name:
-                            named_path = ('build-static/db/current' if name == 'named-symlink-actual' else
+                            named_path = (DIRECTORY_PATH if name == 'named-directory-actual' else
+                                          'retired-directory' if named_directory else
+                                          'build-static/db/current' if name == 'named-symlink-actual' else
                                           'rotation/records/named-link' if name.startswith('named-symlink-layout-') else
                                           'rotation/records/journal')
                             assert expected_metadata[named_path]['links'] == 0
-                            expected_metadata[named_path]['links'] = 1
+                            expected_metadata[named_path]['links'] = 2 if named_directory else 1
+                            if named_directory and not name.endswith('-parent-before-decrement'):
+                                expected_metadata['build-static/db' if name == 'named-directory-actual' else '.']['links'] += 1
                             recovered = disk.read_bytes()
                             inode = inode_offset(data, lookup(data, named_path))
                             assert struct.unpack_from('<I', recovered, inode + 20)[0] == 0

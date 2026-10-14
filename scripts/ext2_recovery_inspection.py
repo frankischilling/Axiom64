@@ -22,7 +22,7 @@ def removed_numbers(line, limit):
     return values
 
 
-def deleted_allocation_findings(data, text):
+def deleted_allocation_findings(data, text, *, directory_summaries=False):
     if len(data) < 2048 or struct.unpack_from('<H', data, 1080)[0] != 0xef53:
         raise ValueError('invalid classic ext2 volume')
     u32 = lambda offset: struct.unpack_from('<I', data, offset)[0]
@@ -44,6 +44,9 @@ def deleted_allocation_findings(data, text):
                r'^Block bitmap differences:.*$', r'^Inode bitmap differences:.*$',
                r'^.+: \*+ WARNING: Filesystem still has errors \*+$',
                r'^.+: \d+/\d+ files.*\d+/\d+ blocks$')
+    directory_pattern = r'^Directories count wrong for group #(\d+) \((\d+), counted=(\d+)\)\.$'
+    if directory_summaries:
+        allowed += (directory_pattern,)
     for line in text.splitlines():
         if line and not any(re.fullmatch(pattern, line) for pattern in allowed):
             raise ValueError('additional filesystem damage: ' + line)
@@ -79,6 +82,7 @@ def deleted_allocation_findings(data, text):
             for index in range(block_size // 4):
                 claim(u32(block * block_size + index * 4), depth - 1)
 
+    retired_directories = {}
     for number in expected_inodes:
         if number < first_inode or not allocated(number, True):
             raise ValueError('reserved or unallocated retired inode')
@@ -90,6 +94,8 @@ def deleted_allocation_findings(data, text):
         mode, links = struct.unpack_from('<H', data, offset)[0], struct.unpack_from('<H', data, offset + 26)[0]
         if links or not u32(offset + 20) or mode & 0o170000 not in (0o100000, 0o040000, 0o120000, 0o140000):
             raise ValueError('inode lacks an unlinked deletion marker')
+        if mode & 0o170000 == 0o040000:
+            retired_directories[group] = retired_directories.get(group, 0) + 1
         if u32(offset + 32) or u32(offset + 112) or struct.unpack_from('<H', data, offset + 116)[0]:
             raise ValueError('unsupported retired inode layout')
         attribute = u32(offset + 104)
@@ -105,6 +111,33 @@ def deleted_allocation_findings(data, text):
             claim(attribute)
     if owned != expected_blocks:
         raise ValueError('checker bitmap changes do not match the retired inode allocations')
+    if directory_summaries:
+        groups = (blocks-first+blocks_per_group-1)//blocks_per_group
+        if inodes > groups*inodes_per_group:
+            raise ValueError('inode geometry exceeds the block groups')
+        allocated_directories = {group:0 for group in range(groups)}
+        for number in range(2, inodes+1):
+            if not allocated(number, True):
+                continue
+            group, index = divmod(number-1, inodes_per_group)
+            table = u32(descriptors+group*32+8)
+            if struct.unpack_from('<H', data, table*block_size+index*inode_size)[0] & 0o170000 == 0o040000:
+                allocated_directories[group] += 1
+        expected_summaries = {}
+        for group, count in allocated_directories.items():
+            stored = struct.unpack_from('<H', data, descriptors+group*32+16)[0]
+            if stored != count:
+                raise ValueError('stored directory count does not match allocated directory bodies')
+            if retired_directories.get(group):
+                expected_summaries[group] = (stored, stored-retired_directories[group])
+        reported = {}
+        for group, stored, counted in re.findall(directory_pattern, text, re.MULTILINE):
+            group = int(group)
+            if group in reported:
+                raise ValueError('duplicated directory summary')
+            reported[group] = (int(stored), int(counted))
+        if reported != expected_summaries:
+            raise ValueError('checker directory summaries do not match retired directory bodies')
     return dict(inodes=sorted(expected_inodes), blocks=sorted(owned),
                 original_sha256=hashlib.sha256(data).hexdigest(),
                 classification='allocated-deletion-marked-inodes', repair_performed=False)

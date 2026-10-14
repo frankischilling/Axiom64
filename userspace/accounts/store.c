@@ -482,9 +482,11 @@ static int remove_generation(int parent, const char* name,
             error = errno;
     if (!error && fsync(fd) < 0)
         error = errno;
-    if (close(fd) < 0 && !error)
-        error = errno;
     if (!error && unlinkat(parent, name, AT_REMOVEDIR) < 0)
+        error = errno;
+    if (!error && fsync(parent) < 0)
+        error = errno;
+    if (close(fd) < 0 && !error)
         error = errno;
     return error ? failed(error) : 0;
 }

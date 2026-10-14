@@ -20,7 +20,10 @@ RECOVERY_FIXTURE = Path('scripts/tests/fixtures/ext2-deleted-open-inode.raw.gz')
 NAMED_RECOVERY_FIXTURE = Path('scripts/tests/fixtures/ext2-named-retirement.raw.gz')
 SYMLINK_RECOVERY_FIXTURE = Path('scripts/tests/fixtures/ext2-named-symlink-retirement.raw.gz')
 CLEARED_SYMLINK_FIXTURE = Path('scripts/tests/fixtures/ext2-cleared-named-symlink.raw.gz')
-RECOVERY_FIXTURES = (RECOVERY_FIXTURE, NAMED_RECOVERY_FIXTURE, SYMLINK_RECOVERY_FIXTURE, CLEARED_SYMLINK_FIXTURE)
+DIRECTORY_RECOVERY_FIXTURE = Path('scripts/tests/fixtures/ext2-named-directory-retirement.raw.gz')
+CLEARED_DIRECTORY_FIXTURE = Path('scripts/tests/fixtures/ext2-cleared-named-directory.raw.gz')
+RECOVERY_FIXTURES = (RECOVERY_FIXTURE, NAMED_RECOVERY_FIXTURE, SYMLINK_RECOVERY_FIXTURE, CLEARED_SYMLINK_FIXTURE,
+                     DIRECTORY_RECOVERY_FIXTURE, CLEARED_DIRECTORY_FIXTURE)
 
 
 class SourceBundleInputsTests(unittest.TestCase):

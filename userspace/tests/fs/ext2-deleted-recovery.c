@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -45,6 +46,22 @@ int main(int argc, char** argv) {
             char header[5];
             CHECK(read(fd, header, sizeof(header)) == sizeof(header) &&
                   !memcmp(header, "root:", sizeof(header)) && close(fd) == 0);
+            if (!strcmp(argv[3], "directory")) {
+                const char* path =
+                    "/mnt/recovery/build-static/db/g-ddf7c441df09912037b60d0ac8f2d736";
+                CHECK(lstat(path, &value) == 0 && S_ISDIR(value.st_mode) && !value.st_uid &&
+                      !value.st_gid && value.st_nlink == 2);
+                DIR* directory = opendir(path);
+                CHECK(directory != NULL);
+                unsigned entries = 0;
+                struct dirent* entry;
+                errno = 0;
+                while ((entry = readdir(directory))) {
+                    CHECK(!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."));
+                    entries++;
+                }
+                CHECK(!errno && entries == 2 && closedir(directory) == 0);
+            }
         } else {
             int fd = open("/mnt/recovery/rotation/records/journal", O_RDONLY | O_CLOEXEC);
             CHECK(fd >= 0);

@@ -132,7 +132,7 @@
       "title": "Writable ext2 and later ext4",
       "milestone": "M1",
       "state": "partial",
-      "current": "Classic ext2 root and data volumes support persistent files, external xattrs and file capabilities, shared EA copy-on-write, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and fresh kernel reboot verification. Writable checked dirty mounts reconcile in-range free counters from validated allocation maps after full inode, attribute and directory checks. ACLs, inline/ext4 attributes, advanced formats and general recovery after power loss remain planned.",
+      "current": "Classic ext2 root and data volumes support persistent files, external xattrs and file capabilities, shared EA copy-on-write, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and fresh kernel reboot verification. Writable checked dirty mounts reconcile in-range free counters and reclaim validated, unreferenced deletion-marked inodes after full allocation, inode, attribute and directory checks, followed by strict validation of the staged result. ACLs, inline/ext4 attributes, orphan chains, advanced formats and general recovery after power loss remain planned.",
       "scope": [
         "Writable ext2 inodes, directories, indirect blocks, allocation, and links",
         "Mount, unmount, sync, truncation, rename, permissions, and timestamps",
@@ -155,6 +155,12 @@
         "userspace/tests/fs/ext2.c",
         "userspace/tests/fs/ext2.sh",
         "scripts/ext2_test.py",
+        "userspace/tests/fs/ext2-deleted-recovery.c",
+        "scripts/ext2_deleted_inode_test.py",
+        "scripts/ext2_inspection.py",
+        "scripts/ext2_recovery_inspection.py",
+        "scripts/tests/ext2_inspection_test.py",
+        "scripts/tests/ext2_recovery_inspection_test.py",
         "docs/ext2.md"
       ],
       "branch": "feature/f03-writable-ext2-and-later-ext4",

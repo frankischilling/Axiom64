@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/select.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
@@ -22,7 +23,36 @@
         }                                                                                          \
     } while (0)
 
-enum kind { good, empty, overlong, nul, eof, interrupt, terminate, hangup };
+enum kind { good, empty, overlong, nul, eof, interrupt, terminate, hangup, read_gap };
+
+static int signal_terminal = -1;
+static int signal_before_wait;
+
+ssize_t __real_read(int fd, void* data, size_t size);
+
+int __real_pselect(int nfds, fd_set* readfds, fd_set* writefds, fd_set* exceptfds,
+                   const struct timespec* timeout, const sigset_t* mask);
+
+static void inject_signal(int fd) {
+    if (signal_before_wait && fd == signal_terminal) {
+        struct termios hidden = {0};
+        CHECK(tcgetattr(fd, &hidden) == 0 && !(hidden.c_lflag & (ECHO | ECHONL)));
+        signal_before_wait = 0;
+        CHECK(raise(SIGHUP) == 0);
+    }
+}
+
+ssize_t __wrap_read(int fd, void* data, size_t size) {
+    inject_signal(fd);
+    return __real_read(fd, data, size);
+}
+
+int __wrap_pselect(int nfds, fd_set* readfds, fd_set* writefds, fd_set* exceptfds,
+                   const struct timespec* timeout, const sigset_t* mask) {
+    if (signal_terminal >= 0 && readfds && FD_ISSET(signal_terminal, readfds))
+        inject_signal(signal_terminal);
+    return __real_pselect(nfds, readfds, writefds, exceptfds, timeout, mask);
+}
 
 static unsigned observations;
 
@@ -44,6 +74,13 @@ static int same_term(const struct termios* first, const struct termios* second) 
            first->c_cflag == second->c_cflag && first->c_lflag == second->c_lflag &&
            memcmp(first->c_cc, second->c_cc, NCCS) == 0 &&
            cfgetispeed(first) == cfgetispeed(second) && cfgetospeed(first) == cfgetospeed(second);
+}
+
+static int same_mask(const sigset_t* first, const sigset_t* second) {
+    for (int number = 1; number < NSIG; number++)
+        if (sigismember(first, number) != sigismember(second, number))
+            return 0;
+    return 1;
 }
 
 static void read_exact(int fd, void* data, size_t size) {
@@ -69,6 +106,8 @@ static void run(enum kind kind, const char* name) {
     CHECK(ptsname_r(master, path, sizeof(path)) == 0);
     int slave = open(path, O_RDWR | O_NOCTTY | O_CLOEXEC);
     CHECK(slave >= 0);
+    int original_flags = fcntl(slave, F_GETFL);
+    CHECK(original_flags >= 0);
     struct termios before = {0};
     CHECK(tcgetattr(slave, &before) == 0);
     before.c_lflag |= ICANON | ECHO | ECHONL | ISIG;
@@ -84,8 +123,15 @@ static void run(enum kind kind, const char* name) {
         close(master);
         close(result[0]);
         CHECK(setsid() == getpid() && ioctl(slave, TIOCSCTTY, 0) == 0);
-        if (kind == hangup)
+        if (kind == hangup || kind == read_gap)
             CHECK(signal(SIGHUP, SIG_IGN) != SIG_ERR);
+        sigset_t retained, before_mask;
+        sigemptyset(&retained);
+        CHECK(sigaddset(&retained, SIGUSR1) == 0 &&
+              sigprocmask(SIG_BLOCK, &retained, &before_mask) == 0 &&
+              sigprocmask(SIG_SETMASK, NULL, &before_mask) == 0);
+        struct sigaction before_hangup;
+        CHECK(sigaction(SIGHUP, NULL, &before_hangup) == 0);
         if (kind == good) {
             pid_t background = fork();
             CHECK(background >= 0);
@@ -101,21 +147,35 @@ static void run(enum kind kind, const char* name) {
         }
         char secret[ACCOUNT_PASSWORD_MAX + 1];
         memset(secret, 'z', sizeof(secret));
+        if (kind == read_gap) {
+            signal_terminal = slave;
+            signal_before_wait = 1;
+        }
         int status = account_secret_read(slave, "Password: ", secret);
         if (kind == good) {
             CHECK(status == 0 && strlen(secret) == ACCOUNT_PASSWORD_MAX);
             for (size_t i = 0; i < ACCOUNT_PASSWORD_MAX; i++)
                 CHECK(secret[i] == 'F');
         } else {
-            int expected = kind == overlong ? EMSGSIZE
-                           : kind == eof    ? ENODATA
-                           : kind == hangup ? ECANCELED
-                                            : EINVAL;
+            int expected = kind == overlong                     ? EMSGSIZE
+                           : kind == eof                        ? ENODATA
+                           : kind == hangup || kind == read_gap ? ECANCELED
+                                                                : EINVAL;
             CHECK(status == -1 && errno == expected && cleared(secret));
         }
+        if (kind == read_gap)
+            CHECK(!signal_before_wait);
         account_password_clear(secret, sizeof(secret));
         struct termios after = {0};
         CHECK(tcgetattr(slave, &after) == 0 && same_term(&before, &after));
+        CHECK(fcntl(slave, F_GETFL) == original_flags);
+        sigset_t after_mask;
+        struct sigaction after_hangup;
+        CHECK(sigprocmask(SIG_SETMASK, NULL, &after_mask) == 0 &&
+              same_mask(&before_mask, &after_mask));
+        CHECK(sigaction(SIGHUP, NULL, &after_hangup) == 0 &&
+              before_hangup.sa_handler == after_hangup.sa_handler &&
+              same_mask(&before_hangup.sa_mask, &after_hangup.sa_mask));
         char byte = 'x';
         CHECK(write(result[1], &byte, 1) == 1);
         close(slave);
@@ -126,7 +186,8 @@ static void run(enum kind kind, const char* name) {
     read_exact(master, prompt, 10);
     CHECK(memcmp(prompt, "Password: ", 10) == 0);
     struct termios hidden = {0};
-    CHECK(tcgetattr(slave, &hidden) == 0 && !(hidden.c_lflag & (ECHO | ECHONL)));
+    if (kind != read_gap)
+        CHECK(tcgetattr(slave, &hidden) == 0 && !(hidden.c_lflag & (ECHO | ECHONL)));
     if (kind == good || kind == overlong) {
         char input[ACCOUNT_PASSWORD_MAX + 2];
         size_t size = ACCOUNT_PASSWORD_MAX + (kind == overlong ? 1u : 0u);
@@ -140,7 +201,7 @@ static void run(enum kind kind, const char* name) {
         CHECK(write(master, input, sizeof(input)) == sizeof(input));
     } else if (kind == eof)
         CHECK(write(master, "\004", 1) == 1);
-    else
+    else if (kind != read_gap)
         CHECK(kill(child, kind == interrupt ? SIGINT : kind == terminate ? SIGTERM : SIGHUP) == 0);
     int status;
     if (kind == interrupt || kind == terminate) {
@@ -154,12 +215,13 @@ static void run(enum kind kind, const char* name) {
     }
     struct termios after = {0};
     CHECK(tcgetattr(slave, &after) == 0 && same_term(&before, &after));
+    CHECK(fcntl(slave, F_GETFL) == original_flags);
     // The master transcript may contain only the explicit final line ending.
     // It must contain no input bytes, including invalid or overlong passwords.
     CHECK(fcntl(master, F_SETFL, O_NONBLOCK) == 0);
     char transcript[1024];
     ssize_t count = read(master, transcript, sizeof(transcript));
-    if (kind == interrupt || kind == terminate || kind == hangup)
+    if (kind == interrupt || kind == terminate || kind == hangup || kind == read_gap)
         CHECK(count == -1 && errno == EAGAIN);
     else
         CHECK((count == 1 && transcript[0] == '\n') ||
@@ -189,6 +251,7 @@ int main(void) {
     run(interrupt, "sigint_original_action_after_echo_restored");
     run(terminate, "sigterm_original_action_after_echo_restored");
     run(hangup, "ignored_hangup_returns_cancelled_cleared_echo_restored");
+    run(read_gap, "signal_before_wait_cancelled_echo_and_descriptor_flags_restored");
     printf("ACCOUNT_SECRET_PASS observations=%u\n", observations);
     return 0;
 }

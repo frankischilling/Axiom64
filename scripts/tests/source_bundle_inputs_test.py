@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the real prompt regression from a generated corresponding-source archive."""
+"""Keep actual text and binary regression inputs in corresponding-source archives."""
 from contextlib import redirect_stdout
 import io
 from pathlib import Path
@@ -16,6 +16,7 @@ import sources
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = Path('scripts/tests/fixtures/normal-console/interrupted-prompt.txt')
+RECOVERY_FIXTURE = Path('scripts/tests/fixtures/ext2-deleted-open-inode.raw.gz')
 
 
 class SourceBundleInputsTests(unittest.TestCase):
@@ -31,7 +32,8 @@ class SourceBundleInputsTests(unittest.TestCase):
             configuration = root / 'build/busybox-1.37.0/.config'
             configuration.parent.mkdir(parents=True)
             configuration.write_bytes(b'fixture\n')
-            for item in (Path('scripts/console_prompt.py'), Path('scripts/tests/console_prompt_test.py'), FIXTURE):
+            for item in (Path('scripts/console_prompt.py'), Path('scripts/tests/console_prompt_test.py'),
+                         FIXTURE, RECOVERY_FIXTURE):
                 target = root / item
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / item, target)
@@ -41,8 +43,9 @@ class SourceBundleInputsTests(unittest.TestCase):
                 sources.bundle([])
             extracted = Path(name) / 'extracted'
             with tarfile.open(root / 'build/axiom64-sources.tar') as archive:
-                member = archive.getmember('Axiom64/' + FIXTURE.as_posix())
-                self.assertEqual(archive.extractfile(member).read(), (ROOT / FIXTURE).read_bytes())
+                for fixture in (FIXTURE, RECOVERY_FIXTURE):
+                    member = archive.getmember('Axiom64/' + fixture.as_posix())
+                    self.assertEqual(archive.extractfile(member).read(), (ROOT / fixture).read_bytes())
                 archive.extractall(extracted, filter='data')
             result = subprocess.run([sys.executable, str(extracted / 'Axiom64/scripts/tests/console_prompt_test.py'), '-v'],
                                     capture_output=True, timeout=30)

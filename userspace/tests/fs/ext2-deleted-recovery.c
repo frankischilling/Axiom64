@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mount.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#define CHECK(value)                                                                               \
+    do {                                                                                           \
+        if (!(value)) {                                                                            \
+            fprintf(stderr, "EXT2_DELETED_RECOVERY_FAIL line=%d errno=%d expression=%s\n",         \
+                    __LINE__, errno, #value);                                                      \
+            exit(1);                                                                               \
+        }                                                                                          \
+    } while (0)
+
+int main(int argc, char** argv) {
+    CHECK(argc == 3 && !getuid() && !geteuid());
+    struct stat device;
+    CHECK(stat("/dev/vda", &device) == 0 && S_ISBLK(device.st_mode));
+    CHECK(mkdir("/mnt", 0755) == 0 || errno == EEXIST);
+    CHECK(mkdir("/mnt/recovery", 0755) == 0);
+    unsigned long flags = !strcmp(argv[1], "checked-ro") ? MS_RDONLY : 0;
+    const char* options = !strcmp(argv[1], "default") ? NULL : "recovery=check";
+    int expected = atoi(argv[2]);
+    int result = mount("/dev/vda", "/mnt/recovery", "ext2", flags, options);
+    if (expected) {
+        CHECK(result == -1 && errno == expected);
+        printf("EXT2_DELETED_RECOVERY_DENIED mode=%s errno=%d\n", argv[1], errno);
+    } else {
+        CHECK(result == 0);
+        int fd = open("/mnt/recovery/rotation/records/journal", O_RDONLY | O_CLOEXEC);
+        CHECK(fd >= 0);
+        unsigned char header[4];
+        CHECK(read(fd, header, sizeof(header)) == sizeof(header) &&
+              memcmp(header, "A46L", sizeof(header)) == 0 && close(fd) == 0);
+        CHECK(umount("/mnt/recovery") == 0);
+        printf("EXT2_DELETED_RECOVERY_PASS mode=%s mounted=1 clean_unmount=1\n", argv[1]);
+    }
+    return 0;
+}

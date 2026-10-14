@@ -806,6 +806,12 @@ jobs:
       - name: Test writable ext2 volumes and host fsck
         if: matrix.suite == 'storage'
         run: python3 scripts/ext2_test.py
+      - name: Test whole-volume observation and checked deleted-inode recovery
+        if: matrix.suite == 'storage'
+        run: |
+          python3 scripts/tests/ext2_inspection_test.py
+          python3 scripts/tests/ext2_recovery_inspection_test.py
+          python3 scripts/ext2_deleted_inode_test.py --directory build/ext2-deleted-recovery
 
       - name: Test ext2 root, data mounts, rejection, and reboot persistence
         if: matrix.suite == 'root'
@@ -948,6 +954,7 @@ jobs:
             build/ext2-*.iso
             build/ext2-*.conf
             build/ext2-*-acl.bin
+            build/ext2-deleted-recovery/**
       - name: Upload TCP boot fixtures
         if: always() && matrix.suite == 'tcp'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

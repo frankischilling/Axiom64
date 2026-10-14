@@ -29,20 +29,28 @@ def receive(connection, expected):
 class NativePeer:
     def __init__(self, lane):
         self.lane, self.error, self.result = lane, None, {}
-        self.server = socket.socket()
-        self.server.bind(('127.0.0.1', 0))
-        self.server.listen(1)
-        self.server.settimeout(20)
-        reservation = socket.socket()
-        reservation.bind(('127.0.0.1', 0))
-        self.forward_port = reservation.getsockname()[1]
-        reservation.close()
+        self.server = self.forwarding = None
         self.connections, self.threads = [], []
         self.client_started = self.server_started = False
+        try:
+            self.server = socket.socket()
+            self.forwarding = socket.socket()
+            self.server.bind(('127.0.0.1', 0))
+            self.server.listen(1)
+            self.server.settimeout(20)
+            self.forwarding.bind(('127.0.0.1', 0))
+            self.forwarding.listen(1)
+            self.forward_port = self.forwarding.getsockname()[1]
+        except BaseException:
+            self.close()
+            raise
 
     @property
     def port(self):
         return self.server.getsockname()[1]
+
+    def release_forwarding(self):
+        self.forwarding.close()
 
     def exchange(self, role):
         try:
@@ -71,7 +79,10 @@ class NativePeer:
         thread.start()
 
     def close(self):
-        self.server.close()
+        if self.forwarding is not None:
+            self.forwarding.close()
+        if self.server is not None:
+            self.server.close()
         for connection in self.connections:
             try:
                 connection.shutdown(socket.SHUT_RDWR)
@@ -85,12 +96,14 @@ class NativePeer:
 def run(linkage, firmware, transport, timeout):
     label = f'tcp-wire-{linkage}-{firmware}-{transport}'
     log = ROOT / 'build' / f'{label}.log'
-    peers, captures = [NativePeer(lane) for lane in range(2)], []
-    script = (f'#!/bin/sh\nset -e\n/bin/tcp-tests --wire {peers[0].port} {peers[1].port}\n'
-              'echo AXIOM64_TESTS_PASS\n').encode()
+    peers, captures = [], []
     error, timed_out, evidence, process = None, False, [], None
     started = time.monotonic()
     try:
+        for lane in range(2):
+            peers.append(NativePeer(lane))
+        script = (f'#!/bin/sh\nset -e\n/bin/tcp-tests --wire {peers[0].port} {peers[1].port}\n'
+                  'echo AXIOM64_TESTS_PASS\n').encode()
         image = fixture(linkage, script, f'axiom64-{label}.iso')
         command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '512M', '-nic', 'none',
                    '-cdrom', str(image), '-display', 'none', '-serial', 'stdio', '-monitor', 'none',
@@ -114,6 +127,8 @@ def run(linkage, firmware, transport, timeout):
                         '-drive', f'if=pflash,format=raw,file={variables}']
         booted = time.monotonic()
         with log.open('wb') as output:
+            for peer in peers:
+                peer.release_forwarding()
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
             while process.poll() is None:
                 if time.monotonic() - booted > timeout:

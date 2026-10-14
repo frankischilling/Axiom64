@@ -645,6 +645,7 @@ test-tcp-native:
 test-tcp-sockets:
 	$(PYTHON) scripts/tcp_test.py
 test-tcp-native-wire:
+	$(PYTHON) scripts/tests/tcp_forward_ports_test.py
 	$(PYTHON) scripts/tcp_native_wire.py
 build/tcp-fault-native: userspace/tests/net/tcp_fault.c
 	@mkdir -p build

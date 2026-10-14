@@ -32,7 +32,8 @@ def build(provider, linkage, directory):
     command = [*compiler, '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
                '-I' + str(stage / 'usr/include'),
                str(ROOT / 'userspace/accounts/password.c'), str(ROOT / 'userspace/accounts/secret.c'),
-               str(ROOT / 'userspace/tests/security/account-secret.c'), '-o', str(program)]
+               str(ROOT / 'userspace/tests/security/account-secret.c'),
+               '-Wl,--wrap=read', '-Wl,--wrap=pselect', '-o', str(program)]
     if linkage == 'static':
         command += ['-static', str(stage / 'usr/lib/libcrypt.a')]
     else:
@@ -66,8 +67,8 @@ def execute(command, log, firmware=None):
     text = log.read_text().replace('\r\n', '\n')
     lines = text.splitlines()
     count = sum(line.startswith('ACCOUNT_SECRET_OBSERVATION ') for line in lines)
-    passed = (not timed_out and process.returncode == (1 if firmware else 0) and count == 9 and
-              lines.count('ACCOUNT_SECRET_PASS observations=9') == 1 and
+    passed = (not timed_out and process.returncode == (1 if firmware else 0) and count == 10 and
+              lines.count('ACCOUNT_SECRET_PASS observations=10') == 1 and
               not any(marker in text for marker in ('ACCOUNT_SECRET_FAIL', 'PANIC:', 'FAULT pid=')))
     if firmware:
         passed = passed and lines.count('AXIOM64_TESTS_PASS') == 1 and 'AXIOM64_EXIT status=0' in text
@@ -130,7 +131,7 @@ def main():
                     print('ACCOUNT_SECRET_GUEST_PASS ' + case.name + '/' + firmware, flush=True)
     if source != {name: digest(ROOT / name) for name in source}:
         raise RuntimeError('account secret source changed during validation')
-    print('ACCOUNT_SECRET_MATRIX_PASS profiles=' + str(len(rows)) + ' observations=' + str(len(rows) * 9), flush=True)
+    print('ACCOUNT_SECRET_MATRIX_PASS profiles=' + str(len(rows)) + ' observations=' + str(len(rows) * 10), flush=True)
 
 
 if __name__ == '__main__':

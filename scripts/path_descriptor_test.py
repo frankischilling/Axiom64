@@ -48,7 +48,7 @@ def build(directory, provider, linkage, native):
     return binary, inputs
 
 
-def execute(command, directory, native):
+def execute(command, directory, native, observations=71):
     started = time.monotonic_ns()
     log = directory / 'execution.log'
     timed_out = False
@@ -69,15 +69,17 @@ def execute(command, directory, native):
             process.wait()
             raise
     text = log.read_text().replace('\r\n', '\n')
-    marker = 'PATH_DESCRIPTOR_PASS root_observations=54 ordinary_permission_checks=6'
+    marker = f'PATH_DESCRIPTOR_PASS root_observations={observations-8} ordinary_permission_checks=6 record_lock_child_checks=2'
     passed = (not timed_out and process.returncode == (0 if native else 1) and
               text.splitlines().count(marker) == 1 and
               text.splitlines().count('PATH_DESCRIPTOR_SELECT result=1 requested_bit=1') == 1 and
+              text.splitlines().count('PATH_DESCRIPTOR_RECORD_CLOSE_PASS path_preserved=1 ordinary_released=1') == 1 and
               'PATH_DESCRIPTOR_FAIL' not in text and 'PANIC:' not in text)
     if not native:
         passed &= text.splitlines().count('AXIOM64_TESTS_PASS') == 1 and 'AXIOM64_EXIT status=0' in text
     return dict(passed=bool(passed), command=command, returncode=process.returncode,
-                timed_out=timed_out, elapsed_ns=time.monotonic_ns()-started, log_sha256=digest(log))
+                timed_out=timed_out, elapsed_ns=time.monotonic_ns()-started, log_sha256=digest(log),
+                observations=observations if passed else 0)
 
 
 def inspect_native_fixture(path):
@@ -180,7 +182,7 @@ def main():
                     if filesystem == 'ext2':
                         command = ('/bin/busybox mkdir -p /mnt/path && '
                                    '/bin/busybox mount -t ext2 /dev/vda /mnt/path && '
-                                   '/bin/' + filename + ' /mnt/path/case && /bin/busybox umount /mnt/path')
+                                   '/bin/' + filename + ' /mnt/path/case mounted-block && /bin/busybox umount /mnt/path')
                     image = fixture(case, provider, linkage, program_builder=lambda *unused:(program, product),
                                     filename=filename, command=command)
                     for firmware in ('bios', 'uefi') if args.firmware == 'both' else (args.firmware,):
@@ -190,7 +192,8 @@ def main():
                             disk = phase / 'disk.raw' if filesystem == 'ext2' else None
                             if disk:
                                 create_volume(disk)
-                            row = execute(qemu(image, phase, firmware, transport, disk), phase, False)
+                            row = execute(qemu(image, phase, firmware, transport, disk), phase, False,
+                                          observations=75 if filesystem == 'ext2' else 71)
                             row.update(provider=provider, linkage=linkage, firmware=firmware,
                                        transport=transport, filesystem=filesystem)
                             rows.append(row)
@@ -212,7 +215,7 @@ def main():
                args.filesystem == args.firmware == args.transport == 'both')
     receipt = dict(passed=error is None and stable and bool(rows) and all(row['passed'] for row in rows),
                    terminal=True, source_stable=stable, matrix_complete=complete and error is None,
-                   native=args.native, cells=len(rows), observations=len(rows)*60, error=error,
+                   native=args.native, cells=len(rows), observations=sum(row['observations'] for row in rows), error=error,
                    host_filesystem_repair=False)
     save(directory / 'receipt.json', receipt)
     assert receipt['passed'], error or 'path descriptor source changed'

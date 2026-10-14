@@ -40,8 +40,37 @@ static void target(int fd, const char* expected) {
     CHECK(size == (ssize_t)strlen(expected) && !memcmp(value, expected, (size_t)size));
 }
 
+static void record_conflict(int fd, short expected, pid_t owner) {
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        struct flock query = {.l_type = F_WRLCK, .l_whence = SEEK_SET};
+        CHECK(fcntl(fd, F_GETLK, &query) == 0 && query.l_type == expected &&
+              (expected == F_UNLCK || query.l_pid == owner));
+        _exit(0);
+    }
+    int status = 0;
+    CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && !WEXITSTATUS(status));
+}
+
+static void record_close_policy(void) {
+    int data = open("data", O_RDWR | O_CLOEXEC);
+    CHECK(data >= 0);
+    struct flock lock = {.l_type = F_WRLCK, .l_whence = SEEK_SET};
+    CHECK(fcntl(data, F_SETLK, &lock) == 0);
+    int path = open("data", O_PATH | O_CLOEXEC);
+    CHECK(path >= 0 && close(path) == 0);
+    record_conflict(data, F_WRLCK, getpid());
+    int ordinary = open("data", O_RDONLY | O_CLOEXEC);
+    CHECK(ordinary >= 0 && close(ordinary) == 0);
+    record_conflict(data, F_UNLCK, getpid());
+    CHECK(close(data) == 0);
+    puts("PATH_DESCRIPTOR_RECORD_CLOSE_PASS path_preserved=1 ordinary_released=1");
+}
+
 int main(int argc, char** argv) {
-    CHECK(argc == 2 && !getuid() && !getgid());
+    CHECK((argc == 2 || (argc == 3 && !strcmp(argv[2], "mounted-block"))) && !getuid() &&
+          !getgid());
     CHECK(mkdir(argv[1], 0755) == 0 && chmod(argv[1], 0755) == 0 && chdir(argv[1]) == 0);
     int file = open("data", O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC, 0600);
     CHECK(file >= 0 && write(file, "fixture", 7) == 7 && close(file) == 0);
@@ -66,6 +95,14 @@ int main(int argc, char** argv) {
     CHECK(fstat(descriptor, &after) == 0 && after.st_size == 7);
     struct statfs filesystem;
     CHECK(fstatfs(descriptor, &filesystem) == 0);
+    if (argc == 3) {
+        int device = open("/dev/vda", O_PATH | O_CLOEXEC);
+        CHECK(device >= 0);
+        CHECK(fstat(device, &after) == 0 && S_ISBLK(after.st_mode));
+        DENIED(read(device, value, 1));
+        CHECK(close(device) == 0);
+    }
+    record_close_policy();
     DENIED(read(descriptor, value, 1));
     DENIED(read(descriptor, value, 0));
     DENIED(write(descriptor, value, 1));
@@ -137,7 +174,8 @@ int main(int argc, char** argv) {
     }
     int status = 0;
     CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && !WEXITSTATUS(status));
-    printf("PATH_DESCRIPTOR_PASS root_observations=%u ordinary_permission_checks=6\n",
+    printf("PATH_DESCRIPTOR_PASS root_observations=%u ordinary_permission_checks=6 "
+           "record_lock_child_checks=2\n",
            observations);
     return 0;
 }

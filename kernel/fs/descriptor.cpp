@@ -40,7 +40,8 @@ void close_descriptor(FileTable& table, int fd) {
         return;
     auto handle = table.entries[fd].handle;
     if (handle) {
-        record_lock_close(table, handle->node);
+        if (!(handle->flags & 010000000))
+            record_lock_close(table, handle->node);
         close_handle(handle);
     }
     table.entries[fd] = {};

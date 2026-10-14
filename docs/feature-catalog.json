@@ -173,7 +173,7 @@
       "title": "VFS, mounts, and pseudo filesystems",
       "milestone": "M1",
       "state": "partial",
-      "current": "RAM and classic ext2 mounts, Linux path/no-follow/descriptor xattrs, filesystem dispatch, directory identity, read-only policy, mount-aware statfs, rename, links, pipes, and selected synthetic device metadata work. O_PATH retains file, directory and no-follow symlink identity for metadata, duplication, relative lookup and empty-path readlink while rejecting data I/O and mapping. Local advisory flock supports canonical inode ownership, descriptor lifetime, retained waits, and tested signal restart on the single-CPU kernel. Procfs provides process/thread status, enumeration, caller-relative links, description-owned reads and retained inode lifetime. Stat records include actual process/thread birth ticks, and a secure UUID identifies each initialized kernel boot; accounting and complete procfs remain unfinished.",
+      "current": "RAM and classic ext2 mounts, Linux path/no-follow/descriptor xattrs, filesystem dispatch, directory identity, read-only policy, mount-aware statfs, rename, links, pipes, and selected synthetic device metadata work. O_PATH retains file, directory and no-follow symlink identity for metadata, duplication, relative lookup and empty-path readlink while rejecting data I/O and mapping. Closing a path descriptor preserves POSIX locks; ordinary descriptor closure releases the process's inode locks. Local advisory flock supports canonical inode ownership, descriptor lifetime, retained waits, and tested signal restart on the single-CPU kernel. Procfs provides process/thread status, enumeration, caller-relative links, description-owned reads and retained inode lifetime. Stat records include actual process/thread birth ticks, and a secure UUID identifies each initialized kernel boot; accounting and complete procfs remain unfinished.",
       "scope": [
         "Mount graph, filesystem operations, vnode/dentry lifetime, and pathname traversal",
         "File descriptions, descriptor lifetime, close-on-exec, and robust directory enumeration",
@@ -198,6 +198,7 @@
         "kernel/abi/linux/syscall.cpp",
         "userspace/tests/fs/vfs.c",
         "userspace/tests/fs/path-descriptors.c",
+        "kernel/fs/descriptor.cpp",
         "scripts/path_descriptor_test.py",
         "scripts/tests/path_descriptor_storage_test.py",
         "userspace/tests/fs/ext2.c",

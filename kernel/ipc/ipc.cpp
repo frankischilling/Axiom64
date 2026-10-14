@@ -115,7 +115,8 @@ int64_t socket_write(Socket* s, const void* data, size_t len) {
 }
 
 static Handle* handle(int fd) {
-    return fd >= 0 && unsigned(fd) < max_fds ? current->files->entries[fd].handle : nullptr;
+    auto h = fd >= 0 && unsigned(fd) < max_fds ? current->files->entries[fd].handle : nullptr;
+    return h && (h->flags & 010000000) ? nullptr : h;
 }
 
 static int install_socket(Task& task, Socket* socket, int flags = 0, int reserved = -1) {
@@ -209,6 +210,9 @@ int64_t socket_accept(Task& task, Handle* h, uint64_t address, uint64_t length, 
 uint32_t readiness(Handle* h) {
     if (!h)
         return 32;
+    // select uses the default mask for a path description; poll rejects it.
+    if (h->flags & 010000000)
+        return 1 | 4;
     uint32_t events = 0;
     if (handle_ready(h, false))
         events |= 1;
@@ -342,6 +346,8 @@ bool poll_task_ready(Task& task) {
         if (p.fd < 0)
             continue;
         auto h = unsigned(p.fd) < max_fds ? task.files->entries[p.fd].handle : nullptr;
+        if (h && (h->flags & 010000000))
+            return true;
         if (readiness(h) & (p.events | 8 | 16 | 32))
             return true;
     }
@@ -351,6 +357,9 @@ bool poll_task_ready(Task& task) {
 int64_t ipc_syscall(Frame* f) {
     auto a = f->rdi, b = f->rsi, c = f->rdx, d = f->r10;
     auto h = handle(a);
+    if (!h && (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50 || f->rax == 51 ||
+               f->rax == 52 || f->rax == 54 || f->rax == 55))
+        return -9;
     Socket* s = h ? h->socket : nullptr;
     int64_t timeout_result;
     if (socket_timeout_syscall(*current, *f, h, timeout_result))

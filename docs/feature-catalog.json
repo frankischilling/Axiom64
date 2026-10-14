@@ -132,7 +132,7 @@
       "title": "Writable ext2 and later ext4",
       "milestone": "M1",
       "state": "partial",
-      "current": "Classic ext2 root and data volumes support persistent files, external xattrs and file capabilities, shared EA copy-on-write, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and fresh kernel reboot verification. Writable checked dirty mounts reconcile in-range free counters and reclaim validated, unreferenced deletion-marked inodes. A retired regular file with one validated name and matching change/deletion times can retain that name and its contents. Full allocation, inode, attribute and directory checks precede correction, followed by strict validation of the staged result. ACLs, inline/ext4 attributes, orphan chains, advanced formats and general recovery after power loss remain planned.",
+      "current": "Classic ext2 root and data volumes support persistent files, external xattrs and file capabilities, shared EA copy-on-write, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and fresh kernel reboot verification. Writable checked dirty mounts reconcile in-range free counters and reclaim validated, unreferenced deletion-marked inodes. A retired regular file or symlink with one validated name and matching change/deletion times can retain that name and its contents or target. Full allocation, inode, attribute and directory checks precede correction, followed by strict validation of the staged result. Named deleted directories and cleared inode bodies remain rejected. ACLs, inline/ext4 attributes, orphan chains, advanced formats and general recovery after power loss remain planned.",
       "scope": [
         "Writable ext2 inodes, directories, indirect blocks, allocation, and links",
         "Mount, unmount, sync, truncation, rename, permissions, and timestamps",
@@ -173,7 +173,7 @@
       "title": "VFS, mounts, and pseudo filesystems",
       "milestone": "M1",
       "state": "partial",
-      "current": "RAM and classic ext2 mounts, Linux path/no-follow/descriptor xattrs, filesystem dispatch, directory identity, read-only policy, mount-aware statfs, rename, links, pipes, and selected synthetic device metadata work. Local advisory flock supports canonical inode ownership, descriptor lifetime, retained waits, and tested signal restart on the single-CPU kernel. Procfs provides process/thread status, enumeration, caller-relative links, description-owned reads and retained inode lifetime. Stat records include actual process/thread birth ticks, and a secure UUID identifies each initialized kernel boot; accounting and complete procfs remain unfinished.",
+      "current": "RAM and classic ext2 mounts, Linux path/no-follow/descriptor xattrs, filesystem dispatch, directory identity, read-only policy, mount-aware statfs, rename, links, pipes, and selected synthetic device metadata work. O_PATH retains file, directory and no-follow symlink identity for metadata, duplication, relative lookup and empty-path readlink while rejecting data I/O and mapping. Local advisory flock supports canonical inode ownership, descriptor lifetime, retained waits, and tested signal restart on the single-CPU kernel. Procfs provides process/thread status, enumeration, caller-relative links, description-owned reads and retained inode lifetime. Stat records include actual process/thread birth ticks, and a secure UUID identifies each initialized kernel boot; accounting and complete procfs remain unfinished.",
       "scope": [
         "Mount graph, filesystem operations, vnode/dentry lifetime, and pathname traversal",
         "File descriptions, descriptor lifetime, close-on-exec, and robust directory enumeration",
@@ -197,6 +197,9 @@
         "kernel/fs/ext2/ext2.cpp",
         "kernel/abi/linux/syscall.cpp",
         "userspace/tests/fs/vfs.c",
+        "userspace/tests/fs/path-descriptors.c",
+        "scripts/path_descriptor_test.py",
+        "scripts/tests/path_descriptor_storage_test.py",
         "userspace/tests/fs/ext2.c",
         "docs/vfs.md",
         "kernel/fs/file_lock.cpp",

@@ -1350,8 +1350,8 @@ static void destroy(Mount* mount) {
 
 // Validate allocation, ownership and directories before staging any mount writes.
 // Checked writable dirty mounts may reconcile counters and reclaim completely
-// validated inodes carrying the on-disk deletion marker. A still-named ordinary
-// file can retain its validated namespace when retirement preceded its removal.
+// validated inodes carrying the on-disk deletion marker. A still-named regular
+// file or symlink can retain its namespace when retirement preceded its removal.
 struct Validation {
     Volume& v;
     bool reconcile_counts;
@@ -1708,7 +1708,8 @@ struct Validation {
                     if (!bit(inode_bits, r.inode) || !modes[r.inode] ||
                         (r.type && r.type != file_type(modes[r.inode])) ||
                         (!detached && deleted(r.inode) &&
-                         (modes[r.inode] & 0170000) != regular_file)) {
+                         (modes[r.inode] & 0170000) != regular_file &&
+                         (modes[r.inode] & 0170000) != symlink)) {
                         success = v.fail();
                         break;
                     }
@@ -1790,11 +1791,12 @@ struct Validation {
             if (references[number] != links[number]) {
                 uint8_t data[ax::inode_bytes];
                 // Restore only a single existing name for a completely owned
-                // regular file. The retirement must match the inode change time;
+                // regular file or symlink. Retirement must match the change time;
                 // unrelated link discrepancies and unnamed live inodes stay errors.
                 if (!deleted(number) || references[number] != 1 ||
-                    (modes[number] & 0170000) != regular_file || !inode(number, data) ||
-                    u32(data + 20) != u32(data + 12))
+                    ((modes[number] & 0170000) != regular_file &&
+                     (modes[number] & 0170000) != symlink) ||
+                    !inode(number, data) || u32(data + 20) != u32(data + 12))
                     return v.fail();
             }
             if ((modes[number] & 0170000) != ax::directory)

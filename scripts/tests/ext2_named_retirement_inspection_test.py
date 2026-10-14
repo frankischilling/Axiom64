@@ -56,7 +56,24 @@ def main():
         except (ValueError, struct.error, IndexError):
             continue
         raise AssertionError('unproven named-retirement finding accepted')
-    print('EXT2_NAMED_RETIREMENT_INSPECTION_PASS readonly_actual_checker=1 negative_cases=' + str(len(negatives)))
+    for filename, expected in (('ext2-named-symlink-retirement.raw.gz', True),
+                               ('ext2-cleared-named-symlink.raw.gz', False)):
+        volume = gzip.decompress((Path(__file__).parent / 'fixtures' / filename).read_bytes())
+        with tempfile.TemporaryDirectory(prefix='axiom64-symlink-retirement-') as temporary:
+            disk = Path(temporary) / 'disk.raw'
+            disk.write_bytes(volume)
+            process = subprocess.run(['e2fsck', '-f', '-n', str(disk)], capture_output=True, text=True, timeout=60)
+            assert process.returncode == 4 and disk.read_bytes() == volume
+            findings = process.stdout + process.stderr
+        try:
+            identified = named_retirement_findings(volume, findings)
+        except ValueError:
+            assert not expected, 'preserved symlink was not recognized'
+        else:
+            assert expected, 'cleared inode was incorrectly recognized'
+            assert identified['inodes'] == [41] and identified['blocks'] == []
+            assert identified['restored_names'] == [dict(name='current', directory='/build-static/db', parent=15, inode=41)]
+    print('EXT2_NAMED_RETIREMENT_INSPECTION_PASS readonly_actual_checkers=3 negative_cases=' + str(len(negatives)+1))
 
 
 if __name__ == '__main__':

@@ -25,6 +25,8 @@ INPUT = 'scripts/tests/fixtures/ext2-deleted-open-inode.raw.gz'
 RAW_SHA256 = 'd26bbe2752604ea777f829c422f35891f4ef5226fd21d8cf7b23a7e62a35e944'
 NAMED_INPUT = 'scripts/tests/fixtures/ext2-named-retirement.raw.gz'
 NAMED_SHA256 = '9561c8cd01f27dd7e606aa3b25c78678b550cfb1abf2296c09fde89027e92866'
+SYMLINK_INPUT = 'scripts/tests/fixtures/ext2-named-symlink-retirement.raw.gz'
+CLEARED_INPUT = 'scripts/tests/fixtures/ext2-cleared-named-symlink.raw.gz'
 
 
 def build(directory):
@@ -249,6 +251,35 @@ def cases(raw, directory):
         struct.pack_into('<I', changed, inode + 20, 17)
         yield ('named-retirement-layout-' + str(block_size) + '-' + str(inode_size) + '-' + features,
                bytes(changed), 'checked', 0)
+    symlink = gzip.decompress((ROOT / SYMLINK_INPUT).read_bytes())
+    assert hashlib.sha256(symlink).hexdigest() == '5ee230c10fad1dee6a87005c78dbf43ef2e53612851ea2985676bdc537366eac'
+    yield 'named-symlink-actual', symlink, 'checked', 0
+    yield 'named-symlink-default', symlink, 'default', 117
+    yield 'named-symlink-readonly', symlink, 'checked-ro', 117
+    inode = inode_offset(symlink, lookup(symlink, 'build-static/db/current'))
+    for field, value, label in ((20, 0, 'missing-marker'), (20, 17, 'mismatched-times')):
+        changed = bytearray(symlink)
+        struct.pack_into('<I', changed, inode + field, value)
+        yield 'named-symlink-' + label, bytes(changed), 'checked', 117
+    alias = directory / 'named-symlink-alias.raw'
+    alias.write_bytes(symlink)
+    debugfs(alias, 'ln /build-static/db/current /build-static/db/alias', True)
+    yield 'named-symlink-multiple-names', alias.read_bytes(), 'checked', 117
+    for block_size, inode_size, features in FORMATS:
+        disk = directory / ('named-symlink-layout-' + str(block_size) + '-' + features + '.raw')
+        disk.write_bytes(generated_deleted(directory, block_size, inode_size, features))
+        debugfs(disk, 'symlink /rotation/records/named-link ' + 'unresolved-' + 'x' * 120, True)
+        changed = bytearray(disk.read_bytes())
+        inode = inode_offset(changed, lookup(changed, 'rotation/records/named-link'))
+        struct.pack_into('<H', changed, inode + 26, 0)
+        struct.pack_into('<I', changed, inode + 12, 17)
+        struct.pack_into('<I', changed, inode + 20, 17)
+        struct.pack_into('<H', changed, 1024 + 58, 0)
+        yield ('named-symlink-layout-' + str(block_size) + '-' + str(inode_size) + '-' + features,
+               bytes(changed), 'checked', 0)
+    cleared = gzip.decompress((ROOT / CLEARED_INPUT).read_bytes())
+    assert hashlib.sha256(cleared).hexdigest() == '679539adefb75e423e88a2a52a9ef5811c36534d6fb95a770ac3a936a8dbad15'
+    yield 'named-symlink-cleared-inode', cleared, 'checked', 95
 
 
 def main():
@@ -262,7 +293,7 @@ def main():
     if not directory.is_relative_to((ROOT / 'build').resolve()):
         raise ValueError('use a fresh owned directory under build/')
     directory.mkdir(parents=True, exist_ok=False)
-    names = [CLIENT, INPUT, NAMED_INPUT, 'scripts/ext2_deleted_inode_test.py', 'scripts/account_store_guest.py',
+    names = [CLIENT, INPUT, NAMED_INPUT, SYMLINK_INPUT, CLEARED_INPUT, 'scripts/ext2_deleted_inode_test.py', 'scripts/account_store_guest.py',
              'scripts/ext2_test.py', 'scripts/fixture_archive.py', 'scripts/build_musl.py',
              'scripts/image.py', 'Makefile', 'dependencies.json', 'sources.lock.json', 'ports.lock.json',
              'boot/limine.conf', 'vendor/limine.h', 'userspace/init/main.c', 'userspace/init/console.c',
@@ -291,7 +322,8 @@ def main():
         cell.mkdir()
         image = fixture(cell, 'build', 'static', program_builder=lambda *unused: build(cell),
                         filename='ext2-deleted-recovery-' + name,
-                        command='/bin/ext2-deleted-recovery-' + name + ' ' + mode + ' ' + str(expected))
+                        command='/bin/ext2-deleted-recovery-' + name + ' ' + mode + ' ' + str(expected) +
+                        (' symlink' if name == 'named-symlink-actual' else ''))
         for firmware in ('bios', 'uefi') if args.firmware == 'both' else (args.firmware,):
             for transport in ('modern', 'legacy') if args.transport == 'both' else (args.transport,):
                 phase = cell / (firmware + '-' + transport)
@@ -317,14 +349,17 @@ def main():
                                                      for name, contents in after_files.items()},
                                    after_metadata=after_metadata, after_directories=after_directories)
                         expected_metadata = {path: dict(value) for path, value in before_metadata.items()}
-                        restored_name = name == 'actual-named-retirement' or name.startswith('named-retirement-layout-')
+                        restored_name = name in ('actual-named-retirement', 'named-symlink-actual') or name.startswith(('named-retirement-layout-', 'named-symlink-layout-'))
                         if restored_name:
-                            assert expected_metadata['rotation/records/journal']['links'] == 0
-                            expected_metadata['rotation/records/journal']['links'] = 1
+                            named_path = ('build-static/db/current' if name == 'named-symlink-actual' else
+                                          'rotation/records/named-link' if name.startswith('named-symlink-layout-') else
+                                          'rotation/records/journal')
+                            assert expected_metadata[named_path]['links'] == 0
+                            expected_metadata[named_path]['links'] = 1
                             recovered = disk.read_bytes()
-                            inode = inode_offset(data, lookup(data, 'rotation/records/journal'))
+                            inode = inode_offset(data, lookup(data, named_path))
                             assert struct.unpack_from('<I', recovered, inode + 20)[0] == 0
-                            row['restored_named_inode'] = lookup(data, 'rotation/records/journal')
+                            row['restored_named_inode'] = lookup(data, named_path)
                         assert after_files == before_files and after_metadata == expected_metadata
                         assert after_directories == before_directories
                         if name == 'deleted-shared-attribute':

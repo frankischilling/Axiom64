@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Match refused checker findings to a singly named, deletion-marked regular file."""
+"""Match refused checker findings to a singly named, deletion-marked file or symlink."""
 import re
 import struct
 
@@ -42,9 +42,9 @@ def named_retirement_findings(data, text):
         inode = table * block_size + index * inode_size
         if not 0 <= inode <= len(data) - inode_size:
             raise ValueError('inode outside the volume')
-        if number in wanted and (u16(inode) & 0o170000 != 0o100000 or
+        if number in wanted and (u16(inode) & 0o170000 not in (0o100000, 0o120000) or
                                  u32(inode + 12) != u32(inode + 20)):
-            raise ValueError('named retirement is not a regular file with matching times')
+            raise ValueError('named retirement is not an eligible file with matching times')
         if u16(inode) & 0o170000 != 0o040000:
             continue
         if not u16(inode + 26) or u32(inode + 20):
@@ -68,6 +68,13 @@ def named_retirement_findings(data, text):
                         raise ValueError('malformed or duplicate directory name')
                     entries[name] = target
                     if target in wanted:
+                        target_group, target_index = divmod(target - 1, per_group)
+                        target_table = u32(descriptors + target_group * 32 + 8)
+                        target_inode = target_table * block_size + target_index * inode_size
+                        actual_type = data[offset + 7] if u32(1120) & 2 else 0
+                        expected_type = {0o100000:1, 0o120000:7}.get(u16(target_inode) & 0o170000)
+                        if actual_type and actual_type != expected_type:
+                            raise ValueError('named retirement has an inconsistent directory type')
                         references[target].append((number, name))
                 offset += extent
         if entries.get('.') != number or '..' not in entries:
@@ -95,7 +102,7 @@ def named_retirement_findings(data, text):
         expected.add((name, paths[parent], parent, number))
     if set(findings) != expected:
         raise ValueError('checker names do not match the actual directory records')
-    result.update(classification='singly-named-deletion-marked-regular-files',
+    result.update(classification='singly-named-deletion-marked-files-or-symlinks',
                   restored_names=[dict(name=name, directory=path, parent=parent, inode=number)
                                   for name, path, parent, number in sorted(expected)])
     return result

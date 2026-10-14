@@ -19,7 +19,7 @@
     } while (0)
 
 int main(int argc, char** argv) {
-    CHECK(argc == 3 && !getuid() && !geteuid());
+    CHECK((argc == 3 || argc == 4) && !getuid() && !geteuid());
     struct stat device;
     CHECK(stat("/dev/vda", &device) == 0 && S_ISBLK(device.st_mode));
     CHECK(mkdir("/mnt", 0755) == 0 || errno == EEXIST);
@@ -33,11 +33,25 @@ int main(int argc, char** argv) {
         printf("EXT2_DELETED_RECOVERY_DENIED mode=%s errno=%d\n", argv[1], errno);
     } else {
         CHECK(result == 0);
-        int fd = open("/mnt/recovery/rotation/records/journal", O_RDONLY | O_CLOEXEC);
-        CHECK(fd >= 0);
-        unsigned char header[4];
-        CHECK(read(fd, header, sizeof(header)) == sizeof(header) &&
-              memcmp(header, "A46L", sizeof(header)) == 0 && close(fd) == 0);
+        if (argc == 4) {
+            struct stat value;
+            char target[64] = {0};
+            CHECK(lstat("/mnt/recovery/build-static/db/current", &value) == 0 &&
+                  S_ISLNK(value.st_mode) && !value.st_uid && !value.st_gid && value.st_nlink == 1);
+            CHECK(readlink("/mnt/recovery/build-static/db/current", target, sizeof(target)) == 34 &&
+                  !memcmp(target, "g-", 2));
+            int fd = open("/mnt/recovery/build-static/db/current/passwd", O_RDONLY | O_CLOEXEC);
+            CHECK(fd >= 0);
+            char header[5];
+            CHECK(read(fd, header, sizeof(header)) == sizeof(header) &&
+                  !memcmp(header, "root:", sizeof(header)) && close(fd) == 0);
+        } else {
+            int fd = open("/mnt/recovery/rotation/records/journal", O_RDONLY | O_CLOEXEC);
+            CHECK(fd >= 0);
+            unsigned char header[4];
+            CHECK(read(fd, header, sizeof(header)) == sizeof(header) &&
+                  memcmp(header, "A46L", sizeof(header)) == 0 && close(fd) == 0);
+        }
         CHECK(umount("/mnt/recovery") == 0);
         printf("EXT2_DELETED_RECOVERY_PASS mode=%s mounted=1 clean_unmount=1\n", argv[1]);
     }

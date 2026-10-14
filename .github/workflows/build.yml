@@ -799,6 +799,12 @@ jobs:
       - name: Compare Linux file locks and test RAM/ext2 description lifetime
         if: matrix.suite == 'configuration'
         run: make test-file-locks
+      - name: Compare Linux path descriptors and test RAM/ext2 lifetime and access
+        if: matrix.suite == 'configuration'
+        run: |
+          python3 scripts/tests/path_descriptor_storage_test.py
+          sudo -n python3 scripts/path_descriptor_test.py --native --directory build/path-descriptors-native --fixtures /tmp/axiom64-ci-path-descriptors
+          sudo -n python3 scripts/path_descriptor_test.py --directory build/path-descriptors-guest
 
       - name: Test virtio disks and reboot persistence
         if: matrix.suite == 'storage'
@@ -905,6 +911,14 @@ jobs:
             build/tcp-icmp-*-inputs.json
             build/tcp-icmp-*.txt
             build/tcp-icmp-damaged/**
+      - name: Upload complete path-descriptor sources, products and filesystem evidence
+        if: always() && matrix.suite == 'configuration'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-path-descriptors-evidence
+          if-no-files-found: error
+          compression-level: 1
+          path: build/path-descriptors-*/**
       - name: Upload complete account source, process, filesystem and graphical evidence
         if: always() && startsWith(matrix.suite, 'accounts-')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

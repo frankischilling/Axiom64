@@ -854,7 +854,7 @@ Handle* open_handle(Node* n, uint32_t flags, int* error) {
         if (!h.references) {
             h = {file_node(n), nullptr, 0, flags, 1, false};
             h.generation = next_generation++;
-            int result = device_open(&h);
+            int result = flags & 010000000 ? 0 : device_open(&h);
             if (result) {
                 h.references = 0;
                 if (error)
@@ -893,7 +893,8 @@ void close_handle(Handle* h) {
     record_lock_release(*h);
     if (h->node && h->node->mount->ops->close_description)
         h->node->mount->ops->close_description(h);
-    device_close(h);
+    if (!(h->flags & 010000000))
+        device_close(h);
     if (h->socket)
         socket_close(h->socket);
     if (h->packet)

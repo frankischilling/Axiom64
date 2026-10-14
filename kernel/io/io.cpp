@@ -635,7 +635,7 @@ int64_t io_syscall(Task& task, const Frame& frame) {
         return -22;
     int fd = int(frame.rdi);
     Handle* h = fd >= 0 && unsigned(fd) < max_fds ? task.files->entries[fd].handle : nullptr;
-    if (!h)
+    if (!h || (h->flags & 010000000))
         return -9;
     if (task.io)
         panic("active I/O at syscall entry");

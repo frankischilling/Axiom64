@@ -44,8 +44,9 @@ struct Pollfd {
     int16_t events, revents;
 };
 
-static Handle* fd_handle(int fd) {
-    return fd >= 0 && unsigned(fd) < max_fds ? current->files->entries[fd].handle : nullptr;
+static Handle* fd_handle(int fd, bool path_allowed = false) {
+    auto handle = fd >= 0 && unsigned(fd) < max_fds ? current->files->entries[fd].handle : nullptr;
+    return handle && (!path_allowed && (handle->flags & 010000000)) ? nullptr : handle;
 }
 
 static int64_t copy_result(uint64_t to, const void* data, size_t size) {
@@ -64,7 +65,7 @@ static bool path_at(int fd, uint64_t user, Path& path) {
         if (fd == -100)
             path.base = current->fs->cwd_node;
         else {
-            auto h = fd_handle(fd);
+            auto h = fd_handle(fd, true);
             if (!h || !h->node) {
                 path.error = -9;
                 return false;
@@ -81,6 +82,9 @@ static bool path_at(int fd, uint64_t user, Path& path) {
 }
 
 static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode) {
+    bool path_only = flags & 010000000;
+    if (path_only)
+        flags &= 010000000 | 02000000 | 0200000 | 0400000;
     Path name;
     if (!path_at(dirfd, path, name))
         return name.error;
@@ -97,7 +101,7 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
         return error;
     if ((flags & 0200000) && (n->mode & 0170000) != directory)
         return -20;
-    if ((n->mode & 0170000) == symlink)
+    if ((n->mode & 0170000) == symlink && !path_only)
         return -40;
     if ((n->mode & 0170000) == directory && (flags & 3))
         return -21;
@@ -105,9 +109,9 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
     unsigned mask = (flags & 3) == 0 ? 4 : (flags & 3) == 1 ? 2 : 6;
     if ((flags & 01000) && (n->mode & 0170000) == regular_file)
         mask |= 2;
-    if (!created && (error = node_access(n, mask)))
+    if (!path_only && !created && (error = node_access(n, mask)))
         return error;
-    if (n->mount->nodev &&
+    if (!path_only && n->mount->nodev &&
         ((n->mode & 0170000) == character || (n->mode & 0170000) == block_device))
         return -13;
     if (((flags & 3) || (flags & 01000)) && (n->mode & 0170000) == regular_file && node_readonly(n))
@@ -118,7 +122,7 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
         return -16;
     if (n->device == Device::block && (flags & 040000)) // O_DIRECT needs alignment semantics.
         return -22;
-    if (n->device == Device::tty && !current->process->controlling_pty &&
+    if (!path_only && n->device == Device::tty && !current->process->controlling_pty &&
         !current->process->controlling_console)
         return -6;
     if ((flags & 01000) && (n->mode & 0170000) == regular_file) {
@@ -143,7 +147,7 @@ static int path_node_at(int fd, uint64_t user, uint64_t flags, Node*& node, bool
         if (!current->memory->space.string(user, path.text, sizeof(path.text)))
             return -14;
         if (!path.text[0]) {
-            auto handle = fd_handle(fd);
+            auto handle = fd_handle(fd, true);
             node = fd == -100 ? current->fs->cwd_node : handle ? handle->node : nullptr;
             return node ? 0 : -9;
         }
@@ -292,7 +296,7 @@ static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd,
 }
 
 static int64_t dup_fd(int old, int target, int flags = 0) {
-    Handle* h = fd_handle(old);
+    Handle* h = fd_handle(old, true);
     if (!h)
         return -9;
     if (target < 0 || unsigned(target) >= max_fds)
@@ -459,11 +463,8 @@ static int64_t statfs_node(Node* node, uint64_t dst) {
 static int64_t readlink_path(int fd, uint64_t path, uint64_t buffer, size_t capacity) {
     if (!capacity)
         return -22;
-    Path name;
-    if (!path_at(fd, path, name))
-        return name.error;
     Node* node = nullptr;
-    int error = resolve_path(name, node, false);
+    int error = path_node_at(fd, path, 0x100 | 0x1000, node);
     if (error)
         return error;
     node = file_node(node);
@@ -583,7 +584,7 @@ static int64_t dispatch(Frame* f) {
     case 2:
         return open_file(-100, a, b, c);
     case 3: {
-        auto h = fd_handle(a);
+        auto h = fd_handle(a, true);
         if (!h)
             return -9;
         close_descriptor(*current->files, int(a));
@@ -592,7 +593,7 @@ static int64_t dispatch(Frame* f) {
     case 4:
         return stat_path(-100, a, b, true);
     case 5: {
-        auto h = fd_handle(a);
+        auto h = fd_handle(a, true);
         if (!h)
             return -9;
         if (h->pipe || h->socket || h->packet || h->inet || h->netlink || h->epoll) {
@@ -786,7 +787,7 @@ static int64_t dispatch(Frame* f) {
     case 67:
         return shared_memory_syscall(f);
     case 32: {
-        auto h = fd_handle(a);
+        auto h = fd_handle(a, true);
         if (!h)
             return -9;
         retain(h);
@@ -862,7 +863,7 @@ static int64_t dispatch(Frame* f) {
     case 72: {
         if (record_lock_command(b))
             return io_syscall(*current, *f);
-        auto h = fd_handle(a);
+        auto h = fd_handle(a, true);
         if (!h)
             return -9;
         if (b == 0 || b == 1030) {
@@ -873,13 +874,15 @@ static int64_t dispatch(Frame* f) {
             return fd;
         }
         if (b == 1)
-            return current->files->entries[a].cloexec;
+            return current->files->entries[int(a)].cloexec;
         if (b == 2) {
-            current->files->entries[a].cloexec = c & 1;
+            current->files->entries[int(a)].cloexec = c & 1;
             return 0;
         }
         if (b == 3)
-            return h->flags;
+            return h->flags & ~uint32_t(02000000);
+        if (h->flags & 010000000)
+            return -9;
         if (b == 4) {
             h->flags = (h->flags & ~uint32_t(06000)) | (c & 06000);
             return 0;
@@ -941,7 +944,7 @@ static int64_t dispatch(Frame* f) {
         return 0;
     }
     case 81: {
-        auto h = fd_handle(a);
+        auto h = fd_handle(a, true);
         if (!h)
             return -9;
         if (!h->node || (h->node->mode & 0170000) != directory)
@@ -1230,7 +1233,7 @@ static int64_t dispatch(Frame* f) {
         return error ? error : statfs_node(node, b);
     }
     case 138: {
-        auto h = fd_handle(a);
+        auto h = fd_handle(a, true);
         return !h ? -9 : !h->node ? -22 : statfs_node(h->node, b);
     }
     case 162:

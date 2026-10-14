@@ -133,6 +133,31 @@ static int read_current(int directory, char output[35]) {
     return generation_name(output) ? 0 : failed(EINVAL);
 }
 
+static int hold_current_pointer(const struct account_store* store) {
+    int fd = openat(store->directory, "current", O_PATH | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0)
+        return -1;
+    struct stat held, named;
+    int error = fstat(fd, &held) < 0 ? errno : 0;
+    if (!error && (!S_ISLNK(held.st_mode) || held.st_uid || held.st_gid || held.st_nlink != 1))
+        error = EACCES;
+    if (!error && fstatat(store->directory, "current", &named, AT_SYMLINK_NOFOLLOW) < 0)
+        error = errno;
+    if (!error && (held.st_dev != named.st_dev || held.st_ino != named.st_ino))
+        error = EUCLEAN;
+    char target[35];
+    ssize_t length = error ? -1 : readlinkat(fd, "", target, sizeof(target));
+    if (!error && length < 0)
+        error = errno;
+    if (!error && (length != 34 || memcmp(target, store->current, 34)))
+        error = EUCLEAN;
+    if (error) {
+        close(fd);
+        return failed(error);
+    }
+    return fd;
+}
+
 static int remove_generation(int, const char*, const struct account_transaction*, int held);
 
 static int remove_pointer(int directory, const char* generation) {
@@ -533,6 +558,7 @@ static int commit(struct account_store* store,
             return failed(EINVAL);
     char generation[35] = {0}, pointer[35] = {0}, observed[35] = {0};
     int directory = -1, created = 0, pointer_created = 0, error = 0;
+    int previous_pointer = -1;
     struct account_transaction* transaction = NULL;
     if (home) {
         for (unsigned attempt = 0; attempt < 8; attempt++) {
@@ -579,6 +605,13 @@ static int commit(struct account_store* store,
     if (!error &&
         (fchmod(directory, 0755) < 0 || fsync(directory) < 0 || fsync(store->directory) < 0))
         error = errno;
+    // Keep the previous symlink's inode and target intact through publication.
+    // A non-following path description cannot read or modify the selected files.
+    if (!error && *store->current) {
+        previous_pointer = hold_current_pointer(store);
+        if (previous_pointer < 0)
+            error = errno;
+    }
     memcpy(pointer, generation, sizeof(pointer));
     pointer[0] = 'p';
     if (!error) {
@@ -627,6 +660,8 @@ static int commit(struct account_store* store,
     }
     if (!error)
         error = cleanup_error;
+    if (previous_pointer >= 0 && close(previous_pointer) < 0 && !error)
+        error = errno;
     return error ? failed(error) : 0;
 }
 

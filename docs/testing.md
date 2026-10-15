@@ -67,6 +67,8 @@ The native path-descriptor cancellation checks distinguish live children, unreap
 
 The host captures `build/desktop-bios.png` and `desktop-uefi.png` after input succeeds. Logs are `build/boot-bios.log` and `boot-uefi.log`; results are in `build/boot-results.json`.
 
+CI can reuse completed musl and OpenSSL products across revisions with identical dependency locks, recipes, local patches and host build inputs. The cache key includes actual compiler/tool bytes, native linker inputs and C headers. It also binds the workspace path used by compiler specifications. Cache hits still run the maintained builders, complete product hash checks and damaged-input controls. The cache retains staged tools, libraries, notices, manifests, logs and generated configuration headers; it excludes OpenSSL source and intermediate object trees. Input fingerprints, product counts and cache-hit evidence accompany the account-policy artifact under `crypto-cache/`. Complete cold and warm workflow timings are needed before claiming an overall CI improvement.
+
 For shorter development loops:
 
 ```sh

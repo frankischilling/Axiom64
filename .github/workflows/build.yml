@@ -40,6 +40,17 @@ jobs:
             downloads/*.tar.*
             downloads/ports
             downloads/sources
+      - name: Test crypto cache input invalidation and complete product retention
+        run: python3 scripts/tests/crypto_cache_test.py -v
+      - name: Fingerprint crypto recipes and actual host toolchain inputs
+        id: crypto_cache_inputs
+        run: python3 scripts/ci/crypto_cache.py --report build/crypto-cache/inputs.json >> "$GITHUB_OUTPUT"
+      - name: Cache completed crypto libraries and staged tools
+        id: crypto_cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          key: ${{ steps.crypto_cache_inputs.outputs.key }}
+          path: ${{ steps.crypto_cache_inputs.outputs.paths }}
       - name: Check C and C++ formatting
         run: make check-format
       - name: Test QEMU accelerator selection and actual monitor evidence
@@ -109,6 +120,10 @@ jobs:
         run: python3 scripts/build_openssl.py --provider all
       - name: Verify completed OpenSSL fingerprints and reject changed inputs and products
         run: python3 scripts/tests/openssl_inputs_test.py -v
+      - name: Verify every completed crypto product is retained by the cache
+        run: |
+          python3 scripts/ci/crypto_cache.py --check --report build/crypto-cache/products.json
+          printf '%s\n' '${{ steps.crypto_cache.outputs.cache-hit }}' > build/crypto-cache/cache-hit.txt
       - name: Build maintained password providers and account programs
         run: |
           python3 scripts/build_libxcrypt.py --provider all
@@ -193,6 +208,7 @@ jobs:
             build/gnu-reader-controls
             build/gnu-reader-public-controls
             build/gnu-utmp-reader
+            build/crypto-cache
       - name: Test paired network workspace isolation and failure evidence
         run: python3 scripts/tests/paired_network_test.py
       - name: Test PCI removal preserves interrupted guest reads

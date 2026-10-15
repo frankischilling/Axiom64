@@ -843,6 +843,7 @@ jobs:
       - name: Compare Linux path descriptors and test RAM/ext2 lifetime and access
         if: matrix.suite == 'configuration'
         run: |
+          python3 scripts/tests/path_descriptor_cancellation_test.py -v
           python3 scripts/tests/path_descriptor_storage_test.py
           sudo -n python3 scripts/path_descriptor_test.py --native --directory build/path-descriptors-native --fixtures /tmp/axiom64-ci-path-descriptors
           sudo -n python3 scripts/path_descriptor_test.py --directory build/path-descriptors-guest

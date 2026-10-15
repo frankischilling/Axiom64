@@ -78,6 +78,8 @@ jobs:
         run: python3 scripts/tests/account_management_coverage_test.py -v
       - name: Require complete bounded CI storage matrices
         run: python3 scripts/tests/account_storage_ci_test.py -v
+      - name: Publish root-created storage evidence through an ordinary runner
+        run: sudo -n python3 scripts/tests/account_storage_publication_test.py
       - name: Define complete account storage matrices
         id: storage_matrices
         run: python3 scripts/account_storage_ci.py >> "$GITHUB_OUTPUT"
@@ -1128,6 +1130,11 @@ jobs:
           sudo -n python3 scripts/account_management_ext2.py --journal --campaign clean --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --directory "build/account-management-clean-$cell"
           sudo -n python3 scripts/account_management_ext2.py --journal --campaign storage --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --directory "build/account-management-storage-$cell"
           sudo -n python3 scripts/account_management_storage_coverage.py collect-clean --clean-directory "build/account-management-clean-$cell" --storage-directory "build/account-management-storage-$cell" --output "build/account-management-clean-index-$cell/coverage-index.json"
+      - name: Give the runner ownership of completed administration evidence
+        if: always()
+        run: |
+          cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT"
+          sudo -n bash scripts/ci/storage_evidence.sh "$(id -u)" "$(id -g)" "build/account-management-clean-$cell" "build/account-management-storage-$cell" "build/account-management-clean-index-$cell"
       - name: Upload complete administration and storage-control evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1176,6 +1183,11 @@ jobs:
           cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-$CACHE"
           sudo -n python3 scripts/account_management_ext2.py --journal --campaign fault --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --cache-model "$CACHE" --fault-modes eio,pause-before,pause-after --directory "build/account-management-fault-$cell"
           sudo -n python3 scripts/account_management_storage_coverage.py collect-fault --directory "build/account-management-fault-$cell" --output "build/account-management-fault-index-$cell/coverage-index.json"
+      - name: Give the runner ownership of completed administration fault evidence
+        if: always()
+        run: |
+          cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-$CACHE"
+          sudo -n bash scripts/ci/storage_evidence.sh "$(id -u)" "$(id -g)" "build/account-management-fault-$cell" "build/account-management-fault-index-$cell"
       - name: Upload complete administration device and power-loss evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1225,6 +1237,11 @@ jobs:
           cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-$SCENARIO-$CACHE-$SHARD"
           sudo -n python3 scripts/account_logbook_rotation_ext2.py --journal --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --scenario "$SCENARIO" --cache-model "$CACHE" --fault-mode eio pause-before pause-after --shard-count "$SHARD_COUNT" --shard-index "$SHARD" --directory "build/account-rotation-storage-$cell"
           sudo -n python3 scripts/account_rotation_storage_coverage.py collect --directory "build/account-rotation-storage-$cell" --output "build/account-rotation-storage-$cell/coverage-index.json"
+      - name: Give the runner ownership of completed rotation evidence
+        if: always()
+        run: |
+          cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-$SCENARIO-$CACHE-$SHARD"
+          sudo -n bash scripts/ci/storage_evidence.sh "$(id -u)" "$(id -g)" "build/account-rotation-storage-$cell"
       - name: Upload complete rotation sources, images, observations and interrupted disks
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

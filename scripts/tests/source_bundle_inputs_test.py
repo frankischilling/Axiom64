@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import sources
 
 ROOT = Path(__file__).resolve().parents[2]
+PUBLICATION_HELPER = Path('scripts/ci/storage_evidence.sh')
 FIXTURE = Path('scripts/tests/fixtures/normal-console/interrupted-prompt.txt')
 RECOVERY_FIXTURE = Path('scripts/tests/fixtures/ext2-deleted-open-inode.raw.gz')
 NAMED_RECOVERY_FIXTURE = Path('scripts/tests/fixtures/ext2-named-retirement.raw.gz')
@@ -47,7 +48,7 @@ class SourceBundleInputsTests(unittest.TestCase):
             configuration.parent.mkdir(parents=True)
             configuration.write_bytes(b'fixture\n')
             for item in [*(path.relative_to(ROOT) for path in (ROOT / 'scripts').rglob('*.py')),
-                         *ACCOUNT_ORACLE_FIXTURES]:
+                         *ACCOUNT_ORACLE_FIXTURES, PUBLICATION_HELPER]:
                 target = root / item
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / item, target)
@@ -55,7 +56,7 @@ class SourceBundleInputsTests(unittest.TestCase):
                 sources.bundle([])
             extracted = Path(name) / 'extracted'
             with tarfile.open(root / 'build/axiom64-sources.tar') as archive:
-                for fixture in ACCOUNT_ORACLE_FIXTURES:
+                for fixture in (*ACCOUNT_ORACLE_FIXTURES, PUBLICATION_HELPER):
                     self.assertEqual(archive.extractfile('Axiom64/' + fixture.as_posix()).read(),
                                      (ROOT / fixture).read_bytes())
                 archive.extractall(extracted, filter='data')
@@ -79,7 +80,7 @@ class SourceBundleInputsTests(unittest.TestCase):
             configuration.parent.mkdir(parents=True)
             configuration.write_bytes(b'fixture\n')
             for item in (Path('scripts/console_prompt.py'), Path('scripts/tests/console_prompt_test.py'),
-                         FIXTURE, *RECOVERY_FIXTURES):
+                         FIXTURE, *RECOVERY_FIXTURES, PUBLICATION_HELPER):
                 target = root / item
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / item, target)
@@ -89,7 +90,7 @@ class SourceBundleInputsTests(unittest.TestCase):
                 sources.bundle([])
             extracted = Path(name) / 'extracted'
             with tarfile.open(root / 'build/axiom64-sources.tar') as archive:
-                for fixture in (FIXTURE, *RECOVERY_FIXTURES):
+                for fixture in (FIXTURE, *RECOVERY_FIXTURES, PUBLICATION_HELPER):
                     member = archive.getmember('Axiom64/' + fixture.as_posix())
                     self.assertEqual(archive.extractfile(member).read(), (ROOT / fixture).read_bytes())
                 archive.extractall(extracted, filter='data')

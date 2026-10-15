@@ -27,6 +27,7 @@ from account_logbook_rotation_block import backend_command, trace_events
 from account_logbook_rotation_guest import frames, state, projections
 from account_logbook_test import SOURCES
 from account_management_ext2 import working_disk
+from account_journal_oracle import journal_observation
 from account_storage_shards import partition_targets
 from account_store_guest import fixture
 from account_store_test import digest, environment
@@ -313,10 +314,28 @@ def fsck(disk, directory, label, *, pending_recovery=False):
     row = execute(['e2fsck', '-f', '-n', str(disk)], log)
     text = log.read_text()
     diagnostics = re.findall(r'^.*(?:\bwrong\b|Fix\?|\bIGNORED\b|UNEXPECTED INCONSISTENCY|'
-                             r'still has errors|\bcorrupt\b|multiply.claimed|unattached inode).*$'
+                             r'still has errors|skipping journal recovery|\bcorrupt\b|multiply.claimed|unattached inode).*$'
                              , text, re.MULTILINE | re.IGNORECASE)
     row['rejected_diagnostics'] = diagnostics
     row['passed'] = not row['returncode'] and not row['timed_out'] and not diagnostics
+    if pending_recovery and row['returncode'] in (0, 4) and not row['timed_out']:
+        with disk.open('rb') as stream:
+            stream.seek(1116)
+            compatible, incompatible = struct.unpack('<II', stream.read(8))
+        if compatible & 4 and incompatible & 4:
+            # The raw checker omits committed journal replay. Retain that
+            # result, then assess the existing recovery contract on a separate
+            # native observation copy. The guest still receives the raw disk.
+            save(directory / (label + '-fsck.json'), row)
+            with journal_observation(disk, directory) as (observation, proof):
+                with observation.open('rb') as stream:
+                    stream.seek(1120)
+                    assert not struct.unpack('<I', stream.read(4))[0] & 4
+                checked = fsck(observation, directory, label + '-journal-replayed',
+                               pending_recovery=True)
+                proof['raw_filesystem_check'] = row
+                proof['filesystem_check'] = checked
+            return dict(checked, journal_observation=proof)
     if pending_recovery and not row['passed'] and row['returncode'] in (0, 4) and not row['timed_out']:
         data = disk.read_bytes()
         for classifier in (deleted_allocation_findings, counter_findings, named_retirement_findings):

@@ -260,9 +260,41 @@ int account_logbook_auth_line(const struct account_logbook* book, size_t index, 
     return count < 0 || (size_t)count >= capacity ? failed(EOVERFLOW) : count;
 }
 
+struct projection_writer {
+    int fd;
+    size_t used;
+    unsigned char bytes[4096];
+};
+
+static int projection_flush(struct projection_writer* writer) {
+    if (writer->used && write_all(writer->fd, writer->bytes, writer->used, 0, 0) < 0)
+        return -1;
+    writer->used = 0;
+    return 0;
+}
+
+static int projection_write(struct projection_writer* writer, const void* bytes, size_t size) {
+    const unsigned char* input = bytes;
+    while (size) {
+        size_t count = sizeof(writer->bytes) - writer->used;
+        if (count > size)
+            count = size;
+        memcpy(writer->bytes + writer->used, input, count);
+        writer->used += count;
+        input += count;
+        size -= count;
+        if (writer->used == sizeof(writer->bytes) && projection_flush(writer) < 0)
+            return -1;
+    }
+    return 0;
+}
+
 int account_logbook_write_projection(int fd, void* context) {
     struct account_logbook_projection* projection = context;
     struct account_logbook* book = projection->book;
+    // Projections replace complete files. Batch payload writes; their caller
+    // still synchronizes the temporary file before publishing its name.
+    struct projection_writer writer = {.fd = fd};
     if (projection->kind == 0) {
         // utmp keeps the latest occupant of each terminal. An older session's
         // delayed logout cannot clear a newer occupant of the same path.
@@ -290,11 +322,11 @@ int account_logbook_write_projection(int fd, void* context) {
             struct account_login_entry entry = book->frames[slots[i]].entry;
             if (entry.type == 8)
                 memset(entry.user, 0, sizeof(entry.user));
-            if (write_all(fd, &entry, sizeof(entry), 0, 0) < 0)
+            if (projection_write(&writer, &entry, sizeof(entry)) < 0)
                 error = errno;
         }
         free(slots);
-        return error ? failed(error) : 0;
+        return error ? failed(error) : projection_flush(&writer);
     }
     for (size_t i = book->state.carried; i < book->count; i++) {
         const struct account_login_frame* frame = &book->frames[i];
@@ -304,21 +336,21 @@ int account_logbook_write_projection(int fd, void* context) {
             struct account_login_entry entry = frame->entry;
             if (entry.type == 8)
                 memset(entry.user, 0, sizeof(entry.user));
-            if (write_all(fd, &entry, sizeof(entry), 0, 0) < 0)
+            if (projection_write(&writer, &entry, sizeof(entry)) < 0)
                 return -1;
         } else if (projection->kind == 2 && frame->kind == ACCOUNT_LOGIN_DENIED) {
-            if (write_all(fd, &frame->entry, sizeof(frame->entry), 0, 0) < 0)
+            if (projection_write(&writer, &frame->entry, sizeof(frame->entry)) < 0)
                 return -1;
         } else if (projection->kind == 3) {
             char line[512];
             int count = account_logbook_auth_line(book, i, line, sizeof(line));
             if (count < 0)
                 return -1;
-            if (write_all(fd, line, (size_t)count, 0, 0) < 0)
+            if (projection_write(&writer, line, (size_t)count) < 0)
                 return -1;
         }
     }
-    return 0;
+    return projection_flush(&writer);
 }
 
 static int publish(struct account_logbook* book) {

@@ -331,6 +331,32 @@ static void production_limit(const char* directory) {
     puts("ACCOUNT_ROTATION_GUEST_PASS phase=default policy=33554432 generation=2 archives=1");
 }
 
+static void production_recover(const char* directory) {
+    CHECK(ACCOUNT_LOGIN_JOURNAL_LIMIT == 32u * 1024 * 1024 && ACCOUNT_LOGIN_LIVE_LIMIT == 1024);
+    const size_t capacity = ACCOUNT_LOGIN_JOURNAL_LIMIT / sizeof(struct account_login_frame);
+    struct account_logbook* book = NULL;
+    CHECK(account_logbook_open(directory, 0, &book) == 0);
+    CHECK(book->state.generation == 2 && !book->state.carried &&
+          book->state.previous_events == capacity && book->count == 1);
+    const struct account_login_frame* current = &book->frames[0];
+    CHECK(current->kind == ACCOUNT_LOGIN_SUDO && current->uid == fixture_uid &&
+          current->status == 65535 && !strcmp(current->entry.user, "alice") &&
+          !strcmp(current->entry.host, "root"));
+    account_logbook_close(book);
+    char name[4096];
+    path(name, directory, "archive-0000000000000001/journal");
+    int fd = open(name, O_RDONLY | O_NOFOLLOW);
+    struct stat value;
+    CHECK(fd >= 0 && fstat(fd, &value) == 0 &&
+          value.st_size == (off_t)(capacity * sizeof(struct account_login_frame)));
+    uint32_t crc = file_crc(fd);
+    CHECK(close(fd) == 0);
+    printf("ACCOUNT_ROTATION_GUEST_DEFAULT_RECOVERY frames=%zu bytes=%zu crc32=%08x\n", capacity,
+           capacity * sizeof(struct account_login_frame), crc);
+    puts("ACCOUNT_ROTATION_GUEST_PASS phase=default-recover policy=33554432 generation=2 "
+         "archives=1");
+}
+
 int main(int argc, char** argv) {
     CHECK(argc == 3 && !getuid() && !geteuid() && !getgid() && !getegid());
     if (!strcmp(argv[1], "prepare"))
@@ -339,6 +365,8 @@ int main(int argc, char** argv) {
         CHECK(ACCOUNT_LOGIN_JOURNAL_LIMIT == 3584 && ACCOUNT_LOGIN_LIVE_LIMIT == 4);
         verify_current(argv[2], 1);
         puts("ACCOUNT_ROTATION_GUEST_PASS phase=recover policy=small generation=10 archives=4");
+    } else if (!strcmp(argv[1], "default-recover")) {
+        production_recover(argv[2]);
     } else {
         CHECK(!strcmp(argv[1], "default"));
         production_limit(argv[2]);

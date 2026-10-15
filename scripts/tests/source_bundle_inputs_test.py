@@ -27,6 +27,8 @@ CLEARED_DIRECTORY_FIXTURE = Path('scripts/tests/fixtures/ext2-cleared-named-dire
 ACCOUNT_ORACLE_FIXTURES = tuple(Path('scripts/tests/fixtures') / name for name in (
     'account-generation-journal-replay.raw.gz', 'account-generation-journal-replay.json',
     'account-journal-retirement.raw.gz', 'account-journal-retirement.json',
+    'account-rotation-journal-retirement.raw.gz', 'account-rotation-journal-retirement.json',
+    'account-rotation-journal-allocation.raw.gz', 'account-rotation-journal-allocation.json',
     'account-management-targets.json', 'account-rotation-targets.json',
     'account-rotation-provisional.json', 'ext2-counter-drift.raw.gz',
     'account-rotation-interrupted-data.txt'))
@@ -61,7 +63,8 @@ class SourceBundleInputsTests(unittest.TestCase):
                                      (ROOT / fixture).read_bytes())
                 archive.extractall(extracted, filter='data')
             exported = extracted / 'Axiom64'
-            for test in ('account_generation_oracle_test.py', 'account_rotation_serial_test.py'):
+            for test in ('account_generation_oracle_test.py', 'account_rotation_serial_test.py',
+                         'account_rotation_journal_oracle_test.py'):
                 result = subprocess.run([sys.executable, 'scripts/tests/' + test, '-v'],
                                         cwd=exported, env=dict(os.environ, PYTHONPATH=''),
                                         capture_output=True, timeout=60)

@@ -296,7 +296,7 @@ def collect(directory, source_root=ROOT):
         bind(check_log, check['log_sha256'])
         native = check_log.read_text()
         require(all('Pass ' + str(number) + ':' in native for number in range(1, 6)) and
-                not re.search(r'count wrong|bitmap differences|Fix\?|Clear\?|still has errors', native, re.I),
+                not re.search(r'count wrong|bitmap differences|Fix\?|Clear\?|still has errors|skipping journal recovery', native, re.I),
                 'native postcheck was incomplete or found damage')
         bind(folder / 'metadata.json')
         exports = folder / 'exports'

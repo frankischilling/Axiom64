@@ -66,6 +66,8 @@ jobs:
         run: python3 scripts/tests/account_rotation_coverage_test.py -v
       - name: Replay retained account generation selection through a separate Linux journal oracle
         run: python3 scripts/tests/account_generation_oracle_test.py -v
+      - name: Classify retained rotation retirement after journal-only observation
+        run: python3 scripts/tests/account_rotation_journal_oracle_test.py -v
       - name: Preserve actual administration disks and reap interrupted observation children
         run: python3 scripts/tests/account_management_storage_test.py
       - name: Reject unproven provisional rotation archives
@@ -444,6 +446,8 @@ jobs:
         run: |
           sudo -n python3 scripts/account_logbook_rotation_test.py --native --directory build/account-rotation-native --fixtures /tmp/axiom64-ci-account-rotation
           sudo -n python3 scripts/account_logbook_rotation_guest.py --native --directory build/account-rotation-observer-native
+          python3 scripts/tests/account_projection_write_test.py --directory build/account-projection-write
+          python3 scripts/tests/account_projection_write_test.py --directory build/account-projection-write-sanitize --provider native --linkage dynamic --sanitize
       - name: Verify journal rotation, active sessions, retention and exact disk projections in real guest kernels
         if: startsWith(matrix.suite, 'accounts-rotation-') && matrix.suite != 'accounts-rotation-native'
         env:
@@ -457,6 +461,7 @@ jobs:
             *) exit 2 ;;
           esac
           sudo -n python3 scripts/account_logbook_rotation_guest.py --directory build/account-rotation-guest --firmware "$firmware" --transport "$transport" $default
+          sudo -n python3 scripts/account_logbook_default_ext2.py --directory build/account-rotation-default-ext2 --firmware "$firmware" --transport "$transport"
       - name: Verify authenticated graphical sessions and recovery on RAM and persistent roots
         if: startsWith(matrix.suite, 'accounts-desktop-')
         env:

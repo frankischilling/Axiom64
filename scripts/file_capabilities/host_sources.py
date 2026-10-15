@@ -1,14 +1,70 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Retain the signed corresponding Ubuntu glibc source for native test binaries."""
 import hashlib
+import http.client
+import json
 import lzma
+import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 from fetch import ROOT
+
+
+def authenticated_index(signed, cache, output, suite, mirror):
+    """Fetch the exact index named by an already signature-verified Release."""
+    diagnostic = output / 'archive-authentication' / suite
+    diagnostic.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(signed, diagnostic / 'InRelease')
+    match = re.search(r'^ ([a-f0-9]{64})\s+(\d+) main/source/Sources.xz$', signed.read_text(), re.M)
+    if not match:
+        raise ValueError('signed Ubuntu Release lacks the Sources index')
+    expected, size = match[1], int(match[2])
+    index = cache / (suite + '-Sources.xz')
+    url = mirror + 'dists/' + suite + '/main/source/by-hash/SHA256/' + expected
+    cached = index.exists()
+    interrupted = None
+    if cached:
+        data = index.read_bytes()
+    else:
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                declared = response.headers.get('Content-Length')
+                try:
+                    data = response.read(size + 1)
+                except http.client.IncompleteRead as error:
+                    data = error.partial
+                    interrupted = 'incomplete HTTP response'
+                if declared and declared.isdecimal() and len(data) < int(declared):
+                    interrupted = 'incomplete HTTP response'
+        except urllib.error.HTTPError as error:
+            (diagnostic / 'fetch.json').write_text(json.dumps(dict(url=url, status=error.code), indent=2) + '\n')
+            error.close()
+            raise
+    actual = hashlib.sha256(data).hexdigest()
+    passed = interrupted is None and len(data) == size and actual == expected
+    (diagnostic / 'Sources.xz').write_bytes(data)
+    (diagnostic / 'fetch.json').write_text(json.dumps(dict(
+        url=url, cached=cached, expected_sha256=expected, expected_bytes=size,
+        actual_sha256=actual, actual_bytes=len(data), interrupted=interrupted, passed=passed), indent=2) + '\n')
+    if not passed:
+        raise ValueError('signed Ubuntu Sources index checksum differs')
+    if not cached:
+        # A failed transfer never becomes a completed cache entry.
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=cache, prefix=index.name + '.', suffix='.part', delete=False) as stream:
+                temporary = Path(stream.name)
+                stream.write(data)
+            os.replace(temporary, index)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+    return index
 
 
 def capture(output):
@@ -48,21 +104,13 @@ def capture(output):
                           (codename + '-security', 'https://security.ubuntu.com/ubuntu/'),
                           (codename, 'https://archive.ubuntu.com/ubuntu/')):
         signed = cache / (suite + '-InRelease')
-        index = cache / (suite + '-Sources.xz')
         if not signed.exists():
             with urllib.request.urlopen(mirror + 'dists/' + suite + '/InRelease', timeout=60) as response:
                 signed.write_bytes(response.read())
         verified = subprocess.run(['gpgv', '--keyring', str(keyring), str(signed)], capture_output=True, check=True)
         (output / (suite + '-signature.log')).write_bytes(verified.stdout + verified.stderr)
-        match = re.search(r'^ ([a-f0-9]{64})\s+(\d+) main/source/Sources.xz$', signed.read_text(), re.M)
-        if not match:
-            raise ValueError('signed Ubuntu Release lacks the Sources index')
-        if not index.exists():
-            with urllib.request.urlopen(mirror + 'dists/' + suite + '/main/source/Sources.xz', timeout=60) as response:
-                index.write_bytes(response.read())
+        index = authenticated_index(signed, cache, output, suite, mirror)
         data = index.read_bytes()
-        if len(data) != int(match[2]) or hashlib.sha256(data).hexdigest() != match[1]:
-            raise ValueError('signed Ubuntu Sources index checksum differs')
         for item in lzma.decompress(data).decode().split('\n\n'):
             if re.search(r'^Package: glibc$', item, re.M) and re.search(r'^Version: ' + re.escape(version) + '$', item, re.M):
                 paragraph = item + '\n'

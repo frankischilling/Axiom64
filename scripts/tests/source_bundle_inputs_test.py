@@ -71,7 +71,8 @@ class SourceBundleInputsTests(unittest.TestCase):
             exported = extracted / 'Axiom64'
             for test in ('account_generation_oracle_test.py', 'account_rotation_serial_test.py',
                          'account_rotation_journal_oracle_test.py', 'qmp_greeting_test.py',
-                         'path_descriptor_cancellation_test.py', 'crypto_cache_test.py'):
+                         'path_descriptor_cancellation_test.py', 'crypto_cache_test.py',
+                         'host_glibc_sources_test.py'):
                 result = subprocess.run([sys.executable, 'scripts/tests/' + test, '-v'],
                                         cwd=exported, env=dict(os.environ, PYTHONPATH=''),
                                         capture_output=True, timeout=60)

@@ -71,6 +71,8 @@ CI can reuse completed musl and OpenSSL products across revisions with identical
 
 Read these reports together: `inputs.json` records the exact key and build inputs, `cache-hit.txt` records whether the cache action found that key, and `products.json` records the completed manifests and verified product counts. An empty or `false` cache-hit value means a miss; `true` alone does not prove that restored products passed verification. Compare successful complete workflows with matching build inputs, including queue time and the unchanged guest jobs. Documentation changes can reuse the key because they do not change a dependency recipe or product.
 
+Artifact downloads use a pinned Node 24 action and reject digest mismatches before restored inputs reach tests. Native file-capability comparisons obtain Ubuntu source indices through the content hash in a signature-verified Release. This avoids combining an older Release with a newly published mutable index. Capture retains rejected index bytes and their expected/actual hashes under `archive-authentication/`; a failed transfer never becomes a completed index cache entry. Eight HTTP regression cases cover publication identity, truncated responses, missing indices and damaged cached bytes. The extracted-source checks run these cases too.
+
 For shorter development loops:
 
 ```sh

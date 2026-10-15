@@ -124,7 +124,7 @@ Acceptance evidence:
 
 ### F03. Writable ext2 and later ext4
 
-Classic ext2 root and data volumes support persistent files, directories, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and reboot verification. [Data volumes](ext2.md), [disk roots](disk-root.md), and [format/test limits](ext2.md) describe this slice. Advanced formats and recovery remain planned. Every requirement below remains in the complete filesystem area.
+Classic ext2 root and data volumes support persistent files, directories, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and reboot verification. Initial internal-journal support replays committed records after interruption and logs complete data and metadata operations before updating their home blocks. General crash recovery, journal sizing and advanced formats still require work. [Data volumes](ext2.md), [disk roots](disk-root.md), and [format/test limits](ext2.md) describe the supported behavior and remaining acceptance. Every requirement below remains in the complete filesystem area.
 
 Required work:
 

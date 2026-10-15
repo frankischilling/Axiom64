@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/ext2/ext2.hpp"
 #include "fs/ext2/xattr.hpp"
+#include "fs/ext2/journal.hpp"
 #include "process/task.hpp"
 #include "drivers/block/block.hpp"
 #include "drivers/platform/devices.hpp"
@@ -104,6 +105,9 @@ struct Volume {
     Change* changes;
     Entry* entries;
     CachedBlock* cache;
+    Journal* journal;
+    uint32_t* journal_map;
+    uint32_t journal_blocks;
     uint32_t touched[64];
     unsigned touched_count;
     int error;
@@ -320,6 +324,26 @@ struct Volume {
             }
         }
         // Keep the complete overlay after an error; a later sync retries every write.
+        if (journal && changes) {
+            auto writes = static_cast<JournalWrite*>(alloc(sizeof(JournalWrite) * change_count));
+            if (!writes)
+                return fail(-12);
+            unsigned index = 0;
+            for (auto change = changes; change; change = change->next) {
+                writes[index++] = {change->block, change->data};
+                if (cache) {
+                    auto& cached = cache[change->block % cached_blocks];
+                    if (cached.block == change->block)
+                        cached.valid = false;
+                }
+            }
+            int result = journal_commit(journal, writes, change_count);
+            release(writes);
+            if (result)
+                return fail(result);
+            discard();
+            return true;
+        }
         for (unsigned rank = 0; rank <= 5; rank++)
             for (auto change = changes; change; change = change->next)
                 if (change->rank == rank) {
@@ -675,6 +699,8 @@ struct Volume {
         if (!super(header))
             return false;
         set16(header + 58, clean ? u16(header + 58) | 1 : u16(header + 58) & ~1u);
+        if (journal)
+            set32(header + 96, clean ? u32(header + 96) & ~4u : u32(header + 96) | 4u);
         set32(header + 48, node_now().sec);
         return save_super(header);
     }
@@ -1343,6 +1369,8 @@ static void destroy(Mount* mount) {
         block_unclaim(v->device, v);
     release(v->groups);
     release(v->cache);
+    journal_close(v->journal);
+    release(v->journal_map);
     release(v);
     mount->root = nullptr;
     mount->data = nullptr;
@@ -1580,7 +1608,8 @@ struct Validation {
                 uint32_t mode = u16(data), type = mode & 0170000;
                 bool reserved = number < v.first_inode && number != 2;
                 bool resize = number == 7 && (v.compatible & 16);
-                if (reserved && !resize) {
+                bool journal = number == 8 && v.journal;
+                if (reserved && !resize && !journal) {
                     if (mode || file_size(data) || u32(data + 28) || u32(data + 104))
                         return v.fail(-95);
                     for (unsigned slot = 0; slot < 15; slot++)
@@ -1899,6 +1928,105 @@ struct Validation {
     }
 };
 
+static int journal_read(void* context, uint32_t block, void* data) {
+    auto& v = *static_cast<Volume*>(context);
+    return block_read(v.device, uint64_t(block) * (v.block_size / sector_size), data,
+                      v.block_size / sector_size);
+}
+
+static int journal_write(void* context, uint32_t block, const void* data) {
+    auto& v = *static_cast<Volume*>(context);
+    if (v.cache) {
+        auto& cached = v.cache[block % cached_blocks];
+        if (cached.block == block)
+            cached.valid = false;
+    }
+    return block_write(v.device, uint64_t(block) * (v.block_size / sector_size), data,
+                       v.block_size / sector_size, &v);
+}
+
+static int journal_flush(void* context) {
+    return block_flush(static_cast<Volume*>(context)->device);
+}
+
+static int journal_overlay(void* context, uint32_t block, const void* data) {
+    auto& v = *static_cast<Volume*>(context);
+    return v.write_block(block, data, 5) ? 0 : v.error;
+}
+
+static bool open_journal(Volume& v, uint8_t* header, const BlockInfo& disk) {
+    if (!(v.compatible & 4))
+        return (u32(header + 96) & 4) ? v.fail(-95) : true;
+    if (u32(header + 224) != 8 || u32(header + 228) || !disk.flush_supported)
+        return v.fail(-95);
+    uint8_t inode[inode_bytes], original_header[1024];
+    memcpy(original_header, header, sizeof(original_header));
+    if (!v.load_inode(8, inode))
+        return false;
+    if ((u16(inode) & 0170000) != regular_file || u16(inode + 26) != 1 || u16(inode + 2) ||
+        u16(inode + 24) || u16(inode + 120) || u16(inode + 122) || u32(inode + 20) ||
+        u32(inode + 32) || u32(inode + 104) || u32(inode + 108) || !file_size(inode) ||
+        file_size(inode) % v.block_size || file_size(inode) / v.block_size < 1024 ||
+        file_size(inode) / v.block_size > v.blocks)
+        return v.fail(-95);
+    v.journal_blocks = file_size(inode) / v.block_size;
+    v.journal_map = static_cast<uint32_t*>(alloc(uint64_t(v.journal_blocks) * sizeof(uint32_t)));
+    if (!v.journal_map)
+        return v.fail(-12);
+    for (uint32_t index = 0; index < v.journal_blocks; index++)
+        if (!v.map_block(inode, index, false, v.journal_map[index], 0) || !v.journal_map[index])
+            return v.fail();
+    JournalStorage storage{
+        &v,           v.block_size,  v.blocks,     v.journal_map, v.journal_blocks,
+        journal_read, journal_write, journal_flush};
+    int error;
+    v.journal = journal_open(storage, header + 104, error);
+    if (!v.journal)
+        return v.fail(error);
+    if (disk.readonly && (journal_pending(v.journal) || (u32(header + 96) & 4)))
+        return v.fail(-30);
+    error = journal_stage(v.journal, journal_overlay, &v);
+    if (error)
+        return v.fail(error);
+    if (!v.super(header))
+        return false;
+    // Replay may update counters and ordinary mount state, but cannot change
+    // the geometry, feature interpretation or identity of its own journal.
+    uint8_t normalized[1024];
+    memcpy(normalized, header, sizeof(normalized));
+    constexpr unsigned counters[] = {12, 16, 44, 48}, state_fields[] = {52, 58};
+    for (unsigned offset : counters)
+        set32(normalized + offset, u32(original_header + offset));
+    for (unsigned offset : state_fields)
+        set16(normalized + offset, u16(original_header + offset));
+    if ((u32(header + 96) & ~4u) != (u32(original_header + 96) & ~4u) ||
+        (u32(header + 100) != u32(original_header + 100) &&
+         u32(header + 100) != (u32(original_header + 100) | 2)))
+        return v.fail();
+    set32(normalized + 96, u32(original_header + 96));
+    set32(normalized + 100, u32(original_header + 100));
+    if (memcmp(normalized, original_header, sizeof(normalized)))
+        return v.fail();
+    for (unsigned group = 0; group < v.group_count; group++) {
+        uint8_t descriptor[32];
+        const auto& expected = v.groups[group];
+        if (!v.descriptor(group, descriptor) || u32(descriptor) != expected.block_bitmap ||
+            u32(descriptor + 4) != expected.inode_bitmap ||
+            u32(descriptor + 8) != expected.inode_table)
+            return v.fail();
+    }
+    uint8_t replayed[inode_bytes];
+    if (!v.load_inode(8, replayed) || memcmp(inode, replayed, sizeof(inode)))
+        return v.fail();
+    for (uint32_t index = 0; index < v.journal_blocks; index++) {
+        uint32_t block;
+        if (!v.map_block(replayed, index, false, block, 0) || block != v.journal_map[index])
+            return v.fail();
+    }
+    v.readonly_features = u32(header + 100);
+    return true;
+}
+
 static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check_dirty) {
     if (u16(header + 56) != 0xef53)
         return v.fail(-22);
@@ -1919,7 +2047,7 @@ static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check
     uint32_t incompatible = v.revision ? u32(header + 96) : 0;
     v.readonly_features = v.revision ? u32(header + 100) : 0;
     v.typed_entries = incompatible & 2;
-    if ((v.compatible & ~0x38u) || (incompatible & ~2u) || (v.readonly_features & ~3u) ||
+    if ((v.compatible & ~0x3cu) || (incompatible & ~6u) || (v.readonly_features & ~3u) ||
         (v.inode_size != 128 && v.inode_size != 256))
         return v.fail(-95);
     v.reserved_gdt = v.compatible & 16 ? u16(header + 206) : 0;
@@ -1970,13 +2098,27 @@ static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check
             u16(desc + 12) > g.blocks || u16(desc + 14) > g.inodes || u16(desc + 16) > g.inodes)
             return v.fail();
     }
+    if (!open_journal(v, header, disk))
+        return false;
     unsigned state = u16(header + 58);
-    v.writable_safe = (state == 1 || (check_dirty && state == 0)) && !u32(header + 232);
+    v.writable_safe =
+        (state == 1 || ((check_dirty || v.journal) && state == 0)) && !u32(header + 232);
     if ((check_dirty || !v.mount->readonly) && !v.writable_safe)
         return v.fail();
     Validation check{v, check_dirty && !v.mount->readonly && state == 0};
-    return check.allocate() && check.bitmaps(header) && check.inode_maps() && check.directories() &&
-           check.reconcile(header) && check.reclaim_deleted(header);
+    if (!(check.allocate() && check.bitmaps(header) && check.inode_maps() && check.directories() &&
+          check.reconcile(header) && check.reclaim_deleted(header)))
+        return false;
+    if (v.journal) {
+        int error = journal_checkpoint(v.journal);
+        if (error)
+            return v.fail(error);
+        if (v.mount->readonly && ((u32(header + 96) & 4) || v.changes)) {
+            if (!v.state(true) || !v.flush() || !v.super(header))
+                return false;
+        }
+    }
+    return true;
 }
 
 } // namespace
@@ -2028,6 +2170,8 @@ int ext2_mount(Mount* mount, Node* device, bool check_dirty) {
     }
     if (!result && !mount->readonly) {
         set16(header + 58, u16(header + 58) & ~1u);
+        if (v->journal)
+            set32(header + 96, u32(header + 96) | 4u);
         set32(header + 44, node_now().sec);
         if (u16(header + 52) != UINT16_MAX)
             set16(header + 52, u16(header + 52) + 1);

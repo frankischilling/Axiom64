@@ -69,6 +69,8 @@ The host captures `build/desktop-bios.png` and `desktop-uefi.png` after input su
 
 CI can reuse completed musl and OpenSSL products across revisions with identical dependency locks, recipes, local patches and host build inputs. The cache key includes actual compiler/tool bytes, native linker inputs and C headers. It also binds the workspace path used by compiler specifications. Cache hits still run the maintained builders, complete product hash checks and damaged-input controls. The cache retains staged tools, libraries, notices, manifests, logs and generated configuration headers; it excludes OpenSSL source and intermediate object trees. Input fingerprints, product counts and cache-hit evidence accompany the account-policy artifact under `crypto-cache/`. Complete cold and warm workflow timings are needed before claiming an overall CI improvement.
 
+Read these reports together: `inputs.json` records the exact key and build inputs, `cache-hit.txt` records whether the cache action found that key, and `products.json` records the completed manifests and verified product counts. An empty or `false` cache-hit value means a miss; `true` alone does not prove that restored products passed verification. Compare successful complete workflows with matching build inputs, including queue time and the unchanged guest jobs. Documentation changes can reuse the key because they do not change a dependency recipe or product.
+
 For shorter development loops:
 
 ```sh

@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
 #include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
 #include <linux/futex.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/syscall.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
@@ -24,8 +26,36 @@ static uint64_t monotonic_ns(void) {
     return (uint64_t)value.tv_sec * 1000000000 + value.tv_nsec;
 }
 
+static int between(struct timespec value, struct timespec first, struct timespec last) {
+    // Filesystem clocks can round down more coarsely than CLOCK_REALTIME.
+    return value.tv_sec >= first.tv_sec - 1 && value.tv_sec <= last.tv_sec && value.tv_nsec >= 0 &&
+           value.tv_nsec < 1000000000;
+}
+
+static void filesystem_time(void) {
+    struct timespec first, last;
+    struct stat metadata;
+    char name[] = "/tmp/axiom64-clock-wall-XXXXXX";
+    require(!clock_gettime(CLOCK_REALTIME, &first), "filesystem creation lower bound");
+    int fd = mkstemp(name);
+    require(fd >= 0 && !fstat(fd, &metadata) && !clock_gettime(CLOCK_REALTIME, &last),
+            "filesystem creation observation");
+    require(between(metadata.st_atim, first, last) && between(metadata.st_mtim, first, last) &&
+                between(metadata.st_ctim, first, last),
+            "filesystem creation uses calendar time");
+    require(!clock_gettime(CLOCK_REALTIME, &first), "filesystem write lower bound");
+    require(write(fd, "calendar", 8) == 8 && !fsync(fd) && !fstat(fd, &metadata) &&
+                !clock_gettime(CLOCK_REALTIME, &last),
+            "filesystem write observation");
+    require(between(metadata.st_mtim, first, last) && between(metadata.st_ctim, first, last),
+            "filesystem write uses calendar time");
+    require(!unlink(name) && !close(fd), "filesystem calendar cleanup");
+    puts("CLOCK_WALL_FILESYSTEM_PASS creation=3 write=2");
+}
+
 int main(void) {
     setbuf(stdout, NULL);
+    filesystem_time();
     struct timespec first, last, resolution;
     struct timeval wall;
     require(!clock_gettime(CLOCK_REALTIME, &first), "realtime time");

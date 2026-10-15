@@ -12,10 +12,12 @@
 #include "process/task.hpp"
 #include "drivers/block/block.hpp"
 #include "fs/ext2/ext2.hpp"
+#include "core/time.hpp"
 
 namespace ax {
 Timestamp node_now() {
-    return {int64_t(ticks / 100), (ticks % 100) * 10000000};
+    uint64_t now = clock_realtime_ticks();
+    return {int64_t(now / 100), (now % 100) * 10000000};
 }
 
 Node nodes[16384];

@@ -1380,8 +1380,13 @@ static void destroy(Mount* mount) {
 // Checked writable dirty mounts may reconcile counters and reclaim completely
 // validated inodes carrying the on-disk deletion marker. A named file, symlink
 // or empty directory can keep its checked namespace and bounded parent links.
+// Dirty journaled mounts may reclaim unreferenced retired inodes, with strict
+// counters and no restoration of names or parent-link contributions.
 struct Validation {
+    enum class Recovery { none, checked, journal };
+
     Volume& v;
+    Recovery recovery;
     bool reconcile_counts;
     uint16_t *group_free_blocks = nullptr, *group_free_inodes = nullptr;
     uint64_t free_block_total = 0, free_inode_total = 0;
@@ -1394,7 +1399,12 @@ struct Validation {
     uint8_t inode_table[max_block_size]{};
     uint32_t cached_table = UINT32_MAX;
 
-    explicit Validation(Volume& value, bool reconcile) : v(value), reconcile_counts(reconcile) {
+    explicit Validation(Volume& value, Recovery mode)
+        : v(value), recovery(mode), reconcile_counts(mode == Recovery::checked) {
+    }
+
+    bool recovering() const {
+        return recovery != Recovery::none;
     }
 
     ~Validation() {
@@ -1425,16 +1435,18 @@ struct Validation {
         references = (uint32_t*)alloc(inode_count * sizeof(uint32_t));
         parents = (uint32_t*)alloc(inode_count * sizeof(uint32_t));
         dotdots = (uint32_t*)alloc(inode_count * sizeof(uint32_t));
-        if (reconcile_counts) {
+        if (recovering()) {
             deleted_bits = (uint8_t*)alloc(inode_bytes);
             named_directory_parents = (uint8_t*)alloc(inode_bytes);
+        }
+        if (reconcile_counts) {
             group_free_blocks = (uint16_t*)alloc(v.group_count * sizeof(uint16_t));
             group_free_inodes = (uint16_t*)alloc(v.group_count * sizeof(uint16_t));
         }
         if (!block_bits || !inode_bits || !owners || !modes || !links || !xattr_references ||
             !references || !parents || !dotdots ||
-            (reconcile_counts && (!deleted_bits || !named_directory_parents || !group_free_blocks ||
-                                  !group_free_inodes)))
+            (recovering() && (!deleted_bits || !named_directory_parents)) ||
+            (reconcile_counts && (!group_free_blocks || !group_free_inodes)))
             return v.fail(-12);
         memset(block_bits, 0, block_bytes);
         memset(owners, 0, block_bytes);
@@ -1684,7 +1696,7 @@ struct Validation {
                     return v.fail();
                 if (!reserved) {
                     bool removed = !u16(data + 26) && u32(data + 20);
-                    if (removed && reconcile_counts && number >= v.first_inode)
+                    if (removed && recovering() && number >= v.first_inode)
                         setbit(deleted_bits, number, true);
                     else if (!u16(data + 26) || u32(data + 20))
                         return v.fail();
@@ -1822,8 +1834,11 @@ struct Validation {
             if ((modes[number] & 0170000) == ax::directory && !check_directory(number))
                 return false;
         for (uint32_t number = v.first_inode; number <= v.inodes; number++) {
-            if (!deleted(number) || (modes[number] & 0170000) != ax::directory ||
-                !references[number])
+            if (!deleted(number))
+                continue;
+            if (!reconcile_counts && references[number])
+                return v.fail();
+            if ((modes[number] & 0170000) != ax::directory || !references[number])
                 continue;
             uint32_t parent = parents[number];
             uint8_t data[ax::inode_bytes];
@@ -1922,7 +1937,7 @@ struct Validation {
         if (!v.super(header))
             return false;
         // Validate the complete proposed disk image before mount can commit it.
-        Validation result{v, false};
+        Validation result{v, Recovery::none};
         return result.allocate() && result.bitmaps(header) && result.inode_maps() &&
                result.directories();
     }
@@ -2103,9 +2118,16 @@ static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check
     unsigned state = u16(header + 58);
     v.writable_safe =
         (state == 1 || ((check_dirty || v.journal) && state == 0)) && !u32(header + 232);
-    if ((check_dirty || !v.mount->readonly) && !v.writable_safe)
+    if ((v.journal || check_dirty || !v.mount->readonly) && !v.writable_safe)
         return v.fail();
-    Validation check{v, check_dirty && !v.mount->readonly && state == 0};
+    auto recovery = Validation::Recovery::none;
+    if (state == 0) {
+        if (check_dirty && !v.mount->readonly)
+            recovery = Validation::Recovery::checked;
+        else if (v.journal && !disk.readonly)
+            recovery = Validation::Recovery::journal;
+    }
+    Validation check{v, recovery};
     if (!(check.allocate() && check.bitmaps(header) && check.inode_maps() && check.directories() &&
           check.reconcile(header) && check.reclaim_deleted(header)))
         return false;

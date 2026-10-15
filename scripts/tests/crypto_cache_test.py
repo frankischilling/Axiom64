@@ -77,6 +77,8 @@ class CryptoCacheTest(unittest.TestCase):
                     product = directory / name
                     product.parent.mkdir(parents=True, exist_ok=True)
                     product.write_bytes((provider + '/' + name).encode())
+                    if name.endswith('/bin/openssl'):
+                        product.chmod(0o755)
                     products[name] = cache.digest(product)
                 links = {}
                 if dependency == 'openssl':
@@ -91,6 +93,9 @@ class CryptoCacheTest(unittest.TestCase):
     def test_declared_paths_round_trip_all_products_and_links(self):
         self.completed_products()
         original = cache.check_products(self.root)
+        modes = {path.relative_to(self.root).as_posix(): path.stat().st_mode & 0o777
+                 for path in self.root.rglob('*') if path.is_file() and not path.is_symlink()
+                 and cache.covered(path.relative_to(self.root).as_posix(), cache.cache_paths())}
         archive = io.BytesIO()
         with tarfile.open(fileobj=archive, mode='w') as stream:
             selected = set()
@@ -105,6 +110,7 @@ class CryptoCacheTest(unittest.TestCase):
             self.assertFalse(any(name.endswith('unused.o') for name in stream.getnames()))
             stream.extractall(restored, filter='data')
         self.assertEqual(original, cache.check_products(restored))
+        self.assertEqual(modes, {name: (restored / name).stat().st_mode & 0o777 for name in modes})
 
     def test_missing_changed_and_omitted_products_fail(self):
         self.completed_products()

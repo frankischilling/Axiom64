@@ -68,6 +68,8 @@ jobs:
         run: python3 scripts/tests/account_generation_oracle_test.py -v
       - name: Classify retained rotation retirement after journal-only observation
         run: python3 scripts/tests/account_rotation_journal_oracle_test.py -v
+      - name: Replay actual QMP startup notifications within the negotiation deadline
+        run: python3 scripts/tests/qmp_greeting_test.py -v
       - name: Preserve actual administration disks and reap interrupted observation children
         run: python3 scripts/tests/account_management_storage_test.py
       - name: Reject unproven provisional rotation archives

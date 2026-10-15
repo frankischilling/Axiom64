@@ -37,8 +37,15 @@ class QMP:
                     if process.poll() is not None or time.monotonic() >= deadline:
                         raise RuntimeError('QEMU did not open its QMP socket')
                     time.sleep(0.02)
-            greeting = self.receive(deadline)
-            if 'QMP' not in greeting:
+            while True:
+                greeting = self.receive(deadline)
+                # Startup notifications can precede the greeting. Retain them
+                # in the transcript without extending negotiation's deadline.
+                if (isinstance(greeting, dict) and isinstance(greeting.get('event'), str) and
+                        greeting['event'] and not {'QMP', 'id', 'return', 'error'} & greeting.keys()):
+                    continue
+                break
+            if not isinstance(greeting, dict) or 'QMP' not in greeting:
                 raise RuntimeError('QMP greeting is missing')
             self.command('qmp_capabilities')
         except BaseException:

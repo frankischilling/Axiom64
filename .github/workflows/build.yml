@@ -23,6 +23,11 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 75
+    outputs:
+      account_clean_matrix: ${{ steps.storage_matrices.outputs.account_clean_matrix }}
+      account_fault_matrix: ${{ steps.storage_matrices.outputs.account_fault_matrix }}
+      account_rotation_matrix: ${{ steps.storage_matrices.outputs.account_rotation_matrix }}
+      rotation_shard_count: ${{ steps.storage_matrices.outputs.rotation_shard_count }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install build and emulation tools
@@ -55,6 +60,27 @@ jobs:
         run: python3 scripts/tests/random_executable_copy_test.py -v
       - name: Replay actual RTC firmware writes and reject damaged calendar observations
         run: python3 scripts/tests/clock_wall_observer_test.py -v
+      - name: Require complete and unaltered storage target shard unions
+        run: python3 scripts/tests/account_storage_shards_test.py -v
+      - name: Require every rotation variant, target and actual fault mode
+        run: python3 scripts/tests/account_rotation_coverage_test.py -v
+      - name: Replay retained account generation selection through a separate Linux journal oracle
+        run: python3 scripts/tests/account_generation_oracle_test.py -v
+      - name: Preserve actual administration disks and reap interrupted observation children
+        run: python3 scripts/tests/account_management_storage_test.py
+      - name: Reject unproven provisional rotation archives
+        run: python3 scripts/tests/account_rotation_storage_test.py
+      - name: Replay actual kernel-interrupted rotation exports without changing captured bytes
+        run: python3 scripts/tests/account_rotation_serial_test.py -v
+      - name: Require exact allocation-map evidence for bounded counter recovery
+        run: python3 scripts/tests/ext2_counter_inspection_test.py
+      - name: Require every administration variant, concurrency phase and storage fault
+        run: python3 scripts/tests/account_management_coverage_test.py -v
+      - name: Require complete bounded CI storage matrices
+        run: python3 scripts/tests/account_storage_ci_test.py -v
+      - name: Define complete account storage matrices
+        id: storage_matrices
+        run: python3 scripts/account_storage_ci.py >> "$GITHUB_OUTPUT"
       - name: Test manager runtime hint provenance and explicit invalidation with sanitizers
         run: make test-manager-runtime-native
       - name: Test actual desktop image readiness and bounded uniform-image rejection
@@ -331,6 +357,7 @@ jobs:
         run: |
           python3 scripts/password_library_test.py
           sudo -n python3 scripts/account_management_test.py --fixtures /tmp/axiom64-ci-account-management
+          sudo -n python3 scripts/account_management_ext2.py --native --directory build/account-management-command-native --fixtures /tmp/axiom64-ci-management-command-native
           sudo -n python3 scripts/account_auth_test.py --native --directory build/account-auth-native --fixtures /tmp/axiom64-ci-account-auth
           sudo -n python3 scripts/account_secret_test.py --native --directory build/account-secret-native
       - name: Compare session credentials, leases and login-record projections with native Linux
@@ -1072,8 +1099,199 @@ jobs:
             build/file-capabilities-independent.log
             build/file-capabilities-damage.log
 
+  account-storage-clean:
+    name: Administration ${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.build.outputs.account_clean_matrix) }}
+    env:
+      PROVIDER: ${{ matrix.provider }}
+      LINKAGE: ${{ matrix.linkage }}
+      FIRMWARE: ${{ matrix.firmware }}
+      TRANSPORT: ${{ matrix.transport }}
+    steps:
+      - name: Download this run's test inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: axiom64-ci-inputs
+          path: ${{ runner.temp }}/ci-inputs
+      - name: Restore source and build together
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
+      - name: Install build and emulation tools
+        run: bash scripts/ci/tools.sh restore
+      - name: Run actual administration, concurrent commands and fresh-kernel checks
+        run: |
+          cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT"
+          sudo -n python3 scripts/account_management_ext2.py --journal --campaign clean --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --directory "build/account-management-clean-$cell"
+          sudo -n python3 scripts/account_management_ext2.py --journal --campaign storage --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --directory "build/account-management-storage-$cell"
+          sudo -n python3 scripts/account_management_storage_coverage.py collect-clean --clean-directory "build/account-management-clean-$cell" --storage-directory "build/account-management-storage-$cell" --output "build/account-management-clean-index-$cell/coverage-index.json"
+      - name: Upload complete administration and storage-control evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-account-management-clean-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            build/account-management-clean-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}
+            build/account-management-storage-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}
+      - name: Upload administration coverage index
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-account-management-index-clean-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}
+          retention-days: 1
+          if-no-files-found: error
+          path: build/account-management-clean-index-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}/coverage-index.json
+
+  account-storage-fault:
+    name: Administration faults ${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.cache }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.build.outputs.account_fault_matrix) }}
+    env:
+      PROVIDER: ${{ matrix.provider }}
+      LINKAGE: ${{ matrix.linkage }}
+      FIRMWARE: ${{ matrix.firmware }}
+      TRANSPORT: ${{ matrix.transport }}
+      CACHE: ${{ matrix.cache }}
+    steps:
+      - name: Download this run's test inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: axiom64-ci-inputs
+          path: ${{ runner.temp }}/ci-inputs
+      - name: Restore source and build together
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
+      - name: Install build and emulation tools
+        run: bash scripts/ci/tools.sh restore
+      - name: Interrupt every observed actual administration request and boot normal recovery
+        run: |
+          cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-$CACHE"
+          sudo -n python3 scripts/account_management_ext2.py --journal --campaign fault --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --cache-model "$CACHE" --fault-modes eio,pause-before,pause-after --directory "build/account-management-fault-$cell"
+          sudo -n python3 scripts/account_management_storage_coverage.py collect-fault --directory "build/account-management-fault-$cell" --output "build/account-management-fault-index-$cell/coverage-index.json"
+      - name: Upload complete administration device and power-loss evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-account-management-fault-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.cache }}
+          retention-days: 1
+          if-no-files-found: error
+          path: build/account-management-fault-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.cache }}
+      - name: Upload administration fault coverage index
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-account-management-index-fault-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.cache }}
+          retention-days: 1
+          if-no-files-found: error
+          path: build/account-management-fault-index-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.cache }}/coverage-index.json
+
+  account-rotation-storage:
+    name: Rotation faults ${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.scenario }}-${{ matrix.cache }}-${{ matrix.shard }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.build.outputs.account_rotation_matrix) }}
+    env:
+      PROVIDER: ${{ matrix.provider }}
+      LINKAGE: ${{ matrix.linkage }}
+      FIRMWARE: ${{ matrix.firmware }}
+      TRANSPORT: ${{ matrix.transport }}
+      SCENARIO: ${{ matrix.scenario }}
+      CACHE: ${{ matrix.cache }}
+      SHARD: ${{ matrix.shard }}
+      SHARD_COUNT: ${{ needs.build.outputs.rotation_shard_count }}
+    steps:
+      - name: Download this run's test inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: axiom64-ci-inputs
+          path: ${{ runner.temp }}/ci-inputs
+      - name: Restore source and build together
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
+      - name: Install build and emulation tools
+        run: bash scripts/ci/tools.sh restore
+      - name: Interrupt all assigned rotation writes and flushes in every fault mode
+        run: |
+          cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-$SCENARIO-$CACHE-$SHARD"
+          sudo -n python3 scripts/account_logbook_rotation_ext2.py --journal --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --scenario "$SCENARIO" --cache-model "$CACHE" --fault-mode eio pause-before pause-after --shard-count "$SHARD_COUNT" --shard-index "$SHARD" --directory "build/account-rotation-storage-$cell"
+          sudo -n python3 scripts/account_rotation_storage_coverage.py collect --directory "build/account-rotation-storage-$cell" --output "build/account-rotation-storage-$cell/coverage-index.json"
+      - name: Upload complete rotation sources, images, observations and interrupted disks
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-account-rotation-storage-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.scenario }}-${{ matrix.cache }}-${{ matrix.shard }}
+          retention-days: 1
+          if-no-files-found: error
+          path: build/account-rotation-storage-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.scenario }}-${{ matrix.cache }}-${{ matrix.shard }}
+      - name: Upload rotation coverage index
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-account-rotation-index-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.scenario }}-${{ matrix.cache }}-${{ matrix.shard }}
+          retention-days: 1
+          if-no-files-found: error
+          path: build/account-rotation-storage-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.scenario }}-${{ matrix.cache }}-${{ matrix.shard }}/coverage-index.json
+
+  account-storage-coverage:
+    name: Complete account storage coverage
+    needs: [build, account-storage-clean, account-storage-fault, account-rotation-storage]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Require every actual administration and rotation variant to pass
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          CLEAN_RESULT: ${{ needs.account-storage-clean.result }}
+          FAULT_RESULT: ${{ needs.account-storage-fault.result }}
+          ROTATION_RESULT: ${{ needs.account-rotation-storage.result }}
+        run: |
+          test "$BUILD_RESULT" = success
+          test "$CLEAN_RESULT" = success
+          test "$FAULT_RESULT" = success
+          test "$ROTATION_RESULT" = success
+      - name: Download this run's test inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: axiom64-ci-inputs
+          path: ${{ runner.temp }}/ci-inputs
+      - name: Restore the exact verified source and build inputs
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
+      - name: Download every administration coverage index
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: axiom64-account-management-index-*
+          path: ${{ runner.temp }}/account-management-indices
+      - name: Download every rotation coverage index
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: axiom64-account-rotation-index-*
+          path: ${{ runner.temp }}/account-rotation-indices
+      - name: Require the complete variant, observed-target, shard and fault-mode unions
+        run: |
+          python3 scripts/account_management_storage_coverage.py verify --indices "$RUNNER_TEMP/account-management-indices" --output build/account-storage-coverage/administration.json
+          python3 scripts/account_rotation_storage_coverage.py verify --indices "$RUNNER_TEMP/account-rotation-indices" --output build/account-storage-coverage/rotation.json
+      - name: Upload complete storage coverage proofs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-account-storage-coverage
+          retention-days: 1
+          if-no-files-found: error
+          path: build/account-storage-coverage
+
   qemu:
-    needs: [build, tests]
+    needs: [build, tests, account-storage-clean, account-storage-fault, account-rotation-storage, account-storage-coverage]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -1082,6 +1300,14 @@ jobs:
         env:
           BUILD_RESULT: ${{ needs.build.result }}
           TEST_RESULT: ${{ needs.tests.result }}
+          ACCOUNT_CLEAN_RESULT: ${{ needs.account-storage-clean.result }}
+          ACCOUNT_FAULT_RESULT: ${{ needs.account-storage-fault.result }}
+          ACCOUNT_ROTATION_RESULT: ${{ needs.account-rotation-storage.result }}
+          ACCOUNT_COVERAGE_RESULT: ${{ needs.account-storage-coverage.result }}
         run: |
           test "$BUILD_RESULT" = success
           test "$TEST_RESULT" = success
+          test "$ACCOUNT_CLEAN_RESULT" = success
+          test "$ACCOUNT_FAULT_RESULT" = success
+          test "$ACCOUNT_ROTATION_RESULT" = success
+          test "$ACCOUNT_COVERAGE_RESULT" = success

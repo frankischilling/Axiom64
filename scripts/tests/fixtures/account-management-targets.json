@@ -1,0 +1,89 @@
+{
+  "format": 1,
+  "scope": "Captured synthetic administration baseline targets for coverage-unit tests; no guest acceptance.",
+  "client_sha256": "28d6cffdb86d1213c0f0d8339d3a1499cf3d92d66e92b3a292369f2f303b1672",
+  "baselines": {
+    "writeback": {
+      "observed_manifest_sha256": "3c869d086c07abaad3edb9887263ef1446232e1d908e66cc5c3251bf38349061",
+      "phases": {
+        "intent-audit-data": {
+          "operation": "write",
+          "request": 439
+        },
+        "intent-audit-published": {
+          "operation": "flush",
+          "request": 266
+        },
+        "intent-audit-flushed": {
+          "operation": "flush",
+          "request": 266
+        },
+        "home-created-before-publication": {
+          "operation": "flush",
+          "request": 515
+        },
+        "passwd-staged": {
+          "operation": "write",
+          "request": 977
+        },
+        "shadow-staged": {
+          "operation": "write",
+          "request": 1047
+        },
+        "complete-generation-published": {
+          "operation": "flush",
+          "request": 604
+        },
+        "older-generation-collected": {
+          "operation": "flush",
+          "request": 631
+        },
+        "completion-audit-published": {
+          "operation": "flush",
+          "request": 650
+        }
+      }
+    },
+    "writethrough": {
+      "observed_manifest_sha256": "0e4af7d79525c5ec0bb8950e4cdd3e9ff3658eb1d5830082cc939d6cf4e1b21a",
+      "phases": {
+        "intent-audit-data": {
+          "operation": "write",
+          "request": 439
+        },
+        "intent-audit-published": {
+          "operation": "write",
+          "request": 446
+        },
+        "intent-audit-flushed": {
+          "operation": "flush",
+          "request": 266
+        },
+        "home-created-before-publication": {
+          "operation": "write",
+          "request": 918
+        },
+        "passwd-staged": {
+          "operation": "write",
+          "request": 977
+        },
+        "shadow-staged": {
+          "operation": "write",
+          "request": 1047
+        },
+        "complete-generation-published": {
+          "operation": "write",
+          "request": 1102
+        },
+        "older-generation-collected": {
+          "operation": "write",
+          "request": 1172
+        },
+        "completion-audit-published": {
+          "operation": "write",
+          "request": 1204
+        }
+      }
+    }
+  }
+}

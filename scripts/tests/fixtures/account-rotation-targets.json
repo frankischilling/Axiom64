@@ -1,0 +1,118 @@
+{
+  "format": 1,
+  "scope": "Captured guest target observations for coverage-validator unit tests; not full fault acceptance.",
+  "client_sha256": "40a616fd7490e77305907a15bc56643c2d18853fac4c7879f47ab91a08bd423b",
+  "kernel_sha256": "854aa07eaf2d5038ebab2ee21f15f40209cda14c21e1311fff6df4523ea85c24",
+  "baselines": {
+    "basic": {
+      "observed_manifest_sha256": "6c9764ef0f4d32c0d8423ec88c87c1b1a667ab654237a3eed7cf2550520afb72",
+      "phases": {
+        "archive-created": {
+          "first_write": 43,
+          "last_write": 50,
+          "flush": 31
+        },
+        "archive-journal": {
+          "first_write": 112,
+          "last_write": 114,
+          "flush": 65
+        },
+        "archive-complete": {
+          "first_write": 408,
+          "last_write": 410,
+          "flush": 223
+        },
+        "marker": {
+          "first_write": 490,
+          "last_write": 492,
+          "flush": 277
+        },
+        "carried-current": {
+          "first_write": 579,
+          "last_write": 582,
+          "flush": 334
+        },
+        "state-committed": {
+          "first_write": 646,
+          "last_write": 648,
+          "flush": 368
+        },
+        "marker-removed": {
+          "first_write": 660,
+          "last_write": 666,
+          "flush": 374
+        },
+        "trigger": {
+          "first_write": 713,
+          "last_write": 718,
+          "flush": 411
+        },
+        "projections": {
+          "first_write": 934,
+          "last_write": 940,
+          "flush": 514
+        }
+      }
+    },
+    "expiry": {
+      "observed_manifest_sha256": "2777f2104ded81f2e0599aa2d9febd5f5f8680cfe6688c20b3f43e2ab492063b",
+      "phases": {
+        "archive-created": {
+          "first_write": 145,
+          "last_write": 152,
+          "flush": 116
+        },
+        "archive-journal": {
+          "first_write": 214,
+          "last_write": 216,
+          "flush": 150
+        },
+        "archive-complete": {
+          "first_write": 472,
+          "last_write": 474,
+          "flush": 288
+        },
+        "marker": {
+          "first_write": 548,
+          "last_write": 550,
+          "flush": 337
+        },
+        "carried-current": {
+          "first_write": 636,
+          "last_write": 638,
+          "flush": 394
+        },
+        "state-committed": {
+          "first_write": 707,
+          "last_write": 714,
+          "flush": 428
+        },
+        "marker-removed": {
+          "first_write": 726,
+          "last_write": 732,
+          "flush": 434
+        },
+        "expiry-partial": {
+          "first_write": 744,
+          "last_write": 750,
+          "flush": 440
+        },
+        "expiry-complete": {
+          "first_write": 936,
+          "last_write": 942,
+          "flush": 551
+        },
+        "trigger": {
+          "first_write": 953,
+          "last_write": 958,
+          "flush": 557
+        },
+        "projections": {
+          "first_write": 1175,
+          "last_write": 1182,
+          "flush": 660
+        }
+      }
+    }
+  }
+}

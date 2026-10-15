@@ -60,10 +60,14 @@ def authenticated_index(signed, cache, output, suite, mirror):
             with tempfile.NamedTemporaryFile(dir=cache, prefix=index.name + '.', suffix='.part', delete=False) as stream:
                 temporary = Path(stream.name)
                 stream.write(data)
+                # Native capture runs as root; ordinary CI readers need these public bytes.
+                os.fchmod(stream.fileno(), 0o644)
             os.replace(temporary, index)
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
+    else:
+        index.chmod(0o644)
     return index
 
 

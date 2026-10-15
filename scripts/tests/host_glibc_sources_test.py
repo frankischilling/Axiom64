@@ -4,7 +4,11 @@
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
+import shutil
+import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -79,6 +83,24 @@ class HostSourceIndexTests(unittest.TestCase):
         self.assertTrue(self.proof()['passed'])
         self.assertEqual(list(self.cache.glob('*.part')), [])
 
+    def test_verified_index_remains_readable_by_the_evidence_reader(self):
+        result = self.fetch()
+        published = self.root / 'published-Sources.xz'
+        shutil.copy2(result, published)
+        if os.geteuid() == 0:
+            # Native production runs as root; checking and uploading use the runner UID.
+            self.root.chmod(0o755)
+            self.cache.chmod(0o755)
+            reader = subprocess.run([
+                sys.executable, '-c',
+                'from pathlib import Path; import sys; '
+                'assert Path(sys.argv[1]).read_bytes() == Path(sys.argv[2]).read_bytes() == bytes.fromhex(sys.argv[3])',
+                str(result), str(published), self.data.hex()], user=65534, group=65534,
+                extra_groups=[], capture_output=True, timeout=10)
+            self.assertEqual(reader.returncode, 0, reader.stderr.decode())
+        self.assertEqual(stat.S_IMODE(result.stat().st_mode), 0o644)
+        self.assertEqual(stat.S_IMODE(published.stat().st_mode), 0o644)
+
     def test_changed_index_is_rejected_and_retained(self):
         self.served = b'X' * len(self.data)
         with self.assertRaisesRegex(ValueError, 'checksum differs'):
@@ -106,16 +128,20 @@ class HostSourceIndexTests(unittest.TestCase):
 
     def test_complete_cached_index_is_verified_without_network(self):
         self.index.write_bytes(self.data)
+        self.index.chmod(0o600)
         self.assertEqual(self.fetch().read_bytes(), self.data)
         self.assertEqual(self.requests, [])
         self.assertTrue(self.proof()['cached'])
+        self.assertEqual(stat.S_IMODE(self.index.stat().st_mode), 0o644)
 
     def test_damaged_cache_is_rejected_without_replacement(self):
         self.index.write_bytes(b'damaged retained cache')
+        self.index.chmod(0o600)
         with self.assertRaisesRegex(ValueError, 'checksum differs'):
             self.fetch()
         self.assertEqual(self.requests, [])
         self.assertEqual(self.index.read_bytes(), b'damaged retained cache')
+        self.assertEqual(stat.S_IMODE(self.index.stat().st_mode), 0o600)
 
     def test_missing_hash_does_not_fall_back_to_a_mutable_url(self):
         self.status = 404

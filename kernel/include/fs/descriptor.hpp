@@ -4,10 +4,11 @@
 namespace ax {
 struct FileTable;
 struct Handle;
+struct Task;
 
 // A reservation owns a table slot without exposing a file. Install exactly once,
 // or discard on failure/interruption. The owning task keeps the table alive.
-int reserve_fd(FileTable&, int start = 0, bool cloexec = false);
+int reserve_fd(Task&, int start = 0, bool cloexec = false);
 void install_reserved_fd(FileTable&, int, Handle*);
 void discard_reserved_fd(FileTable&, int);
 // Closing or replacing a visible descriptor releases that table's POSIX locks

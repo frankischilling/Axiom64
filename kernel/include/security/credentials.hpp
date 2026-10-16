@@ -22,6 +22,7 @@ enum class Capability : unsigned {
     sys_ptrace = 19,
     sys_admin = 21,
     sys_boot = 22,
+    sys_resource = 24,
     sys_chroot = 18
 };
 constexpr uint64_t all_capabilities = (1ull << 41) - 1;

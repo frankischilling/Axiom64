@@ -4,10 +4,12 @@
 #include "fs/record_lock.hpp"
 
 namespace ax {
-int reserve_fd(FileTable& table, int start, bool cloexec) {
+int reserve_fd(Task& task, int start, bool cloexec) {
     if (start < 0)
         return -22;
-    for (unsigned index = start; index < max_fds; index++)
+    auto& table = *task.files;
+    uint64_t limit = task.process->limits.soft(Resource::open_files);
+    for (unsigned index = start; index < max_fds && index < limit; index++)
         if (!table.entries[index].handle && !table.entries[index].reserved) {
             table.entries[index] = {nullptr, cloexec, true};
             return index;
@@ -29,7 +31,7 @@ void discard_reserved_fd(FileTable& table, int fd) {
 }
 
 int allocate_fd(Task* task, Handle* handle, int start, bool cloexec) {
-    int fd = reserve_fd(*task->files, start, cloexec);
+    int fd = reserve_fd(*task, start, cloexec);
     if (fd >= 0)
         install_reserved_fd(*task->files, fd, handle);
     return fd;

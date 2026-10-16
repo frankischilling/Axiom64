@@ -6,6 +6,10 @@ namespace ax {
 namespace {
 void commit(const Credentials& proposed) {
     auto& cred = current->credentials;
+    if (cred.user.real != proposed.user.real)
+        current->process_limit_exceeded =
+            proposed.user.real && task_user_count(proposed.user.real) >
+                                      current->process->limits.soft(Resource::processes);
     if (cred.user.effective != proposed.user.effective ||
         cred.user.filesystem != proposed.user.filesystem ||
         cred.group.effective != proposed.group.effective ||

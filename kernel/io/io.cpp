@@ -286,7 +286,7 @@ static int prepare(Task& task, IoRequest& request) {
     if (request.accept) {
         if (f.rax == 288 && (f.r10 & ~uint64_t(0x80800)))
             return -22;
-        request.reserved_fd = reserve_fd(*task.files, 0, f.rax == 288 && (f.r10 & 0x80000));
+        request.reserved_fd = reserve_fd(task, 0, f.rax == 288 && (f.r10 & 0x80000));
         if (request.reserved_fd < 0)
             return request.reserved_fd;
         request.reserved_table = task.files;
@@ -580,8 +580,30 @@ static int64_t attempt(Task& task, IoRequest& request) {
         (request.write ? request.stream_blocking : request.socket && (request.flags & 0x100));
     if (completion)
         result = stream_attempt(task, request);
-    for (size_t i = 0; !completion && i < request.count; i++) {
-        auto& vector = request.vectors[i];
+    bool limited_write = request.write && h->node && (h->node->mode & 0170000) == regular_file;
+    size_t budget = 0;
+    if (limited_write) {
+        for (size_t i = 0; i < request.count; i++) {
+            const auto& vector = request.vectors[i];
+            if (vector.length &&
+                (vector.base >= user_limit || vector.length > user_limit - vector.base)) {
+                result = -14;
+                completion = true;
+                break;
+            }
+            budget += vector.length;
+        }
+        if (!completion) {
+            if (int error = write_handle_limit(h, budget)) {
+                result = error;
+                completion = true;
+            }
+        }
+    }
+    for (size_t i = 0; !completion && i < request.count && (!limited_write || done < budget); i++) {
+        auto vector = request.vectors[i];
+        if (limited_write)
+            vector.length = min(vector.length, uint64_t(budget - done));
         if (!vector.length)
             continue;
         if (done && !handle_ready(h, request.write))

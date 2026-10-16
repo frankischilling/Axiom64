@@ -40,6 +40,19 @@ jobs:
             downloads/*.tar.*
             downloads/ports
             downloads/sources
+      - name: Test crypto cache input invalidation and complete product retention
+        run: python3 scripts/tests/crypto_cache_test.py -v
+      - name: Test authenticated Ubuntu index identity and retained download failures
+        run: python3 scripts/tests/host_glibc_sources_test.py -v
+      - name: Fingerprint crypto recipes and actual host toolchain inputs
+        id: crypto_cache_inputs
+        run: python3 scripts/ci/crypto_cache.py --report build/crypto-cache/inputs.json >> "$GITHUB_OUTPUT"
+      - name: Cache completed crypto libraries and staged tools
+        id: crypto_cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          key: ${{ steps.crypto_cache_inputs.outputs.key }}
+          path: ${{ steps.crypto_cache_inputs.outputs.paths }}
       - name: Check C and C++ formatting
         run: make check-format
       - name: Test QEMU accelerator selection and actual monitor evidence
@@ -111,6 +124,10 @@ jobs:
         run: python3 scripts/build_openssl.py --provider all
       - name: Verify completed OpenSSL fingerprints and reject changed inputs and products
         run: python3 scripts/tests/openssl_inputs_test.py -v
+      - name: Verify every completed crypto product is retained by the cache
+        run: |
+          python3 scripts/ci/crypto_cache.py --check --report build/crypto-cache/products.json
+          printf '%s\n' '${{ steps.crypto_cache.outputs.cache-hit }}' > build/crypto-cache/cache-hit.txt
       - name: Build maintained password providers and account programs
         run: |
           python3 scripts/build_libxcrypt.py --provider all
@@ -195,6 +212,7 @@ jobs:
             build/gnu-reader-controls
             build/gnu-reader-public-controls
             build/gnu-utmp-reader
+            build/crypto-cache
       - name: Test paired network workspace isolation and failure evidence
         run: python3 scripts/tests/paired_network_test.py
       - name: Test PCI removal preserves interrupted guest reads
@@ -343,8 +361,9 @@ jobs:
           - accounts-vm-state
     steps:
       - name: Download this run's test inputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
+          digest-mismatch: error
           name: axiom64-ci-inputs
           path: ${{ runner.temp }}/ci-inputs
       - name: Restore source and build together
@@ -1145,8 +1164,9 @@ jobs:
       TRANSPORT: ${{ matrix.transport }}
     steps:
       - name: Download this run's test inputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
+          digest-mismatch: error
           name: axiom64-ci-inputs
           path: ${{ runner.temp }}/ci-inputs
       - name: Restore source and build together
@@ -1199,8 +1219,9 @@ jobs:
       CACHE: ${{ matrix.cache }}
     steps:
       - name: Download this run's test inputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
+          digest-mismatch: error
           name: axiom64-ci-inputs
           path: ${{ runner.temp }}/ci-inputs
       - name: Restore source and build together
@@ -1253,8 +1274,9 @@ jobs:
       SHARD_COUNT: ${{ needs.build.outputs.rotation_shard_count }}
     steps:
       - name: Download this run's test inputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
+          digest-mismatch: error
           name: axiom64-ci-inputs
           path: ${{ runner.temp }}/ci-inputs
       - name: Restore source and build together
@@ -1307,20 +1329,23 @@ jobs:
           test "$FAULT_RESULT" = success
           test "$ROTATION_RESULT" = success
       - name: Download this run's test inputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
+          digest-mismatch: error
           name: axiom64-ci-inputs
           path: ${{ runner.temp }}/ci-inputs
       - name: Restore the exact verified source and build inputs
         run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
       - name: Download every administration coverage index
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
+          digest-mismatch: error
           pattern: axiom64-account-management-index-*
           path: ${{ runner.temp }}/account-management-indices
       - name: Download every rotation coverage index
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
+          digest-mismatch: error
           pattern: axiom64-account-rotation-index-*
           path: ${{ runner.temp }}/account-rotation-indices
       - name: Require the complete variant, observed-target, shard and fault-mode unions

@@ -83,6 +83,8 @@ for name, value in data.items():
 for name in ('axiom64-normal-init-ram.iso','axiom64-normal-init-ext2.iso'):
     (build / name).write_bytes(data[name])
 (build / 'root-disk.raw').write_bytes(data['seed.raw'])
+if settings.get('changed_alias') == worker:
+    (build / 'root-disk.raw').write_bytes(b'actual-rejected-seed-' + worker.encode())
 inputs = dict(image_sha256={key: hashlib.sha256(data['axiom64-normal-init-'+key+'.iso']).hexdigest()
                            for key in ('ram','ext2')}, seed_sha256=hashlib.sha256(data['seed.raw']).hexdigest())
 (fixture / 'inputs.json').write_text(json.dumps(inputs))
@@ -98,14 +100,15 @@ sys.exit(7 if settings['fail'] == worker else 0)
 
 
 class PairTest(unittest.TestCase):
-    def fixture(self, directory, fail=None, spawn=False, hang=False, normal_missing=False):
+    def fixture(self, directory, fail=None, spawn=False, hang=False, normal_missing=False, changed_alias=None):
         root = directory / 'source'
         (root / 'scripts').mkdir(parents=True)
         barrier = directory / 'barrier'
         barrier.mkdir()
         (root / 'settings.json').write_text(json.dumps(dict(barrier=str(barrier), fail=fail,
                                                           spawn=spawn, hang=hang,
-                                                          normal_missing=normal_missing)))
+                                                          normal_missing=normal_missing,
+                                                          changed_alias=changed_alias)))
         (root / 'scripts' / 'manager_protocol_test.py').write_text(WORKER)
         (root / 'scripts' / 'normal_manager_test.py').write_text(NORMAL_WORKER)
         (root / 'build').mkdir()
@@ -240,6 +243,19 @@ class PairTest(unittest.TestCase):
             for record in report['workers'].values():
                 for saved in record['fixtures'].values():
                     self.assertEqual(hashlib.sha256((root / saved['path']).read_bytes()).hexdigest(), saved['sha256'])
+
+    def test_rejected_alias_is_kept_after_original_fixture_tree_already_moved(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            root, archive = self.fixture(directory, changed_alias='legacy')
+            self.assertEqual(PAIRED.run_pair(root, archive, directory, 'normal-init-bios'), 1)
+            report = json.loads((root / 'build/paired-network/normal-init-bios/results.json').read_text())
+            self.assertFalse(report['success'])
+            saved = report['workers']['legacy']['unverified_fixture_archive']
+            with tarfile.open(root / saved['path']) as retained:
+                self.assertEqual(retained.extractfile('root-disk.raw').read(), b'actual-rejected-seed-legacy')
+            original = root / 'build/normal-init-workers/normal-init-bios/legacy/normal-init-login-legacy/seed.raw'
+            self.assertEqual(original.read_bytes(), b'seed-legacy')
 
     def test_rejects_unknown_cells_before_creating_workspaces(self):
         for suite in ('boot', 'protocol-bios-modern-lane2', 'link-bios-modern-lane0-static', '../link'):

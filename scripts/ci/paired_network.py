@@ -97,10 +97,10 @@ def retain_unverified_normal_fixtures(workspace, destination, previous):
     """Keep original failed outputs when normal retention cannot finish."""
     build = workspace / 'build'
     sources = [path for path in build.glob('normal-init-login-*') if path.name not in previous]
-    if not sources:
-        return None
     sources += [build / name for name in ('axiom64-normal-init-ram.iso',
                  'axiom64-normal-init-ext2.iso', 'root-disk.raw') if (build / name).exists()]
+    if not sources:
+        return None
     path = destination / f'unverified-normal-fixtures-{time.monotonic_ns()}.tar.gz'
     with tarfile.open(path, 'x:gz', compresslevel=1, dereference=False) as retained:
         for source in sources:
@@ -111,15 +111,15 @@ def retain_unverified_normal_fixtures(workspace, destination, previous):
                 accepted=False, reason='normal fixture retention failed; original outputs are unverified')
 
 
-def capture(process, destination, linkage, failures):
+def capture(process, destination, worker, failures):
     try:
         with destination.open('wb') as output:
             for line in process.stdout:
                 output.write(line)
                 output.flush()
-                print(f'{linkage}: {line.decode("utf-8", errors="replace").rstrip()}', flush=True)
+                print(f'{worker}: {line.decode("utf-8", errors="replace").rstrip()}', flush=True)
     except Exception as failure:
-        failures.append(f'{linkage}: {type(failure).__name__}: {failure}')
+        failures.append(f'{worker}: {type(failure).__name__}: {failure}')
 
 
 def stop(process):
@@ -179,39 +179,39 @@ def run_pair(root, archive, temporary_parent, suite, scenarios=None, root_type=N
                     if expected != digest(copied):
                         raise ValueError('normal workers require identical prepared kernel and root inputs')
                     normal_inputs[name] = expected
-            for linkage, workspace in zip(choices, (root, dynamic)):
-                output = evidence / linkage
+            for worker, workspace in zip(choices, (root, dynamic)):
+                output = evidence / worker
                 output.mkdir(exist_ok=True)
                 script = 'normal_manager_test.py' if kind == 'normal' else f'manager_{kind}_test.py'
                 selection = '--transport' if kind == 'normal' else '--linkage'
                 command = [sys.executable, '-u', str(workspace / 'scripts' / script),
-                           *arguments, selection, linkage]
-                records[linkage] = dict(workspace=str(workspace), command=command,
+                           *arguments, selection, worker]
+                records[worker] = dict(workspace=str(workspace), command=command,
                                         evidence=str(output.relative_to(root)), returncode=None)
                 if kind == 'normal':
-                    records[linkage]['previous_fixture_directories'] = [
+                    records[worker]['previous_fixture_directories'] = [
                         path.name for path in (workspace / 'build').glob('normal-init-login-*')]
-                print(f'Starting {suite} {linkage} in {workspace}', flush=True)
+                print(f'Starting {suite} {worker} in {workspace}', flush=True)
                 process = subprocess.Popen(command, cwd=workspace, stdout=subprocess.PIPE,
                                            stderr=subprocess.STDOUT, start_new_session=True)
-                workers[linkage] = process
+                workers[worker] = process
                 reader = threading.Thread(target=capture,
-                                          args=(process, output / 'worker.log', linkage, capture_failures))
+                                          args=(process, output / 'worker.log', worker, capture_failures))
                 reader.start()
-                readers[linkage] = reader
-            for linkage, process in workers.items():
-                records[linkage]['returncode'] = process.wait()
+                readers[worker] = reader
+            for worker, process in workers.items():
+                records[worker]['returncode'] = process.wait()
         except BaseException as failure:
             error = f'{type(failure).__name__}: {failure}'
             print(error, file=sys.stderr, flush=True)
         finally:
             for process in workers.values():
                 stop(process)
-            for linkage, process in workers.items():
-                readers[linkage].join()
+            for worker, process in workers.items():
+                readers[worker].join()
                 process.stdout.close()
-                records[linkage]['returncode'] = process.returncode
-            for linkage, record in records.items():
+                records[worker]['returncode'] = process.returncode
+            for worker, record in records.items():
                 destination = root / record['evidence']
                 build = Path(record['workspace']) / 'build'
                 pattern = 'normal-init-*' if kind == 'normal' else f'manager-{kind}-*'
@@ -220,17 +220,17 @@ def run_pair(root, archive, temporary_parent, suite, scenarios=None, root_type=N
                         try:
                             shutil.copy2(source, destination / source.name)
                         except OSError as failure:
-                            capture_failures.append(f'{linkage}: evidence copy: {failure}')
+                            capture_failures.append(f'{worker}: evidence copy: {failure}')
                             keep_temporary = True
                 if kind == 'normal':
                     try:
                         fixtures, aliases = retain_normal_fixtures(root, Path(record['workspace']), suite,
-                            linkage, record['previous_fixture_directories'])
+                            worker, record['previous_fixture_directories'])
                         record.update(fixtures=fixtures, retired_duplicate_aliases=aliases)
                         record['normal_cases'] = normal_cases(build, NORMAL.fullmatch(suite).group(1),
-                            linkage, scenarios or NORMAL_SCENARIOS, root_type)
+                            worker, scenarios or NORMAL_SCENARIOS, root_type)
                     except Exception as failure:
-                        retention_failures.append(f'{linkage}: {type(failure).__name__}: {failure}')
+                        retention_failures.append(f'{worker}: {type(failure).__name__}: {failure}')
                         try:
                             saved = retain_unverified_normal_fixtures(Path(record['workspace']), destination,
                                 record['previous_fixture_directories'])

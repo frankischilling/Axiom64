@@ -1024,8 +1024,10 @@ jobs:
           case "$firmware" in bios|uefi) ;; *) exit 1 ;; esac
           python3 scripts/tests/normal_manager_records_test.py
           python3 scripts/normal_manager_peer_test.py 2>&1 | tee build/normal-init-peer.log
+          mkdir -p build/ci-normal-workers
           python3 scripts/ci/paired_network.py --suite "$SUITE" \
-            --archive "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz" --temporary-parent "$RUNNER_TEMP"
+            --archive "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz" \
+            --temporary-parent "$GITHUB_WORKSPACE/build/ci-normal-workers"
       - name: Upload normal init root fixtures
         if: always() && startsWith(matrix.suite, 'normal-init-')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1037,6 +1039,8 @@ jobs:
             build/normal-init-*.raw
             build/axiom64-normal-init-*.iso
             build/normal-init-workers/${{ matrix.suite }}/**/axiom64-normal-init-*.iso
+            build/ci-normal-workers/*/build/axiom64-normal-init-*.iso
+            build/ci-normal-workers/*/build/normal-init-login-*/axiom64-normal-init-*.iso
       - name: Upload saved-state root fixtures
         if: always() && matrix.suite == 'random'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1123,6 +1127,10 @@ jobs:
             build/normal-init-login-*/**
             build/normal-init-workers/**
             !build/normal-init-workers/**/axiom64-normal-init-*.iso
+            build/ci-normal-workers/*/build/normal-init-*/**
+            build/ci-normal-workers/*/build/normal-init-*.*
+            build/ci-normal-workers/*/build/root-disk.raw
+            !build/ci-normal-workers/**/axiom64-normal-init-*.iso
       - name: Upload actual raw storage and ext2 volume and boot fixtures
         if: always() && matrix.suite == 'storage'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

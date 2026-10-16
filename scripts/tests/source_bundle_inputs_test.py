@@ -38,6 +38,38 @@ RECOVERY_FIXTURES = (RECOVERY_FIXTURE, NAMED_RECOVERY_FIXTURE, SYMLINK_RECOVERY_
 
 
 class SourceBundleInputsTests(unittest.TestCase):
+    def test_exported_resource_limits_build_and_run_their_actual_native_policies(self):
+        with tempfile.TemporaryDirectory(prefix='axiom64-resource-source-inputs-') as name:
+            root = Path(name) / 'source'
+            root.mkdir()
+            for item in ('sources.lock.json', 'ports.lock.json', 'dependencies.json', 'LICENSE',
+                         'Makefile', 'README.md', '.clang-format', '.gitattributes'):
+                shutil.copyfile(ROOT / item, root / item)
+            for folder in ('kernel', 'userspace', 'boot', 'vendor', 'docs', 'scripts'):
+                shutil.copytree(ROOT / folder, root / folder)
+            configuration = root / 'build/busybox-1.37.0/.config'
+            configuration.parent.mkdir(parents=True)
+            configuration.write_bytes(b'fixture\n')
+            with patch.object(sources, 'ROOT', root), patch.object(sources, 'gnu_reader_kit'), redirect_stdout(io.StringIO()):
+                sources.bundle([])
+            extracted = Path(name) / 'extracted'
+            with tarfile.open(root / 'build/axiom64-sources.tar') as archive:
+                for item in ('kernel/include/process/limits.hpp', 'kernel/process/limits.cpp',
+                             'kernel/include/mm/stack.hpp', 'kernel/mm/stack.cpp',
+                             'scripts/resource_limits_test.py', 'scripts/resource_limits_storage_test.py',
+                             'userspace/tests/process/resource-limits.c'):
+                    self.assertEqual(archive.extractfile('Axiom64/' + item).read(), (ROOT / item).read_bytes())
+                archive.extractall(extracted, filter='data')
+            exported = extracted / 'Axiom64'
+            result = subprocess.run(['make', '-s', '-j2', 'test-process-limits-policy',
+                                     'test-proc-identity-policy', 'test-exec-arguments-policy'],
+                                    cwd=exported, env=dict(os.environ, PYTHONPATH=''),
+                                    capture_output=True, timeout=120)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for marker in (b'PROCESS_LIMIT_NATIVE_DIFFERENTIAL_PASS', b'PROC_IDENTITY_KERNEL_PASS',
+                           b'EXEC_ARGUMENTS_HOST_PASS'):
+                self.assertIn(marker, result.stdout)
+
     def test_exported_account_oracle_replays_its_actual_retained_inputs(self):
         with tempfile.TemporaryDirectory(prefix='axiom64-account-source-inputs-') as name:
             root = Path(name) / 'source'

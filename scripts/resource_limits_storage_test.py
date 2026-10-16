@@ -13,7 +13,7 @@ from account_store_guest import fixture
 from ext2_test import create_volume, SEED
 from fetch import ROOT
 from fixture_archive import archive_fixture
-from resource_limits_test import build, digest, execute, INPUTS
+from resource_limits_test import build, digest, execute, snapshot_inputs
 
 
 def main():
@@ -21,12 +21,8 @@ def main():
     parser.add_argument('--directory', type=Path, default=ROOT / 'build/resource-limits-storage')
     args = parser.parse_args()
     args.directory.mkdir(parents=True, exist_ok=False)
-    names = [*INPUTS, 'scripts/resource_limits_storage_test.py', 'scripts/ext2_test.py',
-             'scripts/fixture_archive.py',
-             *(path.relative_to(ROOT).as_posix() for path in (ROOT / 'kernel').rglob('*')
-               if path.is_file() and path.suffix in ('.cpp', '.hpp', '.asm'))]
-    sources = {name: digest(ROOT / name) for name in names}
-    (args.directory / 'source-inputs.json').write_text(json.dumps(sources, indent=2) + '\n')
+    sources = snapshot_inputs(args.directory, ('scripts/resource_limits_storage_test.py',
+                                             'scripts/ext2_test.py', 'scripts/fixture_archive.py'))
     subprocess.run(['make', '-s', '-j2', 'build/axiom64.elf', 'build/init', 'busybox'], cwd=ROOT, check=True)
     rows = []
     for provider in ('build', 'runtime'):

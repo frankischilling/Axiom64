@@ -27,13 +27,16 @@ test-account-secret-native:
 .PHONY: test-parent-death test-parent-death-native test-signal-wait test-signal-wait-native test-account-desktop
 .PHONY: test-waitid test-waitid-native test-proc-identity test-proc-identity-native test-proc-identity-policy test-record-lock-lifecycle test-record-lock-lifecycle-native
 .PHONY: test-exec-arguments test-exec-arguments-native test-exec-arguments-policy
-.PHONY: test-process-limits-policy test-resource-limits test-resource-limits-native
+.PHONY: test-process-limits-policy test-resource-limits test-resource-limits-native test-resource-limits-storage
 
 test-resource-limits:
 	$(PYTHON) scripts/resource_limits_test.py
 
 test-resource-limits-native:
 	$(PYTHON) scripts/resource_limits_test.py --native --directory build/resource-limits-native
+
+test-resource-limits-storage:
+	$(PYTHON) scripts/resource_limits_storage_test.py
 
 build/process-limits-policy: kernel/tests/process/limits.cpp kernel/process/limits.cpp kernel/include/process/limits.hpp
 	@mkdir -p build

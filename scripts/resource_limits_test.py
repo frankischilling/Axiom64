@@ -19,8 +19,24 @@ from fetch import ROOT
 INPUTS = ['userspace/tests/process/resource-limits.c', 'scripts/resource_limits_test.py',
           'scripts/account_store_guest.py', 'scripts/account_store_test.py',
           'scripts/build_musl.py', 'scripts/image.py', 'Makefile', 'sources.lock.json',
-          'dependencies.json', 'userspace/init/main.c', 'userspace/init/console.c',
+          'scripts/file_capabilities/host_sources.py', 'vendor/limine.h',
+          'dependencies.json', 'ports.lock.json', 'userspace/init/main.c', 'userspace/init/console.c',
           'userspace/init/console.h', 'userspace/init/seed_records.h', 'boot/limine.conf']
+
+
+def snapshot_inputs(directory, extra=()):
+    names = sorted(set([*INPUTS, *extra,
+        *(path.relative_to(ROOT).as_posix() for path in (ROOT / 'kernel').rglob('*')
+          if path.is_file() and path.suffix in ('.cpp', '.hpp', '.asm', '.ld'))]))
+    source = {}
+    for name in names:
+        target = directory / 'inputs' / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / name, target)
+        source[name] = digest(ROOT / name)
+        assert digest(target) == source[name], 'source changed during capture: ' + name
+    (directory / 'source-inputs.json').write_text(json.dumps(source, indent=2) + '\n')
+    return source
 
 
 def build(provider, linkage, directory, native_runtime=None):
@@ -81,15 +97,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--directory', type=Path, default=ROOT / 'build/resource-limits')
     parser.add_argument('--native', action='store_true')
+    parser.add_argument('--retain-host-source', action='store_true',
+                        help='retain authenticated Ubuntu glibc source for published native binaries')
     args = parser.parse_args()
+    if args.retain_host_source and not args.native:
+        parser.error('--retain-host-source requires --native')
     if args.native and (os.geteuid() or os.getegid()):
         raise RuntimeError('the Linux resource-limit comparison requires root')
     args.directory.mkdir(parents=True, exist_ok=False)
-    names = [*INPUTS, *(path.relative_to(ROOT).as_posix() for path in (ROOT / 'kernel').rglob('*')
-                       if path.is_file() and path.suffix in ('.cpp', '.hpp', '.asm'))]
-    source = {name: digest(ROOT / name) for name in names}
-    (args.directory / 'source-inputs.json').write_text(json.dumps(source, indent=2) + '\n')
+    source = snapshot_inputs(args.directory)
     (args.directory / 'host-kernel.json').write_text(json.dumps(platform.uname()._asdict(), indent=2) + '\n')
+    if args.retain_host_source:
+        from file_capabilities.host_sources import capture
+        corresponding_source = capture(args.directory / 'inputs')
+        (args.directory / 'native-glibc-source.json').write_text(json.dumps(corresponding_source, indent=2) + '\n')
     if not args.native:
         subprocess.run(['make', '-s', '-j2', 'build/axiom64.elf', 'build/init', 'busybox'], cwd=ROOT, check=True)
     rows = []
@@ -104,7 +125,12 @@ def main():
                 program, inputs = build(provider, linkage, case,
                     native_root / case.name if args.native else None)
                 if args.native:
-                    command = ['unshare', '--mount', '--pid', '--ipc', '--fork', '--mount-proc', str(program), '--native']
+                    accessible = native_root / case.name / program.name
+                    accessible.parent.mkdir(exist_ok=True)
+                    shutil.copy2(program, accessible)
+                    assert digest(accessible) == inputs['binary_sha256']
+                    command = ['unshare', '--mount', '--pid', '--ipc', '--fork', '--kill-child',
+                               '--mount-proc', str(accessible), '--native']
                     row = execute(command, case / 'native.log')
                     row.update(provider=provider, linkage=linkage, inputs=inputs)
                     rows.append(row)

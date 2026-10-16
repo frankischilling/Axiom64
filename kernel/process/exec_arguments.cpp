@@ -15,15 +15,17 @@ void ExecArguments::clear() {
     values_ = nullptr;
     used_ = capacity_ = count_ = vector_capacity_ = 0;
     argc_ = envc_ = processed_ = budget_ = 0;
+    limit_ = exec_argument_limit;
+    stack_limit_ = UINT64_MAX;
     ready_ = false;
     memset(path_, 0, sizeof(path_));
 }
 
 int ExecArguments::append_pointer(const char* value, bool charged) {
-    if (charged && budget_ > exec_argument_limit - sizeof(uint64_t))
+    if (charged && budget_ > limit_ - sizeof(uint64_t))
         return -7;
     if (count_ == vector_capacity_) {
-        size_t maximum = exec_argument_limit / sizeof(uint64_t) + 2;
+        size_t maximum = limit_ / sizeof(uint64_t) + 2;
         if (count_ == maximum)
             return -7;
         size_t next = min(maximum, vector_capacity_ ? vector_capacity_ * 2 : size_t(64));
@@ -43,11 +45,11 @@ int ExecArguments::append_pointer(const char* value, bool charged) {
 }
 
 int ExecArguments::append_bytes(const char* bytes, size_t size) {
-    if (size > exec_argument_limit - budget_)
+    if (size > limit_ - budget_)
         return -7;
     if (size > capacity_ - used_) {
         size_t next = max(capacity_ ? capacity_ * 2 : size_t(page_size), used_ + size);
-        next = min(next, exec_argument_limit);
+        next = min(next, limit_);
         auto text = static_cast<char*>(alloc(next));
         if (!text)
             return -12;
@@ -148,8 +150,11 @@ int ExecArguments::finish(Read read, void* context, bool kernel, bool empty) {
     return 0;
 }
 
-int ExecArguments::capture(Read read, void* context, uint64_t path, uint64_t argv, uint64_t envp) {
+int ExecArguments::capture(Read read, void* context, uint64_t path, uint64_t argv, uint64_t envp,
+                           uint64_t stack_limit) {
     clear();
+    stack_limit_ = stack_limit;
+    limit_ = max(size_t(32 * page_size), min(exec_argument_limit, size_t(stack_limit / 4)));
     if (!read)
         return -22;
     size_t length = 0;
@@ -183,8 +188,10 @@ int ExecArguments::capture(Read read, void* context, uint64_t path, uint64_t arg
 }
 
 int ExecArguments::capture_kernel(const char* path, const char* const* argv,
-                                  const char* const* envp) {
+                                  const char* const* envp, uint64_t stack_limit) {
     clear();
+    stack_limit_ = stack_limit;
+    limit_ = max(size_t(32 * page_size), min(exec_argument_limit, size_t(stack_limit / 4)));
     if (!path)
         return -14;
     size_t length = 0;
@@ -215,10 +222,13 @@ int ExecArguments::layout(uint64_t top, size_t auxiliary_size, ExecStack& output
     size_t filename_size = strlen(path_) + 1;
     size_t table_size = (argc_ + envc_ + 3) * sizeof(uint64_t);
     size_t fixed = used_ + filename_size + 7 + 16 + table_size + 15;
-    if (auxiliary_size > SIZE_MAX - fixed - 2 * 1024 * 1024 - page_size)
+    constexpr size_t reserve = 128 * 1024;
+    if (auxiliary_size > SIZE_MAX - fixed - reserve - page_size)
         return -7;
-    size_t mapping = align_up(fixed + auxiliary_size + 2 * 1024 * 1024);
-    if (mapping >= top)
+    size_t mapping = align_up(fixed + auxiliary_size + reserve);
+    if (mapping > stack_limit_)
+        mapping = align_down(stack_limit_);
+    if (mapping >= top || align_up(fixed + auxiliary_size) > mapping)
         return -7;
     ExecStack result{};
     result.top = top;

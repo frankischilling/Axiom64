@@ -220,6 +220,9 @@ void close_handle(Handle*);
 
 int64_t read_handle(Handle*, void*, size_t);
 
+// Clamp a complete regular-file write before inspecting user payload pages.
+int write_handle_limit(Handle*, size_t&);
+
 int64_t write_handle(Handle*, const void*, size_t);
 
 bool handle_ready(Handle*, bool write);

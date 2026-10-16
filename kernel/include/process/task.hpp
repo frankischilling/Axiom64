@@ -2,6 +2,7 @@
 #pragma once
 #include "fs/vfs.hpp"
 #include "security/credentials.hpp"
+#include "process/limits.hpp"
 
 namespace ax {
 constexpr unsigned max_tasks = 64, max_fds = 128;
@@ -43,6 +44,7 @@ struct MemoryContext {
     bool dumpable = true;
     AddressSpace space;
     uint64_t brk_base = 0, brk_end = 0;
+    uint64_t initial_data_size = 0;
     SharedAttachment shared[64]{};
 };
 
@@ -67,6 +69,7 @@ struct Task;
 struct IoRequest;
 
 struct Process {
+    ProcessLimits limits{max_fds};
     int pid = 0, parent = 0, pgid = 0, sid = 0, exit_status = 0, stop_signal = 0;
     unsigned live_threads = 1;
     Task* leader = nullptr;
@@ -75,6 +78,7 @@ struct Process {
     bool executed = false;
     char executable[1024]{};
     uint64_t start_ticks = 0;
+    uint64_t cpu_user_ticks = 0, cpu_system_ticks = 0;
     uint64_t alarm_deadline = 0, alarm_interval = 0, pending_signals = 0;
     SignalData signal_data[64]{};
 };
@@ -92,7 +96,9 @@ struct Task {
     Process* process;
     int real_parent_tid;
     int parent_death_signal;
+    bool process_limit_exceeded;
     uint64_t start_ticks;
+    uint64_t cpu_user_ticks, cpu_system_ticks;
 
     struct {
         uint64_t mask, information, deadline;
@@ -127,6 +133,10 @@ extern const char* test_suite;
 extern const char* test_phase;
 
 Task* new_task();
+
+uint64_t task_user_count(uint32_t);
+
+int process_exec_limit(Task&);
 
 int fork_task(Frame*, bool share = false, uint64_t stack = 0);
 

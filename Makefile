@@ -27,6 +27,20 @@ test-account-secret-native:
 .PHONY: test-parent-death test-parent-death-native test-signal-wait test-signal-wait-native test-account-desktop
 .PHONY: test-waitid test-waitid-native test-proc-identity test-proc-identity-native test-proc-identity-policy test-record-lock-lifecycle test-record-lock-lifecycle-native
 .PHONY: test-exec-arguments test-exec-arguments-native test-exec-arguments-policy
+.PHONY: test-process-limits-policy test-resource-limits test-resource-limits-native
+
+test-resource-limits:
+	$(PYTHON) scripts/resource_limits_test.py
+
+test-resource-limits-native:
+	$(PYTHON) scripts/resource_limits_test.py --native --directory build/resource-limits-native
+
+build/process-limits-policy: kernel/tests/process/limits.cpp kernel/process/limits.cpp kernel/include/process/limits.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/process/limits.cpp kernel/process/limits.cpp -o $@
+
+test-process-limits-policy: build/process-limits-policy
+	ASAN_OPTIONS=detect_leaks=1 ./build/process-limits-policy
 test-exec-arguments:
 	$(PYTHON) scripts/exec_arguments_test.py --directory build/exec-arguments
 test-exec-arguments-native:
@@ -44,9 +58,9 @@ test-proc-identity:
 	$(PYTHON) scripts/proc_identity_test.py --directory build/proc-identity
 test-proc-identity-native:
 	$(PYTHON) scripts/proc_identity_test.py --directory build/proc-identity-native --native
-build/proc-identity-policy: kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp kernel/include/fs/proc.hpp kernel/include/process/task.hpp
+build/proc-identity-policy: kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp kernel/process/limits.cpp kernel/include/process/limits.hpp kernel/include/fs/proc.hpp kernel/include/process/task.hpp
 	@mkdir -p build
-	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp -o $@
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp kernel/process/limits.cpp -o $@
 test-proc-identity-policy: build/proc-identity-policy
 	ASAN_OPTIONS=detect_leaks=1 ./build/proc-identity-policy
 test-record-lock-lifecycle:

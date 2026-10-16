@@ -4,6 +4,9 @@
 #include "ipc/ipc.hpp"
 #include "process/signals.hpp"
 #include "process/task.hpp"
+#include "process/cpu.hpp"
+#include "mm/limits.hpp"
+#include "mm/stack.hpp"
 #include "process/exec_arguments.hpp"
 #include "process/futex.hpp"
 #include "process/waitid.hpp"
@@ -15,6 +18,7 @@
 #include "core/random.hpp"
 #include "core/random/primitives.hpp"
 #include "abi/linux/credentials.hpp"
+#include "abi/linux/resource.hpp"
 #include "abi/linux/xattr.hpp"
 #include "fs/record_lock.hpp"
 #include "fs/proc.hpp"
@@ -219,44 +223,68 @@ static int64_t block(Wait why, int fd = -1, int pid = -1) {
     return would_block;
 }
 
-static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd, uint64_t off) {
-    if (!len || len > 256 * 1024 * 1024 || off % page_size || !(flags & 3) || (flags & 3) == 3 ||
-        (prot & ~7))
+static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, int fd,
+                         uint64_t off) {
+    if (!len || len > 256 * 1024 * 1024 || off % page_size || !(flags & 3) || (flags & 3) == 3)
         return -22;
+    // Linux mmap ignores protection bits outside the access permissions.
+    prot &= 7;
     len = align_up(len);
     if (flags & 0x10) {
         if (addr % page_size || addr < page_size || addr >= user_limit || len > user_limit - addr)
             return -22;
-        current->memory->space.unmap(addr, len);
     } else {
         addr = current->memory->space.next_map;
-        current->memory->space.next_map += len + page_size;
     }
     if (addr >= user_limit || len > user_limit - addr)
         return -12;
     Handle* h = nullptr;
+    bool framebuffer = false;
     if (!(flags & 0x20)) {
         h = fd_handle(fd);
         if (!h)
             return -9;
-        if (h->node && h->node->device == Device::framebuffer)
-            return framebuffer_map(current->memory->space, addr, len, prot, off);
-        if (!h->node || (h->node->mode & 0170000) != regular_file)
+        framebuffer = h->node && h->node->device == Device::framebuffer;
+        if (!framebuffer && (!h->node || (h->node->mode & 0170000) != regular_file))
             return -19;
-        if (h->node->mount->ops == &procfs_ops)
+        if (!framebuffer && h->node->mount->ops == &procfs_ops)
             return -19;
-        if ((h->flags & 3) == 1)
+        if (!framebuffer && (h->flags & 3) == 1)
             return -13;
-        if ((prot & 4) && h->node->mount->noexec)
+        if (!framebuffer && (prot & 4) && h->node->mount->noexec)
             return -1;
+        if (!framebuffer && (flags & 1) && (prot & 2) && (h->flags & 3) != 2)
+            return -13;
+    }
+    if (!memory_growth_allowed(*current, addr, len, flags & 0x10))
+        return -12;
+    bool private_mapping = flags & 2, stack_mapping = flags & 0x100;
+    if (stack_mapping && (!private_mapping || !(flags & 0x20)))
+        return -22;
+    if (private_mapping && (prot & 2) && !stack_mapping &&
+        !data_growth_allowed(*current, addr, len, flags & 0x10))
+        return -12;
+    auto complete = [&]() -> int64_t {
+        if (!(flags & 0x10))
+            current->memory->space.next_map = addr + len + page_size;
+        return addr;
+    };
+    if (framebuffer) {
+        if (flags & 0x10)
+            current->memory->space.unmap(addr, len);
+        int64_t result = framebuffer_map(current->memory->space, addr, len, prot, off);
+        if (result >= 0 && private_mapping)
+            for (uint64_t page = addr; page < addr + len; page += page_size)
+                *current->memory->space.entry(page) |= page_private;
+        return result < 0 ? result : complete();
     }
     if (h && (flags & 1)) {
-        if ((prot & 2) && (h->flags & 3) != 2)
-            return -13;
         uint64_t backing;
         int error = node_map_shared(h->node, off, len, prot & 2, backing);
         if (error)
             return error;
+        if (flags & 0x10)
+            current->memory->space.unmap(addr, len);
         if (!current->memory->space.map_physical(addr, backing, len, prot))
             return -12;
         if ((h->flags & 3) != 2 || node_readonly(h->node))
@@ -266,10 +294,15 @@ static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd,
         if (h->node->mount->noexec)
             for (uint64_t page = addr; page < addr + len; page += page_size)
                 *current->memory->space.entry(page) |= page_no_execute;
-        return addr;
+        return complete();
     }
-    if (!current->memory->space.map(addr, len, 3))
+    if (flags & 0x10)
+        current->memory->space.unmap(addr, len);
+    if (!current->memory->space.map(addr, len, 3, private_mapping))
         return -12;
+    if (stack_mapping)
+        for (uint64_t page = addr; page < addr + len; page += page_size)
+            *current->memory->space.entry(page) |= page_stack;
     if ((flags & 0x21) == 0x21)
         for (uint64_t page = addr; page < addr + len; page += page_size)
             *current->memory->space.entry(page) |= 0x400;
@@ -292,7 +325,7 @@ static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd,
             *current->memory->space.entry(page) |= page_no_execute;
     if (!current->memory->space.protect(addr, len, prot))
         return -12;
-    return addr;
+    return complete();
 }
 
 static int64_t dup_fd(int old, int target, int flags = 0) {
@@ -300,6 +333,8 @@ static int64_t dup_fd(int old, int target, int flags = 0) {
     if (!h)
         return -9;
     if (target < 0 || unsigned(target) >= max_fds)
+        return -9;
+    if (target != old && uint64_t(target) >= current->process->limits.soft(Resource::open_files))
         return -9;
     if (current->files->entries[target].reserved)
         return -16;
@@ -390,11 +425,29 @@ static int64_t wait_child(int pid, uint64_t status, int options, uint64_t usage)
 }
 
 static int64_t exec_user(uint64_t path, uint64_t argv, uint64_t envp, Frame* frame) {
+    if (current->process_limit_exceeded) {
+        // Capture filename errors before the deferred quota check; argv/envp follow it.
+        char filename[exec_path_limit];
+        size_t length = 0;
+        for (; length < sizeof(filename); length++) {
+            if (!current->memory->space.copy_in(filename + length, path + length, 1))
+                return -14;
+            if (!filename[length])
+                break;
+        }
+        if (length == sizeof(filename))
+            return -36;
+        if (!length)
+            return -2;
+        if (int error = process_exec_limit(*current))
+            return error;
+    }
     ExecArguments arguments;
     auto read = [](void* context, uint64_t address, void* output, size_t size) {
         return static_cast<AddressSpace*>(context)->copy_in(output, address, size);
     };
-    int result = arguments.capture(read, &current->memory->space, path, argv, envp);
+    int result = arguments.capture(read, &current->memory->space, path, argv, envp,
+                                   current->process->limits.soft(Resource::stack));
     if (!result) {
         result = exec_task(current, arguments);
         if (!result)
@@ -629,7 +682,12 @@ static int64_t dispatch(Frame* f) {
     }
     case 9:
         return mmap_call(a, b, c, d, e, g);
-    case 10:
+    case 10: {
+        int error = memory_protection_range(current->memory->space, a, b, c);
+        if (error)
+            return error;
+        if (!b)
+            return 0;
         if (c & (2 | 4)) {
             if (a >= user_limit || b > user_limit - a)
                 return -22;
@@ -640,7 +698,11 @@ static int64_t dispatch(Frame* f) {
                     return -13;
             }
         }
+        if (a < user_limit && b <= user_limit - a &&
+            !memory_protection_allowed(*current, a, align_up(b), int(c)))
+            return -12;
         return current->memory->space.protect(a, align_up(b), c) ? 0 : -12;
+    }
     case 11:
         if (a % page_size || !b || a >= user_limit || b > user_limit - a)
             return -22;
@@ -650,6 +712,14 @@ static int64_t dispatch(Frame* f) {
         if (!a)
             return current->memory->brk_end;
         if (a < current->memory->brk_base || a > current->memory->brk_base + 128 * 1024 * 1024)
+            return current->memory->brk_end;
+        if (!heap_change_allowed(*current, a))
+            return current->memory->brk_end;
+        if (align_up(a) > align_up(current->memory->brk_end) &&
+            (!memory_growth_allowed(*current, align_up(current->memory->brk_end),
+                                    align_up(a) - align_up(current->memory->brk_end)) ||
+             !data_growth_allowed(*current, align_up(current->memory->brk_end),
+                                  align_up(a) - align_up(current->memory->brk_end))))
             return current->memory->brk_end;
         if (a > current->memory->brk_end &&
             !current->memory->space.map(align_up(current->memory->brk_end),
@@ -867,6 +937,8 @@ static int64_t dispatch(Frame* f) {
         if (!h)
             return -9;
         if (b == 0 || b == 1030) {
+            if (uint32_t(c) >= current->process->limits.soft(Resource::open_files))
+                return -22;
             retain(h);
             int fd = allocate_fd(current, h, c, b == 1030);
             if (fd < 0)
@@ -1074,11 +1146,10 @@ static int64_t dispatch(Frame* f) {
         const uint32_t timezone[2]{};
         return b ? copy_result(b, timezone, sizeof(timezone)) : 0;
     }
-    case 97: {
-        uint64_t limit[] = {a == 7 ? max_fds : 0x7fffffffffffffffull,
-                            a == 7 ? max_fds : 0x7fffffffffffffffull};
-        return copy_result(b, limit, sizeof(limit));
-    }
+    case 97:
+    case 160:
+    case 302:
+        return resource_syscall(f);
     case 101: {
         if (!a)
             return -38;
@@ -1214,7 +1285,9 @@ static int64_t dispatch(Frame* f) {
     case 228: {
         if (a > 7)
             return -22;
-        uint64_t now = a == 0 || a == 5 ? clock_realtime_ticks() : ticks;
+        uint64_t now = a == 2 || a == 3   ? cpu_ticks(*current, a == 3)
+                       : a == 0 || a == 5 ? clock_realtime_ticks()
+                                          : ticks;
         Timespec ts{int64_t(now / 100), int64_t(now % 100) * 10000000};
         return copy_result(b, &ts, sizeof(ts));
     }
@@ -1352,15 +1425,6 @@ static int64_t dispatch(Frame* f) {
         return dup_fd(a, b, c);
     case 293:
         return create_pipe(a, b);
-    case 302: {
-        if (a && int(a) != current->process->pid && int(a) != current->pid)
-            return -3;
-        uint64_t limit[] = {b == 7 ? max_fds : 0x7fffffffffffffffull,
-                            b == 7 ? max_fds : 0x7fffffffffffffffull};
-        if (c)
-            return -38;
-        return d ? copy_result(d, limit, sizeof(limit)) : 0;
-    }
     case 318: {
         unsigned flags = c;
         if ((flags & ~7u) || (flags & 6u) == 6u)
@@ -1398,6 +1462,7 @@ static int64_t dispatch(Frame* f) {
 }
 
 extern "C" Frame* handle_syscall(Frame* f) {
+    cpu_account(current);
     asm volatile("fxsave64 %0" : "=m"(current->fpu));
     clock_refresh();
     uint64_t number = f->rax;
@@ -1405,7 +1470,7 @@ extern "C" Frame* handle_syscall(Frame* f) {
         log("sys pid=%u nr=%u a=%x b=%x c=%x\n", uint64_t(current->pid), number, f->rdi, f->rsi,
             f->rdx);
     int64_t result = dispatch(f);
-    clock_refresh();
+    cpu_refresh();
     epoll_notify();
     if (trace_syscalls)
         log("sys result=%d\n", result);

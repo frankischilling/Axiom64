@@ -58,6 +58,7 @@ class SourceBundleInputsTests(unittest.TestCase):
                 for item in ('kernel/include/process/limits.hpp', 'kernel/process/limits.cpp',
                              'kernel/include/mm/stack.hpp', 'kernel/mm/stack.cpp',
                              'scripts/resource_limits_test.py', 'scripts/resource_limits_storage_test.py',
+                             'scripts/tests/resource_thread_retirement_test.py',
                              'userspace/tests/process/resource-limits.c'):
                     self.assertEqual(archive.extractfile('Axiom64/' + item).read(), (ROOT / item).read_bytes())
                 archive.extractall(extracted, filter='data')

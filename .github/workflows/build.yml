@@ -433,6 +433,9 @@ jobs:
             build/http-download-normal-audit/**
             !build/http-downloads/**/certificates/*.key
             !build/http-download-normal/**/certificates/*.key
+      - name: Check actual joined-thread quota reclamation on separate native CPUs
+        if: matrix.suite == 'resource-limits-native'
+        run: sudo -n python3 scripts/tests/resource_thread_retirement_test.py
       - name: Compare resource quotas, signals and memory admission with native Linux
         if: matrix.suite == 'resource-limits-native'
         run: sudo -n python3 scripts/resource_limits_test.py --native --retain-host-source --directory build/resource-limits-native

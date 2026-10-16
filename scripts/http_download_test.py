@@ -19,6 +19,7 @@ from build_openssl import ensure as openssl
 from fetch import LOCK, ROOT
 from http_download.client import commands, verify
 from http_download.fixture import image
+from http_download.native import command as ordinary_command
 from http_download.peer import PAYLOAD_SHA256, Peer
 from eventfd_client import build as build_eventfd, verify as verify_eventfd
 from random_administration_test import checked_run, fingerprint
@@ -113,10 +114,13 @@ def native(case, provider, linkage, directory, event_program, certs, peers, time
         command_file.write_text('set -eu\n'+prefix+shlex.join(counter)+'\n'+script)
         command_file.chmod(0o644)
         shutil.copyfile(command_file, case / 'commands.sh')
-        command = ['unshare', '--pid', '--fork', '--kill-child', '--mount-proc', '--', 'setpriv',
+        host_accounts = {name: fingerprint(Path('/etc') / name) for name in ('passwd', 'group')}
+        command = ordinary_command(work, ['setpriv',
                    '--reuid', '60011', '--regid', '60011', '--clear-groups',
-                   'env', '-u', 'LD_PRELOAD', 'LC_ALL=C', 'sh', str(command_file)]
+                   'env', '-u', 'LD_PRELOAD', 'LC_ALL=C', 'sh', str(command_file)])
         process, text = checked_run(command, case / 'native.log', timeout)
+        if host_accounts != {name: fingerprint(Path('/etc') / name) for name in host_accounts}:
+            raise RuntimeError('native comparison changed host account files')
         checks = verify(text, expected)
         if process['returncode'] != 0 or process['timed_out']:
             raise RuntimeError('native download command failed: ' + repr(process))
@@ -136,6 +140,8 @@ def native(case, provider, linkage, directory, event_program, certs, peers, time
             raise RuntimeError('ordinary client wrote into the protected output directory')
         shutil.copytree(output, case / 'exports', symlinks=True)
         return dict(process=process, checks=checks, eventfd=verify_eventfd(text, strict=False), exports=exports,
+                    host_accounts_unchanged=True, host_account_inputs=host_accounts,
+                    fixture_account_inputs={name: fingerprint(work / name) for name in host_accounts},
                     accessible_inputs={name: fingerprint(path) for name, path in sources.items()})
 
 

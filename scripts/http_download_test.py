@@ -20,7 +20,9 @@ from fetch import LOCK, ROOT
 from http_download.client import commands, verify
 from http_download.fixture import image
 from http_download.native import command as ordinary_command
+from http_download.log import healthy
 from http_download.peer import PAYLOAD_SHA256, Peer
+from http_download.wire import verify as verify_wire
 from eventfd_client import build as build_eventfd, verify as verify_eventfd
 from random_administration_test import checked_run, fingerprint
 from random_crypto.peer import certificates
@@ -167,6 +169,7 @@ def guest(case, provider, linkage, firmware, transport, directory, event_program
         firmware_inputs = {name: fingerprint(Path('/usr/share/OVMF') / name)
                           for name in ('OVMF_CODE_4M.fd', 'OVMF_VARS_4M.fd')}
     process, text = checked_run(command, case / 'guest.log', timeout)
+    health = healthy((case / 'guest.log').read_bytes(), firmware)
     checks = {}
     for lane in (0, 1):
         parts = re.findall(r'^DOWNLOAD_LANE_BEGIN '+str(lane)+r'\r?\n(.*?)^DOWNLOAD_LANE_END '+str(lane)+r'\r?$', text, re.S | re.M)
@@ -177,7 +180,7 @@ def guest(case, provider, linkage, firmware, transport, directory, event_program
         raise RuntimeError('guest download process failed: ' + repr(process))
     return dict(process=process, checks=checks, eventfd=verify_eventfd(text, strict=True), image=fingerprint(iso),
                 captures={path.name: fingerprint(path) for path in captures},
-                firmware_inputs=firmware_inputs, independent_capture_verified=False)
+                firmware_inputs=firmware_inputs, health=health)
 
 
 def main():
@@ -230,6 +233,10 @@ def main():
                 for peer in peers[lane].values():
                     peer.close()
             row['peers'] = {lane: peer_results(group) for lane, group in peers.items()}
+            if not args.native:
+                row['wire'] = {lane: verify_wire(case / f'lane{lane}.pcap', lane, row['peers'][lane])
+                               for lane in (0, 1)}
+                row['independent_capture_verified'] = True
             row['passed'] = True
         except BaseException as error:
             row['error'] = repr(error)

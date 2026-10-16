@@ -384,7 +384,10 @@ jobs:
         run: bash scripts/ci/tools.sh restore
       - name: Compare ordinary-user HTTP and authenticated HTTPS downloads with native Linux
         if: matrix.suite == 'downloads-native'
-        run: sudo -n python3 scripts/http_download_test.py --native --output build/http-downloads
+        run: |
+          sudo -n python3 scripts/http_download_test.py --native --output build/http-downloads
+          sudo -n python3 scripts/http_download_failure_native_test.py --output build/http-downloads/normal-native
+          sudo -n python3 scripts/http_download_wget_native_test.py --output build/http-downloads/native-wget
       - name: Download real HTTP and authenticated HTTPS fixtures on both guest adapters
         if: startsWith(matrix.suite, 'downloads-') && matrix.suite != 'downloads-native'
         env:
@@ -394,9 +397,28 @@ jobs:
           firmware="${firmware%-*}"
           transport="${SUITE##*-}"
           python3 scripts/http_download_test.py --firmware "$firmware" --transport "$transport" --output build/http-downloads
+      - name: Independently read actual download sources, products and complete captures
+        if: startsWith(matrix.suite, 'downloads-') && matrix.suite != 'downloads-native'
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          firmware="${SUITE#downloads-}"
+          firmware="${firmware%-*}"
+          transport="${SUITE##*-}"
+          python3 scripts/http_download_verify.py build/http-downloads --firmware "$firmware" --transport "$transport" --source-root . --negative-controls build/http-download-controls --report build/http-downloads/actual-evidence.json
+      - name: Verify normal authenticated downloads and persistent reboots
+        if: startsWith(matrix.suite, 'downloads-') && matrix.suite != 'downloads-native'
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          firmware="${SUITE#downloads-}"
+          firmware="${firmware%-*}"
+          transport="${SUITE##*-}"
+          sudo -n python3 scripts/http_download_normal_test.py --firmware "$firmware" --transport "$transport" --output build/http-download-normal
+          sudo -n python3 scripts/http_download_normal_verify.py build/http-download-normal --firmware "$firmware" --transport "$transport" --source-root . --output build/http-download-normal-audit --negative-controls build/http-download-normal-audit/controls
       - name: Give the runner ownership of completed download evidence
         if: always() && startsWith(matrix.suite, 'downloads-')
-        run: sudo -n bash scripts/ci/storage_evidence.sh "$(id -u)" "$(id -g)" build/http-downloads
+        run: sudo -n bash scripts/ci/storage_evidence.sh "$(id -u)" "$(id -g)" build/http-downloads build/http-download-controls build/http-download-normal build/http-download-normal-audit
       - name: Upload actual download sources, clients, images, files and captures
         if: always() && startsWith(matrix.suite, 'downloads-')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -406,7 +428,11 @@ jobs:
           compression-level: 1
           path: |
             build/http-downloads/**
+            build/http-download-controls/**
+            build/http-download-normal/**
+            build/http-download-normal-audit/**
             !build/http-downloads/**/certificates/*.key
+            !build/http-download-normal/**/certificates/*.key
       - name: Compare resource quotas, signals and memory admission with native Linux
         if: matrix.suite == 'resource-limits-native'
         run: sudo -n python3 scripts/resource_limits_test.py --native --retain-host-source --directory build/resource-limits-native

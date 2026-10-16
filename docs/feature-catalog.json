@@ -2862,9 +2862,10 @@
     {
       "name": "ca-certificates",
       "kind": "port",
-      "state": "planned",
+      "state": "demonstrated",
       "owner": "F14",
-      "issue": "https://github.com/frankischilling/Axiom64/issues/14",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/168",
+      "current": "Dated public roots are authenticated, reproduced offline and installed at the default path. Local curl/wget checks exercise administrator-selected, public-only, missing and damaged trust stores. The complete download matrix and independent artifact readers define integration acceptance.",
       "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
     },
     {
@@ -2918,10 +2919,11 @@
     {
       "name": "curl",
       "kind": "port",
-      "state": "planned",
+      "state": "demonstrated",
       "owner": "F14",
-      "issue": "https://github.com/frankischilling/Axiom64/issues/14",
-      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+      "issue": "https://github.com/frankischilling/Axiom64/issues/168",
+      "current": "Authenticated curl 8.23.0/libcurl builds with all three explicit libc providers. Local native and guest comparisons verify HTTP framing, binary downloads, resume, errors, TLS 1.2/1.3 and certificate rejection. Normal RAM/ext2 reboot pilots verify authenticated DHCP/DNS/default-trust sessions. Integration requires the full normal matrix and hosted artifact acceptance.",
+      "acceptance": "Complete both musl providers, linkages, firmware paths, virtio transports and e1000 with ordinary authenticated DHCP/DNS/default-trust sessions, fresh-kernel persistence, independent actual-byte evidence and the complete current workflow."
     },
     {
       "name": "dbus",
@@ -5162,9 +5164,10 @@
     {
       "name": "wget",
       "kind": "port",
-      "state": "planned",
+      "state": "demonstrated",
       "owner": "F14",
-      "issue": "https://github.com/frankischilling/Axiom64/issues/14",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/168",
+      "current": "Local native and normal-guest checks verify HTTP and DNS-name HTTPS through the OpenSSL helper, plus default-store rejection. Numeric-IP helper URLs with an explicit port fail before TLS. The internal TLS 1.2 fallback accepts invalid certificates and warns that certificate validation is not implemented; use curl for authenticated HTTPS.",
       "acceptance": "Download from the guest through real DNS, TCP and HTTPS with trusted certificates; reject invalid certificates and interrupted transfers."
     },
     {

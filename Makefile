@@ -13,7 +13,7 @@ FORMAT_SOURCES = $(foreach pattern,*.cpp *.hpp,$(call rwildcard,kernel/,$(patter
 all: image
 .PHONY: test-rtc-codec test-clock-wall test-clock-wall-native
 .PHONY: test-random-crypto test-random-crypto-native test-random-crypto-wait test-random-crypto-wait-native
-.PHONY: openssl libxcrypt test-password-library-native test-password-library test-random-installed
+.PHONY: openssl libxcrypt curl ca-bundle test-password-library-native test-password-library test-random-installed
 .PHONY: test-pty-security test-pty-security-native
 test-pty-security:
 	$(PYTHON) scripts/pty_security_test.py
@@ -72,6 +72,10 @@ openssl:
 	$(PYTHON) scripts/build_openssl.py --provider all
 libxcrypt:
 	$(PYTHON) scripts/build_libxcrypt.py --provider all
+curl:
+	$(PYTHON) scripts/build_curl.py --provider all
+ca-bundle:
+	$(PYTHON) scripts/ca_bundle.py
 test-password-library-native:
 	$(PYTHON) scripts/password_library_test.py
 test-password-library:
@@ -574,6 +578,7 @@ ROOTFS_INPUTS += build/network-manager
 ROOTFS_INPUTS += build/random-seed-static
 ROOTFS_INPUTS += scripts/build_libcap.py scripts/build_musl.py scripts/build_openssl.py sources.lock.json
 ROOTFS_INPUTS += scripts/build_libxcrypt.py scripts/linux_uapi.py
+ROOTFS_INPUTS += scripts/build_curl.py scripts/ca_bundle.py
 ROOTFS_INPUTS += scripts/build_accounts.py $(wildcard userspace/accounts/*.c userspace/accounts/*.h)
 ROOTFS_INPUTS += $(wildcard userspace/desktop/*.c userspace/desktop/*.h)
 ROOTFS_INPUTS += build/desktop-terminal

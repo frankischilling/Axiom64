@@ -39,6 +39,49 @@ RECOVERY_FIXTURES = (RECOVERY_FIXTURE, NAMED_RECOVERY_FIXTURE, SYMLINK_RECOVERY_
 
 
 class SourceBundleInputsTests(unittest.TestCase):
+    def test_exported_ca_proof_runs_offline_from_actual_published_inputs(self):
+        from build_curl import source_inputs as curl_sources
+        from ca_bundle import source_inputs as ca_sources
+        inputs = [curl_sources(), ca_sources()]
+        with tempfile.TemporaryDirectory(prefix='axiom64-ca-source-export-') as temporary:
+            root = Path(temporary) / 'source'
+            root.mkdir()
+            for name in ('sources.lock.json', 'ports.lock.json', 'dependencies.json', 'LICENSE',
+                         'Makefile', 'README.md', '.clang-format', '.gitattributes'):
+                shutil.copyfile(ROOT / name, root / name)
+            shutil.copytree(ROOT / 'scripts', root / 'scripts',
+                            ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+            for folder in ('kernel', 'userspace', 'boot', 'vendor', 'docs'):
+                (root / folder).mkdir()
+            configuration = root / 'build/busybox-1.37.0/.config'
+            configuration.parent.mkdir(parents=True)
+            configuration.write_bytes(b'fixture\n')
+            with patch.object(sources, 'ROOT', root), patch.object(sources, 'gnu_reader_kit'), redirect_stdout(io.StringIO()):
+                sources.bundle(inputs)
+            extracted = Path(temporary) / 'extracted'
+            with tarfile.open(root / 'build/axiom64-sources.tar') as archive:
+                archive.extractall(extracted, filter='data')
+            exported = extracted / 'Axiom64'
+            lock = json.loads((exported / 'dependencies.json').read_text())
+            paths = {
+                'ports/ca-bundle/' + lock['ca_bundle']['archive']: 'downloads/' + lock['ca_bundle']['archive'],
+                'ports/ca-bundle/certdata.txt': 'downloads/sources/ca-bundle/certdata.txt',
+                'ports/ca-bundle/MPL-2.0.txt': 'downloads/sources/ca-bundle/MPL-2.0.txt',
+                'ports/curl-upstream/' + lock['curl']['archive']: 'downloads/' + lock['curl']['archive'],
+            }
+            for original, relative in paths.items():
+                destination = exported / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(extracted / original, destination)
+            code = ('import runpy,sys,urllib.request\n'
+                    'def offline(*args,**kwargs): raise RuntimeError("source export attempted a network fallback")\n'
+                    'urllib.request.urlopen=offline\n'
+                    'sys.argv=["scripts/tests/ca_bundle_test.py","-v"]\n'
+                    'runpy.run_path(sys.argv[0],run_name="__main__")\n')
+            result = subprocess.run([sys.executable, '-c', code], cwd=exported,
+                env=dict(os.environ, PYTHONPATH=''), capture_output=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_exported_account_oracle_replays_its_actual_retained_inputs(self):
         with tempfile.TemporaryDirectory(prefix='axiom64-account-source-inputs-') as name:
             root = Path(name) / 'source'
@@ -72,7 +115,7 @@ class SourceBundleInputsTests(unittest.TestCase):
             for test in ('account_generation_oracle_test.py', 'account_rotation_serial_test.py',
                          'account_rotation_journal_oracle_test.py', 'qmp_greeting_test.py',
                          'path_descriptor_cancellation_test.py', 'crypto_cache_test.py',
-                         'host_glibc_sources_test.py'):
+                         'host_glibc_sources_test.py', 'http_download_peer_test.py'):
                 result = subprocess.run([sys.executable, 'scripts/tests/' + test, '-v'],
                                         cwd=exported, env=dict(os.environ, PYTHONPATH=''),
                                         capture_output=True, timeout=60)

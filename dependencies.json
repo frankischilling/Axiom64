@@ -38,6 +38,33 @@
     "public_key_sha256": "3a2b9dd46fcb218a5ec628452db45bb14825a9f2d0a7301ec154cf87897eec0e",
     "signing_primary_fingerprint": "678CE3FEE430311596DB8C16F52E98007594C21D"
   },
+  "ca_bundle": {
+    "version": "2026-09-25",
+    "source_date_epoch": 1790305921,
+    "archive": "cacert-2026-09-25.pem",
+    "url": "https://curl.se/ca/cacert-2026-09-25.pem",
+    "sha256": "a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505",
+    "license": "MPL-2.0",
+    "license_url": "https://www.mozilla.org/media/MPL/2.0/index.txt",
+    "license_sha256": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04",
+    "source_url": "https://raw.githubusercontent.com/mozilla-firefox/firefox/f6dd0159931e536991eaaa02d839bdffb92c3f22/security/nss/lib/ckfw/builtins/certdata.txt",
+    "source_revision": "f6dd0159931e536991eaaa02d839bdffb92c3f22",
+    "source_sha256": "beb7e6dfe6499926e52c075c27bcfbe4c957f8609c575b3860273ae2806f63eb",
+    "certificates": 121
+  },
+  "curl": {
+    "version": "8.23.0",
+    "archive": "curl-8.23.0.tar.xz",
+    "url": "https://curl.se/download/curl-8.23.0.tar.xz",
+    "sha256": "8dadd7d2536a314f982ad05a651b713f426bf7d02cc2c76cffb9796f2218e6c5",
+    "license": "curl",
+    "license_sha256": "82f2f4427d6545ee5aaac4f0b80428da6cc8ba41c2cf5da3a03680ec327b9681",
+    "signature_url": "https://curl.se/download/curl-8.23.0.tar.xz.asc",
+    "signature_sha256": "dba1562fec2bf698a1226054e6757940e4bf2ab87b3b222a5e7b91348f0b82e2",
+    "public_key_url": "https://keys.openpgp.org/vks/v1/by-fingerprint/27EDEAF22F3ABCEB50DB9A125CC908FDB71E12C2",
+    "public_key_sha256": "55b605e2e455e1214781c14932696116b792adf334a400dda9ef2a6f06852b32",
+    "signing_primary_fingerprint": "27EDEAF22F3ABCEB50DB9A125CC908FDB71E12C2"
+  },
   "openssl": {
     "version": "3.5.9",
     "archive": "openssl-3.5.9.tar.gz",

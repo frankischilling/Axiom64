@@ -38,6 +38,7 @@ jobs:
           key: ${{ runner.os }}-downloads-v1-${{ hashFiles('dependencies.json', 'ports.lock.json', 'sources.lock.json', 'vendor/gnu-utmp-reader/inputs.json') }}
           path: |
             downloads/*.tar.*
+            downloads/cacert-*.pem
             downloads/ports
             downloads/sources
       - name: Test crypto cache input invalidation and complete product retention
@@ -122,6 +123,12 @@ jobs:
         run: python3 scripts/build_openssl.py --provider all
       - name: Verify completed OpenSSL fingerprints and reject changed inputs and products
         run: python3 scripts/tests/openssl_inputs_test.py -v
+      - name: Build authenticated curl and libcurl with all explicit libc providers
+        run: python3 scripts/build_curl.py --provider all
+      - name: Verify the dated public CA bundle against its offline Mozilla conversion
+        run: |
+          python3 scripts/ca_bundle.py
+          python3 scripts/tests/ca_bundle_test.py -v
       - name: Verify every completed crypto product is retained by the cache
         run: |
           python3 scripts/ci/crypto_cache.py --check --report build/crypto-cache/products.json
@@ -294,6 +301,11 @@ jobs:
           - random-crypto-bios
           - random-crypto-uefi
           - random-crypto-prerequisites
+          - downloads-native
+          - downloads-bios-modern
+          - downloads-bios-legacy
+          - downloads-uefi-modern
+          - downloads-uefi-legacy
           - random-installed-bios
           - random-installed-uefi
           - credentials
@@ -365,6 +377,31 @@ jobs:
         run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
       - name: Install build and emulation tools
         run: bash scripts/ci/tools.sh restore
+      - name: Compare ordinary-user HTTP and authenticated HTTPS downloads with native Linux
+        if: matrix.suite == 'downloads-native'
+        run: sudo -n python3 scripts/http_download_test.py --native --output build/http-downloads
+      - name: Download real HTTP and authenticated HTTPS fixtures on both guest adapters
+        if: startsWith(matrix.suite, 'downloads-') && matrix.suite != 'downloads-native'
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          firmware="${SUITE#downloads-}"
+          firmware="${firmware%-*}"
+          transport="${SUITE##*-}"
+          python3 scripts/http_download_test.py --firmware "$firmware" --transport "$transport" --output build/http-downloads
+      - name: Give the runner ownership of completed download evidence
+        if: always() && startsWith(matrix.suite, 'downloads-')
+        run: sudo -n bash scripts/ci/storage_evidence.sh "$(id -u)" "$(id -g)" build/http-downloads
+      - name: Upload actual download sources, clients, images, files and captures
+        if: always() && startsWith(matrix.suite, 'downloads-')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-${{ matrix.suite }}-evidence
+          if-no-files-found: error
+          compression-level: 1
+          path: |
+            build/http-downloads/**
+            !build/http-downloads/**/certificates/*.key
       - name: Compare account database publication and updates with native Linux
         if: matrix.suite == 'accounts-native-storage'
         run: |

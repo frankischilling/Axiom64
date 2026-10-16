@@ -251,9 +251,10 @@ static int epoll_events(Task& task, Epoll* poll, uint64_t output, unsigned count
             task.files->entries[item.fd].handle != item.handle ||
             item.handle->generation != item.generation)
             continue;
-        uint32_t mask = (item.event.events & (1u << 31))
-                            ? item.pending
-                            : readiness(item.handle) & (item.event.events | 8 | 16);
+        uint32_t ready_now = readiness(item.handle) & (item.event.events | 8 | 16);
+        // A queued edge can become stale before this waiter gets to consume it.
+        item.pending &= ready_now;
+        uint32_t mask = (item.event.events & (1u << 31)) ? item.pending : ready_now;
         if (!mask)
             continue;
         if (copy) {
@@ -271,7 +272,7 @@ static int epoll_events(Task& task, Epoll* poll, uint64_t output, unsigned count
     return ready;
 }
 
-void epoll_notify() {
+void epoll_notify(Handle* source, uint32_t events) {
     for (auto poll : epolls)
         if (poll)
             for (auto& item : poll->items)
@@ -279,6 +280,8 @@ void epoll_notify() {
                     item.handle->generation == item.generation) {
                     uint32_t ready = readiness(item.handle) & (item.event.events | 8 | 16);
                     item.pending |= ready & ~item.last_ready;
+                    if (item.handle == source)
+                        item.pending |= ready & events;
                     item.last_ready = ready;
                 }
 }

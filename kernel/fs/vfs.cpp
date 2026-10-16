@@ -6,6 +6,7 @@
 #include "fs/proc.hpp"
 #include "drivers/platform/devices.hpp"
 #include "ipc/ipc.hpp"
+#include "ipc/eventfd.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
 #include "net/netlink.hpp"
@@ -912,6 +913,10 @@ void close_handle(Handle* h) {
         netlink_close(h->netlink);
     if (h->epoll)
         epoll_close(h->epoll);
+    if (h->event) {
+        close_eventfd(h->event);
+        h->event = nullptr;
+    }
     if (h->pipe) {
         auto p = h->pipe;
         if (h->writer)
@@ -940,6 +945,8 @@ bool handle_ready(Handle* h, bool write) {
         return netlink_ready(h->netlink, write);
     if (h->epoll)
         return true;
+    if (h->event)
+        return eventfd_ready(h->event, write);
     if (h->pipe)
         return write ? h->pipe->size < sizeof(Pipe::bytes) || !h->pipe->readers
                      : h->pipe->size || !h->pipe->writers;
@@ -951,6 +958,12 @@ bool handle_ready(Handle* h, bool write) {
 int64_t read_handle(Handle* h, void* buf, size_t len) {
     if ((h->flags & 3) == 1)
         return -9;
+    if (h->event) {
+        int64_t result = eventfd_read(h->event, buf, len);
+        if (result > 0)
+            epoll_notify(h, 4);
+        return result;
+    }
     if (!len)
         return h->node && h->node->device == Device::random ? device_read(h, buf, 0) : 0;
     if (h->socket)
@@ -1010,6 +1023,12 @@ int write_handle_limit(Handle* h, size_t& length) {
 int64_t write_handle(Handle* h, const void* buf, size_t len) {
     if ((h->flags & 3) == 0)
         return -9;
+    if (h->event) {
+        int64_t result = eventfd_write(h->event, buf, len);
+        if (result > 0)
+            epoll_notify(h, 1);
+        return result;
+    }
     if (!len)
         return 0;
     if (h->socket)

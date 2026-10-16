@@ -49,6 +49,8 @@ struct IoRequest {
     size_t packet_length;
     uint64_t address_pointer, address_length_pointer;
     uint32_t address_capacity;
+    uint64_t event_value;
+    bool event_value_ready;
 };
 
 static void destroy(IoRequest* request) {
@@ -293,7 +295,8 @@ static int prepare(Task& task, IoRequest& request) {
         return 0;
     }
     if (request.positioned) {
-        if (request.handle->pipe || request.handle->socket || inet_stream(request.handle->inet) ||
+        if (request.handle->pipe || request.handle->event || request.handle->socket ||
+            inet_stream(request.handle->inet) ||
             (request.handle->node && (request.handle->node->mode & 0170000) == character))
             return -29;
         if (int64_t(f.r10) < 0)
@@ -516,9 +519,78 @@ static int64_t stream_attempt(Task& task, IoRequest& request) {
     return request.progress;
 }
 
+static int64_t eventfd_attempt(Task& task, IoRequest& request) {
+    size_t total = 0;
+    for (size_t i = 0; i < request.count; i++) {
+        const auto& vector = request.vectors[i];
+        // access_ok precedes the counter operation, but mapped-page faults do not.
+        if (vector.base >= user_limit || vector.length > user_limit - vector.base)
+            return -14;
+        total += vector.length;
+    }
+    if (!total && (request.call.rax == 19 || request.call.rax == 20))
+        return 0;
+    if (!request.write) {
+        if (total < sizeof(uint64_t))
+            return -22;
+        uint64_t value;
+        int64_t result = read_handle(request.handle, &value, sizeof(value));
+        if (result < 0)
+            return result == -11 && request.stream_blocking ? would_block : result;
+        // Linux consumes the counter before copying, including a late readv fault.
+        size_t copied = 0;
+        for (size_t i = 0; i < request.count && copied < sizeof(value); i++) {
+            const auto& vector = request.vectors[i];
+            size_t length = min(size_t(vector.length), sizeof(value) - copied);
+            size_t offset = 0;
+            while (offset < length) {
+                uint64_t address = vector.base + offset;
+                size_t count = min(length - offset, size_t(page_size - address % page_size));
+                if (!task.memory->space.copy_out(
+                        address, reinterpret_cast<uint8_t*>(&value) + copied, count))
+                    return -14;
+                copied += count;
+                offset += count;
+            }
+        }
+        return sizeof(value);
+    }
+    if (!total)
+        return -22;
+    while (request.cursor < request.count) {
+        const auto& vector = request.vectors[request.cursor];
+        if (!vector.length) {
+            request.cursor++;
+            continue;
+        }
+        if (!request.event_value_ready) {
+            // writev retains the scalar boundary of every nonempty vector.
+            if (vector.length != sizeof(uint64_t))
+                return request.progress ? int64_t(request.progress) : -22;
+            if (!task.memory->space.copy_in(&request.event_value, vector.base,
+                                            sizeof(request.event_value)))
+                return request.progress ? int64_t(request.progress) : -14;
+            request.event_value_ready = true;
+        }
+        int64_t result =
+            write_handle(request.handle, &request.event_value, sizeof(request.event_value));
+        if (result < 0) {
+            if (result == -11 && request.stream_blocking)
+                return would_block;
+            return request.progress ? int64_t(request.progress) : result;
+        }
+        request.progress += result;
+        request.cursor++;
+        request.event_value_ready = false;
+    }
+    return request.progress;
+}
+
 static int64_t attempt(Task& task, IoRequest& request) {
     auto h = request.handle;
     const auto& f = request.call;
+    if (h->event && !request.locking)
+        return eventfd_attempt(task, request);
     if (request.connect) {
         net_poll();
         if (!request.started) {
@@ -672,7 +744,7 @@ int64_t io_syscall(Task& task, const Frame& frame) {
     if (!error) {
         // Linux captures O_NONBLOCK for this call; an alias cannot alter a retained cursor.
         request->stream_blocking =
-            inet_stream(h->inet) && !(h->flags & 04000) && !(request->flags & 0x40);
+            (inet_stream(h->inet) || h->event) && !(h->flags & 04000) && !(request->flags & 0x40);
         capture_timeout(*request);
     }
     int64_t result = error ? error : attempt(task, *request);

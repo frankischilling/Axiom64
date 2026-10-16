@@ -20,6 +20,7 @@ from fetch import LOCK, ROOT
 from http_download.client import commands, verify
 from http_download.fixture import image
 from http_download.peer import PAYLOAD_SHA256, Peer
+from eventfd_client import build as build_eventfd, verify as verify_eventfd
 from random_administration_test import checked_run, fingerprint
 from random_crypto.peer import certificates
 
@@ -63,7 +64,7 @@ def peer_results(peers):
     return {name: peer.result for name, peer in peers.items()}
 
 
-def native(case, provider, linkage, directory, certs, peers, timeout):
+def native(case, provider, linkage, directory, event_program, certs, peers, timeout):
     if os.geteuid() != 0:
         raise RuntimeError('ordinary-user native comparisons need the private root build session')
     with tempfile.TemporaryDirectory(prefix='axiom64-http-client-') as temporary:
@@ -71,7 +72,7 @@ def native(case, provider, linkage, directory, certs, peers, timeout):
         work.chmod(0o755)
         binary = work / 'bin'
         binary.mkdir(mode=0o755)
-        sources = {'curl': directory / linkage / 'stage/usr/bin/curl',
+        sources = {'curl': directory / linkage / 'stage/usr/bin/curl', 'eventfd-test': event_program,
                    'busybox': ROOT / ('build/busybox-' + LOCK['busybox']['version'] + '/busybox')}
         if linkage == 'dynamic':
             sources['libcurl.so.4'] = directory / 'dynamic/stage/usr/lib/libcurl.so.4'
@@ -102,10 +103,17 @@ def native(case, provider, linkage, directory, certs, peers, timeout):
         script, expected = commands(executable, binary / 'busybox', public / 'ca.pem',
             public / 'untrusted.pem', peers, '127.0.0.1', output)
         command_file = work / 'commands.sh'
-        command_file.write_text('export LD_LIBRARY_PATH=' + shlex.quote(str(binary)) + '\n' + script)
+        counter = [str(binary / 'eventfd-test'), '--observe-native']
+        prefix = 'export LD_LIBRARY_PATH=' + shlex.quote(str(binary)) + '\n'
+        if linkage == 'dynamic' and provider != 'native':
+            counter.insert(0, str(binary / 'loader'))
+            prefix += 'export EVENTFD_EXEC_LOADER=' + shlex.quote(str(binary / 'loader')) + '\n'
+        else:
+            prefix += 'unset EVENTFD_EXEC_LOADER\n'
+        command_file.write_text('set -eu\n'+prefix+shlex.join(counter)+'\n'+script)
         command_file.chmod(0o644)
         shutil.copyfile(command_file, case / 'commands.sh')
-        command = ['unshare', '--pid', '--fork', '--kill-child', '--', 'setpriv',
+        command = ['unshare', '--pid', '--fork', '--kill-child', '--mount-proc', '--', 'setpriv',
                    '--reuid', '60011', '--regid', '60011', '--clear-groups',
                    'env', '-u', 'LD_PRELOAD', 'LC_ALL=C', 'sh', str(command_file)]
         process, text = checked_run(command, case / 'native.log', timeout)
@@ -127,12 +135,12 @@ def native(case, provider, linkage, directory, certs, peers, timeout):
         if (output / 'deny/forbidden.bin').exists():
             raise RuntimeError('ordinary client wrote into the protected output directory')
         shutil.copytree(output, case / 'exports', symlinks=True)
-        return dict(process=process, checks=checks, exports=exports,
+        return dict(process=process, checks=checks, eventfd=verify_eventfd(text, strict=False), exports=exports,
                     accessible_inputs={name: fingerprint(path) for name, path in sources.items()})
 
 
-def guest(case, provider, linkage, firmware, transport, directory, certs, peers, timeout):
-    iso, expected = image(case, provider, linkage, directory, certs, peers)
+def guest(case, provider, linkage, firmware, transport, directory, event_program, certs, peers, timeout):
+    iso, expected = image(case, provider, linkage, directory, event_program, certs, peers)
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '512M',
         '-nic', 'none', '-cdrom', str(iso), '-display', 'none', '-serial', 'stdio',
         '-monitor', 'none', '-no-reboot', '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
@@ -161,7 +169,7 @@ def guest(case, provider, linkage, firmware, transport, directory, certs, peers,
         checks[lane] = verify(parts[0], expected[lane])
     if process['returncode'] != 1 or process['timed_out']:
         raise RuntimeError('guest download process failed: ' + repr(process))
-    return dict(process=process, checks=checks, image=fingerprint(iso),
+    return dict(process=process, checks=checks, eventfd=verify_eventfd(text, strict=True), image=fingerprint(iso),
                 captures={path.name: fingerprint(path) for path in captures},
                 firmware_inputs=firmware_inputs, independent_capture_verified=False)
 
@@ -202,14 +210,16 @@ def main():
     for provider, linkage, firmware, transport in scenarios:
         case = output / '-'.join((provider, linkage, firmware, transport))
         case.mkdir()
+        event_program, event_inputs = build_eventfd(case, provider, linkage)
         peers = {lane: {name: Peer(name, certs, args.timeout) for name in NAMES}
                  for lane in ((0,) if args.native else (0, 1))}
         row = dict(provider=provider, linkage=linkage, firmware=firmware, transport=transport,
-                   curl_manifest=fingerprint(providers[provider] / 'manifest.json'), passed=False)
+                   curl_manifest=fingerprint(providers[provider] / 'manifest.json'),
+                   eventfd_build=event_inputs, passed=False)
         try:
-            row.update(native(case, provider, linkage, providers[provider], certs, peers[0], args.timeout)
+            row.update(native(case, provider, linkage, providers[provider], event_program, certs, peers[0], args.timeout)
                 if args.native else guest(case, provider, linkage, firmware, transport,
-                                         providers[provider], certs, peers, args.timeout))
+                                         providers[provider], event_program, certs, peers, args.timeout))
             for lane in peers:
                 for peer in peers[lane].values():
                     peer.close()

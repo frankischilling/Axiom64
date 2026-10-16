@@ -13,7 +13,7 @@ from http_download.client import commands
 from random_administration_test import fingerprint
 
 
-def image(directory, provider, linkage, curl_directory, certificates, peers):
+def image(directory, provider, linkage, curl_directory, event_program, certificates, peers):
     files = {name: (0o40755, b'') for name in
         ('bin', 'sbin', 'lib', 'usr', 'usr/bin', 'usr/lib', 'etc', 'etc/ssl', 'dev', 'proc', 'sys', 'tmp', 'run')}
     stage = curl_directory / linkage / 'stage'
@@ -21,6 +21,7 @@ def image(directory, provider, linkage, curl_directory, certificates, peers):
         'sbin/init': ROOT / 'build/init',
         'bin/busybox': ROOT / ('build/busybox-' + LOCK['busybox']['version'] + '/busybox'),
         'usr/bin/curl': stage / 'usr/bin/curl',
+        'usr/bin/eventfd-test': event_program,
         'lib/ld-musl-x86_64.so.1': loader(provider),
         'etc/ssl/test-ca.pem': certificates / 'ca.pem',
         'etc/ssl/untrusted-ca.pem': certificates / 'untrusted.pem',
@@ -39,7 +40,7 @@ def image(directory, provider, linkage, curl_directory, certificates, peers):
     for name in ('libc.so', 'libc.musl-x86_64.so.1'):
         files['lib/' + name] = (0o120777, b'/lib/ld-musl-x86_64.so.1')
     setup = ['#!/bin/sh', 'set -eu', 'export PATH=/bin:/usr/bin:/sbin',
-             'export LD_LIBRARY_PATH=/usr/lib:/lib']
+             'export LD_LIBRARY_PATH=/usr/lib:/lib', '/usr/bin/eventfd-test --strict-writes']
     expected = {}
     for lane in (0, 1):
         host = f'10.23.{lane+1}.1'

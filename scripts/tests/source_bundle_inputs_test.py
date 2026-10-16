@@ -2,6 +2,7 @@
 """Keep actual text and binary regression inputs in corresponding-source archives."""
 from contextlib import redirect_stdout
 import io
+import json
 import os
 from pathlib import Path
 import shutil
@@ -55,6 +56,10 @@ class SourceBundleInputsTests(unittest.TestCase):
                 target = root / item
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / item, target)
+            for item in json.loads((ROOT / 'sources.lock.json').read_text())['musl_local_patches']:
+                target = root / item['path']
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / item['path'], target)
             with patch.object(sources, 'ROOT', root), patch.object(sources, 'gnu_reader_kit'), redirect_stdout(io.StringIO()):
                 sources.bundle([])
             extracted = Path(name) / 'extracted'
@@ -66,7 +71,8 @@ class SourceBundleInputsTests(unittest.TestCase):
             exported = extracted / 'Axiom64'
             for test in ('account_generation_oracle_test.py', 'account_rotation_serial_test.py',
                          'account_rotation_journal_oracle_test.py', 'qmp_greeting_test.py',
-                         'path_descriptor_cancellation_test.py'):
+                         'path_descriptor_cancellation_test.py', 'crypto_cache_test.py',
+                         'host_glibc_sources_test.py'):
                 result = subprocess.run([sys.executable, 'scripts/tests/' + test, '-v'],
                                         cwd=exported, env=dict(os.environ, PYTHONPATH=''),
                                         capture_output=True, timeout=60)

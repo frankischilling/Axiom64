@@ -67,6 +67,12 @@ The native path-descriptor cancellation checks distinguish live children, unreap
 
 The host captures `build/desktop-bios.png` and `desktop-uefi.png` after input succeeds. Logs are `build/boot-bios.log` and `boot-uefi.log`; results are in `build/boot-results.json`.
 
+CI can reuse completed musl and OpenSSL products across revisions with identical dependency locks, recipes, local patches and host build inputs. The cache key includes actual compiler/tool bytes, native linker inputs and C headers. It also binds the workspace path used by compiler specifications. Cache hits still run the maintained builders, complete product hash checks and damaged-input controls. The cache retains staged tools, libraries, notices, manifests, logs and generated configuration headers; it excludes OpenSSL source and intermediate object trees. Input fingerprints, product counts and cache-hit evidence accompany the account-policy artifact under `crypto-cache/`. Complete cold and warm workflow timings are needed before claiming an overall CI improvement.
+
+Read these reports together: `inputs.json` records the exact key and build inputs, `cache-hit.txt` records whether the cache action found that key, and `products.json` records the completed manifests and verified product counts. An empty or `false` cache-hit value means a miss; `true` alone does not prove that restored products passed verification. Compare successful complete workflows with matching build inputs, including queue time and the unchanged guest jobs. Documentation changes can reuse the key because they do not change a dependency recipe or product.
+
+Artifact downloads use a pinned Node 24 action and reject digest mismatches before restored inputs reach tests. Native file-capability comparisons obtain Ubuntu source indices through the content hash in a signature-verified Release. This avoids combining an older Release with a newly published mutable index. Capture retains rejected index bytes and their expected/actual hashes under `archive-authentication/`; a failed transfer never becomes a completed index cache entry. Verified public indices use mode `0644`, so ordinary CI readers and uploaders can read files produced by root. Nine HTTP regression cases cover publication identity, truncated responses, missing indices, damaged cached bytes and evidence-reader access. When run as root, the access case drops to an unprivileged UID to read the actual cached and copied files. The extracted-source checks run these cases too.
+
 For shorter development loops:
 
 ```sh

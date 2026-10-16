@@ -82,8 +82,8 @@ def execute(command, log, firmware=None):
     text = log.read_text().replace('\r\n', '\n')
     lines = text.splitlines()
     count = sum(line.startswith('RESOURCE_LIMIT_OBSERVATION ') for line in lines)
-    passed = not timed_out and process.returncode == (1 if firmware else 0) and count == 10 and \
-        lines.count('RESOURCE_LIMIT_PASS observations=10 scope=interface-descriptors-files-processes-exec-memory-cpu-data-stack') == 1 and not any(
+    passed = not timed_out and process.returncode == (1 if firmware else 0) and count == 11 and \
+        lines.count('RESOURCE_LIMIT_PASS observations=11 scope=interface-descriptors-files-processes-exec-memory-cpu-data-stack-isolation') == 1 and not any(
         marker in text for marker in ('RESOURCE_LIMIT_FAIL', 'PANIC:', 'FAULT pid='))
     if firmware:
         passed = passed and lines.count('AXIOM64_TESTS_PASS') == 1 and \

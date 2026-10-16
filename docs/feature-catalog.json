@@ -324,7 +324,7 @@
       "title": "Linux syscall and libc compatibility",
       "milestone": "M4",
       "state": "partial",
-      "current": "Static/dynamic musl programs and a tested syscall subset work, including retained blocking I/O and tested restart behavior. Unsupported calls return ENOSYS; complete Linux conformance remains planned. Local advisory flock supports canonical inode ownership, descriptor lifetime, retained waits, and tested signal restart on the single-CPU kernel. POSIX/OFD record locks have native and RAM/ext2 lifetime, deadlock, restart, descriptor-replacement, exhaustion and reboot checks. Owned exec argument/environment capture and checked stack loading accept long Linux commands while preserving failed-exec state; complete resource-limit enforcement remains planned.",
+      "current": "Static/dynamic musl programs and a tested syscall subset work, including retained blocking I/O and tested restart behavior. Unsupported calls return ENOSYS; complete Linux conformance remains planned. Local advisory flock supports canonical inode ownership, descriptor lifetime, retained waits, and tested signal restart on the single-CPU kernel. POSIX/OFD record locks have native and RAM/ext2 lifetime, deadlock, restart, descriptor-replacement, exhaustion and reboot checks. Owned exec argument/environment capture and checked stack loading accept long Linux commands while preserving failed-exec state; seven Linux resource limits now have native and guest enforcement checks, including real stack growth, CPU accounting and coordinated ordinary-user pressure. Other stored resource selectors and broader resource-consuming interfaces still require their Linux ABI implementations.",
       "scope": [
         "Machine-readable Linux x86-64 syscall/structure/flag/error matrix with tests",
         "Extend musl coverage without silent successful stubs",
@@ -372,8 +372,8 @@
       "id": "F09",
       "title": "Accounts, permissions, and process credentials",
       "milestone": "M3",
-      "state": "partial",
-      "current": "Task identities, supplementary groups, capability transitions, RAM/ext2 file-capability exec, maintained getcap/setcap tools, DAC, chroot and process/IPC/network guards work. Account tools provide atomic passwd/group/shadow storage, administration, maintained password verification, private terminals, supervised ordinary shells, protected login journals and interactive login/su/sudo/passwd. Structural account administration and numeric identity reuse check live session leases and actual process/thread credentials under database/logbook locks. Normal images provision an administrator privately on a fresh disk and require login on later boots. Authenticated graphical clients use ordinary identities while trusted Xorg owns raw devices; saved seat state binds boot and process birth. Bounded journal rotation retains four closed generations and carries active leases. Complete persistent administration, storage/process/VM fault acceptance and wider isolation remain required.",
+      "state": "complete",
+      "current": "Task identities, supplementary groups, capability transitions, RAM/ext2 file-capability exec, maintained getcap/setcap tools, DAC, chroot and process/IPC/network guards work. Account tools provide atomic passwd/group/shadow storage, administration, maintained password verification, private terminals, supervised ordinary shells, protected login journals and interactive login/su/sudo/passwd. Structural account administration and numeric identity reuse check live session leases and actual process/thread credentials under database/logbook locks. Normal images provision an administrator privately on a fresh disk and require login on later boots. Authenticated graphical clients use ordinary identities while trusted Xorg owns raw devices; saved seat state binds boot and process birth. Bounded journal rotation retains four closed generations and carries active leases. Complete persistent account acceptance covers administration, storage/process/VM faults and published-byte verification. Process-owned Linux resource tables enforce descriptors, regular-file size, real-UID tasks, address space, private data/heap, grow-down stacks and CPU time. Thirty native/RAM/ext2 profiles exercise quota failures, ownership and simultaneous ordinary-user isolation with a healthy worker that keeps its limits and continues after hard CPU termination. Current complete hosted and independent publication checks remain integration gates. Other Linux ABI interfaces, service lifecycle and remote-access requirements remain in their own feature areas.",
       "scope": [
         "UID/GID, supplementary groups, real/effective/saved credentials, and umask",
         "File/directory access checks, ownership, sticky bits, set-ID, and chroot",
@@ -418,7 +418,16 @@
         "userspace/tests/desktop/seat-recovery.c",
         "scripts/tests/desktop_seat_test.py",
         "userspace/tests/desktop/login-observe.c",
-        "scripts/account_normal_test.py"
+        "scripts/account_normal_test.py",
+        "kernel/process/limits.cpp",
+        "kernel/process/cpu.cpp",
+        "kernel/mm/stack.cpp",
+        "kernel/abi/linux/resource.cpp",
+        "kernel/tests/process/limits.cpp",
+        "userspace/tests/process/resource-limits.c",
+        "scripts/resource_limits_test.py",
+        "scripts/resource_limits_storage_test.py",
+        "docs/resource-limits.md"
       ],
       "branch": "feature/f09-accounts-permissions-and-process-credentials",
       "issue": "https://github.com/frankischilling/Axiom64/issues/9"

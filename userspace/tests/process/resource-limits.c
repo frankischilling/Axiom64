@@ -953,6 +953,220 @@ static void cpu_limits(void) {
           WTERMSIG(status) == SIGKILL);
 }
 
+static void isolation_limit(int resource, rlim_t soft_value, rlim_t hard_value) {
+    struct rlimit value = {soft_value, hard_value};
+    CHECK(setrlimit(resource, &value) == 0);
+}
+
+static void isolation_identity(uid_t uid) {
+    CHECK(setgroups(0, NULL) == 0 && setgid(uid) == 0 && setuid(uid) == 0);
+    CHECK(getuid() == uid && geteuid() == uid && getgid() == uid && getegid() == uid);
+}
+
+static void isolation_checkpoint(int request, int response, unsigned index) {
+    char command = (char)('A' + index), reply;
+    CHECK(write(request, &command, 1) == 1 && read(response, &reply, 1) == 1 && reply == command);
+}
+
+static void service_isolation(void) {
+    const uid_t healthy_uid = 60011, pressure_uid = 60012;
+    struct rlimit parent_limits[16];
+    for (unsigned resource = 0; resource < 16; resource++)
+        CHECK(getrlimit((int)resource, &parent_limits[resource]) == 0);
+    const char* directory = getenv("AXIOM64_RESOURCE_DIRECTORY");
+    char workspace[1024], healthy_path[1100], pressure_path[1100];
+    int length = snprintf(workspace, sizeof(workspace), "%s/resource-isolation-XXXXXX",
+                          directory ? directory : "/tmp");
+    CHECK(length > 0 && (size_t)length < sizeof(workspace) && mkdtemp(workspace) != NULL);
+    CHECK(chmod(workspace, 0711) == 0);
+    CHECK(snprintf(healthy_path, sizeof(healthy_path), "%s/healthy", workspace) > 0);
+    CHECK(snprintf(pressure_path, sizeof(pressure_path), "%s/pressure", workspace) > 0);
+    const char* paths[] = {healthy_path, pressure_path};
+    uid_t owners[] = {healthy_uid, pressure_uid};
+    for (unsigned i = 0; i < 2; i++) {
+        int fd = open(paths[i], O_CREAT | O_EXCL | O_RDWR, 0600);
+        CHECK(fd >= 0 && fchown(fd, owners[i], owners[i]) == 0 && close(fd) == 0);
+    }
+    int healthy_request[2], healthy_response[2], pressure_report[2], pressure_control[2];
+    CHECK(pipe(healthy_request) == 0 && pipe(healthy_response) == 0 && pipe(pressure_report) == 0 &&
+          pipe(pressure_control) == 0);
+    pid_t healthy = fork();
+    CHECK(healthy >= 0);
+    if (!healthy) {
+        CHECK(close(healthy_request[1]) == 0 && close(healthy_response[0]) == 0);
+        CHECK(close(pressure_report[0]) == 0 && close(pressure_report[1]) == 0 &&
+              close(pressure_control[0]) == 0 && close(pressure_control[1]) == 0);
+        isolation_limit(RLIMIT_NOFILE, 32, 32);
+        isolation_limit(RLIMIT_NPROC, 2, 2);
+        isolation_limit(RLIMIT_AS, 64 * 1024 * 1024, 64 * 1024 * 1024);
+        isolation_limit(RLIMIT_DATA, 32 * 1024 * 1024, 32 * 1024 * 1024);
+        isolation_limit(RLIMIT_STACK, 512 * 1024, 512 * 1024);
+        isolation_limit(RLIMIT_FSIZE, 4096, 4096);
+        isolation_identity(healthy_uid);
+        struct rlimit initial[16];
+        for (unsigned resource = 0; resource < 16; resource++)
+            CHECK(getrlimit((int)resource, &initial[resource]) == 0);
+        int data = open(healthy_path, O_RDWR);
+        CHECK(data >= 0);
+        for (unsigned i = 0; i < 7; i++) {
+            char command;
+            CHECK(read(healthy_request[0], &command, 1) == 1 && command == (char)('A' + i));
+            for (unsigned resource = 0; resource < 16; resource++) {
+                struct rlimit current;
+                CHECK(getrlimit((int)resource, &current) == 0 &&
+                      current.rlim_cur == initial[resource].rlim_cur &&
+                      current.rlim_max == initial[resource].rlim_max);
+            }
+            int extra = open("/dev/null", O_RDONLY);
+            CHECK(extra >= 0 && close(extra) == 0);
+            unsigned char* memory =
+                mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            CHECK(memory != MAP_FAILED);
+            memory[0] = (unsigned char)command;
+            CHECK(memory[0] == (unsigned char)command && munmap(memory, 4096) == 0);
+            pid_t child = fork();
+            CHECK(child >= 0);
+            if (!child)
+                _exit(0);
+            int status;
+            CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+                  WEXITSTATUS(status) == 0);
+            CHECK(write(data, &command, 1) == 1 && fsync(data) == 0);
+            CHECK(write(healthy_response[1], &command, 1) == 1);
+        }
+        CHECK(close(data) == 0 && close(healthy_request[0]) == 0 &&
+              close(healthy_response[1]) == 0);
+        _exit(0);
+    }
+    CHECK(close(healthy_request[0]) == 0 && close(healthy_response[1]) == 0);
+    isolation_checkpoint(healthy_request[1], healthy_response[0], 0);
+    pid_t pressure = fork();
+    CHECK(pressure >= 0);
+    if (!pressure) {
+        CHECK(close(healthy_request[1]) == 0 && close(healthy_response[0]) == 0 &&
+              close(pressure_report[0]) == 0 && close(pressure_control[1]) == 0);
+        isolation_limit(RLIMIT_NOFILE, 16, 16);
+        isolation_limit(RLIMIT_NPROC, 2, 2);
+        isolation_limit(RLIMIT_AS, 32 * 1024 * 1024, 32 * 1024 * 1024);
+        isolation_limit(RLIMIT_DATA, 16 * 1024 * 1024, 16 * 1024 * 1024);
+        isolation_limit(RLIMIT_STACK, 256 * 1024, 256 * 1024);
+        isolation_limit(RLIMIT_FSIZE, 8, 8);
+        isolation_limit(RLIMIT_CPU, 1, 2);
+        isolation_identity(pressure_uid);
+        CHECK(signal(SIGXFSZ, SIG_IGN) != SIG_ERR && signal(SIGXCPU, SIG_IGN) != SIG_ERR);
+        CHECK(open(healthy_path, O_WRONLY) == -1 && errno == EACCES);
+        CHECK(kill(healthy, SIGTERM) == -1 && errno == EPERM);
+        struct rlimit remote;
+        CHECK(syscall(SYS_prlimit64, healthy, RLIMIT_NOFILE, NULL, &remote) == -1 &&
+              errno == EPERM);
+        struct rlimit raised = {16, 32};
+        CHECK(setrlimit(RLIMIT_NOFILE, &raised) == -1 && errno == EPERM);
+        char phase = 1, reply;
+        CHECK(write(pressure_report[1], &phase, 1) == 1 &&
+              read(pressure_control[0], &reply, 1) == 1 && reply == phase);
+        int data = open(pressure_path, O_RDWR);
+        CHECK(data >= 0 && write(data, "0123456789abcdef", 16) == 8);
+        CHECK(write(data, "X", 1) == -1 && errno == EFBIG);
+        int held[32], count = 0;
+        for (;;) {
+            int fd = open("/dev/null", O_RDONLY);
+            if (fd < 0) {
+                CHECK(errno == EMFILE);
+                break;
+            }
+            CHECK(count < 32);
+            held[count++] = fd;
+        }
+        CHECK(count > 0);
+        phase = 2;
+        CHECK(write(pressure_report[1], &phase, 1) == 1 &&
+              read(pressure_control[0], &reply, 1) == 1 && reply == phase);
+        unsigned char* memory =
+            mmap(NULL, 4 * 1024 * 1024, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        CHECK(memory != MAP_FAILED);
+        for (size_t i = 0; i < 4 * 1024 * 1024; i += 4096)
+            memory[i] = 0x5a;
+        CHECK(mmap(NULL, 64 * 1024 * 1024, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1,
+                   0) == MAP_FAILED &&
+              errno == ENOMEM);
+        phase = 3;
+        CHECK(write(pressure_report[1], &phase, 1) == 1 &&
+              read(pressure_control[0], &reply, 1) == 1 && reply == phase);
+        pid_t holder = fork();
+        CHECK(holder >= 0);
+        if (!holder)
+            for (;;)
+                pause();
+        CHECK(fork() == -1 && errno == EAGAIN);
+        phase = 4;
+        CHECK(write(pressure_report[1], &phase, 1) == 1 &&
+              read(pressure_control[0], &reply, 1) == 1 && reply == phase);
+        CHECK(kill(holder, SIGKILL) == 0);
+        int status;
+        CHECK(waitpid(holder, &status, 0) == holder && WIFSIGNALED(status) &&
+              WTERMSIG(status) == SIGKILL);
+        holder = fork();
+        CHECK(holder >= 0);
+        if (!holder)
+            _exit(0);
+        CHECK(waitpid(holder, &status, 0) == holder && WIFEXITED(status) &&
+              WEXITSTATUS(status) == 0);
+        while (count)
+            CHECK(close(held[--count]) == 0);
+        int reclaimed = open("/dev/null", O_RDONLY);
+        CHECK(reclaimed >= 0 && close(reclaimed) == 0);
+        for (size_t i = 0; i < 4 * 1024 * 1024; i += 4096)
+            CHECK(memory[i] == 0x5a);
+        CHECK(munmap(memory, 4 * 1024 * 1024) == 0 && close(data) == 0);
+        phase = 5;
+        CHECK(write(pressure_report[1], &phase, 1) == 1);
+        cpu_forever();
+    }
+    CHECK(close(pressure_report[1]) == 0 && close(pressure_control[0]) == 0);
+    for (unsigned i = 1; i <= 5; i++) {
+        char phase;
+        CHECK(read(pressure_report[0], &phase, 1) == 1 && phase == (char)i);
+        isolation_checkpoint(healthy_request[1], healthy_response[0], i);
+        if (i < 5)
+            CHECK(write(pressure_control[1], &phase, 1) == 1);
+    }
+    int status;
+    CHECK(waitpid(pressure, &status, 0) == pressure && WIFSIGNALED(status) &&
+          WTERMSIG(status) == SIGKILL);
+    isolation_checkpoint(healthy_request[1], healthy_response[0], 6);
+    CHECK(waitpid(healthy, &status, 0) == healthy && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    CHECK(close(healthy_request[1]) == 0 && close(healthy_response[0]) == 0 &&
+          close(pressure_report[0]) == 0 && close(pressure_control[1]) == 0);
+    char bytes[16] = {0};
+    int data = open(healthy_path, O_RDONLY);
+    struct stat metadata;
+    CHECK(data >= 0 && read(data, bytes, sizeof(bytes)) == 7 && !memcmp(bytes, "ABCDEFG", 7) &&
+          fstat(data, &metadata) == 0 && metadata.st_uid == healthy_uid &&
+          metadata.st_gid == healthy_uid && (metadata.st_mode & 0777) == 0600 && close(data) == 0);
+    data = open(pressure_path, O_RDONLY);
+    CHECK(data >= 0 && read(data, bytes, sizeof(bytes)) == 8 && !memcmp(bytes, "01234567", 8) &&
+          fstat(data, &metadata) == 0 && metadata.st_uid == pressure_uid && close(data) == 0);
+    CHECK(unlink(pressure_path) == 0);
+    if (directory) {
+        char persisted[1100];
+        length = snprintf(persisted, sizeof(persisted), "%s/resource-isolation-result", directory);
+        CHECK(length > 0 && (size_t)length < sizeof(persisted) &&
+              rename(healthy_path, persisted) == 0);
+    } else {
+        CHECK(unlink(healthy_path) == 0);
+    }
+    CHECK(rmdir(workspace) == 0);
+    for (unsigned resource = 0; resource < 16; resource++) {
+        struct rlimit current;
+        CHECK(getrlimit((int)resource, &current) == 0 &&
+              current.rlim_cur == parent_limits[resource].rlim_cur &&
+              current.rlim_max == parent_limits[resource].rlim_max);
+    }
+    fprintf(stderr,
+            "RESOURCE_ISOLATION_PASS healthy_checkpoints=7 cross_user_denials=3 "
+            "quota_failures=4 killed_signal=9 healthy_uid=60011 pressure_uid=60012 file_bytes=7\n");
+}
+
 int main(int argc, char** argv) {
     if (argc >= 4 && !strcmp(argv[1], "--verify-stack-exec")) {
         struct rlimit limit;
@@ -1006,8 +1220,9 @@ int main(int argc, char** argv) {
     isolated(data_limits,
              "actual_private_data_mappings_protection_fixed_admission_and_byte_heap_limits");
     isolated(stack_limits, "actual_stack_fault_growth_guard_copy_and_exec_argument_budgets");
+    isolated(service_isolation, "cross_uid_healthy_worker_quota_pressure_denial_and_cleanup");
     printf("RESOURCE_LIMIT_PASS observations=%u "
-           "scope=interface-descriptors-files-processes-exec-memory-cpu-data-stack\n",
+           "scope=interface-descriptors-files-processes-exec-memory-cpu-data-stack-isolation\n",
            observations);
     return 0;
 }

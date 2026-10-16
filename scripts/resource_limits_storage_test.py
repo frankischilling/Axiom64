@@ -64,7 +64,8 @@ def main():
                     row['passed'] &= check.returncode == 0 and not re.search(
                         rb'count wrong|Fix\?|Clear\?|still has errors|corrupt', log, re.IGNORECASE)
                     exports = {}
-                    for filename, expected in (('resource-file-result', bytes(6) + b'01'), ('seed.txt', SEED)):
+                    for filename, expected in (('resource-file-result', bytes(6) + b'01'),
+                                               ('resource-isolation-result', b'ABCDEFG'), ('seed.txt', SEED)):
                         exported = subprocess.run(['debugfs', '-R', 'cat /' + filename, str(disk)],
                                                   capture_output=True, check=True)
                         (phase / (filename + '.export')).write_bytes(exported.stdout)
@@ -75,6 +76,11 @@ def main():
                     (phase / 'result-inode.txt').write_bytes(metadata)
                     row['passed'] &= bool(re.search(rb'Mode:\s+0600', metadata) and
                                           re.search(rb'Size:\s+8\b', metadata) and re.search(rb'Links:\s+1\b', metadata))
+                    isolation = subprocess.check_output(['debugfs', '-R', 'stat /resource-isolation-result', str(disk)])
+                    (phase / 'isolation-inode.txt').write_bytes(isolation)
+                    row['passed'] &= bool(re.search(rb'Mode:\s+0600', isolation) and
+                        re.search(rb'Size:\s+7\b', isolation) and re.search(rb'Links:\s+1\b', isolation) and
+                        re.search(rb'User:\s+60011\s+Group:\s+60011', isolation))
                     row['native_exports'] = exports
                     row['retained_disk'] = archive_fixture(disk, remove=True)
                     rows.append(row)

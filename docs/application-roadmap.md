@@ -29,7 +29,7 @@ The catalog contains 479 inventory entries, of which 478 remain in scope. A proj
 | `brotli` | bundled | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |
 | `bzip2` | bundled | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |
 | `c-ares` | planned | [F14](feature-roadmap.md#f14-dhcp-dns-and-network-configuration) |
-| `ca-certificates` | planned | [F14](feature-roadmap.md#f14-dhcp-dns-and-network-configuration) |
+| `ca-certificates` | demonstrated | [F14](feature-roadmap.md#f14-dhcp-dns-and-network-configuration) |
 | `cairo` | planned | [F23](feature-roadmap.md#f23-shells-window-managers-and-desktop-environments) |
 | `cde` | planned | [F23](feature-roadmap.md#f23-shells-window-managers-and-desktop-environments) |
 | `cjson` | planned | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |
@@ -38,7 +38,7 @@ The catalog contains 479 inventory entries, of which 478 remain in scope. A proj
 | `constype` | planned | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |
 | `coreutils` | planned | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |
 | `ctwm` | planned | [F23](feature-roadmap.md#f23-shells-window-managers-and-desktop-environments) |
-| `curl` | planned | [F14](feature-roadmap.md#f14-dhcp-dns-and-network-configuration) |
+| `curl` | demonstrated | [F14](feature-roadmap.md#f14-dhcp-dns-and-network-configuration) |
 | `dbus` | planned | [F25](feature-roadmap.md#f25-init-login-and-system-services) |
 | `diffutils` | planned | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |
 | `disasterparty` | planned | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |
@@ -232,7 +232,7 @@ The catalog contains 479 inventory entries, of which 478 remain in scope. A proj
 | `vim` | planned | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |
 | `wayland` | bundled | [F23](feature-roadmap.md#f23-shells-window-managers-and-desktop-environments) |
 | `weston` | planned | [F23](feature-roadmap.md#f23-shells-window-managers-and-desktop-environments) |
-| `wget` | planned | [F14](feature-roadmap.md#f14-dhcp-dns-and-network-configuration) |
+| `wget` | demonstrated | [F14](feature-roadmap.md#f14-dhcp-dns-and-network-configuration) |
 | `x11perf` | planned | [F23](feature-roadmap.md#f23-shells-window-managers-and-desktop-environments) |
 | `xauth` | planned | [F23](feature-roadmap.md#f23-shells-window-managers-and-desktop-environments) |
 | `xbacklight` | planned | [F23](feature-roadmap.md#f23-shells-window-managers-and-desktop-environments) |

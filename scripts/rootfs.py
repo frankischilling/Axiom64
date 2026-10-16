@@ -7,6 +7,8 @@ from ports import packages
 from build_musl import loader, runtime_files
 from build_libcap import runtime_files as capability_files
 from build_openssl import runtime_files as crypto_files
+from build_curl import runtime_files as download_files
+from ca_bundle import runtime_files as trust_files
 from build_libxcrypt import runtime_files as password_files
 from build_accounts import runtime_files as account_files
 import tarfile
@@ -125,7 +127,8 @@ for package, archive in packages():
                 files[path] = files[target]
 
 # Override both the installed interpreter and native development libc after APK imports.
-for path, value in {**runtime_files(), **capability_files(), **crypto_files(), **password_files(), **account_files()}.items():
+for path, value in {**runtime_files(), **capability_files(), **crypto_files(), **download_files(),
+                    **trust_files(), **password_files(), **account_files()}.items():
     for parent in reversed(Path(path).parents):
         if str(parent) != '.':
             files.setdefault(str(parent), (0o40755, b''))

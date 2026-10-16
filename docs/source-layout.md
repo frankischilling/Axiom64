@@ -15,7 +15,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/fs/` | VFS, RAM filesystems, procfs process identity, xattrs and advisory file locks; ext2 storage and EA codec have their own subfolder |
 | `kernel/security/` | Task credential transitions and bounded file capability decoding |
 | `kernel/io/` | Retained blocking I/O requests |
-| `kernel/ipc/` | Sockets, readiness, shared memory |
+| `kernel/ipc/` | Sockets, event counters, readiness, shared memory |
 | `kernel/net/` | Ethernet interfaces, interface/route ioctls, and Linux raw packet sockets |
 | `kernel/net/ipv4/` | IPv4 routes/output, ARP cache/timers, ICMP, and Internet socket descriptions |
 | `kernel/net/udp/` | UDP lengths, pseudo-header checksums, payload delivery, and transmission |

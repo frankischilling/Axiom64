@@ -119,6 +119,9 @@ def prepare():
                                 (crypto['archive'] + '.asc')),
                        crypto['signature_sha256'], 'sha256')
     inputs.append(('OpenSSL-upstream', [fetch('openssl'), signature]))
+    from build_curl import source_inputs as curl_sources
+    from ca_bundle import source_inputs as ca_sources
+    inputs.extend((curl_sources(), ca_sources()))
     password = LOCK['libxcrypt']
     signature = verify(download(password['signature_url'], CACHE / 'libxcrypt-upstream' /
                                 (password['archive'] + '.asc')), password['signature_sha256'], 'sha256')

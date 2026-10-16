@@ -3,7 +3,7 @@
 set -euo pipefail
 
 if ((EUID != 0 || $# < 3)); then
-  echo 'Use root, the runner UID/GID and completed account evidence directories.' >&2
+  echo 'Use root, the runner UID/GID and completed evidence directories.' >&2
   exit 1
 fi
 target_uid=$1
@@ -18,7 +18,7 @@ storage_corpora=()
 
 # Validate every selected root before changing ownership of any evidence.
 for storage_corpus in "$@"; do
-  [[ $storage_corpus =~ ^build/account-(management|rotation-storage)-[A-Za-z0-9-]+$ ]]
+  [[ $storage_corpus =~ ^build/(account-(management|rotation-storage)-[A-Za-z0-9-]+|http-downloads|http-download-controls|http-download-normal|http-download-normal-audit)$ ]]
   [[ ! -L $storage_corpus ]]
   if [[ -e $storage_corpus ]]; then
     [[ -d $storage_corpus ]]

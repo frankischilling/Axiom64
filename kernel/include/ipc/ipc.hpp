@@ -65,7 +65,7 @@ bool poll_task_ready(Task&);
 
 int select_events(Task&, const Frame&, bool copy);
 
-void epoll_notify();
+void epoll_notify(Handle* source = nullptr, uint32_t events = 0);
 
 void epoll_close(Epoll*);
 

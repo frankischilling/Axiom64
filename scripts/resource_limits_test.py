@@ -17,6 +17,8 @@ from build_musl import compiler_args, loader
 from fetch import ROOT
 
 INPUTS = ['userspace/tests/process/resource-limits.c', 'scripts/resource_limits_test.py',
+          'scripts/tests/resource_thread_retirement_test.py', 'scripts/http_download/native_process.py',
+          'scripts/http_download/audit.py',
           'scripts/account_store_guest.py', 'scripts/account_store_test.py',
           'scripts/build_musl.py', 'scripts/image.py', 'Makefile', 'sources.lock.json',
           'scripts/file_capabilities/host_sources.py', 'vendor/limine.h',

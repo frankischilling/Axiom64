@@ -245,9 +245,37 @@ static void file_size(void) {
     CHECK(fd >= 0 && write(fd, bytes, 4) == 4 && close(fd) == 0 && file_signals == 5);
 }
 
+struct held_thread {
+    int descriptor;
+    pid_t tid;
+};
+
+static void retired_thread(pid_t tid) {
+    char path[80];
+    CHECK(tid > 0 && snprintf(path, sizeof(path), "/proc/self/task/%d/stat", tid) > 0);
+    struct timespec started, now;
+    CHECK(clock_gettime(CLOCK_MONOTONIC, &started) == 0);
+    for (;;) {
+        int fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) {
+            CHECK(errno == ENOENT);
+            break;
+        }
+        CHECK(close(fd) == 0 && clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+        CHECK((now.tv_sec - started.tv_sec) * 1000000000LL + now.tv_nsec - started.tv_nsec <
+              2000000000LL);
+        struct timespec interval = {0, 1000000};
+        while (nanosleep(&interval, &interval) < 0)
+            CHECK(errno == EINTR);
+    }
+    fprintf(stderr, "RESOURCE_THREAD_RETIRED tid=%d\n", tid);
+}
+
 static void* hold_thread(void* argument) {
+    struct held_thread* held = argument;
+    held->tid = (pid_t)syscall(SYS_gettid);
     char byte;
-    CHECK(read((int)(intptr_t)argument, &byte, 1) == 1 && byte == 'x');
+    CHECK(read(held->descriptor, &byte, 1) == 1 && byte == 'x');
     return NULL;
 }
 
@@ -278,9 +306,13 @@ static void processes(void) {
     CHECK(fork() == -1 && errno == EAGAIN);
     CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
     pthread_t thread;
-    CHECK(pthread_create(&thread, NULL, hold_thread, (void*)(intptr_t)pipefd[0]) == 0);
+    struct held_thread held = {pipefd[0], 0};
+    CHECK(pthread_create(&thread, NULL, hold_thread, &held) == 0);
     CHECK(fork() == -1 && errno == EAGAIN);
     CHECK(write(pipefd[1], "x", 1) == 1 && pthread_join(thread, NULL) == 0);
+    // Linux wakes pthread_join before release_task drops the real-UID quota.
+    // Observe kernel retirement before requiring that quota to admit a fork.
+    retired_thread(held.tid);
     CHECK(close(pipefd[0]) == 0 && close(pipefd[1]) == 0);
     child = fork();
     CHECK(child >= 0);
@@ -290,7 +322,7 @@ static void processes(void) {
     limit.rlim_cur = 1;
     CHECK(setrlimit(RLIMIT_NPROC, &limit) == 0);
     CHECK(fork() == -1 && errno == EAGAIN);
-    CHECK(pthread_create(&thread, NULL, hold_thread, NULL) == EAGAIN);
+    CHECK(pthread_create(&thread, NULL, hold_thread, &held) == EAGAIN);
 }
 
 static void process_exec(void) {

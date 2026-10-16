@@ -19,6 +19,7 @@
 #include "core/random/primitives.hpp"
 #include "abi/linux/credentials.hpp"
 #include "abi/linux/resource.hpp"
+#include "abi/linux/eventfd.hpp"
 #include "abi/linux/xattr.hpp"
 #include "fs/record_lock.hpp"
 #include "fs/proc.hpp"
@@ -649,6 +650,12 @@ static int64_t dispatch(Frame* f) {
         auto h = fd_handle(a, true);
         if (!h)
             return -9;
+        if (h->event) {
+            LinuxStat s{};
+            s.mode = 0600;
+            s.nlink = 1;
+            return copy_result(b, &s, sizeof(s));
+        }
         if (h->pipe || h->socket || h->packet || h->inet || h->netlink || h->epoll) {
             LinuxStat s{};
             s.mode = h->socket || h->packet || h->inet || h->netlink ? 0140777 : 0010600;
@@ -665,6 +672,8 @@ static int64_t dispatch(Frame* f) {
         auto h = fd_handle(a);
         if (!h)
             return -9;
+        if (h->event)
+            return c <= 4 ? 0 : -22;
         if (h->pipe || !h->node || (h->node->mode & 0170000) == character)
             return -29;
         int64_t base = c == 0   ? 0
@@ -1419,6 +1428,9 @@ static int64_t dispatch(Frame* f) {
         }
         return changed ? node_setattr(node, node->mode, update[0], update[1]) : 0;
     }
+    case 284:
+    case 290:
+        return eventfd_syscall(*f);
     case 292:
         if (a == b || (c & ~02000000))
             return -22;

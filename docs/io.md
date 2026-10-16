@@ -6,7 +6,7 @@ Axiom64 retains the open file description selected by an I/O syscall while that 
 
 | Operations | Current scope |
 | --- | --- |
-| `read`, `write`, `readv`, `writev` | Existing regular files, pipes, Unix stream sockets, and character/block devices |
+| `read`, `write`, `readv`, `writev` | Existing regular files, pipes, Unix stream sockets, event counters, and character/block devices |
 | `pread64`, `pwrite64` | Existing seekable files and block devices; preserve the shared file offset; pipes, sockets, and character devices return `ESPIPE` |
 | `recvfrom`, `sendto` | Connected Unix streams, including receive-address output; a send destination is unsupported |
 | `recvmsg`, `sendmsg` | Nameless Unix stream messages with copied iovec metadata; ancillary sending is unsupported and receive control length is zero |
@@ -14,6 +14,18 @@ Axiom64 retains the open file description selected by an I/O syscall while that 
 | `flock` | [Local advisory file locks](file-locks.md), retaining the original description during an uninterrupted blocking attempt |
 
 Socket transfers support `MSG_DONTWAIT`, receive `MSG_PEEK`, and send `MSG_NOSIGNAL`. Peeking advances across the captured vectors without consuming bytes. Unsupported transfer flags, `MSG_WAITALL`, named Unix messages, and ancillary sending return `EOPNOTSUPP`. Socket receive/send deadlines are supported as described below. Poll/select/epoll have separate wait state and are not affected by these socket options.
+
+## Event counters
+
+The Linux x86-64 `eventfd` and `eventfd2` calls create an unsigned 64-bit counter shared by duplicates, forked descriptions and retained I/O. `EFD_SEMAPHORE`, `EFD_NONBLOCK` and `EFD_CLOEXEC` are supported; unknown flags return `EINVAL`. Descriptor creation uses the current `RLIMIT_NOFILE` admission path. Final description release frees the counter, including after descriptor replacement during a blocked call.
+
+A read requires at least eight bytes and returns exactly eight. It drains the counter, or subtracts one in semaphore mode. An empty counter blocks or returns `EAGAIN`. The counter is consumed before copying to user memory; a later page fault preserves the already copied prefix and returns `EFAULT`. `readv` can distribute that value across vectors. A write requires exactly eight bytes, rejects `UINT64_MAX`, and blocks or returns `EAGAIN` if the sum would exceed `UINT64_MAX - 1`. Zero is accepted. `writev` preserves each nonempty vector's scalar write boundary and retains completed progress and the copied pending value while blocked.
+
+The exact write size follows [Linux v6.17](https://github.com/torvalds/linux/blob/v6.17/fs/eventfd.c). Older Linux kernels can accept the first eight bytes of a larger write; native comparisons record that version difference, while guest checks require the modern strict size. User-range checks precede the counter operation, and mapped-page faults follow the read-consumption rule above.
+
+Poll/select/epoll report readable when the counter is nonzero and writable below the maximum. Successful writes and reads notify their applicable epoll waiters, including repeated writes while still readable. Delivery rechecks queued readiness, so draining before `epoll_wait` suppresses a stale read event. The existing single-CPU syscall discipline protects these operations; SMP synchronization remains required.
+
+The download contract client checks flags, size and overflow boundaries, semaphore behavior, vector and page faults, ordinary-user access, resource admission, readiness, retained handle/value ownership, signals, fork/exec and close-on-exec. It runs before transfers in each native and guest download profile. Host comparisons and a counter startup test alone do not establish full HTTP/HTTPS acceptance. Kernel-generated overflow notifications, complete anonymous-inode procfs metadata and full Linux ABI conformance remain planned.
 
 ## Linux socket deadlines
 

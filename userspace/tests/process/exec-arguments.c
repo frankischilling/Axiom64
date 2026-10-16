@@ -269,10 +269,8 @@ int main(int argc, char** argv) {
     if (getenv("EMPTY_ARGV_EXPECTED") || (argc > 1 && !strcmp(argv[1], "--verify")))
         return verify(argc, argv);
     executable = argv[0];
-    if (argc == 2 && !strcmp(argv[1], "--native")) {
-        struct rlimit limit = {RLIM_INFINITY, RLIM_INFINITY};
-        CHECK(setrlimit(RLIMIT_STACK, &limit) == 0);
-    }
+    struct rlimit limit = {RLIM_INFINITY, RLIM_INFINITY};
+    CHECK(setrlimit(RLIMIT_STACK, &limit) == 0);
     success(1023, 1, 0, "argument");
     success(1024, 1, 0, "argument");
     success(1054, 1, 0, "argument");

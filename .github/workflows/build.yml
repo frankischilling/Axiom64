@@ -116,6 +116,8 @@ jobs:
       - name: Test process identity and exec capture failures with sanitizers
         run: |
           make test-proc-identity-policy test-exec-arguments-policy 2>&1 | tee build/accounts-policy/process.log
+      - name: Compare process resource-limit policy with native Linux under sanitizers
+        run: make test-process-limits-policy
       - name: Verify the portable GNU login-record reader and its pinned inputs
         run: python3 scripts/tests/gnu_utmp_reader_test.py --directory build/gnu-reader-controls
       - name: Build all maintained OpenSSL providers from their pinned inputs
@@ -298,6 +300,9 @@ jobs:
           - random-installed-uefi
           - credentials
           - file-capabilities
+          - resource-limits-native
+          - resource-limits
+          - resource-limits-storage
           - tcp
           - tcp-fault-loss
           - tcp-fault-reordering
@@ -365,6 +370,15 @@ jobs:
         run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
       - name: Install build and emulation tools
         run: bash scripts/ci/tools.sh restore
+      - name: Compare resource quotas, signals and memory admission with native Linux
+        if: matrix.suite == 'resource-limits-native'
+        run: sudo -n python3 scripts/resource_limits_test.py --native --retain-host-source --directory build/resource-limits-native
+      - name: Verify resource quotas and stack-aware exec across both libc providers and firmware modes
+        if: matrix.suite == 'resource-limits'
+        run: python3 scripts/resource_limits_test.py --directory build/resource-limits-guest
+      - name: Verify resource quotas and durable ext2 bytes across both virtio transports
+        if: matrix.suite == 'resource-limits-storage'
+        run: python3 scripts/resource_limits_storage_test.py --directory build/resource-limits-storage
       - name: Compare account database publication and updates with native Linux
         if: matrix.suite == 'accounts-native-storage'
         run: |
@@ -1064,6 +1078,13 @@ jobs:
             build/ext2-journal-rejection/**
             build/ext2-journal-core-native
             build/ext2-journal-volume-native
+      - name: Upload complete resource-limit source, execution, image and disk evidence
+        if: always() && startsWith(matrix.suite, 'resource-limits')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-${{ matrix.suite }}-evidence
+          if-no-files-found: error
+          path: build/resource-limits-*/**
       - name: Upload open-description recovery sources, images, disks and negative controls
         if: always() && startsWith(matrix.suite, 'storage-journal-lifetime-')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

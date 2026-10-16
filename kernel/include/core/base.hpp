@@ -21,6 +21,8 @@ constexpr uint64_t user_limit = 0x0000800000000000;
 constexpr uint64_t page_mask = 0x000ffffffffff000;
 // Software bit outside the x86-64 physical-address field: mapping may not gain execution.
 constexpr uint64_t page_no_execute = 1ull << 52;
+constexpr uint64_t page_private = 1ull << 53, page_stack = 1ull << 54;
+constexpr uint64_t page_software = 0xe00 | page_no_execute | page_private | page_stack;
 
 constexpr uint64_t align_down(uint64_t x) {
     return x & ~(page_size - 1);
@@ -137,7 +139,12 @@ struct AddressSpace {
 
     uint64_t* entry(uint64_t va, bool create = false);
 
-    bool map(uint64_t va, size_t len, int prot);
+    uint64_t mapped_size(uint64_t start = 0, uint64_t length = user_limit) const;
+
+    uint64_t private_writable_size(uint64_t start = 0, uint64_t length = user_limit,
+                                   bool make_writable = false) const;
+
+    bool map(uint64_t va, size_t len, int prot, bool private_mapping = true);
 
     bool map_physical(uint64_t va, uint64_t pa, size_t len, int prot, bool external = false);
 

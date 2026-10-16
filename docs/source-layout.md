@@ -10,8 +10,8 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/core/random/` | Cryptographic primitives, entropy pool and generator state |
 | `kernel/firmware/` | Bounded ACPI table parsing and QEMU generation-ID discovery |
 | `kernel/abi/linux/` | Linux syscall dispatch and ABI structures |
-| `kernel/mm/` | Physical and virtual memory |
-| `kernel/process/` | Tasks, scheduling, signals, futexes, child-event waits and checked executable argument capture |
+| `kernel/mm/` | Physical and virtual memory, mapping/protection and heap admission limits, grow-down stacks |
+| `kernel/process/` | Tasks, scheduling, CPU accounting, process resource tables, signals, futexes, child-event waits and checked executable argument capture |
 | `kernel/fs/` | VFS, RAM filesystems, procfs process identity, xattrs and advisory file locks; ext2 storage and EA codec have their own subfolder |
 | `kernel/security/` | Task credential transitions and bounded file capability decoding |
 | `kernel/io/` | Retained blocking I/O requests |

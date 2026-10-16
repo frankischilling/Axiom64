@@ -24,8 +24,10 @@ class ExecArguments {
     ExecArguments(const ExecArguments&) = delete;
     ExecArguments& operator=(const ExecArguments&) = delete;
 
-    int capture(Read, void*, uint64_t path, uint64_t argv, uint64_t envp);
-    int capture_kernel(const char*, const char* const*, const char* const*);
+    int capture(Read, void*, uint64_t path, uint64_t argv, uint64_t envp,
+                uint64_t stack_limit = UINT64_MAX);
+    int capture_kernel(const char*, const char* const*, const char* const*,
+                       uint64_t stack_limit = UINT64_MAX);
 
     const char* path() const {
         return path_;
@@ -57,6 +59,8 @@ class ExecArguments {
     const char** values_ = nullptr;
     size_t used_ = 0, capacity_ = 0, count_ = 0, vector_capacity_ = 0;
     size_t argc_ = 0, envc_ = 0, processed_ = 0, budget_ = 0;
+    size_t limit_ = exec_argument_limit;
+    uint64_t stack_limit_ = UINT64_MAX;
     bool ready_ = false;
 
     void clear();

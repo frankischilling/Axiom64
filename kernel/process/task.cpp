@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "process/task.hpp"
 #include "process/exec_arguments.hpp"
+#include "process/cpu.hpp"
+#include "mm/limits.hpp"
+#include "mm/stack.hpp"
 #include "fs/record_lock.hpp"
 #include "process/waitid.hpp"
 #include "fs/descriptor.hpp"
@@ -121,6 +124,31 @@ static constexpr uint64_t clone_vm = 0x100, clone_fs = 0x200, clone_files = 0x40
                           clone_parent_settid = 0x100000, clone_child_cleartid = 0x200000,
                           clone_detached = 0x400000, clone_child_settid = 0x1000000;
 
+uint64_t task_user_count(uint32_t uid) {
+    uint64_t count = 0;
+    for (const auto& task : tasks)
+        if (task.state != State::empty && task.credentials.user.real == uid)
+            count++;
+    return count;
+}
+
+int process_exec_limit(Task& task) {
+    if (task.process_limit_exceeded && task_user_count(task.credentials.user.real) >
+                                           task.process->limits.soft(Resource::processes))
+        return -11;
+    task.process_limit_exceeded = false;
+    return 0;
+}
+
+static bool process_quota_available(const Task& parent) {
+    const auto& credentials = parent.credentials;
+    if (!credentials.user.real || capable(credentials, Capability::sys_resource) ||
+        capable(credentials, Capability::sys_admin))
+        return true;
+    return task_user_count(credentials.user.real) <
+           parent.process->limits.soft(Resource::processes);
+}
+
 int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, uint64_t child_tid,
                uint64_t tls) {
     constexpr uint64_t supported = 0xff | clone_vm | clone_fs | clone_files | clone_sighand |
@@ -148,6 +176,9 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         return -14;
     if ((flags & clone_child_settid) && !child_tid)
         return -14;
+    if (!process_quota_available(*current))
+        return -11;
+    current->process_limit_exceeded = false;
     Task* child = new_task();
     if (!child)
         return -11;
@@ -166,6 +197,7 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         }
         child->memory->brk_base = current->memory->brk_base;
         child->memory->brk_end = current->memory->brk_end;
+        child->memory->initial_data_size = current->memory->initial_data_size;
         child->memory->dumpable = current->memory->dumpable;
         shared_memory_fork(child, current);
     }
@@ -199,6 +231,7 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         child->process = current->process;
         child->process->live_threads++;
     } else {
+        child->process->limits = current->process->limits;
         child->process->parent = current->process->pid;
         child->process->pgid = current->process->pgid;
         child->process->sid = current->process->sid;
@@ -294,6 +327,7 @@ static void parent_departed(Task* parent) {
 void exit_thread(Task* t, int status) {
     if (t->state == State::empty || t->state == State::zombie)
         return;
+    cpu_depart(*t);
     auto process = t->process;
     parent_departed(t);
     clear_tid(t);
@@ -395,12 +429,15 @@ static bool awaken(Task& t) {
 }
 
 Frame* schedule(Frame* f, bool yield) {
+    cpu_account();
     if (current && f) {
         current->frame = *f;
         asm volatile("fxsave64 %0" : "=m"(current->fpu));
     }
-    if (current && current->state == State::runnable && !yield && signal_deliver(*current))
+    if (current && current->state == State::runnable && !yield && signal_deliver(*current)) {
+        cpu_account(current, true);
         return &current->frame;
+    }
     unsigned start = current ? unsigned(current - tasks) + 1 : 0;
     for (;;) {
         random_refresh(ticks);
@@ -416,6 +453,7 @@ Frame* schedule(Frame* f, bool yield) {
             write_cr3(t->memory->space.root);
             arch_task(t->fs_base);
             asm volatile("fxrstor64 %0" ::"m"(t->fpu));
+            cpu_account(t, true);
             return &t->frame;
         }
         // No kernel continuation is retained across a task switch.
@@ -440,6 +478,7 @@ struct ProgramHeader {
 
 struct Image {
     uint64_t entry, phdr, phnum, end, base;
+    uint64_t data_start, data_end;
     char interpreter[1024];
 };
 
@@ -506,6 +545,8 @@ static int load_image(AddressSpace& mem, Node* file, uint64_t base, Image& image
             done += result;
         }
         image.end = max(image.end, va + p.memsz);
+        image.data_start = max(image.data_start, va);
+        image.data_end = max(image.data_end, va + p.filesz);
         if (h->phoff >= p.offset &&
             h->phoff + uint64_t(h->phnum) * sizeof(ProgramHeader) <= p.offset + p.filesz)
             image.phdr = va + h->phoff - p.offset;
@@ -526,6 +567,8 @@ static int load_image(AddressSpace& mem, Node* file, uint64_t base, Image& image
 }
 
 int exec_task(Task* t, const ExecArguments& arguments) {
+    if (int error = process_exec_limit(*t))
+        return error;
     const char* path = arguments.path();
     Path name;
     name.base = t->fs->cwd_node;
@@ -608,6 +651,8 @@ int exec_task(Task* t, const ExecArguments& arguments) {
         memory.destroy();
         return stack_error ? stack_error : -12;
     }
+    for (uint64_t page = stack.bottom; page < stack.top; page += page_size)
+        *memory.entry(page) |= page_stack;
     const uint8_t trampoline[] = {0x48, 0xc7, 0xc0, 15, 0, 0, 0, 0x0f, 0x05};
     if (!memory.map(signal_trampoline, page_size, 3) ||
         !memory.copy_out(signal_trampoline, trampoline, sizeof(trampoline)) ||
@@ -616,6 +661,18 @@ int exec_task(Task* t, const ExecArguments& arguments) {
         return -12;
     }
     uint8_t random[16]{};
+    uint64_t address_limit = t->process->limits.soft(Resource::address_space);
+    if (address_limit != resource_infinity && memory.mapped_size() > address_limit) {
+        memory.destroy();
+        return -12;
+    }
+    uint64_t data_limit = t->process->limits.soft(Resource::data);
+    if (!data_limit)
+        data_limit = t->process->limits.hard(Resource::data);
+    if (data_limit != resource_infinity && memory.private_writable_size() > data_limit) {
+        memory.destroy();
+        return -12;
+    }
     // Like early Linux exec, AT_RANDOM must not prevent init from bootstrapping entropy.
     // Before readiness these bytes have the same explicit limitation as GRND_INSECURE.
     int random_error = random_read(random, sizeof(random), true);
@@ -726,6 +783,7 @@ int exec_task(Task* t, const ExecArguments& arguments) {
     t->frame.rflags = 0x202;
     t->fs_base = 0;
     t->memory->brk_base = t->memory->brk_end = align_up(image.end);
+    t->memory->initial_data_size = image.data_end - image.data_start;
     t->tid_address = 0;
     t->altstack_base = t->altstack_size = 0;
     for (auto& action : t->handlers->signal_actions)
@@ -761,7 +819,8 @@ void start_init(const char* path) {
                          test_phase,
                          nullptr};
     ExecArguments arguments;
-    if (arguments.capture_kernel(path, args, env) || exec_task(init, arguments))
+    if (arguments.capture_kernel(path, args, env, init->process->limits.soft(Resource::stack)) ||
+        exec_task(init, arguments))
         panic("cannot execute init");
     enter_user(schedule(nullptr, true));
 }
@@ -769,6 +828,8 @@ void start_init(const char* path) {
 extern "C" Frame* handle_trap(Frame* f) {
     if (f->vector == 32) {
         clock_refresh(true);
+        if ((f->cs & 3) == 3)
+            cpu_account();
         devices_poll();
         epoll_notify();
         signal_tick();
@@ -784,6 +845,13 @@ extern "C" Frame* handle_trap(Frame* f) {
     uint64_t cr2 = 0;
     asm volatile("mov %%cr2,%0" : "=r"(cr2));
     if ((f->cs & 3) == 3 && current) {
+        cpu_account();
+        if (f->vector == 14 && !(f->error & 9)) {
+            cpu_account(current);
+            if (grow_user_stack(current->memory->space, cr2, 1, f->error & 2, f->error & 16))
+                return schedule(f, false);
+            cpu_account();
+        }
         int signal = f->vector == 0 || f->vector == 16 || f->vector == 19 ? 8
                      : f->vector == 6                                     ? 4
                      : f->vector == 1 || f->vector == 3                   ? 5

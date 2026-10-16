@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ipc/ipc.hpp"
+#include "mm/limits.hpp"
 
 namespace ax {
 struct Segment {
@@ -139,9 +140,9 @@ int64_t shared_memory_syscall(Frame* f) {
         if (!record)
             return -24;
         size_t length = align_up(segment->size);
-        if (!base) {
+        bool automatic = !base;
+        if (automatic) {
             base = current->memory->space.next_map;
-            current->memory->space.next_map += length + page_size;
         }
         if (base < page_size || base >= user_limit || length > user_limit - base)
             return -22;
@@ -150,9 +151,13 @@ int64_t shared_memory_syscall(Frame* f) {
             if (entry && (*entry & page_mask))
                 return -22;
         }
+        if (!memory_growth_allowed(*current, base, length))
+            return -12;
         if (!current->memory->space.map_physical(base, segment->physical, length,
                                                  (c & 0x1000) ? 1 : 3))
             return -12;
+        if (automatic)
+            current->memory->space.next_map = base + length + page_size;
         *record = {segment->id, base, length};
         segment->attachments++;
         segment->attached = ticks / 100;

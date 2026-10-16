@@ -10,6 +10,7 @@
 #include "net/inet.hpp"
 #include "net/netlink.hpp"
 #include "process/task.hpp"
+#include "process/signals.hpp"
 #include "drivers/block/block.hpp"
 #include "fs/ext2/ext2.hpp"
 #include "core/time.hpp"
@@ -474,6 +475,10 @@ int node_truncate(Node* node, uint64_t size) {
         return node && (node->mode & 0170000) == directory ? -21 : -22;
     if (node_readonly(node))
         return -30;
+    if (current && size > node->size && size > current->process->limits.soft(Resource::file_size)) {
+        queue_signal(current, 25, current->process->pid);
+        return -27;
+    }
     if (int error = node_drop_file_capabilities(node))
         return error;
     if (current && !capable(current->credentials, Capability::fsetid)) {
@@ -982,6 +987,26 @@ int64_t read_handle(Handle* h, void* buf, size_t len) {
     return count;
 }
 
+int write_handle_limit(Handle* h, size_t& length) {
+    auto node = h->node;
+    if (!length || !node || (node->mode & 0170000) != regular_file)
+        return 0;
+    if ((h->flags & 3) == 0)
+        return -9;
+    if (node_readonly(node))
+        return -30;
+    if (!current)
+        return 0;
+    uint64_t offset = h->flags & 02000 ? node->size : h->offset;
+    uint64_t limit = current->process->limits.soft(Resource::file_size);
+    if (offset >= limit) {
+        queue_signal(current, 25, current->process->pid);
+        return -27;
+    }
+    length = min(uint64_t(length), limit - offset);
+    return 0;
+}
+
 int64_t write_handle(Handle* h, const void* buf, size_t len) {
     if ((h->flags & 3) == 0)
         return -9;
@@ -1015,6 +1040,8 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
         return device_write(h, buf, len);
     if ((n->mode & 0170000) != regular_file)
         return -21;
+    if (int error = write_handle_limit(h, len))
+        return error;
     if (h->flags & 02000)
         h->offset = n->size;
     if (node_readonly(n))

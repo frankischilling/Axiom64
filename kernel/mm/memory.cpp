@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "boot/boot.hpp"
+#include "mm/stack.hpp"
 
 namespace ax {
 uint64_t direct_map;
@@ -185,11 +186,44 @@ uint64_t* AddressSpace::entry(uint64_t va, bool create_table) {
     return &table[(va >> 12) & 511];
 }
 
+static uint64_t mapped_length(uint64_t table, unsigned level, uint64_t base, uint64_t start,
+                              uint64_t end, bool private_data = false, bool make_writable = false) {
+    const auto entries = static_cast<const uint64_t*>(physical(table));
+    uint64_t span = 1ull << (12 + (level - 1) * 9), result = 0;
+    for (unsigned i = 0; i < (level == 4 ? 256u : 512u); i++) {
+        uint64_t address = base + i * span;
+        if (!(entries[i] & page_mask) || address >= end || address + span <= start)
+            continue;
+        if (level == 1 || (entries[i] & 128)) {
+            if (!private_data || ((entries[i] & page_private) && !(entries[i] & page_stack) &&
+                                  (make_writable || (entries[i] & 2))))
+                result += min(end, address + span) - max(start, address);
+        } else
+            result += mapped_length(entries[i] & page_mask, level - 1, address, start, end,
+                                    private_data, make_writable);
+    }
+    return result;
+}
+
+uint64_t AddressSpace::mapped_size(uint64_t start, uint64_t length) const {
+    if (start > user_limit || length > user_limit - start)
+        return UINT64_MAX;
+    return root && length ? mapped_length(root, 4, 0, start, start + length) : 0;
+}
+
+uint64_t AddressSpace::private_writable_size(uint64_t start, uint64_t length,
+                                             bool make_writable) const {
+    if (start > user_limit || length > user_limit - start)
+        return UINT64_MAX;
+    return root && length ? mapped_length(root, 4, 0, start, start + length, true, make_writable)
+                          : 0;
+}
+
 static uint64_t permissions(int prot) {
     return 4 | ((prot & 3) ? 1 : 0) | ((prot & 2) ? 2 : 0) | ((prot & 4) ? 1 : (1ull << 63));
 }
 
-bool AddressSpace::map(uint64_t va, size_t len, int prot) {
+bool AddressSpace::map(uint64_t va, size_t len, int prot, bool private_mapping) {
     if (va % page_size || va < page_size || va >= user_limit || len > user_limit - va ||
         len > SIZE_MAX - page_size)
         return false;
@@ -203,7 +237,8 @@ bool AddressSpace::map(uint64_t va, size_t len, int prot) {
                 return false;
             *e = physical_page;
         }
-        *e = (*e & (page_mask | 0xe00)) | permissions(prot);
+        *e = (*e & (page_mask | page_software)) | permissions(prot);
+        *e = private_mapping ? *e | page_private : *e & ~page_private;
     }
     if (read_cr3() == root)
         write_cr3(root);
@@ -257,7 +292,7 @@ bool AddressSpace::protect(uint64_t va, size_t len, int prot) {
     }
     for (uint64_t p = va; p < va + len; p += page_size) {
         auto e = entry(p);
-        *e = (*e & (page_mask | 0xe00 | page_no_execute)) | permissions(prot);
+        *e = (*e & (page_mask | page_software)) | permissions(prot);
     }
     if (read_cr3() == root)
         write_cr3(root);
@@ -270,7 +305,7 @@ bool AddressSpace::valid(uint64_t va, size_t len, bool write) const {
     for (uint64_t p = align_down(va); p < va + len; p += page_size) {
         auto e = const_cast<AddressSpace*>(this)->entry(p);
         if (!e || ((*e & 5) != 5) || (write && !(*e & 2)))
-            return false;
+            return grow_user_stack(*this, va, len, write);
     }
     return true;
 }

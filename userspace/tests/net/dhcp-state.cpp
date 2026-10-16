@@ -575,6 +575,101 @@ static void delayed_install_and_stop(void) {
     puts("DHCP_STATE_DELAYED_COMPLETION_STOP_PASS");
 }
 
+static void accepted_announcement_boundaries(void) {
+    for (unsigned boundary = 0; boundary < 3; boundary++) {
+        Harness harness;
+        harness.request();
+        auto reply = harness.message(Type::ack, 30);
+        reply.parameters.renewal = 8;
+        reply.parameters.rebinding = 15;
+        harness.receive(reply);
+        harness.probes();
+        const auto lease = harness.action.lease;
+        harness.done();
+        harness.expect(Operation::announce, "first address announcement is emitted");
+        harness.done();
+        uint64_t deadline = boundary == 0   ? lease.renewal_at
+                            : boundary == 1 ? lease.rebinding_at
+                                            : lease.expires_at;
+        harness.tick(deadline - 1);
+        harness.expect(Operation::announce,
+                       "second address announcement is emitted before boundary");
+        // The synchronous send succeeded; sampling its completion crosses the timer.
+        harness.now = deadline;
+        harness.done();
+        if (boundary == 2) {
+            harness.expect(Operation::withdraw,
+                           "expiry still withdraws an already sent announcement");
+            harness.cleanup();
+            check(!harness.client.configured(),
+                  "expired completion never retains an owned address");
+        } else {
+            harness.expect(Operation::transmit,
+                           "accepted second announcement is not retransmitted across lease timer");
+            check(harness.action.request.mode == (boundary == 0 ? Mode::renew : Mode::rebind),
+                  "renewal/rebinding still starts at its original boundary");
+        }
+    }
+    Harness failed;
+    failed.request();
+    auto reply = failed.message(Type::ack, 30);
+    reply.parameters.renewal = 8;
+    reply.parameters.rebinding = 15;
+    failed.receive(reply);
+    failed.probes();
+    failed.done();
+    failed.done();
+    auto renewal_at = failed.client.lease().renewal_at;
+    failed.tick(renewal_at - 1);
+    failed.expect(Operation::announce, "second announcement is pending before a failed send");
+    failed.now = renewal_at;
+    failed.done(false);
+    failed.expect(Operation::announce, "failed send across renewal still requires an announcement");
+    failed.done();
+    failed.expect(Operation::transmit,
+                  "accepted retry resumes renewal without another announcement");
+
+    Harness stale;
+    stale.request();
+    stale.receive(stale.message(Type::ack, 30));
+    stale.probes();
+    stale.done();
+    stale.done();
+    auto stale_renewal = stale.client.lease().renewal_at;
+    stale.tick(stale_renewal - 1);
+    auto old_token = stale.action.token;
+    stale.tick(stale_renewal);
+    stale.expect(Operation::announce,
+                 "unexecuted announcement is requeued after renewal transition");
+    auto live_token = stale.action.token;
+    check(live_token != old_token, "transition invalidates the unexecuted action token");
+    Event completion;
+    completion.input = Input::completion;
+    completion.token = old_token;
+    completion.success = true;
+    stale.action = stale.client.advance(completion, stale.now, 0);
+    stale.expect(Operation::none, "stale success cannot consume the live announcement");
+    stale.tick(stale.now + 100);
+    stale.expect(Operation::announce, "live announcement remains available after stale completion");
+    check(stale.action.token == live_token, "stale success preserves the live action identity");
+    stale.done();
+    stale.expect(Operation::transmit, "one live completion accounts for the second announcement");
+
+    Harness defense;
+    defense.bind();
+    auto renewal = defense.client.lease().renewal_at;
+    defense.now = renewal - 1;
+    defense.input(Input::conflict);
+    defense.expect(Operation::announce, "one defensive announcement is emitted");
+    defense.now = renewal;
+    defense.done();
+    defense.expect(Operation::transmit,
+                   "accepted defense is not repeated when renewal crosses its completion");
+    check(defense.action.request.mode == Mode::renew,
+          "accounting for defense does not delay renewal");
+    puts("DHCP_STATE_ACCEPTED_ANNOUNCEMENT_BOUNDARIES_PASS");
+}
+
 int main() {
     acquisition();
     retransmission();
@@ -585,6 +680,7 @@ int main() {
     lifecycle();
     renewal_during_announcement();
     delayed_install_and_stop();
+    accepted_announcement_boundaries();
     puts("DHCP_STATE_TESTS_PASS");
     return 0;
 }

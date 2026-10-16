@@ -382,6 +382,11 @@ void Client::timers(uint32_t random) {
 Action Client::advance(const Event& event, uint64_t now, uint32_t random) {
     if (now > now_)
         now_ = now;
+    // The send already succeeded. Account for it before a lease timer can cancel
+    // its completion token and schedule the same announcement again.
+    if (event.input == Input::completion && event.success &&
+        pending_.operation == Operation::announce && event.token == pending_.token)
+        complete(true, random);
     timers(random);
     if (event.input == Input::start && phase_ == Phase::stopped && !remove_ && !forget_) {
         stopping_ = false;

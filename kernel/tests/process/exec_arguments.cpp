@@ -112,6 +112,45 @@ static void many_strings_and_budget() {
     assert(!live);
 }
 
+static void stack_budgets() {
+    char text[32768];
+    memset(text, 's', sizeof(text) - 1);
+    text[sizeof(text) - 1] = 0;
+    const char* values[194];
+    for (uint64_t stack : {UINT64_C(65536), UINT64_C(524288), UINT64_C(8388608), UINT64_MAX}) {
+        size_t budget = max(size_t(131072), min(exec_argument_limit, size_t(stack / 4)));
+        size_t count = (budget - 11) / (sizeof(text) + sizeof(uint64_t));
+        assert(count + 2 <= sizeof(values) / sizeof(values[0]));
+        for (size_t i = 0; i < count + 1; i++)
+            values[i] = text;
+        values[count] = nullptr;
+        {
+            ExecArguments input;
+            assert(!input.capture_kernel("/bin/probe", values, nullptr, stack));
+            ExecStack layout{};
+            int result = input.layout(UINT64_C(0x700000000000), 16, layout);
+            assert(result == (stack == 65536 ? -7 : 0));
+            if (!result)
+                assert(layout.mapping_size <= stack);
+        }
+        values[count] = text;
+        values[count + 1] = nullptr;
+        {
+            ExecArguments input;
+            assert(input.capture_kernel("/bin/probe", values, nullptr, stack) == -7);
+        }
+    }
+    {
+        const char* small[] = {"probe", nullptr};
+        ExecArguments input;
+        assert(!input.capture_kernel("/bin/probe", small, nullptr, 65536));
+        ExecStack layout{};
+        assert(!input.layout(UINT64_C(0x700000000000), 16, layout));
+        assert(layout.mapping_size == 65536);
+    }
+    assert(!live);
+}
+
 static void user_faults_and_empty() {
     char bytes[4 * page_size]{};
     Memory memory{0x10000, bytes, sizeof(bytes)};
@@ -220,6 +259,7 @@ static void stack_and_allocation_faults() {
 int main() {
     captured_strings();
     many_strings_and_budget();
+    stack_budgets();
     user_faults_and_empty();
     stack_and_allocation_faults();
     assert(!live);

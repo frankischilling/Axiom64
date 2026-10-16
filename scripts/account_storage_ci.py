@@ -3,7 +3,7 @@
 import json
 
 
-ROTATION_SHARDS = 4
+ROTATION_SHARDS = 1
 
 
 def matrices():

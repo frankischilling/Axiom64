@@ -625,7 +625,7 @@ def cell(directory, iso, recovery_iso, base, offset, firmware, transport, scenar
                cache_model=model, operation=operation, request=request, fault_mode=mode,
                wrapped=False, power_loss=mode.startswith('pause-'), passed=False)
     try:
-        with tempfile.TemporaryDirectory(prefix='axiom64-rotation-vm-') as temporary, working_disk(disk) as device_disk:
+        with tempfile.TemporaryDirectory(prefix='axiom64-rotation-vm-') as temporary, working_disk(disk, prefer_memory=True) as device_disk:
             scratch = Path(temporary)
             backend, output, socket, trace, backend_args = start_backend(
                 device_disk, directory, scratch, offset, model=model, operation=operation, request=request, mode=mode)
@@ -741,7 +741,7 @@ def cell(directory, iso, recovery_iso, base, offset, firmware, transport, scenar
         recovery = directory / 'recovery'
         recovery.mkdir()
         recovery_log = recovery / 'guest.log'
-        with working_disk(disk) as device_disk:
+        with working_disk(disk, prefer_memory=True) as device_disk:
             recovered = execute(qemu(recovery_iso, recovery, firmware, transport, disk=device_disk), recovery_log)
         recovered['actual_device_disk_sha256'] = digest(disk)
         recovered['temporary_linux_device_disk'] = True

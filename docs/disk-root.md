@@ -29,15 +29,15 @@ Limine's kernel command line selects the root:
 | `rootfstype=ext2` | Select the supported disk filesystem; omission also selects ext2 |
 | `rootflags=rw` | Writable root; also the default for a selected disk |
 | `rootflags=ro` | Read-only root; use `readonly=on` on QEMU's drive to enforce it in hardware too |
-| `rootflags=rw,recovery=check` or `ro,recovery=check` | Permit a structurally consistent dirty root after the complete ext2 validation scan; reject damaged metadata, error flags and orphan chains |
+| `rootflags=rw,recovery=check` or `ro,recovery=check` | Check a dirty root through the complete ext2 validation scan; writable checks can reconcile free counters, while read-only checks require consistent counters |
 
 Empty, duplicate, oversized, and unsupported root options fail with a `BOOT_ROOT_FAIL` diagnostic naming the stage and Linux errno. Filesystem type or flags require a disk selection. A missing disk or rejected ext2 volume also stops boot; the kernel does not silently use the bootstrap as a successful disk root. Device names follow PCI discovery order and are not stable disk identifiers.
 
-For a generated recovery boot image, pass `--root-recovery` with `--root-device` to `scripts/image.py`. This selects the checked policy above. The ordinary image keeps the default clean-volume requirement. [Ext2 recovery limits](ext2.md#supported-format-and-operations) explain which interrupted volumes can be used without repair.
+For a generated recovery boot image, pass `--root-recovery` with `--root-device` to `scripts/image.py`. This selects the checked policy above. The ordinary image keeps the default clean-volume requirement. [Ext2 recovery limits](ext2.md#supported-format-and-operations) explain counter reconciliation and structural rejection.
 
 The disk must contain executable regular files at `/sbin/init`, `/bin/busybox`, and `/lib/ld-musl-x86_64.so.1`, plus directories at `/dev`, `/proc`, `/sys`, `/tmp`, and `/run`. Required paths are checked through the disk filesystem. The ELF loader and dynamic linker use the selected root. Relative paths, cwd, mount ownership, and `stat.st_dev` follow that root too.
 
-The kernel mounts independent RAM volumes on those five directories. Devices, synthetic process metadata, framebuffer metadata, sockets, and scratch files can therefore work with a read-only root. `/tmp` has mode `01777`. Ordinary files elsewhere use ext2; `/tmp` and `/run` do not persist. These RAM mount points are not complete Linux procfs, sysfs, or devtmpfs implementations.
+The kernel mounts independent RAM volumes on `/dev`, `/sys`, `/tmp` and `/run`, and a process filesystem on `/proc`. Devices, process status, framebuffer metadata, sockets and scratch files can therefore work with a read-only root. `/tmp` has mode `01777`. Ordinary files elsewhere use ext2; `/tmp` and `/run` do not persist. Procfs currently supplies process/thread enumeration, caller-relative self links and actual identity/group/state status; wider procfs, sysfs and devtmpfs interfaces remain required.
 
 ## Shutdown and errors
 
@@ -45,7 +45,7 @@ Use `/bin/busybox poweroff -f` from the guest serial shell for a clean stop. The
 
 Ordinary boots on QEMU's `pc` machine discover the enabled PIIX4 power-management I/O block through PCI and request soft power off with a 16-bit PM1 control write. The register mapping and sleep type follow [QEMU's PIIX4 implementation](https://github.com/qemu/qemu/blob/v8.2.2/hw/acpi/piix4.c) and [ACPI control implementation](https://github.com/qemu/qemu/blob/v8.2.2/hw/acpi/core.c). This platform path is verified under BIOS and UEFI. General ACPI table discovery, hardware-specific sleep types, restart, and suspend remain planned; an unavailable power block leaves the CPU halted after filesystem shutdown.
 
-The [ext2 validation and error policy](ext2.md) applies to the root. Invalid metadata is rejected before writable mounting. A backend failure can leave a volume marked unclean even when its inode structure remains valid; writable mounting then requires host repair. A failed shutdown is not persistence evidence. Abruptly closing QEMU, losing power, crash recovery, ext4, partitions, stable root identifiers, and a disk installer remain separate roadmap work.
+The [ext2 validation and error policy](ext2.md) applies to the root. A backend failure can leave a volume marked unclean. An explicit writable checked mount can reconcile free counters when the complete structural scan succeeds; other damage requires a filesystem checker. A failed shutdown is not persistence evidence. Broader power-loss recovery, ext4, partitions, stable root identifiers, and a disk installer remain separate roadmap work.
 
 Block requests, including mount-time flushes, have a 30-second deadline. A host flush can cover the copied full image even when the guest changed only a small amount of metadata. Device-reset acknowledgement keeps its separate two-second limit. An expired request is logged with its type, sector, length, and timeout errno, then the device is reset and quarantined.
 

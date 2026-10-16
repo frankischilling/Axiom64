@@ -36,6 +36,5 @@ The serial run also spent 1,305 seconds downloading inputs in its critical carri
 job, so the whole-workflow difference includes runner/setup and queue effects. The
 protocol commands and real waits retained their full durations.
 
-[#149](https://github.com/frankischilling/Axiom64/issues/149) is closed for that measured
-redistribution. Wider manager/CI timing work remains in #133. TCG stays the default;
-the complete manager matrix and VM-before-hardware requirements remain in force.
+The measured redistribution is complete. Wider manager and CI timing improvements
+remain open. TCG stays the default; the complete manager matrix and VM-before-hardware requirements remain in force.

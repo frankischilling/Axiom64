@@ -1,6 +1,6 @@
 # Default TCP delivery lifetime
 
-[#155](https://github.com/frankischilling/Axiom64/issues/155) covers unanswered established
+Default TCP lifetime acceptance covers unanswered established
 data, FIN and zero-window probing. TCP_USER_TIMEOUT remains zero by default. Zero selects
 a finite 924600 ms default delivery period; a positive value selects the configured
 deadline, including values longer than the default.
@@ -98,7 +98,7 @@ Build inputs retain all three new compiled clients; evidence and every generated
 guest image remain in the corresponding scoped artifacts. Integration requires
 current-source full CI and independent published evidence, including the retained
 manager/startup/filesystem matrix. Local regressions and individual observations do
-not complete #155, its TCP parents, or the VM workloads required before HP development.
+not establish every TCP reliability requirement or the VM workloads required before HP development.
 
 The contract follows [RFC 9293 section 3.8.3](https://www.rfc-editor.org/rfc/rfc9293.html#section-3.8.3)
 and [zero-window operation](https://www.rfc-editor.org/rfc/rfc9293.html#section-3.8.6.1),

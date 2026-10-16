@@ -2,6 +2,8 @@
 #include "fs/vfs.hpp"
 #include "fs/xattr.hpp"
 #include "fs/file_lock.hpp"
+#include "fs/record_lock.hpp"
+#include "fs/proc.hpp"
 #include "drivers/platform/devices.hpp"
 #include "ipc/ipc.hpp"
 #include "net/packet.hpp"
@@ -10,10 +12,12 @@
 #include "process/task.hpp"
 #include "drivers/block/block.hpp"
 #include "fs/ext2/ext2.hpp"
+#include "core/time.hpp"
 
 namespace ax {
 Timestamp node_now() {
-    return {int64_t(ticks / 100), (ticks % 100) * 10000000};
+    uint64_t now = clock_realtime_ticks();
+    return {int64_t(now / 100), (now % 100) * 10000000};
 }
 
 Node nodes[16384];
@@ -257,6 +261,8 @@ int node_access(Node* node, unsigned mask, bool real) {
     node = file_node(node);
     if (!node)
         return -2;
+    if (node->mount->ops->refresh)
+        node->mount->ops->refresh(node);
     const Credentials boot{};
     return credential_access(current ? current->credentials : boot, node->uid, node->gid,
                              node->mode, mask, real);
@@ -406,9 +412,11 @@ int remove_node(const Path& path, bool dir) {
     return node->mount->ops->remove(node);
 }
 
-int rename_node(const Path& from, const Path& to) {
-    if (dot_component(from) || dot_component(to))
+int rename_node(const Path& from, const Path& to, bool no_replace) {
+    if (dot_component(from))
         return -16;
+    if (dot_component(to))
+        return no_replace ? -17 : -16;
     Node* node = nullptr;
     int error = resolve_path(from, node, false);
     if (error)
@@ -424,21 +432,27 @@ int rename_node(const Path& from, const Path& to) {
         return -16;
     if (node_readonly(node))
         return -30;
-    if ((error = parent_write(directory_parent(node), node)))
+    if (!no_replace && (error = parent_write(directory_parent(node), node)))
         return error;
     Node* replaced = nullptr;
     error = parent->mount->ops->lookup(parent, name, replaced);
     if (error && error != -2)
         return error;
+    // Filesystem calls do not yield or run concurrently on another CPU. Check
+    // the destination within this same serialized lookup/rename operation.
+    if (no_replace && replaced)
+        return -17;
+    if (no_replace && (error = parent_write(directory_parent(node), node)))
+        return error;
     if ((error = parent_write(parent, replaced)))
         return error;
-    if (to.text[strlen(to.text) - 1] == '/' && !replaced)
-        return -2;
+    bool dir = (node->mode & 0170000) == directory;
+    if (to.text[strlen(to.text) - 1] == '/' && !dir)
+        return -20;
     if (replaced && (mount_root(replaced) || mounted_on(replaced)))
         return -16;
     if (replaced && file_node(replaced) == file_node(node))
         return 0;
-    bool dir = (node->mode & 0170000) == directory;
     for (Node* n = parent; dir && n; n = n->parent)
         if (n == node)
             return -22;
@@ -526,6 +540,12 @@ int node_chown(Node* node, uint32_t uid, uint32_t gid) {
 int64_t node_read(Node* node, uint64_t offset, void* buffer, size_t length) {
     node = file_node(node);
     return node->mount->ops->read(node, offset, buffer, length);
+}
+
+int64_t description_read(Handle* handle, uint64_t offset, void* buffer, size_t length) {
+    auto operation = handle->node->mount->ops->read_description;
+    return operation ? operation(handle, offset, buffer, length)
+                     : node_read(handle->node, offset, buffer, length);
 }
 
 int node_readdir(Node* node, uint64_t cookie, DirectoryEntry& entry) {
@@ -658,7 +678,8 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
         return 0;
     }
     bool ram = type && !strcmp(type, "ramfs"), disk = type && !strcmp(type, "ext2");
-    if (!ram && !disk)
+    bool proc = type && !strcmp(type, "proc");
+    if (!ram && !disk && !proc)
         return -19;
     Node* device = nullptr;
     if (disk) {
@@ -677,14 +698,18 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
                      nullptr,
                      point,
                      point->mount,
-                     ram ? &ramfs_ops : &ext2_ops,
+                     ram    ? &ramfs_ops
+                     : proc ? &procfs_ops
+                            : &ext2_ops,
                      nullptr,
                      false,
                      bool(flags & 1)};
-            if (ram) {
-                mount.root = ramfs_root(&mount, 0755);
-                if (!mount.root)
+            if (ram || proc) {
+                mount.root = ram ? ramfs_root(&mount, 0755) : procfs_root(&mount);
+                if (!mount.root) {
+                    mount = {};
                     return -28;
+                }
             } else {
                 error = ext2_mount(&mount, device, check_dirty);
                 if (error) {
@@ -693,9 +718,9 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
                 }
             }
             mount.active = true;
-            mount.nosuid = flags & 2;
-            mount.nodev = flags & 4;
-            mount.noexec = flags & 8;
+            mount.nosuid = proc || (flags & 2);
+            mount.nodev = proc || (flags & 4);
+            mount.noexec = proc || (flags & 8);
             return 0;
         }
     return -28;
@@ -824,15 +849,22 @@ void vfs_init(const void* archive, size_t length) {
     log("VFS: imported %u nodes from initramfs\n", uint64_t(node_count));
 }
 
-Handle* open_handle(Node* n, uint32_t flags) {
+Handle* open_handle(Node* n, uint32_t flags, int* error) {
+    if (error)
+        *error = -23;
     for (auto& h : handles)
         if (!h.references) {
             h = {file_node(n), nullptr, 0, flags, 1, false};
             h.generation = next_generation++;
-            if (!device_open(&h)) {
+            int result = flags & 010000000 ? 0 : device_open(&h);
+            if (result) {
                 h.references = 0;
+                if (error)
+                    *error = result;
                 return nullptr;
             }
+            if (error)
+                *error = 0;
             return &h;
         }
     return nullptr;
@@ -860,7 +892,11 @@ void close_handle(Handle* h) {
     if (!h || !h->references || --h->references)
         return;
     file_lock_release(h);
-    device_close(h);
+    record_lock_release(*h);
+    if (h->node && h->node->mount->ops->close_description)
+        h->node->mount->ops->close_description(h);
+    if (!(h->flags & 010000000))
+        device_close(h);
     if (h->socket)
         socket_close(h->socket);
     if (h->packet)
@@ -940,7 +976,7 @@ int64_t read_handle(Handle* h, void* buf, size_t len) {
         return -21;
     if ((n->mode & 0170000) == character || (n->mode & 0170000) == block_device)
         return device_read(h, buf, len);
-    int64_t count = node_read(n, h->offset, buf, len);
+    int64_t count = description_read(h, h->offset, buf, len);
     if (count > 0)
         h->offset += count;
     return count;

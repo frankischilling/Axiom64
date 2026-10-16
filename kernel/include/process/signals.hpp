@@ -19,4 +19,8 @@ bool signal_deliver(Task&);
 void signal_tick();
 
 int64_t signal_syscall(Frame*);
+
+int64_t signal_wait_enter(Frame*);
+
+bool signal_wait_resume(Task&);
 } // namespace ax

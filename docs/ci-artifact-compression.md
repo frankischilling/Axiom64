@@ -1,6 +1,6 @@
 # Normal-init fixture archive compression
 
-[Issue #141](https://github.com/frankischilling/Axiom64/issues/141), a child of [#133](https://github.com/frankischilling/Axiom64/issues/133), tracks normal-init fixture packaging. The successful [TCG baseline](https://github.com/frankischilling/Axiom64/actions/runs/38059241982) spent 90 seconds uploading BIOS fixtures and 96 seconds uploading UEFI fixtures. Each set includes both boot images and every saved ext2 root disk.
+Normal-init fixtures retain both boot images and every saved ext2 root disk. Archive compression is measured separately from [VM execution timing](ci-vm-timing.md). The successful [TCG baseline](https://github.com/frankischilling/Axiom64/actions/runs/38059241982) spent 90 seconds uploading BIOS fixtures and 96 seconds uploading UEFI fixtures.
 
 The existing complete published BIOS set contains 10 files and 6,221,539,328 input bytes. A local ZIP benchmark checks every extracted file against its original SHA-256 and compares the same files at two compression levels:
 

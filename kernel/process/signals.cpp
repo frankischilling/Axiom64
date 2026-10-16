@@ -59,9 +59,13 @@ void queue_signal(Task* task, int signal, int sender, int code, int status, uint
     if (signal < 1 || signal > 64 || task->state == State::empty || task->state == State::zombie)
         return;
     control_signal(task->process, signal);
-    if (task->handlers->signal_actions[signal - 1][0] == 1 && signal != 9 && signal != 19)
+    if (task->handlers->signal_actions[signal - 1][0] == 1 && signal != 9 && signal != 19 &&
+        !(task->signal_mask & (1ull << (signal - 1))))
         return;
-    task->pending_signals |= 1ull << (signal - 1);
+    uint64_t bit = 1ull << (signal - 1);
+    if (signal < 32 && (task->pending_signals & bit))
+        return;
+    task->pending_signals |= bit;
     task->signal_data[signal - 1] = {sender, code, status, address, sender_uid(sender)};
 }
 
@@ -72,9 +76,13 @@ void queue_process_signal(Process* process, int signal, int sender, int code, in
     control_signal(process, signal);
     for (auto& task : tasks)
         if (task.state != State::empty && task.state != State::zombie && task.process == process) {
-            if (task.handlers->signal_actions[signal - 1][0] == 1 && signal != 9 && signal != 19)
+            if (task.handlers->signal_actions[signal - 1][0] == 1 && signal != 9 && signal != 19 &&
+                !(task.signal_mask & (1ull << (signal - 1))))
                 return;
-            process->pending_signals |= 1ull << (signal - 1);
+            uint64_t bit = 1ull << (signal - 1);
+            if (signal < 32 && (process->pending_signals & bit))
+                return;
+            process->pending_signals |= bit;
             process->signal_data[signal - 1] = {sender, code, status, address, sender_uid(sender)};
             return;
         }
@@ -102,6 +110,14 @@ void signal_interrupt(Task& task) {
     int signal = actionable(task);
     if (!signal)
         return;
+    if (task.wait == Wait::signal_queue) {
+        task.signal_wait = {};
+        task.frame.rip += 2;
+        task.frame.rax = uint64_t(-4);
+        task.wait = Wait::none;
+        task.state = State::runnable;
+        return;
+    }
     uint64_t flags = task.handlers->signal_actions[signal - 1][1];
     if (task.handlers->signal_actions[signal - 1][0] <= 1) {
         task.state = State::runnable;
@@ -323,6 +339,8 @@ int64_t signal_syscall(Frame* f) {
     uint64_t a = f->rdi, b = f->rsi, c = f->rdx;
     if (f->rax == 15)
         return restore_signal(f);
+    if (f->rax == 128)
+        return signal_wait_enter(f);
     if (f->rax == 34 || f->rax == 130) {
         if (f->rax == 130) {
             if (b != 8)

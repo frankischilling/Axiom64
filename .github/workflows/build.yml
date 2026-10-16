@@ -23,6 +23,11 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 75
+    outputs:
+      account_clean_matrix: ${{ steps.storage_matrices.outputs.account_clean_matrix }}
+      account_fault_matrix: ${{ steps.storage_matrices.outputs.account_fault_matrix }}
+      account_rotation_matrix: ${{ steps.storage_matrices.outputs.account_rotation_matrix }}
+      rotation_shard_count: ${{ steps.storage_matrices.outputs.rotation_shard_count }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install build and emulation tools
@@ -30,7 +35,7 @@ jobs:
       - name: Cache locked dependency and source archives
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
-          key: ${{ runner.os }}-downloads-v1-${{ hashFiles('dependencies.json', 'ports.lock.json', 'sources.lock.json') }}
+          key: ${{ runner.os }}-downloads-v1-${{ hashFiles('dependencies.json', 'ports.lock.json', 'sources.lock.json', 'vendor/gnu-utmp-reader/inputs.json') }}
           path: |
             downloads/*.tar.*
             downloads/ports
@@ -41,6 +46,12 @@ jobs:
         run: python3 scripts/tests/qemu_acceleration_test.py
       - name: Test init supervision observes complete serial records
         run: python3 scripts/tests/normal_manager_events_test.py -v
+      - name: Replay authenticated console prompts and command return ordering
+        run: python3 scripts/tests/normal_login_test.py -v
+      - name: Replay actual kernel-interrupted ordinary Bash prompts
+        run: python3 scripts/tests/console_prompt_test.py -v
+      - name: Run prompt verification from exported corresponding-source inputs
+        run: python3 scripts/tests/source_bundle_inputs_test.py -v
       - name: Test seed supervision observes complete ordinary-console records
         run: python3 scripts/tests/random_installed_records_test.py -v
       - name: Test actual init seed records stay framed at every input-echo boundary
@@ -49,12 +60,59 @@ jobs:
         run: python3 scripts/tests/random_executable_copy_test.py -v
       - name: Replay actual RTC firmware writes and reject damaged calendar observations
         run: python3 scripts/tests/clock_wall_observer_test.py -v
+      - name: Require complete and unaltered storage target shard unions
+        run: python3 scripts/tests/account_storage_shards_test.py -v
+      - name: Require every rotation variant, target and actual fault mode
+        run: python3 scripts/tests/account_rotation_coverage_test.py -v
+      - name: Replay retained account generation selection through a separate Linux journal oracle
+        run: python3 scripts/tests/account_generation_oracle_test.py -v
+      - name: Classify retained rotation retirement after journal-only observation
+        run: python3 scripts/tests/account_rotation_journal_oracle_test.py -v
+      - name: Replay actual QMP startup notifications within the negotiation deadline
+        run: python3 scripts/tests/qmp_greeting_test.py -v
+      - name: Preserve actual administration disks and reap interrupted observation children
+        run: python3 scripts/tests/account_management_storage_test.py
+      - name: Reject unproven provisional rotation archives
+        run: python3 scripts/tests/account_rotation_storage_test.py
+      - name: Replay actual kernel-interrupted rotation exports without changing captured bytes
+        run: python3 scripts/tests/account_rotation_serial_test.py -v
+      - name: Require exact allocation-map evidence for bounded counter recovery
+        run: python3 scripts/tests/ext2_counter_inspection_test.py
+      - name: Require every administration variant, concurrency phase and storage fault
+        run: python3 scripts/tests/account_management_coverage_test.py -v
+      - name: Require complete bounded CI storage matrices
+        run: python3 scripts/tests/account_storage_ci_test.py -v
+      - name: Publish root-created storage evidence through an ordinary runner
+        run: sudo -n python3 scripts/tests/account_storage_publication_test.py
+      - name: Define complete account storage matrices
+        id: storage_matrices
+        run: python3 scripts/account_storage_ci.py >> "$GITHUB_OUTPUT"
       - name: Test manager runtime hint provenance and explicit invalidation with sanitizers
         run: make test-manager-runtime-native
       - name: Test actual desktop image readiness and bounded uniform-image rejection
         run: python3 scripts/tests/desktop_visual_test.py -v
+      - name: Test Xauthority records against an isolated real X server and ordinary users
+        run: sudo -n python3 scripts/tests/desktop_authority_test.py --isolated
+      - name: Test the selected shell starts only on a private owned foreground PTY
+        run: sudo -n python3 scripts/tests/desktop_terminal_test.py
+      - name: Test desktop recovery ownership and saved process identity
+        run: |
+          mkdir -p build/accounts-policy
+          sudo -n python3 scripts/tests/desktop_seat_test.py 2>&1 | tee build/accounts-policy/seat.log
+          sudo -n python3 scripts/tests/desktop_seat_test.py --sanitize 2>&1 | tee build/accounts-policy/seat-sanitize.log
+      - name: Test process identity and exec capture failures with sanitizers
+        run: |
+          make test-proc-identity-policy test-exec-arguments-policy 2>&1 | tee build/accounts-policy/process.log
+      - name: Verify the portable GNU login-record reader and its pinned inputs
+        run: python3 scripts/tests/gnu_utmp_reader_test.py --directory build/gnu-reader-controls
       - name: Build all maintained OpenSSL providers from their pinned inputs
         run: python3 scripts/build_openssl.py --provider all
+      - name: Verify completed OpenSSL fingerprints and reject changed inputs and products
+        run: python3 scripts/tests/openssl_inputs_test.py -v
+      - name: Build maintained password providers and account programs
+        run: |
+          python3 scripts/build_libxcrypt.py --provider all
+          python3 scripts/build_accounts.py --provider all --linkage all
       - name: Build secure-random lifecycle and cryptographic prerequisite clients
         run: |
           make -j2 build/random-admin-native build/random-admin-static build/random-admin-dynamic
@@ -75,6 +133,18 @@ jobs:
           make test-rtc-codec test-netlink-inventory-codec
       - name: Bundle corresponding sources
         run: make sources
+      - name: Execute and relink the GNU reader extracted from this run's public source artifact
+        run: |
+          python3 scripts/tests/gnu_utmp_reader_test.py --directory build/gnu-reader-public-controls --source-archive build/axiom64-sources.tar
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          kit = Path('build/gnu-reader-public-controls/moved-kit')
+          manifest = json.loads((kit / 'manifest.json').read_text())
+          assert hashlib.sha256((kit / 'application.c').read_bytes()).hexdigest() == manifest['source_sha256']
+          print('GNU_UTMP_READER_PUBLIC_SOURCE_BINDING_PASS')
+          PY
       - name: Build standalone image and both userspace profiles
         run: |
           make -j2 image
@@ -113,6 +183,16 @@ jobs:
           name: tcp-policy
           if-no-files-found: warn
           path: build/tcp-policy
+      - name: Upload account policy and portable reader evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-account-policy
+          path: |
+            build/accounts-policy
+            build/gnu-reader-controls
+            build/gnu-reader-public-controls
+            build/gnu-utmp-reader
       - name: Test paired network workspace isolation and failure evidence
         run: python3 scripts/tests/paired_network_test.py
       - name: Test PCI removal preserves interrupted guest reads
@@ -174,6 +254,11 @@ jobs:
           - network
           - configuration
           - storage
+          - storage-journal
+          - storage-journal-lifetime-bios-modern
+          - storage-journal-lifetime-bios-legacy
+          - storage-journal-lifetime-uefi-modern
+          - storage-journal-lifetime-uefi-legacy
           - root
           - root-userspace
           - manager-bios-modern
@@ -226,6 +311,31 @@ jobs:
           - link-uefi-modern-lane1
           - link-uefi-legacy-lane0
           - link-uefi-legacy-lane1
+          - accounts-native-storage
+          - accounts-native-auth
+          - accounts-native-session
+          - accounts-native-frontends
+          - accounts-guest-storage
+          - accounts-store-ext2
+          - accounts-guest-auth
+          - accounts-guest-session
+          - accounts-guest-frontends
+          - accounts-process-native
+          - accounts-process-guest
+          - accounts-record-native
+          - accounts-record-bios-modern
+          - accounts-record-bios-legacy
+          - accounts-record-uefi-modern
+          - accounts-record-uefi-legacy
+          - accounts-rotation-native
+          - accounts-rotation-bios-modern
+          - accounts-rotation-bios-legacy
+          - accounts-rotation-uefi-modern
+          - accounts-rotation-uefi-legacy
+          - accounts-desktop-bios
+          - accounts-desktop-uefi
+          - accounts-console-full
+          - accounts-vm-state
     steps:
       - name: Download this run's test inputs
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -236,6 +346,138 @@ jobs:
         run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
       - name: Install build and emulation tools
         run: bash scripts/ci/tools.sh restore
+      - name: Compare account database publication and updates with native Linux
+        if: matrix.suite == 'accounts-native-storage'
+        run: |
+          sudo -n python3 scripts/account_store_test.py --fixtures /tmp/axiom64-ci-account-store
+          sudo -n python3 scripts/account_database_test.py --native --directory build/account-database-native --fixtures /tmp/axiom64-ci-account-database
+          sudo -n python3 scripts/account_update_test.py --native --directory build/account-update-native --fixtures /tmp/axiom64-ci-account-update
+          sudo -n python3 scripts/account_update_test.py --native --sanitize --directory build/account-update-sanitize --fixtures /tmp/axiom64-ci-account-update-sanitize
+          sudo -n python3 scripts/rename_test.py --native --directory build/account-rename-native --fixtures /tmp/axiom64-ci-rename
+          sudo -n python3 scripts/account_home_test.py --native --directory build/account-home-native --fixtures /tmp/axiom64-ci-home
+          sudo -n python3 scripts/account_home_test.py --native --sanitize --directory build/account-home-sanitize --fixtures /tmp/axiom64-ci-home-sanitize
+          sudo -n python3 scripts/account_transaction_test.py --native --directory build/account-transaction-native --fixtures /tmp/axiom64-ci-transaction
+          sudo -n python3 scripts/account_transaction_test.py --native --sanitize --directory build/account-transaction-sanitize --fixtures /tmp/axiom64-ci-transaction-sanitize
+      - name: Compare account management, password hashing and authentication with native Linux
+        if: matrix.suite == 'accounts-native-auth'
+        run: |
+          python3 scripts/password_library_test.py
+          sudo -n python3 scripts/account_management_test.py --fixtures /tmp/axiom64-ci-account-management
+          sudo -n python3 scripts/account_management_ext2.py --native --directory build/account-management-command-native --fixtures /tmp/axiom64-ci-management-command-native
+          sudo -n python3 scripts/account_auth_test.py --native --directory build/account-auth-native --fixtures /tmp/axiom64-ci-account-auth
+          sudo -n python3 scripts/account_secret_test.py --native --directory build/account-secret-native
+      - name: Compare session credentials, leases and login-record projections with native Linux
+        if: matrix.suite == 'accounts-native-session'
+        run: |
+          sudo -n python3 scripts/account_session_test.py --native --directory build/account-session-native --fixtures /tmp/axiom64-ci-account-session
+          sudo -n python3 scripts/account_logbook_test.py --native --directory build/account-logbook-native --fixtures /tmp/axiom64-ci-account-logbook
+      - name: Compare login, su, sudo, passwd and console recovery with native Linux
+        if: matrix.suite == 'accounts-native-frontends'
+        run: |
+          sudo -n python3 scripts/account_access_test.py --native --directory build/account-access-native --fixtures /tmp/axiom64-ci-account-access
+          sudo -n python3 scripts/account_console_test.py --native --directory build/account-console-native --fixtures /tmp/axiom64-ci-account-console
+      - name: Verify account database publication and updates in fresh guest kernels
+        if: matrix.suite == 'accounts-guest-storage'
+        run: |
+          python3 scripts/account_store_guest.py
+          python3 scripts/account_database_test.py
+          python3 scripts/account_update_test.py
+          python3 scripts/rename_test.py --directory build/account-rename-guest
+          python3 scripts/account_home_test.py --directory build/account-home-guest
+          python3 scripts/account_home_reboot_test.py --directory build/account-home-reboot
+          python3 scripts/account_transaction_test.py --directory build/account-transaction-guest
+          python3 scripts/account_transaction_reboot_test.py --directory build/account-transaction-reboot
+      - name: Verify account generation transactions through persistent ext2 reboot pairs
+        if: matrix.suite == 'accounts-store-ext2'
+        run: python3 scripts/account_store_ext2.py
+      - name: Verify password hashing, account management and authentication in fresh guest kernels
+        if: matrix.suite == 'accounts-guest-auth'
+        run: |
+          python3 scripts/password_library_guest.py
+          python3 scripts/account_management_guest.py
+          python3 scripts/account_auth_test.py
+          python3 scripts/account_secret_test.py
+      - name: Verify session credentials, leases and GNU login-record interoperability in fresh guest kernels
+        if: matrix.suite == 'accounts-guest-session'
+        run: |
+          python3 scripts/account_session_test.py
+          python3 scripts/account_logbook_test.py
+      - name: Verify login aliases, elevation and console recovery in fresh guest kernels
+        if: matrix.suite == 'accounts-guest-frontends'
+        run: |
+          python3 scripts/account_access_test.py
+          python3 scripts/account_console_test.py
+      - name: Compare terminal ownership, parent death, signal waits, waitid, procfs and exec with native Linux
+        if: matrix.suite == 'accounts-process-native'
+        run: |
+          sudo -n make test-pty-security-native test-parent-death-native test-signal-wait-native
+          sudo -n make test-waitid-native test-proc-identity-native test-exec-arguments-native
+          sudo -n python3 scripts/proc_test.py --native --directory build/proc-native
+          sudo -n python3 scripts/terminal_flush_test.py --native --directory build/terminal-flush-native
+          sudo -n python3 scripts/terminal_flush_test.py --native --sanitize --directory build/terminal-flush-sanitize
+      - name: Verify terminal ownership, parent death, signal waits, waitid, procfs and exec in fresh guest kernels
+        if: matrix.suite == 'accounts-process-guest'
+        run: |
+          make test-pty-security test-parent-death test-signal-wait
+          make test-waitid test-proc-identity test-exec-arguments
+          python3 scripts/proc_test.py
+          python3 scripts/terminal_flush_test.py
+      - name: Compare POSIX and OFD record locks with actual native process lifetimes
+        if: matrix.suite == 'accounts-record-native'
+        run: |
+          sudo -n python3 scripts/record_lock_test.py --native --directory build/record-locks-native --fixtures /tmp/axiom64-ci-record-locks
+          sudo -n make test-record-lock-lifecycle-native
+      - name: Verify POSIX and OFD record-lock lifetime and ext2 reboot persistence
+        if: startsWith(matrix.suite, 'accounts-record-') && matrix.suite != 'accounts-record-native'
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          case "$SUITE" in
+            accounts-record-bios-modern) firmware=bios; transport=modern ;;
+            accounts-record-bios-legacy) firmware=bios; transport=legacy ;;
+            accounts-record-uefi-modern) firmware=uefi; transport=modern ;;
+            accounts-record-uefi-legacy) firmware=uefi; transport=legacy ;;
+            *) exit 2 ;;
+          esac
+          python3 scripts/record_lock_lifecycle_test.py --directory build/record-lock-lifecycle --firmware "$firmware" --transport "$transport"
+      - name: Preserve the original complete record-lock regression matrix
+        if: matrix.suite == 'accounts-record-bios-modern'
+        run: python3 scripts/record_lock_test.py --directory build/record-locks
+      - name: Verify native journal rotation at every publication, short-write and expiry boundary
+        if: matrix.suite == 'accounts-rotation-native'
+        run: |
+          sudo -n python3 scripts/account_logbook_rotation_test.py --native --directory build/account-rotation-native --fixtures /tmp/axiom64-ci-account-rotation
+          sudo -n python3 scripts/account_logbook_rotation_guest.py --native --directory build/account-rotation-observer-native
+          python3 scripts/tests/account_projection_write_test.py --directory build/account-projection-write
+          python3 scripts/tests/account_projection_write_test.py --directory build/account-projection-write-sanitize --provider native --linkage dynamic --sanitize
+      - name: Verify journal rotation, active sessions, retention and exact disk projections in real guest kernels
+        if: startsWith(matrix.suite, 'accounts-rotation-') && matrix.suite != 'accounts-rotation-native'
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          case "$SUITE" in
+            accounts-rotation-bios-modern) firmware=bios; transport=modern; default= ;;
+            accounts-rotation-bios-legacy) firmware=bios; transport=legacy; default=--skip-default ;;
+            accounts-rotation-uefi-modern) firmware=uefi; transport=modern; default=--skip-default ;;
+            accounts-rotation-uefi-legacy) firmware=uefi; transport=legacy; default=--skip-default ;;
+            *) exit 2 ;;
+          esac
+          sudo -n python3 scripts/account_logbook_rotation_guest.py --directory build/account-rotation-guest --firmware "$firmware" --transport "$transport" $default
+          sudo -n python3 scripts/account_logbook_default_ext2.py --directory build/account-rotation-default-ext2 --firmware "$firmware" --transport "$transport"
+      - name: Verify authenticated graphical sessions and recovery on RAM and persistent roots
+        if: startsWith(matrix.suite, 'accounts-desktop-')
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          firmware=${SUITE#accounts-desktop-}
+          case "$firmware" in bios|uefi) ;; *) exit 2 ;; esac
+          python3 scripts/account_normal_test.py --directory build/account-desktop --graphical --firmware "$firmware"
+      - name: Verify authenticated full-profile console, persistence and reboot recovery
+        if: matrix.suite == 'accounts-console-full'
+        run: python3 scripts/account_normal_test.py --directory build/account-normal-full --profile full
+      - name: Verify disposable persistent VM setup, concurrent denial and authenticated reboot
+        if: matrix.suite == 'accounts-vm-state'
+        run: python3 scripts/vm_test.py
       - name: Prepare optional KVM access for measured manager VM runs
         if: (startsWith(matrix.suite, 'link-') || startsWith(matrix.suite, 'normal-init-')) && (inputs.manager_accelerator == 'auto' || inputs.manager_accelerator == 'kvm')
         run: |
@@ -301,6 +543,7 @@ jobs:
         run: |
           firmware=${SUITE#random-installed-}
           case "$firmware" in bios|uefi) ;; *) exit 1 ;; esac
+          python3 scripts/tests/fixture_archive_test.py
           python3 scripts/random_installed_test.py --firmware "$firmware" --output build/random-lifecycle/installed
 
       - name: Verify native shared-port ownership and exclusive lifetime endpoints
@@ -333,6 +576,12 @@ jobs:
       - name: Test ordinary identities, privilege-dropped exec and RAM/ext2 permissions
         if: matrix.suite == 'credentials'
         run: make test-credentials
+      - name: Compare parent-thread death and synchronous signal waits with native Linux
+        if: matrix.suite == 'credentials'
+        run: sudo -n make test-parent-death-native test-signal-wait-native
+      - name: Test parent-thread death and captured signal waits with BIOS and UEFI
+        if: matrix.suite == 'credentials'
+        run: make test-parent-death test-signal-wait
       - name: Compare all three libc profiles with native Linux tmpfs and ext2 xattrs
         if: matrix.suite == 'file-capabilities'
         run: |
@@ -438,7 +687,10 @@ jobs:
           python3 scripts/tests/tcp_icmp_capture_test.py 2>&1 | tee build/tcp-icmp-damage.log
       - name: Test desktop serial acceptance decisions
         if: matrix.suite == 'boot'
-        run: python3 scripts/tests/desktop_console_test.py
+        run: |
+          python3 scripts/tests/desktop_console_test.py
+          python3 scripts/tests/normal_login_test.py
+          python3 scripts/tests/fixture_archive_test.py
       - name: Test pthread lifecycle, futexes, and blocked I/O
         if: matrix.suite == 'boot'
         run: make test-threads
@@ -588,6 +840,13 @@ jobs:
       - name: Compare Linux file locks and test RAM/ext2 description lifetime
         if: matrix.suite == 'configuration'
         run: make test-file-locks
+      - name: Compare Linux path descriptors and test RAM/ext2 lifetime and access
+        if: matrix.suite == 'configuration'
+        run: |
+          python3 scripts/tests/path_descriptor_cancellation_test.py -v
+          python3 scripts/tests/path_descriptor_storage_test.py
+          sudo -n python3 scripts/path_descriptor_test.py --native --directory build/path-descriptors-native --fixtures /tmp/axiom64-ci-path-descriptors
+          sudo -n python3 scripts/path_descriptor_test.py --directory build/path-descriptors-guest
 
       - name: Test virtio disks and reboot persistence
         if: matrix.suite == 'storage'
@@ -595,6 +854,34 @@ jobs:
       - name: Test writable ext2 volumes and host fsck
         if: matrix.suite == 'storage'
         run: python3 scripts/ext2_test.py
+      - name: Test whole-volume observation and checked deleted-inode recovery
+        if: matrix.suite == 'storage'
+        run: |
+          python3 scripts/tests/ext2_inspection_test.py
+          python3 scripts/tests/ext2_recovery_inspection_test.py
+          python3 scripts/tests/ext2_named_retirement_inspection_test.py
+          python3 scripts/tests/ext2_directory_retirement_inspection_test.py
+          python3 scripts/ext2_deleted_inode_test.py --directory build/ext2-deleted-recovery
+
+      - name: Test native journal crash recovery and Linux format interoperability
+        if: matrix.suite == 'storage-journal'
+        run: make test-ext2-journal-native
+      - name: Recover committed journals and verify guest persistence across all profiles
+        if: matrix.suite == 'storage-journal'
+        run: |
+          make test-ext2-journal
+          python3 scripts/ext2_journal_rejection_test.py
+      - name: Recover open descriptions after VM interruption and reject damaged metadata
+        if: startsWith(matrix.suite, 'storage-journal-lifetime-')
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          python3 scripts/tests/journal_lifetime_boundary_test.py
+          case "$SUITE" in storage-journal-lifetime-bios-modern|storage-journal-lifetime-bios-legacy|storage-journal-lifetime-uefi-modern|storage-journal-lifetime-uefi-legacy) ;; *) exit 1 ;; esac
+          configuration=${SUITE#storage-journal-lifetime-}
+          firmware=${configuration%-*}
+          transport=${configuration#*-}
+          python3 scripts/ext2_journal_lifetime_test.py --firmware "$firmware" --transport "$transport" --directory "build/${SUITE}"
 
       - name: Test ext2 root, data mounts, rejection, and reboot persistence
         if: matrix.suite == 'root'
@@ -634,6 +921,7 @@ jobs:
         run: |
           firmware=${SUITE#normal-init-}
           case "$firmware" in bios|uefi) ;; *) exit 1 ;; esac
+          python3 scripts/tests/normal_manager_records_test.py
           python3 scripts/normal_manager_peer_test.py 2>&1 | tee build/normal-init-peer.log
           python3 scripts/normal_manager_test.py --firmware "$firmware"
       - name: Upload normal init root fixtures
@@ -686,6 +974,33 @@ jobs:
             build/tcp-icmp-*-inputs.json
             build/tcp-icmp-*.txt
             build/tcp-icmp-damaged/**
+      - name: Upload complete path-descriptor sources, products and filesystem evidence
+        if: always() && matrix.suite == 'configuration'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-path-descriptors-evidence
+          if-no-files-found: error
+          compression-level: 1
+          path: build/path-descriptors-*/**
+      - name: Upload complete account source, process, filesystem and graphical evidence
+        if: always() && startsWith(matrix.suite, 'accounts-')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-${{ matrix.suite }}-evidence
+          if-no-files-found: error
+          compression-level: 1
+          path: |
+            build/account-*/**
+            build/password-library-*/**
+            build/record-lock*/**
+            build/pty-security*/**
+            build/terminal-flush*/**
+            build/parent-death*/**
+            build/signal-wait*/**
+            build/waitid*/**
+            build/proc*/**
+            build/exec-arguments*/**
+            build/vm-state-test/**
       - name: Upload complete entropy, seed, cryptographic and ordinary-init evidence
         if: always() && startsWith(matrix.suite, 'random-')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -694,6 +1009,15 @@ jobs:
           if-no-files-found: error
           compression-level: 1
           path: build/random-lifecycle
+      - name: Upload authenticated normal boot fixtures
+        if: always() && (matrix.suite == 'boot' || matrix.suite == 'root-userspace' || startsWith(matrix.suite, 'normal-init-'))
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-normal-login-${{ matrix.suite }}
+          compression-level: 1
+          path: |
+            build/interactive-login-*/**
+            build/normal-init-login-*/**
       - name: Upload actual raw storage and ext2 volume and boot fixtures
         if: always() && matrix.suite == 'storage'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -708,6 +1032,26 @@ jobs:
             build/ext2-*.iso
             build/ext2-*.conf
             build/ext2-*-acl.bin
+            build/ext2-deleted-recovery/**
+      - name: Upload complete journal sources, products, volumes and checker evidence
+        if: always() && matrix.suite == 'storage-journal'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-journal-fixtures
+          if-no-files-found: error
+          path: |
+            build/ext2-journal-native/**
+            build/ext2-journal-guest/**
+            build/ext2-journal-rejection/**
+            build/ext2-journal-core-native
+            build/ext2-journal-volume-native
+      - name: Upload open-description recovery sources, images, disks and negative controls
+        if: always() && startsWith(matrix.suite, 'storage-journal-lifetime-')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-journal-lifetime-${{ matrix.suite }}
+          if-no-files-found: error
+          path: build/storage-journal-lifetime-*/**
       - name: Upload TCP boot fixtures
         if: always() && matrix.suite == 'tcp'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -765,8 +1109,214 @@ jobs:
             build/file-capabilities-independent.log
             build/file-capabilities-damage.log
 
+  account-storage-clean:
+    name: Administration ${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.build.outputs.account_clean_matrix) }}
+    env:
+      PROVIDER: ${{ matrix.provider }}
+      LINKAGE: ${{ matrix.linkage }}
+      FIRMWARE: ${{ matrix.firmware }}
+      TRANSPORT: ${{ matrix.transport }}
+    steps:
+      - name: Download this run's test inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: axiom64-ci-inputs
+          path: ${{ runner.temp }}/ci-inputs
+      - name: Restore source and build together
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
+      - name: Install build and emulation tools
+        run: bash scripts/ci/tools.sh restore
+      - name: Run actual administration, concurrent commands and fresh-kernel checks
+        run: |
+          cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT"
+          sudo -n python3 scripts/account_management_ext2.py --journal --campaign clean --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --directory "build/account-management-clean-$cell"
+          sudo -n python3 scripts/account_management_ext2.py --journal --campaign storage --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --directory "build/account-management-storage-$cell"
+          sudo -n python3 scripts/account_management_storage_coverage.py collect-clean --clean-directory "build/account-management-clean-$cell" --storage-directory "build/account-management-storage-$cell" --output "build/account-management-clean-index-$cell/coverage-index.json"
+      - name: Give the runner ownership of completed administration evidence
+        if: always()
+        run: |
+          cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT"
+          sudo -n bash scripts/ci/storage_evidence.sh "$(id -u)" "$(id -g)" "build/account-management-clean-$cell" "build/account-management-storage-$cell" "build/account-management-clean-index-$cell"
+      - name: Upload complete administration and storage-control evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-account-management-clean-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            build/account-management-clean-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}
+            build/account-management-storage-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}
+      - name: Upload administration coverage index
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-account-management-index-clean-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}
+          retention-days: 1
+          if-no-files-found: error
+          path: build/account-management-clean-index-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}/coverage-index.json
+
+  account-storage-fault:
+    name: Administration faults ${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.cache }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.build.outputs.account_fault_matrix) }}
+    env:
+      PROVIDER: ${{ matrix.provider }}
+      LINKAGE: ${{ matrix.linkage }}
+      FIRMWARE: ${{ matrix.firmware }}
+      TRANSPORT: ${{ matrix.transport }}
+      CACHE: ${{ matrix.cache }}
+    steps:
+      - name: Download this run's test inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: axiom64-ci-inputs
+          path: ${{ runner.temp }}/ci-inputs
+      - name: Restore source and build together
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
+      - name: Install build and emulation tools
+        run: bash scripts/ci/tools.sh restore
+      - name: Interrupt every observed actual administration request and boot normal recovery
+        run: |
+          cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-$CACHE"
+          sudo -n python3 scripts/account_management_ext2.py --journal --campaign fault --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --cache-model "$CACHE" --fault-modes eio,pause-before,pause-after --directory "build/account-management-fault-$cell"
+          sudo -n python3 scripts/account_management_storage_coverage.py collect-fault --directory "build/account-management-fault-$cell" --output "build/account-management-fault-index-$cell/coverage-index.json"
+      - name: Give the runner ownership of completed administration fault evidence
+        if: always()
+        run: |
+          cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-$CACHE"
+          sudo -n bash scripts/ci/storage_evidence.sh "$(id -u)" "$(id -g)" "build/account-management-fault-$cell" "build/account-management-fault-index-$cell"
+      - name: Upload complete administration device and power-loss evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-account-management-fault-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.cache }}
+          retention-days: 1
+          if-no-files-found: error
+          path: build/account-management-fault-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.cache }}
+      - name: Upload administration fault coverage index
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-account-management-index-fault-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.cache }}
+          retention-days: 1
+          if-no-files-found: error
+          path: build/account-management-fault-index-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.cache }}/coverage-index.json
+
+  account-rotation-storage:
+    name: Rotation faults ${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.scenario }}-${{ matrix.cache }}-${{ matrix.shard }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.build.outputs.account_rotation_matrix) }}
+    env:
+      PROVIDER: ${{ matrix.provider }}
+      LINKAGE: ${{ matrix.linkage }}
+      FIRMWARE: ${{ matrix.firmware }}
+      TRANSPORT: ${{ matrix.transport }}
+      SCENARIO: ${{ matrix.scenario }}
+      CACHE: ${{ matrix.cache }}
+      SHARD: ${{ matrix.shard }}
+      SHARD_COUNT: ${{ needs.build.outputs.rotation_shard_count }}
+    steps:
+      - name: Download this run's test inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: axiom64-ci-inputs
+          path: ${{ runner.temp }}/ci-inputs
+      - name: Restore source and build together
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
+      - name: Install build and emulation tools
+        run: bash scripts/ci/tools.sh restore
+      - name: Interrupt all assigned rotation writes and flushes in every fault mode
+        run: |
+          cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-$SCENARIO-$CACHE-$SHARD"
+          sudo -n python3 scripts/account_logbook_rotation_ext2.py --journal --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --scenario "$SCENARIO" --cache-model "$CACHE" --fault-mode eio pause-before pause-after --shard-count "$SHARD_COUNT" --shard-index "$SHARD" --directory "build/account-rotation-storage-$cell"
+          sudo -n python3 scripts/account_rotation_storage_coverage.py collect --directory "build/account-rotation-storage-$cell" --output "build/account-rotation-storage-$cell/coverage-index.json"
+      - name: Give the runner ownership of completed rotation evidence
+        if: always()
+        run: |
+          cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-$SCENARIO-$CACHE-$SHARD"
+          sudo -n bash scripts/ci/storage_evidence.sh "$(id -u)" "$(id -g)" "build/account-rotation-storage-$cell"
+      - name: Upload complete rotation sources, images, observations and interrupted disks
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-account-rotation-storage-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.scenario }}-${{ matrix.cache }}-${{ matrix.shard }}
+          retention-days: 1
+          if-no-files-found: error
+          path: build/account-rotation-storage-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.scenario }}-${{ matrix.cache }}-${{ matrix.shard }}
+      - name: Upload rotation coverage index
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-account-rotation-index-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.scenario }}-${{ matrix.cache }}-${{ matrix.shard }}
+          retention-days: 1
+          if-no-files-found: error
+          path: build/account-rotation-storage-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.scenario }}-${{ matrix.cache }}-${{ matrix.shard }}/coverage-index.json
+
+  account-storage-coverage:
+    name: Complete account storage coverage
+    needs: [build, account-storage-clean, account-storage-fault, account-rotation-storage]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Require every actual administration and rotation variant to pass
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          CLEAN_RESULT: ${{ needs.account-storage-clean.result }}
+          FAULT_RESULT: ${{ needs.account-storage-fault.result }}
+          ROTATION_RESULT: ${{ needs.account-rotation-storage.result }}
+        run: |
+          test "$BUILD_RESULT" = success
+          test "$CLEAN_RESULT" = success
+          test "$FAULT_RESULT" = success
+          test "$ROTATION_RESULT" = success
+      - name: Download this run's test inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: axiom64-ci-inputs
+          path: ${{ runner.temp }}/ci-inputs
+      - name: Restore the exact verified source and build inputs
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
+      - name: Download every administration coverage index
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: axiom64-account-management-index-*
+          path: ${{ runner.temp }}/account-management-indices
+      - name: Download every rotation coverage index
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: axiom64-account-rotation-index-*
+          path: ${{ runner.temp }}/account-rotation-indices
+      - name: Require the complete variant, observed-target, shard and fault-mode unions
+        run: |
+          python3 scripts/account_management_storage_coverage.py verify --indices "$RUNNER_TEMP/account-management-indices" --output build/account-storage-coverage/administration.json
+          python3 scripts/account_rotation_storage_coverage.py verify --indices "$RUNNER_TEMP/account-rotation-indices" --output build/account-storage-coverage/rotation.json
+      - name: Upload complete storage coverage proofs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-account-storage-coverage
+          retention-days: 1
+          if-no-files-found: error
+          path: build/account-storage-coverage
+
   qemu:
-    needs: [build, tests]
+    needs: [build, tests, account-storage-clean, account-storage-fault, account-rotation-storage, account-storage-coverage]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -775,6 +1325,14 @@ jobs:
         env:
           BUILD_RESULT: ${{ needs.build.result }}
           TEST_RESULT: ${{ needs.tests.result }}
+          ACCOUNT_CLEAN_RESULT: ${{ needs.account-storage-clean.result }}
+          ACCOUNT_FAULT_RESULT: ${{ needs.account-storage-fault.result }}
+          ACCOUNT_ROTATION_RESULT: ${{ needs.account-rotation-storage.result }}
+          ACCOUNT_COVERAGE_RESULT: ${{ needs.account-storage-coverage.result }}
         run: |
           test "$BUILD_RESULT" = success
           test "$TEST_RESULT" = success
+          test "$ACCOUNT_CLEAN_RESULT" = success
+          test "$ACCOUNT_FAULT_RESULT" = success
+          test "$ACCOUNT_ROTATION_RESULT" = success
+          test "$ACCOUNT_COVERAGE_RESULT" = success

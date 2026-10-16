@@ -14,7 +14,7 @@ Plan all service and reliability work: supervision, logging, time synchronizatio
 
 [Commit ba768b4](https://github.com/frankischilling/Axiom64/commit/ba768b40b8d55e1abae43b331f931bfff1bec4e2) has [successful CI evidence](https://github.com/frankischilling/Axiom64/actions/runs/37607497820) for BIOS/UEFI boot, static/dynamic musl, IPC, signals, BusyBox, Bash, zsh, native GNU C/C++ tools, Xorg drawing, a window manager, and emulated input into interactive Bash. [Current limits](architecture.md#current-limits) remain part of the compatibility contract. This evidence does not prove disk, network, thread, or complete Linux support.
 
-The inventory date is 2026-10-07. `partial` means some behavior exists and the issue lists what remains. `planned` means the required capability has not been demonstrated. `excluded` records a non-Linux personality removed by the 2026-10-09 scope decision. The inventory retains 34 in-scope feature areas and three excluded historical areas. A catalog entry is not a claim that a driver or application works.
+The inventory date is 2026-10-07. `partial` means some behavior exists and the detailed scope lists what remains. `planned` means the required capability has not been demonstrated. `excluded` records a non-Linux personality removed by the 2026-10-09 scope decision. The inventory retains 34 in-scope feature areas and three excluded historical areas. A catalog entry is not a claim that a driver or application works.
 
 ## Milestones
 
@@ -29,7 +29,7 @@ The inventory date is 2026-10-07. `partial` means some behavior exists and the i
 | M7 | [Linux executable and runtime compatibility](https://github.com/frankischilling/Axiom64/milestone/7) | Validate Linux executable formats, interpreter/runtime contracts and architecture boundaries; Linux is the only ABI target. |
 | M8 | [Installable distribution](https://github.com/frankischilling/Axiom64/milestone/8) | Deliver a live image, simple installer, signed package manager, reproducible sources, and recovery tools. |
 
-The first three milestones define the next core sequence. Later milestones describe complete tracks, not an instruction to defer prerequisites. Credentials and randomness precede remote services; verification and provenance apply to every milestone. Dependencies below describe interfaces that the full feature needs. Child tasks should be split so that, for example, storage PCI discovery does not wait for every secondary boot mode, and AHCI does not wait for USB storage.
+The first three milestones define the next core sequence. Later milestones describe complete tracks, not an instruction to defer prerequisites. Credentials and randomness precede remote services; verification and provenance apply to every milestone. Dependencies below describe interfaces that the full feature needs. Separate implementation tasks where dependencies differ: for example, storage PCI discovery does not wait for every secondary boot mode, and AHCI does not wait for USB storage.
 
 ## Tracked features
 
@@ -75,17 +75,17 @@ The first three milestones define the next core sequence. Later milestones descr
 
 ## Implementation workflow
 
-Use descriptive feature branches and substantial PRs with guest tests and documentation. Complete an issue's full checklist in one coherent PR when its requirements are actionable. Use child issues when dependencies require separate implementation, and keep unrelated changes separate. Branch suggestions and acceptance requirements are in [the catalog](feature-catalog.json). Refine dependencies to the actual task so unrelated later work does not block an early milestone.
+Develop each feature as one coherent change with guest tests and documentation. Complete its full checklist when the requirements are actionable. Separate implementation tasks where dependencies require it, and keep unrelated changes separate. Acceptance requirements are in [the catalog](feature-catalog.json). Refine dependencies to the actual task so unrelated later work does not block an early milestone.
 
-Link a PR to the exact tasks it completes. Keep an area issue open until every requirement has evidence. Report an application as bundled separately from demonstrated. Preserve the full firmware suite; add disk reboot, controlled network peer, threading, audio, and real hardware evidence when the corresponding feature is claimed. Do not substitute host operations for the guest behavior being tested.
+Record the exact requirements each change completes. Treat a feature area as unfinished until every requirement has evidence. Report an application as bundled separately from demonstrated. Preserve the full firmware suite; add disk reboot, controlled network peer, threading, audio, and real hardware evidence when the corresponding feature is claimed. Host checks must observe the guest's actual behavior.
 
-Start from current `main` after checking remote updates, open PRs and CI. Preserve unrelated local changes and use an isolated worktree when needed. Keep private answers under `.local/`; do not copy the questionnaire or private inputs into commits or source bundles.
+Start from current `main` after checking remote updates, ongoing work and CI. Preserve unrelated local changes and use an isolated worktree when needed. Keep private answers under `.local/`; do not copy the questionnaire or private inputs into commits or source bundles.
 
 ## Detailed scope
 
 ### F01. Firmware, buses, and interrupt routing
 
-Limine BIOS/UEFI boot, legacy PIT/PIC interrupts, PCI configuration-mechanism-1 enumeration, virtio DMA, and [bounded ACPI HPET discovery](time.md) work. PCIe ECAM, general ACPI/firmware handoff, and interrupt routing remain planned. [The first storage delivery](https://github.com/frankischilling/Axiom64/issues/40) adds the PCI and MMIO support used by raw virtio disks.
+Limine BIOS/UEFI boot, legacy PIT/PIC interrupts, PCI configuration-mechanism-1 enumeration, virtio DMA, and [bounded ACPI HPET discovery](time.md) work. PCIe ECAM, general ACPI/firmware handoff, and interrupt routing remain planned. [Storage support](storage.md) adds the PCI and MMIO support used by raw virtio disks.
 
 Required work:
 
@@ -105,7 +105,7 @@ Acceptance evidence:
 
 ### F02. Block layer and virtio disk
 
-Modern and legacy virtio block devices provide persistent sector I/O, Linux block nodes, explicit flushes, and exclusive filesystem claims. Ext2 volumes have a bounded [read cache](ext2.md#write-and-error-behavior). [Storage tests](storage.md#verification) cover host disk bytes, fresh guest boots, read-only disks, queue rollover, and backend errors. [The first raw-disk delivery](https://github.com/frankischilling/Axiom64/issues/40) and [ext2 follow-up](https://github.com/frankischilling/Axiom64/issues/45) leave partitions, general block caching and writeback, and stable root identifiers for later work.
+Modern and legacy virtio block devices provide persistent sector I/O, Linux block nodes, explicit flushes, and exclusive filesystem claims. Ext2 volumes have a bounded [read cache](ext2.md#write-and-error-behavior). [Storage tests](storage.md#verification) cover host disk bytes, fresh guest boots, read-only disks, queue rollover, and backend errors. [Raw disks](storage.md) and [ext2 volumes](ext2.md) leave partitions, general block caching and writeback, and stable root identifiers for later work.
 
 Required work:
 
@@ -124,7 +124,7 @@ Acceptance evidence:
 
 ### F03. Writable ext2 and later ext4
 
-Classic ext2 root and data volumes support persistent files, directories, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and reboot verification. [The data-volume delivery](https://github.com/frankischilling/Axiom64/issues/45), [disk-root delivery](https://github.com/frankischilling/Axiom64/issues/55), and [format/test limits](ext2.md) describe this slice. Advanced formats and recovery remain planned. Every requirement below remains in the complete filesystem area.
+Classic ext2 root and data volumes support persistent files, directories, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and reboot verification. Initial internal-journal support replays committed records after interruption and logs complete data and metadata operations before updating their home blocks. General crash recovery, journal sizing and advanced formats still require work. [Data volumes](ext2.md), [disk roots](disk-root.md), and [format/test limits](ext2.md) describe the supported behavior and remaining acceptance. Every requirement below remains in the complete filesystem area.
 
 Required work:
 
@@ -143,9 +143,9 @@ Acceptance evidence:
 
 ### F04. VFS, mounts, and pseudo filesystems
 
-RAM and classic ext2 mounts, filesystem dispatch, directory identity, read-only policy, mount-aware statfs, rename, links, pipes, and selected synthetic device metadata work. [Mount tests and limits](vfs.md) describe the mount interface from [#42](https://github.com/frankischilling/Axiom64/issues/42) and the [ext2 delivery](https://github.com/frankischilling/Axiom64/issues/45); the remaining requirements below stay open.
+RAM and classic ext2 mounts, filesystem dispatch, directory identity, read-only policy, mount-aware statfs, rename, links, pipes, and selected synthetic device metadata work. [Mount tests and limits](vfs.md) describe filesystem dispatch and [ext2 volumes](ext2.md); the remaining requirements below stay open.
 
-[Local advisory file locks](file-locks.md) add canonical inode ownership, fork/dup lifetime, retained waits and checked process teardown in [#76](https://github.com/frankischilling/Axiom64/issues/76). Record locks, anonymous descriptions, network filesystems, SMP synchronization and the full area remain required.
+[Local advisory file locks](file-locks.md) add canonical inode ownership, fork/dup lifetime, retained waits and checked process teardown. Record locks, anonymous descriptions, network filesystems, SMP synchronization and the full area remain required.
 
 Required work:
 
@@ -165,7 +165,7 @@ Acceptance evidence:
 
 ### F05. POSIX threads and futexes
 
-Single-CPU musl pthread lifecycle, shared clone resources, TLS/FPU isolation, mutex/condition/semaphore synchronization, futex wait/wake/bitsets/requeue, and guest-compiled C++ threads are implemented. [The interface and tests](threads.md) cover worker fork/exec, group teardown, clear-TID, and shared futex backing lifetime. [Child #47](https://github.com/frankischilling/Axiom64/issues/47) tracks this slice; robust owner death, cancellation, remaining POSIX synchronization, complete signal semantics, and SMP remain planned.
+Single-CPU musl pthread lifecycle, shared clone resources, TLS/FPU isolation, mutex/condition/semaphore synchronization, futex wait/wake/bitsets/requeue, and guest-compiled C++ threads are implemented. [The interface and tests](threads.md) cover worker fork/exec, group teardown, clear-TID, and shared futex backing lifetime. The supported pthread lifecycle is bounded; robust owner death, cancellation, remaining POSIX synchronization, complete signal semantics, and SMP remain planned.
 
 Required work:
 
@@ -244,7 +244,7 @@ Acceptance evidence:
 
 ### F09. Accounts, permissions, and process credentials
 
-[Task credentials and permission enforcement](credentials.md) provide real/effective/saved/filesystem IDs, supplementary groups, capability transitions, DAC, ownership, sticky/set-ID rules, chroot and process/IPC/network guards. Child #114 verifies actual ordinary identities and privilege-dropped exec across both musl linkages, firmware types and RAM/ext2. [Linux xattrs and file capabilities](file-capabilities.md) add actual file-capability exec and upstream getcap/setcap administration. The complete account, authentication, session and isolation requirements below remain open.
+[Task credentials and permission enforcement](credentials.md) provide real/effective/saved/filesystem IDs, supplementary groups, capability transitions, DAC, ownership, sticky/set-ID rules, chroot and process/IPC/network guards. Credential tests verify actual ordinary identities and privilege-dropped exec across both musl linkages, firmware types and RAM/ext2. [Linux xattrs and file capabilities](file-capabilities.md) add actual file-capability exec and upstream getcap/setcap administration. The complete account, authentication, session and isolation requirements below remain open.
 
 Required work:
 
@@ -263,7 +263,7 @@ Acceptance evidence:
 
 ### F10. Secure random number generation
 
-[Kernel randomness](random.md) provides a BLAKE2s/ChaCha20 generator, validated RDSEED and opt-in modern/legacy virtio seeding/reseeding, partial credit and capability-gated administration. Persisted seeds rotate without supplying initialization credit; QEMU generation changes rekey initialized state. The complete F10 acceptance covers readiness and errors, deterministic state transitions, seed faults/crashes/recovery, ordinary startup, and real TLS/key-generation/package-signature clients. [PR #162](https://github.com/frankischilling/Axiom64/pull/162) records the implementation, complete hosted matrix and independent published evidence for #10. General filesystem repair, broader credential services and physical-device acceptance remain in their own feature areas.
+[Kernel randomness](random.md) provides a BLAKE2s/ChaCha20 generator, validated RDSEED and opt-in modern/legacy virtio seeding/reseeding, partial credit and capability-gated administration. Persisted seeds rotate without supplying initialization credit; QEMU generation changes rekey initialized state. The complete F10 acceptance covers readiness and errors, deterministic state transitions, seed faults/crashes/recovery, ordinary startup, and real TLS/key-generation/package-signature clients. The [complete hosted workflow](https://github.com/frankischilling/Axiom64/actions/runs/38206186991) and independent published checks establish the scope completed in [randomness](random.md). General filesystem repair, broader credential services and physical-device acceptance remain in their own feature areas.
 
 Required work:
 
@@ -280,7 +280,7 @@ Acceptance evidence:
 
 ### F11. Ethernet devices and link management
 
-[PCI virtio-net and QEMU 82540EM e1000](network.md) share bounded Ethernet ownership and Linux raw packet sockets. Modern/legacy transport, multiple interfaces, carrier/MTU controls, rollover, and controlled-peer tests cover this slice; wider hardware, interrupt-driven completion, and advanced networking remain planned. [Children #51](https://github.com/frankischilling/Axiom64/issues/51) and [#54](https://github.com/frankischilling/Axiom64/issues/54) track the paired adapters. The usable network release still requires the complete protocol and configuration work below.
+[PCI virtio-net and QEMU 82540EM e1000](network.md) share bounded Ethernet ownership and Linux raw packet sockets. Modern/legacy transport, multiple interfaces, carrier/MTU controls, rollover, and controlled-peer tests cover this slice; wider hardware, interrupt-driven completion, and advanced networking remain planned. The same checks exercise both adapters. The usable network release still requires the complete protocol and configuration work below.
 
 Required work:
 
@@ -298,7 +298,7 @@ Acceptance evidence:
 
 ### F12. IPv4, IPv6, routing, and ICMP
 
-The [initial IPv4 host path](ipv4.md) supports static addresses, connected and explicit routes, loopback, bounded ARP, raw ICMP sockets, and echo/ping on both Ethernet adapters. [Netlink control](netlink.md) adds bounded main-table dumps, protocol/scope-filtered route mutations, and complete address updates. Options and fragments are rejected; complete IPv4, IPv6, reassembly, multicast, and path MTU behavior remain required. [The initial implementation task](https://github.com/frankischilling/Axiom64/issues/61), [route-control prerequisite](https://github.com/frankischilling/Axiom64/issues/67), and [address/ownership task](https://github.com/frankischilling/Axiom64/issues/69) cover these slices.
+The [initial IPv4 host path](ipv4.md) supports static addresses, connected and explicit routes, loopback, bounded ARP, raw ICMP sockets, and echo/ping on both Ethernet adapters. [Netlink control](netlink.md) adds bounded main-table dumps, protocol/scope-filtered route mutations, and complete address updates. Options and fragments are rejected; complete IPv4, IPv6, reassembly, multicast, and path MTU behavior remain required. See [IPv4 routing](ipv4.md), [route control](netlink.md) and [configuration ownership](network-configuration.md) for the supported interfaces.
 
 Required work:
 
@@ -316,9 +316,9 @@ Acceptance evidence:
 
 ### F13. TCP, UDP, and Linux socket semantics
 
-Unix stream sockets support X11, [AF_PACKET raw sockets](network.md) exchange Ethernet, and [AF_INET raw ICMP sockets](ipv4.md) support ping. [IPv4 UDP sockets](udp.md) add datagrams with tested checksums, binding, queues, errors, readiness and retained I/O. [IPv4 TCP streams](tcp.md) add ordinary active/passive connections and native host client/server transfers in [#120](https://github.com/frankischilling/Axiom64/issues/120). [#123](https://github.com/frankischilling/Axiom64/issues/123) adds retained MSG_WAITALL progress and compact TIME-WAIT storage, with native/guest signal, replacement and rapid-close evidence. [#125](https://github.com/frankischilling/Axiom64/issues/125) adds held accept descriptors, TCP listener lifetime and native/VM descriptor, restart and teardown checks. [#127](https://github.com/frankischilling/Axiom64/issues/127) adds retained blocking-write progress, captured blocking mode and native/VM deadline, signal and exact-byte ownership checks. [#129](https://github.com/frankischilling/Axiom64/issues/129) adds stream-before-page checks, receive copy/commit ownership and guarded-buffer native/VM evidence. [#131](https://github.com/frankischilling/Axiom64/issues/131) adds pending connect completion and reusable failed sockets, with native/VM comparisons for binding, option preservation, retained descriptions/destinations, ordinary signals/restart and finite deadlines. [NETLINK_ROUTE sockets](netlink.md) support bounded tagged IPv4 route control, dumps, complete address updates and retained datagram I/O. [Shared Linux receive/send socket timeouts](io.md) capture finite monotonic deadlines and release retained descriptions on expiry and interruption. Unix datagram descriptors currently support interface configuration only. Full TCP transport acceptance remains in [#109](https://github.com/frankischilling/Axiom64/issues/109), including retained-call, reclamation and controlled NIC faults in [#121](https://github.com/frankischilling/Axiom64/issues/121). IPv6 UDP, Unix datagram data, complete connect interruption/deadline semantics, ancillary data and the full socket contract remain required.
+Unix stream sockets support X11, [AF_PACKET raw sockets](network.md) exchange Ethernet, and [AF_INET raw ICMP sockets](ipv4.md) support ping. [IPv4 UDP sockets](udp.md) add datagrams with tested checksums, binding, queues, errors, readiness and retained I/O. [IPv4 TCP streams](tcp.md) add ordinary active/passive connections and native host client/server transfers in [Linux TCP socket integration](tcp.md). [retained receive progress](io.md) adds retained MSG_WAITALL progress and compact TIME-WAIT storage, with native/guest signal, replacement and rapid-close evidence. [retained accept behavior](io.md) adds held accept descriptors, TCP listener lifetime and native/VM descriptor, restart and teardown checks. [blocking TCP progress](io.md) adds retained blocking-write progress, captured blocking mode and native/VM deadline, signal and exact-byte ownership checks. [TCP copy and wait behavior](io.md) adds stream-before-page checks, receive copy/commit ownership and guarded-buffer native/VM evidence. [connect completion](io.md) adds pending connect completion and reusable failed sockets, with native/VM comparisons for binding, option preservation, retained descriptions/destinations, ordinary signals/restart and finite deadlines. [NETLINK_ROUTE sockets](netlink.md) support bounded tagged IPv4 route control, dumps, complete address updates and retained datagram I/O. [Shared Linux receive/send socket timeouts](io.md) capture finite monotonic deadlines and release retained descriptions on expiry and interruption. Unix datagram descriptors currently support interface configuration only. Full TCP transport acceptance remains in [TCP sockets](tcp.md), including retained-call, reclamation and controlled NIC faults in [TCP reliability](tcp.md). IPv6 UDP, Unix datagram data, complete connect interruption/deadline semantics, ancillary data and the full socket contract remain required.
 
-The [first controlled NIC loss subset](tcp-loss.md) exercises actual active/passive handshakes, data and FIN retransmissions, initial elapsed retry timing, exact bidirectional payloads and wrapped peer sequence space. Independent native/guest captures and damaged-evidence rejection supplement the existing ordinary interoperability tests; wider #121/#109 controlled-wire acceptance remains required.
+The [first controlled NIC loss subset](tcp-loss.md) exercises actual active/passive handshakes, data and FIN retransmissions, initial elapsed retry timing, exact bidirectional payloads and wrapped peer sequence space. Independent native/guest captures and damaged-evidence rejection supplement the existing ordinary interoperability tests; complete controlled-wire acceptance remains required for TCP reliability.
 
 Required work:
 
@@ -337,7 +337,7 @@ Acceptance evidence:
 
 ### F14. DHCP, DNS, and network configuration
 
-Linux interface/route control and BusyBox tools support [static configuration](ipv4.md#configuration-and-routing). [Ring 3 configuration/DHCP modules](network-configuration.md) and the [normal network manager](network-manager.md) implement concurrent default DHCP, saved static/disabled overrides, owned address/route/resolver updates, synchronized profiles/hints and fresh-boot validation. The complete [client/service acceptance matrices](network-manager-acceptance.md) pass for [#66](https://github.com/frankischilling/Axiom64/issues/66) and [#78](https://github.com/frankischilling/Axiom64/issues/78). [Actual musl IPv4 UDP lookups](dns.md) have controlled query/search/error/retry and driver-receipt tests on both Ethernet adapters. [Normal-init application lookups](dns.md#normal-dhcp-to-query-path) use DHCP-published settings before and after actual PID1 manager restart, with fresh ACK nameservers and the same usable desktop. The bounded [TCP fallback child #157](dns.md#tcp-fallback) adds checked musl provider patches, complete response framing and ownership, finite error controls, concurrent queries, reclaimed descriptions and independent packet/damaged-evidence gates. IPv6, DNSSEC, downloads/TLS and the complete first network release remain required.
+Linux interface/route control and BusyBox tools support [static configuration](ipv4.md#configuration-and-routing). [Ring 3 configuration/DHCP modules](network-configuration.md) and the [normal network manager](network-manager.md) implement concurrent default DHCP, saved static/disabled overrides, owned address/route/resolver updates, synchronized profiles/hints and fresh-boot validation. The complete [client/service acceptance matrices](network-manager-acceptance.md) pass for [DHCP client behavior](network-manager.md) and [normal network startup](network-manager-acceptance.md). [Actual musl IPv4 UDP lookups](dns.md) have controlled query/search/error/retry and driver-receipt tests on both Ethernet adapters. [Normal-init application lookups](dns.md#normal-dhcp-to-query-path) use DHCP-published settings before and after actual PID1 manager restart, with fresh ACK nameservers and the same usable desktop. [TCP fallback](dns.md#tcp-fallback) uses checked musl provider patches, complete response framing and ownership, finite error controls, concurrent queries, reclaimed descriptions and independent packet/damaged-evidence gates. IPv6, DNSSEC, downloads/TLS and the complete first network release remain required.
 
 Required work:
 
@@ -374,7 +374,7 @@ Acceptance evidence:
 
 ### F16. Clocks, timers, and power management
 
-Boot-relative clocks use [checked HPET elapsed accounting or a calibrated fixed-frequency single-CPU TSC fallback](time.md). PIT scheduling and resolution remain 100 Hz/10 ms. [Child #73](https://github.com/frankischilling/Axiom64/issues/73) checks delayed storage intervals and overdue absolute futex/interval timers. RTC/calendar time, complete clock-ID semantics, higher-resolution deadlines, ACPI PM timer, SMP, and power transitions remain required.
+Boot-relative clocks use [checked HPET elapsed accounting or a calibrated fixed-frequency single-CPU TSC fallback](time.md). PIT scheduling and resolution remain 100 Hz/10 ms. [Elapsed storage-wait accounting](time.md) checks delayed storage intervals and overdue absolute futex/interval timers. RTC/calendar time, complete clock-ID semantics, higher-resolution deadlines, ACPI PM timer, SMP, and power transitions remain required.
 
 Required work:
 
@@ -545,7 +545,7 @@ Acceptance evidence:
 
 ### F25. Init, login, and system services
 
-Init starts desktop/serial processes, reaps children and independently supervises the normal network manager with a one-second restart delay. The complete [manager crash/recovery and unchanged-desktop startup matrices](network-manager-acceptance.md) pass. General service ordering/supervision, login, credentials, daemons and clean system shutdown remain required.
+Init reaps children and independently supervises the authenticated console and normal network manager with one-second restart delays. Normal startup creates an administrator privately on a fresh disk, then requires login across persistent reboots. Local [account checks](accounts.md) cover provisioning, login, elevation, logout and killed-console recovery. The published [network-manager baseline](network-manager-acceptance.md) retains crash/recovery and desktop-startup evidence; authenticated graphical startup remains under integration. General service ordering, daemons and complete clean shutdown remain required.
 
 Required work:
 

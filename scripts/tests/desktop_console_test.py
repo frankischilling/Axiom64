@@ -31,10 +31,17 @@ class DesktopConsoleTests(unittest.TestCase):
                 self.assertFalse(desktop_complete(COMPLETE - {marker}, True, True))
 
     def test_input_echo_cannot_contain_an_acknowledgement(self):
-        command = desktop_test_command()
-        for marker in COMPLETE | {b"DESKTOP_INPUT_READY"}:
-            self.assertNotIn(marker, command)
-        self.assertTrue(command.endswith(b"\n"))
+        for authenticated in (False, True):
+            command = desktop_test_command(authenticated)
+            for marker in COMPLETE | {b"DESKTOP_INPUT_READY"}:
+                self.assertNotIn(marker, command)
+            self.assertTrue(command.endswith(b"\n"))
+
+    def test_authenticated_command_does_not_complete_after_failed_identity(self):
+        command = desktop_test_command(True).replace(b'/usr/bin/account-normal-observe identity', b'false')
+        result = subprocess.run(['sh', '-c', command.decode()], capture_output=True, timeout=5)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(result.stdout)
 
     def test_generated_command_emits_real_acknowledgements(self):
         with tempfile.TemporaryDirectory(prefix="axiom64-desktop-console-") as temporary:

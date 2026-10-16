@@ -1,0 +1,12 @@
+{
+  "scope": "Actual synthetic publication pause-after fixture; bounded deleted-inode eligibility only, not guest recovery.",
+  "archive_sha256": "de9bc0477d8df6a054fa9f096b7811132b219f71dac4ac5b4e79b51d9cd8258e",
+  "original": {
+    "bytes": 33554432,
+    "sha256": "a1280b91a708cf17a3f85d6c00d81f5bc5e20f3c3eb5216554caf87f6e17f6e1"
+  },
+  "expected_retired_inodes": [
+    41
+  ],
+  "client_sha256": "28d6cffdb86d1213c0f0d8339d3a1499cf3d92d66e92b3a292369f2f303b1672"
+}

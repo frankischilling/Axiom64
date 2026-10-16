@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/descriptor.hpp"
 #include "process/task.hpp"
+#include "fs/record_lock.hpp"
 
 namespace ax {
 int reserve_fd(FileTable& table, int start, bool cloexec) {
@@ -32,5 +33,17 @@ int allocate_fd(Task* task, Handle* handle, int start, bool cloexec) {
     if (fd >= 0)
         install_reserved_fd(*task->files, fd, handle);
     return fd;
+}
+
+void close_descriptor(FileTable& table, int fd) {
+    if (fd < 0 || unsigned(fd) >= max_fds)
+        return;
+    auto handle = table.entries[fd].handle;
+    if (handle) {
+        if (!(handle->flags & 010000000))
+            record_lock_close(table, handle->node);
+        close_handle(handle);
+    }
+    table.entries[fd] = {};
 }
 } // namespace ax

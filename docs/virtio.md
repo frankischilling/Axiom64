@@ -1,6 +1,6 @@
 # Virtio transport and split queues
 
-`kernel/include/drivers/virtio/pci.hpp` handles polling PCI devices through modern MMIO or legacy I/O registers. `kernel/include/drivers/virtio/queue.hpp` owns split-ring storage, descriptor chains, completion identity, and CPU metadata. The block driver uses these modules for one outstanding request. Separate receive/transmit queues can hold several buffers in flight; Ethernet remains planned in [#51](https://github.com/frankischilling/Axiom64/issues/51).
+`kernel/include/drivers/virtio/pci.hpp` handles polling PCI devices through modern MMIO or legacy I/O registers. `kernel/include/drivers/virtio/queue.hpp` owns split-ring storage, descriptor chains, completion identity, and CPU metadata. The block driver uses these modules for one outstanding request. Separate receive/transmit queues hold several buffers in flight for the [virtio Ethernet driver](network.md).
 
 ## Driver lifecycle
 
@@ -27,7 +27,7 @@ A malformed completion stops new submissions. The queue checks do not prove a de
 
 The module preserves assigned 32/64-bit BAR decoding, bounded capability walks, supervisor uncached mappings, register alignment, configuration generations, and notification bounds. MSI/MSI-X are disabled and INTx is masked. Available rings suppress used-buffer interrupts. PIT channel 2 calibrates the TSC. Reset acknowledgement uses two seconds; the block driver allows 30 seconds per request, including flushes. Iteration bounds apply only when calibration fails, so fast polling cannot shorten a calibrated deadline.
 
-Callers currently run on one CPU. SMP synchronization, interrupt-driven completion, packed/indirect/event-index rings, individual queue reset, hotplug, PCIe ECAM, and IOMMU support remain planned. Offering an optional feature does not mean the guest negotiates it. Full scopes remain in [#1](https://github.com/frankischilling/Axiom64/issues/1), [#2](https://github.com/frankischilling/Axiom64/issues/2), and [#11](https://github.com/frankischilling/Axiom64/issues/11).
+Callers currently run on one CPU. SMP synchronization, interrupt-driven completion, packed/indirect/event-index rings, individual queue reset, hotplug, PCIe ECAM, and IOMMU support remain planned. Offering an optional feature does not mean the guest negotiates it. See the remaining requirements for [firmware and interrupt routing](feature-roadmap.md#f01-firmware-buses-and-interrupt-routing), [block storage](storage.md), and [Ethernet](network.md).
 
 ## Verification
 

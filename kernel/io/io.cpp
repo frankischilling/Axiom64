@@ -2,6 +2,7 @@
 #include "io/io.hpp"
 #include "core/time.hpp"
 #include "fs/file_lock.hpp"
+#include "fs/record_lock.hpp"
 #include "fs/descriptor.hpp"
 #include "ipc/ipc.hpp"
 #include "process/signals.hpp"
@@ -26,6 +27,9 @@ static_assert(sizeof(Iovec) == 16 && sizeof(Message) == 56);
 
 struct IoRequest {
     Handle* handle;
+    Task* record_task = nullptr;
+    unsigned record_command = 0;
+    RecordFlock record{}, original_record{};
     FileTable* reserved_table = nullptr;
     int reserved_fd = -1;
     Frame call;
@@ -52,6 +56,8 @@ static void destroy(IoRequest* request) {
         return;
     if (request->reserved_table)
         discard_reserved_fd(*request->reserved_table, request->reserved_fd);
+    if (request->record_task)
+        record_lock_discard(*request->record_task);
     if (request->vectors != &request->single)
         release(request->vectors);
     release(request->packet_data);
@@ -237,6 +243,17 @@ static int prepare_packet(Task& task, IoRequest& request) {
 
 static int prepare(Task& task, IoRequest& request) {
     const auto& f = request.call;
+    if (f.rax == 72) {
+        request.locking = true;
+        request.record_task = &task;
+        request.record_command = unsigned(f.rsi);
+        if (request.handle->flags & 010000000)
+            return -9;
+        if (!task.memory->space.copy_in(&request.record, f.rdx, sizeof(RecordFlock)))
+            return -14;
+        request.original_record = request.record;
+        return record_lock_prepare(request.handle, request.record_command, request.record);
+    }
     if (f.rax == 73) {
         request.locking = true;
         return 0;
@@ -514,6 +531,28 @@ static int64_t attempt(Task& task, IoRequest& request) {
         return tcp_connect_result(h->inet);
     }
     if (request.locking) {
+        if (request.record_command) {
+            int result = record_lock_try(task, h, request.record_command, request.record);
+            if (!result && (request.record_command == 5 || request.record_command == 36)) {
+                if (request.record.type == 2) {
+                    request.original_record.type = 2;
+                    request.record = request.original_record;
+                }
+                return task.memory->space.copy_out(f.rdx, &request.record, sizeof(RecordFlock))
+                           ? 0
+                           : -14;
+            }
+            if (!result && request.record_command < 36) {
+                int fd = int(f.rdi);
+                if (fd < 0 || unsigned(fd) >= max_fds || task.files->entries[fd].handle != h) {
+                    record_lock_close(*task.files, h->node);
+                    return -9;
+                }
+            }
+            return result == -11 && (request.record_command == 7 || request.record_command == 38)
+                       ? would_block
+                       : result;
+        }
         int result = file_lock_try(h, uint32_t(f.rsi));
         return result == -11 && !(f.rsi & 4) ? would_block : result;
     }
@@ -559,7 +598,11 @@ static int64_t attempt(Task& task, IoRequest& request) {
     }
     if (request.positioned)
         h->offset = old_offset;
-    if (result == -11 && !(h->flags & 04000) && !(request.flags & 0x40) && !request.positioned)
+    // Regular-file errors are results, including procfs readiness errors. They
+    // do not represent a stream operation to retain until a pollable event.
+    bool regular_file = h->node && (h->node->mode & 0170000) == 0100000;
+    if (result == -11 && !regular_file && !(h->flags & 04000) && !(request.flags & 0x40) &&
+        !request.positioned)
         return would_block;
     if (result >= 0 && f.rax == 45 && f.r8) {
         uint32_t length = 0;
@@ -592,7 +635,7 @@ int64_t io_syscall(Task& task, const Frame& frame) {
         return -22;
     int fd = int(frame.rdi);
     Handle* h = fd >= 0 && unsigned(fd) < max_fds ? task.files->entries[fd].handle : nullptr;
-    if (!h)
+    if (!h || (h->flags & 010000000))
         return -9;
     if (task.io)
         panic("active I/O at syscall entry");

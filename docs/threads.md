@@ -1,6 +1,6 @@
 # Threads and futexes
 
-Axiom64 runs Linux x86-64 musl pthreads on one CPU. Threads share selected process resources and retain their own TID, registers, FS base, FPU state, signal mask, alternate stack, and wait state. This is the first implementation slice of [the threading area](https://github.com/frankischilling/Axiom64/issues/5), tracked by [#47](https://github.com/frankischilling/Axiom64/issues/47).
+Axiom64 runs Linux x86-64 musl pthreads on one CPU. Threads share selected process resources and retain their own TID, registers, FS base, FPU state, signal mask, alternate stack, and wait state.
 
 ## Resource ownership
 
@@ -16,6 +16,22 @@ Axiom64 runs Linux x86-64 musl pthreads on one CPU. Threads share selected proce
 `getpid` returns the TGID and `gettid` returns the calling task's TID. `exit` releases one thread; `exit_group` terminates the group. An exited leader retains a wait record while its other threads run. The parent can reap the process only after its final thread exits. Nonleader slots are reusable immediately after exit. Clear-child-TID writes zero and wakes a shared futex waiter on exit or successful exec.
 
 Fork copies private pages, retains shared pages, and creates a process containing only the caller. Vfork shares memory and suspends the calling task until the child exits or execs. Successful exec terminates other threads in the group, gives a surviving worker the TGID, replaces memory, and unshares descriptor and signal-handler tables before applying close-on-exec and disposition resets. Loading or allocation failure preserves the existing process.
+
+Executable arguments and environment strings are captured into owned buffers before loading. Each string allows 131,072 bytes including its terminator, with a 6 MiB combined budget. Empty argument vectors produce one empty argument. The loader checks the complete aligned stack, auxiliary vector and string layout before replacing the process; invalid pointers, excessive input and allocation failures leave its original memory, credentials, descriptors and threads intact. The VFS path limit remains 1,023 bytes. Runtime stack-limit changes and complete resource-limit enforcement remain planned.
+
+`waitid` selects all children, one PID or a process group and reports exited, stopped and continued events. `WNOHANG` returns immediately; `WNOWAIT` retains the selected event and exited child's identity for a later wait. Blocking waits wake when a matching child changes state or another thread reaps it. A failed result copy consumes an ordinary event but preserves one observed with `WNOWAIT`. The kernel writes the documented child fields of `siginfo_t`, leaving its unused tail untouched. PID descriptors and tracing-specific flags remain unsupported; child CPU usage remains zero until accounting is implemented.
+
+`/proc/PID/stat` and `/proc/PID/task/TID/stat` expose 52 fields, including each process or thread's actual birth time in 100 Hz ticks. Process birth survives a nonleader exec; other accounting, address and terminal fields remain incomplete. `/proc/sys/kernel/random/boot_id` returns one secure UUID for the kernel lifetime and returns `EAGAIN` before entropy initialization. This early-boot rule is stricter than Linux's UUID policy. Regular procfs reads return that error directly rather than entering a stream wait.
+
+`sudo -n make test-waitid-native test-proc-identity-native test-exec-arguments-native` runs six native provider/linkage profiles for each interface. The matching guest targets run both musl providers and linkages under BIOS and UEFI. Process identity also checks eight entropy-unready boots and compares UUIDs across independent ready kernels. Sanitizer targets exercise actual procfs serialization and executable capture allocation/copy failures. Guest tests verify long arguments, boundary errors, preserved failed-exec state, child selectors, stop/continue, signals, restarts and protected unused result bytes.
+
+## Parent death and synchronous signal waits
+
+`PR_SET_PDEATHSIG` and `PR_GET_PDEATHSIG` store the selected signal in the calling task. Fork and thread creation reset it. The creator thread's exit delivers the configured signal even while other threads in that process remain alive. A worker that becomes the process leader at exec retains its child relationships. Effective/filesystem UID or GID changes, permitted-capability gains and privileged exec clear the setting; ordinary exec preserves it. These transitions follow [Linux parent-death handling](https://github.com/torvalds/linux/blob/v6.17/kernel/exit.c).
+
+`rt_sigtimedwait` captures an eight-byte signal mask and an optional valid relative timeout. It selects thread-pending signals before shared process signals and synchronous fault numbers before other numbers. Timeout returns EAGAIN; caught signals return EINTR even with SA_RESTART. An invalid siginfo destination consumes the selected signal before returning EFAULT. Standard signals coalesce while preserving the first sender's information. Full queues for repeated real-time signals remain unfinished. The observable rules follow [Linux signal waiting](https://github.com/torvalds/linux/blob/v6.17/kernel/signal.c).
+
+`sudo -n make test-parent-death-native test-signal-wait-native` compares six native provider/linkage profiles. `make test-parent-death test-signal-wait` runs eight BIOS/UEFI guest profiles per interface. The retained cases include creator-thread exit, worker exec, credential transitions, 128 reuse cycles, signal ordering, failed copies, delayed ignored signals, relative and saturated timeouts, restart denial and stop/continue interruption.
 
 ## Clone interface
 
@@ -72,4 +88,4 @@ Evidence is saved in `build/threads-all-{bios,uefi}.log` and `build/threads-all-
 
 The limit is one CPU, 64 task slots, and 128 descriptors per file table. FPU switching uses FXSAVE/FXRSTOR for x87/SSE state, without extended XSAVE state. Caught signals currently return `EINTR` from futex waits even with `SA_RESTART`.
 
-Robust owner-death lists, priority inheritance, `FUTEX_WAKE_OP`, newer wait-vector operations, cancellation coverage, rwlocks/barriers, complete process-shared POSIX synchronization, thread-targeted timers, and full fork/exec/signal semantics remain in #5 and its related areas. SysV semaphore undo and complete resource limits are also pending. Working musl and C++ tests do not establish complete POSIX threading or Linux compatibility. [SMP](https://github.com/frankischilling/Axiom64/issues/7) follows the tested single-CPU interface.
+Robust owner-death lists, priority inheritance, `FUTEX_WAKE_OP`, newer wait-vector operations, cancellation coverage, rwlocks/barriers, complete process-shared POSIX synchronization, thread-targeted timers, and full fork/exec/signal semantics remain unfinished. SysV semaphore undo and complete resource limits are also pending. Working musl and C++ tests do not establish complete POSIX threading or Linux compatibility. [SMP](feature-roadmap.md#f07-smp-scheduling-and-kernel-synchronization) follows the tested single-CPU interface.

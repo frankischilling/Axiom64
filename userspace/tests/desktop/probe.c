@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
+#include "../../desktop/authority.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -15,6 +16,9 @@
 
 #ifndef AXIOM64_X11_SOCKET
 #define AXIOM64_X11_SOCKET "/tmp/.X11-unix/X0"
+#endif
+#ifndef AXIOM64_X11_DISPLAY
+#define AXIOM64_X11_DISPLAY 0
 #endif
 
 #define CHECK(expr)                                                                                \
@@ -126,8 +130,18 @@ int main(int argc, char** argv) {
             return 2;
         CHECK(0);
     }
-    unsigned char hello[12] = {'l', 0, 11, 0};
-    transfer(fd, hello, sizeof(hello), 1);
+    unsigned char hello[48] = {'l', 0, 11, 0};
+    const char* authority = getenv("XAUTHORITY");
+    size_t hello_size = 12;
+    if (authority && *authority) {
+        CHECK(desktop_authority_read(authority, AXIOM64_X11_DISPLAY, hello + 32) == 0);
+        hello[6] = 18;
+        hello[8] = 16;
+        memcpy(hello + 12, "MIT-MAGIC-COOKIE-1", 18);
+        hello_size = sizeof(hello);
+    }
+    transfer(fd, hello, hello_size, 1);
+    explicit_bzero(hello, sizeof(hello));
     unsigned char prefix[8];
     transfer(fd, prefix, 8, 0);
     CHECK(prefix[0] == 1 && u16(prefix + 2) == 11);
@@ -152,10 +166,17 @@ int main(int argc, char** argv) {
     }
     if (argc > 1 && !strcmp(argv[1], "--desktop")) {
         uint32_t attributes[] = {2u << 16 | 3u, root};
-        transfer(fd, attributes, sizeof(attributes), 1);
-        unsigned char* masks = response(fd, reply, &length);
-        CHECK(length >= 12 && (u32(masks) & (1u << 20)));
-        free(masks);
+        int managed = 0;
+        for (unsigned attempt = 0; attempt < 20 && !managed; attempt++) {
+            transfer(fd, attributes, sizeof(attributes), 1);
+            unsigned char* masks = response(fd, reply, &length);
+            CHECK(length >= 12);
+            managed = !!(u32(masks) & (1u << 20));
+            free(masks);
+            if (!managed)
+                usleep(100000);
+        }
+        CHECK(managed);
         puts("WINDOW_MANAGER_PASS");
         uint32_t atom[] = {4u << 16 | 16u, 8, 0, 0};
         memcpy(atom + 2, "WM_CLASS", 8);

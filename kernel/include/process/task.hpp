@@ -6,7 +6,20 @@
 namespace ax {
 constexpr unsigned max_tasks = 64, max_fds = 128;
 enum class State { empty, runnable, blocked, zombie, stopped };
-enum class Wait { none, read, write, child, sleep, poll, vfork, signal, futex, file_lock, random };
+enum class Wait {
+    none,
+    read,
+    write,
+    child,
+    sleep,
+    poll,
+    vfork,
+    signal,
+    signal_queue,
+    futex,
+    file_lock,
+    random
+};
 
 struct Descriptor {
     Handle* handle;
@@ -61,6 +74,7 @@ struct Process {
     bool controlling_console = false, stop_reported = false, continued = false, stopped = false;
     bool executed = false;
     char executable[1024]{};
+    uint64_t start_ticks = 0;
     uint64_t alarm_deadline = 0, alarm_interval = 0, pending_signals = 0;
     SignalData signal_data[64]{};
 };
@@ -76,6 +90,15 @@ struct Task {
     State state;
     int pid; // Kernel TID; process->pid is the userspace thread-group ID.
     Process* process;
+    int real_parent_tid;
+    int parent_death_signal;
+    uint64_t start_ticks;
+
+    struct {
+        uint64_t mask, information, deadline;
+        bool finite;
+    } signal_wait;
+
     Frame frame;
     MemoryContext* memory;
     FileTable* files;
@@ -110,7 +133,9 @@ int fork_task(Frame*, bool share = false, uint64_t stack = 0);
 int clone_task(Frame*, uint64_t flags, uint64_t stack, uint64_t parent_tid, uint64_t child_tid,
                uint64_t tls);
 
-int exec_task(Task*, const char*, const char* const*, const char* const*);
+class ExecArguments;
+
+int exec_task(Task*, const ExecArguments&);
 
 void exit_task(Task*, int);
 

@@ -4,7 +4,9 @@
 #include "ipc/ipc.hpp"
 #include "process/signals.hpp"
 #include "process/task.hpp"
+#include "process/exec_arguments.hpp"
 #include "process/futex.hpp"
+#include "process/waitid.hpp"
 #include "io/io.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
@@ -14,6 +16,9 @@
 #include "core/random/primitives.hpp"
 #include "abi/linux/credentials.hpp"
 #include "abi/linux/xattr.hpp"
+#include "fs/record_lock.hpp"
+#include "fs/proc.hpp"
+#include "fs/descriptor.hpp"
 
 namespace ax {
 struct LinuxStat {
@@ -39,8 +44,9 @@ struct Pollfd {
     int16_t events, revents;
 };
 
-static Handle* fd_handle(int fd) {
-    return fd >= 0 && unsigned(fd) < max_fds ? current->files->entries[fd].handle : nullptr;
+static Handle* fd_handle(int fd, bool path_allowed = false) {
+    auto handle = fd >= 0 && unsigned(fd) < max_fds ? current->files->entries[fd].handle : nullptr;
+    return handle && (!path_allowed && (handle->flags & 010000000)) ? nullptr : handle;
 }
 
 static int64_t copy_result(uint64_t to, const void* data, size_t size) {
@@ -59,7 +65,7 @@ static bool path_at(int fd, uint64_t user, Path& path) {
         if (fd == -100)
             path.base = current->fs->cwd_node;
         else {
-            auto h = fd_handle(fd);
+            auto h = fd_handle(fd, true);
             if (!h || !h->node) {
                 path.error = -9;
                 return false;
@@ -76,6 +82,9 @@ static bool path_at(int fd, uint64_t user, Path& path) {
 }
 
 static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode) {
+    bool path_only = flags & 010000000;
+    if (path_only)
+        flags &= 010000000 | 02000000 | 0200000 | 0400000;
     Path name;
     if (!path_at(dirfd, path, name))
         return name.error;
@@ -92,7 +101,7 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
         return error;
     if ((flags & 0200000) && (n->mode & 0170000) != directory)
         return -20;
-    if ((n->mode & 0170000) == symlink)
+    if ((n->mode & 0170000) == symlink && !path_only)
         return -40;
     if ((n->mode & 0170000) == directory && (flags & 3))
         return -21;
@@ -100,9 +109,9 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
     unsigned mask = (flags & 3) == 0 ? 4 : (flags & 3) == 1 ? 2 : 6;
     if ((flags & 01000) && (n->mode & 0170000) == regular_file)
         mask |= 2;
-    if (!created && (error = node_access(n, mask)))
+    if (!path_only && !created && (error = node_access(n, mask)))
         return error;
-    if (n->mount->nodev &&
+    if (!path_only && n->mount->nodev &&
         ((n->mode & 0170000) == character || (n->mode & 0170000) == block_device))
         return -13;
     if (((flags & 3) || (flags & 01000)) && (n->mode & 0170000) == regular_file && node_readonly(n))
@@ -113,7 +122,7 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
         return -16;
     if (n->device == Device::block && (flags & 040000)) // O_DIRECT needs alignment semantics.
         return -22;
-    if (n->device == Device::tty && !current->process->controlling_pty &&
+    if (!path_only && n->device == Device::tty && !current->process->controlling_pty &&
         !current->process->controlling_console)
         return -6;
     if ((flags & 01000) && (n->mode & 0170000) == regular_file) {
@@ -121,9 +130,9 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
         if (error)
             return error;
     }
-    Handle* h = open_handle(n, flags);
+    Handle* h = open_handle(n, flags, &error);
     if (!h)
-        return -23;
+        return error;
     int fd = allocate_fd(current, h, 0, flags & 02000000);
     if (fd < 0)
         close_handle(h);
@@ -138,7 +147,7 @@ static int path_node_at(int fd, uint64_t user, uint64_t flags, Node*& node, bool
         if (!current->memory->space.string(user, path.text, sizeof(path.text)))
             return -14;
         if (!path.text[0]) {
-            auto handle = fd_handle(fd);
+            auto handle = fd_handle(fd, true);
             node = fd == -100 ? current->fs->cwd_node : handle ? handle->node : nullptr;
             return node ? 0 : -9;
         }
@@ -169,6 +178,8 @@ static int64_t stat_node(Node* n, uint64_t dst) {
         return -2;
     n = file_node(n);
     LinuxStat s{};
+    if (n->mount->ops->refresh)
+        n->mount->ops->refresh(n);
     s.dev = n->mount->id;
     s.ino = n->inode;
     s.nlink = n->links;
@@ -232,6 +243,8 @@ static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd,
             return framebuffer_map(current->memory->space, addr, len, prot, off);
         if (!h->node || (h->node->mode & 0170000) != regular_file)
             return -19;
+        if (h->node->mount->ops == &procfs_ops)
+            return -19;
         if ((h->flags & 3) == 1)
             return -13;
         if ((prot & 4) && h->node->mount->noexec)
@@ -283,7 +296,7 @@ static int64_t mmap_call(uint64_t addr, size_t len, int prot, int flags, int fd,
 }
 
 static int64_t dup_fd(int old, int target, int flags = 0) {
-    Handle* h = fd_handle(old);
+    Handle* h = fd_handle(old, true);
     if (!h)
         return -9;
     if (target < 0 || unsigned(target) >= max_fds)
@@ -291,7 +304,7 @@ static int64_t dup_fd(int old, int target, int flags = 0) {
     if (current->files->entries[target].reserved)
         return -16;
     if (target != old) {
-        close_handle(current->files->entries[target].handle);
+        close_descriptor(*current->files, target);
         retain(h);
         current->files->entries[target] = {h, bool(flags & 02000000)};
     }
@@ -376,46 +389,17 @@ static int64_t wait_child(int pid, uint64_t status, int options, uint64_t usage)
     return block(Wait::child, -1, pid);
 }
 
-struct ExecArgs {
-    char path[1024], args[128][1024], env[128][1024];
-    const char* argv[129];
-    const char* envp[129];
-};
-
 static int64_t exec_user(uint64_t path, uint64_t argv, uint64_t envp, Frame* frame) {
-    auto a = (ExecArgs*)alloc(sizeof(ExecArgs));
-    if (!a)
-        return -12;
-    int result = -14;
-    if (!current->memory->space.string(path, a->path, sizeof(a->path))) {
-        release(a);
-        return result;
-    }
-    auto vector = [&](uint64_t ptr, char (*strings)[1024], const char** result) -> bool {
-        if (!ptr) {
-            result[0] = nullptr;
-            return true;
-        }
-        for (unsigned i = 0; i < 128; i++) {
-            uint64_t p;
-            if (!current->memory->space.copy_in(&p, ptr + i * 8, 8))
-                return false;
-            if (!p) {
-                result[i] = nullptr;
-                return true;
-            }
-            if (!current->memory->space.string(p, strings[i], 1024))
-                return false;
-            result[i] = strings[i];
-        }
-        return false;
+    ExecArguments arguments;
+    auto read = [](void* context, uint64_t address, void* output, size_t size) {
+        return static_cast<AddressSpace*>(context)->copy_in(output, address, size);
     };
-    if (vector(argv, a->args, a->argv) && vector(envp, a->env, a->envp)) {
-        result = exec_task(current, a->path, a->argv, a->envp);
+    int result = arguments.capture(read, &current->memory->space, path, argv, envp);
+    if (!result) {
+        result = exec_task(current, arguments);
         if (!result)
             *frame = current->frame;
     }
-    release(a);
     return result;
 }
 
@@ -479,11 +463,8 @@ static int64_t statfs_node(Node* node, uint64_t dst) {
 static int64_t readlink_path(int fd, uint64_t path, uint64_t buffer, size_t capacity) {
     if (!capacity)
         return -22;
-    Path name;
-    if (!path_at(fd, path, name))
-        return name.error;
     Node* node = nullptr;
-    int error = resolve_path(name, node, false);
+    int error = path_node_at(fd, path, 0x100 | 0x1000, node);
     if (error)
         return error;
     node = file_node(node);
@@ -603,17 +584,16 @@ static int64_t dispatch(Frame* f) {
     case 2:
         return open_file(-100, a, b, c);
     case 3: {
-        auto h = fd_handle(a);
+        auto h = fd_handle(a, true);
         if (!h)
             return -9;
-        close_handle(h);
-        current->files->entries[a] = {};
+        close_descriptor(*current->files, int(a));
         return 0;
     }
     case 4:
         return stat_path(-100, a, b, true);
     case 5: {
-        auto h = fd_handle(a);
+        auto h = fd_handle(a, true);
         if (!h)
             return -9;
         if (h->pipe || h->socket || h->packet || h->inet || h->netlink || h->epoll) {
@@ -718,6 +698,7 @@ static int64_t dispatch(Frame* f) {
     case 38:
     case 62:
     case 127:
+    case 128:
     case 130:
     case 131:
     case 200:
@@ -806,7 +787,7 @@ static int64_t dispatch(Frame* f) {
     case 67:
         return shared_memory_syscall(f);
     case 32: {
-        auto h = fd_handle(a);
+        auto h = fd_handle(a, true);
         if (!h)
             return -9;
         retain(h);
@@ -880,7 +861,9 @@ static int64_t dispatch(Frame* f) {
         return copy_result(a, name, sizeof(name));
     }
     case 72: {
-        auto h = fd_handle(a);
+        if (record_lock_command(b))
+            return io_syscall(*current, *f);
+        auto h = fd_handle(a, true);
         if (!h)
             return -9;
         if (b == 0 || b == 1030) {
@@ -891,13 +874,15 @@ static int64_t dispatch(Frame* f) {
             return fd;
         }
         if (b == 1)
-            return current->files->entries[a].cloexec;
+            return current->files->entries[int(a)].cloexec;
         if (b == 2) {
-            current->files->entries[a].cloexec = c & 1;
+            current->files->entries[int(a)].cloexec = c & 1;
             return 0;
         }
         if (b == 3)
-            return h->flags;
+            return h->flags & ~uint32_t(02000000);
+        if (h->flags & 010000000)
+            return -9;
         if (b == 4) {
             h->flags = (h->flags & ~uint32_t(06000)) | (c & 06000);
             return 0;
@@ -959,7 +944,7 @@ static int64_t dispatch(Frame* f) {
         return 0;
     }
     case 81: {
-        auto h = fd_handle(a);
+        auto h = fd_handle(a, true);
         if (!h)
             return -9;
         if (!h->node || (h->node->mode & 0170000) != directory)
@@ -994,13 +979,19 @@ static int64_t dispatch(Frame* f) {
         return link_node(old_path, new_path, f->rax == 265 && (e & 0x400));
     }
     case 82:
-    case 264: {
+    case 264:
+    case 316: {
+        uint32_t flags = f->rax == 316 ? uint32_t(e) : 0;
+        if ((flags & ~7u) || ((flags & 2) && (flags & 5)))
+            return -22;
+        if (flags & ~1u)
+            return -95;
         Path old_path, new_path;
         if (!path_at(f->rax == 82 ? -100 : int(a), f->rax == 82 ? a : b, old_path))
             return old_path.error;
         if (!path_at(f->rax == 82 ? -100 : int(c), f->rax == 82 ? b : d, new_path))
             return new_path.error;
-        return rename_node(old_path, new_path);
+        return rename_node(old_path, new_path, flags & 1);
     }
     case 84:
     case 87:
@@ -1242,7 +1233,7 @@ static int64_t dispatch(Frame* f) {
         return error ? error : statfs_node(node, b);
     }
     case 138: {
-        auto h = fd_handle(a);
+        auto h = fd_handle(a, true);
         return !h ? -9 : !h->node ? -22 : statfs_node(h->node, b);
     }
     case 162:
@@ -1275,6 +1266,15 @@ static int64_t dispatch(Frame* f) {
         if (!path_at(-100, a, path))
             return path.error;
         return unmount(path, b);
+    }
+    case 247: {
+        int selected;
+        int error =
+            wait_information_selector(*current, unsigned(a), uint32_t(b), unsigned(d), selected);
+        if (error)
+            return error;
+        int64_t result = wait_information(*current, unsigned(a), selected, c, unsigned(d), e);
+        return result == would_block ? block(Wait::child, -1, selected) : result;
     }
     case 257:
         return open_file(a, b, c, d);

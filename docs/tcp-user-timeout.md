@@ -1,6 +1,6 @@
 # TCP user-timeout socket and NIC acceptance
 
-[Issue #147](https://github.com/frankischilling/Axiom64/issues/147) adds real socket and packet evidence for the configured deadline requirement in #121/#109. A receiver closes its advertised window after two clean 536-byte segments, leaving 976 of the application's 2048 bytes queued. It keeps answering actual probes with the same cumulative ACK and zero window.
+Configured TCP user-timeout acceptance uses real sockets and packets to verify deadline behavior. A receiver closes its advertised window after two clean 536-byte segments, leaving 976 of the application's 2048 bytes queued. It keeps answering actual probes with the same cumulative ACK and zero window.
 
 The same C program runs with glibc, static musl and dynamic musl on Linux, then with both musl linkages in the VM. It checks the default option, rejects a negative value, round-trips a 2500 ms value and verifies listener inheritance. Active sockets consume ETIMEDOUT through blocking receive; passive sockets wait for POLLERR and consume it through SO_ERROR. Both then check cleared SO_ERROR, EOF, EPIPE and descriptor closure. The ten-second I/O timeout is separate and must not account for the earlier ETIMEDOUT result.
 

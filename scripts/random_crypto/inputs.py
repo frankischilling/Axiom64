@@ -21,10 +21,12 @@ def provider(name):
         raise RuntimeError('build exactly one current OpenSSL provider first: ' + name)
     manifest, data = candidates[0]
     identity = {key: data[key] for key in ('dependency', 'provider', 'compiler', 'target',
-                'libc_identity', 'native_inputs', 'uapi', 'recipe_sha256')}
+                'libc_identity', 'native_inputs', 'uapi', 'recipe_sha256', 'uapi_recipe_sha256')}
     expected = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     if data['identity'] != expected or manifest.parent.name != expected:
         raise RuntimeError('OpenSSL product identity differs')
+    if data['uapi_recipe_sha256'] != digest(ROOT / 'scripts/linux_uapi.py'):
+        raise RuntimeError('OpenSSL UAPI recipe changed')
     if name == 'native':
         if data['native_inputs'] != native_inputs():
             raise RuntimeError('native OpenSSL linker inputs changed')

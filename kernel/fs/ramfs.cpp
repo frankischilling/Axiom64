@@ -102,6 +102,21 @@ static int remove(Node* node) {
     return 0;
 }
 
+void ramfs_reclaim_device(Node* node) {
+    if (!node || !node->mount || node->mount->ops != &ramfs_ops || !node->removed || node->links ||
+        (node->mode & 0170000) != character || node->hardlink || node->owned ||
+        node_referenced(node))
+        return;
+    Node** slot = &node->parent->first_child;
+    while (*slot && *slot != node)
+        slot = &(*slot)->next_sibling;
+    if (*slot != node)
+        return;
+    *slot = node->next_sibling;
+    xattr_store_destroy(node->xattrs);
+    *node = {};
+}
+
 static int rename(Node* node, Node* parent, const char* name, Node* replaced) {
     auto old_parent = node->parent;
     Node** slot = &old_parent->first_child;

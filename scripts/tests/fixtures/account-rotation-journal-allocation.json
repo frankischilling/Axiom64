@@ -1,0 +1,13 @@
+{
+  "scope": "Actual interrupted rotation with committed allocations absent from the raw home view.",
+  "run": "https://github.com/frankischilling/Axiom64/actions/runs/38697879553",
+  "commit": "811783dcf48bc49192940d62a5237cc5c0380118",
+  "artifact_id": 11957891253,
+  "artifact_sha256": "734dda79f28c0b359e088550b1c98b9aded2b338cfff82467a1207251b00e3c2",
+  "member": "build-static/bios-modern-expiry/archive-created-write-152-writethrough-pause-before/disk.raw.gz",
+  "archive_sha256": "0ae431d8a14d6aadb265b1a88b202638ee604324188bc3459539421665bc67e0",
+  "original": {
+    "bytes": 16777216,
+    "sha256": "b90359b794bb91be6c5c4a491f6e82d0a1d63e115d1a53e83cd160f245c7720c"
+  }
+}

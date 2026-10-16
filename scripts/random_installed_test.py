@@ -17,6 +17,11 @@ from fetch import ROOT
 from random_administration_test import copy_executable, fingerprint, snapshot
 from random_crypto.inputs import provider
 from random_installed_records import seed_records
+from normal_login import ConsoleLogin, install_observer
+from account_normal_test import PASSWORD, write_cpio
+from build_musl import compiler_args
+from build_accounts import environment
+from fixture_archive import archive_fixture
 
 SEED = '/var/lib/axiom64/random'
 MESSAGE = b'Axiom64 installed seed service\n'
@@ -83,6 +88,17 @@ def shell_check(ready):
     return (shlex.join(['/bin/busybox', 'sh', '-c', '\n'.join(lines)]) + '\n').encode()
 
 
+def unready_observer(directory):
+    program = directory / 'random-installed-unready'
+    command = [*compiler_args('build'), '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
+               '-static', str(ROOT / 'userspace/tests/security/random-installed-unready.c'),
+               '-o', str(program)]
+    with (directory / 'unready-build.log').open('wb') as log:
+        subprocess.run(command, cwd=ROOT, env=environment(), check=True,
+                       stdout=log, stderr=subprocess.STDOUT)
+    return program, dict(command=command, binary=fingerprint(program))
+
+
 def verify_signature(directory, text, observer):
     for label in ('PUBLIC', 'SIGNATURE'):
         value = base64.b64decode(record(text, label), validate=True)
@@ -133,11 +149,17 @@ def boot(directory, iso, firmware, transport, ready, observer, disk=None, previo
             process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=stream,
                                        stderr=subprocess.STDOUT)
             deadline = time.monotonic() + 180
+            def console_write(value):
+                process.stdin.write(value)
+                process.stdin.flush()
+            login = ConsoleLogin(console_write)
 
             def wait(predicate):
                 while time.monotonic() < deadline:
                     text = log.read_text()
-                    if any(marker in text for marker in ('PANIC:', 'FAULT pid=', 'BOOT_ROOT_FAIL')):
+                    login.consume(text)
+                    if any(marker in text for marker in ('PANIC:', 'FAULT pid=', 'BOOT_ROOT_FAIL',
+                                                         'INSTALLED_RANDOM_FAIL', 'ACCOUNT_NORMAL_FAIL')):
                         raise RuntimeError('the ordinary installed boot reported a fault')
                     if predicate(text):
                         return text
@@ -146,16 +168,15 @@ def boot(directory, iso, firmware, transport, ready, observer, disk=None, previo
                     time.sleep(.02)
                 raise TimeoutError('ordinary seed service observation expired')
 
-            wait(lambda text: 'Axiom64. Starting Xorg' in text)
-            process.stdin.write(b"printf '%s%s\\n' INSTALLED_RANDOM_ CONSOLE\n")
-            process.stdin.flush()
-            wait(lambda text: '\nINSTALLED_RANDOM_CONSOLE\n' in text)
             if ready:
+                wait(lambda text: login.ready)
+                login.command(b"/usr/bin/account-normal-observe identity && "
+                              b"printf '%s%s\\n' INSTALLED_RANDOM_ CONSOLE\n")
+                wait(lambda text: '\nINSTALLED_RANDOM_CONSOLE\n' in text)
                 wait(lambda text: any(row[1] == '0' for row in seed_records(text, 'REAP')))
+                login.elevate(shell_check(True).decode().strip())
             else:
                 wait(lambda text: sum(row[1] == '256' for row in seed_records(text, 'REAP')) >= 3)
-            process.stdin.write(shell_check(ready))
-            process.stdin.flush()
             text = wait(lambda text: '\nINSTALLED_RANDOM_CHECK ' + ('ready' if ready else 'unready') + '\n' in text)
             spawn = seed_records(text, 'SPAWN')
             reaped = seed_records(text, 'REAP')
@@ -166,7 +187,7 @@ def boot(directory, iso, firmware, transport, ready, observer, disk=None, previo
                     raise RuntimeError('the actual init child status or ownership differs')
                 if index + 1 < len(spawn) and int(spawn[index+1][1]) - int(when) < 1000:
                     raise RuntimeError('init retried the seed service before one real second')
-            row.update(spawns=spawn, reaps=reaped)
+            row.update(spawns=spawn, reaps=reaped, login_events=login.events)
             if ready:
                 seed = bytes.fromhex(record(text, 'SEED'))
                 if len(seed) != 32 or (previous is not None and seed == previous):
@@ -174,22 +195,34 @@ def boot(directory, iso, firmware, transport, ready, observer, disk=None, previo
                 row['seed_sha256'] = hashlib.sha256(seed).hexdigest()
                 row['crypto'] = verify_signature(directory, text, observer)
                 (directory / 'guest-seed.bin').write_bytes(seed)
+                login.elevate('/bin/busybox poweroff -f')
+                wait(lambda text: 'PLATFORM_POWEROFF method=piix4\n' in text)
             elif (text.count('RANDOM_SEED_FAILED stage=initialized-output error=11\n') < 3 or
                   'RANDOM_READY ' in text or 'RANDOM_SEED_ROTATED ' in text):
                 raise RuntimeError('an unready ordinary boot returned initialized data')
-            process.stdin.write(b'/bin/busybox poweroff -f\n')
-            process.stdin.flush()
+            else:
+                if (login.ready or login.events != ['administrator', 'new', 'confirm'] or
+                        'Administrator created.' in text or 'ACCOUNT_DESKTOP_READY ' in text or
+                        'INSTALLED_RANDOM_UNREADY_OBSERVER private_directory=1 seed_absent=1 '
+                        'initialized_denied=1 accounts_unpublished=1 x11_absent=1 observation_seconds=8\n' not in text):
+                    raise RuntimeError('entropy-unready provisioning must remain blocked')
             process.wait(timeout=max(.01, deadline-time.monotonic()))
         text = log.read_text()
+        row['guest_elapsed_ns'] = time.monotonic_ns() - started
+        if PASSWORD.decode() in text:
+            raise RuntimeError('fixture password appeared in installed seed capture')
         if process.returncode != 0 or 'PLATFORM_POWEROFF method=piix4\n' not in text:
             raise RuntimeError('the ordinary installed boot did not shut down cleanly')
         if disk:
             row['filesystem'] = inspect_disk(disk, directory)
             if (directory / 'seed.bin').read_bytes() != (directory / 'guest-seed.bin').read_bytes():
                 raise RuntimeError('persisted seed differs from the actual serial export')
-            shutil.copyfile(disk, directory / 'root.raw')
-            if fingerprint(directory / 'root.raw') != row['filesystem']['disk']:
+            retained = archive_fixture(disk, owned_root=directory.parent)
+            if retained['original'] != row['filesystem']['disk']:
                 raise RuntimeError('the retained installed disk checkpoint differs')
+            shutil.move(retained['path'], directory / 'root.raw.gz')
+            retained['path'] = str(directory / 'root.raw.gz')
+            row['retained_disk'] = retained
         row['passed'] = True
     except BaseException as error:
         row['error'] = repr(error)
@@ -225,11 +258,19 @@ def main():
     subprocess.run(['make', '-s', '-j2', 'build/axiom64.elf', 'build/rootfs.cpio',
                     'build/rootfs-desktop.cpio'], cwd=ROOT, check=True)
     inputs = snapshot(out)
-    for name in ('userspace/init/main.c', 'userspace/init/seed_records.h', 'userspace/services/random_seed.c',
+    for name in ('userspace/init/main.c', 'userspace/init/console.c', 'userspace/init/console.h',
+                 'userspace/init/seed_records.h', 'userspace/services/random_seed.c',
                  'scripts/random_installed_records.py', 'scripts/rootfs.py',
-                 'scripts/disk_root.py', 'scripts/image.py', 'scripts/random_installed_test.py'):
+                 'scripts/disk_root.py', 'scripts/image.py', 'scripts/random_installed_test.py',
+                 'scripts/normal_login.py', 'scripts/account_normal_test.py',
+                 'scripts/console_prompt.py',
+                 'scripts/fixture_archive.py',
+                 'userspace/tests/security/account-normal-observe.c',
+                 'userspace/tests/security/random-installed-unready.c'):
         inputs[name] = fingerprint(ROOT / name)
     (out / 'source-inputs.json').write_text(json.dumps(inputs, indent=2)+'\n')
+    unready_program, unready_inputs = unready_observer(out)
+    (out / 'unready-inputs.json').write_text(json.dumps(unready_inputs, indent=2)+'\n')
     results = []
     for profile in ('full', 'desktop') if args.profile == 'both' else (args.profile,):
         source = ROOT / 'build' / ('rootfs.cpio' if profile == 'full' else 'rootfs-desktop.cpio')
@@ -239,13 +280,35 @@ def main():
         if entries['var/lib/axiom64/random'][0] != 0o40700:
             raise RuntimeError('ordinary profile has unsafe seed directory permissions')
         shutil.copyfile(source, out / (profile + '.cpio'))
-        base = build(profile) if args.root != 'ram' else None
+        fixture = out / (profile + '-fixture')
+        fixture.mkdir()
+        observer_inputs = install_observer(entries, fixture)
+        (fixture / 'observer-inputs.json').write_text(json.dumps(observer_inputs, indent=2)+'\n')
+        ready_cpio = fixture / 'ready.cpio'
+        write_cpio(ready_cpio, entries)
+        unready_entries = entries.copy()
+        unready_entries['sbin/network-manager-installed'] = entries['sbin/network-manager']
+        unready_entries['sbin/network-manager'] = (0o100755, unready_program.read_bytes())
+        unready_cpio = fixture / 'unready.cpio'
+        write_cpio(unready_cpio, unready_entries)
+        for archive in (ready_cpio, unready_cpio):
+            installed = archive_entries(archive)
+            for name in ('sbin/init', 'sbin/random-seed', 'sbin/account-console', 'usr/bin/account-access'):
+                if installed[name] != entries[name]:
+                    raise RuntimeError('seed fixture changed a production authentication or seed program')
+        base = None
+        if args.root != 'ram':
+            generated = build(profile, source=ready_cpio)
+            base = fixture / 'seed.raw'
+            shutil.copyfile(generated, base)
+            (fixture / 'seed-input.json').write_text(json.dumps(fingerprint(base), indent=2) + '\n')
         for root in ('ram', 'ext2') if args.root == 'both' else (args.root,):
             for ready in (True, False) if root == 'ram' else (True,):
                 label = profile + '-' + root + ('-ready' if ready else '-unready')
                 name = 'axiom64-random-installed-' + label + '.iso'
                 command = ['python3', 'scripts/image.py', '--output-name', name]
-                command += ['--root-device', '/dev/vda'] if root == 'ext2' else ['--initramfs', str(source)]
+                command += (['--root-device', '/dev/vda'] if root == 'ext2' else
+                            ['--initramfs', str(ready_cpio if ready else unready_cpio)])
                 if not ready:
                     command += ['--kernel-option', 'random.trust_cpu=off']
                 with (out / (label + '-image.log')).open('wb') as stream:
@@ -268,6 +331,11 @@ def main():
                             (out / 'results.json').write_text(json.dumps(results, indent=2)+'\n')
                             if disk:
                                 previous = (folder / 'guest-seed.bin').read_bytes()
+                        if disk:
+                            retained = results[-1]['retained_disk']['original']
+                            if disk.is_symlink() or disk.resolve().parent != out or fingerprint(disk) != retained:
+                                raise RuntimeError('working seed disk differs from its verified retained checkpoint')
+                            disk.unlink()
     if inputs != {name: fingerprint(ROOT / name) for name in inputs}:
         raise RuntimeError('the installed seed sources changed during acceptance')
 

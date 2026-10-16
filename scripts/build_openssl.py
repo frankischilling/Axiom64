@@ -16,6 +16,7 @@ import tempfile
 
 from build_musl import compiler_args, ensure as musl
 from fetch import LOCK, ROOT, fetch
+from linux_uapi import headers as uapi_headers
 from ports import download
 
 OUTPUT = ROOT / 'build/openssl'
@@ -44,41 +45,6 @@ def elf(path):
     return dict(program_headers=headers, dynamic=dynamic)
 
 
-def uapi_headers():
-    packages = json.loads((ROOT / 'ports.lock.json').read_text())['packages']
-    package, = (item for item in packages if item['name'] == 'linux-headers')
-    archive = download(package['url'], ROOT / 'downloads/ports' / package['archive'])
-    if digest(archive) != package['sha256']:
-        raise RuntimeError('OpenSSL Linux UAPI archive checksum differs')
-    OUTPUT.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='case-probe-', dir=OUTPUT) as temporary:
-        probe = Path(temporary)
-        (probe / 'a').write_bytes(b'lowercase')
-        case_sensitive = not (probe / 'A').exists()
-    if case_sensitive:
-        destination = OUTPUT / 'uapi' / package['sha256']
-    else:
-        # Linux UAPI contains distinct filenames that differ only in case.
-        # A Windows-mounted workspace cannot preserve those headers.
-        cache = Path(os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache')))
-        if not cache.is_absolute():
-            raise RuntimeError('the Linux UAPI cache must use an absolute path')
-        destination = cache / 'axiom64-uapi' / package['sha256']
-    expected = {}
-    with tarfile.open(archive, 'r:gz', ignore_zeros=True) as stream:
-        members = [member for member in stream if member.name.startswith('usr/include/')]
-        for member in members:
-            if member.isfile():
-                expected[member.name] = hashlib.file_digest(stream.extractfile(member), 'sha256').hexdigest()
-        if not destination.exists():
-            destination.mkdir(parents=True)
-            stream.extractall(destination, members=members, filter='data')
-    if expected != {path.relative_to(destination).as_posix(): digest(path)
-                    for path in destination.rglob('*') if path.is_file() and not path.is_symlink()}:
-        raise RuntimeError('OpenSSL Linux UAPI headers differ from the pinned archive')
-    return destination / 'usr/include', dict(package=package, products=expected)
-
-
 def ensure(provider='build'):
     if provider not in ('build', 'runtime', 'native'):
         raise ValueError(provider)
@@ -95,7 +61,8 @@ def ensure(provider='build'):
     identity_data = dict(dependency=dependency, provider=provider, compiler=version, target=target,
                          libc_identity=libc['identity'] if libc else None,
                          native_inputs=comparison_inputs, uapi=uapi,
-                         recipe_sha256=digest(Path(__file__)))
+                         recipe_sha256=digest(Path(__file__)),
+                         uapi_recipe_sha256=digest(ROOT / 'scripts/linux_uapi.py'))
     identity = hashlib.sha256(json.dumps(identity_data, sort_keys=True).encode()).hexdigest()
     destination = OUTPUT / provider / identity
     manifest = destination / 'manifest.json'

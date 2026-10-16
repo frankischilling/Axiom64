@@ -22,10 +22,12 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/fs/ext2/ext2.cpp` | Classic ext2 volumes, mount validation, allocation, file/directory operations, synchronous commits |
 | `kernel/abi/linux/syscall.cpp` | Linux syscall numbers, ABI structures, errors, blocking operations |
 | `kernel/process/signals.cpp` | Queues, masks, actions, signal frames, return, alternate stacks, timers |
+| `kernel/process/signal_wait.cpp` | Captured Linux synchronous signal waits, dequeue order, timeout and interruption |
 | `kernel/ipc/ipc.cpp`, `shared_memory.cpp` | Unix stream sockets, readiness, epoll, select, shared mappings, SysV segments |
 | `kernel/drivers/platform/devices.cpp` | Serial terminal, PTYs, framebuffer, PS/2 events, Linux block-device file operations |
 | `kernel/drivers/platform/power.cpp` | PIIX4 power off after filesystem synchronization on the tested QEMU platform |
-| `userspace/init/main.c` | Desktop and serial shell startup, child reaping, console shell restart |
+| `userspace/init/main.c`, `console.c` | Seed/network supervision, authenticated console startup, child reaping and console recovery |
+| `userspace/desktop/seat.c`, `authority.c`, `terminal.c` | Authenticated display ownership, private X11 cookies, process recovery and ordinary-user terminals |
 | `userspace/services/random_seed.c` | Private persisted seed loading, rotation, and interrupted-operation recovery |
 | `userspace/net/` | C++ configuration ownership, saved profiles, resolver metadata, and DHCP packet/state/transport modules; normal manager startup remains required |
 
@@ -36,6 +38,8 @@ Each memory context has four-level user page tables with user, write, and execut
 The ELF loader validates ELF64 segments, loads a `PT_INTERP` musl interpreter, and supplies argv, environment, and the auxiliary vector. Failed exec preserves the old address space. Successful exec ends other group members and unshares the descriptor/disposition tables. File descriptions share offsets across fork and dup; close-on-exec belongs to descriptors. Each thread preserves FS base and FPU state. [Thread ownership and futexes](threads.md) describe exit/reaping, clear-TID, supported clone flags, and synchronization limits.
 
 [Blocking I/O](io.md) retains the selected file description and captured vector metadata while an attempt waits. Completion updates the owner's saved frame before signal delivery. Caught signals release the attempt; an `SA_RESTART` entry selects a descriptor again. Task teardown releases saved operations before memory and file tables.
+
+Axiom64 provides `kernel/fs/proc.cpp` behind the VFS filesystem interface. Both RAM-root and ext2-root boots mount actual process/thread metadata at `/proc`. Numeric process directories and per-process task directories expose live kernel identities, groups, state, signal masks and capabilities. `self` and `thread-self` resolve relative to the caller. Status and stat reads retain a description-owned buffer; an exited task can finish already buffered bytes, while a previously unread description reports ESRCH. Cached nodes keep PID/TID identity across task-slot reuse and retire only after descriptions and directory references end. Stat field 22 records process/thread birth in actual 100 Hz clock ticks and remains stable across exec. CPU accounting, address/TTY statistics and broader procfs fields remain incomplete. The shared boot UUID uses initialized randomness and returns EAGAIN before initialization. Complete procfs, namespaces and process diagnostics remain roadmap work.
 
 [Advisory file locks](file-locks.md) use that retained lifetime for blocking flock calls. Independent descriptions conflict on canonical local nodes; dup/fork ownership and final-close release follow the description's references.
 
@@ -48,12 +52,12 @@ The framebuffer maps Limine's physical pixel storage into userspace. Xorg's fbde
 This is a development OS with a tested compatibility surface. Unsupported syscalls return `ENOSYS`; these working programs do not imply complete Linux compatibility.
 
 - One CPU, 64 task slots, 128 descriptors per file table. Musl pthreads and C++ threads work within [the tested slice](threads.md); SMP and complete POSIX threading remain planned.
-- [Task credentials and permissions](credentials.md) support ordinary numeric identities, capability transitions, filesystem access and privilege-dropped exec. Account databases, authentication, login policy and complete isolation remain required. [Kernel randomness](random.md) shares a BLAKE2s/ChaCha20 generator across the Linux interfaces. The current branch adds validated virtio input, administration, persisted seeds and generation-change handling; complete lifecycle and cryptographic-client acceptance remain required in #10.
+- [Task credentials and permissions](credentials.md) support ordinary numeric identities, capability transitions, filesystem access and privilege-dropped exec. [Account tools](accounts.md) provide persistent databases and local authentication; authenticated graphical access and complete isolation remain unfinished. [Kernel randomness](random.md) shares a BLAKE2s/ChaCha20 generator across the Linux interfaces. Axiom64 provides validated virtio input, administration, persisted seeds and generation-change handling. See [randomness](random.md) for lifecycle and cryptographic-client acceptance.
 - A RAM or [classic ext2 root](disk-root.md), independent RAM mounts, raw virtio disks, and [writable ext2 data volumes](ext2.md). Partitions, advanced filesystems/recovery, and a package installation service remain planned. See [mounts](vfs.md) and [storage](storage.md) for interfaces and limits.
 - Unix stream sockets, [raw Ethernet packet sockets](network.md), [raw IPv4 ICMP sockets](ipv4.md), [IPv4 UDP sockets](udp.md) and ordinary [IPv4 TCP streams](tcp.md), with static addresses, routes, ARP, loopback and ping on virtio-net and QEMU e1000. [Netlink sockets](netlink.md) add bounded IPv4 route dumps, tagged route control and complete address updates. [DHCP/configuration and resolver metadata modules](network-configuration.md), the [normal manager](network-manager.md) and [DNS queries with TCP fallback](dns.md) have guest checks. [Quoted TCP ICMP errors](tcp-icmp-acceptance.md) validate emitted ownership and Linux hard/soft diagnostics. Full TCP fault/lifetime acceptance, PMTU recovery, IPv6, fragmentation/reassembly, ancillary data and the complete socket contract remain required. Unix datagram descriptors currently serve interface configuration only.
 - Eager copying on fork, bounded allocations, and no general `mremap` implementation.
 - Fixed framebuffer mode. No accelerated graphics, hardware gamma control, hotplug, or virtual-console switching.
 - Basic terminal discipline and job control; terminal and signal semantics continue to grow with tests.
-- 10 ms timer resolution with HPET or fixed-frequency TSC elapsed accounting. The current branch samples a checked UTC RTC calendar at boot; synchronization, clock setting and complete Linux clock-ID semantics remain required. See [clock selection and limits](time.md).
+- 10 ms timer resolution with HPET or fixed-frequency TSC elapsed accounting. Axiom64 samples a checked UTC RTC calendar at boot; synchronization, clock setting and complete Linux clock-ID semantics remain required. See [clock selection and limits](time.md).
 
 The harness tests the guest's own kernel paths. It does not substitute host syscalls for guest operations.

@@ -9,7 +9,7 @@ import shutil
 import struct
 import subprocess
 
-from ext2_test import create_volume, invalid_volumes
+from ext2_test import create_volume, debugfs, invalid_volumes, recovery_volumes, SEED
 from fetch import ROOT
 from random_administration_test import checked_run, fingerprint, snapshot
 from random_seed_crash_test import qemu_command
@@ -22,6 +22,11 @@ def invalid(directory):
     for source in invalid_volumes(prefix):
         data = bytearray(source.read_bytes())
         struct.pack_into('<H', data, 1024 + 58, 0)
+        if source.stem.endswith('-free-count'):
+            # In-range summaries are recoverable. Keep this negative case for
+            # an out-of-range total, which must reject before any mount writes.
+            blocks = struct.unpack_from('<I', data, 1024 + 4)[0]
+            struct.pack_into('<I', data, 1024 + 12, blocks + 1)
         source.write_bytes(data)
         expected = int(re.match(rb'AXIOM64_EXT2_EXPECT=(\d+)\n', data)[1])
         result.append((source, expected))
@@ -57,7 +62,7 @@ def boot(case, iso, volumes, linkage, firmware, transport, mode):
     row, text = checked_run(command, case / 'guest.log', 90)
     row.update(linkage=linkage, firmware=firmware, transport=transport, mode=mode,
                image=fingerprint(iso), before=before)
-    checks = len(volumes) if mode == 'invalid' else 9
+    checks = 9 if mode == 'policy' else len(volumes)
     required = [f'RANDOM_SEED_RECOVERY_PASS linkage={linkage} mode={mode} checks={checks}\n',
                 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}']
     try:
@@ -76,12 +81,34 @@ def boot(case, iso, volumes, linkage, firmware, transport, mode):
                 raise RuntimeError('the actual malformed-volume error observations differ')
             row['rejections'] = observations
         else:
-            with (case / 'fsck.log').open('wb') as output:
-                result = subprocess.run(['e2fsck', '-f', '-n', str(copies[0])], stdout=output,
-                                        stderr=subprocess.STDOUT)
-            if result.returncode:
-                raise RuntimeError('checked recovery did not leave a clean filesystem')
-            row['filesystem'] = dict(returncode=result.returncode, log=fingerprint(case / 'fsck.log'))
+            filesystems = {}
+            for index, disk in enumerate(copies):
+                logfile = case / ('fsck.log' if mode == 'policy' else f'fsck-{index}.log')
+                with logfile.open('wb') as output:
+                    result = subprocess.run(['e2fsck', '-f', '-n', str(disk)], stdout=output,
+                                            stderr=subprocess.STDOUT)
+                if result.returncode or re.search(
+                        r'count wrong|UNEXPECTED INCONSISTENCY|FILESYSTEM STILL HAS ERRORS',
+                        logfile.read_text(), re.I):
+                    raise RuntimeError('checked recovery did not leave a clean filesystem')
+                filesystems[disk.name] = dict(returncode=result.returncode, log=fingerprint(logfile))
+                if debugfs(disk, 'cat /seed.txt').encode() != SEED:
+                    raise RuntimeError('checked recovery changed the original seed file')
+            row['filesystem'] = filesystems[copies[0].name]
+            row['filesystems'] = filesystems
+            if mode == 'counters':
+                expected = []
+                for index, (source, _) in enumerate(volumes):
+                    marker = re.match(rb'AXIOM64_EXT2_RECOVER=1,117,(\d+),(\d+),117\n',
+                                      source.read_bytes()[:128])
+                    if not marker:
+                        raise RuntimeError('counter fixture lacks independently prepared totals')
+                    expected.append((chr(ord('a') + index), marker[1].decode(), marker[2].decode()))
+                observed = re.findall(r'RANDOM_SEED_RECOVERY_COUNTER device=/dev/vd([a-h]) '
+                                      r'free_blocks=(\d+) free_inodes=(\d+)\n', text)
+                if observed != expected:
+                    raise RuntimeError('the actual reconciled counter observations differ')
+                row['counter_observations'] = observed
         row['passed'] = True
     except BaseException as error:
         row.update(passed=False, error=repr(error))
@@ -112,6 +139,7 @@ def main():
         inputs[name] = fingerprint(ROOT / name)
     (directory / 'source-inputs.json').write_text(json.dumps(inputs, indent=2) + '\n')
     policies = []
+    counters = []
     if args.checks in ('policy', 'both'):
         for block_size, inode_size, features in ((1024, 128, 'default'), (2048, 256, 'default'),
                                                 (4096, 256, 'default'), (1024, 128, 'original')):
@@ -121,24 +149,30 @@ def main():
             struct.pack_into('<H', data, 1024 + 58, 0)
             disk.write_bytes(data)
             policies.append([(disk, 0)])
+            prefix = directory / f'counters-{block_size}-{inode_size}-{features}'
+            counters.append([(disk, 0) for disk, repaired in
+                             recovery_volumes(prefix, block_size, inode_size, features) if repaired])
     damaged = invalid(directory) if args.checks in ('invalid', 'both') else []
     results = []
     for linkage in linkages:
         images = {}
-        for mode, count in [('policy', 0)] * bool(policies) + [('invalid', count) for count in (8, 2)] * bool(damaged):
+        image_cases = [('policy', 0)] * bool(policies) + [('counters', 6)] * bool(counters)
+        image_cases += [('invalid', count) for count in (8, 2)] * bool(damaged)
+        for mode, count in image_cases:
             folder = directory / (linkage + '-' + mode + str(count) + '-image')
             folder.mkdir()
             images[mode, count] = image(folder, linkage, 'recovery-' + mode + str(count),
                 probe='random-seed-recovery', command='/bin/seed-probe ' + mode +
-                (' ' + str(count) if mode == 'invalid' else ''))
+                (' ' + str(count) if mode != 'policy' else ''))
         for firmware in ('bios', 'uefi') if args.firmware == 'both' else (args.firmware,):
             for transport in ('modern', 'legacy') if args.transport == 'both' else (args.transport,):
                 selected = [('policy', index, volumes) for index, volumes in enumerate(policies)]
+                selected += [('counters', index, volumes) for index, volumes in enumerate(counters)]
                 selected += [('invalid', index // 8, damaged[index:index+8])
                              for index in range(0, len(damaged), 8)]
                 for mode, index, volumes in selected:
                     case = directory / f'{linkage}-{firmware}-{transport}-{mode}-{index}'
-                    results.append(boot(case, images[mode, len(volumes) if mode == 'invalid' else 0],
+                    results.append(boot(case, images[mode, len(volumes) if mode != 'policy' else 0],
                                         volumes, linkage, firmware, transport, mode))
                     (directory / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
                     print(json.dumps(dict(case=case.name, passed=True, volumes=len(volumes))), flush=True)

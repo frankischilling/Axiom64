@@ -37,8 +37,15 @@ class QMP:
                     if process.poll() is not None or time.monotonic() >= deadline:
                         raise RuntimeError('QEMU did not open its QMP socket')
                     time.sleep(0.02)
-            greeting = self.receive(deadline)
-            if 'QMP' not in greeting:
+            while True:
+                greeting = self.receive(deadline)
+                # Startup notifications can precede the greeting. Retain them
+                # in the transcript without extending negotiation's deadline.
+                if (isinstance(greeting, dict) and isinstance(greeting.get('event'), str) and
+                        greeting['event'] and not {'QMP', 'id', 'return', 'error'} & greeting.keys()):
+                    continue
+                break
+            if not isinstance(greeting, dict) or 'QMP' not in greeting:
                 raise RuntimeError('QMP greeting is missing')
             self.command('qmp_capabilities')
         except BaseException:
@@ -318,7 +325,8 @@ def main():
                     *(f'build/random-snapshot-{linkage}' for linkage in linkages)], cwd=ROOT, check=True)
     inputs = snapshot(directory)
     for name in ('userspace/tests/random/snapshot.c', 'scripts/random_snapshot_test.py',
-                 'scripts/image.py', 'scripts/disk_root.py', 'userspace/init/main.c'):
+                 'scripts/image.py', 'scripts/disk_root.py', 'userspace/init/main.c',
+                 'userspace/init/console.c', 'userspace/init/console.h'):
         inputs[name] = fingerprint(ROOT / name)
     (directory / 'source-inputs.json').write_text(json.dumps(inputs, indent=2) + '\n')
     tools = {}

@@ -1,0 +1,16 @@
+{
+  "scope": "Actual interrupted synthetic account fixture; native journal replay oracle regression.",
+  "kernel_commit": "2570ae60b46aa964100e19b314028e64a38500d3",
+  "client_sha256": "28d6cffdb86d1213c0f0d8339d3a1499cf3d92d66e92b3a292369f2f303b1672",
+  "archive_sha256": "012e5bdb505e28741104e39473fc5afbb61ef727f103ff263648cc3cc02ac077",
+  "original": {
+    "bytes": 33554432,
+    "sha256": "99610e9a4c2d7044747a501ea05952fced79b888e85ace3f43df1b8eeb943cdc"
+  },
+  "expected_revision": "g-cd90c5809ec493f0bef686fea3fa9319",
+  "expected_files": {
+    "passwd": "909a43a5e3aa5454520abd6bba117ab62d63f7e0d82e387c1a351bc5b0f73e34",
+    "group": "f6d2133531f505a4f0424f16f35eb03e9f299e798b3efe9c67c3b32e16646e9d",
+    "shadow": "fb3d158d3f1cad65ba35bb366f8b6c57cff46c7863c60a9f066dcf7b270f5ace"
+  }
+}

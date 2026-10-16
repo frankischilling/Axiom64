@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/ext2/ext2.hpp"
 #include "fs/ext2/xattr.hpp"
+#include "fs/ext2/journal.hpp"
 #include "process/task.hpp"
 #include "drivers/block/block.hpp"
 #include "drivers/platform/devices.hpp"
@@ -104,6 +105,9 @@ struct Volume {
     Change* changes;
     Entry* entries;
     CachedBlock* cache;
+    Journal* journal;
+    uint32_t* journal_map;
+    uint32_t journal_blocks;
     uint32_t touched[64];
     unsigned touched_count;
     int error;
@@ -279,6 +283,9 @@ struct Volume {
         if (!write_block(groups[index / inodes_per_group].inode_table + offset / block_size, block,
                          2))
             return false;
+        // Initial mount recovery has no cached identities to refresh.
+        if (!entries)
+            return true;
         for (unsigned i = 0; i < touched_count; i++)
             if (touched[i] == number)
                 return true;
@@ -317,6 +324,26 @@ struct Volume {
             }
         }
         // Keep the complete overlay after an error; a later sync retries every write.
+        if (journal && changes) {
+            auto writes = static_cast<JournalWrite*>(alloc(sizeof(JournalWrite) * change_count));
+            if (!writes)
+                return fail(-12);
+            unsigned index = 0;
+            for (auto change = changes; change; change = change->next) {
+                writes[index++] = {change->block, change->data};
+                if (cache) {
+                    auto& cached = cache[change->block % cached_blocks];
+                    if (cached.block == change->block)
+                        cached.valid = false;
+                }
+            }
+            int result = journal_commit(journal, writes, change_count);
+            release(writes);
+            if (result)
+                return fail(result);
+            discard();
+            return true;
+        }
         for (unsigned rank = 0; rank <= 5; rank++)
             for (auto change = changes; change; change = change->next)
                 if (change->rank == rank) {
@@ -413,11 +440,22 @@ struct Volume {
         for (unsigned step = 0; step < group_count; step++) {
             unsigned index = (preferred + step) % group_count;
             auto& group = groups[index];
+            uint8_t desc[32];
+            if (!descriptor(index, desc))
+                return 0;
+            // Validated counters include this operation's staged allocations.
+            if (!u16(desc + (inode ? 14 : 12)))
+                continue;
             uint32_t bitmap_block = inode ? group.inode_bitmap : group.block_bitmap;
             if (!read_block(bitmap_block, bitmap))
                 return 0;
             uint32_t count = inode ? group.inodes : group.blocks;
             for (uint32_t i = 0; i < count; i++) {
+                // Skip occupied words while keeping first-free allocation order.
+                if (!(i % 32) && u32(bitmap + i / 8) == UINT32_MAX) {
+                    i += 31;
+                    continue;
+                }
                 uint32_t number = inode ? index * inodes_per_group + i + 1 : group.first + i;
                 if (bit(bitmap, i) || (inode && number < first_inode))
                     continue;
@@ -661,6 +699,8 @@ struct Volume {
         if (!super(header))
             return false;
         set16(header + 58, clean ? u16(header + 58) | 1 : u16(header + 58) & ~1u);
+        if (journal)
+            set32(header + 96, clean ? u32(header + 96) & ~4u : u32(header + 96) | 4u);
         set32(header + 48, node_now().sec);
         return save_super(header);
     }
@@ -845,7 +885,7 @@ static bool drop_inode(Volume& v, Node* node) {
     if (!u16(inode + 26)) {
         if (!node_referenced(node))
             return v.delete_inode(node->inode, inode);
-        set32(inode + 20, node_now().sec);
+        set32(inode + 20, u32(inode + 12));
     }
     return v.save_inode(node->inode, inode);
 }
@@ -1329,29 +1369,52 @@ static void destroy(Mount* mount) {
         block_unclaim(v->device, v);
     release(v->groups);
     release(v->cache);
+    journal_close(v->journal);
+    release(v->journal_map);
     release(v);
     mount->root = nullptr;
     mount->data = nullptr;
 }
 
-// The mount scan checks allocation and ownership before any writable I/O. It
-// does not repair a damaged volume; recovery remains the filesystem checker's job.
+// Validate allocation, ownership and directories before staging any mount writes.
+// Checked writable dirty mounts may reconcile counters and reclaim completely
+// validated inodes carrying the on-disk deletion marker. A named file, symlink
+// or empty directory can keep its checked namespace and bounded parent links.
+// Dirty journaled mounts may reclaim unreferenced retired inodes, with strict
+// counters and no restoration of names or parent-link contributions.
 struct Validation {
+    enum class Recovery { none, checked, journal };
+
     Volume& v;
+    Recovery recovery;
+    bool reconcile_counts;
+    uint16_t *group_free_blocks = nullptr, *group_free_inodes = nullptr;
+    uint64_t free_block_total = 0, free_inode_total = 0;
     uint8_t *block_bits = nullptr, *inode_bits = nullptr, *owners = nullptr;
+    uint8_t* deleted_bits = nullptr;
+    uint8_t* named_directory_parents = nullptr;
     uint16_t *modes = nullptr, *links = nullptr;
     uint16_t* xattr_references = nullptr;
     uint32_t *references = nullptr, *parents = nullptr, *dotdots = nullptr;
     uint8_t inode_table[max_block_size]{};
     uint32_t cached_table = UINT32_MAX;
 
-    explicit Validation(Volume& value) : v(value) {
+    explicit Validation(Volume& value, Recovery mode)
+        : v(value), recovery(mode), reconcile_counts(mode == Recovery::checked) {
+    }
+
+    bool recovering() const {
+        return recovery != Recovery::none;
     }
 
     ~Validation() {
+        release(group_free_blocks);
+        release(group_free_inodes);
         release(block_bits);
         release(inode_bits);
         release(owners);
+        release(deleted_bits);
+        release(named_directory_parents);
         release(modes);
         release(links);
         release(xattr_references);
@@ -1372,12 +1435,26 @@ struct Validation {
         references = (uint32_t*)alloc(inode_count * sizeof(uint32_t));
         parents = (uint32_t*)alloc(inode_count * sizeof(uint32_t));
         dotdots = (uint32_t*)alloc(inode_count * sizeof(uint32_t));
+        if (recovering()) {
+            deleted_bits = (uint8_t*)alloc(inode_bytes);
+            named_directory_parents = (uint8_t*)alloc(inode_bytes);
+        }
+        if (reconcile_counts) {
+            group_free_blocks = (uint16_t*)alloc(v.group_count * sizeof(uint16_t));
+            group_free_inodes = (uint16_t*)alloc(v.group_count * sizeof(uint16_t));
+        }
         if (!block_bits || !inode_bits || !owners || !modes || !links || !xattr_references ||
-            !references || !parents || !dotdots)
+            !references || !parents || !dotdots ||
+            (recovering() && (!deleted_bits || !named_directory_parents)) ||
+            (reconcile_counts && (!group_free_blocks || !group_free_inodes)))
             return v.fail(-12);
         memset(block_bits, 0, block_bytes);
         memset(owners, 0, block_bytes);
         memset(inode_bits, 0, inode_bytes);
+        if (deleted_bits)
+            memset(deleted_bits, 0, inode_bytes);
+        if (named_directory_parents)
+            memset(named_directory_parents, 0, inode_bytes);
         memset(modes, 0, inode_count * sizeof(uint16_t));
         memset(links, 0, inode_count * sizeof(uint16_t));
         memset(xattr_references, 0, uint64_t(v.blocks) * sizeof(uint16_t));
@@ -1386,6 +1463,10 @@ struct Validation {
         memset(dotdots, 0, inode_count * sizeof(uint32_t));
         parents[2] = 2;
         return true;
+    }
+
+    bool deleted(uint32_t number) const {
+        return deleted_bits && bit(deleted_bits, number);
     }
 
     bool bitmaps(const uint8_t* header) {
@@ -1409,8 +1490,10 @@ struct Validation {
                 if (!used)
                     free++;
             }
-            if (free != u16(desc + 12))
+            if (!reconcile_counts && free != u16(desc + 12))
                 return v.fail();
+            if (reconcile_counts)
+                group_free_blocks[group] = free;
             free_blocks += free;
             if (!v.read_block(g.inode_bitmap, data))
                 return false;
@@ -1429,11 +1512,41 @@ struct Validation {
                 if (!used)
                     free++;
             }
-            if (free != u16(desc + 14))
+            if (!reconcile_counts && free != u16(desc + 14))
                 return v.fail();
+            if (reconcile_counts)
+                group_free_inodes[group] = free;
             free_inodes += free;
         }
-        return free_blocks == u32(header + 12) && free_inodes == u32(header + 16) ? true : v.fail();
+        free_block_total = free_blocks;
+        free_inode_total = free_inodes;
+        return reconcile_counts ||
+                       (free_blocks == u32(header + 12) && free_inodes == u32(header + 16))
+                   ? true
+                   : v.fail();
+    }
+
+    bool reconcile(uint8_t* header) {
+        if (!reconcile_counts)
+            return true;
+        // The complete structural scan has succeeded. All counts are derived
+        // from the validated bitmaps; layout bounds and directory counts stay strict.
+        uint8_t desc[32];
+        for (unsigned group = 0; group < v.group_count; group++) {
+            if (!v.descriptor(group, desc))
+                return false;
+            if (u16(desc + 12) == group_free_blocks[group] &&
+                u16(desc + 14) == group_free_inodes[group])
+                continue;
+            set16(desc + 12, group_free_blocks[group]);
+            set16(desc + 14, group_free_inodes[group]);
+            if (!v.save_descriptor(group, desc))
+                return false;
+        }
+        // The mount's final staged superblock write must use these same totals.
+        set32(header + 12, free_block_total);
+        set32(header + 16, free_inode_total);
+        return true;
     }
 
     bool inode(uint32_t number, uint8_t* data) {
@@ -1507,7 +1620,8 @@ struct Validation {
                 uint32_t mode = u16(data), type = mode & 0170000;
                 bool reserved = number < v.first_inode && number != 2;
                 bool resize = number == 7 && (v.compatible & 16);
-                if (reserved && !resize) {
+                bool journal = number == 8 && v.journal;
+                if (reserved && !resize && !journal) {
                     if (mode || file_size(data) || u32(data + 28) || u32(data + 104))
                         return v.fail(-95);
                     for (unsigned slot = 0; slot < 15; slot++)
@@ -1581,7 +1695,10 @@ struct Validation {
                 if (type == directory && leaves != length / v.block_size)
                     return v.fail();
                 if (!reserved) {
-                    if (!u16(data + 26) || u32(data + 20))
+                    bool removed = !u16(data + 26) && u32(data + 20);
+                    if (removed && recovering() && number >= v.first_inode)
+                        setbit(deleted_bits, number, true);
+                    else if (!u16(data + 26) || u32(data + 20))
                         return v.fail();
                     modes[number] = mode;
                     links[number] = u16(data + 26);
@@ -1613,6 +1730,7 @@ struct Validation {
     };
 
     bool check_directory(uint32_t number) {
+        bool detached = deleted(number);
         uint8_t disk_inode[ax::inode_bytes], data[max_block_size];
         if (!inode(number, disk_inode))
             return false;
@@ -1635,12 +1753,20 @@ struct Validation {
                 }
                 if (r.inode) {
                     if (!bit(inode_bits, r.inode) || !modes[r.inode] ||
-                        (r.type && r.type != file_type(modes[r.inode]))) {
+                        (r.type && r.type != file_type(modes[r.inode])) ||
+                        (!detached && deleted(r.inode) &&
+                         (modes[r.inode] & 0170000) != regular_file &&
+                         (modes[r.inode] & 0170000) != symlink &&
+                         (modes[r.inode] & 0170000) != ax::directory)) {
                         success = v.fail();
                         break;
                     }
                     bool self = r.name_length == 1 && data[offset + 8] == '.';
                     bool up = r.name_length == 2 && !memcmp(data + offset + 8, "..", 2);
+                    if (detached && !self && !up) {
+                        success = v.fail();
+                        break;
+                    }
                     if (self) {
                         if (dot || r.inode != number) {
                             success = v.fail();
@@ -1661,7 +1787,7 @@ struct Validation {
                         }
                         parents[r.inode] = number;
                     }
-                    if (++references[r.inode] > UINT16_MAX) {
+                    if (!detached && ++references[r.inode] > UINT16_MAX) {
                         success = v.fail();
                         break;
                     }
@@ -1707,13 +1833,58 @@ struct Validation {
         for (uint32_t number = 2; number <= v.inodes; number++)
             if ((modes[number] & 0170000) == ax::directory && !check_directory(number))
                 return false;
+        for (uint32_t number = v.first_inode; number <= v.inodes; number++) {
+            if (!deleted(number))
+                continue;
+            if (!reconcile_counts && references[number])
+                return v.fail();
+            if ((modes[number] & 0170000) != ax::directory || !references[number])
+                continue;
+            uint32_t parent = parents[number];
+            uint8_t data[ax::inode_bytes];
+            // An empty directory can keep one existing parent name. Its dotdot
+            // must identify that live parent; only that known link may be missing.
+            if (references[number] != 1 || !parent || dotdots[number] != parent ||
+                deleted(parent) || (modes[parent] & 0170000) != ax::directory ||
+                bit(named_directory_parents, parent) || references[parent] == UINT16_MAX ||
+                !inode(number, data) || u32(data + 20) != u32(data + 12))
+                return v.fail();
+            setbit(named_directory_parents, parent, true);
+            references[number]++;
+            references[parent]++;
+        }
         for (uint32_t number = 2; number <= v.inodes; number++) {
             if (!modes[number])
                 continue;
-            if (references[number] != links[number])
-                return v.fail();
+            if (references[number] != links[number]) {
+                uint8_t data[ax::inode_bytes];
+                unsigned type = modes[number] & 0170000;
+                bool parent_link = named_directory_parents &&
+                                   bit(named_directory_parents, number) && !deleted(number) &&
+                                   references[number] == uint32_t(links[number]) + 1;
+                bool retained =
+                    deleted(number) &&
+                    (((type == regular_file || type == symlink) && references[number] == 1) ||
+                     (type == ax::directory && references[number] == 2 && parents[number])) &&
+                    inode(number, data) && u32(data + 20) == u32(data + 12);
+                if (!parent_link && !retained)
+                    return v.fail();
+            }
             if ((modes[number] & 0170000) != ax::directory)
                 continue;
+            if (deleted(number)) {
+                // A removed directory must be empty and its retained ancestry
+                // must terminate at a live, reachable directory without cycles.
+                uint32_t parent = number;
+                unsigned depth = 0;
+                while (deleted(parent)) {
+                    if (++depth > v.inodes || !dotdots[parent] ||
+                        (modes[dotdots[parent]] & 0170000) != ax::directory)
+                        return v.fail();
+                    parent = dotdots[parent];
+                }
+                continue;
+            }
             if (!parents[number] || dotdots[number] != parents[number])
                 return v.fail();
             uint32_t parent = number;
@@ -1726,9 +1897,152 @@ struct Validation {
         }
         return true;
     }
+
+    bool reclaim_deleted(uint8_t* header) {
+        if (!deleted_bits)
+            return true;
+        bool any = false;
+        for (uint32_t number = v.first_inode; number <= v.inodes; number++)
+            any |= deleted(number);
+        if (!any)
+            return true;
+        // Every allocation and directory reference has already been checked.
+        // Reconcile staged counters before the ordinary deletion path adjusts
+        // them, including shared external-attribute ownership.
+        if (!v.save_super(header))
+            return false;
+        uint8_t data[ax::inode_bytes];
+        for (uint32_t number = 2; number <= v.inodes; number++) {
+            if (!bit(named_directory_parents, number))
+                continue;
+            if (!v.load_inode(number, data))
+                return false;
+            set16(data + 26, references[number]);
+            if (!v.save_inode(number, data))
+                return false;
+        }
+        for (uint32_t number = v.first_inode; number <= v.inodes; number++) {
+            if (!deleted(number))
+                continue;
+            if (!v.load_inode(number, data))
+                return false;
+            if (references[number]) {
+                set16(data + 26, references[number]);
+                set32(data + 20, 0);
+                if (!v.save_inode(number, data))
+                    return false;
+            } else if (!v.delete_inode(number, data))
+                return false;
+        }
+        if (!v.super(header))
+            return false;
+        // Validate the complete proposed disk image before mount can commit it.
+        Validation result{v, Recovery::none};
+        return result.allocate() && result.bitmaps(header) && result.inode_maps() &&
+               result.directories();
+    }
 };
 
-static bool layout(Volume& v, const uint8_t* header, const BlockInfo& disk, bool check_dirty) {
+static int journal_read(void* context, uint32_t block, void* data) {
+    auto& v = *static_cast<Volume*>(context);
+    return block_read(v.device, uint64_t(block) * (v.block_size / sector_size), data,
+                      v.block_size / sector_size);
+}
+
+static int journal_write(void* context, uint32_t block, const void* data) {
+    auto& v = *static_cast<Volume*>(context);
+    if (v.cache) {
+        auto& cached = v.cache[block % cached_blocks];
+        if (cached.block == block)
+            cached.valid = false;
+    }
+    return block_write(v.device, uint64_t(block) * (v.block_size / sector_size), data,
+                       v.block_size / sector_size, &v);
+}
+
+static int journal_flush(void* context) {
+    return block_flush(static_cast<Volume*>(context)->device);
+}
+
+static int journal_overlay(void* context, uint32_t block, const void* data) {
+    auto& v = *static_cast<Volume*>(context);
+    return v.write_block(block, data, 5) ? 0 : v.error;
+}
+
+static bool open_journal(Volume& v, uint8_t* header, const BlockInfo& disk) {
+    if (!(v.compatible & 4))
+        return (u32(header + 96) & 4) ? v.fail(-95) : true;
+    if (u32(header + 224) != 8 || u32(header + 228) || !disk.flush_supported)
+        return v.fail(-95);
+    uint8_t inode[inode_bytes], original_header[1024];
+    memcpy(original_header, header, sizeof(original_header));
+    if (!v.load_inode(8, inode))
+        return false;
+    if ((u16(inode) & 0170000) != regular_file || u16(inode + 26) != 1 || u16(inode + 2) ||
+        u16(inode + 24) || u16(inode + 120) || u16(inode + 122) || u32(inode + 20) ||
+        u32(inode + 32) || u32(inode + 104) || u32(inode + 108) || !file_size(inode) ||
+        file_size(inode) % v.block_size || file_size(inode) / v.block_size < 1024 ||
+        file_size(inode) / v.block_size > v.blocks)
+        return v.fail(-95);
+    v.journal_blocks = file_size(inode) / v.block_size;
+    v.journal_map = static_cast<uint32_t*>(alloc(uint64_t(v.journal_blocks) * sizeof(uint32_t)));
+    if (!v.journal_map)
+        return v.fail(-12);
+    for (uint32_t index = 0; index < v.journal_blocks; index++)
+        if (!v.map_block(inode, index, false, v.journal_map[index], 0) || !v.journal_map[index])
+            return v.fail();
+    JournalStorage storage{
+        &v,           v.block_size,  v.blocks,     v.journal_map, v.journal_blocks,
+        journal_read, journal_write, journal_flush};
+    int error;
+    v.journal = journal_open(storage, header + 104, error);
+    if (!v.journal)
+        return v.fail(error);
+    if (disk.readonly && (journal_pending(v.journal) || (u32(header + 96) & 4)))
+        return v.fail(-30);
+    error = journal_stage(v.journal, journal_overlay, &v);
+    if (error)
+        return v.fail(error);
+    if (!v.super(header))
+        return false;
+    // Replay may update counters and ordinary mount state, but cannot change
+    // the geometry, feature interpretation or identity of its own journal.
+    uint8_t normalized[1024];
+    memcpy(normalized, header, sizeof(normalized));
+    constexpr unsigned counters[] = {12, 16, 44, 48}, state_fields[] = {52, 58};
+    for (unsigned offset : counters)
+        set32(normalized + offset, u32(original_header + offset));
+    for (unsigned offset : state_fields)
+        set16(normalized + offset, u16(original_header + offset));
+    if ((u32(header + 96) & ~4u) != (u32(original_header + 96) & ~4u) ||
+        (u32(header + 100) != u32(original_header + 100) &&
+         u32(header + 100) != (u32(original_header + 100) | 2)))
+        return v.fail();
+    set32(normalized + 96, u32(original_header + 96));
+    set32(normalized + 100, u32(original_header + 100));
+    if (memcmp(normalized, original_header, sizeof(normalized)))
+        return v.fail();
+    for (unsigned group = 0; group < v.group_count; group++) {
+        uint8_t descriptor[32];
+        const auto& expected = v.groups[group];
+        if (!v.descriptor(group, descriptor) || u32(descriptor) != expected.block_bitmap ||
+            u32(descriptor + 4) != expected.inode_bitmap ||
+            u32(descriptor + 8) != expected.inode_table)
+            return v.fail();
+    }
+    uint8_t replayed[inode_bytes];
+    if (!v.load_inode(8, replayed) || memcmp(inode, replayed, sizeof(inode)))
+        return v.fail();
+    for (uint32_t index = 0; index < v.journal_blocks; index++) {
+        uint32_t block;
+        if (!v.map_block(replayed, index, false, block, 0) || block != v.journal_map[index])
+            return v.fail();
+    }
+    v.readonly_features = u32(header + 100);
+    return true;
+}
+
+static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check_dirty) {
     if (u16(header + 56) != 0xef53)
         return v.fail(-22);
     v.revision = u32(header + 76);
@@ -1748,7 +2062,7 @@ static bool layout(Volume& v, const uint8_t* header, const BlockInfo& disk, bool
     uint32_t incompatible = v.revision ? u32(header + 96) : 0;
     v.readonly_features = v.revision ? u32(header + 100) : 0;
     v.typed_entries = incompatible & 2;
-    if ((v.compatible & ~0x38u) || (incompatible & ~2u) || (v.readonly_features & ~3u) ||
+    if ((v.compatible & ~0x3cu) || (incompatible & ~6u) || (v.readonly_features & ~3u) ||
         (v.inode_size != 128 && v.inode_size != 256))
         return v.fail(-95);
     v.reserved_gdt = v.compatible & 16 ? u16(header + 206) : 0;
@@ -1799,12 +2113,34 @@ static bool layout(Volume& v, const uint8_t* header, const BlockInfo& disk, bool
             u16(desc + 12) > g.blocks || u16(desc + 14) > g.inodes || u16(desc + 16) > g.inodes)
             return v.fail();
     }
+    if (!open_journal(v, header, disk))
+        return false;
     unsigned state = u16(header + 58);
-    v.writable_safe = (state == 1 || (check_dirty && state == 0)) && !u32(header + 232);
-    if ((check_dirty || !v.mount->readonly) && !v.writable_safe)
+    v.writable_safe =
+        (state == 1 || ((check_dirty || v.journal) && state == 0)) && !u32(header + 232);
+    if ((v.journal || check_dirty || !v.mount->readonly) && !v.writable_safe)
         return v.fail();
-    Validation check{v};
-    return check.allocate() && check.bitmaps(header) && check.inode_maps() && check.directories();
+    auto recovery = Validation::Recovery::none;
+    if (state == 0) {
+        if (check_dirty && !v.mount->readonly)
+            recovery = Validation::Recovery::checked;
+        else if (v.journal && !disk.readonly)
+            recovery = Validation::Recovery::journal;
+    }
+    Validation check{v, recovery};
+    if (!(check.allocate() && check.bitmaps(header) && check.inode_maps() && check.directories() &&
+          check.reconcile(header) && check.reclaim_deleted(header)))
+        return false;
+    if (v.journal) {
+        int error = journal_checkpoint(v.journal);
+        if (error)
+            return v.fail(error);
+        if (v.mount->readonly && ((u32(header + 96) & 4) || v.changes)) {
+            if (!v.state(true) || !v.flush() || !v.super(header))
+                return false;
+        }
+    }
+    return true;
 }
 
 } // namespace
@@ -1856,6 +2192,8 @@ int ext2_mount(Mount* mount, Node* device, bool check_dirty) {
     }
     if (!result && !mount->readonly) {
         set16(header + 58, u16(header + 58) & ~1u);
+        if (v->journal)
+            set32(header + 96, u32(header + 96) | 4u);
         set32(header + 44, node_now().sec);
         if (u16(header + 52) != UINT16_MAX)
             set16(header + 52, u16(header + 52) + 1);

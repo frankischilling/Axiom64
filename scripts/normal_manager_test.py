@@ -17,6 +17,9 @@ from manager_peer import ManagerPeer
 from normal_dns_peer import NormalDns
 from qmp import Qmp
 from qemu_acceleration import Acceleration
+from normal_login import ConsoleLogin, install_observer
+from build_accounts import digest
+from fixture_archive import archive_fixture
 
 SCENARIOS = {'no-nic': (0, 0), 'no-server': (2, 0), 'missing': (2, 2), 'healthy': (2, 3)}
 PHASES = ('desktop-before', 'initial', 'kill', 'revalidating', 'recovered', 'desktop-after', 'stop')
@@ -144,17 +147,35 @@ def fixture():
     for linkage in ('static', 'dynamic'):
         name = 'normal-dns-' + linkage
         entries['bin/' + name] = (0o100755, (ROOT / 'build' / name).read_bytes())
-    try:
-        write_archive(original, entries)
-        disk = build('full')
-        images = {}
-        for root in ('ram', 'ext2'):
-            images[root] = ROOT / 'build' / f'axiom64-normal-init-{root}.iso'
-            subprocess.run(['python3', 'scripts/image.py', '--output-name', images[root].name] +
-                           (['--root-device', '/dev/vda'] if root == 'ext2' else []), cwd=ROOT, check=True)
-        return disk, images
-    finally:
-        original.write_bytes(before)
+    directory = ROOT / 'build' / ('normal-init-login-' + str(os.getpid()))
+    directory.mkdir(exist_ok=False)
+    inputs = install_observer(entries, directory)
+    archive = directory / 'root.cpio'
+    write_archive(archive, entries)
+    disk = build('full', source=archive)
+    shutil.copyfile(disk, directory / 'seed.raw')
+    disk = directory / 'seed.raw'
+    images = {}
+    for root in ('ram', 'ext2'):
+        images[root] = ROOT / 'build' / f'axiom64-normal-init-{root}.iso'
+        subprocess.run(['python3', 'scripts/image.py', '--output-name', images[root].name] +
+                       (['--root-device', '/dev/vda'] if root == 'ext2' else ['--initramfs', str(archive)]),
+                       cwd=ROOT, check=True)
+        shutil.copyfile(images[root], directory / images[root].name)
+        images[root] = directory / images[root].name
+    check(original.read_bytes() == before, 'fixture preserves the original production root archive')
+    inputs.update(kernel_sha256=digest(ROOT / 'build/axiom64.elf'),
+                  original_cpio_sha256=digest(original), root_cpio_sha256=digest(archive),
+                  image_sha256={root: digest(path) for root, path in images.items()},
+                  seed_sha256=digest(disk), source_sha256={name: digest(ROOT / name) for name in
+                      ('scripts/normal_manager_test.py', 'scripts/normal_login.py',
+                       'scripts/console_prompt.py',
+                       'scripts/account_normal_test.py', 'scripts/disk_root.py', 'scripts/image.py',
+                       'scripts/fixture_archive.py',
+                       'scripts/manager_peer.py', 'scripts/dhcp_peer.py', 'scripts/normal_dns_peer.py',
+                       'userspace/tests/net/init-supervision.cpp', 'userspace/tests/net/normal-dns.c')})
+    (directory / 'inputs.json').write_text(json.dumps(inputs, indent=2) + '\n')
+    return disk, images, directory, inputs
 
 
 def host_filesystem(disk, label):
@@ -181,10 +202,11 @@ def send(process, command):
 
 
 def events(text):
+    prefix = r'^(?:(?:\x1b\[\?2004h)?bash-\d+(?:\.\d+)*\$ )?'
     spawns = [(int(pid), int(tick)) for pid, tick in
-              re.findall(r'^INIT_MANAGER_SPAWN pid=(\d+) monotonic_ms=(\d+)\r?\n', text, re.M)]
+              re.findall(prefix + r'INIT_MANAGER_SPAWN pid=(\d+) monotonic_ms=(\d+)\r?\n', text, re.M)]
     reaps = [(int(pid), int(status), int(tick)) for pid, status, tick in
-             re.findall(r'^INIT_MANAGER_REAP pid=(\d+) status=(\d+) monotonic_ms=(\d+)\r?\n', text, re.M)]
+             re.findall(prefix + r'INIT_MANAGER_REAP pid=(\d+) status=(\d+) monotonic_ms=(\d+)\r?\n', text, re.M)]
     passed = {phase: (int(pid), int(tick)) for phase, pid, tick in
               re.findall(r'^INIT_OBSERVER_PASS phase=([a-z-]+) pid=(\d+) monotonic_ms=(\d+)\r?\n', text, re.M)}
     return spawns, reaps, passed
@@ -202,10 +224,10 @@ def dns_passed(text, phase, mask):
                for linkage in ('static', 'dynamic'))
 
 
-def run(scenario, firmware, transport, root, disk_seed, images, timeout):
+def run(scenario, firmware, transport, root, disk_seed, images, timeout, directory, inputs):
     interfaces, mask = SCENARIOS[scenario]
     label = f'normal-init-{scenario}-{root}-{firmware}-{transport}'
-    log = ROOT / 'build' / (label + '.log')
+    log = directory / (label + '.log')
     control = Path('/tmp') / f'axiom64-normal-init-{os.getpid()}.sock'
     control.unlink(missing_ok=True)
     selector = selectors.DefaultSelector()
@@ -218,7 +240,7 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout):
                '-no-reboot', '-qmp', f'unix:{control},server=on,wait=off']
     mode = 'disable-legacy=on' if transport == 'modern' else 'disable-modern=on'
     if root == 'ext2':
-        disk = ROOT / 'build' / (label + '.raw')
+        disk = directory / (label + '.raw')
         shutil.copyfile(disk_seed, disk)
         command += ['-drive', f'if=none,id=root,format=raw,cache=writeback,file={disk}',
                     '-device', f'virtio-blk-pci,drive=root,{mode},rerror=report,werror=report,addr=6']
@@ -235,7 +257,7 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout):
             nic += ',' + mode
         command += ['-netdev', f'socket,id=peer{lane},connect=127.0.0.1:{server.getsockname()[1]}', '-device', nic]
     if firmware == 'uefi':
-        variables = ROOT / 'build' / (label + '-OVMF_VARS.fd')
+        variables = directory / (label + '-OVMF_VARS.fd')
         shutil.copyfile('/usr/share/OVMF/OVMF_VARS_4M.fd', variables)
         command += ['-drive', 'if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd',
                     '-drive', f'if=pflash,format=raw,file={variables}']
@@ -253,6 +275,10 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout):
     failure_screenshot = capture_error = None
     with log.open('wb') as output:
         process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT)
+        def console_write(value):
+            process.stdin.write(value)
+            process.stdin.flush()
+        login = ConsoleLogin(console_write)
         try:
             while process.poll() is None:
                 now = time.monotonic()
@@ -292,16 +318,15 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout):
                     selector.modify(connection, selectors.EVENT_READ | (
                         selectors.EVENT_WRITE if peer.output else 0), ('peer', lane))
                 text = log.read_text(errors='replace')
+                login.consume(text)
                 check(not any(value in text for value in ('PANIC:', 'FAULT pid=', 'INIT_OBSERVER_FAIL ',
                                                           'NETWORK_MANAGER_ERROR ', 'NORMAL_DNS_FAIL ',
                                                           'network-manager:')),
                       'normal guest reported a failure')
                 spawns, reaps, passed = events(text)
-                if stage == 'boot' and spawns and f'NETWORK_MANAGER_READY pid={spawns[0][0]} interfaces={interfaces}' in text:
+                if stage == 'boot' and login.ready and spawns and f'NETWORK_MANAGER_READY pid={spawns[0][0]} interfaces={interfaces}' in text:
                     first = spawns[0][0]
-                    send(process, 'while ! test -f /tmp/xterm-ready; do sleep .1; done; '
-                         '/bin/x11-probe --desktop && while ! test -f /tmp/init-keyboard-before; '
-                         f'do sleep .1; done && /bin/init-supervision desktop-before {first} {mask} {interfaces}')
+                    login.command('/usr/bin/account-normal-observe identity && /bin/x11-probe --desktop')
                     stage = 'desktop-before'
                 if (stage in ('desktop-before', 'desktop-after') and stage != typing_phase and
                         not keyboard and qmp is None):
@@ -326,10 +351,15 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout):
                     if not keyboard:
                         qmp.close()
                         qmp = None
+                        phase = typing_phase
+                        login.elevate('while ! test -f /tmp/init-keyboard-' + phase[8:] +
+                            '; do sleep .1; done; /bin/init-supervision ' + phase +
+                            f' {first if phase == "desktop-before" else second} {mask} {interfaces}')
                 if stage == 'desktop-before' and stage in passed:
                     before_desktop = desktop_identity(text)
-                    check(all(len(values) == 1 for values in before_desktop.values()), 'actual installed desktop processes')
-                    snapshot = ROOT / 'build' / (label + '-before.png')
+                    check(all(len(values) == (2 if path == '/bin/bash' else 1)
+                              for path, values in before_desktop.items()), 'actual installed desktop and serial processes')
+                    snapshot = directory / (label + '-before.png')
                     qmp = Qmp(control)
                     qmp.command('screendump', {'filename': str(snapshot), 'format': 'png'})
                     qmp.close()
@@ -340,13 +370,13 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout):
                         all((peer.announcements == 2 and
                              f'NETWORK_MANAGER_BOUND index={peer.lane + 1} method=dhcp ' in text)
                             if peer.healthy else peer.discovers >= 1 for peer in peers)):
-                    send(process, f'/bin/init-supervision initial {first} {mask} {interfaces} && '
+                    login.elevate(f'/bin/init-supervision initial {first} {mask} {interfaces} && '
                          f'/bin/normal-dns-static initial {mask} && /bin/normal-dns-dynamic initial {mask}')
                     stage = 'initial'
                 if (stage == 'initial' and stage in passed and dns_passed(text, stage, mask) and
                         all(not p.healthy or p.announcements == 2 for p in peers)):
                     initial_counts = [peer.verify_initial() for peer in peers]
-                    send(process, f'/bin/init-supervision kill {first} {mask} {interfaces}')
+                    login.elevate(f'/bin/init-supervision kill {first} {mask} {interfaces}')
                     stage = 'kill'
                 if stage == 'kill' and len(spawns) >= 2:
                     check(len(reaps) == 1 and reaps[0][:2] == (first, 9), 'PID1 reaps the SIGKILL status')
@@ -358,7 +388,7 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout):
                                 peer.restart_discover_transaction is not None for peer in peers)):
                         check(f'exec pid={second} /sbin/network-manager (static ELF)' in text,
                               'PID1 execs the installed manager binary')
-                        send(process, f'/bin/init-supervision revalidating {second} {mask} {interfaces}')
+                        login.elevate(f'/bin/init-supervision revalidating {second} {mask} {interfaces}')
                         stage = 'revalidating'
                 if stage == 'revalidating' and stage in passed:
                     for peer in peers:
@@ -366,28 +396,27 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout):
                             peer.approve()
                     stage = 'ack'
                 if stage == 'ack' and all(not peer.healthy or peer.announcements == 4 for peer in peers):
-                    send(process, f'/bin/init-supervision recovered {second} {mask} {interfaces} && '
+                    login.elevate(f'/bin/init-supervision recovered {second} {mask} {interfaces} && '
                          f'/bin/normal-dns-static recovered {mask} && /bin/normal-dns-dynamic recovered {mask}')
                     stage = 'recovered'
                 if stage == 'recovered' and stage in passed and dns_passed(text, stage, mask):
-                    send(process, '/bin/x11-probe --desktop && while ! test -f /tmp/init-keyboard-after; '
-                         f'do sleep .1; done && /bin/init-supervision desktop-after {second} {mask} {interfaces}')
+                    login.command('/bin/x11-probe --desktop')
                     stage = 'desktop-after'
                 if stage == 'desktop-after' and stage in passed:
                     check(desktop_identity(text) == before_desktop, 'the same desktop processes survive manager death')
                     windows = re.findall(r'^XTERM_WINDOW_ID window=(\d+)\r?$', text, re.M)
                     check(len(windows) == 2 and windows[0] == windows[1], 'the same normal xterm window remains usable')
-                    snapshot = ROOT / 'build' / (label + '-after.png')
+                    snapshot = directory / (label + '-after.png')
                     qmp = Qmp(control)
                     qmp.command('screendump', {'filename': str(snapshot), 'format': 'png'})
                     qmp.close()
                     qmp = None
                     screenshots.append(snapshot.name)
-                    send(process, f'/bin/init-supervision stop {second} {mask} {interfaces}')
+                    login.elevate(f'/bin/init-supervision stop {second} {mask} {interfaces}')
                     stage = 'stop'
                 if stage == 'stop' and stage in passed and len(reaps) >= 2:
                     check(len(reaps) == 2 and reaps[1][:2] == (second, 0), 'PID1 reaps the checked normal SIGTERM exit')
-                    send(process, '/bin/busybox poweroff -f')
+                    login.elevate('/bin/busybox poweroff -f')
                     stage = 'poweroff'
         except Exception as exception:
             error = str(exception)
@@ -396,7 +425,7 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout):
                     failure_screenshot = label + '-failure.png'
                     observer = qmp if qmp is not None else Qmp(control)
                     try:
-                        observer.command('screendump', {'filename': str(ROOT / 'build' / failure_screenshot),
+                        observer.command('screendump', {'filename': str(directory / failure_screenshot),
                                                        'format': 'png'})
                     finally:
                         if observer is not qmp:
@@ -424,14 +453,15 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout):
                   returncode=returncode, stage=stage, error=error, spawns=spawns, reaps=reaps, phases=passed,
                   initial_counts=initial_counts, counts=[peer.counts() for peer in peers], screenshots=screenshots,
                   desktop=before_desktop, seconds=round(time.monotonic() - started, 3), passed=False,
-                  acceleration=acceleration.evidence)
+                  acceleration=acceleration.evidence, directory=str(directory), inputs=inputs,
+                  login_events=login.events)
     if failure_screenshot or capture_error:
         result.update(failure_screenshot=failure_screenshot, capture_error=capture_error)
     dns = [peer.dns.evidence() for peer in peers]
     result['dns_counts'] = [{'lane': row['lane'], 'healthy': row['healthy'],
                              'queries': len(row['queries']), 'replies': len(row['replies']),
                              'arps': len(row['arps'])} for row in dns]
-    packets = ROOT / 'build' / (label + '-dns-packets.json')
+    packets = directory / (label + '-dns-packets.json')
     packets.write_text(json.dumps({'scenario': scenario, 'mask': mask, 'peers': dns}, indent=2) + '\n')
     result['dns_packets'] = packets.name
     try:
@@ -453,12 +483,16 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout):
         for phase in ('initial', 'recovered'):
             check(dns_passed(text, phase, mask), 'both actual musl applications finish each lease generation')
         if disk:
-            result['disk'] = disk.name
             result['fsck'] = host_filesystem(disk, label)
+            shutil.copyfile(ROOT / 'build' / result['fsck'], directory / result['fsck'])
+            result['retained_disk'] = archive_fixture(disk, remove=True)
+            result['disk'] = Path(result['retained_disk']['path']).name
         result['passed'] = True
     except Exception as exception:
         result['error'] = result['error'] or str(exception)
-    print(json.dumps(result), flush=True)
+    print(json.dumps({key: result[key] for key in ('scenario', 'firmware', 'transport', 'root',
+                                                  'passed', 'error', 'seconds', 'stage')}), flush=True)
+    (directory / (label + '-result.json')).write_text(json.dumps(result, indent=2) + '\n')
     if not result['passed']:
         print(text[-5000:], flush=True)
     return result
@@ -474,18 +508,20 @@ def main():
     args = parser.parse_args()
     if not 0 < args.timeout < 300:
         parser.error('timeout must be positive and below the fixture lease renewal time')
-    disk, images = fixture()
+    disk, images, directory, inputs = fixture()
     results = []
     report = ROOT / 'build' / f'normal-init-{args.firmware}-results.json'
     for firmware in ('bios', 'uefi') if args.firmware == 'both' else (args.firmware,):
         for transport in ('modern', 'legacy') if args.transport == 'both' else (args.transport,):
             for root in ('ram', 'ext2') if args.root == 'both' else (args.root,):
                 for scenario in args.scenario:
-                    result = run(scenario, firmware, transport, root, disk, images, args.timeout)
+                    result = run(scenario, firmware, transport, root, disk, images, args.timeout, directory, inputs)
                     results.append(result)
                     report.write_text(json.dumps(results, indent=2) + '\n')
                     if not result['passed']:
                         raise SystemExit('Installed normal-init supervision failed')
+    expected = {**inputs['source_sha256'], **inputs['observer_source_sha256']}
+    check(expected == {name: digest(ROOT / name) for name in expected}, 'normal fixture sources remain unchanged')
 
 
 if __name__ == '__main__':

@@ -42,7 +42,8 @@ def check_fs(disk, label):
     result = subprocess.run(["e2fsck", "-f", "-n", str(disk)], capture_output=True, text=True)
     logfile = ROOT / "build" / f"{label}-fsck.log"
     logfile.write_text(result.stdout + result.stderr)
-    if result.returncode:
+    if result.returncode or re.search(r"count wrong|UNEXPECTED INCONSISTENCY|FILESYSTEM STILL HAS ERRORS",
+                                     result.stdout + result.stderr, re.IGNORECASE):
         raise RuntimeError(f"e2fsck rejected {disk.name}:\n{result.stdout}{result.stderr}")
     return logfile.name
 
@@ -83,6 +84,8 @@ def host_verify(disk, block_size, label):
 
 def boot(firmware, transport, phase, disks, images, label, timeout, readonly=False, rules=None):
     logfile = ROOT / "build" / f"{label}.log"
+    disk_inputs = [dict(name=disk.name, bytes=disk.stat().st_size,
+                        sha256=hashlib.sha256(disk.read_bytes()).hexdigest()) for disk in disks]
     mode = "disable-legacy=on" if transport == "modern" else "disable-modern=on"
     command = ["qemu-system-x86_64", "-machine", "pc", "-cpu", "max", "-m", "512M",
                "-cdrom", str(images[phase]), "-display", "none", "-serial", "stdio", "-monitor", "none",
@@ -105,6 +108,9 @@ def boot(firmware, transport, phase, disks, images, label, timeout, readonly=Fal
         markers.append("EXT2_COMMANDS_PASS")
     if phase == "invalid":
         markers.append(f"EXT2_REJECT_PASS volumes={len(disks)}")
+    if phase == "recovery":
+        recovered = sum(int(re.match(rb"AXIOM64_EXT2_RECOVER=(\d),", disk.read_bytes())[1]) for disk in disks)
+        markers.append(f"EXT2_RECOVERY_PASS volumes={len(disks)} repaired={recovered}")
     for index, disk in enumerate(disks):
         markers.append(f"virtio-blk: disk={index} transport={transport} sectors={disk.stat().st_size // 512} readonly={int(readonly)} flush=1")
     started = time.monotonic()
@@ -123,7 +129,8 @@ def boot(firmware, transport, phase, disks, images, label, timeout, readonly=Fal
     report = {"firmware": firmware, "transport": transport, "phase": phase, "label": label,
               "passed": not timed_out and not missing and not failed and returncode == 1,
               "returncode": returncode, "timed_out": timed_out, "missing": missing,
-              "seconds": round(time.monotonic() - started, 2), "log": logfile.name}
+              "seconds": round(time.monotonic() - started, 2), "log": logfile.name,
+              "disk_inputs": disk_inputs}
     print(json.dumps(report), flush=True)
     if not report["passed"]:
         print("\n".join(text.splitlines()[-26:]), flush=True)
@@ -254,12 +261,93 @@ def error_volumes(prefix):
     return disks, rules
 
 
+def recovery_volumes(prefix, block_size, inode_size, features):
+    base = Path(str(prefix) + "-base.raw")
+    create_volume(base, block_size, inode_size, features)
+    check_fs(base, base.stem)
+    original = base.read_bytes()
+    free_blocks, free_inodes = struct.unpack_from("<II", original, 1024 + 12)
+    blocks = struct.unpack_from("<I", original, 1024 + 4)[0]
+    first = struct.unpack_from("<I", original, 1024 + 20)[0]
+    per_group = struct.unpack_from("<I", original, 1024 + 32)[0]
+    inode_count = struct.unpack_from("<I", original, 1024)[0]
+    inodes_per_group = struct.unpack_from("<I", original, 1024 + 40)[0]
+    group_count = (blocks - first + per_group - 1) // per_group
+    gdt = (first + 1) * block_size
+    variants = ("super-blocks", "super-inodes", "group-blocks", "group-inodes",
+                "all-increase", "all-decrease", "clean-counts", "recorded-error")
+    for name in variants:
+        disk = Path(str(prefix) + "-" + name + ".raw")
+        data = bytearray(original)
+        struct.pack_into("<H", data, 1024 + 58, 1 if name == "clean-counts" else 2 if name == "recorded-error" else 0)
+        if name in ("super-blocks", "clean-counts", "recorded-error"):
+            struct.pack_into("<I", data, 1024 + 12, free_blocks + 1)
+        elif name == "super-inodes":
+            struct.pack_into("<I", data, 1024 + 16, free_inodes + 1)
+        elif name in ("group-blocks", "group-inodes"):
+            offset = gdt + (12 if name == "group-blocks" else 14)
+            struct.pack_into("<H", data, offset, struct.unpack_from("<H", data, offset)[0] + 1)
+        else:
+            delta = -1 if name == "all-decrease" else 1
+            changed = {12: 0, 14: 0}
+            for group in range(group_count):
+                for field in (12, 14):
+                    offset = gdt + group * 32 + field
+                    value = struct.unpack_from("<H", data, offset)[0] + delta
+                    bound = (min(per_group, blocks - first - group * per_group) if field == 12 else
+                             min(inodes_per_group, inode_count - group * inodes_per_group))
+                    if 0 <= value <= bound:
+                        struct.pack_into("<H", data, offset, value)
+                        changed[field] += delta
+            assert changed[12] and changed[14]
+            struct.pack_into("<II", data, 1024 + 12,
+                             free_blocks + changed[12], free_inodes + changed[14])
+        repair = name not in ("clean-counts", "recorded-error")
+        marker = f"AXIOM64_EXT2_RECOVER={int(repair)},117,{free_blocks},{free_inodes},117\n".encode()
+        data[:len(marker)] = marker
+        disk.write_bytes(data)
+        yield disk, repair
+
+
+def recovery_rejections(prefix):
+    for disk in invalid_volumes(prefix):
+        if disk.stem.endswith("-free-count"):
+            continue  # A valid dirty volume's count-only mismatch is recoverable.
+        data = bytearray(disk.read_bytes())
+        expected = int(re.match(rb"AXIOM64_EXT2_EXPECT=(\d+)", data)[1])
+        struct.pack_into("<H", data, 1024 + 58, 0)
+        struct.pack_into("<I", data, 1024 + 12, 1)
+        # Default and read-only policies reject stale counts before inode checks.
+        # A writable checked mount must reach the original unsupported-inode errno.
+        precheck = 117 if disk.stem.endswith(("-inode-flags", "-acl")) else expected
+        marker = f"AXIOM64_EXT2_RECOVER=0,{expected},0,0,{precheck}\n".encode()
+        data[:len(marker)] = marker
+        disk.write_bytes(data)
+        yield disk
+    base = Path(str(prefix) + "-base.raw").read_bytes()
+    for name, offset, form, value in (
+            ("orphan", 1024 + 232, "I", 7),
+            ("group-block-range", 2048 + 12, "H", 65535),
+            ("group-inode-range", 2048 + 14, "H", 65535),
+            ("super-block-range", 1024 + 12, "I", struct.unpack_from("<I", base, 1024 + 4)[0] + 1),
+            ("super-inode-range", 1024 + 16, "I", struct.unpack_from("<I", base, 1024)[0] + 1)):
+        data = bytearray(base)
+        struct.pack_into("<H", data, 1024 + 58, 0)
+        struct.pack_into("<I", data, 1024 + 12, 1)
+        struct.pack_into("<" + form, data, offset, value)
+        marker = b"AXIOM64_EXT2_RECOVER=0,117,0,0,117\n"
+        data[:len(marker)] = marker
+        disk = Path(str(prefix) + "-" + name + ".raw")
+        disk.write_bytes(data)
+        yield disk
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--firmware", choices=["bios", "uefi", "both"], default="both")
     parser.add_argument("--transport", choices=["modern", "legacy", "both"], default="both")
     parser.add_argument("--quick", action="store_true", help="Run only the first format's write/reboot checks")
-    parser.add_argument("--checks", choices=["all", "files", "invalid", "errors", "full"], default="all")
+    parser.add_argument("--checks", choices=["all", "files", "invalid", "errors", "full", "recovery"], default="all")
     parser.add_argument("--tag", help="Distinct label for generated images and results")
     parser.add_argument("--timeout", type=int, default=240)
     args = parser.parse_args()
@@ -269,9 +357,9 @@ def main():
     subprocess.run(["make", "-j2", "build/axiom64.elf", "build/rootfs-desktop.cpio"], cwd=ROOT, check=True)
     checks = "files" if args.quick else args.checks
     phases = ["write", "verify"] if args.quick else {
-        "all": ["write", "verify", "readonly", "invalid", "error", "full"],
+        "all": ["write", "verify", "readonly", "invalid", "error", "full", "recovery"],
         "files": ["write", "verify", "readonly"], "invalid": ["invalid"],
-        "errors": ["error"], "full": ["full"]}[checks]
+        "errors": ["error"], "full": ["full"], "recovery": ["recovery"]}[checks]
     images = {}
     for phase in phases:
         with (ROOT / "build" / f"{suite_label}-image-{phase}.log").open("w") as output:
@@ -346,6 +434,32 @@ def main():
                             raise RuntimeError("full-volume test changed the seed")
                     report["host_verified"] = True
                     print(f"HOST_EXT2_FULL_VOLUME_PASS {prefix.name}", flush=True)
+                if checks in ["all", "recovery"]:
+                    for block_size, inode_size, features in FORMATS:
+                        recovery = list(recovery_volumes(Path(str(prefix) + f"-recovery-{block_size}-{features}"),
+                                                        block_size, inode_size, features))
+                        disks = [disk for disk, _ in recovery]
+                        before = [hashlib.sha256(disk.read_bytes()).hexdigest() for disk in disks]
+                        report = run(firmware, transport, "recovery", disks,
+                                     f"{prefix.name}-recovery-{block_size}-{features}")
+                        for index, (disk, repaired) in enumerate(recovery):
+                            if repaired:
+                                report.setdefault("fsck", []).append(check_fs(disk, disk.stem))
+                                if dump(disk, "/seed.txt", disk.stem) != SEED:
+                                    raise RuntimeError("checked recovery changed the seed")
+                            elif hashlib.sha256(disk.read_bytes()).hexdigest() != before[index]:
+                                raise RuntimeError("rejected recovery changed a disk")
+                        report.update(host_verified=True, repaired=[disk.name for disk, flag in recovery if flag])
+                    rejected = list(recovery_rejections(Path(str(prefix) + "-recovery-reject")))
+                    for batch in range(0, len(rejected), 8):
+                        disks = rejected[batch:batch + 8]
+                        before = [hashlib.sha256(disk.read_bytes()).hexdigest() for disk in disks]
+                        report = run(firmware, transport, "recovery", disks,
+                                     f"{prefix.name}-recovery-reject-{batch // 8}")
+                        if before != [hashlib.sha256(disk.read_bytes()).hexdigest() for disk in disks]:
+                            raise RuntimeError("failed structural recovery changed a disk")
+                        report.update(host_verified=True, rejected=[disk.name for disk in disks])
+                    print(f"HOST_EXT2_RECOVERY_PASS {prefix.name}", flush=True)
     except Exception as error:
         if reports:
             reports[-1].update(passed=False, host_error=str(error))

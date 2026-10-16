@@ -109,8 +109,8 @@ any residual error readiness. Axiom64 does not yet implement `IP_RECVERR` or
 Fragmentation-needed is reserved for future PMTU recovery and cannot abort TCP as
 an ordinary unreachable error. This change does not establish PMTU/fragmentation,
 route/device failure recovery, IPv6, all TCP options or the complete socket contract.
-The wider releases [#109](https://github.com/frankischilling/Axiom64/issues/109) and
-[#121](https://github.com/frankischilling/Axiom64/issues/121) remain open. Required
+The wider releases [TCP sockets](tcp.md) and
+[TCP reliability](tcp.md) remain open. Required
 applications and VM milestones still precede HP development.
 
 The policy uses [RFC 1122 section 4.2.3.9](https://www.rfc-editor.org/rfc/rfc1122.html#section-4.2.3.9),

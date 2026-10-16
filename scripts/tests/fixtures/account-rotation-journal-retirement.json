@@ -1,0 +1,22 @@
+{
+  "scope": "Actual interrupted rotation fixture; bounded recovery eligibility only.",
+  "run": "https://github.com/frankischilling/Axiom64/actions/runs/38697879553",
+  "commit": "811783dcf48bc49192940d62a5237cc5c0380118",
+  "artifact_id": 11957477823,
+  "artifact_sha256": "c00dfcdbbb41cd1b8f74ebe0d8a4a114756bbd840101acbc0fd40656ef6ca35d",
+  "member": "build-static/bios-modern-basic/carried-current-flush-334-writeback-pause-after/disk.raw.gz",
+  "archive_sha256": "bb2c51900108ab60b2f30c98d848f5b9fbf9030c0e0ac9da32f5412a7304fc16",
+  "original": {
+    "bytes": 16777216,
+    "sha256": "f37615c3acbb54317f8fcf1946aaa64886b81f14cebbe4d6960c22749935167a"
+  },
+  "expected_retired_inodes": [
+    17
+  ],
+  "expected_retired_blocks": [
+    1371,
+    1372,
+    1374,
+    1375
+  ]
+}

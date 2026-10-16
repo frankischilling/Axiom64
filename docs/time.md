@@ -63,8 +63,7 @@ clock semantics. Absolute `FUTEX_WAIT_BITSET` deadlines with
 deadlines and expected-word error ordering preserved. Complete
 Linux clock-ID semantics, realtime setting and permissions, ACPI PM timer,
 higher-resolution deadlines, SMP clock handling, power transitions,
-suspend/resume, and synchronization remain in
-[the clocks/timers/power scope](https://github.com/frankischilling/Axiom64/issues/16).
+suspend/resume, and synchronization remain unfinished.
 
 ## Boot calendar
 
@@ -83,6 +82,10 @@ counter. An unavailable or invalid RTC is reported and leaves calendar calls
 boot-relative; the kernel cannot infer a valid date from that hardware state.
 There is no NTP synchronization, RTC update, suspend correction, or wall-clock
 setting interface yet.
+
+Filesystem creation and mutation timestamps use the same calendar offset.
+RAM files retain the 10 ms clock resolution; classic ext2 stores whole seconds.
+An unavailable RTC leaves these timestamps boot relative too.
 
 ## Verification
 
@@ -125,6 +128,12 @@ exercise the original eras. This is a firmware limitation, and these cases
 do not claim that OVMF preserves a configured date outside its window. Three native libc
 profiles run the same client. The fixture selects QEMU's unscaled `clock=rt`:
 QEMU 8.2.2's custom-date `clock=host` offset overflows for the 2100 case.
+
+The same client compares RAM-file access, modification and change timestamps
+at creation, then modification and change timestamps after writing, against
+the surrounding realtime observations. Bounds allow ordinary filesystem
+rounding. Interrupted open-description tests also compare held file, symlink
+and directory change times against the guest calendar before killing the VM.
 
 The guest matrix contains 24 boots: BIOS/UEFI, modern/legacy virtio, normal HPET,
 HPET disabled for TSC fallback, or an unsupported 32-comparator HPET requiring

@@ -13,9 +13,69 @@ FORMAT_SOURCES = $(foreach pattern,*.cpp *.hpp,$(call rwildcard,kernel/,$(patter
 all: image
 .PHONY: test-rtc-codec test-clock-wall test-clock-wall-native
 .PHONY: test-random-crypto test-random-crypto-native test-random-crypto-wait test-random-crypto-wait-native
-.PHONY: openssl test-random-installed
+.PHONY: openssl libxcrypt test-password-library-native test-password-library test-random-installed
+.PHONY: test-pty-security test-pty-security-native
+test-pty-security:
+	$(PYTHON) scripts/pty_security_test.py
+test-pty-security-native:
+	$(PYTHON) scripts/pty_security_test.py --native --directory build/pty-security-native
+.PHONY: test-account-secret test-account-secret-native
+test-account-secret:
+	$(PYTHON) scripts/account_secret_test.py
+test-account-secret-native:
+	$(PYTHON) scripts/account_secret_test.py --native --directory build/account-secret-native
+.PHONY: test-parent-death test-parent-death-native test-signal-wait test-signal-wait-native test-account-desktop
+.PHONY: test-waitid test-waitid-native test-proc-identity test-proc-identity-native test-proc-identity-policy test-record-lock-lifecycle test-record-lock-lifecycle-native
+.PHONY: test-exec-arguments test-exec-arguments-native test-exec-arguments-policy
+test-exec-arguments:
+	$(PYTHON) scripts/exec_arguments_test.py --directory build/exec-arguments
+test-exec-arguments-native:
+	$(PYTHON) scripts/exec_arguments_test.py --native --directory build/exec-arguments-native
+build/exec-arguments-policy: kernel/tests/process/exec_arguments.cpp kernel/process/exec_arguments.cpp kernel/include/process/exec_arguments.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/process/exec_arguments.cpp kernel/process/exec_arguments.cpp -o $@
+test-exec-arguments-policy: build/exec-arguments-policy
+	ASAN_OPTIONS=detect_leaks=1 ./build/exec-arguments-policy
+test-waitid:
+	$(PYTHON) scripts/waitid_test.py --directory build/waitid
+test-waitid-native:
+	$(PYTHON) scripts/waitid_test.py --directory build/waitid-native --native
+test-proc-identity:
+	$(PYTHON) scripts/proc_identity_test.py --directory build/proc-identity
+test-proc-identity-native:
+	$(PYTHON) scripts/proc_identity_test.py --directory build/proc-identity-native --native
+build/proc-identity-policy: kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp kernel/include/fs/proc.hpp kernel/include/process/task.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp -o $@
+test-proc-identity-policy: build/proc-identity-policy
+	ASAN_OPTIONS=detect_leaks=1 ./build/proc-identity-policy
+test-record-lock-lifecycle:
+	$(PYTHON) scripts/record_lock_lifecycle_test.py --directory build/record-lock-lifecycle
+test-record-lock-lifecycle-native:
+	$(PYTHON) scripts/record_lock_lifecycle_test.py --native --fixtures /tmp/axiom64-record-lock-lifecycle --directory build/record-lock-lifecycle-native
+test-parent-death:
+	$(PYTHON) scripts/parent_death_test.py --directory build/parent-death
+test-parent-death-native:
+	$(PYTHON) scripts/parent_death_test.py --directory build/parent-death-native --native
+test-signal-wait:
+	$(PYTHON) scripts/signal_wait_test.py --directory build/signal-wait
+test-signal-wait-native:
+	$(PYTHON) scripts/signal_wait_test.py --directory build/signal-wait-native --native
+test-account-desktop:
+	$(PYTHON) scripts/account_normal_test.py --directory build/account-desktop --graphical
+.PHONY: test-account-normal test-vm-state
+test-account-normal:
+	$(PYTHON) scripts/account_normal_test.py
+test-vm-state:
+	$(PYTHON) scripts/vm_test.py
 openssl:
 	$(PYTHON) scripts/build_openssl.py --provider all
+libxcrypt:
+	$(PYTHON) scripts/build_libxcrypt.py --provider all
+test-password-library-native:
+	$(PYTHON) scripts/password_library_test.py
+test-password-library:
+	$(PYTHON) scripts/password_library_guest.py
 test-random-installed:
 	$(PYTHON) scripts/random_installed_test.py
 test-random-crypto:
@@ -93,6 +153,20 @@ build/ext2-xattr-codec-test: kernel/tests/fs/ext2_xattr.cpp kernel/fs/ext2/xattr
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/fs/ext2_xattr.cpp kernel/fs/ext2/xattr.cpp kernel/fs/xattr_store.cpp -o $@
 test-ext2-xattr-codec: build/ext2-xattr-codec-test
 	ASAN_OPTIONS=detect_leaks=1 $(PYTHON) scripts/tests/ext2_xattr_codec_test.py
+.PHONY: test-ext2-journal-native test-ext2-journal test-ext2-journal-lifetime
+build/ext2-journal-core-native: kernel/tests/fs/ext2_journal.cpp kernel/fs/ext2/journal.cpp kernel/include/fs/ext2/journal.hpp kernel/include/core/base.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/fs/ext2_journal.cpp kernel/fs/ext2/journal.cpp -o $@
+build/ext2-journal-volume-native: kernel/tests/fs/ext2_journal_volume.cpp kernel/fs/ext2/journal.cpp kernel/include/fs/ext2/journal.hpp kernel/include/core/base.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/fs/ext2_journal_volume.cpp kernel/fs/ext2/journal.cpp -o $@
+test-ext2-journal-native: build/ext2-journal-core-native build/ext2-journal-volume-native
+	ASAN_OPTIONS=detect_leaks=1 ./build/ext2-journal-core-native
+	ASAN_OPTIONS=detect_leaks=1 $(PYTHON) scripts/ext2_journal_native_test.py
+test-ext2-journal:
+	$(PYTHON) scripts/ext2_journal_test.py
+test-ext2-journal-lifetime:
+	$(PYTHON) scripts/ext2_journal_lifetime_test.py
 build/credentials-native: userspace/tests/security/credentials.c
 	@mkdir -p build
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DCREDENTIAL_LINKAGE='"native"' $< -o $@
@@ -302,9 +376,9 @@ test-clock:
 build/abi-dynamic: userspace/tests/abi/abi.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DABI_LINKAGE='"dynamic"' $< -o $@
-build/init: userspace/init/main.c userspace/init/seed_records.h
+build/init: userspace/init/main.c userspace/init/console.c userspace/init/console.h userspace/init/seed_records.h
 	@mkdir -p build
-	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $(filter %.c,$^) -o $@
 build/ipc-tests: userspace/tests/ipc/ipc.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
@@ -488,7 +562,10 @@ build/lifecycle-static: userspace/tests/threads/lifecycle.c userspace/tests/thre
 build/lifecycle-dynamic: userspace/tests/threads/lifecycle.c userspace/tests/threads/clone.S
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DLIFE_LINKAGE='"dynamic"' $(filter %.c %.S %.s,$^) -o $@
-build/x11-probe: userspace/tests/desktop/probe.c
+build/x11-probe: userspace/tests/desktop/probe.c userspace/desktop/authority.c userspace/desktop/authority.h
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $(filter %.c,$^) -o $@
+build/desktop-terminal: userspace/desktop/terminal.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static $< -o $@
 USERSPACE_DATA = $(foreach pattern,*.sh *.conf *.twmrc,$(call rwildcard,userspace/,$(pattern))) $(wildcard userspace/tests/toolchain/*)
@@ -496,6 +573,10 @@ ROOTFS_INPUTS = build/thread-io-static build/thread-io-dynamic build/lifecycle-s
 ROOTFS_INPUTS += build/network-manager
 ROOTFS_INPUTS += build/random-seed-static
 ROOTFS_INPUTS += scripts/build_libcap.py scripts/build_musl.py scripts/build_openssl.py sources.lock.json
+ROOTFS_INPUTS += scripts/build_libxcrypt.py scripts/linux_uapi.py
+ROOTFS_INPUTS += scripts/build_accounts.py $(wildcard userspace/accounts/*.c userspace/accounts/*.h)
+ROOTFS_INPUTS += $(wildcard userspace/desktop/*.c userspace/desktop/*.h)
+ROOTFS_INPUTS += build/desktop-terminal
 build/rootfs.cpio: $(ROOTFS_INPUTS) | busybox
 	$(PYTHON) scripts/rootfs.py
 build/rootfs-desktop.cpio: $(ROOTFS_INPUTS) | busybox
@@ -578,6 +659,7 @@ test-tcp-native:
 test-tcp-sockets:
 	$(PYTHON) scripts/tcp_test.py
 test-tcp-native-wire:
+	$(PYTHON) scripts/tests/tcp_forward_ports_test.py
 	$(PYTHON) scripts/tcp_native_wire.py
 build/tcp-fault-native: userspace/tests/net/tcp_fault.c
 	@mkdir -p build
@@ -705,10 +787,10 @@ format:
 	$(CLANG_FORMAT) -i $(FORMAT_SOURCES)
 check-format:
 	$(CLANG_FORMAT) --dry-run --Werror $(FORMAT_SOURCES)
-run: image
-	qemu-system-x86_64 -machine pc -cpu max -m 2G -cdrom build/axiom64.iso -serial stdio -no-reboot
-run-serial: image
-	qemu-system-x86_64 -machine pc -cpu max -m 2G -cdrom build/axiom64.iso -serial stdio -display none -no-reboot
+run: build/axiom64.elf build/rootfs.cpio
+	$(PYTHON) scripts/vm.py
+run-serial: build/axiom64.elf build/rootfs.cpio
+	$(PYTHON) scripts/vm.py --serial
 clean:
 	$(PYTHON) scripts/clean.py
 

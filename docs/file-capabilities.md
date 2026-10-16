@@ -1,6 +1,6 @@
 # Linux extended attributes and file capabilities
 
-The twelve Linux path, no-follow and descriptor xattr calls work on RAM and classic ext2. `security.capability` supplies candidate credentials for actual ELF exec, and upstream libcap 2.78 `getcap` and `setcap` are installed in both userspace profiles. Account databases, authentication, ACL permission policy, user namespaces and security modules remain work under [F09](https://github.com/frankischilling/Axiom64/issues/9) and [F04](https://github.com/frankischilling/Axiom64/issues/4).
+The twelve Linux path, no-follow and descriptor xattr calls work on RAM and classic ext2. `security.capability` supplies candidate credentials for actual ELF exec, and upstream libcap 2.78 `getcap` and `setcap` are installed in both userspace profiles. [Account tools](accounts.md) provide local records and authentication. ACL permission policy, user namespaces and security modules remain planned; see [credentials](credentials.md) and [VFS limits](vfs.md).
 
 ## Attribute interface and lifetime
 
@@ -46,4 +46,4 @@ Native tests require every selected profile to pass; a host filesystem without x
 
 Guest fixtures exercise both musl linkages, BIOS/UEFI and modern/legacy virtio, RAM and four ext2 format combinations. Ext2 fixtures boot the stored helper in a new kernel, then independently export attributes, ELF bytes and ownership with e2fsprogs. Metadata fixtures exercise shared blocks, non-ASCII names, opaque attributes, unlinked descriptions, malformed mounts, legacy/foreign/malformed capability words, disk exhaustion and deliberate block-write/flush faults. Sanitizers exercise allocation failures, bounded codecs and lifetime. The independent checker verifies actual syscall/exec/tool receipts, frozen policy expectations, original deadlines, source/library/product fingerprints, bytes extracted from the tested ISO and stored metadata. Deliberately damaged evidence must be rejected.
 
-Evidence directories under `build/file-capabilities` refuse overwrites. A failed run retains its original logs, images, inputs and deadlines; a corrected implementation or fixture uses a new directory. The full acceptance job and all existing repository checks must pass on the same candidate before merging.
+Evidence directories under `build/file-capabilities` refuse overwrites. A failed run retains its original logs, images, inputs and deadlines; a corrected implementation or fixture uses a new directory. The full acceptance job and all existing repository checks must pass on the same candidate for final acceptance.

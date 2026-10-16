@@ -33,8 +33,9 @@ struct ByteQueue {
 };
 
 struct Pty {
-    bool used;
+    bool used, locked, io_error;
     unsigned id, masters, slaves;
+    Node* slave;
     Terminal terminal;
     int pgid, sid;
     ByteQueue input, output;
@@ -45,7 +46,7 @@ void devices_init();
 
 uint64_t device_number(Node*);
 
-bool device_open(Handle*);
+int device_open(Handle*);
 
 void device_close(Handle*);
 

@@ -7,6 +7,8 @@ from ports import packages
 from build_musl import loader, runtime_files
 from build_libcap import runtime_files as capability_files
 from build_openssl import runtime_files as crypto_files
+from build_libxcrypt import runtime_files as password_files
+from build_accounts import runtime_files as account_files
 import tarfile
 import argparse
 import tempfile
@@ -31,7 +33,7 @@ def regular(path, source, mode=0o100755):
     files[path] = (mode, Path(source).read_bytes())
 
 
-for path in ["bin", "sbin", "lib", "etc", "dev", "proc", "tmp", "run", "root", "usr", "usr/bin", "usr/share", "usr/share/licenses", "usr/share/licenses/Axiom64", "usr/share/licenses/BusyBox", "usr/share/licenses/musl"]:
+for path in ["bin", "sbin", "lib", "etc", "dev", "proc", "sys", "tmp", "run", "root", "usr", "usr/bin", "usr/share", "usr/share/licenses", "usr/share/licenses/Axiom64", "usr/share/licenses/BusyBox", "usr/share/licenses/musl"]:
     directory(path)
 busybox_dir = ROOT / "build" / f"busybox-{LOCK['busybox']['version']}"
 busybox = busybox_dir / "busybox"
@@ -123,7 +125,7 @@ for package, archive in packages():
                 files[path] = files[target]
 
 # Override both the installed interpreter and native development libc after APK imports.
-for path, value in {**runtime_files(), **capability_files(), **crypto_files()}.items():
+for path, value in {**runtime_files(), **capability_files(), **crypto_files(), **password_files(), **account_files()}.items():
     for parent in reversed(Path(path).parents):
         if str(parent) != '.':
             files.setdefault(str(parent), (0o40755, b''))
@@ -136,9 +138,20 @@ regular("bin/busybox", busybox)
 files["bin/sh"] = (0o120777, b"/bin/busybox")
 for filename in ["xorg.conf", "system.twmrc"]:
     regular(f"etc/X11/{filename}", ROOT / "userspace/desktop" / filename, 0o100644)
+# Package shell-registration hooks are not run. Supply the conventional list
+# explicitly so clients using getusershell retain the authenticated shell.
+shells = [path for path in ('/bin/sh', '/bin/ash', '/bin/bash', '/bin/zsh',
+                           '/bin/ksh', '/bin/mksh', '/bin/dash', '/bin/csh', '/bin/tcsh')
+          if path.lstrip('/') in files]
+files['etc/shells'] = (0o100644, ('\n'.join(shells) + '\n').encode())
 regular("etc/xterm-session.sh", ROOT / "userspace/desktop/xterm-session.sh")
+regular('usr/libexec/desktop-terminal', ROOT / 'build/desktop-terminal')
+for filename in ('desktop-client-session.sh', 'desktop-console-session.sh'):
+    regular('etc/' + filename, ROOT / 'userspace/desktop' / filename)
 regular("bin/x11-probe", ROOT / "build" / "x11-probe")
 for path in ["etc/X11", "tmp/.X11-unix", "var", "var/log", "var/lib", "var/lib/xkb", "usr/share/licenses/Xorg"]:
+    directory(path)
+for path in ('home', 'etc/axiom64', 'etc/axiom64/accounts', 'var/log/axiom64', 'var/log/axiom64/login'):
     directory(path)
 directory("var/lib/axiom64")
 files["var/lib/axiom64/random"] = (0o40700, b"")

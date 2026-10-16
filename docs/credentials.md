@@ -1,6 +1,8 @@
 # Linux credentials and permission enforcement
 
-Tasks carry real, effective, saved and filesystem UID/GID values, supplementary groups and Linux capability masks. Init starts with UID/GID zero and the initial capability set. Applications can create ordinary identities and drop privileges; [persistent accounts and authenticated login (#115)](https://github.com/frankischilling/Axiom64/issues/115) are separate work under [#9](https://github.com/frankischilling/Axiom64/issues/9) and [#25](https://github.com/frankischilling/Axiom64/issues/25).
+Tasks carry real, effective, saved and filesystem UID/GID values, supplementary groups and Linux capability masks. Init starts with UID/GID zero and the initial capability set. Applications can create ordinary identities and drop privileges. [Account tools](accounts.md) use these credentials for persistent records and authenticated local sessions.
+
+Axiom64 provides [validated records, root administration and password/credential helpers](accounts.md). Native and fresh guest fixtures exercise maintained hashing, actual libc lookup, supplementary groups and irreversible service privilege dropping. Normal-image login, private terminal ownership, supervised shells, login records and logout have local acceptance checks. Authenticated graphical sessions and complete persistent administration and failure recovery remain unfinished.
 
 ## Ownership and task transitions
 
@@ -8,7 +10,7 @@ The production policy lives in `kernel/security/credentials.cpp`, with a narrow 
 
 Each task owns its identity and capability values. Supplementary groups are immutable sorted lists retained across clone/fork and released during task teardown. Changes validate and allocate a replacement before installation. A failed allocation, invalid group or user-copy fault preserves the previous list. Lists accept up to 65,536 entries and retain duplicates as Linux does. A temporary credential copy used for same-task validation or exec borrows the group list; `credential_inherit` creates a retained owner for another task.
 
-Raw Linux identity syscalls change the calling task. Static and dynamic musl's pthread wrappers synchronize their changes across the thread group. Clones inherit the caller's credentials even when other resources are shared. The current scheduler serializes these operations on one CPU; the reference counts and credential installation need an SMP synchronization audit before the [multi-CPU feature](https://github.com/frankischilling/Axiom64/issues/7) can be accepted.
+Raw Linux identity syscalls change the calling task. Static and dynamic musl's pthread wrappers synchronize their changes across the thread group. Clones inherit the caller's credentials even when other resources are shared. The current scheduler serializes these operations on one CPU; the reference counts and credential installation need an SMP synchronization audit before the [multi-CPU feature](feature-roadmap.md#f07-smp-scheduling-and-kernel-synchronization) can be accepted.
 
 Supported calls include UID/GID queries, `getresuid/getresgid`, `setuid/setgid`, `setreuid/setregid`, `setresuid/setresgid`, `setfsuid/setfsgid` and supplementary-group queries/changes. IDs are unsigned 32-bit values. The all-ones value means unchanged only for APIs that define that convention. Filesystem-ID changes return the old value, including denied requests. Saved identities permit a temporary drop; replacing all root identities without retained capabilities prevents regaining root.
 
@@ -34,7 +36,7 @@ ELF exec checks directory search, regular-file type, executable mode and `noexec
 
 Ordinary exec preserves valid ambient capabilities. An applicable file capability or privilege-changing set-ID exec clears them; root compatibility uses the bounding and inheritable sets. Keep-caps is cleared at exec. Identity or filesystem-identity changes, and acquisition of permitted capabilities, restrict the shared memory context's dumpability. `AT_SECURE` and dumpability use separate Linux rules: a secure loader can run with normal dumpability when exec does not acquire privileges. The [file capability contract](file-capabilities.md) records wire formats, attribute permissions and actual exec transitions.
 
-RAM and classic ext2 xattrs supply Linux file capabilities and upstream `getcap`/`setcap` administration. User namespaces, security modules, ACLs, auditing, seccomp and a complete tracing engine remain required work for [F09](https://github.com/frankischilling/Axiom64/issues/9), [F04](https://github.com/frankischilling/Axiom64/issues/4) and [F34](https://github.com/frankischilling/Axiom64/issues/35). Stored capability bits do not establish support for an absent syscall or subsystem.
+RAM and classic ext2 xattrs supply Linux file capabilities and upstream `getcap`/`setcap` administration. User namespaces, security modules, ACLs, auditing, seccomp and a complete tracing engine remain required work for [F09](feature-roadmap.md#f09-accounts-permissions-and-process-credentials), [F04](feature-roadmap.md#f04-vfs-mounts-and-pseudo-filesystems) and [F34](feature-roadmap.md#f34-debugging-tracing-and-profiling). Stored capability bits do not establish support for an absent syscall or subsystem.
 
 ## Filesystem access and retained resources
 
@@ -48,7 +50,7 @@ Chroot changes the task's filesystem root without changing its current directory
 
 Signals check real/effective sender identities against real/saved target identities, with the same-session `SIGCONT` exception and same-thread-group behavior. Delivered `siginfo` records the sender's real UID. Process-group changes apply Linux parent/session/exec restrictions. Ptrace denies disallowed identity, dumpability and capability combinations before returning `ENOSYS` for the remaining unimplemented request.
 
-Unix pathname connection requires write permission on the socket inode. `SO_PEERCRED` reports the captured effective UID/GID and process ID from connection/listen or socketpair creation; subsequent identity changes do not rewrite the peer record. System V shared memory records owner and creator IDs, checks attachment/stat/control access and retains owner metadata through `IPC_SET`. The wider IPC flag and executable-mapping coverage remains in [F15](https://github.com/frankischilling/Axiom64/issues/15).
+Unix pathname connection requires write permission on the socket inode. `SO_PEERCRED` reports the captured effective UID/GID and process ID from connection/listen or socketpair creation; subsequent identity changes do not rewrite the peer record. System V shared memory records owner and creator IDs, checks attachment/stat/control access and retains owner metadata through `IPC_SET`. The wider IPC flag and executable-mapping coverage remains in [F15](feature-roadmap.md#f15-ipc-and-event-notification).
 
 ## Verification
 
@@ -67,6 +69,6 @@ Eight guest kernels cover static/dynamic musl, BIOS/UEFI and RAM/ext2. Actual ta
 
 Evidence uses `build/credentials-*.log`, `build/credentials-*-results.json`, `build/credentials-results.json` and guest ext2 images. CI retains native/guest results, fsck/inode logs and the credential disk/boot fixtures. The full existing ABI, threading, storage, networking and desktop gates remain required at the same tested tree.
 
-The fixture provides numeric identities and privileged test setup. It does not implement an account database, password authentication, a login/session manager, SSH or graphical remote access. Passing it completes a foundation for [#114](https://github.com/frankischilling/Axiom64/issues/114); the broader account, service and everyday VM requirements remain open. HP work follows completion of the required VM operating system and the project readiness review.
+The fixture provides numeric identities and privileged test setup. It does not implement an account database, password authentication, a login/session manager, SSH or graphical remote access. Passing it completes a foundation for credential enforcement; the broader account, service and everyday VM requirements remain open. HP work follows completion of the required VM operating system and the project readiness review.
 
 Linux behavior is checked against the pinned source's [identity syscalls](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/kernel/sys.c), [capability transitions](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/security/commoncap.c), [path permissions](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/fs/namei.c), [exec opening](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/fs/exec.c) and [mapped-file rights](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/mm/mmap.c), together with the recorded native kernel version.

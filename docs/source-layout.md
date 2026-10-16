@@ -11,8 +11,8 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/firmware/` | Bounded ACPI table parsing and QEMU generation-ID discovery |
 | `kernel/abi/linux/` | Linux syscall dispatch and ABI structures |
 | `kernel/mm/` | Physical and virtual memory |
-| `kernel/process/` | Tasks, scheduling, signals, futexes |
-| `kernel/fs/` | VFS, RAM filesystems, xattrs and advisory file locks; ext2 storage and EA codec have their own subfolder |
+| `kernel/process/` | Tasks, scheduling, signals, futexes, child-event waits and checked executable argument capture |
+| `kernel/fs/` | VFS, RAM filesystems, procfs process identity, xattrs and advisory file locks; ext2 storage and EA codec have their own subfolder |
 | `kernel/security/` | Task credential transitions and bounded file capability decoding |
 | `kernel/io/` | Retained blocking I/O requests |
 | `kernel/ipc/` | Sockets, readiness, shared memory |
@@ -29,6 +29,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/include/` | Public internal headers with matching module paths |
 | `kernel/tests/` | Host tests grouped by module; excluded from kernel linking |
 | `userspace/init/` | Ring 3 init |
+| `userspace/accounts/` | Account generations, administration, authentication, private sessions, login journals and archive rotation |
 | `userspace/services/` | Persisted seed ownership, rotation and recovery |
 | `userspace/desktop/` | Display sessions, Xorg and window-manager configuration |
 | `userspace/net/config/` | Ring 3 address/route adapter, ownership recovery, saved profiles, and resolver metadata |

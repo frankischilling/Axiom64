@@ -1114,6 +1114,26 @@
   ],
   "source_builds": [
     {
+      "name": "libxcrypt",
+      "version": "4.5.2",
+      "provides": [
+        "libcrypt.so.2",
+        "libcrypt.a",
+        "crypt.h"
+      ],
+      "recipe": "scripts/build_libxcrypt.py",
+      "providers": [
+        "build",
+        "runtime",
+        "native"
+      ],
+      "linkages": [
+        "static",
+        "dynamic"
+      ],
+      "status": "source-pinned"
+    },
+    {
       "name": "openssl",
       "version": "3.5.9",
       "provides": [

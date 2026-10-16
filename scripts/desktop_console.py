@@ -12,12 +12,15 @@ def acknowledgement(marker):
     return b"printf '%s%s\\n' " + prefix + b"_ " + suffix
 
 
-def desktop_test_command():
-    return (b"while ! test -f /tmp/xterm-ready; do sleep .1; done; "
-            b"/bin/x11-probe --desktop && " + acknowledgement(b"DESKTOP_INPUT_READY") + b"; "
-            b"while ! test -f /tmp/x11-input-pass; do sleep .1; done; " +
-            acknowledgement(b"X11_KEYBOARD_PASS") + b"; " +
-            acknowledgement(b"DESKTOP_CAPTURE_READY") + b"; sleep 2; " +
+def desktop_test_command(authenticated=False):
+    prefix = (b'/usr/bin/account-normal-observe identity && ' if authenticated else
+              b'while ! test -f /tmp/xterm-ready; do sleep .1; done; ')
+    following = b' && ' if authenticated else b'; '
+    return (prefix +
+            b"/bin/x11-probe --desktop && " + acknowledgement(b"DESKTOP_INPUT_READY") + following +
+            b"while ! test -f /tmp/x11-input-pass; do sleep .1; done" + following +
+            acknowledgement(b"X11_KEYBOARD_PASS") + following +
+            acknowledgement(b"DESKTOP_CAPTURE_READY") + following + b"sleep 2" + following +
             acknowledgement(b"NORMAL_BOOT_PASS") + b"\n")
 
 

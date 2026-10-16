@@ -345,6 +345,57 @@ static void error_tests(void) {
     puts("EXT2_BACKEND_ERROR_PASS");
 }
 
+static void recovery_tests(void) {
+    unsigned count = 0, repaired = 0;
+    for (char disk = 'a'; disk <= 'h'; disk++) {
+        char device[] = "/dev/vda";
+        device[7] = disk;
+        int fd = open(device, O_RDONLY);
+        if (fd < 0) {
+            CHECK(errno == ENOENT);
+            break;
+        }
+        char header[128] = {0};
+        CHECK(pread(fd, header, sizeof(header) - 1, 0) == sizeof(header) - 1 && close(fd) == 0);
+        int repair, expected, precheck;
+        unsigned free_blocks, free_inodes;
+        CHECK(sscanf(header, "AXIOM64_EXT2_RECOVER=%d,%d,%u,%u,%d", &repair, &expected,
+                     &free_blocks, &free_inodes, &precheck) == 5);
+        if (!repair) {
+            ERROR(mount(device, volume, "ext2", 0, NULL), precheck);
+            ERROR(mount(device, volume, "ext2", MS_RDONLY, NULL), precheck);
+            ERROR(mount(device, volume, "ext2", MS_RDONLY, "recovery=check"), precheck);
+            ERROR(mount(device, volume, "ext2", 0, "recovery=check"), expected);
+        } else {
+            ERROR(mount(device, volume, "ext2", 0, NULL), EUCLEAN);
+            ERROR(mount(device, volume, "ext2", MS_RDONLY, NULL), EUCLEAN);
+            ERROR(mount(device, volume, "ext2", MS_RDONLY, "recovery=check"), EUCLEAN);
+            CHECK(mount(device, volume, "ext2", 0, "recovery=check") == 0);
+            struct statfs before, after;
+            CHECK(statfs(volume, &before) == 0 && before.f_bfree == free_blocks &&
+                  before.f_ffree == free_inodes);
+            expect(open("/tmp/ext2-volume/seed.txt", O_RDONLY), "host-created seed\n");
+            fd = open("/tmp/ext2-volume/recovery-created", O_CREAT | O_EXCL | O_RDWR, 0640);
+            CHECK(fd >= 0 && write(fd, "reconciled", 10) == 10 && fsync(fd) == 0 && close(fd) == 0);
+            CHECK(unlink("/tmp/ext2-volume/recovery-created") == 0);
+            sync();
+            CHECK(statfs(volume, &after) == 0 && after.f_bfree == free_blocks &&
+                  after.f_ffree == free_inodes && umount(volume) == 0);
+            CHECK(mount(device, volume, "ext2", MS_RDONLY, NULL) == 0);
+            CHECK(statfs(volume, &after) == 0 && after.f_bfree == free_blocks &&
+                  after.f_ffree == free_inodes);
+            expect(open("/tmp/ext2-volume/seed.txt", O_RDONLY), "host-created seed\n");
+            CHECK(umount(volume) == 0);
+            repaired++;
+        }
+        count++;
+        printf("EXT2_RECOVERY_OBSERVATION disk=%c repaired=%d free_blocks=%u free_inodes=%u\n",
+               disk, repair, free_blocks, free_inodes);
+    }
+    CHECK(count > 0);
+    printf("EXT2_RECOVERY_PASS volumes=%u repaired=%u\n", count, repaired);
+}
+
 static void full_tests(void) {
     CHECK(mount("/dev/vda", volume, "ext2", 0, NULL) == 0);
     geometry();
@@ -413,6 +464,8 @@ int main(int argc, char** argv) {
         invalid_tests();
     else if (!strcmp(phase, "error"))
         error_tests();
+    else if (!strcmp(phase, "recovery"))
+        recovery_tests();
     else if (!strcmp(phase, "full"))
         full_tests();
     else

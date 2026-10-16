@@ -1,0 +1,8 @@
+[?2004hbash-5.2$exec pid=72 /usr/bin/xeyes (dynamic musl)
+exec pid=73 /usr/bin/xterm (dynamic musl)
+ unimplemented syscall 25 pid=73
+unimplemented syscall 25 pid=73
+exec pid=74 /usr/libexec/desktop-terminal (static ELF)
+exec pid=74 /bin/bash (dynamic musl)
+RANDOM_RESEEDED source=rdseed bits=256
+RANDOM_RESEEDED source=rdseed bits=256

@@ -10,8 +10,10 @@ void commit(const Credentials& proposed) {
         cred.user.filesystem != proposed.user.filesystem ||
         cred.group.effective != proposed.group.effective ||
         cred.group.filesystem != proposed.group.filesystem ||
-        (proposed.permitted & ~cred.permitted))
+        (proposed.permitted & ~cred.permitted)) {
         current->memory->dumpable = false;
+        current->parent_death_signal = 0;
+    }
     cred = proposed;
 }
 
@@ -149,6 +151,14 @@ int64_t credential_syscall(Frame* frame) {
     case 126:
         return capabilities(frame);
     case 157:
+        if (a == 1) {
+            if (frame->rsi > 64)
+                return -22;
+            current->parent_death_signal = int(frame->rsi);
+            return 0;
+        }
+        if (a == 2)
+            return space.copy_out(frame->rsi, &current->parent_death_signal, sizeof(int)) ? 0 : -14;
         if (a == 3)
             return current->memory->dumpable;
         if (a == 4) {

@@ -1,5 +1,11 @@
 * text=auto eol=lf
 *.iso binary
 *.cpio binary
+# Keep captured serial bytes, including CRLF and terminal escape sequences.
+scripts/tests/fixtures/normal-console/interrupted-prompt.txt -text -whitespace
+scripts/tests/fixtures/account-rotation-interrupted-data.txt -text -whitespace
+scripts/tests/fixtures/qmp-pre-greeting-resume.jsonl -text -whitespace
 # Preserve checked patch bytes and the whitespace required by unified context.
 vendor/musl/patches/*.patch -text -whitespace
+# Preserve pinned verification inputs and complete upstream license bytes.
+vendor/gnu-utmp-reader/* -text -whitespace

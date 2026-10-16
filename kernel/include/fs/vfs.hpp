@@ -91,6 +91,10 @@ struct FilesystemOps {
     int64_t (*listxattr)(Node*, void*, size_t, bool trusted) = nullptr;
     int (*setxattr)(Node*, const XattrName&, const void*, size_t, unsigned) = nullptr;
     int (*removexattr)(Node*, const XattrName&) = nullptr;
+    // Dynamic metadata and description-owned sequential-read snapshots.
+    void (*refresh)(Node*) = nullptr;
+    int64_t (*read_description)(Handle*, uint64_t, void*, size_t) = nullptr;
+    void (*close_description)(Handle*) = nullptr;
 };
 
 struct Mount {
@@ -107,6 +111,9 @@ struct Mount {
 extern const FilesystemOps ramfs_ops;
 
 Node* ramfs_root(Mount*, uint32_t);
+
+// Release an unlinked, unreferenced kernel-created character device.
+void ramfs_reclaim_device(Node*);
 
 struct Pipe {
     uint8_t bytes[16384];
@@ -134,6 +141,7 @@ struct Handle {
     Epoll* epoll = nullptr;
     uint64_t generation = 0;
     uint8_t file_lock = 0;
+    void* filesystem_data = nullptr;
     SocketTimeout receive_timeout{}, send_timeout{};
 };
 
@@ -162,7 +170,7 @@ int link_node(const Path&, const Path&, bool follow);
 
 int remove_node(const Path&, bool directory);
 
-int rename_node(const Path&, const Path&);
+int rename_node(const Path&, const Path&, bool no_replace = false);
 
 int mount_filesystem(const Path&, const Path&, const char*, uint64_t, bool check_dirty = false);
 
@@ -186,6 +194,7 @@ int node_chmod(Node*, uint32_t);
 int node_chown(Node*, uint32_t, uint32_t);
 
 int64_t node_read(Node*, uint64_t, void*, size_t);
+int64_t description_read(Handle*, uint64_t, void*, size_t);
 
 int node_readdir(Node*, uint64_t, DirectoryEntry&);
 
@@ -201,7 +210,7 @@ int node_stats(Node*, FilesystemStats&);
 
 bool node_referenced(Node*);
 
-Handle* open_handle(Node*, uint32_t);
+Handle* open_handle(Node*, uint32_t, int* error = nullptr);
 
 Handle* pipe_handle(Pipe*, bool);
 

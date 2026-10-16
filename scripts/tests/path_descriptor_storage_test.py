@@ -14,6 +14,22 @@ from fetch import ROOT
 from path_descriptor_test import execute
 
 
+def child_stopped(status):
+    try:
+        value = status.read_text()
+    except (FileNotFoundError, ProcessLookupError):
+        return True
+    return 'State:\tZ' in value
+
+
+def cleanup_child_group(parent, child):
+    try:
+        if os.getpgid(child) == parent:
+            os.killpg(parent, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix='path-descriptor-cancellation-', dir=ROOT / 'build') as name:
         directory = Path(name)
@@ -46,15 +62,14 @@ def main():
             parent, child = json.loads(marker.read_text())
             assert not Path('/proc/' + str(parent)).exists(), 'native parent was not reaped'
             status = Path('/proc/' + str(child) + '/status')
-            assert not status.exists() or 'State:\tZ' in status.read_text(), 'ordinary child remains live'
+            assert child_stopped(status), 'ordinary child remains live'
             assert (directory / 'execution.log').is_file()
         finally:
             sender.join(timeout=4)
             signal.signal(signal.SIGINT, previous)
             if marker.exists():
                 parent, child = json.loads(marker.read_text())
-                if Path('/proc/' + str(child)).exists() and os.getpgid(child) == parent:
-                    os.killpg(parent, signal.SIGKILL)
+                cleanup_child_group(parent, child)
     print('PATH_DESCRIPTOR_STORAGE_PASS parent_reaped=1 ordinary_child_stopped=1 log_retained=1')
 
 

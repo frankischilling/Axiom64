@@ -70,15 +70,35 @@ def management_volume(disk, journal):
     check_fs(disk, disk.parent, 'journal-created')
 
 
+def copy_device_bytes(source, destination, expected):
+    with source.open('rb') as incoming, destination.open('xb') as output:
+        shutil.copyfileobj(incoming, output)
+        output.flush()
+        os.fsync(output.fileno())
+    assert digest(destination) == expected
+
+
 @contextmanager
-def working_disk(retained):
+def working_disk(retained, *, prefer_memory=False):
     # Keep per-request device I/O on the Linux filesystem. The complete actual
     # guest disk is copied back, including after timeout or rejection.
     original = retained.lstat()
     identity = lambda value: (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns)
     if not stat.S_ISREG(original.st_mode) or original.st_nlink != 1:
         raise ValueError('the retained fixture must be a single-link regular file')
-    temporary = Path(tempfile.mkdtemp(prefix='axiom64-management-disk-', dir='/tmp'))
+    parent = Path('/tmp')
+    # The NBD backend owns its separate volatile cache and flush model. A small
+    # host-memory device file avoids unrelated physical-host sync latency while
+    # retaining the same actual guest writes across emulator/backend termination.
+    if prefer_memory and original.st_size <= 32 * 1024 * 1024:
+        memory = Path('/dev/shm')
+        try:
+            if (memory.is_dir() and not memory.is_symlink() and
+                    shutil.disk_usage(memory).free >= original.st_size + 16 * 1024 * 1024):
+                parent = memory
+        except OSError:
+            pass
+    temporary = Path(tempfile.mkdtemp(prefix='axiom64-management-disk-', dir=parent))
     disk = temporary / 'disk.raw'
     try:
         shutil.copyfile(retained, disk)
@@ -94,14 +114,16 @@ def working_disk(retained):
     finally:
         try:
             expected = digest(disk)
+            if temporary.parent == Path('/dev/shm'):
+                checkpoint = Path(tempfile.mkdtemp(prefix='axiom64-management-disk-', dir='/tmp'))
+                copy_device_bytes(disk, checkpoint / 'disk.raw', expected)
+                disk.unlink()
+                temporary.rmdir()
+                disk, temporary = checkpoint / 'disk.raw', checkpoint
             pending = retained.with_name(retained.name + '.pending-copy')
             if identity(retained.lstat()) != identity(original):
                 raise OSError(errno.ESTALE, 'the fixture destination changed')
-            with disk.open('rb') as source, pending.open('xb') as output:
-                shutil.copyfileobj(source, output)
-                output.flush()
-                os.fsync(output.fileno())
-            assert digest(pending) == expected
+            copy_device_bytes(disk, pending, expected)
             if identity(retained.lstat()) != identity(original):
                 raise OSError(errno.ESTALE, 'the fixture destination changed')
             os.replace(pending, retained)

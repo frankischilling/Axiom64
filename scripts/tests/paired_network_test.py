@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Check actual worker concurrency, isolated fixtures and failure evidence."""
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import tarfile
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'ci' / 'paired_network.py'
@@ -51,16 +53,67 @@ if settings['hang']:
 sys.exit(7 if settings['fail'] == args.linkage else 0)
 '''
 
+NORMAL_WORKER = '''import argparse, gzip, hashlib, json, pathlib, sys, time
+parser = argparse.ArgumentParser()
+parser.add_argument('--firmware')
+parser.add_argument('--transport')
+parser.add_argument('--root', default='both')
+parser.add_argument('--scenario', nargs='+', default=['no-nic','no-server','missing','healthy'])
+args = parser.parse_args()
+root = pathlib.Path.cwd()
+settings = json.loads((root / 'settings.json').read_text())
+barrier = pathlib.Path(settings['barrier'])
+worker = args.transport
+other = 'legacy' if worker == 'modern' else 'modern'
+build = root / 'build'
+build.mkdir(exist_ok=True)
+(barrier / worker).write_text('ready')
+deadline = time.monotonic() + 10
+while not (barrier / other).exists():
+    assert time.monotonic() < deadline, 'both transport workers must run at once'
+    time.sleep(.02)
+fixture = build / ('normal-init-login-' + worker)
+fixture.mkdir()
+data = {'root.cpio': b'root-' + worker.encode(), 'seed.raw': b'seed-' + worker.encode(),
+        'axiom64-normal-init-ram.iso': b'ram-' + worker.encode(),
+        'axiom64-normal-init-ext2.iso': b'ext2-' + worker.encode(),
+        'saved.raw.gz': gzip.compress(b'disk-' + worker.encode())}
+for name, value in data.items():
+    (fixture / name).write_bytes(value)
+for name in ('axiom64-normal-init-ram.iso','axiom64-normal-init-ext2.iso'):
+    (build / name).write_bytes(data[name])
+(build / 'root-disk.raw').write_bytes(data['seed.raw'])
+if settings.get('changed_alias') == worker:
+    (build / 'root-disk.raw').write_bytes(b'actual-rejected-seed-' + worker.encode())
+inputs = dict(image_sha256={key: hashlib.sha256(data['axiom64-normal-init-'+key+'.iso']).hexdigest()
+                           for key in ('ram','ext2')}, seed_sha256=hashlib.sha256(data['seed.raw']).hexdigest())
+(fixture / 'inputs.json').write_text(json.dumps(inputs))
+rows = [dict(scenario=scenario,firmware=args.firmware,transport=worker,root=kind,
+             passed=True,directory=str(fixture),acceleration=dict(used='tcg'))
+        for kind in (('ram','ext2') if args.root=='both' else (args.root,)) for scenario in args.scenario]
+if settings['normal_missing']:
+    rows.pop()
+(build / ('normal-init-'+args.firmware+'-results.json')).write_text(json.dumps(rows))
+print('completed ' + worker, flush=True)
+sys.exit(7 if settings['fail'] == worker else 0)
+'''
+
 
 class PairTest(unittest.TestCase):
-    def fixture(self, directory, fail=None, spawn=False, hang=False):
+    def fixture(self, directory, fail=None, spawn=False, hang=False, normal_missing=False, changed_alias=None):
         root = directory / 'source'
         (root / 'scripts').mkdir(parents=True)
         barrier = directory / 'barrier'
         barrier.mkdir()
         (root / 'settings.json').write_text(json.dumps(dict(barrier=str(barrier), fail=fail,
-                                                          spawn=spawn, hang=hang)))
+                                                          spawn=spawn, hang=hang,
+                                                          normal_missing=normal_missing,
+                                                          changed_alias=changed_alias)))
         (root / 'scripts' / 'manager_protocol_test.py').write_text(WORKER)
+        (root / 'scripts' / 'normal_manager_test.py').write_text(NORMAL_WORKER)
+        (root / 'build').mkdir()
+        (root / 'build/axiom64.elf').write_bytes(b'prepared-kernel')
+        (root / 'build/rootfs.cpio').write_bytes(b'prepared-production-root')
         archive = directory / 'inputs.tar.gz'
         with tarfile.open(archive, 'w:gz') as output:
             for source in root.iterdir():
@@ -96,6 +149,113 @@ class PairTest(unittest.TestCase):
 
     def test_static_failure_retains_both_workers_and_packet_evidence(self):
         self.check_pair('static')
+
+    def check_normal_pair(self, fail=None, missing=False):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            root, archive = self.fixture(directory, fail=fail, normal_missing=missing)
+            old = root / 'build' / 'normal-init-login-preexisting'
+            old.mkdir(parents=True)
+            (old / 'checkpoint').write_text('keep')
+            status = PAIRED.run_pair(root, archive, directory, 'normal-init-bios')
+            self.assertEqual(status, int(fail is not None or missing))
+            evidence = root / 'build' / 'paired-network' / 'normal-init-bios'
+            report = json.loads((evidence / 'results.json').read_text())
+            self.assertEqual(report['success'], status == 0)
+            self.assertEqual((old / 'checkpoint').read_text(), 'keep')
+            self.assertEqual(set(report['workers']), {'modern', 'legacy'})
+            for worker in ('modern', 'legacy'):
+                record = report['workers'][worker]
+                rows = json.loads((root / record['evidence'] / 'normal-init-bios-results.json').read_text())
+                self.assertEqual(len(rows), 7 if missing else 8)
+                self.assertEqual(record['returncode'], 7 if worker == fail else 0)
+                saved = record['fixtures']
+                self.assertTrue(saved)
+                for original, retained in saved.items():
+                    path = root / retained['path']
+                    self.assertTrue(path.is_file(), original)
+                    self.assertEqual(path.stat().st_size, retained['bytes'])
+                    self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), retained['sha256'])
+                self.assertFalse((root / 'build' / ('normal-init-login-' + worker)).exists())
+            self.assertFalse(Path(report['workers']['legacy']['workspace']).exists())
+            self.assertFalse((root / 'build/axiom64-normal-init-ram.iso').exists())
+            self.assertFalse((root / 'build/root-disk.raw').exists())
+
+    def test_normal_transports_retain_every_case_and_actual_fixture_in_isolated_workers(self):
+        self.check_normal_pair()
+
+    def test_normal_worker_failure_still_retains_both_complete_fixture_trees(self):
+        self.check_normal_pair(fail='legacy')
+
+    def test_normal_missing_case_is_failure_even_when_worker_exits_successfully(self):
+        self.check_normal_pair(missing=True)
+
+    def test_normal_workers_reject_different_prepared_inputs_before_booting(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            root, archive = self.fixture(directory)
+            (root / 'build/axiom64.elf').write_bytes(b'changed-kernel')
+            self.assertEqual(PAIRED.run_pair(root, archive, directory, 'normal-init-bios'), 1)
+            report = json.loads((root / 'build/paired-network/normal-init-bios/results.json').read_text())
+            self.assertFalse(report['success'])
+            self.assertIn('identical prepared kernel and root inputs', report['error'])
+            self.assertEqual(report['workers'], {})
+            self.assertFalse(any((directory / 'barrier').iterdir()))
+
+    def test_normal_retention_collision_keeps_both_existing_and_failed_fixture_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            root, archive = self.fixture(directory)
+            existing = root / 'build/normal-init-workers/normal-init-bios/legacy/normal-init-login-legacy'
+            existing.mkdir(parents=True)
+            (existing / 'checkpoint').write_text('keep-existing')
+            self.assertEqual(PAIRED.run_pair(root, archive, directory, 'normal-init-bios'), 1)
+            report = json.loads((root / 'build/paired-network/normal-init-bios/results.json').read_text())
+            self.assertFalse(report['success'])
+            self.assertEqual((existing / 'checkpoint').read_text(), 'keep-existing')
+            saved = report['workers']['legacy']['unverified_fixture_archive']
+            path = root / saved['path']
+            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), saved['sha256'])
+            with tarfile.open(path) as retained:
+                self.assertEqual(retained.extractfile('normal-init-login-legacy/seed.raw').read(), b'seed-legacy')
+            self.assertFalse(Path(report['workers']['legacy']['workspace']).exists())
+
+    def test_failed_report_copy_keeps_original_worker_workspace_and_fixtures(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            root, archive = self.fixture(directory)
+            copy = PAIRED.shutil.copy2
+
+            def reject_legacy_report(source, destination, *args, **kwargs):
+                if destination.parent.name == 'legacy' and source.name == 'normal-init-bios-results.json':
+                    raise OSError('owned report destination rejects copying')
+                return copy(source, destination, *args, **kwargs)
+
+            with patch.object(PAIRED.shutil, 'copy2', side_effect=reject_legacy_report):
+                self.assertEqual(PAIRED.run_pair(root, archive, directory, 'normal-init-bios'), 1)
+            report = json.loads((root / 'build/paired-network/normal-init-bios/results.json').read_text())
+            self.assertFalse(report['success'])
+            workspace = Path(report['preserved_temporary_workspace'])
+            self.assertTrue(workspace.is_dir())
+            original = workspace / 'build/normal-init-bios-results.json'
+            self.assertEqual(len(json.loads(original.read_text())), 8)
+            self.assertIn('rejects copying', report['capture_failures'][0])
+            for record in report['workers'].values():
+                for saved in record['fixtures'].values():
+                    self.assertEqual(hashlib.sha256((root / saved['path']).read_bytes()).hexdigest(), saved['sha256'])
+
+    def test_rejected_alias_is_kept_after_original_fixture_tree_already_moved(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            root, archive = self.fixture(directory, changed_alias='legacy')
+            self.assertEqual(PAIRED.run_pair(root, archive, directory, 'normal-init-bios'), 1)
+            report = json.loads((root / 'build/paired-network/normal-init-bios/results.json').read_text())
+            self.assertFalse(report['success'])
+            saved = report['workers']['legacy']['unverified_fixture_archive']
+            with tarfile.open(root / saved['path']) as retained:
+                self.assertEqual(retained.extractfile('root-disk.raw').read(), b'actual-rejected-seed-legacy')
+            original = root / 'build/normal-init-workers/normal-init-bios/legacy/normal-init-login-legacy/seed.raw'
+            self.assertEqual(original.read_bytes(), b'seed-legacy')
 
     def test_rejects_unknown_cells_before_creating_workspaces(self):
         for suite in ('boot', 'protocol-bios-modern-lane2', 'link-bios-modern-lane0-static', '../link'):

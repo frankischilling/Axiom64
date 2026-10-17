@@ -191,6 +191,10 @@ jobs:
           make -j2 build/tcp-timeout-native build/tcp-timeout-static build/tcp-timeout-dynamic
           make -j2 build/tcp-lifetime-native build/tcp-lifetime-static build/tcp-lifetime-dynamic
           make -j2 build/tcp-icmp-native build/tcp-icmp-static build/tcp-icmp-dynamic
+          make -j2 build/tcp-pmtu-native build/tcp-pmtu-static build/tcp-pmtu-dynamic
+          make -j2 build/tcp-pressure-native build/tcp-pressure-static build/tcp-pressure-dynamic
+          make -j2 build/tcp-reconnect-native build/tcp-reconnect-static build/tcp-reconnect-dynamic
+          make -j2 build/tcp-recovery-native build/tcp-recovery-static build/tcp-recovery-dynamic
           make build/init-supervision
       - name: Test split-queue ownership with sanitizers
         run: make test-virtqueue
@@ -203,7 +207,7 @@ jobs:
       - name: Test TCP wire, sender and connection policies with sanitizers
         run: |
           mkdir -p build/tcp-policy
-          make test-tcp-wire test-tcp-sender test-tcp-connection test-tcp-isn test-tcp-time-wait test-tcp-icmp 2>&1 | tee build/tcp-policy/host.log
+          make test-tcp-wire test-tcp-sender test-tcp-connection test-tcp-isn test-tcp-time-wait test-tcp-icmp test-tcp-pmtu 2>&1 | tee build/tcp-policy/host.log
       - name: Upload TCP policy evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -654,6 +658,7 @@ jobs:
         if: matrix.suite == 'tcp-lifetime-native'
         run: |
           sudo -n make test-tcp-lifetime-native
+          python3 scripts/tests/tcp_capture_clock_test.py build/tcp-lifetime-native-results.json --output build/tcp-lifetime-clock-results.json
           python3 scripts/tcp_lifetime/capture.py --report tcp-lifetime-native-results.json 2>&1 | tee build/tcp-lifetime-capture.log
           python3 scripts/tcp_lifetime/damaged.py 2>&1 | tee build/tcp-lifetime-damage.log
       - name: Observe complete default TCP lifetimes with both guest linkages and NICs
@@ -720,6 +725,7 @@ jobs:
         if: matrix.suite == 'tcp-fault-loss'
         run: |
           python3 scripts/tcp_fault_capture.py 2>&1 | tee build/tcp-fault-capture.log
+          python3 scripts/tests/tcp_capture_clock_test.py build/tcp-fault-native-results.json --output build/tcp-fault-clock-results.json
           python3 scripts/tests/tcp_fault_capture_test.py 2>&1 | tee build/tcp-fault-capture-checker.log
       - name: Compare receive reordering with isolated native Linux
         if: matrix.suite == 'tcp-fault-reordering'
@@ -786,6 +792,38 @@ jobs:
           make test-tcp-icmp-sockets
           python3 scripts/tcp_icmp_capture.py 2>&1 | tee build/tcp-icmp-capture.log
           python3 scripts/tests/tcp_icmp_capture_test.py 2>&1 | tee build/tcp-icmp-damage.log
+      - name: Verify PMTU recovery, rejected hints and complete driver captures
+        if: matrix.suite == 'tcp-fault-icmp'
+        run: |
+          sudo -n python3 scripts/packet_buffer_native.py
+          sudo -n make test-tcp-pmtu-native
+          make test-tcp-pmtu-sockets
+          python3 scripts/tcp_pmtu_capture.py build/tcp-pmtu-native-results.json --output build/tcp-pmtu-native-audit.json
+          python3 scripts/tcp_pmtu_capture.py build/tcp-pmtu-results.json --output build/tcp-pmtu-guest-audit.json
+          python3 scripts/tests/tcp_pmtu_capture_test.py 2>&1 | tee build/tcp-pmtu-damage.log
+      - name: Verify TCP admission, live companions and complete TIME-WAIT expiry
+        if: matrix.suite == 'tcp-fault-icmp'
+        run: |
+          sudo -n make test-tcp-pressure
+          python3 scripts/tcp_pressure_capture.py build/tcp-pressure-native-results.json --output build/tcp-pressure-native-audit.json
+          python3 scripts/tcp_pressure_capture.py build/tcp-pressure-results.json --output build/tcp-pressure-guest-audit.json
+          python3 scripts/tests/tcp_pressure_capture_test.py 2>&1 | tee build/tcp-pressure-damage.log
+      - name: Verify disconnect sequence isolation and completed tuple ownership
+        if: matrix.suite == 'tcp-fault-icmp'
+        run: |
+          sudo -n make test-tcp-reconnect-native
+          make test-tcp-reconnect-sockets
+          python3 scripts/tcp_reconnect_capture.py build/tcp-reconnect-native-results.json --output build/tcp-reconnect-native-audit.json
+          python3 scripts/tcp_reconnect_capture.py build/tcp-reconnect-results.json --output build/tcp-reconnect-guest-audit.json
+          python3 scripts/tests/tcp_reconnect_capture_test.py 2>&1 | tee build/tcp-reconnect-damage.log
+      - name: Verify TCP recovery across interface, route and physical link faults
+        if: matrix.suite == 'tcp-fault-icmp'
+        run: |
+          sudo -n make test-tcp-recovery-native
+          make test-tcp-recovery-sockets
+          python3 scripts/tcp_recovery_capture.py build/tcp-recovery-native-results.json --output build/tcp-recovery-native-audit.json
+          python3 scripts/tcp_recovery_capture.py build/tcp-recovery-results.json --output build/tcp-recovery-guest-audit.json
+          python3 scripts/tests/tcp_recovery_capture_test.py 2>&1 | tee build/tcp-recovery-damage.log
       - name: Test desktop serial acceptance decisions
         if: matrix.suite == 'boot'
         run: |
@@ -1069,6 +1107,7 @@ jobs:
             build/*.png
             build/*.dump
             build/tcp-*.pcap
+            build/tcp-*.clocks.jsonl
             build/tcp-fault-*-peer.json
             build/tcp-reordering-*-peer.json
             build/tcp-persist-*-peer.json
@@ -1081,6 +1120,32 @@ jobs:
             build/tcp-icmp-*-inputs.json
             build/tcp-icmp-*.txt
             build/tcp-icmp-damaged/**
+            build/tcp-pmtu-*-peer.json
+            build/tcp-pmtu-*-inputs.json
+            build/tcp-pmtu-*-audit.json
+            build/tcp-pmtu-damaged/**
+            build/tcp-pressure-*-peer.json
+            build/tcp-pressure-*-inputs.json
+            build/tcp-pressure-*-audit.json
+            build/tcp-pressure-damaged/**
+            build/tcp-reconnect-*-peer.json
+            build/tcp-reconnect-*-inputs.json
+            build/tcp-reconnect-*-audit.json
+            build/tcp-reconnect-*-queued-copy.json
+            build/tcp-reconnect-*-queued-copy-*.gdb
+            build/tcp-reconnect-*-queued-copy-*.log
+            build/tcp-reconnect-damaged/**
+            build/tcp-recovery-*-peer.json
+            build/tcp-recovery-*-inputs.json
+            build/tcp-recovery-*-audit.json
+            build/tcp-recovery-*-carrier.json
+            build/tcp-recovery-*-queue-*.json
+            build/tcp-recovery-*-queue-*.gdb
+            build/tcp-recovery-damaged/**
+            build/packet-buffer-*-inputs.json
+            build/packet-buffer-native
+            build/packet-buffer-static
+            build/packet-buffer-dynamic
       - name: Upload complete path-descriptor sources, products and filesystem evidence
         if: always() && matrix.suite == 'configuration'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1209,6 +1274,10 @@ jobs:
             build/axiom64-tcp-challenge-*.iso
             build/axiom64-tcp-lifetime-*.iso
             build/axiom64-tcp-icmp-*.iso
+            build/axiom64-tcp-pmtu-*.iso
+            build/axiom64-tcp-pressure-*.iso
+            build/axiom64-tcp-reconnect-*.iso
+            build/axiom64-tcp-recovery-*.iso
       - name: Upload credential filesystem and boot fixtures
         if: always() && matrix.suite == 'credentials'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

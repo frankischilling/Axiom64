@@ -47,9 +47,15 @@ void Retransmission::established(bool syn_retransmitted) {
 }
 
 Congestion::Congestion(uint32_t maximum_segment) {
-    mss = maximum_segment ? minimum(maximum_segment, 65535) : 536;
-    initial_window = minimum(4 * mss, maximum(2 * mss, 4380));
+    segment_size(maximum_segment ? maximum_segment : 536);
     congestion_window = initial_window;
+}
+
+void Congestion::segment_size(uint32_t maximum_segment) {
+    if (!maximum_segment)
+        return;
+    mss = minimum(maximum_segment, 65535);
+    initial_window = minimum(4 * mss, maximum(2 * mss, 4380));
 }
 
 void Congestion::loss_threshold(uint32_t flight) {

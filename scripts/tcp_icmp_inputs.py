@@ -7,7 +7,7 @@ import subprocess
 from fetch import ROOT, LOCK
 from build_musl import ensure, loader
 
-SOURCES = ('Makefile', 'userspace/tests/net/tcp_icmp.c', 'userspace/tests/net/tcp_icmp_cases.h',
+SOURCES = ('Makefile', 'scripts/tcp_capture_clock.py', 'scripts/tests/tcp_clock_mutations.py', 'userspace/tests/net/tcp_icmp.c', 'userspace/tests/net/tcp_icmp_cases.h',
            'scripts/tcp_icmp_peer.py', 'scripts/tcp_icmp_inputs.py', 'scripts/tcp_fault_test.py',
            'scripts/tcp_fault_native.py', 'kernel/net/tcp/icmp.cpp', 'kernel/include/net/tcp/icmp.hpp',
            'kernel/net/tcp/connection.cpp', 'kernel/include/net/tcp/connection.hpp',
@@ -20,8 +20,8 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def record(linkage, native=False, image=None, label=None):
-    binary = ROOT / 'build' / f'tcp-icmp-{linkage}'
+def record(linkage, native=False, image=None, label=None, program='tcp-icmp', sources=SOURCES):
+    binary = ROOT / 'build' / f'{program}-{linkage}'
     products = [binary]
     providers = {}
     if linkage != 'native':
@@ -40,10 +40,10 @@ def record(linkage, native=False, image=None, label=None):
             if not path.is_file():
                 raise ValueError(f'actual glibc library is missing: {name}')
             host_libraries[name] = dict(path=str(path), sha256=digest(path))
-    label = label or (f'tcp-icmp-linux-{linkage}' if native else f'tcp-icmp-{linkage}')
+    label = label or (f'{program}-linux-{linkage}' if native else f'{program}-{linkage}')
     value = dict(linkage=linkage, native=native,
                  compiler=subprocess.check_output(['gcc', '-dumpfullversion'], text=True).strip(),
-                 sources={name: digest(ROOT / name) for name in SOURCES},
+                 sources={name: digest(ROOT / name) for name in sources},
                  products={path.relative_to(ROOT).as_posix(): digest(path) for path in products},
                  providers=providers, host_libraries=host_libraries)
     path = ROOT / 'build' / (label + '-inputs.json')

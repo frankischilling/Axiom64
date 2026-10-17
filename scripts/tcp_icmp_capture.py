@@ -5,6 +5,7 @@ from collections import Counter, defaultdict, deque
 import hashlib
 import json
 from pathlib import Path
+from tcp_capture_clock import bind_native_clock, microseconds
 import re
 import struct
 from fetch import ROOT
@@ -31,7 +32,7 @@ def fnv(frame):
     return f'{result:016x}'
 
 
-def packets(path):
+def packets(path, statistics=None):
     raw = path.read_bytes()
     require(len(raw) >= 24 and raw[:4] == bytes.fromhex('d4c3b2a1'), 'PCAP header')
     header = struct.unpack_from('<IHHIIII', raw)
@@ -48,7 +49,7 @@ def packets(path):
         at += size
         if frame[12:14] != b'\x08\x00':
             continue
-        require(stamp >= previous, 'monotonic IPv4 PCAP receipt clock')
+        require(statistics is not None or stamp >= previous, 'monotonic IPv4 PCAP receipt clock')
         previous = stamp
         ip = frame[14:]
         require(len(ip) >= 20 and ip[0] == 0x45 and checksum(ip[:20]) == 0,
@@ -65,6 +66,8 @@ def packets(path):
             require(ip[9] == 1, 'only TCP and ICMP in the isolated fixture')
         rows.append(dict(stamp=stamp, frame=frame, ip=ip[:total], body=body, protocol=ip[9]))
     require(rows, 'nonempty actual traffic')
+    if statistics is not None:
+        bind_native_clock(path, rows, statistics)
     return rows
 
 
@@ -155,15 +158,15 @@ def verify_controls(packets, quotes, cases, native, windows):
                 require(selected, 'actual passive completion selects the expected request generation')
                 syn, opening = selected[0]
                 peer_syns = [(item, fields) for item, fields in incoming if fields['source'] == selected_port and
-                             fields['flags'] == 2 and item['stamp'] < syn['stamp']]
+                             fields['flags'] == 2 and microseconds(item) < microseconds(syn)]
                 require(peer_syns and opening['flags'] == 18 and opening['acknowledgment'] ==
                         (peer_syns[-1][1]['sequence'] + 1) & 0xffffffff,
                         'passive SYN-ACK acknowledges its actual selected peer SYN')
                 acknowledgments = [(item, fields) for item, fields in incoming if fields['source'] == selected_port and
                                    fields['flags'] == 16 and fields['acknowledgment'] ==
-                                   (opening['sequence'] + 1) & 0xffffffff and item['stamp'] > syn['stamp']]
+                                   (opening['sequence'] + 1) & 0xffffffff and microseconds(item) > microseconds(syn)]
                 require(acknowledgments and any(fields['target'] == selected_port and fields['data'] == b'P' and
-                                               item['stamp'] > acknowledgments[0][0]['stamp']
+                                               microseconds(item) > microseconds(acknowledgments[0][0])
                                                for item, fields in outgoing),
                         'accepted passive request completes the real handshake and sends application bytes')
                 if mode == 'PASSIVE_DROP':
@@ -174,21 +177,21 @@ def verify_controls(packets, quotes, cases, native, windows):
             syn, opening = syns[-1] if mode == 'RETRY' else syns[0]
             if mode == 'RETRY':
                 require(len({fields['sequence'] for _, fields in syns}) == 2 and
-                        syn['stamp'] > actual_quotes[0][0]['stamp'],
+                        microseconds(syn) > microseconds(actual_quotes[0][0]),
                         'retry creates a fresh sequence owner after consuming the actual failure')
             synacks = [(item, fields) for item, fields in incoming if fields['flags'] == 18 and
                        fields['acknowledgment'] == (opening['sequence'] + 1) & 0xffffffff and
-                       item['stamp'] > syn['stamp']]
+                       microseconds(item) > microseconds(syn)]
             require(synacks, f'successful control receives its actual owned SYN-ACK: lane={lane} case={case["name"]}')
             reply, reply_fields = synacks[0]
             origin = (opening['sequence'] + 1) & 0xffffffff
             peer_origin = (reply_fields['sequence'] + 1) & 0xffffffff
             require(any(fields['flags'] & 16 and fields['acknowledgment'] == peer_origin and
-                        fields['sequence'] == origin and item['stamp'] > reply['stamp']
+                        fields['sequence'] == origin and microseconds(item) > microseconds(reply)
                         for item, fields in outgoing), 'successful control acknowledges its real SYN-ACK')
             if mode == 'IGNORE':
-                require(reply['stamp'] - syn['stamp'] >= 350000 and
-                        reply['stamp'] > actual_quotes[0][0]['stamp'],
+                require(microseconds(reply) - microseconds(syn) >= 350000 and
+                        microseconds(reply) > microseconds(actual_quotes[0][0]),
                         'ignored quote preserves the socket until the delayed successful handshake')
             if mode in ('SOFT', 'RECOVER', 'CONSUME'):
                 data = [(item, fields) for item, fields in outgoing if fields['data'] == b'one']
@@ -197,18 +200,18 @@ def verify_controls(packets, quotes, cases, native, windows):
                         'actual outstanding bytes retain the configured delivery timeout')
                 if case['mutation'] == 'last-error':
                     require([item['body'][:2] for item, _ in actual_quotes] == [b'\x03\x03', b'\x0c\0'] and
-                            actual_quotes[1][0]['stamp'] - actual_quotes[0][0]['stamp'] >= 40000,
+                            microseconds(actual_quotes[1][0]) - microseconds(actual_quotes[0][0]) >= 40000,
                             'the later actual parameter error replaces the earlier port diagnostic')
                 if mode == 'RECOVER':
                     progress = [(item, fields) for item, fields in incoming if fields['data'] == b'K' and
                                 fields['sequence'] == peer_origin and fields['acknowledgment'] ==
-                                (origin + 3) & 0xffffffff and item['stamp'] > actual_quotes[0][0]['stamp']]
-                    require(len(progress) == 1 and progress[0][0]['stamp'] - data[0][0]['stamp'] >= 450000,
+                                (origin + 3) & 0xffffffff and microseconds(item) > microseconds(actual_quotes[0][0])]
+                    require(len(progress) == 1 and microseconds(progress[0][0]) - microseconds(data[0][0]) >= 450000,
                             'actual ACK progress and recovery byte follow the soft error')
                     second = [(item, fields) for item, fields in outgoing if fields['data'] == b'two']
                     require(second and all(fields['sequence'] == (origin + 3) & 0xffffffff and
                                            fields['acknowledgment'] == (peer_origin + 1) & 0xffffffff and
-                                           item['stamp'] > progress[0][0]['stamp'] for item, fields in second) and
+                                           microseconds(item) > microseconds(progress[0][0]) for item, fields in second) and
                             end - second[0][0]['driver_ms'] >= 2300,
                             'actual post-progress bytes remain outstanding until their new delivery timeout')
                     require(not any(fields['flags'] & 16 and fields['acknowledgment'] ==
@@ -219,10 +222,10 @@ def verify_controls(packets, quotes, cases, native, windows):
                 own_fin = tcp_fields(actual_quotes[0][1])
                 peer_fins = [(item, fields) for item, fields in incoming if fields['flags'] & 1 and
                              fields['acknowledgment'] == (own_fin['sequence'] + 1) & 0xffffffff and
-                             item['stamp'] < fin['stamp']]
+                             microseconds(item) < microseconds(fin)]
                 require(peer_fins and any(fields['flags'] == 16 and fields['acknowledgment'] ==
                                          (peer_fins[0][1]['sequence'] + 1) & 0xffffffff and
-                                         peer_fins[0][0]['stamp'] < item['stamp'] < fin['stamp']
+                                         microseconds(peer_fins[0][0]) < microseconds(item) < microseconds(fin)
                                          for item, fields in outgoing),
                         'actual FIN exchange and final ACK enter TIME_WAIT before the late ICMP')
 
@@ -247,11 +250,11 @@ def verify_companions(packets, text, cases):
                     'actual unrelated stream has independent guest and wrapped peer sequence owners')
             if role == 0:
                 require(own_syn[1]['flags'] == 2 and peer_syn[1]['flags'] == 18 and
-                        own_syn[0]['stamp'] < peer_syn[0]['stamp'] and peer_syn[1]['acknowledgment'] ==
+                        microseconds(own_syn[0]) < microseconds(peer_syn[0]) and peer_syn[1]['acknowledgment'] ==
                         (own_syn[1]['sequence'] + 1) & 0xffffffff, 'actual unrelated active handshake')
             else:
                 require(peer_syn[1]['flags'] == 2 and own_syn[1]['flags'] == 18 and
-                        peer_syn[0]['stamp'] < own_syn[0]['stamp'] and own_syn[1]['acknowledgment'] ==
+                        microseconds(peer_syn[0]) < microseconds(own_syn[0]) and own_syn[1]['acknowledgment'] ==
                         (peer_syn[1]['sequence'] + 1) & 0xffffffff, 'actual unrelated passive handshake')
             requests = [(item, fields) for item, fields in sent if fields['data']]
             replies = [(item, fields) for item, fields in received if fields['data']]
@@ -263,7 +266,7 @@ def verify_companions(packets, text, cases):
                         request_fields['sequence'] == (own_syn[1]['sequence'] + 1 + number) & 0xffffffff and
                         reply_fields['sequence'] == (peer_syn[1]['sequence'] + 1 + number) & 0xffffffff and
                         reply_fields['acknowledgment'] == (request_fields['sequence'] + 1) & 0xffffffff and
-                        request['stamp'] < reply['stamp'], 'actual exact unaffected stream through ICMP attacks')
+                        microseconds(request) < microseconds(reply), 'actual exact unaffected stream through ICMP attacks')
 
 
 def audit_inputs(inputs, input_root=None, host_libraries=None):
@@ -343,7 +346,8 @@ def audit_row(root, row, cases, input_root=None, host_libraries=None):
                 (0 <= int(elapsed) < 200 if accepted else 190 <= int(elapsed) < 1000),
                 f'measured Linux/guest quote policy: {case["name"]}')
         measured.append(dict(lane=int(lane), case=case['name'], error=int(error), elapsed_ms=int(elapsed)))
-    frames = [packets(root / name) for name in row['captures']]
+    frames = [packets(root / name, row['capture_statistics'][lane] if native else None)
+              for lane, name in enumerate(row['captures'])]
     require(len(frames) == 2, 'both actual Ethernet captures')
     peers = json.loads((root / row['peer']).read_text())
     require(len(peers) == 2 and {peer['lane'] for peer in peers} == {0, 1}, 'both independent peer records')
@@ -393,7 +397,7 @@ def audit_row(root, row, cases, input_root=None, host_libraries=None):
         if not native:
             require(int(index) == lane + 1, 'actual virtio/e1000 driver observer index')
     require(actual == expected and bool(actual), f'every independent IPv4 packet has its exact actual driver receipt: missing={list((expected-actual).items())[:4]} extra={list((actual-expected).items())[:4]}')
-    all_packets.sort(key=lambda item: item['stamp'])
+    all_packets.sort(key=microseconds)
     verify_companions(all_packets, text, cases)
     sent, quoted, cycle_syns, stale_quotes = [], Counter(), [[], []], Counter()
     quotes = defaultdict(list)
@@ -466,14 +470,14 @@ def audit_row(root, row, cases, input_root=None, host_libraries=None):
                         item['driver_ms'] >= int(ignored) and item['driver_ms'] <= int(end) + 100), None)
         require(current is not None, 'actual owned cycle failure follows the observed silence')
         require(int(start) - 100 <= syn['driver_ms'] <= int(ignored) and
-                current['stamp'] - syn['stamp'] >= 140000,
+                microseconds(current) - microseconds(syn) >= 140000,
                 'current-generation failure follows actual SYN and the complete silence interval')
         if number:
             stale = next((item for item, source in quotes[(lane, -1)] if
-                          source is cycle_syns[lane][number - 1] and syn['stamp'] < item['stamp'] < current['stamp']), None)
+                          source is cycle_syns[lane][number - 1] and microseconds(syn) < microseconds(item) < microseconds(current)), None)
             require(stale is not None, 'actual preceding-generation quote arrives during the new cycle')
             require(int(start) <= stale['driver_ms'] <= int(ignored) + 100 and
-                    current['stamp'] - stale['stamp'] >= 100000,
+                    microseconds(current) - microseconds(stale) >= 100000,
                     'actual stale receipt precedes the later current-generation failure')
     for lane, ordinal, _, elapsed, *_ in complete:
         if cases[int(ordinal)]['mode'] in ('SOFT', 'RECOVER', 'CONSUME'):

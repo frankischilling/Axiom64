@@ -3,14 +3,17 @@
 #include "process/task.hpp"
 
 namespace ax {
-constexpr unsigned packet_queue_size = 32, packet_sockets = 256;
+constexpr unsigned packet_queue_size = 256, packet_sockets = 256;
 constexpr size_t packet_queue_bytes = 65536;
+constexpr uint32_t packet_receive_max = 212992;
 
 struct PacketSocket {
     unsigned index = 0, head = 0, count = 0;
     uint16_t protocol = 0;
     bool used = false, ignore_outgoing = false;
     size_t bytes = 0;
+    unsigned queue_limit = 32;
+    uint32_t receive_limit = packet_queue_bytes;
     uint32_t packets = 0, dropped = 0;
     PacketFrame* queue[packet_queue_size]{};
 };
@@ -73,7 +76,8 @@ void packet_deliver(const NetInfo& info, const void* data, size_t length, unsign
             (type == 4 && socket.ignore_outgoing))
             continue;
         socket.packets++;
-        if (socket.count == packet_queue_size || length > packet_queue_bytes - socket.bytes) {
+        if (socket.count >= socket.queue_limit ||
+            length > socket.receive_limit - min(socket.bytes, size_t(socket.receive_limit))) {
             socket.dropped++;
             continue;
         }
@@ -176,6 +180,16 @@ int64_t packet_syscall(Task& task, const Frame& frame) {
     case 51:
         return output_address(task, socket, b, c);
     case 54: {
+        if (b == 1 && c == 8) { // SO_RCVBUF: Linux reports twice the bounded request.
+            uint32_t value;
+            if (frame.r8 < 4)
+                return -22;
+            if (!task.memory->space.copy_in(&value, d, 4))
+                return -14;
+            socket->receive_limit = max(min(value, packet_receive_max) * 2, uint32_t(2304));
+            socket->queue_limit = packet_queue_size;
+            return 0;
+        }
         if (b == 263 && c == 23) {
             int value;
             if (frame.r8 < 4)
@@ -198,8 +212,10 @@ int64_t packet_syscall(Task& task, const Frame& frame) {
                 values[0] = 3;
             else if (c == 4)
                 values[0] = 0;
-            else if (c == 7 || c == 8)
+            else if (c == 7)
                 values[0] = packet_queue_bytes;
+            else if (c == 8)
+                values[0] = socket->receive_limit;
             else if (c == 38)
                 values[0] = socket->protocol;
             else if (c == 39)

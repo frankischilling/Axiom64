@@ -5,6 +5,7 @@ import itertools
 import json
 from pathlib import Path
 from tcp_fault_capture import MASK, decode, packets, require
+from tcp_capture_clock import milliseconds
 from tcp_reordering_capture import verify as verify_order
 
 
@@ -46,8 +47,8 @@ def period(flow, native):
         require(any(not row['outgoing'] and row['flags'] & 16 and row['ack'] == acknowledgement and
                     not row['window'] for row in flow[begin + 1:end]),
                 'each continued probe receives a real zero-window acknowledgement')
-    times = [flow[index]['ms'] for index in probes]
-    previous = [flow[closed]['ms'], *times[:-1]]
+    times = [milliseconds(flow[index]) for index in probes]
+    previous = [milliseconds(flow[closed]), *times[:-1]]
     intervals = [now - then for then, now in zip(previous, times)]
     require((180 if native else 850) <= intervals[0] <= 5000 and
             all(now + 100 >= then * 1.6 and now <= then * 3 + 1000
@@ -56,14 +57,14 @@ def period(flow, native):
     return [round(value, 3) for value in intervals]
 
 
-def verify(path, lane, peer_rows, native=False):
-    result = verify_order(path, lane, peer_rows, native)
-    rows = packets(path, lane)
+def verify(path, lane, peer_rows, native=False, statistics=None):
+    result = verify_order(path, lane, peer_rows, native, statistics)
+    rows = packets(path, lane, statistics=statistics if native else None)
     records = []
     for record in peer_rows['frames']:
         row = decode(bytes.fromhex(record['frame']), lane)
         if row is not None:
-            records.append(dict(row, ms=record['ms']))
+            records.append(dict(row, ms=milliseconds(record)))
     checked = []
     for role in range(2):
         intervals = period([row for row in rows if row['role'] == role], native)
@@ -101,7 +102,8 @@ def check_results(directory):
             require(len(peers) == 2, 'both independent persist peer reports')
             for lane, name in enumerate(row['captures']):
                 require(Path(name).name == name, 'persist capture path bounds')
-                verified.append(verify(directory / name, lane, peers[lane], native))
+                verified.append(verify(directory / name, lane, peers[lane], native,
+                                       row['capture_statistics'][lane] if native else None))
     require(len(verified) == 22, 'all 22 persist captures')
     output = dict(captures=verified, flows=44, reports=reports, passed=True)
     (directory / 'tcp-persist-capture-results.json').write_text(json.dumps(output, indent=2) + '\n')

@@ -8,9 +8,9 @@ bool decode_icmp_error(const uint8_t* bytes, size_t length, IcmpError& result) {
         return false;
     int error = 0;
     bool abort_request = false;
+    bool too_big = bytes[0] == 3 && bytes[1] == 4;
     if (bytes[0] == 3 && bytes[1] < 16) {
-        // Linux IPv4 errno mappings. Fragmentation-needed belongs to PMTU recovery,
-        // not ordinary TCP failure delivery; that path is not implemented here.
+        // Fragmentation-needed carries a path limit rather than a fatal TCP error.
         constexpr int unreachable[] = {101, 113, 92,  111, 0,   95,  101, 112,
                                        64,  101, 113, 101, 113, 113, 113, 113};
         error = unreachable[bytes[1]];
@@ -22,7 +22,7 @@ bool decode_icmp_error(const uint8_t* bytes, size_t length, IcmpError& result) {
         error = 71;
         abort_request = true;
     }
-    if (!error)
+    if (!error && !too_big)
         return false;
     const auto quote = bytes + 8;
     size_t header = size_t(quote[0] & 15) * 4;
@@ -38,6 +38,27 @@ bool decode_icmp_error(const uint8_t* bytes, size_t length, IcmpError& result) {
               ip4::get16(quote + header + 2),
               error,
               abort_request};
+    result.too_big = too_big;
+    if (too_big) {
+        result.next_hop_mtu = ip4::get16(bytes + 6);
+        result.quoted_length = ip4::get16(quote + 2);
+    }
     return true;
+}
+
+uint16_t quoted_path_mtu(const IcmpError& quote) {
+    if (!quote.too_big)
+        return 0;
+    if (quote.next_hop_mtu)
+        return quote.next_hop_mtu >= 68 && quote.next_hop_mtu < quote.quoted_length
+                   ? quote.next_hop_mtu
+                   : 0;
+    // RFC 1191 plateaus make old-router notifications converge without increasing a limit.
+    constexpr uint16_t plateaus[] = {65535, 32000, 17914, 8166, 4352, 2002,
+                                     1492,  1006,  508,   296,  68};
+    for (auto mtu : plateaus)
+        if (mtu < quote.quoted_length)
+            return mtu;
+    return 0;
 }
 } // namespace ax::tcp

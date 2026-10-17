@@ -164,7 +164,9 @@ void Connection::abort(int error, bool send_reset) {
     status = State::closed;
     syn_pending = ack_pending = retransmit_pending = retransmit_active = false;
     delivery_active = false;
+    output_delayed = false;
     sample_pending = false;
+    resegmenting = false;
 }
 
 void Connection::quoted_error(uint32_t sequence, int error, bool abort_request) {
@@ -182,6 +184,21 @@ void Connection::quoted_error(uint32_t sequence, int error, bool abort_request) 
     // Default Linux TCP keeps established streams alive. SO_ERROR can consume
     // this diagnostic; otherwise delivery timeout promotes it to a hard error.
     soft_error = error;
+}
+
+bool Connection::reduce_mss(uint32_t sequence, uint16_t maximum_segment) {
+    if (!maximum_segment || maximum_segment >= mss || !syn_emitted || handshake() ||
+        status == State::closed || status == State::time_wait || send_unacknowledged == send_next ||
+        before(sequence, send_unacknowledged) || before(send_next, sequence))
+        return false;
+    candidate = Output::none;
+    mss = maximum_segment;
+    congestion.segment_size(mss);
+    resegment_next = send_unacknowledged;
+    resegment_end = send_next;
+    resegmenting = resegment_wait = true;
+    retransmit_pending = false;
+    return true;
 }
 
 void Connection::reset_reply(const Segment& segment) {
@@ -203,6 +220,9 @@ void Connection::challenge(uint64_t now) {
 
 void Connection::wait(uint64_t now) {
     status = State::time_wait;
+    output_delayed =
+        false; // A previous live-state delay cannot hide the final ACK from compaction.
+    resegmenting = false;
     expiration = after(now, 120000);
     retransmit_active = retransmit_pending = false;
     sample_pending = false;
@@ -280,6 +300,15 @@ void Connection::acknowledge(const Segment& segment, uint64_t now) {
     acknowledged_history += uint16_t(
         minimum(acknowledged - send_unacknowledged, uint32_t(UINT16_MAX - acknowledged_history)));
     send_unacknowledged = acknowledged;
+    if (resegmenting) {
+        if (!before(acknowledged, resegment_end))
+            resegmenting = false;
+        else {
+            if (resegment_wait || before(resegment_next, acknowledged))
+                resegment_next = acknowledged;
+            resegment_wait = false;
+        }
+    }
     congestion.acknowledged(bytes);
     if (!before(acknowledged, timeout_end))
         repeated_timeout = false;
@@ -501,9 +530,31 @@ bool Connection::oldest(Segment& segment) {
     return true;
 }
 
+bool Connection::resegment(Segment& segment) {
+    uint32_t allowance = minimum(uint32_t(peer_window), congestion.window());
+    uint32_t distance = resegment_next - send_unacknowledged;
+    if (distance >= allowance)
+        return false;
+    segment.sequence = resegment_next;
+    if (send_size && before(resegment_next, send_base + uint32_t(send_size))) {
+        size_t offset = uint32_t(resegment_next - send_base);
+        size_t length = minimum(size_t(mss), send_size - offset);
+        length = minimum(length, size_t(resegment_end - resegment_next));
+        payload(segment, offset, minimum(length, size_t(allowance - distance)));
+        segment.flags = ack | psh;
+    } else if (sent_fin && resegment_next == finish_sequence)
+        segment.flags = ack | fin;
+    else
+        return false;
+    return true;
+}
+
 bool Connection::next(uint64_t now, Segment& result) {
     candidate = Output::none;
     advance(now);
+    if (output_delayed && now < output_retry_at)
+        return false;
+    output_delayed = false;
     Segment segment{};
     segment.sequence = send_next;
     segment.acknowledgment = receive_next;
@@ -526,6 +577,10 @@ bool Connection::next(uint64_t now, Segment& result) {
             return false;
         candidate = Output::retransmit;
         timeout_candidate = !retransmit_pending;
+    } else if (resegmenting && before(resegment_next, resegment_end) && peer_window &&
+               (!resegment_wait || resegment_next == send_unacknowledged)) {
+        if (resegment(segment))
+            candidate = Output::resegment;
     } else if (!handshake() && status != State::time_wait) {
         uint32_t flight = send_next - send_unacknowledged;
         if (!flight && elapsed(now, last_send, timer.interval()))
@@ -539,11 +594,13 @@ bool Connection::next(uint64_t now, Segment& result) {
         bool fits = unsent <= space && (no_delay || !flight);
         bool significant = space >= (uint32_t(maximum_peer_window) + 1) / 2;
         bool override = elapsed(now, last_send, 200);
-        if (unsent && space && nagle && (full || fits || significant || override)) {
+        bool path_wait = resegmenting && resegment_wait;
+        if (!path_wait && unsent && space && nagle && (full || fits || significant || override)) {
             payload(segment, unsent_offset, minimum(minimum(size_t(mss), unsent), size_t(space)));
             segment.flags |= psh;
             candidate = Output::data;
-        } else if (write_closed && !sent_fin && unsent_offset == send_size && flight < allowance &&
+        } else if (!path_wait && write_closed && !sent_fin && unsent_offset == send_size &&
+                   flight < allowance &&
                    (status == State::established || status == State::close_wait)) {
             segment.flags |= fin;
             candidate = Output::finish;
@@ -567,11 +624,39 @@ bool Connection::next(uint64_t now, Segment& result) {
     return true;
 }
 
+void Connection::start_delivery(Output kind, uint64_t now) {
+    if (handshake() || kind == Output::response || kind == Output::acknowledgment)
+        return;
+    if (!send_size && write_closed && !sent_fin && !finish_waiting) {
+        progress_at = now; // Includes an empty FIN queued behind a closed window.
+        finish_waiting = true;
+    }
+    if (delivery_active)
+        return;
+    // Actual output attempts start delivery waiting, even when a local queue or route
+    // rejects them. Repeated attempts never renew this period or the user deadline.
+    delivery_at = now;
+    delivery_active = true;
+}
+
+void Connection::output_blocked(uint64_t now) {
+    if (candidate == Output::none)
+        return;
+    start_delivery(candidate, now);
+    candidate = Output::none;
+    // Local resource retries do not imply packet loss, consume sequence, or back off RTO.
+    output_retry_at = after(now, 200);
+    // Terminal replies stay visible until copied: the adapter reclaims closed
+    // endpoints and compacts TIME-WAIT only when next() has no pending output.
+    output_delayed = status != State::closed && status != State::time_wait;
+}
+
 void Connection::emitted(uint64_t now) {
     if (candidate == Output::none)
         return;
     Output kind = candidate;
     candidate = Output::none;
+    output_delayed = false;
     if (kind == Output::response) {
         response_pending = false;
         return;
@@ -580,16 +665,10 @@ void Connection::emitted(uint64_t now) {
         ack_pending = false;
     if (kind == Output::acknowledgment)
         return;
-    if (!handshake() && !delivery_active) {
-        // Failed enqueue never reaches this ownership boundary. Retries cannot
-        // restart an active period, including an unanswered zero-window probe.
-        delivery_at = now;
-        if (kind == Output::probe && !send_size && write_closed && !sent_fin)
-            progress_at = now; // An empty FIN queued behind a closed window is now being probed.
-        delivery_active = true;
-    }
+    start_delivery(kind, now);
     uint32_t end = produced.sequence + sequence_length(produced);
-    bool retransmitted = kind == Output::retransmit || (kind == Output::handshake && syn_emitted) ||
+    bool retransmitted = kind == Output::retransmit || kind == Output::resegment ||
+                         (kind == Output::handshake && syn_emitted) ||
                          (kind == Output::probe && before(produced.sequence, send_next));
     if (before(send_next, end))
         send_next = end;
@@ -602,8 +681,6 @@ void Connection::emitted(uint64_t now) {
         sent_fin = true;
         finish_sequence = produced.sequence;
         status = status == State::close_wait ? State::last_ack : State::fin_wait_1;
-        if (!send_size)
-            progress_at = now;
     }
     if (retransmitted)
         sample_pending = false;
@@ -617,7 +694,13 @@ void Connection::emitted(uint64_t now) {
         persist_at = after(now, persist_interval);
         return;
     }
+    if (kind == Output::resegment)
+        resegment_next = end;
     if (kind == Output::retransmit) {
+        if (resegmenting) {
+            resegment_next = end;
+            resegment_wait = true;
+        }
         retransmit_pending = false;
         if (timeout_candidate) {
             if (!handshake())

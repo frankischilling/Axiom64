@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tcp_capture import checksum
 from tcp_fault_capture import MASK, decode, verify as verify_loss
 from tcp_reordering_capture import verify
+from tcp_clock_mutations import candidate_verifier
 from tcp_fault_capture_test import records
 
 
@@ -42,18 +43,21 @@ def repair(frame):
     return frame
 
 
-def reject(path, lane, evidence, native):
+def reject(path, lane, evidence, native, check=verify, predecessor=verify_loss):
     # These damages preserve all old exact-byte/loss/checksum requirements.
     # Only the receive-ordering verifier must reject them.
-    verify_loss(path, lane, evidence, native)
+    predecessor(path, lane, evidence, native)
     try:
-        verify(path, lane, evidence, native)
+        check(path, lane, evidence, native)
     except ValueError:
         return
     raise AssertionError('damaged receive ordering was accepted')
 
 
-def mutations(path, lane, evidence, native, directory):
+def mutations(path, lane, evidence, native, directory, statistics=None):
+    checked = candidate_verifier(verify, path, statistics)
+    base_checked = candidate_verifier(verify_loss, path, statistics)
+
     data = path.read_bytes()
     endian, entries = records(data)
     rows = [(at, frame, decode(frame, lane)) for at, frame in entries]
@@ -65,7 +69,7 @@ def mutations(path, lane, evidence, native, directory):
     for at, frame, _ in segments[:2]:
         damaged, adjusted = replace(data, at, frame, None, evidence, endian)
         candidate.write_bytes(damaged)
-        reject(candidate, lane, adjusted, native)
+        reject(candidate, lane, adjusted, native, check=checked, predecessor=base_checked)
         count += 1
 
     # Remove the consistent overlap while retaining every unique stream byte.
@@ -77,7 +81,7 @@ def mutations(path, lane, evidence, native, directory):
     struct.pack_into('!I', modified, tcp_at + 4, (row['seq'] + 268) & MASK)
     damaged, adjusted = replace(data, at, frame, repair(modified), evidence, endian)
     candidate.write_bytes(damaged)
-    reject(candidate, lane, adjusted, native)
+    reject(candidate, lane, adjusted, native, check=checked, predecessor=base_checked)
     count += 1
 
     first, duplicate = segments[0][0], segments[1][0]
@@ -89,12 +93,12 @@ def mutations(path, lane, evidence, native, directory):
     struct.pack_into('!I', modified, tcp_at + 8, (origin + 536) & MASK)
     damaged, adjusted = replace(data, at, frame, repair(modified), evidence, endian)
     candidate.write_bytes(damaged)
-    reject(candidate, lane, adjusted, native)
+    reject(candidate, lane, adjusted, native, check=checked, predecessor=base_checked)
     count += 1
 
     damaged, adjusted = replace(data, at, frame, None, evidence, endian)
     candidate.write_bytes(damaged)
-    reject(candidate, lane, adjusted, native)
+    reject(candidate, lane, adjusted, native, check=checked, predecessor=base_checked)
     return count + 1
 
 
@@ -113,8 +117,9 @@ def main():
                 for lane, name in enumerate(row['captures']):
                     path = directory / name
                     native = report_name == 'tcp-reordering-native-results.json'
-                    assert verify(path, lane, peers[lane], native) == verified[name]
-                    negatives += mutations(path, lane, peers[lane], native, Path(temporary))
+                    statistics = row['capture_statistics'][lane] if native else None
+                    assert verify(path, lane, peers[lane], native, statistics) == verified[name]
+                    negatives += mutations(path, lane, peers[lane], native, Path(temporary), statistics=statistics)
                     captures += 1
     assert captures == 22 and negatives == 110
     print(f'TCP_REORDERING_CAPTURE_CHECKER_PASS captures={captures} negative_cases={negatives}')

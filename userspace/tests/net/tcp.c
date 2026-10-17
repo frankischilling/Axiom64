@@ -275,6 +275,98 @@ static void bindings(void) {
     puts("TCP_BINDINGS_PASS wildcard conflicts independent_udp_names errors");
 }
 
+static void reuse_bindings(void) {
+    unsigned count = 0;
+    for (unsigned addresses = 0; addresses < 4; addresses++)
+        for (unsigned listening = 0; listening < 2; listening++)
+            for (unsigned flags = 0; flags < 4; flags++) {
+                int first = socket(AF_INET, SOCK_STREAM, 0);
+                int second = socket(AF_INET, SOCK_STREAM, 0);
+                CHECK(first >= 0 && second >= 0);
+                int value = (flags & 1) != 0;
+                CHECK(setsockopt(first, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(value)) == 0);
+                value = (flags & 2) != 0;
+                CHECK(setsockopt(second, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(value)) == 0);
+                struct sockaddr_in local = {
+                    .sin_family = AF_INET,
+                    .sin_addr.s_addr = htonl(addresses & 1 ? INADDR_LOOPBACK : INADDR_ANY)};
+                CHECK(bind(first, (struct sockaddr*)&local, sizeof(local)) == 0);
+                socklen_t length = sizeof(local);
+                CHECK(getsockname(first, (struct sockaddr*)&local, &length) == 0 && local.sin_port);
+                if (listening)
+                    CHECK(listen(first, 4) == 0);
+                local.sin_addr.s_addr = htonl(addresses & 2 ? INADDR_LOOPBACK : INADDR_ANY);
+                errno = 0;
+                int bound = bind(second, (struct sockaddr*)&local, sizeof(local));
+                CHECK(flags == 3 && !listening ? bound == 0 : bound == -1 && errno == EADDRINUSE);
+                if (bound == 0) {
+                    // Reusable bindings can coexist before listen, but only one
+                    // overlapping socket can listen without SO_REUSEPORT.
+                    CHECK(listen(first, 4) == 0);
+                    errno = 0;
+                    CHECK(listen(second, 4) == -1 && errno == EADDRINUSE);
+                } else {
+                    struct sockaddr_in unbound;
+                    length = sizeof(unbound);
+                    CHECK(getsockname(second, (struct sockaddr*)&unbound, &length) == 0 &&
+                          !unbound.sin_port);
+                }
+                CHECK(close(first) == 0);
+                if (bound == -1)
+                    CHECK(bind(second, (struct sockaddr*)&local, sizeof(local)) == 0);
+                CHECK(listen(second, 4) == 0 && close(second) == 0);
+                count++;
+            }
+    CHECK(count == 32);
+    puts(
+        "TCP_REUSE_BINDINGS_PASS cases=32 wildcard explicit both_flags listener_conflict handover");
+}
+
+static void reuse_binding_transitions(void) {
+    unsigned count = 0;
+    for (unsigned addresses = 0; addresses < 4; addresses++)
+        for (unsigned flags = 0; flags < 4; flags++) {
+            int first = socket(AF_INET, SOCK_STREAM, 0);
+            int second = socket(AF_INET, SOCK_STREAM, 0);
+            CHECK(first >= 0 && second >= 0);
+            int value = 1;
+            CHECK(setsockopt(first, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(value)) == 0 &&
+                  setsockopt(second, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(value)) == 0);
+            struct sockaddr_in local = {.sin_family = AF_INET,
+                                        .sin_addr.s_addr =
+                                            htonl(addresses & 1 ? INADDR_LOOPBACK : INADDR_ANY)};
+            CHECK(bind(first, (struct sockaddr*)&local, sizeof(local)) == 0);
+            socklen_t length = sizeof(local);
+            CHECK(getsockname(first, (struct sockaddr*)&local, &length) == 0 && local.sin_port);
+            local.sin_addr.s_addr = htonl(addresses & 2 ? INADDR_LOOPBACK : INADDR_ANY);
+            CHECK(bind(second, (struct sockaddr*)&local, sizeof(local)) == 0);
+            value = (flags & 1) != 0;
+            CHECK(setsockopt(first, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(value)) == 0);
+            value = (flags & 2) != 0;
+            CHECK(setsockopt(second, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(value)) == 0);
+            errno = 0;
+            int result = listen(first, 4);
+            CHECK(flags == 3 ? result == 0 : result == -1 && errno == EADDRINUSE);
+            if (result == -1) {
+                value = 1;
+                CHECK(setsockopt(first, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(value)) == 0 &&
+                      setsockopt(second, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(value)) == 0 &&
+                      listen(first, 4) == 0);
+            }
+            // A failed first listen keeps its binding. Once listening, backlog
+            // updates do not compete for the already owned port again.
+            value = 0;
+            CHECK(setsockopt(first, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(value)) == 0 &&
+                  listen(first, 8) == 0);
+            errno = 0;
+            CHECK(listen(second, 4) == -1 && errno == EADDRINUSE);
+            CHECK(close(first) == 0 && listen(second, 4) == 0 && close(second) == 0);
+            count++;
+        }
+    CHECK(count == 16);
+    puts("TCP_REUSE_TRANSITIONS_PASS cases=16 changed_flags listener_conflict handover");
+}
+
 static void vectors(void) {
     int pair[2];
     pair_sockets(pair);
@@ -437,6 +529,7 @@ static void wait_all_signals(void) {
 
 struct RetainedRead {
     int fd;
+    int error;
     uint8_t bytes[8];
     struct iovec vectors[2];
     struct msghdr message;
@@ -448,6 +541,7 @@ static void* retained_reader(void* opaque) {
     struct RetainedRead* operation = opaque;
     atomic_store(&operation->entered, 1);
     operation->result = recvmsg(operation->fd, &operation->message, MSG_WAITALL);
+    operation->error = operation->result < 0 ? errno : 0;
     atomic_store(&operation->done, 1);
     return NULL;
 }
@@ -861,6 +955,7 @@ static size_t receive_pattern(int fd, size_t maximum) {
 
 struct RetainedSend {
     int fd, message;
+    int error;
     struct iovec vectors[2];
     struct msghdr header;
     ssize_t result;
@@ -873,6 +968,7 @@ static void* retained_sender(void* opaque) {
     operation->result = operation->message
                             ? sendmsg(operation->fd, &operation->header, MSG_NOSIGNAL)
                             : writev(operation->fd, operation->vectors, 2);
+    operation->error = operation->result < 0 ? errno : 0;
     atomic_store(&operation->done, 1);
     return NULL;
 }
@@ -1203,6 +1299,229 @@ static void connect_completions(void) {
          "blocking_completion already_connected");
 }
 
+static void disconnects(void) {
+    struct sockaddr unspec = {.sa_family = AF_UNSPEC};
+    for (unsigned short_address = 0; short_address < 2; short_address++) {
+        socklen_t disconnect_length = short_address ? sizeof(unspec.sa_family) : sizeof(unspec);
+        int fresh = socket(AF_INET, SOCK_STREAM, 0);
+        CHECK(fresh >= 0);
+        CHECK(connect(fresh, &unspec, 1) == -1 && errno == EINVAL);
+        CHECK(connect(fresh, NULL, disconnect_length) == -1 && errno == EFAULT);
+        CHECK(connect(fresh, &unspec, disconnect_length) == 0);
+        CHECK(send(fresh, "x", 1, MSG_NOSIGNAL) == -1 && errno == EPIPE);
+        CHECK(close(fresh) == 0);
+        for (unsigned explicit_binding = 0; explicit_binding < 2; explicit_binding++) {
+            struct sockaddr_in destination, binding = {0}, local, remote, before;
+            int listener = tcp_listener(&destination);
+            int fd = socket(AF_INET, SOCK_STREAM, 0);
+            CHECK(fd >= 0);
+            timeouts(fd);
+            if (explicit_binding) {
+                int temporary = tcp_listener(&binding);
+                CHECK(close(temporary) == 0 &&
+                      bind(fd, (struct sockaddr*)&binding, sizeof(binding)) == 0);
+            }
+            int value = 1;
+            CHECK(setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &value, sizeof(value)) == 0);
+            value = 5000;
+            CHECK(setsockopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &value, sizeof(value)) == 0);
+            CHECK(connect(fd, (struct sockaddr*)&destination, sizeof(destination)) == 0);
+            int peer = accept(listener, NULL, NULL);
+            CHECK(peer >= 0);
+            timeouts(peer);
+            unsigned char request = (unsigned char)(17 + short_address * 3 + explicit_binding),
+                          byte;
+            CHECK(send(fd, &request, 1, MSG_NOSIGNAL) == 1 && recv(peer, &byte, 1, 0) == 1 &&
+                  byte == request);
+            socklen_t length = sizeof(before);
+            CHECK(getsockname(fd, (struct sockaddr*)&before, &length) == 0 && before.sin_port);
+            int alias = dup(fd);
+            CHECK(alias >= 0 && connect(alias, &unspec, disconnect_length) == 0);
+            CHECK(recv(peer, &byte, 1, 0) == -1 && errno == ECONNRESET && close(peer) == 0);
+            length = sizeof(local);
+            CHECK(getsockname(fd, (struct sockaddr*)&local, &length) == 0 &&
+                  local.sin_port == before.sin_port &&
+                  local.sin_addr.s_addr == (explicit_binding ? binding.sin_addr.s_addr : 0));
+            length = sizeof(remote);
+            CHECK(getpeername(fd, (struct sockaddr*)&remote, &length) == -1 && errno == ENOTCONN);
+            if (short_address) {
+                byte = 0xa5;
+                CHECK(recv(fd, &byte, 1, MSG_DONTWAIT) == -1 && errno == ECONNRESET &&
+                      byte == 0xa5);
+            }
+            length = sizeof(value);
+            CHECK(getsockopt(fd, SOL_SOCKET, SO_ERROR, &value, &length) == 0 &&
+                  value == (short_address ? 0 : ECONNRESET));
+            CHECK(getsockopt(alias, SOL_SOCKET, SO_ERROR, &value, &length) == 0 && value == 0);
+            CHECK(send(fd, &request, 1, MSG_NOSIGNAL) == -1 && errno == EPIPE);
+            CHECK(getsockopt(alias, IPPROTO_TCP, TCP_NODELAY, &value, &length) == 0 && value == 1);
+            CHECK(getsockopt(alias, IPPROTO_TCP, TCP_USER_TIMEOUT, &value, &length) == 0 &&
+                  value == 5000);
+            CHECK(connect(fd, (struct sockaddr*)&destination, sizeof(destination)) == 0);
+            peer = accept(listener, NULL, NULL);
+            CHECK(peer >= 0);
+            timeouts(peer);
+            request ^= 0xa5;
+            CHECK(send(fd, &request, 1, MSG_NOSIGNAL) == 1 && recv(peer, &byte, 1, 0) == 1 &&
+                  byte == request && send(peer, &byte, 1, MSG_NOSIGNAL) == 1 &&
+                  recv(alias, &byte, 1, 0) == 1 && byte == request);
+            CHECK(connect(fd, &unspec, disconnect_length) == 0);
+            CHECK(recv(peer, &byte, 1, 0) == -1 && errno == ECONNRESET);
+            CHECK(close(peer) == 0 && close(fd) == 0 && close(alias) == 0 && close(listener) == 0);
+        }
+    }
+    puts("TCP_DISCONNECT_PASS cases=6 short_address bad_address shared_description reset reconnect "
+         "exact_bytes binding preserved_options consumed_error");
+}
+
+static void disconnect_reads(void) {
+    struct sockaddr unspec = {.sa_family = AF_UNSPEC};
+    for (unsigned mode = 0; mode < 4; mode++) {
+        unsigned partial = mode & 1, reuse = mode >> 1;
+        int pair[2];
+        pair_sockets(pair);
+        CHECK(fcntl(pair[1], F_SETFL, fcntl(pair[1], F_GETFL) & ~O_NONBLOCK) == 0);
+        timeouts(pair[1]);
+        struct sockaddr_in destination;
+        int listener = tcp_listener(&destination);
+        struct RetainedRead operation = {.fd = pair[1]};
+        operation.vectors[0] = (struct iovec){operation.bytes, 2};
+        operation.vectors[1] = (struct iovec){operation.bytes + 2, 6};
+        operation.message = (struct msghdr){.msg_iov = operation.vectors, .msg_iovlen = 2};
+        if (partial)
+            send_all(pair[0], (const uint8_t*)"part", 4);
+        pthread_t thread;
+        CHECK(pthread_create(&thread, NULL, retained_reader, &operation) == 0);
+        unsigned waits = 0;
+        int available = partial ? 4 : 0;
+        while (!atomic_load(&operation.entered) || available) {
+            CHECK(!atomic_load(&operation.done) && waits++ < 2000);
+            CHECK(ioctl(pair[1], FIONREAD, &available) == 0 && usleep(1000) == 0);
+        }
+        CHECK(usleep(50000) == 0 && !atomic_load(&operation.done));
+        CHECK(connect(pair[1], &unspec, sizeof(unspec)) == 0);
+        int next = -1;
+        if (reuse) {
+            CHECK(connect(pair[1], (struct sockaddr*)&destination, sizeof(destination)) == 0);
+            next = accept(listener, NULL, NULL);
+            CHECK(next >= 0);
+            timeouts(next);
+            send_all(next, (const uint8_t*)"fresh!!!", 8);
+        }
+        CHECK(pthread_join(thread, NULL) == 0);
+        CHECK(partial ? operation.result == 4 && operation.error == 0 &&
+                            !memcmp(operation.bytes, "part\0\0\0\0", 8)
+                      : operation.result == -1 && operation.error == EPIPE &&
+                            !memcmp(operation.bytes, "\0\0\0\0\0\0\0\0", 8));
+        int error = -1;
+        socklen_t length = sizeof(error);
+        if (reuse)
+            readable(pair[1]);
+        CHECK(ioctl(pair[1], FIONREAD, &available) == 0 && available == (reuse ? 8 : 0));
+        CHECK(getsockopt(pair[1], SOL_SOCKET, SO_ERROR, &error, &length) == 0 &&
+              error == (reuse ? 0 : ECONNRESET));
+        if (reuse) {
+            uint8_t bytes[8];
+            CHECK(recv(pair[1], bytes, sizeof(bytes), MSG_WAITALL) == 8 &&
+                  !memcmp(bytes, "fresh!!!", 8));
+            CHECK(connect(pair[1], &unspec, sizeof(unspec)) == 0 && close(next) == 0);
+        }
+        CHECK(close(pair[0]) == 0 && close(pair[1]) == 0 && close(listener) == 0);
+    }
+    puts("TCP_DISCONNECT_READ_PASS cases=4 blocked_vectors partial_prefix reused_description "
+         "new_stream_untouched retained_error");
+}
+
+static volatile sig_atomic_t disconnect_sigpipes;
+
+static void disconnect_pipe(int signal) {
+    (void)signal;
+    disconnect_sigpipes++;
+}
+
+static void disconnect_sends(void) {
+    const size_t size = 262149;
+    uint8_t* bytes = send_pattern(size);
+    uint8_t* inaccessible = guarded_buffer();
+    struct sigaction action = {0}, original_action;
+    action.sa_handler = disconnect_pipe;
+    CHECK(sigemptyset(&action.sa_mask) == 0 && sigaction(SIGPIPE, &action, &original_action) == 0);
+    for (unsigned message = 0; message < 2; message++)
+        for (unsigned mode = 0; mode < 4; mode++) {
+            unsigned progress = mode & 1, reuse = mode >> 1;
+            int pair[2];
+            limited_pair(pair);
+            timeouts(pair[0]);
+            struct sockaddr_in destination;
+            int listener = tcp_listener(&destination);
+            if (!progress) {
+                size_t filled = 0;
+                for (unsigned quiet = 0; quiet < 100;) {
+                    ssize_t count =
+                        send(pair[0], bytes + filled, size - filled, MSG_DONTWAIT | MSG_NOSIGNAL);
+                    if (count > 0) {
+                        filled += count;
+                        CHECK(filled < size);
+                        quiet = 0;
+                    } else {
+                        CHECK(count == -1 && errno == EAGAIN && usleep(1000) == 0);
+                        quiet++;
+                    }
+                }
+            }
+            struct RetainedSend operation = {.fd = pair[0], .message = (int)message};
+            if (progress) {
+                operation.vectors[0] = (struct iovec){bytes, 5000};
+                operation.vectors[1] = (struct iovec){bytes + 5000, size - 5000};
+            } else
+                operation.vectors[0] = (struct iovec){inaccessible + 4096, 16};
+            operation.header = (struct msghdr){.msg_iov = operation.vectors, .msg_iovlen = 2};
+            disconnect_sigpipes = 0;
+            pthread_t thread;
+            CHECK(pthread_create(&thread, NULL, retained_sender, &operation) == 0);
+            int available = 0;
+            for (unsigned waits = 0; !atomic_load(&operation.entered) || !available; waits++) {
+                CHECK(!atomic_load(&operation.done) && waits < 2000);
+                CHECK(ioctl(pair[1], FIONREAD, &available) == 0 && usleep(1000) == 0);
+            }
+            CHECK(usleep(50000) == 0 && !atomic_load(&operation.done));
+            struct sockaddr unspec = {.sa_family = AF_UNSPEC};
+            CHECK(connect(pair[0], &unspec, sizeof(unspec)) == 0);
+            int next = -1;
+            if (reuse) {
+                CHECK(connect(pair[0], (struct sockaddr*)&destination, sizeof(destination)) == 0);
+                next = accept(listener, NULL, NULL);
+                CHECK(next >= 0);
+                timeouts(next);
+            }
+            CHECK(pthread_join(thread, NULL) == 0);
+            CHECK(progress
+                      ? operation.result > 0 && (size_t)operation.result < size && !operation.error
+                      : operation.result == -1 &&
+                            (reuse ? operation.error == ECONNRESET || operation.error == EPIPE
+                                   : operation.error == ECONNRESET));
+            CHECK(disconnect_sigpipes ==
+                  (sig_atomic_t)(!message && operation.result == -1 && operation.error == EPIPE));
+            int error = -1;
+            socklen_t length = sizeof(error);
+            CHECK(getsockopt(pair[0], SOL_SOCKET, SO_ERROR, &error, &length) == 0 &&
+                  error == (progress && !reuse ? ECONNRESET : 0));
+            if (reuse) {
+                char actual[3];
+                CHECK(send(pair[0], "new", 3, MSG_NOSIGNAL) == 3 &&
+                      recv(next, actual, sizeof(actual), MSG_WAITALL) == 3 &&
+                      !memcmp(actual, "new", sizeof(actual)));
+                CHECK(ioctl(next, FIONREAD, &available) == 0 && available == 0);
+                CHECK(connect(pair[0], &unspec, sizeof(unspec)) == 0 && close(next) == 0);
+            }
+            CHECK(close(pair[0]) == 0 && close(pair[1]) == 0 && close(listener) == 0);
+        }
+    CHECK(sigaction(SIGPIPE, &original_action, NULL) == 0 && munmap(inaccessible, 4096) == 0);
+    free(bytes);
+    puts("TCP_DISCONNECT_SEND_PASS cases=8 unavailable_payload partial_prefix writev sendmsg "
+         "reused_stream error_ownership SIGPIPE MSG_NOSIGNAL");
+}
+
 static void connect_failures(void) {
     for (unsigned mode = 0; mode < 4; mode++) {
         unsigned diagnostic = mode & 1, explicit_binding = mode >> 1;
@@ -1494,6 +1813,97 @@ static uint8_t wire_byte(size_t position, unsigned lane, unsigned phase) {
     return pattern(position) ^ (phase * 73) ^ (lane * 11);
 }
 
+static void disconnect_waiters(void) {
+    struct sigaction action = {0}, original_action;
+    action.sa_handler = disconnect_pipe;
+    CHECK(sigemptyset(&action.sa_mask) == 0 && sigaction(SIGPIPE, &action, &original_action) == 0);
+    disconnect_sigpipes = 0;
+    struct sockaddr unspec = {.sa_family = AF_UNSPEC};
+    for (unsigned reuse = 0; reuse < 2; reuse++) {
+        struct PendingConnect group = pending_connect();
+        int fd = group.clients[group.count - 1];
+        CHECK(fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK) == 0);
+        int alias = dup(fd);
+        CHECK(alias >= 0);
+        struct sockaddr_in destination;
+        int listener = tcp_listener(&destination);
+        struct RetainedConnect operation = {.fd = alias, .destination = &group.destination};
+        pthread_t thread;
+        CHECK(pthread_create(&thread, NULL, retained_connector, &operation) == 0);
+        connect_waiting(&operation);
+        CHECK(connect(fd, &unspec, sizeof(unspec)) == 0);
+        int accepted = -1;
+        if (reuse) {
+            CHECK(connect(fd, (struct sockaddr*)&destination, sizeof(destination)) == 0);
+            accepted = accept(listener, NULL, NULL);
+            CHECK(accepted >= 0);
+        }
+        CHECK(pthread_join(thread, NULL) == 0 && operation.result == -1 &&
+              operation.error == EPIPE);
+        int error = -1;
+        socklen_t length = sizeof(error);
+        CHECK(getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &length) == 0 &&
+              error == (reuse ? 0 : ECONNRESET));
+        if (reuse) {
+            uint8_t actual[3];
+            send_all(alias, (const uint8_t*)"new", 3);
+            readable(accepted);
+            CHECK(recv(accepted, actual, sizeof(actual), 0) == 3 &&
+                  !memcmp(actual, "new", sizeof(actual)));
+            CHECK(connect(fd, &unspec, sizeof(unspec)) == 0 && close(accepted) == 0);
+        }
+        CHECK(close(alias) == 0 && close(listener) == 0);
+        for (unsigned at = 0; at < group.count; at++)
+            CHECK(close(group.clients[at]) == 0);
+        CHECK(close(group.listener) == 0);
+    }
+    for (unsigned reuse = 0; reuse < 2; reuse++) {
+        struct sockaddr_in address;
+        int listener = tcp_listener(&address);
+        timeouts(listener);
+        int expected = dup(listener);
+        CHECK(expected >= 0 && close(expected) == 0);
+        struct RetainedAccept operation = {.listener = listener};
+        pthread_t thread;
+        CHECK(pthread_create(&thread, NULL, retained_accept, &operation) == 0);
+        accept_waiting(&operation, expected);
+        CHECK(connect(listener, &unspec, sizeof(unspec)) == 0);
+        int client = -1;
+        if (reuse) {
+            CHECK(listen(listener, 2) == 0);
+            socklen_t length = sizeof(address);
+            CHECK(getsockname(listener, (struct sockaddr*)&address, &length) == 0);
+            client = socket(AF_INET, SOCK_STREAM, 0);
+            CHECK(client >= 0 && connect(client, (struct sockaddr*)&address, sizeof(address)) == 0);
+        }
+        CHECK(pthread_join(thread, NULL) == 0);
+        if (operation.result < 0)
+            CHECK(operation.result == -1 && operation.error == EINVAL);
+        else
+            CHECK(reuse);
+        if (reuse) {
+            int accepted = operation.result;
+            if (accepted < 0)
+                accepted = accept4(listener, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+            CHECK(accepted >= 0 && (fcntl(accepted, F_GETFD) & FD_CLOEXEC) &&
+                  (fcntl(accepted, F_GETFL) & O_NONBLOCK));
+            send_all(client, (const uint8_t*)"new", 3);
+            uint8_t actual[3];
+            readable(accepted);
+            CHECK(recv(accepted, actual, sizeof(actual), 0) == 3 &&
+                  !memcmp(actual, "new", sizeof(actual)));
+            CHECK(close(accepted) == 0 && close(client) == 0);
+        } else {
+            int probe = dup(listener);
+            CHECK(probe == expected && close(probe) == 0);
+        }
+        CHECK(close(listener) == 0);
+    }
+    CHECK(disconnect_sigpipes == 0 && sigaction(SIGPIPE, &original_action, NULL) == 0);
+    puts("TCP_DISCONNECT_WAITERS_PASS cases=4 pending_connect alias EPIPE no_SIGPIPE "
+         "accept_cancel relisten one_child flags descriptor_release exact_bytes");
+}
+
 static void wire_send(int fd, unsigned lane, unsigned phase) {
     uint8_t bytes[4096];
     for (size_t position = 0; position < payload_bytes; position += sizeof(bytes)) {
@@ -1579,8 +1989,32 @@ int main(int argc, char** argv) {
     }
     signal(SIGPIPE, SIG_IGN);
     alarm(60);
+    if (argc == 2 && !strcmp(argv[1], "--reuse-bind-check")) {
+        reuse_bindings();
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--reuse-bind-transition-check")) {
+        reuse_binding_transitions();
+        return 0;
+    }
     native =
         argc == 2 && (!strcmp(argv[1], "--native") || !strcmp(argv[1], "--connect-port-check"));
+    if (argc == 2 && !strcmp(argv[1], "--disconnect-check")) {
+        disconnects();
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--disconnect-read-check")) {
+        disconnect_reads();
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--disconnect-send-check")) {
+        disconnect_sends();
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--disconnect-waiter-check")) {
+        disconnect_waiters();
+        return 0;
+    }
     if (native && !strcmp(argv[1], "--connect-port-check")) {
         connect_failures();
         puts("TCP_AUTOMATIC_PORT_CHECK_PASS cases=4");
@@ -1588,6 +2022,8 @@ int main(int argc, char** argv) {
     }
     creation();
     bindings();
+    reuse_bindings();
+    reuse_binding_transitions();
     options();
     refused();
     vectors();
@@ -1608,10 +2044,14 @@ int main(int argc, char** argv) {
     receive_copy_faults();
     send_copy_faults();
     connect_completions();
+    disconnects();
+    disconnect_reads();
+    disconnect_sends();
     connect_failures();
     retained_connects();
     connect_signals();
     connect_deadlines();
+    disconnect_waiters();
     connection_cycles();
     fflush(stdout);
     loopback();

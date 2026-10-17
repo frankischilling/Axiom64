@@ -25,6 +25,9 @@ class HeldWriter:
         check(self.release.wait(10), 'bounded capture writer pause')
         return self.output.write(data)
 
+    def flush(self):
+        self.output.flush()
+
     def close(self):
         self.output.close()
 
@@ -106,6 +109,9 @@ def wall_step(directory, direction):
                 if index < 2:
                     events[index].set()
             return written
+
+        def flush(self):
+            self.output.flush()
 
         def close(self):
             self.output.close()

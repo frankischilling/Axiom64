@@ -7,6 +7,7 @@ import struct
 import sys
 import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tcp_clock_mutations import MutationClock, candidate_verifier
 from tcp_capture import checksum
 from tcp_fault_capture import decode, verify
 
@@ -21,27 +22,30 @@ def records(data):
     return endian, rows
 
 
-def rejected(path, lane, evidence, native):
+def rejected(path, lane, evidence, native, check=verify):
     try:
-        verify(path, lane, evidence, native=native)
+        check(path, lane, evidence, native=native)
     except (ValueError, struct.error):
         return
     raise AssertionError('damaged controlled TCP evidence was accepted')
 
 
-def mutations(path, lane, evidence, native, destination):
+def mutations(path, lane, evidence, native, destination, statistics=None):
+    checked = candidate_verifier(verify, path, statistics)
+    clock = MutationClock(path, statistics)
+
     data = path.read_bytes()
     endian, rows = records(data)
     tcp = [(at, frame, decode(frame, lane)) for at, frame in rows if decode(frame, lane) is not None]
     candidate = destination / path.name
     candidate.write_bytes(data[:-1])
-    rejected(candidate, lane, evidence, native)
+    rejected(candidate, lane, evidence, native, check=checked)
 
     at, frame, _ = tcp[0]
     damaged = bytearray(data)
     damaged[at + 16 + 14 + 10] ^= 1
     candidate.write_bytes(damaged)
-    rejected(candidate, lane, evidence, native)
+    rejected(candidate, lane, evidence, native, check=checked)
 
     syns = [(at, frame, row) for at, frame, row in tcp if row['outgoing'] and row['role'] == 0 and row['flags'] & 2]
     at, frame, _ = syns[1]
@@ -49,16 +53,16 @@ def mutations(path, lane, evidence, native, destination):
     adjusted = copy.deepcopy(evidence)
     matching = [index for index, row in enumerate(adjusted['frames']) if row['frame'] == frame.hex()]
     del adjusted['frames'][matching[-1]]
-    rejected(candidate, lane, adjusted, native)
+    rejected(candidate, lane, adjusted, native, check=checked)
 
     candidate.write_bytes(data)
     adjusted = copy.deepcopy(evidence)
     del next(row for row in adjusted['frames'] if row.get('drop') == 'data')['drop']
-    rejected(candidate, lane, adjusted, native)
+    rejected(candidate, lane, adjusted, native, check=checked)
 
     adjusted = copy.deepcopy(evidence)
     adjusted['lane'] ^= 1
-    rejected(candidate, lane, adjusted, native)
+    rejected(candidate, lane, adjusted, native, check=checked)
 
     at, frame, row = next(entry for entry in tcp if entry[2]['data'])
     modified = bytearray(frame)
@@ -74,13 +78,13 @@ def mutations(path, lane, evidence, native, destination):
     candidate.write_bytes(data[:at + 16] + modified + data[at + 16 + len(frame):])
     adjusted = copy.deepcopy(evidence)
     next(record for record in adjusted['frames'] if record['frame'] == frame.hex())['frame'] = modified.hex()
-    rejected(candidate, lane, adjusted, native)
+    rejected(candidate, lane, adjusted, native, check=checked)
 
     damaged = bytearray(data)
-    first_seconds, first_micros = struct.unpack_from(endian + 'II', data, syns[0][0])
-    struct.pack_into(endian + 'II', damaged, syns[1][0], first_seconds, first_micros)
+    stamp = round(clock.pcap_ms(syns[1][0], clock.milliseconds(syns[0][0])) * 1000)
+    struct.pack_into(endian + 'II', damaged, syns[1][0], stamp // 1000000, stamp % 1000000)
     candidate.write_bytes(damaged)
-    rejected(candidate, lane, evidence, native)
+    rejected(candidate, lane, evidence, native, check=checked)
     return 7
 
 
@@ -103,8 +107,9 @@ def main():
                 for lane, capture in enumerate(row['captures']):
                     path = directory / capture
                     native = name == 'tcp-fault-native-results.json'
-                    assert verify(path, lane, peers[lane], native=native) == captures_verified[lane]
-                    negatives += mutations(path, lane, peers[lane], native, Path(temporary))
+                    statistics = row['capture_statistics'][lane] if native else None
+                    assert verify(path, lane, peers[lane], native=native, statistics=statistics) == captures_verified[lane]
+                    negatives += mutations(path, lane, peers[lane], native, Path(temporary), statistics=statistics)
                     captures += 1
     assert captures
     print(f'TCP_FAULT_CAPTURE_CHECKER_PASS captures={captures} negative_cases={negatives}')

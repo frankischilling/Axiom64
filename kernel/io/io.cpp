@@ -41,6 +41,7 @@ struct IoRequest {
     bool timed, stream_blocking;
     int connect_error;
     uint64_t deadline;
+    uint64_t inet_generation;
     PacketAddress destination;
     unsigned destination_index;
     InetAddress inet_destination;
@@ -262,10 +263,18 @@ static int prepare(Task& task, IoRequest& request) {
     }
     if (f.rax == 42 && inet_stream(request.handle->inet)) {
         request.connect = request.write = true;
-        if (f.rdx < sizeof(InetAddress))
+        if (f.rdx < sizeof(uint16_t))
             return -22;
-        if (!task.memory->space.copy_in(&request.inet_destination, f.rsi, sizeof(InetAddress)))
+        request.inet_destination = {};
+        if (!task.memory->space.copy_in(&request.inet_destination.family, f.rsi, sizeof(uint16_t)))
             return -14;
+        // AF_UNSPEC disconnect imports only the family, including a two-byte address.
+        if (request.inet_destination.family) {
+            if (f.rdx < sizeof(InetAddress))
+                return -22;
+            if (!task.memory->space.copy_in(&request.inet_destination, f.rsi, sizeof(InetAddress)))
+                return -14;
+        }
         return 0;
     }
     if (request.handle->socket && request.handle->socket->type != 1)
@@ -589,6 +598,18 @@ static int64_t eventfd_attempt(Task& task, IoRequest& request) {
 static int64_t attempt(Task& task, IoRequest& request) {
     auto h = request.handle;
     const auto& f = request.call;
+    // A disconnected stream may already have a successor on this description.
+    // Preserve the old call's prefix without touching the successor or its error.
+    if (inet_stream(h->inet) && !request.accept &&
+        request.inet_generation != tcp_generation(h->inet)) {
+        if (request.progress)
+            return int64_t(request.progress);
+        bool sending = request.write && !request.connect;
+        int error = sending ? tcp_cancelled_write_error(h->inet) : 32;
+        if (error == 32 && sending && !(request.socket && (request.flags & 0x4000)))
+            queue_signal(&task, 13, task.process->pid);
+        return -error;
+    }
     if (h->event && !request.locking)
         return eventfd_attempt(task, request);
     if (request.connect) {
@@ -742,6 +763,7 @@ int64_t io_syscall(Task& task, const Frame& frame) {
     retain(h);
     int error = prepare(task, *request);
     if (!error) {
+        request->inet_generation = tcp_generation(h->inet);
         // Linux captures O_NONBLOCK for this call; an alias cannot alter a retained cursor.
         request->stream_blocking =
             (inet_stream(h->inet) || h->event) && !(h->flags & 04000) && !(request->flags & 0x40);

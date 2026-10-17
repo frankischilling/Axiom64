@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import struct
 from tcp_capture import checksum
+from tcp_capture_clock import bind_native_clock, milliseconds
 
 BYTES = 65536
 MASK = (1 << 32) - 1
@@ -52,7 +53,7 @@ def decode(frame, lane, ports=None):
                 flags=bits & 0x1ff, window=window, data=tcp[length:], frame=frame)
 
 
-def packets(path, lane, ports=None):
+def packets(path, lane, ports=None, statistics=None):
     data = path.read_bytes()
     require(len(data) >= 24 and data[:4] in (bytes.fromhex('d4c3b2a1'), bytes.fromhex('a1b2c3d4')),
             'independent PCAP magic')
@@ -69,9 +70,12 @@ def packets(path, lane, ports=None):
         row = decode(data[offset:offset + size], lane, ports)
         offset += size
         if row is not None:
+            row['stamp'] = seconds * 1000000 + micros
             row['ms'] = seconds * 1000 + micros / 1000
             rows.append(row)
     require(rows, 'independent PCAP contains actual TCP')
+    if statistics is not None:
+        bind_native_clock(path, rows, statistics)
     return rows
 
 
@@ -91,8 +95,9 @@ def stream(rows, origin, lane, role, direction):
     return hashlib.sha256(values).hexdigest()
 
 
-def verify(path, lane, peer_rows, native=False):
-    rows = packets(path, lane)
+def verify(path, lane, peer_rows, native=False, statistics=None):
+    require(not native or statistics is not None, 'native loss capture has independent clock receipts')
+    rows = packets(path, lane, statistics=statistics if native else None)
     require(peer_rows['lane'] == lane, 'independent peer lane identity')
     actual, reported, records = Counter(row['frame'] for row in rows), Counter(), []
     for record in peer_rows['frames']:
@@ -126,13 +131,14 @@ def verify(path, lane, peer_rows, native=False):
                     row['seq'] == dropped['seq'] and row['data'] == dropped['data'] and
                     (row['flags'] & 3) == (dropped['flags'] & 3)]
             require(len(same) >= 2 and same[0][0] is record, 'independent lost sequence/bytes were retransmitted')
-            elapsed = same[1][0]['ms'] - record['ms']
+            elapsed = milliseconds(same[1][0]) - milliseconds(record)
             minimum = (180 if native else 850) if record['drop'] == 'fin' else (2850 if record['drop'] == 'data' else 850)
             require(elapsed >= minimum, 'independent retry elapsed clock')
-            # PCAP and endpoint monotonic clocks must establish the same real wait.
+            # Native receipt and endpoint clocks establish the same elapsed wait.
+            # Original realtime PCAP timestamps remain unchanged.
             captured = [row for row in guest if row['seq'] == dropped['seq'] and
                         row['data'] == dropped['data'] and (row['flags'] & 3) == (dropped['flags'] & 3)]
-            require(len(captured) >= 2 and captured[1]['ms'] - captured[0]['ms'] >= minimum - 5,
+            require(len(captured) >= 2 and milliseconds(captured[1]) - milliseconds(captured[0]) >= minimum - 5,
                     'independent capture confirms elapsed retry')
             occurrences = [index for index, row in enumerate(flow) if row is captured[0] or row is captured[1]]
             require(len(occurrences) == 2, 'independent loss/retry capture ordering')
@@ -151,7 +157,7 @@ def verify(path, lane, peer_rows, native=False):
         results.append(dict(role=role, bytes_each=BYTES, guest_sha256=guest_hash, peer_sha256=peer_hash,
                             sequence_wrap=True, retries_ms=retries, passed=True))
     return dict(file=path.name, lane=lane, sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
-                packets=len(rows), flows=results, passed=True)
+                packets=len(rows), flows=results, timing_clock='monotonic' if native else 'pcap', passed=True)
 
 
 def check_results(directory):
@@ -180,7 +186,8 @@ def check_results(directory):
             for lane, capture in enumerate(row['captures']):
                 require(Path(capture).name == capture, 'bounded independent PCAP path')
                 captures.append(verify(directory / capture, lane, peers[lane],
-                                       native=name == 'tcp-fault-native-results.json'))
+                                       native=name == 'tcp-fault-native-results.json',
+                                       statistics=row['capture_statistics'][lane] if name == 'tcp-fault-native-results.json' else None))
                 count += 1
             verified.append(dict(report=name, report_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
                                  linkage=row['linkage'], firmware=row.get('firmware'),

@@ -34,6 +34,8 @@ struct Output {
     uint32_t next_hop = 0;
     uint64_t expires = 0;
     bool ethernet_ready = false, local = false;
+    bool submitting = false, discard_pending = false;
+    int deferred_error = 0;
 };
 
 struct Selection {
@@ -70,6 +72,14 @@ static bool directed_broadcast(const Ipv4Config& config, uint32_t address) {
 }
 
 static void clear(Output& item, int error = 0) {
+    // Submission polls receive callbacks before copying this buffer. A callback
+    // can cancel the queued packet, but cannot release its borrowed storage yet.
+    if (item.submitting) {
+        item.discard_pending = true;
+        if (!item.deferred_error)
+            item.deferred_error = error;
+        return;
+    }
     if (item.owner) {
         inet_reclaim(item.owner, ip4::get16(item.bytes + ethernet_header + 2));
         if (error)
@@ -544,7 +554,7 @@ int ipv4_send(InetSocket* owner, uint32_t source, uint32_t destination, unsigned
     ip[0] = 0x45;
     ip4::put16(ip + 2, 20 + length);
     ip4::put16(ip + 4, ++identifier);
-    ip4::put16(ip + 6, 0x4000);
+    ip4::put16(ip + 6, inet_dont_fragment(owner) ? 0x4000 : 0);
     ip[8] = ttl;
     ip[9] = protocol;
     ip4::put32(ip + 12, route.source);
@@ -570,6 +580,14 @@ void ipv4_detach_owner(InetSocket* owner) {
     for (auto& item : output)
         if (item.owner == owner)
             item.owner = nullptr;
+}
+
+void ipv4_discard_oversized(InetSocket* owner, uint16_t mtu) {
+    if (!owner || mtu < 68)
+        return;
+    for (auto& item : output)
+        if (item.owner == owner && item.bytes && ip4::get16(item.bytes + ethernet_header + 2) > mtu)
+            clear(item);
 }
 
 void ipv4_receive(const NetInfo& info, const void* data, size_t length) {
@@ -618,8 +636,10 @@ void ipv4_poll() {
         if (!item.bytes)
             continue;
         if (item.local) {
+            item.submitting = true;
             input(item.index, item.bytes + ethernet_header, item.length - ethernet_header);
-            clear(item);
+            item.submitting = false;
+            clear(item, item.deferred_error);
             continue;
         }
         auto info = net_info(item.index);
@@ -643,8 +663,17 @@ void ipv4_poll() {
             item.ethernet_ready = true;
             neighbor->touched = ticks;
         }
+        item.submitting = true;
         int error = net_send(item.index, item.bytes, item.length);
-        if (error != -11)
+        item.submitting = false;
+        if (item.discard_pending) {
+            int failure = item.deferred_error;
+            // Obsolete packet size and queue pressure do not fail a recovered TCP
+            // stream. Preserve independent device or route failures.
+            if (!failure && error < 0 && error != -11 && error != -90)
+                failure = -error;
+            clear(item, failure);
+        } else if (error != -11)
             clear(item, error < 0 ? -error : 0);
     }
     polling = false;

@@ -10,13 +10,17 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tcp_fault_capture import MASK, decode
+from tcp_clock_mutations import MutationClock, candidate_verifier
 from tcp_fault_capture_test import records
 from tcp_reordering_capture_test import repair
 from tcp_old_ack_capture_test import replace
 from tcp_challenge_capture import verify
 
 
-def mutations(path, lane, evidence, native, directory):
+def mutations(path, lane, evidence, native, directory, statistics=None):
+    checked = candidate_verifier(verify, path, statistics)
+    clock = MutationClock(path, statistics)
+
     data = path.read_bytes()
     endian, entries = records(data)
     rows = [(at, frame, decode(frame, lane)) for at, frame in entries]
@@ -27,7 +31,7 @@ def mutations(path, lane, evidence, native, directory):
         nonlocal count
         candidate.write_bytes(damaged)
         try:
-            verify(candidate, lane, adjusted, native)
+            checked(candidate, lane, adjusted, native)
         except ValueError:
             count += 1
             return
@@ -73,8 +77,7 @@ def mutations(path, lane, evidence, native, directory):
         at, frame, _ = triggers[1]
         adjusted = copy.deepcopy(evidence)
         adjusted['frames'][evidence_index(triggers[1])]['ms'] = evidence['frames'][index]['ms'] + 100
-        seconds, micros = struct.unpack_from(endian + 'II', data, responses[0][0])
-        stamp = seconds * 1000000 + micros + 100000
+        stamp = round(clock.pcap_ms(at, clock.milliseconds(responses[0][0]) + 100) * 1000)
         damaged = bytearray(data)
         struct.pack_into(endian + 'II', damaged, at, stamp // 1000000, stamp % 1000000)
         reject(damaged, adjusted)
@@ -105,8 +108,9 @@ def main():
                 peers = json.loads((directory / row['peer']).read_text())
                 for lane, name in enumerate(row['captures']):
                     path = directory / name
-                    assert verify(path, lane, peers[lane], native) == verified[name]
-                    negatives += mutations(path, lane, peers[lane], native, Path(temporary))
+                    statistics = row['capture_statistics'][lane] if native else None
+                    assert verify(path, lane, peers[lane], native, statistics) == verified[name]
+                    negatives += mutations(path, lane, peers[lane], native, Path(temporary), statistics=statistics)
                     captures += 1
     assert captures == 22 and negatives == 1760
     print(f'TCP_CHALLENGE_CAPTURE_CHECKER_PASS captures={captures} negative_cases={negatives}')

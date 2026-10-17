@@ -42,6 +42,8 @@ class Congestion {
     void timeout(uint32_t flight, bool repeated = false);
     void established(bool syn_retransmitted);
     void idle();
+    // Preserve congestion and recovery state when the path changes packet size.
+    void segment_size(uint32_t maximum_segment);
 
   private:
     uint32_t mss, initial_window, congestion_window, slow_start_threshold = 1u << 30;

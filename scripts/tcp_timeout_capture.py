@@ -6,6 +6,7 @@ import itertools
 import json
 from pathlib import Path
 from tcp_fault_capture import MASK, decode as decode_tcp, packets as read_tcp, require
+from tcp_capture_clock import milliseconds
 
 
 def ports(lane):
@@ -22,8 +23,8 @@ def decode(frame, lane):
     return identify(decode_tcp(frame, lane, ports(lane)))
 
 
-def packets(path, lane):
-    return [identify(row) for row in read_tcp(path, lane, ports(lane))]
+def packets(path, lane, statistics=None):
+    return [identify(row) for row in read_tcp(path, lane, ports(lane), statistics)]
 
 
 def period(rows, lane, role, control, native):
@@ -40,7 +41,7 @@ def period(rows, lane, role, control, native):
     require((opened is not None) == bool(control), 'only the disabled-timeout control reopens')
     if control:
         require(rows[opened]['window'] == 8192 and rows[opened]['ack'] == acknowledgment and
-                3500 <= rows[opened]['ms'] - rows[closed]['ms'] < 10000,
+                3500 <= milliseconds(rows[opened]) - milliseconds(rows[closed]) < 10000,
                 'control reopens after the configured deadline without invented progress')
     stopped = rows[closed + 1:opened]
     probes = []
@@ -50,7 +51,7 @@ def period(rows, lane, role, control, native):
                     row['ack'] == acknowledgment, 'zero ACKs never accept queued bytes')
             continue
         if row['flags'] & 4:
-            require(not control and row['ms'] - rows[closed]['ms'] >= 2300, 'no premature reset')
+            require(not control and milliseconds(row) - milliseconds(rows[closed]) >= 2300, 'no premature reset')
             continue
         require(row['flags'] & 16 and not row['flags'] & 7, 'established stopped sender has no FIN')
         if not row['data'] and row['seq'] == acknowledgment:
@@ -63,9 +64,9 @@ def period(rows, lane, role, control, native):
                     answer['ack'] == acknowledgment for answer in stopped[index + 1:
                     next((end for end in range(index + 1, len(stopped)) if stopped[end]['outgoing']), len(stopped))]),
                 'each actual probe has a real non-progress answer')
-        probes.append(row['ms'])
+        probes.append(milliseconds(row))
     require(len(probes) >= (3 if native else (2 if control else 1)), 'required real probes before timeout/recovery')
-    intervals = [now - then for now, then in zip(probes, [rows[closed]['ms'], *probes[:-1]])]
+    intervals = [now - then for now, then in zip(probes, [milliseconds(rows[closed]), *probes[:-1]])]
     require((180 if native else 850) <= intervals[0] < 1500 and
             all(now + 100 >= before * 1.6 and now <= before * 3 + 500
                 for before, now in zip(intervals, intervals[1:])), 'actual bounded probe backoff')
@@ -90,13 +91,14 @@ def period(rows, lane, role, control, native):
                 any(not row['outgoing'] and row['ack'] == (origin + 2049) & MASK for row in rows[opened:]) and
                 any(row['outgoing'] and row['ack'] == (peer_origin + 2) & MASK for row in rows[opened:]),
                 'both control FINs acknowledged after exact data')
-    return dict(closed_at=rows[closed]['ms'], reopened_at=rows[opened]['ms'] if control else None,
+    return dict(closed_at=milliseconds(rows[closed]), reopened_at=milliseconds(rows[opened]) if control else None,
                 probes=probes, intervals_ms=[round(value, 3) for value in intervals],
                 delivered=size, sha256=hashlib.sha256(data).hexdigest())
 
 
-def verify(path, lane, evidence, native=False):
-    rows = packets(path, lane)
+def verify(path, lane, evidence, native=False, statistics=None):
+    require(not native or statistics is not None, 'native timeout capture has independent clock receipts')
+    rows = packets(path, lane, statistics if native else None)
     require(evidence['lane'] == lane and len(evidence['flows']) == 4, 'actual timeout lane and four flows')
     records, frames = [], Counter()
     for entry in evidence['frames']:
@@ -104,7 +106,7 @@ def verify(path, lane, evidence, native=False):
         if row is not None:
             require(entry['direction'] == ('receive' if row['outgoing'] else 'send'), 'independent packet direction')
             frames[row['frame']] += 1
-            records.append(dict(row, ms=entry['ms']))
+            records.append(dict(row, ms=milliseconds(entry)))
     require(Counter(row['frame'] for row in rows) == frames, 'exact PCAP and peer packet multiset')
     checked = []
     for control, role in itertools.product(range(2), repeat=2):
@@ -123,7 +125,7 @@ def verify(path, lane, evidence, native=False):
                   abs(reported['reopened_at'] - observed['reopened_at']) < 10)) and
                 reported['received'] == observed['delivered'],
                 'reported timeout/recovery matches actual peer packets')
-        elapsed = application['ms'] - observed['closed_at']
+        elapsed = milliseconds(application) - observed['closed_at']
         require(application['option_ms'] == (0 if control else 2500) and
                 application['error'] == (0 if control else 110) and
                 application['consumed'] == ('none' if control else ('SO_ERROR' if role else 'recv')),
@@ -131,15 +133,15 @@ def verify(path, lane, evidence, native=False):
         lower, upper = (3500, 10000) if control else (2300, 4500)
         require(lower <= elapsed < upper and lower <= application['elapsed_ms'] < upper and
                 abs(elapsed - application['elapsed_ms']) < 500 and
-                observed['probes'][-1] <= application['ms'], 'actual independent and application elapsed deadline')
+                observed['probes'][-1] <= milliseconds(application), 'actual independent and application elapsed deadline')
         if not control:
             anchor = observed['probes'][0] if native else observed['closed_at']
-            require(2300 <= application['ms'] - anchor < 3300,
+            require(2300 <= milliseconds(application) - anchor < 3300,
                     'configured deadline uses measured native/guest timer anchor')
         checked.append(dict(role=role, control=control, capture=capture, peer=observed,
                             application=application, passed=True))
     return dict(file=path.name, lane=lane, sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
-                packets=len(rows), flows=checked, passed=True)
+                packets=len(rows), flows=checked, timing_clock='monotonic' if native else 'pcap', passed=True)
 
 
 def peer_evidence(directory, row):
@@ -186,7 +188,8 @@ def check_results(directory):
             peers = peer_evidence(directory, row)
             for lane, name in enumerate(row['captures']):
                 require(Path(name).name == name, 'bounded capture path')
-                verified.append(verify(directory / name, lane, peers[lane], native))
+                verified.append(verify(directory / name, lane, peers[lane], native,
+                                       row['capture_statistics'][lane] if native else None))
     require(len(verified) == 22, 'all 22 timeout captures')
     output = dict(captures=verified, flows=88, reports=reports, passed=True)
     (directory / 'tcp-timeout-capture-results.json').write_text(json.dumps(output, indent=2) + '\n')

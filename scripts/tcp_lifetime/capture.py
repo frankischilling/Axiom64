@@ -11,6 +11,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tcp_fault_capture import MASK, decode as decode_tcp, packets as read_tcp, require
+from tcp_capture_clock import milliseconds
 from tcp_lifetime.peer import DEFAULT_MS, LONGER_MS, CASES, RECOVERY_BYTES
 
 
@@ -31,8 +32,8 @@ def decode(frame, lane):
     return identify(decode_tcp(frame, lane, ports(lane)))
 
 
-def packets(path, lane):
-    return [identify(row) for row in read_tcp(path, lane, ports(lane))]
+def packets(path, lane, statistics=None):
+    return [identify(row) for row in read_tcp(path, lane, ports(lane), statistics)]
 
 
 def pattern(lane, role, kind):
@@ -56,7 +57,7 @@ def stream(rows, origin, expected):
 
 
 def period(rows, lane, role, kind, native):
-    require(rows and all(b['ms'] >= a['ms'] for a, b in zip(rows, rows[1:])),
+    require(rows and all(milliseconds(b) >= milliseconds(a) for a, b in zip(rows, rows[1:])),
             'lifetime clock records preserve actual packet order')
     expected_local = (44010 if role else 46000) + lane + kind * 20
     require(all(row['local_port'] == expected_local for row in rows),
@@ -96,7 +97,7 @@ def period(rows, lane, role, kind, native):
         if row['flags'] & 4:
             require(kind != 3 and attempts, 'no reset interrupts responsive lifetime control')
             minimum = 2300 if kind == 5 else (LONGER_MS if kind == 4 else DEFAULT_MS)
-            require(row['ms'] - attempts[0] >= minimum - 1100, 'no reset shortens full lifetime')
+            require(milliseconds(row) - attempts[0] >= minimum - 1100, 'no reset shortens full lifetime')
             continue
         if kind in (0, 4):
             if not row['data']:
@@ -119,7 +120,7 @@ def period(rows, lane, role, kind, native):
                     (not native and kind == 5 and not row['data'] and row['seq'] == (origin - 1) & MASK) or
                     (not native and kind != 5 and row['data'] == expected[:1] and row['seq'] == origin),
                     'actual unanswered native/guest persist probe bytes and sequence')
-        attempts.append(row['ms'])
+        attempts.append(milliseconds(row))
         if kind == 3:
             end = next((at for at in range(index + 1, len(stopped)) if stopped[at]['outgoing']), len(stopped))
             require(any(not answer['outgoing'] and answer['flags'] == 16 and not answer['window'] and
@@ -141,7 +142,7 @@ def period(rows, lane, role, kind, native):
     if kind == 3:
         reopening = body[opened]
         require(reopening['flags'] == 16 and not reopening['data'] and reopening['window'] == 8192 and
-                reopening['ack'] == origin and reopening['ms'] - attempts[0] >= LONGER_MS,
+                reopening['ack'] == origin and milliseconds(reopening) - attempts[0] >= LONGER_MS,
                 'responsive default survives full default interval plus sixty seconds')
         recovery = body[opened:]
         outgoing = [row for row in recovery if row['outgoing']]
@@ -157,27 +158,28 @@ def period(rows, lane, role, kind, native):
                 any(row['ack'] == (remote + RECOVERY_BYTES + 1) & MASK for row in outgoing) and
                 any(row['ack'] == (origin + RECOVERY_BYTES + 1) & MASK for row in incoming),
                 'both recovered FINs acknowledged through real wrapped peer sequence')
-        output.update(reopened_at=reopening['ms'], received=RECOVERY_BYTES, sent=RECOVERY_BYTES)
+        output.update(reopened_at=milliseconds(reopening), received=RECOVERY_BYTES, sent=RECOVERY_BYTES)
     return output
 
 
-def verify(path, lane, evidence, native=False):
-    rows = packets(path, lane)
+def verify(path, lane, evidence, native=False, statistics=None):
+    require(not native or statistics is not None, 'native lifetime capture has independent clock receipts')
+    rows = packets(path, lane, statistics if native else None)
     require(evidence['lane'] == lane and len(evidence['flows']) == CASES * 2, 'twelve actual lifetime flows per NIC')
     records, clocks = [], defaultdict(lambda: ([], []))
     for entry in evidence['frames']:
         row = decode(bytes.fromhex(entry['frame']), lane)
         if row is not None:
             require(row['outgoing'] == (entry['direction'] == 'receive'), 'actual lifetime packet direction')
-            records.append(dict(row, ms=entry['ms']))
-            clocks[row['frame']][1].append(entry['ms'])
+            records.append(dict(row, ms=milliseconds(entry)))
+            clocks[row['frame']][1].append(milliseconds(entry))
     require(Counter(row['frame'] for row in rows) == Counter(row['frame'] for row in records),
             'every PCAP and peer lifetime packet is identical')
     for row in rows:
-        clocks[row['frame']][0].append(row['ms'])
+        clocks[row['frame']][0].append(milliseconds(row))
     differences = [a - b for captured, observed in clocks.values() for a, b in zip(captured, observed)]
     require(max(differences) - min(differences) <= 100,
-            'kernel packet and independent monotonic clocks agree throughout the full interval')
+            'capture receipt and independent monotonic clocks agree throughout the full interval')
     checked = []
     for kind, role in itertools.product(range(CASES), range(2)):
         captured = period([row for row in rows if (row['kind'], row['role']) == (kind, role)], lane, role, kind, native)
@@ -196,19 +198,19 @@ def verify(path, lane, evidence, native=False):
         require(app['option_ms'] == start['option_ms'] == option and app['error'] == (0 if kind == 3 else 110) and
                 app['consumed'] == ('none' if kind == 3 else ('SO_ERROR' if role else 'recv')) and
                 app['reclaimed'] == int(kind != 3), 'actual default/configured option, error consumption and owner release')
-        elapsed = app['ms'] - start['ms']
+        elapsed = milliseconds(app) - milliseconds(start)
         require(abs(elapsed - app['elapsed_ms']) < 500 and
-                observed['attempts_ms'][0] >= start['ms'] - 100 and observed['attempts_ms'][-1] <= app['ms'],
+                observed['attempts_ms'][0] >= milliseconds(start) - 100 and observed['attempts_ms'][-1] <= milliseconds(app),
                 'actual application and independent full lifetime clocks agree')
         if kind == 3:
-            require(app['elapsed_ms'] >= LONGER_MS and 0 <= app['ms'] - observed['reopened_at'] < 20000,
+            require(app['elapsed_ms'] >= LONGER_MS and 0 <= milliseconds(app) - observed['reopened_at'] < 20000,
                     'default responsive lifetime control recovers after its full observation')
         else:
             threshold = 2500 if kind == 5 else (LONGER_MS if kind == 4 else DEFAULT_MS)
             upper = 6000 if kind == 5 else (1200000 if native else threshold + 5000)
             require(threshold - (200 if kind == 5 else 100) <= app['elapsed_ms'] < upper,
                     'actual unshortened default or authoritative configured socket deadline')
-            anchored = app['ms'] - observed['attempts_ms'][0]
+            anchored = milliseconds(app) - observed['attempts_ms'][0]
             require(threshold - 100 <= anchored < (3500 if kind == 5 else upper),
                     'default/configured failure observes first actual owned output')
         checked.append(dict(kind=kind, role=role, capture=captured, peer=observed, application=app, passed=True))
@@ -267,7 +269,9 @@ def check_results(directory, names=None):
             require(len(row['captures']) == 2 and all(Path(item).name == item for item in row['captures']),
                     'both bounded complete lifetime capture paths')
             peers = peer_evidence(directory, row)
-            verified += [verify(directory / item, lane, peers[lane], native) for lane, item in enumerate(row['captures'])]
+            verified += [verify(directory / item, lane, peers[lane], native,
+                                row['capture_statistics'][lane] if native else None)
+                         for lane, item in enumerate(row['captures'])]
     output = dict(captures=verified, reports=hashes, flows=len(verified) * CASES * 2,
                   complete_matrix=set(names) == set(REPORTS), passed=True)
     (directory / 'tcp-lifetime-capture-results.json').write_text(json.dumps(output, indent=2) + '\n')

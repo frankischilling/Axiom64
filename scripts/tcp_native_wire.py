@@ -167,7 +167,8 @@ def run(linkage, firmware, transport, timeout):
     text = log.read_text(errors='replace') if log.exists() else ''
     required = ['TCP_CONFIG_PASS nics=2', 'TCP_TEST_PASS', 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0',
                 f'Firmware: {firmware.upper()}', 'TCP_CREATE_PASS variants=8', 'TCP_OPTIONS_PASS ',
-                'TCP_BINDINGS_PASS ', 'TCP_REFUSED_PASS ', 'TCP_VECTORS_PASS ',
+                'TCP_BINDINGS_PASS ', 'TCP_REUSE_BINDINGS_PASS cases=32', 'TCP_REFUSED_PASS ', 'TCP_VECTORS_PASS ',
+                'TCP_REUSE_TRANSITIONS_PASS cases=16',
                 'TCP_WAITALL_PASS ', 'TCP_WAITALL_SIGNALS_PASS ', 'TCP_RETAINED_READ_PASS cases=2',
                 'TCP_RESOURCE_CYCLES_PASS count=300', 'TCP_LOOPBACK_PASS bytes=262144',
                 'TCP_ACCEPT_DESCRIPTORS_PASS ', 'TCP_ACCEPT_RESERVATION_PASS ',
@@ -178,6 +179,10 @@ def run(linkage, firmware, transport, timeout):
                 'TCP_UNAVAILABLE_COPY_PASS cases=8', 'TCP_UNAVAILABLE_SEND_PASS cases=8',
                 'TCP_RECEIVE_COPY_PASS modes=4', 'TCP_SEND_COPY_PASS modes=4',
                 'TCP_CONNECT_COMPLETION_PASS cases=3', 'TCP_CONNECT_FAILURES_PASS cases=4',
+                'TCP_DISCONNECT_PASS cases=6',
+                'TCP_DISCONNECT_READ_PASS cases=4',
+                'TCP_DISCONNECT_SEND_PASS cases=8',
+                'TCP_DISCONNECT_WAITERS_PASS cases=4',
                 'TCP_RETAINED_CONNECT_PASS cases=2', 'TCP_CONNECT_DEADLINES_PASS cases=2',
                 'TCP_CONNECT_SIGNALS_PASS cases=3',
                 f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']

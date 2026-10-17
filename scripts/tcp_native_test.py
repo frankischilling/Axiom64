@@ -3,13 +3,16 @@
 import json
 import subprocess
 from fetch import ROOT
+from build_musl import loader
 
 
 def main():
     profiles = ('native', 'static', 'dynamic')
     subprocess.run(['make', '-s', '-j2', *(f'build/tcp-{profile}' for profile in profiles)],
                    cwd=ROOT, check=True)
-    required = ('TCP_CREATE_PASS variants=8', 'TCP_BINDINGS_PASS ', 'TCP_OPTIONS_PASS ', 'TCP_REFUSED_PASS ',
+    required = ('TCP_CREATE_PASS variants=8', 'TCP_BINDINGS_PASS ', 'TCP_REUSE_BINDINGS_PASS cases=32',
+                'TCP_REUSE_TRANSITIONS_PASS cases=16',
+                'TCP_OPTIONS_PASS ', 'TCP_REFUSED_PASS ',
                 'TCP_VECTORS_PASS ', 'TCP_WAITALL_PASS ', 'TCP_WAITALL_SIGNALS_PASS ',
                 'TCP_RETAINED_READ_PASS cases=2', 'TCP_RESOURCE_CYCLES_PASS count=300',
                 'TCP_ACCEPT_DESCRIPTORS_PASS ', 'TCP_ACCEPT_RESERVATION_PASS ',
@@ -20,13 +23,20 @@ def main():
                 'TCP_UNAVAILABLE_COPY_PASS cases=8', 'TCP_UNAVAILABLE_SEND_PASS cases=8',
                 'TCP_RECEIVE_COPY_PASS modes=4', 'TCP_SEND_COPY_PASS modes=4',
                 'TCP_CONNECT_COMPLETION_PASS cases=3', 'TCP_CONNECT_FAILURES_PASS cases=4',
+                'TCP_DISCONNECT_PASS cases=6',
+                'TCP_DISCONNECT_READ_PASS cases=4',
+                'TCP_DISCONNECT_SEND_PASS cases=8',
+                'TCP_DISCONNECT_WAITERS_PASS cases=4',
                 'TCP_RETAINED_CONNECT_PASS cases=2', 'TCP_CONNECT_DEADLINES_PASS cases=2',
                 'TCP_CONNECT_SIGNALS_PASS cases=3',
                 'TCP_CLIENT_PASS ', 'TCP_LOOPBACK_PASS bytes=262144', 'TCP_TEST_PASS')
     results = []
     with (ROOT / 'build/tcp-native.log').open('w') as log:
         for profile in profiles:
-            process = subprocess.run([ROOT / 'build' / f'tcp-{profile}', '--native'], cwd=ROOT,
+            command = [ROOT / 'build' / f'tcp-{profile}', '--native']
+            if profile == 'dynamic':
+                command.insert(0, loader('build'))
+            process = subprocess.run(command, cwd=ROOT,
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      text=True, timeout=75)
             log.write(f'PROFILE {profile}\n{process.stdout}')

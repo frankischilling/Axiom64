@@ -6,6 +6,9 @@ namespace ax {
 constexpr unsigned tcp_time_wait_count = 1024;
 struct Handle;
 bool inet_stream(InetSocket*);
+uint64_t tcp_generation(const InetSocket*);
+// A cancelled write consumes an old diagnostic only while there is no successor.
+int tcp_cancelled_write_error(InetSocket*);
 bool tcp_port_busy(uint32_t local, uint16_t port, unsigned index, bool reuse);
 void tcp_close(InetSocket*);
 void tcp_poll();

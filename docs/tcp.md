@@ -8,15 +8,149 @@ The wire codec, sender policies and bounded connection engine are implemented un
 
 Supported calls include default/IPPROTO_TCP stream creation with nonblocking and close-on-exec flags, bind, listen, accept/accept4, connect, getsockname/getpeername, read/write/readv/writev, send/recv/sendmsg/recvmsg, peek/MSG_WAITALL, shutdown and poll/epoll readiness. The tested subset includes explicit loopback and wildcard bindings, TCP/UDP port separation, accepted descriptor flags, refusal/SO_ERROR clearing, vector reads crossing the 4096-byte copy buffer, retained dup descriptions and EOF/EPOLLRDHUP. TCP receives ignore source-address output and return zero address length, as native Linux does. Unsupported message flags and additional contracts remain documented below.
 
+`SO_REUSEADDR` allows overlapping bound-only TCP sockets when both owners enable
+it. An active listener keeps its overlapping address and port exclusive. First
+listen rechecks the current reuse flags on all overlapping owners; an existing
+listener can still update its backlog after changing those flags. Failed first
+listen retains the binding for a later retry. A failed bind can be retried after
+the conflicting owner closes. The common native and guest socket program checks
+48 wildcard/loopback binding and flag-transition cases, including listener
+handover and backlog updates. Broader Linux reuse policies remain required.
+
 Active sockets keep pending connect completion separate from the transport handshake. After a nonblocking handshake, a repeated connect completes the pending socket state and returns zero once; later calls return EISCONN. Dup descriptions share this state. An existing pending handshake returns EALREADY to nonblocking calls, while a blocking call can keep waiting through its retained description and imported destination. Finite waits retain their initial EINPROGRESS or repeated EALREADY result. Caught signals interrupt finite waits even with SA_RESTART; an infinite restarted wait can complete the existing handshake. [connect completion](io.md) records this completion/retry subset.
 
 A failed pending connect consumes the socket error and returns to an unconnected state. If SO_ERROR already consumed the refusal, completion returns ECONNABORTED. The adapter detaches old owned-output callbacks, releases the old connection storage, clears peer/shutdown/error state and constructs a fresh engine for a later attempt. Socket options and explicit address/nonzero-port bindings survive. An automatically assigned port loses its binding owner after the closed attempt's pending output has been copied; getsockname still reports the last source port, matching Linux's separate bind-owner and reported-port fields. Completion clears an automatically chosen source address. These state and binding rules follow pinned [__inet_stream_connect](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/net/ipv4/af_inet.c), [tcp_disconnect/tcp_set_state](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/net/ipv4/tcp.c) and [inet_put_port](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/net/ipv4/inet_hashtables.c).
 
 TCP_NODELAY and TCP_USER_TIMEOUT can be set/read; both default to zero. SO_RCVTIMEO/SO_SNDTIMEO use the common finite socket deadline mechanism. TCP_MAXSEG accepts zero or 88 through 32767 before connection; this implementation caps the effective value at 1460 and currently reports its configured limit rather than Linux's negotiated value. Post-connect TCP_MAXSEG and additional TCP options remain unsupported. Socket buffers have fixed bounded storage rather than Linux autotuning.
 
+`connect` with `AF_UNSPEC` disconnects the current stream and makes its file
+description reusable. A two-byte family is sufficient; bad lengths and inaccessible
+addresses return their Linux errors. Dup aliases share the reset, socket options
+and explicit binding. Completed TIME-WAIT tuples keep their compact guards when
+the description is reused. Immediate reuse of a completed identical tuple is still
+rejected; Linux permits the measured same-description case. Reset diagnostics remain available through `SO_ERROR`
+until consumed, and a new admitted connection clears old diagnostics.
+
+Each retained stream call captures a connection generation. Explicit disconnect
+changes that generation, so an old read, write or connect cannot use the successor
+stream. An interrupted retained read returns its completed prefix, or `EPIPE` when
+it has no progress, without consuming the new stream's bytes or diagnostic state.
+The native comparison checks both outcomes with vectored `MSG_WAITALL`, immediate
+reconnect, exact successor bytes and shared socket errors. Listener accept behavior
+uses its listener/queue state separately.
+
+A blocked connect through an alias returns `EPIPE` after explicit disconnect,
+without generating `SIGPIPE` or consuming a successor's error. Disconnect wakes
+an old accept with `EINVAL` when the description stays unconnected. If the same
+description listens again before that accept runs, the call may instead accept
+one new child. The comparison covers both native race outcomes, exact new-stream
+bytes, accepted descriptor flags and release of the reserved descriptor slot.
+
+A cancelled write with no progress consumes its old reset diagnostic while the
+description has no successor stream. A partial write returns its completed prefix
+and leaves the diagnostic available. With a successor, the old call returns its
+prefix or `EPIPE` without consuming the successor's error or copying more payload.
+`writev` generates `SIGPIPE` for an unconsumed `EPIPE`; `sendmsg` with `MSG_NOSIGNAL`
+suppresses it. Regression cases include an inaccessible payload behind a full old
+send queue, so cancellation must complete before any user-buffer access.
+
+TCP keeps buffered bytes through a temporary administrative interface outage
+or loss of a connected or explicit host route. An `ENETDOWN` or `ENETUNREACH`
+enqueue rejection leaves its sequence pending. Local queue and route failures
+schedule a 200-millisecond retry without consuming sequence space or backing off
+the retransmission timer. Delivery and configured user deadlines still bound
+the wait, including data that has never reached the IPv4 queue. Fresh connects
+continue to fail immediately when no route exists. If IPv4 already
+owns a packet copy, discarding that copy returns its queue credit while TCP keeps
+the unacknowledged bytes for retransmission. This includes `ENOBUFS` when a ready
+IPv4 copy expires under local transmit backpressure. Device failure remains a separate
+hard error. This follows the retained transmit queue in pinned
+[Linux TCP output](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/net/ipv4/tcp_output.c).
+
+`sudo -n make test-tcp-recovery-native` and `make test-tcp-recovery-sockets`
+compare recovery on both interfaces, with exact payloads and live companion
+traffic on the other interface. The queued-output cases confirm pending bytes
+before lowering the interface: native Linux uses a private egress delay queue;
+the guest fixture holds the Ethernet transmit boundary at `EAGAIN`. Neither
+fixture changes TCP state or clocks. Debugger observations establish ownership
+and recovery; retransmission timing is checked by the separate wire profiles.
+Native `SO_ERROR` may expose advisory `ENETUNREACH` during an outage while the
+stream remains usable. A second hold on each NIC keeps the interface up for at
+least 4500 milliseconds, confirms actual guest copy expiry and then recovers the
+stream with live companion traffic. Native Linux uses a ten-second private egress
+delay for this case. The application retains its full wait; the native and guest
+fixtures release output after that observation. The program's overall alarm is
+60 seconds for the additional two waits; each VM profile keeps its 150-second
+limit. TCP's default, configured, retransmission and application deadlines remain
+unchanged. Additional cases withdraw the connected route with a netmask change
+and delete an explicit on-link host route on each NIC. Each confirms a fresh
+connect fails with `ENETUNREACH`, retains 512 undelivered bytes, exchanges exact
+companion traffic and recovers after restoration. Physical-carrier cases keep the
+client interfaces administratively up. Native Linux lowers the selected veth port
+behind an up bridge observer; the guest uses one shared QMP monitor to change each
+real adapter's link. A complete companion echo acknowledges actual carrier loss
+before the application submits its 512 selected bytes. Those bytes remain
+undelivered until restoration, with no socket error. Each complete stream carries
+6224 data bytes and four control bytes. Wider route policies, longer outages and
+permanent device failure still require their wider acceptance cases.
+
+`scripts/tcp_recovery_capture.py` independently reconstructs both streams, the
+Q/H control positions, every ACK and both closes. It checks actual physical-link
+operations, administrative state, complete companion progress and carrier-byte
+ordering, alongside the native queue backlog or guest held/released boundary logs
+and the frozen source,
+compiled product and native library fingerprints. The CLI requires the complete
+three-linkage native or eight-profile guest cohort. Its damaged-evidence test
+requires rejection of 513 altered packet, control, queue, expiry, route, carrier, result,
+source and cohort cases, including shortened waits, absent physical expiry evidence,
+false fresh-connect results and missing or reordered route restoration. Native
+capture receipts also establish the order of physical-link operations and packets.
+The test bridge disables [multicast snooping](https://docs.kernel.org/networking/bridge.html#bridge-netlink-attributes)
+before it is brought up, preventing
+its own IGMP reports from entering this isolated TCP workload. Captures remain
+unfiltered and the reader still rejects unexpected IPv4 traffic.
+
+Explicit disconnect advances the description's next sequence beyond all old
+queued bytes and the largest advertised peer window. Later connections on that
+description carry the advanced sequence across destination changes, so an
+intervening connection cannot erase protection for an earlier tuple. The advance
+accounts for a queued FIN, sequence wrap and the nonzero restart value. New
+descriptions use the keyed initial-sequence generator. This does not shorten
+TIME-WAIT, retransmission or application deadlines.
+
+`sudo -n make test-tcp-reconnect-native` and `make test-tcp-reconnect-sockets` exercise
+both NICs with six cases each. Aborted streams reuse the same bound description
+and tuple with 32768 independently generated bytes in each phase. Completed streams
+retain the measured wire-path tuple guard and reconnect to an independent destination
+with the same source port. Two peer windows, wrapped peer sequences, exact replies,
+owned resets and fully acknowledged FINs are checked from original packets by
+`scripts/tcp_reconnect_capture.py`.
+
+An additional three-open case transfers 262144 bytes to one destination, briefly
+connects to a second destination, then returns to the first on the same bound
+description. Independent checks require each restart to exclude its predecessor's
+full sequence window and the final open to exclude the original stream. Exact
+bytes, both resets, the final close and retained source address are checked.
+
+The queued-copy case keeps 512 old bytes pending while `AF_UNSPEC` disconnects
+the description and a successor opens on its exact original tuple. Native Linux
+retains the old copies in a ten-second egress queue while a classifier change
+allows future packets through. The guest observer holds the actual old transmit
+copy until its four-second expiry and verifies that its callback owner is empty.
+Each NIC waits at least eleven seconds, transfers exact successor bytes and keeps
+the other NIC active. Original packets, queue commands and fingerprinted observer
+traces establish ownership; debugger observations do not establish transport
+timing. Guest profiles use two isolated VMs concurrently after both linkage images
+are built. Broader Linux
+reuse policies remain part of complete transport acceptance.
+
 Initial sequences use a 32-byte secret obtained only from the ready kernel random source, a domain-separated HMAC-BLAKE2s of the IPv4/port tuple and a monotonic sequence clock. Allocation/output retries do not substitute a predictable fallback. The derivation has independent standard HMAC fixtures. This integration does not establish the full entropy, saved-state, adversarial ISN or SMP acceptance in randomness/TCP sockets.
 
-The shared Internet pool contains at most 256 sockets, with at most 32 unaccepted children per listener and 32 KiB send/receive storage per connection. After pending output has been copied, detached TIME-WAIT endpoints move to a separate 1024-record table and release their application buffers and general socket slots. Each record is at most 64 bytes, including its completed sequence state, tuple, binding, TTL and deadline. Expiry releases only elapsed records; duplicate FINs restart the 120-second timer. Completed tuples remain protected against premature reconnect and still own conflicting bound ports. Ephemeral allocation includes both live sockets and compact owners. If the table fills, the adapter keeps the original endpoint until safe reclamation; it never evicts live sequence state. Full table pressure, adapter expiry/reuse and listener pressure remain required for full TCP reliability.
+The shared Internet pool contains at most 256 sockets, with at most 32 unaccepted children per listener and 32 KiB send/receive storage per connection. Each active or passive connection reserves a slot in a separate 1024-record TIME-WAIT table before its handshake. After TCP submits its final packets, a detached endpoint transfers completed state to its reserved record and releases its application buffers and general socket slot. IPv4 owns the final packet copies independently. Resets, failed allocation and failed attempts release unused reservations.
+
+The table bounds reservations and completed records together. A full table rejects new TCP state with ENOBUFS, while a listener can leave a SYN unadmitted until capacity returns. A finite connect waiting for listener capacity retains its normal EINPROGRESS timeout result. Completed sequence state is never evicted to admit another connection. UDP and other Internet sockets keep their shared pool available.
+
+Each compact record is at most 64 bytes, including completed sequence state, tuple, binding, TTL and deadline. Expiry releases only elapsed records; duplicate FINs restart the 120-second timer. Completed tuples remain protected against premature reconnect and still own conflicting bound ports. Ephemeral allocation includes both live sockets and compact owners. The pressure regression reaches the admission limit, preserves live companions and 32 fresh UDP endpoints, observes the entire 120-second interval and repeats the workload after expiry. The complete transport checklist remains required for full TCP reliability.
 
 MSG_WAITALL retains imported vector metadata and a cursor through the original file description. Delayed chunks append to the remaining user buffers; peek advances a saved offset without consuming bytes. Nonblocking calls return an available prefix, and EOF, a finite deadline or a caught signal returns already transferred bytes. Partial progress prevents SA_RESTART from replaying that prefix. An unavailable peek offset waits for more bytes rather than appearing as EOF.
 
@@ -36,7 +170,7 @@ The endpoint implements active/passive and simultaneous handshakes; established,
 
 Each connection contains 32 KiB send storage, 32 KiB receive storage, a receive bitmap and a packet scratch buffer. Writes accept only available queue space. Limits can shrink without discarding already readable data. Peek reads preserve ownership. Reading reopens the advertised window. Read shutdown discards readable bytes while continuing to acknowledge the stream. Write shutdown sends FIN after preceding queued bytes have been transmitted.
 
-`next()` produces a borrowed packet candidate. The adapter must copy it into an owned IPv4 output queue and then call `emitted()` immediately. A failed enqueue consumes no sequence numbers and starts no retransmission timer. Input, reads and writes invalidate the candidate. Listener/backlog ownership, tuple lookup, port allocation, file descriptions, syscall blocking, readiness and ICMP delivery belong to the kernel adapter; full fault/lifetime acceptance remains in TCP sockets/TCP reliability.
+`next()` produces a borrowed packet candidate. The adapter must copy it into an owned IPv4 output queue and then call `emitted()` immediately. For a temporary enqueue rejection it calls `output_blocked()` instead. Rejection consumes no sequence numbers and starts no retransmission timer; the engine schedules its local retry and starts bounded delivery waiting for data, FIN or a probe. Inspecting an offer without reporting an actual attempt does not start that period. Pure ACK rejection creates no delivery deadline. Input, reads and writes invalidate the candidate. Listener/backlog ownership, tuple lookup, port allocation, file descriptions, syscall blocking, readiness and ICMP delivery belong to the kernel adapter; full fault/lifetime acceptance remains in TCP sockets/TCP reliability.
 
 ## Sending and timers
 
@@ -44,7 +178,7 @@ Each connection contains 32 KiB send storage, 32 KiB receive storage, a receive 
 
 New data respects the peer window and congestion window. Three qualifying duplicate ACKs request fast retransmission. Slow start, byte-counted congestion avoidance, recovery and timer-loss restart follow the sender policy. SYN retransmission reduces the initial data window and retains the conservative data RTO. Default Nagle coalesces small writes while earlier data remains unacknowledged; the adapter can enable TCP_NODELAY. A 200 ms sender override bounds waiting on a small advertised window. Ring wrap uses packet scratch storage to preserve full segment sizing.
 
-Zero-window probes run independently of RTO loss, with bounded one-through-60-second backoff. A newly closed window starts a fresh period using the current RTO; repeated zero-window ACKs preserve its backoff. Probes can request reopening with queued data or FIN. Window reopening schedules outstanding data promptly. With TCP_USER_TIMEOUT at zero, unanswered owned data, FIN and probes expire after 924600 ms without accepted progress or a responsive zero-window answer. A validated stopped receiver can keep answering probes indefinitely; reopening starts a fresh delivery period. Open-window duplicate ACKs, invalid control segments and failed output submissions cannot restart the default period. A positive configured timeout remains authoritative, including values longer than the default. [Full lifetime acceptance](tcp-default-lifetime.md) describes the separate real observations and supported limits. Handshakes expire after 60 seconds. Detaching an endpoint with unread data requests a reset; detached FIN-WAIT-2 expires after 60 seconds. TIME-WAIT retains completed sequence state until its timer expires. Last close immediately reclaims an already closed endpoint when it has no pending output; a reset still awaiting output ownership uses the ordinary poll path.
+Zero-window probes run independently of RTO loss, with bounded one-through-60-second backoff. A newly closed window starts a fresh period using the current RTO; repeated zero-window ACKs preserve its backoff. Probes can request reopening with queued data or FIN. Window reopening schedules outstanding data promptly. With TCP_USER_TIMEOUT at zero, unanswered data, FIN and probes expire after 924600 ms without accepted progress or a responsive zero-window answer. A validated stopped receiver can keep answering probes indefinitely; reopening starts a fresh delivery period. Open-window duplicate ACKs, invalid control segments and failed output submissions cannot restart the default period. A positive configured timeout remains authoritative, including values longer than the default. [Full lifetime acceptance](tcp-default-lifetime.md) describes the separate real observations and supported limits. Handshakes expire after 60 seconds. Detaching an endpoint with unread data requests a reset; detached FIN-WAIT-2 expires after 60 seconds. TIME-WAIT retains completed sequence state until its timer expires. Last close immediately reclaims an already closed endpoint when it has no pending output; a reset still awaiting output ownership uses the ordinary poll path.
 
 ## Verification
 
@@ -52,7 +186,7 @@ Run `make test-tcp-wire test-tcp-sender test-tcp-connection test-tcp-isn test-tc
 
 - The wire test checks independent fixed packet/checksum fixtures, every single-bit corruption of a fixture, malformed headers/options, overlapping output, sequence wrap, window/reset decisions and 50,000 checksum-repaired mutations.
 - The sender test checks RTT update order, Karn filtering, SYN fallback, repeated RTOs, congestion growth/recovery and arithmetic bounds across 50,000 events.
-- The connection test checks output enqueue failure, handshake/refusal/simultaneous open, overlap/gaps/queued FIN, stale/future ACK behavior, reset validation, fast retransmission/RTO, Nagle/SWS timing, finite deadlines, zero-window reopening, shutdown and close ownership. Its deterministic 300,000-byte transfer crosses the production codec while losing, duplicating and reordering packets and wrapping sequence numbers. Queue bounds and exact received bytes are checked throughout.
+- The connection test checks output enqueue failure, handshake/refusal/simultaneous open, overlap/gaps/queued FIN, stale/future ACK behavior, reset validation, fast retransmission/RTO, Nagle/SWS timing, finite deadlines, zero-window reopening, shutdown and close ownership. Eighteen local-output cases check bounded unsent data/FIN, repeated rejection, unchanged RTO and sequence ownership, exact recovery, independent streams, pure ACKs and backward/saturating clocks. Reopening a window or later accepting a waiting FIN cannot renew its configured deadline. Its deterministic 300,000-byte transfer crosses the production codec while losing, duplicating and reordering packets and wrapping sequence numbers. Queue bounds and exact received bytes are checked throughout.
 
 - The compact completed-state test checks duplicate FINs, exact/in-window/out-of-window resets, old/future ACKs, sequence wrap, zero windows, malformed input and expiry/saturating timer bounds.
 
@@ -87,4 +221,40 @@ The wire/state contract follows [RFC 9293](https://www.rfc-editor.org/rfc/rfc929
 
 [Controlled zero-window acceptance](tcp-persist.md) adds stopped-window probes, elapsed backoff and exact recovery to the loss and receive-ordering profiles. [Configured user-timeout acceptance](tcp-user-timeout.md) separately checks real socket errors, independent elapsed deadlines and disabled-timeout recovery. [Old-ACK acceptance](tcp-old-ack.md) rejects poisoned in-window payload/FIN before window learning, then verifies actual challenge ACKs and exact recovery. Other TCP reliability requirements remain open.
 
-[Quoted ICMP acceptance](tcp-icmp-acceptance.md) adds bounded quote decoding, emitted tuple/sequence ownership, pending connection failures, established soft diagnostics and their timeout/consumption policy. Additional message/address/reconnect/option behavior, PMTU recovery, error queues and complete Linux TCP options remain required, along with the controlled NIC and lifetime tests. Actual libc DNS TCP fallback and response ownership are covered by the [resolver tests](dns.md). IPv6 transport, urgent/OOB handling, TLS, full entropy/ISN acceptance and SMP are separate outstanding work. The VM operating system and required workloads come first; HP-specific development follows the readiness review in [HP hardware readiness](feature-roadmap.md), after most roadmap requirements and all prerequisites have evidence. Physical boot tests and installation readiness follow the required HP driver work.
+## Connection pressure and expiry
+
+`sudo -n make test-tcp-pressure` runs the complete three-libc native comparison and
+eight static/dynamic, BIOS/UEFI and modern/legacy guest profiles. Each keeps a live
+TCP connection on each NIC while 2560 refused/aborted attempts, 5120 listener/child
+teardown cycles and enough graceful loopback closes to fill the compact table
+exercise reclamation. Listener cycles check queued-child close, listener shutdown,
+unread accepted-child reset, full-backlog teardown and an independent live listener.
+Admission pressure
+must leave both companions usable and all 32 simultaneously held fresh UDP sockets
+able to exchange exact bytes. The program waits the full 120 seconds, repeats the
+pressure and UDP workload, then completes both companion closes. Conservative guest
+admission and Linux's larger native capacity are checked separately.
+
+The coordinator builds clients and prepares immutable images before overlapping
+independent observations. `scripts/tcp_pressure_capture.py` verifies all original
+frames, checksums, tuple ownership, exact payloads, acknowledgments and FINs. Actual
+driver receipts and zero-drop counters must account for every captured IPv4 frame.
+Both the application clock and the independent packet clock must observe the full
+expiry interval. Source, product, provider and native loader hashes bind the results
+to their inputs. `scripts/tests/tcp_pressure_capture_test.py` rejects 198 damaged
+observations, including a checksum-valid reply addressed to the wrong UDP socket.
+The optional `--quick` client diagnostic does not establish expiry acceptance.
+
+## Path MTU recovery
+
+A validated ICMP destination-unreachable/code 4 hint can lower an established connection's effective send MSS without aborting the socket. The quote must own the emitted tuple, interface and outstanding sequence range. Hints below 68 bytes, nonreducing values and hints that cannot reduce the quoted packet are ignored. A zero next-hop MTU selects the next lower RFC 1191 plateau. Peer-advertised MSS and the local receive MSS remain separate from the path limit.
+
+The sender retains the original unacknowledged bytes and highest transmitted sequence while splitting the outstanding flight. It sends one resized packet, waits for ACK progress, then retransmits the remaining flight within the peer window and congestion allowance. FIN ownership and sequence wrap follow the same cursor. PMTU feedback preserves congestion state, retransmission backoff and configured/default delivery deadlines. Repeated or invalid hints cannot restart those deadlines. `IP_PMTUDISC_DONT` and `IP_PMTUDISC_PROBE` do not learn TCP segment sizes from ICMP. General route caching, fragmentation and the complete discovery-policy contract remain required.
+
+Only oversized IPv4 copies belonging to the affected socket are cancelled. Submission retains borrowed storage until the network driver returns, including when a receive callback cancels that packet. Other interfaces and owners keep their queues.
+
+`make test-tcp-pmtu` runs sanitizer models for quote validation, wrap, FIN, partial ACKs, failed enqueue, changing windows, congestion and unchanged deadlines. `sudo -n make test-tcp-pmtu-native` and `make test-tcp-pmtu-sockets` run three native libc profiles and all eight mixed-NIC VM profiles. Each NIC has twelve independent paths, with 4096 bytes in each direction, active/passive opens, valid and legacy hints, consecutive reductions and eight damaged/unowned/nonreducing controls. Separate destination addresses prevent Linux's shared PMTU cache from hiding a later case. Linux accepts an invalid quoted inner IPv4 checksum; the guest retains its stricter validation. The native case explicitly requires recovery from that hint, while the guest requires a later valid hint.
+
+The application records real driver frames and zero-drop counters. `scripts/tcp_pmtu_capture.py` checks original quoted packets, deliberate mutations, observation clocks, MSS values, tuple-specific payloads, full closes and source/product/provider hashes. `scripts/tests/tcp_pmtu_capture_test.py` checks rejection of damaged evidence. The full transport and VM-readiness requirements remain open. The recovery rules follow [RFC 1191](https://www.rfc-editor.org/rfc/rfc1191.html) and the quote-ownership guidance in [RFC 5927](https://www.rfc-editor.org/rfc/rfc5927.html).
+
+[Quoted ICMP acceptance](tcp-icmp-acceptance.md) adds bounded quote decoding, emitted tuple/sequence ownership, pending connection failures, established soft diagnostics and their timeout/consumption policy. Additional message/address/reconnect/option behavior, complete PMTU policies and route caching, error queues and complete Linux TCP options remain required, along with the controlled NIC and lifetime tests. Actual libc DNS TCP fallback and response ownership are covered by the [resolver tests](dns.md). IPv6 transport, urgent/OOB handling, TLS, full entropy/ISN acceptance and SMP are separate outstanding work. The VM operating system and required workloads come first; HP-specific development follows the readiness review in [HP hardware readiness](feature-roadmap.md), after most roadmap requirements and all prerequisites have evidence. Physical boot tests and installation readiness follow the required HP driver work.

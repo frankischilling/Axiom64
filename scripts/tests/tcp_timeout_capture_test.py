@@ -10,20 +10,23 @@ import sys
 import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tcp_timeout_capture import decode, packets, peer_evidence, verify
+from tcp_clock_mutations import MutationClock, candidate_verifier
 from tcp_fault_capture_test import records
 from tcp_reordering_capture_test import repair
 from tcp_persist_capture_test import counterpart, rewrite
 
 
-def mutations(path, lane, evidence, native, directory):
+def mutations(path, lane, evidence, native, directory, statistics=None):
+    checked = candidate_verifier(verify, path, statistics)
+    clock = MutationClock(path, statistics)
+
     original = path.read_bytes()
     endian, entries = records(original)
     flows = {control: [] for control in range(2)}
     for offset, frame in entries:
         row = decode(frame, lane)
         if row is not None and row['role'] == 0:
-            seconds, micros = struct.unpack_from(endian + 'II', original, offset)
-            row['ms'] = seconds * 1000 + micros / 1000
+            row['ms'] = clock.milliseconds(offset)
             flows[row['control']].append((offset, frame, row))
     closed = [next(entry for entry in flows[control] if not entry[2]['outgoing'] and
                    entry[2]['flags'] == 16 and not entry[2]['window']) for control in range(2)]
@@ -45,14 +48,14 @@ def mutations(path, lane, evidence, native, directory):
                            if decode(bytes.fromhex(entry['frame']), lane) is not None)
         assert Counter(row['frame'] for row in decoded) == expected
         try:
-            verify(candidate, lane, adjusted, native)
+            checked(candidate, lane, adjusted, native)
         except ValueError:
             count += 1
             return
         raise AssertionError('false user-timeout/recovery evidence was accepted')
 
     def change(entry, modified, timestamp=None, peer_time=None):
-        data, adjusted = rewrite(original, entry[0], modified, evidence, endian, timestamp, peer_time)
+        data, adjusted = rewrite(original, entry[0], modified, evidence, endian, clock.pcap_ms(entry[0], timestamp), peer_time)
         reject(data, adjusted)
 
     for entry in (probes[0][0], answer, opened):
@@ -82,14 +85,14 @@ def mutations(path, lane, evidence, native, directory):
         reject(original, adjusted)
     closed_record = counterpart(original, closed[1][0], evidence)
     data, adjusted = rewrite(original, opened[0], opened[1], evidence, endian,
-                             closed[1][2]['ms'] + 1000, closed_record['ms'] + 1000)
+                             clock.pcap_ms(opened[0], closed[1][2]['ms'] + 1000), closed_record['ms'] + 1000)
     next(flow for flow in adjusted['flows'] if not flow['role'] and flow['control'])['reopened_at'] = closed_record['ms'] + 1000
     reject(data, adjusted)
     change(probes[0][0], probes[0][0][1], probes[0][0][2]['ms'] + 600)
     previous, last = probes[1][-2:]
     previous_record = counterpart(original, previous[0], evidence)
     data, adjusted = rewrite(original, last[0], last[1], evidence, endian,
-                             previous[2]['ms'] + 100, previous_record['ms'] + 100)
+                             clock.pcap_ms(last[0], previous[2]['ms'] + 100), previous_record['ms'] + 100)
     next(flow for flow in adjusted['flows'] if not flow['role'] and flow['control'])['probe_ms'][-1] = previous_record['ms'] + 100
     reject(data, adjusted)
     assert count == 14
@@ -111,8 +114,9 @@ def main():
                 for lane, name in enumerate(row['captures']):
                     path = directory / name
                     native = report_name == 'tcp-timeout-native-results.json'
-                    assert verify(path, lane, peers[lane], native) == verified[name]
-                    negatives += mutations(path, lane, peers[lane], native, Path(temporary))
+                    statistics = row['capture_statistics'][lane] if native else None
+                    assert verify(path, lane, peers[lane], native, statistics) == verified[name]
+                    negatives += mutations(path, lane, peers[lane], native, Path(temporary), statistics=statistics)
                     captures += 1
     assert captures == 22 and negatives == 308
     print(f'TCP_TIMEOUT_CAPTURE_CHECKER_PASS captures={captures} negative_cases={negatives}')

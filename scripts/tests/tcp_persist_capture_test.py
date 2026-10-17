@@ -11,7 +11,9 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tcp_fault_capture import MASK, decode
 from tcp_reordering_capture import verify as verify_order
-from tcp_persist_capture import verify
+from tcp_persist_capture import period, verify
+from tcp_clock_mutations import MutationClock, candidate_verifier
+from tcp_capture_clock import ClockEvidenceError
 from tcp_fault_capture_test import records
 from tcp_reordering_capture_test import repair
 
@@ -42,24 +44,30 @@ def rewrite(data, at, modified, evidence, endian, timestamp=None, peer_time=None
     return data[:at] + header + modified + data[end:], adjusted
 
 
-def reject(path, lane, evidence, native):
-    verify_order(path, lane, evidence, native)
+def reject(path, lane, evidence, native, check=verify, predecessor=verify_order, timing=False):
     try:
-        verify(path, lane, evidence, native)
+        predecessor(path, lane, evidence, native)
+    except ClockEvidenceError:
+        assert timing, 'packet-semantic persist damage must pass the preceding clock checks'
+    try:
+        check(path, lane, evidence, native)
     except ValueError:
         return
     raise AssertionError('damaged persist behavior was accepted')
 
 
-def mutations(path, lane, evidence, native, directory):
+def mutations(path, lane, evidence, native, directory, statistics=None):
+    checked = candidate_verifier(verify, path, statistics)
+    clock = MutationClock(path, statistics)
+    base_checked = candidate_verifier(verify_order, path, statistics)
+
     data = path.read_bytes()
     endian, entries = records(data)
     flow = []
     for at, frame in entries:
         row = decode(frame, lane)
         if row is not None and row['role'] == 0:
-            seconds, micros = struct.unpack_from(endian + 'II', data, at)
-            row['ms'] = seconds * 1000 + micros / 1000
+            row['ms'] = clock.milliseconds(at)
             flow.append((at, frame, row))
     closed = next(entry for entry in flow if not entry[2]['outgoing'] and
                   entry[2]['flags'] & 16 and not entry[2]['flags'] & 2 and not entry[2]['window'])
@@ -77,9 +85,25 @@ def mutations(path, lane, evidence, native, directory):
 
     def check_change(entry, modified, timestamp=None, peer_time=None):
         nonlocal count
-        damaged, adjusted = rewrite(data, entry[0], modified, evidence, endian, timestamp, peer_time)
+        damaged, adjusted = rewrite(data, entry[0], modified, evidence, endian, clock.pcap_ms(entry[0], timestamp), peer_time)
         candidate.write_bytes(damaged)
-        reject(candidate, lane, adjusted, native)
+        if timestamp is not None:
+            # A shortened packet interval may also violate global capture
+            # order. Prove the original persist timing guard still rejects
+            # the synchronized monotonic peer evidence independently.
+            flow = []
+            for record in adjusted['frames']:
+                row = decode(bytes.fromhex(record['frame']), lane)
+                if row is not None and row['role'] == 0:
+                    flow.append(dict(row, ms=record['ms']))
+            try:
+                period(flow, native)
+            except ValueError as error:
+                assert 'bounded exponential persist backoff' in str(error)
+            else:
+                raise AssertionError('false persist timing passed its original semantic guard')
+        reject(candidate, lane, adjusted, native, check=checked, predecessor=base_checked,
+               timing=timestamp is not None)
         count += 1
 
     for entry in (probes[0], answer, opened):
@@ -130,8 +154,9 @@ def main():
                 for lane, name in enumerate(row['captures']):
                     path = directory / name
                     native = report_name == 'tcp-persist-native-results.json'
-                    assert verify(path, lane, peers[lane], native) == verified[name]
-                    negatives += mutations(path, lane, peers[lane], native, Path(temporary))
+                    statistics = row['capture_statistics'][lane] if native else None
+                    assert verify(path, lane, peers[lane], native, statistics) == verified[name]
+                    negatives += mutations(path, lane, peers[lane], native, Path(temporary), statistics=statistics)
                     captures += 1
     assert captures == 22 and negatives == 176
     print(f'TCP_PERSIST_CAPTURE_CHECKER_PASS captures={captures} negative_cases={negatives}')

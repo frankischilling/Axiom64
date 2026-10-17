@@ -6,10 +6,12 @@ import itertools
 import json
 from pathlib import Path
 from tcp_fault_capture import BYTES, MASK, decode, packets, require, stream
+from tcp_capture_clock import milliseconds
 
 
-def verify(path, lane, peer_rows, native=False):
-    rows = packets(path, lane)
+def verify(path, lane, peer_rows, native=False, statistics=None):
+    require(not native or statistics is not None, 'native old-ACK capture has independent clock receipts')
+    rows = packets(path, lane, statistics=statistics if native else None)
     require(peer_rows['lane'] == lane, 'old-ACK capture and independent peer lane')
     reported = defaultdict(deque)
     for record in peer_rows['frames']:
@@ -61,14 +63,14 @@ def verify(path, lane, peer_rows, native=False):
                     'in-window poison payload/FIN is exactly one byte outside the learned ACK bound')
             require(challenge['outgoing'] and challenge['flags'] == 16 and not challenge['data'] and
                     challenge['seq'] == snd_una and challenge['ack'] == peer_origin and start < end and
-                    challenge['record']['ms'] >= attack['record']['ms'] and challenge['ms'] >= attack['ms'],
+                    milliseconds(challenge['record']) >= milliseconds(attack['record']) and milliseconds(challenge) >= milliseconds(attack),
                     'actual causal challenge ACK preserves both sequence edges')
             require(not any(row['outgoing'] or row['data'] or row['flags'] & 1
                             for row in flow[start + 1:end]), 'challenge is the first actual guest response to poison')
             if number:
                 earlier = challenges[number - 1]
-                require(flow.index(earlier) < start and attack['record']['ms'] - earlier['record']['ms'] >= 1200 and
-                        attack['ms'] - earlier['ms'] >= 1195,
+                require(flow.index(earlier) < start and milliseconds(attack['record']) - milliseconds(earlier['record']) >= 1200 and
+                        milliseconds(attack) - milliseconds(earlier) >= 1195,
                         'old-ACK injections retain actual wait between response barriers')
             barriers.append(dict(attack=number + 1, lower_bound=(snd_una - 8192) & MASK,
                                  acknowledgment=attack['ack'], receive_next=challenge['ack'], passed=True))
@@ -87,8 +89,8 @@ def verify(path, lane, peer_rows, native=False):
             require(len(same) >= 2 and same[0] is dropped, 'old-ACK lost sequence/bytes actually retry')
             label = dropped['record']['drop']
             minimum = (180 if native else 850) if label == 'fin' else (2850 if label == 'data' else 850)
-            elapsed = same[1]['record']['ms'] - dropped['record']['ms']
-            require(elapsed >= minimum and same[1]['ms'] - dropped['ms'] >= minimum - 5,
+            elapsed = milliseconds(same[1]['record']) - milliseconds(dropped['record'])
+            require(elapsed >= minimum and milliseconds(same[1]) - milliseconds(dropped) >= minimum - 5,
                     'old-ACK profile retains actual independent loss retry clocks')
             before, after = flow.index(same[0]), flow.index(same[1])
             edge = (dropped['seq'] + len(dropped['data']) + int(bool(dropped['flags'] & 3))) & MASK
@@ -105,7 +107,7 @@ def verify(path, lane, peer_rows, native=False):
         results.append(dict(role=role, bytes_each=BYTES, guest_sha256=guest_hash, peer_sha256=peer_hash,
                             sequence_wrap=True, retries_ms=retries, old_ack=barriers, passed=True))
     return dict(file=path.name, lane=lane, sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
-                packets=len(rows), flows=results, passed=True)
+                packets=len(rows), flows=results, timing_clock='monotonic' if native else 'pcap', passed=True)
 
 
 def check_results(directory):
@@ -147,7 +149,8 @@ def check_results(directory):
             require(len(peers) == len(row['captures']) == 2, 'both independent old-ACK adapter captures')
             for lane, name in enumerate(row['captures']):
                 require(Path(name).name == name, 'old-ACK capture path bounds')
-                verified.append(verify(directory / name, lane, peers[lane], native))
+                verified.append(verify(directory / name, lane, peers[lane], native,
+                                       row['capture_statistics'][lane] if native else None))
     require(len(verified) == 22, 'all twenty-two complete old-ACK captures')
     output = dict(captures=verified, flows=44, attacks=132, reports=reports, passed=True)
     (directory / 'tcp-old-ack-capture-results.json').write_text(json.dumps(output, indent=2) + '\n')

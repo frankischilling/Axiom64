@@ -38,6 +38,35 @@ static int raw(int index, int protocol, int flags) {
     return fd;
 }
 
+static void buffer_options(unsigned maximum) {
+    int fd = socket(AF_PACKET, SOCK_RAW | SOCK_CLOEXEC, 0);
+    check(fd >= 0, "buffer socket");
+    const int requests[] = {0, 1, 1024, 65536, 131072, 262144, -1};
+    for (unsigned i = 0; i < sizeof(requests) / sizeof(requests[0]); i++) {
+        unsigned hint = (unsigned)requests[i];
+        unsigned expected = (hint < maximum ? hint : maximum) * 2;
+        if (expected < 2304)
+            expected = 2304;
+        int actual = -1;
+        socklen_t size = sizeof(actual);
+        check(setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &requests[i], sizeof(int)) == 0 &&
+                  getsockopt(fd, SOL_SOCKET, SO_RCVBUF, &actual, &size) == 0 &&
+                  size == sizeof(actual) && actual == (int)expected,
+              "bounded receive buffer hint");
+    }
+    int value = 65536, actual;
+    socklen_t size = sizeof(actual);
+    check(setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &value, 3) == -1 && errno == EINVAL,
+          "short receive buffer option");
+    check(setsockopt(fd, SOL_SOCKET, SO_RCVBUF, (void*)1, sizeof(value)) == -1 && errno == EFAULT,
+          "inaccessible receive buffer option");
+    unsigned largest = maximum * 2 > 2304 ? maximum * 2 : 2304;
+    check(getsockopt(fd, SOL_SOCKET, SO_RCVBUF, &actual, &size) == 0 && actual == (int)largest,
+          "failed receive buffer option preserves limit");
+    check(close(fd) == 0, "buffer socket close");
+    printf("PACKET_BUFFER_OPTIONS_PASS cases=9 maximum=%u\n", maximum);
+}
+
 static void frame(unsigned char* bytes, size_t length, const unsigned char mac[6], unsigned lane,
                   unsigned sequence) {
     memcpy(bytes, peer, 6);
@@ -104,6 +133,10 @@ static void link_state(int control, struct ifreq* request, int index) {
 
 static void listener_pressure(int fd, int index, const unsigned char mac[6], unsigned sequence) {
     int lagger = raw(index, PROTOCOL, SOCK_NONBLOCK), one = 1;
+    int capture = raw(index, PROTOCOL, SOCK_NONBLOCK), capacity = 131072;
+    check(setsockopt(capture, SOL_SOCKET, SO_RCVBUF, &capacity, sizeof(capacity)) == 0 &&
+              setsockopt(capture, SOL_PACKET, PACKET_IGNORE_OUTGOING, &one, sizeof(one)) == 0,
+          "independent larger receive buffer");
     check(setsockopt(lagger, SOL_PACKET, PACKET_IGNORE_OUTGOING, &one, sizeof(one)) == 0,
           "lagging listener ignore outgoing");
     unsigned char sent[64], bytes[1518];
@@ -130,6 +163,21 @@ static void listener_pressure(int fd, int index, const unsigned char mac[6], uns
         received(bytes, sent, sizeof(sent), NULL, mac, index);
     }
     check(read(lagger, bytes, sizeof(bytes)) == -1 && errno == EAGAIN, "lagging listener drained");
+    length = sizeof(stats);
+    check(getsockopt(capture, SOL_PACKET, PACKET_STATISTICS, &stats, &length) == 0 &&
+              length == sizeof(stats) && stats.packets == 48 && !stats.drops,
+          "configured listener retains complete burst");
+    capacity = 0;
+    check(setsockopt(capture, SOL_SOCKET, SO_RCVBUF, &capacity, sizeof(capacity)) == 0,
+          "shrink occupied receive buffer");
+    for (unsigned i = 0; i < 48; i++) {
+        frame(sent, sizeof(sent), mac, index - 1, sequence + i);
+        check(read(capture, bytes, sizeof(bytes)) == sizeof(sent),
+              "shrinking preserves queued frames");
+        received(bytes, sent, sizeof(sent), NULL, mac, index);
+    }
+    check(read(capture, bytes, sizeof(bytes)) == -1 && errno == EAGAIN && close(capture) == 0,
+          "configured listener drained and closed");
     length = sizeof(stats);
     check(getsockopt(lagger, SOL_PACKET, PACKET_STATISTICS, &stats, &length) == 0 &&
               !stats.packets && !stats.drops,
@@ -469,6 +517,16 @@ static void fault_test(int bad_id) {
 
 int main(int argc, char** argv) {
     setbuf(stdout, NULL);
+    unsigned maximum = 212992;
+    if (argc == 3 && !strcmp(argv[1], "buffer-options")) {
+        char* end;
+        unsigned long value = strtoul(argv[2], &end, 10);
+        check(value && value <= 0x3fffffff && !*end, "native receive maximum argument");
+        maximum = (unsigned)value;
+    }
+    buffer_options(maximum);
+    if (argc > 1 && !strcmp(argv[1], "buffer-options"))
+        return 0;
     if (argc > 1 && !strcmp(argv[1], "pressure")) {
         transmit_pressure();
         return 0;

@@ -79,9 +79,9 @@ and a forged product fingerprint, plus an omitted unrelated-stream reply. All 24
 damaged PCAP/journal/receipt/input bundles
 are retained with rejection reasons and hashes under `build/tcp-icmp-damaged/`.
 
-CI adds `tcp-fault-icmp` to the [complete TCP profile jobs](ci-tcp-profiles.md). All
-earlier gates remain required: 43 test jobs, the shared build and the `qemu` aggregate
-must pass for the current head. Integration also requires independent downloaded
+The `tcp-fault-icmp` profile runs in the [complete TCP profile matrix](ci-tcp-profiles.md).
+Every required job in the [full workflow](testing.md), including the shared build
+and `qemu` aggregate, must pass for the current head. Integration also requires independent downloaded
 source, product, library, image, packet, clock and receipt checks for this profile
 and the retained TCP, DNS and manager evidence.
 
@@ -106,9 +106,10 @@ The retry comparison waits for `POLLOUT` and zero `SO_ERROR`, and records
 any residual error readiness. Axiom64 does not yet implement `IP_RECVERR` or
 `MSG_ERRQUEUE`; complete ancillary and error-queue behavior remains required.
 
-Fragmentation-needed is reserved for future PMTU recovery and cannot abort TCP as
-an ordinary unreachable error. This change does not establish PMTU/fragmentation,
-route/device failure recovery, IPv6, all TCP options or the complete socket contract.
+Fragmentation-needed uses the nonfatal [TCP PMTU recovery path](tcp.md#path-mtu-recovery)
+and cannot abort TCP as an ordinary unreachable error. General IPv4 fragmentation,
+route/device failure recovery, IPv6, all TCP options and the complete socket contract
+remain required.
 The wider releases [TCP sockets](tcp.md) and
 [TCP reliability](tcp.md) remain open. Required
 applications and VM milestones still precede HP development.

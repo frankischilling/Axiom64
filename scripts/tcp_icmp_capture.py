@@ -282,7 +282,12 @@ def audit_inputs(inputs, input_root=None, host_libraries=None):
         require(set(inputs['host_libraries']) == {'libc.so.6', 'ld-linux-x86-64.so.2'},
                 'the native client records its actual glibc and loader')
         for name, library in inputs['host_libraries'].items():
-            data = host_libraries[name] if host_libraries is not None else Path(library['path']).read_bytes()
+            if 'retained' in library:
+                require(inputs['products'].get(library['retained']) == library['sha256'],
+                        f'retained native shared library fingerprint: {name}')
+                data = (input_root / library['retained']).read_bytes()
+            else:
+                data = host_libraries[name] if host_libraries is not None else Path(library['path']).read_bytes()
             require(hashlib.sha256(data).hexdigest() == library['sha256'],
                     f'actual native shared library: {name}')
 

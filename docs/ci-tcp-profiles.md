@@ -36,6 +36,9 @@ backlog, callback ownership, observer fingerprints and clocks, client results,
 source hashes and cohort completeness. Reconnect guest profiles use two isolated
 VMs concurrently; all eight firmware/transport/linkage combinations retain their
 complete observations.
+Native glibc comparisons publish the exact libc and loader bytes under
+content-addressed paths. Input manifests bind both retained libraries to the
+actual host fingerprints, so downloaded evidence can be checked on another host.
 An actual local comparison of all eight profiles used the same inspected images,
 clients and source with one and two workers. Producer time fell from 259.623 to
 130.576 seconds; each cohort passed 16 captures and rejected the same 298 damaged

@@ -39,7 +39,18 @@ def record(linkage, native=False, image=None, label=None, program='tcp-icmp', so
             path = Path(subprocess.check_output(['gcc', '-print-file-name=' + name], text=True).strip()).resolve()
             if not path.is_file():
                 raise ValueError(f'actual glibc library is missing: {name}')
-            host_libraries[name] = dict(path=str(path), sha256=digest(path))
+            data = path.read_bytes()
+            fingerprint = hashlib.sha256(data).hexdigest()
+            retained = ROOT / 'build/tcp-host-libraries' / fingerprint / name
+            retained.parent.mkdir(parents=True, exist_ok=True)
+            if retained.exists():
+                if digest(retained) != fingerprint:
+                    raise ValueError(f'retained native shared library changed: {name}')
+            else:
+                retained.write_bytes(data)
+            products.append(retained)
+            host_libraries[name] = dict(path=str(path), sha256=fingerprint,
+                                       retained=retained.relative_to(ROOT).as_posix())
     label = label or (f'{program}-linux-{linkage}' if native else f'{program}-{linkage}')
     value = dict(linkage=linkage, native=native,
                  compiler=subprocess.check_output(['gcc', '-dumpfullversion'], text=True).strip(),

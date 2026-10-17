@@ -208,6 +208,7 @@ jobs:
         run: |
           mkdir -p build/tcp-policy
           make test-tcp-wire test-tcp-sender test-tcp-connection test-tcp-isn test-tcp-time-wait test-tcp-icmp test-tcp-pmtu 2>&1 | tee build/tcp-policy/host.log
+          python3 scripts/tests/tcp_input_libraries_test.py
       - name: Upload TCP policy evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1108,6 +1109,7 @@ jobs:
             build/*.dump
             build/tcp-*.pcap
             build/tcp-*.clocks.jsonl
+            build/tcp-host-libraries/**
             build/tcp-fault-*-peer.json
             build/tcp-reordering-*-peer.json
             build/tcp-persist-*-peer.json

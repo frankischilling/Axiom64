@@ -53,10 +53,17 @@ backlog, callback ownership, observer fingerprints and clocks, client results,
 source hashes and cohort completeness. Reconnect guest profiles use two isolated
 VMs concurrently; all eight firmware/transport/linkage combinations retain their
 complete observations.
-Congestion, malformed-input, quoted-error, PMTU, pressure, reconnect and recovery native
-glibc comparisons publish the exact libc and loader bytes under
+All controlled native glibc comparisons publish the exact libc and loader bytes under
 content-addressed paths. Input manifests bind both retained libraries to the
 actual host fingerprints, so downloaded evidence can be checked on another host.
+Loss, reordering, persist, configured timeout, old-ACK, challenge and default
+lifetime jobs independently verify all three native input manifests with
+`scripts/tcp_native_inputs.py`. Each manifest is recorded before its actual
+client executes. Dynamic musl comparisons use the retained build-provider loader
+explicitly. These runtime checks complement the existing packet and timing gates.
+The loss job also exports the actual compiled clients and library products to a
+separate root, makes original host paths unavailable, and rejects 22 missing,
+misbound, corrupted or incomplete runtime/source/cohort observations.
 An actual local comparison of all eight profiles used the same inspected images,
 clients and source with one and two workers. Producer time fell from 259.623 to
 130.576 seconds; each cohort passed 16 captures and rejected the same 298 damaged

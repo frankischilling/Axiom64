@@ -845,6 +845,25 @@ jobs:
           python3 scripts/tcp_recovery_capture.py build/tcp-recovery-native-results.json --output build/tcp-recovery-native-audit.json
           python3 scripts/tcp_recovery_capture.py build/tcp-recovery-results.json --output build/tcp-recovery-guest-audit.json
           python3 scripts/tests/tcp_recovery_capture_test.py 2>&1 | tee build/tcp-recovery-damage.log
+      - name: Independently verify legacy native TCP source and runtime inputs
+        if: (startsWith(matrix.suite, 'tcp-fault-') && matrix.suite != 'tcp-fault-icmp') || matrix.suite == 'tcp-lifetime-native'
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          case "$SUITE" in
+            tcp-fault-loss) prefix=tcp-fault ;;
+            tcp-fault-reordering) prefix=tcp-reordering ;;
+            tcp-fault-persist) prefix=tcp-persist ;;
+            tcp-fault-timeout) prefix=tcp-timeout ;;
+            tcp-fault-old-ack) prefix=tcp-old-ack ;;
+            tcp-fault-challenge) prefix=tcp-challenge ;;
+            tcp-lifetime-native) prefix=tcp-lifetime ;;
+            *) exit 1 ;;
+          esac
+          python3 scripts/tcp_native_inputs.py "build/$prefix-native-results.json" 2>&1 | tee "build/$prefix-native-inputs.log"
+          if [ "$prefix" = tcp-fault ]; then
+            python3 scripts/tests/tcp_native_inputs_test.py "build/$prefix-native-results.json" 2>&1 | tee "build/$prefix-native-inputs-damage.log"
+          fi
       - name: Test desktop serial acceptance decisions
         if: matrix.suite == 'boot'
         run: |
@@ -1130,6 +1149,8 @@ jobs:
             build/tcp-*.pcap
             build/tcp-*.clocks.jsonl
             build/tcp-host-libraries/**
+            build/tcp-*-inputs.json
+            build/tcp-*-inputs-damaged/**
             build/tcp-fault-*-peer.json
             build/tcp-reordering-*-peer.json
             build/tcp-persist-*-peer.json

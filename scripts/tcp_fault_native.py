@@ -111,7 +111,7 @@ def client(scratch, linkage, wire='loss'):
     program, _ = application_configuration(wire)
     binary = ROOT / 'build' / f'{program}-{linkage}'
     command_line = [str(binary), '--native']
-    if wire in ('icmp', 'pmtu', 'pressure', 'reconnect', 'recovery', 'malformed', 'window', 'fast') and linkage == 'dynamic':
+    if linkage == 'dynamic':
         from build_musl import loader
         command_line.insert(0, str(loader('build')))
     if wire == 'icmp':
@@ -135,6 +135,9 @@ def client(scratch, linkage, wire='loss'):
     elif wire in ('window', 'fast'):
         from tcp_congestion.inputs import record
         record(linkage, wire, native=True)
+    else:
+        from tcp_native_inputs import record
+        record(wire, linkage)
     completed = subprocess.run(command_line)
     print(f'TCP_FAULT_NATIVE_DONE status={completed.returncode}', flush=True)
     began = time.monotonic()
@@ -225,14 +228,12 @@ def namespace(scratch, wire='loss', linkages=('native', 'static', 'dynamic')):
                           passed=not error and not missing and returncode == 0 and
                           not any(marker in text for marker in ('TCP_FAULT_FAIL', 'TCP_TIMEOUT_FAIL', 'TCP_LIFETIME_FAIL', 'TCP_ICMP_FAIL')))
             if wire == 'lifetime':
-                result['kernel'] = platform.release()
                 result['defaults'] = {name: int(subprocess.check_output(
                     ['nsenter', '-t', str(process.pid), '-n', '/usr/sbin/sysctl', '-n', f'net.ipv4.{name}']))
                     for name in ('tcp_retries1', 'tcp_retries2', 'tcp_syn_retries', 'tcp_synack_retries')}
                 result['host_configuration_changed'] = False
-            if wire in ('icmp', 'pmtu', 'pressure', 'reconnect', 'recovery', 'malformed', 'window', 'fast'):
-                result['kernel'] = platform.release()
-                result['inputs'] = f'tcp-{wire}-linux-{linkage}-inputs.json'
+            result['kernel'] = platform.release()
+            result['inputs'] = f'{wire_prefix}-linux-{linkage}-inputs.json'
         finally:
             if wire in ('recovery', 'reconnect'):
                 for peer in peers:

@@ -25,7 +25,7 @@ struct TimeWaitRecord {
     uint16_t local_port = 0, peer_port = 0;
     unsigned index = 0, binding_index = 0;
     uint8_t ttl = 64;
-    bool used = false, pending = false, reuse = false;
+    bool used = false, pending = false, reuse = false, reserved = false;
 };
 
 static_assert(sizeof(TimeWaitRecord) <= 64);
@@ -43,6 +43,13 @@ void expire_time_wait(uint64_t now) {
 }
 
 int sequence(InetSocket* socket, uint32_t& value, uint64_t now) {
+    // Disconnect advances this description beyond every byte it could emit.
+    // Carry that sequence through intervening destinations as well as the last
+    // tuple: choosing a new tuple hash could re-enter an earlier stream.
+    if (socket->restart_valid) {
+        value = socket->restart_sequence;
+        return 0;
+    }
     if (!sequence_seeded) {
         int error = random_read(sequence_key, sizeof(sequence_key));
         if (error)
@@ -56,13 +63,35 @@ int sequence(InetSocket* socket, uint32_t& value, uint64_t now) {
     return 0;
 }
 
-bool make_stream(InetSocket* socket) {
+void release_time_wait(InetSocket* socket) {
+    if (socket->time_wait_slot < tcp_time_wait_count) {
+        auto& record = time_waits[socket->time_wait_slot];
+        if (record.reserved && !record.used)
+            record.reserved = false;
+        socket->time_wait_slot = UINT16_MAX;
+    }
+}
+
+int make_stream(InetSocket* socket, uint64_t now) {
+    expire_time_wait(now);
+    for (unsigned index = 0; index < tcp_time_wait_count; index++)
+        if (!time_waits[index].used && !time_waits[index].reserved) {
+            time_waits[index].reserved = true;
+            socket->time_wait_slot = index;
+            break;
+        }
+    // Every admitted connection can leave the shared Internet pool after close.
+    // A full table rejects new TCP state instead of retaining large orphan owners.
+    if (socket->time_wait_slot == UINT16_MAX)
+        return -105;
     void* storage = alloc(sizeof(tcp::Connection));
-    if (!storage)
-        return false;
+    if (!storage) {
+        release_time_wait(socket);
+        return -12;
+    }
     socket->stream = new (storage) tcp::Connection;
     tcp_limits(socket);
-    return true;
+    return 0;
 }
 
 void unqueue(InetSocket* socket) {
@@ -86,6 +115,7 @@ void unqueue(InetSocket* socket) {
 
 void reclaim(InetSocket* socket) {
     unqueue(socket);
+    release_time_wait(socket);
     if (socket->stream) {
         socket->stream->~Connection();
         release(socket->stream);
@@ -106,6 +136,8 @@ void release_automatic_port(InetSocket* socket) {
 void reset_connect(InetSocket* socket) {
     // Owned packets may outlive this attempt; their callbacks cannot reach its successor.
     ipv4_detach_owner(socket);
+    release_time_wait(socket);
+    socket->mss_cache = socket->stream->segment_size();
     socket->stream->~Connection();
     release(socket->stream);
     socket->stream = nullptr;
@@ -122,25 +154,32 @@ void reset_connect(InetSocket* socket) {
     socket->connect_pending = false;
 }
 
+bool transfer_time_wait(InetSocket* socket) {
+    if (socket->time_wait_slot >= tcp_time_wait_count)
+        return false;
+    auto& record = time_waits[socket->time_wait_slot];
+    if (!record.reserved || record.used)
+        return false;
+    record = {};
+    record.state = socket->stream->time_wait_state();
+    record.local = socket->local;
+    record.peer = socket->peer;
+    record.local_port = socket->local_port;
+    record.peer_port = socket->peer_port;
+    record.index = socket->stream_index;
+    record.binding_index = socket->index;
+    record.ttl = socket->ttl;
+    record.reuse = socket->reuse;
+    record.used = true;
+    socket->time_wait_slot = UINT16_MAX;
+    return true;
+}
+
 bool compact_time_wait(InetSocket* socket) {
-    for (auto& record : time_waits)
-        if (!record.used) {
-            record = {};
-            record.state = socket->stream->time_wait_state();
-            record.local = socket->local;
-            record.peer = socket->peer;
-            record.local_port = socket->local_port;
-            record.peer_port = socket->peer_port;
-            record.index = socket->stream_index;
-            record.binding_index = socket->index;
-            record.ttl = socket->ttl;
-            record.reuse = socket->reuse;
-            record.used = true;
-            reclaim(socket);
-            return true;
-        }
-    // A full compact table keeps the original endpoint; never evict live sequence space.
-    return false;
+    if (!transfer_time_wait(socket))
+        return false;
+    reclaim(socket);
+    return true;
 }
 
 void stop_listener(InetSocket* socket) {
@@ -181,10 +220,55 @@ bool synchronized(const InetSocket* socket) {
     return state != tcp::State::closed && state != tcp::State::syn_sent &&
            state != tcp::State::syn_received && state != tcp::State::time_wait;
 }
+
+int disconnect(InetSocket* socket) {
+    int error = tcp_error(socket, false);
+    if (socket->listening)
+        stop_listener(socket);
+    if (socket->stream) {
+        auto state = socket->stream->state();
+        // A completed tuple remains protected even when its description is reused.
+        if (state == tcp::State::time_wait && !transfer_time_wait(socket))
+            return -105;
+        if (state != tcp::State::closed && state != tcp::State::time_wait)
+            error = 104;
+        socket->restart_sequence = socket->stream->reconnect_sequence();
+        socket->restart_valid = true;
+        socket->generation++;
+        socket->stream->abort(0, state != tcp::State::closed && state != tcp::State::syn_sent &&
+                                     state != tcp::State::time_wait);
+        tcp_poll();
+        reset_connect(socket);
+    } else {
+        socket->generation++;
+        tcp_poll();
+        release_automatic_port(socket);
+        if (!socket->bound)
+            socket->local = 0;
+        socket->peer = 0;
+        socket->peer_port = 0;
+        socket->shutdown = 0;
+        socket->error_seen = false;
+    }
+    socket->user_mss = 0;
+    socket->error = error;
+    return 0;
+}
 } // namespace
 
 bool inet_stream(InetSocket* socket) {
     return socket && socket->type == 1;
+}
+
+uint64_t tcp_generation(const InetSocket* socket) {
+    return socket ? socket->generation : 0;
+}
+
+int tcp_cancelled_write_error(InetSocket* socket) {
+    if (!socket->stream)
+        if (int error = tcp_error(socket, true))
+            return error;
+    return 32;
 }
 
 bool tcp_port_busy(uint32_t local, uint16_t port, unsigned index, bool reuse) {
@@ -244,6 +328,11 @@ int tcp_error(InetSocket* socket, bool clear) {
 void tcp_failed(InetSocket* socket, int error) {
     if (!socket || !socket->used)
         return;
+    // IPv4 may discard an owned copy when an interface goes down or the copy
+    // expires under backpressure. TCP still owns its unacknowledged bytes and
+    // retries them on its existing clocks.
+    if (error == 100 || error == 105)
+        return;
     if (socket->stream && socket->stream->state() == tcp::State::closed)
         return;
     if (!tcp_error(socket, false))
@@ -270,11 +359,21 @@ void tcp_icmp_error(unsigned index, const uint8_t* bytes, size_t length) {
             __builtin_bswap16(socket.peer_port) != quote.destination ||
             (socket.index && socket.index != index))
             continue;
-        socket.stream->quoted_error(quote.sequence, quote.error, quote.abort_request);
+        if (quote.too_big) {
+            // DONT and PROBE do not learn packet sizes from incoming ICMP.
+            if (!socket.mtu_policy || socket.mtu_policy >= 3)
+                continue;
+            uint16_t mtu = tcp::quoted_path_mtu(quote);
+            if (mtu && socket.stream->reduce_mss(quote.sequence, uint16_t(mtu - 40)))
+                ipv4_discard_oversized(&socket, mtu);
+        } else
+            socket.stream->quoted_error(quote.sequence, quote.error, quote.abort_request);
     }
 }
 
 int tcp_connect(InetSocket* socket, const InetAddress& address) {
+    if (!address.family)
+        return disconnect(socket);
     if (socket->listening)
         return -106;
     if (socket->stream) {
@@ -317,9 +416,13 @@ int tcp_connect(InetSocket* socket, const InetAddress& address) {
     error = sequence(socket, initial, now);
     if (error)
         return error;
-    if (!make_stream(socket))
-        return -12;
-    uint16_t mss = min(socket->maximum_segment, uint16_t(path.mtu > 40 ? path.mtu - 40 : 1));
+    error = make_stream(socket, now);
+    if (error)
+        return error;
+    socket->error = 0;
+    socket->error_seen = false;
+    uint16_t limit = socket->user_mss ? socket->user_mss : 1460;
+    uint16_t mss = min(limit, uint16_t(path.mtu > 40 ? path.mtu - 40 : 1));
     socket->stream->active(initial, now, mss);
     socket->connect_pending = true;
     tcp_poll();
@@ -349,12 +452,10 @@ int tcp_listen(InetSocket* socket, int backlog) {
         if (error)
             return error;
     }
-    for (auto& other : inet_sockets)
-        if (other.used && &other != socket && other.type == 1 && other.listening &&
-            other.local_port == socket->local_port &&
-            (!other.local || !socket->local || other.local == socket->local) &&
-            (!other.index || !socket->index || other.index == socket->index))
-            return -98;
+    // First listen rechecks current sharing flags on every overlapping owner.
+    // An existing listener already owns its port when updating the backlog.
+    if (!socket->listening && inet_port_conflict(socket, socket->local, socket->local_port))
+        return -98;
     socket->listening = true;
     socket->shutdown = 0;
     socket->backlog =
@@ -404,8 +505,10 @@ int64_t tcp_accept(Task& task, Handle* handle, uint64_t address, uint64_t length
 
 int64_t tcp_read(InetSocket* socket, void* data, size_t length, bool peek, size_t offset) {
     auto stream = socket->stream;
-    if (!stream)
-        return -107;
+    if (!stream) {
+        int error = tcp_error(socket, true);
+        return error ? -error : -107;
+    }
     if (stream->available()) {
         size_t count = stream->read(data, length, peek, peek ? offset : 0);
         if (count || !length)
@@ -512,12 +615,13 @@ bool tcp_option(InetSocket* socket, unsigned option, int& value, bool set, int& 
         if (set) {
             if (value && (value < 88 || value > 32767))
                 error = -22;
-            else if (socket->stream)
-                error = -95;
             else
-                socket->maximum_segment = value ? min(value, 1460) : 1460;
-        } else
-            value = socket->maximum_segment;
+                socket->user_mss = value;
+        } else if (socket->user_mss &&
+                   (!socket->stream || socket->stream->state() == tcp::State::closed))
+            value = socket->user_mss;
+        else
+            value = socket->stream ? socket->stream->segment_size() : socket->mss_cache;
     } else if (option == 18) {
         if (set) {
             if (value < 0)
@@ -591,16 +695,15 @@ void tcp_receive(unsigned index, uint32_t source, uint32_t destination, const vo
         child->reuse = listener->reuse;
         child->nodelay = listener->nodelay;
         child->user_timeout = listener->user_timeout;
-        child->maximum_segment = listener->maximum_segment;
+        child->user_mss = listener->user_mss;
         uint32_t initial;
-        if (sequence(child, initial, now) || !make_stream(child)) {
+        if (sequence(child, initial, now) || make_stream(child, now)) {
             reclaim(child);
             return;
         }
         const auto info = index == ipv4_loopback ? nullptr : net_info(index);
-        uint16_t mss =
-            info ? min(child->maximum_segment, uint16_t(info->mtu > 40 ? info->mtu - 40 : 1))
-                 : child->maximum_segment;
+        uint16_t limit = child->user_mss ? child->user_mss : 1460;
+        uint16_t mss = info ? min(limit, uint16_t(info->mtu > 40 ? info->mtu - 40 : 1)) : limit;
         if (!child->stream->passive(initial, segment, now, mss)) {
             reclaim(child);
             return;
@@ -643,8 +746,12 @@ void tcp_poll() {
             segment.destination = __builtin_bswap16(socket.peer_port);
             int error =
                 emit(&socket, socket.stream_index, socket.local, socket.peer, segment, socket.ttl);
-            if (error == -11 || error == -12 || error == -105)
+            // A temporary queue, interface or route failure rejects this enqueue.
+            // TCP retains its bytes and owns the local retry and delivery deadlines.
+            if (error == -11 || error == -12 || error == -105 || error == -100 || error == -101) {
+                socket.stream->output_blocked(now);
                 break;
+            }
             if (error) {
                 tcp_failed(&socket, -error);
                 pending = false;

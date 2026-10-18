@@ -5,6 +5,7 @@ import time
 from tcp_fault_peer import Flow as BaseFlow, Peer as BasePeer, ACK, SYN, FIN, RST, MASK, check
 
 DEFAULT_MS, LONGER_MS, CASES, RECOVERY_BYTES = 924600, 984600, 6, 2048
+REOPEN_MARGIN_MS = 100
 
 
 class Flow(BaseFlow):
@@ -103,7 +104,10 @@ class Flow(BaseFlow):
 
     def tick(self):
         if (self.kind == 3 and self.attempts and self.reopened_at is None and
-                self.peer.elapsed() - self.attempts[0] >= LONGER_MS):
+                self.peer.elapsed() - self.attempts[0] >= LONGER_MS + REOPEN_MARGIN_MS):
+            # Independent readers can observe the first probe at different
+            # instants. Wait beyond the existing 100 ms clock-agreement bound
+            # so both still prove the unchanged complete minimum interval.
             self.reopened_at = self.peer.elapsed()
             self.send(window=8192)
 
@@ -111,7 +115,8 @@ class Flow(BaseFlow):
         check(self.done and self.application and self.started and self.attempts,
               'complete real lifetime application and packet observation')
         check(self.kind != 3 or (self.received == self.expected and self.fin_received and
-                                self.fin_acknowledged and self.reopened_at - self.attempts[0] >= LONGER_MS),
+                                self.fin_acknowledged and
+                                self.reopened_at - self.attempts[0] >= LONGER_MS + REOPEN_MARGIN_MS),
               'responsive default persists beyond its complete deadline and recovers exactly')
         return dict(role=self.role, kind=self.kind, attempts_ms=self.attempts, reopened_at=self.reopened_at,
                     received=len(self.received), sent=self.sent, started=self.started,

@@ -32,13 +32,18 @@ struct InetSocket {
     bool listening = false, detached = false, error_seen = false, nodelay = false;
     bool connect_pending = false;
     uint32_t user_timeout = 0;
-    uint16_t maximum_segment = 1460;
+    uint16_t user_mss = 0, mss_cache = 536;
     unsigned stream_index = 0;
     bool accept_queued = false;
+    uint16_t time_wait_slot = UINT16_MAX;
+    uint64_t generation = 1;
+    uint32_t restart_sequence = 0;
+    bool restart_valid = false;
 };
 
 extern InetSocket inet_sockets[inet_socket_count];
 InetSocket* inet_allocate(unsigned type);
 void inet_dispose(InetSocket*);
+bool inet_port_conflict(InetSocket*, uint32_t local, uint16_t port);
 int inet_bind_port(InetSocket*, uint32_t local, uint16_t port);
 } // namespace ax

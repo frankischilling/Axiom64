@@ -11,13 +11,13 @@ from fetch import ROOT, LOCK
 from build_musl import loader as musl_loader
 from manager_peer import ManagerPeer
 
-SCENARIOS = ('concurrent', 'missing', 'static', 'conflict', 'defense', 'disabled', 'unsafe', 'manual', 'restart',
+SCENARIOS = ('address-query', 'concurrent', 'missing', 'static', 'conflict', 'defense', 'disabled', 'unsafe', 'manual', 'restart',
              'hint-sync', 'resolver', 'hint-remove', 'close')
 
 
 def fixture(linkage, scenario, root='/tmp', build_image=True):
     subprocess.run(['make', '-j2', 'build/axiom64.elf', 'build/init', 'busybox',
-                    'build/manager-tests', 'build/network-manager',
+                    'build/manager-tests', 'build/address-query-static', 'build/address-query-dynamic', 'build/network-manager',
                     'build/network-manager-dynamic', 'build/network-manager-faults',
                     'build/network-manager-dynamic-faults'], cwd=ROOT, check=True)
     expected = json.loads((ROOT / 'sources.lock.json').read_text())['build_musl']['version']
@@ -29,6 +29,8 @@ def fixture(linkage, scenario, root='/tmp', build_image=True):
     for name, source in [('sbin/init', ROOT / 'build/init'),
                          ('bin/busybox', ROOT / 'build' / f"busybox-{LOCK['busybox']['version']}" / 'busybox'),
                          ('bin/manager-tests', ROOT / 'build/manager-tests'),
+                         ('bin/address-query-static', ROOT / 'build/address-query-static'),
+                         ('bin/address-query-dynamic', ROOT / 'build/address-query-dynamic'),
                          ('sbin/network-manager', ROOT / 'build/network-manager'),
                          ('sbin/network-manager-dynamic', ROOT / 'build/network-manager-dynamic'),
                          ('sbin/network-manager-faults', ROOT / 'build/network-manager-faults'),
@@ -36,7 +38,9 @@ def fixture(linkage, scenario, root='/tmp', build_image=True):
                          ('lib/ld-musl-x86_64.so.1', musl_loader())]:
         files[name] = (0o100755, Path(source).read_bytes())
     binary = 'network-manager-dynamic' if linkage == 'dynamic' else 'network-manager'
-    script = f'#!/bin/sh\nset -e\n/bin/manager-tests /sbin/{binary} {scenario} {root}\necho AXIOM64_TESTS_PASS\n'
+    command = (f'/bin/address-query-{linkage} eth0 eth1' if scenario == 'address-query' else
+               f'/bin/manager-tests /sbin/{binary} {scenario} {root}')
+    script = f'#!/bin/sh\nset -e\n{command}\necho AXIOM64_TESTS_PASS\n'
     files['etc/net-test.sh'] = (0o100755, script.encode())
     with (ROOT / 'build/rootfs-network.cpio').open('wb') as output:
         for inode, (name, (mode, data)) in enumerate([*sorted(files.items()), ('TRAILER!!!', (0, b''))], 1):
@@ -46,9 +50,12 @@ def fixture(linkage, scenario, root='/tmp', build_image=True):
             output.write(bytes(-output.tell() % 4))
             output.write(data)
             output.write(bytes(-output.tell() % 4))
+    image_name = (f'axiom64-manager-address-query-{linkage}.iso' if scenario == 'address-query' else
+                  f'axiom64-manager-{linkage}.iso')
     if build_image:
         subprocess.run(['python3', 'scripts/image.py', '--test', '--suite', 'network',
-                        '--output-name', f'axiom64-manager-{linkage}.iso'], cwd=ROOT, check=True)
+                        '--output-name', image_name], cwd=ROOT, check=True)
+    return ROOT / 'build' / image_name
 
 
 def run(linkage, scenario, firmware, transport, timeout, repetition=0, root_disk=None, image=None):
@@ -145,17 +152,22 @@ def run(linkage, scenario, firmware, transport, timeout, repetition=0, root_disk
                 if peer.connection:
                     peer.connection.close()
     text = log.read_text(errors='replace')
-    required = [f'MANAGER_TEST_PASS scenario={scenario} processes=checked resolver=merged manual=preserved',
-                'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0',
+    address_query = scenario == 'address-query'
+    required = ['AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0',
                 f'Firmware: {firmware.upper()}']
-    if scenario != 'persist-prime':
+    if address_query:
+        required += [f'ADDRESS_QUERY_PASS interface=eth{lane} actual_withdrawal=1 '
+                     'no_leaked_descriptors=1 real_errors_preserved=1' for lane in range(2)]
+    else:
+        required.append(f'MANAGER_TEST_PASS scenario={scenario} processes=checked resolver=merged manual=preserved')
+    if not address_query and scenario != 'persist-prime':
         required.append('NETWORK_MANAGER_EXIT status=0')
     if root_disk:
         required += ['VFS_ROOT_PASS filesystem=ext2 device=/dev/vda readonly=0',
                      'MANAGER_PERSIST_PRIME_PASS' if scenario == 'persist-prime' else 'MANAGER_PERSIST_REBOOT_PASS']
     missing = [marker for marker in required if marker not in text]
     counts = [peer.counts() for peer in peers]
-    if error is None and returncode == 1 and not missing:
+    if error is None and returncode == 1 and not missing and not address_query:
         try:
             counts = [peer.verify() for peer in peers]
         except Exception as exception:
@@ -164,7 +176,7 @@ def run(linkage, scenario, firmware, transport, timeout, repetition=0, root_disk
                   error=error, missing=missing, counts=counts, log=log.name,
                   seconds=round(time.monotonic() - started, 3),
                   passed=returncode == 1 and error is None and not missing and
-                  not any(marker in text for marker in ['PANIC:', 'MANAGER_TEST_FAIL ', 'FAULT pid=']))
+                  not any(marker in text for marker in ['PANIC:', 'MANAGER_TEST_FAIL ', 'ADDRESS_QUERY_FAIL ', 'FAULT pid=']))
     print(json.dumps(result), flush=True)
     if not result['passed']:
         print(text[-4500:], flush=True)
@@ -189,12 +201,12 @@ def main():
         f'manager-{args.firmware}-{args.transport}-results.json')
     for linkage in ['static', 'dynamic'] if args.linkage == 'both' else [args.linkage]:
         for scenario in args.scenario:
-            fixture(linkage, scenario)
+            image = fixture(linkage, scenario)
             for firmware in ['bios', 'uefi'] if args.firmware == 'both' else [args.firmware]:
                 for transport in ['modern', 'legacy'] if args.transport == 'both' else [args.transport]:
                     for repetition in range(args.repeat):
                         result = run(linkage, scenario, firmware, transport, args.timeout,
-                                     repetition + 1 if args.repeat > 1 else 0)
+                                     repetition + 1 if args.repeat > 1 else 0, image=image)
                         results.append(result)
                         (ROOT / 'build' / report).write_text(json.dumps(results, indent=2) + '\n')
                         if not result['passed']:

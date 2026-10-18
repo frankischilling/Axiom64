@@ -51,9 +51,10 @@ static void decoder() {
         bytes[1] = code;
         checksums(bytes);
         bool decoded = tcp::decode_icmp_error(bytes.data(), bytes.size(), value);
-        assert(decoded == bool(errors[code]));
+        assert(decoded == (bool(errors[code]) || code == 4));
         if (decoded)
             assert(value.error == errors[code] && value.abort_request == (code < 2));
+        assert(!decoded || value.too_big == (code == 4));
     }
     for (auto [type, limit, error] : {std::array<int, 3>{11, 1, 113}, {12, 3, 71}}) {
         for (int code = 0; code <= limit; code++) {

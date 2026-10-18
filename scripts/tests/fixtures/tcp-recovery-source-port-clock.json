@@ -1,0 +1,70 @@
+{
+  "description": "Actual published native SYN port mutation after omitted ARP frames; clocks are replay fixtures.",
+  "source_run": 39075903115,
+  "source_commit": "ede086c43e227a6909ce343fa7523f83c7994711",
+  "original_pcap_sha256": "01cbe415f7214b5c62f049239b3b4e3ead7b29a2e8b1983c20927d8ae8868f46",
+  "original_receipts_sha256": "0659b959b462aca00740170e217e788b4f0ccbfc3e9de77fd3a2022646b5a0e6",
+  "candidate_pcap_sha256": "98a91c59c7878bb9508d4cbc2d695b5a2561d99934e8f256830288b4b6b155db",
+  "original": [
+    {
+      "stamp": 1792281487430992,
+      "frame": "ffffffffffff525400123410080600010800060400015254001234100a1701020000000000000a170101"
+    },
+    {
+      "stamp": 1792281487431459,
+      "frame": "525400123410024158544300080600010800060400020241585443000a1701015254001234100a170102"
+    },
+    {
+      "stamp": 1792281487431478,
+      "frame": "02415854430052540012341008004500003c3ac140004006e9ca0a1701020a170101bb80bf683790f79800000000a002faf02dc30000020405b40402080a641ffae6000000000103030a"
+    },
+    {
+      "stamp": 1792281487431643,
+      "frame": "52540012341002415854430008004500002c000040004006249c0a1701010a170102bf68bb80fffffff03790f79960122000bb7d000002040218"
+    }
+  ],
+  "candidate": [
+    {
+      "stamp": 1792281487431478,
+      "frame": "02415854430052540012341008004500003c3ac140004006e9ca0a1701020a170101bb83bf683790f79800000000a002faf02dc00000020405b40402080a641ffae6000000000103030a"
+    },
+    {
+      "stamp": 1792281487431643,
+      "frame": "52540012341002415854430008004500002c000040004006249c0a1701010a170102bf68bb80fffffff03790f79960122000bb7d000002040218"
+    }
+  ],
+  "receipts": [
+    {
+      "frame": 0,
+      "sha256": "51119e76df464aa704859e2ee060aae68878479fce300c5dfe7d1556967d649a",
+      "kernel_realtime_ns": 1792281487430992164,
+      "receipt_monotonic_ns": 1814214618850,
+      "receipt_realtime_ns": 1792281487431327503,
+      "receipt_monotonic_after_ns": 1814214620271
+    },
+    {
+      "frame": 1,
+      "sha256": "4e4f78ddc0af9f6ab0f7f512acf8ad3e232e6f94f4b2d5a3bf18199a2f2ac5fe",
+      "kernel_realtime_ns": 1792281487431459890,
+      "receipt_monotonic_ns": 1814214771352,
+      "receipt_realtime_ns": 1792281487431479444,
+      "receipt_monotonic_after_ns": 1814214772144
+    },
+    {
+      "frame": 2,
+      "sha256": "a163ca2f5c04d5392bb0b20a56ae427ebe9d2d8f21e8a794eeca4432aed18d83",
+      "kernel_realtime_ns": 1792281487431478329,
+      "receipt_monotonic_ns": 1814214815284,
+      "receipt_realtime_ns": 1792281487431523080,
+      "receipt_monotonic_after_ns": 1814214815670
+    },
+    {
+      "frame": 3,
+      "sha256": "e0d74c9df9d5b72a42eb6de01ae269130662c85a166dfdcb4916d1dbd9c10480",
+      "kernel_realtime_ns": 1792281487431643751,
+      "receipt_monotonic_ns": 1814214952684,
+      "receipt_realtime_ns": 1792281487431660602,
+      "receipt_monotonic_after_ns": 1814214953176
+    }
+  ]
+}

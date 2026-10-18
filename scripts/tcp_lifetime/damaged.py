@@ -11,21 +11,24 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tests'))
+from tcp_clock_mutations import MutationClock, candidate_verifier
 from tcp_fault_capture_test import records
 from tcp_persist_capture_test import counterpart, rewrite
 from tcp_reordering_capture_test import repair
 from tcp_lifetime.capture import DEFAULT_MS, LONGER_MS, decode, packets, peer_evidence, verify
 
 
-def mutations(path, lane, evidence, native, directory):
+def mutations(path, lane, evidence, native, directory, statistics=None):
+    checked = candidate_verifier(verify, path, statistics)
+    clock = MutationClock(path, statistics)
+
     original = path.read_bytes()
     endian, entries = records(original)
     flows = {kind: [] for kind in range(6)}
     for offset, frame in entries:
         row = decode(frame, lane)
         if row is not None and row['role'] == 0:
-            seconds, micros = struct.unpack_from(endian + 'II', original, offset)
-            row['ms'] = seconds * 1000 + micros / 1000
+            row['ms'] = clock.milliseconds(offset)
             flows[row['kind']].append((offset, frame, row))
     data = [entry for entry in flows[0] if entry[2]['outgoing'] and entry[2]['data']]
     fins = [entry for entry in flows[1] if entry[2]['outgoing'] and entry[2]['flags'] & 1]
@@ -48,14 +51,14 @@ def mutations(path, lane, evidence, native, directory):
                            if decode(bytes.fromhex(entry['frame']), lane) is not None)
         assert Counter(row['frame'] for row in decoded) == expected
         try:
-            verify(candidate, lane, adjusted, native)
+            checked(candidate, lane, adjusted, native)
         except ValueError:
             count += 1
             return
         raise AssertionError('false full-lifetime evidence was accepted')
 
     def changed(entry, modified, timestamp=None, peer_time=None):
-        bytes_, adjusted = rewrite(original, entry[0], modified, evidence, endian, timestamp, peer_time)
+        bytes_, adjusted = rewrite(original, entry[0], modified, evidence, endian, clock.pcap_ms(entry[0], timestamp), peer_time)
         reject(bytes_, adjusted)
 
     for entry, kind in ((data[1], 0), (fins[1], 1), (probes[1], 3)):
@@ -91,7 +94,7 @@ def mutations(path, lane, evidence, native, directory):
     # Move reopening and its report together; packet equality alone must not accept a shortened observation.
     initial = counterpart(original, probes[0][0], evidence)['ms']
     bytes_, adjusted = rewrite(original, opened[0], opened[1], evidence, endian,
-                               opened[2]['ms'] - LONGER_MS + 1000, initial + 1000)
+                               clock.pcap_ms(opened[0], opened[2]['ms'] - LONGER_MS + 1000), initial + 1000)
     next(flow for flow in adjusted['flows'] if flow['kind'] == 3 and flow['role'] == 0)['reopened_at'] = initial + 1000
     reject(bytes_, adjusted)
     # Move a whole flow onto another live case's endpoint, with valid checksums
@@ -124,8 +127,9 @@ def main():
                 for lane, item in enumerate(row['captures']):
                     capture = directory / item
                     native = name == 'tcp-lifetime-native-results.json'
-                    assert verify(capture, lane, peers[lane], native) == verified[item]
-                    negatives += mutations(capture, lane, peers[lane], native, Path(temporary))
+                    statistics = row['capture_statistics'][lane] if native else None
+                    assert verify(capture, lane, peers[lane], native, statistics) == verified[item]
+                    negatives += mutations(capture, lane, peers[lane], native, Path(temporary), statistics=statistics)
                     captures += 1
     assert captures == len(report['captures']) and negatives == captures * 18
     print(f'TCP_LIFETIME_CAPTURE_CHECKER_PASS captures={captures} negative_cases={negatives}')

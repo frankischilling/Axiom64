@@ -13,6 +13,7 @@ import time
 from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tcp_fault_native import Capture, check, command
+from tcp_capture_clock import ClockEvidenceError, bind_native_clock, milliseconds, raw_records
 
 
 class HeldWriter:
@@ -24,6 +25,9 @@ class HeldWriter:
         self.entered.set()
         check(self.release.wait(10), 'bounded capture writer pause')
         return self.output.write(data)
+
+    def flush(self):
+        self.output.flush()
 
     def close(self):
         self.output.close()
@@ -69,6 +73,13 @@ def burst(directory, overflow):
         if frame[:14] == prefix:
             captured[struct.unpack_from('!I', frame, 14)[0]] += 1
     check(captured == Counter(range(1000)), 'every actual burst frame is captured exactly once')
+    bind_frames(path, prefix, statistics)
+
+
+def bind_frames(path, prefix, statistics):
+    rows = [row for row in raw_records(path) if row['frame'].startswith(prefix)]
+    bind_native_clock(path, rows, statistics)
+    return rows
 
 
 def pair_times(path, prefix):
@@ -107,6 +118,9 @@ def wall_step(directory, direction):
                     events[index].set()
             return written
 
+        def flush(self):
+            self.output.flush()
+
         def close(self):
             self.output.close()
 
@@ -132,6 +146,12 @@ def wall_step(directory, direction):
     timestamps = pair_times(path, prefix)
     elapsed = timestamps[1] - timestamps[0]
     check(20 <= elapsed <= 1000, f'actual capture interval survives a wall-clock step: elapsed_ms={elapsed}')
+    try:
+        bind_frames(path, prefix, statistics)
+    except ClockEvidenceError as exception:
+        check('stable native' in str(exception), 'observed wall-clock step fails the clock contract')
+    else:
+        raise ValueError('discontinuous clock evidence was accepted')
 
 
 def queued_timestamps(directory):
@@ -163,6 +183,10 @@ def queued_timestamps(directory):
     timestamps = pair_times(path, prefix)
     elapsed = timestamps[1] - timestamps[0]
     check(20 <= elapsed <= 1000, f'kernel receipt interval survives delayed collection: elapsed_ms={elapsed}')
+    bound = bind_frames(path, prefix, statistics)
+    observed = milliseconds(bound[1]) - milliseconds(bound[0])
+    check(abs(observed - elapsed) <= .001,
+          'delayed reads preserve the original kernel packet interval within PCAP microsecond precision')
 
 
 def isolated(parent):

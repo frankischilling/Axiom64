@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Exercise real Linux TCP sockets against independently constructed fault peers."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 from pathlib import Path
 import selectors
@@ -10,6 +11,7 @@ import struct
 import subprocess
 import tempfile
 import time
+import traceback
 from fetch import ROOT, LOCK
 from build_musl import loader as musl_loader
 from tcp_fault_peer import Peer, check
@@ -19,7 +21,14 @@ from tcp_timeout_peer import Peer as TimeoutPeer
 from tcp_old_ack_peer import Peer as OldAckPeer
 from tcp_challenge_peer import Peer as ChallengePeer
 from tcp_icmp_peer import Peer as IcmpPeer, CASES as ICMP_CASES
+from tcp_pmtu_peer import Peer as PmtuPeer
+from tcp_pressure_peer import Peer as PressurePeer
+from tcp_reconnect_peer import Peer as ReconnectPeer
+from tcp_recovery_peer import Peer as RecoveryPeer
 from tcp_lifetime.peer import Peer as LifetimePeer
+from tcp_malformed.peer import Peer as MalformedPeer
+from tcp_congestion.window_peer import Peer as WindowPeer
+from tcp_congestion.fast_peer import Peer as FastPeer
 
 
 def wire_configuration(wire):
@@ -27,13 +36,32 @@ def wire_configuration(wire):
                 'persist': (PersistPeer, 'tcp-persist'), 'timeout': (TimeoutPeer, 'tcp-timeout'),
                 'old-ack': (OldAckPeer, 'tcp-old-ack'),
                 'challenge': (ChallengePeer, 'tcp-challenge'),
+                'malformed': (MalformedPeer, 'tcp-malformed'),
+                'window': (WindowPeer, 'tcp-window'), 'fast': (FastPeer, 'tcp-fast'),
                 'icmp': (IcmpPeer, 'tcp-icmp'),
+                'pmtu': (PmtuPeer, 'tcp-pmtu'),
+                'pressure': (PressurePeer, 'tcp-pressure'),
+                'reconnect': (ReconnectPeer, 'tcp-reconnect'),
+                'recovery': (RecoveryPeer, 'tcp-recovery'),
                 'lifetime': (LifetimePeer, 'tcp-lifetime')}
     check(wire in profiles, 'known controlled TCP wire profile')
     return profiles[wire]
 
 
 def application_configuration(wire):
+    if wire in ('window', 'fast'):
+        return 'tcp-window', ['TCP_WINDOW_PASS nics=2 bytes_each=65536']
+    if wire == 'malformed':
+        return 'tcp-malformed', ['TCP_MALFORMED_PASS nics=2 cases_each=7']
+    if wire == 'recovery':
+        return 'tcp-recovery', ['TCP_RECOVERY_PASS nics=2 exact_each=6224 queued_each=512 expiry_ms=4500 routes_each=2 carrier_each=1']
+    if wire == 'reconnect':
+        return 'tcp-reconnect', ['TCP_RECONNECT_PASS nics=2 cases_each=6 ordinary_phases_each=2 '
+                                 'revisit_phases=3 queued_phases_each=2 queued_each=512']
+    if wire == 'pressure':
+        return 'tcp-pressure', ['TCP_PRESSURE_PASS phases=2 udp_each=32 aborted=2560 companions=2']
+    if wire == 'pmtu':
+        return 'tcp-pmtu', ['TCP_PMTU_PASS lanes=2 flows_each=12 bytes_each=4096']
     if wire == 'icmp':
         markers = [f'TCP_ICMP_PASS cases={len(ICMP_CASES)} nics=2 cycles=128']
         markers += [f'ICMP_CASE_PASS lane={lane} case={ordinal} name={case["name"]}'
@@ -85,6 +113,24 @@ def fixture(linkage, wire='loss'):
     if wire == 'icmp':
         from tcp_icmp_inputs import record
         record(linkage, image=image)
+    elif wire == 'pmtu':
+        from tcp_pmtu_inputs import record
+        record(linkage, image=image)
+    elif wire == 'pressure':
+        from tcp_pressure_inputs import record
+        record(linkage, image=image)
+    elif wire == 'reconnect':
+        from tcp_reconnect_inputs import record
+        record(linkage, image=image)
+    elif wire == 'recovery':
+        from tcp_recovery_inputs import record
+        record(linkage, image=image)
+    elif wire == 'malformed':
+        from tcp_malformed.inputs import record
+        record(linkage, image=image)
+    elif wire in ('window', 'fast'):
+        from tcp_congestion.inputs import record
+        record(linkage, wire, image=image)
     return image
 
 
@@ -207,15 +253,38 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
     log_path = ROOT / 'build' / f'{label}.log'
     peers, servers, captures = [peer_type(lane) for lane in range(2)], [], []
     capture_workspace = tempfile.TemporaryDirectory(prefix=f'axiom64-tcp-{wire}-packets-') if wire in ('challenge', 'lifetime', 'icmp') else None
+    carrier_workspace = None
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '512M', '-nic', 'none',
                '-cdrom', str(image), '-display', 'none', '-serial', 'stdio', '-monitor', 'none',
                '-no-reboot', '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
+    if wire == 'reconnect':
+        from tcp_reconnect_fault import QueuedOutput
+        with socket.socket() as reserve:
+            reserve.bind(('127.0.0.1', 0))
+            debug_port = reserve.getsockname()[1]
+        command += ['-gdb', f'tcp:127.0.0.1:{debug_port}']
+        QueuedOutput(peers, label, ROOT / 'build', debug_port=debug_port,
+                     kernel_path=ROOT / 'build/axiom64.elf')
+    if wire == 'recovery':
+        from tcp_recovery_carrier import Carrier
+        carrier_workspace = tempfile.TemporaryDirectory(prefix='axiom64-tcp-carrier-')
+        monitor_path = Path(carrier_workspace.name) / 'monitor.sock'
+        Carrier(peers, label, monitor_path=monitor_path)
+        command += ['-qmp', f'unix:{monitor_path},server=on,wait=off']
+        with socket.socket() as reserve:
+            reserve.bind(('127.0.0.1', 0))
+            debug_port = reserve.getsockname()[1]
+        command += ['-gdb', f'tcp:127.0.0.1:{debug_port}']
+        for peer in peers:
+            peer.guest_profile(debug_port, label)
     for lane, model in enumerate(('virtio-net-pci', 'e1000')):
         server = socket.socket()
         server.bind(('127.0.0.1', 0))
         server.listen(1)
         servers.append(server)
         nic = f'{model},netdev=peer{lane},addr={lane + 4:x},mac={peers[lane].guest.hex(":")}'
+        if wire == 'recovery':
+            nic += f',id=carrier{lane}'
         if lane == 0:
             nic += ',disable-legacy=on' if transport == 'modern' else ',disable-modern=on'
         capture = ROOT / 'build' / f'{label}-lane{lane}.pcap'
@@ -235,6 +304,11 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             text, results, error, returncode = exercise(process, peers, servers, timeout, log)
     finally:
+        if wire in ('recovery', 'reconnect'):
+            for peer in peers:
+                peer.close()
+        if carrier_workspace is not None:
+            carrier_workspace.cleanup()
         for server in servers:
             server.close()
         if capture_workspace:
@@ -248,7 +322,10 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
     peer_path = ROOT / 'build' / f'{label}-peer.json'
     peer_path.write_text(json.dumps([dict(lane=peer.lane, frames=peer.frames) for peer in peers], indent=2) + '\n')
     program, required = application_configuration(wire)
-    application_prefix = {'timeout': 'TCP_TIMEOUT', 'lifetime': 'TCP_LIFETIME', 'icmp': 'TCP_ICMP'}.get(wire, 'TCP_FAULT')
+    application_prefix = {'timeout': 'TCP_TIMEOUT', 'lifetime': 'TCP_LIFETIME', 'icmp': 'TCP_ICMP',
+                          'pressure': 'TCP_PRESSURE', 'reconnect': 'TCP_RECONNECT',
+                          'recovery': 'TCP_RECOVERY', 'malformed': 'TCP_MALFORMED',
+                          'window': 'TCP_WINDOW', 'fast': 'TCP_WINDOW'}.get(wire, 'TCP_FAULT')
     required += [f'{application_prefix}_CONFIG_PASS nics=2',
                 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
                 f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
@@ -260,8 +337,8 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
                   seconds=round(time.monotonic() - began, 3),
                   passed=not error and not missing and returncode == 1 and
                   not any(marker in text for marker in ('TCP_FAULT_FAIL', 'TCP_TIMEOUT_FAIL', 'TCP_LIFETIME_FAIL', 'TCP_ICMP_FAIL', 'PANIC:', 'FAULT pid=')))
-    if wire == 'icmp':
-        result['inputs'] = f'tcp-icmp-{linkage}-inputs.json'
+    if wire in ('icmp', 'pmtu', 'pressure', 'reconnect', 'recovery', 'malformed', 'window', 'fast'):
+        result['inputs'] = f'tcp-{wire}-{linkage}-inputs.json'
     print(json.dumps(result), flush=True)
     if not result['passed']:
         print(text[-5000:], flush=True)
@@ -270,14 +347,16 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist', 'timeout', 'old-ack', 'challenge', 'icmp'), default='loss')
+    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist', 'timeout', 'old-ack', 'challenge', 'icmp', 'pmtu', 'pressure', 'reconnect', 'recovery', 'malformed', 'window', 'fast'), default='loss')
     for name, choices in (('linkage', ('static', 'dynamic')), ('firmware', ('bios', 'uefi')),
                           ('transport', ('modern', 'legacy'))):
         parser.add_argument(f'--{name}', choices=(*choices, 'both'), default='both')
     parser.add_argument('--timeout', type=float)
+    parser.add_argument('--workers', type=int, choices=range(1, 5), default=1,
+                        help='maximum simultaneous guest VMs; fixtures are built first')
     args = parser.parse_args()
     if args.timeout is None:
-        args.timeout = 240 if args.wire == 'icmp' else 150
+        args.timeout = 300 if args.wire == 'pressure' else 240 if args.wire == 'icmp' else 150
     _, prefix = wire_configuration(args.wire)
     if args.timeout <= 0:
         parser.error('timeout must be positive')
@@ -285,6 +364,29 @@ def main():
     previous = original.read_bytes() if original.exists() else None
     results = []
     try:
+        if args.workers > 1:
+            linkages = ('static', 'dynamic') if args.linkage == 'both' else (args.linkage,)
+            images = {linkage: fixture(linkage, args.wire) for linkage in linkages}
+            profiles = [(linkage, firmware, transport) for linkage in linkages
+                        for firmware in (('bios', 'uefi') if args.firmware == 'both' else (args.firmware,))
+                        for transport in (('modern', 'legacy') if args.transport == 'both' else (args.transport,))]
+            with ThreadPoolExecutor(max_workers=args.workers) as executor:
+                pending = {executor.submit(run, *profile, images[profile[0]], args.timeout, args.wire): profile
+                           for profile in profiles}
+                for future in as_completed(pending):
+                    linkage, firmware, transport = pending[future]
+                    try:
+                        result = future.result()
+                    except Exception as error:
+                        filename = f'{prefix}-{linkage}-{firmware}-{transport}-producer-error.log'
+                        (ROOT / 'build' / filename).write_text(traceback.format_exc())
+                        result = dict(wire=args.wire, linkage=linkage, firmware=firmware, transport=transport,
+                                      passed=False, error=str(error), producer_error=filename)
+                    results.append(result)
+                    (ROOT / 'build' / f'{prefix}-results.json').write_text(json.dumps(results, indent=2) + '\n')
+            if not all(result['passed'] for result in results):
+                raise SystemExit('Controlled guest TCP acceptance failed')
+            return
         for linkage in ('static', 'dynamic') if args.linkage == 'both' else (args.linkage,):
             image = fixture(linkage, args.wire)
             for firmware in ('bios', 'uefi') if args.firmware == 'both' else (args.firmware,):

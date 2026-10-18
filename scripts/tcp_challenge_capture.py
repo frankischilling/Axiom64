@@ -7,6 +7,7 @@ import json
 import re
 from pathlib import Path
 from tcp_fault_capture import BYTES, MASK, decode, packets, require, stream
+from tcp_capture_clock import milliseconds
 
 
 def shape(kind, receive, send):
@@ -30,8 +31,9 @@ def shape(kind, receive, send):
     return flags, sequence, acknowledgment, data
 
 
-def verify(path, lane, peer_rows, native=False):
-    rows = packets(path, lane)
+def verify(path, lane, peer_rows, native=False, statistics=None):
+    require(not native or statistics is not None, 'native challenge capture has independent clock receipts')
+    rows = packets(path, lane, statistics=statistics if native else None)
     require(peer_rows['lane'] == lane, 'challenge lane identity')
     reported = defaultdict(deque)
     for record in peer_rows['frames']:
@@ -100,7 +102,7 @@ def verify(path, lane, peer_rows, native=False):
                     'complete observed silence includes all bursts and no concealed extra replies')
             for clock in ('ms', 'peer'):
                 def timestamp(row):
-                    return row['record']['ms'] if clock == 'peer' else row['ms']
+                    return milliseconds(row['record']) if clock == 'peer' else milliseconds(row)
                 reply_at = timestamp(response)
                 require(0 <= reply_at - timestamp(trigger) <= 250,
                         'actual challenge follows trigger promptly in both clocks')
@@ -110,7 +112,7 @@ def verify(path, lane, peer_rows, native=False):
                 require(timestamp(end) - reply_at >= (650 if clock == 'peer' else 645),
                         'each silence barrier retains the full real elapsed wait on both clocks')
             barriers.append(dict(round=number, injections=17,
-                                 silence_ms=round(end['record']['ms'] - response['record']['ms'], 3), passed=True))
+                                 silence_ms=round(milliseconds(end['record']) - milliseconds(response['record']), 3), passed=True))
         require(position(first_data) > position(challenges[-1]), 'valid data follows all challenge barriers')
         hashes = (stream(guest, guest_origin, lane, role, 0), stream(benign, peer_origin, lane, role, 1))
         drops = [row for row in guest if 'drop' in row['record']]
@@ -123,14 +125,14 @@ def verify(path, lane, peer_rows, native=False):
             label = dropped['record']['drop']
             minimum = (180 if native else 850) if label == 'fin' else (2850 if label == 'data' else 850)
             require(len(same) >= 2 and same[0] is dropped and
-                    same[1]['record']['ms'] - dropped['record']['ms'] >= minimum and
-                    same[1]['ms'] - dropped['ms'] >= minimum - 5, 'actual loss retry in both clocks')
+                    milliseconds(same[1]['record']) - milliseconds(dropped['record']) >= minimum and
+                    milliseconds(same[1]) - milliseconds(dropped) >= minimum - 5, 'actual loss retry in both clocks')
             edge = (dropped['seq'] + len(dropped['data']) + int(bool(dropped['flags'] & 3))) & MASK
             require(not any(not row['outgoing'] and row['flags'] & 16 and
                             ((row['ack'] - edge) & MASK) < (1 << 31)
                             for row in flow[position(dropped) + 1:position(same[1])]),
                     'lost sequence is unacknowledged before its actual retry')
-            retries[label] = round(same[1]['record']['ms'] - dropped['record']['ms'], 3)
+            retries[label] = round(milliseconds(same[1]['record']) - milliseconds(dropped['record']), 3)
         for outgoing, origin, opposite in ((guest, guest_origin, benign), (benign, peer_origin, guest)):
             finishes = [row for row in outgoing if row['flags'] & 1]
             require(finishes and all((row['seq'] + len(row['data'])) & MASK == (origin + BYTES) & MASK
@@ -140,11 +142,11 @@ def verify(path, lane, peer_rows, native=False):
         first_responses.append(challenges[0])
         results.append(dict(role=role, bytes_each=BYTES, guest_sha256=hashes[0], peer_sha256=hashes[1],
                             sequence_wrap=True, retries_ms=retries, challenge=barriers, passed=True))
-    require(abs(first_responses[0]['record']['ms'] - first_responses[1]['record']['ms']) < 450 and
-            abs(first_responses[0]['ms'] - first_responses[1]['ms']) < 450,
+    require(abs(milliseconds(first_responses[0]['record']) - milliseconds(first_responses[1]['record'])) < 450 and
+            abs(milliseconds(first_responses[0]) - milliseconds(first_responses[1])) < 450,
             'independent connections both respond within one 500 ms interval on both clocks')
     return dict(file=path.name, lane=lane, sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
-                packets=len(rows), flows=results, passed=True)
+                packets=len(rows), flows=results, timing_clock='monotonic' if native else 'pcap', passed=True)
 
 
 def check_results(directory):
@@ -189,7 +191,8 @@ def check_results(directory):
             require(len(peers) == len(row['captures']) == 2, 'both independent challenge adapter captures')
             for lane, name in enumerate(row['captures']):
                 require(Path(name).name == name, 'challenge capture path bounds')
-                verified.append(verify(directory / name, lane, peers[lane], native))
+                verified.append(verify(directory / name, lane, peers[lane], native,
+                                       row['capture_statistics'][lane] if native else None))
     require(len(verified) == 22, 'all twenty-two complete challenge captures')
     output = dict(captures=verified, flows=44, attacks=5984, challenges=352, reports=reports, passed=True)
     (directory / 'tcp-challenge-capture-results.json').write_text(json.dumps(output, indent=2) + '\n')

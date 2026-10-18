@@ -894,7 +894,255 @@ static void default_lifetimes() {
         cases);
 }
 
+static void reconnect_sequences() {
+    struct Fixture {
+        uint32_t initial;
+        uint16_t window;
+        uint32_t queued, closed, enlarged;
+    };
+
+    const Fixture fixtures[] = {
+        {100, 8192, 8312, 8313, 65656},    {0xfffffff0, 8192, 8196, 8197, 65540},
+        {0xffffdfec, 8192, 1, 1, 57344},   {0xffffdfeb, 8192, 0xffffffff, 1, 57343},
+        {100, 65535, 65655, 65656, 65656}, {0xfffffff0, 65535, 65539, 65540, 65540},
+        {0xfffeffed, 65535, 1, 1, 1},      {0xfffeffec, 65535, 0xffffffff, 1, 1},
+    };
+    for (auto fixture : fixtures) {
+        Connection client;
+        client.active(fixture.initial, 0);
+        assert(require_output(client, 0).segment().flags == syn);
+        auto response = inbound(client, 0xfffffff0, nullptr, syn | ack);
+        response.window = fixture.window;
+        response.maximum_segment = 1460;
+        client.input(injection(response).segment(), 10);
+        assert(require_output(client, 10).segment().flags == ack);
+        const char bytes[17] = "queued old bytes";
+        assert(client.write(bytes, sizeof(bytes), 20) == sizeof(bytes));
+        assert(client.next_send() == fixture.initial + 1);
+        assert(client.reconnect_sequence() == fixture.queued);
+        assert(require_output(client, 20).segment().length == sizeof(bytes));
+        assert(client.reconnect_sequence() == fixture.queued);
+        response = inbound(client, client.next_receive());
+        response.window = 0;
+        client.input(injection(response).segment(), 30);
+        assert(client.queued() == 0 && client.reconnect_sequence() == fixture.queued);
+        client.close_write();
+        assert(client.reconnect_sequence() == fixture.closed);
+        no_output(client, 31);
+        response.window = 65535;
+        client.input(injection(response).segment(), 40);
+        assert(client.reconnect_sequence() == fixture.enlarged);
+        auto finish = require_output(client, 40).segment();
+        assert(finish.flags == (fin | ack));
+        assert(client.reconnect_sequence() == fixture.enlarged);
+        response.acknowledgment = finish.sequence + 1;
+        client.input(injection(response).segment(), 50);
+        assert(client.reconnect_sequence() == fixture.enlarged);
+    }
+    std::puts("TCP_RECONNECT_SEQUENCE_MODEL_PASS cases=8 pending_bytes maximum_window queued_FIN "
+              "acknowledged_FIN wrap nonzero");
+}
+
+static void local_output_retries() {
+    constexpr uint64_t lifetime = 924600;
+    unsigned cases = 0;
+    for (bool finish : {false, true}) {
+        for (uint32_t timeout : {uint32_t(0), uint32_t(2500)}) {
+            for (uint64_t start : {uint64_t(20), UINT64_MAX - lifetime}) {
+                Connection blocked, peer;
+                establish(blocked, peer, 0xfffffff0);
+                blocked.user_timeout(timeout);
+                if (finish)
+                    blocked.close_write();
+                else
+                    assert(blocked.write("x", 1, start) == 1);
+                uint32_t sequence = blocked.next_send();
+                Packet packet;
+                assert(output(blocked, start, true, packet, false));
+                blocked.output_blocked(start);
+                blocked.emitted(start); // The rejected offer cannot later acquire ownership.
+                assert(blocked.next_send() == sequence && blocked.state() == State::established);
+                no_output(blocked, start - 1); // A regressed reading cannot end the local delay.
+                no_output(blocked, start + 199);
+                assert(output(blocked, start + 200, true, packet, false));
+                assert(packet.segment().sequence == sequence);
+                blocked.output_blocked(start + 200);
+                uint64_t bound = start + (timeout ? timeout : lifetime);
+                assert(output(blocked, bound - 1, true, packet, false));
+                blocked.output_blocked(bound - 1);
+                // The delivery deadline expires inside the most recent local retry delay.
+                no_output(blocked, bound);
+                assert(blocked.state() == State::closed && blocked.error() == 110 &&
+                       blocked.next_send() == sequence);
+                cases++;
+            }
+        }
+    }
+
+    for (bool zero_window : {false, true}) {
+        Connection finish, peer;
+        if (zero_window)
+            peer.limits(0, stream_capacity);
+        establish(finish, peer);
+        finish.user_timeout(2500);
+        finish.close_write();
+        uint64_t start = zero_window ? 1010 : 20;
+        Packet packet;
+        assert(output(finish, start, true, packet, false));
+        finish.output_blocked(start);
+        if (zero_window) {
+            peer.limits(stream_capacity, stream_capacity);
+            finish.input(require_output(peer, start + 100, false).segment(), start + 101);
+        }
+        packet = require_output(finish, start + 200);
+        assert(packet.segment().flags & fin);
+        no_output(finish, start + 2500);
+        assert(finish.error() == 110); // Successful enqueue cannot renew an already waiting FIN.
+        cases++;
+    }
+
+    Connection delayed, waiting;
+    establish(delayed, waiting);
+    delayed.user_timeout(2500);
+    assert(delayed.write("x", 1, 20) == 1);
+    Packet packet;
+    assert(output(delayed, 2400, true, packet, false));
+    delayed.output_blocked(2400);
+    no_output(delayed, 2520);
+    assert(delayed.error() == 110); // The explicit data deadline still starts at write progress.
+    cases++;
+
+    Connection recovering, receiver, live, live_peer;
+    establish(recovering, receiver, 0xfffffff0);
+    establish(live, live_peer);
+    char bytes[512], actual[512];
+    for (unsigned at = 0; at < sizeof(bytes); at++)
+        bytes[at] = char(at * 29 ^ at >> 3);
+    assert(recovering.write(bytes, sizeof(bytes), 20) == sizeof(bytes));
+    for (uint64_t now : {uint64_t(20), uint64_t(220), uint64_t(420)}) {
+        assert(output(recovering, now, true, packet, false));
+        auto offer = packet.segment();
+        assert(offer.sequence == 0xfffffff1 && offer.length == sizeof(bytes) &&
+               !std::memcmp(offer.payload, bytes, sizeof(bytes)));
+        recovering.output_blocked(now);
+    }
+    assert(live.write("ok", 2, 430) == 2);
+    live_peer.input(require_output(live, 430).segment(), 431);
+    live.input(require_output(live_peer, 432, false).segment(), 433);
+    assert(live.queued() == 0 && live_peer.read(actual, sizeof(actual)) == 2 &&
+           !std::memcmp(actual, "ok", 2));
+    receiver.input(require_output(recovering, 620).segment(), 621);
+    assert(receiver.read(actual, sizeof(actual)) == sizeof(bytes) &&
+           !std::memcmp(actual, bytes, sizeof(bytes)));
+    recovering.input(require_output(receiver, 622, false).segment(), 623);
+    assert(recovering.queued() == 0 &&
+           recovering.next_send() == uint32_t(0xfffffff1 + sizeof(bytes)));
+    no_output(recovering, lifetime + 20);
+    assert(recovering.state() == State::established && recovering.error() == 0);
+    cases++;
+
+    Connection retransmitting, absent;
+    establish(retransmitting, absent);
+    assert(retransmitting.write("x", 1, 20) == 1);
+    Packet first = require_output(retransmitting, 20);
+    no_output(retransmitting, 1019);
+    for (uint64_t now : {uint64_t(1020), uint64_t(1220)}) {
+        assert(output(retransmitting, now, true, packet, false));
+        assert(packet.bytes == first.bytes);
+        retransmitting.output_blocked(now);
+    }
+    assert(require_output(retransmitting, 1420).bytes == first.bytes);
+    no_output(retransmitting, 3419);
+    assert(require_output(retransmitting, 3420).bytes == first.bytes);
+    cases++;
+
+    Connection acknowledger, sender;
+    establish(acknowledger, sender);
+    assert(sender.write("x", 1, 20) == 1);
+    acknowledger.input(require_output(sender, 20, false).segment(), 21);
+    assert(output(acknowledger, 21, true, packet, false));
+    assert(packet.segment().length == 0 && packet.segment().flags == ack);
+    acknowledger.output_blocked(21);
+    no_output(acknowledger, 220);
+    assert(output(acknowledger, lifetime + 21, true, packet, false));
+    acknowledger.output_blocked(lifetime + 21);
+    assert(acknowledger.state() == State::established && acknowledger.error() == 0);
+    auto answer = require_output(acknowledger, lifetime + 221).segment();
+    assert(answer.flags == ack && answer.length == 0 &&
+           answer.acknowledgment == sender.next_send());
+    cases++;
+
+    Connection opening;
+    opening.active(100, 0);
+    assert(output(opening, 0, true, packet, false));
+    opening.output_blocked(0);
+    no_output(opening, 199);
+    assert(output(opening, 59999, true, packet, false));
+    opening.output_blocked(59999);
+    no_output(opening, 60000);
+    assert(opening.state() == State::closed && opening.error() == 110 &&
+           opening.next_send() == 100);
+    cases++;
+
+    Connection saturated, peer;
+    establish(saturated, peer);
+    saturated.output_blocked(20); // No live offer means no delay and no delivery period.
+    assert(saturated.write("x", 1, UINT64_MAX - 100) == 1);
+    assert(output(saturated, UINT64_MAX - 100, true, packet, false));
+    saturated.output_blocked(UINT64_MAX - 100);
+    no_output(saturated, UINT64_MAX - 1);
+    assert(require_output(saturated, UINT64_MAX).segment().length == 1);
+    assert(saturated.error() == 0 && saturated.next_send() == 102);
+    cases++;
+
+    Connection completed, last_peer;
+    establish(completed, last_peer);
+    completed.close_write();
+    last_peer.input(require_output(completed, 20).segment(), 21);
+    completed.input(require_output(last_peer, 22, false).segment(), 23);
+    last_peer.close_write();
+    completed.input(require_output(last_peer, 24, false).segment(), 25);
+    assert(completed.state() == State::time_wait);
+    assert(output(completed, 25, true, packet, false));
+    completed.output_blocked(25);
+    // The adapter compacts TIME-WAIT only after next() has no pending final ACK.
+    assert(output(completed, 26, true, packet, false));
+    assert(packet.segment().flags == ack && packet.segment().length == 0 &&
+           packet.segment().acknowledgment == last_peer.next_send());
+    completed.emitted(26);
+    no_output(completed, 27);
+    no_output(completed, 120025);
+    assert(completed.state() == State::closed && completed.error() == 0);
+    cases++;
+
+    Connection transitioning, final_peer;
+    establish(transitioning, final_peer);
+    transitioning.detach(20);
+    final_peer.input(require_output(transitioning, 20).segment(), 21);
+    transitioning.input(require_output(final_peer, 22, false).segment(), 23);
+    auto future = inbound(transitioning, transitioning.next_receive());
+    future.acknowledgment = transitioning.next_send() + 1;
+    transitioning.input(injection(future).segment(), 24);
+    assert(output(transitioning, 25, true, packet, false));
+    transitioning.output_blocked(25);
+    final_peer.close_write();
+    transitioning.input(require_output(final_peer, 26, false).segment(), 27);
+    assert(transitioning.state() == State::time_wait);
+    // A live-state delay must not hide a final ACK after entering TIME-WAIT either.
+    assert(output(transitioning, 28, true, packet, false));
+    assert(packet.segment().flags == ack &&
+           packet.segment().acknowledgment == final_peer.next_send());
+    transitioning.emitted(28);
+    no_output(transitioning, 29);
+    cases++;
+    std::printf("TCP_LOCAL_OUTPUT_PASS cases=%u data fin user default sequence retry rto recovery "
+                "independent ack syn backward saturation time_wait\n",
+                cases);
+}
+
 int main() {
+    local_output_retries();
+    reconnect_sequences();
     default_lifetimes();
     challenge_intervals();
     handshakes();

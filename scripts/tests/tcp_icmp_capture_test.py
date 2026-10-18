@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Retain synchronized corruptions of actual ICMP captures and reject each one."""
 import argparse
-from collections import Counter
 import copy
 import hashlib
 import json
@@ -13,6 +12,7 @@ import tempfile
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tcp_clock_mutations import candidate_auditor
 from fetch import ROOT
 from tcp_icmp_capture import audit_row, checksum, contract, fnv, require
 
@@ -56,6 +56,7 @@ def repair(frame, quote=False):
 
 def mutations(build, row, lane, destination, cases):
     names = [row['log'], row['peer'], row['inputs'], *row['captures']]
+    names += [value['monotonic_receipts'] for value in row.get('capture_statistics', [])]
     originals = {name: (build / name).read_bytes() for name in names}
     header, capture = records(build / row['captures'][lane])
     ipv4 = [(index, item) for index, item in enumerate(capture) if item['frame'][12:14] == b'\x08\x00']
@@ -78,23 +79,35 @@ def mutations(build, row, lane, destination, cases):
     results = []
 
     def reject(kind, transform):
+        # Only the quote-before-SYN control may reschedule copied receipt
+        # pairs. Other clock corruptions must retain their native rejection;
+        # original observations and packet timestamps remain untouched.
+        checked = candidate_auditor(audit_row, build, row,
+                                    reschedule_reordered=(kind == 'noncausal-error'))
         with tempfile.TemporaryDirectory(prefix='axiom64-icmp-damage-') as temporary:
             folder = Path(temporary)
             for name, data in originals.items():
                 (folder / name).write_bytes(data)
             transform(folder)
             try:
-                audit_row(folder, row, cases)
+                checked(folder, row, cases)
             except ValueError as error:
                 reason = str(error)
+                if kind == 'noncausal-error':
+                    require('quote' in reason and 'clock' not in reason,
+                            'noncausal ICMP control reaches its original quote ownership guard: ' + reason)
             else:
                 raise AssertionError(f'synchronized ICMP damage accepted: {kind}')
+            retained_names = names
+            if 'client_namespace' in row:
+                (folder / 'candidate-row.json').write_text(json.dumps(checked.last_row, indent=2) + '\n')
+                retained_names = [*names, 'candidate-row.json']
             label = Path(row['log']).stem + f'-lane{lane}-{kind}'
             archive = destination / (label + '.zip')
             with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as retained:
-                for name in names:
+                for name in retained_names:
                     retained.write(folder / name, name)
-            files = {name: hashlib.sha256((folder / name).read_bytes()).hexdigest() for name in names}
+            files = {name: hashlib.sha256((folder / name).read_bytes()).hexdigest() for name in retained_names}
             with zipfile.ZipFile(archive) as retained:
                 require(retained.testzip() is None and all(
                     hashlib.sha256(retained.read(name)).hexdigest() == digest for name, digest in files.items()),
@@ -139,7 +152,7 @@ def mutations(build, row, lane, destination, cases):
             peer['frames'].insert(source_peer, moved_peer)
             source_receipt = receipt(text, source['frame'])
             moved_receipt = receipt(text, frame)
-            line = re.sub(r'monotonic_ms=\d+', 'monotonic_ms=' + str(int(source_receipt[1]) - 1), moved_receipt[0])
+            line = re.sub(r'monotonic_ms=\d+', 'monotonic_ms=' + source_receipt[1], moved_receipt[0])
             text = text[:moved_receipt.start()] + text[moved_receipt.end():]
             source_receipt = receipt(text, source['frame'])
             text = text[:source_receipt.start()] + line + '\n' + text[source_receipt.start():]

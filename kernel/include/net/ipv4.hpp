@@ -47,6 +47,8 @@ int ipv4_send(InetSocket*, uint32_t source, uint32_t destination, unsigned bound
 
 // Last socket close detaches error delivery; accepted packets own their bytes.
 void ipv4_detach_owner(InetSocket*);
+// Release only oversized queued copies; the transport retains its original bytes.
+void ipv4_discard_oversized(InetSocket*, uint16_t mtu);
 
 void ipv4_receive(const NetInfo&, const void*, size_t);
 

@@ -7,8 +7,8 @@ from pathlib import Path
 from tcp_fault_capture import MASK, packets, require, verify as verify_loss
 
 
-def verify(path, lane, peer_rows, native=False):
-    result = verify_loss(path, lane, peer_rows, native)
+def verify(path, lane, peer_rows, native=False, statistics=None):
+    result = verify_loss(path, lane, peer_rows, native, statistics)
     rows = packets(path, lane)
     reordered = []
     for role in range(2):
@@ -65,7 +65,8 @@ def check_results(directory):
             require(len(peers) == 2, 'both independent receive-reordering peer reports')
             for lane, name in enumerate(row['captures']):
                 require(Path(name).name == name, 'receive-reordering capture path bounds')
-                verified.append(verify(directory / name, lane, peers[lane], native))
+                verified.append(verify(directory / name, lane, peers[lane], native,
+                                       row['capture_statistics'][lane] if native else None))
     require(len(verified) == 22, 'all 22 receive-reordering captures')
     output = dict(captures=verified, flows=44, reports=reports, passed=True)
     (directory / 'tcp-reordering-capture-results.json').write_text(json.dumps(output, indent=2) + '\n')

@@ -84,21 +84,22 @@ unsigned inet_shutdown(InetSocket* socket) {
     return socket->shutdown;
 }
 
-static bool port_conflict(InetSocket* socket, uint32_t local, uint16_t port) {
+bool inet_port_conflict(InetSocket* socket, uint32_t local, uint16_t port) {
     if (socket->type == 1 && tcp_port_busy(local, port, socket->index, socket->reuse))
         return true;
     for (auto& other : inet_sockets)
         if (other.used && &other != socket && other.type == socket->type &&
             other.local_port == port &&
             (!socket->index || !other.index || socket->index == other.index) &&
-            (!local || !other.local || local == other.local) && !(socket->reuse && other.reuse))
+            (!local || !other.local || local == other.local) &&
+            (!socket->reuse || !other.reuse || (socket->type == 1 && other.listening)))
             return true;
     return false;
 }
 
 int inet_bind_port(InetSocket* socket, uint32_t local, uint16_t port) {
     if (port) {
-        if (port_conflict(socket, local, port))
+        if (inet_port_conflict(socket, local, port))
             return -98;
     } else {
         // Include completed TCP tuples as well as every live socket. One more
@@ -107,7 +108,7 @@ int inet_bind_port(InetSocket* socket, uint32_t local, uint16_t port) {
         for (unsigned attempt = 0; attempt < attempts; attempt++) {
             uint16_t candidate = next_port;
             next_port = next_port == 60999 ? 32768 : next_port + 1;
-            if (!port_conflict(socket, local, candidate)) {
+            if (!inet_port_conflict(socket, local, candidate)) {
                 port = candidate;
                 break;
             }
@@ -175,6 +176,10 @@ void inet_icmp_error(unsigned index, const uint8_t* quote, int error) {
 
 void inet_reclaim(InetSocket* socket, size_t length) {
     socket->transmitted -= min(socket->transmitted, length);
+}
+
+bool inet_dont_fragment(const InetSocket* socket) {
+    return !socket || socket->mtu_policy != 0;
 }
 
 bool inet_ready(InetSocket* socket, bool write) {

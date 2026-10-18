@@ -10,7 +10,11 @@ struct IcmpError {
     uint16_t source = 0, destination = 0;
     int error = 0;
     bool abort_request = false;
+    uint16_t next_hop_mtu = 0, quoted_length = 0;
+    bool too_big = false;
 };
 
 bool decode_icmp_error(const uint8_t*, size_t, IcmpError&);
+// A valid lower IPv4 limit, including legacy zero-MTU notifications; zero means ignore.
+uint16_t quoted_path_mtu(const IcmpError&);
 } // namespace ax::tcp

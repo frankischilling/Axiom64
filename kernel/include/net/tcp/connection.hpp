@@ -21,9 +21,11 @@ enum class State {
 
 // A bounded TCP endpoint. The caller owns tuple lookup, packet validation, clock and storage.
 // Input borrows a checksum-validated Segment; no input pointers survive the call.
-// next() borrows send bytes until the immediately following emitted() or input/read/write call.
-// Call emitted() only after copying the packet into an owned output queue. Failed enqueue
-// leaves the candidate pending and does not consume sequence space or start a timer.
+// next() borrows send bytes until the immediately following emitted(), output_blocked(),
+// input/read/write, or successful reduce_mss() call. Call emitted() only after copying the packet
+// into an owned output queue. Report a temporary enqueue rejection with output_blocked(): it leaves
+// sequence and RTO ownership unchanged, schedules a local retry, and bounds delivery even if no
+// copy has reached the output queue.
 class Connection {
   public:
     State state() const {
@@ -32,6 +34,10 @@ class Connection {
 
     int error() const {
         return failure;
+    }
+
+    uint16_t segment_size() const {
+        return mss;
     }
 
     // SO_ERROR observes and consumes a soft network error without closing TCP
@@ -49,6 +55,14 @@ class Connection {
 
     uint32_t next_send() const {
         return send_next;
+    }
+
+    // An explicit disconnect keeps a successor outside all old queued bytes and
+    // the largest advertised peer window, including a queued FIN and wrap.
+    uint32_t reconnect_sequence() const {
+        uint32_t sequence =
+            send_base + uint32_t(send_size) + uint32_t(write_closed) + maximum_peer_window + 2;
+        return sequence ? sequence : 1;
     }
 
     size_t available() const {
@@ -77,6 +91,7 @@ class Connection {
     void input(const Segment&, uint64_t now);
     bool next(uint64_t now, Segment&);
     void emitted(uint64_t now);
+    void output_blocked(uint64_t now);
     size_t write(const void*, size_t, uint64_t now);
     size_t read(void*, size_t, bool peek = false, size_t offset = 0);
     void close_write();
@@ -86,6 +101,9 @@ class Connection {
     // The caller validates the quote and tuple. Sequence ownership and handshake
     // versus established error policy remain with the connection.
     void quoted_error(uint32_t sequence, int error, bool abort_request);
+    // The caller owns IPv4/tuple/policy validation. Keep all sent sequence owned
+    // while repacketizing its buffered bytes; delivery and RTO clocks do not restart.
+    bool reduce_mss(uint32_t sequence, uint16_t maximum_segment);
     void limits(size_t receive_bytes, size_t send_bytes);
 
     void nodelay(bool enabled) {
@@ -105,6 +123,7 @@ class Connection {
         finish,
         acknowledgment,
         retransmit,
+        resegment,
         probe
     };
     State status = State::closed;
@@ -120,12 +139,13 @@ class Connection {
     uint32_t initial_send = 0, initial_receive = 0, send_base = 0;
     uint32_t send_unacknowledged = 0, send_next = 0, receive_next = 0, finish_sequence = 0;
     uint32_t window_sequence = 0, window_ack = 0, pending_fin_sequence = 0;
+    uint32_t resegment_next = 0, resegment_end = 0;
     uint16_t peer_window = 0, maximum_peer_window = 0, mss = 536, local_mss = 1460;
     uint16_t acknowledged_history = 0;
     uint32_t timeout_ms = 0, persist_interval = 1000;
     uint64_t opened_at = 0, progress_at = 0, retransmit_at = 0, persist_at = 0;
     uint64_t sample_at = 0, expiration = 0, last_send = 0, challenge_at = 0;
-    uint64_t delivery_at = 0;
+    uint64_t delivery_at = 0, output_retry_at = 0;
     uint32_t sample_end = 0, timeout_end = 0;
     int failure = 0, soft_error = 0;
     bool initialized = false, syn_pending = false, syn_emitted = false, syn_retransmitted = false;
@@ -136,7 +156,10 @@ class Connection {
     bool no_delay = false;
     bool timeout_candidate = false, challenge_sent = false;
     bool delivery_active = false;
+    bool output_delayed = false;
+    bool finish_waiting = false;
     bool passive_open = false;
+    bool resegmenting = false, resegment_wait = false;
     void initialize(uint32_t, uint64_t, uint16_t);
     void negotiate(const Segment&);
     void synchronize(uint64_t);
@@ -145,6 +168,7 @@ class Connection {
     void finish_received(uint64_t);
     void wait(uint64_t);
     void advance(uint64_t);
+    void start_delivery(Output, uint64_t);
     void discard(size_t);
     void reset_reply(const Segment&);
     void challenge(uint64_t);
@@ -152,6 +176,7 @@ class Connection {
     bool present(size_t) const;
     void mark(size_t, bool);
     bool oldest(Segment&);
+    bool resegment(Segment&);
     void payload(Segment&, size_t offset, size_t length);
 };
 } // namespace ax::tcp

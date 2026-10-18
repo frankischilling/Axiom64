@@ -21,7 +21,7 @@ SOURCES = ('Makefile', 'userspace/tests/net/tcp_device.c',
            'kernel/net/ipv4/core.cpp', 'kernel/net/tcp/connection.cpp',
            'kernel/include/net/tcp/connection.hpp', 'kernel/net/tcp/socket.cpp',
            'kernel/include/net/tcp/socket.hpp')
-SOURCES += IPV4_MODULES
+SOURCES = tuple(dict.fromkeys(SOURCES + IPV4_MODULES))
 
 
 def record(linkage, affected, native=False, image=None):

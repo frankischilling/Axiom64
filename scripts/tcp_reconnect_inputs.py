@@ -17,7 +17,7 @@ SOURCES = ('Makefile', 'scripts/tcp_capture_clock.py', 'scripts/tests/tcp_clock_
            'kernel/net/tcp/isn.cpp', 'kernel/include/net/tcp/isn.hpp',
            'kernel/net/ipv4/socket.cpp', 'kernel/net/ipv4/socket.hpp',
            'kernel/net/ipv4/core.cpp', 'kernel/include/net/ipv4.hpp')
-SOURCES += IPV4_MODULES
+SOURCES = tuple(dict.fromkeys(SOURCES + IPV4_MODULES))
 
 
 def record(linkage, native=False, image=None, label=None):

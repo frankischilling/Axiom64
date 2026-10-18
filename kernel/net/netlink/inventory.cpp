@@ -21,6 +21,7 @@ struct Attribute {
 
 static_assert(sizeof(LinkHeader) == 16 && sizeof(AddressHeader) == 8);
 static_assert((max_net_devices + 1) * 128 + 20 <= netlink_max_reply);
+static_assert((ipv4_address_capacity + 1) * 76 + 20 <= netlink_max_reply);
 
 class Writer {
   public:
@@ -86,16 +87,18 @@ bool link(Writer& output, const NetlinkHeader& request, uint32_t port, const Net
 }
 
 bool address(Writer& output, const NetlinkHeader& request, uint32_t port, const NetInfo& info,
-             const Ipv4Config& value, bool loopback) {
+             const Ipv4Address& entry, bool loopback) {
+    const auto& value = entry.config;
     size_t start = output.size;
     NetlinkHeader message{0, 20, 2, request.sequence, port};
-    AddressHeader header{2, uint8_t(prefix(value.mask)), 0x80, uint8_t(loopback ? 254 : 0),
-                         info.index};
+    uint32_t flags = 0x80 | (entry.secondary ? 1 : 0);
+    AddressHeader header{2, uint8_t(prefix(value.mask)), uint8_t(flags),
+                         uint8_t(loopback ? 254 : 0), info.index};
     uint32_t local = __builtin_bswap32(value.address),
-             broadcast = __builtin_bswap32(value.broadcast), flags = 0x80;
+             broadcast = __builtin_bswap32(value.broadcast);
     if (!output.append(&message, sizeof(message)) || !output.append(&header, sizeof(header)) ||
         !output.attribute(1, &local, 4) || !output.attribute(2, &local, 4) ||
-        !output.attribute(3, info.name, strlen(info.name) + 1) ||
+        !output.attribute(3, entry.label, strlen(entry.label) + 1) ||
         (!loopback && value.broadcast && !output.attribute(4, &broadcast, 4)) ||
         !output.attribute(8, &flags, 4))
         return false;
@@ -132,17 +135,14 @@ int netlink_inventory_reply(const void* data, const NetlinkHeader& request, uint
         auto info = loopback ? &lo : net_info(index);
         if (!info)
             continue;
-        bool written;
-        if (request.type == 18)
-            written = link(output, request, port, *info, loopback);
-        else {
-            auto value = ipv4_config(index);
-            if (!value || !value->address)
-                continue;
-            written = address(output, request, port, *info, *value, loopback);
-        }
-        if (!written)
-            return -90;
+        if (request.type == 18) {
+            if (!link(output, request, port, *info, loopback))
+                return -90;
+        } else
+            for (unsigned n = 0; auto entry = ipv4_address(n); n++)
+                if (entry->index == index &&
+                    !address(output, request, port, *info, *entry, loopback))
+                    return -90;
     }
     NetlinkHeader done{20, 3, 2, request.sequence, port};
     int status = 0;

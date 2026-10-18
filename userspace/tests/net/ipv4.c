@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
+#include "ipv4_aliases.h"
 #include "ipv4_fragments.h"
 #include "ipv4_path_mtu.h"
 #include <arpa/inet.h>
@@ -980,6 +981,11 @@ static void link_change(unsigned lane) {
 
 int main(int argc, char** argv) {
     setbuf(stdout, NULL);
+    if (argc == 2 && !strcmp(argv[1], "--aliases")) {
+        ipv4_alias_checks(0);
+        ipv4_alias_checks(1);
+        return 0;
+    }
     if (argc == 2 && !strcmp(argv[1], "--path-mtu-lifetime")) {
         ipv4_path_mtu_lifetime_checks();
         return 0;
@@ -1015,6 +1021,8 @@ int main(int argc, char** argv) {
     if (argc == 1 || strcmp(argv[1], "--loopback")) {
         queues();
         configuration();
+        ipv4_alias_checks(0);
+        ipv4_alias_checks(1);
         fd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
         check(fd >= 0, "wire raw ICMP socket");
         set_address(fd, "eth0", SIOCSIFNETMASK, "255.255.255.255");

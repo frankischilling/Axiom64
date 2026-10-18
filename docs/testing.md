@@ -2,6 +2,8 @@
 
 `python3 scripts/tests/account_rotation_disk_test.py -v` checks bounded host-memory device staging, disk fallback, exact copyback after success or guest failure, and retention when the evidence destination rejects copying. Rotation's small device files use this staging while the NBD backend retains its independent cache, flush and fault semantics. The original guest deadlines and native filesystem checks remain required. [VM timing](ci-vm-timing.md) records the focused host-storage comparison and remaining complete-run gates.
 
+`sudo -n python3 scripts/ipv4_alias_native.py` compares labelled address lifetimes with three native Linux linkages and two captured TAP links each. The normal guest IPv4 profiles exercise the same alias client on both adapters. Alias packets must retain their selected source and hardware identity across primary deletion. Sanitizer inventory/route checks and thirteen damaged peer controls run in the existing build job; native alias evidence stays in the network job. Both musl IPv4 clients compile with the pinned target UAPI helper. Complete current-revision acceptance remains required.
+
 Run the full test suite:
 
 ```sh

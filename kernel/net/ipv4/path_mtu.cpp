@@ -80,4 +80,10 @@ void PathMtuCache::discard_route(uint64_t route_owner) {
         if (route_owner && entry.key.route_owner == route_owner)
             entry = {};
 }
+
+void PathMtuCache::discard_source(unsigned index, uint32_t preferred_source) {
+    for (auto& entry : entries)
+        if (entry.key.index == index && entry.key.source == preferred_source)
+            entry = {};
+}
 } // namespace ax::ip4

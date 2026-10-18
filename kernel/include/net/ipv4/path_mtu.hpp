@@ -35,6 +35,8 @@ class PathMtuCache {
 
     void discard_route(uint64_t route_owner);
 
+    void discard_source(unsigned index, uint32_t preferred_source);
+
   private:
     struct Entry {
         PathKey key;

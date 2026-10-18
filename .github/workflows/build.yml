@@ -219,6 +219,7 @@ jobs:
         run: |
           mkdir -p build/ipv4-policy
           python3 scripts/tests/network_fixture_test.py 2>&1 | tee build/ipv4-policy/fixture.log
+          python3 scripts/tests/ipv4_aliases_test.py 2>&1 | tee build/ipv4-policy/aliases.log
           make test-ipv4-reassembly test-ipv4-fragmentation test-ipv4-path-mtu test-ipv4-paths 2>&1 | tee build/ipv4-policy/host.log
       - name: Upload IPv4 policy evidence
         if: always()
@@ -923,6 +924,16 @@ jobs:
       - name: Compare IPv4 fragment receive behavior with three native Linux linkages
         if: matrix.suite == 'network'
         run: sudo -n make test-ipv4-fragments-native
+      - name: Compare labelled IPv4 address ownership with native Linux
+        if: matrix.suite == 'network'
+        run: sudo -n python3 scripts/ipv4_alias_native.py
+      - name: Upload native labelled-address evidence
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-aliases-native
+          if-no-files-found: warn
+          path: build/ipv4-aliases-native
       - name: Upload native IPv4 fragment evidence
         if: always() && matrix.suite == 'network'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

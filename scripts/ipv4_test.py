@@ -17,6 +17,7 @@ from ipv4_fault import expire, hold_arp_reply
 from network_fault import inject
 from qmp import Qmp
 from ipv4_fragments import FragmentPeer
+from ipv4_aliases import AliasPeer
 from ipv4_expiry_capture import verify_capture
 from ipv4_path_mtu_capture import verify_capture as verify_path_mtu
 from ipv4_path_mtu_lifetime_capture import verify_capture as verify_path_lifetime
@@ -76,6 +77,7 @@ class Peer:
         self.held_replies = 0
         self.reply_ingress = 0
         self.fragments = FragmentPeer(lane)
+        self.addresses = AliasPeer(lane)
 
     @staticmethod
     def alias_address(sequence):
@@ -255,6 +257,11 @@ class Peer:
     def packet(self, frame):
         if frame[6:12] != self.guest:
             raise RuntimeError('unexpected guest source MAC')
+        addresses = self.addresses.receive(frame)
+        if addresses is not None:
+            for response in addresses:
+                self.queue(response)
+            return
         path_arp = self.fragments.path_mtu.arp_reply(frame)
         if path_arp is not None:
             self.queue(path_arp)
@@ -592,6 +599,8 @@ def run(firmware, transport, timeout, fault=False, *, image=None, gdb_port=1237)
                 'IPV4_ICMP_ERROR_PASS index=1', 'IPV4_ICMP_ERROR_PASS index=2',
                 'IPV4_INPUT_PASS index=1', 'IPV4_INPUT_PASS index=2',
                 'IPV4_CACHE_EXPIRY_PASS index=1', 'IPV4_CACHE_EXPIRY_PASS index=2',
+                'IPV4_ALIAS_PASS index=1 wire_cases=4 local_udp=3',
+                'IPV4_ALIAS_PASS index=2 wire_cases=4 local_udp=3',
                 'IPV4_LIMITS_PASS index=1', 'IPV4_LIMITS_PASS index=2',
                 'IPV4_RECEIVE_LIFETIME_PASS index=1', 'IPV4_RECEIVE_LIFETIME_PASS index=2',
                 'IPV4_LINK_PASS index=1', 'IPV4_LINK_PASS index=2',
@@ -617,7 +626,7 @@ def run(firmware, transport, timeout, fault=False, *, image=None, gdb_port=1237)
             debugger.returncode == 0 and f'IPV4_ARP_REPLY_HELD index={lane + 1}' in debug_log.read_text() and
             f'IPV4_ARP_REPLY_RESUMED index={lane + 1}' in debug_log.read_text()
             for lane, (debugger, debug_log, _, _) in reply_debuggers.items())
-        passed = reply_injected and len(link_events) == 4 and all(peer.arp >= 2 and peer.echo == len(peer.targets) and
+        passed = reply_injected and len(link_events) == 4 and all(peer.addresses.passed and peer.arp >= 2 and peer.echo == len(peer.targets) and
                      peer.bad_arp == 11 and peer.bad_ip == 15 and
                      peer.pressure == 33 and peer.pressure_arp >= 1 and
                      len(peer.missing_arp) == 3 and peer.error_tests == 1 and
@@ -676,6 +685,10 @@ def run(firmware, transport, timeout, fault=False, *, image=None, gdb_port=1237)
                   cache_replacement_arp=[sum(peer.alias_arp.values()) for peer in peers],
                   cache_replacement_echo=[peer.alias_echo for peer in peers],
                   cache_refresh_reply=[peer.alias_reply for peer in peers],
+                  address_aliases=[dict(cases=peer.addresses.cases, arp_requests=peer.addresses.arp_requests,
+                                        arp_replies=peer.addresses.arp_replies,
+                                        kernel_replies=peer.addresses.kernel_replies,
+                                        passed=peer.addresses.passed) for peer in peers],
                   held_arp_replies=[peer.held_replies for peer in peers],
                   arp_reply_ingress=[min(peer.reply_ingress, 96) for peer in peers],
                   fragment_cases=[peer.fragments.completed for peer in peers],

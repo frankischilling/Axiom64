@@ -2,10 +2,29 @@
 #include <cstdio>
 #include <cstdlib>
 #include "net/netlink.hpp"
+#include "net/ipv4/addresses.hpp"
 
 using namespace ax;
 static unsigned changes;
-static Ipv4Config configurations[3];
+static ip4::AddressBook addresses;
+
+static const Ipv4Config& current(unsigned index) {
+    auto entry = addresses.preferred(index);
+    static const Ipv4Config empty;
+    return entry ? entry->config : empty;
+}
+
+static bool unchanged(const ip4::AddressBook& before) {
+    for (unsigned n = 0; n < ipv4_address_capacity; n++) {
+        auto a = before.at(n), b = addresses.at(n);
+        if (!a || !b)
+            return a == b;
+        if (a->index != b->index || a->secondary != b->secondary || strcmp(a->label, b->label) ||
+            memcmp(&a->config, &b->config, sizeof(a->config)))
+            return false;
+    }
+    return true;
+}
 
 static void check(bool condition, const char* reason) {
     if (!condition) {
@@ -17,17 +36,27 @@ static void check(bool condition, const char* reason) {
 namespace ax {
 const NetInfo* net_info(unsigned index) {
     static NetInfo information[2];
+    for (unsigned n = 0; n < 2; n++) {
+        information[n].index = n + 1;
+        std::snprintf(information[n].name, sizeof(information[n].name), "eth%u", n);
+    }
     return index && index <= 2 ? &information[index - 1] : nullptr;
 }
 
-const Ipv4Config* ipv4_config(unsigned index) {
-    return index && index <= 2 ? &configurations[index] : nullptr;
+const Ipv4Address* ipv4_address(unsigned position) {
+    return addresses.at(position);
 }
 
-int ipv4_configure(unsigned index, const Ipv4Config& value) {
-    changes++;
-    configurations[index] = value;
-    return 0;
+int ipv4_address_add(unsigned index, const char* label, const Ipv4Config& value) {
+    int error = addresses.add(index, label, value);
+    changes += !error;
+    return error;
+}
+
+int ipv4_address_remove(unsigned index, uint32_t address, uint32_t mask) {
+    int error = addresses.remove(index, address, mask);
+    changes += !error;
+    return error;
 }
 } // namespace ax
 
@@ -46,8 +75,8 @@ int main() {
     memcpy(fixture, &header, sizeof(header));
     memcpy(fixture + 16, body, sizeof(body));
     memcpy(fixture + 24, attributes, sizeof(attributes));
-    check(evaluate(fixture) == 0 && changes == 1 && configurations[1].address == 0x0a170128 &&
-              configurations[1].mask == 0xffffff00 && configurations[1].broadcast == 0x0a1701ff,
+    check(evaluate(fixture) == 0 && changes == 1 && current(1).address == 0x0a170128 &&
+              current(1).mask == 0xffffff00 && current(1).broadcast == 0x0a1701ff,
           "independent ifaddrmsg commits complete address/prefix/broadcast in one call");
     check(evaluate(fixture) == -17 && changes == 1, "exclusive create preserves existing address");
     header.type = 21;
@@ -59,16 +88,31 @@ int main() {
           "delete requires both local address and exact prefix");
     fixture[17] = 24;
     fixture[47] = 255;
-    check(evaluate(fixture) == 0 && changes == 2 && !configurations[1].address &&
-              configurations[1].mask == 0xffffff00 && !configurations[1].broadcast,
+    check(evaluate(fixture) == 0 && changes == 2 && !current(1).address &&
+              current(1).mask == 0xffffff00 && !current(1).broadcast,
           "exact delete restores the disabled interface's default mask in one call");
-    configurations[1] = {0x0a170128, 0xffffff00, 0x0a1701ff};
+    check(addresses.add(1, "eth0", {0x0a170128, 0xffffff00, 0x0a1701ff}) == 0,
+          "restore local-only deletion fixture");
     uint8_t local_only[32];
     memcpy(local_only, fixture, sizeof(local_only));
     NetlinkHeader local_header{32, 21, 5, 1, 0};
     memcpy(local_only, &local_header, sizeof(local_header));
-    check(evaluate(local_only) == 0 && changes == 3 && !configurations[1].address,
-          "Linux local-only deletion removes the exact primary address");
+    local_only[17] = 0;
+    check(evaluate(local_only) == 0 && changes == 3 && !current(1).address,
+          "Linux local-only deletion ignores an absent peer prefix");
+    uint8_t edge[48];
+    memcpy(edge, fixture, sizeof(edge));
+    NetlinkHeader edge_header{48, 20, 0x605, 2, 0};
+    memcpy(edge, &edge_header, sizeof(edge_header));
+    edge[17] = 32;
+    edge[31] = edge[39] = 0;
+    memset(edge + 44, 0, 4);
+    check(evaluate(edge) == 0 && changes == 4, "create a local host address ending in zero");
+    edge_header = {32, 21, 5, 3, 0};
+    memcpy(edge, &edge_header, sizeof(edge_header));
+    edge[17] = 24;
+    check(evaluate(edge) == 0 && changes == 5 && !current(1).address,
+          "local-only deletion ignores prefix host bits as well as its mask");
     header.type = 20;
     header.flags = 0x605;
     memcpy(fixture, &header, sizeof(header));
@@ -89,7 +133,7 @@ int main() {
             bytes[17] = 33;
             break;
         case 3:
-            bytes[18] |= 1;
+            bytes[18] |= 2;
             expected = -95;
             break;
         case 4:
@@ -108,7 +152,7 @@ int main() {
             invalid.length += 8;
             break;
         case 8:
-            bytes[26] = 3;
+            bytes[26] = 5;
             expected = -95;
             break;
         case 9:
@@ -137,7 +181,7 @@ int main() {
         }
         memcpy(bytes, &invalid, sizeof(invalid));
         unsigned before = changes;
-        check(evaluate(bytes) == expected && changes == before && !configurations[1].address,
+        check(evaluate(bytes) == expected && changes == before && !current(1).address,
               "malformed/unsupported message cannot partially alter address state");
     }
     std::puts("ADDRESS_CODEC_FIXTURES_PASS requests=16");
@@ -145,9 +189,10 @@ int main() {
     for (unsigned trial = 0; trial < 8000; trial++) {
         uint8_t bytes[4096];
         memcpy(bytes, fixture, sizeof(bytes));
-        configurations[1] = configurations[2] = {};
+        addresses = {};
         if (trial & 1)
-            configurations[1] = {0x0a170128, 0xffffff00, 0x0a1701ff};
+            check(addresses.add(1, "eth0", {0x0a170128, 0xffffff00, 0x0a1701ff}) == 0,
+                  "restore mutation fixture");
         for (unsigned i = 0; i < 8; i++) {
             random = random * 1664525 + 1013904223;
             size_t offset = (random >> 8) % (i % 3 ? 48 : sizeof(bytes));
@@ -158,12 +203,11 @@ int main() {
         header.flags = trial & 1 ? 5 : 0x605;
         header.length = trial % 3 ? 48 : 16 + random % (sizeof(bytes) - 15);
         memcpy(bytes, &header, sizeof(header));
-        Ipv4Config before[3];
-        memcpy(before, configurations, sizeof(before));
+        auto before = addresses;
         unsigned old_changes = changes;
         int result = evaluate(bytes);
         if (result)
-            check(changes == old_changes && !memcmp(before, configurations, sizeof(before)),
+            check(changes == old_changes && unchanged(before),
                   "failed mutated request preserves all backend tuples");
         else
             check(changes == old_changes + 1, "accepted message makes one complete update");

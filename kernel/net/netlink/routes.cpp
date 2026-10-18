@@ -109,7 +109,8 @@ int parse(const uint8_t* input, const NetlinkHeader& message, Ipv4Route& value, 
 }
 
 size_t dump(const NetlinkHeader& request, uint32_t port, const Ipv4Route& filter, uint8_t* output) {
-    Ipv4Route routes[32 + max_net_devices + 1];
+    Ipv4Route routes[32 + ipv4_address_capacity + 1];
+    static_assert(32 * 68 + (ipv4_address_capacity + 1) * 52 + 20 <= netlink_max_reply);
     size_t count = ipv4_routes(routes, sizeof(routes) / sizeof(routes[0])), size = 0;
     for (size_t i = 0; i < count; i++) {
         const auto& value = routes[i];

@@ -45,6 +45,9 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
     error = None
     command = client(profile, pmtu_only, lifetime_only)
     sources = ['userspace/tests/net/ipv4.c', 'userspace/tests/net/ipv4_fragments.c',
+               'userspace/tests/net/ipv4_aliases.c', 'userspace/tests/net/ipv4_aliases.h',
+               'scripts/compile_uapi_client.py', 'scripts/linux_uapi.py',
+               'scripts/build_openssl.py', 'ports.lock.json',
                'userspace/tests/net/ipv4_path_mtu.c', 'userspace/tests/net/ipv4_path_mtu.h',
                'scripts/ipv4_path_mtu.py',
                'scripts/ipv4_path_mtu_capture.py',

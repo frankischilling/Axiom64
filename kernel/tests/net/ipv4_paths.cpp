@@ -120,6 +120,41 @@ static void route_pressure() {
     }
 }
 
+static void address_aliases() {
+    constexpr uint32_t first = 0x0a170102, alias = 0x0a170103, peer = 0x0a1701be;
+    constexpr uint32_t other = 0x0a170302;
+    learn(1, peer, 900);
+    Ipv4Config secondary{alias, 0xffffff00, 0x0a1701ff};
+    Ipv4Config independent{other, 0xffffff00, 0x0a1703ff};
+    assert(ipv4_address_add(1, "eth0:blue", secondary) == 0);
+    assert(ipv4_address_add(1, "eth0:red", independent) == 0);
+    assert(ipv4_address_add(1, "independent", {other + 1, 0xffffff00, 0x0a1703ff}) == 0);
+    assert(ipv4_address_remove(1, other + 1, 0xffffff00) == 0);
+    assert(ipv4_address_add(1, "eth0:duplicate", secondary) == -17);
+    assert(ipv4_local(alias) && ipv4_local(other));
+    Ipv4Path path;
+    assert(ipv4_path(alias, peer, 1, path) == 0 && path.source == alias && path.mtu == 900);
+    assert(ipv4_path(0, 0x0a170301, 1, path) == 0 && path.source == other);
+    assert(ipv4_learn_pmtu(alias, peer, 1, 700, 1128) == 700);
+    assert(mtu(1, peer) == 700);
+    assert(ipv4_address_remove(1, alias, 0xffff0000) == -99);
+    assert(ipv4_address_remove(1, alias, 0xffffff00) == 0);
+    assert(mtu(1, peer) == 700);
+    assert(ipv4_address_add(1, "eth0:blue", secondary) == 0);
+    Ipv4Route gateway{0x0a630000, 0xffffff00, 0x0a170301};
+    assert(ipv4_route(gateway, false) == 0);
+    assert(ipv4_path(0, 0x0a630001, 0, path) == 0 && path.index == 1 && path.source == other);
+    assert(ipv4_route(gateway, true) == 0);
+    assert(ipv4_address_remove(1, first, 0xffffff00) == 0);
+    assert(!ipv4_local(first) && !ipv4_local(alias) && ipv4_local(other));
+    assert(!ipv4_label(1, "eth0") && !ipv4_label(1, "eth0:blue"));
+    assert(ipv4_path(0, 0x0a170301, 1, path) == 0 && path.source == other);
+    assert(ipv4_path(alias, peer, 1, path) == -99);
+    assert(ipv4_configure(1, {first, 0xffffff00, 0}) == 0);
+    assert(mtu(1, peer) == 1500);
+    assert(ipv4_address_remove(1, other, 0xffffff00) == 0);
+}
+
 static void link_lifecycle() {
     constexpr uint32_t first = 0x0a1701d0, second = 0x0a1702d0;
     learn(1, first, 900);
@@ -139,7 +174,7 @@ static void link_lifecycle() {
     assert(ipv4_path(0, first, 1, path) == -100);
     assert(net_configure(1, true, 1500) == 0);
     assert(mtu(1, first) == 900);
-    assert(ipv4_configure(1, {0x0a170102, 0xffffff00, 0}) == 0);
+    assert(ipv4_configure(1, {0x0a170103, 0xffffff00, 0}) == 0);
     assert(mtu(1, first) == 1500);
     assert(mtu(2, second) == 800);
     learn(1, first, 900);
@@ -166,6 +201,7 @@ int main() {
     unrelated_routes();
     shared_next_hop();
     route_pressure();
+    address_aliases();
     link_lifecycle();
     ipv4_shutdown();
     std::puts("IPV4_PATHS_PASS route-ownership restoration sharing pressure links expiry");

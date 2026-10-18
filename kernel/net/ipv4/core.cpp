@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/ipv4.hpp"
+#include "net/ipv4/addresses.hpp"
 #include "net/ipv4/reassembly.hpp"
 #include "net/ipv4/fragmentation.hpp"
 #include "net/ipv4/path_mtu.hpp"
@@ -45,6 +46,7 @@ struct Output {
     bool fragmentable = false;
     bool use_path_mtu = true, want_df = false;
     uint64_t path_owner = 0;
+    uint32_t path_source = 0;
 };
 
 struct Selection {
@@ -52,9 +54,10 @@ struct Selection {
     unsigned index = 0, prefix = 0, metric = UINT32_MAX;
     bool local = false, broadcast = false, found = false;
     uint64_t path_owner = 0;
+    uint32_t path_source = 0;
 };
 
-static Ipv4Config interfaces[max_net_devices + 1];
+static ip4::AddressBook addresses;
 static Ipv4Config loopback{0x7f000001, 0xff000000, 0};
 static Route routes[route_count];
 static Neighbor neighbors[neighbor_count];
@@ -83,6 +86,20 @@ static bool directed_broadcast(const Ipv4Config& config, uint32_t address) {
            config.broadcast == address;
 }
 
+static bool directed_broadcast(unsigned index, uint32_t address) {
+    for (unsigned n = 0; auto entry = addresses.at(n); n++)
+        if (entry->index == index && directed_broadcast(entry->config, address))
+            return true;
+    return false;
+}
+
+static bool assigned(unsigned index, uint32_t address) {
+    for (unsigned n = 0; auto entry = addresses.at(n); n++)
+        if (entry->index == index && entry->config.address == address)
+            return true;
+    return false;
+}
+
 static void clear(Output& item, int error = 0) {
     // Submission polls receive callbacks before copying this buffer. A callback
     // can cancel the queued packet, but cannot release its borrowed storage yet.
@@ -106,11 +123,10 @@ static ip4::FragmentPiece submit(Output& item, const NetInfo& info) {
     auto packet = item.bytes + ethernet_header;
     if (ip4::get16(item.bytes + 12) != 0x0800)
         return {net_send(item.index, item.bytes, item.length), 0, 0, true};
-    auto limit = item.use_path_mtu
-                     ? path_mtu.lookup({ip4::get32(packet + 12), ip4::get32(packet + 16),
-                                        item.next_hop, item.index, item.path_owner},
-                                       info.mtu, ticks)
-                     : ip4::PathMtu{info.mtu};
+    auto limit = item.use_path_mtu ? path_mtu.lookup({item.path_source, ip4::get32(packet + 16),
+                                                      item.next_hop, item.index, item.path_owner},
+                                                     info.mtu, ticks)
+                                   : ip4::PathMtu{info.mtu};
     if (item.want_df && limit.locked && (ip4::get16(packet + 6) & 0x4000)) {
         ip4::put16(packet + 6, ip4::get16(packet + 6) & ~uint16_t(0x4000));
         ip4::put16(packet + 10, 0);
@@ -242,11 +258,10 @@ static void arp_receive(const NetInfo& info, const uint8_t* frame, size_t length
     if ((operation != 1 && operation != 2) || !nonzero || (mac[0] & 1) ||
         memcmp(mac, frame + 6, 6) || (sender && (!ip4::unicast(sender) || is_loopback(sender))))
         return;
-    auto config = ipv4_config(info.index);
-    if (!config || !config->address || sender == config->address ||
-        directed_broadcast(*config, sender))
+    if (!addresses.preferred(info.index) || ipv4_local(sender) ||
+        directed_broadcast(info.index, sender))
         return;
-    bool ours = target == config->address;
+    bool ours = assigned(info.index, target);
     if (operation == 2 && (memcmp(frame, info.mac, 6) || memcmp(frame + 32, info.mac, 6)))
         return;
     if (sender)
@@ -259,7 +274,7 @@ static void arp_receive(const NetInfo& info, const uint8_t* frame, size_t length
     auto bytes = static_cast<uint8_t*>(alloc(60));
     if (!bytes)
         return;
-    arp_frame(bytes, info, 2, mac, config->address, sender);
+    arp_frame(bytes, info, 2, mac, target, sender);
     *slot = {nullptr, bytes, 60, info.index, 0, ticks + 100, true, false};
 }
 
@@ -285,9 +300,10 @@ static int select(uint32_t source, uint32_t destination, unsigned bound, Selecti
     }
     if (bound && !ipv4_config(bound))
         return -19;
-    for (unsigned index = 1; index <= max_net_devices; index++) {
-        auto config = ipv4_config(index);
-        if (!config || !config->address || (bound && bound != index))
+    for (unsigned n = 0; auto entry = addresses.at(n); n++) {
+        unsigned index = entry->index;
+        const auto config = &entry->config;
+        if (bound && bound != index)
             continue;
         if (destination == config->address) {
             result = {
@@ -299,12 +315,13 @@ static int select(uint32_t source, uint32_t destination, unsigned bound, Selecti
                 source ? source : config->address, destination, index, 32, 0, false, true, true};
             break;
         }
-        if ((destination & config->mask) == (config->address & config->mask)) {
+        if (!entry->secondary && (destination & config->mask) == (config->address & config->mask)) {
             unsigned prefix = prefix_length(config->mask);
             if (!result.found || prefix > result.prefix) {
                 result = {
                     source ? source : config->address,        destination, index, prefix, 0, false,
                     directed_broadcast(*config, destination), true};
+                result.path_source = config->address;
             }
         }
     }
@@ -313,12 +330,14 @@ static int select(uint32_t source, uint32_t destination, unsigned bound, Selecti
         if (!route.used || (bound && bound != value.index) ||
             (destination & value.mask) != value.destination)
             continue;
-        auto config = ipv4_config(value.index);
-        if (!config || !config->address)
+        auto preferred =
+            addresses.preferred(value.index, value.gateway ? value.gateway : destination);
+        if (!preferred)
             continue;
+        const auto config = &preferred->config;
         unsigned prefix = prefix_length(value.mask);
         if (!result.found || prefix > result.prefix ||
-            (prefix == result.prefix && value.metric < result.metric))
+            (prefix == result.prefix && value.metric < result.metric)) {
             result = {source ? source : config->address,
                       value.gateway ? value.gateway : destination,
                       value.index,
@@ -328,6 +347,8 @@ static int select(uint32_t source, uint32_t destination, unsigned bound, Selecti
                       false,
                       true,
                       route.path_owner};
+            result.path_source = config->address;
+        }
     }
     if (!result.found)
         return -101;
@@ -408,11 +429,10 @@ static void input(unsigned index, const uint8_t* bytes, size_t length,
     uint32_t source = ip4::get32(bytes + 12), destination = ip4::get32(bytes + 16);
     auto config = ipv4_config(index);
     bool local = ipv4_local(destination);
-    bool broadcast =
-        destination == UINT32_MAX || (config && directed_broadcast(*config, destination));
+    bool broadcast = destination == UINT32_MAX || directed_broadcast(index, destination);
     if (!config || !ip4::unicast(source) || (!local && !broadcast) ||
         (index != ipv4_loopback &&
-         (is_loopback(source) || is_loopback(destination) || directed_broadcast(*config, source))))
+         (is_loopback(source) || is_loopback(destination) || directed_broadcast(index, source))))
         return;
     auto assembled =
         ip4::reassemble(index, bytes, length, ticks, link_broadcast, reassembly_timeout);
@@ -468,33 +488,124 @@ static void input(unsigned index, const uint8_t* bytes, size_t length,
 const Ipv4Config* ipv4_config(unsigned index) {
     if (index == ipv4_loopback)
         return &loopback;
-    return net_info(index) ? &interfaces[index] : nullptr;
+    if (!net_info(index))
+        return nullptr;
+    auto preferred = addresses.preferred(index);
+    static const Ipv4Config empty;
+    return preferred ? &preferred->config : &empty;
+}
+
+const Ipv4Address* ipv4_address(unsigned position) {
+    if (auto entry = addresses.at(position))
+        return entry;
+    if (position && !addresses.at(position - 1))
+        return nullptr;
+    static const Ipv4Address lo{{0x7f000001, 0xff000000, 0}, ipv4_loopback, "lo", false};
+    return &lo;
+}
+
+const Ipv4Config* ipv4_label(unsigned index, const char* label, uint32_t hint) {
+    if (index == ipv4_loopback)
+        return !strcmp(label, "lo") ? &loopback : nullptr;
+    auto entry = addresses.label(index, label, hint);
+    return entry ? &entry->config : nullptr;
+}
+
+static int address_label(unsigned index, const char* label) {
+    if (index == ipv4_loopback)
+        return -95;
+    auto info = net_info(index);
+    if (!info)
+        return -19;
+    if (!label)
+        return -22;
+    unsigned size = 0;
+    while (size < 16 && label[size])
+        size++;
+    size_t base = strlen(info->name);
+    if (size == 16 || size < base || memcmp(label, info->name, base) ||
+        (label[base] && label[base] != ':'))
+        return -22;
+    return 0;
+}
+
+static void addresses_changed(const ip4::AddressBook& before, unsigned index) {
+    bool retained = false;
+    for (unsigned n = 0; auto old = before.at(n); n++) {
+        if (old->index != index)
+            continue;
+        bool unchanged = false;
+        for (unsigned m = 0; auto current = addresses.at(m); m++)
+            unchanged |= current->index == index &&
+                         current->config.address == old->config.address &&
+                         current->config.mask == old->config.mask &&
+                         current->config.broadcast == old->config.broadcast;
+        retained |= unchanged;
+        if (unchanged)
+            continue;
+        if (!old->secondary)
+            path_mtu.discard_source(index, old->config.address);
+        if (assigned(index, old->config.address))
+            continue;
+        ip4::reassembly_discard(old->config.address);
+        for (auto& item : output) {
+            if (!item.bytes || item.index != index)
+                continue;
+            bool ip = item.local || ip4::get16(item.bytes + 12) == 0x0800;
+            bool owned =
+                ip ? ip4::get32(item.bytes + ethernet_header + 12) == old->config.address ||
+                         (item.local &&
+                          ip4::get32(item.bytes + ethernet_header + 16) == old->config.address)
+                   : ip4::get32(item.bytes + 28) == old->config.address;
+            if (owned)
+                clear(item, 100);
+        }
+    }
+    if (!retained)
+        for (auto& neighbor : neighbors)
+            if (neighbor.index == index)
+                neighbor = {};
+}
+
+int ipv4_configure_label(unsigned index, const char* label, const Ipv4Config& config) {
+    if (int error = address_label(index, label))
+        return error;
+    auto before = addresses;
+    int error = addresses.set(index, label, config);
+    addresses_changed(before, index);
+    return error;
 }
 
 int ipv4_configure(unsigned index, const Ipv4Config& config) {
-    if (!ipv4_config(index))
-        return -19;
-    if (index == ipv4_loopback)
-        return -95;
-    if (!ip4::mask_valid(config.mask) ||
-        (config.address && (!ip4::unicast(config.address) || is_loopback(config.address))))
-        return -22;
     auto changed = config;
     if (!changed.address || changed.mask >= 0xfffffffe)
         changed.broadcast = 0;
     else if (!changed.broadcast)
         changed.broadcast = changed.address | ~changed.mask;
-    if (interfaces[index].address)
-        ip4::reassembly_discard(interfaces[index].address);
-    interfaces[index] = changed;
-    path_mtu.discard(index);
-    for (auto& neighbor : neighbors)
-        if (neighbor.index == index)
-            neighbor = {};
-    for (auto& item : output)
-        if (item.bytes && item.index == index)
-            clear(item, 100);
-    return 0;
+    auto info = net_info(index);
+    return info                     ? ipv4_configure_label(index, info->name, changed)
+           : index == ipv4_loopback ? -95
+                                    : -19;
+}
+
+int ipv4_address_add(unsigned index, const char* label, const Ipv4Config& config) {
+    if (!net_info(index))
+        return -19;
+    auto before = addresses;
+    int error = addresses.add(index, label, config);
+    if (!error)
+        addresses_changed(before, index);
+    return error;
+}
+
+int ipv4_address_remove(unsigned index, uint32_t address, uint32_t mask) {
+    if (!net_info(index))
+        return -19;
+    auto before = addresses;
+    int error = addresses.remove(index, address, mask);
+    if (!error)
+        addresses_changed(before, index);
+    return error;
 }
 
 void ipv4_mtu_changed(unsigned index) {
@@ -533,32 +644,32 @@ static int change_route(const Ipv4Route& input, bool remove, bool control, bool 
     if (!value.index) {
         unsigned best = 0;
         const uint32_t target = value.gateway ? value.gateway : value.destination;
-        for (unsigned index = 1; index <= max_net_devices; index++) {
-            const auto config = ipv4_config(index);
-            if (config && config->address &&
-                (target & config->mask) == (config->address & config->mask) &&
+        for (unsigned n = 0; auto entry = addresses.at(n); n++) {
+            const auto config = &entry->config;
+            if (!entry->secondary && (target & config->mask) == (config->address & config->mask) &&
                 (!value.index || prefix_length(config->mask) > best)) {
-                value.index = index;
+                value.index = entry->index;
                 best = prefix_length(config->mask);
             }
         }
         if (!value.index)
             return -101;
     }
-    auto config = ipv4_config(value.index);
-    if (!config || value.index == ipv4_loopback)
+    if (!net_info(value.index) || value.index == ipv4_loopback)
         return -19;
+    auto preferred = addresses.preferred(value.index, value.gateway);
+    const auto config = preferred ? &preferred->config : nullptr;
     if (value.gateway &&
-        (!config->address || !ip4::unicast(value.gateway) || is_loopback(value.gateway) ||
-         directed_broadcast(*config, value.gateway) || value.gateway == config->address ||
+        (!config || !ip4::unicast(value.gateway) || is_loopback(value.gateway) ||
+         directed_broadcast(value.index, value.gateway) || ipv4_local(value.gateway) ||
          (value.gateway & config->mask) != (config->address & config->mask)))
         return -101;
     if (value.scope == 255)
         value.scope = value.gateway ? 0 : 253;
     if (exclusive && !value.metric)
-        for (unsigned index = 1; index <= ipv4_loopback; index++) {
-            auto connected = ipv4_config(index);
-            if (connected && connected->address && connected->mask == value.mask &&
+        for (unsigned n = 0; auto entry = ipv4_address(n); n++) {
+            auto connected = &entry->config;
+            if (!entry->secondary && connected->mask == value.mask &&
                 (connected->address & connected->mask) == value.destination)
                 return -17;
         }
@@ -602,10 +713,11 @@ int ipv4_route_control(const Ipv4Route& value, bool remove, bool exclusive) {
 
 size_t ipv4_routes(Ipv4Route* output, size_t capacity) {
     size_t count = 0;
-    for (unsigned index = 1; index <= ipv4_loopback; index++) {
-        auto config = ipv4_config(index);
-        if (config && config->address && count < capacity)
-            output[count++] = {config->address & config->mask, config->mask, 0, index, 0, 2, 253};
+    for (unsigned n = 0; auto entry = ipv4_address(n); n++) {
+        const auto config = &entry->config;
+        if (!entry->secondary && count < capacity)
+            output[count++] = {
+                config->address & config->mask, config->mask, 0, entry->index, 0, 2, 253};
     }
     for (const auto& route : routes)
         if (route.used && count < capacity)
@@ -616,8 +728,8 @@ size_t ipv4_routes(Ipv4Route* output, size_t capacity) {
 bool ipv4_local(uint32_t address) {
     if (is_loopback(address))
         return true;
-    for (unsigned i = 1; i <= max_net_devices; i++)
-        if (net_info(i) && address && interfaces[i].address == address)
+    for (unsigned n = 0; auto entry = addresses.at(n); n++)
+        if (address && entry->config.address == address)
             return true;
     return false;
 }
@@ -641,7 +753,7 @@ int ipv4_path(uint32_t source, uint32_t destination, unsigned bound_index, Ipv4P
         uint32_t mtu = route.local ? 65535u : net_info(route.index)->mtu;
         if (!route.local && !route.broadcast)
             mtu = path_mtu
-                      .lookup({route.source, destination, route.next_hop, route.index,
+                      .lookup({route.path_source, destination, route.next_hop, route.index,
                                route.path_owner},
                               mtu, ticks)
                       .mtu;
@@ -656,7 +768,7 @@ uint32_t ipv4_learn_pmtu(uint32_t source, uint32_t destination, unsigned index,
     if (select(source, destination, index, route) || route.local || route.broadcast)
         return 0;
     return path_mtu
-        .learn({route.source, destination, route.next_hop, route.index, route.path_owner},
+        .learn({route.path_source, destination, route.next_hop, route.index, route.path_owner},
                net_info(route.index)->mtu, announced_mtu, quoted_length, ticks)
         .mtu;
 }
@@ -677,7 +789,8 @@ int ipv4_send(InetSocket* owner, uint32_t source, uint32_t destination, unsigned
     bool use_path_mtu = inet_use_path_mtu(owner);
     if (!route.local && !route.broadcast && use_path_mtu)
         limit = path_mtu.lookup(
-            {route.source, destination, route.next_hop, route.index, route.path_owner}, mtu, ticks);
+            {route.path_source, destination, route.next_hop, route.index, route.path_owner}, mtu,
+            ticks);
     if (length > 65535 - 20 || (!route.local && length + 20 > limit.mtu && !fragmentable))
         return -90;
     auto slot = vacant_output();
@@ -717,6 +830,7 @@ int ipv4_send(InetSocket* owner, uint32_t source, uint32_t destination, unsigned
     slot->use_path_mtu = use_path_mtu;
     slot->want_df = fragmentable && inet_dont_fragment(owner);
     slot->path_owner = route.path_owner;
+    slot->path_source = route.path_source;
     return 0;
 }
 
@@ -770,7 +884,14 @@ void ipv4_poll() {
             !info->carrier)
             continue;
         uint8_t frame[60];
-        arp_frame(frame, *info, 1, nullptr, config->address, neighbor.address);
+        uint32_t source = config->address;
+        for (const auto& item : output)
+            if (item.bytes && !item.local && !item.ethernet_ready && item.index == neighbor.index &&
+                item.next_hop == neighbor.address) {
+                source = ip4::get32(item.bytes + ethernet_header + 12);
+                break;
+            }
+        arp_frame(frame, *info, 1, nullptr, source, neighbor.address);
         int error = net_send(neighbor.index, frame, sizeof(frame));
         if (!error) {
             neighbor.attempts++;

@@ -10,6 +10,15 @@ struct Ipv4Config {
     uint32_t address = 0, mask = 0xffffff00, broadcast = 0;
 };
 
+constexpr unsigned ipv4_address_capacity = 32;
+
+struct Ipv4Address {
+    Ipv4Config config;
+    unsigned index = 0;
+    char label[16]{};
+    bool secondary = false;
+};
+
 struct Ipv4Route {
     uint32_t destination = 0, mask = 0, gateway = 0;
     unsigned index = 0, metric = 0;
@@ -20,7 +29,18 @@ constexpr unsigned ipv4_loopback = max_net_devices + 1;
 
 const Ipv4Config* ipv4_config(unsigned index);
 
+// Serialized callers may borrow entries until the next address mutation.
+const Ipv4Address* ipv4_address(unsigned position);
+
+const Ipv4Config* ipv4_label(unsigned index, const char* label, uint32_t hint = 0);
+
 int ipv4_configure(unsigned index, const Ipv4Config&);
+
+int ipv4_configure_label(unsigned index, const char* label, const Ipv4Config&);
+
+int ipv4_address_add(unsigned index, const char* label, const Ipv4Config&);
+
+int ipv4_address_remove(unsigned index, uint32_t address, uint32_t mask);
 
 // A changed link MTU invalidates learned exceptions on that interface only.
 void ipv4_mtu_changed(unsigned index);

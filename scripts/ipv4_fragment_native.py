@@ -19,6 +19,7 @@ from fetch import ROOT
 from ipv4_fragments import FragmentPeer
 from ipv4_expiry_capture import verify_capture
 from ipv4_path_mtu_capture import verify_capture as verify_path_mtu
+from ipv4_path_mtu_lifetime_capture import verify_capture as verify_path_lifetime
 from tcp_fault_native import Capture
 
 
@@ -26,33 +27,37 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def client(profile, pmtu_only=False):
+def client(profile, pmtu_only=False, lifetime_only=False):
     binary = ROOT / 'build' / {'native': 'ipv4-native', 'static': 'ipv4-tests',
                               'dynamic': 'ipv4-dynamic'}[profile]
-    command = [str(binary), '--path-mtu' if pmtu_only else '--fragments']
+    mode = '--path-mtu-lifetime' if lifetime_only else '--path-mtu' if pmtu_only else '--fragments'
+    command = [str(binary), mode]
     if profile == 'dynamic':
         command.insert(0, str(loader('build')))
     return command
 
 
-def child(profile, directory, pmtu_only=False):
+def child(profile, directory, pmtu_only=False, lifetime_only=False):
     directory.mkdir(exist_ok=False)
     peers = [FragmentPeer(lane, native=True) for lane in range(2)]
     taps, captures, statistics, links = [], [], [], []
     process = None
     error = None
-    command = client(profile, pmtu_only)
+    command = client(profile, pmtu_only, lifetime_only)
     sources = ['userspace/tests/net/ipv4.c', 'userspace/tests/net/ipv4_fragments.c',
                'userspace/tests/net/ipv4_path_mtu.c', 'userspace/tests/net/ipv4_path_mtu.h',
                'scripts/ipv4_path_mtu.py',
                'scripts/ipv4_path_mtu_capture.py',
+               'scripts/ipv4_path_mtu_lifetime.py', 'scripts/ipv4_path_mtu_lifetime_capture.py',
                'userspace/tests/net/ipv4_fragments.h', 'scripts/ipv4_fragments.py',
                'scripts/ipv4_fragment_native.py', 'scripts/ipv4_expiry_capture.py',
                'scripts/tcp_fault_native.py', 'Makefile']
-    before = dict(profile=profile, pmtu_only=pmtu_only, kernel=platform.uname()._asdict(), command=command,
+    before = dict(profile=profile, pmtu_only=pmtu_only, lifetime_only=lifetime_only,
+                  kernel=platform.uname()._asdict(), command=command,
                   source_sha256={name: digest(ROOT / name) for name in sources},
                   executable_sha256={name: digest(Path(name)) for name in command[:-1]},
                   requested_fragment_timeout_seconds=60,
+                  requested_path_mtu_lifetime_seconds=600,
                   native_icmp_error_tos=0xc0,
                   expiry_quote_upper_seconds=peers[0].expiry.latest_quote_seconds,
                   expiry_context_gap_seconds=peers[0].expiry.context_gap_seconds,
@@ -84,6 +89,8 @@ def child(profile, directory, pmtu_only=False):
         fragment_timeout = int(Path('/proc/sys/net/ipv4/ipfrag_time').read_text())
         if fragment_timeout != 60:
             raise ValueError('native fragment lifetime differs from the 60-second guest policy')
+        if int(Path('/proc/sys/net/ipv4/route/mtu_expires').read_text()) != 600:
+            raise ValueError('native path lifetime differs from the unchanged ten-minute policy')
         subprocess.run(['ip', 'link', 'set', 'lo', 'up'], check=True)
         for lane in range(2):
             name = f'eth{lane}'
@@ -99,8 +106,9 @@ def child(profile, directory, pmtu_only=False):
             process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
                                        stdin=subprocess.DEVNULL, cwd=ROOT)
             while True:
-                if time.monotonic() - started > 120:
-                    raise TimeoutError('fragment comparison exceeded its 120-second bound')
+                bound = 120 if pmtu_only else 640 if lifetime_only else 780
+                if time.monotonic() - started > bound:
+                    raise TimeoutError(f'IPv4 comparison exceeded its {bound}-second bound')
                 if process.poll() not in (None, 0):
                     raise RuntimeError(f'fragment client exited {process.returncode}')
                 for lane, peer in enumerate(peers):
@@ -143,9 +151,12 @@ def child(profile, directory, pmtu_only=False):
                             send_packets(lane, peers[lane].expiry.receive(packet))
                         else:
                             send_packets(lane, [(payload, False) for payload in peers[lane].receive(packet)])
-                if process.poll() == 0 and all(peer.path_mtu.passed and
-                    (pmtu_only or (peer.acknowledged and peer.output.acknowledged and
-                                   peer.expiry.passed)) for peer in peers):
+                if process.poll() == 0 and all(
+                    (lifetime_only or peer.path_mtu.passed) and
+                    (pmtu_only or peer.path_mtu.lifetime.passed) and
+                    (pmtu_only or lifetime_only or
+                     (peer.acknowledged and peer.output.acknowledged and peer.expiry.passed))
+                    for peer in peers):
                     break
     except Exception as exception:
         error = f'{type(exception).__name__}: {exception}'
@@ -181,15 +192,18 @@ def child(profile, directory, pmtu_only=False):
     acknowledged = [peer.acknowledged for peer in peers]
     output_cases = [peer.output.completed for peer in peers]
     output_ack = [peer.output.acknowledged for peer in peers]
-    markers = all(f'IPV4_PATH_MTU_PASS index={lane + 1} cases=18 policies_each=6\n' in text
-                  for lane in range(2))
+    markers = lifetime_only or all(f'IPV4_PATH_MTU_PASS index={lane + 1} cases=18 policies_each=6\n' in text
+                                  for lane in range(2))
     if not pmtu_only:
+        markers = markers and all(f'IPV4_PATH_MTU_LIFETIME_PASS index={lane + 1} ' in text
+                                  for lane in range(2))
+    if not pmtu_only and not lifetime_only:
         markers = markers and all(f'IPV4_FRAGMENT_PASS index={lane + 1} cases=6\n' in text for lane in range(2))
         markers = markers and all(f'IPV4_FRAGMENT_OUTPUT_PASS index={lane + 1} cases=21\n' in text
                                   for lane in range(2))
         markers = markers and all(f'IPV4_FRAGMENT_EXPIRY_PASS index={lane + 1} ' in text for lane in range(2))
     expiry_audits = []
-    if not pmtu_only and error is None and process is not None and process.returncode == 0 and markers:
+    if not pmtu_only and not lifetime_only and error is None and process is not None and process.returncode == 0 and markers:
         try:
             for lane in range(2):
                 expiry_audits.append(verify_capture(directory / f'lane{lane}.pcap', lane,
@@ -198,7 +212,7 @@ def child(profile, directory, pmtu_only=False):
         except Exception as exception:
             error = f'expiry capture audit: {exception}'
     path_audits = []
-    if error is None and process is not None and process.returncode == 0 and markers:
+    if not lifetime_only and error is None and process is not None and process.returncode == 0 and markers:
         try:
             for lane in range(2):
                 path_audits.append(verify_path_mtu(directory / f'lane{lane}.pcap', lane,
@@ -206,7 +220,17 @@ def child(profile, directory, pmtu_only=False):
                     damage_archive=directory / f'lane{lane}-pmtu-damaged.zip'))
         except Exception as exception:
             error = f'path MTU capture audit: {exception}'
-    result = dict(profile=profile, pmtu_only=pmtu_only, error=error, returncode=process.returncode if process else None,
+    lifetime_audits = []
+    if not pmtu_only and error is None and process is not None and process.returncode == 0 and markers:
+        try:
+            for lane in range(2):
+                lifetime_audits.append(verify_path_lifetime(directory / f'lane{lane}.pcap', lane,
+                    directory / 'client.log', native=True,
+                    damage_archive=directory / f'lane{lane}-pmtu-lifetime-damaged.zip'))
+        except Exception as exception:
+            error = f'path MTU lifetime capture audit: {exception}'
+    result = dict(profile=profile, pmtu_only=pmtu_only, lifetime_only=lifetime_only,
+                  error=error, returncode=process.returncode if process else None,
                   cases=completed, final_ack=acknowledged, frames=[peer.frames for peer in peers],
                   output_cases=output_cases, output_final_ack=output_ack,
                   output_frames=[peer.output.frames for peer in peers],
@@ -215,14 +239,20 @@ def child(profile, directory, pmtu_only=False):
                   fragment_expiry_capture_audits=expiry_audits,
                   path_mtu=[peer.path_mtu.report() for peer in peers],
                   path_mtu_capture_audits=path_audits,
+                  path_mtu_lifetime=[peer.path_mtu.lifetime.report() for peer in peers],
+                  path_mtu_lifetime_capture_audits=lifetime_audits,
                   link_statistics=links,
                   seconds=time.monotonic() - started, capture_statistics=statistics,
                   source_sha256=before['source_sha256'],
                   passed=(error is None and process is not None and process.returncode == 0 and
-                          all(peer.path_mtu.passed for peer in peers) and
-                          (pmtu_only or (completed == [6, 6] and all(acknowledged) and output_cases == [21, 21] and
+                          (lifetime_only or all(peer.path_mtu.passed for peer in peers)) and
+                          (pmtu_only or all(peer.path_mtu.lifetime.passed for peer in peers)) and
+                          (pmtu_only or lifetime_only or (completed == [6, 6] and all(acknowledged) and output_cases == [21, 21] and
                           all(output_ack) and all(peer.expiry.passed for peer in peers))) and
-                          markers and len(statistics) == 2 and len(path_audits) == 2))
+                          markers and len(statistics) == 2 and
+                          len(path_audits) == (0 if lifetime_only else 2) and
+                          len(lifetime_audits) == (0 if pmtu_only else 2) and
+                          len(expiry_audits) == (0 if pmtu_only or lifetime_only else 2)))
     (directory / 'receipt.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result), flush=True)
     return result['passed']
@@ -232,14 +262,17 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--directory', type=Path, default=ROOT / 'build/ipv4-fragments-native')
     parser.add_argument('--child', choices=['native', 'static', 'dynamic'])
-    parser.add_argument('--pmtu-only', action='store_true',
-                        help='focused PMTU run; does not establish fragment or expiry acceptance')
+    focused = parser.add_mutually_exclusive_group()
+    focused.add_argument('--pmtu-only', action='store_true',
+                         help='focused PMTU policies; excludes fragment and ten-minute expiry acceptance')
+    focused.add_argument('--lifetime-only', action='store_true',
+                         help='complete ten-minute PMTU lifetime; excludes fragment and six-policy acceptance')
     args = parser.parse_args()
     directory = args.directory.resolve()
     if directory == (ROOT / 'build').resolve() or not directory.is_relative_to((ROOT / 'build').resolve()):
         raise ValueError('native evidence must have a dedicated directory beneath build/')
     if args.child:
-        return 0 if child(args.child, directory, args.pmtu_only) else 1
+        return 0 if child(args.child, directory, args.pmtu_only, args.lifetime_only) else 1
     directory.mkdir(parents=True, exist_ok=False)
     started = time.monotonic()
     with (directory / 'build.log').open('wb') as log:
@@ -252,6 +285,8 @@ def main():
                        '--directory', str(directory / profile)]
             if args.pmtu_only:
                 command.append('--pmtu-only')
+            if args.lifetime_only:
+                command.append('--lifetime-only')
             completed = subprocess.run(command, cwd=ROOT)
             return dict(profile=profile, returncode=completed.returncode)
 
@@ -261,6 +296,7 @@ def main():
             results = list(pool.map(compare, ['native', 'static', 'dynamic']))
     passed = built.returncode == 0 and len(results) == 3 and all(row['returncode'] == 0 for row in results)
     (directory / 'receipt.json').write_text(json.dumps(dict(passed=passed, pmtu_only=args.pmtu_only,
+        lifetime_only=args.lifetime_only,
         build_returncode=built.returncode, profiles=results, seconds=time.monotonic() - started,
         execution='three private network namespaces after one shared build'), indent=2) + '\n')
     return 0 if passed else 1

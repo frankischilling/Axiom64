@@ -70,6 +70,12 @@ Output captures its discovery policy when accepted. It checks current device and
 
 The ordinary fragment-native command includes these cases. A focused comparison is `sudo -n python3 scripts/ipv4_fragment_native.py --pmtu-only --directory build/ipv4-pmtu-focused`; that focused mode does not establish fragment or expiry acceptance. The independent `scripts/ipv4_path_mtu_capture.py` auditor checks the original packets, quote provenance, ordered barriers, fragment geometry, checksums and client query results. Ten damaged capture/log fixtures per NIC must fail. Native capture receipts bind every original frame to its hash and kernel timestamp; both capture and TAP drop counts must remain zero.
 
+The complete clients also age both adapters' learned limits concurrently through the unchanged ten-minute lifetime. An actual 1,128-byte UDP packet supplies each original quote. A corrupted hint must leave the limit unchanged; a valid hint lowers it to 900 bytes. Twenty-one lookup rounds, including a round at 590 seconds, require both the original and a fresh DO socket to reject the oversized payload. At 605 seconds both descriptions must transmit all 1,100 application bytes in whole DF packets. Ordinary lookups and failed sends cannot renew the original deadline.
+
+The retained socket's final `IP_MTU` query follows its real send, which refreshes Linux's potentially obsolete cached destination. This expiry check does not establish the complete cached-route query lifecycle described above. The independent `scripts/ipv4_path_mtu_lifetime_capture.py` auditor requires every original quote, lookup barrier, query result and recovered datagram. Original wire timing must prove at least 600 seconds; the client's elapsed clock must agree. Fourteen damaged fixtures per NIC cover early and late recovery, missing descriptions or barriers, false queries and duration, route/quote ownership and wire corruption.
+
+`--lifetime-only` selects this complete ten-minute native comparison without claiming fragment or six-policy acceptance. The full native command and every normal guest profile include it. Both production deadlines and guest clocks remain unchanged.
+
 ## Fragment reassembly
 
 The receive module owns up to 32 incomplete datagrams. Each queue copies its accepted payload bytes and tracks their coverage; recycling a hardware RX buffer cannot change them. Source, destination, protocol and identification select a queue. Fragments can arrive through different interfaces. Removing an address releases queues for that destination without changing other destinations' state.
@@ -116,7 +122,7 @@ python3 scripts/ipv4_test.py --firmware both --fault
 sudo ./build/ipv4-tests --loopback
 ```
 
-The final command runs the common loopback/raw-socket checks on the Linux build host for comparison. The guest matrix has eight boots: BIOS/UEFI and modern/legacy virtio, each with virtio-net and e1000 together, followed by the same four cases with an isolated virtio RX identity fault. Results accumulate in `build/ipv4-results.json`; logs and GDB commands use `build/ipv4-*`. A standalone invocation replaces its result file with that invocation's cases.
+The final command runs the common loopback/raw-socket checks on the Linux build host for comparison. The guest matrix has eight boots: BIOS/UEFI and modern/legacy virtio, each with virtio-net and e1000 together, followed by the same four cases with an isolated virtio RX identity fault. Two isolated worker processes run concurrently by default, sharing one immutable image per phase. `python3 scripts/ipv4_matrix.py --workers 1` runs sequentially; `--workers 4` runs all four phase profiles together. Every profile retains its original coverage and complete observations. Results accumulate in `build/ipv4-results.json`; logs, worker receipts and GDB commands use `build/ipv4-*`. A standalone invocation replaces its result file with that invocation's cases.
 
 Independent loopback TCP peers handle QEMU's Ethernet framing. They validate interface-specific MACs, ARP fields/padding, IPv4 route/source/destination/length/checksum/TTL/DF, ICMP checksums, and deterministic payloads. They answer real guest requests; they do not run guest socket operations or substitute for the kernel stack. BusyBox sends two actual ping requests per interface.
 

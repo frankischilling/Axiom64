@@ -980,6 +980,10 @@ static void link_change(unsigned lane) {
 
 int main(int argc, char** argv) {
     setbuf(stdout, NULL);
+    if (argc == 2 && !strcmp(argv[1], "--path-mtu-lifetime")) {
+        ipv4_path_mtu_lifetime_checks();
+        return 0;
+    }
     if (argc == 2 && !strcmp(argv[1], "--path-mtu")) {
         ipv4_path_mtu_checks(0);
         ipv4_path_mtu_checks(1);
@@ -991,6 +995,7 @@ int main(int argc, char** argv) {
         ipv4_fragment_expiry_checks();
         ipv4_path_mtu_checks(0);
         ipv4_path_mtu_checks(1);
+        ipv4_path_mtu_lifetime_checks();
         return 0;
     }
     int fd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
@@ -1050,6 +1055,7 @@ int main(int argc, char** argv) {
         ipv4_fragment_expiry_checks();
         ipv4_path_mtu_checks(0);
         ipv4_path_mtu_checks(1);
+        ipv4_path_mtu_lifetime_checks();
     }
     if (fd >= 0)
         check(close(fd) == 0, "raw ICMP close");

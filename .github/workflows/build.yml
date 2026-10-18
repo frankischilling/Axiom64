@@ -1189,6 +1189,7 @@ jobs:
             build/ipv4-*.pcap
             build/ipv4-*-expiry-lane*.zip
             build/ipv4-*-pmtu-lane*.zip
+            build/ipv4-*-pmtu-lifetime-lane*.zip
             build/manager-protocol-*-packets.json
             build/manager-link-*-packets.json
             build/axiom64-manager-address-query-*.iso

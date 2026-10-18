@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Validate real path-MTU datagrams and ordered client barriers on one NIC."""
 import struct
+from ipv4_path_mtu_lifetime import PathMtuLifetimePeer
 
 
 def require(condition, message):
@@ -32,6 +33,7 @@ class PathMtuPeer:
         self.observed = False
         self.pending_control = None
         self.passed = False
+        self.lifetime = PathMtuLifetimePeer(lane, native=native)
 
     @property
     def target(self):
@@ -50,6 +52,9 @@ class PathMtuPeer:
         return 1500 if self.original_policy >= 4 and self.completed < 16 else max(552, self.announced)
 
     def arp_reply(self, frame):
+        lifetime = self.lifetime.arp_reply(frame)
+        if lifetime is not None:
+            return lifetime
         if len(frame) < 42 or frame[12:14] != b'\x08\x06' or not (
                 frame[38:41] == self.remote[:3] and 180 <= frame[41] < 198):
             return None
@@ -64,7 +69,8 @@ class PathMtuPeer:
                 self.guest + self.local).ljust(60, b'\0')
 
     def accepts(self, packet):
-        return ((len(packet) == 52 and packet[9] == 1 and packet[16:20] == self.remote and
+        return (self.lifetime.accepts(packet) or
+                (len(packet) == 52 and packet[9] == 1 and packet[16:20] == self.remote and
                  packet[24:26] == b'PM') or
                 (len(packet) >= 20 and packet[16:19] == self.remote[:3] and
                  180 <= packet[19] < 198))
@@ -214,6 +220,8 @@ class PathMtuPeer:
         return responses
 
     def receive(self, packet):
+        if self.lifetime.accepts(packet):
+            return self.lifetime.receive(packet)
         require(len(packet) >= 20 and packet[:2] == b'\x45\0' and
                 int.from_bytes(packet[2:4], 'big') == len(packet) and
                 not checksum(packet[:20]) and packet[12:16] == self.local,

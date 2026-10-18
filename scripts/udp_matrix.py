@@ -9,6 +9,7 @@ from udp_test import run
 
 
 def main():
+    subprocess.run([sys.executable, 'scripts/tests/udp_peer_test.py'], cwd=ROOT, check=True)
     results = []
     destination = ROOT / 'build/udp-results.json'
     try:

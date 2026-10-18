@@ -55,6 +55,7 @@ class Peer:
         self.pressure_mac = self.mac[:5] + bytes([self.lane + 10])
         self.pressure_arp = self.pressure_frames = self.unanswered = 0
         self.pressure_released = self.pressure_reply_queued = False
+        self.path_locked = False
 
     def queue(self, frame):
         self.output.extend(struct.pack('!I', len(frame)) + frame)
@@ -141,6 +142,9 @@ class Peer:
             self.queue(self.guest + self.mac + b'\x08\x00' +
                        ipv4(self.ip, self.guest_ip, bytes(error), protocol=1))
         self.quote_errors += len(forms)
+        # The final zero-MTU hint locks this unicast path at the learned floor.
+        # WANT clears DF on later UDP output, including another socket's sends.
+        self.path_locked = True
 
     def icmp(self, packet):
         data = packet[20:]
@@ -215,8 +219,10 @@ class Peer:
         broadcast = packet[16:20] == b'\xff' * 4
         pressure = packet[16:20] == self.pressure_ip
         expected_mac = b'\xff' * 6 if broadcast else self.pressure_mac if pressure else self.mac
+        expected_flags = (b'\0\0' if self.path_locked and packet[9:10] == b'\x11' and
+                          packet[16:20] == self.ip else b'\x40\0')
         if (len(packet) < 28 or frame[:12] != expected_mac + self.guest or packet[:2] != b'\x45\0' or
-                checksum(packet[:20]) or packet[6:9] != b'\x40\0\x40' or
+                checksum(packet[:20]) or packet[6:8] != expected_flags or packet[8] != 64 or
                 packet[12:16] != self.guest_ip or (not broadcast and not pressure and packet[16:20] != self.ip)):
             raise RuntimeError('UDP guest Ethernet/IPv4 header differs')
         total = int.from_bytes(packet[2:4], 'big')

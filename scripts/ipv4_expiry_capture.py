@@ -140,7 +140,8 @@ def audit(rows, lane, log, native=False):
             broadcast['packet'][6:8] == b'\x20\0' and broadcast['packet'][20:] == body[:24] and
             broadcast['frame'][:6] == b'\xff' * 6, 'suppression context bytes or Ethernet mode differ')
     contexts = [initial, no_first, error_input, broadcast]
-    require(all(b['ns'] - a['ns'] >= 1980000000 for a, b in zip(contexts, contexts[1:])),
+    require(all(b['ns'] - a['ns'] >= (7980000000 if native else 1980000000)
+                for a, b in zip(contexts, contexts[1:])),
             'simultaneous suppression deadlines can hide a missing filter')
     relevant_errors = [x for x in errors if controls[0]['index'] < x['index'] < controls[-1]['index']]
     require(len(relevant_errors) == 1, 'missing eligible ICMP error or forbidden suppression response')
@@ -151,11 +152,11 @@ def audit(rows, lane, log, native=False):
             packet[20:22] == b'\x0b\x01' and packet[24:28] == b'\0' * 4 and
             not checksum(packet[20:]) and 28 <= len(packet[28:]) <= len(first) and
             packet[28:] == first[:len(packet[28:])], 'ICMP quote/checksum or host policy differs')
-    require(59980000000 <= quote['ns'] - initial['ns'] <= 85000000000,
+    require(59980000000 <= quote['ns'] - initial['ns'] <= (66000000000 if native else 61000000000),
             'expiry does not match the original 60-second deadline')
     require(29980000000 <= duplicate['ns'] - initial['ns'] <= 35000000000,
             'duplicate was not sent halfway through the original deadline')
-    require(acknowledgements[1]['ns'] - broadcast['ns'] >= 62980000000,
+    require(acknowledgements[1]['ns'] - broadcast['ns'] >= (68980000000 if native else 62980000000),
             'quiet observation ends before the final suppression deadline')
     sequence = [controls[0], initial, acknowledgements[0], duplicate, quote,
                 acknowledgements[1], controls[1], tail, acknowledgements[2], controls[2], fresh, controls[3]]
@@ -174,7 +175,7 @@ def audit(rows, lane, log, native=False):
                 original_packet_times_not_rescaled=True, passed=True)
 
 
-def damages(rows, lane):
+def damages(rows, lane, *, native=False):
     identity = 0x7a10 + lane * 16
     firsts = [i for i, r in enumerate(rows) if len(r['frame']) >= 58 and
               r['frame'][12:14] == b'\x08\0' and int.from_bytes(r['frame'][18:20], 'big') == identity and
@@ -190,11 +191,13 @@ def damages(rows, lane):
             row['elapsed_ns'] += timestamp - row['ns']
         row['ns'] = timestamp
 
-    for name in ['early-expiry', 'late-duplicate', 'missing-quote', 'wrong-quote', 'extra-error',
+    for name in ['early-expiry', 'late-expiry', 'late-duplicate', 'missing-quote', 'wrong-quote', 'extra-error',
                  'unicast-broadcast-case', 'simultaneous-suppression', 'missing-reuse', 'bad-outer-checksum']:
         changed = copy.deepcopy(rows)
         if name == 'early-expiry':
             shift_clock(changed[quote], changed[first]['ns'] + 59000000000)
+        elif name == 'late-expiry':
+            shift_clock(changed[quote], changed[first]['ns'] + (67 if native else 62) * 1000000000)
         elif name == 'late-duplicate':
             shift_clock(changed[duplicate], changed[first]['ns'] + 40000000000)
         elif name == 'missing-quote':
@@ -236,7 +239,7 @@ def verify_capture(capture, lane, log, native=False, damage_archive=None):
     if damage_archive:
         failures = []
         with zipfile.ZipFile(damage_archive, 'x', compression=zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
-            for name, changed in damages(rows, lane):
+            for name, changed in damages(rows, lane, native=native):
                 archive.writestr(name + '.pcap', encode_capture(changed))
                 if native:
                     archive.writestr(name + '.observations.json', json.dumps(dict(

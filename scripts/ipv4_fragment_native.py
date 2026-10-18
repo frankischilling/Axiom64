@@ -36,7 +36,7 @@ def client(profile):
 
 def child(profile, directory):
     directory.mkdir(exist_ok=False)
-    peers = [FragmentPeer(lane, expiry_error_tos=0xc0) for lane in range(2)]
+    peers = [FragmentPeer(lane, native=True) for lane in range(2)]
     taps, captures, statistics, links = [], [], [], []
     process = None
     error = None
@@ -50,6 +50,9 @@ def child(profile, directory):
                   executable_sha256={name: digest(Path(name)) for name in command[:-1]},
                   requested_fragment_timeout_seconds=60,
                   native_icmp_error_tos=0xc0,
+                  expiry_quote_upper_seconds=peers[0].expiry.latest_quote_seconds,
+                  expiry_context_gap_seconds=peers[0].expiry.context_gap_seconds,
+                  expiry_quiet_delay_seconds=peers[0].expiry.quiet_delay_seconds,
                   namespace_linkage='private network namespace; two private TAP devices')
     (directory / 'preexecution.json').write_text(json.dumps(before, indent=2) + '\n')
     products = directory / 'products'

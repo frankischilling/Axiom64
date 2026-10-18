@@ -14,14 +14,14 @@ def checksum(data):
 
 
 class FragmentPeer:
-    def __init__(self, lane, *, expiry_error_tos=0):
+    def __init__(self, lane, *, native=False):
         self.lane = lane
         self.completed = 0
         self.waiting = None
         self.frames = 0
         self.acknowledged = False
         self.output = OutputFragmentPeer(self)
-        self.expiry = FragmentExpiryPeer(self, error_tos=expiry_error_tos)
+        self.expiry = FragmentExpiryPeer(self, native=native)
 
     def accepts(self, packet):
         return (packet[24:26] in (b'FR', b'FO') or
@@ -224,9 +224,12 @@ class OutputFragmentPeer:
 
 class FragmentExpiryPeer:
     """Observe real expiry; responses are (IP packet, Ethernet broadcast) pairs."""
-    def __init__(self, parent, *, error_tos=0):
+    def __init__(self, parent, *, native=False):
         self.parent = parent
-        self.error_tos = error_tos
+        self.error_tos = 0xc0 if native else 0
+        self.latest_quote_seconds = 66 if native else 61
+        self.context_gap_seconds = 8 if native else 2
+        self.quiet_delay_seconds = 69 if native else 63
         self.start = self.duplicate = self.quote = self.quiet = None
         self.contexts = []
         self.events = []
@@ -256,7 +259,7 @@ class FragmentExpiryPeer:
         # Separate each suppression deadline from the preceding ICMP opportunity.
         # Simultaneous expiry could let the rate limiter hide a missing filter.
         test = len(self.contexts)
-        if test < 4 and now - self.contexts[-1]['monotonic'] >= 2:
+        if test < 4 and now - self.contexts[-1]['monotonic'] >= self.context_gap_seconds:
             identity = 0x7a10 + self.parent.lane * 16 + test
             body = self.parent.body(0)
             if test == 1:
@@ -278,7 +281,7 @@ class FragmentExpiryPeer:
             self.duplicate = now
             self.event('exact first-fragment duplicate queued', now)
         if (self.stage == 1 and len(self.contexts) == 4 and self.quote is not None and
-                now - self.contexts[-1]['monotonic'] >= 63):
+                now - self.contexts[-1]['monotonic'] >= self.quiet_delay_seconds):
             self.stage = 2
             self.quiet = now
             result.append(self.acknowledgement(1))
@@ -301,7 +304,7 @@ class FragmentExpiryPeer:
                     not 28 <= len(quoted) <= len(self.first) or
                     quoted != self.first[:len(quoted)] or self.stage != 1 or
                     self.quote is not None or self.duplicate is None or
-                    not 59.98 <= now - self.start <= 85):
+                    not 59.98 <= now - self.start <= self.latest_quote_seconds):
                 raise ValueError('expiry quote, timing, duplicate or suppression differs')
             self.quote = now
             self.event('original first-header and payload quote received', now)
@@ -344,6 +347,9 @@ class FragmentExpiryPeer:
     def report(self):
         return dict(passed=self.passed, stage=self.stage, acknowledged=self.acknowledged,
                     expected_error_tos=self.error_tos,
+                    latest_quote_seconds=self.latest_quote_seconds,
+                    context_gap_seconds=self.context_gap_seconds,
+                    quiet_delay_seconds=self.quiet_delay_seconds,
                     quote_seconds=None if self.quote is None else self.quote - self.start,
                     duplicate_seconds=None if self.duplicate is None else self.duplicate - self.start,
                     contexts=self.contexts, events=self.events)

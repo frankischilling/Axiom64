@@ -247,6 +247,33 @@ missing recovery, incorrect FIN ownership or missing final ACKs. The challenge
 CI job retains these inputs and results. Complete congestion and hard-device
 failure acceptance remain required.
 
+## Captured congestion acceptance
+
+`sudo -n make test-tcp-window-native` and `make test-tcp-window` run three native
+libc profiles and all eight mixed-NIC guest configurations. An ACK-gated peer
+measures opening flight and growth after one MSS is acknowledged, withholds
+further ACKs through two actual retransmission timeouts, then measures recovery.
+It advertises a 1024-byte window for a complete 350 ms observation before
+reopening it. Each original socket completes 65536 exact forward bytes,
+16 reply bytes and both acknowledged FINs.
+
+`sudo -n make test-tcp-fast-native` and `make test-tcp-fast` use the same client
+with a separate peer. Three duplicate ACKs must precede one retransmission of
+the oldest segment; a fourth duplicate then tests inflation. An advancing ACK
+tests deflation before the same receive-window and close observations.
+
+`python3 scripts/tcp_congestion/capture.py` derives flight and byte ownership
+from the original packets. It checks negotiated MSS, cumulative ACKs, window
+bounds, exact retransmitted bytes, full observation waits, native receipt
+clocks and the contents of all four boot images. Guest Reno bounds and Linux's
+permitted CUBIC/limited-transmit behavior are checked separately. The RTO
+profile retains both actual retry intervals without rounding or rescaling them;
+the existing default/configured deadline suites remain separate acceptance.
+`scripts/tests/tcp_window_capture_test.py` and
+`scripts/tests/tcp_fast_capture_test.py` reject 198 and 242 damaged copies,
+including excess flight, receive-window overrun, poisoned or missing retries,
+unowned ACKs and incomplete closes. These observations run in the loss CI job.
+
 ## Connection pressure and expiry
 
 `sudo -n make test-tcp-pressure` runs the complete three-libc native comparison and

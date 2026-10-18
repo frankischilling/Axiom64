@@ -12,7 +12,16 @@ The profile matrix names are `tcp-fault-loss`, `tcp-fault-reordering`,
 `tcp-fault-persist`, `tcp-fault-timeout`, `tcp-fault-old-ack` and
 `tcp-fault-challenge` and `tcp-fault-icmp`. Each publishes `axiom64-evidence-<suite>` and
 `axiom64-<suite>-fixtures`, where `<suite>` is the complete matrix name. Download all
-seven pairs to audit the implemented wire profiles, including twenty-four static/dynamic images.
+seven pairs to audit the implemented wire profiles, including twenty-eight static/dynamic images.
+The loss job additionally measures ACK-gated congestion and receive-window
+ownership. RTO and duplicate-ACK observations each retain three native libc
+profiles and all eight guest configurations, original packet clocks, two
+inspected boot images and exact completed streams. Their independent auditors
+reconstruct actual flight, negotiated MSS, retransmitted byte ranges, recovery
+bounds and the advertised 1024-byte receive window. Native CUBIC and guest Reno
+bounds are checked separately. The two observations reject 198 and 242 damaged
+captures respectively; existing deadline and retransmission tests remain required.
+See [captured congestion acceptance](tcp.md#captured-congestion-acceptance).
 The challenge job also runs malformed TCP checksum and option injections through
 three native libc profiles and all eight guest configurations. Both adapters
 must preserve exact application bytes and acknowledge both FINs after seven
@@ -44,7 +53,7 @@ backlog, callback ownership, observer fingerprints and clocks, client results,
 source hashes and cohort completeness. Reconnect guest profiles use two isolated
 VMs concurrently; all eight firmware/transport/linkage combinations retain their
 complete observations.
-Malformed-input, quoted-error, PMTU, pressure, reconnect and recovery native
+Congestion, malformed-input, quoted-error, PMTU, pressure, reconnect and recovery native
 glibc comparisons publish the exact libc and loader bytes under
 content-addressed paths. Input manifests bind both retained libraries to the
 actual host fingerprints, so downloaded evidence can be checked on another host.

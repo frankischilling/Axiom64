@@ -189,6 +189,7 @@ jobs:
           make -j2 build/tcp-fault-native build/tcp-fault-static build/tcp-fault-dynamic
           make -j2 build/tcp-challenge-native build/tcp-challenge-static build/tcp-challenge-dynamic
           make -j2 build/tcp-malformed-native build/tcp-malformed-static build/tcp-malformed-dynamic
+          make -j2 build/tcp-window-native build/tcp-window-static build/tcp-window-dynamic
           make -j2 build/tcp-timeout-native build/tcp-timeout-static build/tcp-timeout-dynamic
           make -j2 build/tcp-lifetime-native build/tcp-lifetime-static build/tcp-lifetime-dynamic
           make -j2 build/tcp-icmp-native build/tcp-icmp-static build/tcp-icmp-dynamic
@@ -729,6 +730,16 @@ jobs:
           python3 scripts/tcp_fault_capture.py 2>&1 | tee build/tcp-fault-capture.log
           python3 scripts/tests/tcp_capture_clock_test.py build/tcp-fault-native-results.json --output build/tcp-fault-clock-results.json
           python3 scripts/tests/tcp_fault_capture_test.py 2>&1 | tee build/tcp-fault-capture-checker.log
+      - name: Verify captured congestion and receive-window ownership across the complete matrix
+        if: matrix.suite == 'tcp-fault-loss'
+        run: |
+          sudo -n make test-tcp-window-native
+          make test-tcp-window
+          sudo -n make test-tcp-fast-native
+          make test-tcp-fast
+          python3 scripts/tcp_congestion/capture.py 2>&1 | tee build/tcp-congestion-capture.log
+          python3 scripts/tests/tcp_window_capture_test.py 2>&1 | tee build/tcp-window-damage.log
+          python3 scripts/tests/tcp_fast_capture_test.py 2>&1 | tee build/tcp-fast-damage.log
       - name: Compare receive reordering with isolated native Linux
         if: matrix.suite == 'tcp-fault-reordering'
         run: sudo -n make test-tcp-reordering-native
@@ -1128,6 +1139,12 @@ jobs:
             build/tcp-malformed-*-peer.json
             build/tcp-malformed-*-inputs.json
             build/tcp-malformed-damaged/**
+            build/tcp-window-*-peer.json
+            build/tcp-window-*-inputs.json
+            build/tcp-window-damaged/**
+            build/tcp-fast-*-peer.json
+            build/tcp-fast-*-inputs.json
+            build/tcp-fast-damaged/**
             build/tcp-lifetime-*-peer.json
             build/tcp-lifetime-port-ownership.json
             build/tcp-icmp-*-peer.json
@@ -1287,6 +1304,8 @@ jobs:
             build/axiom64-tcp-old-ack-*.iso
             build/axiom64-tcp-challenge-*.iso
             build/axiom64-tcp-malformed-*.iso
+            build/axiom64-tcp-window-*.iso
+            build/axiom64-tcp-fast-*.iso
             build/axiom64-tcp-lifetime-*.iso
             build/axiom64-tcp-icmp-*.iso
             build/axiom64-tcp-pmtu-*.iso

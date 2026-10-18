@@ -829,6 +829,24 @@ test-tcp-malformed:
 	$(PYTHON) scripts/tcp_fault_test.py --wire malformed --workers 2
 test-tcp-malformed-native:
 	$(PYTHON) scripts/tcp_fault_native.py --wire malformed
+build/tcp-window-native: userspace/tests/net/tcp_window.c
+	@mkdir -p build
+	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-window-static: userspace/tests/net/tcp_window.c
+	@mkdir -p build
+	$(MUSL_CC) -std=gnu11 -static -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-window-dynamic: userspace/tests/net/tcp_window.c
+	@mkdir -p build
+	$(MUSL_CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+.PHONY: test-tcp-window test-tcp-window-native test-tcp-fast test-tcp-fast-native
+test-tcp-window:
+	$(PYTHON) scripts/tcp_fault_test.py --wire window --workers 2
+test-tcp-window-native:
+	$(PYTHON) scripts/tcp_fault_native.py --wire window
+test-tcp-fast:
+	$(PYTHON) scripts/tcp_fault_test.py --wire fast --workers 2
+test-tcp-fast-native:
+	$(PYTHON) scripts/tcp_fault_native.py --wire fast
 .PHONY: test-tcp-old-ack test-tcp-old-ack-native
 test-tcp-old-ack:
 	$(PYTHON) scripts/tcp_fault_test.py --wire old-ack
@@ -908,6 +926,7 @@ MUSL_PROGRAMS += build/tcp-pressure-static build/tcp-pressure-dynamic
 MUSL_PROGRAMS += build/tcp-reconnect-static build/tcp-reconnect-dynamic
 MUSL_PROGRAMS += build/tcp-recovery-static build/tcp-recovery-dynamic
 MUSL_PROGRAMS += build/tcp-malformed-static build/tcp-malformed-dynamic
+MUSL_PROGRAMS += build/tcp-window-static build/tcp-window-dynamic
 MUSL_PROGRAMS += build/random-admin-static build/random-admin-dynamic
 MUSL_PROGRAMS += build/crypto-wait-static build/crypto-wait-dynamic
 MUSL_PROGRAMS += build/random-seed-static build/random-seed-dynamic

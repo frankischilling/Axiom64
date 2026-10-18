@@ -4,7 +4,7 @@ from tcp_icmp_inputs import record as record_inputs
 
 SOURCES = ('Makefile', 'userspace/tests/net/tcp_malformed.c',
            'scripts/tcp_malformed/peer.py', 'scripts/tcp_malformed/capture.py',
-           'scripts/tcp_malformed/inputs.py', 'scripts/tcp_icmp_inputs.py',
+           'scripts/tcp_malformed/inputs.py', 'scripts/tcp_icmp_inputs.py', 'scripts/tcp_fixture_inputs.py',
            'scripts/tests/tcp_malformed_capture_test.py',
            'scripts/tcp_fault_peer.py', 'scripts/tcp_fault_test.py',
            'scripts/tcp_fault_native.py', 'scripts/tcp_capture_clock.py',

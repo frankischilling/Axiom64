@@ -7,17 +7,15 @@ import itertools
 import json
 import re
 import struct
-import subprocess
 import sys
-import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from fetch import ROOT, LOCK
+from fetch import ROOT
 from tcp_capture import checksum
 from tcp_capture_clock import bind_native_clock, milliseconds
 from tcp_fault_capture import require, MASK
 from tcp_icmp_capture import audit_inputs
-from disk_root import archive_entries
+from tcp_fixture_inputs import audit_image
 from tcp_malformed.inputs import SOURCES
 
 
@@ -188,37 +186,6 @@ def bounded(root, name):
     return root / name
 
 
-def audit_image(inputs, input_root):
-    linkage = inputs['linkage']
-    image = input_root / f'build/axiom64-tcp-malformed-{linkage}.iso'
-    require(f'build/{image.name}' in inputs['products'], 'actual malformed boot image is fingerprinted')
-    with tempfile.TemporaryDirectory(prefix='axiom64-malformed-image-audit-') as temporary:
-        directory = Path(temporary)
-        subprocess.run(['xorriso', '-osirrox', 'on', '-indev', str(image),
-                        '-extract', '/boot/axiom64.elf', str(directory / 'kernel'),
-                        '-extract', '/boot/rootfs.cpio', str(directory / 'root.cpio')],
-                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        require(digest(directory / 'kernel') == inputs['products']['build/axiom64.elf'],
-                'actual ISO contains the fingerprinted running kernel')
-        entries = archive_entries(directory / 'root.cpio')
-    products = {'sbin/init': 'build/init', 'bin/tcp-malformed': f'build/tcp-malformed-{linkage}',
-                'bin/busybox': f'build/busybox-{LOCK["busybox"]["version"]}/busybox'}
-    for name, product in products.items():
-        require(name in entries and entries[name][0] == 0o100755 and
-                hashlib.sha256(entries[name][1]).hexdigest() == inputs['products'][product],
-                f'actual ISO contains the exact executable: {name}')
-    # The shared fixture selects build_musl.loader() with its build-provider default.
-    loaders = [fingerprint for name, fingerprint in inputs['products'].items()
-               if '/build/' in name and name.endswith('/ld-musl-x86_64.so.1')]
-    require(len(loaders) == 1 and entries['lib/ld-musl-x86_64.so.1'][0] == 0o100755 and
-            hashlib.sha256(entries['lib/ld-musl-x86_64.so.1'][1]).hexdigest() == loaders[0],
-            'actual ISO contains the recorded build-provider musl loader')
-    require(entries['etc/net-test.sh'] == (0o100755,
-            b'#!/bin/sh\nset -e\n/bin/tcp-malformed\necho AXIOM64_TESTS_PASS\n'),
-            'actual boot script executes the exact malformed socket client')
-    return dict(image=image.name, sha256=digest(image), actual_image_opened=True)
-
-
 def check_results(directory, input_root=None):
     input_root = input_root or ROOT
     checked, images = [], {}
@@ -254,7 +221,7 @@ def check_results(directory, input_root=None):
                         f'Firmware: {row["firmware"].upper()}', f'virtio-net: index=1 transport={row["transport"]}',
                         'e1000: index=2 model=82540EM')), 'actual malformed guest firmware and both NIC drivers')
                 if row['linkage'] not in images:
-                    images[row['linkage']] = audit_image(inputs, input_root)
+                    images[row['linkage']] = audit_image(inputs, input_root, 'tcp-malformed', 'tcp-malformed')
             peers = json.loads(bounded(directory, row['peer']).read_text())
             require(len(peers) == len(row['captures']) == 2, 'both original malformed adapter captures')
             if native:

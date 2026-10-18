@@ -12,7 +12,15 @@ The profile matrix names are `tcp-fault-loss`, `tcp-fault-reordering`,
 `tcp-fault-persist`, `tcp-fault-timeout`, `tcp-fault-old-ack` and
 `tcp-fault-challenge` and `tcp-fault-icmp`. Each publishes `axiom64-evidence-<suite>` and
 `axiom64-<suite>-fixtures`, where `<suite>` is the complete matrix name. Download all
-seven pairs to audit complete TCP acceptance, including twenty-two static/dynamic images.
+seven pairs to audit the implemented wire profiles, including twenty-four static/dynamic images.
+The challenge job also runs malformed TCP checksum and option injections through
+three native libc profiles and all eight guest configurations. Both adapters
+must preserve exact application bytes and acknowledge both FINs after seven
+injections apiece. The independent audit opens both additional boot images,
+verifies their actual kernel, client, init, loader and boot script, and rejects
+220 damaged capture copies. This adds no matrix job. See
+[malformed-input acceptance](tcp.md#malformed-input-acceptance) for commands and
+the documented Linux option-handling difference.
 The quoted-error job also runs the [PMTU recovery matrix](tcp.md#path-mtu-recovery),
 with three native linkages, eight VM profiles and both adapters. It publishes the
 PMTU sources/products, input manifests, original captures, audits and damaged-evidence
@@ -36,7 +44,8 @@ backlog, callback ownership, observer fingerprints and clocks, client results,
 source hashes and cohort completeness. Reconnect guest profiles use two isolated
 VMs concurrently; all eight firmware/transport/linkage combinations retain their
 complete observations.
-Native glibc comparisons publish the exact libc and loader bytes under
+Malformed-input, quoted-error, PMTU, pressure, reconnect and recovery native
+glibc comparisons publish the exact libc and loader bytes under
 content-addressed paths. Input manifests bind both retained libraries to the
 actual host fingerprints, so downloaded evidence can be checked on another host.
 An actual local comparison of all eight profiles used the same inspected images,

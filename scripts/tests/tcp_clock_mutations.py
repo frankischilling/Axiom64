@@ -87,6 +87,14 @@ def candidate_verifier(verifier, original, statistics):
                 for index in range(start, stop):
                     owners[index] = (left + index - start if kind == 'equal' else
                                      min(left + index - start, end - 1) if end > left else max(0, left - 1))
+                    if kind == 'replace':
+                        # Protocol readers may omit unrelated ARP or IPv6 records.
+                        # A changed TCP frame still owns its original timestamp,
+                        # rather than the first omitted frame in this block.
+                        matching = [owner for owner in range(left, end)
+                                    if packets[owner]['stamp'] == changed[index]['stamp']]
+                        if len(matching) == 1:
+                            owners[index] = matching[0]
         values, timing_changed = [], False
         for index, (packet, owner) in enumerate(zip(changed, owners)):
             assert owner is not None

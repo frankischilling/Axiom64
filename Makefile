@@ -815,6 +815,20 @@ test-tcp-challenge:
 	$(PYTHON) scripts/tcp_fault_test.py --wire challenge
 test-tcp-challenge-native:
 	$(PYTHON) scripts/tcp_fault_native.py --wire challenge
+build/tcp-malformed-native: userspace/tests/net/tcp_malformed.c
+	@mkdir -p build
+	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-malformed-static: userspace/tests/net/tcp_malformed.c
+	@mkdir -p build
+	$(MUSL_CC) -std=gnu11 -static -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-malformed-dynamic: userspace/tests/net/tcp_malformed.c
+	@mkdir -p build
+	$(MUSL_CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+.PHONY: test-tcp-malformed test-tcp-malformed-native
+test-tcp-malformed:
+	$(PYTHON) scripts/tcp_fault_test.py --wire malformed --workers 2
+test-tcp-malformed-native:
+	$(PYTHON) scripts/tcp_fault_native.py --wire malformed
 .PHONY: test-tcp-old-ack test-tcp-old-ack-native
 test-tcp-old-ack:
 	$(PYTHON) scripts/tcp_fault_test.py --wire old-ack
@@ -893,6 +907,7 @@ MUSL_PROGRAMS += build/tcp-pmtu-static build/tcp-pmtu-dynamic
 MUSL_PROGRAMS += build/tcp-pressure-static build/tcp-pressure-dynamic
 MUSL_PROGRAMS += build/tcp-reconnect-static build/tcp-reconnect-dynamic
 MUSL_PROGRAMS += build/tcp-recovery-static build/tcp-recovery-dynamic
+MUSL_PROGRAMS += build/tcp-malformed-static build/tcp-malformed-dynamic
 MUSL_PROGRAMS += build/random-admin-static build/random-admin-dynamic
 MUSL_PROGRAMS += build/crypto-wait-static build/crypto-wait-dynamic
 MUSL_PROGRAMS += build/random-seed-static build/random-seed-dynamic

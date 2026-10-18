@@ -221,6 +221,32 @@ The wire/state contract follows [RFC 9293](https://www.rfc-editor.org/rfc/rfc929
 
 [Controlled zero-window acceptance](tcp-persist.md) adds stopped-window probes, elapsed backoff and exact recovery to the loss and receive-ordering profiles. [Configured user-timeout acceptance](tcp-user-timeout.md) separately checks real socket errors, independent elapsed deadlines and disabled-timeout recovery. [Old-ACK acceptance](tcp-old-ack.md) rejects poisoned in-window payload/FIN before window learning, then verifies actual challenge ACKs and exact recovery. Other TCP reliability requirements remain open.
 
+## Malformed-input acceptance
+
+`sudo -n make test-tcp-malformed-native` compares native glibc, static musl and
+dynamic musl. `make test-tcp-malformed` runs all eight combinations of linkage,
+firmware and virtio transport, with virtio-net and e1000 together. Each adapter
+receives a poisoned bad-checksum payload, zero/one/overrunning option lengths,
+incorrect MSS and window-scale option lengths, and a well-formed unknown option.
+Each injection precedes a valid sixteen-byte recovery by a complete 100 ms wait.
+The client verifies all 16 request and 112 reply bytes and both stream closes.
+
+Bad-checksum data cannot advance receive ownership. Axiom64 also discards the
+five malformed-option segments. Linux can accept their payloads after stopping
+option parsing; this comparison permits that robust handling difference.
+Both systems must accept the well-formed unknown option before its fallback.
+These checks exercise actual packets delivered to real sockets.
+
+`python3 scripts/tcp_malformed/capture.py` audits all 22 original captures,
+independent peer records and native monotonic receipts. It checks exact input
+encodings, full recovery waits, application bytes, FIN acknowledgments, source
+and runtime product hashes, and the contents of both actual boot images.
+`python3 scripts/tests/tcp_malformed_capture_test.py` rejects 220 copies with
+missing or repaired injections, changed options or payloads, false ACKs,
+missing recovery, incorrect FIN ownership or missing final ACKs. The challenge
+CI job retains these inputs and results. Complete congestion and hard-device
+failure acceptance remain required.
+
 ## Connection pressure and expiry
 
 `sudo -n make test-tcp-pressure` runs the complete three-libc native comparison and

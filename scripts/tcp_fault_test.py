@@ -26,6 +26,7 @@ from tcp_pressure_peer import Peer as PressurePeer
 from tcp_reconnect_peer import Peer as ReconnectPeer
 from tcp_recovery_peer import Peer as RecoveryPeer
 from tcp_lifetime.peer import Peer as LifetimePeer
+from tcp_malformed.peer import Peer as MalformedPeer
 
 
 def wire_configuration(wire):
@@ -33,6 +34,7 @@ def wire_configuration(wire):
                 'persist': (PersistPeer, 'tcp-persist'), 'timeout': (TimeoutPeer, 'tcp-timeout'),
                 'old-ack': (OldAckPeer, 'tcp-old-ack'),
                 'challenge': (ChallengePeer, 'tcp-challenge'),
+                'malformed': (MalformedPeer, 'tcp-malformed'),
                 'icmp': (IcmpPeer, 'tcp-icmp'),
                 'pmtu': (PmtuPeer, 'tcp-pmtu'),
                 'pressure': (PressurePeer, 'tcp-pressure'),
@@ -44,6 +46,8 @@ def wire_configuration(wire):
 
 
 def application_configuration(wire):
+    if wire == 'malformed':
+        return 'tcp-malformed', ['TCP_MALFORMED_PASS nics=2 cases_each=7']
     if wire == 'recovery':
         return 'tcp-recovery', ['TCP_RECOVERY_PASS nics=2 exact_each=6224 queued_each=512 expiry_ms=4500 routes_each=2 carrier_each=1']
     if wire == 'reconnect':
@@ -115,6 +119,9 @@ def fixture(linkage, wire='loss'):
         record(linkage, image=image)
     elif wire == 'recovery':
         from tcp_recovery_inputs import record
+        record(linkage, image=image)
+    elif wire == 'malformed':
+        from tcp_malformed.inputs import record
         record(linkage, image=image)
     return image
 
@@ -309,7 +316,7 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
     program, required = application_configuration(wire)
     application_prefix = {'timeout': 'TCP_TIMEOUT', 'lifetime': 'TCP_LIFETIME', 'icmp': 'TCP_ICMP',
                           'pressure': 'TCP_PRESSURE', 'reconnect': 'TCP_RECONNECT',
-                          'recovery': 'TCP_RECOVERY'}.get(wire, 'TCP_FAULT')
+                          'recovery': 'TCP_RECOVERY', 'malformed': 'TCP_MALFORMED'}.get(wire, 'TCP_FAULT')
     required += [f'{application_prefix}_CONFIG_PASS nics=2',
                 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
                 f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
@@ -321,7 +328,7 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
                   seconds=round(time.monotonic() - began, 3),
                   passed=not error and not missing and returncode == 1 and
                   not any(marker in text for marker in ('TCP_FAULT_FAIL', 'TCP_TIMEOUT_FAIL', 'TCP_LIFETIME_FAIL', 'TCP_ICMP_FAIL', 'PANIC:', 'FAULT pid=')))
-    if wire in ('icmp', 'pmtu', 'pressure', 'reconnect', 'recovery'):
+    if wire in ('icmp', 'pmtu', 'pressure', 'reconnect', 'recovery', 'malformed'):
         result['inputs'] = f'tcp-{wire}-{linkage}-inputs.json'
     print(json.dumps(result), flush=True)
     if not result['passed']:
@@ -331,7 +338,7 @@ def run(linkage, firmware, transport, image, timeout, wire='loss'):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist', 'timeout', 'old-ack', 'challenge', 'icmp', 'pmtu', 'pressure', 'reconnect', 'recovery'), default='loss')
+    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist', 'timeout', 'old-ack', 'challenge', 'icmp', 'pmtu', 'pressure', 'reconnect', 'recovery', 'malformed'), default='loss')
     for name, choices in (('linkage', ('static', 'dynamic')), ('firmware', ('bios', 'uefi')),
                           ('transport', ('modern', 'legacy'))):
         parser.add_argument(f'--{name}', choices=(*choices, 'both'), default='both')

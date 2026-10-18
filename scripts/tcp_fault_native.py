@@ -111,7 +111,7 @@ def client(scratch, linkage, wire='loss'):
     program, _ = application_configuration(wire)
     binary = ROOT / 'build' / f'{program}-{linkage}'
     command_line = [str(binary), '--native']
-    if wire in ('icmp', 'pmtu', 'pressure', 'reconnect', 'recovery') and linkage == 'dynamic':
+    if wire in ('icmp', 'pmtu', 'pressure', 'reconnect', 'recovery', 'malformed') and linkage == 'dynamic':
         from build_musl import loader
         command_line.insert(0, str(loader('build')))
     if wire == 'icmp':
@@ -128,6 +128,9 @@ def client(scratch, linkage, wire='loss'):
         record(linkage, native=True)
     elif wire == 'recovery':
         from tcp_recovery_inputs import record
+        record(linkage, native=True)
+    elif wire == 'malformed':
+        from tcp_malformed.inputs import record
         record(linkage, native=True)
     completed = subprocess.run(command_line)
     print(f'TCP_FAULT_NATIVE_DONE status={completed.returncode}', flush=True)
@@ -224,7 +227,7 @@ def namespace(scratch, wire='loss', linkages=('native', 'static', 'dynamic')):
                     ['nsenter', '-t', str(process.pid), '-n', '/usr/sbin/sysctl', '-n', f'net.ipv4.{name}']))
                     for name in ('tcp_retries1', 'tcp_retries2', 'tcp_syn_retries', 'tcp_synack_retries')}
                 result['host_configuration_changed'] = False
-            if wire in ('icmp', 'pmtu', 'pressure', 'reconnect', 'recovery'):
+            if wire in ('icmp', 'pmtu', 'pressure', 'reconnect', 'recovery', 'malformed'):
                 result['kernel'] = platform.release()
                 result['inputs'] = f'tcp-{wire}-linux-{linkage}-inputs.json'
         finally:
@@ -285,7 +288,7 @@ def main():
                   (sys.argv[4],) if len(sys.argv) == 5 else ('native', 'static', 'dynamic'))
         return
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist', 'timeout', 'old-ack', 'challenge', 'icmp', 'pmtu', 'pressure', 'reconnect', 'recovery'), default='loss')
+    parser.add_argument('--wire', choices=('loss', 'reordering', 'persist', 'timeout', 'old-ack', 'challenge', 'icmp', 'pmtu', 'pressure', 'reconnect', 'recovery', 'malformed'), default='loss')
     args = parser.parse_args()
     program, _ = application_configuration(args.wire)
     subprocess.run(['make', '-s', '-j2', *(f'build/{program}-{linkage}' for linkage in

@@ -188,6 +188,7 @@ jobs:
           make -j2 build/tcp-native build/tcp-static build/tcp-dynamic
           make -j2 build/tcp-fault-native build/tcp-fault-static build/tcp-fault-dynamic
           make -j2 build/tcp-challenge-native build/tcp-challenge-static build/tcp-challenge-dynamic
+          make -j2 build/tcp-malformed-native build/tcp-malformed-static build/tcp-malformed-dynamic
           make -j2 build/tcp-timeout-native build/tcp-timeout-static build/tcp-timeout-dynamic
           make -j2 build/tcp-lifetime-native build/tcp-lifetime-static build/tcp-lifetime-dynamic
           make -j2 build/tcp-icmp-native build/tcp-icmp-static build/tcp-icmp-dynamic
@@ -783,6 +784,13 @@ jobs:
         run: |
           python3 scripts/tcp_challenge_capture.py 2>&1 | tee build/tcp-challenge-capture.log
           python3 scripts/tests/tcp_challenge_capture_test.py 2>&1 | tee build/tcp-challenge-capture-checker.log
+      - name: Compare malformed TCP checksums and options across every native and guest profile
+        if: matrix.suite == 'tcp-fault-challenge'
+        run: |
+          sudo -n make test-tcp-malformed-native
+          make test-tcp-malformed
+          python3 scripts/tcp_malformed/capture.py 2>&1 | tee build/tcp-malformed-capture.log
+          python3 scripts/tests/tcp_malformed_capture_test.py 2>&1 | tee build/tcp-malformed-damage.log
       - name: Compare quoted ICMP failures across Linux and the complete guest matrix
         if: matrix.suite == 'tcp-fault-icmp'
         run: |
@@ -820,6 +828,7 @@ jobs:
       - name: Verify TCP recovery across interface, route and physical link faults
         if: matrix.suite == 'tcp-fault-icmp'
         run: |
+          python3 scripts/tests/tcp_mutation_clock_test.py
           sudo -n make test-tcp-recovery-native
           make test-tcp-recovery-sockets
           python3 scripts/tcp_recovery_capture.py build/tcp-recovery-native-results.json --output build/tcp-recovery-native-audit.json
@@ -1116,6 +1125,9 @@ jobs:
             build/tcp-timeout-*-peer.json
             build/tcp-old-ack-*-peer.json
             build/tcp-challenge-*-peer.json
+            build/tcp-malformed-*-peer.json
+            build/tcp-malformed-*-inputs.json
+            build/tcp-malformed-damaged/**
             build/tcp-lifetime-*-peer.json
             build/tcp-lifetime-port-ownership.json
             build/tcp-icmp-*-peer.json
@@ -1274,6 +1286,7 @@ jobs:
             build/axiom64-tcp-timeout-*.iso
             build/axiom64-tcp-old-ack-*.iso
             build/axiom64-tcp-challenge-*.iso
+            build/axiom64-tcp-malformed-*.iso
             build/axiom64-tcp-lifetime-*.iso
             build/axiom64-tcp-icmp-*.iso
             build/axiom64-tcp-pmtu-*.iso

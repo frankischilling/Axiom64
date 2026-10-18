@@ -186,20 +186,23 @@ def damages(rows, lane, *, native=False):
     first, duplicate, fresh = firsts
     quote = quotes[0]
 
-    def shift_clock(row, timestamp):
+    def shift_elapsed_observation(row, target_elapsed_ns):
+        # Negative fixtures use the selected elapsed clock. Realtime can drift
+        # independently; shift both fixture observations by the same delta.
+        delta = target_elapsed_ns - elapsed_ns(row)
         if 'elapsed_ns' in row:
-            row['elapsed_ns'] += timestamp - row['ns']
-        row['ns'] = timestamp
+            row['elapsed_ns'] += delta
+        row['ns'] += delta
 
     for name in ['early-expiry', 'late-expiry', 'late-duplicate', 'missing-quote', 'wrong-quote', 'extra-error',
                  'unicast-broadcast-case', 'simultaneous-suppression', 'missing-reuse', 'bad-outer-checksum']:
         changed = copy.deepcopy(rows)
         if name == 'early-expiry':
-            shift_clock(changed[quote], changed[first]['ns'] + 59000000000)
+            shift_elapsed_observation(changed[quote], elapsed_ns(changed[first]) + 59000000000)
         elif name == 'late-expiry':
-            shift_clock(changed[quote], changed[first]['ns'] + (67 if native else 62) * 1000000000)
+            shift_elapsed_observation(changed[quote], elapsed_ns(changed[first]) + (67 if native else 62) * 1000000000)
         elif name == 'late-duplicate':
-            shift_clock(changed[duplicate], changed[first]['ns'] + 40000000000)
+            shift_elapsed_observation(changed[duplicate], elapsed_ns(changed[first]) + 40000000000)
         elif name == 'missing-quote':
             del changed[quote]
         elif name in ('wrong-quote', 'bad-outer-checksum'):
@@ -225,7 +228,7 @@ def damages(rows, lane, *, native=False):
                 changed[i]['frame'] = changed[first]['frame'][:6] + changed[i]['frame'][6:]
             else:
                 for i in candidates:
-                    shift_clock(changed[i], changed[first]['ns'])
+                    shift_elapsed_observation(changed[i], elapsed_ns(changed[first]))
         else:
             del changed[fresh]
         yield name, changed

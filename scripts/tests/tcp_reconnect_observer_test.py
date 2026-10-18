@@ -12,6 +12,25 @@ import tcp_reconnect_fault as observer
 
 
 class ObserverReadiness(unittest.TestCase):
+    def test_arm_clock_precedes_release_to_the_client(self):
+        with tempfile.TemporaryDirectory(prefix='axiom64-reconnect-arm-') as temporary:
+            clock, released = [1000000000], []
+
+            def release():
+                released.append(clock[0])
+                # The released client may run before the controller returns.
+                clock[0] += 200000
+
+            phase = SimpleNamespace(received=bytearray(16), app_sent=16, control=release)
+            peers = [SimpleNamespace(lane=lane, queued_copy=None,
+                     flows=[SimpleNamespace(phases=[phase], flush=lambda: None)]) for lane in range(2)]
+            controller = observer.QueuedOutput(peers, 'arm-clock', temporary, native_pid=12345)
+            with patch.object(controller.holds[0], 'arm'), \
+                 patch.object(observer.time, 'monotonic_ns', side_effect=lambda: clock[0]):
+                controller.line(b'TCP_RECONNECT_QUEUED_ARM lane=0 old_prefix=16')
+            self.assertEqual(len(controller.events), 1)
+            self.assertLessEqual(controller.events[0]['monotonic_ns'], released[0])
+
     def test_repeated_label_waits_for_the_new_debugger(self):
         with tempfile.TemporaryDirectory(prefix='axiom64-reconnect-readiness-') as temporary:
             directory = Path(temporary)

@@ -215,6 +215,8 @@ jobs:
           mkdir -p build/tcp-policy
           make test-tcp-wire test-tcp-sender test-tcp-connection test-tcp-isn test-tcp-time-wait test-tcp-icmp test-tcp-pmtu 2>&1 | tee build/tcp-policy/host.log
           python3 scripts/tests/tcp_input_libraries_test.py
+          python3 scripts/tests/tcp_reconnect_clock_test.py -v 2>&1 | tee build/tcp-policy/reconnect-clock.log
+          python3 scripts/tests/tcp_reconnect_observer_test.py -v 2>&1 | tee build/tcp-policy/reconnect-observer.log
       - name: Test IPv4 fragment ownership and reassembly with sanitizers
         run: |
           mkdir -p build/ipv4-policy

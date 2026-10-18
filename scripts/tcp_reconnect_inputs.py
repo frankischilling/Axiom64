@@ -10,6 +10,7 @@ SOURCES = ('Makefile', 'scripts/tcp_capture_clock.py', 'scripts/tests/tcp_clock_
            'scripts/tests/tcp_reconnect_capture_test.py',
            'scripts/tests/tcp_reconnect_queued_controls.py',
            'scripts/tests/tcp_reconnect_observer_test.py',
+           'scripts/tests/tcp_reconnect_clock_test.py',
            'scripts/tcp_fault_peer.py', 'scripts/tcp_fault_test.py', 'scripts/tcp_fault_native.py',
            'kernel/io/io.cpp', 'kernel/net/tcp/socket.cpp', 'kernel/include/net/tcp/socket.hpp',
            'kernel/net/tcp/connection.cpp', 'kernel/include/net/tcp/connection.hpp',

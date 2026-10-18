@@ -12,6 +12,7 @@ import socket
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 from fetch import ROOT
 from qmp import Qmp
@@ -36,14 +37,19 @@ def fixture(status=True, program='net-tests', script='userspace/tests/net/run.sh
                 data = f'export {key}={shlex.quote(value)}\n'.encode() + data
         files[name] = (0o100755, data)
     destination = ROOT / 'build/rootfs-network.cpio'
-    with destination.open('wb') as output:
-        for inode, (name, (mode, data)) in enumerate([*sorted(files.items()), ('TRAILER!!!', (0, b''))], 1):
-            encoded = name.encode() + b'\0'
-            values = [inode, mode, 0, 0, 1, 0, len(data), 0, 0, 0, 0, len(encoded), 0]
-            output.write(b'070701' + b''.join(f'{value:08x}'.encode() for value in values) + encoded)
-            output.write(bytes(-output.tell() % 4))
-            output.write(data)
-            output.write(bytes(-output.tell() % 4))
+    # Completed ISO staging trees may still link the previous archive. Publish a
+    # new inode only after the full newc stream is closed, preserving those bytes.
+    with tempfile.TemporaryDirectory(prefix='.network-root-', dir=destination.parent) as staging:
+        staged = Path(staging) / destination.name
+        with staged.open('wb') as output:
+            for inode, (name, (mode, data)) in enumerate([*sorted(files.items()), ('TRAILER!!!', (0, b''))], 1):
+                encoded = name.encode() + b'\0'
+                values = [inode, mode, 0, 0, 1, 0, len(data), 0, 0, 0, 0, len(encoded), 0]
+                output.write(b'070701' + b''.join(f'{value:08x}'.encode() for value in values) + encoded)
+                output.write(bytes(-output.tell() % 4))
+                output.write(data)
+                output.write(bytes(-output.tell() % 4))
+        os.replace(staged, destination)
 
 
 def reply(frame, lane):

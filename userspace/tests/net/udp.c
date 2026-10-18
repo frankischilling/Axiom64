@@ -940,8 +940,14 @@ static void wire(unsigned lane) {
     peer.sin_port = 0;
     check(sendto(fd, data, 31, 0, (struct sockaddr*)&peer, sizeof(peer)) == -1 && errno == EINVAL,
           "UDP named zero destination port rejected");
+    int discovery = IP_PMTUDISC_DO;
+    check(setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &discovery, sizeof(discovery)) == 0,
+          "UDP require DF for MTU rejection");
     check(send(fd, data, 1473, 0) == -1 && errno == EMSGSIZE,
           "UDP payload includes IPv4 and UDP overhead in MTU");
+    discovery = IP_PMTUDISC_WANT;
+    check(setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &discovery, sizeof(discovery)) == 0,
+          "UDP restore default discovery");
     wire_send(fd, lane, 'M', 0, 1472);
     wire_receive(fd, lane, 'M', 0, 1472);
     check(send(fd, NULL, 0, 0) == 0, "UDP wire zero payload send");

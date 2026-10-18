@@ -29,6 +29,8 @@ bool inet_payload(InetSocket*);
 
 bool inet_dont_fragment(const InetSocket*);
 
+bool inet_fragmentation_allowed(const InetSocket*);
+
 bool inet_ready(InetSocket*, bool write);
 
 const InetFrame* inet_front(InetSocket*);

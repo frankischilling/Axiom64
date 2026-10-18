@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/ipv4.hpp"
+#include "net/ipv4/reassembly.hpp"
+#include "net/ipv4/fragmentation.hpp"
 #include "net/inet.hpp"
 #include "process/task.hpp"
 #include "net/ipv4_wire.hpp"
@@ -36,6 +38,9 @@ struct Output {
     bool ethernet_ready = false, local = false;
     bool submitting = false, discard_pending = false;
     int deferred_error = 0;
+    uint8_t* fragment_bytes = nullptr;
+    size_t fragment_capacity = 0, fragment_offset = 0;
+    bool fragmentable = false;
 };
 
 struct Selection {
@@ -86,7 +91,44 @@ static void clear(Output& item, int error = 0) {
             inet_failed(item.owner, error);
     }
     release(item.bytes);
+    release(item.fragment_bytes);
     item = {};
+}
+
+static ip4::FragmentPiece submit(Output& item, const NetInfo& info) {
+    auto packet = item.bytes + ethernet_header;
+    if (ip4::get16(item.bytes + 12) != 0x0800 ||
+        (!item.fragment_offset && ip4::get16(packet + 2) <= info.mtu))
+        return {net_send(item.index, item.bytes, item.length), 0, 0, true};
+    if (!item.fragmentable)
+        return {-90};
+    size_t capacity = ethernet_header + info.mtu;
+    if (item.fragment_capacity < capacity) {
+        auto bytes = static_cast<uint8_t*>(alloc(capacity));
+        if (!bytes)
+            return {-12};
+        release(item.fragment_bytes);
+        item.fragment_bytes = bytes;
+        item.fragment_capacity = capacity;
+    }
+    // WANT permits local fragmentation even though small packets carry DF.
+    // The policy was captured when accepted; later socket changes cannot alter it.
+    if (ip4::get16(packet + 6) & 0x4000) {
+        ip4::put16(packet + 6, ip4::get16(packet + 6) & ~uint16_t(0x4000));
+        ip4::put16(packet + 10, 0);
+        ip4::put16(packet + 10, ip4::checksum(packet, size_t(packet[0] & 15) * 4));
+    }
+    auto part = ip4::fragment_packet(packet, item.length - ethernet_header, info.mtu,
+                                     item.fragment_offset, item.fragment_bytes + ethernet_header,
+                                     item.fragment_capacity - ethernet_header);
+    if (part.error)
+        return part;
+    size_t wire_length = max(size_t(60), ethernet_header + part.length);
+    memcpy(item.fragment_bytes, item.bytes, ethernet_header);
+    memset(item.fragment_bytes + ethernet_header + part.length, 0,
+           wire_length - ethernet_header - part.length);
+    part.error = net_send(item.index, item.fragment_bytes, wire_length);
+    return part;
 }
 
 static Output* vacant_output() {
@@ -279,18 +321,32 @@ static int select(uint32_t source, uint32_t destination, unsigned bound, Selecti
 }
 
 static void protocol_error(unsigned index, uint32_t source, uint32_t destination,
-                           const uint8_t* bytes, size_t length, uint8_t code = 2) {
+                           const uint8_t* bytes, size_t length, uint8_t code = 2,
+                           uint8_t type = 3) {
     if (ticks < next_icmp_error[index])
         return;
+    size_t header = size_t(bytes[0] & 15) * 4;
+    // Never answer an ICMP error with another error, including a fragmented one.
+    if (bytes[9] == 1 && length > header &&
+        (bytes[header] == 3 || bytes[header] == 4 || bytes[header] == 5 || bytes[header] == 11 ||
+         bytes[header] == 12))
+        return;
     // IPv4 header plus the first eight original payload bytes, bounded by RX length.
-    uint8_t error[36]{};
-    error[0] = 3;
+    uint8_t error[76]{};
+    error[0] = type;
     error[1] = code;
-    size_t quoted = min(length, size_t(28));
+    size_t quoted = min(length, header + 8);
     memcpy(error + 8, bytes, quoted);
     ip4::put16(error + 2, ip4::checksum(error, 8 + quoted));
     if (!ipv4_send(nullptr, destination, source, index, 1, 64, false, error, 8 + quoted))
         next_icmp_error[index] = ticks + 100;
+}
+
+static void reassembly_timeout(unsigned index, const uint8_t* bytes, size_t length,
+                               bool link_broadcast) {
+    uint32_t source = ip4::get32(bytes + 12), destination = ip4::get32(bytes + 16);
+    if (!link_broadcast && ipv4_local(destination) && ip4::unicast(source))
+        protocol_error(index, source, destination, bytes, length, 1, 11);
 }
 
 static void quoted_error(unsigned index, const uint8_t* payload, size_t length) {
@@ -327,7 +383,7 @@ static void input(unsigned index, const uint8_t* bytes, size_t length,
                   bool link_broadcast = false) {
     if (length < 20 || bytes[0] != 0x45 || ip4::get16(bytes + 2) < 20 ||
         ip4::get16(bytes + 2) > length || ip4::checksum(bytes, 20) || !bytes[8] ||
-        (ip4::get16(bytes + 6) & ~uint16_t(0x4000)))
+        (ip4::get16(bytes + 6) & 0x8000))
         return;
     length = ip4::get16(bytes + 2);
     uint32_t source = ip4::get32(bytes + 12), destination = ip4::get32(bytes + 16);
@@ -338,6 +394,15 @@ static void input(unsigned index, const uint8_t* bytes, size_t length,
     if (!config || !ip4::unicast(source) || (!local && !broadcast) ||
         (index != ipv4_loopback &&
          (is_loopback(source) || is_loopback(destination) || directed_broadcast(*config, source))))
+        return;
+    auto assembled =
+        ip4::reassemble(index, bytes, length, ticks, link_broadcast, reassembly_timeout);
+    if (assembled.status == ip4::FragmentStatus::complete) {
+        input(index, assembled.bytes, assembled.length, assembled.link_broadcast);
+        release(assembled.bytes);
+        return;
+    }
+    if (assembled.status != ip4::FragmentStatus::whole)
         return;
     if (bytes[9] == 17) {
         if (udp_receive(index, source, destination, broadcast, bytes + 20, length - 20) ==
@@ -400,6 +465,8 @@ int ipv4_configure(unsigned index, const Ipv4Config& config) {
         changed.broadcast = 0;
     else if (!changed.broadcast)
         changed.broadcast = changed.address | ~changed.mask;
+    if (interfaces[index].address)
+        ip4::reassembly_discard(interfaces[index].address);
     interfaces[index] = changed;
     for (auto& neighbor : neighbors)
         if (neighbor.index == index)
@@ -538,7 +605,9 @@ int ipv4_send(InetSocket* owner, uint32_t source, uint32_t destination, unsigned
         return error;
     if (route.broadcast && !broadcast)
         return -13;
-    if (length > 65535 - 20 || (!route.local && length + 20 > net_info(route.index)->mtu))
+    bool fragmentable = inet_fragmentation_allowed(owner);
+    if (length > 65535 - 20 ||
+        (!route.local && length + 20 > net_info(route.index)->mtu && !fragmentable))
         return -90;
     auto slot = vacant_output();
     if (!slot)
@@ -573,6 +642,7 @@ int ipv4_send(InetSocket* owner, uint32_t source, uint32_t destination, unsigned
     }
     *slot = {owner, bytes,      total, route.index, route.next_hop, ticks + retry_interval * 4,
              ready, route.local};
+    slot->fragmentable = fragmentable;
     return 0;
 }
 
@@ -610,6 +680,7 @@ void ipv4_poll() {
     if (polling)
         return;
     polling = true;
+    ip4::reassembly_expire(ticks, reassembly_timeout);
     for (auto& neighbor : neighbors) {
         if (neighbor.state != NeighborState::resolving || !neighbor_pending(neighbor) ||
             ticks < neighbor.next)
@@ -663,24 +734,37 @@ void ipv4_poll() {
             item.ethernet_ready = true;
             neighbor->touched = ticks;
         }
-        item.submitting = true;
-        int error = net_send(item.index, item.bytes, item.length);
-        item.submitting = false;
-        if (item.discard_pending) {
-            int failure = item.deferred_error;
-            // Obsolete packet size and queue pressure do not fail a recovered TCP
-            // stream. Preserve independent device or route failures.
-            if (!failure && error < 0 && error != -11 && error != -90)
-                failure = -error;
-            clear(item, failure);
-        } else if (error != -11)
-            clear(item, error < 0 ? -error : 0);
+        // Bound work per datagram without consuming one output slot per fragment.
+        // Cursor progress follows accepted frames, so EAGAIN retries the same bytes.
+        for (unsigned budget = 0; budget < 8; budget++) {
+            item.submitting = true;
+            auto submitted = submit(item, *info);
+            int error = submitted.error;
+            item.submitting = false;
+            if (item.discard_pending) {
+                int failure = item.deferred_error;
+                // Obsolete packet size and queue pressure do not fail a recovered TCP
+                // stream. Preserve independent device or route failures.
+                if (!failure && error < 0 && error != -11 && error != -90)
+                    failure = -error;
+                clear(item, failure);
+                break;
+            }
+            if (error == -11)
+                break;
+            if (error || submitted.complete) {
+                clear(item, error < 0 ? -error : 0);
+                break;
+            }
+            item.fragment_offset += submitted.consumed;
+        }
     }
     polling = false;
     tcp_poll();
 }
 
 void ipv4_shutdown() {
+    ip4::reassembly_discard();
     for (auto& item : output)
         if (item.bytes)
             clear(item);

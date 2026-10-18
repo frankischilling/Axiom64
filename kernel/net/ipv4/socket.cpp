@@ -179,7 +179,11 @@ void inet_reclaim(InetSocket* socket, size_t length) {
 }
 
 bool inet_dont_fragment(const InetSocket* socket) {
-    return !socket || socket->mtu_policy != 0;
+    return !socket || (socket->mtu_policy > 0 && socket->mtu_policy < 4);
+}
+
+bool inet_fragmentation_allowed(const InetSocket* socket) {
+    return !socket || socket->mtu_policy < 2 || socket->mtu_policy == 5;
 }
 
 bool inet_ready(InetSocket* socket, bool write) {
@@ -485,12 +489,15 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             socket->reuse = value != 0;
         else if (b == 1 && c == 6)
             socket->broadcast = value != 0;
-        else if (b == 1 && (c == 7 || c == 8)) {
-            if (value < 0)
+        else if (b == 1 && (c == 7 || c == 8 || c == 32)) {
+            if (c == 32 && !capable(task.credentials, Capability::net_admin))
+                return -1;
+            if (value < 0 && c != 32)
                 return -22;
-            uint32_t bound = uint32_t(min(uint64_t(value) * 2, uint64_t(inet_queue_bytes)));
+            uint64_t limit = c == 32 ? uint64_t(INT32_MAX / 2) * 2 : uint64_t(inet_queue_bytes);
+            uint32_t bound = uint32_t(min(uint64_t(max(value, 0)) * 2, limit));
             bound = max(bound, uint32_t(2048));
-            (c == 7 ? socket->send_limit : socket->receive_limit) = bound;
+            (c == 8 ? socket->receive_limit : socket->send_limit) = bound;
             if (inet_stream(socket))
                 tcp_limits(socket);
         } else if (b == 0 && c == 2) {
@@ -498,8 +505,8 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
                 return -22;
             socket->ttl = value;
         } else if (b == 0 && c == 10) {
-            if (value != 1 && value != 2)
-                return -95;
+            if (value < 0 || value > 5)
+                return -22;
             socket->mtu_policy = value;
         } else if (b == 255 && c == 1 && socket->type == 3)
             socket->filter = uint32_t(value);

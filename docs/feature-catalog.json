@@ -505,7 +505,7 @@
       "title": "IPv4, IPv6, routing, and ICMP",
       "milestone": "M3",
       "state": "partial",
-      "current": "The initial IPv4 host path supports static addresses, routes, bounded ARP, loopback, raw ICMP sockets, and ping on both adapters. NETLINK_ROUTE adds bounded main-table dumps, protocol/scope-filtered route control, complete address updates, and bounded link/address inventories used by libc interface discovery. Three native and eight static/dynamic BIOS/UEFI inventory profiles pass with real libc discovery and BusyBox queries. Established TCP streams recover from validated fragmentation-needed hints using connection-local segment limits. Options and fragments are rejected; complete IPv4, IPv6, reassembly, multicast, shared PMTU routing and full discovery-policy behavior remain required.",
+      "current": "The initial IPv4 host path supports static addresses, routes, bounded ARP, loopback, raw ICMP sockets, and ping on both adapters. NETLINK_ROUTE adds bounded main-table dumps, protocol/scope-filtered route control, complete address updates, and bounded link/address inventories used by libc interface discovery. Three native and eight static/dynamic BIOS/UEFI inventory profiles pass with real libc discovery and BusyBox queries. Established TCP streams recover from validated fragmentation-needed hints using connection-local segment limits. IPv4 fragment queues own copied bytes, reassemble up to 65,535 bytes, reject ambiguous overlaps, preserve atomic-ID independence and apply a fixed 60-second expiry. Sanitized host checks, six wire corpora on both NICs in normal firmware/transport boots and three native Linux linkages cover the initial receiver. Outgoing datagrams use one retained packet and a reusable MTU-sized buffer, advancing only accepted fragments. DONT/WANT/OMIT permit local fragmentation; DO/PROBE/INTERFACE reject device-MTU oversize. Raw ICMP/UDP wire cases include full-size datagrams, MTU 68, buffer reuse and a privileged send-quota override. Actual elapsed guest expiry, broader fragmented transports, options, IPv6, multicast and shared PMTU routing remain required.",
       "scope": [
         "Ethernet framing, ARP, IPv4 checksums, loopback, routing, aliases, and gateways",
         "ICMP errors and echo/ping",
@@ -537,7 +537,17 @@
         "scripts/configuration_native.py",
         "docs/network-configuration.md",
         "kernel/net/netlink/inventory.cpp",
-        "scripts/netlink_inventory_test.py"
+        "scripts/netlink_inventory_test.py",
+        "kernel/include/net/ipv4/reassembly.hpp",
+        "kernel/net/ipv4/reassembly.cpp",
+        "kernel/tests/net/ipv4_reassembly.cpp",
+        "userspace/tests/net/ipv4_fragments.c",
+        "scripts/ipv4_fragments.py",
+        "scripts/ipv4_fragment_native.py",
+        "scripts/tests/network_fixture_test.py",
+        "kernel/include/net/ipv4/fragmentation.hpp",
+        "kernel/net/ipv4/fragmentation.cpp",
+        "kernel/tests/net/ipv4_fragmentation.cpp"
       ],
       "branch": "feature/f12-ipv4-ipv6-routing-and-icmp",
       "issue": "https://github.com/frankischilling/Axiom64/issues/12"

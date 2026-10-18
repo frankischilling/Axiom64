@@ -421,9 +421,15 @@ build/root-tests: userspace/tests/fs/root.c
 build/net-tests: userspace/tests/net/packet.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
-build/ipv4-tests: userspace/tests/net/ipv4.c
+build/ipv4-tests: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h
 	@mkdir -p build
-	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $(filter %.c,$^) -o $@
+build/ipv4-native: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@
+build/ipv4-dynamic: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h
+	@mkdir -p build
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@
 build/udp-tests: userspace/tests/net/udp.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
@@ -642,6 +648,22 @@ build/netlink-codec-host: kernel/tests/net/netlink.cpp kernel/net/netlink/routes
 test-netlink-codec: build/netlink-codec-host
 	./build/netlink-codec-host
 .PHONY: test-tcp-wire
+build/ipv4-reassembly-host: kernel/tests/net/ipv4_reassembly.cpp kernel/net/ipv4/reassembly.cpp kernel/include/net/ipv4/reassembly.hpp kernel/include/net/ipv4_wire.hpp kernel/include/core/base.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/ipv4_reassembly.cpp kernel/net/ipv4/reassembly.cpp -o $@
+.PHONY: test-ipv4-reassembly
+test-ipv4-reassembly: build/ipv4-reassembly-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-reassembly-host
+build/ipv4-fragmentation-host: kernel/tests/net/ipv4_fragmentation.cpp kernel/net/ipv4/fragmentation.cpp kernel/include/net/ipv4/fragmentation.hpp kernel/include/net/ipv4_wire.hpp kernel/include/core/base.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/ipv4_fragmentation.cpp kernel/net/ipv4/fragmentation.cpp -o $@
+.PHONY: test-ipv4-fragmentation
+test-ipv4-fragmentation: build/ipv4-fragmentation-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-fragmentation-host
+.PHONY: test-ipv4-fragments-native
+test-ipv4-fragments-native:
+	$(PYTHON) scripts/ipv4_fragment_native.py
+
 build/tcp-wire-host: kernel/tests/net/tcp_wire.cpp kernel/net/tcp/wire.cpp kernel/include/net/tcp/wire.hpp kernel/include/net/ipv4_wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_wire.cpp kernel/net/tcp/wire.cpp -o $@
@@ -946,6 +968,7 @@ clean:
 MUSL_INPUTS = sources.lock.json scripts/build_musl.py scripts/musl_cc.py $(wildcard vendor/musl/patches/*.patch)
 MUSL_PROGRAMS = build/address-query-static build/address-query-dynamic build/credentials-static build/credentials-dynamic build/random-static build/random-dynamic build/abi-static build/file-lock-static build/file-lock-dynamic build/clock-elapsed-tests build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/net-tests build/ipv4-tests build/udp-tests build/dns-static build/dns-dynamic build/normal-dns-static build/normal-dns-dynamic build/netlink-tests build/network-manager-faults build/network-manager-dynamic-faults build/network-manager build/network-manager-dynamic build/manager-tests build/manager-protocol build/manager-link build/init-supervision build/ownership-tests build/ownership-dynamic build/configuration-tests build/dhcp-codec-tests build/dhcp-state-tests build/dhcp-profile-tests build/profile-privacy-tests build/profile-privacy-dynamic build/dhcp-transport-tests build/resolver-tests build/thread-static build/thread-io-static build/thread-io-dynamic build/thread-dynamic build/futex-static build/futex-dynamic build/lifecycle-static build/lifecycle-dynamic build/x11-probe build/tcp-static build/tcp-dynamic build/tcp-fault-static build/tcp-fault-dynamic build/tcp-lifetime-static build/tcp-lifetime-dynamic build/tcp-challenge-static build/tcp-challenge-dynamic build/tcp-timeout-static build/tcp-timeout-dynamic
 MUSL_PROGRAMS += build/tcp-icmp-static build/tcp-icmp-dynamic
+MUSL_PROGRAMS += build/ipv4-dynamic
 MUSL_PROGRAMS += build/tcp-pmtu-static build/tcp-pmtu-dynamic
 MUSL_PROGRAMS += build/tcp-pressure-static build/tcp-pressure-dynamic
 MUSL_PROGRAMS += build/tcp-reconnect-static build/tcp-reconnect-dynamic

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run IPv4 and failed-device contracts with both firmware and virtio transports."""
 import json
+import shutil
 import subprocess
 import sys
 from fetch import ROOT
@@ -17,6 +18,8 @@ def main():
                     environment={'AXIOM64_IP_FAULT': '1'} if fault else None)
             subprocess.run([sys.executable, 'scripts/image.py', '--test', '--suite', 'network',
                             '--output-name', 'ipv4-test.iso'], cwd=ROOT, check=True)
+            name = 'fault' if fault else 'normal'
+            shutil.copyfile(ROOT / 'build/ipv4-test.iso', ROOT / f'build/axiom64-ipv4-{name}.iso')
             for transport in ['modern', 'legacy']:
                 for firmware in ['bios', 'uefi']:
                     result = run(firmware, transport, 120, fault)

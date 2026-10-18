@@ -16,6 +16,7 @@ from network_test import fixture
 from ipv4_fault import expire, hold_arp_reply
 from network_fault import inject
 from qmp import Qmp
+from ipv4_fragments import FragmentPeer
 
 
 def checksum(data):
@@ -71,6 +72,7 @@ class Peer:
         self.reply_pressure_started = False
         self.held_replies = 0
         self.reply_ingress = 0
+        self.fragments = FragmentPeer(lane)
 
     @staticmethod
     def alias_address(sequence):
@@ -309,6 +311,15 @@ class Peer:
                 self.foreign += 1
                 return
             packet = frame[14:]
+            if self.fragments.accepts(packet):
+                if frame[:12] != self.mac + self.guest:
+                    raise RuntimeError('fragment control Ethernet ownership differs')
+                total = int.from_bytes(packet[2:4], 'big')
+                if total > len(packet):
+                    raise RuntimeError('truncated fragment output')
+                for response in self.fragments.receive(packet[:total]):
+                    self.queue(self.ethernet(response))
+                return
             if packet[24:26] == b'CR':
                 self.alias_packet(frame)
                 return
@@ -413,6 +424,9 @@ def run(firmware, transport, timeout, fault=False):
             nic += ',disable-legacy=on' if transport == 'modern' else ',disable-modern=on'
         command += ['-netdev', f'socket,id=peer{lane},connect=127.0.0.1:{server.getsockname()[1]}',
                     '-device', nic]
+        capture = ROOT / 'build' / f'{label}-lane{lane}.pcap'
+        capture.unlink(missing_ok=True)
+        command += ['-object', f'filter-dump,id=cap{lane},netdev=peer{lane},file={capture}']
     if firmware == 'uefi':
         variables = ROOT / 'build' / (label + '-OVMF_VARS.fd')
         shutil.copyfile('/usr/share/OVMF/OVMF_VARS_4M.fd', variables)
@@ -557,6 +571,7 @@ def run(firmware, transport, timeout, fault=False):
                 'IPV4_LINK_PASS index=1', 'IPV4_LINK_PASS index=2',
                 'IPV4_CACHE_REPLACEMENT_PASS index=1', 'IPV4_CACHE_REPLACEMENT_PASS index=2',
                 'IPV4_ARP_REPLY_PASS index=1', 'IPV4_ARP_REPLY_PASS index=2',
+                'IPV4_FRAGMENT_OUTPUT_PASS index=1 cases=21', 'IPV4_FRAGMENT_OUTPUT_PASS index=2 cases=21',
                 'IPV4_BUSYBOX_PASS', 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0']
     missing = [marker for marker in required if marker not in text]
     if fault:
@@ -580,7 +595,10 @@ def run(firmware, transport, timeout, fault=False):
                      peer.cache_ack and peer.cache_arp == 1 and peer.broadcast == 1 and
                      peer.lifetime == 1 and peer.alias_echo == 132 and peer.alias_reply == 1 and
                      sum(peer.alias_arp.values()) == 130 and peer.held_replies == 1 and
-                     peer.reply_ingress == 97 for peer in peers)
+                     peer.reply_ingress == 97 and peer.fragments.completed == 6 and
+                     peer.fragments.waiting is None and peer.fragments.acknowledged and
+                     peer.fragments.output.completed == 21 and peer.fragments.output.waiting is None and
+                     peer.fragments.output.acknowledged for peer in peers)
     result = dict(firmware=firmware, transport=transport, fault=fault, returncode=returncode, timed_out=timed_out,
                   error=error, missing=missing, arp=[peer.arp for peer in peers],
                   echo=[peer.echo for peer in peers], foreign=[peer.foreign for peer in peers],
@@ -599,6 +617,13 @@ def run(firmware, transport, timeout, fault=False):
                   cache_refresh_reply=[peer.alias_reply for peer in peers],
                   held_arp_replies=[peer.held_replies for peer in peers],
                   arp_reply_ingress=[min(peer.reply_ingress, 96) for peer in peers],
+                  fragment_cases=[peer.fragments.completed for peer in peers],
+                  fragment_peer_frames=[peer.fragments.frames for peer in peers],
+                  fragment_final_ack=[peer.fragments.acknowledged for peer in peers],
+                  fragment_output_cases=[peer.fragments.output.completed for peer in peers],
+                  fragment_output_frames=[peer.fragments.output.frames for peer in peers],
+                  fragment_output_final_ack=[peer.fragments.output.acknowledged for peer in peers],
+                  captures=[f'{label}-lane{lane}.pcap' for lane in range(2)],
                   seconds=round(time.monotonic() - started, 2), log=log.name,
                   passed=returncode == 1 and not timed_out and not error and not missing and passed)
     print(json.dumps(result), flush=True)

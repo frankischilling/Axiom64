@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
+#include "ipv4_fragments.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <net/if.h>
@@ -658,10 +659,16 @@ static void limits(unsigned lane) {
     struct sockaddr_in destination = {.sin_family = AF_INET,
                                       .sin_addr.s_addr = htonl(0x0a170101 + (lane << 8))};
     unsigned char oversized[1481] = {8}, bytes[64];
+    int discovery = IP_PMTUDISC_DO;
+    check(setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &discovery, sizeof(discovery)) == 0,
+          "require DF for MTU rejection");
     check(sendto(fd, oversized, sizeof(oversized), 0, (struct sockaddr*)&destination,
                  sizeof(destination)) == -1 &&
               errno == EMSGSIZE,
           "IPv4 MTU includes header");
+    discovery = IP_PMTUDISC_WANT;
+    check(setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &discovery, sizeof(discovery)) == 0,
+          "restore default discovery");
     destination.sin_addr.s_addr = htonl(0xffffffff);
     request_bytes(bytes);
     bytes[4] = 'B';
@@ -972,6 +979,11 @@ static void link_change(unsigned lane) {
 
 int main(int argc, char** argv) {
     setbuf(stdout, NULL);
+    if (argc == 2 && !strcmp(argv[1], "--fragments")) {
+        ipv4_fragment_checks(0);
+        ipv4_fragment_checks(1);
+        return 0;
+    }
     int fd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
     check(fd >= 0, "raw ICMP socket");
     echo(fd, "127.0.0.1", "IPV4_LOOPBACK_PASS");
@@ -1022,6 +1034,8 @@ int main(int argc, char** argv) {
         cache_replacement(1);
         arp_reply_pressure(0);
         arp_reply_pressure(1);
+        ipv4_fragment_checks(0);
+        ipv4_fragment_checks(1);
     }
     if (fd >= 0)
         check(close(fd) == 0, "raw ICMP close");

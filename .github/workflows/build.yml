@@ -215,6 +215,18 @@ jobs:
           mkdir -p build/tcp-policy
           make test-tcp-wire test-tcp-sender test-tcp-connection test-tcp-isn test-tcp-time-wait test-tcp-icmp test-tcp-pmtu 2>&1 | tee build/tcp-policy/host.log
           python3 scripts/tests/tcp_input_libraries_test.py
+      - name: Test IPv4 fragment ownership and reassembly with sanitizers
+        run: |
+          mkdir -p build/ipv4-policy
+          python3 scripts/tests/network_fixture_test.py 2>&1 | tee build/ipv4-policy/fixture.log
+          make test-ipv4-reassembly test-ipv4-fragmentation 2>&1 | tee build/ipv4-policy/host.log
+      - name: Upload IPv4 policy evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-policy
+          if-no-files-found: warn
+          path: build/ipv4-policy
       - name: Upload TCP policy evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -908,6 +920,23 @@ jobs:
       - name: Test IPv4 routes, ARP, raw ICMP, ping, and failed-device sockets
         if: matrix.suite == 'network'
         run: make test-ipv4
+      - name: Compare IPv4 fragment receive behavior with three native Linux linkages
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv4-fragments-native
+      - name: Upload native IPv4 fragment evidence
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-fragments-native
+          if-no-files-found: warn
+          path: build/ipv4-fragments-native
+      - name: Upload actual normal and failed-device IPv4 images
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-ipv4-fixtures
+          if-no-files-found: warn
+          path: build/axiom64-ipv4-*.iso
       - name: Test IPv4 UDP, datagram lifetime, checksums, and failed-device sockets
         if: matrix.suite == 'network'
         run: make test-udp
@@ -1157,6 +1186,7 @@ jobs:
             build/*.trace
             build/*.gdb
             build/*results.json
+            build/ipv4-*.pcap
             build/manager-protocol-*-packets.json
             build/manager-link-*-packets.json
             build/axiom64-manager-address-query-*.iso

@@ -84,6 +84,14 @@ observations; 513 damaged-evidence cases cover packet, queue, expiry, route,
 carrier, result, source and cohort corruption. Guest debugger
 observations do not replace the separate retransmission timing gates.
 The build job publishes corresponding source, test inputs and compiled products.
+The same quoted-error job also runs [permanent device-loss acceptance](tcp-device-loss.md).
+Both adapter selections require six native virtual-device observations and sixteen
+guest PCI-removal observations across the complete linkage, firmware and transport
+matrix. It retains 44 captures, four inspected boot images, exact pending-copy
+ownership and reclamation, actual device absence, socket error progression and
+the other original stream's full 5000-millisecond interval. All 252 damaged-evidence
+controls must be rejected. Native configured-timeout and guest default TCP failure
+contracts remain separately documented and checked.
 
 The [full default-lifetime profile](tcp-default-lifetime.md) adds `tcp-lifetime-native`
 and `tcp-lifetime-{bios,uefi}-{modern,legacy}`. Its native job overlaps three isolated

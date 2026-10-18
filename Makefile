@@ -829,6 +829,20 @@ test-tcp-malformed:
 	$(PYTHON) scripts/tcp_fault_test.py --wire malformed --workers 2
 test-tcp-malformed-native:
 	$(PYTHON) scripts/tcp_fault_native.py --wire malformed
+build/tcp-device-native: userspace/tests/net/tcp_device.c
+	@mkdir -p build
+	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-device-static: userspace/tests/net/tcp_device.c
+	@mkdir -p build
+	$(MUSL_CC) -std=gnu11 -static -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp-device-dynamic: userspace/tests/net/tcp_device.c
+	@mkdir -p build
+	$(MUSL_CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+.PHONY: test-tcp-device test-tcp-device-native
+test-tcp-device:
+	$(PYTHON) scripts/tcp_device/run.py guest --workers 2
+test-tcp-device-native:
+	$(PYTHON) scripts/tcp_device/run.py native
 build/tcp-window-native: userspace/tests/net/tcp_window.c
 	@mkdir -p build
 	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
@@ -927,6 +941,7 @@ MUSL_PROGRAMS += build/tcp-reconnect-static build/tcp-reconnect-dynamic
 MUSL_PROGRAMS += build/tcp-recovery-static build/tcp-recovery-dynamic
 MUSL_PROGRAMS += build/tcp-malformed-static build/tcp-malformed-dynamic
 MUSL_PROGRAMS += build/tcp-window-static build/tcp-window-dynamic
+MUSL_PROGRAMS += build/tcp-device-static build/tcp-device-dynamic
 MUSL_PROGRAMS += build/random-admin-static build/random-admin-dynamic
 MUSL_PROGRAMS += build/crypto-wait-static build/crypto-wait-dynamic
 MUSL_PROGRAMS += build/random-seed-static build/random-seed-dynamic

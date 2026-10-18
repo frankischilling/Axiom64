@@ -2,6 +2,7 @@
 """Open actual controlled TCP boot fixtures and verify their executable inputs."""
 from pathlib import Path
 import hashlib
+import shlex
 import subprocess
 import tempfile
 from fetch import LOCK
@@ -17,7 +18,7 @@ def require(value, message):
         raise ValueError(message)
 
 
-def audit_image(inputs, input_root, program, profile):
+def audit_image(inputs, input_root, program, profile, arguments=()):
     linkage = inputs['linkage']
     image = input_root / f'build/axiom64-{profile}-{linkage}.iso'
     require(f'build/{image.name}' in inputs['products'], 'actual controlled TCP boot image is fingerprinted')
@@ -42,7 +43,8 @@ def audit_image(inputs, input_root, program, profile):
     require(len(loaders) == 1 and entries['lib/ld-musl-x86_64.so.1'][0] == 0o100755 and
             hashlib.sha256(entries['lib/ld-musl-x86_64.so.1'][1]).hexdigest() == loaders[0],
             'actual ISO contains the recorded build-provider musl loader')
+    command = shlex.join((f'/bin/{program}', *arguments))
     require(entries['etc/net-test.sh'] == (0o100755,
-            f'#!/bin/sh\nset -e\n/bin/{program}\necho AXIOM64_TESTS_PASS\n'.encode()),
+            f'#!/bin/sh\nset -e\n{command}\necho AXIOM64_TESTS_PASS\n'.encode()),
             'actual boot script executes the exact controlled TCP socket client')
     return dict(image=image.name, sha256=digest(image), actual_image_opened=True)

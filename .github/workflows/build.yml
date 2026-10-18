@@ -189,6 +189,7 @@ jobs:
           make -j2 build/tcp-fault-native build/tcp-fault-static build/tcp-fault-dynamic
           make -j2 build/tcp-challenge-native build/tcp-challenge-static build/tcp-challenge-dynamic
           make -j2 build/tcp-malformed-native build/tcp-malformed-static build/tcp-malformed-dynamic
+          make -j2 build/tcp-device-native build/tcp-device-static build/tcp-device-dynamic
           make -j2 build/tcp-window-native build/tcp-window-static build/tcp-window-dynamic
           make -j2 build/tcp-timeout-native build/tcp-timeout-static build/tcp-timeout-dynamic
           make -j2 build/tcp-lifetime-native build/tcp-lifetime-static build/tcp-lifetime-dynamic
@@ -845,6 +846,15 @@ jobs:
           python3 scripts/tcp_recovery_capture.py build/tcp-recovery-native-results.json --output build/tcp-recovery-native-audit.json
           python3 scripts/tcp_recovery_capture.py build/tcp-recovery-results.json --output build/tcp-recovery-guest-audit.json
           python3 scripts/tests/tcp_recovery_capture_test.py 2>&1 | tee build/tcp-recovery-damage.log
+      - name: Verify owned TCP copies across actual device removal and surviving streams
+        if: matrix.suite == 'tcp-fault-icmp'
+        run: |
+          mkdir -p build/tcp-device
+          sudo -n python3 scripts/tests/tcp_device_native_cleanup_test.py
+          sudo -n make test-tcp-device-native
+          make test-tcp-device
+          python3 scripts/tcp_device/capture.py 2>&1 | tee build/tcp-device-capture.log
+          python3 scripts/tests/tcp_device_capture_test.py 2>&1 | tee build/tcp-device-damage.log
       - name: Independently verify legacy native TCP source and runtime inputs
         if: (startsWith(matrix.suite, 'tcp-fault-') && matrix.suite != 'tcp-fault-icmp') || matrix.suite == 'tcp-lifetime-native'
         env:
@@ -1160,6 +1170,7 @@ jobs:
             build/tcp-malformed-*-peer.json
             build/tcp-malformed-*-inputs.json
             build/tcp-malformed-damaged/**
+            build/tcp-device/**
             build/tcp-window-*-peer.json
             build/tcp-window-*-inputs.json
             build/tcp-window-damaged/**
@@ -1325,6 +1336,7 @@ jobs:
             build/axiom64-tcp-old-ack-*.iso
             build/axiom64-tcp-challenge-*.iso
             build/axiom64-tcp-malformed-*.iso
+            build/axiom64-tcp-device-*.iso
             build/axiom64-tcp-window-*.iso
             build/axiom64-tcp-fast-*.iso
             build/axiom64-tcp-lifetime-*.iso

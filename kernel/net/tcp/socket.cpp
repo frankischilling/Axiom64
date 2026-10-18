@@ -137,6 +137,7 @@ void reset_connect(InetSocket* socket) {
     // Owned packets may outlive this attempt; their callbacks cannot reach its successor.
     ipv4_detach_owner(socket);
     release_time_wait(socket);
+    socket->mss_cache = socket->stream->segment_size();
     socket->stream->~Connection();
     release(socket->stream);
     socket->stream = nullptr;
@@ -249,6 +250,7 @@ int disconnect(InetSocket* socket) {
         socket->shutdown = 0;
         socket->error_seen = false;
     }
+    socket->user_mss = 0;
     socket->error = error;
     return 0;
 }
@@ -419,7 +421,8 @@ int tcp_connect(InetSocket* socket, const InetAddress& address) {
         return error;
     socket->error = 0;
     socket->error_seen = false;
-    uint16_t mss = min(socket->maximum_segment, uint16_t(path.mtu > 40 ? path.mtu - 40 : 1));
+    uint16_t limit = socket->user_mss ? socket->user_mss : 1460;
+    uint16_t mss = min(limit, uint16_t(path.mtu > 40 ? path.mtu - 40 : 1));
     socket->stream->active(initial, now, mss);
     socket->connect_pending = true;
     tcp_poll();
@@ -612,12 +615,13 @@ bool tcp_option(InetSocket* socket, unsigned option, int& value, bool set, int& 
         if (set) {
             if (value && (value < 88 || value > 32767))
                 error = -22;
-            else if (socket->stream)
-                error = -95;
             else
-                socket->maximum_segment = value ? min(value, 1460) : 1460;
-        } else
-            value = socket->maximum_segment;
+                socket->user_mss = value;
+        } else if (socket->user_mss &&
+                   (!socket->stream || socket->stream->state() == tcp::State::closed))
+            value = socket->user_mss;
+        else
+            value = socket->stream ? socket->stream->segment_size() : socket->mss_cache;
     } else if (option == 18) {
         if (set) {
             if (value < 0)
@@ -691,16 +695,15 @@ void tcp_receive(unsigned index, uint32_t source, uint32_t destination, const vo
         child->reuse = listener->reuse;
         child->nodelay = listener->nodelay;
         child->user_timeout = listener->user_timeout;
-        child->maximum_segment = listener->maximum_segment;
+        child->user_mss = listener->user_mss;
         uint32_t initial;
         if (sequence(child, initial, now) || make_stream(child, now)) {
             reclaim(child);
             return;
         }
         const auto info = index == ipv4_loopback ? nullptr : net_info(index);
-        uint16_t mss =
-            info ? min(child->maximum_segment, uint16_t(info->mtu > 40 ? info->mtu - 40 : 1))
-                 : child->maximum_segment;
+        uint16_t limit = child->user_mss ? child->user_mss : 1460;
+        uint16_t mss = info ? min(limit, uint16_t(info->mtu > 40 ? info->mtu - 40 : 1)) : limit;
         if (!child->stream->passive(initial, segment, now, mss)) {
             reclaim(child);
             return;

@@ -186,6 +186,12 @@ static int flow(unsigned lane, unsigned scenario) {
         REQUIRE(connect(fd, (struct sockaddr*)&peer, sizeof(peer)) == 0);
     }
     stage = 1;
+    int maximum_segment = -1;
+    socklen_t maximum_size = sizeof(maximum_segment);
+    REQUIRE(getsockopt(fd, IPPROTO_TCP, TCP_MAXSEG, &maximum_segment, &maximum_size) == 0 &&
+            maximum_size == sizeof(maximum_segment) && maximum_segment == 1460);
+    printf("TCP_PMTU_MAXSEG lane=%u case=%u stage=connected value=%d\n", lane, scenario,
+           maximum_segment);
     for (size_t at = 0; at < sizeof(bytes); at++)
         bytes[at] = pattern(at, lane, scenario, 0);
     while (sent < sizeof(bytes)) {
@@ -203,6 +209,12 @@ static int flow(unsigned lane, unsigned scenario) {
     for (size_t at = 0; at < sizeof(bytes); at++)
         REQUIRE(bytes[at] == pattern(at, lane, scenario, 1));
     REQUIRE(recv(fd, bytes, 1, 0) == 0);
+    maximum_size = sizeof(maximum_segment);
+    REQUIRE(getsockopt(fd, IPPROTO_TCP, TCP_MAXSEG, &maximum_segment, &maximum_size) == 0 &&
+            maximum_size == sizeof(maximum_segment) && maximum_segment > 0 &&
+            maximum_segment <= 1460);
+    printf("TCP_PMTU_MAXSEG lane=%u case=%u stage=recovered value=%d\n", lane, scenario,
+           maximum_segment);
     int error = -1;
     socklen_t length = sizeof(error);
     REQUIRE(getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &length) == 0 && error == 0);

@@ -167,13 +167,28 @@ def main():
                 for filename in [*row['captures'], row['inputs'], row['log']]:
                     (scratch / filename).write_bytes((root / filename).read_bytes())
                 text = (root / row['log']).read_text()
-                for label in ('driver-receipt', 'driver-drop'):
+                for label in ('driver-receipt', 'driver-drop', 'maxseg-missing',
+                              'maxseg-duplicate', 'maxseg-stale', 'maxseg-wrong-tuple',
+                              'maxseg-wire-limit'):
                     if label == 'driver-receipt':
                         changed = re.sub(r'(PMTU_FRAME .*?hash=)[0-9a-f]{16}', r'\g<1>0000000000000000', text, count=1)
                         expected = 'every original IPv4 wire byte'
-                    else:
+                    elif label == 'driver-drop':
                         changed = re.sub(r'(PMTU_CAPTURE_PASS .*?dropped=)0', r'\g<1>1', text, count=1)
                         expected = 'driver identity and zero drops'
+                    else:
+                        query = re.search(r'^TCP_PMTU_MAXSEG lane=0 case=' +
+                                          ('2' if label == 'maxseg-wire-limit' else '0') +
+                                          r' stage=recovered value=(\d+)\r?\n', text, re.M)
+                        require(query is not None, 'actual recovered MSS query is present')
+                        replacement = {'maxseg-missing': '',
+                                       'maxseg-duplicate': query[0] * 2,
+                                       'maxseg-stale': query[0].replace('value=536', 'value=1460'),
+                                       'maxseg-wrong-tuple': query[0].replace('lane=0', 'lane=1'),
+                                       'maxseg-wire-limit': query[0].replace('value=' + query[1],
+                                                                            'value=' + str(int(query[1]) + 1))}[label]
+                        changed = text[:query.start()] + replacement + text[query.end():]
+                        expected = 'actual socket MSS follows negotiated and recovered wire limits'
                     require(changed != text, 'an actual driver observation was damaged')
                     (scratch / row['log']).write_text(changed)
                     reason = rejected(lambda: checked(scratch, row), label, expected)

@@ -36,6 +36,10 @@ class Connection {
         return failure;
     }
 
+    uint16_t segment_size() const {
+        return mss;
+    }
+
     // SO_ERROR observes and consumes a soft network error without closing TCP
     // or making normal reads/writes fail. A failed user copy must only peek.
     int network_error(bool clear = false) {

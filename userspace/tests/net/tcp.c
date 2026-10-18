@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
+#include "tcp_maxseg.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -1989,6 +1990,11 @@ int main(int argc, char** argv) {
     }
     signal(SIGPIPE, SIG_IGN);
     alarm(60);
+    if (argc == 2 &&
+        (!strcmp(argv[1], "--maxseg-check") || !strcmp(argv[1], "--native-maxseg-check"))) {
+        tcp_maxseg_options(!strcmp(argv[1], "--native-maxseg-check"));
+        return 0;
+    }
     if (argc == 2 && !strcmp(argv[1], "--reuse-bind-check")) {
         reuse_bindings();
         return 0;
@@ -2025,6 +2031,7 @@ int main(int argc, char** argv) {
     reuse_bindings();
     reuse_binding_transitions();
     options();
+    tcp_maxseg_options(native);
     refused();
     vectors();
     wait_all();

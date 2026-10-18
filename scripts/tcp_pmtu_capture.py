@@ -164,9 +164,19 @@ def verify_flow(items, lane, case, native):
                     'real damaged-hint silence before valid reduction')
     if case == 3:
         require({quote['mtu'] for quote in quotes} == {576, 1400}, 'both path reductions captured')
+    # Legacy zero-MTU hints can select a different native route plateau. Read
+    # the sending limit from the actual full segments after path learning.
+    learned = valid or quotes
+    minimum_mtu = min(quote['mtu'] for quote in learned)
+    threshold = next(quote['clock_us'] for quote in learned if quote['mtu'] == minimum_mtu)
+    resized_payloads = [len(tcp_fields(item)['data']) for item in tcp
+                        if item['outgoing'] and microseconds(item) >= threshold and
+                        len(item['ip']) <= 576 and tcp_fields(item)['data']]
+    require(resized_payloads, 'full recovered sending segments remain observable')
     return dict(case=case, passive=bool(case & 1), guest_port=guest_port,
                 bytes_each=SIZE, oversized=oversized, resized=resized, quotes=len(quotes),
-                damaged=int(case >= 4), native_inner_checksum_control=case == 5 and native)
+                damaged=int(case >= 4), native_inner_checksum_control=case == 5 and native,
+                effective_send_mss=max(resized_payloads))
 
 
 def audit_row(root, row, input_root=None, host_libraries=None):
@@ -193,6 +203,17 @@ def audit_row(root, row, input_root=None, host_libraries=None):
                        r'milliseconds=(\d+)\r?$', text, re.M)
     require(len(flows) == CASES * 2 and {(int(lane), int(case)) for lane, case, _ in flows} ==
             {(lane, case) for lane in range(2) for case in range(CASES)}, 'every actual socket case')
+    maximum_segments = re.findall(r'^TCP_PMTU_MAXSEG lane=(\d+) case=(\d+) '
+                                  r'stage=(connected|recovered) value=(\d+)\r?$', text, re.M)
+    require(len(maximum_segments) == CASES * 4 and
+            Counter((int(lane), int(case), stage)
+                    for lane, case, stage, value in maximum_segments) ==
+            Counter((lane, case, stage) for lane in range(2) for case in range(CASES)
+                    for stage in ('connected', 'recovered')) and
+            all(0 < int(value) <= 1460 for _, _, _, value in maximum_segments),
+            'actual socket MSS follows negotiated and recovered wire limits for every tuple')
+    maximum_values = {(int(lane), int(case), stage): int(value)
+                      for lane, case, stage, value in maximum_segments}
     receipts = re.findall(r'^PMTU_FRAME lane=(\d+) index=(\d+) length=(\d+) kind=(\d+) '
                           r'hash=([0-9a-f]{16}) monotonic_ms=(\d+)\r?$', text, re.M)
     stats = re.findall(r'^PMTU_CAPTURE_PASS lane=(\d+) index=(\d+) packets=(\d+) dropped=(\d+) '
@@ -230,8 +251,16 @@ def audit_row(root, row, input_root=None, host_libraries=None):
         require({item['ip'][16:20] if item['outgoing'] else item['ip'][12:16] for item in items} ==
                 {bytes([10, 23, lane + 1, 10 + case]) for case in range(CASES)},
                 'all independent paths present without unrelated tuples')
+        checked_flows = [verify_flow(items, lane, case, native) for case in range(CASES)]
+        for flow in checked_flows:
+            case = flow['case']
+            require(maximum_values[lane, case, 'connected'] == 1460 and
+                    maximum_values[lane, case, 'recovered'] == flow['effective_send_mss'],
+                    'actual socket MSS follows negotiated and recovered wire limits for every tuple')
+            flow['reported_connected_mss'] = maximum_values[lane, case, 'connected']
+            flow['reported_recovered_mss'] = maximum_values[lane, case, 'recovered']
         reports.append(dict(lane=lane, frames=len(items), driver_receipts=len(actual_rows),
-                            flows=[verify_flow(items, lane, case, native) for case in range(CASES)]))
+                            flows=checked_flows))
     return dict(linkage=row['linkage'], native=native, captures=2, lanes=reports, passed=True)
 
 

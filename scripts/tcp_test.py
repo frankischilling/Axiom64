@@ -61,7 +61,7 @@ def run(linkage, firmware, timeout, image):
     text = log.read_text(errors='replace')
     required = ('TCP_CREATE_PASS variants=8', 'TCP_BINDINGS_PASS ', 'TCP_REUSE_BINDINGS_PASS cases=32',
                 'TCP_REUSE_TRANSITIONS_PASS cases=16',
-                'TCP_OPTIONS_PASS ', 'TCP_REFUSED_PASS ',
+                'TCP_OPTIONS_PASS ', 'TCP_MAXSEG_PASS fresh=8 lifecycle=5 post_sets=25', 'TCP_REFUSED_PASS ',
                 'TCP_VECTORS_PASS ', 'TCP_WAITALL_PASS ', 'TCP_WAITALL_SIGNALS_PASS ',
                 'TCP_RETAINED_READ_PASS cases=2', 'TCP_RESOURCE_CYCLES_PASS count=300',
                 'TCP_ACCEPT_DESCRIPTORS_PASS ', 'TCP_ACCEPT_RESERVATION_PASS ',

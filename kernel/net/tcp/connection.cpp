@@ -28,6 +28,7 @@ void Connection::initialize(uint32_t initial, uint64_t now, uint16_t maximum_seg
     initial_send = send_unacknowledged = send_next = initial;
     send_base = initial + 1;
     local_mss = maximum_segment ? minimum(maximum_segment, uint16_t(1460)) : 1460;
+    mss = local_mss;
     opened_at = progress_at = last_send = now;
     persist_at = after(now, persist_interval);
     syn_pending = true;

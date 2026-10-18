@@ -67,7 +67,9 @@ void acknowledge(tcp::Connection& connection, uint32_t sequence, uint64_t now,
 }
 
 uint32_t establish(tcp::Connection& connection) {
+    assert(connection.segment_size() == 536);
     connection.active(UINT32_MAX - 2048, 0);
+    assert(connection.segment_size() == 1460);
     auto syn = take(connection, 0);
     assert(syn.flags == tcp::syn);
     tcp::Segment response{};
@@ -78,6 +80,7 @@ uint32_t establish(tcp::Connection& connection) {
     response.flags = tcp::syn | tcp::ack;
     connection.input(response, 10);
     assert(connection.state() == tcp::State::established);
+    assert(connection.segment_size() == 1460);
     auto ack = take(connection, 10);
     assert(ack.flags == tcp::ack && ack.bytes.empty());
     connection.nodelay(true);
@@ -129,6 +132,7 @@ void repacketization() {
     uint32_t end = connection.next_send();
     assert(end < origin); // Both the owned flight and its FIN cross sequence wrap.
     assert(connection.reduce_mss(origin, 536));
+    assert(connection.segment_size() == 536);
     assert(connection.next_send() == end && connection.queued() == 4096);
     assert(!connection.error() && !connection.network_error());
     auto first = take(connection, 30);

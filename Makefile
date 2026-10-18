@@ -684,15 +684,15 @@ build/tcp-isn-host: kernel/tests/net/tcp_isn.cpp kernel/net/tcp/isn.cpp kernel/c
 .PHONY: test-tcp-isn
 test-tcp-isn: build/tcp-isn-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/tcp-isn-host
-build/tcp-native: userspace/tests/net/tcp.c
+build/tcp-native: userspace/tests/net/tcp.c userspace/tests/net/tcp_maxseg.c userspace/tests/net/tcp_maxseg.h
 	@mkdir -p build
-	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread $< -o $@
-build/tcp-static: userspace/tests/net/tcp.c
+	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@
+build/tcp-static: userspace/tests/net/tcp.c userspace/tests/net/tcp_maxseg.c userspace/tests/net/tcp_maxseg.h
 	@mkdir -p build
-	$(MUSL_CC) -std=gnu11 -static -O2 -g -Wall -Wextra -Werror -pthread $< -o $@
-build/tcp-dynamic: userspace/tests/net/tcp.c
+	$(MUSL_CC) -std=gnu11 -static -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@
+build/tcp-dynamic: userspace/tests/net/tcp.c userspace/tests/net/tcp_maxseg.c userspace/tests/net/tcp_maxseg.h
 	@mkdir -p build
-	$(MUSL_CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread $< -o $@
+	$(MUSL_CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@
 .PHONY: test-tcp-native test-tcp-sockets test-tcp-native-wire
 test-tcp-native:
 	$(PYTHON) scripts/tcp_native_test.py

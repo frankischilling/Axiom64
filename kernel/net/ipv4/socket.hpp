@@ -32,7 +32,7 @@ struct InetSocket {
     bool listening = false, detached = false, error_seen = false, nodelay = false;
     bool connect_pending = false;
     uint32_t user_timeout = 0;
-    uint16_t maximum_segment = 1460;
+    uint16_t user_mss = 0, mss_cache = 536;
     unsigned stream_index = 0;
     bool accept_queued = false;
     uint16_t time_wait_slot = UINT16_MAX;

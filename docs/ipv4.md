@@ -106,6 +106,8 @@ The guest and native clients also age incomplete queues on both adapters concurr
 
 Ordered barriers then prove that a final fragment cannot reuse expired first bytes, while a fresh first fragment completes the reused identity. Results retain host monotonic observations and the client's elapsed clock measurements; no guest clock or production deadline changes.
 
+The native peer waits for the independent collector to record each injected expiry context before starting the next spacing interval. This preserves the full eight-second separation when a preceding fragment burst delays the reader. The final quiet interval also starts after that receipt. Capture timestamps and independent audit thresholds remain unchanged; a missing receipt fails the comparison.
+
 An independent capture auditor checks tuple ownership, packet checksums, original quote bytes, elapsed timing, suppression spacing and reuse barriers. Ten damaged captures per adapter must fail, including both early and late expiry; original captures, native monotonic receipt files and compressed negative fixtures remain available.
 
 Broader UDP/TCP fragment corpora, dynamic guest linkage and the remaining complete IP requirements still need independent acceptance evidence. The current receiver continues to require a 20-byte header; variable-header module tests do not establish IP option support in the receive path.

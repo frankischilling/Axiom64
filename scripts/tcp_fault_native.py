@@ -48,6 +48,8 @@ class Capture:
         self.frame_count = 0
         self.stopping = threading.Event()
         self.error = None
+        self.injection = None
+        self.injection_lock = threading.Lock()
         self.thread = threading.Thread(target=self.collect, daemon=True)
         self.thread.start()
 
@@ -78,8 +80,29 @@ class Capture:
                     sha256=hashlib.sha256(frame).hexdigest(), kernel_realtime_ns=timestamp,
                     **observed)) + '\n')
                 self.frame_count += 1
+                if self.injection is not None:
+                    with self.injection_lock:
+                        waiting = self.injection
+                        if waiting is not None and waiting['frame'] == frame and not waiting['ready'].is_set():
+                            waiting['monotonic_ns'] = observed['receipt_monotonic_ns']
+                            waiting['ready'].set()
         except Exception as exception:
             self.error = exception
+
+    def observe_injection(self, frame, send, timeout=2):
+        """Send one exact frame and wait for its independent monotonic receipt."""
+        waiting = dict(frame=frame, ready=threading.Event(), monotonic_ns=None)
+        with self.injection_lock:
+            check(self.injection is None, 'one outstanding independently observed injection')
+            self.injection = waiting
+        try:
+            check(send(frame) == len(frame), 'complete independently observed injection')
+            check(waiting['ready'].wait(timeout) and self.error is None,
+                  'independent capture observes the injected frame within its deadline')
+            return waiting['monotonic_ns'] / 1e9
+        finally:
+            with self.injection_lock:
+                self.injection = None
 
     def close(self):
         self.stopping.set()

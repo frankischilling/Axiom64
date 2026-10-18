@@ -37,6 +37,25 @@ def client(profile, pmtu_only=False, lifetime_only=False):
     return command
 
 
+def send_packets(taps, captures, peers, lane, packets):
+    guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
+    mac = bytes([2, 0x41, 0x58, 0x49, 0x50, lane])
+    for packet, broadcast in packets:
+        frame = ((b'\xff' * 6 if broadcast else guest) + mac + b'\x08\0' + packet).ljust(60, b'\0')
+        context = next((item for item in peers[lane].expiry.contexts
+                        if item['packet_hex'] == packet.hex() and 'capture_monotonic' not in item), None)
+        if context is not None:
+            # A reader delayed by the preceding fragment burst can observe less
+            # than eight seconds between packets sent eight seconds apart.
+            # Start the next gap after this independent receipt instead.
+            observed = captures[lane].observe_injection(frame, lambda data: os.write(taps[lane], data))
+            if observed < context['monotonic']:
+                raise ValueError('context capture precedes its actual injection')
+            context['capture_monotonic'] = observed
+        elif os.write(taps[lane], frame) != len(frame):
+            raise OSError('short TAP fragment injection')
+
+
 def child(profile, directory, pmtu_only=False, lifetime_only=False):
     directory.mkdir(exist_ok=False)
     peers = [FragmentPeer(lane, native=True) for lane in range(2)]
@@ -77,14 +96,6 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
     started = time.monotonic()
     selector = selectors.DefaultSelector()
 
-    def send_packets(lane, packets):
-        guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
-        mac = bytes([2, 0x41, 0x58, 0x49, 0x50, lane])
-        for packet, broadcast in packets:
-            frame = ((b'\xff' * 6 if broadcast else guest) + mac + b'\x08\0' + packet).ljust(60, b'\0')
-            if os.write(taps[lane], frame) != len(frame):
-                raise OSError('short TAP fragment injection')
-
     fragment_timeout = None
     try:
         # Match the unchanged guest policy in this private network namespace only.
@@ -115,7 +126,7 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                 if process.poll() not in (None, 0):
                     raise RuntimeError(f'fragment client exited {process.returncode}')
                 for lane, peer in enumerate(peers):
-                    send_packets(lane, peer.expiry.tick())
+                    send_packets(taps, captures, peers, lane, peer.expiry.tick())
                 for key, _ in selector.select(.02):
                     lane = key.data
                     frame = os.read(key.fd, 65535)
@@ -151,9 +162,10 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                         if total > len(packet):
                             raise ValueError('truncated native control packet')
                         if expiry:
-                            send_packets(lane, peers[lane].expiry.receive(packet))
+                            send_packets(taps, captures, peers, lane, peers[lane].expiry.receive(packet))
                         else:
-                            send_packets(lane, [(payload, False) for payload in peers[lane].receive(packet)])
+                            send_packets(taps, captures, peers, lane,
+                                         [(payload, False) for payload in peers[lane].receive(packet)])
                 if process.poll() == 0 and all(
                     (lifetime_only or peer.path_mtu.passed) and
                     (pmtu_only or peer.path_mtu.lifetime.passed) and

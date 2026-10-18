@@ -263,7 +263,9 @@ class FragmentExpiryPeer:
         # Separate each suppression deadline from the preceding ICMP opportunity.
         # Simultaneous expiry could let the rate limiter hide a missing filter.
         test = len(self.contexts)
-        if test < 4 and now - self.contexts[-1]['monotonic'] >= self.context_gap_seconds:
+        previous = self.contexts[-1]
+        observed = previous.get('capture_monotonic', previous['monotonic'])
+        if test < 4 and now - observed >= self.context_gap_seconds:
             identity = 0x7a10 + self.parent.lane * 16 + test
             body = self.parent.body(0)
             if test == 1:
@@ -284,8 +286,10 @@ class FragmentExpiryPeer:
             result.append((self.first, False))
             self.duplicate = now
             self.event('exact first-fragment duplicate queued', now)
+        previous = self.contexts[-1]
+        observed = previous.get('capture_monotonic', previous['monotonic'])
         if (self.stage == 1 and len(self.contexts) == 4 and self.quote is not None and
-                now - self.contexts[-1]['monotonic'] >= self.quiet_delay_seconds):
+                now - observed >= self.quiet_delay_seconds):
             self.stage = 2
             self.quiet = now
             result.append(self.acknowledgement(1))

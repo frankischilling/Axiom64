@@ -16,7 +16,7 @@ static void ownership() {
     assert(cache.lookup(key, 1500, 0).mtu == 1500);
     assert(cache.learn(key, 1500, 900, 1200, 0).mtu == 900);
     assert(cache.lookup(key, 1500, 1).mtu == 900);
-    for (unsigned part = 0; part < 4; part++) {
+    for (unsigned part = 0; part < 5; part++) {
         auto other = key;
         if (part == 0)
             other.source++;
@@ -24,8 +24,10 @@ static void ownership() {
             other.destination++;
         else if (part == 2)
             other.next_hop++;
-        else
+        else if (part == 3)
             other.index++;
+        else
+            other.route_owner++;
         assert(cache.lookup(other, 1500, 2).mtu == 1500);
         cache.learn(other, 1500, 1000, 1200, 2);
         assert(cache.lookup(key, 1500, 3).mtu == 900);

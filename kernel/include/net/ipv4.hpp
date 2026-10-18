@@ -22,6 +22,9 @@ const Ipv4Config* ipv4_config(unsigned index);
 
 int ipv4_configure(unsigned index, const Ipv4Config&);
 
+// A changed link MTU invalidates learned exceptions on that interface only.
+void ipv4_mtu_changed(unsigned index);
+
 int ipv4_route(const Ipv4Route&, bool remove);
 
 // Routing control retains protocol/scope and applies Linux deletion filters.

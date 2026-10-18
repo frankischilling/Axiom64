@@ -183,10 +183,17 @@ def inspect(rows, lane, log):
                 'damaged-hint silence precedes ordered valid learning')
     cases = re.findall(r'^IPV4_PATH_MTU_CASE index=' + str(lane + 1) + r' case=(\d+) mtu=(\d+)\r?$', log, re.M)
     require([(int(n), int(value)) for n, value in cases] == [(n, learned(n)) for n in range(18)], 'all actual client path queries')
+    route_cases = re.findall(r'^IPV4_PATH_MTU_ROUTES index=' + str(lane + 1) +
+                            r' case=(\d+) restored=(\d+)\r?$', log, re.M)
+    require(route_cases == cases, 'all actual route ownership and restoration queries')
+    require(len(re.findall(r'^IPV4_PATH_MTU_LINK index=' + str(lane + 1) +
+                          r' lower=600 restored=1500\r?$', log, re.M)) == 1,
+            'actual link MTU change and exception invalidation')
     require(len(re.findall(r'^IPV4_PATH_MTU_PASS index=' + str(lane + 1) +
                           r' cases=18 policies_each=6\r?$', log, re.M)) == 1, 'actual client final acknowledgement')
     result = dict(passed=True, lane=lane, cases=18, policy_checks=108, damaged_hints_rejected=18,
-                  datagrams=datagrams, data_frames=fragments, original_times_not_rescaled=True)
+                  datagrams=datagrams, data_frames=fragments, route_query_cases=18,
+                  link_mtu_recovery=True, original_times_not_rescaled=True)
     return result, (requests, replies, data, errors)
 
 
@@ -213,7 +220,8 @@ def verify_capture(path, lane, log_path, damage_archive=None, native=False):
                 original_captures_and_native_receipts_unchanged=True,
                 original_elapsed_time_requirements_unchanged=True)) + '\n')
             for name in ['missing-valid-hint', 'wrong-quote', 'wrong-DF', 'bad-UDP-checksum', 'missing-fragment',
-                         'bad-IP-checksum', 'missing-final-ack', 'forbidden-DO-output', 'wrong-route', 'false-client-MTU']:
+                         'bad-IP-checksum', 'missing-final-ack', 'forbidden-DO-output', 'wrong-route', 'false-client-MTU',
+                         'false-route-MTU', 'missing-route-check', 'false-link-MTU']:
                 changed, text = copy.deepcopy(rows), log
                 target = errors[0][1]['index']
                 if name == 'missing-valid-hint':
@@ -235,6 +243,15 @@ def verify_capture(path, lane, log_path, damage_archive=None, native=False):
                 elif name == 'false-client-MTU':
                     text = text.replace(f'IPV4_PATH_MTU_CASE index={lane + 1} case=0 mtu=900',
                                         f'IPV4_PATH_MTU_CASE index={lane + 1} case=0 mtu=899')
+                elif name == 'false-route-MTU':
+                    text = text.replace(f'IPV4_PATH_MTU_ROUTES index={lane + 1} case=0 restored=900',
+                                        f'IPV4_PATH_MTU_ROUTES index={lane + 1} case=0 restored=899')
+                elif name == 'missing-route-check':
+                    text = re.sub(r'^IPV4_PATH_MTU_ROUTES index=' + str(lane + 1) +
+                                  r' case=0 restored=900\r?\n', '', text, count=1, flags=re.M)
+                elif name == 'false-link-MTU':
+                    text = text.replace(f'IPV4_PATH_MTU_LINK index={lane + 1} lower=600 restored=1500',
+                                        f'IPV4_PATH_MTU_LINK index={lane + 1} lower=600 restored=1400')
                 elif name == 'forbidden-DO-output':
                     source = copy.deepcopy(changed[data[0][0]['index']])
                     frame = bytearray(source['frame'])

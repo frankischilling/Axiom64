@@ -74,4 +74,10 @@ void PathMtuCache::discard(unsigned index) {
         if (!index || entry.key.index == index)
             entry = {};
 }
+
+void PathMtuCache::discard_route(uint64_t route_owner) {
+    for (auto& entry : entries)
+        if (route_owner && entry.key.route_owner == route_owner)
+            entry = {};
+}
 } // namespace ax::ip4

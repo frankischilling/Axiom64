@@ -4,9 +4,11 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <net/if.h>
+#include <net/route.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -137,6 +139,69 @@ static int control_socket(unsigned lane) {
     return control;
 }
 
+static int fresh_mtu(const struct sockaddr_in* target) {
+    int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_UDP);
+    require(fd >= 0 && connect(fd, (const struct sockaddr*)target, sizeof(*target)) == 0,
+            "connect fresh route query");
+    int result = mtu(fd);
+    require(close(fd) == 0, "close fresh route query");
+    return result;
+}
+
+static void route_change(int control, unsigned lane, uint32_t destination, uint32_t mask,
+                         uint32_t gateway, int remove) {
+    char name[16];
+    snprintf(name, sizeof(name), "eth%u", lane);
+    struct rtentry route = {0};
+    struct sockaddr_in* address = (struct sockaddr_in*)&route.rt_dst;
+    address->sin_family = AF_INET;
+    address->sin_addr.s_addr = htonl(destination);
+    address = (struct sockaddr_in*)&route.rt_genmask;
+    address->sin_family = AF_INET;
+    address->sin_addr.s_addr = htonl(mask);
+    address = (struct sockaddr_in*)&route.rt_gateway;
+    address->sin_family = AF_INET;
+    address->sin_addr.s_addr = htonl(gateway);
+    route.rt_flags = RTF_UP | (mask == UINT32_MAX ? RTF_HOST : 0) | (gateway ? RTF_GATEWAY : 0);
+    route.rt_dev = name;
+    require(ioctl(control, remove ? SIOCDELRT : SIOCADDRT, &route) == 0,
+            "change selected or unrelated route");
+}
+
+static void route_checks(int control, int fd, unsigned lane, unsigned test,
+                         const struct sockaddr_in* target, int expected) {
+    uint32_t unrelated = 0x0a630000 + (lane << 8), peer = ntohl(target->sin_addr.s_addr);
+    route_change(control, lane, unrelated, 0xffffff00, 0, 0);
+    require(fresh_mtu(target) == expected, "unrelated route add preserves learned limit");
+    route_change(control, lane, unrelated, 0xffffff00, 0, 1);
+    require(fresh_mtu(target) == expected, "unrelated route removal preserves learned limit");
+    for (unsigned gateway = 0; gateway < 2; gateway++) {
+        uint32_t next_hop = gateway ? 0x0a170101 + (lane << 8) : 0;
+        route_change(control, lane, peer, UINT32_MAX, next_hop, 0);
+        require(fresh_mtu(target) == 1500, "new route ownership starts at device limit");
+        route_change(control, lane, peer, UINT32_MAX, next_hop, 1);
+        require(fresh_mtu(target) == expected, "removing override restores learned limit");
+    }
+    // Reconnect explicitly selects the restored route. Retained cached queries
+    // before route use have a separate Linux lifecycle contract.
+    require(connect(fd, (const struct sockaddr*)target, sizeof(*target)) == 0 &&
+                mtu(fd) == expected,
+            "reconnected description selects restored limit");
+    printf("IPV4_PATH_MTU_ROUTES index=%u case=%u restored=%d\n", lane + 1, test, expected);
+}
+
+static void link_mtu_checks(int control, unsigned lane, const struct sockaddr_in* target) {
+    struct ifreq request = {0};
+    snprintf(request.ifr_name, sizeof(request.ifr_name), "eth%u", lane);
+    request.ifr_mtu = 600;
+    require(ioctl(control, SIOCSIFMTU, &request) == 0 && fresh_mtu(target) == 600,
+            "lower link MTU invalidates learned exception");
+    request.ifr_mtu = 1500;
+    require(ioctl(control, SIOCSIFMTU, &request) == 0 && fresh_mtu(target) == 1500,
+            "restored link MTU starts without obsolete exception");
+    printf("IPV4_PATH_MTU_LINK index=%u lower=600 restored=1500\n", lane + 1);
+}
+
 void ipv4_path_mtu_checks(unsigned lane) {
     int control = control_socket(lane);
     for (unsigned test = 0; test < 18; test++) {
@@ -192,6 +257,7 @@ void ipv4_path_mtu_checks(unsigned lane) {
                     connect(shared, (const struct sockaddr*)&target, sizeof(target)) == 0,
                 "fresh protocol shares learned path");
         require(mtu(shared) == expected && close(shared) == 0, "shared cache query and close");
+        route_checks(control, fd, lane, test, &target, expected);
         for (unsigned changed = 0; changed < 6; changed++) {
             option(fd, IP_MTU_DISCOVER, changed);
             barrier("PM", control, lane, test, 2, changed);
@@ -205,6 +271,8 @@ void ipv4_path_mtu_checks(unsigned lane) {
             require(mtu(fd) == expected, "policy override retains queryable shared limit");
         }
         barrier("PM", control, lane, test, 4, policy);
+        if (test == 17)
+            link_mtu_checks(control, lane, &target);
         require(close(fd) == 0, "close data description");
         if (observer >= 0)
             require(close(observer) == 0, "close independent raw observer");

@@ -17,6 +17,7 @@ constexpr uint64_t neighbor_lifetime = 30000, retry_interval = 100;
 struct Route {
     Ipv4Route value;
     bool used = false;
+    uint64_t path_owner = 0;
 };
 
 enum class NeighborState : uint8_t { free, resolving, reachable, failed };
@@ -43,12 +44,14 @@ struct Output {
     size_t fragment_capacity = 0, fragment_offset = 0;
     bool fragmentable = false;
     bool use_path_mtu = true, want_df = false;
+    uint64_t path_owner = 0;
 };
 
 struct Selection {
     uint32_t source = 0, next_hop = 0;
     unsigned index = 0, prefix = 0, metric = UINT32_MAX;
     bool local = false, broadcast = false, found = false;
+    uint64_t path_owner = 0;
 };
 
 static Ipv4Config interfaces[max_net_devices + 1];
@@ -57,6 +60,7 @@ static Route routes[route_count];
 static Neighbor neighbors[neighbor_count];
 static Output output[output_count];
 static ip4::PathMtuCache path_mtu;
+static uint64_t next_path_owner;
 static uint16_t identifier;
 static bool polling;
 static uint64_t next_icmp_error[max_net_devices + 2];
@@ -104,7 +108,7 @@ static ip4::FragmentPiece submit(Output& item, const NetInfo& info) {
         return {net_send(item.index, item.bytes, item.length), 0, 0, true};
     auto limit = item.use_path_mtu
                      ? path_mtu.lookup({ip4::get32(packet + 12), ip4::get32(packet + 16),
-                                        item.next_hop, item.index},
+                                        item.next_hop, item.index, item.path_owner},
                                        info.mtu, ticks)
                      : ip4::PathMtu{info.mtu};
     if (item.want_df && limit.locked && (ip4::get16(packet + 6) & 0x4000)) {
@@ -322,7 +326,8 @@ static int select(uint32_t source, uint32_t destination, unsigned bound, Selecti
                       value.metric,
                       false,
                       false,
-                      true};
+                      true,
+                      route.path_owner};
     }
     if (!result.found)
         return -101;
@@ -492,6 +497,16 @@ int ipv4_configure(unsigned index, const Ipv4Config& config) {
     return 0;
 }
 
+void ipv4_mtu_changed(unsigned index) {
+    if (index && index <= max_net_devices)
+        path_mtu.discard(index);
+}
+
+static bool same_next_hop(const Ipv4Route& a, const Ipv4Route& b) {
+    return a.index == b.index && a.gateway == b.gateway && a.metric == b.metric &&
+           a.protocol == b.protocol && a.scope == b.scope;
+}
+
 static int change_route(const Ipv4Route& input, bool remove, bool control, bool exclusive) {
     auto value = input;
     if (!ip4::mask_valid(value.mask) || (value.destination & value.mask) != value.destination)
@@ -504,8 +519,13 @@ static int change_route(const Ipv4Route& input, bool remove, bool control, bool 
                 (!value.metric || route.value.metric == value.metric) &&
                 (!control || ((!value.protocol || route.value.protocol == value.protocol) &&
                               (value.scope == 255 || route.value.scope == value.scope)))) {
+                uint64_t owner = route.path_owner;
                 route = {};
-                path_mtu.discard();
+                bool retained = false;
+                for (const auto& other : routes)
+                    retained |= other.used && other.path_owner == owner;
+                if (!retained)
+                    path_mtu.discard_route(owner);
                 return 0;
             }
         return -3;
@@ -557,8 +577,18 @@ static int change_route(const Ipv4Route& input, bool remove, bool control, bool 
     }
     if (!empty)
         return -105;
-    *empty = {value, true};
-    path_mtu.discard();
+    uint64_t owner = 0;
+    for (const auto& route : routes)
+        if (route.used && same_next_hop(route.value, value)) {
+            owner = route.path_owner;
+            break;
+        }
+    if (!owner) {
+        if (next_path_owner == UINT64_MAX)
+            return -75;
+        owner = ++next_path_owner;
+    }
+    *empty = {value, true, owner};
     return 0;
 }
 
@@ -611,7 +641,9 @@ int ipv4_path(uint32_t source, uint32_t destination, unsigned bound_index, Ipv4P
         uint32_t mtu = route.local ? 65535u : net_info(route.index)->mtu;
         if (!route.local && !route.broadcast)
             mtu = path_mtu
-                      .lookup({route.source, destination, route.next_hop, route.index}, mtu, ticks)
+                      .lookup({route.source, destination, route.next_hop, route.index,
+                               route.path_owner},
+                              mtu, ticks)
                       .mtu;
         path = {route.source, mtu, route.index};
     }
@@ -624,8 +656,8 @@ uint32_t ipv4_learn_pmtu(uint32_t source, uint32_t destination, unsigned index,
     if (select(source, destination, index, route) || route.local || route.broadcast)
         return 0;
     return path_mtu
-        .learn({route.source, destination, route.next_hop, route.index}, net_info(route.index)->mtu,
-               announced_mtu, quoted_length, ticks)
+        .learn({route.source, destination, route.next_hop, route.index, route.path_owner},
+               net_info(route.index)->mtu, announced_mtu, quoted_length, ticks)
         .mtu;
 }
 
@@ -644,8 +676,8 @@ int ipv4_send(InetSocket* owner, uint32_t source, uint32_t destination, unsigned
     ip4::PathMtu limit{mtu};
     bool use_path_mtu = inet_use_path_mtu(owner);
     if (!route.local && !route.broadcast && use_path_mtu)
-        limit =
-            path_mtu.lookup({route.source, destination, route.next_hop, route.index}, mtu, ticks);
+        limit = path_mtu.lookup(
+            {route.source, destination, route.next_hop, route.index, route.path_owner}, mtu, ticks);
     if (length > 65535 - 20 || (!route.local && length + 20 > limit.mtu && !fragmentable))
         return -90;
     auto slot = vacant_output();
@@ -684,6 +716,7 @@ int ipv4_send(InetSocket* owner, uint32_t source, uint32_t destination, unsigned
     slot->fragmentable = fragmentable;
     slot->use_path_mtu = use_path_mtu;
     slot->want_df = fragmentable && inet_dont_fragment(owner);
+    slot->path_owner = route.path_owner;
     return 0;
 }
 

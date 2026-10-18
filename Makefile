@@ -666,6 +666,12 @@ build/ipv4-path-mtu-host: kernel/tests/net/ipv4_path_mtu.cpp kernel/net/ipv4/pat
 .PHONY: test-ipv4-path-mtu
 test-ipv4-path-mtu: build/ipv4-path-mtu-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-path-mtu-host
+build/ipv4-paths-host: kernel/tests/net/ipv4_paths.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ethernet.cpp $(call rwildcard,kernel/include/,*.hpp)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
+.PHONY: test-ipv4-paths
+test-ipv4-paths: build/ipv4-paths-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-paths-host
 .PHONY: test-ipv4-fragments-native
 test-ipv4-fragments-native:
 	$(PYTHON) scripts/ipv4_fragment_native.py

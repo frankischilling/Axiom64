@@ -10,6 +10,7 @@ constexpr uint64_t path_mtu_lifetime = 60000; // Ten minutes on the 100 Hz kerne
 struct PathKey {
     uint32_t source = 0, destination = 0, next_hop = 0;
     unsigned index = 0;
+    uint64_t route_owner = 0;
 
     bool operator==(const PathKey&) const = default;
 };
@@ -28,8 +29,11 @@ class PathMtuCache {
     PathMtu lookup(const PathKey&, uint32_t device_mtu, uint64_t now);
     PathMtu learn(const PathKey&, uint32_t device_mtu, uint16_t announced_mtu,
                   uint16_t quoted_length, uint64_t now);
-    // Route changes discard all entries; interface changes can discard one index.
+    // Interface changes discard one index. Removing a route's last owner only
+    // releases that owner's entries; unrelated routes retain their deadlines.
     void discard(unsigned index = 0);
+
+    void discard_route(uint64_t route_owner);
 
   private:
     struct Entry {

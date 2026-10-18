@@ -1187,6 +1187,7 @@ jobs:
             build/*.gdb
             build/*results.json
             build/ipv4-*.pcap
+            build/ipv4-*-expiry-lane*.zip
             build/manager-protocol-*-packets.json
             build/manager-link-*-packets.json
             build/axiom64-manager-address-query-*.iso

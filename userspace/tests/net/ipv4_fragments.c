@@ -58,9 +58,9 @@ static void configure(int fd, unsigned lane, const char* name) {
     require(ioctl(fd, SIOCSIFFLAGS, &request) == 0, "enable interface");
 }
 
-static void control(int fd, const struct sockaddr_in* peer, unsigned lane, unsigned test,
-                    unsigned phase) {
-    unsigned char bytes[32] = {8, 0, 0, 0, 'F', 'R', test, phase};
+static void send_control(int fd, const struct sockaddr_in* peer, unsigned lane, const char tag[2],
+                         unsigned test, unsigned phase) {
+    unsigned char bytes[32] = {8, 0, 0, 0, tag[0], tag[1], test, phase};
     for (unsigned i = 8; i < sizeof(bytes); i++)
         bytes[i] = (unsigned char)(i * 17 + lane * 31);
     unsigned checksum = sum(bytes, sizeof(bytes));
@@ -69,6 +69,11 @@ static void control(int fd, const struct sockaddr_in* peer, unsigned lane, unsig
     require(sendto(fd, bytes, sizeof(bytes), 0, (const struct sockaddr*)peer, sizeof(*peer)) ==
                 sizeof(bytes),
             "control send");
+}
+
+static void control(int fd, const struct sockaddr_in* peer, unsigned lane, unsigned test,
+                    unsigned phase) {
+    send_control(fd, peer, lane, "FR", test, phase);
 }
 
 static void receive_packet(int fd, unsigned lane, unsigned test, int barrier) {
@@ -110,32 +115,29 @@ static void receive_packet(int fd, unsigned lane, unsigned test, int barrier) {
 
 static void output_control(int fd, const struct sockaddr_in* peer, unsigned lane, unsigned test,
                            unsigned phase) {
-    unsigned char bytes[32] = {8, 0, 0, 0, 'F', 'O', test, phase};
-    for (unsigned i = 8; i < sizeof(bytes); i++)
-        bytes[i] = (unsigned char)(i * 17 + lane * 31);
-    unsigned checksum = sum(bytes, sizeof(bytes));
-    bytes[2] = checksum >> 8;
-    bytes[3] = checksum;
-    require(sendto(fd, bytes, sizeof(bytes), 0, (const struct sockaddr*)peer, sizeof(*peer)) ==
-                sizeof(bytes),
-            "output control send");
+    send_control(fd, peer, lane, "FO", test, phase);
 }
 
-static void output_acknowledgement(int fd, unsigned lane, unsigned test, unsigned phase) {
+static void acknowledgement(int fd, unsigned lane, const char tag[2], unsigned test, unsigned phase,
+                            int timeout) {
     struct pollfd event = {fd, POLLIN, 0};
-    require(poll(&event, 1, 5000) == 1 && (event.revents & POLLIN),
+    require(poll(&event, 1, timeout) == 1 && (event.revents & POLLIN),
             "output acknowledgement readiness");
     unsigned char bytes[52];
     require(recv(fd, bytes, sizeof(bytes), MSG_TRUNC) == sizeof(bytes) && bytes[0] == 0x45 &&
-                bytes[9] == IPPROTO_ICMP && bytes[20] == 0 && bytes[21] == 0 && bytes[24] == 'F' &&
-                bytes[25] == 'O' && bytes[26] == test && bytes[27] == phase && bytes[12] == 10 &&
-                bytes[13] == 23 && bytes[14] == lane + 1 && bytes[15] == 1 && bytes[16] == 10 &&
-                bytes[17] == 23 && bytes[18] == lane + 1 && bytes[19] == 2 && sum(bytes, 20) == 0 &&
-                sum(bytes + 20, 32) == 0,
+                bytes[9] == IPPROTO_ICMP && bytes[20] == 0 && bytes[21] == 0 &&
+                bytes[24] == tag[0] && bytes[25] == tag[1] && bytes[26] == test &&
+                bytes[27] == phase && bytes[12] == 10 && bytes[13] == 23 && bytes[14] == lane + 1 &&
+                bytes[15] == 1 && bytes[16] == 10 && bytes[17] == 23 && bytes[18] == lane + 1 &&
+                bytes[19] == 2 && sum(bytes, 20) == 0 && sum(bytes + 20, 32) == 0,
             "output acknowledgement bytes");
     for (unsigned i = 8; i < 32; i++)
         require(bytes[20 + i] == (unsigned char)(i * 17 + lane * 31),
                 "output acknowledgement body");
+}
+
+static void output_acknowledgement(int fd, unsigned lane, unsigned test, unsigned phase) {
+    acknowledgement(fd, lane, "FO", test, phase, 5000);
 }
 
 static void output_checks(unsigned lane, const char* name, const struct sockaddr_in* peer) {
@@ -263,4 +265,60 @@ void ipv4_fragment_checks(unsigned lane) {
     require(close(fd) == 0, "raw socket close");
     printf("IPV4_FRAGMENT_PASS index=%u cases=6\n", lane + 1);
     output_checks(lane, name, &peer);
+}
+
+void ipv4_fragment_expiry_checks(void) {
+    int sockets[2];
+    struct sockaddr_in peers[2];
+    double started[2];
+    // Both queues age concurrently; neither kernel clock nor queue deadline changes.
+    for (unsigned lane = 0; lane < 2; lane++) {
+        sockets[lane] = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
+        require(sockets[lane] >= 0, "expiry raw socket");
+        char name[IFNAMSIZ], address[32];
+        snprintf(name, sizeof(name), "eth%u", lane);
+        configure(sockets[lane], lane, name);
+        require(setsockopt(sockets[lane], SOL_SOCKET, SO_BINDTODEVICE, name, strlen(name) + 1) == 0,
+                "expiry device binding");
+        unsigned filter = ~1u;
+        require(setsockopt(sockets[lane], 255, 1, &filter, sizeof(filter)) == 0,
+                "expiry reply filter");
+        memset(&peers[lane], 0, sizeof(peers[lane]));
+        peers[lane].sin_family = AF_INET;
+        snprintf(address, sizeof(address), "10.23.%u.1", lane + 1);
+        require(inet_pton(AF_INET, address, &peers[lane].sin_addr) == 1, "expiry peer parse");
+        started[lane] = elapsed();
+        send_control(sockets[lane], &peers[lane], lane, "FE", lane, 0);
+        acknowledgement(sockets[lane], lane, "FE", lane, 0, 5000);
+        printf("IPV4_FRAGMENT_EXPIRY_STARTED index=%u monotonic=%.9f\n", lane + 1, started[lane]);
+    }
+    for (unsigned lane = 0; lane < 2; lane++) {
+        acknowledgement(sockets[lane], lane, "FE", lane, 1, 100000);
+        double duration = elapsed() - started[lane];
+        require(duration >= 60 && duration <= 100, "real elapsed expiry observation");
+        // A last fragment alone must not complete using any expired first bytes.
+        send_control(sockets[lane], &peers[lane], lane, "FE", lane, 2);
+        acknowledgement(sockets[lane], lane, "FE", lane, 2, 5000);
+        send_control(sockets[lane], &peers[lane], lane, "FE", lane, 3);
+        struct pollfd ready = {sockets[lane], POLLIN, 0};
+        require(poll(&ready, 1, 5000) == 1 && (ready.revents & POLLIN),
+                "reused identity completion");
+        unsigned char packet[84], body[64] = {0, 0, 0, 0, 'F', 'R', 0, lane};
+        for (unsigned i = 8; i < sizeof(body); i++)
+            body[i] = (unsigned char)(i * 17 + lane * 31);
+        unsigned check = sum(body, sizeof(body));
+        body[2] = check >> 8;
+        body[3] = check;
+        require(recv(sockets[lane], packet, sizeof(packet), MSG_TRUNC) == sizeof(packet) &&
+                    packet[0] == 0x45 && packet[8] == 51 && packet[9] == 1 && packet[4] == 0x7a &&
+                    packet[5] == 0x10 + lane * 16 && packet[6] == 0 && packet[7] == 0 &&
+                    sum(packet, 20) == 0 && packet[12] == 10 && packet[13] == 23 &&
+                    packet[14] == lane + 1 && packet[15] == 1 && packet[16] == 10 &&
+                    packet[17] == 23 && packet[18] == lane + 1 && packet[19] == 2 &&
+                    memcmp(packet + 20, body, sizeof(body)) == 0,
+                "expired queue discards old bytes before identity reuse");
+        send_control(sockets[lane], &peers[lane], lane, "FE", lane, 4);
+        require(close(sockets[lane]) == 0, "expiry socket close");
+        printf("IPV4_FRAGMENT_EXPIRY_PASS index=%u elapsed=%.9f\n", lane + 1, duration);
+    }
 }

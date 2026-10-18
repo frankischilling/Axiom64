@@ -17,6 +17,7 @@ from ipv4_fault import expire, hold_arp_reply
 from network_fault import inject
 from qmp import Qmp
 from ipv4_fragments import FragmentPeer
+from ipv4_expiry_capture import verify_capture
 
 
 def checksum(data):
@@ -147,6 +148,8 @@ class Peer:
 
     def release(self):
         now = time.monotonic()
+        for packet, broadcast in self.fragments.expiry.tick():
+            self.queue(self.ethernet(packet, broadcast))
         while self.delayed and self.delayed[0][0] <= now:
             _, frame = self.delayed.pop(0)
             self.arp_valid = True
@@ -311,6 +314,15 @@ class Peer:
                 self.foreign += 1
                 return
             packet = frame[14:]
+            if self.fragments.expiry.accepts(packet):
+                if frame[:12] != self.mac + self.guest:
+                    raise RuntimeError('fragment expiry Ethernet ownership differs')
+                total = int.from_bytes(packet[2:4], 'big')
+                if total > len(packet):
+                    raise RuntimeError('truncated fragment expiry packet')
+                for response, broadcast in self.fragments.expiry.receive(packet[:total]):
+                    self.queue(self.ethernet(response, broadcast))
+                return
             if self.fragments.accepts(packet):
                 if frame[:12] != self.mac + self.guest:
                     raise RuntimeError('fragment control Ethernet ownership differs')
@@ -572,6 +584,7 @@ def run(firmware, transport, timeout, fault=False):
                 'IPV4_CACHE_REPLACEMENT_PASS index=1', 'IPV4_CACHE_REPLACEMENT_PASS index=2',
                 'IPV4_ARP_REPLY_PASS index=1', 'IPV4_ARP_REPLY_PASS index=2',
                 'IPV4_FRAGMENT_OUTPUT_PASS index=1 cases=21', 'IPV4_FRAGMENT_OUTPUT_PASS index=2 cases=21',
+                 'IPV4_FRAGMENT_EXPIRY_PASS index=1', 'IPV4_FRAGMENT_EXPIRY_PASS index=2',
                 'IPV4_BUSYBOX_PASS', 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0']
     missing = [marker for marker in required if marker not in text]
     if fault:
@@ -598,7 +611,16 @@ def run(firmware, transport, timeout, fault=False):
                      peer.reply_ingress == 97 and peer.fragments.completed == 6 and
                      peer.fragments.waiting is None and peer.fragments.acknowledged and
                      peer.fragments.output.completed == 21 and peer.fragments.output.waiting is None and
-                     peer.fragments.output.acknowledged for peer in peers)
+                     peer.fragments.output.acknowledged and peer.fragments.expiry.passed for peer in peers)
+    expiry_audits = []
+    if not fault and passed and returncode == 1 and not timed_out and not error and not missing:
+        try:
+            for lane in range(2):
+                archive = ROOT / 'build' / f'{label}-expiry-lane{lane}-{time.monotonic_ns()}.zip'
+                expiry_audits.append(verify_capture(ROOT / 'build' / f'{label}-lane{lane}.pcap',
+                                                    lane, log, damage_archive=archive))
+        except Exception as exception:
+            error = f'expiry capture audit: {exception}'
     result = dict(firmware=firmware, transport=transport, fault=fault, returncode=returncode, timed_out=timed_out,
                   error=error, missing=missing, arp=[peer.arp for peer in peers],
                   echo=[peer.echo for peer in peers], foreign=[peer.foreign for peer in peers],
@@ -623,6 +645,8 @@ def run(firmware, transport, timeout, fault=False):
                   fragment_output_cases=[peer.fragments.output.completed for peer in peers],
                   fragment_output_frames=[peer.fragments.output.frames for peer in peers],
                   fragment_output_final_ack=[peer.fragments.output.acknowledged for peer in peers],
+                  fragment_expiry=[peer.fragments.expiry.report() for peer in peers],
+                  fragment_expiry_capture_audits=expiry_audits,
                   captures=[f'{label}-lane{lane}.pcap' for lane in range(2)],
                   seconds=round(time.monotonic() - started, 2), log=log.name,
                   passed=returncode == 1 and not timed_out and not error and not missing and passed)
@@ -636,7 +660,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--firmware', choices=['bios', 'uefi', 'both'], default='both')
     parser.add_argument('--transport', choices=['modern', 'legacy'], default='modern')
-    parser.add_argument('--timeout', type=int, default=60)
+    parser.add_argument('--timeout', type=int, default=120)
     parser.add_argument('--fault', action='store_true', help='quarantine one real virtio RX queue through GDB')
     args = parser.parse_args()
     fixture(program='ipv4-tests', script='userspace/tests/net/ipv4.sh',

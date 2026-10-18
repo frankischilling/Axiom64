@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Controlled IPv4 fragment corpora; transport observation stays in the caller."""
 import struct
+import time
 
 
 def checksum(data):
@@ -13,13 +14,14 @@ def checksum(data):
 
 
 class FragmentPeer:
-    def __init__(self, lane):
+    def __init__(self, lane, *, expiry_error_tos=0):
         self.lane = lane
         self.completed = 0
         self.waiting = None
         self.frames = 0
         self.acknowledged = False
         self.output = OutputFragmentPeer(self)
+        self.expiry = FragmentExpiryPeer(self, error_tos=expiry_error_tos)
 
     def accepts(self, packet):
         return (packet[24:26] in (b'FR', b'FO') or
@@ -218,3 +220,130 @@ class OutputFragmentPeer:
         self.waiting = None
         self.completed += 1
         return [self.acknowledgement(test, 1)]
+
+
+class FragmentExpiryPeer:
+    """Observe real expiry; responses are (IP packet, Ethernet broadcast) pairs."""
+    def __init__(self, parent, *, error_tos=0):
+        self.parent = parent
+        self.error_tos = error_tos
+        self.start = self.duplicate = self.quote = self.quiet = None
+        self.contexts = []
+        self.events = []
+        self.stage = 0
+        self.acknowledged = False
+        self.first = parent.packet(parent.body(0)[:24], 0x7a10 + parent.lane * 16, 0, True)
+
+    def event(self, name, now):
+        self.events.append(dict(name=name, monotonic=now, wall_ns=time.time_ns()))
+
+    def accepts(self, packet):
+        return packet[24:26] == b'FE' or (self.start is not None and not self.acknowledged and
+                                         len(packet) >= 20 and packet[9] == 1)
+
+    def acknowledgement(self, phase):
+        lane = self.parent.lane
+        body = bytearray([0, 0, 0, 0, ord('F'), ord('E'), lane, phase])
+        body.extend((i * 17 + lane * 31) & 255 for i in range(8, 32))
+        struct.pack_into('!H', body, 2, checksum(bytes(body)))
+        return self.parent.packet(bytes(body), 0x7b10 + lane * 16 + phase), False
+
+    def tick(self):
+        now = time.monotonic()
+        if self.start is None or self.acknowledged:
+            return []
+        result = []
+        # Separate each suppression deadline from the preceding ICMP opportunity.
+        # Simultaneous expiry could let the rate limiter hide a missing filter.
+        test = len(self.contexts)
+        if test < 4 and now - self.contexts[-1]['monotonic'] >= 2:
+            identity = 0x7a10 + self.parent.lane * 16 + test
+            body = self.parent.body(0)
+            if test == 1:
+                packet = self.parent.packet(body[24:], identity, 24, False)
+            elif test == 2:
+                error = bytearray(body[:24])
+                error[0] = 3
+                error[2:4] = b'\0\0'
+                struct.pack_into('!H', error, 2, checksum(bytes(error)))
+                packet = self.parent.packet(bytes(error), identity, 0, True)
+            else:
+                packet = self.parent.packet(body[:24], identity, 0, True)
+            result.append((packet, test == 3))
+            self.contexts.append(dict(test=test, monotonic=now, packet_hex=packet.hex(),
+                                      ethernet_broadcast=test == 3))
+            self.event('suppressed context queued', now)
+        if self.duplicate is None and now - self.start >= 30:
+            result.append((self.first, False))
+            self.duplicate = now
+            self.event('exact first-fragment duplicate queued', now)
+        if (self.stage == 1 and len(self.contexts) == 4 and self.quote is not None and
+                now - self.contexts[-1]['monotonic'] >= 63):
+            self.stage = 2
+            self.quiet = now
+            result.append(self.acknowledgement(1))
+            self.event('all staggered expiry deadlines and quiet observation passed', now)
+        return result
+
+    def receive(self, packet):
+        lane = self.parent.lane
+        if (len(packet) < 28 or packet[0] != 0x45 or checksum(packet[:20]) or
+                int.from_bytes(packet[2:4], 'big') != len(packet) or
+                int.from_bytes(packet[6:8], 'big') & 0xbfff or packet[8:10] != b'\x40\x01' or
+                packet[12:20] != bytes([10, 23, lane + 1, 2, 10, 23, lane + 1, 1]) or
+                checksum(packet[20:])):
+            raise ValueError('expiry IP tuple, flags, length or checksum differs')
+        now = time.monotonic()
+        if packet[20:22] == b'\x0b\x01':
+            quoted = packet[28:]
+            # Linux may quote all of the first fragment, beyond the required eight bytes.
+            if (packet[1] != self.error_tos or packet[24:28] != b'\0' * 4 or
+                    not 28 <= len(quoted) <= len(self.first) or
+                    quoted != self.first[:len(quoted)] or self.stage != 1 or
+                    self.quote is not None or self.duplicate is None or
+                    not 59.98 <= now - self.start <= 85):
+                raise ValueError('expiry quote, timing, duplicate or suppression differs')
+            self.quote = now
+            self.event('original first-header and payload quote received', now)
+            return []
+        body = packet[20:]
+        if (packet[1] or len(body) != 32 or body[:2] != b'\x08\0' or
+                body[4:7] != b'FE' + bytes([lane]) or
+                body[8:] != bytes((i * 17 + lane * 31) & 255 for i in range(8, 32))):
+            raise ValueError('unexpected expiry control or forbidden ICMP error')
+        phase = body[7]
+        identity = 0x7a10 + lane * 16
+        if phase == 0 and self.stage == 0:
+            self.start = now
+            self.stage = 1
+            self.contexts.append(dict(test=0, monotonic=now, packet_hex=self.first.hex(),
+                                      ethernet_broadcast=False))
+            self.event('eligible incomplete first fragment queued', now)
+            return [(self.first, False), self.acknowledgement(0)]
+        if phase == 2 and self.stage == 2:
+            self.stage = 3
+            self.event('last fragment reuses expired identity before ordered barrier', now)
+            return [(self.parent.packet(self.parent.body(0)[24:], identity, 24, False), False),
+                    self.acknowledgement(2)]
+        if phase == 3 and self.stage == 3:
+            self.stage = 4
+            self.event('fresh first fragment completes reused identity', now)
+            return [(self.first, False)]
+        if phase == 4 and self.stage == 4:
+            self.stage = 5
+            self.acknowledged = True
+            self.event('guest confirms complete payload after identity reuse', now)
+            return []
+        raise ValueError('expiry control skipped its ordered barrier')
+
+    @property
+    def passed(self):
+        return (self.acknowledged and self.stage == 5 and self.quote is not None and
+                self.duplicate is not None and self.quiet is not None and len(self.contexts) == 4)
+
+    def report(self):
+        return dict(passed=self.passed, stage=self.stage, acknowledged=self.acknowledged,
+                    expected_error_tos=self.error_tos,
+                    quote_seconds=None if self.quote is None else self.quote - self.start,
+                    duplicate_seconds=None if self.duplicate is None else self.duplicate - self.start,
+                    contexts=self.contexts, events=self.events)

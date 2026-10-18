@@ -982,6 +982,7 @@ int main(int argc, char** argv) {
     if (argc == 2 && !strcmp(argv[1], "--fragments")) {
         ipv4_fragment_checks(0);
         ipv4_fragment_checks(1);
+        ipv4_fragment_expiry_checks();
         return 0;
     }
     int fd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
@@ -1036,6 +1037,7 @@ int main(int argc, char** argv) {
         arp_reply_pressure(1);
         ipv4_fragment_checks(0);
         ipv4_fragment_checks(1);
+        ipv4_fragment_expiry_checks();
     }
     if (fd >= 0)
         check(close(fd) == 0, "raw ICMP close");

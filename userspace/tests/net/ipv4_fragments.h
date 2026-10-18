@@ -2,3 +2,5 @@
 #pragma once
 
 void ipv4_fragment_checks(unsigned lane);
+
+void ipv4_fragment_expiry_checks(void);

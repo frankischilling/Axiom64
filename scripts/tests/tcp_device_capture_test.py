@@ -27,6 +27,8 @@ GUEST = {
     'short-host-lifetime': 'independent host monotonic observations retain the full healthy lifetime',
     'no-owned-pending-copy': 'actual failure reclaims the owned copy',
     'failed-observer-exit': 'actual successful owned physical observer exit',
+    'unrelated-failure-entry': 'actual device failure is observed at the called owner boundary',
+    'failure-owner-mismatch': 'actual device failure is observed at the called owner boundary',
 }
 NATIVE = {
     'selected-interface-remains': 'actual original Linux device inventory proves selected absence',
@@ -135,12 +137,16 @@ def modify(directory, row, label):
         events = {item['stage']: item for item in physical['events']}
         events['healthy_complete']['monotonic_ns'] = events['actual_guest_failure']['monotonic_ns'] + 4999999999
     else:
-        trace = directory / ('device-copy.gdb' if label == 'synthesized-EIO' else 'device-copy.log')
+        trace = directory / ('device-copy.gdb' if label in ('synthesized-EIO', 'unrelated-failure-entry') else 'device-copy.log')
         original = trace.read_text()
         if label == 'synthesized-EIO':
             altered = original.replace('return (int)-11', 'return (int)-5')
+        elif label == 'unrelated-failure-entry':
+            altered = original.replace('break *ax::inet_failed', 'break *ax::inet_icmp_error')
+        elif label == 'failure-owner-mismatch':
+            altered = re.sub(r'(TCP_DEVICE_QUEUE_FAILURE error=5 owner=)0x[0-9a-f]+', r'\g<1>0x1234', original)
         elif label == 'callback-owner-remains':
-            altered = original.replace('TCP_DEVICE_QUEUE_CLEARED owner=0x0 ', 'TCP_DEVICE_QUEUE_CLEARED owner=0x1234 ')
+            altered = original.replace('TCP_DEVICE_COPY_CLEARED owner=0x0 ', 'TCP_DEVICE_COPY_CLEARED owner=0x1234 ')
         elif label == 'missing-copy-failure':
             altered = re.sub(r'^TCP_DEVICE_QUEUE_FAILURE[^\n]*\n', '', original, flags=re.M)
         elif label == 'no-owned-pending-copy':
@@ -209,7 +215,8 @@ def main():
                     results.append(dict(profile=row['directory'], control=label, rejection=rejection,
                                         artifact=artifact.name, sha256=digest(artifact)))
     require(all(digest(path) == value for path, value in originals.items()), 'all original device evidence stays unchanged')
-    require(len(results) == 252, 'all six native and sixteen guest device controls run')
+    require(len(results) == 6 * (len(NATIVE) + 2) + 16 * (len(GUEST) + 2),
+            'all six native and sixteen guest device controls run')
     (output / 'results.json').write_text(json.dumps(dict(passed=True, controls_rejected=len(results), results=results,
                                                        original_inputs_unchanged=True), indent=2) + '\n')
     print(f'TCP_DEVICE_DAMAGE_PASS controls={len(results)} originals_unchanged=1')

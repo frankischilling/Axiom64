@@ -14,6 +14,8 @@ struct Interface {
 // Positive errno on failure; neither function changes interface configuration.
 int query_interface(unsigned index, Interface&);
 
+// An absent or concurrently withdrawn address returns a zero address/mask.
+// Other errors leave both caller outputs unchanged.
 int query_address(const char* interface, uint32_t& address, uint32_t& mask);
 
 enum class Received : uint8_t { empty, ignored, reply, conflict };

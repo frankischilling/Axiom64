@@ -454,6 +454,17 @@ OWNERSHIP_FAULTS = -Wl,--wrap=flock
 MANAGER_SOURCES = userspace/net/manager/main.cpp userspace/net/manager/runtime.cpp userspace/net/manager/static.cpp userspace/net/manager/ownership.cpp userspace/net/config/configuration.cpp userspace/net/config/routing.cpp userspace/net/config/resolver.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/state.cpp userspace/net/dhcp/wire.cpp
 MANAGER_HEADERS = userspace/net/manager/runtime.hpp userspace/net/manager/static.hpp userspace/net/manager/ownership.hpp userspace/net/config/configuration.hpp userspace/net/config/routing.hpp userspace/net/config/resolver.hpp $(PROFILE_HEADERS) userspace/net/dhcp/transport.hpp userspace/net/dhcp/state.hpp
 MANAGER_NATIVE_SOURCES = $(filter-out userspace/net/manager/main.cpp userspace/net/manager/runtime.cpp,$(MANAGER_SOURCES))
+ADDRESS_QUERY_SOURCES = userspace/tests/net/address-query.cpp userspace/net/dhcp/transport.cpp
+ADDRESS_QUERY_FLAGS = -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -ffunction-sections -fdata-sections -Iuserspace -Wl,--gc-sections,--wrap=ioctl
+build/address-query-native: $(ADDRESS_QUERY_SOURCES) $(MANAGER_HEADERS)
+	@mkdir -p build
+	$(CXX) $(ADDRESS_QUERY_FLAGS) $(ADDRESS_QUERY_SOURCES) -o $@
+build/address-query-static: $(ADDRESS_QUERY_SOURCES) $(MANAGER_HEADERS)
+	@mkdir -p build
+	$(MUSL_CC) $(ADDRESS_QUERY_FLAGS) -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu -static $(ADDRESS_QUERY_SOURCES) -o $@
+build/address-query-dynamic: $(ADDRESS_QUERY_SOURCES) $(MANAGER_HEADERS)
+	@mkdir -p build
+	$(MUSL_CC) $(ADDRESS_QUERY_FLAGS) -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(ADDRESS_QUERY_SOURCES) -o $@
 .PHONY: test-manager-runtime-native
 build/manager-runtime-native: userspace/tests/net/manager-runtime.cpp userspace/net/manager/runtime.cpp $(MANAGER_NATIVE_SOURCES) $(MANAGER_HEADERS)
 	@mkdir -p build
@@ -933,7 +944,7 @@ clean:
 
 # All guest programs share the checked source-built build provider.
 MUSL_INPUTS = sources.lock.json scripts/build_musl.py scripts/musl_cc.py $(wildcard vendor/musl/patches/*.patch)
-MUSL_PROGRAMS = build/credentials-static build/credentials-dynamic build/random-static build/random-dynamic build/abi-static build/file-lock-static build/file-lock-dynamic build/clock-elapsed-tests build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/net-tests build/ipv4-tests build/udp-tests build/dns-static build/dns-dynamic build/normal-dns-static build/normal-dns-dynamic build/netlink-tests build/network-manager-faults build/network-manager-dynamic-faults build/network-manager build/network-manager-dynamic build/manager-tests build/manager-protocol build/manager-link build/init-supervision build/ownership-tests build/ownership-dynamic build/configuration-tests build/dhcp-codec-tests build/dhcp-state-tests build/dhcp-profile-tests build/profile-privacy-tests build/profile-privacy-dynamic build/dhcp-transport-tests build/resolver-tests build/thread-static build/thread-io-static build/thread-io-dynamic build/thread-dynamic build/futex-static build/futex-dynamic build/lifecycle-static build/lifecycle-dynamic build/x11-probe build/tcp-static build/tcp-dynamic build/tcp-fault-static build/tcp-fault-dynamic build/tcp-lifetime-static build/tcp-lifetime-dynamic build/tcp-challenge-static build/tcp-challenge-dynamic build/tcp-timeout-static build/tcp-timeout-dynamic
+MUSL_PROGRAMS = build/address-query-static build/address-query-dynamic build/credentials-static build/credentials-dynamic build/random-static build/random-dynamic build/abi-static build/file-lock-static build/file-lock-dynamic build/clock-elapsed-tests build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/net-tests build/ipv4-tests build/udp-tests build/dns-static build/dns-dynamic build/normal-dns-static build/normal-dns-dynamic build/netlink-tests build/network-manager-faults build/network-manager-dynamic-faults build/network-manager build/network-manager-dynamic build/manager-tests build/manager-protocol build/manager-link build/init-supervision build/ownership-tests build/ownership-dynamic build/configuration-tests build/dhcp-codec-tests build/dhcp-state-tests build/dhcp-profile-tests build/profile-privacy-tests build/profile-privacy-dynamic build/dhcp-transport-tests build/resolver-tests build/thread-static build/thread-io-static build/thread-io-dynamic build/thread-dynamic build/futex-static build/futex-dynamic build/lifecycle-static build/lifecycle-dynamic build/x11-probe build/tcp-static build/tcp-dynamic build/tcp-fault-static build/tcp-fault-dynamic build/tcp-lifetime-static build/tcp-lifetime-dynamic build/tcp-challenge-static build/tcp-challenge-dynamic build/tcp-timeout-static build/tcp-timeout-dynamic
 MUSL_PROGRAMS += build/tcp-icmp-static build/tcp-icmp-dynamic
 MUSL_PROGRAMS += build/tcp-pmtu-static build/tcp-pmtu-dynamic
 MUSL_PROGRAMS += build/tcp-pressure-static build/tcp-pressure-dynamic

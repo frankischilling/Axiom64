@@ -89,7 +89,7 @@ Both adapter selections require six native virtual-device observations and sixte
 guest PCI-removal observations across the complete linkage, firmware and transport
 matrix. It retains 44 captures, four inspected boot images, exact pending-copy
 ownership and reclamation, actual device absence, socket error progression and
-the other original stream's full 5000-millisecond interval. All 252 damaged-evidence
+the other original stream's full 5000-millisecond interval. All 284 damaged-evidence
 controls must be rejected. Native configured-timeout and guest default TCP failure
 contracts remain separately documented and checked.
 

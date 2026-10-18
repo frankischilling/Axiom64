@@ -95,13 +95,18 @@ def physical(directory, row, lanes):
             'held copy owns exact abandoned tuple, sequence and bytes')
     require(re.search(rf'TCP_DEVICE_QUEUE_PENDING index={affected+1} owner=0x[1-9a-f][0-9a-f]* transmitted=0 length=566', trace_text)
             and 'TCP_DEVICE_QUEUE_FAILURE error=5 ' in trace_text and
-            'TCP_DEVICE_QUEUE_CLEARED owner=0x0 bytes=0x0 length=0 transmitted=0 remaining=0' in trace_text and
+            'TCP_DEVICE_COPY_CLEARED owner=0x0 bytes=0x0 length=0' in trace_text and
+            'TCP_DEVICE_QUEUE_CLEARED transmitted=0 remaining=0' in trace_text and
             'TCP_DEVICE_HEALTHY_FIN_AFTER_RECLAMATION' in trace_text,
             'actual failure reclaims the owned copy and leaves no queued callback or transmitted accounting')
-    markers = ('TCP_DEVICE_QUEUE_PENDING', 'TCP_DEVICE_QUEUE_FAILURE', 'TCP_DEVICE_QUEUE_CLEARED',
+    markers = ('TCP_DEVICE_QUEUE_PENDING', 'TCP_DEVICE_QUEUE_FAILURE', 'TCP_DEVICE_COPY_CLEARED', 'TCP_DEVICE_QUEUE_CLEARED',
                'TCP_DEVICE_HEALTHY_FIN_AFTER_RECLAMATION')
     require([trace_text.index(marker) for marker in markers] == sorted(trace_text.index(marker) for marker in markers),
             'owned queue failure and reclamation precede the surviving FIN')
+    pending_owner = re.search(r'TCP_DEVICE_QUEUE_PENDING index=\d owner=(0x[0-9a-f]+)', trace_text)[1]
+    require('break *ax::inet_failed if $queued && $rdi == (unsigned long)$ownerptr && $esi == 5' in script_text and
+            f'TCP_DEVICE_QUEUE_FAILURE error=5 owner={pending_owner} length=566' in trace_text,
+            'actual device failure is observed at the called owner boundary')
     events = {entry['stage']: entry for entry in evidence['events']}
     require(events['healthy_complete']['monotonic_ns'] - events['actual_guest_failure']['monotonic_ns'] >= 5000000000,
             'independent host monotonic observations retain the full healthy lifetime')

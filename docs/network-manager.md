@@ -43,6 +43,8 @@ Fault-test binaries inject a directory synchronization failure after a hint's re
 
 Linux open-description semantics follow the [flock implementation](https://github.com/torvalds/linux/blob/v6.12/fs/locks.c) and [API](https://man7.org/linux/man-pages/man2/flock.2.html). The manager's protocol requirements remain [DHCP](https://www.rfc-editor.org/rfc/rfc2131) and [IPv4 address conflict detection](https://www.rfc-editor.org/rfc/rfc5227).
 
+The address getter reads the IPv4 address and mask separately. If withdrawal occurs between those reads, it returns the same empty tuple as an initially absent address. Other ioctl errors preserve both caller outputs. `sudo python3 scripts/address_query_test.py` compares the real getter under glibc and static/dynamic musl in an isolated Linux network namespace. A linker wrapper removes the real address after the first read; the following real netmask ioctl must observe its absence. The same regression runs on both guest adapters in eight additional boots before the original 104 manager cases. Logs also check an ordinary tuple, an already absent address, injected I/O errors at either read, and descriptor cleanup. Evidence uses `build/address-query-*` and `build/manager-address-query-*`.
+
 ## Normal init supervision
 
 The image recipe sets `/etc/network` to mode 0700 after importing packages. Some packages supply that directory with mode 0755, which the manager correctly rejects when reading or writing private profiles. Both normal image profiles retain the packaged files inside it and give the saved-state directory its required private mode.

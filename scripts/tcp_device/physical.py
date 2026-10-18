@@ -80,25 +80,30 @@ class Controller:
         lines = (self.task / 'kernel/net/ipv4/core.cpp').read_text().splitlines()
         pending = next(index + 1 for index, line in enumerate(lines)
                        if 'if (!info || !info->live || !info->administrative || !info->carrier)' in line)
-        clear = next(index + 1 for index, line in enumerate(lines) if line == '    if (item.owner) {')
         array = "'kernel/net/ipv4/core.cpp'::'ax::(anonymous namespace)::output'"
         python_code = [
             'python', 'import gdb, os, time',
-            'class Cleared(gdb.FinishBreakpoint):',
-            '    def __init__(self):',
-            '        super().__init__(internal=True)',
-            '    def stop(self):',
-            '        item = gdb.parse_and_eval("$queueptr").dereference()',
-            '        owner = gdb.parse_and_eval("$ownerptr").dereference()',
-            f'        table = gdb.parse_and_eval({array!r})',
-            '        remaining = sum(int(table[i]["bytes"]) != 0 and table[i]["owner"] == gdb.parse_and_eval("$ownerptr") for i in range(32))',
-            '        print("TCP_DEVICE_QUEUE_CLEARED owner=%s bytes=%s length=%s transmitted=%s remaining=%d" % (item["owner"], item["bytes"], item["length"], owner["transmitted"], remaining))',
+            'copy_cleared = False',
+            'def reclaimed():',
+            '    global copy_cleared',
+            '    if int(gdb.parse_and_eval("$cleared")): return',
+            '    item = gdb.parse_and_eval("$queueptr").dereference()',
+            '    owner = gdb.parse_and_eval("$ownerptr").dereference()',
+            f'    table = gdb.parse_and_eval({array!r})',
+            '    remaining = sum(int(table[i]["bytes"]) != 0 and table[i]["owner"] == gdb.parse_and_eval("$ownerptr") for i in range(32))',
+            '    if not copy_cleared and not int(item["bytes"]):',
+            '        if int(item["owner"]) or int(item["length"]):',
+            '            raise gdb.GdbError("actual saved copy fields must be fully cleared before reuse")',
+            '        print("TCP_DEVICE_COPY_CLEARED owner=%s bytes=%s length=%s" % (item["owner"], item["bytes"], item["length"]))',
+            '        copy_cleared = True',
+            '    if copy_cleared and not int(owner["transmitted"]) and not remaining:',
+            '        print("TCP_DEVICE_QUEUE_CLEARED transmitted=%s remaining=%d" % (owner["transmitted"], remaining))',
             '        gdb.set_convenience_variable("cleared", 1)',
-            '        return False', 'end']
+            'end']
         self.script.write_text('\n'.join([
             'set pagination off', 'set confirm off',
             f'file {self.task / "build/axiom64.elf"}', f'target remote 127.0.0.1:{self.debug_port}',
-            'set $held = 0', 'set $queued = 0', 'set $cleared = 0', 'set $paused_for_remove = 0',
+            'set $held = 0', 'set $queued = 0', 'set $failed = 0', 'set $cleared = 0', 'set $paused_for_remove = 0',
             *python_code,
             f'break *ax::net_send if $rdi == {lane + 1} && $rdx == 566 && '
             '((unsigned char*)$rsi)[12] == 8 && ((unsigned char*)$rsi)[13] == 0 && '
@@ -123,14 +128,22 @@ class Controller:
             f'printf "TCP_DEVICE_QUEUE_PENDING index={lane + 1} owner=%#lx transmitted=%lu length=%lu\\n", (unsigned long)item.owner, item.owner->transmitted, item.length',
             'python print("TCP_DEVICE_QUEUED_FRAME " + bytes(gdb.selected_inferior().read_memory(int(gdb.parse_and_eval("item.bytes")) & ((1 << 64) - 1), 566)).hex())',
             'disable 2', 'continue', 'end',
-            f'break kernel/net/ipv4/core.cpp:{clear} if $queued && item.index == {lane + 1} && item.length == 566 && error == 5',
+            # Entry registers and saved addresses remain valid across optimized
+            # cleanup paths and interrupted frames. Observe the real error here;
+            # inspect completed reclamation before a later allocation can reuse
+            # the vacant slot. Both ARP and IPv4 allocate before filling a slot.
+            'break *ax::inet_failed if $queued && $rdi == (unsigned long)$ownerptr && $esi == 5',
             'commands', 'silent',
-            'printf "TCP_DEVICE_QUEUE_FAILURE error=%d owner=%#lx length=%lu\\n", error, (unsigned long)item.owner, item.length',
-            'python Cleared()', 'disable 3', 'continue', 'end',
-            f'break *ax::net_send if $cleared && $rdi == {2 - lane} && $rdx >= 54 && '
+            'printf "TCP_DEVICE_QUEUE_FAILURE error=%d owner=%#lx length=%lu\\n", $esi, (unsigned long)$queueptr->owner, $queueptr->length',
+            'set $failed = 1', 'disable 3', 'continue', 'end',
+            'break *ax::alloc if $failed && !$cleared',
+            'commands', 'silent', 'python reclaimed()', 'if $cleared', 'disable 4', 'end', 'continue', 'end',
+            f'break *ax::net_send if $failed && $rdi == {2 - lane} && $rdx >= 54 && '
             '((unsigned char*)$rsi)[12] == 8 && ((unsigned char*)$rsi)[13] == 0 && '
             '((unsigned char*)$rsi)[23] == 6 && (((unsigned char*)$rsi)[47] & 1)',
-            'commands', 'silent', 'printf "TCP_DEVICE_HEALTHY_FIN_AFTER_RECLAMATION\\n"',
+            'commands', 'silent', 'python reclaimed()',
+            'python\nif not int(gdb.parse_and_eval("$cleared")): raise gdb.GdbError("actual owned copies must be reclaimed before surviving FIN")\nend',
+            'printf "TCP_DEVICE_HEALTHY_FIN_AFTER_RECLAMATION\\n"',
             'detach', 'quit', 'end',
             f'python open({str(self.armed)!r}, "w").write("armed")', 'continue', '']))
         self.stream = self.log.open('wb')
@@ -192,7 +205,8 @@ class Controller:
         check(len(held) == len(queued) == 1 and held == queued,
               'pending owned output is the exact original held TCP frame')
         check('TCP_DEVICE_QUEUE_FAILURE error=5 ' in text and
-              re.search(r'TCP_DEVICE_QUEUE_CLEARED owner=0x0 bytes=0x0 length=0 transmitted=0 remaining=0', text) and
+              'TCP_DEVICE_COPY_CLEARED owner=0x0 bytes=0x0 length=0' in text and
+              'TCP_DEVICE_QUEUE_CLEARED transmitted=0 remaining=0' in text and
               'TCP_DEVICE_HEALTHY_FIN_AFTER_RECLAMATION' in text,
               'physical device failure reclaims the actual copy and transmitted accounting')
         self.save()

@@ -178,6 +178,7 @@ jobs:
           make -j2 image
           make build/rootfs-desktop.cpio
           make -j2 build/network-manager-dynamic build/network-manager-faults build/network-manager-dynamic-faults build/manager-tests build/manager-protocol build/manager-link
+          sudo python3 scripts/address_query_test.py
           make -j2 build/random-static build/random-dynamic
           make -j2 build/dns-static build/dns-dynamic
           make -j2 build/dns-tcp-static build/dns-tcp-dynamic
@@ -219,6 +220,13 @@ jobs:
           name: tcp-policy
           if-no-files-found: warn
           path: build/tcp-policy
+      - name: Upload native address withdrawal evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-address-query-native
+          if-no-files-found: error
+          path: build/address-query-*
       - name: Upload account policy and portable reader evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1150,6 +1158,7 @@ jobs:
             build/*results.json
             build/manager-protocol-*-packets.json
             build/manager-link-*-packets.json
+            build/axiom64-manager-address-query-*.iso
             build/dns-*-packets.json
             build/dns-tcp-*
             build/normal-init-*-dns-packets.json

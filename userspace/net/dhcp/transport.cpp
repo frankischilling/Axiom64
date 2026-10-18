@@ -74,9 +74,14 @@ int query_address(const char* interface, uint32_t& address, uint32_t& mask) {
         sockaddr_in endpoint;
         memcpy(&endpoint, &request.ifr_addr, sizeof(endpoint));
         found_address = ntohl(endpoint.sin_addr.s_addr);
-        if (ioctl(fd, SIOCGIFNETMASK, &request) < 0)
-            error = errno;
-        else {
+        if (ioctl(fd, SIOCGIFNETMASK, &request) < 0) {
+            // Withdrawal can occur between the two reads. Report the same empty
+            // tuple as an address that was already absent at the first read.
+            if (errno == EADDRNOTAVAIL)
+                found_address = 0;
+            else
+                error = errno;
+        } else {
             memcpy(&endpoint, &request.ifr_netmask, sizeof(endpoint));
             found_mask = ntohl(endpoint.sin_addr.s_addr);
         }

@@ -6,7 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import struct
-from tcp_capture_clock import ClockEvidenceError, raw_records
+from tcp_capture_clock import ClockEvidenceError, native_clock_offset, raw_records
 
 
 class MutationClock:
@@ -33,11 +33,12 @@ class MutationClock:
             assert len(receipts) == len(packets)
         else:
             receipts = [None] * len(packets)
+        translation, _ = native_clock_offset([*receipts, statistics['clock_start'], statistics['clock_end']])
         self.times, self.original = {}, {}
         offset = 24
         for packet, receipt in zip(packets, receipts):
             self.original[offset] = packet['stamp'] / 1000
-            self.times[offset] = (receipt['receipt_monotonic_ns'] / 1000000 if receipt else
+            self.times[offset] = ((receipt['kernel_realtime_ns'] - translation) / 1000000 if receipt else
                                   self.original[offset])
             offset += 16 + len(packet['frame'])
 
@@ -108,8 +109,22 @@ def candidate_verifier(verifier, original, statistics):
             values.append(receipt)
         data = ''.join(json.dumps(value) + '\n' for value in values).encode()
         clock_path.write_bytes(data)
-        metadata = dict(statistics, packets=len(values), receipt_frames=len(values),
+        metadata = deepcopy(statistics)
+        metadata.update(packets=len(values), receipt_frames=len(values),
                         monotonic_receipts_sha256=hashlib.sha256(data).hexdigest())
+        if timing_changed:
+            # Synthetic timing candidates retain a coherent capture bracket;
+            # the original producer's anchors and receipts remain untouched.
+            start, end = metadata['clock_start'], metadata['clock_end']
+            early = min(0, min(row['receipt_monotonic_ns'] for row in values) -
+                        start['receipt_monotonic_after_ns'],
+                        min(row['kernel_realtime_ns'] for row in values) - start['receipt_realtime_ns'])
+            late = max(0, max(row['receipt_monotonic_after_ns'] for row in values) -
+                       end['receipt_monotonic_ns'],
+                       max(row['kernel_realtime_ns'] for row in values) - end['receipt_realtime_ns'])
+            for anchor, delta in ((start, early), (end, late)):
+                for field in anchor:
+                    anchor[field] += delta
         check.timing_changed = timing_changed
         try:
             return verifier(path, lane, evidence, True, metadata)

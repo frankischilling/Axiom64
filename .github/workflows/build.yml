@@ -64,6 +64,8 @@ jobs:
         run: python3 scripts/tests/normal_login_test.py -v
       - name: Replay actual kernel-interrupted ordinary Bash prompts
         run: python3 scripts/tests/console_prompt_test.py -v
+      - name: Check complete and focused input archive boundaries
+        run: python3 scripts/tests/ci_inputs_test.py -v
       - name: Run prompt verification from exported corresponding-source inputs
         run: python3 scripts/tests/source_bundle_inputs_test.py -v
       - name: Test seed supervision observes complete ordinary-console records
@@ -254,20 +256,9 @@ jobs:
       - name: Pack this run's test inputs
         # Keep source/output timestamps and executable modes together so make
         # can reuse this commit's build in each isolated test workspace.
-        run: |
-          busybox_dir=$(python3 -c "import json; print('build/busybox-' + json.load(open('dependencies.json'))['busybox']['version'])")
-          tar -cf "$RUNNER_TEMP/ci-inputs.tar" \
-            --exclude='./.git' --exclude='./.local' --exclude='__pycache__' \
-            --exclude='./downloads/sources' --exclude='./build/axiom64-sources.tar' \
-            --exclude='./build/axiom64.iso' --exclude='./build/iso*' \
-            --exclude='./build/busybox-*' --exclude='./build/uapi' \
-            --exclude='./build/openssl/source' \
-            --exclude='./build/openssl/*/*/*/build/test' \
-            --exclude='./build/openssl/*/*/*/build/fuzz' \
-            --exclude='./build/openssl/*/*/*/build/*.o' \
-            --exclude='./build/openssl/*/*/*/build/*.a' \
-            . "$busybox_dir/busybox" "$busybox_dir/.config" "$busybox_dir/LICENSE" "$busybox_dir/.axiom64-toolchain"
-          gzip -1 "$RUNNER_TEMP/ci-inputs.tar"
+        run: bash scripts/ci/inputs.sh full
+      - name: Pack rotation inputs without unrelated ports or root images
+        run: bash scripts/ci/inputs.sh rotation
       - name: Share test inputs with isolated jobs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -276,6 +267,14 @@ jobs:
           retention-days: 1
           if-no-files-found: error
           path: ${{ runner.temp }}/ci-inputs.tar.gz
+      - name: Share focused rotation inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-ci-rotation-inputs
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+          path: ${{ runner.temp }}/ci-rotation-inputs.tar.gz
       - name: Upload boot image and kernel
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -849,6 +848,8 @@ jobs:
         if: matrix.suite == 'tcp-fault-icmp'
         run: |
           python3 scripts/tests/tcp_mutation_clock_test.py
+          python3 scripts/tests/tcp_packet_clock_test.py -v
+          python3 scripts/tests/tcp_capture_profiles_test.py -v
           sudo -n make test-tcp-recovery-native
           make test-tcp-recovery-sockets
           python3 scripts/tcp_recovery_capture.py build/tcp-recovery-native-results.json --output build/tcp-recovery-native-audit.json
@@ -1502,10 +1503,10 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           digest-mismatch: error
-          name: axiom64-ci-inputs
+          name: axiom64-ci-rotation-inputs
           path: ${{ runner.temp }}/ci-inputs
       - name: Restore source and build together
-        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-rotation-inputs.tar.gz"
       - name: Install build and emulation tools
         run: bash scripts/ci/tools.sh restore
       - name: Interrupt all assigned rotation writes and flushes in every fault mode

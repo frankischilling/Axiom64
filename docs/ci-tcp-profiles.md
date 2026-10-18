@@ -100,8 +100,9 @@ fixture construction. All observe the complete default interval. Each publishes 
 scoped evidence; the four guest jobs also publish their generated static/dynamic images.
 Download all five evidence artifacts and all four fixture artifacts to audit this
 profile's 22 captures, 264 flows and 396 damaged-evidence cases. Native packet
-timestamps remain unchanged; separate monotonic receipts establish elapsed time
-and have their own corruption checks within the existing jobs.
+timestamps remain unchanged. Paired capture anchors and per-frame clock readings
+validate one constant translation into the monotonic clock domain, preserving
+packet intervals through delayed reads. Their corruption checks stay in the existing jobs.
 
 All earlier non-profile suites remain present. `fail-fast: false` preserves evidence
 from other jobs when one fails. The required `qemu` aggregate checks the build and

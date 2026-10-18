@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tcp_capture_clock import bind_native_clock, raw_records
+from tcp_capture_clock import bind_native_clock, native_clock_offset, raw_records
 from tcp_clock_mutations import candidate_verifier
 from tcp_recovery_capture import decode
 
@@ -38,12 +38,20 @@ class MutationClockRegression(unittest.TestCase):
             statistics = dict(packets=4, dropped=0, receipt_frames=4, original_packet_times_not_rescaled=True,
                 monotonic_receipts=receipts.name,
                 monotonic_receipts_sha256=hashlib.sha256(receipts.read_bytes()).hexdigest())
+            translation, _ = native_clock_offset(fixture['receipts'])
+            # This replay fixture predates producer anchors. Its synthetic
+            # bracket exists only to exercise ownership-preserving mutations.
+            for name, mono in (('clock_start', fixture['receipts'][0]['receipt_monotonic_ns'] - 1000000),
+                               ('clock_end', fixture['receipts'][-1]['receipt_monotonic_after_ns'] + 1000000)):
+                statistics[name] = dict(receipt_monotonic_ns=mono,
+                    receipt_realtime_ns=mono + translation, receipt_monotonic_after_ns=mono + 100)
             originals = {path: path.read_bytes() for path in (original, receipts)}
 
             def verify(path, lane, evidence, native=False, statistics=None):
                 rows = list(raw_records(path))
                 bind_native_clock(path, rows, statistics)
-                expected = [row['receipt_monotonic_ns'] for row in fixture['receipts'][2:]]
+                translation, _ = native_clock_offset([*fixture['receipts'], statistics['clock_start'], statistics['clock_end']])
+                expected = [row['kernel_realtime_ns'] - translation for row in fixture['receipts'][2:]]
                 self.assertEqual([row['monotonic_ns'] for row in rows], expected)
                 return decode(path, lane, statistics)
 

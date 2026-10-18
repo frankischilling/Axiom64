@@ -65,14 +65,27 @@ def controls(path, statistics, directory):
         clock_file.write_bytes(raw_receipts)
         return deepcopy(statistics)
 
-    for label in ('receipt-path', 'receipt-fingerprint', 'dropped-frame'):
+    for label in ('receipt-path', 'receipt-fingerprint', 'dropped-frame',
+                  'missing-anchor', 'anchor-offset-step', 'anchor-order', 'late-start-anchor'):
         changed = restore()
         if label == 'receipt-path':
             changed['monotonic_receipts'] = '../outside.clocks.jsonl'
         elif label == 'receipt-fingerprint':
             changed['monotonic_receipts_sha256'] = '0' * 64
-        else:
+        elif label == 'dropped-frame':
             changed['dropped'] = 1
+        elif label == 'missing-anchor':
+            del changed['clock_start']
+        elif label == 'anchor-offset-step':
+            changed['clock_start'] = dict(changed['clock_start'])
+            changed['clock_start']['receipt_realtime_ns'] += 100000000
+        elif label == 'anchor-order':
+            changed['clock_end'] = dict(changed['clock_end'])
+            changed['clock_end']['receipt_monotonic_after_ns'] = changed['clock_end']['receipt_monotonic_ns'] - 1
+        else:
+            changed['clock_start'] = dict(changed['clock_start'])
+            shifted = receipts[-1]['receipt_monotonic_after_ns'] + 1
+            changed['clock_start'].update(receipt_monotonic_ns=shifted, receipt_monotonic_after_ns=shifted)
         results.append(rejected(lambda: audit(candidate, changed), label))
 
     for label in ('missing-receipt', 'frame-hash', 'kernel-timestamp', 'backward-receipt',
@@ -142,7 +155,7 @@ def controls(path, statistics, directory):
         clock_file.write_bytes(encoded)
         changed['monotonic_receipts_sha256'] = hashlib.sha256(encoded).hexdigest()
         audit(candidate, changed)
-    require(len(results) == 16, 'all native clock corruption classes rejected')
+    require(len(results) == 20, 'all native clock corruption classes rejected')
     return results
 
 

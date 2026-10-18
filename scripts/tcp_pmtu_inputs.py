@@ -2,7 +2,7 @@
 """Fingerprint PMTU clients, providers, kernel and independent fixture sources."""
 from tcp_icmp_inputs import record as record_inputs
 
-SOURCES = ('Makefile', 'scripts/tcp_capture_clock.py', 'scripts/tests/tcp_clock_mutations.py', 'userspace/tests/net/tcp_pmtu.c', 'userspace/tests/net/packet.c',
+SOURCES = ('Makefile', 'scripts/tcp_capture_profiles.py', 'scripts/tcp_capture_clock.py', 'scripts/tests/tcp_clock_mutations.py', 'userspace/tests/net/tcp_pmtu.c', 'userspace/tests/net/packet.c',
            'scripts/tcp_pmtu_peer.py', 'scripts/tcp_pmtu_inputs.py',
            'scripts/tcp_pmtu_capture.py', 'scripts/tcp_icmp_inputs.py',
            'scripts/tcp_icmp_capture.py', 'scripts/tcp_fault_peer.py',

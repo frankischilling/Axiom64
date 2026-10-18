@@ -4,6 +4,7 @@ import argparse
 from collections import Counter, defaultdict
 import json
 from pathlib import Path
+from tcp_capture_profiles import require_complete_profiles
 from tcp_capture_clock import bind_native_clock, microseconds
 import re
 import struct
@@ -273,7 +274,7 @@ def audit(report, root=None, input_root=None, host_libraries=None):
     report = Path(report)
     root = Path(root) if root else report.parent
     rows = json.loads(report.read_text())
-    require(isinstance(rows, list) and rows, 'nonempty original pressure results')
+    require_complete_profiles(rows)
     return [audit_row(root, row, input_root, host_libraries) for row in rows]
 
 

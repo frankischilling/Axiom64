@@ -12,6 +12,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tcp_clock_mutations import candidate_auditor, candidate_verifier
+from tcp_capture_profiles import require_complete_profiles
 from tcp_capture_clock import ClockEvidenceError, microseconds
 from fetch import ROOT
 from tcp_icmp_capture import checksum, require, tcp_fields
@@ -120,7 +121,9 @@ def main():
                 'reused-UDP-port': 'sixteen simultaneously held UDP ports'}
     for report in reports:
         root = report.parent
-        for row in json.loads(report.read_text()):
+        rows = json.loads(report.read_text())
+        require_complete_profiles(rows)
+        for row in rows:
             audit_row(root, row, args.input_root, libraries)
             native = 'client_namespace' in row
             checked = candidate_auditor(audit_row, root, row)

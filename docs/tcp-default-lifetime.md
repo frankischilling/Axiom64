@@ -83,8 +83,10 @@ unchanged. Every NIC has a separate zero-drop capture. Original kernel realtime
 timestamps remain in the PCAP. A separate receipt file records monotonic and realtime
 readings, each frame's SHA-256 and its original kernel timestamp. The independent
 auditor verifies every binding, record count, clock pair and workload reader latency
-before using monotonic receipts for native elapsed checks. Guest captures retain
-their virtual packet clock. No packet timestamp is rewritten.
+and paired anchors before capture startup and after completion. All pairs must
+support one constant realtime-to-monotonic offset. Applying that offset to kernel
+packet times preserves their intervals through delayed or batched reads. Guest
+captures retain their virtual packet clock. No packet timestamp is rewritten.
 
 `make test-tcp-lifetime` covers BIOS/UEFI, modern/legacy virtio and both musl linkages,
 with e1000 alongside virtio-net. Fixture construction is sequential; at most two
@@ -110,9 +112,9 @@ errors, reclamation or application deadlines; shift a packet clock; or shorten t
 responsive observation; or move a flow onto another live case's local endpoint.
 The complete matrix requires 396 rejected cases. Native protocol candidates also
 repair their test-only receipt bindings, so a stale hash cannot substitute for a
-protocol rejection. Originals remain unchanged. Sixteen additional receipt controls
+protocol rejection. Originals remain unchanged. Twenty additional receipt controls
 per native capture reject missing or forged clocks, frame substitutions, invalid
-clock pairs, delayed readers and inconsistent counts or paths.
+clock pairs, capture anchors, delayed readers and inconsistent counts or paths.
 
 The existing six TCP fault profiles and every other CI suite remain required. The
 five default-lifetime profiles run within the shared test matrix. Every required

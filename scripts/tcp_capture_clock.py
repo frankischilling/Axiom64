@@ -43,10 +43,18 @@ def raw_records(path):
         require(count, 'nonempty original native clock capture')
 
 
+def native_clock_offset(receipts):
+    """Choose one translation supported by every paired clock observation."""
+    lower = max(row['receipt_realtime_ns'] - row['receipt_monotonic_after_ns'] for row in receipts)
+    upper = min(row['receipt_realtime_ns'] - row['receipt_monotonic_ns'] for row in receipts)
+    require(lower <= upper, 'one stable native realtime-to-monotonic offset')
+    return (lower + upper) // 2, upper - lower
+
 def bind_native_clock(path, rows, statistics):
     """Attach monotonic_ns without changing decoded frame, stamp or ms fields.
 
     Every raw frame remains bound to its original kernel timestamp and receipt.
+    One constant clock translation preserves every kernel packet interval.
     Latency checks apply to the decoded workload, preserving existing exclusions
     for unrelated IPv6 control traffic whose timestamps may predate veth delivery.
     """
@@ -69,7 +77,22 @@ def bind_native_clock(path, rows, statistics):
             'complete lossless native capture and clock counts')
     receipts = encoded.splitlines()
     require(len(receipts) == statistics['receipt_frames'], 'one native receipt for every captured frame')
+    anchors = []
+    clock_keys = {'receipt_monotonic_ns', 'receipt_realtime_ns', 'receipt_monotonic_after_ns'}
+    for name in ('clock_start', 'clock_end'):
+        anchor = statistics.get(name)
+        require(isinstance(anchor, dict) and set(anchor) == clock_keys and
+                all(type(anchor[key]) is int and anchor[key] >= 0 for key in clock_keys),
+                'native capture has paired clock anchors')
+        before, after = anchor['receipt_monotonic_ns'], anchor['receipt_monotonic_after_ns']
+        require(before <= after and after - before <= 100000000,
+                'ordered bounded native capture clock anchors')
+        anchors.append(anchor)
+    start, end = anchors
+    require(start['receipt_monotonic_after_ns'] <= end['receipt_monotonic_ns'],
+            'ordered native capture clock bracket')
     by_frame = defaultdict(deque)
+    observations = []
     previous, first_offset, last_offset, count = None, None, None, 0
     keys = {'frame', 'sha256', 'kernel_realtime_ns', 'receipt_monotonic_ns',
             'receipt_realtime_ns', 'receipt_monotonic_after_ns'}
@@ -90,14 +113,18 @@ def bind_native_clock(path, rows, statistics):
         before, after = receipt['receipt_monotonic_ns'], receipt['receipt_monotonic_after_ns']
         require(before <= after and after - before <= 100000000 and
                 (previous is None or before >= previous), 'ordered bounded native monotonic receipt pairs')
+        require(start['receipt_monotonic_after_ns'] <= before <= after <= end['receipt_monotonic_ns'],
+                'every native receipt lies inside its capture clock bracket')
         previous = before
         offset = receipt['receipt_realtime_ns'] - before
         if first_offset is None:
             first_offset = offset
         last_offset = offset
         by_frame[(packet['stamp'], receipt['sha256'])].append(receipt)
+        observations.append(receipt)
         count += 1
     require(count == statistics['packets'], 'actual native capture count matches its clock records')
+    offset, uncertainty = native_clock_offset([*anchors, *observations])
     delays = []
     for row in rows:
         require(type(row.get('stamp')) is int and isinstance(row.get('frame'), bytes),
@@ -105,12 +132,17 @@ def bind_native_clock(path, rows, statistics):
         key = row['stamp'], hashlib.sha256(row['frame']).hexdigest()
         require(key in by_frame and by_frame[key], 'every decoded native workload packet has one independent receipt')
         receipt = by_frame[key].popleft()
+        require(start['receipt_realtime_ns'] <= receipt['kernel_realtime_ns'] <= end['receipt_realtime_ns'],
+                'every native workload packet lies inside its capture clock bracket')
         delay = receipt['receipt_realtime_ns'] - receipt['kernel_realtime_ns']
         require(0 <= delay <= 1000000000, 'bounded independent native workload reader latency')
-        row['monotonic_ns'] = receipt['receipt_monotonic_ns']
+        # Reader scheduling can delay or batch recvmsg returns. It must not
+        # enlarge or compress the independently captured wire interval.
+        row['monotonic_ns'] = receipt['kernel_realtime_ns'] - offset
         delays.append(delay)
     require(delays, 'nonempty independently timed native workload')
     return dict(frames=count, timed_frames=len(delays),
+                realtime_to_monotonic_offset_ns=offset, offset_uncertainty_ns=uncertainty,
                 max_reader_latency_ms=max(delays) / 1000000,
                 realtime_offset_change_ms=(last_offset - first_offset) / 1000000,
                 original_packet_times_not_rescaled=True)

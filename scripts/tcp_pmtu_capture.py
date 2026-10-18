@@ -4,6 +4,7 @@ import argparse
 from collections import Counter
 import json
 from pathlib import Path
+from tcp_capture_profiles import require_complete_profiles
 from tcp_capture_clock import microseconds
 import re
 from tcp_icmp_capture import audit_inputs, checksum, fnv, packets, require, tcp_fields
@@ -268,7 +269,7 @@ def audit(report, root=None, input_root=None, host_libraries=None):
     report = Path(report)
     root = Path(root) if root else report.parent
     rows = json.loads(report.read_text())
-    require(isinstance(rows, list) and rows, 'nonempty original runtime results')
+    require_complete_profiles(rows)
     return [audit_row(root, row, input_root, host_libraries) for row in rows]
 
 

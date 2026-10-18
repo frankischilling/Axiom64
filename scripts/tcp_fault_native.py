@@ -19,8 +19,16 @@ from tcp_fault_peer import check
 from tcp_fault_test import exercise, wire_configuration, application_configuration
 
 
+def clock_pair():
+    before = time.monotonic_ns()
+    realtime = time.time_ns()
+    return dict(receipt_monotonic_ns=before, receipt_realtime_ns=realtime,
+                receipt_monotonic_after_ns=time.monotonic_ns())
+
+
 class Capture:
     def __init__(self, interface, path):
+        self.clock_start = clock_pair()
         self.socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
         # Linux SO_RCVBUFFORCE reserves a per-socket burst budget without
         # changing host sysctls. This isolated fixture already requires root.
@@ -48,9 +56,7 @@ class Capture:
             while True:
                 try:
                     frame, ancillary, flags, _ = self.socket.recvmsg(65535, socket.CMSG_SPACE(16))
-                    monotonic = time.monotonic_ns()
-                    realtime = time.time_ns()
-                    after = time.monotonic_ns()
+                    observed = clock_pair()
                 except socket.timeout:
                     if self.stopping.is_set():
                         break
@@ -70,8 +76,7 @@ class Capture:
                 # to an independently observed monotonic receipt.
                 self.clocks.write(json.dumps(dict(frame=self.frame_count,
                     sha256=hashlib.sha256(frame).hexdigest(), kernel_realtime_ns=timestamp,
-                    receipt_monotonic_ns=monotonic, receipt_realtime_ns=realtime,
-                    receipt_monotonic_after_ns=after)) + '\n')
+                    **observed)) + '\n')
                 self.frame_count += 1
         except Exception as exception:
             self.error = exception
@@ -91,7 +96,8 @@ class Capture:
             return dict(packets=packets, dropped=dropped, buffer_bytes=self.buffer_bytes,
                         monotonic_receipts=self.clocks_path.name,
                         monotonic_receipts_sha256=hashlib.sha256(self.clocks_path.read_bytes()).hexdigest(),
-                        receipt_frames=self.frame_count, original_packet_times_not_rescaled=True)
+                        receipt_frames=self.frame_count, original_packet_times_not_rescaled=True,
+                        clock_start=self.clock_start, clock_end=clock_pair())
         finally:
             self.socket.close()
             self.output.close()

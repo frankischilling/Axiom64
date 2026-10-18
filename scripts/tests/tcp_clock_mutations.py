@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Keep malicious protocol candidates clock-consistent without modifying originals."""
+from collections import Counter, defaultdict, deque
 from copy import deepcopy
 from difflib import SequenceMatcher
 import hashlib
@@ -49,7 +50,28 @@ class MutationClock:
         return None if desired is None else self.original[offset] + desired - self.times[offset]
 
 
-def candidate_verifier(verifier, original, statistics):
+def reordered_frame_owners(packets, changed):
+    """Keep exact records and moved unchanged frames with their own receipts."""
+    if Counter(packet['frame'] for packet in packets) != Counter(packet['frame'] for packet in changed):
+        return None
+    exact = defaultdict(deque)
+    for owner, packet in enumerate(packets):
+        exact[packet['stamp'], packet['frame']].append(owner)
+    owners = []
+    for packet in changed:
+        matches = exact[packet['stamp'], packet['frame']]
+        owners.append(matches.popleft() if matches else None)
+    unused = set(range(len(packets))) - {owner for owner in owners if owner is not None}
+    remaining = defaultdict(deque)
+    for owner in sorted(unused):
+        remaining[packets[owner]['frame']].append(owner)
+    for index, owner in enumerate(owners):
+        if owner is None:
+            owners[index] = remaining[changed[index]['frame']].popleft()
+    return owners
+
+
+def candidate_verifier(verifier, original, statistics, *, reschedule_reordered=False):
     original = Path(original)
     if statistics is None:
         def guest(path, lane, evidence, native=False):
@@ -79,8 +101,13 @@ def candidate_verifier(verifier, original, statistics):
             # Let the original protocol reader diagnose truncated/malformed
             # captures before any clock binding; do not fabricate a repair.
             return verifier(path, lane, evidence, True, statistics)
+        reordered = False
         if len(changed) == len(packets):
-            owners = list(range(len(packets)))
+            owners = reordered_frame_owners(packets, changed)
+            if owners is None:
+                owners = list(range(len(packets)))
+            else:
+                reordered = owners != list(range(len(packets)))
         else:
             owners = [None] * len(changed)
             changed_tokens = [(packet['stamp'], packet['frame']) for packet in changed]
@@ -107,6 +134,16 @@ def candidate_verifier(verifier, original, statistics):
                           'receipt_monotonic_after_ns'):
                 receipt[field] += delta
             values.append(receipt)
+        if timing_changed and reordered and reschedule_reordered:
+            # A reordered candidate may put packets closer than their original
+            # read delays. Delay only copied receipt pairs, preserving their
+            # clock offset and every candidate kernel packet timestamp.
+            for previous, receipt in zip(values, values[1:]):
+                delay = previous['receipt_monotonic_ns'] - receipt['receipt_monotonic_ns']
+                if delay > 0:
+                    for field in ('receipt_monotonic_ns', 'receipt_realtime_ns',
+                                  'receipt_monotonic_after_ns'):
+                        receipt[field] += delay
         data = ''.join(json.dumps(value) + '\n' for value in values).encode()
         clock_path.write_bytes(data)
         metadata = deepcopy(statistics)
@@ -138,13 +175,14 @@ def candidate_verifier(verifier, original, statistics):
     return check
 
 
-def candidate_auditor(auditor, original_root, original_row):
+def candidate_auditor(auditor, original_root, original_row, *, reschedule_reordered=False):
     """Repair only test-candidate clock bindings before auditing a copied row."""
     original_root = Path(original_root)
     if 'client_namespace' not in original_row:
         return auditor
     metadata = lambda path, lane, evidence, native=False, statistics=None: statistics
-    checks = [candidate_verifier(metadata, original_root / name, statistics)
+    checks = [candidate_verifier(metadata, original_root / name, statistics,
+                                 reschedule_reordered=reschedule_reordered)
               for name, statistics in zip(original_row['captures'], original_row['capture_statistics'])]
 
     def check(root, row, *args, **kwargs):

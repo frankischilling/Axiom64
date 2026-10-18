@@ -79,10 +79,11 @@ def mutations(build, row, lane, destination, cases):
     results = []
 
     def reject(kind, transform):
-        # The shared auditor translates reordered native packets with one
-        # constant clock offset. Rewriting a receipt here would invalidate its
-        # paired clock evidence before the quote ownership check can run.
-        checked = candidate_auditor(audit_row, build, row)
+        # Only the quote-before-SYN control may reschedule copied receipt
+        # pairs. Other clock corruptions must retain their native rejection;
+        # original observations and packet timestamps remain untouched.
+        checked = candidate_auditor(audit_row, build, row,
+                                    reschedule_reordered=(kind == 'noncausal-error'))
         with tempfile.TemporaryDirectory(prefix='axiom64-icmp-damage-') as temporary:
             folder = Path(temporary)
             for name, data in originals.items():

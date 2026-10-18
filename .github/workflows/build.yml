@@ -1199,6 +1199,7 @@ jobs:
             build/*.gdb
             build/*results.json
             build/ipv4-*.pcap
+            build/ipv4-*-alias-lane*.zip
             build/ipv4-*-expiry-lane*.zip
             build/ipv4-*-pmtu-lane*.zip
             build/ipv4-*-pmtu-lifetime-lane*.zip

@@ -17,10 +17,12 @@ import time
 from build_musl import loader
 from fetch import ROOT
 from ipv4_aliases import AliasPeer
+from ipv4_alias_capture import verify_capture as verify_alias_capture
 from tcp_fault_native import Capture
 
 SOURCES = ('Makefile', 'userspace/tests/net/ipv4.c', 'userspace/tests/net/ipv4_aliases.c',
            'userspace/tests/net/ipv4_aliases.h', 'scripts/ipv4_aliases.py',
+           'scripts/ipv4_alias_capture.py', 'scripts/ipv4_path_mtu_capture.py',
            'userspace/tests/net/ipv4_fragments.c', 'userspace/tests/net/ipv4_fragments.h',
            'userspace/tests/net/ipv4_path_mtu.c', 'userspace/tests/net/ipv4_path_mtu.h',
            'scripts/ipv4_alias_native.py', 'scripts/tcp_fault_native.py', 'scripts/build_musl.py',
@@ -116,9 +118,17 @@ def child(profile, directory):
         for tap in taps:
             os.close(tap)
     text = (directory / 'client.log').read_text(errors='replace') if process else ''
+    audits = []
+    if error is None and process is not None and process.returncode == 0 and all(p.passed for p in peers):
+        try:
+            for lane in range(2):
+                audits.append(verify_alias_capture(directory / f'lane{lane}.pcap', lane,
+                    directory / 'client.log', directory / f'lane{lane}-alias-damaged.zip'))
+        except Exception as exception:
+            error = f'alias capture audit: {exception}'
     unchanged = all(digest(ROOT / n) == value for n, value in sources.items())
     passed = (error is None and process is not None and process.returncode == 0 and
-              unchanged and len(statistics) == 2 and all(not s['dropped'] for s in statistics) and
+              unchanged and len(audits) == 2 and all(a['passed'] for a in audits) and len(statistics) == 2 and all(not s['dropped'] for s in statistics) and
               all(peer.passed for peer in peers) and all(
                   f'IPV4_ALIAS_PASS index={lane + 1} wire_cases=4 local_udp=3\n' in text
                   for lane in range(2)))
@@ -126,7 +136,7 @@ def child(profile, directory):
                   returncode=process.returncode if process else None,
                   peers=[dict(cases=p.cases, arp_requests=p.arp_requests, arp_replies=p.arp_replies,
                               kernel_replies=p.kernel_replies, passed=p.passed) for p in peers],
-                  capture_statistics=statistics, link_statistics=links,
+                  capture_audits=audits, capture_statistics=statistics, link_statistics=links,
                   seconds=time.monotonic() - started)
     (directory / 'receipt.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({k: v for k, v in result.items() if k not in

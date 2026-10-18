@@ -18,6 +18,7 @@ from network_fault import inject
 from qmp import Qmp
 from ipv4_fragments import FragmentPeer
 from ipv4_aliases import AliasPeer
+from ipv4_alias_capture import verify_capture as verify_alias_capture
 from ipv4_expiry_capture import verify_capture
 from ipv4_path_mtu_capture import verify_capture as verify_path_mtu
 from ipv4_path_mtu_lifetime_capture import verify_capture as verify_path_lifetime
@@ -640,6 +641,15 @@ def run(firmware, transport, timeout, fault=False, *, image=None, gdb_port=1237)
                      peer.fragments.output.acknowledged and peer.fragments.expiry.passed and
                      peer.fragments.path_mtu.passed and peer.fragments.path_mtu.lifetime.passed
                      for peer in peers)
+    alias_audits = []
+    if not fault and passed and returncode == 1 and not timed_out and not error and not missing:
+        try:
+            for lane in range(2):
+                archive = ROOT / 'build' / f'{label}-alias-lane{lane}-{time.monotonic_ns()}.zip'
+                alias_audits.append(verify_alias_capture(ROOT / 'build' / f'{label}-lane{lane}.pcap',
+                                                       lane, log, archive))
+        except Exception as exception:
+            error = f'alias capture audit: {exception}'
     expiry_audits = []
     if not fault and passed and returncode == 1 and not timed_out and not error and not missing:
         try:
@@ -698,6 +708,7 @@ def run(firmware, transport, timeout, fault=False, *, image=None, gdb_port=1237)
                   fragment_output_frames=[peer.fragments.output.frames for peer in peers],
                   fragment_output_final_ack=[peer.fragments.output.acknowledged for peer in peers],
                   fragment_expiry=[peer.fragments.expiry.report() for peer in peers],
+                  address_alias_capture_audits=alias_audits,
                   fragment_expiry_capture_audits=expiry_audits,
                   path_mtu=[peer.fragments.path_mtu.report() for peer in peers],
                   path_mtu_capture_audits=path_audits,
@@ -705,7 +716,8 @@ def run(firmware, transport, timeout, fault=False, *, image=None, gdb_port=1237)
                   path_mtu_lifetime_capture_audits=lifetime_audits,
                   captures=[f'{label}-lane{lane}.pcap' for lane in range(2)],
                   seconds=round(time.monotonic() - started, 2), log=log.name,
-                  passed=returncode == 1 and not timed_out and not error and not missing and passed)
+                  passed=(returncode == 1 and not timed_out and not error and not missing and passed and
+                          (fault or (len(alias_audits) == 2 and all(a['passed'] for a in alias_audits)))))
     print(json.dumps(result), flush=True)
     if not result['passed']:
         print('\n'.join(text.splitlines()[-25:]), flush=True)

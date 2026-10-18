@@ -219,7 +219,7 @@ jobs:
         run: |
           mkdir -p build/ipv4-policy
           python3 scripts/tests/network_fixture_test.py 2>&1 | tee build/ipv4-policy/fixture.log
-          make test-ipv4-reassembly test-ipv4-fragmentation 2>&1 | tee build/ipv4-policy/host.log
+          make test-ipv4-reassembly test-ipv4-fragmentation test-ipv4-path-mtu 2>&1 | tee build/ipv4-policy/host.log
       - name: Upload IPv4 policy evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1188,6 +1188,7 @@ jobs:
             build/*results.json
             build/ipv4-*.pcap
             build/ipv4-*-expiry-lane*.zip
+            build/ipv4-*-pmtu-lane*.zip
             build/manager-protocol-*-packets.json
             build/manager-link-*-packets.json
             build/axiom64-manager-address-query-*.iso

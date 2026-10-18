@@ -151,16 +151,20 @@ void inet_failed(InetSocket* socket, int error) {
         socket->error = error;
 }
 
-void inet_icmp_error(unsigned index, const uint8_t* quote, int error) {
+void inet_icmp_error(unsigned index, const uint8_t* quote, int error, uint16_t announced_mtu) {
     uint32_t local = ip4::get32(quote + 12), peer = ip4::get32(quote + 16);
     InetSocket* best = nullptr;
     unsigned best_score = 0;
     for (auto& socket : inet_sockets) {
-        if (!socket.used || socket.peer != peer || !socket.peer ||
-            (socket.index && socket.index != index) || socket.local != local)
+        if (!socket.used || (socket.peer && socket.peer != peer) ||
+            (socket.index && socket.index != index) || (socket.local && socket.local != local))
             continue;
-        if (socket.type == 3 && quote[9] == 1)
-            inet_failed(&socket, error);
+        if (socket.type == 3 && quote[9] == 1) {
+            if (error == 90 && inet_accept_path_mtu(&socket))
+                ipv4_learn_pmtu(local, peer, index, announced_mtu, ip4::get16(quote + 2));
+            if (socket.peer && (error != 90 || socket.mtu_policy))
+                inet_failed(&socket, error);
+        }
         if (socket.type != 2 || quote[9] != 17 || socket.local_port != ip4::get16(quote + 20) ||
             (socket.peer_port && __builtin_bswap16(socket.peer_port) != ip4::get16(quote + 22)))
             continue;
@@ -170,20 +174,33 @@ void inet_icmp_error(unsigned index, const uint8_t* quote, int error) {
             best_score = score;
         }
     }
-    if (best)
-        inet_failed(best, error);
+    if (best) {
+        if (error == 90 && inet_accept_path_mtu(best))
+            ipv4_learn_pmtu(local, peer, index, announced_mtu, ip4::get16(quote + 2));
+        if (best->peer && (error != 90 || best->mtu_policy))
+            inet_failed(best, error);
+    }
 }
 
 void inet_reclaim(InetSocket* socket, size_t length) {
     socket->transmitted -= min(socket->transmitted, length);
 }
 
-bool inet_dont_fragment(const InetSocket* socket) {
-    return !socket || (socket->mtu_policy > 0 && socket->mtu_policy < 4);
+bool inet_dont_fragment(const InetSocket* socket, bool path_locked) {
+    return !socket || socket->mtu_policy == 2 || socket->mtu_policy == 3 ||
+           (socket->mtu_policy == 1 && !path_locked);
 }
 
 bool inet_fragmentation_allowed(const InetSocket* socket) {
     return !socket || socket->mtu_policy < 2 || socket->mtu_policy == 5;
+}
+
+bool inet_use_path_mtu(const InetSocket* socket) {
+    return !socket || socket->mtu_policy < 3;
+}
+
+bool inet_accept_path_mtu(const InetSocket* socket) {
+    return socket && socket->mtu_policy != 4 && socket->mtu_policy != 5;
 }
 
 bool inet_ready(InetSocket* socket, bool write) {
@@ -548,7 +565,15 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             value = socket->ttl;
         else if (b == 0 && c == 10)
             value = socket->mtu_policy;
-        else if (b == 255 && c == 1 && socket->type == 3)
+        else if (b == 0 && c == 14) {
+            if (!socket->peer)
+                return -107;
+            Ipv4Path path;
+            int error = ipv4_path(socket->local, socket->peer, socket->index, path);
+            if (error)
+                return error;
+            value = path.mtu;
+        } else if (b == 255 && c == 1 && socket->type == 3)
             value = socket->filter;
         else
             return -92;

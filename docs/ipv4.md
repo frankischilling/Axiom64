@@ -39,13 +39,36 @@ Physical carrier and `IFF_UP` are independent. Carrier or administrative down re
 
 Input requires IPv4 version 4, a 20-byte header, a valid header checksum, a bounded total length, nonzero TTL, supported flag forms, valid source addressing, and a local or accepted broadcast destination. Ethernet padding is trimmed to the IP total length. Traffic from a NIC cannot impersonate loopback. Options and the reserved flag are rejected; forwarding remains unimplemented. Fragmented input reaches the transport only after complete reassembly.
 
-Output builds its own 20-byte header, checksum, identifier, TTL, and DF flag. The IP header counts toward the interface MTU. `IP_PMTUDISC_DONT` and the default `IP_PMTUDISC_WANT` permit local fragmentation; `DO`, `PROBE` and `INTERFACE` reject device-MTU oversize with `EMSGSIZE`. `INTERFACE` clears DF, and `OMIT` also permits local fragmentation. Both bypass learned path hints; shared route PMTU learning remains required. Small `WANT` packets carry DF, while locally generated fragments clear it. TCP can reduce its own segment size from validated path hints, as described in [TCP recovery](tcp.md#path-mtu-recovery). A shared route PMTU cache remains required. Limited and directed broadcasts use the Ethernet broadcast destination and require `SO_BROADCAST`. Multicast, TOS controls, IPv6, and general IP options remain planned.
+Output builds its own 20-byte header, checksum, identifier, TTL and DF flag. The IP header counts toward the selected path limit. DONT, WANT and OMIT permit local fragmentation; DO, PROBE and INTERFACE reject an oversized datagram with `EMSGSIZE`. PROBE, INTERFACE and OMIT use the device MTU for transmission. Limited and directed broadcasts use the Ethernet broadcast destination and require `SO_BROADCAST`. Multicast, TOS controls, IPv6 and general IP options remain planned.
 
 One output slot owns the complete datagram and a reusable MTU-sized wire buffer. Each poll submits at most eight fragments per slot. Accepted frames advance the payload cursor; `EAGAIN` retains its current position. The original queue deadline and socket charge cover the whole datagram. MTU changes apply to the remaining bytes, and callback cancellation retains borrowed storage until submission returns. A full 65,535-byte packet therefore does not consume one output slot per fragment.
 
 The ICMP handler checks payload length and checksum before answering a local unicast echo request. Echo replies preserve the identifier, sequence, and payload. It does not answer broadcast echo requests or recursively generate errors for ICMP errors. Unknown local unicast protocols can generate a rate-limited protocol-unreachable response quoting the original header and first eight payload bytes. Valid destination-unreachable and parameter-problem quotes can report matching connected raw-socket errors; malformed or unrelated quotes are ignored.
 
 Raw ICMP listeners receive the complete validated IPv4 datagram before the ICMP handler checks its payload checksum, matching the Linux raw-observer ordering. A raw program can therefore see an invalid ICMP checksum that the kernel handler rejects. Kernel validation and raw observation are tested separately.
+
+## Path MTU discovery
+
+IPv4 retains up to 64 path limits keyed by source, destination, next hop and interface. Raw ICMP, UDP and TCP share those limits. Valid reports can lower a limit but cannot raise it. Entries expire after ten minutes; ordinary lookups do not renew them. Equal reports refresh only in the second half of that lifetime. Successful route mutations invalidate the cache, and address changes invalidate the affected interface.
+
+The default learned floor is 552 bytes, capped by the device MTU. A report below that floor, including a zero next-hop MTU, locks the estimate. WANT then clears DF so a smaller downstream link can fragment the packet. DO continues to require DF. These policies follow [RFC 1191](https://www.rfc-editor.org/rfc/rfc1191) and the compared [Linux route policy](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/net/ipv4/route.c).
+
+| Discovery policy | Use learned limit for IP output | Learn from an owned ICMP quote | DF on whole output |
+| --- | --- | --- | --- |
+| DONT | Yes | Yes | Clear |
+| WANT | Yes | Yes | Set unless the path is locked |
+| DO | Yes | Yes | Set |
+| PROBE | No | Yes | Set |
+| INTERFACE | No | No | Clear |
+| OMIT | No | No | Clear |
+
+Connected raw and UDP sockets report a valid fragmentation-needed error through `SO_ERROR`, except with DONT. Error notification remains separate from learning, so INTERFACE and OMIT can report `EMSGSIZE` without accepting the hint. Another eligible raw listener can still learn the same shared path. `IP_MTU` queries the connected socket's current selected path; an unconnected query returns `ENOTCONN`. Linux can retain an earlier cached-route query value when another listener learns, until a later route lookup. Axiom64 currently queries the shared path directly; complete cached-route query lifecycle equivalence remains required.
+
+Output captures its discovery policy when accepted. It checks current device and learned limits before each submission, preserving its cursor and owned bytes across backpressure. New TCP connections use the shared limit; established connections require an owned outstanding sequence before learning or resizing. [TCP recovery](tcp.md#path-mtu-recovery) describes retransmission and deadline ownership.
+
+`make test-ipv4-path-mtu` checks production cache ownership, expiry, refresh, bounded eviction, route/interface invalidation, floor locking and clock bounds with both sanitizers. Eighteen wire cases per NIC cover all six policies, shared raw-to-UDP queries, ignored corrupted hints, local fragmentation, required DO silence, small WANT packets at the floor and independent wildcard observers. The actual client checks each socket query and error; the peer requires every payload byte before acknowledging a policy barrier. Barriers can wait for a datagram still queued behind ARP.
+
+The ordinary fragment-native command includes these cases. A focused comparison is `sudo -n python3 scripts/ipv4_fragment_native.py --pmtu-only --directory build/ipv4-pmtu-focused`; that focused mode does not establish fragment or expiry acceptance. The independent `scripts/ipv4_path_mtu_capture.py` auditor checks the original packets, quote provenance, ordered barriers, fragment geometry, checksums and client query results. Ten damaged capture/log fixtures per NIC must fail. Native capture receipts bind every original frame to its hash and kernel timestamp; both capture and TAP drop counts must remain zero.
 
 ## Fragment reassembly
 

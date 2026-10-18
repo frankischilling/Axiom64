@@ -40,6 +40,10 @@ struct Ipv4Path {
 
 int ipv4_path(uint32_t source, uint32_t destination, unsigned bound_index, Ipv4Path&);
 
+// A validated transport quote may lower the selected path. Zero means no eligible route.
+uint32_t ipv4_learn_pmtu(uint32_t source, uint32_t destination, unsigned index,
+                         uint16_t announced_mtu, uint16_t quoted_length);
+
 int ipv4_source(uint32_t source, uint32_t destination, unsigned bound_index, uint32_t& selected);
 
 int ipv4_send(InetSocket*, uint32_t source, uint32_t destination, unsigned bound_index,

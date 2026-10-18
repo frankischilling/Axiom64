@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Bind reconnect observations to actual clients, protocol state and retained I/O."""
 from tcp_icmp_inputs import record as record_inputs
+from tcp_icmp_inputs import IPV4_MODULES
 
 SOURCES = ('Makefile', 'scripts/tcp_capture_clock.py', 'scripts/tests/tcp_clock_mutations.py', 'userspace/tests/net/tcp_reconnect.c', 'scripts/tcp_reconnect_peer.py',
            'scripts/tcp_reconnect_inputs.py', 'scripts/tcp_icmp_inputs.py',
@@ -16,6 +17,7 @@ SOURCES = ('Makefile', 'scripts/tcp_capture_clock.py', 'scripts/tests/tcp_clock_
            'kernel/net/tcp/isn.cpp', 'kernel/include/net/tcp/isn.hpp',
            'kernel/net/ipv4/socket.cpp', 'kernel/net/ipv4/socket.hpp',
            'kernel/net/ipv4/core.cpp', 'kernel/include/net/ipv4.hpp')
+SOURCES += IPV4_MODULES
 
 
 def record(linkage, native=False, image=None, label=None):

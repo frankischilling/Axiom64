@@ -360,11 +360,18 @@ void tcp_icmp_error(unsigned index, const uint8_t* bytes, size_t length) {
             (socket.index && socket.index != index))
             continue;
         if (quote.too_big) {
-            // DONT and PROBE do not learn packet sizes from incoming ICMP.
-            if (!socket.mtu_policy || socket.mtu_policy >= 3)
+            if (!inet_accept_path_mtu(&socket) || !socket.stream->owns_pmtu_quote(quote.sequence))
                 continue;
             uint16_t mtu = tcp::quoted_path_mtu(quote);
-            if (mtu && socket.stream->reduce_mss(quote.sequence, uint16_t(mtu - 40)))
+            if (!mtu)
+                continue;
+            uint32_t learned = ipv4_learn_pmtu(quote.local, quote.peer, socket.stream_index,
+                                               quote.next_hop_mtu, quote.quoted_length);
+            if (learned)
+                mtu = min(mtu, uint16_t(learned));
+            // DONT can populate the route cache without forcing a transport retry.
+            // PROBE bypasses that cache at IP output, but TCP still adapts its MSS.
+            if (socket.mtu_policy && socket.stream->reduce_mss(quote.sequence, uint16_t(mtu - 40)))
                 ipv4_discard_oversized(&socket, mtu);
         } else
             socket.stream->quoted_error(quote.sequence, quote.error, quote.abort_request);
@@ -696,14 +703,19 @@ void tcp_receive(unsigned index, uint32_t source, uint32_t destination, const vo
         child->nodelay = listener->nodelay;
         child->user_timeout = listener->user_timeout;
         child->user_mss = listener->user_mss;
+        child->mtu_policy = listener->mtu_policy;
         uint32_t initial;
         if (sequence(child, initial, now) || make_stream(child, now)) {
             reclaim(child);
             return;
         }
-        const auto info = index == ipv4_loopback ? nullptr : net_info(index);
         uint16_t limit = child->user_mss ? child->user_mss : 1460;
-        uint16_t mss = info ? min(limit, uint16_t(info->mtu > 40 ? info->mtu - 40 : 1)) : limit;
+        Ipv4Path path;
+        if (ipv4_path(destination, source, index, path)) {
+            reclaim(child);
+            return;
+        }
+        uint16_t mss = min(limit, uint16_t(path.mtu > 40 ? path.mtu - 40 : 1));
         if (!child->stream->passive(initial, segment, now, mss)) {
             reclaim(child);
             return;

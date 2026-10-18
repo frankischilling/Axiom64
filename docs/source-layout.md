@@ -17,7 +17,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/io/` | Retained blocking I/O requests |
 | `kernel/ipc/` | Sockets, event counters, readiness, shared memory |
 | `kernel/net/` | Ethernet interfaces, interface/route ioctls, and Linux raw packet sockets |
-| `kernel/net/ipv4/` | IPv4 routes/output, bounded reassembly and MTU-sized fragment emission, ARP cache/timers, ICMP, and Internet socket descriptions |
+| `kernel/net/ipv4/` | IPv4 routes/output, bounded reassembly, shared path-MTU limits and fragment emission, ARP cache/timers, ICMP, and Internet socket descriptions |
 | `kernel/net/udp/` | UDP lengths, pseudo-header checksums, payload delivery, and transmission |
 | `kernel/net/tcp/` | TCP wire/state/sender policy, socket ownership, timers, ISNs, TIME_WAIT and quoted ICMP errors |
 | `kernel/net/netlink/` | Link/address inventories, route/address message validation, owned replies, and control socket lifecycle |

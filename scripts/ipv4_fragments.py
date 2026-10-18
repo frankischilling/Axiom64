@@ -2,6 +2,7 @@
 """Controlled IPv4 fragment corpora; transport observation stays in the caller."""
 import struct
 import time
+from ipv4_path_mtu import PathMtuPeer
 
 
 def checksum(data):
@@ -22,9 +23,10 @@ class FragmentPeer:
         self.acknowledged = False
         self.output = OutputFragmentPeer(self)
         self.expiry = FragmentExpiryPeer(self, native=native)
+        self.path_mtu = PathMtuPeer(lane, native=native)
 
     def accepts(self, packet):
-        return (packet[24:26] in (b'FR', b'FO') or
+        return (self.path_mtu.accepts(packet) or packet[24:26] in (b'FR', b'FO') or
                 (self.output.waiting is not None and len(packet) >= 20 and packet[9] in (1, 17)))
 
     def packet(self, payload, identifier, offset=0, more=False):
@@ -49,6 +51,8 @@ class FragmentPeer:
 
     def receive(self, packet):
         """Return IP packets only after validating the real guest's exact request."""
+        if self.path_mtu.accepts(packet):
+            return self.path_mtu.receive(packet)
         if packet[24:26] != b'FR':
             return self.output.receive(packet)
         if len(packet) != 52 or packet[:2] != b'\x45\0' or checksum(packet[:20]):

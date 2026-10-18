@@ -7,6 +7,11 @@ import subprocess
 from fetch import ROOT, LOCK
 from build_musl import ensure, loader
 
+IPV4_MODULES = ('kernel/include/net/ipv4_wire.hpp',
+                'kernel/include/net/ipv4/reassembly.hpp', 'kernel/net/ipv4/reassembly.cpp',
+                'kernel/include/net/ipv4/fragmentation.hpp', 'kernel/net/ipv4/fragmentation.cpp',
+                'kernel/include/net/ipv4/path_mtu.hpp', 'kernel/net/ipv4/path_mtu.cpp')
+
 SOURCES = ('Makefile', 'scripts/tcp_capture_clock.py', 'scripts/tests/tcp_clock_mutations.py', 'userspace/tests/net/tcp_icmp.c', 'userspace/tests/net/tcp_icmp_cases.h',
            'scripts/tcp_icmp_peer.py', 'scripts/tcp_icmp_inputs.py', 'scripts/tcp_fault_test.py',
            'scripts/tcp_fault_native.py', 'kernel/net/tcp/icmp.cpp', 'kernel/include/net/tcp/icmp.hpp',
@@ -14,6 +19,7 @@ SOURCES = ('Makefile', 'scripts/tcp_capture_clock.py', 'scripts/tests/tcp_clock_
            'kernel/net/tcp/socket.cpp', 'kernel/include/net/tcp/socket.hpp',
            'kernel/net/ipv4/core.cpp', 'kernel/net/ipv4/socket.cpp',
            'scripts/tests/tcp_icmp_error_order_test.py')
+SOURCES += IPV4_MODULES
 
 
 def digest(path):

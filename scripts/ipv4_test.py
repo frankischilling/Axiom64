@@ -18,6 +18,7 @@ from network_fault import inject
 from qmp import Qmp
 from ipv4_fragments import FragmentPeer
 from ipv4_expiry_capture import verify_capture
+from ipv4_path_mtu_capture import verify_capture as verify_path_mtu
 
 
 def checksum(data):
@@ -253,6 +254,10 @@ class Peer:
     def packet(self, frame):
         if frame[6:12] != self.guest:
             raise RuntimeError('unexpected guest source MAC')
+        path_arp = self.fragments.path_mtu.arp_reply(frame)
+        if path_arp is not None:
+            self.queue(path_arp)
+            return
         if frame[12:14] == b'\x08\x06':
             if len(frame) < 42 or frame[28:32] != self.guest_ip:
                 self.foreign += 1
@@ -584,6 +589,8 @@ def run(firmware, transport, timeout, fault=False):
                 'IPV4_CACHE_REPLACEMENT_PASS index=1', 'IPV4_CACHE_REPLACEMENT_PASS index=2',
                 'IPV4_ARP_REPLY_PASS index=1', 'IPV4_ARP_REPLY_PASS index=2',
                 'IPV4_FRAGMENT_OUTPUT_PASS index=1 cases=21', 'IPV4_FRAGMENT_OUTPUT_PASS index=2 cases=21',
+                'IPV4_PATH_MTU_PASS index=1 cases=18 policies_each=6',
+                'IPV4_PATH_MTU_PASS index=2 cases=18 policies_each=6',
                  'IPV4_FRAGMENT_EXPIRY_PASS index=1', 'IPV4_FRAGMENT_EXPIRY_PASS index=2',
                 'IPV4_BUSYBOX_PASS', 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0']
     missing = [marker for marker in required if marker not in text]
@@ -611,7 +618,8 @@ def run(firmware, transport, timeout, fault=False):
                      peer.reply_ingress == 97 and peer.fragments.completed == 6 and
                      peer.fragments.waiting is None and peer.fragments.acknowledged and
                      peer.fragments.output.completed == 21 and peer.fragments.output.waiting is None and
-                     peer.fragments.output.acknowledged and peer.fragments.expiry.passed for peer in peers)
+                     peer.fragments.output.acknowledged and peer.fragments.expiry.passed and
+                     peer.fragments.path_mtu.passed for peer in peers)
     expiry_audits = []
     if not fault and passed and returncode == 1 and not timed_out and not error and not missing:
         try:
@@ -621,6 +629,15 @@ def run(firmware, transport, timeout, fault=False):
                                                     lane, log, damage_archive=archive))
         except Exception as exception:
             error = f'expiry capture audit: {exception}'
+    path_audits = []
+    if not fault and passed and returncode == 1 and not timed_out and not error and not missing:
+        try:
+            for lane in range(2):
+                archive = ROOT / 'build' / f'{label}-pmtu-lane{lane}-{time.monotonic_ns()}.zip'
+                path_audits.append(verify_path_mtu(ROOT / 'build' / f'{label}-lane{lane}.pcap',
+                                                  lane, log, damage_archive=archive))
+        except Exception as exception:
+            error = f'path MTU capture audit: {exception}'
     result = dict(firmware=firmware, transport=transport, fault=fault, returncode=returncode, timed_out=timed_out,
                   error=error, missing=missing, arp=[peer.arp for peer in peers],
                   echo=[peer.echo for peer in peers], foreign=[peer.foreign for peer in peers],
@@ -647,6 +664,8 @@ def run(firmware, transport, timeout, fault=False):
                   fragment_output_final_ack=[peer.fragments.output.acknowledged for peer in peers],
                   fragment_expiry=[peer.fragments.expiry.report() for peer in peers],
                   fragment_expiry_capture_audits=expiry_audits,
+                  path_mtu=[peer.fragments.path_mtu.report() for peer in peers],
+                  path_mtu_capture_audits=path_audits,
                   captures=[f'{label}-lane{lane}.pcap' for lane in range(2)],
                   seconds=round(time.monotonic() - started, 2), log=log.name,
                   passed=returncode == 1 and not timed_out and not error and not missing and passed)

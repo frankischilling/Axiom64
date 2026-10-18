@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
 #include "ipv4_fragments.h"
+#include "ipv4_path_mtu.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <net/if.h>
@@ -979,10 +980,17 @@ static void link_change(unsigned lane) {
 
 int main(int argc, char** argv) {
     setbuf(stdout, NULL);
+    if (argc == 2 && !strcmp(argv[1], "--path-mtu")) {
+        ipv4_path_mtu_checks(0);
+        ipv4_path_mtu_checks(1);
+        return 0;
+    }
     if (argc == 2 && !strcmp(argv[1], "--fragments")) {
         ipv4_fragment_checks(0);
         ipv4_fragment_checks(1);
         ipv4_fragment_expiry_checks();
+        ipv4_path_mtu_checks(0);
+        ipv4_path_mtu_checks(1);
         return 0;
     }
     int fd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
@@ -1017,6 +1025,8 @@ int main(int argc, char** argv) {
         fd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
         check(fd >= 0, "routed wire socket");
         routing(fd);
+        check(close(fd) == 0, "close completed routing observer");
+        fd = -1;
         pressure(0);
         pressure(1);
         arp_failure(0);
@@ -1038,6 +1048,8 @@ int main(int argc, char** argv) {
         ipv4_fragment_checks(0);
         ipv4_fragment_checks(1);
         ipv4_fragment_expiry_checks();
+        ipv4_path_mtu_checks(0);
+        ipv4_path_mtu_checks(1);
     }
     if (fd >= 0)
         check(close(fd) == 0, "raw ICMP close");

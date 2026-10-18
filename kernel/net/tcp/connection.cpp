@@ -187,10 +187,14 @@ void Connection::quoted_error(uint32_t sequence, int error, bool abort_request) 
     soft_error = error;
 }
 
+bool Connection::owns_pmtu_quote(uint32_t sequence) const {
+    return syn_emitted && !handshake() && status != State::closed && status != State::time_wait &&
+           send_unacknowledged != send_next && !before(sequence, send_unacknowledged) &&
+           !before(send_next, sequence);
+}
+
 bool Connection::reduce_mss(uint32_t sequence, uint16_t maximum_segment) {
-    if (!maximum_segment || maximum_segment >= mss || !syn_emitted || handshake() ||
-        status == State::closed || status == State::time_wait || send_unacknowledged == send_next ||
-        before(sequence, send_unacknowledged) || before(send_next, sequence))
+    if (!maximum_segment || maximum_segment >= mss || !owns_pmtu_quote(sequence))
         return false;
     candidate = Output::none;
     mss = maximum_segment;

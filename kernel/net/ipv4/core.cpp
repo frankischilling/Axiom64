@@ -2,6 +2,7 @@
 #include "net/ipv4.hpp"
 #include "net/ipv4/reassembly.hpp"
 #include "net/ipv4/fragmentation.hpp"
+#include "net/ipv4/path_mtu.hpp"
 #include "net/inet.hpp"
 #include "process/task.hpp"
 #include "net/ipv4_wire.hpp"
@@ -41,6 +42,7 @@ struct Output {
     uint8_t* fragment_bytes = nullptr;
     size_t fragment_capacity = 0, fragment_offset = 0;
     bool fragmentable = false;
+    bool use_path_mtu = true, want_df = false;
 };
 
 struct Selection {
@@ -54,6 +56,7 @@ static Ipv4Config loopback{0x7f000001, 0xff000000, 0};
 static Route routes[route_count];
 static Neighbor neighbors[neighbor_count];
 static Output output[output_count];
+static ip4::PathMtuCache path_mtu;
 static uint16_t identifier;
 static bool polling;
 static uint64_t next_icmp_error[max_net_devices + 2];
@@ -97,12 +100,23 @@ static void clear(Output& item, int error = 0) {
 
 static ip4::FragmentPiece submit(Output& item, const NetInfo& info) {
     auto packet = item.bytes + ethernet_header;
-    if (ip4::get16(item.bytes + 12) != 0x0800 ||
-        (!item.fragment_offset && ip4::get16(packet + 2) <= info.mtu))
+    if (ip4::get16(item.bytes + 12) != 0x0800)
+        return {net_send(item.index, item.bytes, item.length), 0, 0, true};
+    auto limit = item.use_path_mtu
+                     ? path_mtu.lookup({ip4::get32(packet + 12), ip4::get32(packet + 16),
+                                        item.next_hop, item.index},
+                                       info.mtu, ticks)
+                     : ip4::PathMtu{info.mtu};
+    if (item.want_df && limit.locked && (ip4::get16(packet + 6) & 0x4000)) {
+        ip4::put16(packet + 6, ip4::get16(packet + 6) & ~uint16_t(0x4000));
+        ip4::put16(packet + 10, 0);
+        ip4::put16(packet + 10, ip4::checksum(packet, size_t(packet[0] & 15) * 4));
+    }
+    if (!item.fragment_offset && ip4::get16(packet + 2) <= limit.mtu)
         return {net_send(item.index, item.bytes, item.length), 0, 0, true};
     if (!item.fragmentable)
         return {-90};
-    size_t capacity = ethernet_header + info.mtu;
+    size_t capacity = ethernet_header + limit.mtu;
     if (item.fragment_capacity < capacity) {
         auto bytes = static_cast<uint8_t*>(alloc(capacity));
         if (!bytes)
@@ -118,7 +132,7 @@ static ip4::FragmentPiece submit(Output& item, const NetInfo& info) {
         ip4::put16(packet + 10, 0);
         ip4::put16(packet + 10, ip4::checksum(packet, size_t(packet[0] & 15) * 4));
     }
-    auto part = ip4::fragment_packet(packet, item.length - ethernet_header, info.mtu,
+    auto part = ip4::fragment_packet(packet, item.length - ethernet_header, limit.mtu,
                                      item.fragment_offset, item.fragment_bytes + ethernet_header,
                                      item.fragment_capacity - ethernet_header);
     if (part.error)
@@ -376,7 +390,7 @@ static void quoted_error(unsigned index, const uint8_t* payload, size_t length) 
             error = 90; // EMSGSIZE: fragmentation needed
     }
     if (error)
-        inet_icmp_error(index, quote, error);
+        inet_icmp_error(index, quote, error, error == 90 ? ip4::get16(payload + 6) : 0);
 }
 
 static void input(unsigned index, const uint8_t* bytes, size_t length,
@@ -468,6 +482,7 @@ int ipv4_configure(unsigned index, const Ipv4Config& config) {
     if (interfaces[index].address)
         ip4::reassembly_discard(interfaces[index].address);
     interfaces[index] = changed;
+    path_mtu.discard(index);
     for (auto& neighbor : neighbors)
         if (neighbor.index == index)
             neighbor = {};
@@ -490,6 +505,7 @@ static int change_route(const Ipv4Route& input, bool remove, bool control, bool 
                 (!control || ((!value.protocol || route.value.protocol == value.protocol) &&
                               (value.scope == 255 || route.value.scope == value.scope)))) {
                 route = {};
+                path_mtu.discard();
                 return 0;
             }
         return -3;
@@ -542,6 +558,7 @@ static int change_route(const Ipv4Route& input, bool remove, bool control, bool 
     if (!empty)
         return -105;
     *empty = {value, true};
+    path_mtu.discard();
     return 0;
 }
 
@@ -590,9 +607,26 @@ int ipv4_source(uint32_t source, uint32_t destination, unsigned bound_index, uin
 int ipv4_path(uint32_t source, uint32_t destination, unsigned bound_index, Ipv4Path& path) {
     Selection route;
     int error = select(source, destination, bound_index, route);
-    if (!error)
-        path = {route.source, route.local ? 65535u : net_info(route.index)->mtu, route.index};
+    if (!error) {
+        uint32_t mtu = route.local ? 65535u : net_info(route.index)->mtu;
+        if (!route.local && !route.broadcast)
+            mtu = path_mtu
+                      .lookup({route.source, destination, route.next_hop, route.index}, mtu, ticks)
+                      .mtu;
+        path = {route.source, mtu, route.index};
+    }
     return error;
+}
+
+uint32_t ipv4_learn_pmtu(uint32_t source, uint32_t destination, unsigned index,
+                         uint16_t announced_mtu, uint16_t quoted_length) {
+    Selection route;
+    if (select(source, destination, index, route) || route.local || route.broadcast)
+        return 0;
+    return path_mtu
+        .learn({route.source, destination, route.next_hop, route.index}, net_info(route.index)->mtu,
+               announced_mtu, quoted_length, ticks)
+        .mtu;
 }
 
 int ipv4_send(InetSocket* owner, uint32_t source, uint32_t destination, unsigned bound_index,
@@ -606,8 +640,13 @@ int ipv4_send(InetSocket* owner, uint32_t source, uint32_t destination, unsigned
     if (route.broadcast && !broadcast)
         return -13;
     bool fragmentable = inet_fragmentation_allowed(owner);
-    if (length > 65535 - 20 ||
-        (!route.local && length + 20 > net_info(route.index)->mtu && !fragmentable))
+    uint32_t mtu = route.local ? 65535u : net_info(route.index)->mtu;
+    ip4::PathMtu limit{mtu};
+    bool use_path_mtu = inet_use_path_mtu(owner);
+    if (!route.local && !route.broadcast && use_path_mtu)
+        limit =
+            path_mtu.lookup({route.source, destination, route.next_hop, route.index}, mtu, ticks);
+    if (length > 65535 - 20 || (!route.local && length + 20 > limit.mtu && !fragmentable))
         return -90;
     auto slot = vacant_output();
     if (!slot)
@@ -623,7 +662,7 @@ int ipv4_send(InetSocket* owner, uint32_t source, uint32_t destination, unsigned
     ip[0] = 0x45;
     ip4::put16(ip + 2, 20 + length);
     ip4::put16(ip + 4, ++identifier);
-    ip4::put16(ip + 6, inet_dont_fragment(owner) ? 0x4000 : 0);
+    ip4::put16(ip + 6, inet_dont_fragment(owner, limit.locked) ? 0x4000 : 0);
     ip[8] = ttl;
     ip[9] = protocol;
     ip4::put32(ip + 12, route.source);
@@ -643,6 +682,8 @@ int ipv4_send(InetSocket* owner, uint32_t source, uint32_t destination, unsigned
     *slot = {owner, bytes,      total, route.index, route.next_hop, ticks + retry_interval * 4,
              ready, route.local};
     slot->fragmentable = fragmentable;
+    slot->use_path_mtu = use_path_mtu;
+    slot->want_df = fragmentable && inet_dont_fragment(owner);
     return 0;
 }
 
@@ -765,6 +806,7 @@ void ipv4_poll() {
 
 void ipv4_shutdown() {
     ip4::reassembly_discard();
+    path_mtu.discard();
     for (auto& item : output)
         if (item.bytes)
             clear(item);

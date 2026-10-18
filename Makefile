@@ -421,13 +421,13 @@ build/root-tests: userspace/tests/fs/root.c
 build/net-tests: userspace/tests/net/packet.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
-build/ipv4-tests: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h
+build/ipv4-tests: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h userspace/tests/net/ipv4_path_mtu.c userspace/tests/net/ipv4_path_mtu.h
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $(filter %.c,$^) -o $@
-build/ipv4-native: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h
+build/ipv4-native: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h userspace/tests/net/ipv4_path_mtu.c userspace/tests/net/ipv4_path_mtu.h
 	@mkdir -p build
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@
-build/ipv4-dynamic: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h
+build/ipv4-dynamic: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h userspace/tests/net/ipv4_path_mtu.c userspace/tests/net/ipv4_path_mtu.h
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@
 build/udp-tests: userspace/tests/net/udp.c
@@ -660,6 +660,12 @@ build/ipv4-fragmentation-host: kernel/tests/net/ipv4_fragmentation.cpp kernel/ne
 .PHONY: test-ipv4-fragmentation
 test-ipv4-fragmentation: build/ipv4-fragmentation-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-fragmentation-host
+build/ipv4-path-mtu-host: kernel/tests/net/ipv4_path_mtu.cpp kernel/net/ipv4/path_mtu.cpp kernel/include/net/ipv4/path_mtu.hpp kernel/include/net/ipv4_wire.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/ipv4_path_mtu.cpp kernel/net/ipv4/path_mtu.cpp -o $@
+.PHONY: test-ipv4-path-mtu
+test-ipv4-path-mtu: build/ipv4-path-mtu-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-path-mtu-host
 .PHONY: test-ipv4-fragments-native
 test-ipv4-fragments-native:
 	$(PYTHON) scripts/ipv4_fragment_native.py

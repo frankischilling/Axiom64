@@ -27,9 +27,13 @@ void inet_close(InetSocket*);
 
 bool inet_payload(InetSocket*);
 
-bool inet_dont_fragment(const InetSocket*);
+bool inet_dont_fragment(const InetSocket*, bool path_locked = false);
 
 bool inet_fragmentation_allowed(const InetSocket*);
+
+bool inet_use_path_mtu(const InetSocket*);
+
+bool inet_accept_path_mtu(const InetSocket*);
 
 bool inet_ready(InetSocket*, bool write);
 
@@ -49,7 +53,7 @@ int inet_error(InetSocket*, bool clear = false);
 
 void inet_failed(InetSocket*, int error);
 
-void inet_icmp_error(unsigned index, const uint8_t* quote, int error);
+void inet_icmp_error(unsigned index, const uint8_t* quote, int error, uint16_t announced_mtu = 0);
 
 void inet_reclaim(InetSocket*, size_t length);
 

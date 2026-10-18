@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Retain synchronized corruptions of actual ICMP captures and reject each one."""
 import argparse
-from collections import Counter, defaultdict, deque
 import copy
 import hashlib
 import json
@@ -14,7 +13,6 @@ import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tcp_clock_mutations import candidate_auditor
-from tcp_capture_clock import raw_records
 from fetch import ROOT
 from tcp_icmp_capture import audit_row, checksum, contract, fnv, require
 
@@ -81,38 +79,10 @@ def mutations(build, row, lane, destination, cases):
     results = []
 
     def reject(kind, transform):
-        def audit_candidate(folder, candidate_row, cases):
-            if kind == 'noncausal-error' and 'client_namespace' in row:
-                # Move the independent observation with the quote, keeping all
-                # other original monotonic receipts. This case must reach the
-                # owned-quote guard rather than fail a clock setup check.
-                observations = defaultdict(deque)
-                clock_name = row['capture_statistics'][lane]['monotonic_receipts']
-                clocks = [json.loads(line) for line in (build / clock_name).read_text().splitlines()]
-                original = clocks[source_at]
-                for packet, receipt in zip(raw_records(build / row['captures'][lane]), clocks):
-                    observations[(packet['stamp'], packet['frame'])].append(receipt)
-                values = []
-                for index, packet in enumerate(raw_records(folder / row['captures'][lane])):
-                    key = packet['stamp'], packet['frame']
-                    if observations[key]:
-                        receipt = copy.deepcopy(observations[key].popleft())
-                    else:
-                        require(packet['frame'] == item['frame'], 'only the intended ICMP receipt moves')
-                        receipt = copy.deepcopy(original)
-                        lag = receipt['receipt_realtime_ns'] - receipt['kernel_realtime_ns']
-                        receipt['kernel_realtime_ns'] = packet['stamp'] * 1000
-                        receipt['receipt_realtime_ns'] = receipt['kernel_realtime_ns'] + lag
-                        receipt['receipt_monotonic_ns'] -= 1
-                        receipt['receipt_monotonic_after_ns'] = receipt['receipt_monotonic_ns']
-                    receipt.update(frame=index, sha256=hashlib.sha256(packet['frame']).hexdigest())
-                    values.append(receipt)
-                data = ''.join(json.dumps(value) + '\n' for value in values).encode()
-                (folder / clock_name).write_bytes(data)
-                candidate_row['capture_statistics'][lane]['monotonic_receipts_sha256'] = hashlib.sha256(data).hexdigest()
-            return audit_row(folder, candidate_row, cases)
-
-        checked = candidate_auditor(audit_candidate, build, row)
+        # The shared auditor translates reordered native packets with one
+        # constant clock offset. Rewriting a receipt here would invalidate its
+        # paired clock evidence before the quote ownership check can run.
+        checked = candidate_auditor(audit_row, build, row)
         with tempfile.TemporaryDirectory(prefix='axiom64-icmp-damage-') as temporary:
             folder = Path(temporary)
             for name, data in originals.items():

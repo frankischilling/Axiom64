@@ -26,8 +26,9 @@ inline const uint8_t* inet_bytes(const InetFrame* frame) {
 
 void inet_close(InetSocket*);
 
-// A serialized output caller may borrow the matching connected destination.
-Ipv4Destination* inet_destination(InetSocket*, uint32_t address);
+// Borrow only destination state that this output lookup may replace or clear.
+// Raw output preserves failed lookups and refreshes only an existing cache.
+Ipv4Destination* inet_output_destination(InetSocket*, uint32_t address, bool lookup_failed);
 
 bool inet_payload(InetSocket*);
 

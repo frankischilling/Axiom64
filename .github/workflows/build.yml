@@ -922,6 +922,19 @@ jobs:
       - name: Test virtio and e1000 Ethernet with packet sockets
         if: matrix.suite == 'network'
         run: make test-network
+      - name: Compare gateway routing with three native Linux linkages
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv4-gateways-native
+      - name: Test gateway routing across eight static and dynamic guest profiles
+        if: matrix.suite == 'network'
+        run: make test-ipv4-gateways
+      - name: Upload native gateway routing evidence
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-gateways-native
+          if-no-files-found: warn
+          path: build/ipv4-gateways-native
       - name: Test IPv4 routes, ARP, raw ICMP, ping, and failed-device sockets
         if: matrix.suite == 'network'
         run: make test-ipv4
@@ -1206,6 +1219,8 @@ jobs:
             build/ipv4-*-expiry-lane*.zip
             build/ipv4-*-pmtu-lane*.zip
             build/ipv4-*-pmtu-lifetime-lane*.zip
+            build/ipv4-gateway-*-lane*-damaged-*.zip
+            build/ipv4-gateway-*-inputs.json
             build/manager-protocol-*-packets.json
             build/manager-link-*-packets.json
             build/axiom64-manager-address-query-*.iso

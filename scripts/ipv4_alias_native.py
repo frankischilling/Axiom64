@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Compare the real alias client through isolated native Linux Ethernet links."""
+"""Compare IPv4 address and gateway clients on isolated native Ethernet links."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import fcntl
@@ -15,9 +15,12 @@ import subprocess
 import sys
 import time
 from build_musl import loader
+from compile_uapi_client import audit_compile
 from fetch import ROOT
 from ipv4_aliases import AliasPeer
 from ipv4_alias_capture import verify_capture as verify_alias_capture
+from ipv4_gateways import GatewayPeer
+from ipv4_gateway_capture import verify_capture as verify_gateway_capture
 from tcp_fault_native import Capture
 
 SOURCES = ('Makefile', 'userspace/tests/net/ipv4.c', 'userspace/tests/net/ipv4_aliases.c',
@@ -27,18 +30,20 @@ SOURCES = ('Makefile', 'userspace/tests/net/ipv4.c', 'userspace/tests/net/ipv4_a
            'userspace/tests/net/ipv4_path_mtu.c', 'userspace/tests/net/ipv4_path_mtu.h',
            'scripts/ipv4_alias_native.py', 'scripts/tcp_fault_native.py', 'scripts/build_musl.py',
            'scripts/compile_uapi_client.py', 'scripts/linux_uapi.py', 'scripts/build_openssl.py',
-           'ports.lock.json')
+           'ports.lock.json', 'userspace/tests/net/ipv4_gateways.c',
+           'userspace/tests/net/ipv4_gateways.h', 'scripts/ipv4_gateways.py',
+           'scripts/ipv4_gateway_capture.py')
 
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def child(profile, directory):
+def child(profile, directory, suite='aliases'):
     directory.mkdir(exist_ok=False)
     binary = ROOT / 'build' / {'native': 'ipv4-native', 'static': 'ipv4-tests',
                               'dynamic': 'ipv4-dynamic'}[profile]
-    command = [str(binary), '--aliases']
+    command = [str(binary), '--' + suite]
     if profile == 'dynamic':
         command.insert(0, str(loader('build')))
     sources = {name: digest(ROOT / name) for name in SOURCES}
@@ -55,11 +60,9 @@ def child(profile, directory):
             raise ValueError('alias executable changed during preservation')
     if profile != 'native':
         inputs = binary.with_suffix('.inputs.json')
-        manifest = json.loads(inputs.read_text())
-        if manifest['product']['sha256'] != digest(binary):
-            raise ValueError('alias UAPI build record does not match its executable')
+        audit_compile(binary, ROOT)
         shutil.copy2(inputs, saved / 'compile.inputs.json')
-    peers = [AliasPeer(lane) for lane in range(2)]
+    peers = [(GatewayPeer if suite == 'gateways' else AliasPeer)(lane) for lane in range(2)]
     selector = selectors.DefaultSelector()
     taps, captures, statistics, links = [], [], [], []
     process, error = None, None
@@ -122,19 +125,29 @@ def child(profile, directory):
     if error is None and process is not None and process.returncode == 0 and all(p.passed for p in peers):
         try:
             for lane in range(2):
-                audits.append(verify_alias_capture(directory / f'lane{lane}.pcap', lane,
-                    directory / 'client.log', directory / f'lane{lane}-alias-damaged.zip'))
+                archive = directory / f'lane{lane}-{"gateway" if suite == "gateways" else "alias"}-damaged.zip'
+                if suite == 'gateways':
+                    audits.append(verify_gateway_capture(directory / f'lane{lane}.pcap', lane,
+                        directory / 'client.log', archive, native=True))
+                else:
+                    audits.append(verify_alias_capture(directory / f'lane{lane}.pcap', lane,
+                        directory / 'client.log', archive))
         except Exception as exception:
             error = f'alias capture audit: {exception}'
     unchanged = all(digest(ROOT / n) == value for n, value in sources.items())
+    products_unchanged = all(digest(Path(name)) == value for name, value in products.items())
+    marker = ('IPV4_GATEWAY_PASS index={index} protocols=2 datagrams=12\n' if suite == 'gateways' else
+              'IPV4_ALIAS_PASS index={index} wire_cases=4 local_udp=3\n')
     passed = (error is None and process is not None and process.returncode == 0 and
-              unchanged and len(audits) == 2 and all(a['passed'] for a in audits) and len(statistics) == 2 and all(not s['dropped'] for s in statistics) and
+              unchanged and products_unchanged and len(audits) == 2 and all(a['passed'] for a in audits) and len(statistics) == 2 and all(not s['dropped'] for s in statistics) and
               all(peer.passed for peer in peers) and all(
-                  f'IPV4_ALIAS_PASS index={lane + 1} wire_cases=4 local_udp=3\n' in text
+                  marker.format(index=lane + 1) in text
                   for lane in range(2)))
-    result = dict(passed=passed, profile=profile, error=error, source_unchanged=unchanged,
+    result = dict(passed=passed, profile=profile, suite=suite, error=error, source_unchanged=unchanged,
+                  products_unchanged=products_unchanged,
                   returncode=process.returncode if process else None,
-                  peers=[dict(cases=p.cases, arp_requests=p.arp_requests, arp_replies=p.arp_replies,
+                  peers=[p.report() if suite == 'gateways' else
+                         dict(cases=p.cases, arp_requests=p.arp_requests, arp_replies=p.arp_replies,
                               kernel_replies=p.kernel_replies, passed=p.passed) for p in peers],
                   capture_audits=audits, capture_statistics=statistics, link_statistics=links,
                   seconds=time.monotonic() - started)
@@ -146,14 +159,15 @@ def child(profile, directory):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--directory', type=Path, default=ROOT / 'build/ipv4-aliases-native')
+    parser.add_argument('--directory', type=Path)
+    parser.add_argument('--suite', choices=('aliases', 'gateways'), default='aliases')
     parser.add_argument('--child', choices=['native', 'static', 'dynamic'])
     args = parser.parse_args()
-    directory = args.directory.resolve()
+    directory = (args.directory or ROOT / f'build/ipv4-{args.suite}-native').resolve()
     if directory == (ROOT / 'build').resolve() or not directory.is_relative_to((ROOT / 'build').resolve()):
         raise ValueError('alias evidence needs a dedicated directory beneath build/')
     if args.child:
-        return 0 if child(args.child, directory) else 1
+        return 0 if child(args.child, directory, args.suite) else 1
     directory.mkdir(parents=True, exist_ok=False)
     with (directory / 'build.log').open('wb') as log:
         built = subprocess.run(['make', '-j2', 'build/ipv4-native', 'build/ipv4-tests',
@@ -162,13 +176,14 @@ def main():
     if not built.returncode:
         def compare(profile):
             result = subprocess.run(['unshare', '--net', sys.executable, __file__, '--child', profile,
+                                     '--suite', args.suite,
                                      '--directory', str(directory / profile)], cwd=ROOT)
             return dict(profile=profile, returncode=result.returncode)
         with ThreadPoolExecutor(max_workers=3) as pool:
             results = list(pool.map(compare, ['native', 'static', 'dynamic']))
     passed = not built.returncode and len(results) == 3 and all(not row['returncode'] for row in results)
     (directory / 'receipt.json').write_text(json.dumps(dict(passed=passed,
-        build_returncode=built.returncode, profiles=results), indent=2) + '\n')
+        suite=args.suite, build_returncode=built.returncode, profiles=results), indent=2) + '\n')
     return 0 if passed else 1
 
 

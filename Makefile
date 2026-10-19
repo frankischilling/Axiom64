@@ -421,13 +421,13 @@ build/root-tests: userspace/tests/fs/root.c
 build/net-tests: userspace/tests/net/packet.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
-build/ipv4-tests: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h userspace/tests/net/ipv4_path_mtu.c userspace/tests/net/ipv4_path_mtu.h userspace/tests/net/ipv4_aliases.c userspace/tests/net/ipv4_aliases.h scripts/compile_uapi_client.py scripts/linux_uapi.py scripts/build_openssl.py ports.lock.json
+build/ipv4-tests: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h userspace/tests/net/ipv4_path_mtu.c userspace/tests/net/ipv4_path_mtu.h userspace/tests/net/ipv4_aliases.c userspace/tests/net/ipv4_aliases.h userspace/tests/net/ipv4_gateways.c userspace/tests/net/ipv4_gateways.h scripts/compile_uapi_client.py scripts/linux_uapi.py scripts/build_openssl.py ports.lock.json
 	@mkdir -p build
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $(filter %.c,$^)
-build/ipv4-native: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h userspace/tests/net/ipv4_path_mtu.c userspace/tests/net/ipv4_path_mtu.h userspace/tests/net/ipv4_aliases.c userspace/tests/net/ipv4_aliases.h
+build/ipv4-native: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h userspace/tests/net/ipv4_path_mtu.c userspace/tests/net/ipv4_path_mtu.h userspace/tests/net/ipv4_aliases.c userspace/tests/net/ipv4_aliases.h userspace/tests/net/ipv4_gateways.c userspace/tests/net/ipv4_gateways.h
 	@mkdir -p build
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@
-build/ipv4-dynamic: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h userspace/tests/net/ipv4_path_mtu.c userspace/tests/net/ipv4_path_mtu.h userspace/tests/net/ipv4_aliases.c userspace/tests/net/ipv4_aliases.h scripts/compile_uapi_client.py scripts/linux_uapi.py scripts/build_openssl.py ports.lock.json
+build/ipv4-dynamic: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h userspace/tests/net/ipv4_path_mtu.c userspace/tests/net/ipv4_path_mtu.h userspace/tests/net/ipv4_aliases.c userspace/tests/net/ipv4_aliases.h userspace/tests/net/ipv4_gateways.c userspace/tests/net/ipv4_gateways.h scripts/compile_uapi_client.py scripts/linux_uapi.py scripts/build_openssl.py ports.lock.json
 	@mkdir -p build
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^)
 build/udp-tests: userspace/tests/net/udp.c
@@ -640,6 +640,14 @@ test-network:
 	$(PYTHON) scripts/network_matrix.py
 test-ipv4:
 	$(PYTHON) scripts/ipv4_matrix.py
+
+.PHONY: test-ipv4-gateways test-ipv4-gateways-native
+test-ipv4-gateways:
+	$(PYTHON) scripts/tests/compile_uapi_client_test.py
+	$(PYTHON) scripts/tests/network_fixture_test.py
+	$(PYTHON) scripts/ipv4_gateway_test.py --workers 4
+test-ipv4-gateways-native:
+	$(PYTHON) scripts/ipv4_alias_native.py --suite gateways
 test-udp:
 	$(PYTHON) scripts/udp_matrix.py
 build/netlink-codec-host: kernel/tests/net/netlink.cpp kernel/net/netlink/routes.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp

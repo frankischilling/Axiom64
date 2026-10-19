@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Preserve earlier linked initramfs bytes across successful or failed publication."""
 import errno
+import hashlib
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -10,6 +12,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import network_test
+from tcp_fixture_inputs import audit_fixture
 
 
 def members(data):
@@ -55,9 +58,9 @@ class FixturePublication(unittest.TestCase):
         self.root_patch = patch.object(network_test, 'ROOT', self.root)
         self.root_patch.start()
         self.addCleanup(self.root_patch.stop)
-        compiler_patch = patch.object(network_test.subprocess, 'run')
-        self.compiler = compiler_patch.start()
-        self.addCleanup(compiler_patch.stop)
+        self.compiler_patch = patch.object(network_test.subprocess, 'run')
+        self.compiler = self.compiler_patch.start()
+        self.addCleanup(self.compiler_patch.stop)
 
     def test_completed_publication_preserves_old_inode_and_payloads(self):
         network_test.fixture(environment={'AXIOM64_FIXTURE_VALUE': 'one two'})
@@ -88,6 +91,32 @@ class FixturePublication(unittest.TestCase):
         self.assertFalse(self.destination.is_symlink())
         self.assertEqual(self.link.read_bytes(), self.original)
         self.assertEqual(members(self.destination.read_bytes())['sbin/init'], b'fixture-init')
+
+    def test_actual_iso_rejects_wrong_executables_kernel_loader_and_script(self):
+        runtime = self.root / 'build/loader'
+        runtime.write_bytes(b'fixture-loader')
+        network_test.fixture(runtime_loader=runtime)
+        self.compiler_patch.stop()
+        tree = self.root / 'iso/boot'
+        tree.mkdir(parents=True)
+        (tree / 'axiom64.elf').write_bytes(b'fixture-kernel')
+        (tree / 'rootfs.cpio').write_bytes(self.destination.read_bytes())
+        image = self.root / 'build/fixture.iso'
+        subprocess.run(['xorriso', '-as', 'mkisofs', '-quiet', '-o', str(image), str(tree.parent)],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        fingerprint = lambda data: hashlib.sha256(data).hexdigest()
+        executables = {name: fingerprint(data) for name, data in members(self.destination.read_bytes()).items()
+                       if name.startswith(('bin/', 'sbin/', 'lib/'))}
+        kernel = fingerprint(b'fixture-kernel')
+        script = b'#!/bin/sh\nexit 0\n'
+        self.assertTrue(audit_fixture(image, kernel, executables, script)['actual_image_opened'])
+        with self.assertRaisesRegex(ValueError, 'fingerprinted running kernel'):
+            audit_fixture(image, fingerprint(b'other-kernel'), executables, script)
+        for name in executables:
+            with self.subTest(executable=name), self.assertRaisesRegex(ValueError, 'exact executable'):
+                audit_fixture(image, kernel, {**executables, name: fingerprint(b'other')}, script)
+        with self.assertRaisesRegex(ValueError, 'actual boot script'):
+            audit_fixture(image, kernel, executables, b'#!/bin/sh\n/bin/other\n')
 
 
 if __name__ == '__main__':

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
 #include "ipv4_aliases.h"
+#include "ipv4_gateways.h"
 #include "ipv4_fragments.h"
 #include "ipv4_path_mtu.h"
 #include <arpa/inet.h>
@@ -981,6 +982,11 @@ static void link_change(unsigned lane) {
 
 int main(int argc, char** argv) {
     setbuf(stdout, NULL);
+    if (argc == 2 && !strcmp(argv[1], "--gateways")) {
+        ipv4_gateway_checks(0);
+        ipv4_gateway_checks(1);
+        return 0;
+    }
     if (argc == 2 && !strcmp(argv[1], "--aliases")) {
         ipv4_alias_checks(0);
         ipv4_alias_checks(1);

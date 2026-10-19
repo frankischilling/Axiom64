@@ -19,10 +19,14 @@ from qmp import Qmp
 from network_fault import defer_tx, inject
 
 
-def fixture(status=True, program='net-tests', script='userspace/tests/net/run.sh', environment=None):
+def fixture(status=True, program='net-tests', script='userspace/tests/net/run.sh', environment=None,
+            runtime_loader=None):
     subprocess.run(['make', 'build/axiom64.elf', 'build/init', f'build/{program}', 'busybox'],
                    cwd=ROOT, check=True)
     files = {name: (0o40755, b'') for name in ['bin', 'sbin', 'etc', 'dev', 'proc', 'sys', 'tmp', 'run', 'root']}
+    if runtime_loader is not None:
+        files['lib'] = (0o40755, b'')
+        files['lib/ld-musl-x86_64.so.1'] = (0o100755, Path(runtime_loader).read_bytes())
     for name, source in [('sbin/init', ROOT / 'build/init'),
                          (f'bin/{program}', ROOT / 'build' / program),
                          ('bin/busybox', ROOT / 'build/busybox-1.37.0/busybox'),

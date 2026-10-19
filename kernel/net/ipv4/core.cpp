@@ -356,6 +356,19 @@ static int select(uint32_t source, uint32_t destination, unsigned bound, Selecti
             result.path_source = config->address;
         }
     }
+    if (!result.found && bound) {
+        if (auto preferred = addresses.preferred(bound, destination)) {
+            result = {source ? source : preferred->config.address,
+                      destination,
+                      bound,
+                      0,
+                      0,
+                      false,
+                      false,
+                      true};
+            result.path_source = preferred->config.address;
+        }
+    }
     if (!result.found)
         return -101;
     auto info = net_info(result.index);
@@ -851,8 +864,8 @@ int ipv4_send(InetSocket* owner, uint32_t source, uint32_t destination, unsigned
     if (!ttl)
         return -22;
     Selection route;
-    auto retained = inet_destination(owner, destination);
     int error = select(source, destination, bound_index, route);
+    auto retained = inet_output_destination(owner, destination, error != 0);
     if (error) {
         if (retained)
             *retained = {};

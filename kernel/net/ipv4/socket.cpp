@@ -25,8 +25,12 @@ struct DestinationRelease {
 };
 } // namespace
 
-Ipv4Destination* inet_destination(InetSocket* socket, uint32_t address) {
-    return socket && socket->used && socket->peer == address ? &socket->destination : nullptr;
+Ipv4Destination* inet_output_destination(InetSocket* socket, uint32_t address, bool lookup_failed) {
+    if (!socket || !socket->used || socket->peer != address)
+        return nullptr;
+    if (socket->type == 3 && (lookup_failed || !socket->destination.path.index))
+        return nullptr;
+    return &socket->destination;
 }
 
 bool inet_payload(InetSocket* socket) {
@@ -314,7 +318,7 @@ int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* da
     if (length + overhead >
         socket->send_limit - min(socket->transmitted, size_t(socket->send_limit)))
         return -11;
-    if (destination == socket->peer) {
+    if (socket->type == 2 && destination == socket->peer) {
         int routed =
             ipv4_destination(socket->destination, socket->local, destination, socket->index);
         if (routed)

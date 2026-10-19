@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "net/ipv4.hpp"
+#include "net/ipv6.hpp"
 
 namespace ax {
 struct Task;
@@ -18,7 +19,7 @@ struct NetlinkHeader {
 };
 
 static_assert(sizeof(NetlinkAddress) == 12 && sizeof(NetlinkHeader) == 16);
-constexpr size_t netlink_max_request = 4096, netlink_max_reply = 4116;
+constexpr size_t netlink_max_request = 4096, netlink_family_reply = 4116, netlink_max_reply = 8192;
 
 struct NetlinkFrame {
     NetlinkAddress source;
@@ -30,7 +31,7 @@ inline const uint8_t* netlink_bytes(const NetlinkFrame* frame) {
 }
 
 // Caller reserves this capacity before invoking route mutation/reply generation.
-size_t routing_capacity(const NetlinkHeader&);
+size_t routing_capacity(const NetlinkHeader&, const void* request = nullptr);
 
 size_t routing_reply(const void*, uint32_t port, bool capped, void* output, bool privileged,
                      bool strict = false);
@@ -43,6 +44,11 @@ int netlink_inventory_reply(const void*, const NetlinkHeader&, uint32_t port, vo
                             size_t& size);
 
 int netlink_address_change(const void*, const NetlinkHeader&);
+
+int netlink_ipv6_address_change(const void*, const NetlinkHeader&);
+
+int netlink_ipv6_route(const void*, const NetlinkHeader&, uint32_t port, void*, size_t capacity,
+                       size_t& size);
 
 void netlink_close(NetlinkSocket*);
 

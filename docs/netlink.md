@@ -1,13 +1,13 @@
-# Link inventories and IPv4 control over netlink
+# Link inventories and IP control over netlink
 
-Ring 3 programs can inspect, add, and remove the supported IPv4 routes through `AF_NETLINK` with `NETLINK_ROUTE`. Routes retain their Linux protocol and scope, allowing the network configuration adapter to remove an owned on-link route while preserving an unrelated gateway route. The [network manager](network-manager.md) uses this interface for DHCP configuration. The complete routing interface remains unfinished.
+Ring 3 programs can inspect, add, and remove the supported IPv4 routes through `AF_NETLINK` with `NETLINK_ROUTE`. Routes retain their Linux protocol and scope, allowing the network configuration adapter to remove an owned on-link route while preserving an unrelated gateway route. The [network manager](network-manager.md) uses this interface for DHCP configuration. [Initial IPv6 control](ipv6.md) adds explicit permanent addresses, DAD flags, main-table routes and family-aware inventories. The complete routing interface remains unfinished.
 
 ## Messages and routes
 
 | Operation | Supported contract |
 | --- | --- |
-| `RTM_GETLINK` | Multipart link inventory for unspecified, IPv4, or packet family; physical interfaces and loopback, with name, flags, MTU, hardware/broadcast address, operational state, and software transmit queue length |
-| `RTM_GETADDR` | Multipart IPv4 address inventory with local/peer address, prefix, individual label, optional broadcast, and permanent/secondary flags |
+| `RTM_GETLINK` | Multipart link inventory for unspecified, IPv4, IPv6, or packet family; physical interfaces and loopback, with name, flags, MTU, hardware/broadcast address, operational state, and software transmit queue length |
+| `RTM_GETADDR` | Multipart IPv4/IPv6 address inventory selected by family; IPv4 labels, local/peer address, optional broadcast and permanent/secondary flags; IPv6 prefix, scope, permanent/tentative/DAD-failed flags and infinite lifetimes |
 | `RTM_NEWROUTE` | `NLM_F_REQUEST`, `NLM_F_CREATE`, and `NLM_F_EXCL`; optional `NLM_F_ACK`; IPv4 main-table unicast with a canonical destination/prefix; direct routes require an explicit physical interface and gateway routes can infer it from a configured subnet |
 | `RTM_DELROUTE` | Matching destination/prefix with optional interface, gateway, priority, protocol, and scope filters; optional acknowledgment |
 | `RTM_GETROUTE` | Multipart dump with `NLM_F_DUMP`; IPv4 or unspecified family, optional protocol/interface filters; main-table unicast records followed by `NLMSG_DONE` and status |
@@ -28,13 +28,15 @@ Replies carry the request sequence, the socket's authoritative port identity, an
 
 ## Socket ownership and bounds
 
+IPv6 mutations support explicit permanent addresses on physical interfaces and main-table unicast routes. Addresses run DAD unless `IFA_F_NODAD` is requested. `IFA_F_NOPREFIXROUTE` creates no prefix route; a previously owned prefix may remain for explicit cleanup after its addresses are removed. Tentative and permanently failed addresses retain existing prefix routes. Route creation requires `NLM_F_CREATE|NLM_F_EXCL`; it rejects local gateways and global next hops without a direct route on the selected interface. Omitted or zero deletion priority is a wildcard. Route control accepts destination, gateway, interface and priority attributes; dumps can filter by protocol and interface. Finite lifetimes, replacement, automatic configuration, additional tables and complete Linux control equivalence remain unfinished. See [IPv6 development](ipv6.md) for host behavior and validation limits.
+
 `SOCK_RAW` and `SOCK_DGRAM` accept nonblocking and close-on-exec flags. Bind allocates a unique port when the requested port is zero; connect and unconnected sends target kernel port zero. Name queries use Linux `sockaddr_nl`. Groups, peer-process delivery, subscriptions, and notifications are unsupported.
 
-There are at most 64 socket descriptions. A socket owns at most 32 reply datagrams and 65536 reserved reply-payload bytes, plus per-frame metadata and allocator overhead. Requests are limited to 4096 bytes and 32 messages per send. Every response allocation is reserved before any request in that send is applied; allocation failure or backpressure leaves those routes unchanged. Dumps reserve their maximum 4116-byte reply space even when their actual records are shorter, so 15 unread dumps exhaust the dump-sized capacity before the datagram count limit. Consuming a reply or final close releases its reservation.
+There are at most 64 socket descriptions. A socket owns at most 32 reply datagrams and 65536 reserved reply-payload bytes, plus per-frame metadata and allocator overhead. Requests are limited to 4096 bytes and 32 messages per send. Every response allocation is reserved before any request in that send is applied; allocation failure or backpressure leaves those routes unchanged. Single-family dumps reserve 4116 bytes even when their actual records are shorter, preserving the 15-unread-dump IPv4 limit. A combined unspecified-family route dump reserves 8192 bytes to include both families. Consuming a reply or final close releases its reservation.
 
 Descriptor reads/writes, vectors, and message calls share the [retained I/O path](io.md). A blocked send retains its original description, destination, vectors, and complete payload through descriptor reuse. Dup and fork preserve port identity and queued replies until final close. Receive supports nonblocking, peek, and truncation; a zero-length descriptor read retains the datagram, while a zero-length receive consumes it. A non-peek receive copy fault consumes the selected datagram; a failed peek retains it. `recvmsg` reports kernel sender metadata and zero control length.
 
-Poll and epoll report read availability and capacity for a minimum acknowledgment. Write readiness does not promise space for every larger request or dump. `SO_TYPE`, `SO_DOMAIN`, `SO_PROTOCOL`, `SO_ERROR`, fixed buffer-size queries, `NETLINK_CAP_ACK`, and `NETLINK_GET_STRICT_CHK` are supported. Route/address mutations retain complete validation independently of the strict dump option. Other options, socket deadlines, multicast, address lifetimes, link mutations over netlink, lookup requests without dump flags, replacement, multiple tables, IPv6, policy routing, and general Linux netlink behavior remain required.
+Poll and epoll report read availability and capacity for a minimum acknowledgment. Write readiness does not promise space for every larger request or dump. `SO_TYPE`, `SO_DOMAIN`, `SO_PROTOCOL`, `SO_ERROR`, fixed buffer-size queries, `NETLINK_CAP_ACK`, and `NETLINK_GET_STRICT_CHK` are supported. Route/address mutations retain complete validation independently of the strict dump option. Other options, socket deadlines, multicast, address lifetimes, link mutations over netlink, lookup requests without dump flags, replacement, multiple tables, complete IPv6 control, policy routing, and general Linux netlink behavior remain required.
 
 ## Ring 3 configuration adapter
 

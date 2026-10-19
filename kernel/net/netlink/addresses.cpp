@@ -26,6 +26,8 @@ int netlink_address_change(const void* data, const NetlinkHeader& message) {
     auto input = static_cast<const uint8_t*>(data);
     AddressHeader address;
     memcpy(&address, input + sizeof(message), sizeof(address));
+    if (address.family == 10)
+        return netlink_ipv6_address_change(data, message);
     if (address.family != 2)
         return -97;
     if (address.prefix > 32)

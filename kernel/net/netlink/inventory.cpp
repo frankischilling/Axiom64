@@ -22,6 +22,8 @@ struct Attribute {
 static_assert(sizeof(LinkHeader) == 16 && sizeof(AddressHeader) == 8);
 static_assert((max_net_devices + 1) * 128 + 20 <= netlink_max_reply);
 static_assert((ipv4_address_capacity + 1) * 76 + 20 <= netlink_max_reply);
+static_assert((ipv4_address_capacity + 1) * 76 + (ipv6_address_capacity + 1) * 72 + 20 <=
+              netlink_family_reply);
 
 class Writer {
   public:
@@ -105,6 +107,25 @@ bool address(Writer& output, const NetlinkHeader& request, uint32_t port, const 
     output.finish(start, message);
     return true;
 }
+
+bool address6(Writer& output, const NetlinkHeader& request, uint32_t port,
+              const Ipv6Address& entry) {
+    size_t start = output.size;
+    NetlinkHeader message{0, 20, 2, request.sequence, port};
+    uint32_t flags = entry.flags;
+    uint32_t lifetime[4] = {UINT32_MAX, UINT32_MAX, 0, 0};
+    AddressHeader header{10, entry.prefix, uint8_t(flags),
+                         uint8_t(entry.index == ipv6_loopback ? 254
+                                 : entry.address.link_local() ? 253
+                                                              : 0),
+                         entry.index};
+    if (!output.append(&message, sizeof(message)) || !output.append(&header, sizeof(header)) ||
+        !output.attribute(1, entry.address.bytes, 16) || !output.attribute(8, &flags, 4) ||
+        !output.attribute(6, lifetime, sizeof(lifetime)))
+        return false;
+    output.finish(start, message);
+    return true;
+}
 } // namespace
 
 int netlink_inventory_reply(const void* data, const NetlinkHeader& request, uint32_t port,
@@ -119,7 +140,7 @@ int netlink_inventory_reply(const void* data, const NetlinkHeader& request, uint
     if (!body || (body > 4 && body != complete) || (strict && body != complete))
         return -22;
     auto input = static_cast<const uint8_t*>(data) + sizeof(request);
-    if (input[0] && input[0] != 2 && !(request.type == 18 && input[0] == 17))
+    if (input[0] && input[0] != 2 && input[0] != 10 && !(request.type == 18 && input[0] == 17))
         return -97;
     // rtgenmsg contains only the family; legacy senders leave its alignment bytes uninitialized.
     for (size_t i = 1; body == complete && i < body; i++)
@@ -138,12 +159,16 @@ int netlink_inventory_reply(const void* data, const NetlinkHeader& request, uint
         if (request.type == 18) {
             if (!link(output, request, port, *info, loopback))
                 return -90;
-        } else
+        } else if (input[0] != 10)
             for (unsigned n = 0; auto entry = ipv4_address(n); n++)
                 if (entry->index == index &&
                     !address(output, request, port, *info, *entry, loopback))
                     return -90;
     }
+    if (request.type == 22 && input[0] != 2)
+        for (unsigned n = 0; auto entry = ipv6_address(n); n++)
+            if (!address6(output, request, port, *entry))
+                return -90;
     NetlinkHeader done{20, 3, 2, request.sequence, port};
     int status = 0;
     if (!output.append(&done, sizeof(done)) || !output.append(&status, sizeof(status)))

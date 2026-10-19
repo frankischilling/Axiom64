@@ -88,8 +88,10 @@ static int evaluate(const uint8_t* packet, bool strict, unsigned* records = null
         }
         at += header.length;
     }
-    require(count == (request.type == 18 ? max_net_devices + 1 : ipv4_address_capacity + 1),
-            "complete device/address inventory fits one reservation");
+    unsigned expected = request.type == 18 ? max_net_devices + 1
+                        : packet[16] == 10 ? 0
+                                           : ipv4_address_capacity + 1;
+    require(count == expected, "complete device/address inventory fits one reservation");
     if (records)
         *records = count;
     return 0;
@@ -99,7 +101,7 @@ int main() {
     uint8_t packet[128]{};
     unsigned cases = 0;
     for (uint16_t type : {uint16_t(18), uint16_t(22)}) {
-        for (unsigned family : {0u, 2u, 17u}) {
+        for (unsigned family : {0u, 2u, 10u, 17u}) {
             if (type == 22 && family == 17)
                 continue;
             for (unsigned body : {1u, 4u, type == 18 ? 16u : 8u}) {
@@ -111,7 +113,9 @@ int main() {
                     memset(packet + 17, 0xa5, 3);
                 unsigned records = 0;
                 require(!evaluate(packet, false, &records) &&
-                            records == (type == 18 ? 9 : ipv4_address_capacity + 1),
+                            records == (type == 18     ? 9
+                                        : family == 10 ? 0
+                                                       : ipv4_address_capacity + 1),
                         "valid compact and complete dumps");
                 require(evaluate(packet, true) == (body == (type == 18 ? 16u : 8u) ? 0 : -22),
                         "strict dump requires the complete header");

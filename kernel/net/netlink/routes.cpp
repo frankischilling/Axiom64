@@ -144,8 +144,13 @@ size_t dump(const NetlinkHeader& request, uint32_t port, const Ipv4Route& filter
 }
 } // namespace
 
-size_t routing_capacity(const NetlinkHeader& request) {
-    return routing_dump(request.type) ? netlink_max_reply : aligned(request.length) + 20;
+size_t routing_capacity(const NetlinkHeader& request, const void* data) {
+    if (!routing_dump(request.type))
+        return aligned(request.length) + 20;
+    bool combined =
+        request.type == 26 && (!data || (request.length > sizeof(request) &&
+                                         !static_cast<const uint8_t*>(data)[sizeof(request)]));
+    return combined ? netlink_max_reply : netlink_family_reply;
 }
 
 size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply, bool privileged,
@@ -172,16 +177,36 @@ size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply
              !(request.flags & ~(1u | 4u | (request.type == 20 ? 0x600u : 0u))))
         error = netlink_address_change(packet, request);
     else if ((request.type == 24 || request.type == 25 || is_dump) && !(request.flags & ~allowed)) {
-        if (is_dump && (request.flags & 0x300) != 0x300)
-            error = -95;
-        else if (is_dump && strict && request.length < sizeof(request) + sizeof(RouteHeader))
-            error = -22;
-        else
-            error = parse(input, request, value, is_dump);
-        if (!error) {
-            if (is_dump)
-                return dump(request, port, value, output);
-            error = ipv4_route_control(value, request.type == 25, request.flags & 0x200);
+        if (request.length > sizeof(request) && input[sizeof(request)] == 10) {
+            size_t size = 0;
+            if (is_dump && ((request.flags & 0x300) != 0x300 ||
+                            (strict && request.length < sizeof(request) + sizeof(RouteHeader))))
+                error = -22;
+            else
+                error = netlink_ipv6_route(packet, request, port, output, netlink_max_reply, size);
+            if (!error && is_dump)
+                return size;
+        } else {
+            if (is_dump && (request.flags & 0x300) != 0x300)
+                error = -95;
+            else if (is_dump && strict && request.length < sizeof(request) + sizeof(RouteHeader))
+                error = -22;
+            else
+                error = parse(input, request, value, is_dump);
+            if (!error) {
+                if (is_dump) {
+                    size_t size = dump(request, port, value, output);
+                    if (input[sizeof(request)] == 0) {
+                        size_t extra = 0;
+                        error = netlink_ipv6_route(packet, request, port, output + size - 20,
+                                                   netlink_max_reply - size + 20, extra);
+                        if (!error)
+                            return size - 20 + extra;
+                    } else
+                        return size;
+                } else
+                    error = ipv4_route_control(value, request.type == 25, request.flags & 0x200);
+            }
         }
     }
     if (!error && !(request.flags & 4))

@@ -935,6 +935,24 @@ jobs:
           name: ipv4-gateways-native
           if-no-files-found: warn
           path: build/ipv4-gateways-native
+      - name: Test IPv6 address control, DAD, neighbor discovery and echo on both adapters
+        if: matrix.suite == 'network'
+        run: make test-ipv6-host
+      - name: Compare IPv6 host behavior with three native Linux linkages
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv6-host-native
+      - name: Upload IPv6 host evidence
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv6-host
+          if-no-files-found: warn
+          path: |
+            build/ipv6-host-wire
+            build/ipv6-host-native-wire
+            build/ipv6-host-static.inputs.json
+            build/ipv6-host-dynamic.inputs.json
+            build/axiom64-ipv6-host-*.iso
       - name: Test IPv4 routes, ARP, raw ICMP, ping, and failed-device sockets
         if: matrix.suite == 'network'
         run: make test-ipv4 IPV4_WORKERS=4

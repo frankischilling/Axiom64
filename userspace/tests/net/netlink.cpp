@@ -717,7 +717,7 @@ static void malformed(int fd) {
             request.size = 27;
             break;
         case 1:
-            request.bytes[16] = AF_INET6;
+            request.bytes[16] = AF_UNIX;
             expected = EAFNOSUPPORT;
             break;
         case 2:

@@ -21,6 +21,8 @@ struct Address {
 
     bool link_local() const;
 
+    bool mapped() const;
+
     bool matches(const Address& prefix, unsigned bits) const;
 };
 
@@ -48,6 +50,7 @@ struct Packet {
     Fragment fragment;
     uint32_t size = 0, error_pointer = 0, next_header_offset = 6;
     uint8_t protocol = 59, error_code = 0;
+    bool fragmented = false;
 };
 
 // No reassembly, authentication or ICMP emission occurs while decoding. The

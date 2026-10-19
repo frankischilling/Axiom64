@@ -81,6 +81,13 @@ bool Address::link_local() const {
     return bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0x80;
 }
 
+bool Address::mapped() const {
+    for (unsigned n = 0; n < 10; n++)
+        if (bytes[n])
+            return false;
+    return bytes[10] == 0xff && bytes[11] == 0xff;
+}
+
 bool Address::matches(const Address& prefix, unsigned bits) const {
     if (bits > 128)
         return false;
@@ -109,7 +116,6 @@ Packet decode(const uint8_t* bytes, size_t length) {
     }
     uint8_t next = bytes[6];
     size_t at = header_size;
-    bool fragmented = false;
     // Each extension advances at least eight bytes inside the 16-bit payload.
     // AH and ESP remain opaque; decoding cannot authorize their inner payload.
     while (next == 0 || next == 43 || next == 44 || next == 60) {
@@ -127,9 +133,9 @@ Packet decode(const uint8_t* bytes, size_t length) {
         if (next == 43 && bytes[at + 3])
             return problem(packet, 0, at + 2);
         if (next == 44) {
-            if (fragmented)
+            if (packet.fragmented)
                 return packet;
-            fragmented = true;
+            packet.fragmented = true;
             uint16_t field = get16(bytes + at + 2);
             packet.fragment = {get32(bytes + at + 4), uint16_t(field & 0xfff8), bool(field & 1)};
             size_t fragment_length = packet.size - at - 8;

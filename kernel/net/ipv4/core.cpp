@@ -118,7 +118,7 @@ static void clear(Output& item, int error = 0) {
     if (item.owner) {
         inet_reclaim(item.owner, ip4::get16(item.bytes + ethernet_header + 2));
         if (error)
-            inet_failed(item.owner, error);
+            inet_failed(item.owner, error, item.index);
     }
     release(item.bytes);
     release(item.fragment_bytes);

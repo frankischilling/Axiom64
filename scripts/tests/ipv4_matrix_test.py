@@ -60,20 +60,23 @@ class MatrixTest(unittest.TestCase):
             os.environ['AXIOM64_IPV4_MATRIX_CONTROL'] = self.previous_control
         self.temporary.cleanup()
 
-    def run_phase(self, mode):
+    def run_phase(self, mode, workers=2):
         os.environ['AXIOM64_IPV4_MATRIX_CONTROL'] = mode
-        ipv4_matrix.phase(False, 2, self.results, self.root / 'build/ipv4-results.json')
+        ipv4_matrix.phase(False, workers, self.results, self.root / 'build/ipv4-results.json')
 
     def test_actual_workers_overlap_and_keep_exact_profiles(self):
-        self.run_phase('normal')
-        rows = json.loads((self.root / 'build/ipv4-normal-worker-results.json').read_text())['cases']
-        self.assertEqual(len(rows), 4)
-        self.assertEqual(len({row['pid'] for row in rows}), 4)
-        self.assertLess(max(row['started_monotonic_ns'] for row in rows[:2]),
-                        min(row['finished_monotonic_ns'] for row in rows[:2]))
-        self.assertTrue(all(row['terminal'] and row['passed'] for row in rows))
-        self.assertEqual([(row['firmware'], row['transport']) for row in self.results],
-                         [('bios', 'modern'), ('uefi', 'modern'), ('bios', 'legacy'), ('uefi', 'legacy')])
+        for workers in (2, 4):
+            with self.subTest(workers=workers):
+                self.results.clear()
+                self.run_phase('normal', workers)
+                rows = json.loads((self.root / 'build/ipv4-normal-worker-results.json').read_text())['cases']
+                self.assertEqual(len(rows), 4)
+                self.assertEqual(len({row['pid'] for row in rows}), 4)
+                self.assertLess(max(row['started_monotonic_ns'] for row in rows[:workers]),
+                                min(row['finished_monotonic_ns'] for row in rows[:workers]))
+                self.assertTrue(all(row['terminal'] and row['passed'] for row in rows))
+                self.assertEqual([(row['firmware'], row['transport']) for row in self.results],
+                                 [('bios', 'modern'), ('uefi', 'modern'), ('bios', 'legacy'), ('uefi', 'legacy')])
 
     def test_nonzero_worker_cannot_claim_success(self):
         with self.assertRaises(RuntimeError):

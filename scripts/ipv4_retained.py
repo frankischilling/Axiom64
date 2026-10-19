@@ -10,10 +10,11 @@ def require(value, reason):
 
 
 class RetainedPeer:
-    def __init__(self, lane, query_model='release'):
+    def __init__(self, lane, query_model='release', native_cache=False):
         self.lane = lane
         require(query_model in ('release', 'read-only'), 'known retained query model')
         self.query_model = query_model
+        self.native_cache = native_cache
         self.guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
         self.control = bytes([2, ord('R'), ord('S'), ord('C'), lane, 0])
         self.prefix = bytes([198, 18, 31 + lane])
@@ -59,8 +60,8 @@ class RetainedPeer:
                   preferred if kind or method in (4, 5, 6) else b'\0' * 4)
         if kind == 2:
             source = preferred if method == 8 else b'\0' * 4
-        elif phase < 6 and not kind and method == 0 and self.query_model == 'read-only':
-            source = preferred
+        variable_source = (phase < 6 and self.native_cache and kind != 1 and
+                           (kind == 2 or method in (0, 1, 2, 3, 7)))
         if control:
             expected = self.control + self.guest + b'\x88\xb6RSC1' + bytes([
                 self.lane, phase, kind, method, 0]) + bytes(
@@ -83,6 +84,9 @@ class RetainedPeer:
         total = int.from_bytes(frame[16:18], 'big')
         packet = frame[14:14 + total]
         raw = kind == 1
+        if variable_source:
+            require(packet[12:16] in (b'\0' * 4, preferred), 'retained native UDP cache source')
+            source = packet[12:16]
         require(len(packet) == total == (52 if raw else 60) and
                 frame[:12] == mac + self.guest and packet[:2] == b'\x45\0' and
                 packet[6:10] == b'\x40\0\x40' + bytes([1 if raw else 17]) and
@@ -110,7 +114,12 @@ class RetainedPeer:
 
     @property
     def passed(self):
-        return self.position == 111 and len(self.datagrams) == 110
+        varied = [row['source'] for row in self.datagrams
+                  if row['phase'] in (1, 2, 3, 5) and row['kind'] != 1 and
+                  (row['kind'] == 2 or row['method'] in (0, 1, 2, 3, 7))]
+        compared = (not self.native_cache or
+                    '00000000' in varied and any(source != '00000000' for source in varied))
+        return self.position == 111 and len(self.datagrams) == 110 and compared
 
     def report(self):
         return dict(passed=self.passed, datagrams=self.datagrams, barriers=self.position)

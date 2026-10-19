@@ -937,7 +937,7 @@ jobs:
           path: build/ipv4-gateways-native
       - name: Test IPv4 routes, ARP, raw ICMP, ping, and failed-device sockets
         if: matrix.suite == 'network'
-        run: make test-ipv4
+        run: make test-ipv4 IPV4_WORKERS=4
       - name: Compare IPv4 fragment receive behavior with three native Linux linkages
         if: matrix.suite == 'network'
         run: sudo -n make test-ipv4-fragments-native

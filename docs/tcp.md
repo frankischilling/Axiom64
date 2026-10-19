@@ -96,6 +96,23 @@ undelivered until restoration, with no socket error. Each complete stream carrie
 6224 data bytes and four control bytes. Wider route policies, longer outages and
 permanent device failure still require their wider acceptance cases.
 
+An unbound stream selects its current route without turning its earlier output
+interface into a device binding. Its four-tuple can receive replies on either
+adapter; an explicit device binding still restricts input and output. Shared
+path-MTU learning uses that same route selection. Live and TIME_WAIT tuples use
+overlapping device bindings to prevent conflicting reuse, while disjoint explicit
+bindings have separate ownership. A failed IPv4-owned copy records its actual
+output device. An unbound stream retains its bytes and original deadlines when a
+healthy replacement route exists; absent recovery or an explicit failed binding
+preserves the existing fatal error contract.
+
+`make test-tcp-connection` includes a sanitizer check through the production socket,
+TCP, IPv4 and Ethernet modules. It verifies both route withdrawals, exact retained
+output, a live companion, migration to another adapter, current-path PMTU, failed
+queued-copy recovery, TIME_WAIT replies, tuple-binding conflicts, reset routing
+and fatal device errors. These module checks do not replace the complete native
+and guest routing, lifetime and device matrices.
+
 `scripts/tcp_recovery_capture.py` independently reconstructs both streams, the
 Q/H control positions, every ACK and both closes. It checks actual physical-link
 operations, administrative state, complete companion progress and carrier-byte

@@ -1,6 +1,7 @@
 CXX = g++
 NASM = nasm
 PYTHON = python3
+IPV4_WORKERS ?= 2
 MUSL_CC = gcc -specs="$(CURDIR)/build/musl/build/compiler.specs"
 CLANG_FORMAT ?= clang-format-20
 CXXFLAGS = -std=c++20 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pie -fno-threadsafe-statics -fno-use-cxa-atexit -fno-builtin -m64 -mno-red-zone -mcmodel=kernel -mgeneral-regs-only -Ikernel/include -Ivendor
@@ -639,7 +640,7 @@ test-root-io: disk-root
 test-network:
 	$(PYTHON) scripts/network_matrix.py
 test-ipv4:
-	$(PYTHON) scripts/ipv4_matrix.py
+	$(PYTHON) scripts/ipv4_matrix.py --workers $(IPV4_WORKERS)
 
 .PHONY: test-ipv4-gateways test-ipv4-gateways-native
 test-ipv4-gateways:
@@ -711,8 +712,12 @@ build/tcp-connection-host: kernel/tests/net/tcp_connection.cpp kernel/net/tcp/co
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_connection.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp -o $@
 .PHONY: test-tcp-connection
-test-tcp-connection: build/tcp-connection-host
+build/tcp-socket-output-host: kernel/tests/net/tcp_socket_output.cpp kernel/net/ipv4/socket.cpp kernel/net/udp/core.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp kernel/core/random/primitives.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/icmp.cpp kernel/net/tcp/isn.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/socket.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/wire.cpp $(call rwildcard,kernel/include/,*.hpp) kernel/net/ipv4/socket.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
+test-tcp-connection: build/tcp-connection-host build/tcp-socket-output-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/tcp-connection-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/tcp-socket-output-host
 build/tcp-icmp-host: kernel/tests/net/tcp_icmp.cpp kernel/net/tcp/icmp.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp kernel/include/net/tcp/icmp.hpp kernel/include/net/tcp/connection.hpp kernel/include/net/tcp/time_wait.hpp kernel/include/net/tcp/sender.hpp kernel/include/net/tcp/wire.hpp kernel/include/net/ipv4_wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_icmp.cpp kernel/net/tcp/icmp.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp -o $@

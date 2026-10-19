@@ -11,8 +11,8 @@ def require(value, reason):
 
 
 class UnconfiguredPeer:
-    def __init__(self, lane, query_model='release'):
-        self.retained = RetainedPeer(lane, query_model)
+    def __init__(self, lane, query_model='release', native_cache=False):
+        self.retained = RetainedPeer(lane, query_model, native_cache)
         self.lane = lane
         self.guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
         self.control = bytes([2, 0x55, 0x4e, 0x43, lane, 0])

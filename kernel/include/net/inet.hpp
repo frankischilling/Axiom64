@@ -56,7 +56,8 @@ size_t inet_available(InetSocket*);
 
 int inet_error(InetSocket*, bool clear = false);
 
-void inet_failed(InetSocket*, int error);
+// An output error carries its failed device; zero identifies other diagnostics.
+void inet_failed(InetSocket*, int error, unsigned failed_index = 0);
 
 void inet_icmp_error(unsigned index, const uint8_t* quote, int error, uint16_t announced_mtu = 0);
 

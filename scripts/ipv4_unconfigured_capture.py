@@ -16,7 +16,7 @@ def require(value, reason):
         raise ValueError(reason)
 
 
-def inspect(rows, lane, log, query_model='release'):
+def inspect(rows, lane, log, query_model='release', native_cache=False):
     guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
     control = bytes([2, 0x55, 0x4e, 0x43, lane, 0])
     prefix = bytes([198, 18, lane + 1])
@@ -129,20 +129,22 @@ def inspect(rows, lane, log, query_model='release'):
     require(len(re.findall(r'^IPV4_UNCONFIGURED_PASS index=' + str(lane + 1) +
                            r' protocols=2 datagrams=14\r?$', log, re.M)) == 1,
             'actual unconfigured client completed both protocols')
-    retained, retained_proof = inspect_retained(rows, lane, log, query_model)
+    retained, retained_proof = inspect_retained(rows, lane, log, query_model, native_cache)
     return dict(passed=True, lane=lane, datagrams=14, source_queries=14, barriers=14,
                 arp_exchanges=sum(map(len, arp_requests.values())), retained=retained), dict(
                     data=data, requests=requests, replies=replies,
                     arp_requests=arp_requests, arp_replies=arp_replies, retained=retained_proof)
 
 
-def verify_capture(path, lane, log_path, damage_archive=None, native=False, query_model='release'):
+def verify_capture(path, lane, log_path, damage_archive=None, native=False, query_model='release',
+                   native_cache=False):
+    native_cache = native or native_cache
     path, log_path = Path(path), Path(log_path)
     original, original_log = path.read_bytes(), log_path.read_bytes()
     rows, text = read_capture(path), original_log.decode(errors='replace')
     if native:
         bind_clocks(rows, path.with_suffix('.clocks.jsonl'))
-    result, proof = inspect(rows, lane, text, query_model)
+    result, proof = inspect(rows, lane, text, query_model, native_cache)
     if damage_archive:
         names = ['missing-data', 'duplicate-data', 'wrong-source', 'wrong-destination',
                  'wrong-next-hop', 'payload', 'IP-checksum', 'UDP-checksum', 'missing-ARP-request',
@@ -198,9 +200,12 @@ def verify_capture(path, lane, log_path, damage_archive=None, native=False, quer
                         elif name == 'retained-wrong-following-source':
                             target = retained['data'][1, 2, 9]
                         frame = bytearray(changed[target]['frame'])
-                        frame[26:30] = (b'\0' * 4 if name == 'retained-wrong-named-source' or
-                                        name == 'retained-wrong-unnamed-source' and query_model == 'read-only'
-                                        else bytes([10, 23, 2 - lane, 2]))
+                        if native_cache and name in (
+                                'retained-wrong-unnamed-source', 'retained-wrong-following-source'):
+                            frame[26:30] = bytes([10, 23, 2 - lane, 254])
+                        else:
+                            frame[26:30] = (b'\0' * 4 if name == 'retained-wrong-named-source'
+                                            else bytes([10, 23, 2 - lane, 2]))
                         frame[24:26] = b'\0\0'
                         struct.pack_into('!H', frame, 24, checksum(frame[14:34]))
                         frame[40:42] = b'\0\0'
@@ -249,13 +254,40 @@ def verify_capture(path, lane, log_path, damage_archive=None, native=False, quer
                 archive.writestr(name + '.pcap', encode_capture(changed))
                 archive.writestr(name + '.log', log)
                 try:
-                    inspect(changed, lane, log, query_model)
+                    inspect(changed, lane, log, query_model, native_cache)
                 except ValueError as error:
                     rejected.append(dict(name=name, reason=str(error)))
                 else:
                     raise ValueError('damaged unconfigured evidence accepted: ' + name)
+            cache_variations = []
+            if native_cache:
+                from ipv4_gateways import GatewayPeer
+                for label, key in [('later-unnamed-refill', (1, 0, 1)),
+                                   ('following-no-query-refill', (1, 2, 9))]:
+                    changed = copy.deepcopy(rows)
+                    target = proof['retained']['data'][key]
+                    frame = bytearray(changed[target]['frame'])
+                    frame[26:30] = (bytes([10, 23, 2 - lane, 2]) if frame[26:30] == b'\0' * 4
+                                    else b'\0' * 4)
+                    frame[24:26] = b'\0\0'
+                    struct.pack_into('!H', frame, 24, checksum(frame[14:34]))
+                    frame[40:42] = b'\0\0'
+                    struct.pack_into('!H', frame, 40,
+                                     checksum(frame[26:34] + b'\0\x11\0\x28' + frame[34:74]) or 65535)
+                    changed[target]['frame'] = bytes(frame)
+                    inspect(changed, lane, text, query_model, native_cache)
+                    peer = GatewayPeer(lane, query_model=query_model, native_cache=True)
+                    for row in changed:
+                        if row['frame'][6:12] == peer.guest:
+                            peer.receive(row['frame'])
+                    require(peer.passed, 'native cache variation completes the live peer')
+                    variation = dict(label=label, changed_frame=target, frame_hex=bytes(frame).hex(),
+                                     original_capture_sha256=hashlib.sha256(original).hexdigest(),
+                                     synthetic_positive_variation=True, actual_runtime_acceptance=False)
+                    archive.writestr(label + '.cache-variation.json', json.dumps(variation, indent=2) + '\n')
+                    cache_variations.append(variation)
             archive.writestr('rejections.json', json.dumps(rejected, indent=2) + '\n')
-        result.update(damaged_rejected=len(rejected), archive=str(damage_archive),
+        result.update(damaged_rejected=len(rejected), cache_variations_checked=len(cache_variations), archive=str(damage_archive),
                       archive_sha256=hashlib.sha256(Path(damage_archive).read_bytes()).hexdigest())
     require(path.read_bytes() == original and log_path.read_bytes() == original_log,
             'original unconfigured packet and client evidence remains unchanged')

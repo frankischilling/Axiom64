@@ -10,7 +10,7 @@ def require(value, reason):
         raise ValueError(reason)
 
 
-def inspect(rows, lane, log, query_model='release'):
+def inspect(rows, lane, log, query_model='release', native_cache=False):
     require(query_model in ('release', 'read-only'), 'known retained query model')
     guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
     control = bytes([2, 0x52, 0x53, 0x43, lane, 0])
@@ -41,6 +41,7 @@ def inspect(rows, lane, log, query_model='release'):
         records[key] = index
     require(set(requests) == set(replies) == set(cases), 'all 111 retained barriers')
     previous = -1
+    native_zero, native_preferred = 0, 0
     resolved = {}
     arp_requests, arp_replies = 0, 0
     first = min(requests[cases[0]], replies[cases[0]])
@@ -53,8 +54,8 @@ def inspect(rows, lane, log, query_model='release'):
                  else preferred[phase])
         if kind == 2:
             local = preferred[phase] if method == 8 else b'\0' * 4
-        elif phase < 6 and not kind and method == 0 and query_model == 'read-only':
-            local = preferred[phase]
+        variable_source = (phase < 6 and native_cache and kind != 1 and
+                           (kind == 2 or method in (0, 1, 2, 3, 7)))
         announced = local if any(local) else preferred.get(phase, b'\0' * 4)
         target = prefix + bytes([12 if phase == 7 else 13 if kind == 2 else
                                 (20 if method == 6 else 10) + kind])
@@ -95,6 +96,13 @@ def inspect(rows, lane, log, query_model='release'):
                     'removed source emits nothing; other cases emit exactly one original datagram')
             packet = frame[14:14 + int.from_bytes(frame[16:18], 'big')]
             raw = kind == 1
+            if variable_source:
+                require(packet[12:16] in (b'\0' * 4, preferred[phase]),
+                        'retained native UDP cache source')
+                local = packet[12:16]
+                if any(preferred[phase]):
+                    native_zero += not any(local)
+                    native_preferred += any(local)
             require(len(packet) == (52 if raw else 60) and
                     int.from_bytes(packet[2:4], 'big') == len(packet) and
                     packet[:2] == b'\x45\0' and not checksum(packet[:20]) and
@@ -123,6 +131,8 @@ def inspect(rows, lane, log, query_model='release'):
         require(not pending and (key in data) == (phase != 6),
                 'retained original data and complete ARP pairs precede acknowledgement')
         previous = replies[key]
+    if native_cache:
+        require(native_zero and native_preferred, 'native unnamed output observes both cache source outcomes')
     accepted = set(data.values())
     for index, row in enumerate(rows):
         frame = row['frame']
@@ -145,5 +155,5 @@ def inspect(rows, lane, log, query_model='release'):
     return dict(passed=True, lane=lane, datagrams=110, barriers=111,
                 arp_requests=arp_requests, arp_replies=arp_replies,
                 methods=8, phases=6, shared_description=True, query_model=query_model,
-                retired_MTU=int(limits[0])), dict(
+                retired_MTU=int(limits[0]), native_cache_sources=dict(zero=native_zero, preferred=native_preferred)), dict(
                     data=data, requests=requests, replies=replies)

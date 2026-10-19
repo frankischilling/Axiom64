@@ -162,9 +162,9 @@ int inet_error(InetSocket* socket, bool clear) {
     return error;
 }
 
-void inet_failed(InetSocket* socket, int error) {
+void inet_failed(InetSocket* socket, int error, unsigned failed_index) {
     if (socket && socket->used && inet_stream(socket)) {
-        tcp_failed(socket, error);
+        tcp_failed(socket, error, failed_index);
         return;
     }
     if (socket && socket->used && !socket->error)

@@ -69,7 +69,7 @@ def child(profile, directory, suite='aliases'):
         inputs = binary.with_suffix('.inputs.json')
         audit_compile(binary, ROOT)
         shutil.copy2(inputs, saved / 'compile.inputs.json')
-    peers = [GatewayPeer(lane, query_model=model) if suite == 'gateways' else AliasPeer(lane)
+    peers = [GatewayPeer(lane, query_model=model, native_cache=True) if suite == 'gateways' else AliasPeer(lane)
              for lane in range(2)]
     selector = selectors.DefaultSelector()
     taps, captures, statistics, links = [], [], [], []

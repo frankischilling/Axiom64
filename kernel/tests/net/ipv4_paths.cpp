@@ -23,7 +23,7 @@ void inet_reclaim(InetSocket*, size_t) {
     assert(false && "path selection must not own a socket output");
 }
 
-void inet_failed(InetSocket*, int) {
+void inet_failed(InetSocket*, int, unsigned) {
     assert(false && "path selection must not deliver a socket error");
 }
 } // namespace ax

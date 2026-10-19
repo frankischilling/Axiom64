@@ -41,7 +41,7 @@ bool tcp_port_busy(uint32_t, uint16_t, unsigned, bool) {
     return false;
 }
 
-void tcp_failed(InetSocket*, int) {
+void tcp_failed(InetSocket*, int, unsigned) {
     assert(false);
 }
 

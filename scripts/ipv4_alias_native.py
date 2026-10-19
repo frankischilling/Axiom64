@@ -21,6 +21,7 @@ from ipv4_aliases import AliasPeer
 from ipv4_alias_capture import verify_capture as verify_alias_capture
 from ipv4_gateways import GatewayPeer
 from ipv4_gateway_capture import verify_capture as verify_gateway_capture
+from ipv4_query_model import query_model
 from tcp_fault_native import Capture
 
 SOURCES = ('Makefile', 'userspace/tests/net/ipv4.c', 'userspace/tests/net/ipv4_aliases.c',
@@ -32,7 +33,8 @@ SOURCES = ('Makefile', 'userspace/tests/net/ipv4.c', 'userspace/tests/net/ipv4_a
            'scripts/compile_uapi_client.py', 'scripts/linux_uapi.py', 'scripts/build_openssl.py',
            'ports.lock.json', 'userspace/tests/net/ipv4_gateways.c',
            'userspace/tests/net/ipv4_gateways.h', 'scripts/ipv4_gateways.py',
-           'scripts/ipv4_gateway_capture.py')
+           'scripts/ipv4_gateway_capture.py', 'scripts/ipv4_query_model.py',
+           'userspace/tests/net/ipv4_query.h')
 
 
 def digest(path):
@@ -47,9 +49,10 @@ def child(profile, directory, suite='aliases'):
     if profile == 'dynamic':
         command.insert(0, str(loader('build')))
     sources = {name: digest(ROOT / name) for name in SOURCES}
+    model = query_model(platform.uname()._asdict())
     products = {name: digest(Path(name)) for name in command[:-1]}
     (directory / 'preexecution.json').write_text(json.dumps(dict(command=command,
-        kernel=platform.uname()._asdict(), source_sha256=sources,
+        kernel=platform.uname()._asdict(), query_model=model, source_sha256=sources,
         executable_sha256=products), indent=2) + '\n')
     saved = directory / 'products'
     saved.mkdir()
@@ -128,10 +131,10 @@ def child(profile, directory, suite='aliases'):
                 archive = directory / f'lane{lane}-{"gateway" if suite == "gateways" else "alias"}-damaged.zip'
                 if suite == 'gateways':
                     audits.append(verify_gateway_capture(directory / f'lane{lane}.pcap', lane,
-                        directory / 'client.log', archive, native=True))
+                        directory / 'client.log', archive, native=True, query_model=model))
                 else:
                     audits.append(verify_alias_capture(directory / f'lane{lane}.pcap', lane,
-                        directory / 'client.log', archive))
+                        directory / 'client.log', archive, query_model=model))
         except Exception as exception:
             error = f'alias capture audit: {exception}'
     unchanged = all(digest(ROOT / n) == value for n, value in sources.items())

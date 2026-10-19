@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
 #include "ipv4_gateways.h"
+#include "ipv4_query.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <net/if.h>
@@ -141,6 +142,7 @@ static void transmit(int fd, int control, unsigned lane, unsigned kind, unsigned
 }
 
 void ipv4_gateway_checks(unsigned lane) {
+    printf("IPV4_GATEWAY_QUERY_MODEL index=%u release=%d\n", lane + 1, ipv4_query_releases());
     char name[16], label[16];
     snprintf(name, sizeof(name), "eth%u", lane);
     snprintf(label, sizeof(label), "eth%u:gateway", lane);
@@ -206,12 +208,15 @@ void ipv4_gateway_checks(unsigned lane) {
         size_t length = payload(bytes, lane, kind, 5);
         require(send(duplicate, bytes, length, 0) == -1 && errno == ENETUNREACH,
                 "removed bound source cannot transmit");
-        queries(fd, duplicate, lane, kind, 5, kind ? 1500 : -ENOTCONN, -ENOTCONN);
+        int releases = ipv4_query_releases();
+        queries(fd, duplicate, lane, kind, 5, kind ? 1500 : -ENOTCONN,
+                kind && !releases ? 1500 : -ENOTCONN);
         barrier(control, lane, kind, 5);
         address(control, label, primary + 1, SIOCSIFADDR);
         address(control, label, 0xffffff00, SIOCSIFNETMASK);
         transmit(duplicate, control, lane, kind, 6);
-        queries(fd, duplicate, lane, kind, 6, kind ? -ENOTCONN : 1500, kind ? -ENOTCONN : 1500);
+        queries(fd, duplicate, lane, kind, 6, kind && releases ? -ENOTCONN : 1500,
+                kind && releases ? -ENOTCONN : 1500);
         require(connect(fd, (const struct sockaddr*)&destination, sizeof(destination)) == 0,
                 "explicit reconnect restores destination");
         queries(fd, duplicate, lane, kind, 7, 1500, 1500);

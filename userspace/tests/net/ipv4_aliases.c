@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
+#include "ipv4_query.h"
 #include "ipv4_aliases.h"
 #include <arpa/inet.h>
 #include <errno.h>
@@ -137,13 +138,41 @@ static int connected(uint32_t source, uint32_t destination, int raw) {
     return fd;
 }
 
-static void route_mtu(int fd, int expected) {
+static int observed_mtu(int fd) {
     int value = -1;
     socklen_t length = sizeof(value);
     int result = getsockopt(fd, IPPROTO_IP, IP_MTU, &value, &length);
-    check(expected < 0 ? result == -1 && errno == -expected
-                       : result == 0 && length == sizeof(value) && value == expected,
-          "retained route MTU observation");
+    if (result)
+        return -errno;
+    check(length == sizeof(value), "retained route MTU result size");
+    return value;
+}
+
+static void route_mtu(int fd, int expected) {
+    check(observed_mtu(fd) == expected, "retained route MTU observation");
+}
+
+struct RetiredQueries {
+    unsigned lane, next;
+    int releases, previous;
+};
+
+static void retired_mtu(struct RetiredQueries* queries, int fd, int expected) {
+    int value = observed_mtu(fd);
+    // Linux can detach an obsolete FIB destination after an RCU grace period.
+    // Its blackhole device has MTU 68; the live Ethernet device stays at 1500.
+    check(value == expected || (!queries->releases && expected == 1500 && value == 68),
+          "retired route follows the exact kernel query contract");
+    unsigned position = queries->next % 17;
+    // These slots query the same description as the preceding slot, including
+    // the original descriptor and its duplicate at positions zero through two.
+    if (position == 1 || position == 2 || position == 5 || position == 11 || position == 13 ||
+        position == 15)
+        check(queries->previous != 68 || value != 1500,
+              "retired destination cannot recover without a route refresh");
+    queries->previous = value;
+    printf("IPV4_ALIAS_RETIRED index=%u query=%u mtu=%d\n", queries->lane + 1, queries->next++,
+           value);
 }
 
 static void device_reset(uint32_t source, uint32_t destination, int raw, const char* name,
@@ -278,6 +307,8 @@ static void collisions(int fd, unsigned index, const char* name, const char* blu
 }
 
 void ipv4_alias_checks(unsigned lane) {
+    int releases = ipv4_query_releases();
+    printf("IPV4_ALIAS_QUERY_MODEL index=%u release=%d\n", lane + 1, releases);
     uint32_t primary = 0x0a170102 + lane * 256, alias = primary + 1;
     uint32_t other = 0x0a210102 + lane * 256;
     char name[16], blue[16], red[16];
@@ -350,6 +381,12 @@ void ipv4_alias_checks(unsigned lane) {
     missing(fd, name);
     missing(fd, blue);
     check(query(fd, red, SIOCGIFADDR) == other, "unrelated prefix survives primary removal");
+    struct RetiredQueries retired = {lane, 0, releases, 0};
+    struct ifreq device_mtu = {0};
+    snprintf(device_mtu.ifr_name, sizeof(device_mtu.ifr_name), "%s", name);
+    check(ioctl(fd, SIOCGIFMTU, &device_mtu) == 0 && device_mtu.ifr_mtu == 1500,
+          "retired destination leaves the Ethernet MTU unchanged");
+    printf("IPV4_ALIAS_RETIRED_DEVICE index=%u mtu=%d\n", lane + 1, device_mtu.ifr_mtu);
     for (unsigned raw = 0; raw < 2; raw++) {
         int value = 0;
         socklen_t length = (socklen_t)-1;
@@ -359,33 +396,36 @@ void ipv4_alias_checks(unsigned lane) {
         check(getsockopt(removed[raw], IPPROTO_IP, IP_MTU, &value, &length) == -1 &&
                   errno == EINVAL,
               "negative option length preserves retained route");
-        route_mtu(removed[raw], 1500);
-        route_mtu(shared[raw], -ENOTCONN);
-        route_mtu(removed[raw], -ENOTCONN);
+        retired_mtu(&retired, removed[raw], 1500);
+        retired_mtu(&retired, shared[raw], releases ? -ENOTCONN : 1500);
+        retired_mtu(&retired, removed[raw], releases ? -ENOTCONN : 1500);
         route_mtu(retained[raw], 1500);
         route_mtu(retained[raw], 1500);
         length = sizeof(value);
         check(getsockopt(value_fault[raw], IPPROTO_IP, IP_MTU, inaccessible, &length) == -1 &&
                   errno == EFAULT,
               "option value fault follows locked release");
-        route_mtu(value_fault[raw], -ENOTCONN);
+        retired_mtu(&retired, value_fault[raw], releases ? -ENOTCONN : 1500);
         check(setsockopt(device_error[raw], SOL_SOCKET, SO_BINDTODEVICE, "missing", 8) == -1 &&
                   errno == ENODEV,
               "missing device preserves retained destination");
         check(setsockopt(device_error[raw], SOL_SOCKET, SO_BINDTODEVICE, inaccessible, 1) == -1 &&
                   errno == EFAULT,
               "unreadable device preserves retained destination");
-        route_mtu(device_error[raw], 1500);
-        route_mtu(device_error[raw], -ENOTCONN);
+        retired_mtu(&retired, device_error[raw], 1500);
+        retired_mtu(&retired, device_error[raw], releases ? -ENOTCONN : 1500);
         for (unsigned operation = 0; operation < 4; operation++) {
             option_control(locked[raw][operation], operation);
-            route_mtu(locked[raw][operation], -ENOTCONN);
+            retired_mtu(&retired, locked[raw][operation],
+                        releases || operation == 2 ? -ENOTCONN : 1500);
         }
         for (unsigned operation = 0; operation < 3; operation++) {
             option_control(lock_free[raw][operation], operation + 4);
-            route_mtu(lock_free[raw][operation], 1500);
-            route_mtu(lock_free[raw][operation], -ENOTCONN);
+            retired_mtu(&retired, lock_free[raw][operation], 1500);
+            retired_mtu(&retired, lock_free[raw][operation], releases ? -ENOTCONN : 1500);
         }
+        option_control(removed[raw], 2);
+        retired_mtu(&retired, shared[raw], -ENOTCONN);
     }
     check(munmap(inaccessible, 4096) == 0, "option copy-fault page release");
     unsigned char byte = 0x58;

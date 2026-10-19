@@ -20,6 +20,7 @@ from ipv4_fragments import FragmentPeer
 from ipv4_expiry_capture import verify_capture
 from ipv4_path_mtu_capture import verify_capture as verify_path_mtu
 from ipv4_path_mtu_lifetime_capture import verify_capture as verify_path_lifetime
+from ipv4_query_model import query_model
 from tcp_fault_native import Capture
 
 
@@ -63,6 +64,7 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
     process = None
     error = None
     command = client(profile, pmtu_only, lifetime_only)
+    model = query_model(platform.uname()._asdict())
     sources = ['userspace/tests/net/ipv4.c', 'userspace/tests/net/ipv4_fragments.c',
                'userspace/tests/net/ipv4_aliases.c', 'userspace/tests/net/ipv4_aliases.h',
                'scripts/compile_uapi_client.py', 'scripts/linux_uapi.py',
@@ -70,11 +72,12 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                'userspace/tests/net/ipv4_path_mtu.c', 'userspace/tests/net/ipv4_path_mtu.h',
                'scripts/ipv4_path_mtu.py',
                'scripts/ipv4_path_mtu_capture.py',
+               'scripts/ipv4_query_model.py', 'userspace/tests/net/ipv4_query.h',
                'scripts/ipv4_path_mtu_lifetime.py', 'scripts/ipv4_path_mtu_lifetime_capture.py',
                'userspace/tests/net/ipv4_fragments.h', 'scripts/ipv4_fragments.py',
                'scripts/ipv4_fragment_native.py', 'scripts/ipv4_expiry_capture.py',
                'scripts/tcp_fault_native.py', 'Makefile']
-    before = dict(profile=profile, pmtu_only=pmtu_only, lifetime_only=lifetime_only,
+    before = dict(profile=profile, pmtu_only=pmtu_only, lifetime_only=lifetime_only, query_model=model,
                   kernel=platform.uname()._asdict(), command=command,
                   source_sha256={name: digest(ROOT / name) for name in sources},
                   executable_sha256={name: digest(Path(name)) for name in command[:-1]},
@@ -231,7 +234,7 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
         try:
             for lane in range(2):
                 path_audits.append(verify_path_mtu(directory / f'lane{lane}.pcap', lane,
-                    directory / 'client.log', native=True,
+                    directory / 'client.log', native=True, query_model=model,
                     damage_archive=directory / f'lane{lane}-pmtu-damaged.zip'))
         except Exception as exception:
             error = f'path MTU capture audit: {exception}'

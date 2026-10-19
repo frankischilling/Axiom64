@@ -12,7 +12,25 @@ import zipfile
 from ipv4_path_mtu_capture import read_capture, encode, checksum, require
 
 
-def inspect(rows, lane, log):
+def inspect(rows, lane, log, query_model='release'):
+    require(query_model in ('release', 'read-only'), 'known alias query contract')
+    require(len(re.findall(r'^IPV4_ALIAS_QUERY_MODEL index=' + str(lane + 1) +
+                          ' release=' + str(int(query_model == 'release')) + r'\r?$', log, re.M)) == 1,
+            'alias client query contract matches the selected kernel model')
+    require(len(re.findall(r'^IPV4_ALIAS_RETIRED_DEVICE index=' + str(lane + 1) +
+                          r' mtu=1500\r?$', log, re.M)) == 1, 'retired queries preserve live device MTU')
+    retired = re.findall(r'^IPV4_ALIAS_RETIRED index=' + str(lane + 1) +
+                         r' query=(\d+) mtu=(-?\d+)\r?$', log, re.M)
+    require([int(n) for n, _ in retired] == list(range(34)), 'every retired query in execution order')
+    expected = ([1500, -107, -107, -107, 1500, -107] + [-107] * 4 + [1500, -107] * 3 + [-107]
+                if query_model == 'release' else
+                [1500] * 6 + [1500, 1500, -107, 1500] + [1500] * 6 + [-107]) * 2
+    require(all(int(value) == target or (query_model == 'read-only' and target == 1500 and int(value) == 68)
+                for (_, value), target in zip(retired, expected)), 'exact retired destination MTUs')
+    for n in range(1, len(retired)):
+        if n % 17 in (1, 2, 5, 11, 13, 15):
+            require((int(retired[n - 1][1]), int(retired[n][1])) != (68, 1500),
+                    'retired shared destination cannot recover without a route refresh')
     guest = bytes.fromhex('5254001234') + bytes([16 + lane])
     host = bytes.fromhex('02414c4941') + bytes([lane])
     primary = bytes([10, 23, lane + 1, 2])
@@ -168,22 +186,36 @@ def fix_ip(frame):
     struct.pack_into('!H', frame, 24, checksum(frame[14:34]))
 
 
-def verify_capture(path, lane, log_path, damage_archive):
+def verify_capture(path, lane, log_path, damage_archive, query_model='release'):
     archive = damage_archive
     rows, log = read_capture(path), log_path.read_text()
-    positive = inspect(rows, lane, log)
+    positive = inspect(rows, lane, log, query_model)
+    positive['query_model'] = query_model
     original = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in (path, log_path)}
     classes = ['missing-request', 'missing-reply', 'wrong-source', 'cross-lane-mac',
                'bad-icmp-checksum', 'padding', 'oversized-total', 'wrong-payload',
                'transition-order', 'missing-arp-reply', 'wrong-arp-sender',
                'missing-kernel-reply', 'false-client-source', 'late-arp-reply', 'reused-arp-reply',
                'short-alias-ipv4', 'short-alias-arp', 'short-broadcast-arp',
-               'foreign-arp-owned-mac', 'unknown-owned-type']
+               'foreign-arp-owned-mac', 'unknown-owned-type', 'false-retired-query', 'revived-retired-query']
     with zipfile.ZipFile(archive, 'x', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as saved:
         for name in classes:
             changed, text = copy.deepcopy(rows), log
             selected = positive['requests'][1]
-            if name in ('short-broadcast-arp', 'foreign-arp-owned-mac', 'unknown-owned-type'):
+            if name == 'revived-retired-query':
+                for query, value in enumerate((68, 1500, 68)):
+                    pattern = (r'^IPV4_ALIAS_RETIRED index=' + str(lane + 1) + ' query=' +
+                               str(query) + r' mtu=-?\d+\r?$')
+                    text, count = re.subn(pattern,
+                        f'IPV4_ALIAS_RETIRED index={lane + 1} query={query} mtu={value}',
+                        text, count=1, flags=re.M)
+                    require(count == 1, 'one original shared-destination query was damaged')
+            elif name == 'false-retired-query':
+                pattern = r'^IPV4_ALIAS_RETIRED index=' + str(lane + 1) + r' query=0 mtu=\d+\r?$'
+                text, count = re.subn(pattern, f'IPV4_ALIAS_RETIRED index={lane + 1} query=0 mtu=1400',
+                                      text, count=1, flags=re.M)
+                require(count == 1, 'one original retired query was damaged')
+            elif name in ('short-broadcast-arp', 'foreign-arp-owned-mac', 'unknown-owned-type'):
                 if name == 'short-broadcast-arp':
                     frame = next(r['frame'][:41] for r in rows if len(r['frame']) >= 42 and
                                  r['frame'][12:14] == b'\x08\x06' and
@@ -239,7 +271,7 @@ def verify_capture(path, lane, log_path, damage_archive):
                     frame[31] ^= 1
                 changed[selected]['frame'] = bytes(frame)
             try:
-                inspect(changed, lane, text)
+                inspect(changed, lane, text, query_model)
             except ValueError as error:
                 saved.writestr(name + '.pcap', encode(changed))
                 saved.writestr(name + '.log', text)
@@ -261,9 +293,10 @@ def main():
     parser.add_argument('capture', type=Path)
     parser.add_argument('--lane', type=int, choices=(0, 1), required=True)
     parser.add_argument('--log', type=Path, required=True)
+    parser.add_argument('--query-model', choices=('release', 'read-only'), default='release')
     parser.add_argument('--damage-archive', type=Path, required=True)
     args = parser.parse_args()
-    result = verify_capture(args.capture, args.lane, args.log, args.damage_archive)
+    result = verify_capture(args.capture, args.lane, args.log, args.damage_archive, args.query_model)
     print(json.dumps(result))
 
 

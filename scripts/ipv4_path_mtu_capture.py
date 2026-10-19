@@ -71,7 +71,12 @@ def application(lane, case, length):
     return bytes(data)
 
 
-def inspect(rows, lane, log):
+def inspect(rows, lane, log, query_model='release'):
+    require(query_model in ('release', 'read-only'), 'known path query contract')
+    releases = int(query_model == 'release')
+    require(len(re.findall(r'^IPV4_PATH_MTU_QUERY_MODEL index=' + str(lane + 1) +
+                          ' release=' + str(releases) + r'\r?$', log, re.M)) == 1,
+            'client query contract matches independently selected kernel model')
     local, remote = bytes([10, 23, lane + 1, 2]), bytes([10, 23, lane + 1, 1])
     guest, host = bytes.fromhex('5254001234') + bytes([0x10 + lane]), bytes.fromhex('0241584950') + bytes([lane])
     requests, replies = {}, {}
@@ -187,9 +192,10 @@ def inspect(rows, lane, log):
                             r' case=(\d+) restored=(\d+)\r?$', log, re.M)
     require(route_cases == cases, 'all actual route ownership and restoration queries')
     held = re.findall(r'^IPV4_PATH_MTU_HELD index=' + str(lane + 1) +
-                      r' case=(\d+) first=(\d+) shared=(\d+)\r?$', log, re.M)
-    require([(int(n), int(first), int(shared)) for n, first, shared in held] ==
-            [(n, 1500, learned(n)) for n in range(18)], 'actual stale-first and shared-description queries')
+                      r' case=(\d+) first=(\d+) shared=(\d+) current=(\d+)\r?$', log, re.M)
+    require([(int(n), int(first), int(shared), int(current)) for n, first, shared, current in held] ==
+            [(n, 1500, learned(n) if releases else 1500, learned(n)) for n in range(18)],
+            'actual stale-first, duplicate and explicit release queries')
     held_routes = re.findall(r'^IPV4_PATH_MTU_HELD_ROUTES index=' + str(lane + 1) +
                              r' case=(\d+) restored=(\d+)\r?$', log, re.M)
     require(held_routes == cases, 'actual held descriptions follow route ownership changes')
@@ -212,7 +218,7 @@ def seal_ip(frame):
     struct.pack_into('!H', frame, 24, checksum(frame[14:34]))
 
 
-def verify_capture(path, lane, log_path, damage_archive=None, native=False):
+def verify_capture(path, lane, log_path, damage_archive=None, native=False, query_model='release'):
     original = path.read_bytes()
     rows, log = read_capture(path), log_path.read_text(errors='replace')
     if native:
@@ -221,7 +227,8 @@ def verify_capture(path, lane, log_path, damage_archive=None, native=False):
         for number, (row, clock) in enumerate(zip(rows, clocks)):
             require(clock['frame'] == number and clock['sha256'] == hashlib.sha256(row['frame']).hexdigest() and
                     clock['kernel_realtime_ns'] // 1000 == row['ns'] // 1000, 'native frame and receipt binding')
-    result, proof = inspect(rows, lane, log)
+    result, proof = inspect(rows, lane, log, query_model)
+    result['query_model'] = query_model
     req, rep, data, errors = proof
     if damage_archive:
         failures = []
@@ -264,8 +271,8 @@ def verify_capture(path, lane, log_path, damage_archive=None, native=False):
                     text = text.replace(f'IPV4_PATH_MTU_LINK index={lane + 1} lower=600 restored=1500',
                                         f'IPV4_PATH_MTU_LINK index={lane + 1} lower=600 restored=1400')
                 elif name == 'false-held-MTU':
-                    text = text.replace(f'IPV4_PATH_MTU_HELD index={lane + 1} case=0 first=1500 shared=900',
-                                        f'IPV4_PATH_MTU_HELD index={lane + 1} case=0 first=1400 shared=900')
+                    text = text.replace(f'IPV4_PATH_MTU_HELD index={lane + 1} case=0 first=1500 ',
+                                        f'IPV4_PATH_MTU_HELD index={lane + 1} case=0 first=1400 ')
                 elif name == 'missing-held-route':
                     text = re.sub(r'^IPV4_PATH_MTU_HELD_ROUTES index=' + str(lane + 1) +
                                   r' case=0 restored=900\r?\n', '', text, count=1, flags=re.M)
@@ -300,7 +307,7 @@ def verify_capture(path, lane, log_path, damage_archive=None, native=False):
                 archive.writestr(name + '.pcap', encode(changed))
                 archive.writestr(name + '.log', text)
                 try:
-                    inspect(changed, lane, text)
+                    inspect(changed, lane, text, query_model)
                 except ValueError as error:
                     failures.append(dict(name=name, rejected=True, reason=str(error)))
                 else:
@@ -318,6 +325,8 @@ if __name__ == '__main__':
     parser.add_argument('--lane', type=int, choices=[0, 1], required=True)
     parser.add_argument('--log', type=Path, required=True)
     parser.add_argument('--native', action='store_true')
+    parser.add_argument('--query-model', choices=('release', 'read-only'), default='release')
     parser.add_argument('--damage-archive', type=Path)
     args = parser.parse_args()
-    print(json.dumps(verify_capture(args.capture, args.lane, args.log, args.damage_archive, args.native)))
+    print(json.dumps(verify_capture(args.capture, args.lane, args.log, args.damage_archive,
+                                    args.native, args.query_model)))

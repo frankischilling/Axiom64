@@ -15,7 +15,11 @@ def require(value, reason):
         raise ValueError(reason)
 
 
-def inspect(rows, lane, log):
+def inspect(rows, lane, log, query_model='release'):
+    require(query_model in ('release', 'read-only'), 'known gateway query contract')
+    require(len(re.findall(r'^IPV4_GATEWAY_QUERY_MODEL index=' + str(lane + 1) +
+                          ' release=' + str(int(query_model == 'release')) + r'\r?$', log, re.M)) == 1,
+            'gateway client query contract matches the selected kernel model')
     guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
     control_mac = bytes([2, 0x41, 0x58, 0x49, 0x50, lane])
     primary, alias, remote = [bytes([10, 23, lane + 1, last]) for last in (2, 3, 1)]
@@ -154,8 +158,9 @@ def inspect(rows, lane, log):
         kind, phase = int(kind), int(phase)
         expected = (900, 900) if phase in (0, 2) else (1500, 1500)
         if phase == 5:
-            expected = (1500 if kind else -107, -107)
-        elif phase == 6 and kind:
+            expected = (1500 if kind else -107,
+                        1500 if kind and query_model == 'read-only' else -107)
+        elif phase == 6 and kind and query_model == 'release':
             expected = (-107, -107)
         require((int(first), int(shared)) == expected, 'native-observed raw/UDP destination cache lifecycle')
     for kind in range(2):
@@ -182,13 +187,14 @@ def seal_udp(frame):
     struct.pack_into('!H', frame, 40, checksum(pseudo + frame[34:14 + total]) or 65535)
 
 
-def verify_capture(path, lane, log_path, damage_archive=None, native=False):
+def verify_capture(path, lane, log_path, damage_archive=None, native=False, query_model='release'):
     path, log_path = Path(path), Path(log_path)
     original, original_log = path.read_bytes(), log_path.read_bytes()
     rows, text = read_capture(path), original_log.decode(errors='replace')
     if native:
         bind_clocks(rows, path.with_suffix('.clocks.jsonl'))
-    result, proof = inspect(rows, lane, text)
+    result, proof = inspect(rows, lane, text, query_model)
+    result['query_model'] = query_model
     if damage_archive:
         names = ['missing-data', 'wrong-next-hop', 'wrong-source', 'wrong-destination', 'payload',
                  'UDP-checksum', 'IP-checksum', 'missing-hint', 'false-hint-MTU', 'wrong-quote',
@@ -215,9 +221,11 @@ def verify_capture(path, lane, log_path, damage_archive=None, native=False):
                                str(phase) + r' first=-?\d+ shared=-?\d+\r?$')
                     value = '' if name == 'missing-query' else (
                         f'IPV4_GATEWAY_MTU index={lane + 1} kind=1 phase={phase} first=' +
-                        ('-107 shared=-107' if phase == 5 else '1500 shared=1500'))
+                        ('-107 shared=-107' if phase == 5 or query_model == 'read-only' else
+                         '1500 shared=1500'))
                     log, count = re.subn(pattern, value, log, count=1, flags=re.M)
                     require(count == 1, 'one original raw lifecycle observation was damaged')
+                    require(log != text, 'raw lifecycle damage changes the original observation')
                 elif name == 'short-owned-output':
                     frame = bytearray(changed[target]['frame'][:34])
                     frame[16:18] = (20).to_bytes(2, 'big')
@@ -282,7 +290,7 @@ def verify_capture(path, lane, log_path, damage_archive=None, native=False):
                 archive.writestr(name + '.pcap', encode_capture(changed))
                 archive.writestr(name + '.log', log)
                 try:
-                    inspect(changed, lane, log)
+                    inspect(changed, lane, log, query_model)
                 except ValueError as error:
                     rejected.append(dict(name=name, rejected=True, reason=str(error)))
                 else:

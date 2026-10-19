@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
 #include "ipv4_path_mtu.h"
+#include "ipv4_query.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <net/if.h>
@@ -168,10 +169,21 @@ static void route_change(int control, unsigned lane, uint32_t destination, uint3
             "change selected or unrelated route");
 }
 
+static void release_destination(int fd) {
+    int value = 65536;
+    require(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &value, sizeof(value)) == 0,
+            "locked socket operation releases obsolete destination");
+}
+
 static void retained_mtu(int fd, int retained, int first, int current) {
-    require(mtu(fd) == first && mtu(fd) == current && mtu(retained) == first &&
-                mtu(retained) == current,
+    int second = ipv4_query_releases() ? current : first;
+    require(mtu(fd) == first && mtu(fd) == second && mtu(retained) == first &&
+                mtu(retained) == second,
             "retained descriptions return before route refresh");
+    release_destination(fd);
+    release_destination(retained);
+    require(mtu(fd) == current && mtu(retained) == current,
+            "locked release refreshes both retained descriptions");
 }
 
 static void route_checks(int control, int fd, int retained, unsigned lane, unsigned test,
@@ -229,6 +241,8 @@ static void link_mtu_checks(int control, int fd, int retained, unsigned lane,
 
 void ipv4_path_mtu_checks(unsigned lane) {
     int control = control_socket(lane);
+    int releases = ipv4_query_releases();
+    printf("IPV4_PATH_MTU_QUERY_MODEL index=%u release=%d\n", lane + 1, releases);
     for (unsigned test = 0; test < 18; test++) {
         unsigned policy = test < 12 ? test % 6 : test < 16 ? 1 : test - 12;
         unsigned announced = test < 12 || test >= 16 ? 900
@@ -292,10 +306,15 @@ void ipv4_path_mtu_checks(unsigned lane) {
                 "fresh protocol shares learned path");
         require(mtu(shared) == expected && close(shared) == 0, "shared cache query and close");
         int stale = mtu(duplicate), refreshed = mtu(retained);
-        require(stale == 1500 && refreshed == expected,
-                "duplicate query refreshes the shared retained description after returning");
-        printf("IPV4_PATH_MTU_HELD index=%u case=%u first=%d shared=%d\n", lane + 1, test, stale,
-               refreshed);
+        require(stale == 1500 && refreshed == (releases ? expected : 1500),
+                "duplicate queries follow the selected kernel contract");
+        release_destination(retained);
+        release_destination(fd);
+        int current = mtu(duplicate), current_shared = mtu(retained);
+        require(current == expected && current_shared == expected,
+                "locked release exposes shared learned destination");
+        printf("IPV4_PATH_MTU_HELD index=%u case=%u first=%d shared=%d current=%d\n", lane + 1,
+               test, stale, refreshed, current);
         route_checks(control, fd, retained, lane, test, &target, expected);
         for (unsigned changed = 0; changed < 6; changed++) {
             option(fd, IP_MTU_DISCOVER, changed);

@@ -9,8 +9,8 @@ bool valid(const PathKey& key, uint32_t mtu) {
            mtu >= 68 && mtu <= 65535;
 }
 
-PathMtu bounded(uint32_t device, uint32_t learned, bool locked) {
-    return {device < learned ? device : learned, locked};
+PathMtu bounded(uint32_t device, uint32_t learned, bool locked, uint64_t expires) {
+    return {device < learned ? device : learned, locked, expires};
 }
 } // namespace
 
@@ -30,17 +30,20 @@ PathMtu PathMtuCache::lookup(const PathKey& key, uint32_t device_mtu, uint64_t n
         if (auto entry = find(key, now)) {
             if (now > entry->touched)
                 entry->touched = now;
-            return bounded(device_mtu, entry->mtu, entry->locked);
+            return bounded(device_mtu, entry->mtu, entry->locked, entry->expires);
         }
     return {device_mtu};
 }
 
 PathMtu PathMtuCache::learn(const PathKey& key, uint32_t device_mtu, uint16_t announced_mtu,
-                            uint16_t quoted_length, uint64_t now) {
+                            uint16_t quoted_length, uint64_t now, bool* updated) {
+    if (updated)
+        *updated = false;
     if (!valid(key, device_mtu))
         return {device_mtu};
     auto entry = find(key, now);
-    auto current = entry ? bounded(device_mtu, entry->mtu, entry->locked) : PathMtu{device_mtu};
+    auto current = entry ? bounded(device_mtu, entry->mtu, entry->locked, entry->expires)
+                         : PathMtu{device_mtu};
     if (current.locked || quoted_length < 28 ||
         (announced_mtu && (announced_mtu >= quoted_length || announced_mtu > current.mtu)))
         return current;
@@ -66,7 +69,26 @@ PathMtu PathMtuCache::learn(const PathKey& key, uint32_t device_mtu, uint16_t an
     }
     uint64_t expires = now > UINT64_MAX - path_mtu_lifetime ? UINT64_MAX : now + path_mtu_lifetime;
     *entry = {key, mtu, locked, expires, now};
-    return {mtu, locked};
+    if (updated)
+        *updated = true;
+    return {mtu, locked, expires};
+}
+
+void PathMtuCache::update_mtu(unsigned index, uint32_t previous, uint32_t current) {
+    if (!index || previous < 68 || previous > 65535 || current < 68 || current > 65535 ||
+        previous == current)
+        return;
+    for (auto& entry : entries) {
+        if (entry.key.index != index)
+            continue;
+        if (entry.locked) {
+            if (current <= entry.mtu) {
+                entry.mtu = current;
+                entry.locked = false;
+            }
+        } else if (entry.mtu > current || entry.mtu == previous)
+            entry.mtu = current;
+    }
 }
 
 void PathMtuCache::discard(unsigned index) {

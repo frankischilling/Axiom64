@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -77,14 +78,16 @@ static unsigned checksum(const unsigned char* bytes, size_t length) {
     return (~sum) & 65535;
 }
 
-static void wire(uint32_t source, uint32_t destination, unsigned lane, unsigned test) {
-    int fd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
+static void wire(uint32_t source, uint32_t destination, unsigned lane, unsigned test,
+                 int retained) {
+    int fd = retained >= 0 ? retained : socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
     check(fd >= 0, "wire raw socket");
     struct timeval timeout = {5, 0};
     check(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0, "wire deadline");
     struct sockaddr_in local = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(source)};
     struct sockaddr_in remote = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(destination)};
-    check(bind(fd, (struct sockaddr*)&local, sizeof(local)) == 0, "bind wire source");
+    if (retained < 0)
+        check(bind(fd, (struct sockaddr*)&local, sizeof(local)) == 0, "bind wire source");
     unsigned char body[64], received[128];
     for (unsigned n = 0; n < sizeof(body); n++)
         body[n] = (unsigned char)(n * 17 + lane * 31 + test);
@@ -115,9 +118,86 @@ static void wire(uint32_t source, uint32_t destination, unsigned lane, unsigned 
             break;
         }
     }
-    check(close(fd) == 0, "wire close");
+    if (retained < 0)
+        check(close(fd) == 0, "wire close");
     printf("IPV4_ALIAS_WIRE index=%u case=%u source=%08x destination=%08x\n", lane + 1, test,
            source, destination);
+}
+
+static int connected(uint32_t source, uint32_t destination, int raw) {
+    int fd = socket(AF_INET, (raw ? SOCK_RAW : SOCK_DGRAM) | SOCK_CLOEXEC,
+                    raw ? IPPROTO_ICMP : IPPROTO_UDP);
+    check(fd >= 0, "retained route socket");
+    struct sockaddr_in local = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(source)};
+    struct sockaddr_in remote = {.sin_family = AF_INET,
+                                 .sin_port = raw ? 0 : htons(30000),
+                                 .sin_addr.s_addr = htonl(destination)};
+    check(bind(fd, (struct sockaddr*)&local, sizeof(local)) == 0, "retained route bind");
+    check(connect(fd, (struct sockaddr*)&remote, sizeof(remote)) == 0, "retained route connect");
+    return fd;
+}
+
+static void route_mtu(int fd, int expected) {
+    int value = -1;
+    socklen_t length = sizeof(value);
+    int result = getsockopt(fd, IPPROTO_IP, IP_MTU, &value, &length);
+    check(expected < 0 ? result == -1 && errno == -expected
+                       : result == 0 && length == sizeof(value) && value == expected,
+          "retained route MTU observation");
+}
+
+static void device_reset(uint32_t source, uint32_t destination, int raw, const char* name,
+                         const void* inaccessible) {
+    for (unsigned operation = 0; operation < 3; operation++) {
+        int fd = connected(source, destination, raw);
+        const void* device = operation == 0 ? name : operation == 1 ? "" : inaccessible;
+        socklen_t length = operation == 0 ? strlen(name) + 1 : operation == 1 ? 1 : 0;
+        struct sockaddr_in remote = {.sin_family = AF_INET,
+                                     .sin_port = raw ? 0 : htons(30000),
+                                     .sin_addr.s_addr = htonl(destination)};
+        for (unsigned repeat = 0; repeat < 2; repeat++) {
+            route_mtu(fd, 1500);
+            check(setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, device, length) == 0,
+                  "successful device binding resets destination");
+            route_mtu(fd, -ENOTCONN);
+            check(connect(fd, (struct sockaddr*)&remote, sizeof(remote)) == 0,
+                  "reconnect selects destination after device binding");
+        }
+        check(close(fd) == 0, "device reset description close");
+    }
+}
+
+static void option_control(int fd, unsigned operation) {
+    int value = 0;
+    socklen_t length = sizeof(value);
+    if (operation == 0) {
+        check(getsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &value, &length) == 0 &&
+                  length == sizeof(value),
+              "locked discovery getter");
+    } else if (operation == 1) {
+        value = IP_PMTUDISC_DO;
+        check(setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &value, sizeof(value)) == 0,
+              "locked discovery setter");
+    } else if (operation == 2) {
+        value = 4096;
+        check(setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &value, sizeof(value)) == 0,
+              "locked send-buffer setter");
+    } else if (operation == 3) {
+        value = -1;
+        check(setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &value, sizeof(value)) == -1 &&
+                  errno == EINVAL,
+              "locked discovery validation failure");
+    } else if (operation == 4) {
+        check(getsockopt(fd, IPPROTO_IP, IP_TTL, &value, &length) == 0 && value == 64,
+              "lock-free TTL getter");
+    } else if (operation == 5) {
+        value = 64;
+        check(setsockopt(fd, IPPROTO_IP, IP_TTL, &value, sizeof(value)) == 0,
+              "lock-free TTL setter");
+    } else {
+        check(getsockopt(fd, SOL_SOCKET, SO_ERROR, &value, &length) == 0 && value == 0,
+              "lock-free pending error getter");
+    }
 }
 
 static int address_request(unsigned index, const char* label, uint32_t address, unsigned prefix,
@@ -245,17 +325,89 @@ void ipv4_alias_checks(unsigned lane) {
              ntohl(((struct sockaddr_in*)&entries[n].ifr_addr)->sin_addr.s_addr) == other))
             found++;
     check(found == 2, "enumeration retains both alias labels and values");
-    wire(alias, primary + 7, lane, 0);
-    wire(other, other + 7, lane, 1);
+    wire(alias, primary + 7, lane, 0, -1);
+    wire(other, other + 7, lane, 1, -1);
+    int removed[2], shared[2], retained[2], locked[2][4], lock_free[2][3], value_fault[2],
+        device_error[2];
+    void* inaccessible = mmap(NULL, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    check(inaccessible != MAP_FAILED, "option copy-fault page");
+    for (unsigned raw = 0; raw < 2; raw++) {
+        device_reset(alias, primary + 7, raw, name, inaccessible);
+        removed[raw] = connected(alias, primary + 7, raw);
+        shared[raw] = dup(removed[raw]);
+        check(shared[raw] >= 0, "shared retained route descriptor");
+        retained[raw] = connected(other, other + 7, raw);
+        route_mtu(removed[raw], 1500);
+        route_mtu(retained[raw], 1500);
+        value_fault[raw] = connected(alias, primary + 7, raw);
+        device_error[raw] = connected(alias, primary + 7, raw);
+        for (unsigned operation = 0; operation < 4; operation++)
+            locked[raw][operation] = connected(alias, primary + 7, raw);
+        for (unsigned operation = 0; operation < 3; operation++)
+            lock_free[raw][operation] = connected(alias, primary + 7, raw);
+    }
     check(address_message(index, name, primary, 1) == 0, "primary removal");
     missing(fd, name);
     missing(fd, blue);
     check(query(fd, red, SIOCGIFADDR) == other, "unrelated prefix survives primary removal");
+    for (unsigned raw = 0; raw < 2; raw++) {
+        int value = 0;
+        socklen_t length = (socklen_t)-1;
+        check(getsockopt(removed[raw], IPPROTO_IP, IP_MTU, &value, inaccessible) == -1 &&
+                  errno == EFAULT,
+              "unreadable option length preserves retained route");
+        check(getsockopt(removed[raw], IPPROTO_IP, IP_MTU, &value, &length) == -1 &&
+                  errno == EINVAL,
+              "negative option length preserves retained route");
+        route_mtu(removed[raw], 1500);
+        route_mtu(shared[raw], -ENOTCONN);
+        route_mtu(removed[raw], -ENOTCONN);
+        route_mtu(retained[raw], 1500);
+        route_mtu(retained[raw], 1500);
+        length = sizeof(value);
+        check(getsockopt(value_fault[raw], IPPROTO_IP, IP_MTU, inaccessible, &length) == -1 &&
+                  errno == EFAULT,
+              "option value fault follows locked release");
+        route_mtu(value_fault[raw], -ENOTCONN);
+        check(setsockopt(device_error[raw], SOL_SOCKET, SO_BINDTODEVICE, "missing", 8) == -1 &&
+                  errno == ENODEV,
+              "missing device preserves retained destination");
+        check(setsockopt(device_error[raw], SOL_SOCKET, SO_BINDTODEVICE, inaccessible, 1) == -1 &&
+                  errno == EFAULT,
+              "unreadable device preserves retained destination");
+        route_mtu(device_error[raw], 1500);
+        route_mtu(device_error[raw], -ENOTCONN);
+        for (unsigned operation = 0; operation < 4; operation++) {
+            option_control(locked[raw][operation], operation);
+            route_mtu(locked[raw][operation], -ENOTCONN);
+        }
+        for (unsigned operation = 0; operation < 3; operation++) {
+            option_control(lock_free[raw][operation], operation + 4);
+            route_mtu(lock_free[raw][operation], 1500);
+            route_mtu(lock_free[raw][operation], -ENOTCONN);
+        }
+    }
+    check(munmap(inaccessible, 4096) == 0, "option copy-fault page release");
+    unsigned char byte = 0x58;
+    check(send(removed[0], &byte, 1, 0) == -1 && errno == ENETUNREACH,
+          "removed bound source cannot reselect a route");
     local_udp(other, lane);
-    wire(other, other + 7, lane, 2);
+    wire(other, other + 7, lane, 2, retained[1]);
     set(fd, name, SIOCSIFADDR, primary);
     set(fd, name, SIOCSIFNETMASK, 0xffffff00);
-    wire(primary, primary + 7, lane, 3);
+    wire(primary, primary + 7, lane, 3, -1);
+    for (unsigned raw = 0; raw < 2; raw++) {
+        route_mtu(removed[raw], -ENOTCONN);
+        check(close(removed[raw]) == 0 && close(shared[raw]) == 0 && close(retained[raw]) == 0,
+              "retained route final close");
+        check(close(value_fault[raw]) == 0, "faulted option description close");
+        check(close(device_error[raw]) == 0, "device error description close");
+        for (unsigned operation = 0; operation < 4; operation++)
+            check(close(locked[raw][operation]) == 0, "locked option description close");
+        for (unsigned operation = 0; operation < 3; operation++)
+            check(close(lock_free[raw][operation]) == 0, "lock-free option description close");
+    }
+    printf("IPV4_ALIAS_ROUTE_PASS index=%u transports=2 shared_descriptions=2\n", lane + 1);
     check(address_message(index, red, other, 1) == 0, "netlink alias removal");
     set(fd, blue, SIOCSIFADDR, alias);
     set(fd, blue, SIOCSIFADDR, 0);

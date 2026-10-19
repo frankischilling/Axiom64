@@ -177,10 +177,19 @@ def audit(rows, lane, log, native=False):
 
 def damages(rows, lane, *, native=False):
     identity = 0x7a10 + lane * 16
+    local, remote = bytes([10, 23, lane + 1, 2]), bytes([10, 23, lane + 1, 1])
+
+    def incoming(frame):
+        return (len(frame) >= 34 and frame[12:14] == b'\x08\0' and frame[23] == 1 and
+                frame[26:34] == remote + local)
+
     firsts = [i for i, r in enumerate(rows) if len(r['frame']) >= 58 and
-              r['frame'][12:14] == b'\x08\0' and int.from_bytes(r['frame'][18:20], 'big') == identity and
+              incoming(r['frame']) and int.from_bytes(r['frame'][18:20], 'big') == identity and
               r['frame'][20:22] == b'\x20\0']
     quotes = [i for i, r in enumerate(rows) if len(r['frame']) >= 70 and
+              r['frame'][12:14] == b'\x08\0' and r['frame'][23] == 1 and
+              r['frame'][51] == 1 and
+              r['frame'][26:34] == local + remote and r['frame'][54:62] == remote + local and
               r['frame'][34:36] == b'\x0b\x01' and int.from_bytes(r['frame'][46:48], 'big') == identity]
     require(len(firsts) == 3 and len(quotes) == 1, 'damage seed is not a complete capture')
     first, duplicate, fresh = firsts
@@ -220,9 +229,9 @@ def damages(rows, lane, *, native=False):
         elif name == 'extra-error':
             changed.insert(quote + 1, copy.deepcopy(changed[quote]))
         elif name in ('unicast-broadcast-case', 'simultaneous-suppression'):
-            candidates = [i for i, r in enumerate(changed) if len(r['frame']) >= 34 and
-                          r['frame'][12:14] == b'\x08\0' and
+            candidates = [i for i, r in enumerate(changed) if incoming(r['frame']) and
                           identity < int.from_bytes(r['frame'][18:20], 'big') < identity + 4]
+            require(len(candidates) == 3, 'all three owned suppression fragments are present')
             if name == 'unicast-broadcast-case':
                 i = candidates[-1]
                 changed[i]['frame'] = changed[first]['frame'][:6] + changed[i]['frame'][6:]

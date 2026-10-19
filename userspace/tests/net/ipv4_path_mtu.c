@@ -168,19 +168,29 @@ static void route_change(int control, unsigned lane, uint32_t destination, uint3
             "change selected or unrelated route");
 }
 
-static void route_checks(int control, int fd, unsigned lane, unsigned test,
+static void retained_mtu(int fd, int retained, int first, int current) {
+    require(mtu(fd) == first && mtu(fd) == current && mtu(retained) == first &&
+                mtu(retained) == current,
+            "retained descriptions return before route refresh");
+}
+
+static void route_checks(int control, int fd, int retained, unsigned lane, unsigned test,
                          const struct sockaddr_in* target, int expected) {
     uint32_t unrelated = 0x0a630000 + (lane << 8), peer = ntohl(target->sin_addr.s_addr);
     route_change(control, lane, unrelated, 0xffffff00, 0, 0);
     require(fresh_mtu(target) == expected, "unrelated route add preserves learned limit");
+    retained_mtu(fd, retained, expected, expected);
     route_change(control, lane, unrelated, 0xffffff00, 0, 1);
     require(fresh_mtu(target) == expected, "unrelated route removal preserves learned limit");
+    retained_mtu(fd, retained, expected, expected);
     for (unsigned gateway = 0; gateway < 2; gateway++) {
         uint32_t next_hop = gateway ? 0x0a170101 + (lane << 8) : 0;
         route_change(control, lane, peer, UINT32_MAX, next_hop, 0);
         require(fresh_mtu(target) == 1500, "new route ownership starts at device limit");
+        retained_mtu(fd, retained, expected, 1500);
         route_change(control, lane, peer, UINT32_MAX, next_hop, 1);
         require(fresh_mtu(target) == expected, "removing override restores learned limit");
+        retained_mtu(fd, retained, 1500, expected);
     }
     // Reconnect explicitly selects the restored route. Retained cached queries
     // before route use have a separate Linux lifecycle contract.
@@ -188,18 +198,33 @@ static void route_checks(int control, int fd, unsigned lane, unsigned test,
                 mtu(fd) == expected,
             "reconnected description selects restored limit");
     printf("IPV4_PATH_MTU_ROUTES index=%u case=%u restored=%d\n", lane + 1, test, expected);
+    printf("IPV4_PATH_MTU_HELD_ROUTES index=%u case=%u restored=%d\n", lane + 1, test, expected);
 }
 
-static void link_mtu_checks(int control, unsigned lane, const struct sockaddr_in* target) {
+static void set_link_mtu(int control, unsigned lane, int value) {
     struct ifreq request = {0};
     snprintf(request.ifr_name, sizeof(request.ifr_name), "eth%u", lane);
-    request.ifr_mtu = 600;
-    require(ioctl(control, SIOCSIFMTU, &request) == 0 && fresh_mtu(target) == 600,
-            "lower link MTU invalidates learned exception");
-    request.ifr_mtu = 1500;
-    require(ioctl(control, SIOCSIFMTU, &request) == 0 && fresh_mtu(target) == 1500,
-            "restored link MTU starts without obsolete exception");
+    request.ifr_mtu = value;
+    require(ioctl(control, SIOCSIFMTU, &request) == 0, "change link MTU");
+}
+
+static void link_mtu_checks(int control, int fd, int retained, unsigned lane,
+                            const struct sockaddr_in* target, int expected) {
+    set_link_mtu(control, lane, 1200);
+    require(fresh_mtu(target) == expected, "larger link preserves the learned limit");
+    retained_mtu(fd, retained, expected, expected);
+    set_link_mtu(control, lane, 1500);
+    require(fresh_mtu(target) == expected, "restoring larger link preserves the learned limit");
+    retained_mtu(fd, retained, expected, expected);
+    set_link_mtu(control, lane, 600);
+    require(fresh_mtu(target) == 600, "lower link MTU clips learned exception");
+    retained_mtu(fd, retained, expected, 600);
+    set_link_mtu(control, lane, 1500);
+    require(fresh_mtu(target) == 1500, "restored device-bound limit permits larger discovery");
+    retained_mtu(fd, retained, 600, 1500);
     printf("IPV4_PATH_MTU_LINK index=%u lower=600 restored=1500\n", lane + 1);
+    printf("IPV4_PATH_MTU_HELD_LINK index=%u first=600 restored=1500 preserved=%d\n", lane + 1,
+           expected);
 }
 
 void ipv4_path_mtu_checks(unsigned lane) {
@@ -218,6 +243,14 @@ void ipv4_path_mtu_checks(unsigned lane) {
                                      .sin_addr.s_addr =
                                          htonl(0x0a170100 + (lane << 8) + 180 + test)};
         int fd = data_socket(lane, test, policy, raw, &target);
+        int retained = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_UDP);
+        require(retained >= 0, "held cross-protocol description");
+        option(retained, IP_MTU_DISCOVER, 2);
+        require(connect(retained, (const struct sockaddr*)&target, sizeof(target)) == 0 &&
+                    mtu(retained) == 1500,
+                "retain a destination before the hint");
+        int duplicate = dup(retained);
+        require(duplicate >= 0, "duplicate held description");
         int observer = -1;
         if (test >= 16) {
             observer = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
@@ -243,6 +276,7 @@ void ipv4_path_mtu_checks(unsigned lane) {
         barrier("PM", control, lane, test, 1, policy);
         require(mtu(fd) == 1500 && pending_error(fd) == 0,
                 "bad outer checksum cannot learn or fail");
+        require(mtu(retained) == 1500, "bad hint preserves held destination");
         barrier("PM", control, lane, test, 6, policy);
         int observed = mtu(fd);
         // Another raw listener can learn while this socket ignores the hint.
@@ -257,7 +291,12 @@ void ipv4_path_mtu_checks(unsigned lane) {
                     connect(shared, (const struct sockaddr*)&target, sizeof(target)) == 0,
                 "fresh protocol shares learned path");
         require(mtu(shared) == expected && close(shared) == 0, "shared cache query and close");
-        route_checks(control, fd, lane, test, &target, expected);
+        int stale = mtu(duplicate), refreshed = mtu(retained);
+        require(stale == 1500 && refreshed == expected,
+                "duplicate query refreshes the shared retained description after returning");
+        printf("IPV4_PATH_MTU_HELD index=%u case=%u first=%d shared=%d\n", lane + 1, test, stale,
+               refreshed);
+        route_checks(control, fd, retained, lane, test, &target, expected);
         for (unsigned changed = 0; changed < 6; changed++) {
             option(fd, IP_MTU_DISCOVER, changed);
             barrier("PM", control, lane, test, 2, changed);
@@ -272,8 +311,9 @@ void ipv4_path_mtu_checks(unsigned lane) {
         }
         barrier("PM", control, lane, test, 4, policy);
         if (test == 17)
-            link_mtu_checks(control, lane, &target);
+            link_mtu_checks(control, fd, retained, lane, &target, expected);
         require(close(fd) == 0, "close data description");
+        require(close(retained) == 0 && close(duplicate) == 0, "close shared held descriptions");
         if (observer >= 0)
             require(close(observer) == 0, "close independent raw observer");
         printf("IPV4_PATH_MTU_CASE index=%u case=%u mtu=%d\n", lane + 1, test, expected);
@@ -322,6 +362,13 @@ static void* lifetime_lane(void* pointer) {
             struct timespec delay = {.tv_sec = remaining / 1000,
                                      .tv_nsec = (remaining % 1000) * 1000000};
             require(nanosleep(&delay, NULL) == 0 || errno == EINTR, "real path lifetime wait");
+        }
+        if (sample == 10) {
+            set_link_mtu(control, lane, 1200);
+            require(fresh_mtu(&target) == 900, "mid-lifetime link change preserves path limit");
+            set_link_mtu(control, lane, 1500);
+            require(fresh_mtu(&target) == 900, "mid-lifetime restoration preserves path limit");
+            printf("IPV4_PATH_MTU_LIFETIME_LINK index=%u sample=10 preserved=900\n", lane + 1);
         }
         int fresh = data_socket(lane, 150, 2, 0, &target);
         int owned_mtu = mtu(fd), fresh_mtu = mtu(fresh);

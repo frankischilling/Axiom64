@@ -223,6 +223,7 @@ jobs:
           python3 scripts/tests/network_fixture_test.py 2>&1 | tee build/ipv4-policy/fixture.log
           python3 scripts/tests/ipv4_aliases_test.py 2>&1 | tee build/ipv4-policy/aliases.log
           python3 scripts/tests/ipv4_fragment_observation_test.py -v 2>&1 | tee build/ipv4-policy/fragment-observation.log
+          python3 scripts/tests/ipv4_expiry_damage_test.py -v 2>&1 | tee build/ipv4-policy/expiry-damage.log
           make test-ipv4-reassembly test-ipv4-fragmentation test-ipv4-path-mtu test-ipv4-paths 2>&1 | tee build/ipv4-policy/host.log
       - name: Upload IPv4 policy evidence
         if: always()

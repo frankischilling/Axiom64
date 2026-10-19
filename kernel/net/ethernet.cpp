@@ -68,11 +68,11 @@ int net_configure(unsigned index, bool administrative, uint32_t mtu) {
     if (mtu < 68 || mtu > info->maximum_mtu)
         return -22;
     auto& writable = devices[index - 1]->info;
-    bool mtu_changed = writable.mtu != mtu;
+    uint32_t previous_mtu = writable.mtu;
     writable.administrative = administrative;
     writable.mtu = mtu;
-    if (mtu_changed)
-        ipv4_mtu_changed(index);
+    if (previous_mtu != mtu)
+        ipv4_mtu_changed(index, previous_mtu);
     return 0;
 }
 

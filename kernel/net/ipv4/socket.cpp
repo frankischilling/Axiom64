@@ -13,6 +13,22 @@ InetSocket inet_sockets[inet_socket_count];
 static uint16_t next_port = 32768;
 static uint64_t binding_order;
 
+namespace {
+struct DestinationRelease {
+    InetSocket* socket;
+    bool active;
+
+    ~DestinationRelease() {
+        if (active && socket->type != 1)
+            ipv4_destination_release(socket->destination);
+    }
+};
+} // namespace
+
+Ipv4Destination* inet_destination(InetSocket* socket, uint32_t address) {
+    return socket && socket->used && socket->peer == address ? &socket->destination : nullptr;
+}
+
 bool inet_payload(InetSocket* socket) {
     return socket->type == 3 || socket->type == 2 || socket->type == 1;
 }
@@ -160,8 +176,12 @@ void inet_icmp_error(unsigned index, const uint8_t* quote, int error, uint16_t a
             (socket.index && socket.index != index) || (socket.local && socket.local != local))
             continue;
         if (socket.type == 3 && quote[9] == 1) {
-            if (error == 90 && inet_accept_path_mtu(&socket))
-                ipv4_learn_pmtu(local, peer, index, announced_mtu, ip4::get16(quote + 2));
+            if (error == 90 && inet_accept_path_mtu(&socket)) {
+                uint32_t learned =
+                    ipv4_learn_pmtu(local, peer, index, announced_mtu, ip4::get16(quote + 2));
+                if (learned && socket.peer)
+                    ipv4_destination(socket.destination, socket.local, socket.peer, socket.index);
+            }
             if (socket.peer && (error != 90 || socket.mtu_policy))
                 inet_failed(&socket, error);
         }
@@ -175,8 +195,12 @@ void inet_icmp_error(unsigned index, const uint8_t* quote, int error, uint16_t a
         }
     }
     if (best) {
-        if (error == 90 && inet_accept_path_mtu(best))
-            ipv4_learn_pmtu(local, peer, index, announced_mtu, ip4::get16(quote + 2));
+        if (error == 90 && inet_accept_path_mtu(best)) {
+            uint32_t learned =
+                ipv4_learn_pmtu(local, peer, index, announced_mtu, ip4::get16(quote + 2));
+            if (learned && best->peer)
+                ipv4_destination(best->destination, best->local, best->peer, best->index);
+        }
         if (best->peer && (error != 90 || best->mtu_policy))
             inet_failed(best, error);
     }
@@ -290,6 +314,12 @@ int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* da
     if (length + overhead >
         socket->send_limit - min(socket->transmitted, size_t(socket->send_limit)))
         return -11;
+    if (destination == socket->peer) {
+        int routed =
+            ipv4_destination(socket->destination, socket->local, destination, socket->index);
+        if (routed)
+            return routed == -99 ? -101 : routed;
+    }
     int error;
     if (socket->type == 2) {
         if (!socket->local_port) {
@@ -397,6 +427,7 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             if (!task.memory->space.copy_in(&family, b, 2))
                 return -14;
             if (!family) { // AF_UNSPEC disconnect
+                socket->destination = {};
                 socket->peer = 0;
                 socket->peer_port = 0;
                 if (!socket->bound)
@@ -430,16 +461,19 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             }
             socket->local = value;
             socket->bound = value != 0;
+            socket->destination = {};
         } else {
             if (!value) {
                 if (socket->type == 3)
                     return -22;
                 value = 0x7f000001;
             }
-            uint32_t selected;
-            error = ipv4_source(socket->bound ? socket->local : 0, value, socket->index, selected);
+            Ipv4Destination destination;
+            error = ipv4_destination(destination, socket->bound ? socket->local : 0, value,
+                                     socket->index);
             if (error)
                 return error;
+            uint32_t selected = destination.path.source;
             if (socket->type == 2 && !socket->local_port) {
                 error = inet_bind_port(socket, socket->bound ? socket->local : 0, 0);
                 if (error)
@@ -450,6 +484,7 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             socket->local = selected;
             socket->peer = value;
             socket->peer_port = address.port;
+            socket->destination = destination;
         }
         return 0;
     }
@@ -490,6 +525,7 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
                 if (!index)
                     return -19;
             }
+            socket->destination = {};
             socket->index = index;
             return 0;
         }
@@ -498,6 +534,7 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             return -22;
         if (!task.memory->space.copy_in(&value, d, 4))
             return -14;
+        DestinationRelease finish{socket, b == 1 || (b == 0 && c == 10)};
         if (b == 6 && inet_stream(socket)) {
             int error;
             return tcp_option(socket, unsigned(c), value, true, error) ? error : -92;
@@ -533,6 +570,11 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
     }
     case 55: {
         uint32_t value = 0, length, actual = 4;
+        if (!task.memory->space.copy_in(&length, frame.r8, 4))
+            return -14;
+        if (int32_t(length) < 0)
+            return -22;
+        DestinationRelease finish{socket, b == 0 && (c == 10 || c == 14)};
         if (b == 1) {
             if (c == 2 && (socket->type == 2 || socket->type == 1))
                 value = socket->reuse;
@@ -566,19 +608,15 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
         else if (b == 0 && c == 10)
             value = socket->mtu_policy;
         else if (b == 0 && c == 14) {
-            if (!socket->peer)
-                return -107;
-            Ipv4Path path;
-            int error = ipv4_path(socket->local, socket->peer, socket->index, path);
-            if (error)
-                return error;
-            value = path.mtu;
+            int mtu = ipv4_destination_mtu(socket->destination, false);
+            if (mtu < 0)
+                return mtu;
+            value = uint32_t(mtu);
         } else if (b == 255 && c == 1 && socket->type == 3)
             value = socket->filter;
         else
             return -92;
-        if (!task.memory->space.copy_in(&length, frame.r8, 4) ||
-            !task.memory->space.copy_out(d, &value, min(length, actual)) ||
+        if (!task.memory->space.copy_out(d, &value, min(length, actual)) ||
             !task.memory->space.copy_out(frame.r8, &actual, 4))
             return -14;
         if (b == 1 && c == 4) {

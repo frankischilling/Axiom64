@@ -155,6 +155,67 @@ static void address_aliases() {
     assert(ipv4_address_remove(1, other, 0xffffff00) == 0);
 }
 
+static void retained_destinations() {
+    constexpr uint32_t primary = 0x0a170102, alias = primary + 1, peer = 0x0a1701d9;
+    assert(mtu(1, peer) == 1500);
+    assert(ipv4_address_add(1, "eth0:held", {alias, 0xffffff00, 0x0a1701ff}) == 0);
+    Ipv4Destination datagram, stream, missing;
+    assert(ipv4_destination_mtu(missing, true) == -107);
+    assert(ipv4_destination(datagram, alias, peer, 1) == 0);
+    assert(ipv4_destination(stream, alias, peer, 1) == 0);
+    assert(ipv4_destination_mtu(datagram, true) == 1500);
+    learn(1, peer, 900);
+    // Native raw/UDP read the old destination before the release callback reselects it.
+    assert(ipv4_destination_mtu(datagram, true) == 1500);
+    assert(ipv4_destination_mtu(datagram, true) == 900);
+    // An unrelated established TCP description does not use that release callback.
+    assert(ipv4_destination_mtu(stream, false) == 1500);
+    assert(ipv4_destination_mtu(stream, false) == 1500);
+    assert(ipv4_address_remove(1, alias, 0xffffff00) == 0);
+    assert(ipv4_destination_mtu(datagram, true) == 900);
+    assert(ipv4_destination_mtu(datagram, true) == -107);
+    assert(ipv4_destination_mtu(stream, false) == 1500);
+    assert(ipv4_address_add(1, "eth0:held", {alias, 0xffffff00, 0x0a1701ff}) == 0);
+    assert(ipv4_destination_mtu(datagram, true) == -107);
+    assert(ipv4_destination(datagram, alias, peer, 1) == 0);
+    assert(ipv4_destination_mtu(datagram, true) == 900);
+    Ipv4Route gateway{peer, 0xffffffff, 0x0a170101, 1};
+    assert(ipv4_route(gateway, false) == 0);
+    assert(ipv4_destination_mtu(datagram, true) == 900);
+    assert(ipv4_destination_mtu(datagram, true) == 1500);
+    assert(ipv4_route(gateway, true) == 0);
+    assert(ipv4_destination_mtu(datagram, true) == 1500);
+    assert(ipv4_destination_mtu(datagram, true) == 900);
+    Ipv4Destination learned_stream;
+    assert(ipv4_destination(learned_stream, alias, peer, 1) == 0);
+    assert(net_configure(1, true, 1200) == 0);
+    assert(mtu(1, peer) == 900);
+    assert(ipv4_destination_mtu(datagram, true) == 900);
+    assert(ipv4_destination_mtu(datagram, true) == 900);
+    assert(ipv4_destination_mtu(stream, false) == 1200);
+    assert(net_configure(1, true, 1500) == 0);
+    assert(mtu(1, peer) == 900);
+    assert(ipv4_destination_mtu(stream, false) == 1500);
+    assert(net_configure(1, true, 600) == 0);
+    assert(ipv4_destination_mtu(learned_stream, false) == 900);
+    assert(ipv4_destination_mtu(learned_stream, false) == 900);
+    assert(ipv4_destination_mtu(datagram, true) == 900);
+    assert(ipv4_destination_mtu(datagram, true) == 600);
+    assert(ipv4_destination(learned_stream, alias, peer, 1) == 0);
+    assert(ipv4_destination_mtu(learned_stream, false) == 600);
+    assert(net_configure(1, true, 1500) == 0);
+    assert(ipv4_destination_mtu(datagram, true) == 600);
+    assert(ipv4_destination_mtu(datagram, true) == 1500);
+    learn(1, peer, 900);
+    assert(ipv4_destination(datagram, alias, peer, 1) == 0);
+    uint64_t before = ticks;
+    ticks += 60000;
+    assert(ipv4_destination_mtu(datagram, true) == 1500);
+    assert(ipv4_destination_mtu(datagram, true) == 1500);
+    ticks = before;
+    assert(ipv4_address_remove(1, alias, 0xffffff00) == 0);
+}
+
 static void link_lifecycle() {
     constexpr uint32_t first = 0x0a1701d0, second = 0x0a1702d0;
     learn(1, first, 900);
@@ -202,6 +263,7 @@ int main() {
     shared_next_hop();
     route_pressure();
     address_aliases();
+    retained_destinations();
     link_lifecycle();
     ipv4_shutdown();
     std::puts("IPV4_PATHS_PASS route-ownership restoration sharing pressure links expiry");

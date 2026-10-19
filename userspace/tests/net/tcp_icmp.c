@@ -37,6 +37,7 @@ static int observers[2];
 static unsigned indices[2], observed[2], ipv4_frames[2];
 static pthread_t observer;
 static int companions[2][2], listeners[2];
+static int passive_listeners[2][ICMP_CASES];
 static unsigned companion_checks[2][2];
 
 static uint64_t milliseconds(void) {
@@ -285,6 +286,20 @@ static void active_case(unsigned lane, unsigned ordinal) {
         char name[16];
         snprintf(name, sizeof(name), "eth%u", lane);
         CHECK(setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, name, strlen(name) + 1) == 0);
+        if (native) {
+            // An earlier active connection must not take a later passive test's port.
+            for (unsigned passive = 0; passive < ICMP_CASES; passive++) {
+                if (icmp_cases[passive].mode != ICMP_PASSIVE_KEEP &&
+                    icmp_cases[passive].mode != ICMP_PASSIVE_DROP)
+                    continue;
+                struct sockaddr_in local = {.sin_family = AF_INET,
+                                            .sin_port = htons(40000 + lane * 1000 + passive),
+                                            .sin_addr.s_addr = htonl(0x0a170102 + (lane << 8))};
+                CHECK(bind(fd, (struct sockaddr*)&local, sizeof(local)) == -1 &&
+                      errno == EADDRINUSE);
+            }
+            printf("ICMP_RESERVED_PORTS_PASS lane=%u\n", lane);
+        }
     }
     struct sockaddr_in address = {.sin_family = AF_INET,
                                   .sin_port = htons(48000 + lane * 1000 + ordinal),
@@ -430,13 +445,28 @@ completed:
     case_complete(lane, ordinal, began);
 }
 
+static void passive_start(void) {
+    // Reserve fixed passive ports before any active connection can select one.
+    for (unsigned lane = 0; lane < 2; lane++) {
+        for (unsigned ordinal = 0; ordinal < ICMP_CASES; ordinal++) {
+            if (icmp_cases[ordinal].mode != ICMP_PASSIVE_KEEP &&
+                icmp_cases[ordinal].mode != ICMP_PASSIVE_DROP)
+                continue;
+            int listener = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+            struct sockaddr_in address = {.sin_family = AF_INET,
+                                          .sin_port = htons(40000 + lane * 1000 + ordinal),
+                                          .sin_addr.s_addr = htonl(0x0a170102 + (lane << 8))};
+            CHECK(listener >= 0 &&
+                  bind(listener, (struct sockaddr*)&address, sizeof(address)) == 0 &&
+                  listen(listener, 2) == 0);
+            passive_listeners[lane][ordinal] = listener;
+        }
+    }
+}
+
 static void passive_case(unsigned lane, unsigned ordinal) {
-    int listener = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
-    struct sockaddr_in address = {.sin_family = AF_INET,
-                                  .sin_port = htons(40000 + lane * 1000 + ordinal),
-                                  .sin_addr.s_addr = htonl(0x0a170102 + (lane << 8))};
-    CHECK(listener >= 0 && bind(listener, (struct sockaddr*)&address, sizeof(address)) == 0 &&
-          listen(listener, 2) == 0);
+    int listener = passive_listeners[lane][ordinal];
+    struct sockaddr_in address;
     printf("ICMP_LISTEN_READY lane=%u case=%u\n", lane, ordinal);
     uint64_t began = milliseconds();
     struct pollfd ready = {.fd = listener, .events = POLLIN};
@@ -499,6 +529,7 @@ int main(int argc, char** argv) {
         configure();
     capture_start();
     puts("TCP_ICMP_CONFIG_PASS nics=2");
+    passive_start();
     companions_start();
     for (unsigned lane = 0; lane < 2; lane++) {
         for (unsigned ordinal = 0; ordinal < ICMP_CASES; ordinal++) {

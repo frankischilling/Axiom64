@@ -64,9 +64,15 @@ static Neighbor neighbors[neighbor_count];
 static Output output[output_count];
 static ip4::PathMtuCache path_mtu;
 static uint64_t next_path_owner;
+static uint64_t destination_generation = 1;
 static uint16_t identifier;
 static bool polling;
 static uint64_t next_icmp_error[max_net_devices + 2];
+
+static void retire_destinations() {
+    if (destination_generation < UINT64_MAX)
+        destination_generation++;
+}
 
 static unsigned prefix_length(uint32_t mask) {
     unsigned count = 0;
@@ -530,6 +536,19 @@ static int address_label(unsigned index, const char* label) {
 }
 
 static void addresses_changed(const ip4::AddressBook& before, unsigned index) {
+    for (unsigned n = 0; n < ipv4_address_capacity; n++) {
+        auto old = before.at(n), current = addresses.at(n);
+        if (!old && !current)
+            break;
+        if (!old || !current || old->index != current->index ||
+            old->config.address != current->config.address ||
+            old->config.mask != current->config.mask ||
+            old->config.broadcast != current->config.broadcast ||
+            old->secondary != current->secondary || strcmp(old->label, current->label)) {
+            retire_destinations();
+            break;
+        }
+    }
     bool retained = false;
     for (unsigned n = 0; auto old = before.at(n); n++) {
         if (old->index != index)
@@ -608,9 +627,11 @@ int ipv4_address_remove(unsigned index, uint32_t address, uint32_t mask) {
     return error;
 }
 
-void ipv4_mtu_changed(unsigned index) {
-    if (index && index <= max_net_devices)
-        path_mtu.discard(index);
+void ipv4_mtu_changed(unsigned index, uint32_t previous_mtu) {
+    if (auto info = net_info(index); info && previous_mtu != info->mtu) {
+        path_mtu.update_mtu(index, previous_mtu, info->mtu);
+        retire_destinations();
+    }
 }
 
 static bool same_next_hop(const Ipv4Route& a, const Ipv4Route& b) {
@@ -637,6 +658,7 @@ static int change_route(const Ipv4Route& input, bool remove, bool control, bool 
                     retained |= other.used && other.path_owner == owner;
                 if (!retained)
                     path_mtu.discard_route(owner);
+                retire_destinations();
                 return 0;
             }
         return -3;
@@ -700,6 +722,7 @@ static int change_route(const Ipv4Route& input, bool remove, bool control, bool 
         owner = ++next_path_owner;
     }
     *empty = {value, true, owner};
+    retire_destinations();
     return 0;
 }
 
@@ -746,20 +769,67 @@ int ipv4_source(uint32_t source, uint32_t destination, unsigned bound_index, uin
     return error;
 }
 
+static ip4::PathMtu selection_limit(const Selection& route, uint32_t destination) {
+    uint32_t device = route.local ? 65535u : net_info(route.index)->mtu;
+    if (!route.local && !route.broadcast)
+        return path_mtu.lookup(
+            {route.path_source, destination, route.next_hop, route.index, route.path_owner}, device,
+            ticks);
+    return {device};
+}
+
 int ipv4_path(uint32_t source, uint32_t destination, unsigned bound_index, Ipv4Path& path) {
     Selection route;
     int error = select(source, destination, bound_index, route);
-    if (!error) {
-        uint32_t mtu = route.local ? 65535u : net_info(route.index)->mtu;
-        if (!route.local && !route.broadcast)
-            mtu = path_mtu
-                      .lookup({route.path_source, destination, route.next_hop, route.index,
-                               route.path_owner},
-                              mtu, ticks)
-                      .mtu;
-        path = {route.source, mtu, route.index};
-    }
+    if (!error)
+        path = {route.source, selection_limit(route, destination).mtu, route.index};
     return error;
+}
+
+static Ipv4Destination retain_selection(const Selection& route, uint32_t destination,
+                                        unsigned bound_index) {
+    auto limit = selection_limit(route, destination);
+    Ipv4Destination retained;
+    retained.path = {route.source, limit.mtu, route.index};
+    retained.address = destination;
+    retained.bound_index = bound_index;
+    retained.generation = destination_generation;
+    retained.expires = limit.expires;
+    retained.local = route.local;
+    retained.gateway = route.next_hop != destination;
+    retained.locked = limit.locked;
+    return retained;
+}
+
+int ipv4_destination(Ipv4Destination& retained, uint32_t source, uint32_t destination,
+                     unsigned bound_index) {
+    Selection route;
+    int error = select(source, destination, bound_index, route);
+    retained = error ? Ipv4Destination{} : retain_selection(route, destination, bound_index);
+    return error;
+}
+
+int ipv4_destination_mtu(Ipv4Destination& retained, bool refresh_route) {
+    if (!retained.path.index)
+        return -107;
+    bool expired = retained.expires && ticks >= retained.expires;
+    auto info = net_info(retained.path.index);
+    uint32_t mtu = retained.local ? 65535u : info ? info->mtu : retained.path.mtu;
+    if (retained.expires && !expired)
+        mtu = retained.path.mtu;
+    else if (retained.locked && retained.gateway && mtu > 576)
+        mtu = 576;
+    // The syscall returns this value even when its release callback loses the route.
+    if (refresh_route)
+        ipv4_destination_release(retained);
+    return int(mtu);
+}
+
+void ipv4_destination_release(Ipv4Destination& retained) {
+    bool expired = retained.expires && ticks >= retained.expires;
+    if (retained.path.index && (expired || retained.generation != destination_generation ||
+                                destination_generation == UINT64_MAX))
+        ipv4_destination(retained, retained.path.source, retained.address, retained.bound_index);
 }
 
 uint32_t ipv4_learn_pmtu(uint32_t source, uint32_t destination, unsigned index,
@@ -767,10 +837,13 @@ uint32_t ipv4_learn_pmtu(uint32_t source, uint32_t destination, unsigned index,
     Selection route;
     if (select(source, destination, index, route) || route.local || route.broadcast)
         return 0;
-    return path_mtu
-        .learn({route.path_source, destination, route.next_hop, route.index, route.path_owner},
-               net_info(route.index)->mtu, announced_mtu, quoted_length, ticks)
-        .mtu;
+    bool updated;
+    auto learned = path_mtu.learn(
+        {route.path_source, destination, route.next_hop, route.index, route.path_owner},
+        net_info(route.index)->mtu, announced_mtu, quoted_length, ticks, &updated);
+    if (updated)
+        retire_destinations();
+    return learned.mtu;
 }
 
 int ipv4_send(InetSocket* owner, uint32_t source, uint32_t destination, unsigned bound_index,
@@ -778,19 +851,23 @@ int ipv4_send(InetSocket* owner, uint32_t source, uint32_t destination, unsigned
     if (!ttl)
         return -22;
     Selection route;
+    auto retained = inet_destination(owner, destination);
     int error = select(source, destination, bound_index, route);
-    if (error)
-        return error;
+    if (error) {
+        if (retained)
+            *retained = {};
+        return owner && error == -99 ? -101 : error;
+    }
+    if (retained)
+        *retained = retain_selection(route, destination, bound_index);
     if (route.broadcast && !broadcast)
         return -13;
     bool fragmentable = inet_fragmentation_allowed(owner);
     uint32_t mtu = route.local ? 65535u : net_info(route.index)->mtu;
     ip4::PathMtu limit{mtu};
     bool use_path_mtu = inet_use_path_mtu(owner);
-    if (!route.local && !route.broadcast && use_path_mtu)
-        limit = path_mtu.lookup(
-            {route.path_source, destination, route.next_hop, route.index, route.path_owner}, mtu,
-            ticks);
+    if (use_path_mtu)
+        limit = selection_limit(route, destination);
     if (length > 65535 - 20 || (!route.local && length + 20 > limit.mtu && !fragmentable))
         return -90;
     auto slot = vacant_output();
@@ -961,6 +1038,7 @@ void ipv4_poll() {
 void ipv4_shutdown() {
     ip4::reassembly_discard();
     path_mtu.discard();
+    retire_destinations();
     for (auto& item : output)
         if (item.bytes)
             clear(item);

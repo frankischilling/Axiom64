@@ -8,6 +8,8 @@ from fetch import ROOT, LOCK
 from build_musl import ensure, loader
 
 IPV4_MODULES = ('kernel/include/net/ipv4.hpp', 'kernel/include/net/ethernet.hpp',
+                'kernel/include/net/inet.hpp',
+                'kernel/net/ipv4/socket.hpp',
                 'kernel/include/net/ipv4/addresses.hpp', 'kernel/net/ipv4/addresses.cpp',
                 'kernel/net/ioctl.cpp',
                 'kernel/net/ethernet.cpp', 'kernel/include/net/ipv4_wire.hpp',

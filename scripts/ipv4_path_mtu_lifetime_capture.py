@@ -98,6 +98,12 @@ def inspect(rows, lane, log):
     query_lines = re.findall(r'^IPV4_PATH_MTU_LIFETIME_QUERY index=' + str(lane + 1) +
                             r' sample=(\d+) mtu=(\d+) fresh=(\d+) elapsed_ms=(\d+)\r?$', log, re.M)
     require(len(query_lines) == 22, 'all actual socket MTU queries are retained')
+    link = list(re.finditer(r'^IPV4_PATH_MTU_LIFETIME_LINK index=' + str(lane + 1) +
+                            r' sample=10 preserved=900\r?$', log, re.M))
+    require(len(link) == 1 and
+            log.find(f'IPV4_PATH_MTU_LIFETIME_QUERY index={lane + 1} sample=9 ') < link[0].start() <
+            log.find(f'IPV4_PATH_MTU_LIFETIME_QUERY index={lane + 1} sample=10 '),
+            'actual mid-lifetime link transition precedes the unchanged deadline checks')
     for sample, values in enumerate(query_lines):
         number, owned, fresh, client_ms = map(int, values)
         expected = 1500 if sample == 21 else 900
@@ -116,7 +122,7 @@ def inspect(rows, lane, log):
     require(replies[21, 3]['index'] < requests[22, 4]['index'], 'final client acknowledgement follows recovery')
     return (dict(passed=True, lane=lane, samples=22, original_datagrams=3,
                  recovered_descriptions=2, expiry_seconds=expiry, lifetime_seconds=600,
-                 original_packet_times_not_rescaled=True),
+                 link_mtu_preserves_deadline=True, original_packet_times_not_rescaled=True),
             dict(requests=requests, replies=replies, data=data, hints=hints))
 
 
@@ -138,7 +144,8 @@ def verify_capture(path, lane, log_path, *, native=False, damage_archive=None):
             names = ['missing-valid-hint', 'wrong-quote', 'early-expiry', 'late-expiry',
                      'missing-second-description', 'bad-UDP-checksum', 'wrong-DF',
                      'missing-lookup', 'missing-final-ack', 'false-client-MTU',
-                     'false-client-duration', 'duplicate-final-data', 'wrong-route', 'early-lookup']
+                     'false-client-duration', 'duplicate-final-data', 'wrong-route', 'early-lookup',
+                     'missing-link-transition', 'false-link-limit']
             for name in names:
                 changed, text = copy.deepcopy(rows), log
                 valid = proof['hints'][1]['index']
@@ -173,6 +180,12 @@ def verify_capture(path, lane, log_path, *, native=False, damage_archive=None):
                     pattern = r'(IPV4_PATH_MTU_LIFETIME_PASS index=' + str(lane + 1) + r' elapsed_ms=)\d+'
                     text, count = re.subn(pattern, r'\g<1>1000', text)
                     require(count == 1, 'one original elapsed observation was damaged')
+                elif name == 'missing-link-transition':
+                    text = re.sub(r'^IPV4_PATH_MTU_LIFETIME_LINK index=' + str(lane + 1) +
+                                  r' sample=10 preserved=900\r?\n', '', text, count=1, flags=re.M)
+                elif name == 'false-link-limit':
+                    text = text.replace(f'IPV4_PATH_MTU_LIFETIME_LINK index={lane + 1} sample=10 preserved=900',
+                                        f'IPV4_PATH_MTU_LIFETIME_LINK index={lane + 1} sample=10 preserved=899')
                 elif name == 'duplicate-final-data':
                     changed.insert(final_data, copy.deepcopy(changed[final_data]))
                 elif name == 'early-lookup':

@@ -136,6 +136,7 @@ void release_automatic_port(InetSocket* socket) {
 void reset_connect(InetSocket* socket) {
     // Owned packets may outlive this attempt; their callbacks cannot reach its successor.
     ipv4_detach_owner(socket);
+    socket->destination = {};
     release_time_wait(socket);
     socket->mss_cache = socket->stream->segment_size();
     socket->stream->~Connection();
@@ -369,6 +370,8 @@ void tcp_icmp_error(unsigned index, const uint8_t* bytes, size_t length) {
                                                quote.next_hop_mtu, quote.quoted_length);
             if (learned)
                 mtu = min(mtu, uint16_t(learned));
+            if (learned)
+                ipv4_destination(socket.destination, socket.local, socket.peer, socket.index);
             // DONT can populate the route cache without forcing a transport retry.
             // PROBE bypasses that cache at IP output, but TCP still adapts its MSS.
             if (socket.mtu_policy && socket.stream->reduce_mss(quote.sequence, uint16_t(mtu - 40)))
@@ -394,10 +397,11 @@ int tcp_connect(InetSocket* socket, const InetAddress& address) {
     uint32_t peer = __builtin_bswap32(address.address);
     if (!peer)
         peer = 0x7f000001;
-    Ipv4Path path;
-    int error = ipv4_path(socket->bound ? socket->local : 0, peer, socket->index, path);
+    Ipv4Destination retained;
+    int error = ipv4_destination(retained, socket->bound ? socket->local : 0, peer, socket->index);
     if (error)
         return error;
+    const auto& path = retained.path;
     if (!socket->local_port) {
         error = inet_bind_port(socket, socket->bound ? socket->local : 0, 0);
         if (error)
@@ -426,6 +430,7 @@ int tcp_connect(InetSocket* socket, const InetAddress& address) {
     error = make_stream(socket, now);
     if (error)
         return error;
+    socket->destination = retained;
     socket->error = 0;
     socket->error_seen = false;
     uint16_t limit = socket->user_mss ? socket->user_mss : 1460;
@@ -710,11 +715,11 @@ void tcp_receive(unsigned index, uint32_t source, uint32_t destination, const vo
             return;
         }
         uint16_t limit = child->user_mss ? child->user_mss : 1460;
-        Ipv4Path path;
-        if (ipv4_path(destination, source, index, path)) {
+        if (ipv4_destination(child->destination, destination, source, index)) {
             reclaim(child);
             return;
         }
+        const auto& path = child->destination.path;
         uint16_t mss = min(limit, uint16_t(path.mtu > 40 ? path.mtu - 40 : 1));
         if (!child->stream->passive(initial, segment, now, mss)) {
             reclaim(child);

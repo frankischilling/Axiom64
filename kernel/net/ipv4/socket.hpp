@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "net/inet.hpp"
+#include "net/ipv4.hpp"
 
 namespace ax::tcp {
 class Connection;
@@ -17,6 +18,7 @@ struct InetSocket {
     uint32_t filter = 0;
     size_t bytes = 0, transmitted = 0;
     unsigned mtu_policy = 1;
+    Ipv4Destination destination;
     int error = 0;
     uint8_t ttl = 64;
     uint8_t type = 3, protocol = 1;

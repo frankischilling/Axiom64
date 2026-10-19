@@ -5,6 +5,7 @@
 namespace ax {
 struct Task;
 struct InetSocket;
+struct Ipv4Destination;
 
 struct InetAddress {
     uint16_t family, port;
@@ -24,6 +25,9 @@ inline const uint8_t* inet_bytes(const InetFrame* frame) {
 }
 
 void inet_close(InetSocket*);
+
+// A serialized output caller may borrow the matching connected destination.
+Ipv4Destination* inet_destination(InetSocket*, uint32_t address);
 
 bool inet_payload(InetSocket*);
 

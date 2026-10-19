@@ -18,6 +18,7 @@ struct PathKey {
 struct PathMtu {
     uint32_t mtu;
     bool locked = false;
+    uint64_t expires = 0;
 };
 
 // Callers validate packet checksums and transport ownership before learning.
@@ -27,10 +28,14 @@ struct PathMtu {
 class PathMtuCache {
   public:
     PathMtu lookup(const PathKey&, uint32_t device_mtu, uint64_t now);
+    // updated reports an accepted cache write, including a permitted deadline refresh.
     PathMtu learn(const PathKey&, uint32_t device_mtu, uint16_t announced_mtu,
-                  uint16_t quoted_length, uint64_t now);
-    // Interface changes discard one index. Removing a route's last owner only
-    // releases that owner's entries; unrelated routes retain their deadlines.
+                  uint16_t quoted_length, uint64_t now, bool* updated = nullptr);
+    // Link changes adjust device-bound limits without renewing their deadlines.
+    void update_mtu(unsigned index, uint32_t previous, uint32_t current);
+
+    // Retiring an interface discards one index. Removing a route's last owner
+    // only releases that owner's entries; unrelated routes retain their deadlines.
     void discard(unsigned index = 0);
 
     void discard_route(uint64_t route_owner);

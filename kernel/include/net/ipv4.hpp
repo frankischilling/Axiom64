@@ -42,8 +42,8 @@ int ipv4_address_add(unsigned index, const char* label, const Ipv4Config&);
 
 int ipv4_address_remove(unsigned index, uint32_t address, uint32_t mask);
 
-// A changed link MTU invalidates learned exceptions on that interface only.
-void ipv4_mtu_changed(unsigned index);
+// A changed link MTU adjusts that interface's exceptions without renewing expiry.
+void ipv4_mtu_changed(unsigned index, uint32_t previous_mtu);
 
 int ipv4_route(const Ipv4Route&, bool remove);
 
@@ -62,6 +62,22 @@ struct Ipv4Path {
 };
 
 int ipv4_path(uint32_t source, uint32_t destination, unsigned bound_index, Ipv4Path&);
+
+// A socket owns its selected destination even when a later route edit retires it.
+struct Ipv4Destination {
+    Ipv4Path path{};
+    uint32_t address = 0;
+    unsigned bound_index = 0;
+    uint64_t generation = 0, expires = 0;
+    bool local = false, gateway = false, locked = false;
+};
+
+int ipv4_destination(Ipv4Destination&, uint32_t source, uint32_t destination, unsigned bound_index);
+
+// Datagram/raw getters return the retained value before refreshing obsolete state.
+int ipv4_destination_mtu(Ipv4Destination&, bool refresh_route);
+
+void ipv4_destination_release(Ipv4Destination&);
 
 // A validated transport quote may lower the selected path. Zero means no eligible route.
 uint32_t ipv4_learn_pmtu(uint32_t source, uint32_t destination, unsigned index,

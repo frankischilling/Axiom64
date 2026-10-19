@@ -310,6 +310,9 @@ def audit_row(root, row, cases, input_root=None, host_libraries=None):
     text = (root / row['log']).read_text()
     require('TCP_ICMP_FAIL' not in text and text.count('TCP_ICMP_PASS cases=57 nics=2 cycles=128') == 1,
             'one complete actual application verdict')
+    if native:
+        require(Counter(re.findall(r'^ICMP_RESERVED_PORTS_PASS lane=(\d+)\r?$', text, re.M)) ==
+                Counter({'0': 1, '1': 1}), 'actual active bind attempts exclude every later passive port')
     complete = re.findall(r'^ICMP_CASE_PASS lane=(\d+) case=(\d+) name=([a-z-]+) elapsed_ms=(\d+) '
                           r'start_ms=(\d+) end_ms=(\d+)\r?$', text, re.M)
     require(len(complete) == 114 and {(int(lane), int(ordinal), name) for lane, ordinal, name, *_ in complete} ==

@@ -113,10 +113,66 @@ static void pressure() {
     assert(cache.lookup(path(100), 1500, 60003).mtu == 1500);
 }
 
+static void retained_deadlines() {
+    PathMtuCache cache;
+    bool updated = false;
+    auto value = cache.learn(path(), 1500, 900, 1200, 100, &updated);
+    assert(updated && value.expires == 60100);
+    assert(cache.lookup(path(), 1500, 200).expires == 60100);
+    value = cache.learn(path(), 1500, 1000, 1200, 200, &updated);
+    assert(!updated && value.mtu == 900 && value.expires == 60100);
+    value = cache.learn(path(), 1500, 900, 1200, 200, &updated);
+    assert(!updated && value.expires == 60100);
+    value = cache.learn(path(), 1500, 900, 1200, 30100, &updated);
+    assert(updated && value.expires == 90100);
+    assert(cache.lookup(path(), 1500, 90100).expires == 0);
+}
+
+static void link_limits() {
+    PathMtuCache cache;
+    auto key = path(), other = path();
+    other.index = 2;
+    cache.learn(key, 1500, 900, 1200, 100);
+    cache.learn(other, 1500, 800, 1200, 100);
+    cache.update_mtu(1, 1500, 1200);
+    auto value = cache.lookup(key, 1200, 200);
+    assert(value.mtu == 900 && value.expires == 60100 && !value.locked);
+    cache.update_mtu(1, 1200, 1500);
+    assert(cache.lookup(key, 1500, 300).mtu == 900);
+    cache.update_mtu(1, 1500, 600);
+    value = cache.lookup(key, 600, 400);
+    assert(value.mtu == 600 && value.expires == 60100 && !value.locked);
+    assert(cache.lookup(other, 1500, 400).mtu == 800);
+    cache.update_mtu(1, 600, 1500);
+    value = cache.lookup(key, 1500, 60099);
+    assert(value.mtu == 1500 && value.expires == 60100 && !value.locked);
+    assert(cache.lookup(key, 1500, 60100).expires == 0);
+
+    for (uint32_t reduced : {552u, 500u}) {
+        cache.discard();
+        cache.learn(key, 1500, 68, 1200, 100);
+        cache.update_mtu(1, 1500, 600);
+        value = cache.lookup(key, 600, 200);
+        assert(value.mtu == 552 && value.locked && value.expires == 60100);
+        cache.update_mtu(1, 600, 1500);
+        value = cache.lookup(key, 1500, 300);
+        assert(value.mtu == 552 && value.locked && value.expires == 60100);
+        cache.update_mtu(1, 1500, reduced);
+        value = cache.lookup(key, reduced, 400);
+        assert(value.mtu == reduced && !value.locked && value.expires == 60100);
+        cache.update_mtu(1, reduced, 1500);
+        value = cache.lookup(key, 1500, 60099);
+        assert(value.mtu == 1500 && !value.locked && value.expires == 60100);
+        assert(cache.lookup(key, 1500, 60100).expires == 0);
+    }
+}
+
 int main() {
     ownership();
     deadlines();
     floor_and_validation();
     pressure();
+    retained_deadlines();
+    link_limits();
     std::puts("IPV4_PATH_MTU_PASS ownership expiry refresh floor lock pressure clocks");
 }

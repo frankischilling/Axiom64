@@ -300,7 +300,8 @@ bool inet_datagram_deliver(unsigned index, uint32_t source, uint32_t destination
     return matched;
 }
 
-int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* data, size_t length) {
+int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* data, size_t length,
+                  bool named) {
     if (inet_stream(socket))
         return tcp_write(socket, data, length);
     if (!inet_payload(socket))
@@ -318,9 +319,12 @@ int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* da
     if (length + overhead >
         socket->send_limit - min(socket->transmitted, size_t(socket->send_limit)))
         return -11;
-    if (socket->type == 2 && destination == socket->peer) {
-        int routed =
-            ipv4_destination(socket->destination, socket->local, destination, socket->index);
+    Ipv4Source source{socket->local};
+    bool connected = !named && destination == socket->peer;
+    if (socket->type == 2 && connected) {
+        if (ipv4_destination_current(socket->destination))
+            source = Ipv4Source::retained(socket->local);
+        int routed = ipv4_destination(socket->destination, source, destination, socket->index);
         if (routed)
             return routed == -99 ? -101 : routed;
     }
@@ -331,14 +335,19 @@ int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* da
             if (error)
                 return error;
         }
-        UdpOutput output{socket->local,
+        UdpOutput output{source,
                          destination,
                          socket->index,
                          socket->local_port,
                          __builtin_bswap16(address.port),
                          socket->ttl,
-                         socket->broadcast};
+                         socket->broadcast,
+                         connected};
         error = udp_send(socket, output, data, length);
+        if (connected && socket->destination.path.index)
+            socket->destination.source = socket->local;
+        if (error == -99)
+            error = -101;
     } else
         error = ipv4_send(socket, socket->local, destination, socket->index, 1, socket->ttl,
                           socket->broadcast, data, length);
@@ -478,6 +487,7 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             if (error)
                 return error;
             uint32_t selected = destination.path.source;
+            destination.source = selected;
             if (socket->type == 2 && !socket->local_port) {
                 error = inet_bind_port(socket, socket->bound ? socket->local : 0, 0);
                 if (error)

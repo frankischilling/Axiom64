@@ -8,6 +8,7 @@ import re
 import struct
 import zipfile
 from ipv4_expiry_capture import bind_clocks, checksum, encode_capture, read_capture
+from ipv4_retained_capture import inspect as inspect_retained
 
 
 def require(value, reason):
@@ -15,7 +16,7 @@ def require(value, reason):
         raise ValueError(reason)
 
 
-def inspect(rows, lane, log):
+def inspect(rows, lane, log, query_model='release'):
     guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
     control = bytes([2, 0x55, 0x4e, 0x43, lane, 0])
     prefix = bytes([198, 18, lane + 1])
@@ -128,30 +129,85 @@ def inspect(rows, lane, log):
     require(len(re.findall(r'^IPV4_UNCONFIGURED_PASS index=' + str(lane + 1) +
                            r' protocols=2 datagrams=14\r?$', log, re.M)) == 1,
             'actual unconfigured client completed both protocols')
+    retained, retained_proof = inspect_retained(rows, lane, log, query_model)
     return dict(passed=True, lane=lane, datagrams=14, source_queries=14, barriers=14,
-                arp_exchanges=sum(map(len, arp_requests.values()))), dict(
+                arp_exchanges=sum(map(len, arp_requests.values())), retained=retained), dict(
                     data=data, requests=requests, replies=replies,
-                    arp_requests=arp_requests, arp_replies=arp_replies)
+                    arp_requests=arp_requests, arp_replies=arp_replies, retained=retained_proof)
 
 
-def verify_capture(path, lane, log_path, damage_archive=None, native=False):
+def verify_capture(path, lane, log_path, damage_archive=None, native=False, query_model='release'):
     path, log_path = Path(path), Path(log_path)
     original, original_log = path.read_bytes(), log_path.read_bytes()
     rows, text = read_capture(path), original_log.decode(errors='replace')
     if native:
         bind_clocks(rows, path.with_suffix('.clocks.jsonl'))
-    result, proof = inspect(rows, lane, text)
+    result, proof = inspect(rows, lane, text, query_model)
     if damage_archive:
         names = ['missing-data', 'duplicate-data', 'wrong-source', 'wrong-destination',
                  'wrong-next-hop', 'payload', 'IP-checksum', 'UDP-checksum', 'missing-ARP-request',
                  'missing-ARP-reply', 'ARP-source', 'ARP-target', 'missing-barrier', 'early-barrier',
-                 'barrier-bytes', 'false-source-query', 'reordered-source-queries', 'missing-success']
+                 'barrier-bytes', 'false-source-query', 'reordered-source-queries', 'missing-success',
+                 'retained-missing-data', 'retained-duplicate-data', 'retained-wrong-unnamed-source',
+                 'retained-wrong-named-source', 'retained-early-barrier', 'retained-missing-barrier',
+                 'retained-wrong-following-source',
+                 'retained-extra-removed-data', 'retained-false-local', 'retained-removed-errno',
+                 'retained-query-order', 'retained-missing-success', 'retained-false-query-model']
         rejected = []
         with zipfile.ZipFile(damage_archive, 'x', compression=zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
             for name in names:
                 changed, log = copy.deepcopy(rows), text
                 target = proof['data'][0, 0]
-                if name.startswith('missing-ARP'):
+                if name.startswith('retained-'):
+                    retained = proof['retained']
+                    target = retained['data'][1, 0, 0]
+                    if name == 'retained-missing-data':
+                        del changed[target]
+                    elif name == 'retained-duplicate-data':
+                        changed.insert(target, copy.deepcopy(changed[target]))
+                    elif name == 'retained-extra-removed-data':
+                        changed.insert(retained['replies'][6, 0, 0],
+                                       copy.deepcopy(changed[retained['data'][5, 0, 7]]))
+                    elif name == 'retained-early-barrier':
+                        reply = changed.pop(retained['replies'][1, 0, 0])
+                        changed.insert(target, reply)
+                    elif name == 'retained-missing-barrier':
+                        del changed[retained['replies'][1, 0, 0]]
+                    elif name == 'retained-false-local':
+                        log = log.replace(f'IPV4_RETAINED_SOURCE index={lane + 1} phase=1 kind=0 method=0 local=00000000',
+                                          f'IPV4_RETAINED_SOURCE index={lane + 1} phase=1 kind=0 method=0 local=0a170102')
+                    elif name == 'retained-removed-errno':
+                        log = log.replace(f'IPV4_RETAINED_REMOVED index={lane + 1} sendto=101',
+                                          f'IPV4_RETAINED_REMOVED index={lane + 1} sendto=99')
+                    elif name == 'retained-missing-success':
+                        log = log.replace(f'IPV4_RETAINED_PASS index={lane + 1} ',
+                                          f'BROKEN_RETAINED_PASS index={lane + 1} ')
+                    elif name == 'retained-false-query-model':
+                        log = log.replace(f'IPV4_RETAINED_QUERY_MODEL index={lane + 1} model={query_model}',
+                            f'IPV4_RETAINED_QUERY_MODEL index={lane + 1} model=' +
+                            ('release' if query_model == 'read-only' else 'read-only'))
+                    elif name == 'retained-query-order':
+                        pattern = (r'^IPV4_RETAINED_SOURCE index=' + str(lane + 1) +
+                                   r' phase=0 kind=0 method=[01] .*\r?$')
+                        lines = re.findall(pattern, log, re.M)
+                        require(len(lines) == 2, 'two original retained name queries to damage')
+                        log = re.sub(pattern, lambda match: lines.pop(), log, flags=re.M)
+                    else:
+                        if name == 'retained-wrong-named-source':
+                            target = retained['data'][1, 0, 4]
+                        elif name == 'retained-wrong-following-source':
+                            target = retained['data'][1, 2, 9]
+                        frame = bytearray(changed[target]['frame'])
+                        frame[26:30] = (b'\0' * 4 if name == 'retained-wrong-named-source' or
+                                        name == 'retained-wrong-unnamed-source' and query_model == 'read-only'
+                                        else bytes([10, 23, 2 - lane, 2]))
+                        frame[24:26] = b'\0\0'
+                        struct.pack_into('!H', frame, 24, checksum(frame[14:34]))
+                        frame[40:42] = b'\0\0'
+                        struct.pack_into('!H', frame, 40,
+                            checksum(frame[26:34] + b'\0\x11\0\x28' + frame[34:74]) or 65535)
+                        changed[target]['frame'] = bytes(frame)
+                elif name.startswith('missing-ARP'):
                     del changed[proof['arp_requests' if name.endswith('request') else 'arp_replies'][0, 0][0]]
                 elif name == 'missing-data':
                     del changed[target]
@@ -193,7 +249,7 @@ def verify_capture(path, lane, log_path, damage_archive=None, native=False):
                 archive.writestr(name + '.pcap', encode_capture(changed))
                 archive.writestr(name + '.log', log)
                 try:
-                    inspect(changed, lane, log)
+                    inspect(changed, lane, log, query_model)
                 except ValueError as error:
                     rejected.append(dict(name=name, reason=str(error)))
                 else:

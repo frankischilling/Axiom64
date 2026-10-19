@@ -45,6 +45,7 @@ struct IoRequest {
     PacketAddress destination;
     unsigned destination_index;
     InetAddress inet_destination;
+    bool inet_destination_named;
     NetlinkAddress netlink_destination;
     uint8_t* packet_data;
     size_t packet_length;
@@ -215,7 +216,9 @@ static int prepare_packet(Task& task, IoRequest& request) {
         if (request.packet_length > netlink_max_request)
             return -90;
     } else if (request.handle->inet) {
-        int error = inet_target(request.handle->inet, request.inet_destination, address != 0);
+        request.inet_destination_named = address != 0;
+        int error = inet_target(request.handle->inet, request.inet_destination,
+                                request.inet_destination_named);
         if (error)
             return error;
         if (request.packet_length > 65535 - 20)
@@ -425,7 +428,7 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
                                 request.packet_length);
         if (request.handle->inet)
             return inet_send(request.handle->inet, request.inet_destination, request.packet_data,
-                             request.packet_length);
+                             request.packet_length, request.inet_destination_named);
         int result = net_send(request.destination_index, request.packet_data, request.packet_length,
                               request.handle->packet);
         return result ? result : int64_t(request.packet_length);

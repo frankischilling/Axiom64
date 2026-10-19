@@ -681,9 +681,13 @@ build/ipv4-paths-host: kernel/tests/net/ipv4_paths.cpp kernel/net/ipv4/core.cpp 
 build/ipv4-output-host: kernel/tests/net/ipv4_output.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
-test-ipv4-paths: build/ipv4-paths-host build/ipv4-addresses-host build/ipv4-output-host
+build/ipv4-socket-output-host: kernel/tests/net/ipv4_socket_output.cpp kernel/net/ipv4/socket.cpp kernel/net/udp/core.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(call rwildcard,kernel/include/,*.hpp) kernel/net/ipv4/socket.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
+test-ipv4-paths: build/ipv4-paths-host build/ipv4-addresses-host build/ipv4-output-host build/ipv4-socket-output-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-paths-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-output-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-socket-output-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-addresses-host
 build/ipv4-addresses-host: kernel/tests/net/ipv4_addresses.cpp kernel/net/ipv4/addresses.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build

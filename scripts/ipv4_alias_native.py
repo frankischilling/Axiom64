@@ -37,7 +37,8 @@ SOURCES = ('Makefile', 'userspace/tests/net/ipv4.c', 'userspace/tests/net/ipv4_a
            'scripts/ipv4_gateway_capture.py', 'scripts/ipv4_query_model.py',
            'userspace/tests/net/ipv4_query.h', 'userspace/tests/net/ipv4_unconfigured.c',
            'userspace/tests/net/ipv4_unconfigured.h', 'scripts/ipv4_unconfigured.py',
-           'scripts/ipv4_unconfigured_capture.py')
+           'scripts/ipv4_unconfigured_capture.py', 'scripts/ipv4_retained.py',
+           'scripts/ipv4_retained_capture.py')
 
 
 def digest(path):
@@ -68,7 +69,8 @@ def child(profile, directory, suite='aliases'):
         inputs = binary.with_suffix('.inputs.json')
         audit_compile(binary, ROOT)
         shutil.copy2(inputs, saved / 'compile.inputs.json')
-    peers = [(GatewayPeer if suite == 'gateways' else AliasPeer)(lane) for lane in range(2)]
+    peers = [GatewayPeer(lane, query_model=model) if suite == 'gateways' else AliasPeer(lane)
+             for lane in range(2)]
     selector = selectors.DefaultSelector()
     taps, captures, statistics, links = [], [], [], []
     process, error = None, None
@@ -137,7 +139,7 @@ def child(profile, directory, suite='aliases'):
                         directory / 'client.log', archive, native=True, query_model=model))
                     audits.append(verify_unconfigured_capture(directory / f'lane{lane}.pcap', lane,
                         directory / 'client.log', directory / f'lane{lane}-unconfigured-damaged.zip',
-                        native=True))
+                        native=True, query_model=model))
                 else:
                     audits.append(verify_alias_capture(directory / f'lane{lane}.pcap', lane,
                         directory / 'client.log', archive, query_model=model))

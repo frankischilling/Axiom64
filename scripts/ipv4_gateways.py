@@ -23,9 +23,9 @@ def payload(lane, kind, phase):
 
 
 class GatewayPeer:
-    def __init__(self, lane):
+    def __init__(self, lane, query_model='release'):
         self.lane = lane
-        self.unconfigured = UnconfiguredPeer(lane)
+        self.unconfigured = UnconfiguredPeer(lane, query_model)
         self.guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
         self.mac = bytes([2, 0x41, 0x58, 0x49, 0x50, lane])
         self.primary = bytes([10, 23, lane + 1, 2])

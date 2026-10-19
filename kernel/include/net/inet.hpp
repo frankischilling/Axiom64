@@ -69,7 +69,7 @@ bool inet_datagram_deliver(unsigned index, uint32_t source, uint32_t destination
                            uint16_t source_port, uint16_t destination_port, bool broadcast,
                            const void*, size_t);
 
-int64_t inet_send(InetSocket*, const InetAddress&, const void*, size_t);
+int64_t inet_send(InetSocket*, const InetAddress&, const void*, size_t, bool named = false);
 
 int64_t inet_read(InetSocket*, void*, size_t);
 

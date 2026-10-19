@@ -54,8 +54,8 @@ int udp_send(InetSocket* owner, const UdpOutput& output, const void* data, size_
     memcpy(bytes + 8, data, length);
     uint16_t sum = checksum(source, output.destination, bytes, length + 8);
     ip4::put16(bytes + 6, sum ? sum : 65535);
-    error = ipv4_send(owner, source, output.destination, output.index, 17, output.ttl,
-                      output.broadcast, bytes, length + 8);
+    error = ipv4_send(owner, Ipv4Source::retained(source), output.destination, output.index, 17,
+                      output.ttl, output.broadcast, bytes, length + 8, output.cache_destination);
     release(bytes);
     return error;
 }

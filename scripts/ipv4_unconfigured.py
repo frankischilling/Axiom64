@@ -2,6 +2,7 @@
 """Ethernet observations for bound IPv4 output without a configured address."""
 import struct
 from ipv4_expiry_capture import checksum
+from ipv4_retained import RetainedPeer
 
 
 def require(value, reason):
@@ -10,7 +11,8 @@ def require(value, reason):
 
 
 class UnconfiguredPeer:
-    def __init__(self, lane):
+    def __init__(self, lane, query_model='release'):
+        self.retained = RetainedPeer(lane, query_model)
         self.lane = lane
         self.guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
         self.control = bytes([2, 0x55, 0x4e, 0x43, lane, 0])
@@ -35,6 +37,9 @@ class UnconfiguredPeer:
         return [bytes(reply)]
 
     def receive(self, frame):
+        retained = self.retained.receive(frame)
+        if retained is not None:
+            return retained
         if len(frame) < 14:
             return None
         control = frame[12:14] == b'\x88\xb5'
@@ -95,8 +100,9 @@ class UnconfiguredPeer:
 
     @property
     def passed(self):
-        return self.phase == 7 and self.kind == 0 and len(self.datagrams) == len(self.arp) == 14
+        return (self.phase == 7 and self.kind == 0 and len(self.datagrams) == len(self.arp) == 14 and
+                self.retained.passed)
 
     def report(self):
         return dict(passed=self.passed, lane=self.lane, datagrams=self.datagrams,
-                    arp_exchanges=len(self.arp))
+                    arp_exchanges=len(self.arp), retained=self.retained.report())

@@ -24,7 +24,7 @@ struct Route {
 enum class NeighborState : uint8_t { free, resolving, reachable, failed };
 
 struct Neighbor {
-    uint32_t address = 0;
+    uint32_t address = 0, request_source = 0;
     unsigned index = 0, attempts = 0;
     uint8_t mac[6]{};
     NeighborState state = NeighborState::free;
@@ -254,12 +254,11 @@ static void arp_frame(uint8_t* frame, const NetInfo& info, uint16_t operation,
 static bool pending_arp_reply(unsigned index, uint32_t sender, uint32_t target) {
     auto neighbor = find_neighbor(index, sender);
     if (!neighbor || neighbor->state != NeighborState::resolving || !neighbor->attempts ||
-        neighbor->expires <= ticks)
+        neighbor->expires <= ticks || target != neighbor->request_source)
         return false;
     for (const auto& item : output)
         if (item.bytes && !item.local && !item.ethernet_ready && item.index == index &&
-            item.next_hop == sender && item.expires > ticks &&
-            ip4::get32(item.bytes + ethernet_header + 12) == target)
+            item.next_hop == sender && item.expires > ticks)
             return true;
     return false;
 }
@@ -298,7 +297,17 @@ static void arp_receive(const NetInfo& info, const uint8_t* frame, size_t length
     *slot = {nullptr, bytes, 60, info.index, 0, ticks + 100, true, false};
 }
 
-static int select(uint32_t source, uint32_t destination, unsigned bound, Selection& result) {
+static uint32_t preferred_source(unsigned index, uint32_t destination) {
+    if (auto preferred = addresses.preferred(index, destination))
+        return preferred->config.address;
+    for (unsigned candidate = 1; candidate <= max_net_devices; candidate++)
+        if (auto preferred = addresses.preferred(candidate))
+            return preferred->config.address;
+    return 0;
+}
+
+static int select(Ipv4Source requested, uint32_t destination, unsigned bound, Selection& result) {
+    uint32_t source = requested.address;
     if (!destination || (!ip4::unicast(destination) && destination != UINT32_MAX))
         return -101;
     if (source && !ipv4_local(source))
@@ -308,7 +317,7 @@ static int select(uint32_t source, uint32_t destination, unsigned bound, Selecti
     if (is_loopback(destination)) {
         if (bound && bound != ipv4_loopback)
             return -101;
-        result = {source ? source : loopback.address,
+        result = {requested.selected ? source : loopback.address,
                   destination,
                   ipv4_loopback,
                   8,
@@ -326,21 +335,38 @@ static int select(uint32_t source, uint32_t destination, unsigned bound, Selecti
         if (bound && bound != index)
             continue;
         if (destination == config->address) {
-            result = {
-                source ? source : config->address, destination, index, 32, 0, true, false, true};
+            result = {requested.selected ? source : config->address,
+                      destination,
+                      index,
+                      32,
+                      0,
+                      true,
+                      false,
+                      true};
             return 0;
         }
         if (destination == UINT32_MAX || directed_broadcast(*config, destination)) {
-            result = {
-                source ? source : config->address, destination, index, 32, 0, false, true, true};
+            result = {requested.selected ? source : config->address,
+                      destination,
+                      index,
+                      32,
+                      0,
+                      false,
+                      true,
+                      true};
             break;
         }
         if (!entry->secondary && (destination & config->mask) == (config->address & config->mask)) {
             unsigned prefix = prefix_length(config->mask);
             if (!result.found || prefix > result.prefix) {
-                result = {
-                    source ? source : config->address,        destination, index, prefix, 0, false,
-                    directed_broadcast(*config, destination), true};
+                result = {requested.selected ? source : config->address,
+                          destination,
+                          index,
+                          prefix,
+                          0,
+                          false,
+                          directed_broadcast(*config, destination),
+                          true};
                 result.path_source = config->address;
             }
         }
@@ -358,7 +384,7 @@ static int select(uint32_t source, uint32_t destination, unsigned bound, Selecti
         unsigned prefix = prefix_length(value.mask);
         if (!result.found || prefix > result.prefix ||
             (prefix == result.prefix && value.metric < result.metric)) {
-            result = {source ? source : config->address,
+            result = {requested.selected ? source : config->address,
                       value.gateway ? value.gateway : destination,
                       value.index,
                       prefix,
@@ -372,11 +398,9 @@ static int select(uint32_t source, uint32_t destination, unsigned bound, Selecti
     }
     if (!result.found && bound && bound != ipv4_loopback) {
         auto preferred = addresses.preferred(bound, destination);
-        uint32_t fallback = preferred ? preferred->config.address : 0;
-        for (unsigned index = 1; !fallback && index <= max_net_devices; index++)
-            if (auto address = addresses.preferred(index))
-                fallback = address->config.address;
-        result = {source ? source : fallback, destination, bound, 0, 0, false, false, true};
+        uint32_t fallback = preferred_source(bound, destination);
+        result = {
+            requested.selected ? source : fallback, destination, bound, 0, 0, false, false, true};
         // Shared exceptions belong to an address on the output device.
         result.path_source = preferred ? preferred->config.address : 0;
     }
@@ -785,7 +809,7 @@ bool ipv4_output_ready() {
     return vacant_output() != nullptr;
 }
 
-int ipv4_source(uint32_t source, uint32_t destination, unsigned bound_index, uint32_t& selected) {
+int ipv4_source(Ipv4Source source, uint32_t destination, unsigned bound_index, uint32_t& selected) {
     Selection route;
     int error = select(source, destination, bound_index, route);
     if (!error)
@@ -802,7 +826,7 @@ static ip4::PathMtu selection_limit(const Selection& route, uint32_t destination
     return {device};
 }
 
-int ipv4_path(uint32_t source, uint32_t destination, unsigned bound_index, Ipv4Path& path) {
+int ipv4_path(Ipv4Source source, uint32_t destination, unsigned bound_index, Ipv4Path& path) {
     Selection route;
     int error = select(source, destination, bound_index, route);
     if (!error)
@@ -811,7 +835,7 @@ int ipv4_path(uint32_t source, uint32_t destination, unsigned bound_index, Ipv4P
 }
 
 static Ipv4Destination retain_selection(const Selection& route, uint32_t destination,
-                                        unsigned bound_index) {
+                                        unsigned bound_index, Ipv4Source source) {
     auto limit = selection_limit(route, destination);
     Ipv4Destination retained;
     retained.path = {route.source, limit.mtu, route.index};
@@ -822,15 +846,22 @@ static Ipv4Destination retain_selection(const Selection& route, uint32_t destina
     retained.local = route.local;
     retained.gateway = route.next_hop != destination;
     retained.locked = limit.locked;
+    retained.source = source.address;
     return retained;
 }
 
-int ipv4_destination(Ipv4Destination& retained, uint32_t source, uint32_t destination,
+int ipv4_destination(Ipv4Destination& retained, Ipv4Source source, uint32_t destination,
                      unsigned bound_index) {
     Selection route;
     int error = select(source, destination, bound_index, route);
-    retained = error ? Ipv4Destination{} : retain_selection(route, destination, bound_index);
+    retained =
+        error ? Ipv4Destination{} : retain_selection(route, destination, bound_index, source);
     return error;
+}
+
+bool ipv4_destination_current(const Ipv4Destination& retained) {
+    return retained.path.index && retained.generation == destination_generation &&
+           destination_generation != UINT64_MAX && (!retained.expires || ticks < retained.expires);
 }
 
 int ipv4_destination_mtu(Ipv4Destination& retained, bool refresh_route) {
@@ -850,10 +881,8 @@ int ipv4_destination_mtu(Ipv4Destination& retained, bool refresh_route) {
 }
 
 void ipv4_destination_release(Ipv4Destination& retained) {
-    bool expired = retained.expires && ticks >= retained.expires;
-    if (retained.path.index && (expired || retained.generation != destination_generation ||
-                                destination_generation == UINT64_MAX))
-        ipv4_destination(retained, retained.path.source, retained.address, retained.bound_index);
+    if (retained.path.index && !ipv4_destination_current(retained))
+        ipv4_destination(retained, retained.source, retained.address, retained.bound_index);
 }
 
 uint32_t ipv4_learn_pmtu(uint32_t source, uint32_t destination, unsigned index,
@@ -870,20 +899,22 @@ uint32_t ipv4_learn_pmtu(uint32_t source, uint32_t destination, unsigned index,
     return learned.mtu;
 }
 
-int ipv4_send(InetSocket* owner, uint32_t source, uint32_t destination, unsigned bound_index,
-              uint8_t protocol, uint8_t ttl, bool broadcast, const void* payload, size_t length) {
+int ipv4_send(InetSocket* owner, Ipv4Source source, uint32_t destination, unsigned bound_index,
+              uint8_t protocol, uint8_t ttl, bool broadcast, const void* payload, size_t length,
+              bool cache_destination) {
     if (!ttl)
         return -22;
     Selection route;
     int error = select(source, destination, bound_index, route);
-    auto retained = inet_output_destination(owner, destination, error != 0);
+    auto retained =
+        cache_destination ? inet_output_destination(owner, destination, error != 0) : nullptr;
     if (error) {
         if (retained)
             *retained = {};
         return owner && error == -99 ? -101 : error;
     }
     if (retained)
-        *retained = retain_selection(route, destination, bound_index);
+        *retained = retain_selection(route, destination, bound_index, source);
     if (route.broadcast && !broadcast)
         return -13;
     bool fragmentable = inet_fragmentation_allowed(owner);
@@ -991,9 +1022,12 @@ void ipv4_poll() {
                 source = ip4::get32(item.bytes + ethernet_header + 12);
                 break;
             }
+        if (!source)
+            source = preferred_source(neighbor.index, neighbor.address);
         arp_frame(frame, *info, 1, nullptr, source, neighbor.address);
         int error = net_send(neighbor.index, frame, sizeof(frame));
         if (!error) {
+            neighbor.request_source = source;
             neighbor.attempts++;
             neighbor.next = ticks + retry_interval;
         }

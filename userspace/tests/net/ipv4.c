@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #include "ipv4_aliases.h"
 #include "ipv4_gateways.h"
+#include "ipv4_unconfigured.h"
 #include "ipv4_fragments.h"
 #include "ipv4_path_mtu.h"
 #include <arpa/inet.h>
@@ -985,6 +986,8 @@ int main(int argc, char** argv) {
     if (argc == 2 && !strcmp(argv[1], "--gateways")) {
         ipv4_gateway_checks(0);
         ipv4_gateway_checks(1);
+        ipv4_unconfigured_checks(0);
+        ipv4_unconfigured_checks(1);
         return 0;
     }
     if (argc == 2 && !strcmp(argv[1], "--aliases")) {

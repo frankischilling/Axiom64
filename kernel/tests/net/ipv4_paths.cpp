@@ -239,6 +239,30 @@ static void bound_device_fallback() {
     assert(ipv4_path(alias, peer, 1, path) == -99);
 }
 
+static void unconfigured_device_fallback() {
+    constexpr uint32_t primary = 0x0a170102, other = 0x0a170202, peer = 0xc000020a;
+    Ipv4Path path;
+    assert(ipv4_address_remove(1, primary, 0xffffff00) == 0);
+    assert(ipv4_path(0, peer, 1, path) == 0);
+    assert(path.index == 1 && path.source == other && path.mtu == 1500);
+    assert(ipv4_path(other, peer, 1, path) == 0 && path.source == other);
+    assert(ipv4_path(primary, peer, 1, path) == -99);
+    assert(ipv4_address_remove(2, other, 0xffffff00) == 0);
+    assert(ipv4_path(0, peer, 1, path) == 0);
+    assert(path.index == 1 && path.source == 0 && path.mtu == 1500);
+    assert(ipv4_path(0, peer, 0, path) == -101);
+    assert(ipv4_path(0, peer, 3, path) == -19);
+    assert(ipv4_path(0, peer, ipv4_loopback, path) == -101);
+    assert(ipv4_path(0x7f000001, peer, 1, path) == -99);
+    assert(net_configure(1, false, 1500) == 0);
+    assert(ipv4_path(0, peer, 1, path) == -100);
+    assert(net_configure(1, true, 1500) == 0);
+    assert(ipv4_configure(2, {other, 0xffffff00, 0}) == 0);
+    assert(ipv4_path(0, peer, 1, path) == 0 && path.source == other);
+    assert(ipv4_configure(1, {primary, 0xffffff00, 0}) == 0);
+    assert(ipv4_path(0, peer, 1, path) == 0 && path.source == primary);
+}
+
 static void link_lifecycle() {
     constexpr uint32_t first = 0x0a1701d0, second = 0x0a1702d0;
     learn(1, first, 900);
@@ -282,6 +306,7 @@ int main() {
         assert(net_register(adapter) == index);
         assert(ipv4_configure(index, {0x0a170002 + index * 256, 0xffffff00, 0}) == 0);
     }
+    unconfigured_device_fallback();
     bound_device_fallback();
     unrelated_routes();
     shared_next_hop();

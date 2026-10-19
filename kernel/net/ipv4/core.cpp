@@ -188,7 +188,7 @@ static Neighbor* find_neighbor(unsigned index, uint32_t address) {
 static bool neighbor_pending(const Neighbor& neighbor) {
     for (const auto& item : output)
         if (item.bytes && !item.local && !item.ethernet_ready && item.index == neighbor.index &&
-            item.next_hop == neighbor.address)
+            item.next_hop == neighbor.address && item.expires > ticks)
             return true;
     return false;
 }
@@ -251,6 +251,19 @@ static void arp_frame(uint8_t* frame, const NetInfo& info, uint16_t operation,
     ip4::put32(frame + 38, target);
 }
 
+static bool pending_arp_reply(unsigned index, uint32_t sender, uint32_t target) {
+    auto neighbor = find_neighbor(index, sender);
+    if (!neighbor || neighbor->state != NeighborState::resolving || !neighbor->attempts ||
+        neighbor->expires <= ticks)
+        return false;
+    for (const auto& item : output)
+        if (item.bytes && !item.local && !item.ethernet_ready && item.index == index &&
+            item.next_hop == sender && item.expires > ticks &&
+            ip4::get32(item.bytes + ethernet_header + 12) == target)
+            return true;
+    return false;
+}
+
 static void arp_receive(const NetInfo& info, const uint8_t* frame, size_t length) {
     if (length < 42 || ip4::get16(frame + 14) != 1 || ip4::get16(frame + 16) != 0x0800 ||
         frame[18] != 6 || frame[19] != 4)
@@ -264,7 +277,8 @@ static void arp_receive(const NetInfo& info, const uint8_t* frame, size_t length
     if ((operation != 1 && operation != 2) || !nonzero || (mac[0] & 1) ||
         memcmp(mac, frame + 6, 6) || (sender && (!ip4::unicast(sender) || is_loopback(sender))))
         return;
-    if (!addresses.preferred(info.index) || ipv4_local(sender) ||
+    bool owned_reply = operation == 2 && pending_arp_reply(info.index, sender, target);
+    if ((!addresses.preferred(info.index) && !owned_reply) || ipv4_local(sender) ||
         directed_broadcast(info.index, sender))
         return;
     bool ours = assigned(info.index, target);
@@ -356,18 +370,15 @@ static int select(uint32_t source, uint32_t destination, unsigned bound, Selecti
             result.path_source = config->address;
         }
     }
-    if (!result.found && bound) {
-        if (auto preferred = addresses.preferred(bound, destination)) {
-            result = {source ? source : preferred->config.address,
-                      destination,
-                      bound,
-                      0,
-                      0,
-                      false,
-                      false,
-                      true};
-            result.path_source = preferred->config.address;
-        }
+    if (!result.found && bound && bound != ipv4_loopback) {
+        auto preferred = addresses.preferred(bound, destination);
+        uint32_t fallback = preferred ? preferred->config.address : 0;
+        for (unsigned index = 1; !fallback && index <= max_net_devices; index++)
+            if (auto address = addresses.preferred(index))
+                fallback = address->config.address;
+        result = {source ? source : fallback, destination, bound, 0, 0, false, false, true};
+        // Shared exceptions belong to an address on the output device.
+        result.path_source = preferred ? preferred->config.address : 0;
     }
     if (!result.found)
         return -101;
@@ -970,14 +981,13 @@ void ipv4_poll() {
         }
         auto info = net_info(neighbor.index);
         auto config = ipv4_config(neighbor.index);
-        if (!info || !config || !config->address || !info->live || !info->administrative ||
-            !info->carrier)
+        if (!info || !config || !info->live || !info->administrative || !info->carrier)
             continue;
         uint8_t frame[60];
         uint32_t source = config->address;
         for (const auto& item : output)
             if (item.bytes && !item.local && !item.ethernet_ready && item.index == neighbor.index &&
-                item.next_hop == neighbor.address) {
+                item.next_hop == neighbor.address && item.expires > ticks) {
                 source = ip4::get32(item.bytes + ethernet_header + 12);
                 break;
             }

@@ -61,6 +61,7 @@ def prepare(linkage):
     sources = tuple(dict.fromkeys((*manifest['sources'], *IPV4_MODULES,
         'kernel/net/ipv4/core.cpp', 'kernel/net/ipv4/socket.cpp', 'scripts/ipv4_gateway_test.py',
         'scripts/ipv4_gateways.py', 'scripts/ipv4_gateway_capture.py', 'scripts/ipv4_expiry_capture.py',
+        'scripts/ipv4_unconfigured.py', 'scripts/ipv4_unconfigured_capture.py',
         'scripts/compile_uapi_client.py', 'scripts/network_test.py', 'scripts/tcp_fixture_inputs.py',
         'scripts/tcp_fault_test.py', 'scripts/image.py', 'userspace/tests/net/ipv4_gateways.sh', 'Makefile')))
     inputs = dict(linkage=linkage, program=program, compile=manifest, image_audit=image_audit,
@@ -106,7 +107,9 @@ def run(linkage, firmware, transport, image, inputs):
         for server in servers:
             server.close()
     required = ['IPV4_GATEWAY_PASS index=1 protocols=2 datagrams=12',
-                'IPV4_GATEWAY_PASS index=2 protocols=2 datagrams=12', 'AXIOM64_TESTS_PASS',
+                'IPV4_GATEWAY_PASS index=2 protocols=2 datagrams=12',
+                'IPV4_UNCONFIGURED_PASS index=1 protocols=2 datagrams=14',
+                'IPV4_UNCONFIGURED_PASS index=2 protocols=2 datagrams=14', 'AXIOM64_TESTS_PASS',
                 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
                 f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
     missing = [marker for marker in required if marker not in text]
@@ -117,9 +120,12 @@ def run(linkage, firmware, transport, image, inputs):
     if passed:
         try:
             from ipv4_gateway_capture import verify_capture
+            from ipv4_unconfigured_capture import verify_capture as verify_unconfigured
             for lane, path in enumerate(captures):
                 archive = ROOT / 'build' / f'{label}-lane{lane}-damaged-{time.monotonic_ns()}.zip'
                 audits.append(verify_capture(path, lane, log, archive))
+                unconfigured_archive = ROOT / 'build' / f'{label}-lane{lane}-unconfigured-damaged-{time.monotonic_ns()}.zip'
+                audits.append(verify_unconfigured(path, lane, log, unconfigured_archive))
         except Exception as failure:
             error = 'gateway capture audit: ' + str(failure)
             passed = False

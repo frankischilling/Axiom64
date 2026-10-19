@@ -3,6 +3,7 @@
 import hashlib
 import struct
 from ipv4_expiry_capture import checksum
+from ipv4_unconfigured import UnconfiguredPeer
 
 
 def require(value, reason):
@@ -24,6 +25,7 @@ def payload(lane, kind, phase):
 class GatewayPeer:
     def __init__(self, lane):
         self.lane = lane
+        self.unconfigured = UnconfiguredPeer(lane)
         self.guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
         self.mac = bytes([2, 0x41, 0x58, 0x49, 0x50, lane])
         self.primary = bytes([10, 23, lane + 1, 2])
@@ -66,6 +68,9 @@ class GatewayPeer:
         return [response]
 
     def receive(self, frame):
+        unconfigured = self.unconfigured.receive(frame)
+        if unconfigured is not None:
+            return unconfigured
         if len(frame) < 34:
             return None
         if frame[12:14] == b'\x08\x06' and len(frame) >= 42:
@@ -136,8 +141,10 @@ class GatewayPeer:
 
     @property
     def passed(self):
-        return self.kind == 2 and self.phase == 0 and self.pending is None and len(self.datagrams) == 12
+        return (self.kind == 2 and self.phase == 0 and self.pending is None and
+                len(self.datagrams) == 12 and self.unconfigured.passed)
 
     def report(self):
         return dict(passed=self.passed, lane=self.lane, datagrams=self.datagrams,
-                    controls=self.controls, arp_requests=self.arp_requests)
+                    controls=self.controls, arp_requests=self.arp_requests,
+                    unconfigured=self.unconfigured.report())

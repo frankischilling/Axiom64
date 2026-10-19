@@ -21,6 +21,7 @@ from ipv4_aliases import AliasPeer
 from ipv4_alias_capture import verify_capture as verify_alias_capture
 from ipv4_gateways import GatewayPeer
 from ipv4_gateway_capture import verify_capture as verify_gateway_capture
+from ipv4_unconfigured_capture import verify_capture as verify_unconfigured_capture
 from ipv4_query_model import query_model
 from tcp_fault_native import Capture
 
@@ -34,7 +35,9 @@ SOURCES = ('Makefile', 'userspace/tests/net/ipv4.c', 'userspace/tests/net/ipv4_a
            'ports.lock.json', 'userspace/tests/net/ipv4_gateways.c',
            'userspace/tests/net/ipv4_gateways.h', 'scripts/ipv4_gateways.py',
            'scripts/ipv4_gateway_capture.py', 'scripts/ipv4_query_model.py',
-           'userspace/tests/net/ipv4_query.h')
+           'userspace/tests/net/ipv4_query.h', 'userspace/tests/net/ipv4_unconfigured.c',
+           'userspace/tests/net/ipv4_unconfigured.h', 'scripts/ipv4_unconfigured.py',
+           'scripts/ipv4_unconfigured_capture.py')
 
 
 def digest(path):
@@ -132,6 +135,9 @@ def child(profile, directory, suite='aliases'):
                 if suite == 'gateways':
                     audits.append(verify_gateway_capture(directory / f'lane{lane}.pcap', lane,
                         directory / 'client.log', archive, native=True, query_model=model))
+                    audits.append(verify_unconfigured_capture(directory / f'lane{lane}.pcap', lane,
+                        directory / 'client.log', directory / f'lane{lane}-unconfigured-damaged.zip',
+                        native=True))
                 else:
                     audits.append(verify_alias_capture(directory / f'lane{lane}.pcap', lane,
                         directory / 'client.log', archive, query_model=model))
@@ -142,10 +148,12 @@ def child(profile, directory, suite='aliases'):
     marker = ('IPV4_GATEWAY_PASS index={index} protocols=2 datagrams=12\n' if suite == 'gateways' else
               'IPV4_ALIAS_PASS index={index} wire_cases=4 local_udp=3\n')
     passed = (error is None and process is not None and process.returncode == 0 and
-              unchanged and products_unchanged and len(audits) == 2 and all(a['passed'] for a in audits) and len(statistics) == 2 and all(not s['dropped'] for s in statistics) and
+              unchanged and products_unchanged and len(audits) == (4 if suite == 'gateways' else 2) and all(a['passed'] for a in audits) and len(statistics) == 2 and all(not s['dropped'] for s in statistics) and
               all(peer.passed for peer in peers) and all(
                   marker.format(index=lane + 1) in text
-                  for lane in range(2)))
+                  for lane in range(2)) and (suite != 'gateways' or all(
+                  f'IPV4_UNCONFIGURED_PASS index={lane + 1} protocols=2 datagrams=14\n' in text
+                  for lane in range(2))))
     result = dict(passed=passed, profile=profile, suite=suite, error=error, source_unchanged=unchanged,
                   products_unchanged=products_unchanged,
                   returncode=process.returncode if process else None,

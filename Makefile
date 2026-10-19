@@ -656,7 +656,12 @@ build/netlink-codec-host: kernel/tests/net/netlink.cpp kernel/net/netlink/routes
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/netlink.cpp kernel/net/netlink/routes.cpp -o $@
 test-netlink-codec: build/netlink-codec-host
 	./build/netlink-codec-host
-.PHONY: test-tcp-wire
+.PHONY: test-ipv6-wire test-tcp-wire
+build/ipv6-wire-host: kernel/tests/net/ipv6_wire.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/wire.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+test-ipv6-wire: build/ipv6-wire-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv6-wire-host
 build/ipv4-reassembly-host: kernel/tests/net/ipv4_reassembly.cpp kernel/net/ipv4/reassembly.cpp kernel/include/net/ipv4/reassembly.hpp kernel/include/net/ipv4_wire.hpp kernel/include/core/base.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/ipv4_reassembly.cpp kernel/net/ipv4/reassembly.cpp -o $@

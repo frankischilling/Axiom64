@@ -1,0 +1,11 @@
+# IPv6 development
+
+IPv6 is required by the [networking roadmap](feature-roadmap.md). The current foundation provides a kernel packet codec and host sanitizer checks. Ethernet delivery, IPv6 socket operations and guest reachability remain unfinished.
+
+`kernel/net/ipv6/wire.cpp` decodes the fixed header and bounded extension chain into a borrowed payload view. It separates complete upper-layer payloads, actual fragments, No Next Header, silent discards and parameter-problem diagnostics. Hop-by-Hop placement and unknown-option action bits follow [RFC 8200](https://www.rfc-editor.org/rfc/rfc8200.html). Unsupported routing types, including deprecated type zero, follow the unknown-type rule in [RFC 5095](https://www.rfc-editor.org/rfc/rfc5095.html). Atomic fragments bypass shared fragment state, as required by [RFC 6946](https://www.rfc-editor.org/rfc/rfc6946.html). AH and ESP remain opaque. Jumbograms and nested Fragment headers are unsupported.
+
+The codec also encodes fixed headers, compares address prefixes and computes upper-layer pseudo-header checksums. The receiving layer must still enforce destination ownership, scoped addresses, authentication, reassembly and [ICMPv6 error suppression](https://www.rfc-editor.org/rfc/rfc4443.html). A decoded parameter problem describes an error; it does not transmit a response.
+
+Run `make test-ipv6-wire` to check an independently checksummed ICMPv6 echo fixture, padding and length boundaries, all four unknown-option actions, extension placement, routing errors, fragment boundaries and 20,000 bounded malformed inputs under address and undefined-behavior sanitizers. The existing host policy job runs this target. These are module checks; IPv6 has no guest acceptance yet.
+
+The complete feature still requires scoped addresses and routes, loopback, Ethernet multicast membership, neighbor discovery and reachability state, duplicate-address detection, ICMPv6 echo and errors, reassembly, path-MTU handling, router advertisements and address lifetimes. Linux IPv6 socket/control interfaces, UDP/TCP integration and actual native/guest wire comparisons remain required. BIOS/UEFI, both adapters and applicable linkage/device variants must retain their existing coverage.

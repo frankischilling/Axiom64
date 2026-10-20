@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/ipv6/host.hpp"
+#include "net/inet6.hpp"
 
 namespace ax {
 namespace {
@@ -11,11 +12,25 @@ struct Output {
     uint8_t mac[6]{};
     uint64_t expires = 0;
     bool control = false;
+    Inet6Socket* owner = nullptr;
 };
 
 Output outputs[32];
 size_t queued_bytes;
 bool polling;
+unsigned error_tokens = 16;
+uint64_t error_epoch;
+
+bool allow_error() {
+    if (ticks - error_epoch >= 100) {
+        error_epoch = ticks;
+        error_tokens = 16;
+    }
+    if (!error_tokens)
+        return false;
+    error_tokens--;
+    return true;
+}
 
 bool valid_mac(const uint8_t* mac) {
     bool nonzero = false;
@@ -24,15 +39,18 @@ bool valid_mac(const uint8_t* mac) {
     return nonzero && !(mac[0] & 1);
 }
 
-void clear(Output& item) {
+void clear(Output& item, int error = 0) {
+    auto owner = item.owner;
+    size_t cost = item.length - ethernet_header;
     queued_bytes -= item.length;
     release(item.bytes);
     item = {};
+    inet6_complete(owner, cost, error);
 }
 
 int queue(const ip6::Address& source, const ip6::Address& destination, unsigned index,
-          uint8_t protocol, uint8_t hop_limit, const void* data, size_t length,
-          bool direct = false) {
+          uint8_t protocol, uint8_t hop_limit, const void* data, size_t length, bool direct = false,
+          Inet6Socket* owner = nullptr) {
     if (length > 65535)
         return -90;
     Output* selected = nullptr;
@@ -53,7 +71,7 @@ int queue(const ip6::Address& source, const ip6::Address& destination, unsigned 
     ip6::Header header{source, destination, 0, uint16_t(length), 0, protocol, hop_limit};
     ip6::encode(bytes + ethernet_header, ip6::header_size, header);
     memcpy(bytes + ethernet_header + ip6::header_size, data, length);
-    *selected = {source, destination, bytes, needed, index, {}, ticks + 400, direct};
+    *selected = {source, destination, bytes, needed, index, {}, ticks + 400, direct, owner};
     queued_bytes += needed;
     return 0;
 }
@@ -154,14 +172,28 @@ void discovery(const NetInfo& info, const ip6::Packet& packet, const uint8_t* se
 } // namespace
 
 int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsigned bound,
-              uint8_t protocol, uint8_t hop_limit, const void* data, size_t length) {
+              uint8_t protocol, uint8_t hop_limit, const void* data, size_t length,
+              Inet6Socket* owner) {
     Ipv6Path path;
     int error = ipv6_path(source, destination, bound, path);
     if (error)
         return error;
     if (length > 65535 || length > path.mtu - ip6::header_size)
         return -90;
-    return queue(path.source, destination, bound, protocol, hop_limit, data, length);
+    return queue(path.source, destination, bound, protocol, hop_limit, data, length, false, owner);
+}
+
+bool ipv6_output_ready() {
+    for (const auto& item : outputs)
+        if (!item.bytes && queued_bytes < 262144 - ethernet_header - ip6::header_size)
+            return true;
+    return false;
+}
+
+void ipv6_detach_owner(Inet6Socket* owner) {
+    for (auto& item : outputs)
+        if (item.owner == owner)
+            item.owner = nullptr;
 }
 
 void ipv6_receive(const NetInfo& info, const void* frame, size_t length) {
@@ -173,9 +205,9 @@ void ipv6_receive(const NetInfo& info, const void* frame, size_t length) {
     auto packet = ip6::decode(bytes + ethernet_header, length - ethernet_header);
     const auto& source = packet.header.source;
     const auto& destination = packet.header.destination;
-    if (packet.input != ip6::Input::payload || packet.protocol != 58 || packet.length < 4 ||
-        source.multicast() || (!loopback && (source.loopback() || destination.loopback())) ||
-        destination.unspecified())
+    if (packet.input != ip6::Input::payload || packet.length < 4 || source.multicast() ||
+        source.mapped() || destination.mapped() ||
+        (!loopback && (source.loopback() || destination.loopback())) || destination.unspecified())
         return;
     if (destination.multicast()) {
         uint8_t mac[6];
@@ -185,8 +217,32 @@ void ipv6_receive(const NetInfo& info, const void* frame, size_t length) {
     } else if (memcmp(info.mac, bytes, 6) ||
                !ipv6_owned(destination.link_local() ? info.index : 0, destination))
         return;
-    if (ip6::checksum(source, destination, 58, packet.payload, packet.length))
+    if (packet.protocol == 17) {
+        if (source.unspecified())
+            return;
+        bool delivered = inet6_deliver(info.index, packet);
+        if (!delivered && !source.unspecified() && !destination.multicast() && allow_error()) {
+            size_t quoted = min(size_t(packet.size), size_t(1232));
+            auto error = static_cast<uint8_t*>(alloc(8 + quoted));
+            if (error) {
+                memset(error, 0, 8);
+                error[0] = 1;
+                error[1] = 4;
+                memcpy(error + 8, bytes + ethernet_header, quoted);
+                uint16_t check = ip6::checksum(destination, source, 58, error, 8 + quoted);
+                error[2] = check >> 8;
+                error[3] = check;
+                ipv6_send(destination, source, source.link_local() ? info.index : 0, 58, 64, error,
+                          8 + quoted);
+                release(error);
+            }
+        }
         return;
+    }
+    if (packet.protocol != 58 ||
+        ip6::checksum(source, destination, 58, packet.payload, packet.length))
+        return;
+    inet6_deliver(info.index, packet);
     if (packet.payload[0] == 135 || packet.payload[0] == 136) {
         discovery(info, packet, bytes + 6);
         return;
@@ -217,7 +273,7 @@ void ipv6_poll() {
         if (!item.bytes)
             continue;
         if (ticks >= item.expires) {
-            clear(item);
+            clear(item, -113);
             continue;
         }
         Ipv6Path path;
@@ -226,13 +282,13 @@ void ipv6_poll() {
             path.source = item.source;
             path.next_hop = item.destination;
             if (!ip6::usable(path.index) || !ipv6_owned(path.index, item.source)) {
-                clear(item);
+                clear(item, -100);
                 continue;
             }
         } else {
             int error = ipv6_path(item.source, item.destination, item.index, path);
             if (error || item.length - ethernet_header > path.mtu) {
-                clear(item);
+                clear(item, error ? error : -90);
                 continue;
             }
             if (path.index == ipv6_loopback) {
@@ -252,7 +308,7 @@ void ipv6_poll() {
         memcpy(item.bytes + 6, info->mac, 6);
         int error = net_send(path.index, item.bytes, item.length);
         if (!error || (error != -11 && error != -100))
-            clear(item);
+            clear(item, error);
     }
     ip6::neighbor_poll();
     polling = false;
@@ -261,9 +317,11 @@ void ipv6_poll() {
 void ipv6_shutdown() {
     for (auto& item : outputs)
         if (item.bytes)
-            clear(item);
+            clear(item, -5);
     ip6::neighbor_reset();
     ip6::address_reset();
+    error_tokens = 16;
+    error_epoch = ticks;
 }
 
 namespace ip6 {

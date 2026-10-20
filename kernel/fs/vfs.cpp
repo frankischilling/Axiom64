@@ -9,6 +9,7 @@
 #include "ipc/eventfd.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
+#include "net/inet6.hpp"
 #include "net/netlink.hpp"
 #include "process/task.hpp"
 #include "process/signals.hpp"
@@ -909,6 +910,8 @@ void close_handle(Handle* h) {
         packet_close(h->packet);
     if (h->inet)
         inet_close(h->inet);
+    if (h->inet6)
+        inet6_close(h->inet6);
     if (h->netlink)
         netlink_close(h->netlink);
     if (h->epoll)
@@ -941,6 +944,8 @@ bool handle_ready(Handle* h, bool write) {
         return packet_ready(h->packet, write);
     if (h->inet)
         return inet_ready(h->inet, write);
+    if (h->inet6)
+        return inet6_ready(h->inet6, write);
     if (h->netlink)
         return netlink_ready(h->netlink, write);
     if (h->epoll)
@@ -972,6 +977,8 @@ int64_t read_handle(Handle* h, void* buf, size_t len) {
         return packet_read(h->packet, buf, len);
     if (h->inet)
         return inet_read(h->inet, buf, len);
+    if (h->inet6)
+        return inet6_read(h->inet6, buf, len);
     if (h->netlink)
         return netlink_read(h->netlink, buf, len);
     auto data = (uint8_t*)buf;
@@ -1037,6 +1044,8 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
         return packet_write(h->packet, buf, len);
     if (h->inet)
         return inet_send(h->inet, inet_peer(h->inet), buf, len);
+    if (h->inet6)
+        return inet6_send(h->inet6, inet6_peer(h->inet6), buf, len);
     if (h->netlink)
         return netlink_send(h->netlink, current->process->pid, buf, len);
     auto data = (const uint8_t*)buf;

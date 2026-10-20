@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/ipv6/host.hpp"
 #include "net/netlink.hpp"
+#include "../../net/ipv6/socket.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
@@ -122,7 +123,7 @@ static void reset() {
 
 static std::vector<uint8_t> incoming(unsigned lane, const ip6::Address& source,
                                      const ip6::Address& destination, std::vector<uint8_t> data,
-                                     unsigned hop = 255) {
+                                     unsigned hop = 255, uint8_t protocol = 58) {
     std::vector<uint8_t> frame(54 + data.size());
     const auto& info = adapters[lane].info;
     if (destination.multicast())
@@ -133,12 +134,13 @@ static std::vector<uint8_t> incoming(unsigned lane, const ip6::Address& source,
     memcpy(frame.data() + 6, peer, 6);
     frame[12] = 0x86;
     frame[13] = 0xdd;
-    ip6::Header header{source, destination, 0, uint16_t(data.size()), 0, 58, uint8_t(hop)};
+    ip6::Header header{source, destination, 0, uint16_t(data.size()), 0, protocol, uint8_t(hop)};
     assert(ip6::encode(frame.data() + 14, 40, header));
-    data[2] = data[3] = 0;
-    uint16_t checksum = ip6::checksum(source, destination, 58, data.data(), data.size());
-    data[2] = checksum >> 8;
-    data[3] = checksum;
+    unsigned check_at = protocol == 17 ? 6 : 2;
+    data[check_at] = data[check_at + 1] = 0;
+    uint16_t checksum = ip6::checksum(source, destination, protocol, data.data(), data.size());
+    data[check_at] = checksum >> 8;
+    data[check_at + 1] = checksum;
     memcpy(frame.data() + 54, data.data(), data.size());
     return frame;
 }
@@ -493,6 +495,107 @@ static void prefix_lifetimes() {
     assert(change(1, address(31, 2)) == -105 && !ipv6_owned(1, address(31, 2), true));
 }
 
+static void socket_ownership() {
+    reset();
+    auto local = address(0, 2), remote = address(0, 1);
+    assert(!change(1, local));
+    auto raw = inet6_allocate(3);
+    assert(raw && raw->reuse);
+    raw->local = local;
+    for (auto& bits : raw->filter)
+        bits = UINT32_MAX;
+    raw->filter[129 / 32] &= ~(uint32_t(1) << (129 % 32));
+    std::vector<uint8_t> message(19, 0x5b);
+    message[0] = 128;
+    message[1] = 0;
+    auto original = message;
+    Inet6Address target{10, 0, 0, remote, 0};
+    assert(inet6_send(raw, target, message.data(), message.size(), true) == 19);
+    assert(raw->transmitted == 59);
+    message.back() ^= 1;
+    net_poll();
+    deliver(0, advertisement(0, remote, local));
+    net_poll();
+    auto packet = last(0, 128);
+    assert(packet.length == 19 && !memcmp(packet.payload + 4, original.data() + 4, 15));
+    assert(!ip6::checksum(local, remote, 58, packet.payload, packet.length) && !raw->transmitted);
+    original[0] = 129;
+    auto frame = incoming(0, remote, local, original, 64);
+    auto bad = frame;
+    bad.back() ^= 1;
+    deliver(0, bad);
+    assert(!raw->count);
+    deliver(0, frame);
+    assert(raw->count == 1 && inet6_front(raw)->length == 19);
+    assert(!memcmp(inet6_bytes(inet6_front(raw)) + 4, original.data() + 4, 15));
+    inet6_consume(raw);
+    inet6_close(raw);
+
+    auto udp = inet6_allocate(2);
+    assert(udp && !udp->reuse);
+    udp->local = local;
+    assert(!inet6_bind_port(udp, local, 7001));
+    std::vector<uint8_t> body{0x1b, 0x58, 0x1b, 0x59, 0, 9, 0, 0, 0x4e};
+    frame = incoming(0, remote, local, body, 64, 17);
+    bad = frame;
+    bad.back() ^= 1;
+    deliver(0, bad);
+    assert(!udp->count);
+    bad = frame;
+    bad[60] = bad[61] = 0;
+    deliver(0, bad);
+    assert(!udp->count);
+    frame.resize(frame.size() + 3);
+    frame[19] = 12;
+    deliver(0, frame);
+    assert(udp->count == 1 && inet6_front(udp)->length == 1 &&
+           *inet6_bytes(inet6_front(udp)) == 0x4e);
+    inet6_consume(udp);
+    for (unsigned n = 0; n < inet6_queue_count + 1; n++)
+        deliver(0, frame);
+    assert(udp->count == inet6_queue_count);
+    inet6_close(udp);
+
+    auto count_errors = [&]() {
+        unsigned count = 0;
+        for (const auto& bytes : emitted[0])
+            if (bytes.size() >= 62 && bytes[20] == 58 && bytes[54] == 1 && bytes[55] == 4)
+                count++;
+        return count;
+    };
+    unsigned before = count_errors();
+    for (unsigned n = 0; n < 20; n++)
+        deliver(0, frame);
+    assert(count_errors() - before == 16);
+    ticks += 100;
+    deliver(0, frame);
+    assert(count_errors() - before == 17);
+
+    udp = inet6_allocate(2);
+    assert(udp);
+    udp->local = local;
+    udp->connected = true;
+    udp->peer = address(0, 99);
+    udp->peer_port = __builtin_bswap16(uint16_t(7000));
+    target = inet6_peer(udp);
+    assert(inet6_send(udp, target, body.data(), 1) == 1);
+    inet6_close(udp);
+    auto reused = inet6_allocate(2);
+    assert(reused == udp);
+    reused->local = local;
+    reused->connected = true;
+    reused->peer = remote;
+    reused->peer_port = __builtin_bswap16(uint16_t(7000));
+    assert(inet6_send(reused, inet6_peer(reused), body.data(), 1) == 1);
+    net_poll();
+    assert(!reused->transmitted);
+    ticks += 401;
+    net_poll();
+    assert(!inet6_error(reused) && !reused->transmitted);
+    inet6_close(reused);
+    reset();
+}
+
 int main() {
     for (unsigned n = 0; n < 2; n++) {
         auto& adapter = adapters[n];
@@ -520,6 +623,7 @@ int main() {
     direct_neighbor_replies();
     prefix_lifetimes();
     prefix_route_order();
+    socket_ownership();
     reset();
     std::puts("IPV6_HOST_PASS adapters=2 DAD=1 duplicate=1 NS=1 NA=1 echo=1 owned_copy=1");
 }

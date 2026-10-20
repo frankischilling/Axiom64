@@ -13,6 +13,7 @@
 #include "io/io.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
+#include "net/inet6.hpp"
 #include "net/netlink.hpp"
 #include "core/time.hpp"
 #include "core/random.hpp"
@@ -565,7 +566,12 @@ static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
         int size = inet_available(h->inet);
         return copy_result(arg, &size, sizeof(size));
     }
-    if ((h->socket || h->packet || h->inet || h->netlink) && request >= 0x890b && request <= 0x89ff)
+    if (request == 0x541b && h->inet6) {
+        int size = inet6_available(h->inet6);
+        return copy_result(arg, &size, sizeof(size));
+    }
+    if ((h->socket || h->packet || h->inet || h->inet6 || h->netlink) && request >= 0x890b &&
+        request <= 0x89ff)
         return net_ioctl(*current, request, arg);
     if (!h->node ||
         ((h->node->mode & 0170000) != character && (h->node->mode & 0170000) != block_device))
@@ -656,9 +662,10 @@ static int64_t dispatch(Frame* f) {
             s.nlink = 1;
             return copy_result(b, &s, sizeof(s));
         }
-        if (h->pipe || h->socket || h->packet || h->inet || h->netlink || h->epoll) {
+        if (h->pipe || h->socket || h->packet || h->inet || h->inet6 || h->netlink || h->epoll) {
             LinuxStat s{};
-            s.mode = h->socket || h->packet || h->inet || h->netlink ? 0140777 : 0010600;
+            s.mode =
+                h->socket || h->packet || h->inet || h->inet6 || h->netlink ? 0140777 : 0010600;
             s.nlink = 1;
             return copy_result(b, &s, sizeof(s));
         }

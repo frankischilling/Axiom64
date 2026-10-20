@@ -8,6 +8,7 @@ struct Pty;
 struct Socket;
 struct PacketSocket;
 struct InetSocket;
+struct Inet6Socket;
 struct NetlinkSocket;
 struct Epoll;
 struct Eventfd;
@@ -138,6 +139,7 @@ struct Handle {
     Socket* socket = nullptr;
     PacketSocket* packet = nullptr;
     InetSocket* inet = nullptr;
+    Inet6Socket* inet6 = nullptr;
     NetlinkSocket* netlink = nullptr;
     Epoll* epoll = nullptr;
     Eventfd* event = nullptr;

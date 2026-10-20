@@ -158,7 +158,7 @@ static void message_contract(bool native) {
         ioctl_address(lane, SIOCSIFADDR, 0);
         verify_address(lane, 0);
         if (!native) {
-            for (unsigned kind = 0; kind < 9; kind++) {
+            for (unsigned kind = 0; kind < 10; kind++) {
                 Message invalid(lane, false);
                 int expected = EINVAL;
                 switch (kind) {
@@ -166,7 +166,7 @@ static void message_contract(bool native) {
                     invalid.body.ifa_prefixlen = 33;
                     break;
                 case 1:
-                    invalid.body.ifa_family = AF_INET6;
+                    invalid.body.ifa_family = AF_UNIX;
                     expected = EAFNOSUPPORT;
                     break;
                 case 2:
@@ -194,6 +194,9 @@ static void message_contract(bool native) {
                 case 8:
                     invalid.body.ifa_index = 65535;
                     expected = ENODEV;
+                    break;
+                case 9:
+                    invalid.body.ifa_family = AF_INET6;
                     break;
                 }
                 exchange(fd, invalid, expected);

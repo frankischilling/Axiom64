@@ -23,12 +23,12 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def prepare(linkage, directory):
-    program = 'ipv6-host-' + linkage
+def prepare(linkage, directory, suite='host'):
+    program = 'ipv6-' + suite + '-' + linkage
     fixture(program=program, script='userspace/tests/net/ipv6_host.sh',
             environment={'AXIOM64_IPV6_PROGRAM': program},
             runtime_loader=loader('build') if linkage == 'dynamic' else None)
-    image = ROOT / 'build' / f'axiom64-ipv6-host-{linkage}.iso'
+    image = ROOT / 'build' / f'axiom64-ipv6-{suite}-{linkage}.iso'
     subprocess.run([sys.executable, 'scripts/image.py', '--test', '--suite', 'network',
                     '--output-name', image.name], cwd=ROOT, check=True)
     manifest = audit_compile(ROOT / 'build' / program, ROOT)
@@ -46,14 +46,16 @@ def prepare(linkage, directory):
         'kernel/net/ethernet.cpp', 'kernel/io/io.cpp', 'kernel/net/netlink/socket.cpp',
         'kernel/net/netlink/addresses.cpp', 'kernel/net/netlink/inventory.cpp',
         'kernel/net/netlink/routes.cpp', 'kernel/net/netlink/ipv6.cpp',
-        'kernel/include/net/netlink.hpp', 'kernel/include/net/ipv6.hpp',
+        'kernel/include/net/netlink.hpp', 'kernel/include/net/ipv6.hpp', 'kernel/include/net/inet6.hpp',
+        'kernel/fs/vfs.cpp', 'kernel/include/fs/vfs.hpp', 'kernel/ipc/ipc.cpp',
+        'kernel/abi/linux/syscall.cpp', 'kernel/io/socket_timeout.cpp',
         'scripts/ipv6_host_peer.py', 'scripts/ipv6_host_test.py',
-        'scripts/ipv6_host_capture.py',
+        'scripts/ipv6_host_capture.py', 'scripts/ipv6_sockets_peer.py', 'scripts/ipv6_sockets_capture.py',
         'scripts/network_test.py', 'scripts/tcp_fault_test.py', 'scripts/image.py',
         'scripts/compile_uapi_client.py', 'scripts/tcp_fixture_inputs.py',
         'userspace/tests/net/ipv6_host.sh',
         *(path.relative_to(ROOT).as_posix() for base in ('kernel/net/ipv6', 'kernel/include/net/ipv6')
-          for path in sorted((ROOT / base).glob('*')) if path.is_file())]))
+          for path in sorted((ROOT / base).rglob('*')) if path.is_file())]))
     names = [*products.values(), image, ROOT / 'build/axiom64.elf',
              ROOT / 'build' / (program + '.inputs.json')]
     inputs = dict(linkage=linkage, program=program, compile=manifest, image_audit=image_audit,
@@ -63,11 +65,15 @@ def prepare(linkage, directory):
     return image, inputs
 
 
-def run(linkage, firmware, transport, image, inputs, directory):
+def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
     label = f'{linkage}-{firmware}-{transport}'
     output = directory / label
     output.mkdir(exist_ok=False)
-    peers, servers, captures = [Peer(lane) for lane in range(2)], [], []
+    peer_type = Peer
+    if suite == 'sockets':
+        from ipv6_sockets_peer import Peer as SocketPeer
+        peer_type = SocketPeer
+    peers, servers, captures = [peer_type(lane) for lane in range(2)], [], []
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '2G',
                '-cdrom', str(image), '-nic', 'none', '-display', 'none', '-serial', 'stdio',
                '-monitor', 'none', '-no-reboot', '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
@@ -104,6 +110,12 @@ def run(linkage, firmware, transport, image, inputs, directory):
                f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
     markers += [f'IPV6_HOST_PHASE_PASS lane={lane} phase={phase}'
                 for lane in range(2) for phase in range(6)]
+    if suite == 'sockets':
+        markers = ['IPV6_SOCKETS_PASS nics=2 raw=1 UDP=1 loopback=1 faults=2 permissions=1',
+                   'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
+                   f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
+        markers += [f'IPV6_SOCKETS_PHASE_PASS lane={lane} phase={phase}'
+                    for lane in range(2) for phase in range(3)]
     missing = [marker for marker in markers if marker not in text]
     unchanged = all(digest(ROOT / name) == expected for group in ('products', 'sources')
                     for name, expected in inputs[group].items())
@@ -111,7 +123,10 @@ def run(linkage, firmware, transport, image, inputs, directory):
     audits = []
     if passed:
         try:
-            from ipv6_host_capture import verify_capture
+            if suite == 'sockets':
+                from ipv6_sockets_capture import verify_capture
+            else:
+                from ipv6_host_capture import verify_capture
             for lane, path in enumerate(captures):
                 audits.append(verify_capture(path, lane, output / 'guest.log',
                                              output / f'lane{lane}-damaged.zip'))
@@ -130,22 +145,24 @@ def run(linkage, firmware, transport, image, inputs, directory):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--suite', choices=('host', 'sockets'), default='host')
     parser.add_argument('--workers', type=int, choices=(1, 2, 4), default=2)
     parser.add_argument('--linkage', choices=('static', 'dynamic', 'both'), default='both')
     parser.add_argument('--firmware', choices=('bios', 'uefi', 'both'), default='both')
     parser.add_argument('--transport', choices=('modern', 'legacy', 'both'), default='both')
-    parser.add_argument('--output-directory', type=Path, default=ROOT / 'build/ipv6-host-wire')
+    parser.add_argument('--output-directory', type=Path, default=None)
     args = parser.parse_args()
+    args.output_directory = args.output_directory or ROOT / 'build' / ('ipv6-' + args.suite + '-wire')
     args.output_directory.mkdir(parents=True, exist_ok=True)
     choose = lambda value, choices: choices if value == 'both' else (value,)
     linkages = choose(args.linkage, ('static', 'dynamic'))
-    prepared = {linkage: prepare(linkage, args.output_directory) for linkage in linkages}
+    prepared = {linkage: prepare(linkage, args.output_directory, args.suite) for linkage in linkages}
     results = []
     profiles = [(linkage, firmware, transport) for linkage in linkages
                 for firmware in choose(args.firmware, ('bios', 'uefi'))
                 for transport in choose(args.transport, ('modern', 'legacy'))]
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        pending = [pool.submit(run, *profile, *prepared[profile[0]], args.output_directory)
+        pending = [pool.submit(run, *profile, *prepared[profile[0]], args.output_directory, args.suite)
                    for profile in profiles]
         for future in as_completed(pending):
             results.append(future.result())

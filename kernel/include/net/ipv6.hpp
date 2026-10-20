@@ -4,6 +4,7 @@
 #include "net/ipv6/wire.hpp"
 
 namespace ax {
+struct Inet6Socket;
 constexpr unsigned ipv6_address_capacity = 16, ipv6_route_capacity = 16;
 constexpr unsigned ipv6_loopback = max_net_devices + 1;
 
@@ -44,7 +45,13 @@ int ipv6_path(const ip6::Address& source, const ip6::Address& destination, unsig
 
 // Success owns a copy until device acceptance or bounded resolution failure.
 int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsigned bound_index,
-              uint8_t protocol, uint8_t hop_limit, const void*, size_t);
+              uint8_t protocol, uint8_t hop_limit, const void*, size_t,
+              Inet6Socket* owner = nullptr);
+
+bool ipv6_output_ready();
+
+// Queued bytes outlive a closed socket, without callbacks to a reused slot.
+void ipv6_detach_owner(Inet6Socket*);
 
 void ipv6_receive(const NetInfo&, const void*, size_t);
 

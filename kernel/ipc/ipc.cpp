@@ -5,6 +5,7 @@
 #include "net/tcp/socket.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
+#include "net/inet6.hpp"
 #include "net/netlink.hpp"
 
 namespace ax {
@@ -236,6 +237,17 @@ uint32_t readiness(Handle* h) {
         if (shutdown == 3)
             events |= 16;
     }
+    if (h->inet6) {
+        unsigned shutdown = inet6_shutdown(h->inet6);
+        if (!inet6_front(h->inet6) && !(shutdown & 1))
+            events &= ~1u;
+        if (inet6_error(h->inet6))
+            events |= 8;
+        if (shutdown & 1)
+            events |= 0x2000;
+        if (shutdown == 3)
+            events |= 16;
+    }
     if (h->pipe && !h->writer && !h->pipe->writers)
         events |= 16;
     if (h->socket && !h->socket->listener &&
@@ -379,6 +391,11 @@ int64_t ipc_syscall(Frame* f) {
          (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50 || f->rax == 51 ||
           f->rax == 52 || f->rax == 54 || f->rax == 55)))
         return inet_syscall(*current, *f);
+    if ((f->rax == 41 && a == 10) ||
+        (h && h->inet6 &&
+         (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50 || f->rax == 51 ||
+          f->rax == 52 || f->rax == 54 || f->rax == 55)))
+        return inet6_syscall(*current, *f);
     if ((f->rax == 41 && a == 17) ||
         (h && h->packet &&
          (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50 || f->rax == 51 ||

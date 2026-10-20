@@ -658,13 +658,13 @@ build/netlink-codec-host: kernel/tests/net/netlink.cpp kernel/net/netlink/routes
 test-netlink-codec: build/netlink-codec-host
 	./build/netlink-codec-host
 .PHONY: test-ipv6-wire test-tcp-wire
-build/ipv6-host-native: userspace/tests/net/ipv6_host.c
+build/ipv6-%-native: userspace/tests/net/ipv6_%.c
 	@mkdir -p build
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
-build/ipv6-host-static: userspace/tests/net/ipv6_host.c scripts/compile_uapi_client.py scripts/build_openssl.py ports.lock.json
+build/ipv6-%-static: userspace/tests/net/ipv6_%.c scripts/compile_uapi_client.py scripts/build_openssl.py ports.lock.json
 	@mkdir -p build
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -static $<
-build/ipv6-host-dynamic: userspace/tests/net/ipv6_host.c scripts/compile_uapi_client.py scripts/build_openssl.py ports.lock.json
+build/ipv6-%-dynamic: userspace/tests/net/ipv6_%.c scripts/compile_uapi_client.py scripts/build_openssl.py ports.lock.json
 	@mkdir -p build
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $<
 .PHONY: test-ipv6-host test-ipv6-host-native
@@ -672,6 +672,11 @@ test-ipv6-host:
 	$(PYTHON) scripts/ipv6_host_test.py
 test-ipv6-host-native:
 	$(PYTHON) scripts/ipv6_host_native.py
+.PHONY: test-ipv6-sockets test-ipv6-sockets-native
+test-ipv6-sockets:
+	$(PYTHON) scripts/ipv6_host_test.py --suite sockets
+test-ipv6-sockets-native:
+	$(PYTHON) scripts/ipv6_host_native.py --suite sockets
 build/ipv6-wire-host: kernel/tests/net/ipv6_wire.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@

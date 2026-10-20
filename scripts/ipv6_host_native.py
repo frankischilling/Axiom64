@@ -25,15 +25,16 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def child(profile, directory):
+def child(profile, directory, suite='host'):
     directory.mkdir(exist_ok=False)
-    program = ROOT / 'build' / ('ipv6-host-' + profile)
+    program = ROOT / 'build' / ('ipv6-' + suite + '-' + profile)
     command = [str(program)]
     if profile == 'dynamic':
         command.insert(0, str(loader('build')))
     sources = {name: digest(ROOT / name) for name in (
-        'userspace/tests/net/ipv6_host.c', 'scripts/ipv6_host_native.py',
-        'scripts/ipv6_host_peer.py', 'scripts/ipv6_host_capture.py', 'scripts/tcp_fault_native.py')}
+        'userspace/tests/net/ipv6_' + suite + '.c', 'scripts/ipv6_host_native.py',
+        'scripts/ipv6_host_peer.py', 'scripts/ipv6_host_capture.py',
+        'scripts/ipv6_sockets_peer.py', 'scripts/ipv6_sockets_capture.py', 'scripts/tcp_fault_native.py')}
     products = {name: digest(Path(name)) for name in command}
     saved = directory / 'products'
     saved.mkdir()
@@ -55,7 +56,11 @@ def child(profile, directory):
     (directory / 'preexecution.json').write_text(json.dumps(dict(profile=profile,
         kernel=platform.uname()._asdict(), command=command, settings=settings,
         source_sha256=sources, product_sha256=products), indent=2) + '\n')
-    peers = [Peer(lane, native=True) for lane in range(2)]
+    peer_type = Peer
+    if suite == 'sockets':
+        from ipv6_sockets_peer import Peer as SocketPeer
+        peer_type = SocketPeer
+    peers = [peer_type(lane, native=True) for lane in range(2)]
     taps, captures, statistics = [], [], []
     selector = selectors.DefaultSelector()
     process, error = None, None
@@ -108,7 +113,10 @@ def child(profile, directory):
     if not error and all(peer.passed for peer in peers):
         try:
             for lane in range(2):
-                audits.append(verify_capture(directory / f'lane{lane}.pcap', lane,
+                checker = verify_capture
+                if suite == 'sockets':
+                    from ipv6_sockets_capture import verify_capture as checker
+                audits.append(checker(directory / f'lane{lane}.pcap', lane,
                     directory / 'client.log', directory / f'lane{lane}-damaged.zip', native=True))
         except Exception as failure:
             error = f'independent native capture: {failure}'
@@ -129,20 +137,22 @@ def child(profile, directory):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--suite', choices=('host', 'sockets'), default='host')
     parser.add_argument('--child', choices=('native', 'static', 'dynamic'))
     parser.add_argument('--profile', choices=('native', 'static', 'dynamic', 'all'), default='all')
-    parser.add_argument('--output-directory', type=Path, default=ROOT / 'build/ipv6-host-native-wire')
+    parser.add_argument('--output-directory', type=Path, default=None)
     args = parser.parse_args()
+    args.output_directory = args.output_directory or ROOT / 'build' / ('ipv6-' + args.suite + '-native-wire')
     if args.child:
-        return child(args.child, args.output_directory)
+        return child(args.child, args.output_directory, args.suite)
     profiles = ('native', 'static', 'dynamic') if args.profile == 'all' else (args.profile,)
-    subprocess.run(['make', '-j2', *('build/ipv6-host-' + profile for profile in profiles)], cwd=ROOT, check=True)
+    subprocess.run(['make', '-j2', *('build/ipv6-' + args.suite + '-' + profile for profile in profiles)], cwd=ROOT, check=True)
     args.output_directory.mkdir(parents=True, exist_ok=True)
     results = []
     for profile in profiles:
         directory = args.output_directory / profile
         result = subprocess.run(['unshare', '--net', sys.executable, '-B', 'scripts/ipv6_host_native.py',
-                                 '--child', profile, '--output-directory', str(directory)], cwd=ROOT)
+                                 '--child', profile, '--suite', args.suite, '--output-directory', str(directory)], cwd=ROOT)
         results.append(dict(profile=profile, returncode=result.returncode))
     (args.output_directory / 'receipt.json').write_text(json.dumps(results, indent=2) + '\n')
     return 0 if all(not row['returncode'] for row in results) else 1

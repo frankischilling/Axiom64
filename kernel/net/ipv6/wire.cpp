@@ -138,6 +138,8 @@ Packet decode(const uint8_t* bytes, size_t length) {
             packet.fragmented = true;
             uint16_t field = get16(bytes + at + 2);
             packet.fragment = {get32(bytes + at + 4), uint16_t(field & 0xfff8), bool(field & 1)};
+            packet.fragment.header_offset = at;
+            packet.fragment.previous_header_offset = packet.next_header_offset;
             size_t fragment_length = packet.size - at - 8;
             if (packet.fragment.more && fragment_length % 8)
                 return problem(packet, 0, 4);

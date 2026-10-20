@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/ipv6/host.hpp"
+#include "net/ipv6/reassembly.hpp"
 #include "net/inet6.hpp"
 
 namespace ax {
@@ -31,6 +32,64 @@ bool allow_error() {
     error_tokens--;
     return true;
 }
+
+void diagnostic(unsigned index, const uint8_t* original, size_t length, uint8_t type, uint8_t code,
+                uint32_t pointer = 0) {
+    if (length < ip6::header_size || !ip6::usable(index))
+        return;
+    ip6::Address source, destination;
+    memcpy(source.bytes, original + 8, 16);
+    memcpy(destination.bytes, original + 24, 16);
+    if (source.unspecified() || source.multicast() || destination.multicast() ||
+        !ipv6_owned(destination.link_local() ? index : 0, destination))
+        return;
+    uint8_t protocol = original[6];
+    size_t at = ip6::header_size;
+    while (protocol == 0 || protocol == 43 || protocol == 44 || protocol == 60 || protocol == 51) {
+        if (length - at < 8)
+            return;
+        size_t size = protocol == 44   ? 8
+                      : protocol == 51 ? (size_t(original[at + 1]) + 2) * 4
+                                       : (size_t(original[at + 1]) + 1) * 8;
+        // A nonfirst fragment cannot establish whether it quotes an ICMP error.
+        if (size > length - at ||
+            (protocol == 44 && (original[at + 2] || (original[at + 3] & 0xf8))))
+            return;
+        protocol = original[at];
+        at += size;
+    }
+    if (protocol == 50 ||
+        (protocol == 58 && (at == length || original[at] < 128 || original[at] == 137)) ||
+        !allow_error())
+        return;
+    size_t quoted = min(length, size_t(1232));
+    auto error = static_cast<uint8_t*>(alloc(8 + quoted));
+    if (!error)
+        return;
+    memset(error, 0, 8);
+    error[0] = type;
+    error[1] = code;
+    for (unsigned n = 0; n < 4; n++)
+        error[4 + n] = pointer >> (24 - n * 8);
+    memcpy(error + 8, original, quoted);
+    uint16_t check = ip6::checksum(destination, source, 58, error, 8 + quoted);
+    error[2] = check >> 8;
+    error[3] = check;
+    ipv6_send(destination, source, source.link_local() ? index : 0, 58, 64, error, 8 + quoted);
+    release(error);
+}
+
+void fragment_expired(unsigned index, const uint8_t* bytes, size_t length) {
+    diagnostic(index, bytes, length, 3, 1);
+}
+
+struct ReassembledInput {
+    uint8_t* bytes = nullptr;
+
+    ~ReassembledInput() {
+        release(bytes);
+    }
+};
 
 bool valid_mac(const uint8_t* mac) {
     bool nonzero = false;
@@ -202,11 +261,13 @@ void ipv6_receive(const NetInfo& info, const void* frame, size_t length) {
     if (!ip6::usable(info.index) || length < ethernet_header + ip6::header_size ||
         bytes[12] != 0x86 || bytes[13] != 0xdd || (!loopback && !valid_mac(bytes + 6)))
         return;
-    auto packet = ip6::decode(bytes + ethernet_header, length - ethernet_header);
+    const uint8_t* datagram = bytes + ethernet_header;
+    auto packet = ip6::decode(datagram, length - ethernet_header);
     const auto& source = packet.header.source;
     const auto& destination = packet.header.destination;
-    if (packet.input != ip6::Input::payload || packet.length < 4 || source.multicast() ||
-        source.mapped() || destination.mapped() ||
+    if ((packet.input != ip6::Input::payload && packet.input != ip6::Input::fragment &&
+         !(packet.input == ip6::Input::parameter_problem && packet.fragment.header_offset)) ||
+        source.multicast() || source.mapped() || destination.mapped() ||
         (!loopback && (source.loopback() || destination.loopback())) || destination.unspecified())
         return;
     if (destination.multicast()) {
@@ -217,26 +278,35 @@ void ipv6_receive(const NetInfo& info, const void* frame, size_t length) {
     } else if (memcmp(info.mac, bytes, 6) ||
                !ipv6_owned(destination.link_local() ? info.index : 0, destination))
         return;
+    ReassembledInput owned;
+    if (packet.input != ip6::Input::payload) {
+        if (source.unspecified())
+            return;
+        auto result = ip6::reassemble(info.index, datagram, length - ethernet_header, ticks,
+                                      fragment_expired);
+        if (result.status == ip6::FragmentStatus::parameter_problem) {
+            diagnostic(info.index, datagram, packet.size, 4, result.error_code,
+                       result.error_pointer);
+            return;
+        }
+        if (result.status != ip6::FragmentStatus::complete)
+            return;
+        owned.bytes = result.bytes;
+        datagram = result.bytes;
+        packet = ip6::decode(datagram, result.length);
+        // Removing the header must not make fragmented ND look unfragmented.
+        if (packet.input != ip6::Input::payload || packet.fragmented)
+            return;
+        packet.fragmented = true;
+    }
+    if (packet.length < 4)
+        return;
     if (packet.protocol == 17) {
         if (source.unspecified())
             return;
         bool delivered = inet6_deliver(info.index, packet);
-        if (!delivered && !source.unspecified() && !destination.multicast() && allow_error()) {
-            size_t quoted = min(size_t(packet.size), size_t(1232));
-            auto error = static_cast<uint8_t*>(alloc(8 + quoted));
-            if (error) {
-                memset(error, 0, 8);
-                error[0] = 1;
-                error[1] = 4;
-                memcpy(error + 8, bytes + ethernet_header, quoted);
-                uint16_t check = ip6::checksum(destination, source, 58, error, 8 + quoted);
-                error[2] = check >> 8;
-                error[3] = check;
-                ipv6_send(destination, source, source.link_local() ? info.index : 0, 58, 64, error,
-                          8 + quoted);
-                release(error);
-            }
-        }
+        if (!delivered)
+            diagnostic(info.index, datagram, packet.size, 1, 4);
         return;
     }
     if (packet.protocol != 58 ||
@@ -269,6 +339,7 @@ void ipv6_poll() {
         return;
     polling = true;
     ip6::address_poll();
+    ip6::reassembly_expire(ticks, fragment_expired);
     for (auto& item : outputs) {
         if (!item.bytes)
             continue;
@@ -319,6 +390,7 @@ void ipv6_shutdown() {
         if (item.bytes)
             clear(item, -5);
     ip6::neighbor_reset();
+    ip6::reassembly_discard();
     ip6::address_reset();
     error_tokens = 16;
     error_epoch = ticks;

@@ -683,9 +683,16 @@ build/ipv6-wire-host: kernel/tests/net/ipv6_wire.cpp kernel/net/ipv6/wire.cpp ke
 build/ipv6-host: kernel/tests/net/ipv6_host.cpp $(IPV6_CORE) kernel/net/ethernet.cpp kernel/net/netlink/ipv6.cpp kernel/net/netlink/addresses.cpp kernel/net/netlink/inventory.cpp kernel/net/netlink/routes.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
-test-ipv6-wire: build/ipv6-wire-host build/ipv6-host
-	ASAN_OPTIONS=detect_leaks=1 ./build/ipv6-host
-	ASAN_OPTIONS=detect_leaks=1 ./build/ipv6-wire-host
+build/ipv6-reassembly-host: kernel/tests/net/ipv6_reassembly.cpp kernel/net/ipv6/reassembly.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/reassembly.hpp kernel/include/net/ipv6/wire.hpp kernel/include/core/base.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+.PHONY: test-ipv6-reassembly
+test-ipv6-reassembly: build/ipv6-reassembly-host
+	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-reassembly-host
+test-ipv6-wire: build/ipv6-wire-host build/ipv6-host build/ipv6-reassembly-host
+	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-reassembly-host
+	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-host
+	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-wire-host
 build/ipv4-reassembly-host: kernel/tests/net/ipv4_reassembly.cpp kernel/net/ipv4/reassembly.cpp kernel/include/net/ipv4/reassembly.hpp kernel/include/net/ipv4_wire.hpp kernel/include/core/base.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/ipv4_reassembly.cpp kernel/net/ipv4/reassembly.cpp -o $@

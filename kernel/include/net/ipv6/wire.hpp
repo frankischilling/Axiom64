@@ -39,6 +39,7 @@ struct Fragment {
     uint32_t identification = 0;
     uint16_t offset = 0;
     bool more = false;
+    uint32_t header_offset = 0, previous_header_offset = 6;
 };
 
 struct Packet {

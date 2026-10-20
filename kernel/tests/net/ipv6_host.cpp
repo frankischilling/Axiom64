@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/ipv6/host.hpp"
 #include "net/netlink.hpp"
+#include "net/ipv6/reassembly.hpp"
 #include "../../net/ipv6/socket.hpp"
 #include <algorithm>
 #include <cassert>
@@ -495,6 +496,106 @@ static void prefix_lifetimes() {
     assert(change(1, address(31, 2)) == -105 && !ipv6_owned(1, address(31, 2), true));
 }
 
+static std::vector<uint8_t> fragment_frame(const std::vector<uint8_t>& whole, size_t offset,
+                                           size_t length, bool more, uint32_t id = 7,
+                                           size_t prefix = 0) {
+    assert(offset + length <= whole.size() - 54 && prefix % 8 == 0 && prefix <= 2048);
+    std::vector<uint8_t> result(62 + prefix + length);
+    memcpy(result.data(), whole.data(), 54);
+    result[18] = (8 + prefix + length) >> 8;
+    result[19] = 8 + prefix + length;
+    result[20] = prefix ? 60 : 44;
+    if (prefix) {
+        result[54] = 44;
+        result[55] = prefix / 8 - 1;
+    }
+    auto header = result.data() + 54 + prefix;
+    header[0] = whole[20];
+    header[2] = offset >> 8;
+    header[3] = offset | unsigned(more);
+    for (unsigned n = 0; n < 4; n++)
+        header[4 + n] = id >> (24 - n * 8);
+    memcpy(header + 8, whole.data() + 54 + offset, length);
+    return result;
+}
+
+static void fragmented_delivery() {
+    reset();
+    auto local = address(0, 2), remote = address(0, 1);
+    assert(!change(1, local));
+    auto udp = inet6_allocate(2);
+    assert(udp);
+    udp->local = local;
+    assert(!inet6_bind_port(udp, local, 7001));
+    std::vector<uint8_t> body(49, 0x5b);
+    body[0] = body[2] = 0x1b;
+    body[1] = 0x58;
+    body[3] = 0x59;
+    body[4] = 0;
+    body[5] = body.size();
+    auto whole = incoming(0, remote, local, body, 64, 17);
+    auto first = fragment_frame(whole, 0, 16, true, 7, 8);
+    auto middle = fragment_frame(whole, 16, 16, true, 7, 16);
+    auto last_piece = fragment_frame(whole, 32, 17, false);
+    deliver(0, last_piece);
+    deliver(0, first);
+    first.back() ^= 1;
+    assert(!udp->count);
+    deliver(0, middle);
+    assert(udp->count == 1 && inet6_front(udp)->length == 41);
+    assert(!memcmp(inet6_bytes(inet6_front(udp)), body.data() + 8, 41));
+    inet6_consume(udp);
+    first = fragment_frame(whole, 0, 16, true);
+    deliver(0, first);
+    deliver(0, first);
+    deliver(0, fragment_frame(whole, 0, 49, false));
+    assert(udp->count == 1);
+    deliver(0, middle);
+    deliver(0, last_piece);
+    assert(udp->count == 2);
+    inet6_consume(udp);
+    inet6_consume(udp);
+    deliver(0, first);
+    deliver(0, fragment_frame(whole, 8, 16, true));
+    deliver(0, middle);
+    deliver(0, last_piece);
+    assert(!udp->count);
+    ip6::reassembly_discard();
+    Inet6Address peer{10, __builtin_bswap16(uint16_t(7000)), 0, remote, 0};
+    assert(inet6_send(udp, peer, nullptr, 0, true) == 0);
+    net_poll();
+    deliver(0, advertisement(0, remote, local));
+    auto solicitation_frame = solicitation(0, local);
+    size_t before = emitted[0].size();
+    deliver(0, fragment_frame(solicitation_frame, 0, 24, true, 8));
+    deliver(0, fragment_frame(solicitation_frame, 24, 8, false, 8));
+    assert(emitted[0].size() == before);
+    deliver(0, first);
+    ticks = 5999;
+    net_poll();
+    assert(emitted[0].size() == before);
+    ticks = 6000;
+    net_poll();
+    auto error = last(0, 3);
+    assert(error.payload[1] == 1 && error.length == 8 + first.size() - 14);
+    assert(!memcmp(error.payload + 8, first.data() + 14, first.size() - 14));
+    auto bad_first = fragment_frame(whole, 0, 16, true, 99);
+    bad_first[54] = 6; // No complete TCP header in this first fragment.
+    deliver(0, bad_first);
+    error = last(0, 4);
+    assert(error.payload[1] == 3 && !error.payload[4] && !error.payload[5] && !error.payload[6] &&
+           !error.payload[7]);
+    deliver(0, advertisement(0, remote, local));
+    before = emitted[0].size();
+    auto icmp_error = incoming(0, remote, local, std::vector<uint8_t>(16), 64, 58);
+    deliver(0, fragment_frame(icmp_error, 0, 8, true, 111));
+    ticks += 6000;
+    net_poll();
+    assert(emitted[0].size() == before); // Never report an error about an ICMP error.
+    inet6_close(udp);
+    reset();
+}
+
 static void socket_ownership() {
     reset();
     auto local = address(0, 2), remote = address(0, 1);
@@ -624,6 +725,7 @@ int main() {
     prefix_lifetimes();
     prefix_route_order();
     socket_ownership();
+    fragmented_delivery();
     reset();
     std::puts("IPV6_HOST_PASS adapters=2 DAD=1 duplicate=1 NS=1 NA=1 echo=1 owned_copy=1");
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/ipv6/host.hpp"
+#include "net/ipv6/reassembly.hpp"
 
 namespace ax {
 namespace {
@@ -80,6 +81,8 @@ int ipv6_address_remove(unsigned index, const ip6::Address& address) {
             for (unsigned next = n + 1; next < address_count; next++)
                 addresses[next - 1] = addresses[next];
             addresses[--address_count] = {};
+            if (address.link_local() || !ipv6_owned(0, address))
+                ip6::reassembly_discard(&address, index);
             return 0;
         }
     return -99;

@@ -249,7 +249,8 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
     if (!bytes)
         return -12;
     size_t offset = socket->type == 2 ? 8 : 0;
-    memcpy(bytes + offset, data, length);
+    if (length)
+        memcpy(bytes + offset, data, length);
     if (socket->type == 2) {
         if (!socket->local_port) {
             error = inet6_bind_port(socket, socket->local, 0);

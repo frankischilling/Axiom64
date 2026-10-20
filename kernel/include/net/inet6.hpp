@@ -32,6 +32,8 @@ void inet6_consume(Inet6Socket*);
 Inet6Address inet6_peer(Inet6Socket*);
 int inet6_target(Inet6Socket*, Inet6Address&, bool named,
                  uint32_t imported_length = sizeof(Inet6Address));
+size_t inet6_send_prefix(Inet6Socket*);
+int inet6_send_route(Inet6Socket*, const Inet6Address&);
 unsigned inet6_shutdown(Inet6Socket*);
 size_t inet6_available(Inet6Socket*);
 int inet6_error(Inet6Socket*, bool clear = false);

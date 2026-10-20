@@ -220,6 +220,16 @@ bool inet6_deliver(unsigned index, const ip6::Packet& packet) {
     return matched;
 }
 
+size_t inet6_send_prefix(Inet6Socket* socket) {
+    return socket->type == 3 ? 2 : 0;
+}
+
+int inet6_send_route(Inet6Socket* socket, const Inet6Address& address) {
+    unsigned index = address.address.link_local() && address.scope ? address.scope : socket->index;
+    Ipv6Path path;
+    return ipv6_path(socket->local, address.address, index, path);
+}
+
 int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const void* data,
                    size_t length, bool named) {
     if (int error = inet6_error(socket, true))
@@ -229,6 +239,9 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
     auto address = requested;
     if (int error = inet6_target(socket, address, named))
         return error;
+    // ICMPv6 protocol selection imports two bytes before route lookup.
+    if (socket->type == 3 && length < 2)
+        return -14;
     size_t overhead = ip6::header_size + (socket->type == 2 ? 8 : 0);
     if (length > 65535 - (overhead - ip6::header_size) || length + overhead > socket->send_limit)
         return -90;

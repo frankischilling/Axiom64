@@ -138,6 +138,24 @@ static int import_vectors(Task& task, IoRequest& request, uint64_t pointer, size
     return 0;
 }
 
+static int copy_packet(Task& task, IoRequest& request, size_t begin, size_t length) {
+    size_t at = 0, end = begin + length;
+    for (size_t i = 0; i < request.count && at < end; i++) {
+        const auto& vector = request.vectors[i];
+        size_t next = at + vector.length;
+        if (next > begin) {
+            size_t skip = begin > at ? begin - at : 0;
+            size_t copied = min(vector.length - skip, end - at - skip);
+            if (copied && (vector.base > UINT64_MAX - skip ||
+                           !task.memory->space.copy_in(request.packet_data + at + skip,
+                                                       vector.base + skip, copied)))
+                return -14;
+        }
+        at = next;
+    }
+    return 0;
+}
+
 static int prepare_packet(Task& task, IoRequest& request) {
     const auto& f = request.call;
     if (request.handle->inet && !inet_payload(request.handle->inet))
@@ -262,20 +280,22 @@ static int prepare_packet(Task& task, IoRequest& request) {
         if (request.packet_length < ethernet_header)
             return -22;
     }
+    size_t prefix = request.handle->inet6 ? inet6_send_prefix(request.handle->inet6) : 0;
+    if (request.packet_length < prefix)
+        return -14;
     if (request.packet_length) {
         request.packet_data = static_cast<uint8_t*>(alloc(request.packet_length));
         if (!request.packet_data)
             return -12;
     }
-    size_t at = 0;
-    for (size_t i = 0; i < request.count; i++) {
-        const auto& vector = request.vectors[i];
-        if (vector.length &&
-            !task.memory->space.copy_in(request.packet_data + at, vector.base, vector.length))
-            return -14;
-        at += vector.length;
+    if (prefix) {
+        // Preserve the imported protocol bytes while routing precedes the remaining copy.
+        if (int error = copy_packet(task, request, 0, prefix))
+            return error;
+        if (int error = inet6_send_route(request.handle->inet6, request.inet6_destination))
+            return error;
     }
-    return 0;
+    return copy_packet(task, request, prefix, request.packet_length - prefix);
 }
 
 static int prepare(Task& task, IoRequest& request) {

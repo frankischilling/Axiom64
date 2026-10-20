@@ -712,6 +712,34 @@ static void socket_ownership() {
     reset();
 }
 
+static void raw_header_bounds() {
+    reset();
+    assert(!change(1, address(0, 2)));
+    auto raw = inet6_allocate(3);
+    assert(raw);
+    uint8_t payload[4] = {129};
+    Inet6Address target{10, 0, 0, address(0, 1), 0};
+    for (unsigned unreachable = 0; unreachable < 2; unreachable++) {
+        target.address = address(unreachable ? 7 : 0, 1);
+        for (unsigned length = 0; length < sizeof(payload); length++)
+            assert(inet6_send(raw, target, payload, length, true) == (length < 2    ? -14
+                                                                      : unreachable ? -101
+                                                                                    : -22));
+    }
+    target.address = address(0, 1);
+    assert(inet6_send(raw, target, payload, 0) == -89);
+    target.family = 2;
+    assert(inet6_send(raw, target, payload, 0, true) == -97);
+    target.family = 10;
+    target.port = __builtin_bswap16(uint16_t(17));
+    assert(inet6_send(raw, target, payload, 0, true) == -22);
+    target.port = 0;
+    raw->transmitted = raw->send_limit;
+    assert(inet6_send(raw, target, payload, 1, true) == -14);
+    inet6_close(raw);
+    reset();
+}
+
 int main() {
     for (unsigned n = 0; n < 2; n++) {
         auto& adapter = adapters[n];
@@ -741,6 +769,7 @@ int main() {
     prefix_route_order();
     socket_ownership();
     fragmented_delivery();
+    raw_header_bounds();
     reset();
     std::puts("IPV6_HOST_PASS adapters=2 DAD=1 duplicate=1 NS=1 NA=1 echo=1 owned_copy=1");
 }

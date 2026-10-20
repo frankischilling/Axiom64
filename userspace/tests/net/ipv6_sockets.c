@@ -115,6 +115,91 @@ static int abi_error(long result, int wanted, const char* reason) {
     return abi_value(result, -1, wanted, reason);
 }
 
+static long raw_short_output(int fd, unsigned char* payload, unsigned length,
+                             struct sockaddr_in6* target, unsigned capacity, int vectored) {
+    struct iovec vectors[2] = {{payload, length ? 1 : 0}, {payload + 1, length ? length - 1 : 0}};
+    struct msghdr message = {
+        .msg_name = target, .msg_namelen = capacity, .msg_iov = vectors, .msg_iovlen = 2};
+    errno = 0;
+    return vectored ? sendmsg(fd, &message, 0)
+                    : sendto(fd, payload, length, 0, (struct sockaddr*)target, capacity);
+}
+
+static void raw_short_abi(void) {
+    int fd = create(SOCK_RAW);
+    unsigned char payload[4] = {129};
+    for (unsigned unreachable = 0; unreachable < 2; unreachable++) {
+        struct sockaddr_in6 target = loopback(58);
+        if (unreachable)
+            check(inet_pton(AF_INET6, "2001:db8:ffff::1", &target.sin6_addr) == 1,
+                  "unrouted raw header fixture");
+        for (unsigned length = 0; length < 4; length++) {
+            for (unsigned vectored = 0; vectored < 2; vectored++) {
+                int error = length < 2 ? EFAULT : unreachable ? ENETUNREACH : EINVAL;
+                const char* reason =
+                    unreachable
+                        ? (length < 2 ? "raw-prefix-before-route" : "raw-route-before-checksum")
+                        : (length < 2 ? "raw-short-prefix" : "raw-short-checksum");
+                abi_error(raw_short_output(fd, payload, length, &target, sizeof(target), vectored),
+                          error, reason);
+            }
+        }
+    }
+    for (unsigned length = 0; length < 2; length++)
+        for (unsigned vectored = 0; vectored < 2; vectored++)
+            abi_error(raw_short_output(fd, payload, length, NULL, 0, vectored), EDESTADDRREQ,
+                      "raw-destination-before-prefix");
+    for (unsigned kind = 0; kind < 3; kind++) {
+        struct sockaddr_in6 target = loopback(kind == 2 ? 17 : 58);
+        if (!kind)
+            target.sin6_family = AF_INET;
+        for (unsigned vectored = 0; vectored < 2; vectored++)
+            abi_error(
+                raw_short_output(fd, payload, 0, &target, kind == 1 ? 1 : sizeof(target), vectored),
+                !kind ? EAFNOSUPPORT : EINVAL,
+                !kind       ? "raw-family-before-prefix"
+                : kind == 1 ? "raw-address-before-prefix"
+                            : "raw-protocol-before-prefix");
+    }
+    close(fd);
+}
+
+static void raw_payload_fault_abi(void) {
+    unsigned char* pages =
+        mmap(NULL, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    check(pages != MAP_FAILED && !mprotect(pages + 4096, 4096, PROT_NONE),
+          "raw payload fault fixture");
+    int fd = create(SOCK_RAW);
+    for (unsigned unreachable = 0; unreachable < 2; unreachable++) {
+        struct sockaddr_in6 target = loopback(58);
+        if (unreachable)
+            check(inet_pton(AF_INET6, "2001:db8:ffff::1", &target.sin6_addr) == 1,
+                  "unrouted raw payload fixture");
+        for (unsigned available = 1; available <= 2; available++) {
+            unsigned char* payload = pages + 4096 - available;
+            payload[0] = 129;
+            if (available == 2)
+                payload[1] = 0;
+            for (unsigned length = 2; length < 4; length++)
+                for (unsigned vectored = 0; vectored < 2; vectored++) {
+                    int error = available < 2        ? EFAULT
+                                : unreachable        ? ENETUNREACH
+                                : length > available ? EFAULT
+                                                     : EINVAL;
+                    const char* reason = available < 2        ? "raw-prefix-copy-before-route"
+                                         : unreachable        ? "raw-route-before-tail-copy"
+                                         : length > available ? "raw-tail-copy-fault"
+                                                              : "raw-checksum-after-copy";
+                    abi_error(
+                        raw_short_output(fd, payload, length, &target, sizeof(target), vectored),
+                        error, reason);
+                }
+        }
+    }
+    close(fd);
+    check(!munmap(pages, 8192), "raw payload fault fixture release");
+}
+
 static void scoped_abi(void) {
     for (unsigned type = SOCK_DGRAM; type <= SOCK_RAW; type++) {
         for (unsigned length = 25; length < 28; length++) {
@@ -454,6 +539,8 @@ static void abi_contract(void) {
     scoped_abi();
     unspecified_output_abi();
     error_copy_abi();
+    raw_short_abi();
+    raw_payload_fault_abi();
     check(!abi_failures, "IPv6 ABI regression cases");
     printf("IPV6_SOCKETS_ABI_PASS cases=%u\n", abi_cases);
 }

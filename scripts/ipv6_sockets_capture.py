@@ -16,7 +16,7 @@ def require(value, reason):
 
 
 def inspect(rows, lane, log, native=False):
-    require(log.count('IPV6_SOCKETS_ABI_PASS cases=286') == 1,
+    require(log.count('IPV6_SOCKETS_ABI_PASS cases=328') == 1,
             'actual IPv6 argument bounds, copy ownership and scoped connection checks')
     abi_cases = {'negative-option-length': (2, 22), 'invalid-bind-length': (4, 22),
                  'invalid-connect-length': (4, 22), 'invalid-send-address-length': (4, 22),
@@ -39,8 +39,15 @@ def inspect(rows, lane, log, native=False):
                       'clamped-address-fault': (2, -1, 14), 'negative-address-before-fault': (8, -1, 22),
                       'consumed-error': (3, 0, 0), 'preserved-error': (3, 111, 0),
                       'error-invalid-length': (1, -1, 22), 'error-length-fault': (2, -1, 14),
-                      'error-empty-output': (1, 0, 0)})
-    require(log.count('IPV6_SOCKETS_ABI_CASE ') == 286 and all(
+                      'error-empty-output': (1, 0, 0),
+                      'raw-short-prefix': (4, -1, 14), 'raw-short-checksum': (4, -1, 22),
+                      'raw-prefix-before-route': (4, -1, 14), 'raw-route-before-checksum': (4, -1, 101),
+                      'raw-destination-before-prefix': (4, -1, 89), 'raw-family-before-prefix': (2, -1, 97),
+                      'raw-address-before-prefix': (2, -1, 22), 'raw-protocol-before-prefix': (2, -1, 22),
+                      'raw-prefix-copy-before-route': (8, -1, 14),
+                      'raw-route-before-tail-copy': (4, -1, 101),
+                      'raw-tail-copy-fault': (2, -1, 14), 'raw-checksum-after-copy': (2, -1, 22)})
+    require(log.count('IPV6_SOCKETS_ABI_CASE ') == 328 and all(
         log.count(f'IPV6_SOCKETS_ABI_CASE name={name} result={value} errno={error} passed=1') == count
         for name, (count, value, error) in abi_cases.items()), 'complete original socket ABI case results')
     require(log.count('IPV6_SOCKETS_LOCAL_PASS shared=1 faults=2 deadline=1 refused=1') == 1,

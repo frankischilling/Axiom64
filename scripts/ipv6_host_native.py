@@ -9,6 +9,7 @@ from pathlib import Path
 import platform
 import selectors
 import shutil
+import socket
 import struct
 import subprocess
 import sys
@@ -34,7 +35,8 @@ def child(profile, directory, suite='host'):
     sources = {name: digest(ROOT / name) for name in (
         'userspace/tests/net/ipv6_' + suite + '.c', 'scripts/ipv6_host_native.py',
         'scripts/ipv6_host_peer.py', 'scripts/ipv6_host_capture.py',
-        'scripts/ipv6_sockets_peer.py', 'scripts/ipv6_sockets_capture.py', 'scripts/tcp_fault_native.py')}
+        'scripts/ipv6_sockets_peer.py', 'scripts/ipv6_sockets_capture.py',
+        'scripts/ipv6_fragments_peer.py', 'scripts/ipv6_fragments_capture.py', 'scripts/tcp_fault_native.py')}
     products = {name: digest(Path(name)) for name in command}
     saved = directory / 'products'
     saved.mkdir()
@@ -51,6 +53,11 @@ def child(profile, directory, suite='host'):
         'net.ipv6.conf.all.enhanced_dad': 0, 'net.ipv6.conf.default.enhanced_dad': 0,
         'net.ipv6.auto_flowlabels': 0,
     }
+    if suite == 'fragments':
+        settings['net.ipv6.conf.default.router_solicitations'] = 0
+        lifetime = subprocess.check_output(['sysctl', '-n', 'net.ipv6.ip6frag_time'], text=True).strip()
+        if lifetime != '60':
+            raise ValueError('native IPv6 fragment lifetime must remain its real 60-second default')
     for name, value in settings.items():
         subprocess.run(['sysctl', '-q', '-w', f'{name}={value}'], check=True)
     (directory / 'preexecution.json').write_text(json.dumps(dict(profile=profile,
@@ -60,8 +67,11 @@ def child(profile, directory, suite='host'):
     if suite == 'sockets':
         from ipv6_sockets_peer import Peer as SocketPeer
         peer_type = SocketPeer
+    elif suite == 'fragments':
+        from ipv6_fragments_peer import Peer as FragmentPeer
+        peer_type = FragmentPeer
     peers = [peer_type(lane, native=True) for lane in range(2)]
-    taps, captures, statistics = [], [], []
+    taps, captures, statistics, interfaces = [], [], [], []
     selector = selectors.DefaultSelector()
     process, error = None, None
     began = time.monotonic()
@@ -74,17 +84,22 @@ def child(profile, directory, suite='host'):
             fcntl.ioctl(tap, 0x400454ca, struct.pack('16sH', name.encode(), 0x1002))
             subprocess.run(['ip', 'link', 'set', 'dev', name, 'address',
                             peers[lane].guest.hex(':'), 'mtu', '1500', 'up'], check=True)
+            interfaces.append(dict(lane=lane, name=name, index=socket.if_nametoindex(name)))
             selector.register(tap, selectors.EVENT_READ, lane)
             captures.append(Capture(name, directory / f'lane{lane}.pcap'))
+        (directory / 'interfaces.json').write_text(json.dumps(interfaces, indent=2) + '\n')
         with (directory / 'client.log').open('wb') as output:
             process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL,
                                        stdout=output, stderr=subprocess.STDOUT)
             while process.poll() is None:
-                if time.monotonic() - began > 45:
+                if time.monotonic() - began > (160 if suite == 'fragments' else 45):
                     raise TimeoutError('native IPv6 client exceeded its overall deadline')
                 for key, _ in selector.select(.02):
                     peers[key.data].receive(os.read(key.fd, 65535))
                 for lane, peer in enumerate(peers):
+                    tick = getattr(peer, 'tick', None)
+                    if tick:
+                        tick()
                     while peer.outgoing:
                         packet = peer.outgoing.pop(0)
                         if os.write(taps[lane], packet) != len(packet):
@@ -116,8 +131,11 @@ def child(profile, directory, suite='host'):
                 checker = verify_capture
                 if suite == 'sockets':
                     from ipv6_sockets_capture import verify_capture as checker
+                elif suite == 'fragments':
+                    from ipv6_fragments_capture import verify_capture as checker
+                extra = dict(statistics=statistics[lane], interface_index=interfaces[lane]['index']) if suite == 'fragments' else {}
                 audits.append(checker(directory / f'lane{lane}.pcap', lane,
-                    directory / 'client.log', directory / f'lane{lane}-damaged.zip', native=True))
+                    directory / 'client.log', directory / f'lane{lane}-damaged.zip', native=True, **extra))
         except Exception as failure:
             error = f'independent native capture: {failure}'
     unchanged = all(digest(ROOT / name) == value for name, value in sources.items())
@@ -129,6 +147,8 @@ def child(profile, directory, suite='host'):
                   returncode=process.returncode if process else None, error=error,
                   source_products_unchanged=unchanged, peers=[peer.result() for peer in peers],
                   capture_audits=audits, capture_statistics=statistics,
+                  interfaces=interfaces, interface_record_sha256=(digest(directory / 'interfaces.json')
+                      if (directory / 'interfaces.json').is_file() else None),
                   settings=settings, full_F12_complete=False)
     (directory / 'receipt.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({key: value for key, value in result.items() if key not in ('peers', 'settings')}), flush=True)
@@ -137,7 +157,7 @@ def child(profile, directory, suite='host'):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--suite', choices=('host', 'sockets'), default='host')
+    parser.add_argument('--suite', choices=('host', 'sockets', 'fragments'), default='host')
     parser.add_argument('--child', choices=('native', 'static', 'dynamic'))
     parser.add_argument('--profile', choices=('native', 'static', 'dynamic', 'all'), default='all')
     parser.add_argument('--output-directory', type=Path, default=None)

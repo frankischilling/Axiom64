@@ -51,10 +51,12 @@ void diagnostic(unsigned index, const uint8_t* original, size_t length, uint8_t 
         size_t size = protocol == 44   ? 8
                       : protocol == 51 ? (size_t(original[at + 1]) + 2) * 4
                                        : (size_t(original[at + 1]) + 1) * 8;
-        // A nonfirst fragment cannot establish whether it quotes an ICMP error.
-        if (size > length - at ||
-            (protocol == 44 && (original[at + 2] || (original[at + 3] & 0xf8))))
+        if (size > length - at)
             return;
+        // A nonfirst fragment cannot establish whether it quotes an ICMP error.
+        // Stop before treating later-fragment data as an upper-layer header.
+        if (protocol == 44 && (original[at + 2] || (original[at + 3] & 0xf8)))
+            break;
         protocol = original[at];
         at += size;
     }

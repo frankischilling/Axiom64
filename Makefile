@@ -677,6 +677,11 @@ test-ipv6-sockets:
 	$(PYTHON) scripts/ipv6_host_test.py --suite sockets
 test-ipv6-sockets-native:
 	$(PYTHON) scripts/ipv6_host_native.py --suite sockets
+.PHONY: test-ipv6-fragments test-ipv6-fragments-native
+test-ipv6-fragments:
+	$(PYTHON) scripts/ipv6_host_test.py --suite fragments --workers 4
+test-ipv6-fragments-native:
+	$(PYTHON) scripts/ipv6_host_native.py --suite fragments
 build/ipv6-wire-host: kernel/tests/net/ipv6_wire.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@

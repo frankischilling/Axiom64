@@ -51,6 +51,7 @@ def prepare(linkage, directory, suite='host'):
         'kernel/abi/linux/syscall.cpp', 'kernel/io/socket_timeout.cpp',
         'scripts/ipv6_host_peer.py', 'scripts/ipv6_host_test.py',
         'scripts/ipv6_host_capture.py', 'scripts/ipv6_sockets_peer.py', 'scripts/ipv6_sockets_capture.py',
+        'scripts/ipv6_fragments_peer.py', 'scripts/ipv6_fragments_capture.py',
         'scripts/network_test.py', 'scripts/tcp_fault_test.py', 'scripts/image.py',
         'scripts/compile_uapi_client.py', 'scripts/tcp_fixture_inputs.py',
         'userspace/tests/net/ipv6_host.sh',
@@ -73,6 +74,9 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
     if suite == 'sockets':
         from ipv6_sockets_peer import Peer as SocketPeer
         peer_type = SocketPeer
+    elif suite == 'fragments':
+        from ipv6_fragments_peer import Peer as FragmentPeer
+        peer_type = FragmentPeer
     peers, servers, captures = [peer_type(lane) for lane in range(2)], [], []
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '2G',
                '-cdrom', str(image), '-nic', 'none', '-display', 'none', '-serial', 'stdio',
@@ -100,7 +104,8 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
         with (output / 'guest.log').open('wb') as log:
             process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE,
                                        stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
-            text, reports, error, status = exercise(process, peers, servers, 45, log)
+            text, reports, error, status = exercise(process, peers, servers,
+                160 if suite == 'fragments' else 45, log)
     finally:
         for server in servers:
             server.close()
@@ -116,6 +121,10 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
                    f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
         markers += [f'IPV6_SOCKETS_PHASE_PASS lane={lane} phase={phase}'
                     for lane in range(2) for phase in range(3)]
+    elif suite == 'fragments':
+        markers = ['IPV6_FRAGMENTS_PASS nics=2 cases_each=7 maximum=65527 expiry_seconds=60',
+                   'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
+                   f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
     missing = [marker for marker in markers if marker not in text]
     unchanged = all(digest(ROOT / name) == expected for group in ('products', 'sources')
                     for name, expected in inputs[group].items())
@@ -125,6 +134,8 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
         try:
             if suite == 'sockets':
                 from ipv6_sockets_capture import verify_capture
+            elif suite == 'fragments':
+                from ipv6_fragments_capture import verify_capture
             else:
                 from ipv6_host_capture import verify_capture
             for lane, path in enumerate(captures):
@@ -145,7 +156,7 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--suite', choices=('host', 'sockets'), default='host')
+    parser.add_argument('--suite', choices=('host', 'sockets', 'fragments'), default='host')
     parser.add_argument('--workers', type=int, choices=(1, 2, 4), default=2)
     parser.add_argument('--linkage', choices=('static', 'dynamic', 'both'), default='both')
     parser.add_argument('--firmware', choices=('bios', 'uefi', 'both'), default='both')

@@ -586,6 +586,21 @@ static void fragmented_delivery() {
     assert(error.payload[1] == 3 && !error.payload[4] && !error.payload[5] && !error.payload[6] &&
            !error.payload[7]);
     deliver(0, advertisement(0, remote, local));
+    for (uint8_t protocol : {17, 58}) {
+        auto overflow = fragment_frame(whole, 0, 16, false, 120 + protocol);
+        overflow[54] = protocol;
+        overflow[56] = 0xff;
+        overflow[57] = 0xf8;
+        overflow[62] = 1; // Later-fragment bytes cannot identify an ICMP error.
+        size_t prior = emitted[0].size();
+        deliver(0, overflow);
+        assert(emitted[0].size() == prior + 1);
+        error = last(0, 4);
+        assert(error.payload[1] == 0 && error.payload[4] == 0 && error.payload[5] == 0 &&
+               error.payload[6] == 0 && error.payload[7] == 42);
+        assert(error.length == 8 + overflow.size() - 14 &&
+               !memcmp(error.payload + 8, overflow.data() + 14, overflow.size() - 14));
+    }
     before = emitted[0].size();
     auto icmp_error = incoming(0, remote, local, std::vector<uint8_t>(16), 64, 58);
     deliver(0, fragment_frame(icmp_error, 0, 8, true, 111));

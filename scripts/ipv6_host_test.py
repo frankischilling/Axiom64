@@ -62,6 +62,9 @@ def prepare(linkage, directory, suite='host', image_directory=None):
         'scripts/ipv6_errors_peer.py', 'scripts/ipv6_errors_capture.py',
         'scripts/ipv6_expiry_peer.py', 'scripts/ipv6_expiry_capture.py',
         'scripts/packet_observation.py', 'scripts/tcp_fault_native.py',
+        'scripts/ipv6_controls_peer.py', 'scripts/ipv6_controls_capture.py',
+        'scripts/ipv6_control_contract.py', 'scripts/ipv6_control_fault_contract.py',
+        'scripts/ipv6_control_header_contract.py', 'scripts/ipv6_controls_contract_test.py',
         'scripts/network_test.py', 'scripts/tcp_fault_test.py', 'scripts/image.py',
         'scripts/compile_uapi_client.py', 'scripts/tcp_fixture_inputs.py',
         'userspace/tests/net/ipv6_host.sh',
@@ -100,6 +103,9 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
     elif suite == 'expiry':
         from ipv6_expiry_peer import Peer as ExpiryPeer
         peer_type = ExpiryPeer
+    elif suite == 'controls':
+        from ipv6_controls_peer import Peer as ControlsPeer
+        peer_type = ControlsPeer
     peers, servers, captures = [peer_type(lane) for lane in range(2)], [], []
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '2G',
                '-cdrom', str(image), '-nic', 'none', '-display', 'none', '-serial', 'stdio',
@@ -167,6 +173,10 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
         markers = ['IPV6_EXPIRY_PASS adapters=2 paths=32 stages=7 lifetime_seconds=600 lower_delay_seconds=20',
                    'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
                    f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
+    elif suite == 'controls':
+        markers = ['IPV6_CONTROLS_PASS adapters=2 cases=160 variants=20 scopes=2 transports=2',
+                   'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
+                   f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
     missing = [marker for marker in markers if marker not in text]
     unchanged = all(digest(ROOT / name) == expected for group in ('products', 'sources')
                     for name, expected in inputs[group].items())
@@ -186,6 +196,8 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
                 from ipv6_errors_capture import verify_capture
             elif suite == 'expiry':
                 from ipv6_expiry_capture import verify_capture
+            elif suite == 'controls':
+                from ipv6_controls_capture import verify_capture
             else:
                 from ipv6_host_capture import verify_capture
             for lane, path in enumerate(captures):
@@ -206,7 +218,7 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--suite', choices=('host', 'sockets', 'fragments', 'output', 'pmtu', 'errors', 'expiry'), default='host')
+    parser.add_argument('--suite', choices=('host', 'sockets', 'fragments', 'output', 'pmtu', 'errors', 'expiry', 'controls'), default='host')
     parser.add_argument('--workers', type=int, choices=(1, 2, 4), default=2)
     parser.add_argument('--linkage', choices=('static', 'dynamic', 'both'), default='both')
     parser.add_argument('--firmware', choices=('bios', 'uefi', 'both'), default='both')

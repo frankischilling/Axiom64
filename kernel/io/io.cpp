@@ -52,6 +52,7 @@ struct IoRequest {
     uint8_t* packet_data;
     size_t packet_length;
     uint64_t address_pointer, address_length_pointer;
+    uint64_t control_pointer, control_capacity;
     uint32_t address_capacity;
     uint64_t event_value;
     bool event_value_ready;
@@ -177,7 +178,7 @@ static int prepare_packet(Task& task, IoRequest& request) {
             if (int32_t(message.name_length) < 0)
                 return -22;
             message.name_length = min(message.name_length, uint32_t(128));
-            if (!message.name_length)
+            if (request.write && !message.name_length)
                 message.name = 0;
         }
         if (request.write && message.control_length)
@@ -188,6 +189,8 @@ static int prepare_packet(Task& task, IoRequest& request) {
         } else {
             request.address_pointer = message.name;
             request.address_capacity = message.name_length;
+            request.control_pointer = message.control;
+            request.control_capacity = message.control_length;
         }
         int error = import_vectors(task, request, message.iov, message.iov_count);
         if (error)
@@ -578,6 +581,24 @@ static int64_t transfer(Task& task, IoRequest& request, const Iovec& vector, siz
     return done;
 }
 
+static bool copy_packet_address(Task& task, uint64_t destination, const void* data, size_t length) {
+    if (!length)
+        return true;
+    if (destination >= user_limit || length > user_limit - destination)
+        return false;
+    auto source = static_cast<const uint8_t*>(data);
+    while (length) {
+        // Preserve bytes on writable pages before a later address-copy fault.
+        size_t count = min(length, size_t(page_size - destination % page_size));
+        if (!task.memory->space.copy_out(destination, source, count))
+            return false;
+        destination += count;
+        source += count;
+        length -= count;
+    }
+    return true;
+}
+
 static int64_t packet_attempt(Task& task, IoRequest& request) {
     net_poll();
     const auto& f = request.call;
@@ -664,21 +685,33 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
         if (int32_t(request.address_capacity) < 0)
             return copy_fault(-22);
     }
+    uint32_t message_flags = length > request.packet_length ? 0x20 : 0;
+    uint64_t control_length =
+        ip6 && f.rax == 47
+            ? inet6_receive_control(task, request.handle->inet6, *ip6, request.control_pointer,
+                                    request.control_capacity, message_flags)
+            : 0;
+    if (ip6 && request.address_pointer) {
+        // Linux stores the full source length before copying any address bytes.
+        uint64_t length_pointer =
+            f.rax == 47 ? f.rsi + offsetof(Message, name_length) : request.address_length_pointer;
+        if (!task.memory->space.copy_out(length_pointer, &actual_address, 4))
+            return copy_fault();
+    }
     if (request.address_pointer &&
-        (!task.memory->space.copy_out(request.address_pointer, source,
-                                      min(request.address_capacity, actual_address)) ||
-         (request.address_length_pointer &&
+        (!copy_packet_address(task, request.address_pointer, source,
+                              min(request.address_capacity, actual_address)) ||
+         (!ip6 && request.address_length_pointer &&
           !task.memory->space.copy_out(request.address_length_pointer, &actual_address, 4))))
         return copy_fault();
     if (f.rax == 47) {
-        uint32_t flags = length > request.packet_length ? 0x20 : 0;
-        uint64_t control_length = 0;
         uint32_t address_length = request.address_pointer ? actual_address : 0;
-        if (!task.memory->space.copy_out(f.rsi + offsetof(Message, name_length), &address_length,
-                                         4) ||
+        // A NULL IPv6 source-name pointer leaves the caller's length untouched.
+        if ((!ip6 && !task.memory->space.copy_out(f.rsi + offsetof(Message, name_length),
+                                                  &address_length, 4)) ||
+            !task.memory->space.copy_out(f.rsi + offsetof(Message, flags), &message_flags, 4) ||
             !task.memory->space.copy_out(f.rsi + offsetof(Message, control_length), &control_length,
-                                         8) ||
-            !task.memory->space.copy_out(f.rsi + offsetof(Message, flags), &flags, 4))
+                                         8))
             return copy_fault();
     }
     int64_t result = request.flags & 0x20 ? length : at;

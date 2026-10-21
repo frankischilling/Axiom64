@@ -981,6 +981,15 @@ jobs:
       - name: Compare IPv6 raw and UDP sockets with three native Linux linkages
         if: matrix.suite == 'network'
         run: sudo -n make test-ipv6-sockets-native
+      - name: Test IPv6 receive metadata and copy faults on both adapters
+        if: matrix.suite == 'network'
+        run: make test-ipv6-controls
+      - name: Compare IPv6 receive metadata with three native Linux linkages
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv6-controls-native
+      - name: Compare every local IPv6 receive-control and result-copy observation
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv6-controls-contract
       - name: Test IPv6 source fragmentation and output policy on both adapters
         if: matrix.suite == 'network'
         run: make test-ipv6-output
@@ -1022,6 +1031,15 @@ jobs:
             build/ipv6-sockets-static.inputs.json
             build/ipv6-sockets-dynamic.inputs.json
             build/axiom64-ipv6-sockets-*.iso
+            build/ipv6-controls-wire
+            build/ipv6-controls-native-wire
+            build/ipv6-controls-contract
+            build/ipv6-controls-native
+            build/ipv6-controls-static
+            build/ipv6-controls-dynamic
+            build/ipv6-controls-static.inputs.json
+            build/ipv6-controls-dynamic.inputs.json
+            build/axiom64-ipv6-controls-*.iso
             build/ipv6-output-wire
             build/ipv6-output-native-wire
             build/ipv6-output-static.inputs.json

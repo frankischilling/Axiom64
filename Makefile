@@ -663,17 +663,20 @@ test-netlink-codec: build/netlink-codec-host
 .PHONY: test-ipv6-wire test-tcp-wire
 build/ipv6-%-native: userspace/tests/net/ipv6_%.c
 	@mkdir -p build
-	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $(filter %.c,$^) -o $@
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $(IPV6_FIXTURE_FLAGS) $(filter %.c,$^) -o $@
 build/ipv6-%-static: userspace/tests/net/ipv6_%.c scripts/compile_uapi_client.py scripts/build_openssl.py ports.lock.json
 	@mkdir -p build
-	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -static $(filter %.c,$^)
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(IPV6_FIXTURE_FLAGS) -static $(filter %.c,$^)
 build/ipv6-%-dynamic: userspace/tests/net/ipv6_%.c scripts/compile_uapi_client.py scripts/build_openssl.py ports.lock.json
 	@mkdir -p build
-	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(filter %.c,$^)
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(IPV6_FIXTURE_FLAGS) $(filter %.c,$^)
 build/ipv6-sockets-native build/ipv6-sockets-static build/ipv6-sockets-dynamic build/ipv6-output-native build/ipv6-output-static build/ipv6-output-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-pmtu-native build/ipv6-pmtu-static build/ipv6-pmtu-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-expiry-native build/ipv6-expiry-static build/ipv6-expiry-dynamic: userspace/tests/net/ipv6_fixture.h
+build/ipv6-controls-native build/ipv6-controls-static build/ipv6-controls-dynamic: userspace/tests/net/ipv6_fixture.h
+build/ipv6-controls-native build/ipv6-controls-static build/ipv6-controls-dynamic: IPV6_FIXTURE_FLAGS = -DIPV6_CONTROLS_INTEGRATED
+build/ipv6-controls-native build/ipv6-controls-static build/ipv6-controls-dynamic: userspace/tests/net/ipv6_control.c userspace/tests/net/ipv6_control_faults.c userspace/tests/net/ipv6_control_header_faults.c
 .PHONY: test-ipv6-host test-ipv6-host-native
 test-ipv6-host:
 	$(PYTHON) scripts/ipv6_host_test.py
@@ -707,6 +710,14 @@ test-ipv6-expiry:
 	$(PYTHON) scripts/ipv6_host_test.py --suite expiry --workers 4
 test-ipv6-expiry-native:
 	$(PYTHON) scripts/ipv6_host_native.py --suite expiry --workers 3
+.PHONY: test-ipv6-controls test-ipv6-controls-native
+test-ipv6-controls:
+	$(PYTHON) scripts/ipv6_host_test.py --suite controls --workers 4
+test-ipv6-controls-native:
+	$(PYTHON) scripts/ipv6_host_native.py --suite controls --workers 3
+.PHONY: test-ipv6-controls-contract
+test-ipv6-controls-contract:
+	$(PYTHON) scripts/ipv6_controls_contract_test.py
 .PHONY: test-ipv6-fragments test-ipv6-fragments-native
 test-ipv6-fragments: test-ipv6-fragment-observation
 	$(PYTHON) scripts/ipv6_host_test.py --suite fragments --workers 4

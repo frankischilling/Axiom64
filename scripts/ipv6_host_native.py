@@ -42,9 +42,17 @@ def child(profile, directory, suite='host'):
                  'scripts/ipv6_pmtu_peer.py', 'scripts/ipv6_pmtu_capture.py',
                  'scripts/ipv6_errors_peer.py', 'scripts/ipv6_errors_capture.py',
                  'scripts/ipv6_expiry_peer.py', 'scripts/ipv6_expiry_capture.py',
+                 'scripts/ipv6_controls_peer.py', 'scripts/ipv6_controls_capture.py',
                  'userspace/tests/net/ipv6_fixture.h'):
         sources[name] = digest(ROOT / name)
     products = {name: digest(Path(name)) for name in command}
+    if suite == 'controls':
+        for name in ('Makefile', 'userspace/tests/net/ipv6_control.c',
+                     'userspace/tests/net/ipv6_control_faults.c',
+                     'userspace/tests/net/ipv6_control_header_faults.c',
+                     'scripts/ipv6_control_contract.py', 'scripts/ipv6_control_fault_contract.py',
+                     'scripts/ipv6_control_header_contract.py', 'scripts/ipv6_controls_contract_test.py'):
+            sources[name] = digest(ROOT / name)
     saved = directory / 'products'
     saved.mkdir()
     for n, name in enumerate(command):
@@ -92,6 +100,9 @@ def child(profile, directory, suite='host'):
     elif suite == 'expiry':
         from ipv6_expiry_peer import Peer as ExpiryPeer
         peer_type = ExpiryPeer
+    elif suite == 'controls':
+        from ipv6_controls_peer import Peer as ControlsPeer
+        peer_type = ControlsPeer
     peers = [peer_type(lane, native=True) for lane in range(2)]
     taps, captures, statistics, interfaces = [], [], [], []
     selector = selectors.DefaultSelector()
@@ -165,7 +176,9 @@ def child(profile, directory, suite='host'):
                     from ipv6_errors_capture import verify_capture as checker
                 elif suite == 'expiry':
                     from ipv6_expiry_capture import verify_capture as checker
-                extra = dict(statistics=statistics[lane], interface_index=interfaces[lane]['index']) if suite in ('fragments', 'output', 'pmtu', 'errors', 'expiry') else {}
+                elif suite == 'controls':
+                    from ipv6_controls_capture import verify_capture as checker
+                extra = dict(statistics=statistics[lane], interface_index=interfaces[lane]['index']) if suite in ('fragments', 'output', 'pmtu', 'errors', 'expiry', 'controls') else {}
                 audits.append(checker(directory / f'lane{lane}.pcap', lane,
                     directory / 'client.log', directory / f'lane{lane}-damaged.zip', native=True, **extra))
         except Exception as failure:
@@ -189,7 +202,7 @@ def child(profile, directory, suite='host'):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--suite', choices=('host', 'sockets', 'fragments', 'output', 'pmtu', 'errors', 'expiry'), default='host')
+    parser.add_argument('--suite', choices=('host', 'sockets', 'fragments', 'output', 'pmtu', 'errors', 'expiry', 'controls'), default='host')
     parser.add_argument('--workers', type=int, choices=(1, 2, 3), default=1)
     parser.add_argument('--child', choices=('native', 'static', 'dynamic'))
     parser.add_argument('--profile', choices=('native', 'static', 'dynamic', 'all'), default='all')

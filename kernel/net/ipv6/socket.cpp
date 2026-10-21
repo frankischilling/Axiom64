@@ -142,7 +142,7 @@ int inet6_bind_port(Inet6Socket* socket, const ip6::Address& local, uint16_t por
 }
 
 static void enqueue(Inet6Socket& socket, unsigned index, const ip6::Address& source, uint16_t port,
-                    const void* data, size_t length) {
+                    const void* data, size_t length, const ip6::Header& header) {
     if (socket.count == inet6_queue_count ||
         length > socket.receive_limit -
                      min(socket.bytes + socket.error_bytes, size_t(socket.receive_limit)))
@@ -150,7 +150,12 @@ static void enqueue(Inet6Socket& socket, unsigned index, const ip6::Address& sou
     auto frame = static_cast<Inet6Frame*>(alloc(sizeof(Inet6Frame) + length));
     if (!frame)
         return;
-    *frame = {{10, __builtin_bswap16(port), 0, source, source.link_local() ? index : 0}, length};
+    *frame = {{10, __builtin_bswap16(port), 0, source, source.link_local() ? index : 0},
+              length,
+              header.destination,
+              index,
+              header.hop_limit,
+              header.traffic_class};
     memcpy(frame + 1, data, length);
     socket.queue[(socket.head + socket.count) % inet6_queue_count] = frame;
     socket.count++;
@@ -194,7 +199,7 @@ bool inet6_deliver(unsigned index, const ip6::Packet& packet) {
             continue;
         matched = true;
         if (!datagram || packet.header.destination.multicast()) {
-            enqueue(socket, index, packet.header.source, source_port, data, length);
+            enqueue(socket, index, packet.header.source, source_port, data, length, packet.header);
             continue;
         }
         unsigned score = (!socket.local.unspecified() ? 4 : 0) + (socket.connected ? 8 : 0) +
@@ -205,7 +210,7 @@ bool inet6_deliver(unsigned index, const ip6::Packet& packet) {
         }
     }
     if (best)
-        enqueue(*best, index, packet.header.source, source_port, data, length);
+        enqueue(*best, index, packet.header.source, source_port, data, length, packet.header);
     return matched;
 }
 

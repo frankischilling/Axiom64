@@ -19,6 +19,9 @@ static_assert(sizeof(Inet6Address) == 28);
 struct Inet6Frame {
     Inet6Address source;
     size_t length;
+    ip6::Address destination;
+    unsigned index = 0;
+    uint8_t hops = 0, traffic_class = 0;
 };
 
 inline const uint8_t* inet6_bytes(const Inet6Frame* frame) {
@@ -32,6 +35,8 @@ bool inet6_error_queued(Inet6Socket*);
 int64_t inet6_receive_error(Task&, Inet6Socket*, const Frame&);
 const Inet6Frame* inet6_front(Inet6Socket*);
 void inet6_consume(Inet6Socket*);
+size_t inet6_receive_control(Task&, Inet6Socket*, const Inet6Frame&, uint64_t address,
+                             uint64_t capacity, uint32_t& flags);
 Inet6Address inet6_peer(Inet6Socket*);
 int inet6_target(Inet6Socket*, Inet6Address&, bool& named,
                  uint32_t imported_length = sizeof(Inet6Address));

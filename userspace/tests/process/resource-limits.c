@@ -17,6 +17,7 @@
 #include <sys/syscall.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -31,6 +32,7 @@
     } while (0)
 
 static const char* executable;
+static int exec_quota_first;
 static unsigned observations;
 static volatile sig_atomic_t file_signals;
 
@@ -366,12 +368,20 @@ static void process_exec(void) {
             if (flagged) {
                 CHECK(syscall(SYS_execve, executable, (void*)-1, (void*)-1) == -1 &&
                       errno == EAGAIN);
-                CHECK(syscall(SYS_execve, (void*)-1, NULL, NULL) == -1 && errno == EFAULT);
-                CHECK(syscall(SYS_execve, "", NULL, NULL) == -1 && errno == ENOENT);
+                CHECK(syscall(SYS_execve, (void*)-1, NULL, NULL) == -1 &&
+                      errno == (exec_quota_first ? EAGAIN : EFAULT));
+                CHECK(syscall(SYS_execve, "", NULL, NULL) == -1 &&
+                      errno == (exec_quota_first ? EAGAIN : ENOENT));
                 CHECK(execv(executable, arguments) == -1 && errno == EAGAIN);
                 limit.rlim_cur = 2;
             }
             CHECK(setrlimit(RLIMIT_NPROC, &limit) == 0);
+            if (flagged) {
+                CHECK(syscall(SYS_execve, (void*)-1, NULL, NULL) == -1 && errno == EFAULT);
+                CHECK(syscall(SYS_execve, "", NULL, NULL) == -1 && errno == ENOENT);
+                CHECK(syscall(SYS_execve, executable, (void*)-1, (void*)-1) == -1 &&
+                      errno == EFAULT);
+            }
             execv(executable, arguments);
             CHECK(0);
         }
@@ -1238,6 +1248,14 @@ int main(int argc, char** argv) {
     }
     CHECK((argc == 1 || (argc == 2 && !strcmp(argv[1], "--native"))) && geteuid() == 0);
     executable = argv[0];
+    if (argc == 2) {
+        struct utsname kernel;
+        unsigned major, minor;
+        CHECK(uname(&kernel) == 0 && sscanf(kernel.release, "%u.%u", &major, &minor) == 2);
+        exec_quota_first = major >= 7;
+    }
+    fprintf(stderr, "RESOURCE_EXEC_MODEL order=%s\n",
+            exec_quota_first ? "quota-first" : "filename-first");
     isolated(interface, "raw_abi_fault_precedence_aliasing_and_hard_limit_permissions");
     isolated(descriptors, "real_descriptor_pressure_pipe_rollback_and_retained_high_descriptions");
     isolated(lifetime, "thread_group_sharing_fork_copy_and_actual_exec_preservation");

@@ -116,7 +116,7 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
                     f'mac={peers[lane].guest.hex(":")}']
         capture = output / f'lane{lane}.pcap'
         captures.append(capture)
-        if suite == 'pmtu':
+        if suite in ('pmtu', 'errors'):
             from packet_observation import PcapObservation
             peers[lane].observe_input = PcapObservation(capture).watch
         command += ['-object', f'filter-dump,id=cap{lane},netdev=peer{lane},file={capture}']

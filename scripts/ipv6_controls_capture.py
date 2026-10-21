@@ -59,7 +59,7 @@ def normalized_header(encoded, before):
     return bytes(value)
 
 
-def expected_sample(lane, sequence, index, packet):
+def expected_sample(lane, sequence, index, packet, native_copy_order='length-first'):
     variant, scoped = sequence % 20, sequence // 20 % 2
     mask = variant if variant < 8 else 7
     capacity = {8: 16, 9: 36, 10: 56, 11: 88}.get(variant, 96)
@@ -111,7 +111,7 @@ def expected_sample(lane, sequence, index, packet):
     before[48:52] = struct.pack('<I', 0x5a5a)
     after = bytearray(before)
     failed = variant in (15, 16, 17)
-    if variant != 15:
+    if variant != 15 and not (variant == 16 and native_copy_order == 'address-first'):
         after[8:12] = struct.pack('<I', 28)
     if not failed:
         after[48:52] = struct.pack('<I', flags | (32 if variant == 13 else 0))
@@ -152,7 +152,9 @@ def multicast_report(frame, guest, link):
     require(at == len(body), 'exact native multicast record length')
 
 
-def inspect(rows, lane, log, native=False, interface_index=None):
+def inspect(rows, lane, log, native=False, interface_index=None, native_copy_order='length-first'):
+    require(native_copy_order in ('address-first', 'length-first') and
+            (native or native_copy_order == 'length-first'), 'explicit native or target copy order')
     require(log.count(DONE) == 1 and 'IPV6_CONTROLS_FAIL' not in log,
             'actual complete metadata client')
     for marker in ('IPV6_CONTROL_LOCAL_DONE cases=650 transports=2 capacities=34 guards=40',
@@ -251,7 +253,7 @@ def inspect(rows, lane, log, native=False, interface_index=None):
         actual = dict(samples[sequence])
         actual['header'] = normalized_header(actual['header'], actual['before_header']).hex()
         actual['before_header'] = normalized_header(actual['before_header'], actual['before_header']).hex()
-        expected = expected_sample(lane, sequence, index, good)
+        expected = expected_sample(lane, sequence, index, good, native_copy_order)
         differences = sorted(key for key in expected if actual[key] != expected[key])
         require(not differences, f'original metadata result case {sequence}: {differences}')
     return dict(passed=True, lane=lane, cases=80, original_inputs=160,
@@ -276,7 +278,7 @@ def damaged_log(log, lane, sequence, field, offset=None):
 
 
 def verify_capture(path, lane, log_path, archive, native=False, statistics=None,
-                   interface_index=None):
+                   interface_index=None, native_copy_order='length-first'):
     path, log_path = Path(path), Path(log_path)
     original, original_log = path.read_bytes(), log_path.read_bytes()
     rows, log = read_capture(path), original_log.decode(errors='replace')
@@ -289,7 +291,7 @@ def verify_capture(path, lane, log_path, archive, native=False, statistics=None,
             if frame[12:14] != b'\x86\xdd' or frame[20] != 0:
                 selected.append(row)
         clock = bind_native_clock(path, selected, statistics)
-    proof = inspect(rows, lane, log, native, interface_index)
+    proof = inspect(rows, lane, log, native, interface_index, native_copy_order)
     names = ('missing-input', 'duplicate-input', 'checksum', 'hop', 'traffic-class',
              'source', 'destination', 'MAC', 'payload', 'missing-case', 'wrong-result',
              'wrong-queue', 'wrong-flags', 'wrong-hop-control', 'wrong-class-control',
@@ -349,7 +351,7 @@ def verify_capture(path, lane, log_path, archive, native=False, statistics=None,
             saved.writestr(name + '.pcap', encode_capture(changed))
             saved.writestr(name + '.log', text)
             try:
-                inspect(changed, lane, text, native, interface_index)
+                inspect(changed, lane, text, native, interface_index, native_copy_order)
             except ValueError as error:
                 rejected.append(dict(name=name, reason=str(error)))
             else:

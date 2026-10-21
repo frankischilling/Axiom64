@@ -21,6 +21,7 @@ from fetch import ROOT
 from ipv6_host_peer import Peer
 from ipv6_host_capture import verify_capture
 from tcp_fault_native import Capture
+from ipv6_copy_model import parse_probe
 
 
 def digest(path):
@@ -60,7 +61,15 @@ def child(profile, directory, suite='host'):
                      'scripts/ipv6_error_metadata_peer.py', 'scripts/ipv6_error_metadata_capture.py',
                      'scripts/ipv6_error_controls_contract.py', 'scripts/ipv6_error_controls_test.py'):
             sources[name] = digest(ROOT / name)
+    model_program = ROOT / 'build/ipv6-copy-model-native' if suite in ('controls', 'errors') else None
+    if model_program:
+        sources['userspace/tests/net/ipv6_copy_model.c'] = digest(ROOT / 'userspace/tests/net/ipv6_copy_model.c')
+        sources['scripts/ipv6_copy_model.py'] = digest(ROOT / 'scripts/ipv6_copy_model.py')
+        products[str(model_program)] = digest(model_program)
     saved.mkdir()
+    if model_program:
+        shutil.copy2(model_program, saved / 'copy-model-native')
+        shutil.copy2(ROOT / 'userspace/tests/net/ipv6_copy_model.c', saved / 'copy-model.c')
     for n, name in enumerate(command):
         shutil.copy2(name, saved / f'{n}-{Path(name).name}')
     if profile != 'native':
@@ -116,6 +125,17 @@ def child(profile, directory, suite='host'):
     began = time.monotonic()
     try:
         subprocess.run(['ip', 'link', 'set', 'lo', 'up'], check=True)
+        if model_program:
+            observed = subprocess.run([str(model_program)], stdout=subprocess.PIPE,
+                                      stderr=subprocess.STDOUT, check=True)
+            (directory / 'native-copy-model.log').write_bytes(observed.stdout)
+            kernel = json.loads((directory / 'preexecution.json').read_text())['kernel']
+            copy_order = parse_probe(observed.stdout.decode(), kernel['release'])
+            model = dict(kernel=kernel, source_order=copy_order,
+                         probe_log_sha256=hashlib.sha256(observed.stdout).hexdigest(),
+                         probe_program=str(model_program), probe_program_sha256=products[str(model_program)],
+                         probe_source_sha256=sources['userspace/tests/net/ipv6_copy_model.c'])
+            (directory / 'native-copy-model.json').write_text(json.dumps(model, indent=2) + '\n')
         for lane in range(2):
             tap = os.open('/dev/net/tun', os.O_RDWR | os.O_NONBLOCK)
             taps.append(tap)
@@ -185,6 +205,8 @@ def child(profile, directory, suite='host'):
                 elif suite == 'controls':
                     from ipv6_controls_capture import verify_capture as checker
                 extra = dict(statistics=statistics[lane], interface_index=interfaces[lane]['index']) if suite in ('fragments', 'output', 'pmtu', 'errors', 'expiry', 'controls') else {}
+                if model_program:
+                    extra['native_copy_order'] = copy_order
                 audits.append(checker(directory / f'lane{lane}.pcap', lane,
                     directory / 'client.log', directory / f'lane{lane}-damaged.zip', native=True, **extra))
         except Exception as failure:
@@ -200,6 +222,8 @@ def child(profile, directory, suite='host'):
                   capture_audits=audits, capture_statistics=statistics,
                   interfaces=interfaces, interface_record_sha256=(digest(directory / 'interfaces.json')
                       if (directory / 'interfaces.json').is_file() else None),
+                  native_copy_model_sha256=(digest(directory / 'native-copy-model.json')
+                      if (directory / 'native-copy-model.json').is_file() else None),
                   settings=settings, full_F12_complete=False)
     (directory / 'receipt.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({key: value for key, value in result.items() if key not in ('peers', 'settings')}), flush=True)
@@ -218,7 +242,10 @@ def main():
     if args.child:
         return child(args.child, args.output_directory, args.suite)
     profiles = ('native', 'static', 'dynamic') if args.profile == 'all' else (args.profile,)
-    subprocess.run(['make', '-j2', *('build/ipv6-' + args.suite + '-' + profile for profile in profiles)], cwd=ROOT, check=True)
+    targets = ['build/ipv6-' + args.suite + '-' + profile for profile in profiles]
+    if args.suite in ('controls', 'errors'):
+        targets.append('build/ipv6-copy-model-native')
+    subprocess.run(['make', '-j2', *targets], cwd=ROOT, check=True)
     args.output_directory.mkdir(parents=True, exist_ok=True)
     def run(profile):
         directory = args.output_directory / profile

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import zipfile
+from ipv6_copy_model import canonical_headers
 
 PREFIXES = (0, 1, 4, 7, 8, 9, 11, 12, 15, 16, 39, 40, 41, 47, 48, 49, 51, 52, 55, 56)
 BUFFERS = {'before_header': 56, 'header': 56, 'name': 40, 'control': 96,
@@ -80,12 +81,12 @@ def parse(text):
     return int(indices[0]), rows
 
 
-def reference(texts):
+def reference(texts, native_copy_order='length-first'):
     parsed = [parse(text) for text in texts]
     require(len(parsed) == 3 and all(index == 1 for index, _ in parsed),
             'three actual Linux linkage observations')
     require(all(rows == parsed[0][1] for _, rows in parsed), 'native header observations agree')
-    return parsed[0][1]
+    return canonical_headers(parsed[0][1], native_copy_order)
 
 
 def differences(expected, text):
@@ -135,6 +136,7 @@ def damage(text, name):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--native-copy-order', choices=('address-first', 'length-first'), default='length-first')
     parser.add_argument('--native', type=Path, action='append', required=True)
     parser.add_argument('--guest', type=Path, action='append', required=True)
     parser.add_argument('--output', type=Path, required=True)
@@ -143,7 +145,7 @@ def main():
     paths = [*args.native, *args.guest]
     require(len(set(paths)) == len(paths), 'distinct original header observations')
     original = {str(path): path.read_bytes() for path in paths}
-    expected = reference([original[str(path)].decode() for path in args.native])
+    expected = reference([original[str(path)].decode() for path in args.native], args.native_copy_order)
     results = [dict(path=str(path), differences=differences(
         expected, original[str(path)].decode(errors='replace'))) for path in args.guest]
     rejected = []

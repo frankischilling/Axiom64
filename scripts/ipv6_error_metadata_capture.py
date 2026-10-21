@@ -70,7 +70,7 @@ def normalize_header(encoded, before, null_name):
     return value.hex()
 
 
-def expected(lane, sequence, index, original, received):
+def expected(lane, sequence, index, original, received, native_copy_order='length-first'):
     variant, scoped, raw = sequence % 20, sequence // 20 % 2, sequence >= 40
     mask = variant if variant < 8 else 0 if variant == 12 else 7
     capacity = {8:16, 9:36, 10:88}.get(variant, 192)
@@ -129,7 +129,7 @@ def expected(lane, sequence, index, original, received):
     before[48:52] = struct.pack('<I', 0x5a5a)
     after = bytearray(before)
     failed = variant in (15, 16, 17)
-    if variant not in (15, 19):
+    if variant not in (15, 19) and not (variant == 16 and native_copy_order == 'address-first'):
         after[8:12] = struct.pack('<I', 28)
     if not failed:
         after[40:48] = struct.pack('<Q', used)
@@ -148,7 +148,9 @@ def expected(lane, sequence, index, original, received):
                 control=control.hex(), payload=payload.hex(), drain=(b'\xa5' * 32).hex())
 
 
-def inspect(rows, lane, log, native=False, interface_index=None):
+def inspect(rows, lane, log, native=False, interface_index=None, native_copy_order='length-first'):
+    require(native_copy_order in ('address-first', 'length-first') and
+            (native or native_copy_order == 'length-first'), 'explicit native or target copy order')
     require(log.splitlines().count(DONE) == 1 and 'IPV6_ERROR_METADATA_FAIL' not in log,
             'complete actual error metadata execution')
     require(log.splitlines().count(f'IPV6_ERROR_METADATA_WIRE_PASS lane={lane} cases=80 scopes=2 variants=20') == 1,
@@ -254,7 +256,7 @@ def inspect(rows, lane, log, native=False, interface_index=None):
         before = actual['before_header']
         for field in ('before_header', 'header'):
             actual[field] = normalize_header(actual[field], before, sequence % 20 == 19)
-        wanted = expected(lane, sequence, index, original, good)
+        wanted = expected(lane, sequence, index, original, good, native_copy_order)
         changed = sorted(key for key in wanted if actual[key] != wanted[key])
         require(not changed, f'original error metadata case {sequence}: {changed}')
     return dict(passed=True, lane=lane, cases=80, original_datagrams=80, received_errors=160,
@@ -275,11 +277,11 @@ def alter_log(log, lane, sequence, field, offset=None):
     return '\n'.join(lines)+'\n'
 
 
-def verify_capture(path, lane, log_path, archive, native=False, interface_index=None):
+def verify_capture(path, lane, log_path, archive, native=False, interface_index=None, native_copy_order='length-first'):
     path, log_path = Path(path), Path(log_path)
     raw, original_log = path.read_bytes(), log_path.read_bytes()
     rows, log = read_capture(path), original_log.decode(errors='replace')
-    result, proof = inspect(rows, lane, log, native, interface_index)
+    result, proof = inspect(rows, lane, log, native, interface_index, native_copy_order)
     names = ('missing-output','duplicate-output','missing-error','checksum','quote','hop','class',
              'source','destination','MAC','missing-case','result','flags','length','packet-address',
              'packet-index','hop-control','class-control','offender','source-name','payload',
@@ -314,7 +316,7 @@ def verify_capture(path, lane, log_path, archive, native=False, interface_index=
                     frame[56:58]=checksum(frame[22:54]+struct.pack('!I3xB',size,58)+frame[54:54+size]).to_bytes(2,'big')
                 changed[at]['frame']=bytes(frame)
             saved.writestr(name+'.pcap',encode_capture(changed));saved.writestr(name+'.log',text)
-            try:inspect(changed,lane,text,native,interface_index)
+            try:inspect(changed,lane,text,native,interface_index,native_copy_order)
             except ValueError as error:rejected.append(dict(name=name,reason=str(error)))
             else:raise ValueError('accepted damaged error metadata: '+name)
         saved.writestr('rejections.json',json.dumps(rejected,indent=2))

@@ -117,18 +117,18 @@ def application(log, lane, interface_index):
         seen.add((link, sequence))
 
 
-def inspect(rows, lane, log, native=False, interface_index=None):
+def inspect(rows, lane, log, native=False, interface_index=None, native_copy_order='length-first'):
     index = interface_index if interface_index is not None else lane + 1
     from ipv6_error_metadata_capture import boundary, inspect as inspect_metadata
     result, proof = inspect_packets(rows[:boundary(rows, lane)], lane, log, native,
                            application=lambda text, link: application(text, link, index),
                            barrier_protocol=b'\x88\xbc', barrier_magic=b'IP6E', quote_length=96)
-    metadata, _ = inspect_metadata(rows, lane, log, native, index)
+    metadata, _ = inspect_metadata(rows, lane, log, native, index, native_copy_order)
     result['metadata'] = metadata
     return result, proof
 
 
-def verify_capture(path, lane, log_path, archive, native=False, statistics=None, interface_index=None):
+def verify_capture(path, lane, log_path, archive, native=False, statistics=None, interface_index=None, native_copy_order='length-first'):
     path, log_path = Path(path), Path(log_path)
     original, original_log = path.read_bytes(), log_path.read_bytes()
     rows, log = read_capture(path), original_log.decode(errors='replace')
@@ -142,7 +142,7 @@ def verify_capture(path, lane, log_path, archive, native=False, statistics=None,
             row['stamp'] = row['ns'] // 1000
             selected.append(row)
         clock = bind_native_clock(path, selected, statistics)
-    result, proof = inspect(rows, lane, log, native, interface_index)
+    result, proof = inspect(rows, lane, log, native, interface_index, native_copy_order)
     names = ('missing-data', 'duplicate-data', 'missing-quote', 'valid-checksum-foreign-quote',
              'wrong-control', 'wrong-payload', 'wrong-destination', 'missing-local-case',
              'wrong-admission', 'wrong-vector', 'wrong-truncation', 'short-observation', 'fragment-offset', 'fragment-id')
@@ -196,7 +196,7 @@ def verify_capture(path, lane, log_path, archive, native=False, statistics=None,
             saved.writestr(name + '.pcap', encode_capture(changed))
             saved.writestr(name + '.log', changed_log)
             try:
-                inspect(changed, lane, changed_log, native, interface_index)
+                inspect(changed, lane, changed_log, native, interface_index, native_copy_order)
             except ValueError as failure:
                 rejected.append(dict(name=name, reason=str(failure)))
             else:
@@ -206,7 +206,7 @@ def verify_capture(path, lane, log_path, archive, native=False, statistics=None,
     from ipv6_error_metadata_capture import verify_capture as verify_metadata
     metadata = verify_metadata(path, lane, log_path,
                                Path(archive).with_name(Path(archive).stem + '-metadata.zip'),
-                               native, interface_index)
+                               native, interface_index, native_copy_order)
     metadata['native_clock_qualified'] = bool(clock)
     result.update(damaged_rejected=len(rejected), native_clock=clock,
                   metadata=metadata,

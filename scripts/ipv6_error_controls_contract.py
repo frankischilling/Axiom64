@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import zipfile
+from ipv6_copy_model import canonical_errors
 
 CAPACITIES = (0, 1, 7, 15, 16, 17, 19, 20, 23, 24, 35, 36,
               37, 39, 40, 55, 56, 63, 64, 87, 88, 151, 152, 192)
@@ -138,6 +139,7 @@ def damage(text, name):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--native-copy-order', choices=('address-first', 'length-first'), default='length-first')
     parser.add_argument('--native', type=Path, action='append', required=True)
     parser.add_argument('--guest', type=Path, action='append', required=True)
     parser.add_argument('--output', type=Path, required=True)
@@ -149,7 +151,7 @@ def main():
     native = [parse(original[str(path)].decode()) for path in args.native]
     require(len(native) == 3 and all(index == 1 for index,_ in native) and
             all(rows == native[0][1] for _,rows in native), 'three agreeing Linux linkages')
-    expected = native[0][1]
+    expected = canonical_errors(native[0][1], args.native_copy_order)
     results = [dict(path=str(path),differences=differences(expected,original[str(path)].decode()))
                for path in args.guest]
     rejected = []
@@ -171,7 +173,7 @@ def main():
             archive.writestr('rejections.json',json.dumps(rejected,indent=2))
     require(all(path.read_bytes()==original[str(path)] for path in paths),'original evidence unchanged')
     result=dict(passed=all(not row['differences'] for row in results),cases_each=472,
-                native_profiles=3,guest_profiles=len(results),damaged_rejected=len(rejected),
+                native_profiles=3,native_copy_order=args.native_copy_order,guest_profiles=len(results),damaged_rejected=len(rejected),
                 profiles=results,full_F12_complete=False,
                 original_sha256={name:hashlib.sha256(data).hexdigest() for name,data in original.items()})
     args.output.write_text(json.dumps(result,indent=2)+'\n')

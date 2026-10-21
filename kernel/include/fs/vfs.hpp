@@ -224,6 +224,9 @@ void close_handle(Handle*);
 
 int64_t read_handle(Handle*, void*, size_t);
 
+// Preview queued pipe bytes without consuming them during a user copy.
+int64_t pipe_read(Pipe*, void*, size_t, bool peek = false);
+
 // Clamp a complete regular-file write before inspecting user payload pages.
 int write_handle_limit(Handle*, size_t&);
 

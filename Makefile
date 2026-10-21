@@ -581,12 +581,15 @@ build/resolver-native: $(RESOLVER_SOURCES) $(RESOLVER_HEADERS)
 build/thread-static: userspace/tests/threads/pthreads.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -lm -o $@
-build/thread-io-static: userspace/tests/threads/io.c
+build/thread-io-static: userspace/tests/threads/io.c userspace/tests/threads/vectors.c
 	@mkdir -p build
-	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
-build/thread-io-dynamic: userspace/tests/threads/io.c
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $(filter %.c,$^) -o $@
+build/thread-io-dynamic: userspace/tests/threads/io.c userspace/tests/threads/vectors.c
 	@mkdir -p build
-	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DIO_LINKAGE='"dynamic"' $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DIO_LINKAGE='"dynamic"' $(filter %.c,$^) -o $@
+build/io-vectors-native: userspace/tests/threads/vectors.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DIO_VECTORS_MAIN -DIO_LINKAGE='"native"' $< -o $@
 build/thread-dynamic: userspace/tests/threads/pthreads.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DTHREAD_LINKAGE='"dynamic"' $< -lm -o $@
@@ -1054,9 +1057,13 @@ test-resolver-native: build/resolver-native
 test-threads:
 	$(PYTHON) scripts/boot_test.py --suite threads --firmware both --timeout 170
 .PHONY: test-thread-io-native
-test-thread-io-native: build/thread-io-static build/thread-io-dynamic
-	./build/thread-io-static
-	./build/thread-io-dynamic
+test-thread-io-native: build/thread-io-static build/thread-io-dynamic build/io-vectors-native
+	./build/thread-io-static >build/thread-io-static-native.log
+	cat build/thread-io-static-native.log
+	./build/thread-io-dynamic >build/thread-io-dynamic-native.log
+	cat build/thread-io-dynamic-native.log
+	./build/io-vectors-native >build/io-vectors-native.log
+	cat build/io-vectors-native.log
 test-thread-io:
 	$(PYTHON) scripts/boot_test.py --suite threads --phase io --firmware both --timeout 90
 build/virtqueue-tests: kernel/tests/drivers/virtio/queue.cpp kernel/drivers/virtio/queue.cpp kernel/include/drivers/virtio/queue.hpp kernel/include/core/base.hpp

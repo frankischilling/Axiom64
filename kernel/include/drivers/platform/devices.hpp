@@ -52,6 +52,8 @@ void device_close(Handle*);
 
 bool device_ready(Handle*, bool);
 
+bool device_ignores_buffer(Handle*, bool write);
+
 int64_t device_read(Handle*, void*, size_t);
 
 int64_t device_write(Handle*, const void*, size_t);

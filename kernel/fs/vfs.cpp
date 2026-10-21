@@ -960,6 +960,22 @@ bool handle_ready(Handle* h, bool write) {
     return device_ready(h, write);
 }
 
+int64_t pipe_read(Pipe* pipe, void* buffer, size_t length, bool peek) {
+    if (!length)
+        return 0;
+    if (!pipe->size)
+        return pipe->writers ? -11 : 0;
+    length = min(length, pipe->size);
+    auto bytes = static_cast<uint8_t*>(buffer);
+    for (size_t n = 0; n < length; n++)
+        bytes[n] = pipe->bytes[(pipe->head + n) % sizeof(pipe->bytes)];
+    if (!peek) {
+        pipe->head = (pipe->head + length) % sizeof(pipe->bytes);
+        pipe->size -= length;
+    }
+    return length;
+}
+
 int64_t read_handle(Handle* h, void* buf, size_t len) {
     if ((h->flags & 3) == 1)
         return -9;
@@ -981,19 +997,8 @@ int64_t read_handle(Handle* h, void* buf, size_t len) {
         return inet6_read(h->inet6, buf, len);
     if (h->netlink)
         return netlink_read(h->netlink, buf, len);
-    auto data = (uint8_t*)buf;
-    if (h->pipe) {
-        auto p = h->pipe;
-        if (!p->size)
-            return p->writers ? -11 : 0;
-        size_t n = min(len, p->size);
-        for (size_t i = 0; i < n; i++) {
-            data[i] = p->bytes[p->head];
-            p->head = (p->head + 1) % sizeof(p->bytes);
-        }
-        p->size -= n;
-        return n;
-    }
+    if (h->pipe)
+        return pipe_read(h->pipe, buf, len);
     auto n = h->node;
     if (!n)
         return -9;

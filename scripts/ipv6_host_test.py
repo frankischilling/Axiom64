@@ -43,7 +43,9 @@ def prepare(linkage, directory, suite='host'):
     image_audit = audit_fixture(image, digest(ROOT / 'build/axiom64.elf'),
                                {name: digest(path) for name, path in products.items()}, script)
     sources = list(dict.fromkeys([*manifest['sources'], 'Makefile',
-        'kernel/net/ethernet.cpp', 'kernel/io/io.cpp', 'kernel/net/netlink/socket.cpp',
+        'kernel/net/ethernet.cpp', 'kernel/io/io.cpp', 'kernel/include/io/vectors.hpp',
+        'kernel/drivers/platform/devices.cpp', 'kernel/include/drivers/platform/devices.hpp',
+        'kernel/net/netlink/socket.cpp',
         'kernel/net/netlink/addresses.cpp', 'kernel/net/netlink/inventory.cpp',
         'kernel/net/netlink/routes.cpp', 'kernel/net/netlink/ipv6.cpp',
         'kernel/include/net/netlink.hpp', 'kernel/include/net/ipv6.hpp', 'kernel/include/net/inet6.hpp',

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "io/io.hpp"
+#include "io/vectors.hpp"
 #include "core/time.hpp"
+#include "drivers/platform/devices.hpp"
 #include "fs/file_lock.hpp"
 #include "fs/record_lock.hpp"
 #include "fs/descriptor.hpp"
@@ -13,9 +15,7 @@
 #include "net/tcp/socket.hpp"
 
 namespace ax {
-struct Iovec {
-    uint64_t base, length;
-};
+using Iovec = IoVector;
 
 struct Message {
     uint64_t name;
@@ -112,7 +112,7 @@ static int64_t timeout_result(const IoRequest& request) {
 
 static int import_vectors(Task& task, IoRequest& request, uint64_t pointer, size_t count) {
     if (count > 1024)
-        return -22;
+        return request.call.rax == 46 || request.call.rax == 47 ? -90 : -22;
     request.count = count;
     if (!count)
         return 0;
@@ -121,21 +121,9 @@ static int import_vectors(Task& task, IoRequest& request, uint64_t pointer, size
         return -12;
     if (!task.memory->space.copy_in(request.vectors, pointer, count * sizeof(Iovec)))
         return -14;
-    uint64_t total = 0;
-    for (size_t i = 0; i < count; i++) {
-        auto& v = request.vectors[i];
-        if (v.length > INT64_MAX - total)
-            return -22;
-        total += v.length;
-    }
     // Linux limits each operation to MAX_RW_COUNT, including vector operations.
-    size_t remaining = 0x7ffff000;
-    for (size_t i = 0; i < count; i++) {
-        auto& v = request.vectors[i];
-        v.length = min(v.length, uint64_t(remaining));
-        remaining -= v.length;
-    }
-    return 0;
+    int64_t capacity = bound_io_vectors(request.vectors, count);
+    return capacity < 0 ? int(capacity) : 0;
 }
 
 static int copy_packet(Task& task, IoRequest& request, size_t begin, size_t length,
@@ -444,32 +432,143 @@ static int64_t stream_transfer(Task& task, IoRequest& request, const Iovec& vect
     return done;
 }
 
+struct VectorCursor {
+    IoRequest& request;
+    size_t index = 0, offset = 0;
+
+    bool copy(Task& task, uint8_t* buffer, size_t length) {
+        while (length) {
+            while (index < request.count && offset == request.vectors[index].length) {
+                index++;
+                offset = 0;
+            }
+            if (index == request.count)
+                panic("I/O cursor exceeds captured vectors");
+            const auto& vector = request.vectors[index];
+            uint64_t address = vector.base + offset;
+            size_t count = min(length, min(size_t(vector.length - offset),
+                                           size_t(page_size - address % page_size)));
+            bool copied = request.write ? task.memory->space.copy_in(buffer, address, count)
+                                        : task.memory->space.copy_out(address, buffer, count);
+            if (!copied)
+                return false;
+            offset += count;
+            buffer += count;
+            length -= count;
+        }
+        return true;
+    }
+};
+
+static int64_t local_stream_attempt(Task& task, IoRequest& request) {
+    auto handle = request.handle;
+    size_t remaining = 0;
+    for (size_t n = 0; n < request.count; n++) {
+        const auto& vector = request.vectors[n];
+        if (vector.length &&
+            (vector.base >= user_limit || vector.length > user_limit - vector.base))
+            return -14;
+        remaining += vector.length;
+    }
+    VectorCursor cursor{request};
+    uint8_t buffer[4096];
+    size_t done = 0;
+    bool peek = request.flags & 2;
+    while (remaining) {
+        size_t count = min(remaining, sizeof(buffer));
+        int64_t result;
+        if (request.write) {
+            result = handle->socket          ? socket_write(handle->socket, nullptr, 0)
+                     : handle->pipe->readers ? 0
+                                             : -32;
+            if (!result) {
+                size_t capacity = handle->socket
+                                      ? handle->socket->peer->capacity - handle->socket->peer->size
+                                      : sizeof(Pipe::bytes) - handle->pipe->size;
+                // Small pipe writes wait for the entire request to fit.
+                if (!capacity ||
+                    (handle->pipe && !done && remaining <= sizeof(buffer) && capacity < remaining))
+                    return done ? int64_t(done) : -11;
+                count = min(count, capacity);
+                if (!cursor.copy(task, buffer, count))
+                    return done ? int64_t(done) : -14;
+                result = handle->socket ? socket_write(handle->socket, buffer, count)
+                                        : write_handle(handle, buffer, count);
+            }
+        } else {
+            result = handle->socket
+                         ? socket_read(handle->socket, buffer, count, true, peek ? done : 0)
+                         : pipe_read(handle->pipe, buffer, count, true);
+            if (result > 0) {
+                // Stream copies commit only after their complete returned
+                // chunk reaches userspace, including across vector boundaries.
+                if (!cursor.copy(task, buffer, result))
+                    return done ? int64_t(done) : -14;
+                // Syscalls run with interrupts masked on the current single CPU.
+                int64_t consumed = handle->socket
+                                       ? peek ? result : socket_read(handle->socket, buffer, result)
+                                       : pipe_read(handle->pipe, buffer, result);
+                if (consumed != result)
+                    panic("local stream changed during copy");
+            }
+        }
+        if (result < 0) {
+            if (result == -32 && request.write && !(request.socket && (request.flags & 0x4000)))
+                queue_signal(&task, 13, task.process->pid);
+            return done ? int64_t(done) : result;
+        }
+        done += result;
+        remaining -= result;
+        if (size_t(result) < count)
+            break;
+    }
+    return done;
+}
+
 static int64_t transfer(Task& task, IoRequest& request, const Iovec& vector, size_t peek_offset) {
     auto h = request.handle;
     if (inet_stream(h->inet))
         return stream_transfer(task, request, vector, peek_offset);
-    if (!task.memory->space.valid(vector.base, vector.length, !request.write))
+    if (vector.base >= user_limit || vector.length > user_limit - vector.base)
         return -14;
+    if (device_ignores_buffer(h, request.write))
+        return request.write ? write_handle(h, nullptr, vector.length)
+                             : read_handle(h, nullptr, vector.length);
     uint8_t buffer[4096];
     size_t done = 0;
     while (done < vector.length) {
+        uint64_t address = vector.base + done;
         size_t count = min(size_t(vector.length - done), sizeof(buffer));
-        if (request.write && !task.memory->space.copy_in(buffer, vector.base + done, count))
+        bool regular = h->node && (h->node->mode & 0170000) == regular_file;
+        // File copies commit a page prefix.
+        if (regular)
+            count = min(count, size_t(page_size - address % page_size));
+        if (request.write && !task.memory->space.copy_in(buffer, address, count))
             return done ? int64_t(done) : -14;
-        int64_t n;
-        if (request.socket)
-            n = request.write
-                    ? socket_write(h->socket, buffer, count)
-                    : socket_read(h->socket, buffer, count, request.flags & 2, peek_offset + done);
-        else
-            n = request.write ? write_handle(h, buffer, count) : read_handle(h, buffer, count);
+        uint64_t old_offset = h->offset;
+        // Devices without a non-consuming read must validate this chunk
+        // before changing their queues or hardware state.
+        if (!request.write && !regular && !task.memory->space.valid(address, count, true))
+            return done ? int64_t(done) : -14;
+        int64_t n = request.write ? write_handle(h, buffer, count) : read_handle(h, buffer, count);
         if (n < 0) {
             if (n == -32 && request.write && !(request.socket && (request.flags & 0x4000)))
                 queue_signal(&task, 13, task.process->pid);
             return done ? int64_t(done) : n;
         }
-        if (!request.write && n && !task.memory->space.copy_out(vector.base + done, buffer, n))
-            return done ? int64_t(done) : -14;
+        if (!request.write && n) {
+            size_t copied = 0;
+            while (copied < size_t(n)) {
+                size_t length =
+                    min(size_t(n) - copied, size_t(page_size - (address + copied) % page_size));
+                if (!task.memory->space.copy_out(address + copied, buffer + copied, length)) {
+                    if (regular)
+                        h->offset = old_offset;
+                    return done ? int64_t(done) : -14;
+                }
+                copied += length;
+            }
+        }
         done += n;
         if (size_t(n) < count || (!request.write && !request.socket && h->node &&
                                   (h->node->mode & 0170000) == character))
@@ -763,8 +862,27 @@ static int64_t attempt(Task& task, IoRequest& request) {
     bool completion =
         inet_stream(h->inet) &&
         (request.write ? request.stream_blocking : request.socket && (request.flags & 0x100));
-    if (completion)
+    bool empty_send = false;
+    if (request.socket && request.write) {
+        bool empty = true;
+        for (size_t i = 0; i < request.count; i++)
+            empty &= request.vectors[i].length == 0;
+        if (empty) {
+            empty_send = true;
+            result = inet_stream(h->inet) ? tcp_write(h->inet, nullptr, 0)
+                                          : socket_write(h->socket, nullptr, 0);
+            if (result == -32 && !(request.flags & 0x4000))
+                queue_signal(&task, 13, task.process->pid);
+            completion = true;
+        }
+    }
+    if (completion && !empty_send)
         result = stream_attempt(task, request);
+    if (!completion && (h->socket || h->pipe)) {
+        if (result >= 0)
+            result = local_stream_attempt(task, request);
+        completion = true;
+    }
     bool limited_write = request.write && h->node && (h->node->mode & 0170000) == regular_file;
     size_t budget = 0;
     if (limited_write) {

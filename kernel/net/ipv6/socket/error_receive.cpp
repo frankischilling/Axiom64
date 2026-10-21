@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/ipv6/errors.hpp"
+#include "io/vectors.hpp"
 #include "net/ipv6.hpp"
 #include "process/task.hpp"
 
 namespace ax {
 namespace {
-struct Vector {
-    uint64_t base, length;
-};
+using Vector = IoVector;
 
 struct Message {
     uint64_t name;
@@ -94,22 +93,10 @@ int64_t inet6_receive_error(Task& task, Inet6Socket* socket, const Frame& call) 
         owned.vectors[0] = {call.rsi, min(call.rdx, uint64_t(0x7ffff000))};
         message.name = call.r8;
     }
-    for (size_t n = 0; n < count; n++) {
-        if (owned.vectors[n].length > uint64_t(INT64_MAX))
-            return -22;
-    }
-    size_t capacity = 0;
-    for (size_t n = 0; n < count; n++) {
-        auto& vector = owned.vectors[n];
-        // A single vector uses Linux's UBUF clamp before checking its span.
-        // Multiple vectors validate every full span before clipping the total.
-        if (count == 1)
-            vector.length = min(vector.length, uint64_t(0x7ffff000));
-        if (vector.base > user_limit || vector.length > user_limit - vector.base)
-            return -14;
-        vector.length = min(vector.length, uint64_t(0x7ffff000 - capacity));
-        capacity += vector.length;
-    }
+    int64_t bounded = bound_io_vectors(owned.vectors, count);
+    if (bounded < 0)
+        return bounded;
+    size_t capacity = bounded;
     net_poll();
     owned.record = inet6_take_error(socket);
     if (!owned.record)

@@ -324,7 +324,7 @@
       "title": "Linux syscall and libc compatibility",
       "milestone": "M4",
       "state": "partial",
-      "current": "Static/dynamic musl programs and a tested syscall subset work, including retained blocking I/O and tested restart behavior. Unsupported calls return ENOSYS; complete Linux conformance remains planned. Local advisory flock supports canonical inode ownership, descriptor lifetime, retained waits, and tested signal restart on the single-CPU kernel. POSIX/OFD record locks have native and RAM/ext2 lifetime, deadlock, restart, descriptor-replacement, exhaustion and reboot checks. Owned exec argument/environment capture and checked stack loading accept long Linux commands while preserving failed-exec state; seven Linux resource limits now have native and guest enforcement checks, including real stack growth, CPU accounting and coordinated ordinary-user pressure. Other stored resource selectors and broader resource-consuming interfaces still require their Linux ABI implementations.",
+      "current": "Static/dynamic musl programs and a tested syscall subset work, including retained blocking I/O and tested restart behavior. Unsupported calls return ENOSYS; complete Linux conformance remains planned. Local advisory flock supports canonical inode ownership, descriptor lifetime, retained waits, and tested signal restart on the single-CPU kernel. POSIX/OFD record locks have native and RAM/ext2 lifetime, deadlock, restart, descriptor-replacement, exhaustion and reboot checks. Owned exec argument/environment capture and checked stack loading accept long Linux commands while preserving failed-exec state; seven Linux resource limits now have native and guest enforcement checks, including real stack growth, CPU accounting and coordinated ordinary-user pressure. Other stored resource selectors and broader resource-consuming interfaces still require their Linux ABI implementations. Captured vector imports now share signed-length, full-span and bounded-total checks with IPv6 error receives. Real descriptor tests compare 77 metadata, 24 read-copy, 20 write-copy, 16 empty-send/signal and 18 cross-vector chunk cases across three native profiles and both static/dynamic BIOS/UEFI guests; broader Linux conformance remains required.",
       "scope": [
         "Machine-readable Linux x86-64 syscall/structure/flag/error matrix with tests",
         "Extend musl coverage without silent successful stubs",
@@ -363,7 +363,9 @@
         "userspace/tests/security/record-locks.c",
         "scripts/record_lock_test.py",
         "userspace/tests/security/record-lock-lifecycle.c",
-        "scripts/record_lock_lifecycle_test.py"
+        "scripts/record_lock_lifecycle_test.py",
+        "kernel/include/io/vectors.hpp",
+        "userspace/tests/threads/vectors.c"
       ],
       "branch": "feature/f08-linux-syscall-and-libc-compatibility",
       "issue": "https://github.com/frankischilling/Axiom64/issues/8"
@@ -630,7 +632,9 @@
         "scripts/ipv6_errors_peer.py",
         "scripts/ipv6_errors_capture.py",
         "scripts/tests/ipv6_fragment_observation_test.py",
-        "userspace/tests/net/ipv6_errors.c"
+        "userspace/tests/net/ipv6_errors.c",
+        "kernel/include/io/vectors.hpp",
+        "userspace/tests/threads/vectors.c"
       ],
       "branch": "feature/f12-ipv4-ipv6-routing-and-icmp",
       "issue": "https://github.com/frankischilling/Axiom64/issues/12"

@@ -1277,6 +1277,16 @@ jobs:
           path: |
             build/manager-persistent-*.raw
             build/axiom64-manager-persistent-*.iso
+      - name: Upload thread I/O comparison clients
+        if: always() && matrix.suite == 'threads'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-thread-io-clients
+          if-no-files-found: error
+          path: |
+            build/io-vectors-native
+            build/thread-io-static
+            build/thread-io-dynamic
       - name: Upload test evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

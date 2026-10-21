@@ -37,7 +37,9 @@ def child(profile, directory, suite='host'):
         'scripts/ipv6_host_peer.py', 'scripts/ipv6_host_capture.py',
         'scripts/ipv6_sockets_peer.py', 'scripts/ipv6_sockets_capture.py',
         'scripts/ipv6_fragments_peer.py', 'scripts/ipv6_fragments_capture.py', 'scripts/tcp_fault_native.py')}
-    for name in ('scripts/ipv6_output_peer.py', 'scripts/ipv6_output_capture.py', 'userspace/tests/net/ipv6_fixture.h'):
+    for name in ('scripts/ipv6_output_peer.py', 'scripts/ipv6_output_capture.py',
+                 'scripts/ipv6_pmtu_peer.py', 'scripts/ipv6_pmtu_capture.py',
+                 'userspace/tests/net/ipv6_fixture.h'):
         sources[name] = digest(ROOT / name)
     products = {name: digest(Path(name)) for name in command}
     saved = directory / 'products'
@@ -75,6 +77,9 @@ def child(profile, directory, suite='host'):
     elif suite == 'output':
         from ipv6_output_peer import Peer as OutputPeer
         peer_type = OutputPeer
+    elif suite == 'pmtu':
+        from ipv6_pmtu_peer import Peer as PmtuPeer
+        peer_type = PmtuPeer
     peers = [peer_type(lane, native=True) for lane in range(2)]
     taps, captures, statistics, interfaces = [], [], [], []
     selector = selectors.DefaultSelector()
@@ -97,7 +102,7 @@ def child(profile, directory, suite='host'):
             process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL,
                                        stdout=output, stderr=subprocess.STDOUT)
             while process.poll() is None:
-                if time.monotonic() - began > (160 if suite == 'fragments' else 120 if suite == 'output' else 45):
+                if time.monotonic() - began > (160 if suite == 'fragments' else 120 if suite in ('output', 'pmtu') else 45):
                     raise TimeoutError('native IPv6 client exceeded its overall deadline')
                 for key, _ in selector.select(.02):
                     peers[key.data].receive(os.read(key.fd, 65535))
@@ -140,7 +145,9 @@ def child(profile, directory, suite='host'):
                     from ipv6_fragments_capture import verify_capture as checker
                 elif suite == 'output':
                     from ipv6_output_capture import verify_capture as checker
-                extra = dict(statistics=statistics[lane], interface_index=interfaces[lane]['index']) if suite in ('fragments', 'output') else {}
+                elif suite == 'pmtu':
+                    from ipv6_pmtu_capture import verify_capture as checker
+                extra = dict(statistics=statistics[lane], interface_index=interfaces[lane]['index']) if suite in ('fragments', 'output', 'pmtu') else {}
                 audits.append(checker(directory / f'lane{lane}.pcap', lane,
                     directory / 'client.log', directory / f'lane{lane}-damaged.zip', native=True, **extra))
         except Exception as failure:
@@ -164,7 +171,7 @@ def child(profile, directory, suite='host'):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--suite', choices=('host', 'sockets', 'fragments', 'output'), default='host')
+    parser.add_argument('--suite', choices=('host', 'sockets', 'fragments', 'output', 'pmtu'), default='host')
     parser.add_argument('--child', choices=('native', 'static', 'dynamic'))
     parser.add_argument('--profile', choices=('native', 'static', 'dynamic', 'all'), default='all')
     parser.add_argument('--output-directory', type=Path, default=None)

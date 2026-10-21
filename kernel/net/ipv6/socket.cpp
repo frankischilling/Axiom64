@@ -173,22 +173,7 @@ bool inet6_deliver(unsigned index, const ip6::Packet& packet) {
     } else {
         if (ip6::checksum(packet.header.source, packet.header.destination, 58, data, length))
             return true;
-        if (data[0] == 1 && data[1] == 4 && length >= 56 && (data[8] >> 4) == 6 &&
-            (data[14] == 17 || data[14] == 58) && (data[12] || data[13] >= 8)) {
-            ip6::Address local, peer;
-            memcpy(local.bytes, data + 16, 16);
-            memcpy(peer.bytes, data + 32, 16);
-            for (auto& socket : inet6_sockets)
-                if (socket.used && socket.connected && socket.local == local &&
-                    socket.peer == peer &&
-                    (!socket.index || socket.index == index || index == ipv6_loopback) &&
-                    socket.protocol == data[14] &&
-                    (socket.type == 3 ||
-                     (socket.local_port == (uint16_t(data[48]) << 8 | data[49]) &&
-                      socket.peer_port == (uint16_t(data[51]) << 8 | data[50]))) &&
-                    !socket.error)
-                    socket.error = 111;
-        }
+        inet6_icmp_error(index, data, length);
     }
     Inet6Socket* best = nullptr;
     unsigned best_score = 0;
@@ -250,7 +235,7 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
         return -11;
     unsigned index = address.address.link_local() && address.scope ? address.scope : socket->index;
     Ipv6Path path;
-    int error = ipv6_path(socket->local, address.address, index, path);
+    int error = ipv6_path(socket->local, address.address, index, path, socket->pmtu_mode >= 3);
     if (error)
         return error;
     bool fragmentable = !socket->dont_fragment && (socket->pmtu_mode < 2 || socket->pmtu_mode == 5);
@@ -289,7 +274,7 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
     bytes[check_at] = checksum >> 8;
     bytes[check_at + 1] = checksum;
     error = ipv6_send(path.source, address.address, index, socket->protocol, socket->hops, bytes,
-                      size, socket, fragmentable, socket->socket_mtu);
+                      size, socket, fragmentable, socket->socket_mtu, socket->pmtu_mode >= 3);
     release(bytes);
     if (!error)
         socket->transmitted += length + overhead;

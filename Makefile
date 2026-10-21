@@ -668,6 +668,7 @@ build/ipv6-%-dynamic: userspace/tests/net/ipv6_%.c scripts/compile_uapi_client.p
 	@mkdir -p build
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(filter %.c,$^)
 build/ipv6-sockets-native build/ipv6-sockets-static build/ipv6-sockets-dynamic build/ipv6-output-native build/ipv6-output-static build/ipv6-output-dynamic: userspace/tests/net/ipv6_fixture.h
+build/ipv6-pmtu-native build/ipv6-pmtu-static build/ipv6-pmtu-dynamic: userspace/tests/net/ipv6_fixture.h
 .PHONY: test-ipv6-host test-ipv6-host-native
 test-ipv6-host:
 	$(PYTHON) scripts/ipv6_host_test.py
@@ -683,6 +684,11 @@ test-ipv6-output:
 	$(PYTHON) scripts/ipv6_host_test.py --suite output --workers 4
 test-ipv6-output-native:
 	$(PYTHON) scripts/ipv6_host_native.py --suite output
+.PHONY: test-ipv6-pmtu test-ipv6-pmtu-native
+test-ipv6-pmtu:
+	$(PYTHON) scripts/ipv6_host_test.py --suite pmtu --workers 4
+test-ipv6-pmtu-native:
+	$(PYTHON) scripts/ipv6_host_native.py --suite pmtu
 .PHONY: test-ipv6-fragments test-ipv6-fragments-native
 test-ipv6-fragments:
 	$(PYTHON) scripts/ipv6_host_test.py --suite fragments --workers 4
@@ -706,7 +712,14 @@ build/ipv6-fragmentation-host: kernel/tests/net/ipv6_fragmentation.cpp kernel/ne
 .PHONY: test-ipv6-fragmentation
 test-ipv6-fragmentation: build/ipv6-fragmentation-host
 	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-fragmentation-host
-test-ipv6-wire: build/ipv6-wire-host build/ipv6-host build/ipv6-reassembly-host build/ipv6-fragmentation-host
+build/ipv6-path-mtu-host: kernel/tests/net/ipv6_path_mtu.cpp kernel/net/ipv6/path_mtu.cpp kernel/net/ipv6/icmp.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/path_mtu.hpp kernel/include/net/ipv6/icmp.hpp kernel/include/net/ipv6/wire.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+.PHONY: test-ipv6-path-mtu
+test-ipv6-path-mtu: build/ipv6-path-mtu-host
+	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-path-mtu-host
+test-ipv6-wire: build/ipv6-wire-host build/ipv6-host build/ipv6-reassembly-host build/ipv6-fragmentation-host build/ipv6-path-mtu-host
+	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-path-mtu-host
 	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-fragmentation-host
 	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-reassembly-host
 	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-host

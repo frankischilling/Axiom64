@@ -26,4 +26,5 @@ struct Inet6Socket {
 extern Inet6Socket inet6_sockets[inet6_socket_count];
 Inet6Socket* inet6_allocate(unsigned type);
 int inet6_bind_port(Inet6Socket*, const ip6::Address&, uint16_t port);
+void inet6_icmp_error(unsigned index, const uint8_t*, size_t);
 } // namespace ax

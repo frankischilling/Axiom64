@@ -19,12 +19,14 @@ struct Ipv6Route {
     ip6::Address destination, gateway;
     unsigned index = 0, metric = 1024;
     uint8_t prefix = 0, protocol = 3;
+    uint64_t owner = 0;
 };
 
 struct Ipv6Path {
     ip6::Address source, next_hop;
     unsigned index = 0;
     uint32_t mtu = 0;
+    uint64_t route_owner = 0;
 };
 
 // Serialized borrowers retain an entry only until the next address mutation.
@@ -41,12 +43,15 @@ int ipv6_route_control(const Ipv6Route&, bool remove, bool exclusive);
 size_t ipv6_routes(Ipv6Route*, size_t capacity);
 
 int ipv6_path(const ip6::Address& source, const ip6::Address& destination, unsigned bound_index,
-              Ipv6Path&);
+              Ipv6Path&, bool interface_mtu = false);
+
+void ipv6_mtu_changed(unsigned index, uint32_t previous);
 
 // Success owns a copy until device acceptance or bounded resolution failure.
 int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsigned bound_index,
               uint8_t protocol, uint8_t hop_limit, const void*, size_t,
-              Inet6Socket* owner = nullptr, bool fragmentable = true, uint32_t socket_mtu = 0);
+              Inet6Socket* owner = nullptr, bool fragmentable = true, uint32_t socket_mtu = 0,
+              bool interface_mtu = false);
 
 bool ipv6_output_ready();
 

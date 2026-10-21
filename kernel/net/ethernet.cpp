@@ -74,8 +74,10 @@ int net_configure(unsigned index, bool administrative, uint32_t mtu) {
     uint32_t previous_mtu = writable.mtu;
     writable.administrative = administrative;
     writable.mtu = mtu;
-    if (previous_mtu != mtu)
+    if (previous_mtu != mtu) {
         ipv4_mtu_changed(index, previous_mtu);
+        ipv6_mtu_changed(index, previous_mtu);
+    }
     return 0;
 }
 

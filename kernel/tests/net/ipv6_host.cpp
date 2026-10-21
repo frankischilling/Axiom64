@@ -18,6 +18,8 @@ unsigned blocked;
 unsigned send_budget = UINT32_MAX;
 unsigned fail_allocations, shutdown_after_polls, remove_after_polls, shrink_after_polls;
 unsigned callback_index = 1;
+unsigned inject_after_polls;
+std::vector<uint8_t> injected_frame;
 bool entropy_available = true;
 } // namespace
 
@@ -142,6 +144,8 @@ static void reset() {
     fail_allocations = shutdown_after_polls = remove_after_polls = shrink_after_polls = 0;
     entropy_available = true;
     callback_index = 1;
+    inject_after_polls = 0;
+    injected_frame.clear();
     for (auto& adapter : adapters) {
         adapter.info.live = adapter.info.carrier = true;
         assert(!net_configure(adapter.info.index, true, 1500));
@@ -931,6 +935,113 @@ static void source_fragmentation() {
     reset();
 }
 
+static void path_mtu_errors() {
+    for (unsigned lane = 0; lane < 2; lane++) {
+        reset();
+        auto local = address(lane, 2), remote = address(lane, 1);
+        assert(!change(lane + 1, local));
+        auto socket = inet6_allocate(2);
+        assert(socket && !inet6_bind_port(socket, local, 47500));
+        socket->local = local;
+        socket->peer = remote;
+        socket->peer_port = __builtin_bswap16(uint16_t(48000));
+        socket->index = lane + 1;
+        socket->connected = true;
+        socket->pmtu_mode = 2;
+        Inet6Address target{10, socket->peer_port, 0, remote, 0};
+        std::vector<uint8_t> bytes(1300, 0xa7);
+        assert(inet6_send(socket, target, bytes.data(), bytes.size()) == 1300);
+        net_poll();
+        deliver(lane, advertisement(lane, remote, local));
+        net_poll();
+        const auto original = emitted[lane].back();
+        assert(original.size() == 14 + 40 + 1308 && original[20] == 17);
+        std::vector<uint8_t> quote(56);
+        quote[0] = 2;
+        quote[6] = 5;
+        memcpy(quote.data() + 8, original.data() + 14, 48);
+        auto error = incoming(lane, address(lane, 250), local, quote, 64);
+        auto damaged = error;
+        damaged.back() ^= 1;
+        deliver(lane, damaged);
+        Ipv6Path path;
+        assert(!ipv6_path(local, remote, lane + 1, path) && path.mtu == 1500);
+        assert(!inet6_error(socket));
+        for (unsigned offset : {48, 50}) {
+            auto unrelated = quote;
+            unrelated[offset] ^= 1;
+            deliver(lane, incoming(lane, remote, local, unrelated, 64));
+            assert(!inet6_error(socket));
+            assert(!ipv6_path(local, remote, lane + 1, path) && path.mtu == 1500);
+        }
+        deliver(lane, error);
+        assert(inet6_error(socket, true) == 90 && !inet6_error(socket));
+        assert(!ipv6_path(local, remote, lane + 1, path) && path.mtu == 1280);
+        assert(inet6_send(socket, target, bytes.data(), bytes.size()) == -90);
+        socket->pmtu_mode = 3;
+        assert(inet6_send(socket, target, bytes.data(), bytes.size()) == 1300);
+        emitted[lane].clear();
+        net_poll();
+        assert(emitted[lane].size() == 1 && emitted[lane][0][20] == 17);
+        socket->pmtu_mode = 1;
+        assert(inet6_send(socket, target, bytes.data(), bytes.size()) == 1300);
+        emitted[lane].clear();
+        net_poll();
+        assert(emitted[lane].size() == 2 && emitted[lane][0][20] == 44 &&
+               emitted[lane][1][20] == 44 && emitted[lane][0].size() <= 14 + 1280);
+        // Later hard diagnostics replace the pending error, as Linux does.
+        quote[0] = 1;
+        quote[1] = 4;
+        deliver(lane, incoming(lane, remote, local, quote, 64));
+        assert(inet6_error(socket) == 111);
+        quote[1] = 1;
+        deliver(lane, incoming(lane, remote, local, quote, 64));
+        assert(inet6_error(socket, true) == 13);
+        quote[1] = 0;
+        deliver(lane, incoming(lane, remote, local, quote, 64));
+        assert(!inet6_error(socket));
+        ticks = 59999;
+        assert(!ipv6_path(local, remote, lane + 1, path) && path.mtu == 1280);
+        Ipv6Route host{remote, {}, lane + 1, 1024, 128, 3};
+        assert(!ipv6_route_control(host, false, true));
+        assert(!ipv6_path(local, remote, lane + 1, path) && path.mtu == 1500);
+        deliver(lane, error);
+        inet6_error(socket, true);
+        assert(!ipv6_path(local, remote, lane + 1, path) && path.mtu == 1280);
+        assert(!ipv6_route_control(host, true, false));
+        assert(!ipv6_path(local, remote, lane + 1, path) && path.mtu == 1280);
+        ticks = 60000;
+        assert(!ipv6_path(local, remote, lane + 1, path) && path.mtu == 1500);
+        // A hint received while a device polls must precede its byte copy.
+        assert(inet6_send(socket, target, bytes.data(), bytes.size()) == 1300);
+        emitted[lane].clear();
+        callback_index = lane + 1;
+        injected_frame = error;
+        inject_after_polls = 2;
+        net_poll();
+        assert(!inject_after_polls && emitted[lane].empty() && socket->transmitted == 1348);
+        assert(inet6_error(socket, true) == 90);
+        net_poll();
+        assert(emitted[lane].size() == 2 && emitted[lane][0][20] == 44 &&
+               emitted[lane][1][20] == 44 && !socket->transmitted);
+        quote[0] = 2;
+        quote[1] = 0;
+        deliver(lane, incoming(lane, remote, local, quote, 64));
+        assert(!ipv6_path(local, remote, lane + 1, path) && path.mtu == 1280);
+        inet6_error(socket, true);
+        assert(!net_configure(lane + 1, true, 1280));
+        assert(!net_configure(lane + 1, true, 1500));
+        assert(!ipv6_path(local, remote, lane + 1, path) && path.mtu == 1500);
+        deliver(lane, incoming(lane, remote, local, quote, 64));
+        inet6_error(socket, true);
+        assert(!change(lane + 1, local, true, true));
+        assert(!change(lane + 1, local));
+        assert(!ipv6_path(local, remote, lane + 1, path) && path.mtu == 1500);
+        inet6_close(socket);
+    }
+    reset();
+}
+
 int main() {
     for (unsigned n = 0; n < 2; n++) {
         auto& adapter = adapters[n];
@@ -942,6 +1053,8 @@ int main() {
         adapter.poll = [](NetAdapter& device) {
             if (device.info.index != callback_index)
                 return;
+            if (inject_after_polls && !--inject_after_polls)
+                net_receive(device, injected_frame.data(), injected_frame.size());
             if (shrink_after_polls && !--shrink_after_polls)
                 assert(!net_configure(1, true, 1280));
             if (remove_after_polls && !--remove_after_polls)
@@ -973,6 +1086,7 @@ int main() {
     fragmented_delivery();
     raw_header_bounds();
     source_fragmentation();
+    path_mtu_errors();
     reset();
     std::puts("IPV6_HOST_PASS adapters=2 DAD=1 duplicate=1 NS=1 NA=1 echo=1 owned_copy=1");
 }

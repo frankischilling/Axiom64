@@ -19,6 +19,7 @@ struct Output {
     size_t fragment_capacity = 0, fragment_offset = 0;
     uint32_t identification = 0, socket_mtu = 0;
     bool fragmentable = true, submitting = false, discard_pending = false;
+    bool interface_mtu = false;
     int deferred_error = 0;
 };
 
@@ -44,7 +45,8 @@ void clear(Output& item, int error = 0) {
 
 int queue(const ip6::Address& source, const ip6::Address& destination, unsigned index,
           uint8_t protocol, uint8_t hop_limit, const void* data, size_t length, bool direct = false,
-          Inet6Socket* owner = nullptr, bool fragmentable = true, uint32_t socket_mtu = 0) {
+          Inet6Socket* owner = nullptr, bool fragmentable = true, uint32_t socket_mtu = 0,
+          bool interface_mtu = false) {
     if (length > 65535)
         return -90;
     Output* selected = nullptr;
@@ -69,6 +71,7 @@ int queue(const ip6::Address& source, const ip6::Address& destination, unsigned 
     *selected = {source, destination, bytes, needed, index, {}, ticks + 400, direct, owner};
     selected->fragmentable = fragmentable;
     selected->socket_mtu = socket_mtu;
+    selected->interface_mtu = interface_mtu;
     queued_bytes += needed;
     return 0;
 }
@@ -88,7 +91,8 @@ int validate_submission(void* context) {
     if (item.control)
         return ip6::usable(item.index) && ipv6_owned(item.index, item.source) ? 0 : -100;
     Ipv6Path current;
-    if (int error = ipv6_path(item.source, item.destination, item.index, current))
+    if (int error =
+            ipv6_path(item.source, item.destination, item.index, current, item.interface_mtu))
         return error;
     if (item.socket_mtu && (!item.fragmentable || submission.fragmented))
         current.mtu = min(current.mtu, item.socket_mtu);
@@ -168,9 +172,9 @@ ip6::FragmentPiece submit(Output& item, const Ipv6Path& path) {
 
 int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsigned bound,
               uint8_t protocol, uint8_t hop_limit, const void* data, size_t length,
-              Inet6Socket* owner, bool fragmentable, uint32_t socket_mtu) {
+              Inet6Socket* owner, bool fragmentable, uint32_t socket_mtu, bool interface_mtu) {
     Ipv6Path path;
-    int error = ipv6_path(source, destination, bound, path);
+    int error = ipv6_path(source, destination, bound, path, interface_mtu);
     if (error)
         return error;
     if (socket_mtu && !fragmentable)
@@ -178,7 +182,7 @@ int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsig
     if (length > 65535 || (!fragmentable && length + ip6::header_size > path.mtu))
         return -90;
     return queue(path.source, destination, bound, protocol, hop_limit, data, length, false, owner,
-                 fragmentable, socket_mtu);
+                 fragmentable, socket_mtu, interface_mtu);
 }
 
 bool ipv6_output_ready() {
@@ -218,7 +222,8 @@ void output_poll() {
                 continue;
             }
         } else {
-            int error = ipv6_path(item.source, item.destination, item.index, path);
+            int error =
+                ipv6_path(item.source, item.destination, item.index, path, item.interface_mtu);
             if (error) {
                 clear(item, error);
                 continue;

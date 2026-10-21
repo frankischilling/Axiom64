@@ -5,8 +5,16 @@ namespace ax {
 namespace {
 Ipv6Route routes[ipv6_route_capacity], prefixes[ipv6_address_capacity];
 unsigned route_count, prefix_count;
+uint64_t next_owner;
+
+uint64_t owner() {
+    if (!++next_owner)
+        ++next_owner;
+    return next_owner;
+}
 
 void erase(Ipv6Route* entries, unsigned& count, unsigned position) {
+    ip6::path_mtu_cache.discard_route(entries[position].owner);
     for (unsigned next = position + 1; next < count; next++)
         entries[next - 1] = entries[next];
     entries[--count] = {};
@@ -104,6 +112,7 @@ int ipv6_route_control(const Ipv6Route& requested, bool remove, bool exclusive) 
     }
     if (route_count == ipv6_route_capacity)
         return -105;
+    route.owner = owner();
     routes[route_count++] = route;
     return 0;
 }
@@ -136,6 +145,7 @@ int prefix_add(const Ipv6Address& value) {
             return 0;
     if (prefix_count == ipv6_address_capacity)
         return -105;
+    prefix.owner = owner();
     prefixes[prefix_count++] = prefix;
     return 0;
 }

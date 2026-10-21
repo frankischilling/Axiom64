@@ -2,8 +2,15 @@
 #pragma once
 #include "net/ipv6.hpp"
 #include "core/time.hpp"
+#include "net/ipv6/path_mtu.hpp"
 
 namespace ax::ip6 {
+extern PathMtuCache path_mtu_cache;
+
+inline PathKey path_key(const Ipv6Path& path, const Address& destination) {
+    return {path.source, destination, path.next_hop, path.index, path.route_owner};
+}
+
 Address solicited_node(const Address&);
 
 Address all_nodes();

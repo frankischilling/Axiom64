@@ -953,6 +953,12 @@ jobs:
       - name: Compare IPv6 source output with three native Linux linkages
         if: matrix.suite == 'network'
         run: sudo -n make test-ipv6-output-native
+      - name: Test IPv6 learned path MTU and quoted errors on both adapters
+        if: matrix.suite == 'network'
+        run: make test-ipv6-pmtu
+      - name: Compare IPv6 path MTU and quoted errors with three native Linux linkages
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv6-pmtu-native
       - name: Test IPv6 fragment delivery and real sixty-second expiry on both adapters
         if: matrix.suite == 'network'
         run: make test-ipv6-fragments
@@ -981,6 +987,11 @@ jobs:
             build/ipv6-output-static.inputs.json
             build/ipv6-output-dynamic.inputs.json
             build/axiom64-ipv6-output-*.iso
+            build/ipv6-pmtu-wire
+            build/ipv6-pmtu-native-wire
+            build/ipv6-pmtu-static.inputs.json
+            build/ipv6-pmtu-dynamic.inputs.json
+            build/axiom64-ipv6-pmtu-*.iso
             build/ipv6-fragments-wire
             build/ipv6-fragments-native-wire
             build/ipv6-fragments-static.inputs.json

@@ -3,6 +3,8 @@
 #include "net/ipv6/reassembly.hpp"
 
 namespace ax {
+ip6::PathMtuCache ip6::path_mtu_cache;
+
 namespace {
 struct AddressSlot {
     Ipv6Address value;
@@ -81,8 +83,10 @@ int ipv6_address_remove(unsigned index, const ip6::Address& address) {
             for (unsigned next = n + 1; next < address_count; next++)
                 addresses[next - 1] = addresses[next];
             addresses[--address_count] = {};
-            if (address.link_local() || !ipv6_owned(0, address))
+            if (address.link_local() || !ipv6_owned(0, address)) {
                 ip6::reassembly_discard(&address, index);
+                ip6::path_mtu_cache.discard_source(address, address.link_local() ? index : 0);
+            }
             return 0;
         }
     return -99;
@@ -97,7 +101,7 @@ bool ipv6_owned(unsigned index, const ip6::Address& address, bool tentative) {
 }
 
 int ipv6_path(const ip6::Address& requested, const ip6::Address& destination, unsigned bound,
-              Ipv6Path& path) {
+              Ipv6Path& path, bool interface_mtu) {
     if (destination.unspecified() || destination.mapped())
         return -101;
     if (bound && bound != ipv6_loopback && !net_info(bound))
@@ -137,8 +141,15 @@ int ipv6_path(const ip6::Address& requested, const ip6::Address& destination, un
     } else if (!ipv6_owned(source.link_local() ? best->index : 0, source))
         return -99;
     path = {source, best->gateway.unspecified() ? destination : best->gateway, best->index,
-            net_info(best->index)->mtu};
+            net_info(best->index)->mtu, best->owner};
+    if (!interface_mtu)
+        path.mtu = ip6::path_mtu_cache.lookup(ip6::path_key(path, destination), path.mtu, ticks);
     return 0;
+}
+
+void ipv6_mtu_changed(unsigned index, uint32_t previous) {
+    if (auto info = net_info(index))
+        ip6::path_mtu_cache.update_mtu(index, previous, info->mtu);
 }
 
 namespace ip6 {
@@ -179,6 +190,7 @@ void address_duplicate(unsigned index, const Address& address) {
 }
 
 void address_reset() {
+    path_mtu_cache.discard();
     for (auto& entry : addresses)
         entry = {};
     address_count = 0;

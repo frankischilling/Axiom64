@@ -53,6 +53,7 @@ def prepare(linkage, directory, suite='host'):
         'scripts/ipv6_host_capture.py', 'scripts/ipv6_sockets_peer.py', 'scripts/ipv6_sockets_capture.py',
         'scripts/ipv6_fragments_peer.py', 'scripts/ipv6_fragments_capture.py',
         'scripts/ipv6_output_peer.py', 'scripts/ipv6_output_capture.py', 'userspace/tests/net/ipv6_fixture.h',
+        'scripts/ipv6_pmtu_peer.py', 'scripts/ipv6_pmtu_capture.py',
         'scripts/network_test.py', 'scripts/tcp_fault_test.py', 'scripts/image.py',
         'scripts/compile_uapi_client.py', 'scripts/tcp_fixture_inputs.py',
         'userspace/tests/net/ipv6_host.sh',
@@ -81,6 +82,9 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
     elif suite == 'output':
         from ipv6_output_peer import Peer as OutputPeer
         peer_type = OutputPeer
+    elif suite == 'pmtu':
+        from ipv6_pmtu_peer import Peer as PmtuPeer
+        peer_type = PmtuPeer
     peers, servers, captures = [peer_type(lane) for lane in range(2)], [], []
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '2G',
                '-cdrom', str(image), '-nic', 'none', '-display', 'none', '-serial', 'stdio',
@@ -109,7 +113,7 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
             process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE,
                                        stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
             text, reports, error, status = exercise(process, peers, servers,
-                160 if suite == 'fragments' else 120 if suite == 'output' else 45, log)
+                160 if suite == 'fragments' else 120 if suite in ('output', 'pmtu') else 45, log)
     finally:
         for server in servers:
             server.close()
@@ -133,6 +137,10 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
         markers = ['IPV6_OUTPUT_PASS adapters=2 cases=432 policies=9 scopes=2 copied_vectors=1 close_reuse=1',
                    'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
                    f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
+    elif suite == 'pmtu':
+        markers = ['IPV6_PMTU_PASS adapters=2 cases=120 policies=6 malformed_each=10',
+                   'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
+                   f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
     missing = [marker for marker in markers if marker not in text]
     unchanged = all(digest(ROOT / name) == expected for group in ('products', 'sources')
                     for name, expected in inputs[group].items())
@@ -146,6 +154,8 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
                 from ipv6_fragments_capture import verify_capture
             elif suite == 'output':
                 from ipv6_output_capture import verify_capture
+            elif suite == 'pmtu':
+                from ipv6_pmtu_capture import verify_capture
             else:
                 from ipv6_host_capture import verify_capture
             for lane, path in enumerate(captures):
@@ -166,7 +176,7 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--suite', choices=('host', 'sockets', 'fragments', 'output'), default='host')
+    parser.add_argument('--suite', choices=('host', 'sockets', 'fragments', 'output', 'pmtu'), default='host')
     parser.add_argument('--workers', type=int, choices=(1, 2, 4), default=2)
     parser.add_argument('--linkage', choices=('static', 'dynamic', 'both'), default='both')
     parser.add_argument('--firmware', choices=('bios', 'uefi', 'both'), default='both')

@@ -138,7 +138,10 @@ static int import_vectors(Task& task, IoRequest& request, uint64_t pointer, size
     return 0;
 }
 
-static int copy_packet(Task& task, IoRequest& request, size_t begin, size_t length) {
+static int copy_packet(Task& task, IoRequest& request, size_t begin, size_t length,
+                       uint8_t* output = nullptr) {
+    if (!output)
+        output = request.packet_data;
     size_t at = 0, end = begin + length;
     for (size_t i = 0; i < request.count && at < end; i++) {
         const auto& vector = request.vectors[i];
@@ -146,9 +149,9 @@ static int copy_packet(Task& task, IoRequest& request, size_t begin, size_t leng
         if (next > begin) {
             size_t skip = begin > at ? begin - at : 0;
             size_t copied = min(vector.length - skip, end - at - skip);
-            if (copied && (vector.base > UINT64_MAX - skip ||
-                           !task.memory->space.copy_in(request.packet_data + at + skip,
-                                                       vector.base + skip, copied)))
+            if (copied &&
+                (vector.base > UINT64_MAX - skip ||
+                 !task.memory->space.copy_in(output + at + skip, vector.base + skip, copied)))
                 return -14;
         }
         at = next;
@@ -262,8 +265,6 @@ static int prepare_packet(Task& task, IoRequest& request) {
                                  request.inet_destination_named, uint32_t(address_length));
         if (error)
             return error;
-        if (request.packet_length > 65535)
-            return -90;
     } else if (request.handle->inet) {
         request.inet_destination_named = address != 0;
         int error = inet_target(request.handle->inet, request.inet_destination,
@@ -283,17 +284,24 @@ static int prepare_packet(Task& task, IoRequest& request) {
     size_t prefix = request.handle->inet6 ? inet6_send_prefix(request.handle->inet6) : 0;
     if (request.packet_length < prefix)
         return -14;
+    uint8_t protocol_bytes[2];
+    if (prefix) {
+        // Import raw protocol bytes before routing and length admission.
+        if (int error = copy_packet(task, request, 0, prefix, protocol_bytes))
+            return error;
+    }
+    if (request.handle->inet6) {
+        if (int error = inet6_send_admit(request.handle->inet6, request.inet6_destination,
+                                         request.packet_length, prefix ? protocol_bytes : nullptr))
+            return error;
+    }
     if (request.packet_length) {
         request.packet_data = static_cast<uint8_t*>(alloc(request.packet_length));
         if (!request.packet_data)
             return -12;
     }
     if (prefix) {
-        // Preserve the imported protocol bytes while routing precedes the remaining copy.
-        if (int error = copy_packet(task, request, 0, prefix))
-            return error;
-        if (int error = inet6_send_route(request.handle->inet6, request.inet6_destination))
-            return error;
+        memcpy(request.packet_data, protocol_bytes, prefix);
     }
     return copy_packet(task, request, prefix, request.packet_length - prefix);
 }
@@ -838,6 +846,13 @@ int64_t io_syscall(Task& task, const Frame& frame) {
         return -9;
     if (task.io)
         panic("active I/O at syscall entry");
+    unsigned flags = frame.rax == 47 ? frame.rdx : frame.r10;
+    if (h->inet6 && (frame.rax == 45 || frame.rax == 47) && (flags & 0x2000)) {
+        retain(h);
+        int64_t result = inet6_receive_error(task, h->inet6, frame);
+        close_handle(h);
+        return result;
+    }
     auto request = static_cast<IoRequest*>(alloc(sizeof(IoRequest)));
     if (!request)
         return -12;

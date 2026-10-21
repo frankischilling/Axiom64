@@ -36,6 +36,7 @@ void inet6_consume(Inet6Socket* socket) {
 
 void inet6_close(Inet6Socket* socket) {
     ipv6_detach_owner(socket);
+    inet6_purge_errors(socket);
     while (socket->count)
         inet6_consume(socket);
     socket->used = false;
@@ -141,7 +142,8 @@ int inet6_bind_port(Inet6Socket* socket, const ip6::Address& local, uint16_t por
 static void enqueue(Inet6Socket& socket, unsigned index, const ip6::Address& source, uint16_t port,
                     const void* data, size_t length) {
     if (socket.count == inet6_queue_count ||
-        length > socket.receive_limit - min(socket.bytes, size_t(socket.receive_limit)))
+        length > socket.receive_limit -
+                     min(socket.bytes + socket.error_bytes, size_t(socket.receive_limit)))
         return;
     auto frame = static_cast<Inet6Frame*>(alloc(sizeof(Inet6Frame) + length));
     if (!frame)
@@ -173,7 +175,7 @@ bool inet6_deliver(unsigned index, const ip6::Packet& packet) {
     } else {
         if (ip6::checksum(packet.header.source, packet.header.destination, 58, data, length))
             return true;
-        inet6_icmp_error(index, data, length);
+        inet6_icmp_error(index, packet.header.source, data, length);
     }
     Inet6Socket* best = nullptr;
     unsigned best_score = 0;
@@ -209,16 +211,26 @@ size_t inet6_send_prefix(Inet6Socket* socket) {
     return socket->type == 3 ? 2 : 0;
 }
 
-int inet6_send_route(Inet6Socket* socket, const Inet6Address& address) {
+int inet6_send_admit(Inet6Socket* socket, const Inet6Address& address, size_t length,
+                     const uint8_t* prefix) {
     unsigned index = address.address.link_local() && address.scope ? address.scope : socket->index;
     Ipv6Path path;
-    return ipv6_path(socket->local, address.address, index, path);
+    int error = ipv6_path(socket->local, address.address, index, path, socket->pmtu_mode >= 3);
+    if (error)
+        return error;
+    size_t overhead = ip6::header_size + (socket->type == 2 ? 8 : 0);
+    uint32_t mtu = socket->socket_mtu ? min(path.mtu, socket->socket_mtu) : path.mtu;
+    bool fragmentable = !socket->dont_fragment && (socket->pmtu_mode < 2 || socket->pmtu_mode == 5);
+    if (length > 65535 - (overhead - ip6::header_size) ||
+        (!fragmentable && length + overhead > mtu)) {
+        inet6_local_error(socket, address, mtu, prefix);
+        return -90;
+    }
+    return -inet6_error(socket, true);
 }
 
 int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const void* data,
                    size_t length, bool named) {
-    if (int error = inet6_error(socket, true))
-        return -error;
     if (socket->shutdown & 2)
         return -32;
     auto address = requested;
@@ -227,6 +239,8 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
     // ICMPv6 protocol selection imports two bytes before route lookup.
     if (socket->type == 3 && length < 2)
         return -14;
+    if (int error = inet6_send_admit(socket, address, length, static_cast<const uint8_t*>(data)))
+        return error;
     size_t overhead = ip6::header_size + (socket->type == 2 ? 8 : 0);
     if (length > 65535 - (overhead - ip6::header_size) || length + overhead > socket->send_limit)
         return -90;

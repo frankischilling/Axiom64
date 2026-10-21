@@ -15,6 +15,8 @@ Axiom64 retains the open file description selected by an I/O syscall while that 
 
 Socket transfers support `MSG_DONTWAIT`, receive `MSG_PEEK`, and send `MSG_NOSIGNAL`. Peeking advances across the captured vectors without consuming bytes. Unsupported transfer flags, `MSG_WAITALL`, named Unix messages, and ancillary sending return `EOPNOTSUPP`. Socket receive/send deadlines are supported as described below. Poll/select/epoll have separate wait state and are not affected by these socket options.
 
+IPv6 raw/UDP [extended error receives](ipv6.md#extended-error-queues) use `MSG_ERRQUEUE` through the same selected description. They return immediately, own their dequeued record during user copies and keep normal receive data independent. They do not create a retained blocking receive attempt.
+
 ## Event counters
 
 The Linux x86-64 `eventfd` and `eventfd2` calls create an unsigned 64-bit counter shared by duplicates, forked descriptions and retained I/O. `EFD_SEMAPHORE`, `EFD_NONBLOCK` and `EFD_CLOEXEC` are supported; unknown flags return `EINVAL`. Descriptor creation uses the current `RLIMIT_NOFILE` admission path. Final description release frees the counter, including after descriptor replacement during a blocked call.

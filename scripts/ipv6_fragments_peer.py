@@ -39,6 +39,7 @@ class Peer:
         self.advertisements, self.warm = 0, 0
         self.expiry_began, self.expiry_seen, self.waiting = None, False, None
         self.first_sent, self.complete = None, []
+        self.expiry_followups = ()
 
     def packet(self, source, destination, payload, hop=64, protocol=58):
         return self.wire.packet(source, destination, payload, hop, protocol)
@@ -111,19 +112,18 @@ class Peer:
         self.ack()
 
     def arm_expiry(self):
-        self.expiry_began = time.monotonic()
+        self.expiry_began = self.first_sent = None
         base = 0x66008000 + self.lane * 256
         self.expiry_id = base
         self.first = fragment(self.udp(8, 41), 0, 16, True, base)
         self.queue(self.first)
-        self.queue(fragment(self.udp(8, 41), 16, 33, False, base + 1), 1)
+        tail = fragment(self.udp(8, 41), 16, 33, False, base + 1)
         error = self.packet(self.remote, self.local, b'\1\4' + bytes(14))
-        self.queue(fragment(error, 0, 16, True, base + 2), 2)
+        suppressed = fragment(error, 0, 16, True, base + 2)
         multicast = bytearray(fragment(self.udp(8, 41), 0, 16, True, base + 3))
         multicast[38:54] = self.all_nodes
         multicast[:6] = b'\x33\x33\0\0\0\1'
-        self.queue(bytes(multicast), 3)
-        self.queue(self.first, 30)
+        self.expiry_followups = ((1, tail), (2, suppressed), (3, bytes(multicast)), (30, self.first))
         self.waiting = 'expiry'
 
     def tick(self):
@@ -132,7 +132,7 @@ class Peer:
             self.ack()
         # Observe an extra second so the independent client and capture clocks
         # both retain the complete required seventy-second quiet interval.
-        if self.waiting == 'expiry' and clock - self.expiry_began >= 71:
+        if self.waiting == 'expiry' and self.expiry_began is not None and clock - self.expiry_began >= 71:
             require(self.expiry_seen, 'eligible first fragment expires at its original 60-second deadline')
             self.ack()
         if clock < self.next_release:
@@ -141,8 +141,12 @@ class Peer:
             if not self.pending or self.pending[0][0] > clock:
                 break
             _, frame = self.pending.popleft()
-            if self.expiry_began is not None and frame == self.first and self.first_sent is None:
+            if self.waiting == 'expiry' and frame == self.first and self.first_sent is None:
                 self.first_sent = time.monotonic()
+                self.expiry_began = self.first_sent
+                # A delayed first release must not shorten later observed gaps.
+                self.pending.extend((self.first_sent + delay, following)
+                                    for delay, following in self.expiry_followups)
             self.inputs.append(frame.hex())
             self.outgoing.append(frame)
         self.next_release = clock + .005

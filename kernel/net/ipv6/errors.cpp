@@ -4,7 +4,8 @@
 #include "net/ipv6/icmp.hpp"
 
 namespace ax {
-void inet6_icmp_error(unsigned index, const uint8_t* bytes, size_t length) {
+void inet6_icmp_error(unsigned index, const ip6::Address& offender, const uint8_t* bytes,
+                      size_t length) {
     ip6::ErrorQuote quote;
     if (!ip6::error_quote(bytes, length, quote) ||
         !ipv6_owned(quote.source.link_local() ? index : 0, quote.source))
@@ -14,6 +15,17 @@ void inet6_icmp_error(unsigned index, const uint8_t* bytes, size_t length) {
         if (!ipv6_path(quote.source, quote.destination, bound, path, true))
             ip6::path_mtu_cache.learn(ip6::path_key(path, quote.destination), path.mtu,
                                       quote.information, ticks);
+    };
+    auto enqueue = [&](Inet6Socket& socket) {
+        Inet6Error record;
+        record.destination = {10, 0, 0, quote.destination,
+                              quote.destination.link_local() ? index : 0};
+        size_t skip = socket.type == 2 ? 8 : 0;
+        if (skip)
+            memcpy(&record.destination.port, quote.transport + 2, 2);
+        record.offender = {10, 0, 0, offender, offender.link_local() ? index : 0};
+        record.error = {uint32_t(quote.error), 3, quote.type, quote.code, 0, quote.information, 0};
+        inet6_queue_error(&socket, record, quote.transport + skip, quote.length - skip);
     };
     // ICMPv6 also receives errors about its own protocol independently of raw
     // descriptions. A closed raw socket does not invalidate a route exception.
@@ -39,10 +51,11 @@ void inet6_icmp_error(unsigned index, const uint8_t* bytes, size_t length) {
                 udp = &socket;
                 best_score = score;
             }
-        } else if (socket.connected) {
+        } else if (socket.connected || socket.receive_errors) {
             if (quote.type == 2)
                 learn(socket.index);
-            if (quote.type == 2 ? socket.pmtu_mode == 2 : quote.hard)
+            enqueue(socket);
+            if (socket.receive_errors || (quote.type == 2 ? socket.pmtu_mode == 2 : quote.hard))
                 socket.error = quote.error;
         }
     }
@@ -55,7 +68,8 @@ void inet6_icmp_error(unsigned index, const uint8_t* bytes, size_t length) {
         learn(udp->index);
         hard = udp->pmtu_mode != 0;
     }
-    if (hard && udp->connected)
+    enqueue(*udp);
+    if (udp->receive_errors || (hard && udp->connected))
         udp->error = quote.error;
 }
 } // namespace ax

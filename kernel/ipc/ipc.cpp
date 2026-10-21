@@ -241,7 +241,7 @@ uint32_t readiness(Handle* h) {
         unsigned shutdown = inet6_shutdown(h->inet6);
         if (!inet6_front(h->inet6) && !(shutdown & 1))
             events &= ~1u;
-        if (inet6_error(h->inet6))
+        if (inet6_error(h->inet6) || inet6_error_queued(h->inet6))
             events |= 8;
         if (shutdown & 1)
             events |= 0x2000;

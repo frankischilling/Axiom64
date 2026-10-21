@@ -935,6 +935,91 @@ static void source_fragmentation() {
     reset();
 }
 
+static void copied_error_queues() {
+    reset();
+    auto socket = inet6_allocate(2);
+    assert(socket);
+    Inet6Error metadata;
+    metadata.destination.address = address(0, 1);
+    metadata.offender.address = address(0, 250);
+    metadata.error = {111, 3, 1, 4, 0, 0, 0};
+    uint8_t bytes[16];
+    memset(bytes, 0x4e, sizeof(bytes));
+    assert(!inet6_queue_error(socket, metadata, bytes, sizeof(bytes)) && allocations.empty());
+    socket->receive_errors = true;
+    assert(inet6_queue_error(socket, metadata, bytes, sizeof(bytes)));
+    bytes[0] ^= 1;
+    metadata.offender.address.bytes[15] ^= 1;
+    auto record = inet6_take_error(socket);
+    assert(record && record->length == 16 && *inet6_error_bytes(record) == 0x4e &&
+           record->offender.address == address(0, 250));
+    release(record);
+    assert(!inet6_error_queued(socket) && !inet6_error(socket) && allocations.empty());
+    fail_allocations = 1;
+    assert(!inet6_queue_error(socket, metadata, bytes, sizeof(bytes)) && !fail_allocations);
+    assert(!inet6_error_queued(socket) && !socket->error_bytes && allocations.empty());
+    assert(!inet6_queue_error(socket, metadata, bytes, SIZE_MAX));
+    for (unsigned n = 0; n < inet6_queue_count; n++) {
+        bytes[0] = n;
+        assert(inet6_queue_error(socket, metadata, bytes, 1));
+    }
+    assert(!inet6_queue_error(socket, metadata, bytes, 1));
+    for (unsigned n = 0; n < inet6_queue_count; n++) {
+        record = inet6_take_error(socket);
+        assert(record && *inet6_error_bytes(record) == n);
+        release(record);
+        if (n < 16) {
+            bytes[0] = 32 + n;
+            assert(inet6_queue_error(socket, metadata, bytes, 1));
+        }
+    }
+    for (unsigned n = 32; n < 48; n++) {
+        record = inet6_take_error(socket);
+        assert(record && *inet6_error_bytes(record) == n);
+        release(record);
+    }
+    assert(!inet6_error_queued(socket) && allocations.empty());
+    metadata.error = {90, 1, 0, 0, 0, 1280, 0};
+    assert(inet6_queue_error(socket, metadata, nullptr, 0));
+    metadata.error = {13, 3, 1, 1, 0, 0, 0};
+    assert(inet6_queue_error(socket, metadata, bytes, 1));
+    socket->error = 111;
+    release(inet6_take_error(socket));
+    assert(inet6_error(socket, true) == 13 && inet6_error_queued(socket));
+    release(inet6_take_error(socket));
+    assert(!inet6_error(socket));
+    assert(inet6_queue_error(socket, metadata, bytes, 1));
+    socket->error = 111;
+    inet6_purge_errors(socket);
+    assert(inet6_error(socket, true) == 111 && !inet6_error_queued(socket) && allocations.empty());
+    auto local = address(0, 2), remote = address(0, 1);
+    assert(!change(1, local) && !inet6_bind_port(socket, local, 7001));
+    socket->local = local;
+    socket->index = 1;
+    socket->receive_limit = 15000;
+    std::vector<uint8_t> datagram(1460, 0x5b);
+    datagram[0] = 0x1b;
+    datagram[1] = 0x58;
+    datagram[2] = 0x1b;
+    datagram[3] = 0x59;
+    datagram[4] = 1460 >> 8;
+    datagram[5] = 1460 & 255;
+    for (unsigned n = 0; n < 10; n++)
+        deliver(0, incoming(0, remote, local, datagram, 64, 17));
+    assert(socket->count == 10 && socket->bytes == 14520);
+    for (unsigned n = 0; n < 5; n++)
+        assert(inet6_queue_error(socket, metadata, bytes, 1));
+    assert(!inet6_queue_error(socket, metadata, bytes, 1));
+    assert(socket->count == 10 && socket->error_count == 5);
+    inet6_close(socket);
+    assert(allocations.empty());
+    auto reused = inet6_allocate(2);
+    assert(reused == socket && !reused->receive_errors && !inet6_error_queued(reused) &&
+           !inet6_error(reused));
+    inet6_close(reused);
+    reset();
+}
+
 static void path_mtu_errors() {
     for (unsigned lane = 0; lane < 2; lane++) {
         reset();
@@ -1087,6 +1172,7 @@ int main() {
     raw_header_bounds();
     source_fragmentation();
     path_mtu_errors();
+    copied_error_queues();
     reset();
     std::puts("IPV6_HOST_PASS adapters=2 DAD=1 duplicate=1 NS=1 NA=1 echo=1 owned_copy=1");
 }

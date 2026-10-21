@@ -6,6 +6,7 @@ namespace ax::ip6 {
 struct ErrorQuote {
     Address source, destination;
     const uint8_t* transport = nullptr;
+    size_t length = 0;
     uint32_t information = 0;
     uint8_t protocol = 0, type = 0, code = 0;
     int error = 0;

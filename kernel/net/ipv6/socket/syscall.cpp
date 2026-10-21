@@ -195,7 +195,7 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             size_t copied = min(size_t(length), sizeof(socket->filter));
             return !copied || task.memory->space.copy_in(socket->filter, d, copied) ? 0 : -14;
         }
-        if (b == 41 && (c == 23 || c == 24 || c == 62)) {
+        if (b == 41 && (c == 23 || c == 24 || c == 25 || c == 62)) {
             int value = 0;
             size_t copied = length >= 4 && d ? 4 : 0;
             if (copied && !task.memory->space.copy_in(&value, d, copied))
@@ -206,6 +206,12 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             }
             if (length < 4)
                 return -22;
+            if (c == 25) {
+                socket->receive_errors = value != 0;
+                if (!value)
+                    inet6_purge_errors(socket);
+                return 0;
+            }
             if (c == 23) {
                 if (value < 0 || value > 5)
                     return -22;
@@ -249,6 +255,9 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
         return 0;
     }
     case 55: {
+        uint32_t ipv6_length = 0;
+        if (b == 41 && !task.memory->space.copy_in(&ipv6_length, frame.r8, 4))
+            return -14;
         if (b == 1 && c == 4) {
             uint32_t length;
             int error = output_length(task, frame.r8, length);
@@ -287,6 +296,8 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             value = socket->hops;
         else if (b == 41 && c == 23)
             value = socket->pmtu_mode;
+        else if (b == 41 && c == 25)
+            value = socket->receive_errors;
         else if (b == 41 && c == 62)
             value = socket->dont_fragment;
         else if (b == 41 && c == 7 && socket->type == 3)
@@ -303,6 +314,13 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             value = path.mtu;
         } else
             return -92;
+        if (b == 41) {
+            uint32_t copied = min(ipv6_length, uint32_t(sizeof(value)));
+            if (!task.memory->space.copy_out(frame.r8, &copied, 4) ||
+                (copied && !task.memory->space.copy_out(d, &value, copied)))
+                return -14;
+            return 0;
+        }
         return output(task, &value, sizeof(value), d, frame.r8, true);
     }
     default:

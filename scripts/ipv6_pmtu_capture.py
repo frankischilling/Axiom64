@@ -35,8 +35,7 @@ def stamp(row):
     return row.get('monotonic_ns', row['ns'])
 
 
-def inspect(rows, lane, log, native=False):
-    log = log.replace('\r\n', '\n')
+def inspect_application(log, lane):
     require(log.count('IPV6_PMTU_PASS adapters=2 cases=120 policies=6 malformed_each=10') == 1 and
             'IPV6_PMTU_FAIL' not in log, 'actual PMTU application completion')
     records = re.findall(r'^IPV6_PMTU_ERROR lane=(\d+) case=(\d+) type=(\d+) scope=(\d+) mode=(\d+) icmp=(\d+) code=(\d+) mtu=(\d+) errno=(\d+)$', log, re.MULTILINE)
@@ -55,6 +54,12 @@ def inspect(rows, lane, log, native=False):
         require(link in (0, 1) and sequence in range(24) and (link, sequence) not in seen and
                 (result, error) == ((-1, 90) if sequence % 6 == 2 else (1300, 0)), 'exact PMTU send result')
         seen.add((link, sequence))
+
+
+def inspect(rows, lane, log, native=False, application=inspect_application,
+            barrier_protocol=b'\x88\xba', barrier_magic=b'IP6P', quote_length=48):
+    log = log.replace('\r\n', '\n')
+    application(log, lane)
     guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
     control, peer = bytes([2, 0x49, 0x50, 0x36, lane, 0]), bytes([2, 0x49, 0x50, 0x36, lane, 1])
     global_local = ipaddress.IPv6Address(f'2001:db8:{lane + 1}::2').packed
@@ -67,8 +72,8 @@ def inspect(rows, lane, log, native=False):
     for index, row in enumerate(rows):
         frame = row['frame']
         require(len(frame) >= 14, 'complete PMTU Ethernet header')
-        if frame[12:14] == b'\x88\xba':
-            require(len(frame) == 60 and frame[14:19] == b'IP6P' + bytes([lane]) and
+        if frame[12:14] == barrier_protocol:
+            require(len(frame) == 60 and frame[14:19] == barrier_magic + bytes([lane]) and
                     not any(frame[21:]), 'exact retained PMTU phase bytes')
             number, reply = frame[19:21]
             if not reply:
@@ -149,7 +154,7 @@ def inspect(rows, lane, log, native=False):
         if frame[6:12] == peer:
             require(waiting is not None and waiting[0] % 3 == 2 and 'original' in active and
                     'injected' not in active, 'one router error for the actual quoted packet')
-            original = bytearray(active['original'][14:62])
+            original = bytearray(active['original'][14:14 + quote_length])
             sequence = active['sequence']
             if sequence >= 50:
                 damage = (sequence - 50) % 5
@@ -158,7 +163,7 @@ def inspect(rows, lane, log, native=False):
                 elif damage == 2:
                     original[39] ^= 64
                 elif damage == 3:
-                    original = original[:-1]
+                    original = original[:47]
                 elif damage == 4:
                     original[6] = 44
                     original[4:6] = (int.from_bytes(original[4:6], 'big') + 8).to_bytes(2, 'big')

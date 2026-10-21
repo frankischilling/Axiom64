@@ -18,6 +18,10 @@ def plan(sequence):
 
 
 class Peer(HostPeer):
+    barrier_protocol = b'\x88\xba'
+    barrier_magic = b'IP6P'
+    quote_length = 48
+
     def __init__(self, lane, native=False):
         super().__init__(lane, native)
         self.sequence = 0
@@ -38,7 +42,7 @@ class Peer(HostPeer):
             return
         phase = item['boundary'][19] % 3
         if phase == 2 and 'original' in item and not item.get('injected'):
-            quote = bytearray(item['original'][14:62])
+            quote = bytearray(item['original'][14:14 + self.quote_length])
             sequence = self.sequence
             if sequence >= 50:
                 damage = (sequence - 50) % 5
@@ -47,7 +51,7 @@ class Peer(HostPeer):
                 elif damage == 2:
                     quote[39] ^= 64
                 elif damage == 3:
-                    quote = quote[:-1]
+                    quote = quote[:47]
                 elif damage == 4:
                     quote[6] = 44
                     quote[4:6] = (int.from_bytes(quote[4:6], 'big') + 8).to_bytes(2, 'big')
@@ -79,9 +83,9 @@ class Peer(HostPeer):
 
     def receive(self, frame):
         require(len(frame) >= 14 and frame[6:12] == self.guest, 'PMTU frame source ownership')
-        if frame[12:14] == b'\x88\xba':
+        if frame[12:14] == self.barrier_protocol:
             require(len(frame) == 60 and frame[:6] == self.control and
-                    frame[14:19] == b'IP6P' + bytes([self.lane]) and not any(frame[20:]),
+                    frame[14:19] == self.barrier_magic + bytes([self.lane]) and not any(frame[20:]),
                     'exact PMTU phase request')
             phase = frame[19]
             if not self.ready:

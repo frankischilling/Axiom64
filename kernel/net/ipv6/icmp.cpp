@@ -34,6 +34,7 @@ bool error_quote(const uint8_t* bytes, size_t length, ErrorQuote& result) {
         value.destination.mapped())
         return false;
     value.transport = quote + at;
+    value.length = quoted - at;
     value.protocol = protocol;
     value.type = bytes[0];
     value.code = bytes[1];

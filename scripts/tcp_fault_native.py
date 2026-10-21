@@ -89,6 +89,22 @@ class Capture:
         except Exception as exception:
             self.error = exception
 
+    def watch(self, frame):
+        """Return a pollable receipt for one future actual packet injection."""
+        waiting = dict(frame=bytes(frame), ready=threading.Event(), monotonic_ns=None)
+        with self.injection_lock:
+            check(self.injection is None, 'one outstanding independently observed injection')
+            self.injection = waiting
+        def observed():
+            check(self.error is None, 'independent input monitor remains healthy')
+            with self.injection_lock:
+                if not waiting['ready'].is_set():
+                    return None
+                if self.injection is waiting:
+                    self.injection = None
+                return waiting['monotonic_ns'] / 1e9
+        return observed
+
     def observe_injection(self, frame, send, timeout=2):
         """Send one exact frame and wait for its independent monotonic receipt."""
         waiting = dict(frame=frame, ready=threading.Event(), monotonic_ns=None)

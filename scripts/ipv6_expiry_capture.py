@@ -66,6 +66,40 @@ def application(log):
     return inventory
 
 
+def inspect_neighbor(frame, lane, pending):
+    guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
+    peer = bytes([2, 0x49, 0x50, 0x36, lane, 1])
+    global_local = ipaddress.IPv6Address(f'2001:db8:{lane + 1}::2').packed
+    link_local = ipaddress.IPv6Address('fe80::2').packed
+    require(len(frame) == 86 and frame[12:14] == b'\x86\xdd' and
+            frame[14:18] == b'\x60\0\0\0' and frame[18:22] == b'\0\x20\x3a\xff',
+            'expiry ND bounds and lifetime')
+    source, destination, body = frame[22:38], frame[38:54], frame[54:]
+    require(body[0] in (135, 136) and body[1] == 0 and
+            not checksum(source + destination + struct.pack('!I3xB', 32, 58) + body),
+            'complete original neighbor checksum and code')
+    target = body[8:24]
+    number = target[-1] - 32
+    local = link_local if number % 8 >= 4 else global_local
+    remote = local[:-1] + bytes([32 + number]) if number in range(16) else None
+    require(target == remote, 'expiry neighbor belongs to an exercised destination')
+    if body[0] == 135:
+        multicast = b'\xff\x02' + bytes(9) + b'\1\xff' + target[-3:]
+        require(frame[6:12] == guest and source in (global_local, link_local) and
+                (destination, frame[:6]) in ((target, peer), (multicast, b'\x33\x33\xff' + target[-3:])) and
+                body[4:8] == bytes(4) and body[24:] == b'\1\1' + guest,
+                'original multicast or unicast neighbor solicitation')
+        pending.setdefault(target, []).append(source)
+    else:
+        requests = pending.get(target, [])
+        require(requests and frame[:12] == guest + peer and source == target and
+                destination == requests[0] and body[4:8] == b'\x60\0\0\0' and
+                body[24:] == b'\2\1' + peer, 'original owned neighbor advertisement')
+        requests.pop(0)
+        if not requests:
+            pending.pop(target)
+
+
 def inspect(rows, lane, log, native=False):
     counts = application(log.replace('\r\n', '\n'))
     guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
@@ -78,6 +112,7 @@ def inspect(rows, lane, log, native=False):
     heartbeats = {number: [] for number in range(16)}
     firmware, mld, nd = 0, 0, 0
     previous = None
+    neighbor_requests = {}
     for index, row in enumerate(rows):
         frame = row['frame']
         require(len(frame) >= 14, 'complete expiry Ethernet envelope')
@@ -122,22 +157,7 @@ def inspect(rows, lane, log, native=False):
                 not checksum(source + destination + struct.pack('!I3xB', size, protocol) + body),
                 'complete original expiry transport checksum')
         if protocol == 58 and body[:1] in (b'\x87', b'\x88'):
-            require(len(body) == 32 and hop == 255 and body[1] == 0, 'expiry ND bounds and lifetime')
-            target = body[8:24]
-            number = target[-1] - 32
-            local = link_local if number % 8 >= 4 else global_local
-            remote = local[:-1] + bytes([32 + number]) if number in range(16) else None
-            require(target == remote, 'expiry neighbor belongs to an exercised destination')
-            if body[0] == 135:
-                multicast = b'\xff\x02' + bytes(9) + b'\1\xff' + target[-3:]
-                require(frame[6:12] == guest and source == local and
-                        (destination, frame[:6]) in ((target, peer), (multicast, b'\x33\x33\xff' + target[-3:])) and
-                        body[4:8] == bytes(4) and body[24:] == b'\1\1' + guest,
-                        'original multicast or unicast neighbor solicitation')
-            else:
-                require(frame[:12] == guest + peer and source == target and destination == local and
-                        body[4:8] == b'\x60\0\0\0' and body[24:] == b'\2\1' + peer,
-                        'original owned neighbor advertisement')
+            inspect_neighbor(frame, lane, neighbor_requests)
             nd += 1
             continue
         require(hop == 64, 'original expiry hop limit')
@@ -252,7 +272,8 @@ def verify_capture(path, lane, log_path, archive, native=False, statistics=None,
     rejected = []
     names = ('missing-data', 'duplicate-data', 'missing-hint', 'wrong-quote', 'wrong-port',
              'wrong-checksum', 'early-expiry', 'late-expiry', 'wrong-MTU', 'wrong-errno',
-             'missing-sample', 'missing-heartbeat', 'missing-lookup', 'wrong-cached-getter')
+             'missing-sample', 'missing-heartbeat', 'missing-lookup', 'wrong-cached-getter',
+             'foreign-neighbor-source', 'wrong-neighbor-recipient')
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as saved:
         for name in names:
             changed, changed_log = copy.deepcopy(rows), log
@@ -286,6 +307,22 @@ def verify_capture(path, lane, log_path, archive, native=False, statistics=None,
             elif name == 'missing-heartbeat':
                 index = next(i for i, row in enumerate(changed) if b'P6EX\x01\xfa' in row['frame'])
                 del changed[index]
+            elif name in ('foreign-neighbor-source', 'wrong-neighbor-recipient'):
+                wanted = 135 if name == 'foreign-neighbor-source' else 136
+                index = next(i for i, row in enumerate(changed) if len(row['frame']) == 86 and
+                             row['frame'][20] == 58 and row['frame'][54] == wanted)
+                frame = bytearray(changed[index]['frame'])
+                if wanted == 135:
+                    frame[22:38] = ipaddress.IPv6Address('2001:db8:ffff::2').packed
+                else:
+                    other = (ipaddress.IPv6Address(f'2001:db8:{lane + 1}::2').packed
+                             if frame[38:40] == b'\xfe\x80' else
+                             ipaddress.IPv6Address('fe80::2').packed)
+                    frame[38:54] = other
+                frame[56:58] = bytes(2)
+                value = checksum(bytes(frame[22:54]) + struct.pack('!I3xB', 32, 58) + bytes(frame[54:]))
+                frame[56:58] = value.to_bytes(2, 'big')
+                changed[index]['frame'] = bytes(frame)
             else:
                 changed_log = re.sub(rf'^IPV6_EXPIRY_LOOKUPS lane={lane} case=0 .*$', '', changed_log, count=1, flags=re.MULTILINE)
             saved.writestr(name + '.pcap', encode_capture(changed))

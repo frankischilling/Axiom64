@@ -689,10 +689,13 @@ test-ipv6-output:
 	$(PYTHON) scripts/ipv6_host_test.py --suite output --workers 4
 test-ipv6-output-native:
 	$(PYTHON) scripts/ipv6_host_native.py --suite output
-.PHONY: test-ipv6-pmtu test-ipv6-pmtu-native
-test-ipv6-pmtu:
+.PHONY: test-ipv6-pmtu test-ipv6-pmtu-native test-ipv6-pmtu-observation
+test-ipv6-pmtu-observation:
+	$(PYTHON) scripts/tests/ipv6_pmtu_observation_test.py -v
+	$(PYTHON) scripts/tests/packet_observation_test.py -v
+test-ipv6-pmtu: test-ipv6-pmtu-observation
 	$(PYTHON) scripts/ipv6_host_test.py --suite pmtu --workers 4
-test-ipv6-pmtu-native:
+test-ipv6-pmtu-native: test-ipv6-pmtu-observation
 	$(PYTHON) scripts/ipv6_host_native.py --suite pmtu
 .PHONY: test-ipv6-errors test-ipv6-errors-native
 test-ipv6-errors:

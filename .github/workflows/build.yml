@@ -924,6 +924,7 @@ jobs:
         if: matrix.suite == 'ipv6-expiry'
         run: |
           python3 scripts/tests/ipv6_expiry_peer_test.py
+          python3 scripts/tests/ipv6_expiry_neighbor_test.py -v
           python3 scripts/tests/ipv6_expiry_controller_test.py -v
       - name: Observe real ten-minute IPv6 path MTU expiry in all eleven profiles
         if: matrix.suite == 'ipv6-expiry'

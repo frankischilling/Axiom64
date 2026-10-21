@@ -61,6 +61,7 @@ def prepare(linkage, directory, suite='host', image_directory=None):
         'scripts/ipv6_pmtu_peer.py', 'scripts/ipv6_pmtu_capture.py',
         'scripts/ipv6_errors_peer.py', 'scripts/ipv6_errors_capture.py',
         'scripts/ipv6_expiry_peer.py', 'scripts/ipv6_expiry_capture.py',
+        'scripts/packet_observation.py', 'scripts/tcp_fault_native.py',
         'scripts/network_test.py', 'scripts/tcp_fault_test.py', 'scripts/image.py',
         'scripts/compile_uapi_client.py', 'scripts/tcp_fixture_inputs.py',
         'userspace/tests/net/ipv6_host.sh',
@@ -115,6 +116,9 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
                     f'mac={peers[lane].guest.hex(":")}']
         capture = output / f'lane{lane}.pcap'
         captures.append(capture)
+        if suite == 'pmtu':
+            from packet_observation import PcapObservation
+            peers[lane].observe_input = PcapObservation(capture).watch
         command += ['-object', f'filter-dump,id=cap{lane},netdev=peer{lane},file={capture}']
     if firmware == 'uefi':
         variables = output / 'OVMF_VARS.fd'

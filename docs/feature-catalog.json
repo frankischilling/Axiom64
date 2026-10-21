@@ -641,7 +641,11 @@
         "scripts/ipv6_expiry_capture.py",
         "scripts/ipv6_expiry_test.py",
         "scripts/tests/ipv6_expiry_peer_test.py",
-        "scripts/tests/ipv6_expiry_controller_test.py"
+        "scripts/tests/ipv6_expiry_controller_test.py",
+        "scripts/packet_observation.py",
+        "scripts/tests/ipv6_pmtu_observation_test.py",
+        "scripts/tests/packet_observation_test.py",
+        "scripts/tests/ipv6_expiry_neighbor_test.py"
       ],
       "branch": "feature/f12-ipv4-ipv6-routing-and-icmp",
       "issue": "https://github.com/frankischilling/Axiom64/issues/12"

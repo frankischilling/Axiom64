@@ -29,6 +29,7 @@ class Peer(HostPeer):
         self.phase = 0
         self.quiet = []
         self.fragments = 0
+        self.observe_input = None
 
     def reply(self, request):
         response = bytearray(request)
@@ -41,7 +42,7 @@ class Peer(HostPeer):
         if item is None or 'boundary' not in item:
             return
         phase = item['boundary'][19] % 3
-        if phase == 2 and 'original' in item and not item.get('injected'):
+        if phase == 2 and 'original' in item and 'observation' not in item:
             quote = bytearray(item['original'][14:14 + self.quote_length])
             sequence = self.sequence
             if sequence >= 50:
@@ -63,10 +64,16 @@ class Peer(HostPeer):
             packet = bytearray(self.packet(bytes(router), item['local'], body, hop=64))
             if sequence >= 50 and (sequence - 50) % 5 == 0:
                 packet[57] ^= 1
+            require(self.observe_input is not None, 'actual quoted-error observation is bound')
+            item['observation'] = self.observe_input(bytes(packet))
             self.outgoing.append(bytes(packet))
-            item['injected'] = time.monotonic()
         if phase == 2:
-            if not item.get('injected') or time.monotonic() - item['injected'] < .05:
+            if 'injected' not in item:
+                observed = item['observation']() if 'observation' in item else None
+                if observed is None:
+                    return
+                item['injected'] = observed
+            if time.monotonic() - item['injected'] < .05:
                 return
         elif self.sequence < 24:
             mode = self.sequence % 6

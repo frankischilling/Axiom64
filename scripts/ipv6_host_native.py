@@ -109,6 +109,8 @@ def child(profile, directory, suite='host'):
             interfaces.append(dict(lane=lane, name=name, index=socket.if_nametoindex(name)))
             selector.register(tap, selectors.EVENT_READ, lane)
             captures.append(Capture(name, directory / f'lane{lane}.pcap'))
+            if suite == 'pmtu':
+                peers[lane].observe_input = captures[-1].watch
         (directory / 'interfaces.json').write_text(json.dumps(interfaces, indent=2) + '\n')
         with (directory / 'client.log').open('wb') as output:
             process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL,

@@ -86,6 +86,11 @@ bool net_writable(unsigned index) {
 }
 
 int net_send(unsigned index, const void* frame, size_t length, const void* sender) {
+    return net_send_checked(index, frame, length, nullptr, nullptr, sender);
+}
+
+int net_send_checked(unsigned index, const void* frame, size_t length, int (*validate)(void*),
+                     void* context, const void* sender) {
     auto info = net_info(index);
     if (!info)
         return -19;
@@ -95,6 +100,9 @@ int net_send(unsigned index, const void* frame, size_t length, const void* sende
         return -5;
     if (!info->administrative || !info->carrier)
         return -100;
+    if (validate)
+        if (int error = validate(context))
+            return error;
     if (length < ethernet_header)
         return -22;
     const auto bytes = static_cast<const uint8_t*>(frame);

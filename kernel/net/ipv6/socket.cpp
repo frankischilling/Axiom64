@@ -253,7 +253,10 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
     int error = ipv6_path(socket->local, address.address, index, path);
     if (error)
         return error;
-    if (length + overhead > path.mtu)
+    bool fragmentable = !socket->dont_fragment && (socket->pmtu_mode < 2 || socket->pmtu_mode == 5);
+    if (socket->socket_mtu)
+        path.mtu = min(path.mtu, socket->socket_mtu);
+    if (!fragmentable && length + overhead > path.mtu)
         return -90;
     size_t size = length + overhead - ip6::header_size;
     if (socket->type == 3 && size < 4)
@@ -286,7 +289,7 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
     bytes[check_at] = checksum >> 8;
     bytes[check_at + 1] = checksum;
     error = ipv6_send(path.source, address.address, index, socket->protocol, socket->hops, bytes,
-                      size, socket);
+                      size, socket, fragmentable, socket->socket_mtu);
     release(bytes);
     if (!error)
         socket->transmitted += length + overhead;

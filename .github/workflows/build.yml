@@ -947,6 +947,12 @@ jobs:
       - name: Compare IPv6 raw and UDP sockets with three native Linux linkages
         if: matrix.suite == 'network'
         run: sudo -n make test-ipv6-sockets-native
+      - name: Test IPv6 source fragmentation and output policy on both adapters
+        if: matrix.suite == 'network'
+        run: make test-ipv6-output
+      - name: Compare IPv6 source output with three native Linux linkages
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv6-output-native
       - name: Test IPv6 fragment delivery and real sixty-second expiry on both adapters
         if: matrix.suite == 'network'
         run: make test-ipv6-fragments
@@ -970,6 +976,11 @@ jobs:
             build/ipv6-sockets-static.inputs.json
             build/ipv6-sockets-dynamic.inputs.json
             build/axiom64-ipv6-sockets-*.iso
+            build/ipv6-output-wire
+            build/ipv6-output-native-wire
+            build/ipv6-output-static.inputs.json
+            build/ipv6-output-dynamic.inputs.json
+            build/axiom64-ipv6-output-*.iso
             build/ipv6-fragments-wire
             build/ipv6-fragments-native-wire
             build/ipv6-fragments-static.inputs.json

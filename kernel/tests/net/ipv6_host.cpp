@@ -15,12 +15,30 @@ std::unordered_set<void*> allocations;
 std::vector<std::vector<uint8_t>> emitted[2];
 ax::NetAdapter adapters[2];
 unsigned blocked;
+unsigned send_budget = UINT32_MAX;
+unsigned fail_allocations, shutdown_after_polls, remove_after_polls, shrink_after_polls;
+unsigned callback_index = 1;
+bool entropy_available = true;
 } // namespace
 
 namespace ax {
 uint64_t ticks;
 
+int random_read(void* output, size_t size, bool insecure) {
+    static uint32_t next = 0x89abcdef;
+    assert(size == sizeof(next) && !insecure);
+    if (!entropy_available)
+        return -11;
+    memcpy(output, &next, size);
+    next++;
+    return 0;
+}
+
 void* alloc(size_t length) {
+    if (fail_allocations) {
+        fail_allocations--;
+        return nullptr;
+    }
     auto result = std::malloc(length);
     assert(result && allocations.insert(result).second);
     return result;
@@ -120,6 +138,14 @@ static void reset() {
     emitted[1].clear();
     ticks = 0;
     blocked = 0;
+    send_budget = UINT32_MAX;
+    fail_allocations = shutdown_after_polls = remove_after_polls = shrink_after_polls = 0;
+    entropy_available = true;
+    callback_index = 1;
+    for (auto& adapter : adapters) {
+        adapter.info.live = adapter.info.carrier = true;
+        assert(!net_configure(adapter.info.index, true, 1500));
+    }
 }
 
 static std::vector<uint8_t> incoming(unsigned lane, const ip6::Address& source,
@@ -740,6 +766,171 @@ static void raw_header_bounds() {
     reset();
 }
 
+static void source_fragmentation() {
+    for (unsigned lane = 0; lane < 2; lane++) {
+        reset();
+        unsigned index = lane + 1;
+        callback_index = index;
+        auto local = address(lane, 2), remote = address(lane, 1);
+        assert(!change(index, local));
+        auto raw = inet6_allocate(3);
+        assert(raw);
+        raw->connected = true;
+        Inet6Address target{10, 0, 0, remote, 0};
+        uint8_t tiny[4] = {129};
+        assert(inet6_send(raw, target, tiny, sizeof(tiny), true) == 4);
+        net_poll();
+        deliver(lane, advertisement(lane, remote, local));
+        net_poll();
+        assert(!raw->transmitted);
+        emitted[lane].clear();
+        std::vector<uint8_t> selected_mtu(2000, 0x71);
+        selected_mtu[0] = 129;
+        selected_mtu[1] = 0;
+        raw->socket_mtu = 1280;
+        assert(inet6_send(raw, target, selected_mtu.data(), 1400, true) == 1400);
+        net_poll();
+        assert(emitted[lane].size() == 1 &&
+               ip6::decode(emitted[lane][0].data() + 14, emitted[lane][0].size() - 14).input ==
+                   ip6::Input::payload);
+        emitted[lane].clear();
+        assert(inet6_send(raw, target, selected_mtu.data(), 2000, true) == 2000);
+        net_poll();
+        assert(!raw->transmitted && emitted[lane].size() == 2);
+        for (const auto& frame : emitted[lane])
+            assert(frame.size() <= 1294 &&
+                   ip6::decode(frame.data() + 14, frame.size() - 14).input == ip6::Input::fragment);
+        raw->pmtu_mode = 2;
+        assert(inet6_send(raw, target, selected_mtu.data(), 1241, true) == -90);
+        assert(inet6_send(raw, target, selected_mtu.data(), 1240, true) == 1240);
+        net_poll();
+        raw->pmtu_mode = 1;
+        raw->socket_mtu = 0;
+        emitted[lane].clear();
+        std::vector<uint8_t> payload(65535), original;
+        for (size_t n = 0; n < payload.size(); n++)
+            payload[n] = uint8_t(n * 13 + 7);
+        payload[0] = 129;
+        payload[1] = payload[2] = payload[3] = 0;
+        original = payload;
+        assert(inet6_send(raw, target, payload.data(), payload.size(), true) == 65535);
+        assert(raw->transmitted == 65575);
+        std::fill(payload.begin(), payload.end(), 0xa5);
+        send_budget = 1;
+        net_poll();
+        assert(emitted[lane].size() == 1);
+        blocked = 1;
+        for (unsigned n = 0; n < 3; n++)
+            net_poll();
+        assert(emitted[lane].size() == 1 && raw->transmitted == 65575);
+        blocked = 0;
+        send_budget = UINT32_MAX;
+        assert(!net_configure(index, true, 1280));
+        for (unsigned n = 0; raw->transmitted && n < 100; n++) {
+            if (n == 1)
+                assert(!net_configure(index, true, 1500));
+            net_poll();
+        }
+        assert(!raw->transmitted && !raw->error);
+        std::vector<uint8_t> restored;
+        uint32_t identification = 0;
+        for (const auto& frame : emitted[lane]) {
+            auto part = ip6::decode(frame.data() + 14, frame.size() - 14);
+            assert(part.input == ip6::Input::fragment && part.protocol == 58 &&
+                   part.fragment.offset == restored.size() && part.header.source == local &&
+                   part.header.destination == remote && frame.size() <= 1514);
+            if (!identification)
+                identification = part.fragment.identification;
+            assert(identification && part.fragment.identification == identification);
+            assert(part.fragment.more == (&frame != &emitted[lane].back()));
+            restored.insert(restored.end(), part.payload, part.payload + part.length);
+        }
+        assert(restored.size() == original.size() &&
+               !ip6::checksum(local, remote, 58, restored.data(), restored.size()));
+        original[2] = restored[2];
+        original[3] = restored[3];
+        assert(restored == original);
+        emitted[lane].clear();
+        raw->send_limit = 262144;
+        for (unsigned n = 0; n < 32; n++)
+            assert(inet6_send(raw, target, original.data(), 7000, true) == 7000);
+        assert(inet6_send(raw, target, original.data(), 7000, true) == -11);
+        assert(!inet6_ready(raw, true));
+        send_budget = 1;
+        net_poll();
+        assert(raw->transmitted);
+        send_budget = UINT32_MAX;
+        for (unsigned n = 0; raw->transmitted && n < 100; n++)
+            net_poll();
+        assert(!raw->transmitted && !raw->error && allocations.empty() && inet6_ready(raw, true));
+        emitted[lane].clear();
+        // A change during the driver's own poll must rebuild the unaccepted piece.
+        assert(inet6_send(raw, target, original.data(), 4000, true) == 4000);
+        raw->pmtu_mode = 2; // Accepted datagrams retain their original policy.
+        if (!lane) {
+            shrink_after_polls = 2;
+            net_poll();
+            assert(emitted[lane].empty() && raw->transmitted == 4040);
+        }
+        for (unsigned n = 0; raw->transmitted && n < 10; n++)
+            net_poll();
+        assert(!raw->transmitted && !raw->error);
+        assert(inet6_send(raw, target, original.data(), 4000, true) == -90);
+        raw->pmtu_mode = 1;
+        // Closing a description keeps its queued copy, without touching a reused slot.
+        emitted[lane].clear();
+        assert(inet6_send(raw, target, original.data(), 4000, true) == 4000);
+        send_budget = 1;
+        net_poll();
+        assert(raw->transmitted);
+        inet6_close(raw);
+        auto reused = inet6_allocate(3);
+        assert(reused == raw && !reused->transmitted);
+        send_budget = UINT32_MAX;
+        for (unsigned n = 0; n < 10; n++)
+            net_poll();
+        assert(!reused->transmitted && !reused->error && emitted[lane].size() >= 3);
+        raw = reused;
+        raw->connected = true;
+        emitted[lane].clear();
+        assert(inet6_send(raw, target, original.data(), 4000, true) == 4000);
+        fail_allocations = 1;
+        net_poll();
+        assert(!raw->transmitted && inet6_error(raw, true) == 12 && allocations.empty());
+        entropy_available = false;
+        assert(inet6_send(raw, target, original.data(), 4000, true) == 4000);
+        net_poll();
+        assert(raw->transmitted == 4040 && emitted[lane].empty());
+        entropy_available = true;
+        for (unsigned n = 0; raw->transmitted && n < 10; n++)
+            net_poll();
+        assert(!raw->transmitted);
+        emitted[lane].clear();
+        assert(inet6_send(raw, target, original.data(), 4000, true) == 4000);
+        blocked = 1;
+        net_poll();
+        ticks = 400;
+        net_poll();
+        blocked = 0;
+        assert(!raw->transmitted && inet6_error(raw, true) == 113 && allocations.empty());
+        if (!lane) {
+            Ipv6Route retained{address(0, 0), {}, 1, 1024, 64, 3};
+            assert(!route(retained, false));
+            assert(inet6_send(raw, target, original.data(), 4000, true) == 4000);
+            remove_after_polls = 2;
+            net_poll();
+            assert(!raw->transmitted && inet6_error(raw, true) == 99 && emitted[lane].empty());
+        } else {
+            assert(inet6_send(raw, target, original.data(), 4000, true) == 4000);
+            shutdown_after_polls = 2;
+            net_poll();
+            assert(!raw->transmitted && inet6_error(raw, true) == 5 && emitted[lane].empty());
+        }
+        inet6_close(raw);
+    }
+    reset();
+}
+
 int main() {
     for (unsigned n = 0; n < 2; n++) {
         auto& adapter = adapters[n];
@@ -748,11 +939,22 @@ int main() {
         adapter.info.mac[0] = 0x52;
         adapter.info.mac[1] = 0x54;
         adapter.info.mac[5] = 0x10 + n;
-        adapter.poll = [](NetAdapter&) {};
+        adapter.poll = [](NetAdapter& device) {
+            if (device.info.index != callback_index)
+                return;
+            if (shrink_after_polls && !--shrink_after_polls)
+                assert(!net_configure(1, true, 1280));
+            if (remove_after_polls && !--remove_after_polls)
+                assert(!change(1, address(0, 2), true, true));
+            if (shutdown_after_polls && !--shutdown_after_polls)
+                net_shutdown();
+        };
         adapter.stop = [](NetAdapter&) {};
         adapter.send = [](NetAdapter& device, const void* data, size_t length) {
-            if (blocked)
+            if (blocked || !send_budget)
                 return -11;
+            if (send_budget != UINT32_MAX)
+                send_budget--;
             const auto bytes = static_cast<const uint8_t*>(data);
             emitted[device.info.index - 1].emplace_back(bytes, bytes + length);
             return 0;
@@ -770,6 +972,7 @@ int main() {
     socket_ownership();
     fragmented_delivery();
     raw_header_bounds();
+    source_fragmentation();
     reset();
     std::puts("IPV6_HOST_PASS adapters=2 DAD=1 duplicate=1 NS=1 NA=1 echo=1 owned_copy=1");
 }

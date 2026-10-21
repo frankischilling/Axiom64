@@ -9,13 +9,14 @@ constexpr uint32_t inet6_queue_bytes = 65536;
 
 struct Inet6Socket {
     bool used = false, bound = false, connected = false, reuse = false, port_locked = false;
-    bool v6only = false;
-    uint8_t type = 3, protocol = 58, hops = 64;
+    bool v6only = false, dont_fragment = false;
+    uint8_t type = 3, protocol = 58, hops = 64, pmtu_mode = 1;
+    uint32_t socket_mtu = 0;
     unsigned index = 0, head = 0, count = 0, shutdown = 0;
     uint16_t local_port = 0, peer_port = 0;
     ip6::Address local, peer;
     uint32_t filter[8]{};
-    uint32_t receive_limit = inet6_queue_bytes, send_limit = inet6_queue_bytes;
+    uint32_t receive_limit = inet6_queue_bytes, send_limit = 212992;
     size_t bytes = 0, transmitted = 0;
     uint64_t order = 0;
     int error = 0;

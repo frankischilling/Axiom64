@@ -195,6 +195,28 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             size_t copied = min(size_t(length), sizeof(socket->filter));
             return !copied || task.memory->space.copy_in(socket->filter, d, copied) ? 0 : -14;
         }
+        if (b == 41 && (c == 23 || c == 24 || c == 62)) {
+            int value = 0;
+            size_t copied = length >= 4 && d ? 4 : 0;
+            if (copied && !task.memory->space.copy_in(&value, d, copied))
+                return -14;
+            if (c == 62) {
+                socket->dont_fragment = value != 0;
+                return 0;
+            }
+            if (length < 4)
+                return -22;
+            if (c == 23) {
+                if (value < 0 || value > 5)
+                    return -22;
+                socket->pmtu_mode = value;
+            } else {
+                if (value && value < int(ip6::minimum_mtu))
+                    return -22;
+                socket->socket_mtu = value;
+            }
+            return 0;
+        }
         int value;
         if (length < 4)
             return -22;
@@ -207,7 +229,9 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
                 return -1;
             if (value < 0 && c != 32)
                 return -22;
-            uint64_t limit = c == 32 ? uint64_t(INT32_MAX / 2) * 2 : uint64_t(inet6_queue_bytes);
+            uint64_t limit = c == 32  ? uint64_t(INT32_MAX / 2) * 2
+                             : c == 7 ? uint64_t(262144)
+                                      : uint64_t(inet6_queue_bytes);
             uint32_t bound = max(uint32_t(min(uint64_t(max(value, 0)) * 2, limit)), uint32_t(2048));
             (c == 8 ? socket->receive_limit : socket->send_limit) = bound;
         } else if (b == 41 && c == 16) {
@@ -261,6 +285,10 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
                 return -92;
         } else if (b == 41 && c == 16)
             value = socket->hops;
+        else if (b == 41 && c == 23)
+            value = socket->pmtu_mode;
+        else if (b == 41 && c == 62)
+            value = socket->dont_fragment;
         else if (b == 41 && c == 7 && socket->type == 3)
             value = 2;
         else if (b == 41 && c == 26)

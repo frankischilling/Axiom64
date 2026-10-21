@@ -46,7 +46,7 @@ int ipv6_path(const ip6::Address& source, const ip6::Address& destination, unsig
 // Success owns a copy until device acceptance or bounded resolution failure.
 int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsigned bound_index,
               uint8_t protocol, uint8_t hop_limit, const void*, size_t,
-              Inet6Socket* owner = nullptr);
+              Inet6Socket* owner = nullptr, bool fragmentable = true, uint32_t socket_mtu = 0);
 
 bool ipv6_output_ready();
 

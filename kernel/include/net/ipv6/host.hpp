@@ -12,6 +12,13 @@ void multicast_mac(const Address&, uint8_t*);
 
 bool usable(unsigned index);
 
+int queue_control(unsigned index, const Address& source, const Address& destination, const void*,
+                  size_t);
+
+void output_poll();
+
+void output_shutdown();
+
 void address_poll();
 
 void address_duplicate(unsigned index, const Address&);

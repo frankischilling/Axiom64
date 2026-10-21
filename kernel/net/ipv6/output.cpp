@@ -46,7 +46,7 @@ void clear(Output& item, int error = 0) {
 int queue(const ip6::Address& source, const ip6::Address& destination, unsigned index,
           uint8_t protocol, uint8_t hop_limit, const void* data, size_t length, bool direct = false,
           Inet6Socket* owner = nullptr, bool fragmentable = true, uint32_t socket_mtu = 0,
-          bool interface_mtu = false) {
+          bool interface_mtu = false, uint8_t traffic_class = 0) {
     if (length > 65535)
         return -90;
     Output* selected = nullptr;
@@ -64,7 +64,8 @@ int queue(const ip6::Address& source, const ip6::Address& destination, unsigned 
     memset(bytes, 0, ethernet_header);
     bytes[12] = 0x86;
     bytes[13] = 0xdd;
-    ip6::Header header{source, destination, 0, uint16_t(length), 0, protocol, hop_limit};
+    ip6::Header header{source,        destination, 0,        uint16_t(length),
+                       traffic_class, protocol,    hop_limit};
     ip6::encode(bytes + ethernet_header, ip6::header_size, header);
     if (length)
         memcpy(bytes + ethernet_header + ip6::header_size, data, length);
@@ -172,7 +173,8 @@ ip6::FragmentPiece submit(Output& item, const Ipv6Path& path) {
 
 int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsigned bound,
               uint8_t protocol, uint8_t hop_limit, const void* data, size_t length,
-              Inet6Socket* owner, bool fragmentable, uint32_t socket_mtu, bool interface_mtu) {
+              Inet6Socket* owner, bool fragmentable, uint32_t socket_mtu, bool interface_mtu,
+              uint8_t traffic_class) {
     Ipv6Path path;
     int error = ipv6_path(source, destination, bound, path, interface_mtu);
     if (error)
@@ -182,7 +184,7 @@ int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsig
     if (length > 65535 || (!fragmentable && length + ip6::header_size > path.mtu))
         return -90;
     return queue(path.source, destination, bound, protocol, hop_limit, data, length, false, owner,
-                 fragmentable, socket_mtu, interface_mtu);
+                 fragmentable, socket_mtu, interface_mtu, traffic_class);
 }
 
 bool ipv6_output_ready() {

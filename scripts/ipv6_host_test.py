@@ -67,6 +67,7 @@ def prepare(linkage, directory, suite='host', image_directory=None):
         'scripts/ipv6_control_header_contract.py', 'scripts/ipv6_controls_contract_test.py',
         'scripts/ipv6_error_controls_contract.py', 'scripts/ipv6_error_controls_test.py',
         'scripts/ipv6_copy_model.py', 'userspace/tests/net/ipv6_copy_model.c',
+        'scripts/ipv6_send_controls_contract.py', 'scripts/ipv6_send_controls_test.py',
         'scripts/ipv6_error_metadata_peer.py', 'scripts/ipv6_error_metadata_capture.py',
         'scripts/network_test.py', 'scripts/tcp_fault_test.py', 'scripts/image.py',
         'scripts/compile_uapi_client.py', 'scripts/tcp_fixture_inputs.py',

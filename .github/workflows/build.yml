@@ -996,6 +996,9 @@ jobs:
       - name: Compare IPv6 source output with three native Linux linkages
         if: matrix.suite == 'network'
         run: sudo -n make test-ipv6-output-native
+      - name: Compare IPv6 per-message output controls and fault ordering
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv6-output-contract
       - name: Test IPv6 learned path MTU and quoted errors on both adapters
         if: matrix.suite == 'network'
         run: make test-ipv6-pmtu
@@ -1038,6 +1041,7 @@ jobs:
             build/ipv6-controls-native-wire
             build/ipv6-controls-contract
             build/ipv6-errors-contract
+            build/ipv6-output-contract
             build/ipv6-controls-native
             build/ipv6-controls-static
             build/ipv6-controls-dynamic

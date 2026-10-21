@@ -798,12 +798,27 @@ static void source_fragmentation() {
                ip6::decode(emitted[lane][0].data() + 14, emitted[lane][0].size() - 14).input ==
                    ip6::Input::payload);
         emitted[lane].clear();
-        assert(inet6_send(raw, target, selected_mtu.data(), 2000, true) == 2000);
+        auto output = inet6_send_defaults(raw, target);
+        output.source = local;
+        output.index = index;
+        output.hops = 43;
+        output.traffic_class = 0xab;
+        output.present = true;
+        assert(inet6_send(raw, target, selected_mtu.data(), 2000, true, &output) == 2000);
+        output.source = address(7, 1);
+        output.hops = output.traffic_class = 0;
+        raw->hops = 2;
+        raw->traffic_class = 1;
         net_poll();
+        raw->hops = 64;
+        raw->traffic_class = 0;
         assert(!raw->transmitted && emitted[lane].size() == 2);
-        for (const auto& frame : emitted[lane])
-            assert(frame.size() <= 1294 &&
-                   ip6::decode(frame.data() + 14, frame.size() - 14).input == ip6::Input::fragment);
+        for (const auto& frame : emitted[lane]) {
+            auto decoded = ip6::decode(frame.data() + 14, frame.size() - 14);
+            assert(frame.size() <= 1294 && decoded.input == ip6::Input::fragment &&
+                   decoded.header.source == local && decoded.header.hop_limit == 43 &&
+                   decoded.header.traffic_class == 0xab);
+        }
         raw->pmtu_mode = 2;
         assert(inet6_send(raw, target, selected_mtu.data(), 1241, true) == -90);
         assert(inet6_send(raw, target, selected_mtu.data(), 1240, true) == 1240);
@@ -1146,6 +1161,75 @@ static void path_mtu_errors() {
     reset();
 }
 
+static void per_message_controls() {
+    reset();
+    auto socket = inet6_allocate(2);
+    assert(socket);
+    socket->local.bytes[15] = 1;
+    socket->hops = 33;
+    socket->traffic_class = 18;
+    Inet6Address target{10, 0, 0, socket->local, 0};
+    std::vector<uint8_t> bytes;
+    auto append = [&](uint32_t type, const void* data, size_t size) {
+        size_t at = bytes.size();
+        bytes.resize(at + ((16 + size + 7) & ~size_t(7)), 0xa5);
+        uint64_t length = 16 + size;
+        uint32_t level = 41;
+        memcpy(bytes.data() + at, &length, 8);
+        memcpy(bytes.data() + at + 8, &level, 4);
+        memcpy(bytes.data() + at + 12, &type, 4);
+        memcpy(bytes.data() + at + 16, data, size);
+    };
+
+    struct Info {
+        ip6::Address source;
+        uint32_t index;
+    } info{socket->local, ipv6_loopback};
+
+    append(50, &info, sizeof(info));
+    int value = 43;
+    append(52, &value, 4);
+    value = 0xab;
+    append(67, &value, 4);
+    value = 1;
+    append(62, &value, 4);
+    Inet6SendControl output;
+    assert(!inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output));
+    assert(output.source == socket->local && output.index == ipv6_loopback && output.hops == 43 &&
+           output.traffic_class == 0xab && output.dont_fragment && output.present);
+    assert(socket->hops == 33 && socket->traffic_class == 18 && !socket->dont_fragment);
+    value = -1;
+    append(52, &value, 4);
+    append(67, &value, 4);
+    assert(!inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output));
+    assert(output.hops == 33 && output.traffic_class == 255);
+    assert(!inet6_parse_send_control(socket, target, nullptr, 0, output));
+    assert(output.hops == 33 && output.traffic_class == 18 && !output.present);
+    for (unsigned index : {1u, 2u}) {
+        bytes.clear();
+        info.index = index;
+        append(50, &info, sizeof(info));
+        assert(inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output) == -22);
+    }
+    bytes.clear();
+    info.index = 0;
+    append(50, &info, sizeof(info));
+    assert(!inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output));
+    assert(output.source == socket->local && !output.index);
+    uint32_t random = 0x641831;
+    for (unsigned count = 0; count < 5000; count++) {
+        bytes.resize(count % 257);
+        for (auto& byte : bytes) {
+            random = random * 1664525 + 1013904223;
+            byte = random >> 24;
+        }
+        int error = inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output);
+        assert(error == 0 || error == -22 || error == -19);
+    }
+    inet6_close(socket);
+    reset();
+}
+
 int main() {
     for (unsigned n = 0; n < 2; n++) {
         auto& adapter = adapters[n];
@@ -1189,6 +1273,7 @@ int main() {
     socket_ownership();
     fragmented_delivery();
     raw_header_bounds();
+    per_message_controls();
     source_fragmentation();
     path_mtu_errors();
     copied_error_queues();

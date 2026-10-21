@@ -248,10 +248,13 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             (c == 49   ? socket->receive_packet_info
              : c == 51 ? socket->receive_hops
                        : socket->receive_traffic_class) = value != 0;
-        } else if (b == 41 && c == 16) {
+        } else if (b == 41 && (c == 16 || c == 67)) {
             if (value < -1 || value > 255)
                 return -22;
-            socket->hops = value == -1 ? 64 : value;
+            if (c == 16)
+                socket->hops = value == -1 ? 64 : value;
+            else
+                socket->traffic_class = value == -1 ? 0 : value;
         } else if (b == 41 && c == 26) {
             if (socket->local_port || socket->type == 3)
                 return -22;
@@ -302,6 +305,8 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
                 return -92;
         } else if (b == 41 && c == 16)
             value = socket->hops;
+        else if (b == 41 && c == 67)
+            value = socket->traffic_class;
         else if (b == 41 && (c == 49 || c == 51 || c == 66))
             value = c == 49   ? socket->receive_packet_info
                     : c == 51 ? socket->receive_hops

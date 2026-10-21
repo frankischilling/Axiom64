@@ -51,7 +51,7 @@ void ipv6_mtu_changed(unsigned index, uint32_t previous);
 int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsigned bound_index,
               uint8_t protocol, uint8_t hop_limit, const void*, size_t,
               Inet6Socket* owner = nullptr, bool fragmentable = true, uint32_t socket_mtu = 0,
-              bool interface_mtu = false);
+              bool interface_mtu = false, uint8_t traffic_class = 0);
 
 bool ipv6_output_ready();
 

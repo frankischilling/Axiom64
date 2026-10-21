@@ -195,7 +195,10 @@ static void output(unsigned lane) {
     printf("IPV6_OUTPUT_WIRE_PASS lane=%u cases=216 maximum_raw=65535 maximum_UDP=65527\n", lane);
 }
 
+int ipv6_send_controls_local(void);
+
 int main(void) {
+    check(!ipv6_send_controls_local(), "complete per-message send controls");
     option_contract();
     int control = fixture_interfaces();
     for (unsigned lane = 0; lane < 2; lane++)

@@ -674,6 +674,8 @@ build/ipv6-%-dynamic: userspace/tests/net/ipv6_%.c scripts/compile_uapi_client.p
 	@mkdir -p build
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(IPV6_FIXTURE_FLAGS) $(filter %.c,$^)
 build/ipv6-sockets-native build/ipv6-sockets-static build/ipv6-sockets-dynamic build/ipv6-output-native build/ipv6-output-static build/ipv6-output-dynamic: userspace/tests/net/ipv6_fixture.h
+build/ipv6-output-native build/ipv6-output-static build/ipv6-output-dynamic: IPV6_FIXTURE_FLAGS = -DIPV6_SEND_CONTROLS_INTEGRATED
+build/ipv6-output-native build/ipv6-output-static build/ipv6-output-dynamic: userspace/tests/net/ipv6_send_controls.c
 build/ipv6-pmtu-native build/ipv6-pmtu-static build/ipv6-pmtu-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: IPV6_FIXTURE_FLAGS = -DIPV6_ERROR_CONTROLS_INTEGRATED
@@ -704,6 +706,9 @@ test-ipv6-output:
 	$(PYTHON) scripts/ipv6_host_test.py --suite output --workers 4
 test-ipv6-output-native:
 	$(PYTHON) scripts/ipv6_host_native.py --suite output
+.PHONY: test-ipv6-output-contract
+test-ipv6-output-contract:
+	$(PYTHON) scripts/ipv6_send_controls_test.py
 .PHONY: test-ipv6-pmtu test-ipv6-pmtu-native test-ipv6-pmtu-observation
 test-ipv6-pmtu-observation:
 	$(PYTHON) scripts/tests/ipv6_pmtu_observation_test.py -v
@@ -741,7 +746,7 @@ test-ipv6-fragments-native: test-ipv6-fragment-observation
 build/ipv6-wire-host: kernel/tests/net/ipv6_wire.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
-build/ipv6-host: kernel/tests/net/ipv6_host.cpp $(IPV6_CORE) kernel/net/ethernet.cpp kernel/net/netlink/ipv6.cpp kernel/net/netlink/addresses.cpp kernel/net/netlink/inventory.cpp kernel/net/netlink/routes.cpp $(call rwildcard,kernel/include/,*.hpp)
+build/ipv6-host: kernel/tests/net/ipv6_host.cpp $(IPV6_CORE) kernel/net/ipv6/socket/send_control.cpp kernel/net/ethernet.cpp kernel/net/netlink/ipv6.cpp kernel/net/netlink/addresses.cpp kernel/net/netlink/inventory.cpp kernel/net/netlink/routes.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 build/ipv6-reassembly-host: kernel/tests/net/ipv6_reassembly.cpp kernel/net/ipv6/reassembly.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/reassembly.hpp kernel/include/net/ipv6/wire.hpp kernel/include/core/base.hpp

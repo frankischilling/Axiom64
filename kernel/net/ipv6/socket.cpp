@@ -218,18 +218,28 @@ size_t inet6_send_prefix(Inet6Socket* socket) {
     return socket->type == 3 ? 2 : 0;
 }
 
+Inet6SendControl inet6_send_defaults(const Inet6Socket* socket, const Inet6Address& address) {
+    return {socket->local,
+            address.address.link_local() && address.scope ? address.scope : socket->index,
+            socket->hops,
+            socket->traffic_class,
+            socket->dont_fragment,
+            false};
+}
+
 int inet6_send_admit(Inet6Socket* socket, const Inet6Address& address, size_t length,
-                     const uint8_t* prefix, bool named) {
-    unsigned index = address.address.link_local() && address.scope ? address.scope : socket->index;
+                     const uint8_t* prefix, bool named, const Inet6SendControl* control) {
+    auto options = control ? *control : inet6_send_defaults(socket, address);
+    unsigned index = options.index;
     Ipv6Path path;
-    int error = ipv6_path(socket->local, address.address, index, path, socket->pmtu_mode >= 3);
+    int error = ipv6_path(options.source, address.address, index, path, socket->pmtu_mode >= 3);
     if (error)
         return error;
-    if (socket->type == 2 && socket->connected && !named)
+    if (socket->type == 2 && socket->connected && !named && !options.present)
         inet6_destination_store(socket, path, address.address);
     size_t overhead = ip6::header_size + (socket->type == 2 ? 8 : 0);
     uint32_t mtu = socket->socket_mtu ? min(path.mtu, socket->socket_mtu) : path.mtu;
-    bool fragmentable = !socket->dont_fragment && (socket->pmtu_mode < 2 || socket->pmtu_mode == 5);
+    bool fragmentable = !options.dont_fragment && (socket->pmtu_mode < 2 || socket->pmtu_mode == 5);
     if (length > 65535 - (overhead - ip6::header_size) ||
         (!fragmentable && length + overhead > mtu)) {
         inet6_local_error(socket, address, mtu, prefix);
@@ -239,7 +249,7 @@ int inet6_send_admit(Inet6Socket* socket, const Inet6Address& address, size_t le
 }
 
 int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const void* data,
-                   size_t length, bool named) {
+                   size_t length, bool named, const Inet6SendControl* control) {
     if (socket->shutdown & 2)
         return -32;
     auto address = requested;
@@ -248,8 +258,8 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
     // ICMPv6 protocol selection imports two bytes before route lookup.
     if (socket->type == 3 && length < 2)
         return -14;
-    if (int error =
-            inet6_send_admit(socket, address, length, static_cast<const uint8_t*>(data), named))
+    if (int error = inet6_send_admit(socket, address, length, static_cast<const uint8_t*>(data),
+                                     named, control))
         return error;
     size_t overhead = ip6::header_size + (socket->type == 2 ? 8 : 0);
     if (length > 65535 - (overhead - ip6::header_size) || length + overhead > socket->send_limit)
@@ -257,12 +267,13 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
     if (length + overhead >
         socket->send_limit - min(socket->transmitted, size_t(socket->send_limit)))
         return -11;
-    unsigned index = address.address.link_local() && address.scope ? address.scope : socket->index;
+    auto options = control ? *control : inet6_send_defaults(socket, address);
+    unsigned index = options.index;
     Ipv6Path path;
-    int error = ipv6_path(socket->local, address.address, index, path, socket->pmtu_mode >= 3);
+    int error = ipv6_path(options.source, address.address, index, path, socket->pmtu_mode >= 3);
     if (error)
         return error;
-    bool fragmentable = !socket->dont_fragment && (socket->pmtu_mode < 2 || socket->pmtu_mode == 5);
+    bool fragmentable = !options.dont_fragment && (socket->pmtu_mode < 2 || socket->pmtu_mode == 5);
     if (socket->socket_mtu)
         path.mtu = min(path.mtu, socket->socket_mtu);
     if (!fragmentable && length + overhead > path.mtu)
@@ -297,8 +308,9 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
         checksum = 0xffff;
     bytes[check_at] = checksum >> 8;
     bytes[check_at + 1] = checksum;
-    error = ipv6_send(path.source, address.address, index, socket->protocol, socket->hops, bytes,
-                      size, socket, fragmentable, socket->socket_mtu, socket->pmtu_mode >= 3);
+    error = ipv6_send(path.source, address.address, index, socket->protocol, options.hops, bytes,
+                      size, socket, fragmentable, socket->socket_mtu, socket->pmtu_mode >= 3,
+                      options.traffic_class);
     release(bytes);
     if (!error)
         socket->transmitted += length + overhead;

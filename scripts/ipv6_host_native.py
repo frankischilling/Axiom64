@@ -55,6 +55,10 @@ def child(profile, directory, suite='host'):
                      'scripts/ipv6_control_header_contract.py', 'scripts/ipv6_controls_contract_test.py'):
             sources[name] = digest(ROOT / name)
     saved = directory / 'products'
+    if suite == 'output':
+        for name in ('Makefile', 'userspace/tests/net/ipv6_send_controls.c',
+                     'scripts/ipv6_send_controls_contract.py', 'scripts/ipv6_send_controls_test.py'):
+            sources[name] = digest(ROOT / name)
     if suite == 'errors':
         for name in ('Makefile', 'userspace/tests/net/ipv6_error_controls.c',
                      'userspace/tests/net/ipv6_error_metadata.c',

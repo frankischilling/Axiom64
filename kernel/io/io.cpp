@@ -47,6 +47,8 @@ struct IoRequest {
     unsigned destination_index;
     InetAddress inet_destination;
     Inet6Address inet6_destination;
+    Inet6SendControl inet6_output;
+    uint8_t* inet6_control_data;
     bool inet_destination_named;
     NetlinkAddress netlink_destination;
     uint8_t* packet_data;
@@ -68,6 +70,7 @@ static void destroy(IoRequest* request) {
     if (request->vectors != &request->single)
         release(request->vectors);
     release(request->packet_data);
+    release(request->inet6_control_data);
     close_handle(request->handle);
     release(request);
 }
@@ -166,6 +169,7 @@ static int prepare_packet(Task& task, IoRequest& request) {
         request.inet6_destination = inet6_peer(request.handle->inet6);
     uint64_t address = f.rax == 44 ? f.r8 : 0;
     uint64_t address_length = f.rax == 44 ? f.r9 : 0;
+    uint64_t control_pointer = 0, control_length = 0;
     if (f.rax == 19 || f.rax == 20) {
         int error = import_vectors(task, request, f.rsi, f.rdx);
         if (error)
@@ -181,8 +185,12 @@ static int prepare_packet(Task& task, IoRequest& request) {
             if (request.write && !message.name_length)
                 message.name = 0;
         }
-        if (request.write && message.control_length)
-            return -95;
+        if (request.write && message.control_length) {
+            if (!request.handle->inet6)
+                return -95;
+            control_pointer = message.control;
+            control_length = message.control_length;
+        }
         if (request.write) {
             address = message.name;
             address_length = message.name_length;
@@ -241,6 +249,13 @@ static int prepare_packet(Task& task, IoRequest& request) {
             !task.memory->space.copy_in(&request.address_capacity, f.r9, 4))
             return -14;
     }
+    if (request.write && request.handle->inet6) {
+        // Import the complete control buffer after vectors and address bytes,
+        // before protocol-specific destination and control validation.
+        if (int error = inet6_capture_control(task, control_pointer, control_length,
+                                              request.inet6_control_data))
+            return error;
+    }
     for (size_t i = 0; i < request.count; i++)
         request.packet_length += request.vectors[i].length;
     if (!request.write)
@@ -272,6 +287,15 @@ static int prepare_packet(Task& task, IoRequest& request) {
         if (request.packet_length < ethernet_header)
             return -22;
     }
+    if (request.handle->inet6) {
+        int error = inet6_parse_send_control(request.handle->inet6, request.inet6_destination,
+                                             request.inet6_control_data, control_length,
+                                             request.inet6_output);
+        release(request.inet6_control_data);
+        request.inet6_control_data = nullptr;
+        if (error)
+            return error;
+    }
     size_t prefix = request.handle->inet6 ? inet6_send_prefix(request.handle->inet6) : 0;
     if (request.packet_length < prefix)
         return -14;
@@ -284,7 +308,7 @@ static int prepare_packet(Task& task, IoRequest& request) {
     if (request.handle->inet6) {
         if (int error = inet6_send_admit(request.handle->inet6, request.inet6_destination,
                                          request.packet_length, prefix ? protocol_bytes : nullptr,
-                                         request.inet_destination_named))
+                                         request.inet_destination_named, &request.inet6_output))
             return error;
     }
     if (request.packet_length) {
@@ -611,7 +635,8 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
                              request.packet_length, request.inet_destination_named);
         if (request.handle->inet6)
             return inet6_send(request.handle->inet6, request.inet6_destination, request.packet_data,
-                              request.packet_length, request.inet_destination_named);
+                              request.packet_length, request.inet_destination_named,
+                              &request.inet6_output);
         int result = net_send(request.destination_index, request.packet_data, request.packet_length,
                               request.handle->packet);
         return result ? result : int64_t(request.packet_length);

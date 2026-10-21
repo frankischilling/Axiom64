@@ -22,6 +22,7 @@ from ipv6_host_peer import Peer
 from ipv6_host_capture import verify_capture
 from tcp_fault_native import Capture
 from ipv6_copy_model import parse_probe
+from ipv6_send_model import parse_probe as parse_send_probe
 
 
 def digest(path):
@@ -70,7 +71,15 @@ def child(profile, directory, suite='host'):
         sources['userspace/tests/net/ipv6_copy_model.c'] = digest(ROOT / 'userspace/tests/net/ipv6_copy_model.c')
         sources['scripts/ipv6_copy_model.py'] = digest(ROOT / 'scripts/ipv6_copy_model.py')
         products[str(model_program)] = digest(model_program)
+    send_model_program = ROOT / 'build/ipv6-send-model-native' if suite == 'output' else None
+    if send_model_program:
+        for name in ('userspace/tests/net/ipv6_send_model.c', 'scripts/ipv6_send_model.py'):
+            sources[name] = digest(ROOT / name)
+        products[str(send_model_program)] = digest(send_model_program)
     saved.mkdir()
+    if send_model_program:
+        shutil.copy2(send_model_program, saved / 'send-model-native')
+        shutil.copy2(ROOT / 'userspace/tests/net/ipv6_send_model.c', saved / 'send-model.c')
     if model_program:
         shutil.copy2(model_program, saved / 'copy-model-native')
         shutil.copy2(ROOT / 'userspace/tests/net/ipv6_copy_model.c', saved / 'copy-model.c')
@@ -129,6 +138,19 @@ def child(profile, directory, suite='host'):
     began = time.monotonic()
     try:
         subprocess.run(['ip', 'link', 'set', 'lo', 'up'], check=True)
+        if send_model_program:
+            observed = subprocess.run([str(send_model_program)], stdout=subprocess.PIPE,
+                                      stderr=subprocess.STDOUT)
+            (directory / 'native-send-model.log').write_bytes(observed.stdout)
+            observed.check_returncode()
+            kernel = json.loads((directory / 'preexecution.json').read_text())['kernel']
+            send_model = parse_send_probe(observed.stdout.decode(), kernel['release'])
+            model = dict(kernel=kernel, **send_model,
+                         probe_log_sha256=hashlib.sha256(observed.stdout).hexdigest(),
+                         probe_program=str(send_model_program),
+                         probe_program_sha256=products[str(send_model_program)],
+                         probe_source_sha256=sources['userspace/tests/net/ipv6_send_model.c'])
+            (directory / 'native-send-model.json').write_text(json.dumps(model, indent=2) + '\n')
         if model_program:
             observed = subprocess.run([str(model_program)], stdout=subprocess.PIPE,
                                       stderr=subprocess.STDOUT, check=True)
@@ -228,6 +250,8 @@ def child(profile, directory, suite='host'):
                       if (directory / 'interfaces.json').is_file() else None),
                   native_copy_model_sha256=(digest(directory / 'native-copy-model.json')
                       if (directory / 'native-copy-model.json').is_file() else None),
+                  native_send_model_sha256=(digest(directory / 'native-send-model.json')
+                      if (directory / 'native-send-model.json').is_file() else None),
                   settings=settings, full_F12_complete=False)
     (directory / 'receipt.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({key: value for key, value in result.items() if key not in ('peers', 'settings')}), flush=True)
@@ -249,6 +273,8 @@ def main():
     targets = ['build/ipv6-' + args.suite + '-' + profile for profile in profiles]
     if args.suite in ('controls', 'errors'):
         targets.append('build/ipv6-copy-model-native')
+    if args.suite == 'output':
+        targets.append('build/ipv6-send-model-native')
     subprocess.run(['make', '-j2', *targets], cwd=ROOT, check=True)
     args.output_directory.mkdir(parents=True, exist_ok=True)
     def run(profile):

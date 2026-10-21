@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import zipfile
+from ipv6_send_model import load as load_send_model, target_rows
 
 SCALARS = {'case','raw','named','variant','sticky','sticky_errno','result','errno',
            'received','receive_errno','length','flags','hops','class'}
@@ -90,11 +91,29 @@ def main():
     parser.add_argument('--guest',type=Path,action='append',required=True)
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--damaged',type=Path,required=True)
+    parser.add_argument('--historical-native-minus-one-class',type=int,choices=(18,255),
+                        help='explicit historical model without an independent original probe')
+    parser.add_argument('--historical-native-optmem-max',type=int)
     args=parser.parse_args()
+    require((args.historical_native_minus_one_class is None)==(args.historical_native_optmem_max is None),
+            'both historical send behavior settings must be explicit')
     paths=[*args.native,*args.guest]
     require(len(set(paths))==len(paths),'distinct original logs')
     originals={str(path):path.read_bytes() for path in paths}
-    native=[parse(originals[str(path)].decode()) for path in args.native]
+    model_records=[]
+    native=[]
+    for path in args.native:
+        value=dict(minus_one_class=args.historical_native_minus_one_class,
+                   optmem_max=args.historical_native_optmem_max)
+        independent=value['minus_one_class'] is None
+        if independent:
+            value=load_send_model(path.parent)
+        model_records.append(dict(path=str(path),**value,independent=independent,
+            model_sha256=(hashlib.sha256((path.parent/'native-send-model.json').read_bytes()).hexdigest()
+                          if independent else None)))
+        native.append(target_rows(parse(originals[str(path)].decode()),**value))
+    require(len({(row['minus_one_class'],row['optmem_max']) for row in model_records})==1,
+            'consistent independently observed native send behavior across linkages')
     require(len(native)==3 and all(rows==native[0] for rows in native),'three agreeing actual native linkages')
     results=[dict(path=str(path),differences=differences(native[0],originals[str(path)].decode()))
              for path in args.guest]
@@ -119,6 +138,7 @@ def main():
     require(all(path.read_bytes()==originals[str(path)] for path in paths),'original logs unchanged')
     result=dict(passed=all(not row['differences'] for row in results),cases_each=480,
                 native_profiles=3,guest_profiles=len(results),profiles=results,
+                native_send_models=model_records,
                 damaged_rejected=len(rejected),full_F12_complete=False,
                 original_sha256={name:hashlib.sha256(data).hexdigest() for name,data in originals.items()})
     args.output.write_text(json.dumps(result,indent=2)+'\n')

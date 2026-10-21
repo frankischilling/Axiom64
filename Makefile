@@ -664,6 +664,9 @@ test-netlink-codec: build/netlink-codec-host
 build/ipv6-copy-model-native: userspace/tests/net/ipv6_copy_model.c
 	@mkdir -p build
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/ipv6-send-model-native: userspace/tests/net/ipv6_send_model.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
 build/ipv6-%-native: userspace/tests/net/ipv6_%.c
 	@mkdir -p build
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $(IPV6_FIXTURE_FLAGS) $(filter %.c,$^) -o $@
@@ -690,6 +693,12 @@ test-ipv6-copy-model:
 	$(PYTHON) scripts/tests/ipv6_copy_model_test.py
 
 test-ipv6-controls-native test-ipv6-errors-native: test-ipv6-copy-model
+
+.PHONY: test-ipv6-send-model
+test-ipv6-send-model:
+	$(PYTHON) scripts/tests/ipv6_send_model_test.py
+
+test-ipv6-output-native test-ipv6-output-contract: test-ipv6-send-model
 
 .PHONY: test-ipv6-host test-ipv6-host-native
 test-ipv6-host:
@@ -770,7 +779,7 @@ test-ipv6-path-mtu: build/ipv6-path-mtu-host
 .PHONY: test-ipv6-fragment-observation
 test-ipv6-fragment-observation:
 	$(PYTHON) scripts/tests/ipv6_fragment_observation_test.py -v
-test-ipv6-wire: test-ipv6-copy-model test-ipv6-fragment-observation build/ipv6-wire-host build/ipv6-host build/ipv6-reassembly-host build/ipv6-fragmentation-host build/ipv6-path-mtu-host
+test-ipv6-wire: test-ipv6-copy-model test-ipv6-send-model test-ipv6-fragment-observation build/ipv6-wire-host build/ipv6-host build/ipv6-reassembly-host build/ipv6-fragmentation-host build/ipv6-path-mtu-host
 	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-path-mtu-host
 	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-fragmentation-host
 	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-reassembly-host

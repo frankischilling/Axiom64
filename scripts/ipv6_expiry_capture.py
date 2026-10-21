@@ -66,7 +66,9 @@ def application(log):
     return inventory
 
 
-def inspect_neighbor(frame, lane, pending):
+def inspect_neighbor(frame, lane, pending, timestamp, record):
+    require(type(timestamp) is int and timestamp >= 0 and type(record) is int and record >= 0,
+            'complete original neighbor packet clock')
     guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
     peer = bytes([2, 0x49, 0x50, 0x36, lane, 1])
     global_local = ipaddress.IPv6Address(f'2001:db8:{lane + 1}::2').packed
@@ -89,15 +91,17 @@ def inspect_neighbor(frame, lane, pending):
                 (destination, frame[:6]) in ((target, peer), (multicast, b'\x33\x33\xff' + target[-3:])) and
                 body[4:8] == bytes(4) and body[24:] == b'\1\1' + guest,
                 'original multicast or unicast neighbor solicitation')
-        pending.setdefault(target, []).append(source)
+        pending.setdefault(target, []).append((source, timestamp, record))
     else:
         requests = pending.get(target, [])
         require(requests and frame[:12] == guest + peer and source == target and
-                destination == requests[0] and body[4:8] == b'\x60\0\0\0' and
+                destination == requests[0][0] and body[4:8] == b'\x60\0\0\0' and
                 body[24:] == b'\2\1' + peer, 'original owned neighbor advertisement')
-        requests.pop(0)
+        require(timestamp >= requests[0][1], 'owned neighbor reply clock follows its request')
+        request = requests.pop(0)
         if not requests:
             pending.pop(target)
+        return request[2]
 
 
 def inspect(rows, lane, log, native=False):
@@ -113,15 +117,21 @@ def inspect(rows, lane, log, native=False):
     firmware, mld, nd = 0, 0, 0
     previous = None
     neighbor_requests = {}
+    neighbor_pairs, quote_pairs, heartbeat_pairs = [], [], []
+    causal_windows = {}
+    barrier_clock = None
     for index, row in enumerate(rows):
         frame = row['frame']
         require(len(frame) >= 14, 'complete expiry Ethernet envelope')
-        if not (native and frame[12:14] == b'\x86\xdd' and len(frame) > 20 and frame[20] == 0):
+        if not native:
             require(previous is None or stamp(row) >= previous, 'original ordered expiry packet clocks')
             previous = stamp(row)
         if frame[12:14] == b'\x88\xbc':
             require(len(frame) == 60 and frame[14:19] == b'IP6X' + bytes([lane]) and
                     not any(frame[21:]), 'exact expiry barrier bytes')
+            require(barrier_clock is None or stamp(row) >= barrier_clock,
+                    'owned expiry barrier clock order')
+            barrier_clock = stamp(row)
             number, reply = frame[19:21]
             if not reply:
                 require(frame[:12] == control + guest and waiting is None and
@@ -157,7 +167,9 @@ def inspect(rows, lane, log, native=False):
                 not checksum(source + destination + struct.pack('!I3xB', size, protocol) + body),
                 'complete original expiry transport checksum')
         if protocol == 58 and body[:1] in (b'\x87', b'\x88'):
-            inspect_neighbor(frame, lane, neighbor_requests)
+            request = inspect_neighbor(frame, lane, neighbor_requests, stamp(row), index)
+            if request is not None:
+                neighbor_pairs.append((request, index))
             nd += 1
             continue
         require(hop == 64, 'original expiry hop limit')
@@ -171,6 +183,10 @@ def inspect(rows, lane, log, native=False):
             original = rows[data[number, original_stage]]['frame']
             require(source == original[38:53] + b'\xfa' and destination == original[22:38] and
                     body[8:] == original[14:62], 'exact original IPv6 and transport quote bytes')
+            require(stamp(row) >= stamp(rows[data[number, original_stage]]) and
+                    stamp(row) >= stamp(rows[barriers[waiting, 0]]),
+                    'owned quoted-data and barrier clocks precede the hint')
+            quote_pairs.append((data[number, original_stage], index))
             key = number, waiting
             ordinal = len(hints.get(key, []))
             role = number % 4
@@ -201,6 +217,7 @@ def inspect(rows, lane, log, native=False):
             require(number % 4 != 0 and len(payload) == 16 and waiting is None and phase in (2, 3, 4, 5),
                     'ordinary traffic on a retained path during observation')
             heartbeats[number].append(index)
+            causal_windows[index] = phase
         else:
             role = number % 4
             allowed = stage in (0, 2, 6) or role == 3 or stage == 1 and role == 2 or stage == 5 and role < 2
@@ -210,15 +227,32 @@ def inspect(rows, lane, log, native=False):
                     (number, stage) not in data,
                     'only the actual successful stage sends appear on the wire')
             data[number, stage] = index
+            causal_windows[index] = (1, 2, 2, 3, 3, 4, 5)[stage]
     expected_data = {(n, s) for n in range(16) for s in range(7)
                      if s in (0, 2, 6) or n % 4 == 3 or s == 1 and n % 4 == 2 or s == 5 and n % 4 < 2}
     require(ready and phase == 6 and waiting is None and set(data) == expected_data and
             len(barriers) == 14 and sum(map(len, hints.values())) == 28, 'complete original expiry wire inventory')
+    # Native timestamps need not follow AF_PACKET receipt order across independent
+    # exchanges. Preserve every original timestamp and validate owned conversations
+    # instead of requiring one total order across all paths.
+    for index, owner_phase in causal_windows.items():
+        require(stamp(rows[barriers[owner_phase, 1]]) <= stamp(rows[index]) <=
+                stamp(rows[barriers[owner_phase + 1, 1]]),
+                'original data clock lies inside its owned phase')
+    for indices in hints.values():
+        require(all(stamp(rows[b]) >= stamp(rows[a]) for a, b in zip(indices, indices[1:])),
+                'original per-path quoted hint clock order')
     intervals = []
     for number in range(16):
+        stages = [data[number, stage] for stage in range(7) if (number, stage) in data]
+        require(all(stamp(rows[b]) >= stamp(rows[a]) for a, b in zip(stages, stages[1:])),
+                'original per-path successful data clock order')
         beats = heartbeats[number]
         require(len(beats) == counts[lane, number], 'ordinary actual wire sends match the client count')
         if number % 4:
+            require(all(stamp(rows[b]) >= stamp(rows[a]) for a, b in zip(beats, beats[1:])),
+                    'original per-path heartbeat clock order')
+            heartbeat_pairs.extend(zip(beats, beats[1:]))
             require(stamp(rows[beats[-1]]) - stamp(rows[beats[0]]) >= 580000000000,
                     'ordinary traffic spans the unchanged ten-minute observation')
         role = number % 4
@@ -252,7 +286,9 @@ def inspect(rows, lane, log, native=False):
     return dict(passed=True, lane=lane, paths=16, samples=112, datagrams=len(data),
                 hints=28, real_expiry_intervals=len(intervals), firmware_frames=firmware,
                 native_MLD_reports=mld, neighbor_frames=nd), dict(data=list(data.values()),
-                hints=[i for values in hints.values() for i in values], intervals=intervals)
+                hints=[i for values in hints.values() for i in values], intervals=intervals,
+                neighbors=neighbor_pairs, quotes=quote_pairs, heartbeats=heartbeat_pairs,
+                barriers=[(barriers[n, 0], barriers[n, 1]) for n in range(7)])
 
 
 def verify_capture(path, lane, log_path, archive, native=False, statistics=None, interface_index=None):
@@ -273,7 +309,8 @@ def verify_capture(path, lane, log_path, archive, native=False, statistics=None,
     names = ('missing-data', 'duplicate-data', 'missing-hint', 'wrong-quote', 'wrong-port',
              'wrong-checksum', 'early-expiry', 'late-expiry', 'wrong-MTU', 'wrong-errno',
              'missing-sample', 'missing-heartbeat', 'missing-lookup', 'wrong-cached-getter',
-             'foreign-neighbor-source', 'wrong-neighbor-recipient')
+             'foreign-neighbor-source', 'wrong-neighbor-recipient', 'backward-neighbor-reply',
+             'backward-barrier-reply', 'backward-quote', 'backward-heartbeat')
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as saved:
         for name in names:
             changed, changed_log = copy.deepcopy(rows), log
@@ -294,6 +331,13 @@ def verify_capture(path, lane, log_path, archive, native=False, statistics=None,
                 duration = 599000000000 if name == 'early-expiry' else 611000000000
                 changed[index]['ns'] = changed[start]['ns'] + duration
                 changed[index]['monotonic_ns'] = stamp(changed[start]) + duration
+            elif name in ('backward-neighbor-reply', 'backward-barrier-reply',
+                          'backward-quote', 'backward-heartbeat'):
+                selected = {'backward-neighbor-reply': 'neighbors', 'backward-barrier-reply': 'barriers',
+                            'backward-quote': 'quotes', 'backward-heartbeat': 'heartbeats'}[name]
+                start, index = proof[selected][0]
+                changed[index]['ns'] = changed[start]['ns'] - 1000000
+                changed[index]['monotonic_ns'] = stamp(changed[start]) - 1000000
             elif name in ('wrong-MTU', 'wrong-errno', 'missing-sample'):
                 wanted = f'IPV6_EXPIRY_SAMPLE lane={lane} case=0 stage=1 before=1400 after=1400 result=-1 errno=90 async=90 pending=0'
                 replacement = (wanted.replace('after=1400', 'after=1500') if name == 'wrong-MTU' else

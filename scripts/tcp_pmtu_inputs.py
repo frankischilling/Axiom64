@@ -17,7 +17,8 @@ SOURCES = ('Makefile', 'scripts/tcp_capture_profiles.py', 'scripts/tcp_capture_c
            'kernel/include/net/ipv4.hpp', 'kernel/include/net/inet.hpp',
            'kernel/net/packet.cpp', 'kernel/include/net/packet.hpp',
            'kernel/net/ethernet.cpp', 'kernel/tests/net/tcp_pmtu.cpp',
-           'scripts/packet_buffer_native.py', 'scripts/tests/tcp_pmtu_capture_test.py')
+           'scripts/packet_buffer_native.py', 'scripts/tests/tcp_pmtu_capture_test.py',
+           'scripts/tests/tcp_pmtu_observer_retirement_test.py')
 SOURCES = tuple(dict.fromkeys(SOURCES + IPV4_MODULES))
 
 

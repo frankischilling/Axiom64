@@ -1466,6 +1466,7 @@ jobs:
             build/axiom64-tcp-fast-*.iso
             build/axiom64-tcp-lifetime-*.iso
             build/axiom64-tcp-icmp-*.iso
+            build/tcp-pmtu-observer-retirement
             build/axiom64-tcp-pmtu-*.iso
             build/axiom64-tcp-pressure-*.iso
             build/axiom64-tcp-reconnect-*.iso

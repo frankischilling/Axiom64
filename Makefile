@@ -890,8 +890,10 @@ build/tcp-pressure-dynamic: userspace/tests/net/tcp_pressure.c
 .PHONY: test-tcp-pressure
 test-tcp-pressure:
 	$(PYTHON) scripts/tcp_pressure_test.py
-.PHONY: test-tcp-pmtu-native test-tcp-pmtu-sockets
-test-tcp-pmtu-native:
+.PHONY: test-tcp-pmtu-native test-tcp-pmtu-sockets test-tcp-pmtu-observer-retirement
+test-tcp-pmtu-observer-retirement:
+	$(PYTHON) scripts/tests/tcp_pmtu_observer_retirement_test.py
+test-tcp-pmtu-native: test-tcp-pmtu-observer-retirement
 	$(PYTHON) scripts/tcp_fault_native.py --wire pmtu
 test-tcp-pmtu-sockets:
 	$(PYTHON) scripts/tcp_fault_test.py --wire pmtu

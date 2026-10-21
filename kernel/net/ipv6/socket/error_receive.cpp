@@ -3,6 +3,7 @@
 #include "io/vectors.hpp"
 #include "net/ipv6.hpp"
 #include "process/task.hpp"
+#include "receive_control.hpp"
 
 namespace ax {
 namespace {
@@ -41,27 +42,19 @@ bool copy_bytes(Task& task, uint64_t destination, const void* data, size_t lengt
     return true;
 }
 
-size_t control_out(Task& task, const Message& message, const Inet6Error& record, uint32_t& flags) {
-    if (!message.control || message.control_length < 16) {
-        flags |= 8;
-        return 0;
-    }
-    uint64_t length = min(message.control_length, uint64_t(60));
-    if (length < 60)
-        flags |= 8;
-    uint32_t level = 41, type = 25;
+size_t control_out(Task& task, const Message& message, const Inet6Socket* socket,
+                   const Inet6Error& record, uint32_t& flags) {
+    Inet6ControlWriter output(task, message.control, message.control_length, flags);
+    // Received ICMP errors retain their outer packet's controls. Local output
+    // failures have no received header and return only the extended error.
+    if (record.error.origin == 3)
+        output.metadata(socket, record.packet_destination, record.index, record.hops,
+                        record.traffic_class);
     uint8_t body[44];
     memcpy(body, &record.error, 16);
     memcpy(body + 16, &record.offender, 28);
-    // Linux ignores a failed put_cmsg here. Already copied header fields stay
-    // visible, but the failed message consumes no control-buffer capacity.
-    if (!task.memory->space.copy_out(message.control, &length, 8) ||
-        !task.memory->space.copy_out(message.control + 8, &level, 4) ||
-        !task.memory->space.copy_out(message.control + 12, &type, 4) ||
-        !copy_bytes(task, message.control + 16, body, length - 16))
-        return 0;
-    // Alignment padding is counted without writing beyond the cmsg payload.
-    return min(message.control_length, uint64_t(64));
+    output.append(25, body, sizeof(body));
+    return output.used;
 }
 } // namespace
 
@@ -112,7 +105,7 @@ int64_t inet6_receive_error(Task& task, Inet6Socket* socket, const Frame& call) 
             return -14;
         at += length;
     }
-    size_t control_length = message_call ? control_out(task, message, record, flags) : 0;
+    size_t control_length = message_call ? control_out(task, message, socket, record, flags) : 0;
     if (message.name) {
         uint32_t capacity = min(message.name_length, uint32_t(128));
         uint64_t length_pointer = call.rsi + offsetof(Message, name_length);
@@ -124,8 +117,9 @@ int64_t inet6_receive_error(Task& task, Inet6Socket* socket, const Frame& call) 
                 return -22;
         }
         uint32_t actual = sizeof(Inet6Address);
-        if (!copy_bytes(task, message.name, &record.destination, min(capacity, actual)) ||
-            !task.memory->space.copy_out(length_pointer, &actual, 4))
+        // The Linux receive wrapper stores the full length before address bytes.
+        if (!task.memory->space.copy_out(length_pointer, &actual, 4) ||
+            !copy_bytes(task, message.name, &record.destination, min(capacity, actual)))
             return -14;
     }
     if (message_call &&

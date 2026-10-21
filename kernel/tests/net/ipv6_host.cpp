@@ -942,6 +942,10 @@ static void copied_error_queues() {
     Inet6Error metadata;
     metadata.destination.address = address(0, 1);
     metadata.offender.address = address(0, 250);
+    metadata.packet_destination = address(0, 2);
+    metadata.index = 1;
+    metadata.hops = 53;
+    metadata.traffic_class = 0xab;
     metadata.error = {111, 3, 1, 4, 0, 0, 0};
     uint8_t bytes[16];
     memset(bytes, 0x4e, sizeof(bytes));
@@ -950,9 +954,15 @@ static void copied_error_queues() {
     assert(inet6_queue_error(socket, metadata, bytes, sizeof(bytes)));
     bytes[0] ^= 1;
     metadata.offender.address.bytes[15] ^= 1;
+    metadata.packet_destination.bytes[15] ^= 1;
+    metadata.index = 2;
+    metadata.hops = 1;
+    metadata.traffic_class = 0;
     auto record = inet6_take_error(socket);
     assert(record && record->length == 16 && *inet6_error_bytes(record) == 0x4e &&
-           record->offender.address == address(0, 250));
+           record->offender.address == address(0, 250) &&
+           record->packet_destination == address(0, 2) && record->index == 1 &&
+           record->hops == 53 && record->traffic_class == 0xab);
     release(record);
     assert(!inet6_error_queued(socket) && !inet6_error(socket) && allocations.empty());
     fail_allocations = 1;
@@ -1007,8 +1017,17 @@ static void copied_error_queues() {
     for (unsigned n = 0; n < 10; n++)
         deliver(0, incoming(0, remote, local, datagram, 64, 17));
     assert(socket->count == 10 && socket->bytes == 14520);
-    for (unsigned n = 0; n < 5; n++)
+    // The fixed budget now includes the retained outer packet metadata.
+    for (unsigned n = 0; n < 4; n++)
         assert(inet6_queue_error(socket, metadata, bytes, 1));
+    assert(!inet6_queue_error(socket, metadata, bytes, 1));
+    assert(socket->count == 10 && socket->error_count == 4 &&
+           socket->error_bytes == 4 * (sizeof(Inet6Error) + 1));
+    // One byte below a complete record cannot admit its one-byte payload.
+    socket->receive_limit = socket->bytes + socket->error_bytes + sizeof(Inet6Error);
+    assert(!inet6_queue_error(socket, metadata, bytes, 1));
+    socket->receive_limit++;
+    assert(inet6_queue_error(socket, metadata, bytes, 1));
     assert(!inet6_queue_error(socket, metadata, bytes, 1));
     assert(socket->count == 10 && socket->error_count == 5);
     inet6_close(socket);

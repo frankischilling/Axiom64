@@ -44,5 +44,5 @@ int inet6_bind_port(Inet6Socket*, const ip6::Address&, uint16_t port);
 void inet6_destination_clear(Inet6Socket*);
 void inet6_destination_store(Inet6Socket*, const Ipv6Path&, const ip6::Address&);
 int inet6_destination_mtu(Inet6Socket*, uint32_t&);
-void inet6_icmp_error(unsigned index, const ip6::Address& offender, const uint8_t*, size_t);
+void inet6_icmp_error(unsigned index, const ip6::Header&, const uint8_t*, size_t);
 } // namespace ax

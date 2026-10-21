@@ -119,9 +119,13 @@ def application(log, lane, interface_index):
 
 def inspect(rows, lane, log, native=False, interface_index=None):
     index = interface_index if interface_index is not None else lane + 1
-    return inspect_packets(rows, lane, log, native,
+    from ipv6_error_metadata_capture import boundary, inspect as inspect_metadata
+    result, proof = inspect_packets(rows[:boundary(rows, lane)], lane, log, native,
                            application=lambda text, link: application(text, link, index),
                            barrier_protocol=b'\x88\xbc', barrier_magic=b'IP6E', quote_length=96)
+    metadata, _ = inspect_metadata(rows, lane, log, native, index)
+    result['metadata'] = metadata
+    return result, proof
 
 
 def verify_capture(path, lane, log_path, archive, native=False, statistics=None, interface_index=None):
@@ -199,7 +203,13 @@ def verify_capture(path, lane, log_path, archive, native=False, statistics=None,
                 raise ValueError('accepted damaged IPv6 error-queue evidence: ' + name)
         saved.writestr('rejections.json', json.dumps(rejected, indent=2))
     require(path.read_bytes() == original and log_path.read_bytes() == original_log, 'original error-queue evidence unchanged')
+    from ipv6_error_metadata_capture import verify_capture as verify_metadata
+    metadata = verify_metadata(path, lane, log_path,
+                               Path(archive).with_name(Path(archive).stem + '-metadata.zip'),
+                               native, interface_index)
+    metadata['native_clock_qualified'] = bool(clock)
     result.update(damaged_rejected=len(rejected), native_clock=clock,
+                  metadata=metadata,
                   original_sha256=hashlib.sha256(original).hexdigest(),
                   archive_sha256=hashlib.sha256(Path(archive).read_bytes()).hexdigest())
     return result

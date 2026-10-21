@@ -54,6 +54,12 @@ def child(profile, directory, suite='host'):
                      'scripts/ipv6_control_header_contract.py', 'scripts/ipv6_controls_contract_test.py'):
             sources[name] = digest(ROOT / name)
     saved = directory / 'products'
+    if suite == 'errors':
+        for name in ('Makefile', 'userspace/tests/net/ipv6_error_controls.c',
+                     'userspace/tests/net/ipv6_error_metadata.c',
+                     'scripts/ipv6_error_metadata_peer.py', 'scripts/ipv6_error_metadata_capture.py',
+                     'scripts/ipv6_error_controls_contract.py', 'scripts/ipv6_error_controls_test.py'):
+            sources[name] = digest(ROOT / name)
     saved.mkdir()
     for n, name in enumerate(command):
         shutil.copy2(name, saved / f'{n}-{Path(name).name}')

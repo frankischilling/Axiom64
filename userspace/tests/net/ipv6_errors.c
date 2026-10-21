@@ -615,7 +615,12 @@ static void wire(unsigned lane) {
     printf("IPV6_ERRORS_WIRE_PASS lane=%u cases=60\n", lane);
 }
 
+int ipv6_error_controls_local(void);
+
+int ipv6_error_metadata_wire(const unsigned*, const unsigned char*, const int*);
+
 int main(int argc, char** argv) {
+    check(!ipv6_error_controls_local(), "complete error-control and fault observations");
     option_contract();
     local_receive_contract();
     vector_receive_contract();
@@ -629,6 +634,8 @@ int main(int argc, char** argv) {
     int control = fixture_interfaces();
     for (unsigned lane = 0; lane < 2; lane++)
         wire(lane);
+    check(!ipv6_error_metadata_wire(indices, &macs[0][0], packets),
+          "complete error metadata wire cases");
     close(control);
     for (unsigned lane = 0; lane < 2; lane++)
         close(packets[lane]);

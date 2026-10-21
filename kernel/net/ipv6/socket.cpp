@@ -182,7 +182,7 @@ bool inet6_deliver(unsigned index, const ip6::Packet& packet) {
     } else {
         if (ip6::checksum(packet.header.source, packet.header.destination, 58, data, length))
             return true;
-        inet6_icmp_error(index, packet.header.source, data, length);
+        inet6_icmp_error(index, packet.header, data, length);
     }
     Inet6Socket* best = nullptr;
     unsigned best_score = 0;

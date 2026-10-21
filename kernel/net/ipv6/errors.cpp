@@ -4,7 +4,7 @@
 #include "net/ipv6/icmp.hpp"
 
 namespace ax {
-void inet6_icmp_error(unsigned index, const ip6::Address& offender, const uint8_t* bytes,
+void inet6_icmp_error(unsigned index, const ip6::Header& header, const uint8_t* bytes,
                       size_t length) {
     ip6::ErrorQuote quote;
     if (!ip6::error_quote(bytes, length, quote) ||
@@ -26,7 +26,11 @@ void inet6_icmp_error(unsigned index, const ip6::Address& offender, const uint8_
         size_t skip = socket.type == 2 ? 8 : 0;
         if (skip)
             memcpy(&record.destination.port, quote.transport + 2, 2);
-        record.offender = {10, 0, 0, offender, offender.link_local() ? index : 0};
+        record.offender = {10, 0, 0, header.source, header.source.link_local() ? index : 0};
+        record.packet_destination = header.destination;
+        record.index = index;
+        record.hops = header.hop_limit;
+        record.traffic_class = header.traffic_class;
         record.error = {uint32_t(quote.error), 3, quote.type, quote.code, 0, quote.information, 0};
         inet6_queue_error(&socket, record, quote.transport + skip, quote.length - skip);
     };

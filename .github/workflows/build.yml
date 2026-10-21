@@ -1008,6 +1008,9 @@ jobs:
       - name: Compare IPv6 error queues with three native Linux linkages
         if: matrix.suite == 'network'
         run: sudo -n make test-ipv6-errors-native
+      - name: Compare IPv6 error metadata and protected result copies
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv6-errors-contract
       - name: Test IPv6 fragment delivery and real sixty-second expiry on both adapters
         if: matrix.suite == 'network'
         run: make test-ipv6-fragments
@@ -1034,6 +1037,7 @@ jobs:
             build/ipv6-controls-wire
             build/ipv6-controls-native-wire
             build/ipv6-controls-contract
+            build/ipv6-errors-contract
             build/ipv6-controls-native
             build/ipv6-controls-static
             build/ipv6-controls-dynamic

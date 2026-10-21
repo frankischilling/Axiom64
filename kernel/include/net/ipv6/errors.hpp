@@ -14,6 +14,9 @@ static_assert(sizeof(Inet6ExtendedError) == 16);
 struct Inet6Error {
     Inet6Address destination, offender;
     Inet6ExtendedError error;
+    ip6::Address packet_destination;
+    unsigned index = 0;
+    uint8_t hops = 0, traffic_class = 0;
     size_t length = 0;
 };
 

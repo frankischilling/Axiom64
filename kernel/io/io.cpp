@@ -280,7 +280,8 @@ static int prepare_packet(Task& task, IoRequest& request) {
     }
     if (request.handle->inet6) {
         if (int error = inet6_send_admit(request.handle->inet6, request.inet6_destination,
-                                         request.packet_length, prefix ? protocol_bytes : nullptr))
+                                         request.packet_length, prefix ? protocol_bytes : nullptr,
+                                         request.inet_destination_named))
             return error;
     }
     if (request.packet_length) {

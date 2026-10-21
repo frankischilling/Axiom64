@@ -36,6 +36,7 @@ void inet6_consume(Inet6Socket* socket) {
 
 void inet6_close(Inet6Socket* socket) {
     ipv6_detach_owner(socket);
+    inet6_destination_clear(socket);
     inet6_purge_errors(socket);
     while (socket->count)
         inet6_consume(socket);
@@ -82,7 +83,8 @@ Inet6Address inet6_peer(Inet6Socket* socket) {
     return {10, socket->peer_port, 0, socket->peer, socket->peer.link_local() ? socket->index : 0};
 }
 
-int inet6_target(Inet6Socket* socket, Inet6Address& address, bool named, uint32_t imported_length) {
+int inet6_target(Inet6Socket* socket, Inet6Address& address, bool& named,
+                 uint32_t imported_length) {
     if (named && (imported_length < (socket->type == 3 ? 24u : 2u) || imported_length > 128 ||
                   (address.family == 10 && imported_length < 24)))
         return -22;
@@ -212,12 +214,14 @@ size_t inet6_send_prefix(Inet6Socket* socket) {
 }
 
 int inet6_send_admit(Inet6Socket* socket, const Inet6Address& address, size_t length,
-                     const uint8_t* prefix) {
+                     const uint8_t* prefix, bool named) {
     unsigned index = address.address.link_local() && address.scope ? address.scope : socket->index;
     Ipv6Path path;
     int error = ipv6_path(socket->local, address.address, index, path, socket->pmtu_mode >= 3);
     if (error)
         return error;
+    if (socket->type == 2 && socket->connected && !named)
+        inet6_destination_store(socket, path, address.address);
     size_t overhead = ip6::header_size + (socket->type == 2 ? 8 : 0);
     uint32_t mtu = socket->socket_mtu ? min(path.mtu, socket->socket_mtu) : path.mtu;
     bool fragmentable = !socket->dont_fragment && (socket->pmtu_mode < 2 || socket->pmtu_mode == 5);
@@ -239,7 +243,8 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
     // ICMPv6 protocol selection imports two bytes before route lookup.
     if (socket->type == 3 && length < 2)
         return -14;
-    if (int error = inet6_send_admit(socket, address, length, static_cast<const uint8_t*>(data)))
+    if (int error =
+            inet6_send_admit(socket, address, length, static_cast<const uint8_t*>(data), named))
         return error;
     size_t overhead = ip6::header_size + (socket->type == 2 ? 8 : 0);
     if (length > 65535 - (overhead - ip6::header_size) || length + overhead > socket->send_limit)

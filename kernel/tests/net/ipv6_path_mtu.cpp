@@ -12,8 +12,73 @@ static Address address(unsigned host) {
     Address value;
     value.bytes[0] = 0x20;
     value.bytes[1] = 1;
+    value.bytes[14] = host >> 8;
     value.bytes[15] = host;
     return value;
+}
+
+static void retained_metrics() {
+    PathMtuCache cache;
+    PathKey key{address(2), address(1), address(1), 1, 17};
+    assert(!cache.retain(key, 0));
+    assert(cache.learn(key, 1500, 1400, 10) == 1400);
+    auto first = cache.retain(key, 11), second = cache.retain(key, 12);
+    assert(first && second && cache.metric(first) == 1400 && cache.metric(second) == 1400);
+    PathMtuCache foreign;
+    assert(foreign.learn(key, 1500, 1300, 10) == 1300);
+    auto foreign_reference = foreign.retain(key, 11);
+    assert(foreign_reference && !foreign.metric(first) && !cache.metric(foreign_reference));
+    auto wrong_owner = first;
+    foreign.release(wrong_owner);
+    assert(cache.metric(first) == 1400 && foreign.metric(foreign_reference) == 1300);
+    foreign.release(foreign_reference);
+    assert(cache.learn(key, 1500, 1280, 1000) == 1280);
+    assert(cache.metric(first) == 1280 && cache.metric(second) == 1280);
+    assert(cache.lookup(key, 1500, 60010) == 1500);
+    assert(!cache.active(first, key, 60010) && cache.metric(first) == 1280);
+    assert(cache.learn(key, 1500, 1400, 70000) == 1400);
+    auto current = cache.retain(key, 70001);
+    assert(cache.active(current, key, 70002) && cache.metric(current) == 1400);
+    assert(cache.metric(first) == 1280 && cache.metric(second) == 1280);
+    auto stale = first;
+    cache.release(first);
+    auto reused = cache.retain(key, 70003);
+    assert(reused && !cache.metric(stale));
+    cache.release(stale);
+    assert(cache.metric(reused) == 1400);
+    cache.discard_route(key.route_owner);
+    assert(cache.lookup(key, 1500, 70004) == 1500 && cache.metric(current) == 1400);
+    cache.release(current);
+    cache.release(reused);
+    cache.release(second);
+
+    // Every socket can pin a different retired metric while the full active
+    // exception table continues to learn, evict, and reuse its own storage.
+    PathMtuReference held[path_mtu_reference_capacity];
+    for (unsigned n = 0; n < path_mtu_reference_capacity; n++) {
+        key.destination = address(100 + n);
+        assert(cache.learn(key, 1500, 1400, 80000 + n) == 1400);
+        held[n] = cache.retain(key, 80000 + n);
+        assert(held[n]);
+        cache.discard_route(key.route_owner);
+    }
+    for (unsigned n = 0; n < path_mtu_capacity + 1; n++) {
+        key.destination = address(500 + n);
+        assert(cache.learn(key, 1500, 1300, 90000 + n) == 1300);
+    }
+    assert(!cache.retain(key, 90100));
+    for (auto& reference : held) {
+        assert(cache.metric(reference) == 1400);
+        cache.release(reference);
+        assert(!reference && !cache.metric(reference));
+    }
+    current = cache.retain(key, 90101);
+    assert(current && cache.metric(current) == 1300);
+    cache.discard_source(key.source);
+    assert(cache.metric(current) == 1300 && !cache.active(current, key, 90102));
+    cache.release(current);
+    cache.discard();
+    assert(cache.learn(key, 1500, 1280, 100000) == 1280);
 }
 
 static void cache() {
@@ -39,8 +104,15 @@ static void cache() {
     assert(cache.lookup(key, 1500, 60010) == 1500);
     assert(cache.learn(key, 1500, 1400, 70000) == 1400);
     assert(cache.learn(key, 1500, 1280, 71000) == 1280);
-    assert(cache.lookup(key, 1500, 130999) == 1280);
-    assert(cache.lookup(key, 1500, 131000) == 1500);
+    // Lower feedback changes the metric, not the existing destination expiry.
+    assert(cache.lookup(key, 1500, 129999) == 1280);
+    assert(cache.lookup(key, 1500, 130000) == 1500);
+    other = key;
+    other.destination = address(5);
+    assert(cache.learn(other, 1500, 1280, 71000) == 1280);
+    assert(cache.lookup(other, 1500, 130000) == 1280);
+    assert(cache.lookup(other, 1500, 130999) == 1280);
+    assert(cache.lookup(other, 1500, 131000) == 1500);
     assert(cache.learn(key, 1500, 1400, 200000) == 1400);
     cache.update_mtu(2, 1500, 1280);
     assert(cache.lookup(key, 1500, 200001) == 1400);
@@ -157,6 +229,7 @@ static void quotes() {
 
 int main() {
     cache();
+    retained_metrics();
     quotes();
     puts("IPv6 path MTU cache, bounded quotes and 20000 malformed inputs passed");
 }

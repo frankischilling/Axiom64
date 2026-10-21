@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Compare the actual IPv6 control client on isolated native Ethernet links."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import fcntl
 import hashlib
 import json
@@ -40,6 +41,7 @@ def child(profile, directory, suite='host'):
     for name in ('scripts/ipv6_output_peer.py', 'scripts/ipv6_output_capture.py',
                  'scripts/ipv6_pmtu_peer.py', 'scripts/ipv6_pmtu_capture.py',
                  'scripts/ipv6_errors_peer.py', 'scripts/ipv6_errors_capture.py',
+                 'scripts/ipv6_expiry_peer.py', 'scripts/ipv6_expiry_capture.py',
                  'userspace/tests/net/ipv6_fixture.h'):
         sources[name] = digest(ROOT / name)
     products = {name: digest(Path(name)) for name in command}
@@ -58,11 +60,14 @@ def child(profile, directory, suite='host'):
         'net.ipv6.conf.all.enhanced_dad': 0, 'net.ipv6.conf.default.enhanced_dad': 0,
         'net.ipv6.auto_flowlabels': 0,
     }
-    if suite == 'fragments':
+    if suite in ('fragments', 'expiry'):
         settings['net.ipv6.conf.default.router_solicitations'] = 0
-        lifetime = subprocess.check_output(['sysctl', '-n', 'net.ipv6.ip6frag_time'], text=True).strip()
-        if lifetime != '60':
-            raise ValueError('native IPv6 fragment lifetime must remain its real 60-second default')
+        timer = 'net.ipv6.ip6frag_time' if suite == 'fragments' else 'net.ipv6.route.mtu_expires'
+        lifetime = subprocess.check_output(['sysctl', '-n', timer], text=True).strip()
+        wanted = '60' if suite == 'fragments' else '600'
+        if lifetime != wanted:
+            raise ValueError(f'native {timer} must remain its real {wanted}-second default')
+        settings[timer] = int(lifetime)
     for name, value in settings.items():
         subprocess.run(['sysctl', '-q', '-w', f'{name}={value}'], check=True)
     (directory / 'preexecution.json').write_text(json.dumps(dict(profile=profile,
@@ -84,6 +89,9 @@ def child(profile, directory, suite='host'):
     elif suite == 'errors':
         from ipv6_errors_peer import Peer as ErrorPeer
         peer_type = ErrorPeer
+    elif suite == 'expiry':
+        from ipv6_expiry_peer import Peer as ExpiryPeer
+        peer_type = ExpiryPeer
     peers = [peer_type(lane, native=True) for lane in range(2)]
     taps, captures, statistics, interfaces = [], [], [], []
     selector = selectors.DefaultSelector()
@@ -106,7 +114,7 @@ def child(profile, directory, suite='host'):
             process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL,
                                        stdout=output, stderr=subprocess.STDOUT)
             while process.poll() is None:
-                if time.monotonic() - began > (160 if suite == 'fragments' else 120 if suite in ('output', 'pmtu', 'errors') else 45):
+                if time.monotonic() - began > (650 if suite == 'expiry' else 160 if suite == 'fragments' else 120 if suite in ('output', 'pmtu', 'errors') else 45):
                     raise TimeoutError('native IPv6 client exceeded its overall deadline')
                 for key, _ in selector.select(.02):
                     peers[key.data].receive(os.read(key.fd, 65535))
@@ -153,7 +161,9 @@ def child(profile, directory, suite='host'):
                     from ipv6_pmtu_capture import verify_capture as checker
                 elif suite == 'errors':
                     from ipv6_errors_capture import verify_capture as checker
-                extra = dict(statistics=statistics[lane], interface_index=interfaces[lane]['index']) if suite in ('fragments', 'output', 'pmtu', 'errors') else {}
+                elif suite == 'expiry':
+                    from ipv6_expiry_capture import verify_capture as checker
+                extra = dict(statistics=statistics[lane], interface_index=interfaces[lane]['index']) if suite in ('fragments', 'output', 'pmtu', 'errors', 'expiry') else {}
                 audits.append(checker(directory / f'lane{lane}.pcap', lane,
                     directory / 'client.log', directory / f'lane{lane}-damaged.zip', native=True, **extra))
         except Exception as failure:
@@ -177,7 +187,8 @@ def child(profile, directory, suite='host'):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--suite', choices=('host', 'sockets', 'fragments', 'output', 'pmtu', 'errors'), default='host')
+    parser.add_argument('--suite', choices=('host', 'sockets', 'fragments', 'output', 'pmtu', 'errors', 'expiry'), default='host')
+    parser.add_argument('--workers', type=int, choices=(1, 2, 3), default=1)
     parser.add_argument('--child', choices=('native', 'static', 'dynamic'))
     parser.add_argument('--profile', choices=('native', 'static', 'dynamic', 'all'), default='all')
     parser.add_argument('--output-directory', type=Path, default=None)
@@ -188,12 +199,13 @@ def main():
     profiles = ('native', 'static', 'dynamic') if args.profile == 'all' else (args.profile,)
     subprocess.run(['make', '-j2', *('build/ipv6-' + args.suite + '-' + profile for profile in profiles)], cwd=ROOT, check=True)
     args.output_directory.mkdir(parents=True, exist_ok=True)
-    results = []
-    for profile in profiles:
+    def run(profile):
         directory = args.output_directory / profile
         result = subprocess.run(['unshare', '--net', sys.executable, '-B', 'scripts/ipv6_host_native.py',
                                  '--child', profile, '--suite', args.suite, '--output-directory', str(directory)], cwd=ROOT)
-        results.append(dict(profile=profile, returncode=result.returncode))
+        return dict(profile=profile, returncode=result.returncode)
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        results = list(pool.map(run, profiles))
     (args.output_directory / 'receipt.json').write_text(json.dumps(results, indent=2) + '\n')
     return 0 if all(not row['returncode'] for row in results) else 1
 

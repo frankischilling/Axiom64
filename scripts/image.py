@@ -14,6 +14,7 @@ parser.add_argument("--trace", action="store_true")
 parser.add_argument("--suite", choices=["full", "abi", "desktop", "storage", "ext2", "threads", "root", "network"], default="full")
 parser.add_argument("--phase", choices=["write", "verify", "readonly", "error", "recovery", "queue", "invalid", "full", "all", "cond", "io", "pressure"], default="verify")
 parser.add_argument("--output-name", help="ISO filename under build/ for an isolated test run")
+parser.add_argument("--output-directory", type=Path, help="directory for the completed ISO")
 parser.add_argument("--initramfs", type=Path, help="explicit initramfs for an isolated fixture")
 parser.add_argument("--root-device", choices=[f"/dev/vd{letter}" for letter in "abcdefgh"])
 parser.add_argument("--root-readonly", action="store_true")
@@ -83,7 +84,9 @@ for token in args.kernel_option:
     options += " " + token
 config = config.replace("cmdline: init=/sbin/init", "cmdline: init=/sbin/init" + options)
 (staging / "boot" / "limine" / "limine.conf").write_text(config)
-destination = ROOT / "build" / (args.output_name if args.output_name else
+output_directory = (args.output_directory.resolve() if args.output_directory else ROOT / "build")
+output_directory.mkdir(parents=True, exist_ok=True)
+destination = output_directory / (args.output_name if args.output_name else
                                   args.suite + "-" + args.phase + ".iso" if disk_suite else
                                   "axiom64-test.iso" if args.test else "axiom64.iso")
 command = ["xorriso", "-as", "mkisofs", "-quiet", "-R", "-J", "-b", "boot/limine/limine-bios-cd.bin", "-no-emul-boot", "-boot-load-size", "4", "-boot-info-table", "--efi-boot", "boot/limine/limine-uefi-cd.bin", "-efi-boot-part", "--efi-boot-image", "--protective-msdos-label", str(staging), "-o", str(destination)]

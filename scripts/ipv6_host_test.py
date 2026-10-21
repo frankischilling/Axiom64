@@ -23,14 +23,17 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def prepare(linkage, directory, suite='host'):
+def prepare(linkage, directory, suite='host', image_directory=None):
     program = 'ipv6-' + suite + '-' + linkage
     fixture(program=program, script='userspace/tests/net/ipv6_host.sh',
             environment={'AXIOM64_IPV6_PROGRAM': program},
             runtime_loader=loader('build') if linkage == 'dynamic' else None)
-    image = ROOT / 'build' / f'axiom64-ipv6-{suite}-{linkage}.iso'
-    subprocess.run([sys.executable, 'scripts/image.py', '--test', '--suite', 'network',
-                    '--output-name', image.name], cwd=ROOT, check=True)
+    image = (image_directory.resolve() if image_directory else ROOT / 'build') / f'axiom64-ipv6-{suite}-{linkage}.iso'
+    command = [sys.executable, 'scripts/image.py', '--test', '--suite', 'network',
+               '--output-name', image.name]
+    if image_directory:
+        command += ['--output-directory', str(image.parent)]
+    subprocess.run(command, cwd=ROOT, check=True)
     manifest = audit_compile(ROOT / 'build' / program, ROOT)
     if ('-static' in manifest['command']) != (linkage == 'static'):
         raise ValueError('IPv6 host client has the wrong linkage')
@@ -57,6 +60,7 @@ def prepare(linkage, directory, suite='host'):
         'scripts/ipv6_output_peer.py', 'scripts/ipv6_output_capture.py', 'userspace/tests/net/ipv6_fixture.h',
         'scripts/ipv6_pmtu_peer.py', 'scripts/ipv6_pmtu_capture.py',
         'scripts/ipv6_errors_peer.py', 'scripts/ipv6_errors_capture.py',
+        'scripts/ipv6_expiry_peer.py', 'scripts/ipv6_expiry_capture.py',
         'scripts/network_test.py', 'scripts/tcp_fault_test.py', 'scripts/image.py',
         'scripts/compile_uapi_client.py', 'scripts/tcp_fixture_inputs.py',
         'userspace/tests/net/ipv6_host.sh',
@@ -65,7 +69,8 @@ def prepare(linkage, directory, suite='host'):
     names = [*products.values(), image, ROOT / 'build/axiom64.elf',
              ROOT / 'build' / (program + '.inputs.json')]
     inputs = dict(linkage=linkage, program=program, compile=manifest, image_audit=image_audit,
-                  products={path.relative_to(ROOT).as_posix(): digest(path) for path in names},
+                  products={(path.relative_to(ROOT).as_posix() if path.is_relative_to(ROOT)
+                             else str(path)): digest(path) for path in names},
                   sources={name: digest(ROOT / name) for name in sources})
     (directory / (linkage + '-inputs.json')).write_text(json.dumps(inputs, indent=2) + '\n')
     return image, inputs
@@ -91,6 +96,9 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
     elif suite == 'errors':
         from ipv6_errors_peer import Peer as ErrorPeer
         peer_type = ErrorPeer
+    elif suite == 'expiry':
+        from ipv6_expiry_peer import Peer as ExpiryPeer
+        peer_type = ExpiryPeer
     peers, servers, captures = [peer_type(lane) for lane in range(2)], [], []
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '2G',
                '-cdrom', str(image), '-nic', 'none', '-display', 'none', '-serial', 'stdio',
@@ -119,7 +127,7 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
             process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE,
                                        stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
             text, reports, error, status = exercise(process, peers, servers,
-                160 if suite == 'fragments' else 120 if suite in ('output', 'pmtu', 'errors') else 45, log)
+                650 if suite == 'expiry' else 160 if suite == 'fragments' else 120 if suite in ('output', 'pmtu', 'errors') else 45, log)
     finally:
         for server in servers:
             server.close()
@@ -151,6 +159,10 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
         markers = ['IPV6_ERRORS_PASS adapters=2 wire=120 local=30 admission=96 options=26 lifetime=4 vectors=8',
                    'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
                    f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
+    elif suite == 'expiry':
+        markers = ['IPV6_EXPIRY_PASS adapters=2 paths=32 stages=7 lifetime_seconds=600 lower_delay_seconds=20',
+                   'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
+                   f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
     missing = [marker for marker in markers if marker not in text]
     unchanged = all(digest(ROOT / name) == expected for group in ('products', 'sources')
                     for name, expected in inputs[group].items())
@@ -168,6 +180,8 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
                 from ipv6_pmtu_capture import verify_capture
             elif suite == 'errors':
                 from ipv6_errors_capture import verify_capture
+            elif suite == 'expiry':
+                from ipv6_expiry_capture import verify_capture
             else:
                 from ipv6_host_capture import verify_capture
             for lane, path in enumerate(captures):
@@ -188,18 +202,19 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--suite', choices=('host', 'sockets', 'fragments', 'output', 'pmtu', 'errors'), default='host')
+    parser.add_argument('--suite', choices=('host', 'sockets', 'fragments', 'output', 'pmtu', 'errors', 'expiry'), default='host')
     parser.add_argument('--workers', type=int, choices=(1, 2, 4), default=2)
     parser.add_argument('--linkage', choices=('static', 'dynamic', 'both'), default='both')
     parser.add_argument('--firmware', choices=('bios', 'uefi', 'both'), default='both')
     parser.add_argument('--transport', choices=('modern', 'legacy', 'both'), default='both')
     parser.add_argument('--output-directory', type=Path, default=None)
+    parser.add_argument('--image-directory', type=Path, default=None)
     args = parser.parse_args()
     args.output_directory = args.output_directory or ROOT / 'build' / ('ipv6-' + args.suite + '-wire')
     args.output_directory.mkdir(parents=True, exist_ok=True)
     choose = lambda value, choices: choices if value == 'both' else (value,)
     linkages = choose(args.linkage, ('static', 'dynamic'))
-    prepared = {linkage: prepare(linkage, args.output_directory, args.suite) for linkage in linkages}
+    prepared = {linkage: prepare(linkage, args.output_directory, args.suite, args.image_directory) for linkage in linkages}
     results = []
     profiles = [(linkage, firmware, transport) for linkage in linkages
                 for firmware in choose(args.firmware, ('bios', 'uefi'))

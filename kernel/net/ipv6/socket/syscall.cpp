@@ -79,6 +79,7 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
         if (error)
             return error;
         if (frame.rax == 42 && !address.family) {
+            inet6_destination_clear(socket);
             socket->peer = {};
             socket->peer_port = 0;
             socket->connected = false;
@@ -128,6 +129,7 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             socket->index = index;
             socket->local = address.address;
             socket->bound = !address.address.unspecified();
+            inet6_destination_clear(socket);
         } else {
             if (address.address.unspecified())
                 address.address.bytes[15] = 1;
@@ -146,6 +148,7 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             socket->peer_port = address.port;
             socket->index = index;
             socket->connected = true;
+            inet6_destination_store(socket, path, address.address);
         }
         return 0;
     }
@@ -189,6 +192,7 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
                 !capable(task.credentials, Capability::net_raw))
                 return -1;
             socket->index = index;
+            inet6_destination_clear(socket);
             return 0;
         }
         if (b == 58 && c == 1 && socket->type == 3) {
@@ -305,13 +309,11 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
         else if (b == 41 && c == 26)
             value = socket->v6only;
         else if (b == 41 && c == 24) {
-            if (!socket->connected)
-                return -107;
-            Ipv6Path path;
-            int error = ipv6_path(socket->local, socket->peer, socket->index, path);
+            uint32_t mtu;
+            int error = inet6_destination_mtu(socket, mtu);
             if (error)
                 return error;
-            value = path.mtu;
+            value = mtu;
         } else
             return -92;
         if (b == 41) {

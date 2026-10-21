@@ -10,11 +10,14 @@ void inet6_icmp_error(unsigned index, const ip6::Address& offender, const uint8_
     if (!ip6::error_quote(bytes, length, quote) ||
         !ipv6_owned(quote.source.link_local() ? index : 0, quote.source))
         return;
-    auto learn = [&](unsigned bound) {
+    auto learn = [&](unsigned bound, Inet6Socket* owner = nullptr) {
         Ipv6Path path;
-        if (!ipv6_path(quote.source, quote.destination, bound, path, true))
+        if (!ipv6_path(quote.source, quote.destination, bound, path, true)) {
             ip6::path_mtu_cache.learn(ip6::path_key(path, quote.destination), path.mtu,
                                       quote.information, ticks);
+            if (owner && owner->connected)
+                inet6_destination_store(owner, path, quote.destination);
+        }
     };
     auto enqueue = [&](Inet6Socket& socket) {
         Inet6Error record;
@@ -53,7 +56,7 @@ void inet6_icmp_error(unsigned index, const ip6::Address& offender, const uint8_
             }
         } else if (socket.connected || socket.receive_errors) {
             if (quote.type == 2)
-                learn(socket.index);
+                learn(socket.index, &socket);
             enqueue(socket);
             if (socket.receive_errors || (quote.type == 2 ? socket.pmtu_mode == 2 : quote.hard))
                 socket.error = quote.error;
@@ -65,7 +68,7 @@ void inet6_icmp_error(unsigned index, const ip6::Address& offender, const uint8_
     if (quote.type == 2) {
         if (udp->pmtu_mode >= 4)
             return;
-        learn(udp->index);
+        learn(udp->index, udp);
         hard = udp->pmtu_mode != 0;
     }
     enqueue(*udp);

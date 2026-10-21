@@ -673,6 +673,7 @@ build/ipv6-%-dynamic: userspace/tests/net/ipv6_%.c scripts/compile_uapi_client.p
 build/ipv6-sockets-native build/ipv6-sockets-static build/ipv6-sockets-dynamic build/ipv6-output-native build/ipv6-output-static build/ipv6-output-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-pmtu-native build/ipv6-pmtu-static build/ipv6-pmtu-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: userspace/tests/net/ipv6_fixture.h
+build/ipv6-expiry-native build/ipv6-expiry-static build/ipv6-expiry-dynamic: userspace/tests/net/ipv6_fixture.h
 .PHONY: test-ipv6-host test-ipv6-host-native
 test-ipv6-host:
 	$(PYTHON) scripts/ipv6_host_test.py
@@ -698,6 +699,11 @@ test-ipv6-errors:
 	$(PYTHON) scripts/ipv6_host_test.py --suite errors --workers 4
 test-ipv6-errors-native:
 	$(PYTHON) scripts/ipv6_host_native.py --suite errors
+.PHONY: test-ipv6-expiry test-ipv6-expiry-native
+test-ipv6-expiry:
+	$(PYTHON) scripts/ipv6_host_test.py --suite expiry --workers 4
+test-ipv6-expiry-native:
+	$(PYTHON) scripts/ipv6_host_native.py --suite expiry --workers 3
 .PHONY: test-ipv6-fragments test-ipv6-fragments-native
 test-ipv6-fragments: test-ipv6-fragment-observation
 	$(PYTHON) scripts/ipv6_host_test.py --suite fragments --workers 4

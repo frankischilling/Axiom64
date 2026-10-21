@@ -313,6 +313,7 @@ jobs:
         suite:
           - boot
           - network
+          - ipv6-expiry
           - configuration
           - storage
           - storage-journal
@@ -919,6 +920,38 @@ jobs:
         if: matrix.suite == 'boot'
         run: python3 scripts/boot_test.py --interactive --firmware both --timeout 180
 
+      - name: Test delayed IPv6 datagrams and isolated expiry campaign control
+        if: matrix.suite == 'ipv6-expiry'
+        run: |
+          python3 scripts/tests/ipv6_expiry_peer_test.py
+          python3 scripts/tests/ipv6_expiry_controller_test.py -v
+      - name: Observe real ten-minute IPv6 path MTU expiry in all eleven profiles
+        if: matrix.suite == 'ipv6-expiry'
+        run: sudo -n python3 scripts/ipv6_expiry_test.py
+      - name: Give the runner ownership of IPv6 expiry evidence
+        if: always() && matrix.suite == 'ipv6-expiry'
+        run: |
+          if test -d build/ipv6-expiry; then
+            sudo -n chown -R "$(id -u):$(id -g)" build/ipv6-expiry
+          fi
+      - name: Upload original IPv6 expiry packets, clocks, images and programs
+        if: always() && matrix.suite == 'ipv6-expiry'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv6-expiry
+          if-no-files-found: error
+          path: |
+            build/ipv6-expiry
+            build/ipv6-expiry-native
+            build/ipv6-expiry-static
+            build/ipv6-expiry-dynamic
+            build/ipv6-expiry-static.inputs.json
+            build/ipv6-expiry-dynamic.inputs.json
+            build/axiom64-ipv6-expiry-*.iso
+            build/musl/**/manifest.json
+            build/musl/**/COPYRIGHT
+            build/musl/**/sysroot/lib/ld-musl-x86_64.so.1
+            build/musl/**/sysroot/usr/lib/libc.a
       - name: Test virtio and e1000 Ethernet with packet sockets
         if: matrix.suite == 'network'
         run: make test-network

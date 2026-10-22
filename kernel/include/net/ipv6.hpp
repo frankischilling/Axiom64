@@ -27,6 +27,7 @@ struct Ipv6Path {
     unsigned index = 0;
     uint32_t mtu = 0;
     uint64_t route_owner = 0;
+    uint8_t route_prefix = 0;
 };
 
 // Serialized borrowers retain an entry only until the next address mutation.

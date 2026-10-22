@@ -83,6 +83,8 @@ def prepare(linkage, directory, suite='host', image_directory=None):
                      'userspace/tests/net/ipv6_receive_extensions.c',
                      'scripts/ipv6_receive_extensions_contract.py',
                      'scripts/tests/fixtures/ipv6-receive-extensions-linux7.json',
+        'scripts/ipv6_cached_peer.py', 'scripts/ipv6_cached_capture.py',
+        'scripts/tcp_capture_clock.py', 'scripts/ipv4_expiry_capture.py',
         'scripts/network_test.py', 'scripts/tcp_fault_test.py', 'scripts/image.py',
         'scripts/compile_uapi_client.py', 'scripts/tcp_fixture_inputs.py',
         'userspace/tests/net/ipv6_host.sh',
@@ -121,6 +123,9 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
     elif suite == 'expiry':
         from ipv6_expiry_peer import Peer as ExpiryPeer
         peer_type = ExpiryPeer
+    elif suite == 'cached':
+        from ipv6_cached_peer import Peer as CachedPeer
+        peer_type = CachedPeer
     elif suite == 'controls':
         from ipv6_controls_peer import Peer as ControlsPeer
         peer_type = ControlsPeer
@@ -140,7 +145,7 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
                     f'mac={peers[lane].guest.hex(":")}']
         capture = output / f'lane{lane}.pcap'
         captures.append(capture)
-        if suite in ('pmtu', 'errors'):
+        if suite in ('pmtu', 'errors', 'cached'):
             from packet_observation import PcapObservation
             peers[lane].observe_input = PcapObservation(capture).watch
         command += ['-object', f'filter-dump,id=cap{lane},netdev=peer{lane},file={capture}']
@@ -192,6 +197,10 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
         markers = ['IPV6_EXPIRY_PASS adapters=2 paths=32 stages=7 lifetime_seconds=600 lower_delay_seconds=20',
                    'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
                    f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
+    elif suite == 'cached':
+        markers = ['IPV6_CACHED_PASS adapters=2 cases=128 variants=8 scopes=2 transports=2',
+                   'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
+                   f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
     elif suite == 'controls':
         markers = ['IPV6_CONTROLS_PASS adapters=2 cases=160 variants=20 scopes=2 transports=2',
                    'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
@@ -215,6 +224,8 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
                 from ipv6_errors_capture import verify_capture
             elif suite == 'expiry':
                 from ipv6_expiry_capture import verify_capture
+            elif suite == 'cached':
+                from ipv6_cached_capture import verify_capture
             elif suite == 'controls':
                 from ipv6_controls_capture import verify_capture
             else:
@@ -237,7 +248,7 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--suite', choices=('host', 'sockets', 'fragments', 'output', 'pmtu', 'errors', 'expiry', 'controls'), default='host')
+    parser.add_argument('--suite', choices=('host', 'sockets', 'fragments', 'output', 'pmtu', 'errors', 'expiry', 'controls', 'cached'), default='host')
     parser.add_argument('--workers', type=int, choices=(1, 2, 4), default=2)
     parser.add_argument('--linkage', choices=('static', 'dynamic', 'both'), default='both')
     parser.add_argument('--firmware', choices=('bios', 'uefi', 'both'), default='both')

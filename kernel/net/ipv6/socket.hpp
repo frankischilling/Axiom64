@@ -12,6 +12,7 @@ static_assert(inet6_socket_count <= ip6::path_mtu_reference_capacity);
 
 struct Inet6Destination {
     Ipv6Path path;
+    ip6::Address address;
     ip6::PathMtuReference metric;
     const NetInfo* adapter = nullptr;
     bool valid = false;
@@ -47,5 +48,7 @@ int inet6_bind_port(Inet6Socket*, const ip6::Address&, uint16_t port);
 void inet6_destination_clear(Inet6Socket*);
 void inet6_destination_store(Inet6Socket*, const Ipv6Path&, const ip6::Address&);
 int inet6_destination_mtu(Inet6Socket*, uint32_t&);
+ip6::Address inet6_destination_output(Inet6Socket*, const Ipv6Path&, const ip6::Address& first,
+                                      const ip6::Address& requested);
 void inet6_icmp_error(unsigned index, const ip6::Packet&, const uint8_t*, size_t);
 } // namespace ax

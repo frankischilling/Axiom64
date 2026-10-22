@@ -1185,6 +1185,106 @@ static void path_mtu_errors() {
     reset();
 }
 
+static void cached_routing_output() {
+    for (unsigned lane = 0; lane < 2; lane++) {
+        for (unsigned variant = 0; variant < 13; variant++) {
+            reset();
+            auto local = address(lane, 2), first = address(lane, 128);
+            auto final = address(144 + lane, 71);
+            assert(!change(lane + 1, local));
+            Ipv6Route host{first, {}, lane + 1, 100, 128};
+            if (variant == 2)
+                assert(!ipv6_route_control(host, false, true));
+            Ipv6Path path;
+            assert(!ipv6_path(local, first, lane + 1, path));
+            bool learned = variant != 0 && variant != 2 && variant != 12;
+            if (learned)
+                assert(ip6::path_mtu_cache.learn(ip6::path_key(path, first), path.mtu, 1400,
+                                                 ticks) == 1400);
+            auto socket = inet6_allocate(variant == 7 ? 3 : 2);
+            assert(socket);
+            if (socket->type == 2)
+                assert(!inet6_bind_port(socket, local, 47500));
+            socket->local = local;
+            socket->index = lane + 1;
+            socket->peer = final;
+            socket->peer_port = __builtin_bswap16(uint16_t(48000));
+            uint8_t routing[40] = {250, 4, 4, 1, 1};
+            memcpy(routing + 8, address(lane, 77).bytes, 16);
+            memcpy(routing + 24, first.bytes, 16);
+            assert(!inet6_extension_set(socket, 57, routing, sizeof(routing)));
+            socket->connected = variant != 3;
+            if (socket->connected)
+                inet6_destination_store(socket, path, first);
+            if (variant == 4)
+                assert(!inet6_extension_set(socket, 57, routing, sizeof(routing)));
+            if (variant == 5)
+                ticks = ip6::path_mtu_lifetime;
+            if (variant == 6) {
+                assert(!ipv6_route_control(host, false, true));
+                assert(!ipv6_path(local, first, lane + 1, path));
+            }
+            if (variant == 8) {
+                first = address(lane, 160);
+                memcpy(routing + 24, first.bytes, 16);
+            }
+            if (variant == 12)
+                assert(ip6::path_mtu_cache.learn(ip6::path_key(path, first), path.mtu, 1400,
+                                                 ticks) == 1400);
+            Inet6Address target{10, socket->peer_port, 0, final, 0};
+            auto control = inet6_send_defaults(socket, target);
+            if (variant == 8) {
+                control.extensions.routing = routing;
+                control.present = true;
+            }
+            if (variant == 10) {
+                control.hops = 55;
+                control.present = true;
+            }
+            uint8_t payload[32] = {129};
+            assert(inet6_send(socket, target, payload, sizeof(payload),
+                              variant == 3 || variant == 9,
+                              variant == 8 || variant == 10 ? &control : nullptr) == 32);
+            if (variant == 11) {
+                // Deferred output owns the effective destination and copied headers.
+                assert(!inet6_extension_set(socket, 57, nullptr, 0));
+                inet6_close(socket);
+            }
+            net_poll();
+            deliver(lane, advertisement(lane, first, local));
+            net_poll();
+            const auto& frame = emitted[lane].back();
+            unsigned transport = socket->type == 3 && variant != 11 ? 58 : 17;
+            unsigned length = sizeof(payload) + (transport == 17 ? 8 : 0);
+            bool reused =
+                variant == 1 || variant == 2 || variant == 9 || variant == 10 || variant == 11;
+            const auto& effective = reused ? first : final;
+            assert(frame.size() == 14 + 40 + sizeof(routing) + length);
+            assert(!memcmp(frame.data() + 38, first.bytes, 16));
+            assert(!memcmp(frame.data() + 54 + 8, effective.bytes, 16));
+            assert(!ip6::checksum(local, effective, transport, frame.data() + 94, length));
+            assert(frame[21] == (variant == 10 ? 55 : 64));
+            if (variant != 11) {
+                assert(socket->peer == final);
+                assert(!memcmp(socket->extensions.routing + 8, routing + 8, 16));
+                socket->receive_errors = true;
+                socket->pmtu_mode = 2;
+                std::vector<uint8_t> oversized(1600, 0x5b);
+                assert(inet6_send(socket, target, oversized.data(), oversized.size(),
+                                  variant == 3 || variant == 9,
+                                  variant == 8 || variant == 10 ? &control : nullptr) == -90);
+                auto failure = inet6_take_error(socket);
+                assert(failure && failure->destination.address == effective);
+                assert(!ipv6_path(local, first, lane + 1, path));
+                assert(failure->error.information == path.mtu - sizeof(routing));
+                release(failure);
+                inet6_close(socket);
+            }
+        }
+    }
+    reset();
+}
+
 static void routed_error_destinations(unsigned mode) {
     for (unsigned lane = 0; lane < 2; lane++) {
         reset();
@@ -1214,6 +1314,8 @@ static void routed_error_destinations(unsigned mode) {
             memset(routing + 58, 0x99, 6);
         }
         assert(!inet6_extension_set(socket, 57, routing, routing_size));
+        // Model connect after installing the header, as the syscall does.
+        inet6_destination_store(socket, path, first);
         Inet6Address target{10, socket->peer_port, 0, final, 0};
         std::vector<uint8_t> payload(128, 0x5b);
         assert(!inet6_send_admit(socket, target, payload.size(), payload.data(), false));
@@ -1902,6 +2004,7 @@ int main() {
     receive_extension_policy();
     source_fragmentation();
     path_mtu_errors();
+    cached_routing_output();
     for (unsigned mode = 0; mode < 3; mode++)
         routed_error_destinations(mode);
     copied_error_queues();

@@ -3,10 +3,10 @@
   "reference": {
     "kernel": "7.0.0-1017-azure",
     "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
-    "source_sha256": "d96b588b19d924877de614897e526b33ead0d097c21d14a4e504a2653aafb3d0",
-    "program_sha256": "35ba1ba18e3e3ac4768008dd0a9e90fa391f582ac428d55cd322f0bf61b9357e",
+    "source_sha256": "2fe17f0aebf290ce5d27fb69b55043a01a09ce503871cd06c97d3194c1f3b143",
+    "program_sha256": "79712d235d43ed331fb9f1ee18e67563d3110c03412f6306f3dc61631073d5fc",
     "original_log_sha256": "4e642e54f18615f8c77ae3b4d63a9683bb37a99b9d81ec4af82c8e98842f8823",
-    "cpio_sha256": "6e7428eb07cb07236aeb807f2a3ced04189cd40f6f1d1cc2ebda0e16760bab84",
+    "cpio_sha256": "eca9ec3676693dc8e8509d5e076046afe51625435afbd095c05b0c8870423b97",
     "actual_program_completed": true,
     "actual_cpio_reopened": true,
     "complete_output_client": true,

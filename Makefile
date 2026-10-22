@@ -684,6 +684,7 @@ build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: use
 build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: IPV6_FIXTURE_FLAGS = -DIPV6_ERROR_CONTROLS_INTEGRATED
 build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: userspace/tests/net/ipv6_error_controls.c
 build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: userspace/tests/net/ipv6_error_metadata.c userspace/tests/net/ipv6_receive_extensions.c
+build/ipv6-cached-native build/ipv6-cached-static build/ipv6-cached-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-expiry-native build/ipv6-expiry-static build/ipv6-expiry-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-controls-native build/ipv6-controls-static build/ipv6-controls-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-controls-native build/ipv6-controls-static build/ipv6-controls-dynamic: IPV6_FIXTURE_FLAGS = -DIPV6_CONTROLS_INTEGRATED
@@ -711,9 +712,9 @@ test-ipv6-sockets:
 test-ipv6-sockets-native:
 	$(PYTHON) scripts/ipv6_host_native.py --suite sockets
 .PHONY: test-ipv6-output test-ipv6-output-native
-test-ipv6-output:
-	$(PYTHON) scripts/ipv6_host_test.py --suite output --workers 4
-test-ipv6-output-native:
+test-ipv6-output: test-ipv6-cached
+	$(PYTHON) scripts/ipv6_host_test.py --suite output --workers 2
+test-ipv6-output-native: test-ipv6-cached-native
 	$(PYTHON) scripts/ipv6_host_native.py --suite output
 .PHONY: test-ipv6-output-contract
 test-ipv6-output-contract:
@@ -1175,3 +1176,9 @@ build/dns-tcp-static: userspace/tests/net/dns-tcp.c userspace/tests/net/dns/cont
 build/dns-tcp-dynamic: userspace/tests/net/dns-tcp.c userspace/tests/net/dns/contract.h $(MUSL_INPUTS) | musl-toolchain
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DDNS_LINKAGE='"dynamic"' $< -o $@
+
+.PHONY: test-ipv6-cached test-ipv6-cached-native
+test-ipv6-cached:
+	$(PYTHON) scripts/ipv6_host_test.py --suite cached --workers 4
+test-ipv6-cached-native:
+	$(PYTHON) scripts/ipv6_host_native.py --suite cached

@@ -1056,6 +1056,11 @@ jobs:
             build/ipv6-output-static.inputs.json
             build/ipv6-output-dynamic.inputs.json
             build/axiom64-ipv6-output-*.iso
+            build/ipv6-cached-wire
+            build/ipv6-cached-native-wire
+            build/ipv6-cached-static.inputs.json
+            build/ipv6-cached-dynamic.inputs.json
+            build/axiom64-ipv6-cached-*.iso
             build/ipv6-pmtu-wire
             build/ipv6-pmtu-native-wire
             build/ipv6-pmtu-static.inputs.json

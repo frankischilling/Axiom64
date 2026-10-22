@@ -74,6 +74,11 @@ def child(profile, directory, suite='host', parent_namespace=None):
                  'scripts/ipv6_sticky_contract.py', 'scripts/tests/fixtures/ipv6-sticky-controls-linux7.json',
                      'scripts/ipv6_send_controls_contract.py', 'scripts/ipv6_send_controls_test.py'):
             sources[name] = digest(ROOT / name)
+    if suite == 'cached':
+        for name in ('Makefile', 'scripts/ipv6_cached_peer.py', 'scripts/ipv6_cached_capture.py',
+                     'scripts/packet_observation.py', 'scripts/tcp_capture_clock.py',
+                     'scripts/ipv4_expiry_capture.py', 'scripts/ipv6_controls_capture.py'):
+            sources[name] = digest(ROOT / name)
     if suite == 'errors':
         for name in ('Makefile', 'userspace/tests/net/ipv6_error_controls.c',
                      'userspace/tests/net/ipv6_error_metadata.c',
@@ -150,6 +155,9 @@ def child(profile, directory, suite='host', parent_namespace=None):
     elif suite == 'expiry':
         from ipv6_expiry_peer import Peer as ExpiryPeer
         peer_type = ExpiryPeer
+    elif suite == 'cached':
+        from ipv6_cached_peer import Peer as CachedPeer
+        peer_type = CachedPeer
     elif suite == 'controls':
         from ipv6_controls_peer import Peer as ControlsPeer
         peer_type = ControlsPeer
@@ -196,7 +204,7 @@ def child(profile, directory, suite='host', parent_namespace=None):
             interfaces.append(dict(lane=lane, name=name, index=socket.if_nametoindex(name)))
             selector.register(tap, selectors.EVENT_READ, lane)
             captures.append(Capture(name, directory / f'lane{lane}.pcap'))
-            if suite in ('pmtu', 'errors'):
+            if suite in ('pmtu', 'errors', 'cached'):
                 peers[lane].observe_input = captures[-1].watch
         (directory / 'interfaces.json').write_text(json.dumps(interfaces, indent=2) + '\n')
         with (directory / 'client.log').open('wb') as output:
@@ -252,9 +260,11 @@ def child(profile, directory, suite='host', parent_namespace=None):
                     from ipv6_errors_capture import verify_capture as checker
                 elif suite == 'expiry':
                     from ipv6_expiry_capture import verify_capture as checker
+                elif suite == 'cached':
+                    from ipv6_cached_capture import verify_capture as checker
                 elif suite == 'controls':
                     from ipv6_controls_capture import verify_capture as checker
-                extra = dict(statistics=statistics[lane], interface_index=interfaces[lane]['index']) if suite in ('fragments', 'output', 'pmtu', 'errors', 'expiry', 'controls') else {}
+                extra = dict(statistics=statistics[lane], interface_index=interfaces[lane]['index']) if suite in ('fragments', 'output', 'pmtu', 'errors', 'expiry', 'controls', 'cached') else {}
                 if model_program:
                     extra['native_copy_order'] = copy_order
                 if send_model_program:
@@ -286,7 +296,7 @@ def child(profile, directory, suite='host', parent_namespace=None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--suite', choices=('host', 'sockets', 'fragments', 'output', 'pmtu', 'errors', 'expiry', 'controls'), default='host')
+    parser.add_argument('--suite', choices=('host', 'sockets', 'fragments', 'output', 'pmtu', 'errors', 'expiry', 'controls', 'cached'), default='host')
     parser.add_argument('--workers', type=int, choices=(1, 2, 3), default=1)
     parser.add_argument('--child', choices=('native', 'static', 'dynamic'))
     parser.add_argument('--parent-network-namespace', type=int)

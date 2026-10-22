@@ -113,7 +113,7 @@ int ipv6_path(const ip6::Address& requested, const ip6::Address& destination, un
             return -99;
         if ((source.loopback() || destination.loopback()) && bound && bound != ipv6_loopback)
             return -101;
-        path = {source, destination, ipv6_loopback, 65536};
+        path = {source, destination, ipv6_loopback, 65536, 0, 128};
         return 0;
     }
     if (destination.loopback() || requested.loopback())
@@ -140,8 +140,9 @@ int ipv6_path(const ip6::Address& requested, const ip6::Address& destination, un
         source = selected->address;
     } else if (!ipv6_owned(source.link_local() ? best->index : 0, source))
         return -99;
-    path = {source, best->gateway.unspecified() ? destination : best->gateway, best->index,
-            net_info(best->index)->mtu, best->owner};
+    path = {source,      best->gateway.unspecified() ? destination : best->gateway,
+            best->index, net_info(best->index)->mtu,
+            best->owner, best->prefix};
     if (!interface_mtu)
         path.mtu = ip6::path_mtu_cache.lookup(ip6::path_key(path, destination), path.mtu, ticks);
     return 0;

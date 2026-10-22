@@ -249,7 +249,8 @@ int inet6_send_admit(Inet6Socket* socket, const Inet6Address& address, size_t le
     int error = ipv6_path(options.source, first, index, path, socket->pmtu_mode >= 3);
     if (error)
         return error;
-    if (socket->type == 2 && socket->connected && !named && !options.present)
+    if (socket->type == 2 && socket->connected && !named && !options.present &&
+        !options.extensions.routing_length)
         inet6_destination_store(socket, path, first);
     int extra = ip6::output_extension_size(options.extensions);
     if (extra < 0)
@@ -259,7 +260,9 @@ int inet6_send_admit(Inet6Socket* socket, const Inet6Address& address, size_t le
     bool fragmentable = !options.dont_fragment && (socket->pmtu_mode < 2 || socket->pmtu_mode == 5);
     if (length > 65535 - (overhead - ip6::header_size) ||
         (!fragmentable && length + overhead > mtu)) {
-        inet6_local_error(socket, address, mtu, prefix);
+        auto failed = address;
+        failed.address = inet6_destination_output(socket, path, first, address.address);
+        inet6_local_error(socket, failed, mtu > uint32_t(extra) ? mtu - extra : 0, prefix);
         return -90;
     }
     return -inet6_error(socket, true);
@@ -326,13 +329,14 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
     }
     unsigned check_at = socket->type == 2 ? 6 : 2;
     bytes[check_at] = bytes[check_at + 1] = 0;
-    uint16_t checksum = ip6::checksum(path.source, address.address, socket->protocol, bytes, size);
+    auto effective = inet6_destination_output(socket, path, first, address.address);
+    uint16_t checksum = ip6::checksum(path.source, effective, socket->protocol, bytes, size);
     if (!checksum && socket->type == 2)
         checksum = 0xffff;
     bytes[check_at] = checksum >> 8;
     bytes[check_at + 1] = checksum;
-    error = ipv6_send(path.source, address.address, index, socket->protocol, options.hops, bytes,
-                      size, socket, fragmentable, socket->socket_mtu, socket->pmtu_mode >= 3,
+    error = ipv6_send(path.source, effective, index, socket->protocol, options.hops, bytes, size,
+                      socket, fragmentable, socket->socket_mtu, socket->pmtu_mode >= 3,
                       options.traffic_class, &options.extensions);
     release(bytes);
     if (!error)

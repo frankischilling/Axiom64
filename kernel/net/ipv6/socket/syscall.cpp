@@ -291,8 +291,13 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
                 return -22;
             if (c == 16)
                 socket->hops = value == -1 ? 64 : value;
-            else
-                socket->traffic_class = value == -1 ? 0 : value;
+            else {
+                uint8_t selected = value == -1 ? 0 : value;
+                if (socket->traffic_class != selected) {
+                    socket->traffic_class = selected;
+                    inet6_destination_clear(socket);
+                }
+            }
         } else if (b == 41 && c == 26) {
             if (socket->local_port || socket->type == 3)
                 return -22;

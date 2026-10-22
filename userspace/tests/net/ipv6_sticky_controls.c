@@ -38,8 +38,18 @@ static unsigned make_header(unsigned char* bytes, unsigned option, unsigned valu
 }
 
 static void hex(const unsigned char* bytes, size_t size) {
-    for (size_t at = 0; at < size; at++)
-        printf("%02x", bytes[at]);
+    static const char digits[] = "0123456789abcdef";
+    char output[512];
+    while (size) {
+        size_t count = size < sizeof(output) / 2 ? size : sizeof(output) / 2;
+        for (size_t at = 0; at < count; at++) {
+            output[at * 2] = digits[bytes[at] >> 4];
+            output[at * 2 + 1] = digits[bytes[at] & 15];
+        }
+        check(fwrite(output, 2, count, stdout) == count, "complete hexadecimal output");
+        bytes += count;
+        size -= count;
+    }
 }
 
 static void one(unsigned raw, unsigned drop, unsigned choice, unsigned variant, unsigned number) {

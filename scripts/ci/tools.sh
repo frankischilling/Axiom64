@@ -15,7 +15,7 @@ apt_get() {
   timeout --kill-after=30s 10m sudo -n apt-get "${apt_options[@]}" "$@"
 }
 
-restore_repository() {
+configure_repository() {
   if command -v lsb_release >/dev/null && [[ "$(lsb_release -is)" == Ubuntu ]]; then
     local release source
     release=$(lsb_release -cs)
@@ -41,6 +41,7 @@ case "${1:-}" in
   prepare)
     cache="${RUNNER_TEMP:?RUNNER_TEMP is required}/axiom64-apt"
     mkdir -p "$cache/partial" "$bundle"
+    configure_repository
     apt_get update
     apt_get -o "Dir::Cache::archives=$cache" \
       -o APT::Keep-Downloaded-Packages=true \
@@ -72,7 +73,7 @@ case "${1:-}" in
     if ((${#packages[@]})); then
       cp "${packages[@]}" "$cache/"
     fi
-    restore_repository
+    configure_repository
     apt_get update
     apt_get -o "Dir::Cache::archives=$cache" \
       install -y --no-install-recommends "${tools[@]}"

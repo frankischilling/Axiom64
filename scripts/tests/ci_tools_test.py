@@ -42,8 +42,8 @@ class PackageRestore(unittest.TestCase):
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'],
                         RUNNER_TEMP=str(self.root / 'runner with spaces'), TOOL_CALLS=str(self.root / 'calls.jsonl'))
 
-    def run_helper(self, **environment):
-        result = subprocess.run(['bash', str(HELPER), 'restore'], cwd=self.root,
+    def run_helper(self, mode='restore', **environment):
+        result = subprocess.run(['bash', str(HELPER), mode], cwd=self.root,
                                 env=dict(self.env, **environment), capture_output=True, text=True)
         calls = self.root / 'calls.jsonl'
         return result, [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
@@ -118,6 +118,36 @@ class PackageRestore(unittest.TestCase):
         result, calls = self.run_helper(TEST_DISTRO='Debian', TEST_CODENAME='bookworm')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(any('Dir::Etc::sourceparts=-' in row for row in calls))
+
+    def test_prepare_uses_canonical_repository_and_retains_packages(self):
+        cache = Path(self.env['RUNNER_TEMP']) / 'axiom64-apt'
+        cache.mkdir(parents=True)
+        package = cache / 'retained.deb'
+        package.write_bytes(b'actual downloaded package fixture')
+        result, calls = self.run_helper(mode='prepare')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        apt = [row for row in calls if row[0] == 'apt-get']
+        self.assertEqual(len(apt), 3)
+        source = cache / 'ubuntu.sources'
+        self.assertTrue(all('Dir::Etc::sourcelist=' + str(source) in row for row in apt))
+        self.assertTrue(all('Dir::Etc::sourceparts=-' in row for row in apt))
+        self.assertIn('URIs: https://archive.ubuntu.com/ubuntu', source.read_text())
+        self.assertIn('Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg', source.read_text())
+        self.assertIn('qemu-system-x86', apt[1])
+        self.assertIn('clang-format-20', apt[2])
+        self.assertFalse(any('--allow-unauthenticated' in row for row in apt))
+        limits = [row for row in calls if row[0] == 'timeout']
+        self.assertEqual(len(limits), 3)
+        self.assertTrue(all(row[1:3] == ['--kill-after=30s', '10m'] for row in limits))
+        retained = self.root / 'build/ci-packages' / package.name
+        self.assertEqual(retained.read_bytes(), package.read_bytes())
+        self.assertEqual((retained.parent / 'SHA256SUMS').read_text(),
+                         hashlib.sha256(package.read_bytes()).hexdigest() + '  build/ci-packages/retained.deb\n')
+
+    def test_prepare_failed_refresh_propagates_without_installation(self):
+        result, calls = self.run_helper(mode='prepare', UPDATE_STATUS='42')
+        self.assertEqual(result.returncode, 42)
+        self.assertFalse(any(row[0] == 'apt-get' and 'install' in row for row in calls))
 
 
 if __name__ == '__main__':

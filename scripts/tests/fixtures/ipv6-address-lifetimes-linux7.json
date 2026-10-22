@@ -3,11 +3,11 @@
   "reference": {
     "kernel": "7.0.0-1017-azure",
     "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
-    "source_sha256": "6e4ce47843f8b1fb11d1f085f011d75f3d8d7502b3b234b83f2fa051804cdc83",
+    "source_sha256": "925f2269f10d67ab1a5bbd05a2fc7e4e4656942d2138ce6736e65fa2e13e217d",
     "host_source_sha256": "309b774244cddf8f590451eb6cf9bda0306d0ea435d74d4d8ad58595d9e9dc72",
-    "program_sha256": "e3552700b323543c332b5441ef8ef49f70206b1dbb0367e61f83d139df0872da",
-    "initramfs_sha256": "4fad1741a4e4e93b5f42da78f8bd0bfa5450a71575467f601afb1fe6018a8a19",
-    "original_log_sha256": "314d8d197a805161f16b107538a16cd49191b956e198a57063e2cf31adaefd4a",
+    "program_sha256": "44fbea136881956c875ab60d4c1b00e5844916db4241d77779dc0ae8e6bdaea9",
+    "initramfs_sha256": "7ef7525b0161244d4219bf822f60ab8bf219dc892c59f49ef56e11fb856e143f",
+    "original_log_sha256": "4d12421cbad71e71fd37d01092912ee06f2e56d125e50611565ab2178474e4fe",
     "actual_program_completed": true,
     "actual_cpio_reopened": true,
     "complete_host_client": true,
@@ -19,10 +19,13 @@
     "preferred_transition_upper_bound_seconds": 8,
     "valid_transition_upper_bound_seconds": 15,
     "original_capture_sha256": [
-      "9f4acfe34ea98a685abef84f828998c85073bf402c4eae5c73b34475b48d5209",
-      "3d81e4a95b74324bd23c2d176d9f61e6e2917280d6158c057c7c3024cfd71507"
+      "b5ea438ed38d7f3d0fa85becab4563a76a6cc5528f65dff9d08872036246ef61",
+      "b8309238d671d93fab09307de34a640d0d2e7af14b3f21f74f198917a42c4804"
     ],
-    "wire_observations": 18
+    "wire_observations": 18,
+    "queued_source_cases": 16,
+    "queued_valid_lifetime_seconds": 1,
+    "queued_source_wire_reopened": true
   },
   "observations": {
     "rows": [
@@ -1021,5 +1024,119 @@
       "exact": 1,
       "source": "20010db8042100000000000000000081"
     }
+  ],
+  "queued_source_observations": [
+    [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      1,
+      0,
+      0,
+      1
+    ],
+    [
+      0,
+      2,
+      0,
+      1,
+      0
+    ],
+    [
+      0,
+      3,
+      0,
+      1,
+      1
+    ],
+    [
+      0,
+      4,
+      1,
+      0,
+      0
+    ],
+    [
+      0,
+      5,
+      1,
+      0,
+      1
+    ],
+    [
+      0,
+      6,
+      1,
+      1,
+      0
+    ],
+    [
+      0,
+      7,
+      1,
+      1,
+      1
+    ],
+    [
+      1,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      1,
+      1,
+      0,
+      0,
+      1
+    ],
+    [
+      1,
+      2,
+      0,
+      1,
+      0
+    ],
+    [
+      1,
+      3,
+      0,
+      1,
+      1
+    ],
+    [
+      1,
+      4,
+      1,
+      0,
+      0
+    ],
+    [
+      1,
+      5,
+      1,
+      0,
+      1
+    ],
+    [
+      1,
+      6,
+      1,
+      1,
+      0
+    ],
+    [
+      1,
+      7,
+      1,
+      1,
+      1
+    ]
   ]
 }

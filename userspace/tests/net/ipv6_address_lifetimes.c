@@ -6,6 +6,8 @@
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <net/if.h>
+#include <netpacket/packet.h>
+#include <sys/ioctl.h>
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -280,6 +282,162 @@ static void wire_exchange(unsigned lane, unsigned stage, unsigned kind, int fd, 
     puts("");
 }
 
+struct queued_link {
+    unsigned lane, index;
+    int packet;
+    unsigned char mac[6];
+};
+
+static struct in6_addr queued_address(unsigned lane, unsigned host) {
+    char text[80];
+    struct in6_addr value;
+    snprintf(text, sizeof(text), "2001:db8:%x::%x", 0x460 + lane, host);
+    check(inet_pton(AF_INET6, text, &value) == 1, "queued source address");
+    return value;
+}
+
+static unsigned queued_gate(const struct queued_link* link, unsigned number, unsigned stage) {
+    unsigned char frame[60] = {2, 'Q', 'S', 'R', link->lane, 0};
+    memcpy(frame + 6, link->mac, 6);
+    frame[12] = 0x88;
+    frame[13] = 0xb7;
+    memcpy(frame + 14, "QSRC", 4);
+    frame[18] = link->lane;
+    frame[19] = number;
+    frame[20] = stage;
+    struct sockaddr_ll target = {.sll_family = AF_PACKET,
+                                 .sll_protocol = htons(0x88b7),
+                                 .sll_ifindex = link->index,
+                                 .sll_halen = 6};
+    memcpy(target.sll_addr, frame, 6);
+    check(sendto(link->packet, frame, sizeof(frame), 0, (struct sockaddr*)&target,
+                 sizeof(target)) == sizeof(frame),
+          "queued source phase request");
+    uint64_t began = now();
+    for (;;) {
+        struct pollfd event = {.fd = link->packet, .events = POLLIN};
+        check(poll(&event, 1, 100) >= 0, "queued source phase poll");
+        unsigned char reply[1600];
+        ssize_t length = recv(link->packet, reply, sizeof(reply), MSG_DONTWAIT);
+        if (length >= 23 && !memcmp(reply, link->mac, 6) && !memcmp(reply + 6, frame, 6) &&
+            !memcmp(reply + 12, frame + 12, 9) && reply[21] == 1)
+            return reply[22];
+        check(now() - began < 10000000000ULL, "queued source finite phase acknowledgment");
+    }
+}
+
+static void queued_sources(void) {
+    int links = socket(AF_INET, SOCK_DGRAM, 0);
+    check(links >= 0, "queued source interface control");
+    for (unsigned lane = 0; lane < 2; lane++) {
+        struct queued_link link = {.lane = lane};
+        struct ifreq request = {0};
+        snprintf(request.ifr_name, sizeof(request.ifr_name), "eth%u", lane);
+        link.index = if_nametoindex(request.ifr_name);
+        check(link.index && !ioctl(links, SIOCGIFHWADDR, &request),
+              "queued source adapter identity");
+        memcpy(link.mac, request.ifr_hwaddr.sa_data, 6);
+        link.packet = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK, htons(3));
+        check(link.packet >= 0, "queued source packet observation");
+        struct sockaddr_ll binding = {
+            .sll_family = AF_PACKET, .sll_protocol = htons(3), .sll_ifindex = link.index};
+        check(!bind(link.packet, (struct sockaddr*)&binding, sizeof(binding)),
+              "queued source packet bind");
+        queued_gate(&link, 255, 0);
+        struct in6_addr permanent = queued_address(lane, 1);
+        check(!change(link.index, &permanent, 64, NLM_F_CREATE | NLM_F_EXCL, 0, 0, 0, 0, 0,
+                      IFA_F_NODAD),
+              "queued source permanent companion");
+        for (unsigned number = 0; number < 8; number++) {
+            unsigned raw = number / 4, expires = (number / 2) % 2, reuse = number % 2;
+            struct in6_addr selected = queued_address(lane, 0x82 + number * 16);
+            struct in6_addr remote = queued_address(lane, 0x83 + number * 16);
+            queued_gate(&link, number, 0);
+            uint64_t created = now();
+            check(!change(link.index, &selected, 64, NLM_F_CREATE | NLM_F_EXCL, 0, expires, 1, 1,
+                          16, IFA_F_NODAD),
+                  "queued source selected address");
+            int fd = socket(AF_INET6, (raw ? SOCK_RAW : SOCK_DGRAM) | SOCK_NONBLOCK,
+                            raw ? IPPROTO_ICMPV6 : 0);
+            check(fd >= 0, "queued source automatic description");
+            if (raw) {
+                int policy = 0;
+                check(!setsockopt(fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &policy, sizeof(policy)),
+                      "queued source raw fragmentation policy");
+            }
+            struct sockaddr_in6 local = {.sin6_family = AF_INET6,
+                                         .sin6_port = raw ? 0 : htons(59400 + lane * 10 + number)};
+            check(!bind(fd, (struct sockaddr*)&local, sizeof(local)),
+                  "queued source wildcard port");
+            struct sockaddr_in6 target = {
+                .sin6_family = AF_INET6, .sin6_port = raw ? 0 : htons(55124), .sin6_addr = remote};
+            unsigned char payload[4000] = {'Q', 'S', 'R', 'C', lane, number, 0x5a, 0x71};
+            if (raw) {
+                memcpy(payload, (unsigned char[]){128, 0, 0, 0, 'Q', 'R', lane, number}, 8);
+            }
+            for (unsigned at = 8; at < sizeof(payload); at++)
+                payload[at] = at * 13 + lane + number;
+            unsigned size = raw ? sizeof(payload) : 16;
+            check(sendto(fd, payload, size, 0, (struct sockaddr*)&target, sizeof(target)) == size,
+                  "queued source copy admission");
+            memset(payload, 0xa5, sizeof(payload));
+            queued_gate(&link, number, 1);
+            if (expires) {
+                // Sample after the configured interval, retaining its real wire minimum.
+                // Address accounting can cross a tick before the netlink reply is received.
+                wait_until(created + 1100000000ULL);
+                while (observe(link.index, &selected).present) {
+                    check(now() - created < 2500000000ULL, "queued source bounded actual expiry");
+                    wait_until(now() + 20000000ULL);
+                }
+                check(now() - created >= 1000000000ULL && now() - created <= 2500000000ULL,
+                      "queued source original valid interval");
+            } else {
+                check(!change(link.index, &selected, 64, 0, 1, 0, 0, 0, 0, 0),
+                      "queued source removal");
+            }
+            check(!observe(link.index, &selected).present, "queued source actually absent");
+            uint64_t elapsed = now() - created;
+            if (reuse) {
+                int previous = fd;
+                check(!close(fd), "queued source final owner close");
+                fd = socket(AF_INET6, (raw ? SOCK_RAW : SOCK_DGRAM) | SOCK_NONBLOCK,
+                            raw ? IPPROTO_ICMPV6 : 0);
+                check(fd == previous, "queued source descriptor replacement");
+                local.sin6_addr = permanent;
+                check(!bind(fd, (struct sockaddr*)&local, sizeof(local)),
+                      "queued source replacement source");
+            }
+            queued_gate(&link, number, 2);
+            unsigned delivered = queued_gate(&link, number, 3);
+            check(delivered == 1, "queued source original copied output observed");
+            int error = -1;
+            socklen_t capacity = sizeof(error);
+            check(!getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &capacity) &&
+                      capacity == sizeof(error) && !error,
+                  "queued source original owner completion");
+            unsigned char fresh[16] = {'Q', 'S', 'R', 'A', lane, number, 0x5a, 0x72};
+            if (raw)
+                memcpy(fresh, (unsigned char[]){128, 0, 0, 0, 'Q', 'A', lane, number}, 8);
+            for (unsigned at = 8; at < sizeof(fresh); at++)
+                fresh[at] = at * 13 + lane + number;
+            check(sendto(fd, fresh, sizeof(fresh), 0, (struct sockaddr*)&target, sizeof(target)) ==
+                      sizeof(fresh),
+                  "queued source fresh companion output");
+            check(queued_gate(&link, number, 4) == 1, "queued source companion actually observed");
+            printf("IPV6_QUEUED_SOURCE_ROW lane=%u case=%u raw=%u expires=%u reused=%u "
+                   "removed=1 copied=1 delivered=1 fresh=1 error=%d elapsed_ns=%llu\n",
+                   lane, number, raw, expires, reuse, error, (unsigned long long)elapsed);
+            check(!close(fd), "queued source description release");
+        }
+        check(!change(link.index, &permanent, 64, 0, 1, 0, 0, 0, 0, 0),
+              "queued source companion cleanup");
+        check(!close(link.packet), "queued source packet release");
+    }
+    check(!close(links), "queued source interface release");
+    puts("IPV6_QUEUED_SOURCE_DONE adapters=2 cases=16 UDP=8 raw=8 expiry=8 close_reuse=8");
+}
+
 void ipv6_address_lifetimes(void) {
     struct utsname kernel;
     check(!uname(&kernel), "actual kernel");
@@ -393,4 +551,5 @@ void ipv6_address_lifetimes(void) {
     }
     puts("IPV6_LIFETIME_WIRE_DONE observations=18");
     printf("IPV6_LIFETIME_DONE cases=%u samples=6\n", count);
+    queued_sources();
 }

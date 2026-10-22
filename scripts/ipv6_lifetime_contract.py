@@ -10,6 +10,7 @@ import zipfile
 from fetch import ROOT
 from ipv6_extension_execution import verify_execution
 from ipv6_lifetime_capture import records as wire_records
+from ipv6_queued_sources_capture import records as queued_records
 
 SOURCE = 'userspace/tests/net/ipv6_address_lifetimes.c'
 HOST = 'userspace/tests/net/ipv6_host.c'
@@ -150,6 +151,10 @@ def fixture():
             reference['host_source_sha256'] == digest(ROOT / HOST), 'executed complete source-bound Linux7 lifetime reference')
     require(len(saved['observations']['rows']) == 58 and len(saved['observations']['sources']) == 6,
             'complete Linux7 reference inventory')
+    require(reference['queued_source_cases'] == 16 and reference['queued_valid_lifetime_seconds'] == 1 and
+            reference['queued_source_wire_reopened'] and saved['queued_source_observations'] ==
+            [[lane, number, number // 4, number // 2 % 2, number % 2] for lane in range(2) for number in range(8)],
+            'complete executed queued-source reference')
     return saved
 
 
@@ -162,9 +167,11 @@ def verify_log(text):
             saved['wire_observations'], 'wire observations differ from executed complete Linux7 client')
     require({key: actual[key] for key in ('rows', 'sources')} == saved['observations'],
             'lifetime observations differ from executed Linux7')
+    require([list(row[:5]) for row in queued_records(text)] == saved['queued_source_observations'],
+            'queued-source observations differ from complete executed Linux7 client')
     return dict(passed=True, address_cases=58, source_cases=6, actual_timestamps_validated=True,
                 raw_cacheinfo_bytes=16, real_valid_seconds=8, scheduled_samples=actual['samples'],
-                bounded_transitions=actual['transitions'], packet_clock_acceptance=False)
+                bounded_transitions=actual['transitions'], queued_source_cases=16, packet_clock_acceptance=False)
 
 
 def compare(native_directory, guest_directory, output):

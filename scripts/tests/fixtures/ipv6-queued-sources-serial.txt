@@ -1,0 +1,17 @@
+IPV6_QUEUED_SOURCE_ROW lane=0 case=0 raw=0 expires=0 reused=0 removed=1 copied=1 delivered=1 fresh=1 error=0 elapsed_ns=3015760
+IPV6_QUEUED_SOURCE_ROW lane=0 case=1 raw=0 expires=0 reused=1 removed=1 copied=1 delivered=1 fresh=1 error=0 elapsed_ns=1604620
+IPV6_QUEUED_SOURCE_ROW lane=0 case=2 raw=0 expires=1 reused=0 removed=1 copied=1 delivered=1 fresh=1 error=0 elapsed_ns=1100975100
+IPV6_QUEUED_SOURCE_ROW lane=0 case=3 raw=0 expires=1 reused=1 removed=1 copied=1 delivered=1 fresh=1 error=0 elapsed_ns=1100876080
+IPV6_QUEUED_SOURCE_ROW lane=0 case=4 raw=1 expires=0 reused=0 removed=1 copied=1 delivered=1 fresh=1 error=0 elapsed_ns=4964470
+IPV6_QUEUED_SOURCE_ROW lane=0 case=5 raw=1 expires=0 reused=1 removed=1 copied=1 delivered=1 fresh=1 error=0 elapsed_ns=2361090
+IPV6_QUEUED_SOURCE_ROW lane=0 case=6 raw=1 expires=1 reused=0 removed=1 copied=1 delivered=1 fresh=1 error=0 elapsed_ns=1100849530
+IPV6_QUEUED_SOURCE_ROW lane=0 case=7 raw=1 expires=1 reused=1 removed=1 copied=1 delivered=1 fresh=1 error=0 elapsed_ns=1100985370
+IPV6_QUEUED_SOURCE_ROW lane=1 case=0 raw=0 expires=0 reused=0 removed=1 copied=1 delivered=1 fresh=1 error=0 elapsed_ns=2293200
+IPV6_QUEUED_SOURCE_ROW lane=1 case=1 raw=0 expires=0 reused=1 removed=1 copied=1 delivered=1 fresh=1 error=0 elapsed_ns=1567790
+IPV6_QUEUED_SOURCE_ROW lane=1 case=2 raw=0 expires=1 reused=0 removed=1 copied=1 delivered=1 fresh=1 error=0 elapsed_ns=1245562770
+IPV6_QUEUED_SOURCE_ROW lane=1 case=3 raw=0 expires=1 reused=1 removed=1 copied=1 delivered=1 fresh=1 error=0 elapsed_ns=1100828130
+IPV6_QUEUED_SOURCE_ROW lane=1 case=4 raw=1 expires=0 reused=0 removed=1 copied=1 delivered=1 fresh=1 error=0 elapsed_ns=1745690
+IPV6_QUEUED_SOURCE_ROW lane=1 case=5 raw=1 expires=0 reused=1 removed=1 copied=1 delivered=1 fresh=1 error=0 elapsed_ns=1769220
+IPV6_QUEUED_SOURCE_ROW lane=1 case=6 raw=1 expires=1 reused=0 removed=1 copied=1 delivered=1 fresh=1 error=0 elapsed_ns=1100852980
+IPV6_QUEUED_SOURCE_ROW lane=1 case=7 raw=1 expires=1 reused=1 removed=1 copied=1 delivered=1 fresh=1 error=0 elapsed_ns=1100835980
+IPV6_QUEUED_SOURCE_DONE adapters=2 cases=16 UDP=8 raw=8 expiry=8 close_reuse=8

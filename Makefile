@@ -786,10 +786,16 @@ test-ipv6-path-mtu: build/ipv6-path-mtu-host
 .PHONY: test-ipv6-fragment-observation
 test-ipv6-fragment-observation:
 	$(PYTHON) scripts/tests/ipv6_fragment_observation_test.py -v
-.PHONY: test-ipv6-host-maintenance
+.PHONY: test-ipv6-host-maintenance test-ipv6-queued-source-log test-ipv6-queued-source-clock
+test-ipv6-queued-source-clock:
+	$(PYTHON) scripts/tests/ipv6_queued_sources_clock_test.py
+
+test-ipv6-queued-source-log:
+	$(PYTHON) scripts/tests/ipv6_queued_sources_log_test.py
+
 test-ipv6-host-maintenance:
 	$(PYTHON) scripts/tests/ipv6_host_maintenance_test.py -v
-test-ipv6-wire: test-ipv6-copy-model test-ipv6-send-model test-ipv6-fragment-observation test-ipv6-host-maintenance build/ipv6-wire-host build/ipv6-host build/ipv6-reassembly-host build/ipv6-fragmentation-host build/ipv6-path-mtu-host
+test-ipv6-wire: test-ipv6-copy-model test-ipv6-send-model test-ipv6-fragment-observation test-ipv6-host-maintenance test-ipv6-queued-source-log test-ipv6-queued-source-clock build/ipv6-wire-host build/ipv6-host build/ipv6-reassembly-host build/ipv6-fragmentation-host build/ipv6-path-mtu-host
 	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-path-mtu-host
 	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-fragmentation-host
 	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-reassembly-host

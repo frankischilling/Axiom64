@@ -57,6 +57,7 @@ def prepare(linkage, directory, suite='host', image_directory=None):
         'scripts/ipv6_host_peer.py', 'scripts/ipv6_host_test.py',
         'scripts/ipv6_host_capture.py', 'scripts/ipv6_sockets_peer.py', 'scripts/ipv6_sockets_capture.py',
         'userspace/tests/net/ipv6_address_lifetimes.c', 'scripts/ipv6_lifetime_contract.py',
+        'scripts/ipv6_queued_sources_peer.py', 'scripts/ipv6_queued_sources_capture.py',
                      'scripts/ipv6_lifetime_peer.py', 'scripts/ipv6_lifetime_capture.py',
         'scripts/tests/fixtures/ipv6-address-lifetimes-linux7.json',
         'scripts/ipv6_fragments_peer.py', 'scripts/ipv6_fragments_capture.py',
@@ -209,6 +210,8 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
                    'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
                    f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
     missing = [marker for marker in markers if marker not in text]
+    if suite == 'host' and 'IPV6_QUEUED_SOURCE_DONE adapters=2 cases=16 UDP=8 raw=8 expiry=8 close_reuse=8' not in text:
+        missing.append('complete queued-source cohort')
     unchanged = all(digest(ROOT / name) == expected for group in ('products', 'sources')
                     for name, expected in inputs[group].items())
     passed = not error and status == 1 and not missing and unchanged and all(peer.passed for peer in peers)

@@ -11,6 +11,7 @@ import zipfile
 from ipv4_expiry_capture import checksum, encode_capture, read_capture
 from ipv6_lifetime_contract import verify_log
 from ipv6_lifetime_capture import inspect as inspect_lifetimes, verify_capture as verify_lifetimes
+from ipv6_queued_sources_capture import inspect as inspect_queued_sources, verify_capture as verify_queued_sources
 
 
 def require(value, reason):
@@ -21,6 +22,8 @@ def require(value, reason):
 def inspect(rows, lane, log, native=False):
     lifetimes = verify_log(log)
     lifetime_wire, excluded = inspect_lifetimes(rows, lane, log)
+    queued_sources, queued_indices = inspect_queued_sources(rows, lane, log)
+    excluded = set(excluded) | queued_indices
     require(log.count('IPV6_HOST_ROUTES_PASS adapters=2 filtered=1') == 1,
             'actual client completed route control and filtered inventory')
     require(log.count(f'IPV6_HOST_DIRECT_ND_PASS lane={lane} prefix=128') == 1,
@@ -261,6 +264,7 @@ def inspect(rows, lane, log, native=False):
     require(len(incoming) == 15 and used_inputs == {row[0] for row in incoming},
             'every valid and malformed peer input remains independently accounted')
     return dict(passed=True, lane=lane, kernel_packets=11, phases=5, malformed_controls=5, lifetimes=lifetimes,
+                queued_sources=queued_sources,
                 peer_inputs=15, lifetime_wire=lifetime_wire, firmware_frames=len(firmware), firmware_sha256=firmware,
                 actual_DAD_elapsed_ns=int(elapsed[0]), native_MLD_reports=mld_reports,
                 native_maintenance=maintenance), dict(
@@ -278,6 +282,8 @@ def verify_capture(path, lane, log_path, archive, native=False, statistics=None)
                             native=native, statistics=statistics)
     result, proof = inspect(rows, lane, log, native)
     result['lifetime_wire'] = wire
+    result['queued_sources'] = verify_queued_sources(path, lane, log_path,
+        Path(archive).with_suffix('.queued-sources.zip'), native=native, statistics=statistics)
     rejected = []
     with zipfile.ZipFile(archive, 'x', compression=zipfile.ZIP_DEFLATED) as saved:
         cases = ['missing-kernel', 'duplicate-kernel', 'checksum', 'source', 'destination', 'MAC',

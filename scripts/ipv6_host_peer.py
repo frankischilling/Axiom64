@@ -46,6 +46,8 @@ class Peer:
         self.records = []
         from ipv6_lifetime_peer import LifetimePeer
         self.lifetimes = LifetimePeer(self)
+        from ipv6_queued_sources_peer import QueuedSourcesPeer
+        self.queued_sources = QueuedSourcesPeer(self)
 
     def multicast(self, target):
         return b'\xff\x02' + b'\0' * 9 + b'\1\xff' + target[-3:]
@@ -83,6 +85,10 @@ class Peer:
 
     def receive(self, frame):
         require(len(frame) >= 14 and frame[6:12] == self.guest, 'actual guest interface source MAC')
+        if self.queued_sources.receive(frame):
+            require(self.complete == [1, 2, 3, 4, 5] and self.lifetimes.passed and self.wait is None,
+                    'queued-source cohort follows every original host and lifetime phase')
+            return
         if frame[12:14] == b'\x88\xb6':
             require(len(frame) == 60 and frame[:6] == self.control and
                     frame[14:19] == b'IP6H' + bytes([self.lane]) and not any(frame[20:]),
@@ -229,11 +235,12 @@ class Peer:
 
     @property
     def passed(self):
-        return self.ready and self.complete == [1, 2, 3, 4, 5] and self.duplicate_seen and self.lifetimes.passed
+        return (self.ready and self.complete == [1, 2, 3, 4, 5] and self.duplicate_seen and
+                self.lifetimes.passed and self.queued_sources.passed)
 
     def result(self):
         return dict(passed=self.passed, lane=self.lane, phases=self.complete,
                     dad=self.dad, duplicate=self.duplicate_seen, packets=self.records,
                     firmware_frames=len(self.firmware_frames), firmware_sha256=self.firmware_frames,
                     native_MLD_reports=self.mld_reports, native_maintenance_probes=self.maintenance_probes,
-                    lifetimes=self.lifetimes.result())
+                    lifetimes=self.lifetimes.result(), queued_sources=self.queued_sources.result())

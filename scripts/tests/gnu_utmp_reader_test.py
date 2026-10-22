@@ -11,6 +11,7 @@ import struct
 import subprocess
 import sys
 import tarfile
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import build_gnu_utmp_reader as reader
@@ -40,6 +41,15 @@ def execute(command, log, expected):
     log.write_bytes(result.stdout + result.stderr)
     assert result.returncode == expected, (command, result.returncode, log.read_text())
     return dict(command=command, returncode=result.returncode, log=log.name, sha256=reader.digest(log))
+
+
+def cached_sources():
+    """A verified compiled kit must not depend on another source download."""
+    directory, original = reader.ensure()
+    with patch.object(reader, 'source_inputs', side_effect=AssertionError('cached reader fetched source inputs')):
+        reused, saved = reader.ensure()
+    assert reused == directory and saved == original
+    return dict(passed=True, identity=saved['identity'], source_downloads=0)
 
 
 def public_archive(source_archive, out):
@@ -134,6 +144,7 @@ def main():
         assert source == {name: reader.digest(reader.ROOT / name) for name in source}
         return
     binary, inputs = reader.build(out / 'original-kit')
+    cached_source_result = cached_sources()
     valid = out / 'records'
     fixtures(valid)
     rows = [execute([str(binary), str(valid)], out / 'original.log', 0)]
@@ -184,11 +195,12 @@ def main():
     finally:
         reader.PIN = current_pin
     assert source == {name: reader.digest(reader.ROOT / name) for name in source}
-    result = dict(passed=True, controls=6, executions=rows, reader=inputs,
+    result = dict(passed=True, controls=7, executions=rows, reader=inputs,
+                  cached_source_independence=cached_source_result,
                   changed_archive_rejected=rejected_cache, changed_notice_rejected=rejected_notice,
                   relinked_sha256=reader.digest(moved / 'reader-relinked'))
     (out / 'results.json').write_text(json.dumps(result, indent=2) + '\n')
-    print('GNU_UTMP_READER_NATIVE_PASS controls=6 moved_relink=identical', flush=True)
+    print('GNU_UTMP_READER_NATIVE_PASS controls=7 moved_relink=identical cached_sources=independent', flush=True)
 
 
 if __name__ == '__main__':

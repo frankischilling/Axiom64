@@ -76,7 +76,6 @@ def link_arguments(base):
 
 def ensure():
     data = pins()
-    origin, sources = source_inputs()
     compiler = Path(shutil.which('gcc')).resolve()
     version = subprocess.check_output([str(compiler), '-dumpfullversion'], text=True).strip()
     target = subprocess.check_output([str(compiler), '-dumpmachine'], text=True).strip()
@@ -111,6 +110,9 @@ def ensure():
                 if os.readlink(directory / name) != expected:
                     raise RuntimeError('GNU reader cached link differs: ' + name)
             return directory, saved
+        # Corresponding sources are needed for a new build and are checked again
+        # by source publication. A verified restored kit needs no network fetch.
+        origin, _ = source_inputs()
         directory.mkdir(parents=True, exist_ok=True)
         stage = directory / 'sysroot'
         stage.mkdir(exist_ok=True)

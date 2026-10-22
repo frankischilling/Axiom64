@@ -9,7 +9,7 @@ shopt -s nullglob
 
 apt_options=(-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
              -o Acquire::Retries=2 -o DPkg::Lock::Timeout=60
-             -o APT::Update::Error-Mode=any)
+             -o APT::Update::Error-Mode=any -o Acquire::Languages=none)
 
 apt_get() {
   timeout --kill-after=30s 10m sudo -n apt-get "${apt_options[@]}" "$@"

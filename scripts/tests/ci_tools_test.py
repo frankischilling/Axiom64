@@ -64,7 +64,7 @@ class PackageRestore(unittest.TestCase):
         self.assertEqual(len(apt), 2)
         for row in apt:
             for option in ('Acquire::http::Timeout=30', 'Acquire::https::Timeout=30',
-                           'Acquire::Retries=2', 'DPkg::Lock::Timeout=60'):
+                           'Acquire::Retries=2', 'DPkg::Lock::Timeout=60', 'Acquire::Languages=none'):
                 self.assertIn(option, row)
             self.assertNotIn('--allow-unauthenticated', row)
         limits = [row for row in calls if row[0] == 'timeout']
@@ -131,6 +131,7 @@ class PackageRestore(unittest.TestCase):
         source = cache / 'ubuntu.sources'
         self.assertTrue(all('Dir::Etc::sourcelist=' + str(source) in row for row in apt))
         self.assertTrue(all('Dir::Etc::sourceparts=-' in row for row in apt))
+        self.assertTrue(all('Acquire::Languages=none' in row for row in apt))
         self.assertIn('URIs: https://archive.ubuntu.com/ubuntu', source.read_text())
         self.assertIn('Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg', source.read_text())
         self.assertIn('qemu-system-x86', apt[1])

@@ -63,6 +63,22 @@ size_t inet6_receive_control(Task& task, Inet6Socket* socket, const Inet6Frame& 
                              uint64_t address, uint64_t capacity, uint32_t& flags) {
     Inet6ControlWriter output(task, address, capacity, flags);
     output.metadata(socket, frame.destination, frame.index, frame.hops, frame.traffic_class);
+    const auto* bytes = inet6_bytes(&frame) + frame.length;
+    uint8_t protocol = frame.extension_protocol;
+    for (size_t at = 0; at < frame.extension_length;) {
+        if (frame.extension_length - at < 8 ||
+            (protocol != 0 && protocol != 43 && protocol != 44 && protocol != 60))
+            break;
+        size_t length = protocol == 44 ? 8 : (size_t(bytes[at + 1]) + 1) * 8;
+        if (length > frame.extension_length - at)
+            break;
+        if (protocol == 0 && socket->receive_hop_options)
+            output.append(54, bytes + at, length);
+        else if (protocol == 60 && socket->receive_destination_options)
+            output.append(59, bytes + at, length);
+        protocol = bytes[at];
+        at += length;
+    }
     return output.used;
 }
 } // namespace ax

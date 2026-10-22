@@ -13,6 +13,7 @@
 #include "net/inet6.hpp"
 #include "net/netlink.hpp"
 #include "net/tcp/socket.hpp"
+#include "security/credentials.hpp"
 
 namespace ax {
 using Iovec = IoVector;
@@ -288,12 +289,14 @@ static int prepare_packet(Task& task, IoRequest& request) {
             return -22;
     }
     if (request.handle->inet6) {
-        int error = inet6_parse_send_control(request.handle->inet6, request.inet6_destination,
-                                             request.inet6_control_data, control_length,
-                                             request.inet6_output);
-        release(request.inet6_control_data);
-        request.inet6_control_data = nullptr;
+        int error = inet6_parse_send_control(
+            request.handle->inet6, request.inet6_destination, request.inet6_control_data,
+            control_length, request.inet6_output, capable(task.credentials, Capability::net_raw));
         if (error)
+            return error;
+        // Sticky views can change through another alias while output waits.
+        // Keep only immutable selected bytes through request teardown.
+        if (int error = inet6_own_send_extensions(request.inet6_output, request.inet6_control_data))
             return error;
     }
     size_t prefix = request.handle->inet6 ? inet6_send_prefix(request.handle->inet6) : 0;

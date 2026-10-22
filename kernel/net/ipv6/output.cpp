@@ -46,8 +46,15 @@ void clear(Output& item, int error = 0) {
 int queue(const ip6::Address& source, const ip6::Address& destination, unsigned index,
           uint8_t protocol, uint8_t hop_limit, const void* data, size_t length, bool direct = false,
           Inet6Socket* owner = nullptr, bool fragmentable = true, uint32_t socket_mtu = 0,
-          bool interface_mtu = false, uint8_t traffic_class = 0) {
-    if (length > 65535)
+          bool interface_mtu = false, uint8_t traffic_class = 0,
+          const ip6::OutputExtensions* extensions = nullptr,
+          const ip6::Address* final_destination = nullptr) {
+    const ip6::OutputExtensions empty;
+    const auto& options = extensions ? *extensions : empty;
+    int extra = ip6::output_extension_size(options);
+    if (extra < 0)
+        return extra;
+    if (length > 65535 - size_t(extra))
         return -90;
     Output* selected = nullptr;
     for (auto& entry : outputs)
@@ -55,7 +62,7 @@ int queue(const ip6::Address& source, const ip6::Address& destination, unsigned 
             selected = &entry;
             break;
         }
-    size_t needed = ethernet_header + ip6::header_size + length;
+    size_t needed = ethernet_header + ip6::header_size + extra + length;
     if (!selected || needed > 262144 - queued_bytes)
         return -11;
     auto bytes = static_cast<uint8_t*>(alloc(needed));
@@ -64,11 +71,17 @@ int queue(const ip6::Address& source, const ip6::Address& destination, unsigned 
     memset(bytes, 0, ethernet_header);
     bytes[12] = 0x86;
     bytes[13] = 0xdd;
-    ip6::Header header{source,        destination, 0,        uint16_t(length),
-                       traffic_class, protocol,    hop_limit};
+    uint8_t next = ip6::output_next_header(protocol, options);
+    ip6::Header header{source,        destination, 0,        uint16_t(extra + length),
+                       traffic_class, next,        hop_limit};
     ip6::encode(bytes + ethernet_header, ip6::header_size, header);
+    if (!ip6::encode_output_extensions(bytes + ethernet_header + ip6::header_size, extra, protocol,
+                                       options, final_destination)) {
+        release(bytes);
+        return -22;
+    }
     if (length)
-        memcpy(bytes + ethernet_header + ip6::header_size, data, length);
+        memcpy(bytes + ethernet_header + ip6::header_size + extra, data, length);
     *selected = {source, destination, bytes, needed, index, {}, ticks + 400, direct, owner};
     selected->fragmentable = fragmentable;
     selected->socket_mtu = socket_mtu;
@@ -146,10 +159,10 @@ ip6::FragmentPiece submit(Output& item, const Ipv6Path& path) {
             item.fragment_capacity = needed;
             queued_bytes += needed;
         }
-        part = ip6::fragment_packet(item.bytes + ethernet_header, item.length - ethernet_header,
-                                    fragment_mtu, item.fragment_offset, item.identification,
-                                    item.fragment_bytes + ethernet_header,
-                                    item.fragment_capacity - ethernet_header);
+        part = ip6::fragment_packet(
+            item.bytes + ethernet_header, item.length - ethernet_header, fragment_mtu,
+            item.fragment_offset, item.identification, item.fragment_bytes + ethernet_header,
+            item.fragment_capacity - ethernet_header, ip6::FragmentLayout::linux_socket);
         if (part.error)
             return part;
         memcpy(item.fragment_bytes, item.bytes, ethernet_header);
@@ -174,17 +187,24 @@ ip6::FragmentPiece submit(Output& item, const Ipv6Path& path) {
 int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsigned bound,
               uint8_t protocol, uint8_t hop_limit, const void* data, size_t length,
               Inet6Socket* owner, bool fragmentable, uint32_t socket_mtu, bool interface_mtu,
-              uint8_t traffic_class) {
+              uint8_t traffic_class, const ip6::OutputExtensions* extensions) {
+    const ip6::OutputExtensions empty;
+    const auto& options = extensions ? *extensions : empty;
+    int extra = ip6::output_extension_size(options);
+    ip6::Address first;
+    if (extra < 0 || !ip6::output_extension_destination(options, destination, first))
+        return -22;
     Ipv6Path path;
-    int error = ipv6_path(source, destination, bound, path, interface_mtu);
+    int error = ipv6_path(source, first, bound, path, interface_mtu);
     if (error)
         return error;
     if (socket_mtu && !fragmentable)
         path.mtu = min(path.mtu, socket_mtu);
-    if (length > 65535 || (!fragmentable && length + ip6::header_size > path.mtu))
+    if (length > 65535 - size_t(extra) ||
+        (!fragmentable && length + extra + ip6::header_size > path.mtu))
         return -90;
-    return queue(path.source, destination, bound, protocol, hop_limit, data, length, false, owner,
-                 fragmentable, socket_mtu, interface_mtu, traffic_class);
+    return queue(path.source, first, bound, protocol, hop_limit, data, length, false, owner,
+                 fragmentable, socket_mtu, interface_mtu, traffic_class, extensions, &destination);
 }
 
 bool ipv6_output_ready() {

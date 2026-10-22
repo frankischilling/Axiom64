@@ -21,13 +21,20 @@ struct Inet6SendControl {
     unsigned index = 0;
     uint8_t hops = 64, traffic_class = 0;
     bool dont_fragment = false, present = false;
+    ip6::OutputExtensions extensions;
 };
 
 // Captured control bytes belong to the caller until parsing or request teardown.
 int inet6_capture_control(Task&, uint64_t pointer, uint64_t length, uint8_t*&);
 int inet6_parse_send_control(const Inet6Socket*, const Inet6Address&, const uint8_t*, size_t,
-                             Inet6SendControl&);
+                             Inet6SendControl&, bool raw_capable);
 Inet6SendControl inet6_send_defaults(const Inet6Socket*, const Inet6Address&);
+// Replace one owned sticky header transactionally; failure preserves every option.
+int inet6_extension_set(Inet6Socket*, unsigned option, const uint8_t*, size_t);
+const uint8_t* inet6_extension_get(const Inet6Socket*, unsigned option, size_t&);
+void inet6_extensions_clear(Inet6Socket*);
+// Snapshot all selected views and retire the old request control allocation.
+int inet6_own_send_extensions(Inet6SendControl&, uint8_t*& request_bytes);
 
 struct Inet6Frame {
     Inet6Address source;
@@ -35,6 +42,8 @@ struct Inet6Frame {
     ip6::Address destination;
     unsigned index = 0;
     uint8_t hops = 0, traffic_class = 0;
+    size_t extension_length = 0;
+    uint8_t extension_protocol = 59;
 };
 
 inline const uint8_t* inet6_bytes(const Inet6Frame* frame) {

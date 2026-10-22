@@ -26,6 +26,37 @@ struct Address {
     bool matches(const Address& prefix, unsigned bits) const;
 };
 
+// Views borrow captured message bytes until the owned output packet is copied.
+struct OutputExtensions {
+    const uint8_t* hop = nullptr;
+    size_t hop_length = 0;
+    const uint8_t* destination = nullptr;
+    size_t destination_length = 0;
+    const uint8_t* before_routing = nullptr;
+    size_t before_routing_length = 0;
+    const uint8_t* routing = nullptr;
+    size_t routing_length = 0;
+};
+
+// Validate a complete segment list and TLVs; received quotes may use reduced SRHs.
+bool valid_segment_routing(const uint8_t*, size_t, bool reduced);
+
+// Validate a complete type-2 or unreduced type-4 output Routing header.
+bool valid_output_routing(const uint8_t*, size_t);
+
+// Validate complete bounded headers and return their combined wire length.
+int output_extension_size(const OutputExtensions&);
+
+// Select the first hop from a validated Routing header; preserve the final address.
+bool output_extension_destination(const OutputExtensions&, const Address& final, Address& first);
+
+uint8_t output_next_header(uint8_t protocol, const OutputExtensions&);
+
+// Rewrite copied Next Header bytes and replace the first routing address with the
+// final destination. A routing header requires final; errors leave output unchanged.
+bool encode_output_extensions(uint8_t*, size_t capacity, uint8_t protocol, const OutputExtensions&,
+                              const Address* final = nullptr);
+
 struct Header {
     Address source, destination;
     uint32_t flow_label = 0;
@@ -52,7 +83,14 @@ struct Packet {
     uint32_t size = 0, error_pointer = 0, next_header_offset = 6;
     uint8_t protocol = 59, error_code = 0;
     bool fragmented = false;
+    const uint8_t* extensions = nullptr;
+    size_t extension_length = 0;
 };
+
+// Apply the receiver's bounded option-count and cumulative-padding policy
+// separately from structural decoding. The default matches Linux's eight
+// non-padding options per header and seven consecutive padding bytes.
+bool receive_extension_options(const Packet&, unsigned maximum_options = 8);
 
 // No reassembly, authentication or ICMP emission occurs while decoding. The
 // receiver still owns destination checks and RFC 4443 error suppression.

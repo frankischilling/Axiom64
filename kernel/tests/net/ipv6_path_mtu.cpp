@@ -212,6 +212,36 @@ static void quotes() {
     bytes[13] = 7;
     bytes[12] = 0;
     assert(!error_quote(bytes.data(), bytes.size(), value));
+    for (unsigned protocol : {17, 58}) {
+        bytes = quote(protocol, 40);
+        bytes[14] = 43;
+        bytes[50] = 4;
+        bytes[51] = 1;
+        bytes[52] = 1;
+        memcpy(bytes.data() + 56, address(71).bytes, 16);
+        assert(error_quote(bytes.data(), bytes.size(), value));
+        assert(value.destination == address(1) &&
+               value.transport_destination == address(protocol == 17 ? 71 : 1));
+        bytes[52] = 3;
+        assert(error_quote(bytes.data(), bytes.size(), value));
+        assert(value.transport_destination == address(1));
+        bytes[52] = 0;
+        // Reduced SRH: one on-wire segment remains outside the stored list.
+        bytes[49] = 2;
+        bytes.erase(bytes.begin() + 72, bytes.begin() + 88);
+        assert(error_quote(bytes.data(), bytes.size(), value));
+        assert(value.transport_destination == address(protocol == 17 ? 71 : 1));
+        auto tail = bytes;
+        bytes = quote(protocol, 48);
+        bytes[14] = 43;
+        bytes[48] = 43;
+        bytes[49] = 2;
+        bytes[50] = 2;
+        bytes[51] = 1;
+        memcpy(bytes.data() + 72, tail.data() + 48, 24);
+        assert(error_quote(bytes.data(), bytes.size(), value));
+        assert(value.transport_destination == address(1));
+    }
     uint32_t random = 0x638a21f5;
     for (unsigned n = 0; n < 20000; n++) {
         std::vector<uint8_t> damaged(n % 512);

@@ -1042,6 +1042,8 @@ jobs:
             build/ipv6-controls-contract
             build/ipv6-errors-contract
             build/ipv6-output-contract
+            build/ipv6-extension-contract
+            build/ipv6-sticky-contract
             build/ipv6-controls-native
             build/ipv6-controls-static
             build/ipv6-controls-dynamic

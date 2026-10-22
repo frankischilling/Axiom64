@@ -4,7 +4,9 @@
 
 namespace ax::ip6 {
 struct ErrorQuote {
-    Address source, destination;
+    // The quoted wire destination keys routes and error-queue addresses.
+    // UDP matching may instead use a validated SRH final destination.
+    Address source, destination, transport_destination;
     const uint8_t* transport = nullptr;
     size_t length = 0;
     uint32_t information = 0;

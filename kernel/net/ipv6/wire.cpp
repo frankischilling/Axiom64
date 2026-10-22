@@ -155,6 +155,8 @@ Packet decode(const uint8_t* bytes, size_t length) {
                 packet.next_header_offset = at;
                 packet.payload = bytes + at + 8;
                 packet.length = fragment_length;
+                packet.extensions = bytes + header_size;
+                packet.extension_length = at - header_size;
                 return packet;
             }
         }
@@ -168,6 +170,8 @@ Packet decode(const uint8_t* bytes, size_t length) {
         return packet;
     }
     packet.input = Input::payload;
+    packet.extensions = bytes + header_size;
+    packet.extension_length = at - header_size;
     packet.payload = bytes + at;
     packet.length = packet.size - at;
     return packet;

@@ -44,7 +44,7 @@ void inet6_icmp_error(unsigned index, const ip6::Header& header, const uint8_t* 
         if (!socket.used || socket.protocol != quote.protocol ||
             (socket.index && socket.index != index && index != ipv6_loopback) ||
             (!socket.local.unspecified() && !(socket.local == quote.source)) ||
-            (socket.connected && !(socket.peer == quote.destination)))
+            (socket.connected && !(socket.peer == quote.transport_destination)))
             continue;
         if (socket.type == 2) {
             if (!socket.local_port ||

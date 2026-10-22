@@ -4,6 +4,9 @@ import struct
 import time
 from ipv6_host_peer import Peer as HostPeer, checksum, require
 from ipv6_send_controls_peer import Peer as SendPeer
+from ipv6_extension_peer import Peer as ExtensionPeer
+from ipv6_routing_peer import Peer as RoutingPeer
+from ipv6_sticky_peer import Peer as StickyPeer
 
 
 def plan(sequence):
@@ -32,6 +35,12 @@ class Peer(HostPeer):
         self.remote_link = bytes.fromhex('fe800000000000000000000000000001')
         self.send_controls = SendPeer(lane, native)
         self.send_controls.outgoing = self.outgoing
+        self.extensions = ExtensionPeer(lane, native)
+        self.extensions.outgoing = self.outgoing
+        self.routing = RoutingPeer(lane, native)
+        self.routing.outgoing = self.outgoing
+        self.sticky = StickyPeer(lane, native)
+        self.sticky.outgoing = self.outgoing
 
     def set_send_model(self, model):
         self.send_controls.set_send_model(model)
@@ -59,8 +68,21 @@ class Peer(HostPeer):
     def tick(self):
         self.finish()
         self.send_controls.tick()
+        self.extensions.tick()
+        self.routing.tick()
+        self.sticky.tick()
 
     def receive(self, frame):
+        if frame[12:14] == b'\x88\xc3' or self.sticky.ready:
+            require(self.routing.passed, 'sticky output follows every original Routing case')
+            self.sticky.receive(frame)
+            return
+        if frame[12:14] == b'\x88\xc2' or self.routing.ready:
+            self.routing.receive(frame)
+            return
+        if frame[12:14] == b'\x88\xc1' or self.extensions.ready:
+            self.extensions.receive(frame)
+            return
         if frame[12:14] == b'\x88\xc0' or self.send_controls.ready:
             self.send_controls.receive(frame)
             return
@@ -169,10 +191,10 @@ class Peer(HostPeer):
 
     @property
     def passed(self):
-        return self.ready and self.completed == 216 and self.pending is None and self.send_controls.passed
+        return self.ready and self.completed == 216 and self.pending is None and self.send_controls.passed and self.extensions.passed and self.routing.passed and self.sticky.passed
 
     def result(self):
         return dict(passed=self.passed, lane=self.lane, cases=self.completed,
                     fragment_frames=self.fragment_frames, quiet_intervals=self.quiet,
                     firmware_frames=len(self.firmware_frames), firmware_sha256=self.firmware_frames,
-                    native_MLD_reports=self.mld_reports, send_controls=self.send_controls.result())
+                    native_MLD_reports=self.mld_reports, send_controls=self.send_controls.result(), extensions=self.extensions.result(), routing=self.routing.result(), sticky=self.sticky.result())

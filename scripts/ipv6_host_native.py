@@ -60,6 +60,15 @@ def child(profile, directory, suite='host'):
         for name in ('Makefile', 'userspace/tests/net/ipv6_send_controls.c',
                      'userspace/tests/net/ipv6_send_controls_wire.c', 'scripts/ipv6_send_controls_peer.py',
                      'scripts/ipv6_send_controls_capture.py',
+                 'scripts/ipv6_extension_peer.py', 'scripts/ipv6_extension_capture.py',
+                 'userspace/tests/net/ipv6_extension_wire.c',
+                 'scripts/ipv6_routing_peer.py', 'scripts/ipv6_routing_capture.py',
+                 'userspace/tests/net/ipv6_routing_wire.c', 'userspace/tests/net/ipv6_extension_controls.c',
+                 'scripts/ipv6_extension_contract.py', 'scripts/ipv6_extension_execution.py',
+                 'scripts/tests/fixtures/ipv6-extension-controls-linux7.json',
+                 'scripts/ipv6_sticky_peer.py', 'scripts/ipv6_sticky_capture.py',
+                 'userspace/tests/net/ipv6_sticky_wire.c', 'userspace/tests/net/ipv6_sticky_controls.c',
+                 'scripts/ipv6_sticky_contract.py', 'scripts/tests/fixtures/ipv6-sticky-controls-linux7.json',
                      'scripts/ipv6_send_controls_contract.py', 'scripts/ipv6_send_controls_test.py'):
             sources[name] = digest(ROOT / name)
     if suite == 'errors':

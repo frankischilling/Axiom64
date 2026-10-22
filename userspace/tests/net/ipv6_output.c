@@ -199,14 +199,34 @@ int ipv6_send_controls_local(void);
 int ipv6_send_controls_wire(const unsigned* input_indices, const unsigned char* input_macs,
                             const int* input_packets);
 
+int ipv6_extension_wire(const unsigned* input_indices, const unsigned char* input_macs,
+                        const int* input_packets);
+
+int ipv6_routing_wire(const unsigned* input_indices, const unsigned char* input_macs,
+                      const int* input_packets);
+
+int ipv6_extension_controls_local(void);
+int ipv6_sticky_controls_local(void);
+int ipv6_sticky_wire(const unsigned* input_indices, const unsigned char* input_macs,
+                    const int* input_packets);
+
 int main(void) {
     check(!ipv6_send_controls_local(), "complete per-message send controls");
+    check(!ipv6_extension_controls_local(),
+          "complete local extension admission and receive controls");
+    check(!ipv6_sticky_controls_local(), "complete sticky extension observations");
     option_contract();
     int control = fixture_interfaces();
     for (unsigned lane = 0; lane < 2; lane++)
         output(lane);
     check(!ipv6_send_controls_wire(indices, &macs[0][0], packets),
           "complete Ethernet send controls");
+    check(!ipv6_extension_wire(indices, &macs[0][0], packets),
+          "complete Ethernet extension controls");
+    check(!ipv6_routing_wire(indices, &macs[0][0], packets),
+          "complete type-2 routing Ethernet controls");
+    check(!ipv6_sticky_wire(indices, &macs[0][0], packets),
+          "complete sticky extension Ethernet controls");
     close(control);
     for (unsigned lane = 0; lane < 2; lane++)
         close(packets[lane]);

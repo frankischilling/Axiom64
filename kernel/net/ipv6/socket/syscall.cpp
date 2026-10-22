@@ -34,6 +34,18 @@ int output_bytes(Task& task, const void* bytes, uint32_t actual, uint64_t pointe
     return 0;
 }
 
+size_t option_copy_out(Task& task, uint64_t destination, const void* data, size_t length) {
+    size_t copied = 0;
+    while (copied < length) {
+        size_t size = min(length - copied, size_t(page_size - (destination + copied) % page_size));
+        if (!task.memory->space.copy_out(destination + copied,
+                                         static_cast<const uint8_t*>(data) + copied, size))
+            break;
+        copied += size;
+    }
+    return copied;
+}
+
 int output(Task& task, const void* bytes, uint32_t actual, uint64_t pointer,
            uint64_t length_pointer, bool clamp = false) {
     uint32_t length;
@@ -134,8 +146,10 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             if (address.address.unspecified())
                 address.address.bytes[15] = 1;
             Ipv6Path path;
-            error = ipv6_path(socket->bound ? socket->local : ip6::Address{}, address.address,
-                              index, path);
+            ip6::Address first;
+            if (!ip6::output_extension_destination(socket->extensions, address.address, first))
+                return -22;
+            error = ipv6_path(socket->bound ? socket->local : ip6::Address{}, first, index, path);
             if (error)
                 return error;
             if (socket->type == 2 && !socket->local_port) {
@@ -148,7 +162,7 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             socket->peer_port = address.port;
             socket->index = index;
             socket->connected = true;
-            inet6_destination_store(socket, path, address.address);
+            inet6_destination_store(socket, path, first);
         }
         return 0;
     }
@@ -172,6 +186,26 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
         uint32_t length = frame.r8;
         if (int32_t(length) < 0)
             return -22;
+        if (b == 41 && (c == 54 || c == 55 || c == 57 || c == 59)) {
+            uint32_t first;
+            // Linux imports the initial scalar before privileged option lookup.
+            if (d && length >= 4 && !task.memory->space.copy_in(&first, d, 4))
+                return -14;
+            if (c != 57 && !capable(task.credentials, Capability::net_raw))
+                return -1;
+            if (!length)
+                return inet6_extension_set(socket, unsigned(c), nullptr, 0);
+            if (!d || length < 2 || length % 8 || length > 2040)
+                return -22;
+            auto bytes = static_cast<uint8_t*>(alloc(length));
+            if (!bytes)
+                return -12;
+            int error = task.memory->space.copy_in(bytes, d, length)
+                            ? inet6_extension_set(socket, unsigned(c), bytes, length)
+                            : -14;
+            release(bytes);
+            return error;
+        }
         if (b == 1 && c == 25) {
             if (length > 16)
                 return -22;
@@ -248,6 +282,9 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             (c == 49   ? socket->receive_packet_info
              : c == 51 ? socket->receive_hops
                        : socket->receive_traffic_class) = value != 0;
+        } else if (b == 41 && (c == 53 || c == 58)) {
+            (c == 53 ? socket->receive_hop_options : socket->receive_destination_options) =
+                value != 0;
         } else if (b == 41 && (c == 16 || c == 67)) {
             if (value < -1 || value > 255)
                 return -22;
@@ -269,6 +306,16 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
         uint32_t ipv6_length = 0;
         if (b == 41 && !task.memory->space.copy_in(&ipv6_length, frame.r8, 4))
             return -14;
+        if (b == 41 && (c == 54 || c == 55 || c == 57 || c == 59)) {
+            size_t size;
+            auto bytes = inet6_extension_get(socket, unsigned(c), size);
+            uint32_t length = min(ipv6_length, uint32_t(size));
+            if (option_copy_out(task, d, bytes, length) != length)
+                return -14;
+            // This IPv6 getter returns the uncopied result-length byte count,
+            // including its positive partial-fault result on native Linux.
+            return 4 - option_copy_out(task, frame.r8, &length, 4);
+        }
         if (b == 1 && c == 4) {
             uint32_t length;
             int error = output_length(task, frame.r8, length);
@@ -311,6 +358,8 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             value = c == 49   ? socket->receive_packet_info
                     : c == 51 ? socket->receive_hops
                               : socket->receive_traffic_class;
+        else if (b == 41 && (c == 53 || c == 58))
+            value = c == 53 ? socket->receive_hop_options : socket->receive_destination_options;
         else if (b == 41 && c == 23)
             value = socket->pmtu_mode;
         else if (b == 41 && c == 25)

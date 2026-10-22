@@ -9,6 +9,8 @@ bool error_quote(const uint8_t* bytes, size_t length, ErrorQuote& result) {
     const auto quote = bytes + 8;
     size_t quoted = length - 8, declared = header_size + (size_t(quote[4]) << 8 | quote[5]);
     quoted = min(quoted, declared);
+    const uint8_t* final = quote + 24;
+    bool routing_seen = false;
     uint8_t protocol = quote[6];
     size_t at = header_size;
     for (unsigned depth = 0;
@@ -21,6 +23,11 @@ bool error_quote(const uint8_t* bytes, size_t length, ErrorQuote& result) {
                                        : (size_t(quote[at + 1]) + 1) * 8;
         if (size > quoted - at || (protocol == 44 && (quote[at + 2] || (quote[at + 3] & 0xf8))))
             return false;
+        if (protocol == 43) {
+            if (!routing_seen && valid_segment_routing(quote + at, size, true))
+                final = quote + at + 8;
+            routing_seen = true;
+        }
         protocol = quote[at];
         at += size;
     }
@@ -29,9 +36,11 @@ bool error_quote(const uint8_t* bytes, size_t length, ErrorQuote& result) {
     ErrorQuote value;
     memcpy(value.source.bytes, quote + 8, 16);
     memcpy(value.destination.bytes, quote + 24, 16);
+    memcpy(value.transport_destination.bytes, protocol == 17 ? final : quote + 24, 16);
     if (value.source.unspecified() || value.source.multicast() || value.source.mapped() ||
         value.destination.unspecified() || value.destination.multicast() ||
-        value.destination.mapped())
+        value.destination.mapped() || value.transport_destination.unspecified() ||
+        value.transport_destination.multicast() || value.transport_destination.mapped())
         return false;
     value.transport = quote + at;
     value.length = quoted - at;

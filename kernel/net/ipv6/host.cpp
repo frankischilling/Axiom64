@@ -205,6 +205,8 @@ void ipv6_receive(const NetInfo& info, const void* frame, size_t length) {
     } else if (memcmp(info.mac, bytes, 6) ||
                !ipv6_owned(destination.link_local() ? info.index : 0, destination))
         return;
+    if (!ip6::receive_extension_options(packet))
+        return;
     ReassembledInput owned;
     if (packet.input != ip6::Input::payload) {
         if (source.unspecified())
@@ -225,6 +227,8 @@ void ipv6_receive(const NetInfo& info, const void* frame, size_t length) {
         if (packet.input != ip6::Input::payload || packet.fragmented)
             return;
         packet.fragmented = true;
+        if (!ip6::receive_extension_options(packet))
+            return;
     }
     if (packet.length < 4)
         return;

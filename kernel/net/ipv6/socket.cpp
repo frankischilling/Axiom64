@@ -27,7 +27,7 @@ void inet6_consume(Inet6Socket* socket) {
     if (!socket->count)
         return;
     auto& frame = socket->queue[socket->head];
-    socket->bytes -= frame->length;
+    socket->bytes -= frame->length + frame->extension_length;
     release(frame);
     frame = nullptr;
     socket->head = (socket->head + 1) % inet6_queue_count;
@@ -40,6 +40,7 @@ void inet6_close(Inet6Socket* socket) {
     inet6_purge_errors(socket);
     while (socket->count)
         inet6_consume(socket);
+    inet6_extensions_clear(socket);
     socket->used = false;
 }
 
@@ -142,12 +143,17 @@ int inet6_bind_port(Inet6Socket* socket, const ip6::Address& local, uint16_t por
 }
 
 static void enqueue(Inet6Socket& socket, unsigned index, const ip6::Address& source, uint16_t port,
-                    const void* data, size_t length, const ip6::Header& header) {
-    if (socket.count == inet6_queue_count ||
-        length > socket.receive_limit -
-                     min(socket.bytes + socket.error_bytes, size_t(socket.receive_limit)))
+                    const void* data, size_t length, const ip6::Packet& packet) {
+    const auto& header = packet.header;
+    size_t metadata = packet.extension_length;
+    if (length > 65535 || metadata > 65535 - length || (metadata && !packet.extensions))
         return;
-    auto frame = static_cast<Inet6Frame*>(alloc(sizeof(Inet6Frame) + length));
+    size_t cost = length + metadata;
+    if (socket.count == inet6_queue_count ||
+        cost > socket.receive_limit -
+                   min(socket.bytes + socket.error_bytes, size_t(socket.receive_limit)))
+        return;
+    auto frame = static_cast<Inet6Frame*>(alloc(sizeof(Inet6Frame) + cost));
     if (!frame)
         return;
     *frame = {{10, __builtin_bswap16(port), 0, source, source.link_local() ? index : 0},
@@ -155,11 +161,15 @@ static void enqueue(Inet6Socket& socket, unsigned index, const ip6::Address& sou
               header.destination,
               index,
               header.hop_limit,
-              header.traffic_class};
+              header.traffic_class,
+              metadata,
+              header.next_header};
     memcpy(frame + 1, data, length);
+    if (metadata)
+        memcpy(reinterpret_cast<uint8_t*>(frame + 1) + length, packet.extensions, metadata);
     socket.queue[(socket.head + socket.count) % inet6_queue_count] = frame;
     socket.count++;
-    socket.bytes += length;
+    socket.bytes += cost;
 }
 
 bool inet6_deliver(unsigned index, const ip6::Packet& packet) {
@@ -199,7 +209,7 @@ bool inet6_deliver(unsigned index, const ip6::Packet& packet) {
             continue;
         matched = true;
         if (!datagram || packet.header.destination.multicast()) {
-            enqueue(socket, index, packet.header.source, source_port, data, length, packet.header);
+            enqueue(socket, index, packet.header.source, source_port, data, length, packet);
             continue;
         }
         unsigned score = (!socket.local.unspecified() ? 4 : 0) + (socket.connected ? 8 : 0) +
@@ -210,7 +220,7 @@ bool inet6_deliver(unsigned index, const ip6::Packet& packet) {
         }
     }
     if (best)
-        enqueue(*best, index, packet.header.source, source_port, data, length, packet.header);
+        enqueue(*best, index, packet.header.source, source_port, data, length, packet);
     return matched;
 }
 
@@ -224,7 +234,8 @@ Inet6SendControl inet6_send_defaults(const Inet6Socket* socket, const Inet6Addre
             socket->hops,
             socket->traffic_class,
             socket->dont_fragment,
-            false};
+            false,
+            socket->extensions};
 }
 
 int inet6_send_admit(Inet6Socket* socket, const Inet6Address& address, size_t length,
@@ -232,12 +243,18 @@ int inet6_send_admit(Inet6Socket* socket, const Inet6Address& address, size_t le
     auto options = control ? *control : inet6_send_defaults(socket, address);
     unsigned index = options.index;
     Ipv6Path path;
-    int error = ipv6_path(options.source, address.address, index, path, socket->pmtu_mode >= 3);
+    ip6::Address first;
+    if (!ip6::output_extension_destination(options.extensions, address.address, first))
+        return -22;
+    int error = ipv6_path(options.source, first, index, path, socket->pmtu_mode >= 3);
     if (error)
         return error;
     if (socket->type == 2 && socket->connected && !named && !options.present)
-        inet6_destination_store(socket, path, address.address);
-    size_t overhead = ip6::header_size + (socket->type == 2 ? 8 : 0);
+        inet6_destination_store(socket, path, first);
+    int extra = ip6::output_extension_size(options.extensions);
+    if (extra < 0)
+        return extra;
+    size_t overhead = ip6::header_size + extra + (socket->type == 2 ? 8 : 0);
     uint32_t mtu = socket->socket_mtu ? min(path.mtu, socket->socket_mtu) : path.mtu;
     bool fragmentable = !options.dont_fragment && (socket->pmtu_mode < 2 || socket->pmtu_mode == 5);
     if (length > 65535 - (overhead - ip6::header_size) ||
@@ -261,16 +278,22 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
     if (int error = inet6_send_admit(socket, address, length, static_cast<const uint8_t*>(data),
                                      named, control))
         return error;
-    size_t overhead = ip6::header_size + (socket->type == 2 ? 8 : 0);
+    auto options = control ? *control : inet6_send_defaults(socket, address);
+    int extra = ip6::output_extension_size(options.extensions);
+    if (extra < 0)
+        return extra;
+    size_t overhead = ip6::header_size + extra + (socket->type == 2 ? 8 : 0);
     if (length > 65535 - (overhead - ip6::header_size) || length + overhead > socket->send_limit)
         return -90;
     if (length + overhead >
         socket->send_limit - min(socket->transmitted, size_t(socket->send_limit)))
         return -11;
-    auto options = control ? *control : inet6_send_defaults(socket, address);
     unsigned index = options.index;
     Ipv6Path path;
-    int error = ipv6_path(options.source, address.address, index, path, socket->pmtu_mode >= 3);
+    ip6::Address first;
+    if (!ip6::output_extension_destination(options.extensions, address.address, first))
+        return -22;
+    int error = ipv6_path(options.source, first, index, path, socket->pmtu_mode >= 3);
     if (error)
         return error;
     bool fragmentable = !options.dont_fragment && (socket->pmtu_mode < 2 || socket->pmtu_mode == 5);
@@ -278,7 +301,7 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
         path.mtu = min(path.mtu, socket->socket_mtu);
     if (!fragmentable && length + overhead > path.mtu)
         return -90;
-    size_t size = length + overhead - ip6::header_size;
+    size_t size = length + (socket->type == 2 ? 8 : 0);
     if (socket->type == 3 && size < 4)
         return -22;
     auto bytes = static_cast<uint8_t*>(alloc(size));
@@ -310,7 +333,7 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
     bytes[check_at + 1] = checksum;
     error = ipv6_send(path.source, address.address, index, socket->protocol, options.hops, bytes,
                       size, socket, fragmentable, socket->socket_mtu, socket->pmtu_mode >= 3,
-                      options.traffic_class);
+                      options.traffic_class, &options.extensions);
     release(bytes);
     if (!error)
         socket->transmitted += length + overhead;

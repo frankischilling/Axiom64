@@ -143,6 +143,8 @@ def inspect(rows, lane, log, native=False, interface_index=None, native_send_cla
         require(interface_index is not None and native_send_class in (18, 255), 'independent native interface and send model')
     else:
         interface_index, native_send_class = lane + 1, 255
+    from ipv6_extension_capture import boundary as extension_boundary
+    rows = rows[:extension_boundary(rows, lane)]
     application(log, lane, interface_index, native_send_class)
     start = boundary(rows, lane)
     guest = bytes.fromhex('5254001234') + bytes([0x10 + lane])

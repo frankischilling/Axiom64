@@ -211,6 +211,12 @@ def inspect(rows, lane, log, native=False, interface_index=None, native_send_cla
     result, proof = inspect_original(rows[:boundary(rows, lane)], lane, log, native)
     controls, _ = inspect_send(rows, lane, log, native, interface_index, native_send_class)
     result['send_controls'] = controls
+    from ipv6_extension_capture import inspect as inspect_extensions
+    result['extensions'], _ = inspect_extensions(rows, lane, log, native, interface_index)
+    from ipv6_routing_capture import inspect as inspect_routing
+    result['routing'], _ = inspect_routing(rows, lane, log, native, interface_index)
+    from ipv6_sticky_capture import inspect as inspect_sticky
+    result['sticky'], _ = inspect_sticky(rows, lane, log, native, interface_index)
     return result, proof
 
 
@@ -223,7 +229,7 @@ def verify_capture(path, lane, log_path, archive, native=False, statistics=None,
         selected = []
         for row in rows:
             frame = row['frame']
-            if frame[12:14] == b'\x86\xdd' and len(frame) > 20 and frame[20] == 0:
+            if frame[12:14] == b'\x86\xdd' and len(frame) >= 54 and frame[20] == 0 and frame[38:54] == bytes.fromhex('ff020000000000000000000000000016'):
                 continue
             row['stamp'] = row['ns'] // 1000
             selected.append(row)
@@ -297,7 +303,19 @@ def verify_capture(path, lane, log_path, archive, native=False, statistics=None,
                            Path(archive).with_name(Path(archive).stem + '-send-controls.zip'),
                            native, interface_index, native_send_class)
     controls['native_clock_qualified'] = bool(clock)
+    from ipv6_extension_capture import verify_capture as verify_extensions
+    extensions = verify_extensions(path, lane, log_path,
+        Path(archive).with_name(Path(archive).stem + '-extensions.zip'), native, interface_index)
+    extensions['native_clock_qualified'] = bool(clock)
+    from ipv6_routing_capture import verify_capture as verify_routing
+    routing = verify_routing(path, lane, log_path,
+        Path(archive).with_name(Path(archive).stem + '-routing.zip'), native, interface_index)
+    routing['native_clock_qualified'] = bool(clock)
+    from ipv6_sticky_capture import verify_capture as verify_sticky
+    sticky = verify_sticky(path, lane, log_path,
+        Path(archive).with_name(Path(archive).stem + '-sticky.zip'), native, interface_index)
+    sticky['native_clock_qualified'] = bool(clock)
     result.update(damaged_rejected=len(rejected), original_sha256=hashlib.sha256(original).hexdigest(),
                   archive_sha256=hashlib.sha256(Path(archive).read_bytes()).hexdigest(), native_clock=clock,
-                  send_controls=controls)
+                  send_controls=controls, extensions=extensions, routing=routing, sticky=sticky)
     return result

@@ -4,6 +4,7 @@
 #include "net/ipv6/reassembly.hpp"
 #include "../../net/ipv6/socket.hpp"
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -538,6 +539,12 @@ static std::vector<uint8_t> fragment_frame(const std::vector<uint8_t>& whole, si
     if (prefix) {
         result[54] = 44;
         result[55] = prefix / 8 - 1;
+        if (prefix == 16) {
+            // Retain the different-length prefix used by the reassembly case,
+            // with the same valid skip-action option as the real wire fixture.
+            result[56] = 0x1e;
+            result[57] = 10;
+        }
     }
     auto header = result.data() + 54 + prefix;
     header[0] = whole[20];
@@ -1161,6 +1168,100 @@ static void path_mtu_errors() {
     reset();
 }
 
+static void routed_error_destinations(unsigned mode) {
+    for (unsigned lane = 0; lane < 2; lane++) {
+        reset();
+        auto local = address(lane, 2), first = address(lane, 1), final = address(80 + lane, 71);
+        assert(!change(lane + 1, local));
+        Ipv6Path path;
+        assert(!ipv6_path(local, first, lane + 1, path));
+        assert(ip6::path_mtu_cache.learn(ip6::path_key(path, first), path.mtu, 1400, ticks) ==
+               1400);
+        auto socket = inet6_allocate(2);
+        assert(socket && !inet6_bind_port(socket, local, 47500));
+        socket->local = local;
+        socket->peer = final;
+        socket->peer_port = __builtin_bswap16(uint16_t(48000));
+        socket->index = lane + 1;
+        socket->connected = true;
+        socket->receive_errors = true;
+        socket->pmtu_mode = 2;
+        size_t routing_size = mode == 0 ? 24 : mode == 1 ? 40 : 64;
+        uint8_t routing[64] = {17, uint8_t(routing_size / 8 - 1), 4, uint8_t(mode), uint8_t(mode)};
+        for (unsigned n = 0; n <= mode; n++)
+            memcpy(routing + 8 + n * 16, address(8 + lane, 40 + n).bytes, 16);
+        memcpy(routing + 8 + mode * 16, first.bytes, 16);
+        if (mode == 2) {
+            routing[56] = 0x1e;
+            routing[57] = 6;
+            memset(routing + 58, 0x99, 6);
+        }
+        assert(!inet6_extension_set(socket, 57, routing, routing_size));
+        Inet6Address target{10, socket->peer_port, 0, final, 0};
+        std::vector<uint8_t> payload(128, 0x5b);
+        assert(!inet6_send_admit(socket, target, payload.size(), payload.data(), false));
+        uint32_t metric = 0;
+        assert(!inet6_destination_mtu(socket, metric) && metric == 1400);
+        // Retaining the actual selected route keeps its metric after expiry.
+        ticks = ip6::path_mtu_lifetime;
+        assert(!ipv6_path(local, first, lane + 1, path) && path.mtu == 1500);
+        assert(!inet6_destination_mtu(socket, metric) && metric == 1400);
+        assert(inet6_send(socket, target, payload.data(), payload.size()) == 128);
+        net_poll();
+        deliver(lane, advertisement(lane, first, local));
+        net_poll();
+        const auto original = emitted[lane].back();
+        assert(original.size() == 14 + 40 + routing_size + 8 + payload.size());
+        assert(!memcmp(original.data() + 14 + 24, first.bytes, 16));
+        std::vector<uint8_t> quote(8 + 40 + routing_size + 8 + payload.size());
+        quote[0] = 2;
+        quote[6] = 5;
+        memcpy(quote.data() + 8, original.data() + 14, quote.size() - 8);
+        // A different final destination cannot claim the connected UDP port.
+        auto unrelated = quote;
+        unrelated[8 + 40 + 8 + 15] ^= 1;
+        deliver(lane, incoming(lane, address(lane, 250), local, unrelated, 64));
+        assert(!inet6_error(socket) && !inet6_error_queued(socket));
+        assert(!ipv6_path(local, first, lane + 1, path) && path.mtu == 1500);
+        // A bounded quote with an impossible segment list cannot learn a PMTU.
+        unrelated = quote;
+        unrelated[8 + 40 + 4] = 3;
+        unrelated[0] = 1;
+        unrelated[1] = 4;
+        socket->reuse = true;
+        auto wire_owner = inet6_allocate(2);
+        wire_owner->reuse = true;
+        assert(!inet6_bind_port(wire_owner, local, socket->local_port));
+        wire_owner->local = local;
+        wire_owner->peer = first;
+        wire_owner->peer_port = socket->peer_port;
+        wire_owner->index = lane + 1;
+        wire_owner->connected = wire_owner->receive_errors = true;
+        deliver(lane, incoming(lane, address(lane, 250), local, unrelated, 64));
+        assert(!inet6_error(socket) && !inet6_error_queued(socket));
+        assert(inet6_error(wire_owner, true) == 111 && inet6_error_queued(wire_owner));
+        inet6_close(wire_owner);
+        deliver(lane, incoming(lane, address(lane, 250), local, quote, 64));
+        assert(inet6_error(socket, true) == 90);
+        assert(!ipv6_path(local, first, lane + 1, path) && path.mtu == 1280);
+        assert(!inet6_destination_mtu(socket, metric) && metric == 1280);
+        auto record = inet6_take_error(socket);
+        assert(record && record->destination.address == first &&
+               record->destination.port == socket->peer_port);
+        assert(record->length == payload.size() &&
+               !memcmp(record + 1, payload.data(), payload.size()));
+        release(record);
+        quote[0] = 1;
+        quote[1] = 4;
+        deliver(lane, incoming(lane, address(lane, 250), local, quote, 64));
+        assert(inet6_error(socket, true) == 111 && inet6_error_queued(socket));
+        release(inet6_take_error(socket));
+        inet6_close(socket);
+        assert(allocations.empty());
+    }
+    reset();
+}
+
 static void per_message_controls() {
     reset();
     auto socket = inet6_allocate(2);
@@ -1178,7 +1279,8 @@ static void per_message_controls() {
         memcpy(bytes.data() + at, &length, 8);
         memcpy(bytes.data() + at + 8, &level, 4);
         memcpy(bytes.data() + at + 12, &type, 4);
-        memcpy(bytes.data() + at + 16, data, size);
+        if (size)
+            memcpy(bytes.data() + at + 16, data, size);
     };
 
     struct Info {
@@ -1194,28 +1296,118 @@ static void per_message_controls() {
     value = 1;
     append(62, &value, 4);
     Inet6SendControl output;
-    assert(!inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output));
+    assert(!inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output, true));
     assert(output.source == socket->local && output.index == ipv6_loopback && output.hops == 43 &&
            output.traffic_class == 0xab && output.dont_fragment && output.present);
     assert(socket->hops == 33 && socket->traffic_class == 18 && !socket->dont_fragment);
     value = -1;
     append(52, &value, 4);
     append(67, &value, 4);
-    assert(!inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output));
+    assert(!inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output, true));
     assert(output.hops == 33 && output.traffic_class == 255);
-    assert(!inet6_parse_send_control(socket, target, nullptr, 0, output));
+    assert(!inet6_parse_send_control(socket, target, nullptr, 0, output, true));
     assert(output.hops == 33 && output.traffic_class == 18 && !output.present);
     for (unsigned index : {1u, 2u}) {
         bytes.clear();
         info.index = index;
         append(50, &info, sizeof(info));
-        assert(inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output) == -22);
+        assert(inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output, true) ==
+               -22);
     }
     bytes.clear();
     info.index = 0;
     append(50, &info, sizeof(info));
-    assert(!inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output));
+    assert(!inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output, true));
     assert(output.source == socket->local && !output.index);
+    // These duplicate/legacy outcomes come from the same complete native
+    // admission probe, including its ordinary-user privilege checks.
+    uint8_t first[8] = {250, 0, 0x1e, 4, 0x11, 0x11, 0x11, 0x11};
+    uint8_t second[8] = {251, 0, 0x1e, 4, 0x22, 0x22, 0x22, 0x22};
+    for (auto test : {std::array<unsigned, 3>{54, 54, 22},
+                      {59, 59, 0},
+                      {54, 3, 22},
+                      {59, 4, 22},
+                      {4, 4, 22},
+                      {4, 59, 0},
+                      {55, 59, 0},
+                      {55, 55, 0}}) {
+        bytes.clear();
+        append(test[0], first, sizeof(first));
+        append(test[1], second, sizeof(second));
+        auto original = bytes;
+        assert(inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output, true) ==
+               -int(test[2]));
+        assert(bytes == original);
+        assert(inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output,
+                                        false) == -1);
+        if (!test[2]) {
+            assert(!inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output,
+                                             true));
+            uint8_t encoded[32];
+            memset(encoded, 0xa5, sizeof(encoded));
+            assert(ip6::encode_output_extensions(encoded, sizeof(encoded), 17, output.extensions));
+            assert(ip6::output_extension_size(output.extensions) == (test[1] == 55 ? 0 : 8));
+            if (test[1] != 55)
+                assert(encoded[0] == 17 && !memcmp(encoded + 1, second + 1, 7));
+            else
+                assert(std::all_of(encoded, encoded + sizeof(encoded),
+                                   [](auto value) { return value == 0xa5; }));
+        }
+    }
+    for (size_t size : {size_t(0), size_t(1), size_t(2), size_t(7), size_t(8), size_t(9),
+                        size_t(16), size_t(2048)}) {
+        std::vector<uint8_t> header(size);
+        if (size > 1)
+            header[1] = size == 2048 ? 255 : 0;
+        for (uint32_t type : {3u, 4u, 54u, 55u, 59u}) {
+            bytes.clear();
+            append(type, header.data(), header.size());
+            auto original = bytes;
+            assert(inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output,
+                                            true) == (size < 8 ? -22 : 0));
+            assert(bytes == original);
+            assert(inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output,
+                                            false) == (size < 8 ? -22 : -1));
+        }
+    }
+    uint8_t routing[24] = {250, 2, 2, 1, 0x71, 0x72, 0x73, 0x74};
+    memcpy(routing + 8, target.address.bytes, 16);
+    for (unsigned kind : {57u, 5u}) {
+        bytes.clear();
+        append(kind, routing, sizeof(routing));
+        const auto original = bytes;
+        assert(
+            !inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output, false));
+        assert(bytes == original && output.extensions.routing_length == 24);
+        ip6::Address first;
+        const auto final = address(7, 9);
+        assert(ip6::output_extension_destination(output.extensions, final, first) &&
+               first == target.address);
+        uint8_t encoded[24];
+        memset(encoded, 0xa5, sizeof(encoded));
+        assert(!ip6::encode_output_extensions(encoded, sizeof(encoded), 17, output.extensions));
+        assert(std::all_of(encoded, encoded + sizeof(encoded),
+                           [](auto value) { return value == 0xa5; }));
+        assert(
+            ip6::encode_output_extensions(encoded, sizeof(encoded), 17, output.extensions, &final));
+        assert(encoded[0] == 17 && encoded[1] == 2 && encoded[2] == 2 && encoded[3] == 1 &&
+               !memcmp(encoded + 4, routing + 4, 4) && !memcmp(encoded + 8, final.bytes, 16));
+        for (unsigned field : {1u, 2u, 3u}) {
+            bytes[16 + field] ^= 1;
+            assert(inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output,
+                                            false) == -22);
+            bytes[16 + field] ^= 1;
+        }
+    }
+    for (unsigned kind : {57u, 5u}) {
+        bytes.clear();
+        append(59, first, sizeof(first));
+        append(kind, routing, sizeof(routing));
+        assert(!inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output, true));
+        assert(output.extensions.routing_length == 24);
+        assert(output.extensions.before_routing_length == (kind == 5 ? 8 : 0));
+        assert(output.extensions.destination_length == (kind == 5 ? 0 : 8));
+    }
     uint32_t random = 0x641831;
     for (unsigned count = 0; count < 5000; count++) {
         bytes.resize(count % 257);
@@ -1223,11 +1415,422 @@ static void per_message_controls() {
             random = random * 1664525 + 1013904223;
             byte = random >> 24;
         }
-        int error = inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output);
+        int error =
+            inet6_parse_send_control(socket, target, bytes.data(), bytes.size(), output, true);
         assert(error == 0 || error == -22 || error == -19);
     }
     inet6_close(socket);
     reset();
+}
+
+static void receive_extension_policy() {
+    for (uint8_t protocol : {0, 60}) {
+        std::vector<uint8_t> bytes(40 + 24 + 4);
+        ip6::Header header;
+        header.next_header = protocol;
+        header.payload_length = 28;
+        assert(ip6::encode(bytes.data(), bytes.size(), header));
+        bytes[40] = 58;
+        bytes[41] = 2;
+        for (unsigned n = 0; n < 8; n++) {
+            bytes[42 + n * 2] = 0x1e;
+            bytes[43 + n * 2] = 0;
+        }
+        auto packet = ip6::decode(bytes.data(), bytes.size());
+        assert(packet.input == ip6::Input::payload && ip6::receive_extension_options(packet));
+        bytes[58] = 0x1e;
+        bytes[59] = 0;
+        packet = ip6::decode(bytes.data(), bytes.size());
+        assert(packet.input == ip6::Input::payload && !ip6::receive_extension_options(packet) &&
+               ip6::receive_extension_options(packet, 9));
+        std::fill(bytes.begin() + 42, bytes.end(), 0);
+        bytes[49] = 0x1e;
+        bytes[50] = 0;
+        bytes[56] = 0x1e;
+        bytes[57] = 0;
+        packet = ip6::decode(bytes.data(), bytes.size());
+        assert(packet.input == ip6::Input::payload && ip6::receive_extension_options(packet));
+        bytes[49] = 0;
+        bytes[50] = 0;
+        packet = ip6::decode(bytes.data(), bytes.size());
+        assert(packet.input == ip6::Input::payload && !ip6::receive_extension_options(packet));
+        std::fill(bytes.begin() + 42, bytes.begin() + 64, 0);
+        bytes[42] = 1;
+        bytes[43] = 20;
+        packet = ip6::decode(bytes.data(), bytes.size());
+        assert(packet.input == ip6::Input::payload && !ip6::receive_extension_options(packet));
+    }
+}
+
+static void copied_extension_output() {
+    for (unsigned lane = 0; lane < 2; lane++) {
+        reset();
+        unsigned index = lane + 1;
+        callback_index = index;
+        auto local = address(lane, 2), remote = address(lane, 1);
+        assert(!change(index, local));
+        auto socket = inet6_allocate(3);
+        assert(socket);
+        Inet6Address target{10, 0, 0, remote, 0};
+        uint8_t hop[8] = {250, 0, 0x1e, 4, 0x11, 0x11, 0x11, 0x11};
+        uint8_t destination[16] = {251,  1, 0x1e, 4,    0x22, 0x22, 0x22, 0x22,
+                                   0x1e, 6, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33};
+        auto policy = inet6_send_defaults(socket, target);
+        policy.extensions = {hop, sizeof(hop), destination, sizeof(destination)};
+        policy.hops = 43;
+        policy.traffic_class = 0xab;
+        policy.present = true;
+        std::vector<uint8_t> payload(4000, 0x7b);
+        payload[0] = 129;
+        payload[1] = payload[2] = payload[3] = 0;
+        auto original = payload;
+        uint8_t expected_destination[16];
+        memcpy(expected_destination, destination, sizeof(destination));
+        expected_destination[0] = 44;
+        assert(inet6_send(socket, target, payload.data(), payload.size(), true, &policy) == 4000);
+        memset(hop, 0xa5, sizeof(hop));
+        memset(destination, 0xa5, sizeof(destination));
+        std::fill(payload.begin(), payload.end(), 0xa5);
+        socket->hops = 99;
+        socket->traffic_class = 7;
+        socket->dont_fragment = true;
+        inet6_close(socket);
+        auto reused = inet6_allocate(3);
+        assert(reused == socket && !reused->transmitted && !reused->error);
+        net_poll();
+        deliver(lane, advertisement(lane, remote, local));
+        net_poll();
+        std::vector<uint8_t> restored;
+        unsigned fragments = 0;
+        for (const auto& frame : emitted[lane]) {
+            auto packet = ip6::decode(frame.data() + 14, frame.size() - 14);
+            if (packet.input != ip6::Input::fragment)
+                continue;
+            assert(packet.fragment.header_offset == 64 &&
+                   packet.fragment.offset == restored.size() && packet.header.hop_limit == 43 &&
+                   packet.header.traffic_class == 0xab && packet.header.source == local &&
+                   packet.header.destination == remote);
+            const auto* bytes = frame.data() + 14;
+            assert(bytes[6] == 0 && bytes[40] == 60 && bytes[42] == 0x1e && bytes[44] == 0x11 &&
+                   bytes[64] == 58);
+            assert(!memcmp(bytes + 48, expected_destination, sizeof(expected_destination)));
+            restored.insert(restored.end(), packet.payload, packet.payload + packet.length);
+            fragments++;
+        }
+        assert(fragments >= 3 && restored.size() == original.size());
+        assert(!ip6::checksum(local, remote, 58, restored.data(), original.size()));
+        assert(std::equal(original.begin() + 4, original.end(), restored.begin() + 4));
+        assert(!reused->transmitted && !reused->error);
+        inet6_close(reused);
+        reset();
+    }
+}
+
+static void copied_routing_output() {
+    for (unsigned lane = 0; lane < 2; lane++) {
+        for (int kind : {2, 3}) {
+            reset();
+            unsigned index = lane + 1;
+            callback_index = index;
+            auto local = address(lane, 2), first = address(lane, 1), final = address(7, 9);
+            assert(!change(index, local));
+            auto socket = inet6_allocate(kind);
+            assert(socket);
+            socket->local = local;
+            socket->index = index;
+            if (kind == 2)
+                assert(!inet6_bind_port(socket, local, 7000 + lane));
+            Inet6Address target{10, __builtin_bswap16(uint16_t(kind == 2 ? 9000 : 58)), 0, final,
+                                0};
+            uint8_t hop[8] = {250, 0, 0x1e, 4, 0x11, 0x11, 0x11, 0x11};
+            uint8_t before[8] = {251, 0, 0x1e, 4, 0x22, 0x22, 0x22, 0x22};
+            uint8_t routing[24] = {252, 2, 2, 1, 0x71, 0x72, 0x73, 0x74};
+            memcpy(routing + 8, first.bytes, 16);
+            uint8_t destination[16] = {253, 1, 0x1e, 12};
+            memset(destination + 4, 0x33, 12);
+            auto policy = inet6_send_defaults(socket, target);
+            policy.extensions = {hop,    sizeof(hop),    destination, sizeof(destination),
+                                 before, sizeof(before), routing,     sizeof(routing)};
+            policy.hops = 47;
+            policy.traffic_class = 0xcd;
+            policy.present = true;
+            std::vector<uint8_t> payload(16384);
+            for (unsigned n = 0; n < payload.size(); n++)
+                payload[n] = n * 23 + lane;
+            if (kind == 3) {
+                payload[0] = 129;
+                payload[1] = payload[2] = payload[3] = 0;
+            }
+            const auto original = payload;
+            assert(inet6_send(socket, target, payload.data(), payload.size(), true, &policy) ==
+                   16384);
+            memset(hop, 0xa5, sizeof(hop));
+            memset(before, 0xa5, sizeof(before));
+            memset(routing, 0xa5, sizeof(routing));
+            memset(destination, 0xa5, sizeof(destination));
+            std::fill(payload.begin(), payload.end(), 0xa5);
+            socket->hops = 99;
+            socket->traffic_class = 7;
+            inet6_close(socket);
+            auto reused = inet6_allocate(kind);
+            assert(reused == socket && !reused->error && !reused->transmitted);
+            net_poll();
+            deliver(lane, advertisement(lane, first, local));
+            for (unsigned count = 0; count < 10; count++)
+                net_poll();
+            std::vector<uint8_t> restored;
+            unsigned pieces = 0;
+            uint32_t identity = 0;
+            for (const auto& frame : emitted[lane]) {
+                if (frame.size() < 14 + 88 || frame[20] != 0)
+                    continue;
+                const auto* bytes = frame.data() + 14;
+                assert(frame.size() <= 1514 &&
+                       (size_t(bytes[4]) << 8 | bytes[5]) == frame.size() - 54);
+                assert(bytes[0] == 0x6c && bytes[1] == 0xd0 && !bytes[2] && !bytes[3] &&
+                       bytes[7] == 47);
+                assert(!memcmp(bytes + 8, local.bytes, 16) && !memcmp(bytes + 24, first.bytes, 16));
+                assert(bytes[40] == 60 && bytes[42] == 0x1e && bytes[44] == 0x11 &&
+                       bytes[48] == 43 && bytes[50] == 0x1e && bytes[52] == 0x22);
+                assert(bytes[56] == 44 && bytes[57] == 2 && bytes[58] == 2 && bytes[59] == 1 &&
+                       bytes[60] == 0x71 && bytes[63] == 0x74 &&
+                       !memcmp(bytes + 64, final.bytes, 16));
+                assert(bytes[80] == 60 && !bytes[81]);
+                uint16_t flags = uint16_t(bytes[82]) << 8 | bytes[83];
+                assert(!(flags & 6) && (flags & 0xfff8) == restored.size());
+                uint32_t actual = uint32_t(bytes[84]) << 24 | uint32_t(bytes[85]) << 16 |
+                                  uint32_t(bytes[86]) << 8 | bytes[87];
+                if (!pieces)
+                    identity = actual;
+                assert(identity && actual == identity);
+                restored.insert(restored.end(), bytes + 88, frame.data() + frame.size());
+                pieces++;
+            }
+            size_t upper = kind == 2 ? 8 : 0;
+            uint8_t protocol = kind == 2 ? 17 : 58;
+            assert(pieces > 8 && restored.size() == original.size() + upper + 16 &&
+                   restored[0] == protocol && restored[1] == 1 && restored[2] == 0x1e &&
+                   restored[3] == 12);
+            for (unsigned n = 4; n < 16; n++)
+                assert(restored[n] == 0x33);
+            assert(!ip6::checksum(local, final, protocol, restored.data() + 16,
+                                  upper + original.size()));
+            assert(ip6::checksum(local, first, protocol, restored.data() + 16,
+                                 upper + original.size()));
+            if (kind == 2)
+                assert(std::equal(original.begin(), original.end(), restored.begin() + 24));
+            else
+                assert(std::equal(original.begin() + 4, original.end(), restored.begin() + 20));
+            assert(!reused->error && !reused->transmitted);
+            inet6_close(reused);
+            reset();
+        }
+    }
+}
+
+static void sticky_extension_controls() {
+    auto socket = inet6_allocate(2);
+    assert(socket);
+    uint8_t hop[16] = {250, 0, 0x1e, 4, 0x11, 0x11, 0x11, 0x11};
+    assert(!inet6_extension_set(socket, 54, hop, sizeof(hop)));
+    size_t size = 0;
+    auto saved = inet6_extension_get(socket, 54, size);
+    assert(size == 8 && saved != hop && !memcmp(saved, hop, size));
+    memset(hop, 0xa5, sizeof(hop));
+    assert(saved[0] == 250 && saved[7] == 0x11);
+    assert(inet6_extension_set(socket, 54, hop, sizeof(hop)) == -22);
+    assert(inet6_extension_get(socket, 54, size) == saved && size == 8);
+    Inet6Address target;
+    auto defaults = inet6_send_defaults(socket, target);
+    assert(defaults.extensions.hop == saved);
+    Inet6SendControl selected;
+    int value = 47;
+
+    struct Scalar {
+        uint64_t length;
+        uint32_t level, kind;
+        int value;
+        uint32_t padding;
+    } scalar{20, 41, 52, value, 0};
+
+    assert(!inet6_parse_send_control(socket, target, reinterpret_cast<const uint8_t*>(&scalar),
+                                     sizeof(scalar), selected, false));
+    assert(selected.extensions.hop == saved && selected.hops == 47);
+    uint8_t only_destination[24]{};
+    uint64_t length = 24;
+    uint32_t level = 41, option = 59;
+    memcpy(only_destination, &length, 8);
+    memcpy(only_destination + 8, &level, 4);
+    memcpy(only_destination + 12, &option, 4);
+    only_destination[16] = 250;
+    assert(!inet6_parse_send_control(socket, target, only_destination, sizeof(only_destination),
+                                     selected, true));
+    assert(!selected.extensions.hop && selected.extensions.destination_length == 8);
+    uint8_t routing[48] = {250, 4, 4, 1, 1};
+    routing[39] = 1;
+    assert(!inet6_extension_set(socket, 57, routing, 40));
+    auto original = inet6_extension_get(socket, 57, size);
+    assert(size == 40 && original != routing);
+    for (auto [field, invalid] : {std::pair{2u, 0u}, std::pair{3u, 2u}, std::pair{4u, 2u}}) {
+        auto before = routing[field];
+        routing[field] = invalid;
+        assert(inet6_extension_set(socket, 57, routing, 40) == -22);
+        assert(inet6_extension_get(socket, 57, size) == original && size == 40);
+        routing[field] = before;
+    }
+    assert(inet6_extension_set(socket, 57, routing, 48) == -22);
+    routing[1] = 5;
+    routing[40] = 0x1e;
+    routing[41] = 6;
+    assert(!inet6_extension_set(socket, 57, routing, sizeof(routing)));
+    routing[41] = 7;
+    assert(inet6_extension_set(socket, 57, routing, sizeof(routing)) == -22);
+    assert(inet6_extension_set(socket, 54, nullptr, 8) == -22);
+    assert(inet6_extension_set(socket, 56, nullptr, 0) == -92);
+    auto policy = inet6_send_defaults(socket, target);
+    auto request = static_cast<uint8_t*>(alloc(16));
+    assert(!inet6_own_send_extensions(policy, request) && request);
+    inet6_close(socket);
+    auto reused = inet6_allocate(2);
+    assert(reused == socket && !reused->extensions.hop && !reused->extensions.routing);
+    ip6::Address first;
+    assert(ip6::output_extension_destination(policy.extensions, target.address, first) &&
+           first.bytes[15] == 1);
+    release(request);
+    inet6_close(reused);
+}
+
+static void copied_sticky_output(unsigned mode) {
+    for (unsigned lane = 0; lane < 2; lane++) {
+        for (int kind : {2, 3}) {
+            reset();
+            unsigned index = lane + 1;
+            callback_index = index;
+            auto local = address(lane, 2), first = address(lane, 1), final = address(7, 9);
+            assert(!change(index, local));
+            auto socket = inet6_allocate(kind);
+            assert(socket);
+            socket->local = local;
+            socket->index = index;
+            if (kind == 2)
+                assert(!inet6_bind_port(socket, local, 7000 + lane));
+            Inet6Address target{10, __builtin_bswap16(uint16_t(kind == 2 ? 9000 : 58)), 0, final,
+                                0};
+            uint8_t hop[8] = {250, 0, 0x1e, 4, 0x11, 0x11, 0x11, 0x11};
+            uint8_t before[8] = {251, 0, 0x1e, 4, 0x22, 0x22, 0x22, 0x22};
+            size_t routing_size = mode == 1 ? 40 : mode == 3 ? 64 : 24;
+            std::vector<uint8_t> routing(routing_size);
+            routing[0] = 252;
+            routing[1] = routing_size / 8 - 1;
+            routing[2] = mode ? 4 : 2;
+            routing[3] = mode == 2 ? 0 : mode == 3 ? 2 : 1;
+            routing[4] = mode ? routing[3] : 0x71;
+            routing[5] = mode ? 0 : 0x72;
+            routing[6] = 0x73;
+            routing[7] = 0x74;
+            for (size_t at = 8; at + 16 <= routing.size(); at += 16)
+                memcpy(routing.data() + at, address(6, at).bytes, 16);
+            memcpy(routing.data() + 8 + (mode ? routing[3] * 16 : 0), first.bytes, 16);
+            if (mode == 3) {
+                routing[56] = 0x1e;
+                routing[57] = 6;
+                memset(routing.data() + 58, 0x99, 6);
+            }
+            auto expected_routing = routing;
+            expected_routing[0] = 44;
+            memcpy(expected_routing.data() + 8, final.bytes, 16);
+            uint8_t destination[16] = {253, 1, 0x1e, 12};
+            memset(destination + 4, 0x33, 12);
+            assert(!inet6_extension_set(socket, 54, hop, sizeof(hop)));
+            assert(!inet6_extension_set(socket, 55, before, sizeof(before)));
+            assert(!inet6_extension_set(socket, 57, routing.data(), routing.size()));
+            assert(!inet6_extension_set(socket, 59, destination, sizeof(destination)));
+            auto policy = inet6_send_defaults(socket, target);
+            uint8_t* retained = nullptr;
+            assert(!inet6_own_send_extensions(policy, retained) && retained);
+            policy.hops = 47;
+            policy.traffic_class = 0xcd;
+            std::vector<uint8_t> payload(16384);
+            for (unsigned n = 0; n < payload.size(); n++)
+                payload[n] = n * 23 + lane;
+            if (kind == 3) {
+                payload[0] = 129;
+                payload[1] = payload[2] = payload[3] = 0;
+            }
+            const auto original = payload;
+            assert(
+                !inet6_send_admit(socket, target, payload.size(), payload.data(), true, &policy));
+            // An alias clears shared options after request admission, before
+            // actual send. The request must still own its selected header bytes.
+            inet6_extensions_clear(socket);
+            assert(inet6_send(socket, target, payload.data(), payload.size(), true, &policy) ==
+                   16384);
+            release(retained);
+            memset(hop, 0xa5, sizeof(hop));
+            memset(before, 0xa5, sizeof(before));
+            std::fill(routing.begin(), routing.end(), 0xa5);
+            memset(destination, 0xa5, sizeof(destination));
+            std::fill(payload.begin(), payload.end(), 0xa5);
+            socket->hops = 99;
+            socket->traffic_class = 7;
+            inet6_close(socket);
+            auto reused = inet6_allocate(kind);
+            assert(reused == socket && !reused->error && !reused->transmitted);
+            net_poll();
+            deliver(lane, advertisement(lane, first, local));
+            for (unsigned count = 0; count < 10; count++)
+                net_poll();
+            assert(!reused->extensions.hop && !reused->extensions.before_routing &&
+                   !reused->extensions.routing && !reused->extensions.destination);
+            size_t fragment_at = 56 + routing_size;
+            std::vector<uint8_t> restored;
+            unsigned pieces = 0;
+            uint32_t identity = 0;
+            for (const auto& frame : emitted[lane]) {
+                if (frame.size() < 14 + fragment_at + 8 || frame[20] != 0)
+                    continue;
+                const auto* bytes = frame.data() + 14;
+                assert(frame.size() <= 1514 &&
+                       (size_t(bytes[4]) << 8 | bytes[5]) == frame.size() - 54);
+                assert(bytes[0] == 0x6c && bytes[1] == 0xd0 && !bytes[2] && !bytes[3] &&
+                       bytes[7] == 47);
+                assert(!memcmp(bytes + 8, local.bytes, 16) && !memcmp(bytes + 24, first.bytes, 16));
+                assert(bytes[40] == 60 && bytes[42] == 0x1e && bytes[44] == 0x11 &&
+                       bytes[48] == 43 && bytes[50] == 0x1e && bytes[52] == 0x22);
+                assert(!memcmp(bytes + 56, expected_routing.data(), expected_routing.size()));
+                assert(bytes[fragment_at] == 60 && !bytes[fragment_at + 1]);
+                uint16_t flags = uint16_t(bytes[fragment_at + 2]) << 8 | bytes[fragment_at + 3];
+                assert(!(flags & 6) && (flags & 0xfff8) == restored.size());
+                uint32_t actual = uint32_t(bytes[fragment_at + 4]) << 24 |
+                                  uint32_t(bytes[fragment_at + 5]) << 16 |
+                                  uint32_t(bytes[fragment_at + 6]) << 8 | bytes[fragment_at + 7];
+                if (!pieces)
+                    identity = actual;
+                assert(identity && actual == identity);
+                restored.insert(restored.end(), bytes + fragment_at + 8,
+                                frame.data() + frame.size());
+                pieces++;
+            }
+            size_t upper = kind == 2 ? 8 : 0;
+            uint8_t protocol = kind == 2 ? 17 : 58;
+            assert(pieces > 8 && restored.size() == original.size() + upper + 16 &&
+                   restored[0] == protocol && restored[1] == 1 && restored[2] == 0x1e &&
+                   restored[3] == 12);
+            for (unsigned n = 4; n < 16; n++)
+                assert(restored[n] == 0x33);
+            assert(!ip6::checksum(local, final, protocol, restored.data() + 16,
+                                  upper + original.size()));
+            assert(ip6::checksum(local, first, protocol, restored.data() + 16,
+                                 upper + original.size()));
+            if (kind == 2)
+                assert(std::equal(original.begin(), original.end(), restored.begin() + 24));
+            else
+                assert(std::equal(original.begin() + 4, original.end(), restored.begin() + 20));
+            assert(!reused->error && !reused->transmitted);
+            inet6_close(reused);
+            reset();
+        }
+    }
 }
 
 int main() {
@@ -1274,8 +1877,16 @@ int main() {
     fragmented_delivery();
     raw_header_bounds();
     per_message_controls();
+    copied_extension_output();
+    copied_routing_output();
+    sticky_extension_controls();
+    for (unsigned mode = 0; mode < 4; mode++)
+        copied_sticky_output(mode);
+    receive_extension_policy();
     source_fragmentation();
     path_mtu_errors();
+    for (unsigned mode = 0; mode < 3; mode++)
+        routed_error_destinations(mode);
     copied_error_queues();
     reset();
     std::puts("IPV6_HOST_PASS adapters=2 DAD=1 duplicate=1 NS=1 NA=1 echo=1 owned_copy=1");

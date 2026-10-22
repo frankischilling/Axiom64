@@ -12,6 +12,7 @@ from ipv4_expiry_capture import checksum, encode_capture, read_capture
 from ipv6_lifetime_contract import verify_log
 from ipv6_lifetime_capture import inspect as inspect_lifetimes, verify_capture as verify_lifetimes
 from ipv6_queued_sources_capture import inspect as inspect_queued_sources, verify_capture as verify_queued_sources
+from ipv6_source_policy_contract import LINK_SOURCES, verify_log as verify_sources, verify_saved as verify_saved_sources
 
 
 def require(value, reason):
@@ -20,6 +21,7 @@ def require(value, reason):
 
 
 def inspect(rows, lane, log, native=False):
+    source_policy = verify_sources(log)
     lifetimes = verify_log(log)
     lifetime_wire, excluded = inspect_lifetimes(rows, lane, log)
     queued_sources, queued_indices = inspect_queued_sources(rows, lane, log)
@@ -76,7 +78,9 @@ def inspect(rows, lane, log, native=False):
             if frame[6:12] == guest:
                 if native and frame[20] == 0:
                     require(frame[21] == 1 and destination == ipaddress.IPv6Address('ff02::16').packed and
-                            source in (bytes(16), link) and frame[14:18] == b'\x60\0\0\0' and
+                            (source in (bytes(16), link) or
+                             (index > max(queued_indices) and source in LINK_SOURCES)) and
+                            frame[14:18] == b'\x60\0\0\0' and
                             frame[:6] == b'\x33\x33\0\0\0\x16' and
                             payload[:8] == b'\x3a\0\5\2\0\0\1\0', 'native MLD hop/options/group')
                     report = payload[8:]
@@ -264,7 +268,7 @@ def inspect(rows, lane, log, native=False):
     require(len(incoming) == 15 and used_inputs == {row[0] for row in incoming},
             'every valid and malformed peer input remains independently accounted')
     return dict(passed=True, lane=lane, kernel_packets=11, phases=5, malformed_controls=5, lifetimes=lifetimes,
-                queued_sources=queued_sources,
+                queued_sources=queued_sources, source_policy=source_policy,
                 peer_inputs=15, lifetime_wire=lifetime_wire, firmware_frames=len(firmware), firmware_sha256=firmware,
                 actual_DAD_elapsed_ns=int(elapsed[0]), native_MLD_reports=mld_reports,
                 native_maintenance=maintenance), dict(
@@ -284,6 +288,8 @@ def verify_capture(path, lane, log_path, archive, native=False, statistics=None)
     result['lifetime_wire'] = wire
     result['queued_sources'] = verify_queued_sources(path, lane, log_path,
         Path(archive).with_suffix('.queued-sources.zip'), native=native, statistics=statistics)
+    result['source_policy'] = verify_saved_sources(log_path,
+        Path(archive).with_suffix('.source-policy.zip'))
     rejected = []
     with zipfile.ZipFile(archive, 'x', compression=zipfile.ZIP_DEFLATED) as saved:
         cases = ['missing-kernel', 'duplicate-kernel', 'checksum', 'source', 'destination', 'MAC',

@@ -3,6 +3,7 @@
 #include "net/netlink.hpp"
 #include "net/ipv6/reassembly.hpp"
 #include "../../net/ipv6/socket.hpp"
+#include <arpa/inet.h>
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -2505,6 +2506,297 @@ static void queued_automatic_source_removal() {
     }
 }
 
+static void retired_neighbor_source() {
+    for (unsigned lane = 0; lane < 2; lane++) {
+        reset();
+        unsigned index = lane + 1;
+        auto local = address(lane, 2), remote = address(lane, 1);
+        assert(!change(index, local));
+        auto socket = inet6_allocate(2);
+        assert(socket);
+        socket->index = index;
+        assert(!inet6_bind_port(socket, {}, 59402));
+        Inet6Address target{10, __builtin_bswap16(uint16_t(8080)), 0, remote, 0};
+        uint8_t payload[16]{};
+        assert(inet6_send(socket, target, payload, sizeof(payload), true) == sizeof(payload));
+        net_poll();
+        assert(last(lane, 135).header.source == local);
+        assert(!change(index, local, true, true));
+        net_poll();
+        assert(!socket->transmitted);
+        emitted[lane].clear();
+        // An unrelated source and route must not revive an orphaned query.
+        assert(!change(index, address(9, 2)));
+        assert(!ipv6_route_control({{}, {}, index, 1024, 0, 3}, false, true));
+        ticks = 100;
+        net_poll();
+        assert(emitted[lane].empty());
+        inet6_close(socket);
+    }
+    reset();
+}
+
+static void cross_interface_source_output() {
+    for (unsigned lane = 0; lane < 2; lane++) {
+        for (bool link : {true, false}) {
+            reset();
+            unsigned index = lane + 1;
+            auto selected = address(9, 2), remote = address(9, 1);
+            auto probe_source = address(lane, 2, true);
+            assert(!ipv6_address_add({selected, 2 - lane, 0x282, 64}));
+            if (link)
+                assert(!ipv6_address_add({probe_source, index, 0x282, 64}));
+            else
+                assert(!ipv6_address_add({address(lane, 2), index, 0x282, 64}, {0, UINT32_MAX}));
+            assert(!ipv6_route_control({{}, {}, index, 1024, 0, 3}, false, true));
+            auto socket = inet6_allocate(2);
+            assert(socket);
+            socket->index = index;
+            assert(!inet6_bind_port(socket, {}, 59401));
+            Inet6Address target{10, __builtin_bswap16(uint16_t(8080)), 0, remote, 0};
+            uint8_t payload[16] = {'S', 'P', 'O', 'L'};
+            assert(inet6_send(socket, target, payload, sizeof(payload), true) == sizeof(payload));
+            memset(payload, 0xa5, sizeof(payload));
+            net_poll();
+            if (link) {
+                assert(last(lane, 135).header.source == probe_source);
+                emitted[lane].clear();
+                deliver(lane, advertisement(lane, remote, probe_source));
+                assert(emitted[lane].size() == 1);
+                const auto& frame = emitted[lane][0];
+                auto packet = ip6::decode(frame.data() + 14, frame.size() - 14);
+                assert(packet.protocol == 17 && packet.header.source == selected &&
+                       packet.header.destination == remote && packet.length == 24);
+                assert(!memcmp(packet.payload + 8, "SPOL", 4) &&
+                       std::all_of(packet.payload + 12, packet.payload + 24,
+                                   [](auto byte) { return !byte; }));
+                assert(!ip6::checksum(selected, remote, 17, packet.payload, packet.length));
+                assert(!socket->transmitted && !socket->error);
+            } else {
+                for (unsigned at = 1; at <= 3; at++) {
+                    ticks = at * 100;
+                    net_poll();
+                }
+                assert(emitted[lane].empty() && socket->transmitted);
+                ticks = 400;
+                net_poll();
+                assert(!socket->transmitted);
+            }
+            inet6_close(socket);
+        }
+    }
+    reset();
+}
+
+static ip6::Address policy_address(const char* text) {
+    ip6::Address result;
+    assert(inet_pton(AF_INET6, text, result.bytes) == 1);
+    return result;
+}
+
+static void manual_source_policy() {
+    struct Candidate {
+        const char* address = nullptr;
+        uint8_t prefix = 0;
+        bool deprecated = false, other = false;
+    };
+
+    struct Case {
+        const char* name;
+        const char* destination;
+        Candidate candidates[3];
+        const char* selected;
+        int error;
+    };
+
+    // Actual UDP connect/getsockname observations on Linux, with the default
+    // label table and both automatic routing and SO_BINDTODEVICE.
+    const Case cases[] = {
+        {"outgoing-before-prefix",
+         "2001:db8:99::2",
+         {{"2001:db8:10::1", 64, false, false}, {"2001:db8:99::1", 128, false, true}},
+         "2001:db8:10::1",
+         0},
+        {"other-interface-fallback",
+         "2001:db8:99::2",
+         {{"fe80::10", 64, false, false}, {"2001:db8:99::1", 64, false, true}},
+         "2001:db8:99::1",
+         0},
+        {"deprecated-before-interface",
+         "2001:db8:99::2",
+         {{"2001:db8:10::1", 64, true, false}, {"2001:db8:99::1", 64, false, true}},
+         "2001:db8:99::1",
+         0},
+        {"outgoing-before-label",
+         "fd42::2",
+         {{"2001:db8:10::1", 64, false, false}, {"fd42::1", 64, false, true}},
+         "2001:db8:10::1",
+         0},
+        {"label-ula",
+         "fd42::2",
+         {{"fd42::1", 0, false, false}, {"2001:db8:10::1", 128, false, false}},
+         "fd42::1",
+         0},
+        {"label-global",
+         "2001:db8:99::2",
+         {{"2001:db8:10::1", 0, false, false}, {"fd42::1", 128, false, false}},
+         "2001:db8:10::1",
+         0},
+        {"label-6to4",
+         "2002:1234::2",
+         {{"2002:1234::1", 0, false, false}, {"2001:db8:10::1", 128, false, false}},
+         "2002:1234::1",
+         0},
+        {"label-teredo",
+         "2001:0:abcd::2",
+         {{"2001:0:1234::1", 0, false, false}, {"2001:db8:10::1", 128, false, false}},
+         "2001:0:1234::1",
+         0},
+        {"label-6bone",
+         "3ffe:1234::2",
+         {{"3ffe:1234::1", 0, false, false}, {"2001:db8:10::1", 128, false, false}},
+         "3ffe:1234::1",
+         0},
+        {"label-orchid",
+         "2001:10::2",
+         {{"2001:10::1", 0, false, false}, {"2001:db8:10::1", 128, false, false}},
+         "2001:10::1",
+         0},
+        {"label-orchid2",
+         "2001:20::2",
+         {{"2001:20::1", 0, false, false}, {"2001:db8:10::1", 128, false, false}},
+         "2001:db8:10::1",
+         0},
+        {"scope-link",
+         "fe80::2",
+         {{"fe80::1", 64, false, false}, {"2001:db8:10::1", 64, false, false}},
+         "fe80::1",
+         0},
+        {"scope-link-global-only",
+         "fe80::2",
+         {{"2001:db8:10::1", 64, false, false}},
+         "2001:db8:10::1",
+         0},
+        {"scope-global-link-only", "2001:db8:99::2", {{"fe80::1", 64, false, false}}, "fe80::1", 0},
+        {"scope-site",
+         "fec0:1::2",
+         {{"fec0:1::1", 64, false, false}, {"2001:db8:10::1", 64, false, false}},
+         "fec0:1::1",
+         0},
+        {"scope-before-deprecated",
+         "fec0:1::2",
+         {{"fec0:1::1", 64, true, false}, {"2001:db8:10::1", 64, false, false}},
+         "fec0:1::1",
+         0},
+        {"scope-site-undersized",
+         "2001:db8:99::2",
+         {{"fe80::1", 64, false, false}, {"fec0:1::1", 64, false, false}},
+         "fec0:1::1",
+         0},
+        {"link-no-cross-interface",
+         "fe80::2",
+         {{"fe80::1", 64, false, true}, {"2001:db8:10::1", 64, false, true}},
+         "::",
+         99},
+        {"multicast-link",
+         "ff02::123",
+         {{"fe80::1", 64, false, false}, {"2001:db8:10::1", 64, false, false}},
+         "fe80::1",
+         0},
+        {"multicast-site",
+         "ff05::123",
+         {{"fe80::1", 64, false, false}, {"2001:db8:10::1", 64, false, false}},
+         "2001:db8:10::1",
+         0},
+        {"multicast-global",
+         "ff0e::123",
+         {{"fe80::1", 64, false, false}, {"2001:db8:10::1", 64, false, false}},
+         "2001:db8:10::1",
+         0},
+        {"prefix-cap",
+         "2001:db8:99::2",
+         {{"2001:db8:99::1", 16, false, false}, {"2001:db8:10::1", 64, false, false}},
+         "2001:db8:10::1",
+         0},
+        {"equal-newest",
+         "2001:db8:99::2",
+         {{"2001:db8:10::1", 64, false, false}, {"2001:db8:11::1", 64, false, false}},
+         "2001:db8:11::1",
+         0},
+        {"deprecated-before-label",
+         "fd42::2",
+         {{"fd42::1", 64, true, false}, {"2001:db8:10::1", 64, false, false}},
+         "2001:db8:10::1",
+         0},
+    };
+    for (unsigned lane = 0; lane < 2; lane++) {
+        for (const auto& test : cases) {
+            reset();
+            unsigned index = lane + 1;
+            assert(!ipv6_route_control({{}, {}, index, 1024, 0, 3}, false, true));
+            for (const auto& candidate : test.candidates) {
+                if (!candidate.address)
+                    continue;
+                Ipv6Address value{policy_address(candidate.address),
+                                  candidate.other ? 2 - lane : index, 0x282, candidate.prefix};
+                assert(
+                    !ipv6_address_add(value, {candidate.deprecated ? 0u : UINT32_MAX, UINT32_MAX}));
+            }
+            auto destination = policy_address(test.destination);
+            for (unsigned bound : {0u, index}) {
+                if (!bound && (destination.link_local() || destination.multicast()))
+                    continue;
+                Ipv6Path path;
+                int result = ipv6_path({}, destination, bound, path);
+                if (result != -test.error ||
+                    (!result && !(path.source == policy_address(test.selected)))) {
+                    std::fprintf(stderr, "SOURCE_POLICY_FAIL case=%s lane=%u bound=%u error=%d\n",
+                                 test.name, lane, bound, result);
+                    std::abort();
+                }
+                if (!result)
+                    assert(path.index == index);
+            }
+        }
+    }
+    reset();
+}
+
+static void reviewed_source_edges() {
+    reset();
+    static NetAdapter third;
+    third.info.live = third.info.carrier = third.info.writable = true;
+    third.info.maximum_mtu = 1500;
+    third.info.mac[0] = 0x52;
+    third.info.mac[5] = 0x12;
+    third.poll = [](NetAdapter&) {};
+    third.stop = [](NetAdapter&) {};
+    third.send = [](NetAdapter&, const void*, size_t) { return -11; };
+    assert(net_register(third) == 3);
+    assert(!net_configure(3, true, 1500));
+    auto first = policy_address("2001:db8:10::1"), second = policy_address("2001:db8:11::1");
+    auto remote = policy_address("2001:db8:99::2");
+    for (bool reverse : {false, true}) {
+        reset();
+        assert(!ipv6_address_add({reverse ? second : first, reverse ? 3u : 2u, 0x282, 64}));
+        assert(!ipv6_address_add({reverse ? first : second, reverse ? 2u : 3u, 0x282, 64}));
+        assert(!ipv6_route_control({{}, {}, 1, 1024, 0, 3}, false, true));
+        Ipv6Path path;
+        assert(!ipv6_path({}, remote, 1, path) && path.source == first);
+        auto newest = policy_address("2001:db8:12::1");
+        assert(!ipv6_address_add({newest, 2, 0x282, 64}));
+        assert(!ipv6_path({}, remote, 1, path) && path.source == newest);
+    }
+    reset();
+    auto compatible = policy_address("::192.0.2.1");
+    assert(!ipv6_address_add({compatible, 1, 0x282, 64}, {0, UINT32_MAX}));
+    assert(!ipv6_address_add({first, 1, 0x282, 128}));
+    assert(!ipv6_route_control({{}, {}, 1, 1024, 0, 3}, false, true));
+    Ipv6Path path;
+    assert(!ipv6_path({}, policy_address("::192.0.2.2"), 1, path) && path.source == compatible);
+    reset();
+}
+
 int main() {
     for (unsigned n = 0; n < 2; n++) {
         auto& adapter = adapters[n];
@@ -2549,6 +2841,9 @@ int main() {
     finite_address_lifetimes();
     finite_address_dad();
     source_lifetime_preferences();
+    manual_source_policy();
+    cross_interface_source_output();
+    retired_neighbor_source();
     finite_prefix_lifetimes();
     retained_address_expiry();
     queued_automatic_source_removal();
@@ -2569,6 +2864,7 @@ int main() {
     for (unsigned mode = 0; mode < 3; mode++)
         routed_error_destinations(mode);
     copied_error_queues();
+    reviewed_source_edges();
     reset();
     std::puts("IPV6_HOST_PASS adapters=2 DAD=1 duplicate=1 NS=1 NA=1 echo=1 owned_copy=1");
 }

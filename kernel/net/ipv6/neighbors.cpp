@@ -43,6 +43,32 @@ Neighbor* reserve(unsigned index, const Address& address) {
     selected->touched = ticks;
     return selected;
 }
+
+enum class ProbeSource { ready, missing, retired };
+
+ProbeSource probe_source(Neighbor& entry) {
+    if (ipv6_owned(entry.index, entry.source))
+        return ProbeSource::ready;
+    if (!ipv6_owned(0, entry.source)) {
+        Ipv6Path path;
+        if (ipv6_path({}, entry.address, entry.index, path))
+            return ProbeSource::retired;
+        if (ipv6_owned(entry.index, path.source)) {
+            entry.source = path.source;
+            return ProbeSource::ready;
+        }
+    }
+    // A data source assigned to another interface cannot source this link's
+    // solicitation. Linux falls back to a ready link-local address instead.
+    for (unsigned n = 0; auto address = ipv6_address(n); n++) {
+        if (address->index == entry.index && address->address.link_local() &&
+            ipv6_owned(entry.index, address->address)) {
+            entry.source = address->address;
+            return ProbeSource::ready;
+        }
+    }
+    return ProbeSource::missing;
+}
 } // namespace
 
 Address all_nodes() {
@@ -111,12 +137,6 @@ bool neighbor_resolve(unsigned index, const Address& source, const Address& addr
         return false;
     entry->touched = ticks;
     entry->source = source;
-    if (!ipv6_owned(index, source)) {
-        Ipv6Path path;
-        if (ipv6_path({}, address, index, path))
-            return false;
-        entry->source = path.source;
-    }
     if (entry->state == State::incomplete || entry->state == State::failed)
         return false;
     if (entry->state == State::stale) {
@@ -148,13 +168,10 @@ void neighbor_poll() {
         }
         if (entry.state != State::incomplete && entry.state != State::probe)
             continue;
-        if (!ipv6_owned(entry.source.link_local() ? entry.index : 0, entry.source)) {
-            Ipv6Path path;
-            if (ipv6_path({}, entry.address, entry.index, path)) {
-                entry = {};
-                continue;
-            }
-            entry.source = path.source;
+        auto source = probe_source(entry);
+        if (source == ProbeSource::retired) {
+            entry = {};
+            continue;
         }
         if (ticks < entry.due)
             continue;
@@ -164,8 +181,9 @@ void neighbor_poll() {
             continue;
         }
         auto state = entry.state;
-        if (!neighbor_probe(entry.index, entry.source, entry.address,
-                            state == State::probe ? entry.mac : nullptr) &&
+        if ((source == ProbeSource::missing ||
+             !neighbor_probe(entry.index, entry.source, entry.address,
+                             state == State::probe ? entry.mac : nullptr)) &&
             entry.state == state) {
             entry.attempts++;
             entry.due = ticks + 100;

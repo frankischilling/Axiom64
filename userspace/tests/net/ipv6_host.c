@@ -546,6 +546,8 @@ static void barrier(unsigned lane, unsigned phase) {
 
 void ipv6_address_lifetimes(void);
 
+void ipv6_source_policy(void);
+
 int main(void) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     int fd = control_socket();
@@ -645,5 +647,6 @@ int main(void) {
     close(fd);
     close(links);
     ipv6_address_lifetimes();
+    ipv6_source_policy();
     puts("IPV6_HOST_PASS nics=2 phases_each=5 DAD=1 duplicate=1 permissions=1");
 }

@@ -4,10 +4,10 @@
     "kernel": "7.0.0-1017-azure",
     "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
     "source_sha256": "925f2269f10d67ab1a5bbd05a2fc7e4e4656942d2138ce6736e65fa2e13e217d",
-    "host_source_sha256": "309b774244cddf8f590451eb6cf9bda0306d0ea435d74d4d8ad58595d9e9dc72",
-    "program_sha256": "44fbea136881956c875ab60d4c1b00e5844916db4241d77779dc0ae8e6bdaea9",
-    "initramfs_sha256": "7ef7525b0161244d4219bf822f60ab8bf219dc892c59f49ef56e11fb856e143f",
-    "original_log_sha256": "4d12421cbad71e71fd37d01092912ee06f2e56d125e50611565ab2178474e4fe",
+    "host_source_sha256": "7ff03d35abc913004f64cdfd86270063869faa9f4a459be2202c9e7ff7f11b53",
+    "program_sha256": "611123769346e1acc261afa5232c1f5c4483bce3e448631ca6ce5f739fcd3ffd",
+    "initramfs_sha256": "e8f6b13b4adee86b86d4a01ad00ae0b82cab130d43b8af31797e531a97c129b0",
+    "original_log_sha256": "7608a6b2c3e83198976d07814b5c5c772e4577c1aa27c3112d4c6bf85ceffe89",
     "actual_program_completed": true,
     "actual_cpio_reopened": true,
     "complete_host_client": true,
@@ -19,8 +19,8 @@
     "preferred_transition_upper_bound_seconds": 8,
     "valid_transition_upper_bound_seconds": 15,
     "original_capture_sha256": [
-      "b5ea438ed38d7f3d0fa85becab4563a76a6cc5528f65dff9d08872036246ef61",
-      "b8309238d671d93fab09307de34a640d0d2e7af14b3f21f74f198917a42c4804"
+      "bd03f42f3b81703fcb901e3fa35564cf8a08745642781686c60c3ba6db57bb87",
+      "bbd7c4fd15fa507c292837e9619e433b861fbe2c9e8d05cd8a774bf43fbd64a8"
     ],
     "wire_observations": 18,
     "queued_source_cases": 16,

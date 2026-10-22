@@ -55,6 +55,8 @@ def child(profile, directory, suite='host', parent_namespace=None):
     products = {name: digest(Path(name)) for name in command}
     if suite == 'host':
         for name in ('Makefile', 'userspace/tests/net/ipv6_address_lifetimes.c',
+                     'userspace/tests/net/ipv6_source_policy.c', 'scripts/ipv6_source_policy_contract.py',
+                     'scripts/tests/fixtures/ipv6-source-policy-linux7.json',
                      'scripts/ipv6_queued_sources_peer.py', 'scripts/ipv6_queued_sources_capture.py',
                      'scripts/ipv6_lifetime_contract.py',
                      'scripts/ipv6_lifetime_peer.py', 'scripts/ipv6_lifetime_capture.py', 'scripts/ipv6_extension_execution.py',

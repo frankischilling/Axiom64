@@ -3,6 +3,7 @@
 import hashlib
 import ipaddress
 import struct
+from ipv6_source_policy_contract import LINK_SOURCES
 
 
 def require(value, reason):
@@ -160,7 +161,8 @@ class Peer:
             destination = ipaddress.IPv6Address('ff02::16').packed
             require(frame[:6] == b'\x33\x33\0\0\0\x16' and frame[21] == 1 and
                     len(frame) >= size + 54 and frame[14:18] == b'\x60\0\0\0' and
-                    frame[22:38] in (bytes(16), self.link) and
+                    (frame[22:38] in (bytes(16), self.link) or
+                     (self.queued_sources.passed and frame[22:38] in LINK_SOURCES)) and
                     frame[38:54] == destination and frame[54:62] == b'\x3a\0\5\2\0\0\1\0' and
                     payload[:2] == b'\x8f\0' and not checksum(frame[22:54] +
                     struct.pack('!I3xB', len(payload), 58) + payload), 'native MLD report envelope')

@@ -50,19 +50,70 @@ unsigned matching_prefix(const Ipv6Address& entry, const ip6::Address& destinati
     return matched;
 }
 
+unsigned address_scope(const ip6::Address& address) {
+    if (address.multicast())
+        return address.bytes[1] & 15;
+    if (address.loopback())
+        return 1;
+    if (address.link_local())
+        return 2;
+    if (address.bytes[0] == 0xfe && (address.bytes[1] & 0xc0) == 0xc0)
+        return 5;
+    return 14;
+}
+
+unsigned address_label(const ip6::Address& address) {
+    const auto* bytes = address.bytes;
+    if (address.loopback())
+        return 0;
+    bool compatible = true;
+    for (unsigned n = 0; n < 12; n++)
+        compatible &= !bytes[n];
+    if (compatible)
+        return 3;
+    if ((bytes[0] & 0xfe) == 0xfc)
+        return 5;
+    if (bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0xc0)
+        return 11;
+    if (bytes[0] == 0x20 && bytes[1] == 2)
+        return 2;
+    if (bytes[0] == 0x3f && bytes[1] == 0xfe)
+        return 12;
+    if (bytes[0] == 0x20 && bytes[1] == 1 && !bytes[2]) {
+        if (!bytes[3])
+            return 6;
+        if ((bytes[3] & 0xf0) == 0x10)
+            return 7;
+    }
+    return 1;
+}
+
+unsigned source_rank(const Ipv6Address& entry, unsigned index, const ip6::Address& destination) {
+    unsigned scope = address_scope(entry.address);
+    unsigned source_label = address_label(entry.address),
+             destination_label = address_label(destination);
+    // Adequate scope wins; then choose the smallest adequate or largest
+    // inadequate scope. Later fields cannot override an earlier rule.
+    unsigned rank = scope >= address_scope(destination) ? 32 - scope : scope;
+    // Linux keeps IPv4-compatible candidates preferred even when deprecated.
+    rank = rank * 2 + (!(entry.flags & 0x20) || source_label == 3);
+    rank = rank * 2 + (entry.index == index);
+    rank = rank * 2 + (source_label == destination_label);
+    rank = rank * 2 + ((source_label == 7) == (destination_label == 7));
+    return rank * 129 + matching_prefix(entry, destination);
+}
+
 const Ipv6Address* source_for(unsigned index, const ip6::Address& destination) {
     const Ipv6Address* best = nullptr;
-    unsigned best_match = 0;
+    unsigned best_rank = 0;
     for (unsigned n = 0; auto entry = ipv6_address(n); n++) {
-        if (entry->index != index || !ready(*entry) ||
-            (destination.link_local() && !entry->address.link_local()) ||
-            (!destination.link_local() && !destination.multicast() && entry->address.link_local()))
+        if (!ready(*entry) || entry->address.loopback() ||
+            ((destination.link_local() || destination.multicast()) && entry->index != index))
             continue;
-        unsigned match = matching_prefix(*entry, destination);
-        if (!best || ((best->flags & 0x20) && !(entry->flags & 0x20)) ||
-            (((best->flags ^ entry->flags) & 0x20) == 0 && match >= best_match)) {
+        unsigned rank = source_rank(*entry, index, destination);
+        if (!best || rank > best_rank || (rank == best_rank && entry->index <= best->index)) {
             best = entry;
-            best_match = match;
+            best_rank = rank;
         }
     }
     return best;

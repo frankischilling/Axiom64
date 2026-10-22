@@ -677,7 +677,13 @@ build/ipv6-%-dynamic: userspace/tests/net/ipv6_%.c scripts/compile_uapi_client.p
 	@mkdir -p build
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(IPV6_FIXTURE_FLAGS) $(filter %.c,$^)
 build/ipv6-sockets-native build/ipv6-sockets-static build/ipv6-sockets-dynamic build/ipv6-output-native build/ipv6-output-static build/ipv6-output-dynamic: userspace/tests/net/ipv6_fixture.h
-build/ipv6-host-native build/ipv6-host-static build/ipv6-host-dynamic: userspace/tests/net/ipv6_address_lifetimes.c
+build/ipv6-host-native build/ipv6-host-static build/ipv6-host-dynamic: userspace/tests/net/ipv6_address_lifetimes.c userspace/tests/net/ipv6_source_policy.c
+build/ipv6-source-policy-native: userspace/tests/net/ipv6_source_policy.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DIPV6_SOURCE_POLICY_STANDALONE $< -o $@
+build/ipv6-source-policy-static build/ipv6-source-policy-dynamic: userspace/tests/net/ipv6_source_policy.c scripts/compile_uapi_client.py scripts/build_openssl.py ports.lock.json
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -DIPV6_SOURCE_POLICY_STANDALONE $(if $(filter %-static,$@),-static) $(filter %.c,$^)
 build/ipv6-output-native build/ipv6-output-static build/ipv6-output-dynamic: IPV6_FIXTURE_FLAGS = -DIPV6_SEND_CONTROLS_INTEGRATED
 build/ipv6-output-native build/ipv6-output-static build/ipv6-output-dynamic: userspace/tests/net/ipv6_send_controls.c userspace/tests/net/ipv6_send_controls_wire.c userspace/tests/net/ipv6_extension_wire.c userspace/tests/net/ipv6_routing_wire.c userspace/tests/net/ipv6_extension_controls.c userspace/tests/net/ipv6_sticky_controls.c userspace/tests/net/ipv6_sticky_wire.c
 build/ipv6-pmtu-native build/ipv6-pmtu-static build/ipv6-pmtu-dynamic: userspace/tests/net/ipv6_fixture.h
@@ -793,8 +799,12 @@ test-ipv6-queued-source-clock:
 test-ipv6-queued-source-log:
 	$(PYTHON) scripts/tests/ipv6_queued_sources_log_test.py
 
-test-ipv6-host-maintenance:
+test-ipv6-host-maintenance: test-ipv6-source-policy-contract
 	$(PYTHON) scripts/tests/ipv6_host_maintenance_test.py -v
+
+.PHONY: test-ipv6-source-policy-contract
+test-ipv6-source-policy-contract:
+	$(PYTHON) scripts/tests/ipv6_source_policy_contract_test.py
 test-ipv6-wire: test-ipv6-copy-model test-ipv6-send-model test-ipv6-fragment-observation test-ipv6-host-maintenance test-ipv6-queued-source-log test-ipv6-queued-source-clock build/ipv6-wire-host build/ipv6-host build/ipv6-reassembly-host build/ipv6-fragmentation-host build/ipv6-path-mtu-host
 	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-path-mtu-host
 	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-fragmentation-host

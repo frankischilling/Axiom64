@@ -527,6 +527,291 @@ static void prefix_lifetimes() {
     assert(change(1, address(31, 2)) == -105 && !ipv6_owned(1, address(31, 2), true));
 }
 
+static int configure_lifetime(unsigned index, const ip6::Address& value, uint32_t preferred,
+                              uint32_t valid, uint16_t flags = 0x605, uint8_t prefix = 64,
+                              uint32_t address_flags = 2, bool privileged = true) {
+    uint8_t input[72]{};
+    NetlinkHeader header{sizeof(input), 20, flags, 17, 0};
+    memcpy(input, &header, 16);
+    input[16] = 10;
+    input[17] = prefix;
+    input[18] = address_flags;
+    memcpy(input + 20, &index, 4);
+    input[24] = 20;
+    input[26] = 1;
+    memcpy(input + 28, value.bytes, 16);
+    input[44] = 8;
+    input[46] = 8;
+    memcpy(input + 48, &address_flags, 4);
+    input[52] = 20;
+    input[54] = 6;
+    uint32_t lifetime[4] = {preferred, valid, 0x12345678, 0x87654321};
+    memcpy(input + 56, lifetime, sizeof(lifetime));
+    std::vector<uint8_t> output(routing_capacity(header) + 16, 0xa7);
+    size_t size = routing_reply(input, 100, false, output.data(), privileged);
+    assert(size >= 36 && size <= routing_capacity(header));
+    assert(std::all_of(output.begin() + routing_capacity(header), output.end(),
+                       [](auto byte) { return byte == 0xa7; }));
+    int error;
+    memcpy(&error, output.data() + 16, 4);
+    return error;
+}
+
+struct AddressObservation {
+    bool present = false;
+    uint8_t prefix = 0;
+    uint32_t flags = 0;
+    std::array<uint32_t, 4> cache{};
+};
+
+static AddressObservation address_observation(unsigned index, const ip6::Address& value) {
+    uint8_t input[24]{};
+    NetlinkHeader header{sizeof(input), 22, 0x301, 18, 0};
+    memcpy(input, &header, 16);
+    input[16] = 10;
+    std::vector<uint8_t> output(routing_capacity(header) + 16, 0xa7);
+    size_t size = routing_reply(input, 100, false, output.data(), true);
+    assert(size <= routing_capacity(header));
+    assert(std::all_of(output.begin() + routing_capacity(header), output.end(),
+                       [](auto byte) { return byte == 0xa7; }));
+    for (size_t at = 0; at < size;) {
+        NetlinkHeader row;
+        memcpy(&row, output.data() + at, sizeof(row));
+        assert(row.length >= 20 && row.length <= size - at);
+        if (row.type == 20) {
+            uint32_t actual_index;
+            memcpy(&actual_index, output.data() + at + 20, 4);
+            AddressObservation result;
+            result.prefix = output[at + 17];
+            for (size_t field = at + 24; field < at + row.length;) {
+                uint16_t length, type;
+                memcpy(&length, output.data() + field, 2);
+                memcpy(&type, output.data() + field + 2, 2);
+                assert(length >= 4 && length <= at + row.length - field);
+                if (type == 1 && length == 20)
+                    result.present = actual_index == index &&
+                                     !memcmp(output.data() + field + 4, value.bytes, 16);
+                if (type == 8 && length == 8)
+                    memcpy(&result.flags, output.data() + field + 4, 4);
+                if (type == 6 && length == 20)
+                    memcpy(result.cache.data(), output.data() + field + 4, 16);
+                field += (length + 3) & ~size_t(3);
+            }
+            if (result.present)
+                return result;
+        }
+        at += (row.length + 3) & ~size_t(3);
+    }
+    return {};
+}
+
+static void finite_address_lifetimes() {
+    for (unsigned lane = 0; lane < 2; lane++) {
+        reset();
+        auto permanent = address(lane, 2), finite = address(lane, 3), remote = address(lane, 9);
+        assert(!change(lane + 1, permanent));
+        ticks = 1000;
+        assert(!configure_lifetime(lane + 1, finite, 2, 8, 0x605, 96));
+        auto initial = address_observation(lane + 1, finite);
+        assert(initial.present && initial.prefix == 96 && initial.flags == 2);
+        assert((initial.cache == std::array<uint32_t, 4>{2, 8, 1000, 1000}));
+        Ipv6Path path;
+        assert(!ipv6_path({}, remote, lane + 1, path) && path.source == finite);
+        auto key = ip6::path_key(path, remote);
+        assert(ip6::path_mtu_cache.learn(key, 1500, 1400, ticks) == 1400);
+        auto held = ip6::path_mtu_cache.retain(key, ticks);
+        assert(held);
+        ticks = 1199;
+        ipv6_poll();
+        auto before = address_observation(lane + 1, finite);
+        assert(before.flags == 2 && before.cache[0] == 1 && before.cache[1] == 7);
+        ticks = 1200;
+        ipv6_poll();
+        auto deprecated = address_observation(lane + 1, finite);
+        assert(deprecated.present && deprecated.flags == 0x22 && deprecated.cache[0] == 0 &&
+               deprecated.cache[1] == 6 && ipv6_owned(lane + 1, finite));
+        assert(!ipv6_path({}, remote, lane + 1, path) && path.source == permanent);
+        assert(!ipv6_path(finite, remote, lane + 1, path) && path.source == finite);
+        ticks = 1799;
+        ipv6_poll();
+        assert(ipv6_owned(lane + 1, finite) && address_observation(lane + 1, finite).cache[1] == 1);
+        ticks = 1800;
+        ipv6_poll();
+        assert(!ipv6_owned(lane + 1, finite, true) &&
+               !address_observation(lane + 1, finite).present);
+        auto network = address(lane, 0);
+        assert(!prefix_present(lane + 1, network, 96) && prefix_present(lane + 1, network, 64));
+        assert(!ipv6_path({}, remote, lane + 1, path) && path.source == permanent);
+        assert(!ip6::path_mtu_cache.active(held, key, ticks));
+        assert(ip6::path_mtu_cache.lookup(key, 1500, ticks) == 1500);
+        assert(ip6::path_mtu_cache.metric(held) == 1400);
+        ip6::path_mtu_cache.release(held);
+
+        reset();
+        ticks = 1000;
+        assert(!configure_lifetime(lane + 1, finite, 2, 8));
+        ticks = 1500;
+        assert(configure_lifetime(lane + 1, finite, 6, 5, 0x105, 64, 2, false) == -1);
+        auto protected_address = address_observation(lane + 1, finite);
+        assert(protected_address.flags == 2 && protected_address.cache[3] == 1000);
+        assert(configure_lifetime(lane + 1, finite, 0, 5) == -17);
+        assert(configure_lifetime(lane + 1, finite, 6, 5, 0x105) == -22);
+        assert(!configure_lifetime(lane + 1, finite, 0, 5, 0x105, 96));
+        auto replaced = address_observation(lane + 1, finite);
+        assert(replaced.present && replaced.prefix == 64 && replaced.flags == 0x22);
+        assert((replaced.cache == std::array<uint32_t, 4>{0, 5, 1000, 1500}));
+        ticks = 1999;
+        ipv6_poll();
+        assert(ipv6_owned(lane + 1, finite));
+        ticks = 2000;
+        ipv6_poll();
+        assert(!ipv6_owned(lane + 1, finite, true));
+        assert(configure_lifetime(lane + 1, finite, 0, 0) == -22);
+        assert(!configure_lifetime(lane + 1, finite, 0, UINT32_MAX, 5));
+        auto forever = address_observation(lane + 1, finite);
+        assert(forever.flags == 0xa2 && forever.cache[1] == UINT32_MAX);
+        reset();
+    }
+}
+
+static void finite_address_dad() {
+    for (unsigned lane = 0; lane < 2; lane++) {
+        reset();
+        ticks = 1000;
+        auto local = address(lane, 2), remote = address(lane, 9);
+        assert(!configure_lifetime(lane + 1, local, 2, 4, 0x605, 64, 0));
+        ipv6_poll();
+        assert(address_observation(lane + 1, local).flags == 0x40);
+        Ipv6Path path;
+        assert(ipv6_path({}, remote, lane + 1, path) == -99);
+        ticks = 1050;
+        assert(!configure_lifetime(lane + 1, local, 2, 8, 0x105, 96, 0));
+        auto refreshed = address_observation(lane + 1, local);
+        assert(refreshed.prefix == 64 && refreshed.cache[2] == 1000 && refreshed.cache[3] == 1050);
+        ticks = 1099;
+        ipv6_poll();
+        assert(!ipv6_owned(lane + 1, local));
+        ticks = 1100;
+        ipv6_poll();
+        assert(ipv6_owned(lane + 1, local) && address_observation(lane + 1, local).flags == 0);
+        ticks = 1250;
+        ipv6_poll();
+        assert(address_observation(lane + 1, local).flags == 0x20);
+        ticks = 1850;
+        ipv6_poll();
+        assert(!ipv6_owned(lane + 1, local, true));
+
+        reset();
+        ticks = 1000;
+        assert(!configure_lifetime(lane + 1, local, 1, 1, 0x605, 64, 0));
+        ipv6_poll();
+        ticks = 1100;
+        ipv6_poll();
+        assert(!ipv6_owned(lane + 1, local, true) && ipv6_path({}, remote, lane + 1, path) == -101);
+
+        reset();
+        ticks = 1000;
+        assert(!configure_lifetime(lane + 1, local, 2, 8, 0x605, 64, 0));
+        ipv6_poll();
+        deliver(lane, advertisement(lane, local, ip6::all_nodes()));
+        assert((address_observation(lane + 1, local).flags & 0x48) == 0x48);
+        assert(!configure_lifetime(lane + 1, local, 2, 8, 0x105));
+        assert((address_observation(lane + 1, local).flags & 0x48) == 0x48);
+        assert(!ipv6_owned(lane + 1, local, true));
+        reset();
+    }
+}
+
+static Ipv6Route prefix_observation(unsigned index, const ip6::Address& address) {
+    Ipv6Route entries[ipv6_route_capacity + ipv6_address_capacity + 1];
+    size_t count = ipv6_routes(entries, sizeof(entries) / sizeof(*entries));
+    for (size_t n = 0; n < count; n++)
+        if (entries[n].index == index && entries[n].prefix == 64 &&
+            address.matches(entries[n].destination, 64))
+            return entries[n];
+    return {};
+}
+
+static void source_lifetime_preferences() {
+    for (unsigned lane = 0; lane < 2; lane++) {
+        reset();
+        auto first = address(lane, 2), second = address(lane, 3), remote = address(lane, 9);
+        assert(!configure_lifetime(lane + 1, first, 8, 8));
+        assert(!configure_lifetime(lane + 1, second, 8, 8));
+        Ipv6Path path;
+        assert(!ipv6_path({}, remote, lane + 1, path) && path.source == second);
+        assert(!configure_lifetime(lane + 1, second, 0, 8, 0x105));
+        assert(!ipv6_path({}, remote, lane + 1, path) && path.source == first);
+        assert(!configure_lifetime(lane + 1, first, 0, 8, 0x105));
+        assert(!ipv6_path({}, remote, lane + 1, path) && path.source == second);
+        assert(!ipv6_address_remove(lane + 1, first));
+        assert(!configure_lifetime(lane + 1, first, 0, 8));
+        assert(!ipv6_path({}, remote, lane + 1, path) && path.source == first);
+        reset();
+    }
+}
+
+static void finite_prefix_lifetimes() {
+    for (unsigned lane = 0; lane < 2; lane++) {
+        reset();
+        ticks = 1000;
+        auto first = address(lane, 2), second = address(lane, 3), remote = address(lane, 9);
+        assert(!configure_lifetime(lane + 1, first, 8, 8));
+        auto initial = prefix_observation(lane + 1, first);
+        assert(initial.owner);
+        ticks = 1100;
+        assert(!configure_lifetime(lane + 1, second, 4, 4));
+        Ipv6Path path;
+        assert(!ipv6_path(first, remote, lane + 1, path));
+        auto key = ip6::path_key(path, remote);
+        assert(ip6::path_mtu_cache.learn(key, 1500, 1400, ticks) == 1400);
+        auto held = ip6::path_mtu_cache.retain(key, ticks);
+        assert(held && prefix_observation(lane + 1, first).owner == initial.owner);
+        assert(!ipv6_address_remove(lane + 1, second));
+        ticks = 1499;
+        ipv6_poll();
+        assert(!ipv6_path(first, remote, lane + 1, path) && path.route_owner == initial.owner);
+        ticks = 1500;
+        ipv6_poll();
+        assert(ipv6_owned(lane + 1, first));
+        assert(ipv6_path(first, remote, lane + 1, path) == -101);
+        assert(!ip6::path_mtu_cache.active(held, key, ticks));
+        assert(ip6::path_mtu_cache.metric(held) == 1400);
+        ip6::path_mtu_cache.release(held);
+
+        reset();
+        ticks = 1000;
+        assert(!change(lane + 1, first));
+        assert(!configure_lifetime(lane + 1, second, 8, 8));
+        initial = prefix_observation(lane + 1, first);
+        ticks = 1100;
+        assert(!ipv6_address_remove(lane + 1, first));
+        assert(prefix_observation(lane + 1, second).owner == initial.owner);
+        ticks = 1799;
+        ipv6_poll();
+        assert(!ipv6_path(second, remote, lane + 1, path));
+        ticks = 1800;
+        ipv6_poll();
+        assert(!prefix_observation(lane + 1, second).owner);
+
+        reset();
+        ticks = 1000;
+        assert(!configure_lifetime(lane + 1, first, 4, 4));
+        assert(!configure_lifetime(lane + 1, second, UINT32_MAX, UINT32_MAX, 0x605, 64, 0x202));
+        initial = prefix_observation(lane + 1, first);
+        assert(!ipv6_address_remove(lane + 1, first));
+        ticks = 1400;
+        ipv6_poll();
+        assert(ipv6_owned(lane + 1, second) &&
+               prefix_observation(lane + 1, second).owner == initial.owner);
+        assert(ipv6_path(second, remote, lane + 1, path) == -101);
+        ticks = 7400;
+        ipv6_poll();
+        assert(!prefix_observation(lane + 1, second).owner);
+        reset();
+    }
+}
+
 static std::vector<uint8_t> fragment_frame(const std::vector<uint8_t>& whole, size_t offset,
                                            size_t length, bool more, uint32_t id = 7,
                                            size_t prefix = 0) {
@@ -1991,6 +2276,10 @@ int main() {
     inventories_and_bounds();
     direct_neighbor_replies();
     prefix_lifetimes();
+    finite_address_lifetimes();
+    finite_address_dad();
+    source_lifetime_preferences();
+    finite_prefix_lifetimes();
     prefix_route_order();
     socket_ownership();
     fragmented_delivery();

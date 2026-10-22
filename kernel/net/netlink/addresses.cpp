@@ -17,7 +17,7 @@ static_assert(sizeof(AddressHeader) == 8 && sizeof(Attribute) == 4);
 } // namespace
 
 int netlink_address_change(const void* data, const NetlinkHeader& message) {
-    unsigned allowed = 1 | 4 | (message.type == 20 ? 0x600 : 0);
+    unsigned allowed = 1 | 4 | (message.type == 20 ? 0x700 : 0);
     if ((message.type != 20 && message.type != 21) || !(message.flags & 1) ||
         (message.flags & ~allowed))
         return -95;
@@ -28,6 +28,8 @@ int netlink_address_change(const void* data, const NetlinkHeader& message) {
     memcpy(&address, input + sizeof(message), sizeof(address));
     if (address.family == 10)
         return netlink_ipv6_address_change(data, message);
+    if (message.flags & 0x100)
+        return -95;
     if (address.family != 2)
         return -97;
     if (address.prefix > 32)

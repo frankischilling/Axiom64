@@ -24,6 +24,7 @@ class Peer:
         self.lane = lane
         self.native = native
         self.mld_reports = 0
+        self.maintenance_probes = 0
         self.guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
         self.mac = bytes([2, 0x49, 0x50, 0x36, lane, 1])
         self.control = bytes([2, ord('I'), ord('P'), ord('6'), lane, 0])
@@ -164,6 +165,17 @@ class Peer:
                 struct.pack('!I3xB', length, 58) + payload), 'actual ICMPv6 pseudo-header checksum')
         require(payload[1] == 0, 'zero ICMPv6 code')
         self.records.append(dict(type=payload[0], source=source.hex(), destination=destination.hex()))
+        if (self.native and self.complete == [1, 2, 3, 4, 5] and self.wait is None and
+                payload[0] == 135 and destination == payload[8:24]):
+            require(hop == 255 and length == 32 and frame[:6] == self.mac and
+                    source in (self.local, self.link) and
+                    destination in (self.remote, self.unknown, self.unresolved) and
+                    payload[4:8] == bytes(4) and payload[24:] == b'\1\1' + self.guest,
+                    'owned native unicast neighbor maintenance probe')
+            self.maintenance_probes += 1
+            require(self.maintenance_probes <= 9, 'bounded native neighbor maintenance')
+            self.outgoing.append(self.na(destination, source))
+            return
         if payload[0] == 135:
             target = payload[8:24]
             require(hop == 255 and destination == self.multicast(target) and
@@ -216,4 +228,4 @@ class Peer:
         return dict(passed=self.passed, lane=self.lane, phases=self.complete,
                     dad=self.dad, duplicate=self.duplicate_seen, packets=self.records,
                     firmware_frames=len(self.firmware_frames), firmware_sha256=self.firmware_frames,
-                    native_MLD_reports=self.mld_reports)
+                    native_MLD_reports=self.mld_reports, native_maintenance_probes=self.maintenance_probes)

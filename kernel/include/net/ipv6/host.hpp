@@ -32,9 +32,13 @@ void address_duplicate(unsigned index, const Address&);
 
 void address_reset();
 
-int prefix_add(const Ipv6Address&);
+uint64_t address_deadline(const Ipv6Address&);
+
+int prefix_add(const Ipv6Address&, uint32_t valid = UINT32_MAX, bool replace_permanent = false);
 
 void prefix_remove(const Ipv6Address&);
+
+void route_poll();
 
 void route_reset();
 

@@ -51,6 +51,11 @@ def child(profile, directory, suite='host', parent_namespace=None):
                  'userspace/tests/net/ipv6_fixture.h'):
         sources[name] = digest(ROOT / name)
     products = {name: digest(Path(name)) for name in command}
+    if suite == 'host':
+        for name in ('Makefile', 'userspace/tests/net/ipv6_address_lifetimes.c',
+                     'scripts/ipv6_lifetime_contract.py', 'scripts/ipv6_extension_execution.py',
+                     'scripts/tests/fixtures/ipv6-address-lifetimes-linux7.json'):
+            sources[name] = digest(ROOT / name)
     if suite == 'controls':
         for name in ('Makefile', 'userspace/tests/net/ipv6_control.c',
                      'userspace/tests/net/ipv6_control_faults.c',

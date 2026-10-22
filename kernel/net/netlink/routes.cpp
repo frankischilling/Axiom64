@@ -174,7 +174,7 @@ size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply
                                request.type == 25))
         error = -1;
     else if ((request.type == 20 || request.type == 21) &&
-             !(request.flags & ~(1u | 4u | (request.type == 20 ? 0x600u : 0u))))
+             !(request.flags & ~(1u | 4u | (request.type == 20 ? 0x700u : 0u))))
         error = netlink_address_change(packet, request);
     else if ((request.type == 24 || request.type == 25 || is_dump) && !(request.flags & ~allowed)) {
         if (request.length > sizeof(request) && input[sizeof(request)] == 10) {

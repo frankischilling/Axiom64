@@ -15,11 +15,23 @@ struct Ipv6Address {
     uint8_t prefix = 128;
 };
 
+struct Ipv6AddressLifetimes {
+    uint32_t preferred = UINT32_MAX, valid = UINT32_MAX;
+};
+
+struct Ipv6AddressCacheInfo {
+    uint32_t preferred = UINT32_MAX, valid = UINT32_MAX;
+    uint32_t created = 0, updated = 0;
+};
+
+static_assert(sizeof(Ipv6AddressLifetimes) == 8 && sizeof(Ipv6AddressCacheInfo) == 16);
+
 struct Ipv6Route {
     ip6::Address destination, gateway;
     unsigned index = 0, metric = 1024;
     uint8_t prefix = 0, protocol = 3;
     uint64_t owner = 0;
+    uint64_t expires = 0;
 };
 
 struct Ipv6Path {
@@ -33,7 +45,9 @@ struct Ipv6Path {
 // Serialized borrowers retain an entry only until the next address mutation.
 const Ipv6Address* ipv6_address(unsigned position);
 
-int ipv6_address_add(const Ipv6Address&);
+int ipv6_address_add(const Ipv6Address&, Ipv6AddressLifetimes = {}, bool replace = false);
+
+Ipv6AddressCacheInfo ipv6_address_cache(const Ipv6Address&);
 
 int ipv6_address_remove(unsigned index, const ip6::Address&);
 

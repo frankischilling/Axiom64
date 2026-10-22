@@ -113,7 +113,7 @@ bool address6(Writer& output, const NetlinkHeader& request, uint32_t port,
     size_t start = output.size;
     NetlinkHeader message{0, 20, 2, request.sequence, port};
     uint32_t flags = entry.flags;
-    uint32_t lifetime[4] = {UINT32_MAX, UINT32_MAX, 0, 0};
+    auto lifetime = ipv6_address_cache(entry);
     AddressHeader header{10, entry.prefix, uint8_t(flags),
                          uint8_t(entry.index == ipv6_loopback ? 254
                                  : entry.address.link_local() ? 253
@@ -121,7 +121,7 @@ bool address6(Writer& output, const NetlinkHeader& request, uint32_t port,
                          entry.index};
     if (!output.append(&message, sizeof(message)) || !output.append(&header, sizeof(header)) ||
         !output.attribute(1, entry.address.bytes, 16) || !output.attribute(8, &flags, 4) ||
-        !output.attribute(6, lifetime, sizeof(lifetime)))
+        !output.attribute(6, &lifetime, sizeof(lifetime)))
         return false;
     output.finish(start, message);
     return true;

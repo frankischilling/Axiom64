@@ -976,7 +976,9 @@ jobs:
         run: make test-ipv6-host
       - name: Compare IPv6 host behavior with three native Linux linkages
         if: matrix.suite == 'network'
-        run: sudo -n make test-ipv6-host-native
+        run: |
+          sudo -n make test-ipv6-host-native
+          make test-ipv6-lifetimes-contract
       - name: Test IPv6 raw and UDP socket traffic on both adapters
         if: matrix.suite == 'network'
         run: make test-ipv6-sockets
@@ -1031,6 +1033,7 @@ jobs:
           path: |
             build/ipv6-host-wire
             build/ipv6-host-native-wire
+            build/ipv6-lifetime-contract
             build/ipv6-host-static.inputs.json
             build/ipv6-host-dynamic.inputs.json
             build/axiom64-ipv6-host-*.iso

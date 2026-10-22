@@ -9,6 +9,7 @@ import re
 import struct
 import zipfile
 from ipv4_expiry_capture import checksum, encode_capture, read_capture
+from ipv6_lifetime_contract import verify_log
 
 
 def require(value, reason):
@@ -17,6 +18,7 @@ def require(value, reason):
 
 
 def inspect(rows, lane, log, native=False):
+    lifetimes = verify_log(log)
     require(log.count('IPV6_HOST_ROUTES_PASS adapters=2 filtered=1') == 1,
             'actual client completed route control and filtered inventory')
     require(log.count(f'IPV6_HOST_DIRECT_ND_PASS lane={lane} prefix=128') == 1,
@@ -101,6 +103,32 @@ def inspect(rows, lane, log, native=False):
                 'actual client completed phase')
     elapsed = re.findall(r'^IPV6_HOST_DAD_PASS elapsed_ns=(\d+)\r?$', log, re.M)
     require(len(elapsed) == 1 and int(elapsed[0]) >= 1000000000, 'actual client observed full DAD interval')
+    maintenance, maintenance_responses, original_emitted = [], set(), []
+    for index, frame, source, destination, payload in emitted:
+        if native and index > acknowledgements[5] and payload[0] == 135:
+            require(frame[21] == 255 and len(payload) == 32 and frame[:6] == peer and
+                    source in (local, link) and destination == payload[8:24] and
+                    destination in (remote, unknown, unresolved) and payload[4:8] == bytes(4) and
+                    payload[24:] == b'\1\1' + guest, 'complete owned native unicast maintenance NS')
+            candidates = []
+            for response, answer, sender, receiver, body in incoming:
+                if (response > index and response not in maintenance_responses and sender == destination and
+                        receiver == source and body[:1] == b'\x88'):
+                    require(answer[:6] == guest and answer[14:18] == b'\x60\0\0\0' and
+                            answer[20:22] == b'\x3a\xff' and len(body) == 32 and body[1] == 0 and
+                            body[4:8] == b'\x60\0\0\0' and body[8:24] == destination and
+                            body[24:] == b'\2\1' + peer and not checksum(sender + receiver +
+                            struct.pack('!I3xB', len(body), 58) + body), 'exact native maintenance response')
+                    candidates.append(response)
+            require(candidates, 'native maintenance request has its captured peer response')
+            response = min(candidates)
+            maintenance_responses.add(response)
+            maintenance.append(dict(request=index, response=response, source=source.hex(), target=destination.hex()))
+        else:
+            original_emitted.append((index, frame, source, destination, payload))
+    require(len(maintenance) <= 9, 'bounded native maintenance exchanges')
+    emitted = original_emitted
+    incoming = [row for row in incoming if row[0] not in maintenance_responses]
     require(len(emitted) == 11, 'exact eleven original kernel packets')
     dad, resolution, advertisements, echoes = [], [], [], []
     advertisement_positions, echo_positions, resolution_positions = {}, {}, {}
@@ -224,10 +252,12 @@ def inspect(rows, lane, log, native=False):
             'original requests, resolution, responses and completion have causal order')
     require(len(incoming) == 15 and used_inputs == {row[0] for row in incoming},
             'every valid and malformed peer input remains independently accounted')
-    return dict(passed=True, lane=lane, kernel_packets=11, phases=5, malformed_controls=5,
+    return dict(passed=True, lane=lane, kernel_packets=11, phases=5, malformed_controls=5, lifetimes=lifetimes,
                 peer_inputs=15, firmware_frames=len(firmware), firmware_sha256=firmware,
-                actual_DAD_elapsed_ns=int(elapsed[0]), native_MLD_reports=mld_reports), dict(
+                actual_DAD_elapsed_ns=int(elapsed[0]), native_MLD_reports=mld_reports,
+                native_maintenance=maintenance), dict(
                 emitted=emitted, requests=requests, acknowledgements=acknowledgements,
+                maintenance=maintenance,
                 resolution=resolution, conflicts=[conflict], valid_inputs=dict(
                     NS=ns1, echo=echo1, NA=na2, bare_NS=bare_ns, bare_NA=na5))
 
@@ -247,11 +277,20 @@ def verify_capture(path, lane, log_path, archive, native=False):
                  'missing-prefix-order-result']
         if not native:
             cases.append('firmware-flood')
+        if proof['maintenance']:
+            cases += ['missing-maintenance-NS', 'missing-maintenance-NA', 'maintenance-checksum']
         for name in cases:
             changed, text = copy.deepcopy(rows), log
             at = proof['emitted'][-1][0]
             if name == 'missing-kernel':
                 del changed[at]
+            elif name.startswith('missing-maintenance-'):
+                del changed[proof['maintenance'][0]['request' if name.endswith('NS') else 'response']]
+            elif name == 'maintenance-checksum':
+                at = proof['maintenance'][0]['request']
+                frame = bytearray(changed[at]['frame'])
+                frame[56] ^= 1
+                changed[at]['frame'] = bytes(frame)
             elif name == 'firmware-flood':
                 frame = copy.deepcopy(rows[0])
                 frame['frame'] = rows[proof['emitted'][0][0]]['frame']

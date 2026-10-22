@@ -270,6 +270,7 @@ void ipv6_poll() {
         return;
     polling = true;
     ip6::address_poll();
+    ip6::route_poll();
     ip6::reassembly_expire(ticks, fragment_expired);
     ip6::output_poll();
     ip6::neighbor_poll();

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/netlink.hpp"
+#include "core/time.hpp"
 
 namespace ax {
 namespace {
@@ -19,7 +20,7 @@ struct RouteHeader {
 };
 
 static_assert(sizeof(AddressHeader) == 8 && sizeof(RouteHeader) == 12);
-static_assert((ipv6_route_capacity + ipv6_address_capacity) * 84 + 20 <= netlink_family_reply);
+static_assert((ipv6_route_capacity + ipv6_address_capacity) * 120 + 20 <= netlink_family_reply);
 
 class Writer {
   public:
@@ -64,6 +65,7 @@ int netlink_ipv6_address_change(const void* data, const NetlinkHeader& message) 
     if (header.scope != 0 && header.scope != 253)
         return -95;
     Ipv6Address value;
+    Ipv6AddressLifetimes lifetime;
     value.index = header.index;
     value.prefix = header.prefix;
     value.flags = header.flags;
@@ -95,12 +97,11 @@ int netlink_ipv6_address_change(const void* data, const NetlinkHeader& message) 
                 return -95;
             value.flags = flags;
         } else if (field.type == 6) {
-            if (field.length != 20)
+            if (field.length < 20)
+                return -34;
+            memcpy(&lifetime, bytes + at + 4, sizeof(lifetime));
+            if (message.type == 20 && (!lifetime.valid || lifetime.preferred > lifetime.valid))
                 return -22;
-            uint32_t lifetime[4];
-            memcpy(lifetime, bytes + at + 4, 16);
-            if (lifetime[0] != UINT32_MAX || lifetime[1] != UINT32_MAX)
-                return -95;
         } else
             return -95;
         size_t aligned = (size_t(field.length) + 3) & ~size_t(3);
@@ -111,9 +112,8 @@ int netlink_ipv6_address_change(const void* data, const NetlinkHeader& message) 
     if (!present || (local_present && !(local == value.address)))
         return -22;
     if (message.type == 20) {
-        if ((message.flags & 0x600) != 0x600)
-            return -95;
-        return ipv6_address_add(value);
+        return ipv6_address_add(value, lifetime,
+                                (message.flags & 0x100) && !(message.flags & 0x200));
     }
     for (unsigned n = 0; auto entry = ipv6_address(n); n++)
         if (entry->index == value.index && entry->address == value.address &&
@@ -203,10 +203,15 @@ int netlink_ipv6_route(const void* data, const NetlinkHeader& message, uint32_t 
         size_t start = output.size;
         NetlinkHeader response{0, 24, 2, message.sequence, port};
         RouteHeader value{10, entry.prefix, 0, 0, 254, entry.protocol, 0, 1, 0};
+        uint32_t cache[8]{};
+        if (entry.expires)
+            cache[2] = entry.expires >= ticks ? uint32_t(entry.expires - ticks)
+                                              : 0u - uint32_t(ticks - entry.expires);
         if (!output.append(&response, sizeof(response)) || !output.append(&value, sizeof(value)) ||
             (entry.prefix && !output.attribute(1, entry.destination.bytes, 16)) ||
             (!entry.gateway.unspecified() && !output.attribute(5, entry.gateway.bytes, 16)) ||
-            !output.attribute(4, &entry.index, 4) || !output.attribute(6, &entry.metric, 4))
+            !output.attribute(4, &entry.index, 4) || !output.attribute(6, &entry.metric, 4) ||
+            !output.attribute(12, cache, sizeof(cache)))
             return -90;
         output.finish(start, response);
     }

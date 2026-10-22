@@ -7,6 +7,10 @@ const Ipv6Address* ipv6_address(unsigned) {
     return nullptr;
 }
 
+Ipv6AddressCacheInfo ipv6_address_cache(const Ipv6Address&) {
+    return {0, 0, 0, 0};
+}
+
 int netlink_ipv6_address_change(const void*, const NetlinkHeader&) {
     return -97;
 }

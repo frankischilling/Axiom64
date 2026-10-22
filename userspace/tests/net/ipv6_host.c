@@ -456,7 +456,10 @@ static void barrier(unsigned lane, unsigned phase) {
     printf("IPV6_HOST_PHASE_PASS lane=%u phase=%u\n", lane, phase);
 }
 
+void ipv6_address_lifetimes(void);
+
 int main(void) {
+    setvbuf(stdout, NULL, _IOLBF, 0);
     int fd = control_socket();
     int links = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
     check(links >= 0, "interface control socket");
@@ -552,5 +555,6 @@ int main(void) {
     }
     close(fd);
     close(links);
+    ipv6_address_lifetimes();
     puts("IPV6_HOST_PASS nics=2 phases_each=5 DAD=1 duplicate=1 permissions=1");
 }

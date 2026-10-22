@@ -110,7 +110,9 @@ int parse(const uint8_t* input, const NetlinkHeader& message, Ipv4Route& value, 
 
 size_t dump(const NetlinkHeader& request, uint32_t port, const Ipv4Route& filter, uint8_t* output) {
     Ipv4Route routes[32 + ipv4_address_capacity + 1];
-    static_assert(32 * 68 + (ipv4_address_capacity + 1) * 52 + 20 <= netlink_max_reply);
+    static_assert(32 * 68 + (ipv4_address_capacity + 1) * 52 + 20 <= netlink_family_reply);
+    static_assert(32 * 68 + (ipv4_address_capacity + 1) * 52 + netlink_ipv6_route_reply <=
+                  netlink_max_reply);
     size_t count = ipv4_routes(routes, sizeof(routes) / sizeof(routes[0])), size = 0;
     for (size_t i = 0; i < count; i++) {
         const auto& value = routes[i];
@@ -147,10 +149,15 @@ size_t dump(const NetlinkHeader& request, uint32_t port, const Ipv4Route& filter
 size_t routing_capacity(const NetlinkHeader& request, const void* data) {
     if (!routing_dump(request.type))
         return aligned(request.length) + 20;
-    bool combined =
-        request.type == 26 && (!data || (request.length > sizeof(request) &&
-                                         !static_cast<const uint8_t*>(data)[sizeof(request)]));
-    return combined ? netlink_max_reply : netlink_family_reply;
+    if (request.type == 26) {
+        if (!data || (request.length > sizeof(request) &&
+                      !static_cast<const uint8_t*>(data)[sizeof(request)]))
+            return netlink_max_reply;
+        if (request.length > sizeof(request) &&
+            static_cast<const uint8_t*>(data)[sizeof(request)] == 10)
+            return netlink_ipv6_route_reply;
+    }
+    return netlink_family_reply;
 }
 
 size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply, bool privileged,
@@ -183,7 +190,8 @@ size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply
                             (strict && request.length < sizeof(request) + sizeof(RouteHeader))))
                 error = -22;
             else
-                error = netlink_ipv6_route(packet, request, port, output, netlink_max_reply, size);
+                error = netlink_ipv6_route(packet, request, port, output,
+                                           routing_capacity(request, packet), size, strict);
             if (!error && is_dump)
                 return size;
         } else {
@@ -199,7 +207,7 @@ size_t routing_reply(const void* packet, uint32_t port, bool capped, void* reply
                     if (input[sizeof(request)] == 0) {
                         size_t extra = 0;
                         error = netlink_ipv6_route(packet, request, port, output + size - 20,
-                                                   netlink_max_reply - size + 20, extra);
+                                                   netlink_max_reply - size + 20, extra, strict);
                         if (!error)
                             return size - 20 + extra;
                     } else

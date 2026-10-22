@@ -20,8 +20,8 @@ struct Attribute {
 };
 
 static_assert(sizeof(LinkHeader) == 16 && sizeof(AddressHeader) == 8);
-static_assert((max_net_devices + 1) * 128 + 20 <= netlink_max_reply);
-static_assert((ipv4_address_capacity + 1) * 76 + 20 <= netlink_max_reply);
+static_assert((max_net_devices + 1) * 128 + 20 <= netlink_family_reply);
+static_assert((ipv4_address_capacity + 1) * 76 + 20 <= netlink_family_reply);
 static_assert((ipv4_address_capacity + 1) * 76 + (ipv6_address_capacity + 1) * 72 + 20 <=
               netlink_family_reply);
 
@@ -31,7 +31,7 @@ class Writer {
     }
 
     bool append(const void* data, size_t length) {
-        if (length > netlink_max_reply - size)
+        if (length > netlink_family_reply - size)
             return false;
         memcpy(bytes + size, data, length);
         size += length;

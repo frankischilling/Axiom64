@@ -65,6 +65,7 @@ int inet6_parse_send_control(const Inet6Socket* socket, const Inet6Address& dest
                             info.source))
                         return -22;
                     result.source = info.source;
+                    result.source_policy = Ipv6SourcePolicy::retained;
                 }
             } else if (header.type == 54 || header.type == 3 || header.type == 59 ||
                        header.type == 4 || header.type == 55) {

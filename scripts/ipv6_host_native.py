@@ -42,7 +42,9 @@ def child(profile, directory, suite='host', parent_namespace=None):
         'userspace/tests/net/ipv6_' + suite + '.c', 'scripts/ipv6_host_native.py',
         'scripts/ipv6_host_peer.py', 'scripts/ipv6_host_capture.py',
         'scripts/ipv6_sockets_peer.py', 'scripts/ipv6_sockets_capture.py',
-        'scripts/ipv6_fragments_peer.py', 'scripts/ipv6_fragments_capture.py', 'scripts/tcp_fault_native.py')}
+        'scripts/ipv6_fragments_peer.py', 'scripts/ipv6_fragments_capture.py', 'scripts/tcp_fault_native.py',
+        'scripts/ipv6_lifetime_peer.py', 'scripts/ipv6_lifetime_capture.py',
+        'scripts/tcp_capture_clock.py', 'scripts/ipv4_expiry_capture.py')}
     for name in ('scripts/ipv6_output_peer.py', 'scripts/ipv6_output_capture.py',
                  'scripts/ipv6_pmtu_peer.py', 'scripts/ipv6_pmtu_capture.py',
                  'scripts/ipv6_errors_peer.py', 'scripts/ipv6_errors_capture.py',
@@ -53,7 +55,8 @@ def child(profile, directory, suite='host', parent_namespace=None):
     products = {name: digest(Path(name)) for name in command}
     if suite == 'host':
         for name in ('Makefile', 'userspace/tests/net/ipv6_address_lifetimes.c',
-                     'scripts/ipv6_lifetime_contract.py', 'scripts/ipv6_extension_execution.py',
+                     'scripts/ipv6_lifetime_contract.py',
+                     'scripts/ipv6_lifetime_peer.py', 'scripts/ipv6_lifetime_capture.py', 'scripts/ipv6_extension_execution.py',
                      'scripts/tests/fixtures/ipv6-address-lifetimes-linux7.json'):
             sources[name] = digest(ROOT / name)
     if suite == 'controls':
@@ -269,7 +272,8 @@ def child(profile, directory, suite='host', parent_namespace=None):
                     from ipv6_cached_capture import verify_capture as checker
                 elif suite == 'controls':
                     from ipv6_controls_capture import verify_capture as checker
-                extra = dict(statistics=statistics[lane], interface_index=interfaces[lane]['index']) if suite in ('fragments', 'output', 'pmtu', 'errors', 'expiry', 'controls', 'cached') else {}
+                extra = dict(statistics=statistics[lane]) if suite == 'host' else {}
+                extra.update(dict(statistics=statistics[lane], interface_index=interfaces[lane]['index']) if suite in ('fragments', 'output', 'pmtu', 'errors', 'expiry', 'controls', 'cached') else {})
                 if model_program:
                     extra['native_copy_order'] = copy_order
                 if send_model_program:

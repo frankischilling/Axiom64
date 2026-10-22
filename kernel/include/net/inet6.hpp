@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "core/base.hpp"
-#include "net/ipv6/wire.hpp"
+#include "net/ipv6.hpp"
 
 namespace ax {
 struct Task;
@@ -22,6 +22,7 @@ struct Inet6SendControl {
     uint8_t hops = 64, traffic_class = 0;
     bool dont_fragment = false, present = false;
     ip6::OutputExtensions extensions;
+    Ipv6SourcePolicy source_policy = Ipv6SourcePolicy::assigned;
 };
 
 // Captured control bytes belong to the caller until parsing or request teardown.

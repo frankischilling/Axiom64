@@ -20,7 +20,9 @@ struct RouteHeader {
 };
 
 static_assert(sizeof(AddressHeader) == 8 && sizeof(RouteHeader) == 12);
-static_assert((ipv6_route_capacity + ipv6_address_capacity) * 120 + 20 <= netlink_family_reply);
+static_assert((ipv6_route_capacity + ipv6_address_capacity) * 120 +
+                  (ipv6_address_capacity + 1) * 116 + 20 <=
+              netlink_ipv6_route_reply);
 
 class Writer {
   public:
@@ -123,7 +125,7 @@ int netlink_ipv6_address_change(const void* data, const NetlinkHeader& message) 
 }
 
 int netlink_ipv6_route(const void* data, const NetlinkHeader& message, uint32_t port, void* reply,
-                       size_t capacity, size_t& size) {
+                       size_t capacity, size_t& size, bool strict) {
     bool dump = message.type == 26;
     if (message.length < sizeof(message) + 1)
         return -22;
@@ -138,10 +140,18 @@ int netlink_ipv6_route(const void* data, const NetlinkHeader& message, uint32_t 
         return -22;
     if (header.family != 10 && !(dump && !header.family))
         return -97;
+    if (dump && !strict) {
+        if (header.flags & 0x800)
+            return -95;
+        uint8_t family = header.family;
+        header = {};
+        header.family = family;
+    }
     if (header.destination_length > 128)
         return -22;
     if (header.source_length || header.tos || header.flags ||
-        (header.table && header.table != 254) || (header.type && header.type != 1) ||
+        (header.table && header.table != 254 && !(dump && header.table == 255)) ||
+        (header.type && header.type != 1 && !(dump && header.type == 2)) ||
         (header.scope && header.scope != 253 && header.scope != 255))
         return -95;
     if (dump && (header.destination_length || header.scope))
@@ -150,7 +160,8 @@ int netlink_ipv6_route(const void* data, const NetlinkHeader& message, uint32_t 
     route.prefix = header.destination_length;
     route.protocol = header.protocol;
     uint32_t seen = 0;
-    for (size_t at = sizeof(message) + sizeof(header); at < message.length;) {
+    for (size_t at = dump && !strict ? message.length : sizeof(message) + sizeof(header);
+         at < message.length;) {
         Attribute field;
         if (message.length - at < 4)
             return -22;
@@ -173,8 +184,11 @@ int netlink_ipv6_route(const void* data, const NetlinkHeader& message, uint32_t 
                 route.index = value;
             else if (field.type == 6)
                 route.metric = value;
-            else if (value != 254)
-                return -95;
+            else {
+                if (value != 254 && !(dump && (value == 0 || value == 255)))
+                    return -95;
+                header.table = value;
+            }
         } else
             return -95;
         size_t aligned = (size_t(field.length) + 3) & ~size_t(3);
@@ -192,16 +206,17 @@ int netlink_ipv6_route(const void* data, const NetlinkHeader& message, uint32_t 
         return ipv6_route_control(route, message.type == 25, message.flags & 0x200);
     }
     Writer output(reply, capacity);
+    uint16_t flags = 2 | (header.table || header.protocol || header.type || route.index ? 0x20 : 0);
     Ipv6Route entries[ipv6_route_capacity + ipv6_address_capacity + 1];
     size_t count = ipv6_routes(entries, sizeof(entries) / sizeof(*entries));
     for (size_t n = 0; n < count; n++) {
         const auto& entry = entries[n];
-        if (entry.index == ipv6_loopback ||
+        if (header.table == 255 || header.type == 2 || entry.index == ipv6_loopback ||
             (header.protocol && header.protocol != entry.protocol) ||
             (route.index && route.index != entry.index))
             continue;
         size_t start = output.size;
-        NetlinkHeader response{0, 24, 2, message.sequence, port};
+        NetlinkHeader response{0, 24, flags, message.sequence, port};
         RouteHeader value{10, entry.prefix, 0, 0, 254, entry.protocol, 0, 1, 0};
         uint32_t cache[8]{};
         if (entry.expires)
@@ -214,6 +229,26 @@ int netlink_ipv6_route(const void* data, const NetlinkHeader& message, uint32_t 
             !output.attribute(12, cache, sizeof(cache)))
             return -90;
         output.finish(start, response);
+    }
+    if (header.table != 254 && header.type != 1 && (!header.protocol || header.protocol == 2)) {
+        for (unsigned n = 0; auto entry = ipv6_address(n); n++) {
+            if ((route.index && route.index != entry->index) ||
+                !ipv6_owned(entry->index, entry->address))
+                continue;
+            size_t start = output.size;
+            NetlinkHeader response{0, 24, flags, message.sequence, port};
+            RouteHeader value{10, 128, 0, 0, 255, 2, 0, 2, 0};
+            uint32_t table = 255, metric = 0, cache[8]{};
+            uint8_t preference = 0;
+            if (!output.append(&response, sizeof(response)) ||
+                !output.append(&value, sizeof(value)) || !output.attribute(15, &table, 4) ||
+                !output.attribute(1, entry->address.bytes, 16) ||
+                !output.attribute(6, &metric, 4) || !output.attribute(4, &entry->index, 4) ||
+                !output.attribute(12, cache, sizeof(cache)) ||
+                !output.attribute(20, &preference, 1))
+                return -90;
+            output.finish(start, response);
+        }
     }
     NetlinkHeader done{20, 3, 2, message.sequence, port};
     int status = 0;

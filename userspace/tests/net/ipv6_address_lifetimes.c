@@ -6,6 +6,7 @@
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <net/if.h>
+#include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -224,6 +225,61 @@ static void source(unsigned lane, unsigned stage, int fd, const struct sockaddr_
     check(!close(fd), "release source description");
 }
 
+static int wire_endpoint(unsigned lane, unsigned kind, const struct in6_addr* selected,
+                         const struct sockaddr_in6* peer) {
+    int fd = socket(AF_INET6, SOCK_DGRAM, 0);
+    check(fd >= 0, "lifetime wire description");
+    struct sockaddr_in6 local = {.sin6_family = AF_INET6,
+                                 .sin6_port = htons(59000 + kind * 100 + lane)};
+    if (selected)
+        local.sin6_addr = *selected;
+    check(!bind(fd, (struct sockaddr*)&local, sizeof(local)), "lifetime wire bind");
+    check(!connect(fd, (const struct sockaddr*)peer, sizeof(*peer)), "lifetime wire connect");
+    return fd;
+}
+
+static void wire_barrier(unsigned lane, unsigned kind, int fd) {
+    unsigned char payload[16] = {'L', 'I', 'F', 'B', lane, 2, kind, 0x5a};
+    for (unsigned at = 8; at < sizeof(payload); at++)
+        payload[at] = at * 17 + lane + 2 + kind;
+    check(send(fd, payload, sizeof(payload), MSG_DONTWAIT) == sizeof(payload),
+          "complete permanent-source lifetime barrier");
+    struct pollfd ready = {.fd = fd, .events = POLLIN};
+    check(poll(&ready, 1, 300) == 1 && ready.revents == POLLIN,
+          "permanent-source lifetime barrier acknowledgment");
+    unsigned char reply[32] = {0};
+    check(recv(fd, reply, sizeof(reply), MSG_DONTWAIT) == sizeof(payload) &&
+              !memcmp(reply, payload, sizeof(payload)),
+          "exact lifetime barrier bytes precede expired-source input check");
+    printf("IPV6_LIFETIME_BARRIER lane=%u stage=2 kind=%u passed=1\n", lane, kind);
+}
+
+static void wire_exchange(unsigned lane, unsigned stage, unsigned kind, int fd, uint64_t began,
+                          int barrier_fd) {
+    unsigned char payload[16] = {'L', 'I', 'F', '6', lane, stage, kind, 0x5a};
+    for (unsigned at = 8; at < sizeof(payload); at++)
+        payload[at] = at * 17 + lane + stage + kind;
+    errno = 0;
+    int sent = send(fd, payload, sizeof(payload), MSG_DONTWAIT), send_error = errno;
+    if (stage == 2 && kind < 2)
+        wire_barrier(lane, kind, barrier_fd);
+    struct pollfd ready = {.fd = fd, .events = POLLIN};
+    int polled = sent < 0 ? -1 : poll(&ready, 1, 300);
+    unsigned char reply[32] = {0};
+    errno = 0;
+    int received = recv(fd, reply, sizeof(reply), MSG_DONTWAIT), receive_error = errno;
+    struct sockaddr_in6 local = {0};
+    socklen_t length = sizeof(local);
+    check(!getsockname(fd, (struct sockaddr*)&local, &length), "lifetime wire local identity");
+    printf("IPV6_LIFETIME_WIRE lane=%u stage=%u kind=%u elapsed_ns=%llu sent=%d errno=%d polled=%d "
+           "events=%d received=%d receive_errno=%d exact=%u source=",
+           lane, stage, kind, (unsigned long long)(now() - began), sent, send_error, polled,
+           ready.revents, received, receive_error,
+           received == sizeof(payload) && !memcmp(reply, payload, sizeof(payload)));
+    hex(&local.sin6_addr, 16);
+    puts("");
+}
+
 void ipv6_address_lifetimes(void) {
     struct utsname kernel;
     check(!uname(&kernel), "actual kernel");
@@ -291,6 +347,9 @@ void ipv6_address_lifetimes(void) {
         struct sockaddr_in6 peer = {.sin6_family = AF_INET6,
                                     .sin6_port = htons(55123),
                                     .sin6_addr = make_address(lane, 255)};
+        int automatic = wire_endpoint(lane, 0, NULL, &peer);
+        int explicit_fd = wire_endpoint(lane, 1, &finite, &peer);
+        int barrier_fd = wire_endpoint(lane, 3, &permanent, &peer);
         for (unsigned stage = 0; stage < 3; stage++) {
             wait_until(began + (stage == 0 ? 0 : stage == 1 ? 4200000000ULL : 9200000000ULL));
             struct observation value = observe(index, &finite);
@@ -318,12 +377,20 @@ void ipv6_address_lifetimes(void) {
                    (unsigned long long)elapsed);
             report(lane, count++, "temporal", result, value);
             source(lane, stage, -1, &peer);
+            wire_exchange(lane, stage, 0, automatic, began, barrier_fd);
+            wire_exchange(lane, stage, 1, explicit_fd, began, barrier_fd);
+            int fresh = wire_endpoint(lane, 2, NULL, &peer);
+            wire_exchange(lane, stage, 2, fresh, began, -1);
+            check(!close(fresh), "release fresh lifetime wire description");
         }
+        check(!close(automatic) && !close(explicit_fd) && !close(barrier_fd),
+              "release retained lifetime descriptions");
         struct observation final = observe(index, &finite);
         if (final.present)
             check(!change(index, &finite, final.prefix, 0, 1, 0, 0, 0, 0, 0),
                   "cleanup remaining finite address");
         check(!change(index, &permanent, 64, 0, 1, 0, 0, 0, 0, 0), "cleanup temporal companion");
     }
+    puts("IPV6_LIFETIME_WIRE_DONE observations=18");
     printf("IPV6_LIFETIME_DONE cases=%u samples=6\n", count);
 }

@@ -252,6 +252,94 @@ static unsigned route_count(int fd, unsigned lane) {
     }
 }
 
+static int local_route_present(int fd, unsigned lane, const struct in6_addr* wanted) {
+    struct {
+        struct nlmsghdr header;
+        struct rtmsg route;
+        struct rtattr field;
+        unsigned interface;
+    } request = {0};
+
+    request.header.nlmsg_len = sizeof(request);
+    request.header.nlmsg_type = RTM_GETROUTE;
+    request.header.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+    request.route.rtm_family = AF_INET6;
+    request.route.rtm_table = RT_TABLE_LOCAL;
+    request.field = (struct rtattr){8, RTA_OIF};
+    request.interface = indices[lane];
+    send_request(fd, &request.header);
+    unsigned found = 0;
+    uint64_t began = now();
+    for (;;) {
+        struct pollfd poller = {.fd = fd, .events = POLLIN};
+        int ready = poll(&poller, 1, 100);
+        check(ready >= 0 && now() - began < 10000000000ULL, "bounded local route dump");
+        if (!ready)
+            continue;
+        _Alignas(8) unsigned char buffer[8192];
+        int length = recv(fd, buffer, sizeof(buffer), MSG_DONTWAIT);
+        check(length > 0, "actual local route dump");
+        for (struct nlmsghdr* header = (void*)buffer; NLMSG_OK(header, length);
+             header = NLMSG_NEXT(header, length)) {
+            check(header->nlmsg_seq == sequence, "local route sequence");
+            if (header->nlmsg_type == NLMSG_DONE) {
+                int status;
+                check(header->nlmsg_len >= NLMSG_LENGTH(sizeof(status)), "local route completion");
+                memcpy(&status, NLMSG_DATA(header), sizeof(status));
+                check(!status && !(header->nlmsg_flags & NLM_F_DUMP_INTR),
+                      "complete local route inventory");
+                return found;
+            }
+            check(header->nlmsg_type == RTM_NEWROUTE &&
+                      header->nlmsg_len >= NLMSG_LENGTH(sizeof(struct rtmsg)),
+                  "local route record");
+            struct rtmsg* route = NLMSG_DATA(header);
+            unsigned index = 0, table = route->rtm_table, seen = 0;
+            struct in6_addr destination = IN6ADDR_ANY_INIT;
+            int remaining = RTM_PAYLOAD(header);
+            for (struct rtattr* field = RTM_RTA(route); RTA_OK(field, remaining);
+                 field = RTA_NEXT(field, remaining)) {
+                unsigned bit = field->rta_type == RTA_DST     ? 1
+                               : field->rta_type == RTA_OIF   ? 2
+                               : field->rta_type == RTA_TABLE ? 4
+                                                              : 0;
+                if (!bit)
+                    continue;
+                check(!(seen & bit) && RTA_PAYLOAD(field) == (bit == 1 ? 16 : 4),
+                      "local route attributes");
+                seen |= bit;
+                memcpy(bit == 1   ? (void*)&destination
+                       : bit == 2 ? (void*)&index
+                                  : (void*)&table,
+                       RTA_DATA(field), bit == 1 ? 16 : 4);
+            }
+            check(!remaining, "local route attribute bounds");
+            if (route->rtm_type == RTN_LOCAL && route->rtm_dst_len == 128 &&
+                !memcmp(&destination, wanted, sizeof(destination))) {
+                check(route->rtm_family == AF_INET6 && table == RT_TABLE_LOCAL &&
+                          route->rtm_protocol == RTPROT_KERNEL && index == indices[lane] &&
+                          (seen & 3) == 3 && !found++,
+                      "single owned local destination route");
+            }
+        }
+        check(!length, "local route datagram bounds");
+    }
+}
+
+static void wait_local_route(int fd, unsigned lane) {
+    struct in6_addr wanted = address(lane, 2, 0);
+    uint64_t began = now();
+    unsigned polls = 0;
+    while (!local_route_present(fd, lane, &wanted)) {
+        check(now() - began < 10000000000ULL, "finite local route publication");
+        struct timespec pause = {0, 10000000};
+        check(!nanosleep(&pause, NULL), "local route observation wait");
+        polls++;
+    }
+    printf("IPV6_HOST_LOCAL_ROUTE_PASS lane=%u polls=%u elapsed_ns=%llu\n", lane, polls,
+           (unsigned long long)(now() - began));
+}
+
 static unsigned flags(int fd, unsigned lane, unsigned host, int local, unsigned prefix) {
     struct {
         struct nlmsghdr header;
@@ -530,6 +618,7 @@ int main(void) {
               "configure direct ND host address");
         check(!(flags(fd, lane, 2, 0, 128) & (IFA_F_TENTATIVE | IFA_F_DADFAILED)),
               "direct ND host address is ready");
+        wait_local_route(fd, lane);
         barrier(lane, 5);
         printf("IPV6_HOST_DIRECT_ND_PASS lane=%u prefix=128\n", lane);
         check(!assign_prefix(fd, lane, 2, 0, 1, 128, 0) &&

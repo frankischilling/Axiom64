@@ -163,7 +163,7 @@ bool ipv6_owned(unsigned index, const ip6::Address& address, bool tentative) {
 }
 
 int ipv6_path(const ip6::Address& requested, const ip6::Address& destination, unsigned bound,
-              Ipv6Path& path, bool interface_mtu) {
+              Ipv6Path& path, bool interface_mtu, Ipv6SourcePolicy source_policy) {
     if (destination.unspecified() || destination.mapped())
         return -101;
     if (bound && bound != ipv6_loopback && !net_info(bound))
@@ -171,7 +171,7 @@ int ipv6_path(const ip6::Address& requested, const ip6::Address& destination, un
     bool local = ipv6_owned(destination.link_local() ? bound : 0, destination);
     if (local && (!destination.link_local() || bound)) {
         auto source = requested.unspecified() ? destination : requested;
-        if (!ipv6_owned(0, source))
+        if (source_policy == Ipv6SourcePolicy::assigned && !ipv6_owned(0, source))
             return -99;
         if ((source.loopback() || destination.loopback()) && bound && bound != ipv6_loopback)
             return -101;
@@ -201,7 +201,8 @@ int ipv6_path(const ip6::Address& requested, const ip6::Address& destination, un
         if (!selected)
             return -99;
         source = selected->address;
-    } else if (!ipv6_owned(source.link_local() ? best->index : 0, source))
+    } else if (source_policy == Ipv6SourcePolicy::assigned &&
+               !ipv6_owned(source.link_local() ? best->index : 0, source))
         return -99;
     path = {source,      best->gateway.unspecified() ? destination : best->gateway,
             best->index, net_info(best->index)->mtu,

@@ -16,7 +16,7 @@ int netlink_ipv6_address_change(const void*, const NetlinkHeader&) {
 }
 
 int netlink_ipv6_route(const void* data, const NetlinkHeader& request, uint32_t port, void* output,
-                       size_t capacity, size_t& size) {
+                       size_t capacity, size_t& size, bool) {
     if (request.type != 26 || static_cast<const uint8_t*>(data)[16])
         return -97;
     if (capacity < 20)

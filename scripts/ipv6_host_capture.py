@@ -10,6 +10,7 @@ import struct
 import zipfile
 from ipv4_expiry_capture import checksum, encode_capture, read_capture
 from ipv6_lifetime_contract import verify_log
+from ipv6_lifetime_capture import inspect as inspect_lifetimes, verify_capture as verify_lifetimes
 
 
 def require(value, reason):
@@ -19,6 +20,7 @@ def require(value, reason):
 
 def inspect(rows, lane, log, native=False):
     lifetimes = verify_log(log)
+    lifetime_wire, excluded = inspect_lifetimes(rows, lane, log)
     require(log.count('IPV6_HOST_ROUTES_PASS adapters=2 filtered=1') == 1,
             'actual client completed route control and filtered inventory')
     require(log.count(f'IPV6_HOST_DIRECT_ND_PASS lane={lane} prefix=128') == 1,
@@ -60,6 +62,8 @@ def inspect(rows, lane, log, native=False):
             require(frame[:12] == (control + guest if not frame[20] else guest + control),
                     'phase MAC ownership')
             target[phase] = index
+        elif index in excluded:
+            continue
         elif frame[12:14] == b'\x86\xdd':
             require(len(frame) >= 54, 'complete IPv6 fixed header')
             length = int.from_bytes(frame[18:20], 'big')
@@ -95,6 +99,8 @@ def inspect(rows, lane, log, native=False):
                 require(frame[6:12] == peer, 'controlled peer source')
                 incoming.append((index, frame, source, destination, payload))
     require(set(requests) == set(acknowledgements) == set(range(6)), 'readiness and all five ordered barriers')
+    require(all(index > acknowledgements[5] for index in excluded),
+            'lifetime packets follow every original host phase')
     previous = -1
     for phase in range(6):
         require(previous < requests[phase] < acknowledgements[phase], 'ordered request/completion')
@@ -105,10 +111,12 @@ def inspect(rows, lane, log, native=False):
     require(len(elapsed) == 1 and int(elapsed[0]) >= 1000000000, 'actual client observed full DAD interval')
     maintenance, maintenance_responses, original_emitted = [], set(), []
     for index, frame, source, destination, payload in emitted:
-        if native and index > acknowledgements[5] and payload[0] == 135:
+        if native and payload[0] == 135 and destination == payload[8:24]:
+            learned = {target for phase, target in ((1, remote), (2, unknown), (5, unresolved))
+                       if acknowledgements[phase] < index}
             require(frame[21] == 255 and len(payload) == 32 and frame[:6] == peer and
                     source in (local, link) and destination == payload[8:24] and
-                    destination in (remote, unknown, unresolved) and payload[4:8] == bytes(4) and
+                    destination in learned and payload[4:8] == bytes(4) and
                     payload[24:] == b'\1\1' + guest, 'complete owned native unicast maintenance NS')
             candidates = []
             for response, answer, sender, receiver, body in incoming:
@@ -253,7 +261,7 @@ def inspect(rows, lane, log, native=False):
     require(len(incoming) == 15 and used_inputs == {row[0] for row in incoming},
             'every valid and malformed peer input remains independently accounted')
     return dict(passed=True, lane=lane, kernel_packets=11, phases=5, malformed_controls=5, lifetimes=lifetimes,
-                peer_inputs=15, firmware_frames=len(firmware), firmware_sha256=firmware,
+                peer_inputs=15, lifetime_wire=lifetime_wire, firmware_frames=len(firmware), firmware_sha256=firmware,
                 actual_DAD_elapsed_ns=int(elapsed[0]), native_MLD_reports=mld_reports,
                 native_maintenance=maintenance), dict(
                 emitted=emitted, requests=requests, acknowledgements=acknowledgements,
@@ -262,11 +270,14 @@ def inspect(rows, lane, log, native=False):
                     NS=ns1, echo=echo1, NA=na2, bare_NS=bare_ns, bare_NA=na5))
 
 
-def verify_capture(path, lane, log_path, archive, native=False):
+def verify_capture(path, lane, log_path, archive, native=False, statistics=None):
     path, log_path = Path(path), Path(log_path)
     raw, raw_log = path.read_bytes(), log_path.read_bytes()
     rows, log = read_capture(path), raw_log.decode(errors='replace')
+    wire = verify_lifetimes(path, lane, log_path, Path(archive).with_suffix('.lifetime.zip'),
+                            native=native, statistics=statistics)
     result, proof = inspect(rows, lane, log, native)
+    result['lifetime_wire'] = wire
     rejected = []
     with zipfile.ZipFile(archive, 'x', compression=zipfile.ZIP_DEFLATED) as saved:
         cases = ['missing-kernel', 'duplicate-kernel', 'checksum', 'source', 'destination', 'MAC',

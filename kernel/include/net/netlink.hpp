@@ -19,7 +19,8 @@ struct NetlinkHeader {
 };
 
 static_assert(sizeof(NetlinkAddress) == 12 && sizeof(NetlinkHeader) == 16);
-constexpr size_t netlink_max_request = 4096, netlink_family_reply = 4116, netlink_max_reply = 8192;
+constexpr size_t netlink_max_request = 4096, netlink_family_reply = 4116,
+                 netlink_ipv6_route_reply = 6144, netlink_max_reply = 12288;
 
 struct NetlinkFrame {
     NetlinkAddress source;
@@ -48,7 +49,7 @@ int netlink_address_change(const void*, const NetlinkHeader&);
 int netlink_ipv6_address_change(const void*, const NetlinkHeader&);
 
 int netlink_ipv6_route(const void*, const NetlinkHeader&, uint32_t port, void*, size_t capacity,
-                       size_t& size);
+                       size_t& size, bool strict);
 
 void netlink_close(NetlinkSocket*);
 

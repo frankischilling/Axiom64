@@ -44,6 +44,8 @@ class Peer:
         self.duplicate_seen = False
         self.wait = None
         self.records = []
+        from ipv6_lifetime_peer import LifetimePeer
+        self.lifetimes = LifetimePeer(self)
 
     def multicast(self, target):
         return b'\xff\x02' + b'\0' * 9 + b'\1\xff' + target[-3:]
@@ -142,6 +144,10 @@ class Peer:
             return
         if frame[12:14] != b'\x86\xdd':
             return
+        if self.lifetimes.receive(frame):
+            require(self.complete == [1, 2, 3, 4, 5] and self.wait is None,
+                    'lifetime traffic follows all original host phases')
+            return
         if self.native and len(frame) >= 78 and frame[20] == 0:
             size = int.from_bytes(frame[18:20], 'big')
             payload = frame[62:54 + size]
@@ -165,11 +171,12 @@ class Peer:
                 struct.pack('!I3xB', length, 58) + payload), 'actual ICMPv6 pseudo-header checksum')
         require(payload[1] == 0, 'zero ICMPv6 code')
         self.records.append(dict(type=payload[0], source=source.hex(), destination=destination.hex()))
-        if (self.native and self.complete == [1, 2, 3, 4, 5] and self.wait is None and
-                payload[0] == 135 and destination == payload[8:24]):
+        if self.native and payload[0] == 135 and destination == payload[8:24]:
+            learned = {target for phase, target in ((1, self.remote), (2, self.unknown),
+                                                   (5, self.unresolved)) if phase in self.complete}
             require(hop == 255 and length == 32 and frame[:6] == self.mac and
                     source in (self.local, self.link) and
-                    destination in (self.remote, self.unknown, self.unresolved) and
+                    destination in learned and
                     payload[4:8] == bytes(4) and payload[24:] == b'\1\1' + self.guest,
                     'owned native unicast neighbor maintenance probe')
             self.maintenance_probes += 1
@@ -222,10 +229,11 @@ class Peer:
 
     @property
     def passed(self):
-        return self.ready and self.complete == [1, 2, 3, 4, 5] and self.duplicate_seen
+        return self.ready and self.complete == [1, 2, 3, 4, 5] and self.duplicate_seen and self.lifetimes.passed
 
     def result(self):
         return dict(passed=self.passed, lane=self.lane, phases=self.complete,
                     dad=self.dad, duplicate=self.duplicate_seen, packets=self.records,
                     firmware_frames=len(self.firmware_frames), firmware_sha256=self.firmware_frames,
-                    native_MLD_reports=self.mld_reports, native_maintenance_probes=self.maintenance_probes)
+                    native_MLD_reports=self.mld_reports, native_maintenance_probes=self.maintenance_probes,
+                    lifetimes=self.lifetimes.result())

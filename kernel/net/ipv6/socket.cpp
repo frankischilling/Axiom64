@@ -235,7 +235,8 @@ Inet6SendControl inet6_send_defaults(const Inet6Socket* socket, const Inet6Addre
             socket->traffic_class,
             socket->dont_fragment,
             false,
-            socket->extensions};
+            socket->extensions,
+            socket->local.unspecified() ? Ipv6SourcePolicy::assigned : Ipv6SourcePolicy::retained};
 }
 
 int inet6_send_admit(Inet6Socket* socket, const Inet6Address& address, size_t length,
@@ -246,7 +247,8 @@ int inet6_send_admit(Inet6Socket* socket, const Inet6Address& address, size_t le
     ip6::Address first;
     if (!ip6::output_extension_destination(options.extensions, address.address, first))
         return -22;
-    int error = ipv6_path(options.source, first, index, path, socket->pmtu_mode >= 3);
+    int error = ipv6_path(options.source, first, index, path, socket->pmtu_mode >= 3,
+                          options.source_policy);
     if (error)
         return error;
     if (socket->type == 2 && socket->connected && !named && !options.present &&
@@ -296,7 +298,8 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
     ip6::Address first;
     if (!ip6::output_extension_destination(options.extensions, address.address, first))
         return -22;
-    int error = ipv6_path(options.source, first, index, path, socket->pmtu_mode >= 3);
+    int error = ipv6_path(options.source, first, index, path, socket->pmtu_mode >= 3,
+                          options.source_policy);
     if (error)
         return error;
     bool fragmentable = !options.dont_fragment && (socket->pmtu_mode < 2 || socket->pmtu_mode == 5);
@@ -337,7 +340,7 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
     bytes[check_at + 1] = checksum;
     error = ipv6_send(path.source, effective, index, socket->protocol, options.hops, bytes, size,
                       socket, fragmentable, socket->socket_mtu, socket->pmtu_mode >= 3,
-                      options.traffic_class, &options.extensions);
+                      options.traffic_class, &options.extensions, options.source_policy);
     release(bytes);
     if (!error)
         socket->transmitted += length + overhead;

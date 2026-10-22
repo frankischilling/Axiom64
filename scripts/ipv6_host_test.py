@@ -57,6 +57,7 @@ def prepare(linkage, directory, suite='host', image_directory=None):
         'scripts/ipv6_host_peer.py', 'scripts/ipv6_host_test.py',
         'scripts/ipv6_host_capture.py', 'scripts/ipv6_sockets_peer.py', 'scripts/ipv6_sockets_capture.py',
         'userspace/tests/net/ipv6_address_lifetimes.c', 'scripts/ipv6_lifetime_contract.py',
+                     'scripts/ipv6_lifetime_peer.py', 'scripts/ipv6_lifetime_capture.py',
         'scripts/tests/fixtures/ipv6-address-lifetimes-linux7.json',
         'scripts/ipv6_fragments_peer.py', 'scripts/ipv6_fragments_capture.py',
         'scripts/ipv6_output_peer.py', 'scripts/ipv6_output_capture.py', 'userspace/tests/net/ipv6_fixture.h',

@@ -1,13 +1,13 @@
 {
-  "schema": 2,
+  "schema": 3,
   "reference": {
     "kernel": "7.0.0-1017-azure",
     "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
-    "source_sha256": "8184a7d5a4345d8d377df7dd03262b84210dc829d6528c12ec8accda211a2156",
-    "host_source_sha256": "ac4339cad6cc20863bc1a8fa75156d694014730d4ca637bcbea134963606f488",
-    "program_sha256": "d8c7a707351f6c9bffe5da5875baaec4bd9c2d0d789bbdfcd11fbc40385470b9",
-    "initramfs_sha256": "7b68b2441a87dd62318fa613f9ffe6f79251b8fb1ecafc4a06c59a886319e0c6",
-    "original_log_sha256": "69bcff17eabb197a04b05a13c329f87a5790a84f7480c2062cadbc4b617ae13b",
+    "source_sha256": "6e4ce47843f8b1fb11d1f085f011d75f3d8d7502b3b234b83f2fa051804cdc83",
+    "host_source_sha256": "309b774244cddf8f590451eb6cf9bda0306d0ea435d74d4d8ad58595d9e9dc72",
+    "program_sha256": "e3552700b323543c332b5441ef8ef49f70206b1dbb0367e61f83d139df0872da",
+    "initramfs_sha256": "4fad1741a4e4e93b5f42da78f8bd0bfa5450a71575467f601afb1fe6018a8a19",
+    "original_log_sha256": "314d8d197a805161f16b107538a16cd49191b956e198a57063e2cf31adaefd4a",
     "actual_program_completed": true,
     "actual_cpio_reopened": true,
     "complete_host_client": true,
@@ -19,9 +19,10 @@
     "preferred_transition_upper_bound_seconds": 8,
     "valid_transition_upper_bound_seconds": 15,
     "original_capture_sha256": [
-      "e7be4d7c624d44ea2a500397d6819d24061280333f003ef0c25bd7586a952c36",
-      "26aa40b887f8810e926b240ebbe7652bfe524c06321b05e3cf715f6aed6ad4ae"
-    ]
+      "9f4acfe34ea98a685abef84f828998c85073bf402c4eae5c73b34475b48d5209",
+      "3d81e4a95b74324bd23c2d176d9f61e6e2917280d6158c057c7c3024cfd71507"
+    ],
+    "wire_observations": 18
   },
   "observations": {
     "rows": [
@@ -784,5 +785,241 @@
         "address": "20010db8042100000000000000000081"
       }
     ]
-  }
+  },
+  "wire_observations": [
+    {
+      "lane": 0,
+      "stage": 0,
+      "kind": 0,
+      "sent": 16,
+      "errno": 0,
+      "polled": 1,
+      "events": 1,
+      "received": 16,
+      "receive_errno": 0,
+      "exact": 1,
+      "source": "20010db8042000000000000000000082"
+    },
+    {
+      "lane": 0,
+      "stage": 0,
+      "kind": 1,
+      "sent": 16,
+      "errno": 0,
+      "polled": 1,
+      "events": 1,
+      "received": 16,
+      "receive_errno": 0,
+      "exact": 1,
+      "source": "20010db8042000000000000000000082"
+    },
+    {
+      "lane": 0,
+      "stage": 0,
+      "kind": 2,
+      "sent": 16,
+      "errno": 0,
+      "polled": 1,
+      "events": 1,
+      "received": 16,
+      "receive_errno": 0,
+      "exact": 1,
+      "source": "20010db8042000000000000000000082"
+    },
+    {
+      "lane": 0,
+      "stage": 1,
+      "kind": 0,
+      "sent": 16,
+      "errno": 0,
+      "polled": 1,
+      "events": 1,
+      "received": 16,
+      "receive_errno": 0,
+      "exact": 1,
+      "source": "20010db8042000000000000000000082"
+    },
+    {
+      "lane": 0,
+      "stage": 1,
+      "kind": 1,
+      "sent": 16,
+      "errno": 0,
+      "polled": 1,
+      "events": 1,
+      "received": 16,
+      "receive_errno": 0,
+      "exact": 1,
+      "source": "20010db8042000000000000000000082"
+    },
+    {
+      "lane": 0,
+      "stage": 1,
+      "kind": 2,
+      "sent": 16,
+      "errno": 0,
+      "polled": 1,
+      "events": 1,
+      "received": 16,
+      "receive_errno": 0,
+      "exact": 1,
+      "source": "20010db8042000000000000000000081"
+    },
+    {
+      "lane": 0,
+      "stage": 2,
+      "kind": 0,
+      "sent": 16,
+      "errno": 0,
+      "polled": 0,
+      "events": 0,
+      "received": -1,
+      "receive_errno": 11,
+      "exact": 0,
+      "source": "20010db8042000000000000000000082"
+    },
+    {
+      "lane": 0,
+      "stage": 2,
+      "kind": 1,
+      "sent": 16,
+      "errno": 0,
+      "polled": 0,
+      "events": 0,
+      "received": -1,
+      "receive_errno": 11,
+      "exact": 0,
+      "source": "20010db8042000000000000000000082"
+    },
+    {
+      "lane": 0,
+      "stage": 2,
+      "kind": 2,
+      "sent": 16,
+      "errno": 0,
+      "polled": 1,
+      "events": 1,
+      "received": 16,
+      "receive_errno": 0,
+      "exact": 1,
+      "source": "20010db8042000000000000000000081"
+    },
+    {
+      "lane": 1,
+      "stage": 0,
+      "kind": 0,
+      "sent": 16,
+      "errno": 0,
+      "polled": 1,
+      "events": 1,
+      "received": 16,
+      "receive_errno": 0,
+      "exact": 1,
+      "source": "20010db8042100000000000000000082"
+    },
+    {
+      "lane": 1,
+      "stage": 0,
+      "kind": 1,
+      "sent": 16,
+      "errno": 0,
+      "polled": 1,
+      "events": 1,
+      "received": 16,
+      "receive_errno": 0,
+      "exact": 1,
+      "source": "20010db8042100000000000000000082"
+    },
+    {
+      "lane": 1,
+      "stage": 0,
+      "kind": 2,
+      "sent": 16,
+      "errno": 0,
+      "polled": 1,
+      "events": 1,
+      "received": 16,
+      "receive_errno": 0,
+      "exact": 1,
+      "source": "20010db8042100000000000000000082"
+    },
+    {
+      "lane": 1,
+      "stage": 1,
+      "kind": 0,
+      "sent": 16,
+      "errno": 0,
+      "polled": 1,
+      "events": 1,
+      "received": 16,
+      "receive_errno": 0,
+      "exact": 1,
+      "source": "20010db8042100000000000000000082"
+    },
+    {
+      "lane": 1,
+      "stage": 1,
+      "kind": 1,
+      "sent": 16,
+      "errno": 0,
+      "polled": 1,
+      "events": 1,
+      "received": 16,
+      "receive_errno": 0,
+      "exact": 1,
+      "source": "20010db8042100000000000000000082"
+    },
+    {
+      "lane": 1,
+      "stage": 1,
+      "kind": 2,
+      "sent": 16,
+      "errno": 0,
+      "polled": 1,
+      "events": 1,
+      "received": 16,
+      "receive_errno": 0,
+      "exact": 1,
+      "source": "20010db8042100000000000000000081"
+    },
+    {
+      "lane": 1,
+      "stage": 2,
+      "kind": 0,
+      "sent": 16,
+      "errno": 0,
+      "polled": 0,
+      "events": 0,
+      "received": -1,
+      "receive_errno": 11,
+      "exact": 0,
+      "source": "20010db8042100000000000000000082"
+    },
+    {
+      "lane": 1,
+      "stage": 2,
+      "kind": 1,
+      "sent": 16,
+      "errno": 0,
+      "polled": 0,
+      "events": 0,
+      "received": -1,
+      "receive_errno": 11,
+      "exact": 0,
+      "source": "20010db8042100000000000000000082"
+    },
+    {
+      "lane": 1,
+      "stage": 2,
+      "kind": 2,
+      "sent": 16,
+      "errno": 0,
+      "polled": 1,
+      "events": 1,
+      "received": 16,
+      "receive_errno": 0,
+      "exact": 1,
+      "source": "20010db8042100000000000000000081"
+    }
+  ]
 }

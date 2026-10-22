@@ -21,6 +21,7 @@ struct Output {
     bool fragmentable = true, submitting = false, discard_pending = false;
     bool interface_mtu = false;
     int deferred_error = 0;
+    Ipv6SourcePolicy source_policy = Ipv6SourcePolicy::assigned;
 };
 
 Output outputs[32];
@@ -48,7 +49,8 @@ int queue(const ip6::Address& source, const ip6::Address& destination, unsigned 
           Inet6Socket* owner = nullptr, bool fragmentable = true, uint32_t socket_mtu = 0,
           bool interface_mtu = false, uint8_t traffic_class = 0,
           const ip6::OutputExtensions* extensions = nullptr,
-          const ip6::Address* final_destination = nullptr) {
+          const ip6::Address* final_destination = nullptr,
+          Ipv6SourcePolicy source_policy = Ipv6SourcePolicy::assigned) {
     const ip6::OutputExtensions empty;
     const auto& options = extensions ? *extensions : empty;
     int extra = ip6::output_extension_size(options);
@@ -86,6 +88,7 @@ int queue(const ip6::Address& source, const ip6::Address& destination, unsigned 
     selected->fragmentable = fragmentable;
     selected->socket_mtu = socket_mtu;
     selected->interface_mtu = interface_mtu;
+    selected->source_policy = source_policy;
     queued_bytes += needed;
     return 0;
 }
@@ -105,8 +108,8 @@ int validate_submission(void* context) {
     if (item.control)
         return ip6::usable(item.index) && ipv6_owned(item.index, item.source) ? 0 : -100;
     Ipv6Path current;
-    if (int error =
-            ipv6_path(item.source, item.destination, item.index, current, item.interface_mtu))
+    if (int error = ipv6_path(item.source, item.destination, item.index, current,
+                              item.interface_mtu, item.source_policy))
         return error;
     if (item.socket_mtu && (!item.fragmentable || submission.fragmented))
         current.mtu = min(current.mtu, item.socket_mtu);
@@ -187,7 +190,8 @@ ip6::FragmentPiece submit(Output& item, const Ipv6Path& path) {
 int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsigned bound,
               uint8_t protocol, uint8_t hop_limit, const void* data, size_t length,
               Inet6Socket* owner, bool fragmentable, uint32_t socket_mtu, bool interface_mtu,
-              uint8_t traffic_class, const ip6::OutputExtensions* extensions) {
+              uint8_t traffic_class, const ip6::OutputExtensions* extensions,
+              Ipv6SourcePolicy source_policy) {
     const ip6::OutputExtensions empty;
     const auto& options = extensions ? *extensions : empty;
     int extra = ip6::output_extension_size(options);
@@ -195,7 +199,7 @@ int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsig
     if (extra < 0 || !ip6::output_extension_destination(options, destination, first))
         return -22;
     Ipv6Path path;
-    int error = ipv6_path(source, first, bound, path, interface_mtu);
+    int error = ipv6_path(source, first, bound, path, interface_mtu, source_policy);
     if (error)
         return error;
     if (socket_mtu && !fragmentable)
@@ -204,7 +208,8 @@ int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsig
         (!fragmentable && length + extra + ip6::header_size > path.mtu))
         return -90;
     return queue(path.source, first, bound, protocol, hop_limit, data, length, false, owner,
-                 fragmentable, socket_mtu, interface_mtu, traffic_class, extensions, &destination);
+                 fragmentable, socket_mtu, interface_mtu, traffic_class, extensions, &destination,
+                 source_policy);
 }
 
 bool ipv6_output_ready() {
@@ -244,8 +249,8 @@ void output_poll() {
                 continue;
             }
         } else {
-            int error =
-                ipv6_path(item.source, item.destination, item.index, path, item.interface_mtu);
+            int error = ipv6_path(item.source, item.destination, item.index, path,
+                                  item.interface_mtu, item.source_policy);
             if (error) {
                 clear(item, error);
                 continue;

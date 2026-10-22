@@ -52,8 +52,17 @@ class Maintenance(unittest.TestCase):
 
     def test_probe_does_not_bypass_original_phases(self):
         peer = self.peer()
-        peer.complete = [1, 2, 3, 4]
+        peer.complete = []
         with self.assertRaises(ValueError): peer.receive(PROBE)
+
+    def test_learned_neighbor_probe_does_not_complete_pending_phase(self):
+        peer = self.peer()
+        peer.complete = [1, 2, 3, 4]
+        peer.wait = 'NS-no-SLLA'
+        peer.receive(PROBE)
+        self.assertEqual(peer.maintenance_probes, 1)
+        self.assertEqual(peer.complete, [1, 2, 3, 4])
+        self.assertEqual(peer.wait, 'NS-no-SLLA')
 
     def test_non_native_producer_rejects_the_extra_probe(self):
         with self.assertRaises(ValueError): self.peer(native=False).receive(PROBE)

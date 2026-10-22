@@ -8,6 +8,9 @@ struct Inet6Socket;
 constexpr unsigned ipv6_address_capacity = 16, ipv6_route_capacity = 16;
 constexpr unsigned ipv6_loopback = max_net_devices + 1;
 
+// A captured source can outlive its interface address; fresh selection cannot.
+enum class Ipv6SourcePolicy : uint8_t { assigned, retained };
+
 struct Ipv6Address {
     ip6::Address address;
     unsigned index = 0;
@@ -58,7 +61,7 @@ int ipv6_route_control(const Ipv6Route&, bool remove, bool exclusive);
 size_t ipv6_routes(Ipv6Route*, size_t capacity);
 
 int ipv6_path(const ip6::Address& source, const ip6::Address& destination, unsigned bound_index,
-              Ipv6Path&, bool interface_mtu = false);
+              Ipv6Path&, bool interface_mtu = false, Ipv6SourcePolicy = Ipv6SourcePolicy::assigned);
 
 void ipv6_mtu_changed(unsigned index, uint32_t previous);
 
@@ -67,7 +70,8 @@ int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsig
               uint8_t protocol, uint8_t hop_limit, const void*, size_t,
               Inet6Socket* owner = nullptr, bool fragmentable = true, uint32_t socket_mtu = 0,
               bool interface_mtu = false, uint8_t traffic_class = 0,
-              const ip6::OutputExtensions* extensions = nullptr);
+              const ip6::OutputExtensions* extensions = nullptr,
+              Ipv6SourcePolicy = Ipv6SourcePolicy::assigned);
 
 bool ipv6_output_ready();
 

@@ -9,6 +9,7 @@ import struct
 import zipfile
 from fetch import ROOT
 from ipv6_extension_execution import verify_execution
+from ipv6_lifetime_capture import records as wire_records
 
 SOURCE = 'userspace/tests/net/ipv6_address_lifetimes.c'
 HOST = 'userspace/tests/net/ipv6_host.c'
@@ -143,7 +144,7 @@ def records(text):
 def fixture():
     saved = json.loads(FIXTURE.read_text())
     reference = saved['reference']
-    require(saved['schema'] == 2 and reference['kernel'] == '7.0.0-1017-azure' and
+    require(saved['schema'] == 3 and reference['kernel'] == '7.0.0-1017-azure' and
             reference['actual_program_completed'] and reference['actual_cpio_reopened'] and
             reference['complete_host_client'] and reference['source_sha256'] == digest(ROOT / SOURCE) and
             reference['host_source_sha256'] == digest(ROOT / HOST), 'executed complete source-bound Linux7 lifetime reference')
@@ -155,6 +156,10 @@ def fixture():
 def verify_log(text):
     saved = fixture()
     actual = records(text)
+    wire = wire_records(text)
+    require(saved['reference']['wire_observations'] == len(wire) == 18 and
+            [{key: value for key, value in row.items() if key != 'elapsed_ns'} for row in wire] ==
+            saved['wire_observations'], 'wire observations differ from executed complete Linux7 client')
     require({key: actual[key] for key in ('rows', 'sources')} == saved['observations'],
             'lifetime observations differ from executed Linux7')
     return dict(passed=True, address_cases=58, source_cases=6, actual_timestamps_validated=True,

@@ -357,7 +357,8 @@ static void inventories_and_bounds() {
             memcpy(input, &request, sizeof(request));
             input[16] = family;
             size_t capacity = routing_capacity(request, input);
-            assert(capacity == (type == 26 && !family ? 8192 : 4116));
+            assert(capacity == (type == 26 ? family ? netlink_ipv6_route_reply : netlink_max_reply
+                                           : netlink_family_reply));
             std::vector<uint8_t> output(capacity + 16, 0xa7);
             size_t length = routing_reply(input, 91, false, output.data(), true, true);
             assert(length <= capacity && length >= 20);
@@ -378,7 +379,7 @@ static void inventories_and_bounds() {
                 at += (record.length + 3) & ~size_t(3);
             }
             assert(count == (type == 22 ? ipv6_address_capacity + 1
-                                        : ipv6_address_capacity + ipv6_route_capacity));
+                                        : 2 * ipv6_address_capacity + ipv6_route_capacity + 1));
         }
     }
 }
@@ -2237,6 +2238,202 @@ static void copied_sticky_output(unsigned mode) {
     }
 }
 
+static void retained_address_expiry() {
+    for (bool bound : {false, true}) {
+        reset();
+        auto finite = address(0, 2), permanent = address(0, 3), remote = address(0, 1);
+        assert(!change(1, permanent));
+        assert(!ipv6_address_add({finite, 1, 2, 96}, {2, 8}));
+        deliver(0, solicitation(0, finite));
+        deliver(0, advertisement(0, remote, finite));
+        auto socket = inet6_allocate(2);
+        assert(socket);
+        socket->local = finite;
+        socket->peer = remote;
+        socket->peer_port = __builtin_bswap16(uint16_t(55123));
+        socket->connected = true;
+        socket->bound = bound;
+        assert(!inet6_bind_port(socket, finite, 59000));
+        Inet6Address peer{10, socket->peer_port, 0, remote, 0};
+        const uint8_t payload[16] = {'L', 'I', 'F', '6'};
+        assert(inet6_send(socket, peer, payload, sizeof(payload)) == sizeof(payload));
+        ipv6_poll();
+        ticks = 200;
+        ipv6_poll();
+        assert(ipv6_owned(1, finite));
+        assert(inet6_send(socket, peer, payload, sizeof(payload)) == sizeof(payload));
+        ipv6_poll();
+        ticks = 800;
+        ipv6_poll();
+        assert(!ipv6_owned(1, finite));
+        Ipv6Path fresh;
+        assert(!ipv6_path({}, remote, 1, fresh) && fresh.source == permanent);
+        assert(ipv6_path(finite, remote, 1, fresh) == -99);
+        emitted[0].clear();
+        blocked = 1;
+        assert(inet6_send(socket, peer, payload, sizeof(payload)) == sizeof(payload));
+        inet6_close(socket);
+        auto reused = inet6_allocate(2);
+        assert(reused == socket);
+        reused->local = permanent;
+        blocked = 0;
+        ipv6_poll();
+        assert(emitted[0].size() == 1 && emitted[0][0].size() == 78);
+        const auto& frame = emitted[0][0];
+        assert(!memcmp(frame.data() + 22, finite.bytes, 16));
+        assert(!memcmp(frame.data() + 62, payload, sizeof(payload)));
+        assert(!ip6::checksum(finite, remote, 17, frame.data() + 54, 24));
+        assert(!reused->transmitted && !reused->error);
+        inet6_close(reused);
+        reset();
+    }
+}
+
+static std::vector<Ipv6Address> local_route_inventory(unsigned index = 0, uint8_t protocol = 2,
+                                                      uint8_t table = 255, bool extended = false) {
+    std::vector<uint8_t> input(28);
+    input[16] = 10;
+    input[20] = extended ? 0 : table;
+    input[21] = protocol;
+    input[23] = 2;
+    auto attribute = [&](uint16_t type, uint32_t value) {
+        uint16_t header[2] = {8, type};
+        input.insert(input.end(), reinterpret_cast<uint8_t*>(header),
+                     reinterpret_cast<uint8_t*>(header) + 4);
+        input.insert(input.end(), reinterpret_cast<uint8_t*>(&value),
+                     reinterpret_cast<uint8_t*>(&value) + 4);
+    };
+    if (index)
+        attribute(4, index);
+    if (extended)
+        attribute(15, table);
+    NetlinkHeader request{uint32_t(input.size()), 26, 0x301, 99, 0};
+    memcpy(input.data(), &request, sizeof(request));
+    size_t capacity = routing_capacity(request, input.data());
+    std::vector<uint8_t> output(capacity + 16, 0xa7);
+    size_t size = routing_reply(input.data(), 77, false, output.data(), true, true);
+    assert(size >= 20 && size <= capacity);
+    assert(std::all_of(output.begin() + capacity, output.end(),
+                       [](auto byte) { return byte == 0xa7; }));
+    std::vector<Ipv6Address> result;
+    for (size_t at = 0; at < size;) {
+        NetlinkHeader row;
+        memcpy(&row, output.data() + at, sizeof(row));
+        assert(row.length >= 20 && row.length <= size - at && row.sequence == 99 && row.port == 77);
+        if (row.type == 3) {
+            assert(row.length == 20 && at + row.length == size);
+            int status;
+            memcpy(&status, output.data() + at + 16, 4);
+            assert(!status);
+        } else {
+            assert(row.type == 24 && row.length == 116);
+            const auto body = output.data() + at;
+            assert(body[16] == 10 && body[17] == 128 && body[18] == 0 && body[19] == 0 &&
+                   body[20] == 255 && body[21] == 2 && body[22] == 0 && body[23] == 2);
+            Ipv6Address value;
+            value.prefix = 128;
+            unsigned fields = 0;
+            for (size_t field = at + 28; field < at + row.length;) {
+                uint16_t length, type;
+                memcpy(&length, output.data() + field, 2);
+                memcpy(&type, output.data() + field + 2, 2);
+                assert(length >= 4 && length <= at + row.length - field && type < 32);
+                assert(!(fields & (1u << type)));
+                fields |= 1u << type;
+                const auto data = output.data() + field + 4;
+                if (type == 1) {
+                    assert(length == 20);
+                    memcpy(value.address.bytes, data, 16);
+                } else if (type == 4) {
+                    assert(length == 8);
+                    memcpy(&value.index, data, 4);
+                } else if (type == 15) {
+                    uint32_t actual;
+                    assert(length == 8);
+                    memcpy(&actual, data, 4);
+                    assert(actual == 255);
+                } else if (type == 6 || type == 12 || type == 20) {
+                    assert(length == (type == 6 ? 8 : type == 12 ? 36 : 5));
+                    assert(
+                        std::all_of(data, data + length - 4, [](auto byte) { return byte == 0; }));
+                } else
+                    assert(false);
+                field += (length + 3) & ~size_t(3);
+            }
+            assert(fields ==
+                   ((1u << 1) | (1u << 4) | (1u << 6) | (1u << 12) | (1u << 15) | (1u << 20)));
+            assert(!index || value.index == index);
+            result.push_back(value);
+        }
+        at += (row.length + 3) & ~size_t(3);
+    }
+    return result;
+}
+
+static void legacy_route_inventory() {
+    reset();
+    assert(!change(1, address(0, 2)));
+    uint8_t input[36]{};
+    NetlinkHeader request{sizeof(input), 26, 0x301, 101, 0};
+    memcpy(input, &request, sizeof(request));
+    input[16] = 10;
+    input[20] = 255;
+    input[21] = 99;
+    input[23] = 2;
+    uint32_t field[2] = {uint32_t(4 << 16 | 8), 2};
+    memcpy(input + 28, field, sizeof(field));
+    size_t capacity = routing_capacity(request, input);
+    for (bool strict : {true, false}) {
+        std::vector<uint8_t> output(capacity + 16, 0xa7);
+        size_t length = routing_reply(input, 79, false, output.data(), true, strict);
+        assert(length <= capacity && length >= 20);
+        unsigned main = 0, local = 0;
+        for (size_t at = 0; at < length;) {
+            NetlinkHeader row;
+            memcpy(&row, output.data() + at, sizeof(row));
+            assert(row.length >= 20 && row.length <= length - at);
+            if (row.type != 3) {
+                assert(row.type == 24 && row.flags == 2 && !strict);
+                main += output[at + 20] == 254 && output[at + 23] == 1;
+                local += output[at + 20] == 255 && output[at + 23] == 2;
+            }
+            at += (row.length + 3) & ~size_t(3);
+        }
+        assert(main == (strict ? 0 : 1) && local == (strict ? 0 : 2));
+        assert(std::all_of(output.begin() + capacity, output.end(),
+                           [](auto byte) { return byte == 0xa7; }));
+    }
+}
+
+static void local_route_visibility() {
+    reset();
+    auto initial = local_route_inventory();
+    assert(initial.size() == 1 && initial[0].index == ipv6_loopback &&
+           initial[0].address.loopback());
+    assert(!change(1, address(0, 2)));
+    assert(!configure_lifetime(1, address(0, 8), 1, 2));
+    assert(!change(2, address(1, 3), false));
+    assert(local_route_inventory().size() == 3 && local_route_inventory(1).size() == 2 &&
+           local_route_inventory(2).empty() && local_route_inventory(1, 99).empty());
+    auto extended = local_route_inventory(1, 2, 255, true);
+    assert(extended.size() == 2);
+    assert(local_route_inventory(1, 2, 254).empty() && local_route_inventory(1, 2, 0).size() == 2);
+    net_poll();
+    ticks = 100;
+    net_poll();
+    assert(local_route_inventory(2).size() == 1);
+    ticks = 200;
+    assert(local_route_inventory(1).size() == 1);
+    assert(!change(1, address(0, 10), false));
+    net_poll();
+    deliver(0, advertisement(0, address(0, 10), ip6::all_nodes()));
+    assert(local_route_inventory(1).size() == 1);
+    assert(!change(1, address(0, 2), true, true));
+    assert(local_route_inventory(1).empty());
+    assert(!change(2, address(1, 3), true, true));
+    assert(local_route_inventory().size() == 1);
+}
+
 int main() {
     for (unsigned n = 0; n < 2; n++) {
         auto& adapter = adapters[n];
@@ -2273,6 +2470,8 @@ int main() {
     dad();
     echo_and_ownership();
     routes_and_deadlines();
+    legacy_route_inventory();
+    local_route_visibility();
     inventories_and_bounds();
     direct_neighbor_replies();
     prefix_lifetimes();
@@ -2280,6 +2479,7 @@ int main() {
     finite_address_dad();
     source_lifetime_preferences();
     finite_prefix_lifetimes();
+    retained_address_expiry();
     prefix_route_order();
     socket_ownership();
     fragmented_delivery();

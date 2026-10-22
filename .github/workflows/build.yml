@@ -1614,10 +1614,10 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           digest-mismatch: error
-          name: axiom64-ci-inputs
+          name: axiom64-ci-rotation-inputs
           path: ${{ runner.temp }}/ci-inputs
       - name: Restore source and build together
-        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-rotation-inputs.tar.gz"
       - name: Install build and emulation tools
         run: bash scripts/ci/tools.sh restore
       - name: Run actual administration, concurrent commands and fresh-kernel checks
@@ -1669,10 +1669,10 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           digest-mismatch: error
-          name: axiom64-ci-inputs
+          name: axiom64-ci-rotation-inputs
           path: ${{ runner.temp }}/ci-inputs
       - name: Restore source and build together
-        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-rotation-inputs.tar.gz"
       - name: Install build and emulation tools
         run: bash scripts/ci/tools.sh restore
       - name: Interrupt every observed actual administration request and boot normal recovery
@@ -1779,10 +1779,10 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           digest-mismatch: error
-          name: axiom64-ci-inputs
+          name: axiom64-ci-rotation-inputs
           path: ${{ runner.temp }}/ci-inputs
       - name: Restore the exact verified source and build inputs
-        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-rotation-inputs.tar.gz"
       - name: Download every administration coverage index
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:

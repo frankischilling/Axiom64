@@ -65,7 +65,9 @@ jobs:
       - name: Replay actual kernel-interrupted ordinary Bash prompts
         run: python3 scripts/tests/console_prompt_test.py -v
       - name: Check complete and focused input archive boundaries
-        run: python3 scripts/tests/ci_inputs_test.py -v
+        run: |
+          python3 scripts/tests/ci_inputs_test.py -v
+          python3 scripts/tests/ci_tools_test.py -v
       - name: Run prompt verification from exported corresponding-source inputs
         run: python3 scripts/tests/source_bundle_inputs_test.py -v
       - name: Test seed supervision observes complete ordinary-console records

@@ -149,8 +149,12 @@ void neighbor_poll() {
         if (entry.state != State::incomplete && entry.state != State::probe)
             continue;
         if (!ipv6_owned(entry.source.link_local() ? entry.index : 0, entry.source)) {
-            entry = {};
-            continue;
+            Ipv6Path path;
+            if (ipv6_path({}, entry.address, entry.index, path)) {
+                entry = {};
+                continue;
+            }
+            entry.source = path.source;
         }
         if (ticks < entry.due)
             continue;

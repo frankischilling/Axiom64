@@ -338,9 +338,10 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
         checksum = 0xffff;
     bytes[check_at] = checksum >> 8;
     bytes[check_at + 1] = checksum;
+    // Socket admission has selected this source; copied output retains it through queue waits.
     error = ipv6_send(path.source, effective, index, socket->protocol, options.hops, bytes, size,
                       socket, fragmentable, socket->socket_mtu, socket->pmtu_mode >= 3,
-                      options.traffic_class, &options.extensions, options.source_policy);
+                      options.traffic_class, &options.extensions, Ipv6SourcePolicy::retained);
     release(bytes);
     if (!error)
         socket->transmitted += length + overhead;

@@ -1231,7 +1231,21 @@ static void source_fragmentation() {
             assert(inet6_send(raw, target, original.data(), 4000, true) == 4000);
             remove_after_polls = 2;
             net_poll();
-            assert(!raw->transmitted && inet6_error(raw, true) == 99 && emitted[lane].empty());
+            assert(!raw->transmitted && !inet6_error(raw, true));
+            std::vector<uint8_t> retained_payload;
+            for (const auto& frame : emitted[lane]) {
+                auto part = ip6::decode(frame.data() + 14, frame.size() - 14);
+                assert(part.input == ip6::Input::fragment && part.protocol == 58 &&
+                       part.fragment.offset == retained_payload.size() &&
+                       part.header.source == local && part.header.destination == remote);
+                retained_payload.insert(retained_payload.end(), part.payload,
+                                        part.payload + part.length);
+            }
+            assert(retained_payload.size() == 4000 &&
+                   !ip6::checksum(local, remote, 58, retained_payload.data(), 4000));
+            assert(std::equal(original.begin() + 4, original.begin() + 4000,
+                              retained_payload.begin() + 4));
+            assert(inet6_send(raw, target, original.data(), 4000, true) == -99);
         } else {
             assert(inet6_send(raw, target, original.data(), 4000, true) == 4000);
             shutdown_after_polls = 2;
@@ -2434,6 +2448,63 @@ static void local_route_visibility() {
     assert(local_route_inventory().size() == 1);
 }
 
+static void queued_automatic_source_removal() {
+    for (unsigned lane = 0; lane < 2; lane++) {
+        for (bool remove : {false, true}) {
+            for (bool close : {false, true}) {
+                reset();
+                unsigned index = lane + 1;
+                auto permanent = address(lane, 3), selected = address(lane, 2),
+                     remote = address(lane, 1);
+                assert(!change(index, permanent));
+                assert(!configure_lifetime(index, selected, 1, 2));
+                auto socket = inet6_allocate(2);
+                assert(socket && socket->local.unspecified());
+                assert(!inet6_bind_port(socket, {}, 59400));
+                Inet6Address peer{10, __builtin_bswap16(uint16_t(55124)), 0, remote, 0};
+                uint8_t payload[16] = {'Q', 'S', 'R', 'C'};
+                const auto original = std::array<uint8_t, 16>{'Q', 'S', 'R', 'C'};
+                assert(inet6_send(socket, peer, payload, sizeof(payload), true) == sizeof(payload));
+                memset(payload, 0xa5, sizeof(payload));
+                net_poll();
+                assert(last(lane, 135).header.source == selected);
+                if (remove)
+                    assert(!change(index, selected, true, true));
+                else
+                    ticks = 200;
+                assert(!ipv6_owned(index, selected));
+                Ipv6Path fresh;
+                assert(!ipv6_path({}, remote, index, fresh) && fresh.source == permanent);
+                net_poll();
+                assert(socket->transmitted == 64 && !socket->error);
+                Inet6Socket* replacement = nullptr;
+                if (close) {
+                    inet6_close(socket);
+                    replacement = inet6_allocate(2);
+                    assert(replacement == socket);
+                    replacement->local = permanent;
+                }
+                emitted[lane].clear();
+                deliver(lane, advertisement(lane, remote, permanent));
+                net_poll();
+                unsigned datagrams = 0;
+                for (const auto& frame : emitted[lane]) {
+                    if (frame.size() != 78 || frame[20] != 17)
+                        continue;
+                    assert(!memcmp(frame.data() + 22, selected.bytes, 16));
+                    assert(!memcmp(frame.data() + 62, original.data(), original.size()));
+                    assert(!ip6::checksum(selected, remote, 17, frame.data() + 54, 24));
+                    datagrams++;
+                }
+                assert(datagrams == 1);
+                assert(!socket->error && !socket->transmitted);
+                inet6_close(replacement ? replacement : socket);
+                reset();
+            }
+        }
+    }
+}
+
 int main() {
     for (unsigned n = 0; n < 2; n++) {
         auto& adapter = adapters[n];
@@ -2480,6 +2551,7 @@ int main() {
     source_lifetime_preferences();
     finite_prefix_lifetimes();
     retained_address_expiry();
+    queued_automatic_source_removal();
     prefix_route_order();
     socket_ownership();
     fragmented_delivery();

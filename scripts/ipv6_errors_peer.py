@@ -13,18 +13,23 @@ class Peer(PathPeer):
         super().__init__(lane, native)
         self.metadata = MetadataPeer(lane, native)
         self.metadata.outgoing = self.outgoing
+        self.extensions = MetadataPeer(lane, native, True)
+        self.extensions.outgoing = self.outgoing
 
     def receive(self, frame):
-        if frame[12:14] == b'\x88\xbe' or self.metadata.ready:
+        if frame[12:14] == b'\x88\xc4' or self.extensions.ready:
+            self.extensions.receive(frame)
+        elif frame[12:14] == b'\x88\xbe' or self.metadata.ready:
             self.metadata.receive(frame)
         else:
             super().receive(frame)
 
     @property
     def passed(self):
-        return super().passed and self.metadata.passed
+        return super().passed and self.metadata.passed and self.extensions.passed
 
     def result(self):
         result = super().result()
         result['metadata'] = self.metadata.result()
+        result['extensions'] = self.extensions.result()
         return result

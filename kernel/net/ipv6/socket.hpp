@@ -21,7 +21,7 @@ struct Inet6Socket {
     bool used = false, bound = false, connected = false, reuse = false, port_locked = false;
     bool v6only = false, dont_fragment = false, receive_errors = false;
     bool receive_packet_info = false, receive_hops = false, receive_traffic_class = false;
-    bool receive_hop_options = false, receive_destination_options = false;
+    bool receive_hop_options = false, receive_routing = false, receive_destination_options = false;
     uint8_t type = 3, protocol = 58, hops = 64, pmtu_mode = 1, traffic_class = 0;
     uint32_t socket_mtu = 0;
     unsigned index = 0, head = 0, count = 0, shutdown = 0;
@@ -47,5 +47,5 @@ int inet6_bind_port(Inet6Socket*, const ip6::Address&, uint16_t port);
 void inet6_destination_clear(Inet6Socket*);
 void inet6_destination_store(Inet6Socket*, const Ipv6Path&, const ip6::Address&);
 int inet6_destination_mtu(Inet6Socket*, uint32_t&);
-void inet6_icmp_error(unsigned index, const ip6::Header&, const uint8_t*, size_t);
+void inet6_icmp_error(unsigned index, const ip6::Packet&, const uint8_t*, size_t);
 } // namespace ax

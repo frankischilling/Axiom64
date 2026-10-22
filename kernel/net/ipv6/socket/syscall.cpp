@@ -261,10 +261,10 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             }
             return 0;
         }
-        int value;
+        int value = 0;
         if (length < 4)
             return -22;
-        if (!task.memory->space.copy_in(&value, d, 4))
+        if ((d || b != 41) && !task.memory->space.copy_in(&value, d, 4))
             return -14;
         if (b == 1 && c == 2)
             socket->reuse = value != 0;
@@ -282,9 +282,10 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             (c == 49   ? socket->receive_packet_info
              : c == 51 ? socket->receive_hops
                        : socket->receive_traffic_class) = value != 0;
-        } else if (b == 41 && (c == 53 || c == 58)) {
-            (c == 53 ? socket->receive_hop_options : socket->receive_destination_options) =
-                value != 0;
+        } else if (b == 41 && (c == 53 || c == 56 || c == 58)) {
+            (c == 53   ? socket->receive_hop_options
+             : c == 56 ? socket->receive_routing
+                       : socket->receive_destination_options) = value != 0;
         } else if (b == 41 && (c == 16 || c == 67)) {
             if (value < -1 || value > 255)
                 return -22;
@@ -358,8 +359,10 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             value = c == 49   ? socket->receive_packet_info
                     : c == 51 ? socket->receive_hops
                               : socket->receive_traffic_class;
-        else if (b == 41 && (c == 53 || c == 58))
-            value = c == 53 ? socket->receive_hop_options : socket->receive_destination_options;
+        else if (b == 41 && (c == 53 || c == 56 || c == 58))
+            value = c == 53   ? socket->receive_hop_options
+                    : c == 56 ? socket->receive_routing
+                              : socket->receive_destination_options;
         else if (b == 41 && c == 23)
             value = socket->pmtu_mode;
         else if (b == 41 && c == 25)
@@ -380,8 +383,8 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             return -92;
         if (b == 41) {
             uint32_t copied = min(ipv6_length, uint32_t(sizeof(value)));
-            if (!task.memory->space.copy_out(frame.r8, &copied, 4) ||
-                (copied && !task.memory->space.copy_out(d, &value, copied)))
+            if (option_copy_out(task, frame.r8, &copied, 4) != 4 ||
+                option_copy_out(task, d, &value, copied) != copied)
                 return -14;
             return 0;
         }

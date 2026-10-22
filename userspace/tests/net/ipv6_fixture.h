@@ -106,16 +106,17 @@ static inline void receive_exact(int fd, void* bytes, size_t size) {
     check(recv(fd, bytes, size, MSG_DONTWAIT) == (ssize_t)size, "exact IPv6 datagram size");
 }
 
-static inline void barrier(unsigned lane, unsigned phase) {
+static inline void ethernet_barrier(unsigned lane, unsigned phase, unsigned protocol,
+                                    const char* magic, const char* label) {
     unsigned char frame[60] = {2, 'I', 'P', '6', lane, 0};
     memcpy(frame + 6, macs[lane], 6);
-    frame[12] = IPV6_BARRIER_PROTOCOL >> 8;
-    frame[13] = IPV6_BARRIER_PROTOCOL & 255;
-    memcpy(frame + 14, IPV6_BARRIER_MAGIC, 4);
+    frame[12] = protocol >> 8;
+    frame[13] = protocol & 255;
+    memcpy(frame + 14, magic, 4);
     frame[18] = lane;
     frame[19] = phase;
     struct sockaddr_ll target = {.sll_family = AF_PACKET,
-                                 .sll_protocol = htons(IPV6_BARRIER_PROTOCOL),
+                                 .sll_protocol = htons(protocol),
                                  .sll_ifindex = indices[lane],
                                  .sll_halen = 6};
     memcpy(target.sll_addr, frame, 6);
@@ -128,14 +129,17 @@ static inline void barrier(unsigned lane, unsigned phase) {
         struct pollfd item = {.fd = packets[lane], .events = POLLIN};
         check(poll(&item, 1, 100) >= 0, "socket barrier poll");
         ssize_t size = recv(packets[lane], reply, sizeof(reply), MSG_DONTWAIT);
-        if (size >= 21 && !memcmp(reply, macs[lane], 6) &&
-            reply[12] == IPV6_BARRIER_PROTOCOL >> 8 && reply[13] == (IPV6_BARRIER_PROTOCOL & 255) &&
-            !memcmp(reply + 14, IPV6_BARRIER_MAGIC, 4) && reply[18] == lane && reply[19] == phase &&
-            reply[20] == 1)
+        if (size >= 21 && !memcmp(reply, macs[lane], 6) && reply[12] == protocol >> 8 &&
+            reply[13] == (protocol & 255) && !memcmp(reply + 14, magic, 4) && reply[18] == lane &&
+            reply[19] == phase && reply[20] == 1)
             break;
         check(now() - began < 10000000000ULL, "finite socket barrier");
     }
-    printf(IPV6_TEST_LABEL "_PHASE_PASS lane=%u phase=%u\n", lane, phase);
+    printf("%s_PHASE_PASS lane=%u phase=%u\n", label, lane, phase);
+}
+
+static inline void barrier(unsigned lane, unsigned phase) {
+    ethernet_barrier(lane, phase, IPV6_BARRIER_PROTOCOL, IPV6_BARRIER_MAGIC, IPV6_TEST_LABEL);
 }
 
 static inline void configure(unsigned lane, int link) {

@@ -55,8 +55,8 @@ static void one(unsigned raw, unsigned drop, unsigned choice, unsigned variant, 
     int seeded = variant == 0 ? 0 : setsockopt(fd, 41, option, seed, size);
     int seed_error = seeded < 0 ? errno : 0;
     size = make_header(input, option, 0x22);
-    unsigned char* pages = mmap(NULL, 8192, PROT_READ | PROT_WRITE,
-                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    unsigned char* pages =
+        mmap(NULL, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     check(pages != MAP_FAILED, "owned guard pages");
     memset(pages, 0xa5, 8192);
     check(!fflush(stdout), "flush original parent output before fork");
@@ -154,8 +154,8 @@ static void one(unsigned raw, unsigned drop, unsigned choice, unsigned variant, 
         void* destination = output;
         void* length_pointer = &capacity;
         if (variant >= 21 && variant <= 36) {
-            static const unsigned capacities[] = {0, 1, 2, 3, 4, 5, 7, 8,
-                                                   9, 23, 24, 25, 32, 63, 64, 2048};
+            static const unsigned capacities[] = {0, 1,  2,  3,  4,  5,  7,  8,
+                                                  9, 23, 24, 25, 32, 63, 64, 2048};
             capacity = capacities[variant - 21];
         } else if (variant == 37 || variant == 38) {
             capacity = variant == 37 ? 0 : 64;
@@ -197,13 +197,13 @@ static void one(unsigned raw, unsigned drop, unsigned choice, unsigned variant, 
         printf("IPV6_STICKY_LOCAL_CASE case=%u raw=%u drop=%u option=%u variant=%u uid=%u "
                "seeded=%d seed_errno=%d action=%d set_length=%u result=%ld errno=%d "
                "got=%ld get_errno=%d length=%u unchanged=%u lengthbytes=",
-               number, raw, drop, option, variant, (unsigned)getuid(), seeded, seed_error,
-               action, length, result, error, got, get_error, capacity, unchanged);
+               number, raw, drop, option, variant, (unsigned)getuid(), seeded, seed_error, action,
+               length, result, error, got, get_error, capacity, unchanged);
         hex(length_bytes, sizeof(length_bytes));
         printf(" output=");
         hex(output, sizeof(output));
-        printf(" after_result=%d after_errno=%d after_length=%u after_output=",
-               after_result, after_error, (unsigned)after_length);
+        printf(" after_result=%d after_errno=%d after_length=%u after_output=", after_result,
+               after_error, (unsigned)after_length);
         hex(after, sizeof(after));
         puts("");
         fflush(stdout);

@@ -13,6 +13,7 @@ class Inet6ControlWriter {
     void append(uint32_t type, const void* bytes, size_t size);
     void metadata(const Inet6Socket*, const ip6::Address& destination, unsigned index, uint8_t hops,
                   uint8_t traffic_class);
+    void extensions(const Inet6Socket*, const uint8_t*, size_t length, uint8_t protocol);
 
     uint64_t used = 0;
 

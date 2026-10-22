@@ -29,7 +29,10 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def child(profile, directory, suite='host'):
+def child(profile, directory, suite='host', parent_namespace=None):
+    namespace = Path('/proc/self/ns/net').stat().st_ino
+    if parent_namespace is None or namespace == parent_namespace:
+        raise ValueError('native network fixture requires its own network namespace')
     directory.mkdir(exist_ok=False)
     program = ROOT / 'build' / ('ipv6-' + suite + '-' + profile)
     command = [str(program)]
@@ -74,6 +77,10 @@ def child(profile, directory, suite='host'):
     if suite == 'errors':
         for name in ('Makefile', 'userspace/tests/net/ipv6_error_controls.c',
                      'userspace/tests/net/ipv6_error_metadata.c',
+                     'scripts/ipv6_extension_execution.py',
+                     'userspace/tests/net/ipv6_receive_extensions.c',
+                     'scripts/ipv6_receive_extensions_contract.py',
+                     'scripts/tests/fixtures/ipv6-receive-extensions-linux7.json',
                      'scripts/ipv6_error_metadata_peer.py', 'scripts/ipv6_error_metadata_capture.py',
                      'scripts/ipv6_error_controls_contract.py', 'scripts/ipv6_error_controls_test.py'):
             sources[name] = digest(ROOT / name)
@@ -107,6 +114,9 @@ def child(profile, directory, suite='host'):
         'net.ipv6.conf.all.enhanced_dad': 0, 'net.ipv6.conf.default.enhanced_dad': 0,
         'net.ipv6.auto_flowlabels': 0,
     }
+    if suite in ('errors', 'output'):
+        for name in ('all', 'default', 'lo'):
+            settings[f'net.ipv6.conf.{name}.seg6_enabled'] = 1
     if suite in ('fragments', 'expiry'):
         settings['net.ipv6.conf.default.router_solicitations'] = 0
         timer = 'net.ipv6.ip6frag_time' if suite == 'fragments' else 'net.ipv6.route.mtu_expires'
@@ -119,6 +129,7 @@ def child(profile, directory, suite='host'):
         subprocess.run(['sysctl', '-q', '-w', f'{name}={value}'], check=True)
     (directory / 'preexecution.json').write_text(json.dumps(dict(profile=profile,
         kernel=platform.uname()._asdict(), command=command, settings=settings,
+        network_namespace=namespace, parent_network_namespace=parent_namespace,
         source_sha256=sources, product_sha256=products), indent=2) + '\n')
     peer_type = Peer
     if suite == 'sockets':
@@ -278,12 +289,13 @@ def main():
     parser.add_argument('--suite', choices=('host', 'sockets', 'fragments', 'output', 'pmtu', 'errors', 'expiry', 'controls'), default='host')
     parser.add_argument('--workers', type=int, choices=(1, 2, 3), default=1)
     parser.add_argument('--child', choices=('native', 'static', 'dynamic'))
+    parser.add_argument('--parent-network-namespace', type=int)
     parser.add_argument('--profile', choices=('native', 'static', 'dynamic', 'all'), default='all')
     parser.add_argument('--output-directory', type=Path, default=None)
     args = parser.parse_args()
     args.output_directory = args.output_directory or ROOT / 'build' / ('ipv6-' + args.suite + '-native-wire')
     if args.child:
-        return child(args.child, args.output_directory, args.suite)
+        return child(args.child, args.output_directory, args.suite, args.parent_network_namespace)
     profiles = ('native', 'static', 'dynamic') if args.profile == 'all' else (args.profile,)
     targets = ['build/ipv6-' + args.suite + '-' + profile for profile in profiles]
     if args.suite in ('controls', 'errors'):
@@ -295,7 +307,8 @@ def main():
     def run(profile):
         directory = args.output_directory / profile
         result = subprocess.run(['unshare', '--net', sys.executable, '-B', 'scripts/ipv6_host_native.py',
-                                 '--child', profile, '--suite', args.suite, '--output-directory', str(directory)], cwd=ROOT)
+                                 '--child', profile, '--suite', args.suite, '--output-directory', str(directory),
+                                 '--parent-network-namespace', str(Path('/proc/self/ns/net').stat().st_ino)], cwd=ROOT)
         return dict(profile=profile, returncode=result.returncode)
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         results = list(pool.map(run, profiles))

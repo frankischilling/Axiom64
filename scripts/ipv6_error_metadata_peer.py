@@ -5,8 +5,11 @@ from ipv6_host_peer import Peer as HostPeer, checksum, require
 
 
 class Peer(HostPeer):
-    def __init__(self, lane, native=False):
+    def __init__(self, lane, native=False, extensions=False):
         super().__init__(lane, native)
+        self.extensions = extensions
+        self.barrier = b"\x88\xc4" if extensions else b"\x88\xbe"
+        self.magic = b"IP6X" if extensions else b"IP6M"
         self.datagrams = {}
         self.quotes = []
         self.pending = None
@@ -30,10 +33,25 @@ class Peer(HostPeer):
         hop, traffic_class = 7 + sequence * 11 % 248, (sequence * 37 + self.lane * 59) % 256
         packet = bytearray(self.packet(bytes(source), frame[22:38], body, hop))
         packet[14:18] = ((6 << 28) | (traffic_class << 20)).to_bytes(4, 'big')
+        if self.extensions:
+            # The ICMP checksum covers its upper-layer body, independently of
+            # the copied extension prefix carried by the outer IPv6 packet.
+            destination = bytes(frame[22:38])
+            chain = bytearray()
+            layout = (0, 60, 43, 60) if sequence % 3 else (0, 43, 60, 43, 60)
+            for at, kind in enumerate(layout):
+                following = layout[at + 1] if at + 1 < len(layout) else 58
+                if kind == 43:
+                    chain.extend(bytes([following, 2, 4, 0, 0, 0, 0x73, at]) + destination)
+                else:
+                    chain.extend(bytes([following, 0, 30, 4]) + bytes([0x31 + at]) * 4)
+            packet[20] = layout[0]
+            packet[18:20] = (len(chain) + len(body)).to_bytes(2, 'big')
+            packet[54:54] = chain
         bad = bytearray(packet)
         # A checksum-invalid code also has a different pending error if wrongly
         # accepted, even when the later receive has a protected payload buffer.
-        bad[55] ^= 1
+        bad[55 + (len(chain) if self.extensions else 0)] ^= 1
         self.outgoing.extend([bytes(bad), bytes(packet)])
         self.quotes.append(sequence)
         self.ack(self.pending)
@@ -41,9 +59,9 @@ class Peer(HostPeer):
 
     def receive(self, frame):
         require(len(frame) >= 14 and frame[6:12] == self.guest, 'error metadata adapter ownership')
-        if frame[12:14] == b'\x88\xbe':
+        if frame[12:14] == self.barrier:
             require(len(frame) == 60 and frame[:6] == self.control and
-                    frame[14:19] == b'IP6M' + bytes([self.lane]) and not any(frame[20:]),
+                    frame[14:19] == self.magic + bytes([self.lane]) and not any(frame[20:]),
                     'complete error metadata barrier')
             phase = frame[19]
             if not self.ready:

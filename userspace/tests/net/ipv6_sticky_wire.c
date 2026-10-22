@@ -29,12 +29,14 @@ static void extension(unsigned char* bytes, size_t* used, int type, unsigned len
 }
 
 static int error_for(unsigned variant) {
-    return variant == 10 ? EMSGSIZE : variant == 14 ? EPERM
-           : variant == 11 || variant == 12 ? EINVAL : 0;
+    return variant == 10                    ? EMSGSIZE
+           : variant == 14                  ? EPERM
+           : variant == 11 || variant == 12 ? EINVAL
+                                            : 0;
 }
 
-static unsigned route_header(unsigned char* bytes, unsigned mode, unsigned lane,
-                             unsigned scope, struct in6_addr first) {
+static unsigned route_header(unsigned char* bytes, unsigned mode, unsigned lane, unsigned scope,
+                             struct in6_addr first) {
     unsigned length = mode == 1 ? 40 : mode == 3 ? 64 : 24;
     memset(bytes, 0, 64);
     bytes[0] = 250;
@@ -116,20 +118,26 @@ static void output(unsigned lane) {
         append(ancillary, &used, IPV6_PKTINFO, &info, sizeof(info));
         scalar(ancillary, &used, IPV6_HOPLIMIT, 47);
         scalar(ancillary, &used, IPV6_TCLASS, 0xcd);
-        unsigned mode = variant == 1 || variant == 9 || variant == 10 || variant == 13 ||
-                                  variant == 14 ? 1 : variant == 2 ? 2 : variant == 3 || variant == 8 ? 3 : 0;
-        struct in6_addr first = address(lane, variant == 9 ? 240 + sequence / 20 * 4 : 1, 0, scope).sin6_addr;
+        unsigned mode =
+            variant == 1 || variant == 9 || variant == 10 || variant == 13 || variant == 14 ? 1
+            : variant == 2                                                                  ? 2
+            : variant == 3 || variant == 8                                                  ? 3
+                                                                                            : 0;
+        struct in6_addr first =
+            address(lane, variant == 9 ? 240 + sequence / 20 * 4 : 1, 0, scope).sin6_addr;
         stored_header(fd, 54, 0x11);
         stored_header(alias, 55, 0x22);
         stored_header(fd, 59, 0x55);
         unsigned char routing[64];
         unsigned route_length = route_header(routing, mode, lane, scope, first);
-        check(!setsockopt(alias, 41, 57, routing, route_length), "store complete sticky Routing header");
+        check(!setsockopt(alias, 41, 57, routing, route_length),
+              "store complete sticky Routing header");
         memset(routing, 0xa5, sizeof(routing));
         if (variant == 15) {
             static const unsigned types[] = {54, 55, 57, 59};
             for (unsigned n = 0; n < 4; n++)
-                check(!setsockopt(alias, 41, types[n], NULL, 0), "remove all shared sticky headers");
+                check(!setsockopt(alias, 41, types[n], NULL, 0),
+                      "remove all shared sticky headers");
         } else if (variant == 16) {
             check(!setsockopt(alias, 41, 57, NULL, 0), "remove only shared Routing header");
         } else if (variant == 17) {
@@ -173,7 +181,8 @@ static void output(unsigned lane) {
             address(lane, 71, type == SOCK_RAW ? 58 : 54000 + lane + scope * 10, scope);
         int routed = variant != 5 && variant != 6 && variant != 7 && variant != 15 && variant != 16;
         if (routed && !scope)
-            check(inet_pton(AF_INET6, lane ? "2001:db8:92::47" : "2001:db8:91::47", &target.sin6_addr) == 1,
+            check(inet_pton(AF_INET6, lane ? "2001:db8:92::47" : "2001:db8:91::47",
+                            &target.sin6_addr) == 1,
                   "off-route final destination");
         // Connect uses the stored first hop, even if this send's ancillary
         // headers temporarily select a different chain.
@@ -240,7 +249,8 @@ static void output(unsigned lane) {
             error = result < 0 ? errno : 0;
         }
         printf("IPV6_STICKY_WIRE_CASE lane=%u case=%u type=%d scope=%u variant=%u named=%u "
-               "bytes=%u result=%ld errno=%d length=%zu hops=%d class=%d df=%d replace_errno=%d control=",
+               "bytes=%u result=%ld errno=%d length=%zu hops=%d class=%d df=%d replace_errno=%d "
+               "control=",
                lane, sequence, type, scope, variant, named, length, result, error, used,
                get(fd, 41, IPV6_UNICAST_HOPS), get(alias, 41, IPV6_TCLASS),
                get(fd, 41, IPV6_DONTFRAG), replace_error);
@@ -287,7 +297,8 @@ static void output(unsigned lane) {
             option(alias, 41, IPV6_DONTFRAG, 1);
             static const unsigned types[] = {54, 55, 57, 59};
             for (unsigned n = 0; n < 4; n++)
-                check(!setsockopt(alias, 41, types[n], NULL, 0), "release shared sticky allocations after queueing");
+                check(!setsockopt(alias, 41, types[n], NULL, 0),
+                      "release shared sticky allocations after queueing");
         }
         check(!close(alias) && !close(fd), "retire queued extension owners");
         int reused = create(type);
@@ -307,7 +318,7 @@ static void output(unsigned lane) {
 }
 
 int ipv6_sticky_wire(const unsigned* input_indices, const unsigned char* input_macs,
-                      const int* input_packets) {
+                     const int* input_packets) {
     for (unsigned lane = 0; lane < 2; lane++) {
         indices[lane] = input_indices[lane];
         memcpy(macs[lane], input_macs + lane * 6, 6);

@@ -4,8 +4,9 @@
 #include "net/ipv6/icmp.hpp"
 
 namespace ax {
-void inet6_icmp_error(unsigned index, const ip6::Header& header, const uint8_t* bytes,
+void inet6_icmp_error(unsigned index, const ip6::Packet& packet, const uint8_t* bytes,
                       size_t length) {
+    const auto& header = packet.header;
     ip6::ErrorQuote quote;
     if (!ip6::error_quote(bytes, length, quote) ||
         !ipv6_owned(quote.source.link_local() ? index : 0, quote.source))
@@ -32,7 +33,10 @@ void inet6_icmp_error(unsigned index, const ip6::Header& header, const uint8_t* 
         record.hops = header.hop_limit;
         record.traffic_class = header.traffic_class;
         record.error = {uint32_t(quote.error), 3, quote.type, quote.code, 0, quote.information, 0};
-        inet6_queue_error(&socket, record, quote.transport + skip, quote.length - skip);
+        record.extension_length = packet.extension_length;
+        record.extension_protocol = header.next_header;
+        inet6_queue_error(&socket, record, quote.transport + skip, quote.length - skip,
+                          packet.extensions);
     };
     // ICMPv6 also receives errors about its own protocol independently of raw
     // descriptions. A closed raw socket does not invalidate a route exception.

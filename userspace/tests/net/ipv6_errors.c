@@ -616,10 +616,12 @@ static void wire(unsigned lane) {
 }
 
 int ipv6_error_controls_local(void);
+int ipv6_receive_extensions_local(void);
 
 int ipv6_error_metadata_wire(const unsigned*, const unsigned char*, const int*);
 
 int main(int argc, char** argv) {
+    check(!ipv6_receive_extensions_local(), "complete receive-extension observations");
     check(!ipv6_error_controls_local(), "complete error-control and fault observations");
     option_contract();
     local_receive_contract();

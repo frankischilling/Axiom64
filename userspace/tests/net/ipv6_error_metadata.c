@@ -11,16 +11,20 @@ static void bytes(const void* pointer, size_t length) {
         printf("%02x", data[at]);
 }
 
-static void receive_options(int fd, unsigned mask) {
-    const int options[] = {IPV6_RECVPKTINFO, IPV6_RECVHOPLIMIT, IPV6_RECVTCLASS};
-    for (unsigned at = 0; at < 3; at++) {
+static void receive_options(int fd, unsigned mask, unsigned outer) {
+    const int options[] = {IPV6_RECVPKTINFO, IPV6_RECVHOPLIMIT, IPV6_RECVTCLASS,
+                           IPV6_RECVHOPOPTS, IPV6_RECVRTHDR,    IPV6_RECVDSTOPTS};
+    for (unsigned at = 0; at < (outer ? 6u : 3u); at++) {
         option(fd, IPPROTO_IPV6, options[at], !!(mask & (1u << at)));
         check(get(fd, IPPROTO_IPV6, options[at]) == !!(mask & (1u << at)),
               "shared error receive options");
     }
 }
 
-static void run(unsigned lane) {
+static void run(unsigned lane, unsigned outer) {
+    const char* label = outer ? "IPV6_ERROR_EXTENSIONS" : "IPV6_ERROR_METADATA";
+    unsigned protocol = outer ? 0x88c4 : IPV6_BARRIER_PROTOCOL;
+    const char* magic = outer ? "IP6X" : IPV6_BARRIER_MAGIC;
     unsigned char* control_pages =
         mmap(NULL, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     unsigned char* name_pages =
@@ -31,11 +35,12 @@ static void run(unsigned lane) {
               !mprotect(control_pages + 4096, 4096, PROT_NONE) &&
               !mprotect(name_pages + 4096, 4096, PROT_NONE),
           "owned wire metadata guards");
-    barrier(lane, 0);
+    ethernet_barrier(lane, 0, protocol, magic, label);
     for (unsigned sequence = 0; sequence < 80; sequence++) {
         unsigned variant = sequence % 20, scoped = sequence / 20 % 2;
         unsigned kind = sequence >= 40 ? SOCK_RAW : SOCK_DGRAM;
-        unsigned mask = variant < 8 ? variant : variant == 12 ? 0 : 7;
+        unsigned all = outer ? 63 : 7;
+        unsigned mask = variant < 8 ? variant * (outer ? 9 : 1) : variant == 12 ? 0 : all;
         int fd = create(kind), alias = dup(fd);
         check(alias >= 0, "wire metadata alias");
         char device[16];
@@ -54,8 +59,8 @@ static void run(unsigned lane) {
         bind_address(fd, address(lane, 2, kind == SOCK_DGRAM ? 46000 + sequence : 0, scoped));
         connect_address(
             fd, address(lane, 128 + sequence, kind == SOCK_DGRAM ? 48000 + sequence : 58, scoped));
-        receive_options(fd, variant == 11 ? 0 : variant == 12 ? 7 : mask);
-        unsigned char sent[32], payload[32], drain[32], name[40], control[192];
+        receive_options(fd, variant == 11 ? 0 : variant == 12 ? all : mask, outer);
+        unsigned char sent[32], payload[32], drain[32], name[40], control[384];
         for (unsigned at = 0; at < sizeof(sent); at++)
             sent[at] = sequence * 7 + lane * 13 + at * 19;
         if (kind == SOCK_RAW) {
@@ -67,14 +72,14 @@ static void run(unsigned lane) {
             sent[7] = sequence;
         }
         check(send(fd, sent, sizeof(sent), 0) == sizeof(sent), "actual original error input");
-        barrier(lane, 2 * sequence + 1);
+        ethernet_barrier(lane, 2 * sequence + 1, protocol, magic, label);
         readable(fd, POLLERR);
         check(get(fd, SOL_SOCKET, SO_ERROR) == ECONNREFUSED, "original remote port error");
         struct pollfd pending = {.fd = fd, .events = POLLERR};
         check(poll(&pending, 1, 0) == 1 && pending.revents & POLLERR,
               "queued error survives clearing pending error");
         if (variant == 11 || variant == 12)
-            receive_options(alias, mask);
+            receive_options(alias, mask, outer);
         memset(payload, 0xa5, sizeof(payload));
         memset(drain, 0xa5, sizeof(drain));
         memset(name, 0xa5, sizeof(name));
@@ -84,14 +89,20 @@ static void run(unsigned lane) {
         check(!mprotect(header_pages + 4096, 4096, PROT_READ | PROT_WRITE),
               "prepare result header");
         memset(header_pages, 0xa5, 8192);
-        unsigned control_visible = variant == 14 ? 143 : variant == 18 ? 17 : sizeof(control);
+        unsigned control_visible = variant == 14   ? 143
+                                   : variant == 18 ? 17
+                                                   : (outer ? sizeof(control) : 192);
         unsigned char* output_control =
             variant == 14 || variant == 18 ? control_pages + 4096 - control_visible : control;
         unsigned name_visible = variant == 16 ? 1 : 0;
         unsigned char* output_name = variant == 19  ? NULL
                                      : name_visible ? name_pages + 4096 - name_visible
                                                     : name;
-        unsigned capacity = variant == 8 ? 16 : variant == 9 ? 36 : variant == 10 ? 88 : 192;
+        unsigned capacity = variant == 8    ? 16
+                            : variant == 9  ? 36
+                            : variant == 10 ? 88
+                            : outer         ? 384
+                                            : 192;
         unsigned payload_size = variant == 13 ? 8 : sizeof(payload);
         struct iovec vectors[] = {
             {payload, 5}, {variant == 15 ? name_pages + 4096 : payload + 5, payload_size - 5}};
@@ -130,11 +141,11 @@ static void run(unsigned lane) {
         errno = 0;
         long normal = recv(fd, drain, sizeof(drain), MSG_DONTWAIT);
         int normal_error = normal < 0 ? errno : 0;
-        printf("IPV6_ERROR_METADATA_CASE lane=%u case=%u kind=%u scope=%u variant=%u mask=%u "
+        printf("%s_CASE lane=%u case=%u kind=%u scope=%u variant=%u mask=%u "
                "capacity=%u input_flags=%u result=%ld errno=%d name_length=%u length=%zu "
                "flags=%u queued=%ld queue_errno=%d normal=%ld normal_errno=%d "
                "control_visible=%u name_visible=%u before_header=",
-               lane, sequence, kind, scoped, variant, mask, capacity, flags, result, error,
+               label, lane, sequence, kind, scoped, variant, mask, capacity, flags, result, error,
                after.msg_namelen, (size_t)after.msg_controllen, (unsigned)after.msg_flags, queued,
                queue_error, normal, normal_error, control_visible, name_visible);
         bytes(&before, sizeof(before));
@@ -154,12 +165,12 @@ static void run(unsigned lane) {
         check(queued == -1 && queue_error == EAGAIN && normal == -1 && normal_error == EAGAIN &&
                   !get(fd, SOL_SOCKET, SO_ERROR) && poll(&pending, 1, 0) == 0,
               "checksum rejection, error dequeue and normal queue independence");
-        barrier(lane, 2 * sequence + 2);
+        ethernet_barrier(lane, 2 * sequence + 2, protocol, magic, label);
         check(!close(alias) && !close(fd), "retire metadata descriptions");
     }
     check(!munmap(control_pages, 8192) && !munmap(name_pages, 8192) && !munmap(header_pages, 8192),
           "release wire metadata guards");
-    printf("IPV6_ERROR_METADATA_WIRE_PASS lane=%u cases=80 scopes=2 variants=20\n", lane);
+    printf("%s_WIRE_PASS lane=%u cases=80 scopes=2 variants=20\n", label, lane);
 }
 
 int ipv6_error_metadata_wire(const unsigned* input_indices, const unsigned char* input_macs,
@@ -181,8 +192,11 @@ int ipv6_error_metadata_wire(const unsigned* input_indices, const unsigned char*
         printf("IPV6_ERROR_METADATA_INTERFACE lane=%u index=%u\n", lane, indices[lane]);
     }
     for (unsigned lane = 0; lane < 2; lane++)
-        run(lane);
+        run(lane, 0);
+    for (unsigned lane = 0; lane < 2; lane++)
+        run(lane, 1);
     check(!close(query), "release metadata interface query");
     puts("IPV6_ERROR_METADATA_PASS adapters=2 cases=160 variants=20 scopes=2 transports=2");
+    puts("IPV6_ERROR_EXTENSIONS_PASS adapters=2 cases=160 variants=20 scopes=2 transports=2");
     return 0;
 }

@@ -23,9 +23,10 @@ def require(condition, reason):
         raise ValueError(reason)
 
 
-def boundary(rows, lane):
+def boundary(rows, lane, outer=False):
+    protocol = b"\x88\xc4IP6X" if outer else b"\x88\xbeIP6M"
     matches = [i for i,row in enumerate(rows) if row['frame'][12:20] ==
-               b'\x88\xbeIP6M' + bytes([lane, 0]) and row['frame'][20:21] == b'\0']
+               protocol + bytes([lane, 0]) and row['frame'][20:21] == b'\0']
     require(len(matches) == 1, 'one original error metadata transition')
     return matches[0]
 
@@ -39,10 +40,11 @@ def sockaddr(value, port=0, scope=0):
     return struct.pack('<H', 10) + struct.pack('!H', port) + bytes(4) + value + struct.pack('<I', scope)
 
 
-def samples(log, lane):
+def samples(log, lane, outer=False):
+    label = "IPV6_ERROR_EXTENSIONS" if outer else "IPV6_ERROR_METADATA"
     rows = []
     for line in log.splitlines():
-        if not line.startswith('IPV6_ERROR_METADATA_CASE '):
+        if not line.startswith(label + "_CASE "):
             continue
         pairs = [item.split('=', 1) for item in line.split()[1:]]
         require(all(len(item) == 2 for item in pairs), 'complete metadata result fields')
@@ -70,11 +72,11 @@ def normalize_header(encoded, before, null_name):
     return value.hex()
 
 
-def expected(lane, sequence, index, original, received, native_copy_order='length-first'):
+def expected(lane, sequence, index, original, received, native_copy_order='length-first', outer=False):
     variant, scoped, raw = sequence % 20, sequence // 20 % 2, sequence >= 40
-    mask = variant if variant < 8 else 0 if variant == 12 else 7
-    capacity = {8:16, 9:36, 10:88}.get(variant, 192)
-    visible = 143 if variant == 14 else 17 if variant == 18 else 192
+    mask = variant * (9 if outer else 1) if variant < 8 else 0 if variant == 12 else 63 if outer else 7
+    capacity = {8:16, 9:36, 10:88}.get(variant, 384 if outer else 192)
+    visible = 143 if variant == 14 else 17 if variant == 18 else 384 if outer else 192
     name_visible = 1 if variant == 16 else 0
     incoming = original['body'] if raw else original['body'][8:]
     copied = 5 if variant == 15 else 8 if variant == 13 else 32
@@ -94,9 +96,13 @@ def expected(lane, sequence, index, original, received, native_copy_order='lengt
 
     if variant != 15:
         fields = [(1, 50, info), (2, 52, struct.pack('<I', received['hop'])),
-                  (4, 67, struct.pack('<I', received['traffic_class'])), (8, 25, error)]
+                  (4, 67, struct.pack('<I', received['traffic_class']))]
+        fields += [(8 if kind == 0 else 16 if kind == 43 else 32,
+                    54 if kind == 0 else 57 if kind == 43 else 59, data)
+                   for kind, data in received['extensions']] if outer else []
+        fields.append((0, 25, error))
         for bit, kind, data in fields:
-            if bit != 8 and not mask & bit:
+            if bit and not mask & bit:
                 continue
             available = capacity - used
             if available < 16:
@@ -148,28 +154,34 @@ def expected(lane, sequence, index, original, received, native_copy_order='lengt
                 control=control.hex(), payload=payload.hex(), drain=(b'\xa5' * 32).hex())
 
 
-def inspect(rows, lane, log, native=False, interface_index=None, native_copy_order='length-first'):
+def inspect(rows, lane, log, native=False, interface_index=None, native_copy_order='length-first', outer=False):
+    label = 'IPV6_ERROR_EXTENSIONS' if outer else 'IPV6_ERROR_METADATA'
+    protocol_bytes = b'\x88\xc4' if outer else b'\x88\xbe'
+    magic = b'IP6X' if outer else b'IP6M'
+    done = label + '_PASS adapters=2 cases=160 variants=20 scopes=2 transports=2'
     require(native_copy_order in ('address-first', 'length-first') and
             (native or native_copy_order == 'length-first'), 'explicit native or target copy order')
-    require(log.splitlines().count(DONE) == 1 and 'IPV6_ERROR_METADATA_FAIL' not in log,
+    require(log.splitlines().count(done) == 1 and 'IPV6_ERROR_METADATA_FAIL' not in log,
             'complete actual error metadata execution')
-    require(log.splitlines().count(f'IPV6_ERROR_METADATA_WIRE_PASS lane={lane} cases=80 scopes=2 variants=20') == 1,
+    require(log.splitlines().count(f'{label}_WIRE_PASS lane={lane} cases=80 scopes=2 variants=20') == 1,
             'complete adapter metadata execution')
     actual = [int(match.group(1)) for line in log.splitlines() if
               (match := re.fullmatch(rf'IPV6_ERROR_METADATA_INTERFACE lane={lane} index=(\d+)', line))]
     require(len(actual) == 1 and (actual[0] == interface_index if interface_index is not None
                                 else actual[0] == lane + 1), 'actual metadata interface binding')
     index = actual[0]
-    observed = samples(log, lane)
+    observed = samples(log, lane, outer)
     guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
     peer, control = bytes([2, 0x49, 0x50, 0x36, lane, 1]), bytes([2, 0x49, 0x50, 0x36, lane, 0])
     requests, replies, data, errors, neighbors = {}, {}, {}, [], {}
-    begin = boundary(rows, lane)
+    begin = boundary(rows, lane, outer)
     for at in range(begin, len(rows)):
         frame = rows[at]['frame']
         require(len(frame) >= 14, 'complete metadata Ethernet frame')
-        if frame[12:14] == b'\x88\xbe':
-            require(len(frame) == 60 and frame[14:19] == b'IP6M' + bytes([lane]) and
+        if not outer and frame[12:20] == b'\x88\xc4IP6X' + bytes([lane, 0]):
+            break
+        if frame[12:14] == protocol_bytes:
+            require(len(frame) == 60 and frame[14:19] == magic + bytes([lane]) and
                     frame[20] in (0, 1) and not any(frame[21:]), 'exact metadata barrier bytes')
             phase, reply = frame[19], frame[20]
             require(frame[:12] == (guest + control if reply else control + guest), 'barrier MAC ownership')
@@ -181,7 +193,7 @@ def inspect(rows, lane, log, native=False, interface_index=None, native_copy_ord
         size, protocol, hop = struct.unpack('!HBB', frame[18:22])
         require(frame[14] >> 4 == 6 and 54 + size <= len(frame), 'complete original IPv6 envelope')
         source, destination, body = frame[22:38], frame[38:54], frame[54:54 + size]
-        if native and protocol == 0:
+        if native and protocol == 0 and frame[6:12] == guest:
             multicast_report(frame, guest, address(lane, 2, True))
             continue
         require(protocol in (17, 58) and not checksum(source + destination +
@@ -207,8 +219,18 @@ def inspect(rows, lane, log, native=False, interface_index=None, native_copy_ord
                 require(rows[at]['ns'] >= rows[neighbors[target][1]]['ns'], 'causal neighbor packet clocks')
                 del neighbors[target]
             continue
+        upper, extensions = 54, []
+        if frame[6:12] == peer:
+            while protocol in (0, 43, 60):
+                require(upper + 8 <= 54 + size, 'complete outer extension header')
+                length = (frame[upper + 1] + 1) * 8
+                require(upper + length <= 54 + size, 'bounded outer extension length')
+                extensions.append((protocol, frame[upper:upper + length]))
+                protocol, upper = frame[upper], upper + length
+            body = frame[upper:54 + size]
         packet = dict(at=at, frame=frame[:54 + size], source=source, destination=destination,
-                      body=body, hop=hop, traffic_class=(int.from_bytes(frame[14:18], 'big') >> 20) & 255)
+                      body=body, hop=hop, extensions=extensions, upper=upper,
+                      traffic_class=(int.from_bytes(frame[14:18], 'big') >> 20) & 255)
         if frame[6:12] == guest:
             sequence = destination[-1] - 128
             require(sequence in range(80) and sequence not in data, 'one original metadata datagram')
@@ -233,7 +255,7 @@ def inspect(rows, lane, log, native=False, interface_index=None, native_copy_ord
         require(requests[phase] < replies[phase] and
                 rows[replies[phase]]['ns'] >= rows[requests[phase]]['ns'] and
                 (not phase or replies[phase - 1] < requests[phase]), 'causal ordered metadata barriers')
-        require(log.splitlines().count(f'IPV6_ERROR_METADATA_PHASE_PASS lane={lane} phase={phase}') == 1,
+        require(log.splitlines().count(f'{label}_PHASE_PASS lane={lane} phase={phase}') == 1,
                 'actual metadata phase completion')
     for sequence in range(80):
         bad, good = errors[2 * sequence:2 * sequence + 2]
@@ -246,7 +268,17 @@ def inspect(rows, lane, log, native=False, interface_index=None, native_copy_ord
                 good['frame'][14:18] == ((6 << 28) | (good['traffic_class'] << 20)).to_bytes(4, 'big') and
                 not checksum(good['source'] + good['destination'] + struct.pack('!I3xB', len(good['body']), 58) + good['body']),
                 'actual complete quote and independently varied received header')
-        altered = bytearray(good['frame']); altered[55] ^= 1
+        expected_extensions = []
+        if outer:
+            kinds = (0, 43, 60, 43, 60) if sequence % 3 == 0 else (0, 60, 43, 60)
+            for n, kind in enumerate(kinds):
+                following = kinds[n + 1] if n + 1 < len(kinds) else 58
+                value = (bytes([following, 2, 4, 0, 0, 0, 0x73, n]) + original['source']
+                         if kind == 43 else bytes([following, 0, 30, 4]) + bytes([0x31 + n]) * 4)
+                expected_extensions.append((kind, value))
+        require(good['extensions'] == expected_extensions and
+                good['frame'][20] == (0 if outer else 58), 'every original outer extension byte and order')
+        altered = bytearray(good['frame']); altered[good['upper'] + 1] ^= 1
         require(bad['frame'] == bytes(altered) and checksum(bad['source'] + bad['destination'] +
                 struct.pack('!I3xB', len(bad['body']), 58) + bad['body']), 'distinct checksum-invalid code control')
         require(original['at'] < good['at'] and requests[2 * sequence + 1] < bad['at'] < good['at'] <
@@ -256,7 +288,7 @@ def inspect(rows, lane, log, native=False, interface_index=None, native_copy_ord
         before = actual['before_header']
         for field in ('before_header', 'header'):
             actual[field] = normalize_header(actual[field], before, sequence % 20 == 19)
-        wanted = expected(lane, sequence, index, original, good, native_copy_order)
+        wanted = expected(lane, sequence, index, original, good, native_copy_order, outer)
         changed = sorted(key for key in wanted if actual[key] != wanted[key])
         require(not changed, f'original error metadata case {sequence}: {changed}')
     return dict(passed=True, lane=lane, cases=80, original_datagrams=80, received_errors=160,
@@ -264,28 +296,34 @@ def inspect(rows, lane, log, native=False, interface_index=None, native_copy_ord
                 errors=[row['at'] for row in errors])
 
 
-def alter_log(log, lane, sequence, field, offset=None):
+def alter_log(log, lane, sequence, field, offset=None, outer=False):
+    label = "IPV6_ERROR_EXTENSIONS" if outer else "IPV6_ERROR_METADATA"
     lines = log.splitlines()
     at = next(i for i,line in enumerate(lines) if line.startswith(
-        f'IPV6_ERROR_METADATA_CASE lane={lane} case={sequence} '))
+        f'{label}_CASE lane={lane} case={sequence} '))
     row = dict(item.split('=', 1) for item in lines[at].split()[1:])
     if offset is None:
         row[field] = str(int(row[field]) ^ 1)
     else:
         data = bytearray.fromhex(row[field]); data[offset] ^= 1; row[field] = data.hex()
-    lines[at] = 'IPV6_ERROR_METADATA_CASE ' + ' '.join(key+'='+value for key,value in row.items())
+    lines[at] = label + '_CASE ' + ' '.join(key+'='+value for key,value in row.items())
     return '\n'.join(lines)+'\n'
 
 
-def verify_capture(path, lane, log_path, archive, native=False, interface_index=None, native_copy_order='length-first'):
+def verify_capture(path, lane, log_path, archive, native=False, interface_index=None, native_copy_order='length-first', outer=False):
+    label = 'IPV6_ERROR_EXTENSIONS' if outer else 'IPV6_ERROR_METADATA'
     path, log_path = Path(path), Path(log_path)
     raw, original_log = path.read_bytes(), log_path.read_bytes()
     rows, log = read_capture(path), original_log.decode(errors='replace')
-    result, proof = inspect(rows, lane, log, native, interface_index, native_copy_order)
+    result, proof = inspect(rows, lane, log, native, interface_index, native_copy_order, outer)
     names = ('missing-output','duplicate-output','missing-error','checksum','quote','hop','class',
              'source','destination','MAC','missing-case','result','flags','length','packet-address',
              'packet-index','hop-control','class-control','offender','source-name','payload',
              'written-padding','header-padding','queue','drain','name-prefix')
+    if outer:
+        names += ('outer-hop-byte', 'outer-route-byte', 'outer-destination-byte',
+                  'outer-next-header', 'outer-length', 'routing-control-type',
+                  'after-queue-enable', 'after-queue-disable')
     rejected = []
     with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as saved:
         for name in names:
@@ -295,28 +333,40 @@ def verify_capture(path, lane, log_path, archive, native=False, interface_index=
             elif name == 'duplicate-output':changed.insert(proof['data'][7],copy.deepcopy(changed[proof['data'][7]]))
             elif name == 'missing-error':del changed[at]
             elif name == 'missing-case':
-                text = re.sub(rf'^IPV6_ERROR_METADATA_CASE lane={lane} case=7 .*\n','',text,count=1,flags=re.MULTILINE)
+                text = re.sub(rf'^{label}_CASE lane={lane} case=7 .*\n','',text,count=1,flags=re.MULTILINE)
+            elif name in ('after-queue-enable', 'after-queue-disable'):
+                text = alter_log(text, lane, 11 if name == 'after-queue-enable' else 12,
+                                 'mask', outer=True)
+            elif name == 'routing-control-type':
+                text = alter_log(text, lane, 7, 'control', 148, True)
             elif name in ('result','flags','length','queue'):
-                text = alter_log(text,lane,7,'queued' if name=='queue' else name)
+                text = alter_log(text,lane,7,'queued' if name=='queue' else name,outer=outer)
             elif name in ('packet-address','packet-index','hop-control','class-control','offender',
                           'source-name','payload','written-padding','header-padding','drain','name-prefix'):
                 field,offset,sequence={'packet-address':('control',16,7),'packet-index':('control',32,7),
                     'hop-control':('control',56,7),'class-control':('control',80,7),'offender':('control',128,7),
                     'source-name':('name',8,7),'payload':('payload',0,7),'written-padding':('control',37,7),
                     'header-padding':('header',12,7),'drain':('drain',0,7),'name-prefix':('name_prefix',0,16)}[name]
-                text = alter_log(text,lane,sequence,field,offset)
+                if outer and name == 'offender':
+                    offset += 104
+                text = alter_log(text,lane,sequence,field,offset,outer)
             else:
                 frame = bytearray(changed[at]['frame'])
-                offset={'checksum':56,'quote':len(frame)-1,'hop':21,'class':15,'source':37,
-                        'destination':53,'MAC':5}[name]
+                upper = 54
+                protocol = frame[20]
+                while protocol in (0, 43, 60):
+                    protocol, upper = frame[upper], upper + (frame[upper + 1] + 1) * 8
+                offset={'checksum':upper + 2,'quote':len(frame)-1,'hop':21,'class':15,'source':37,
+                        'destination':53,'MAC':5,'outer-hop-byte':58,'outer-route-byte':78,
+                        'outer-destination-byte':66,'outer-next-header':54,'outer-length':55}[name]
                 frame[offset] ^= 1
                 if name not in ('checksum','MAC','hop','class'):
-                    frame[56:58]=bytes(2)
-                    size=int.from_bytes(frame[18:20],'big')
-                    frame[56:58]=checksum(frame[22:54]+struct.pack('!I3xB',size,58)+frame[54:54+size]).to_bytes(2,'big')
+                    frame[upper + 2:upper + 4]=bytes(2)
+                    size=int.from_bytes(frame[18:20],'big') - (upper - 54)
+                    frame[upper + 2:upper + 4]=checksum(frame[22:54]+struct.pack('!I3xB',size,58)+frame[upper:upper+size]).to_bytes(2,'big')
                 changed[at]['frame']=bytes(frame)
             saved.writestr(name+'.pcap',encode_capture(changed));saved.writestr(name+'.log',text)
-            try:inspect(changed,lane,text,native,interface_index,native_copy_order)
+            try:inspect(changed,lane,text,native,interface_index,native_copy_order,outer)
             except ValueError as error:rejected.append(dict(name=name,reason=str(error)))
             else:raise ValueError('accepted damaged error metadata: '+name)
         saved.writestr('rejections.json',json.dumps(rejected,indent=2))

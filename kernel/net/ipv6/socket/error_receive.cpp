@@ -47,9 +47,12 @@ size_t control_out(Task& task, const Message& message, const Inet6Socket* socket
     Inet6ControlWriter output(task, message.control, message.control_length, flags);
     // Received ICMP errors retain their outer packet's controls. Local output
     // failures have no received header and return only the extended error.
-    if (record.error.origin == 3)
+    if (record.error.origin == 3) {
         output.metadata(socket, record.packet_destination, record.index, record.hops,
                         record.traffic_class);
+        output.extensions(socket, inet6_error_bytes(&record) + record.length,
+                          record.extension_length, record.extension_protocol);
+    }
     uint8_t body[44];
     memcpy(body, &record.error, 16);
     memcpy(body + 16, &record.offender, 28);

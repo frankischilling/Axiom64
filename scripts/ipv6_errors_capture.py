@@ -125,6 +125,8 @@ def inspect(rows, lane, log, native=False, interface_index=None, native_copy_ord
                            barrier_protocol=b'\x88\xbc', barrier_magic=b'IP6E', quote_length=96)
     metadata, _ = inspect_metadata(rows, lane, log, native, index, native_copy_order)
     result['metadata'] = metadata
+    extensions, _ = inspect_metadata(rows, lane, log, native, index, native_copy_order, True)
+    result['outer_extensions'] = extensions
     return result, proof
 
 
@@ -137,7 +139,8 @@ def verify_capture(path, lane, log_path, archive, native=False, statistics=None,
         require(interface_index is not None, 'actual native error-queue interface identity')
         selected = []
         for row in rows:
-            if row['frame'][12:14] == b'\x86\xdd' and len(row['frame']) > 20 and row['frame'][20] == 0:
+            if row['frame'][12:14] == b'\x86\xdd' and len(row['frame']) >= 54 and \
+                    row['frame'][38:54] == bytes.fromhex('ff020000000000000000000000000016'):
                 continue
             row['stamp'] = row['ns'] // 1000
             selected.append(row)
@@ -208,8 +211,12 @@ def verify_capture(path, lane, log_path, archive, native=False, statistics=None,
                                Path(archive).with_name(Path(archive).stem + '-metadata.zip'),
                                native, interface_index, native_copy_order)
     metadata['native_clock_qualified'] = bool(clock)
+    outer = verify_metadata(path, lane, log_path,
+                            Path(archive).with_name(Path(archive).stem + '-outer-extensions.zip'),
+                            native, interface_index, native_copy_order, True)
+    outer['native_clock_qualified'] = bool(clock)
     result.update(damaged_rejected=len(rejected), native_clock=clock,
-                  metadata=metadata,
+                  metadata=metadata, outer_extensions=outer,
                   original_sha256=hashlib.sha256(original).hexdigest(),
                   archive_sha256=hashlib.sha256(Path(archive).read_bytes()).hexdigest())
     return result

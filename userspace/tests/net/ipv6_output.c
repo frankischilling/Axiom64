@@ -208,7 +208,7 @@ int ipv6_routing_wire(const unsigned* input_indices, const unsigned char* input_
 int ipv6_extension_controls_local(void);
 int ipv6_sticky_controls_local(void);
 int ipv6_sticky_wire(const unsigned* input_indices, const unsigned char* input_macs,
-                    const int* input_packets);
+                     const int* input_packets);
 
 int main(void) {
     check(!ipv6_send_controls_local(), "complete per-message send controls");

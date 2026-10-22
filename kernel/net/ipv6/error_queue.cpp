@@ -3,10 +3,11 @@
 
 namespace ax {
 bool inet6_queue_error(Inet6Socket* socket, const Inet6Error& metadata, const void* bytes,
-                       size_t length) {
-    if (length > 65535)
+                       size_t length, const uint8_t* extensions) {
+    if (metadata.extension_length > 65535 || length > 65535 - metadata.extension_length ||
+        (metadata.extension_length && !extensions))
         return false;
-    size_t cost = sizeof(Inet6Error) + length;
+    size_t cost = sizeof(Inet6Error) + length + metadata.extension_length;
     if (!socket->receive_errors || socket->error_count == inet6_queue_count ||
         cost > socket->receive_limit -
                    min(socket->bytes + socket->error_bytes, size_t(socket->receive_limit)))
@@ -18,6 +19,9 @@ bool inet6_queue_error(Inet6Socket* socket, const Inet6Error& metadata, const vo
     record->length = length;
     if (length)
         memcpy(record + 1, bytes, length);
+    if (record->extension_length)
+        memcpy(reinterpret_cast<uint8_t*>(record + 1) + length, extensions,
+               record->extension_length);
     socket->errors[(socket->error_head + socket->error_count) % inet6_queue_count] = record;
     socket->error_count++;
     socket->error_bytes += cost;
@@ -35,7 +39,7 @@ Inet6Error* inet6_take_error(Inet6Socket* socket) {
     socket->errors[socket->error_head] = nullptr;
     socket->error_head = (socket->error_head + 1) % inet6_queue_count;
     socket->error_count--;
-    socket->error_bytes -= sizeof(Inet6Error) + record->length;
+    socket->error_bytes -= sizeof(Inet6Error) + record->length + record->extension_length;
     auto next = socket->error_count ? socket->errors[socket->error_head] : nullptr;
     if (next && next->error.origin == 3)
         socket->error = next->error.number;

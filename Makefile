@@ -683,7 +683,7 @@ build/ipv6-pmtu-native build/ipv6-pmtu-static build/ipv6-pmtu-dynamic: userspace
 build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: IPV6_FIXTURE_FLAGS = -DIPV6_ERROR_CONTROLS_INTEGRATED
 build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: userspace/tests/net/ipv6_error_controls.c
-build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: userspace/tests/net/ipv6_error_metadata.c
+build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: userspace/tests/net/ipv6_error_metadata.c userspace/tests/net/ipv6_receive_extensions.c
 build/ipv6-expiry-native build/ipv6-expiry-static build/ipv6-expiry-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-controls-native build/ipv6-controls-static build/ipv6-controls-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-controls-native build/ipv6-controls-static build/ipv6-controls-dynamic: IPV6_FIXTURE_FLAGS = -DIPV6_CONTROLS_INTEGRATED
@@ -736,6 +736,7 @@ test-ipv6-errors-native:
 .PHONY: test-ipv6-errors-contract
 test-ipv6-errors-contract:
 	$(PYTHON) scripts/ipv6_error_controls_test.py
+	$(PYTHON) scripts/ipv6_receive_extensions_contract.py --native-directory build/ipv6-errors-native-wire --guest-directory build/ipv6-errors-wire --output-directory build/ipv6-receive-extensions-contract
 .PHONY: test-ipv6-expiry test-ipv6-expiry-native
 test-ipv6-expiry:
 	$(PYTHON) scripts/ipv6_host_test.py --suite expiry --workers 4

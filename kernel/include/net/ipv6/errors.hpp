@@ -16,16 +16,18 @@ struct Inet6Error {
     Inet6ExtendedError error;
     ip6::Address packet_destination;
     unsigned index = 0;
-    uint8_t hops = 0, traffic_class = 0;
-    size_t length = 0;
+    uint8_t hops = 0, traffic_class = 0, extension_protocol = 59;
+    size_t length = 0, extension_length = 0;
 };
 
 inline const uint8_t* inet6_error_bytes(const Inet6Error* error) {
     return reinterpret_cast<const uint8_t*>(error + 1);
 }
 
-// Each queued record owns metadata and payload independently of input packets.
-bool inet6_queue_error(Inet6Socket*, const Inet6Error&, const void*, size_t);
+// Each queued record owns metadata, payload and outer extensions independently
+// of input packets. Extension bytes follow the quoted payload in the allocation.
+bool inet6_queue_error(Inet6Socket*, const Inet6Error&, const void*, size_t,
+                       const uint8_t* extensions = nullptr);
 bool inet6_error_queued(Inet6Socket*);
 // Transfers the front record to the caller, including on later user-copy faults.
 Inet6Error* inet6_take_error(Inet6Socket*);

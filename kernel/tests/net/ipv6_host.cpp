@@ -973,7 +973,13 @@ static void copied_error_queues() {
     memset(bytes, 0x4e, sizeof(bytes));
     assert(!inet6_queue_error(socket, metadata, bytes, sizeof(bytes)) && allocations.empty());
     socket->receive_errors = true;
-    assert(inet6_queue_error(socket, metadata, bytes, sizeof(bytes)));
+    uint8_t extensions[8] = {58, 0, 0x1e, 4, 1, 2, 3, 4};
+    metadata.extension_protocol = 60;
+    metadata.extension_length = sizeof(extensions);
+    assert(!inet6_queue_error(socket, metadata, bytes, sizeof(bytes)) && allocations.empty());
+    assert(inet6_queue_error(socket, metadata, bytes, sizeof(bytes), extensions));
+    assert(socket->error_bytes == sizeof(Inet6Error) + sizeof(bytes) + sizeof(extensions));
+    extensions[7] ^= 1;
     bytes[0] ^= 1;
     metadata.offender.address.bytes[15] ^= 1;
     metadata.packet_destination.bytes[15] ^= 1;
@@ -984,8 +990,15 @@ static void copied_error_queues() {
     assert(record && record->length == 16 && *inet6_error_bytes(record) == 0x4e &&
            record->offender.address == address(0, 250) &&
            record->packet_destination == address(0, 2) && record->index == 1 &&
-           record->hops == 53 && record->traffic_class == 0xab);
+           record->hops == 53 && record->traffic_class == 0xab &&
+           record->extension_protocol == 60 && record->extension_length == 8 &&
+           inet6_error_bytes(record)[record->length + 7] == 4);
     release(record);
+    metadata.extension_length = 65536;
+    assert(!inet6_queue_error(socket, metadata, bytes, 0, extensions));
+    metadata.extension_length = 65535;
+    assert(!inet6_queue_error(socket, metadata, bytes, 1, extensions));
+    metadata.extension_length = 0;
     assert(!inet6_error_queued(socket) && !inet6_error(socket) && allocations.empty());
     fail_allocations = 1;
     assert(!inet6_queue_error(socket, metadata, bytes, sizeof(bytes)) && !fail_allocations);
@@ -1039,19 +1052,23 @@ static void copied_error_queues() {
     for (unsigned n = 0; n < 10; n++)
         deliver(0, incoming(0, remote, local, datagram, 64, 17));
     assert(socket->count == 10 && socket->bytes == 14520);
-    // The fixed budget now includes the retained outer packet metadata.
-    for (unsigned n = 0; n < 4; n++)
-        assert(inet6_queue_error(socket, metadata, bytes, 1));
-    assert(!inet6_queue_error(socket, metadata, bytes, 1));
-    assert(socket->count == 10 && socket->error_count == 4 &&
-           socket->error_bytes == 4 * (sizeof(Inet6Error) + 1));
+    // The fixed budget includes the copied outer extension bytes.
+    metadata.extension_length = sizeof(extensions);
+    size_t record_cost = sizeof(Inet6Error) + 1 + sizeof(extensions);
+    unsigned admitted = (socket->receive_limit - socket->bytes) / record_cost;
+    assert(admitted && admitted < inet6_queue_count);
+    for (unsigned n = 0; n < admitted; n++)
+        assert(inet6_queue_error(socket, metadata, bytes, 1, extensions));
+    assert(!inet6_queue_error(socket, metadata, bytes, 1, extensions));
+    assert(socket->count == 10 && socket->error_count == admitted &&
+           socket->error_bytes == admitted * record_cost);
     // One byte below a complete record cannot admit its one-byte payload.
-    socket->receive_limit = socket->bytes + socket->error_bytes + sizeof(Inet6Error);
-    assert(!inet6_queue_error(socket, metadata, bytes, 1));
+    socket->receive_limit = socket->bytes + socket->error_bytes + record_cost - 1;
+    assert(!inet6_queue_error(socket, metadata, bytes, 1, extensions));
     socket->receive_limit++;
-    assert(inet6_queue_error(socket, metadata, bytes, 1));
-    assert(!inet6_queue_error(socket, metadata, bytes, 1));
-    assert(socket->count == 10 && socket->error_count == 5);
+    assert(inet6_queue_error(socket, metadata, bytes, 1, extensions));
+    assert(!inet6_queue_error(socket, metadata, bytes, 1, extensions));
+    assert(socket->count == 10 && socket->error_count == admitted + 1);
     inet6_close(socket);
     assert(allocations.empty());
     auto reused = inet6_allocate(2);

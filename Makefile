@@ -678,7 +678,7 @@ build/ipv6-%-dynamic: userspace/tests/net/ipv6_%.c scripts/compile_uapi_client.p
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(IPV6_FIXTURE_FLAGS) $(filter %.c,$^)
 build/ipv6-sockets-native build/ipv6-sockets-static build/ipv6-sockets-dynamic build/ipv6-output-native build/ipv6-output-static build/ipv6-output-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-output-native build/ipv6-output-static build/ipv6-output-dynamic: IPV6_FIXTURE_FLAGS = -DIPV6_SEND_CONTROLS_INTEGRATED
-build/ipv6-output-native build/ipv6-output-static build/ipv6-output-dynamic: userspace/tests/net/ipv6_send_controls.c
+build/ipv6-output-native build/ipv6-output-static build/ipv6-output-dynamic: userspace/tests/net/ipv6_send_controls.c userspace/tests/net/ipv6_send_controls_wire.c
 build/ipv6-pmtu-native build/ipv6-pmtu-static build/ipv6-pmtu-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: IPV6_FIXTURE_FLAGS = -DIPV6_ERROR_CONTROLS_INTEGRATED

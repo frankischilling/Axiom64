@@ -58,6 +58,8 @@ def child(profile, directory, suite='host'):
     saved = directory / 'products'
     if suite == 'output':
         for name in ('Makefile', 'userspace/tests/net/ipv6_send_controls.c',
+                     'userspace/tests/net/ipv6_send_controls_wire.c', 'scripts/ipv6_send_controls_peer.py',
+                     'scripts/ipv6_send_controls_capture.py',
                      'scripts/ipv6_send_controls_contract.py', 'scripts/ipv6_send_controls_test.py'):
             sources[name] = digest(ROOT / name)
     if suite == 'errors':
@@ -145,6 +147,8 @@ def child(profile, directory, suite='host'):
             observed.check_returncode()
             kernel = json.loads((directory / 'preexecution.json').read_text())['kernel']
             send_model = parse_send_probe(observed.stdout.decode(), kernel['release'])
+            for peer in peers:
+                peer.set_send_model(send_model)
             model = dict(kernel=kernel, **send_model,
                          probe_log_sha256=hashlib.sha256(observed.stdout).hexdigest(),
                          probe_program=str(send_model_program),
@@ -233,6 +237,8 @@ def child(profile, directory, suite='host'):
                 extra = dict(statistics=statistics[lane], interface_index=interfaces[lane]['index']) if suite in ('fragments', 'output', 'pmtu', 'errors', 'expiry', 'controls') else {}
                 if model_program:
                     extra['native_copy_order'] = copy_order
+                if send_model_program:
+                    extra['native_send_class'] = send_model['minus_one_class']
                 audits.append(checker(directory / f'lane{lane}.pcap', lane,
                     directory / 'client.log', directory / f'lane{lane}-damaged.zip', native=True, **extra))
         except Exception as failure:

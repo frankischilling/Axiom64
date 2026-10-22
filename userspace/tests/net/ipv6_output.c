@@ -196,6 +196,8 @@ static void output(unsigned lane) {
 }
 
 int ipv6_send_controls_local(void);
+int ipv6_send_controls_wire(const unsigned* input_indices, const unsigned char* input_macs,
+                            const int* input_packets);
 
 int main(void) {
     check(!ipv6_send_controls_local(), "complete per-message send controls");
@@ -203,6 +205,8 @@ int main(void) {
     int control = fixture_interfaces();
     for (unsigned lane = 0; lane < 2; lane++)
         output(lane);
+    check(!ipv6_send_controls_wire(indices, &macs[0][0], packets),
+          "complete Ethernet send controls");
     close(control);
     for (unsigned lane = 0; lane < 2; lane++)
         close(packets[lane]);

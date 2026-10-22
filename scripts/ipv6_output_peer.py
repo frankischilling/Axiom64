@@ -3,6 +3,7 @@
 import struct
 import time
 from ipv6_host_peer import Peer as HostPeer, checksum, require
+from ipv6_send_controls_peer import Peer as SendPeer
 
 
 def plan(sequence):
@@ -29,6 +30,11 @@ class Peer(HostPeer):
         self.fragment_frames = 0
         self.quiet = []
         self.remote_link = bytes.fromhex('fe800000000000000000000000000001')
+        self.send_controls = SendPeer(lane, native)
+        self.send_controls.outgoing = self.outgoing
+
+    def set_send_model(self, model):
+        self.send_controls.set_send_model(model)
 
     def reply(self, request):
         result = bytearray(request)
@@ -52,8 +58,12 @@ class Peer(HostPeer):
 
     def tick(self):
         self.finish()
+        self.send_controls.tick()
 
     def receive(self, frame):
+        if frame[12:14] == b'\x88\xc0' or self.send_controls.ready:
+            self.send_controls.receive(frame)
+            return
         require(len(frame) >= 14 and frame[6:12] == self.guest, 'output Ethernet source ownership')
         if frame[12:14] == b'\x88\xb8':
             require(not self.ready and len(frame) == 60 and frame[:6] == self.control and
@@ -159,10 +169,10 @@ class Peer(HostPeer):
 
     @property
     def passed(self):
-        return self.ready and self.completed == 216 and self.pending is None
+        return self.ready and self.completed == 216 and self.pending is None and self.send_controls.passed
 
     def result(self):
         return dict(passed=self.passed, lane=self.lane, cases=self.completed,
                     fragment_frames=self.fragment_frames, quiet_intervals=self.quiet,
                     firmware_frames=len(self.firmware_frames), firmware_sha256=self.firmware_frames,
-                    native_MLD_reports=self.mld_reports)
+                    native_MLD_reports=self.mld_reports, send_controls=self.send_controls.result())

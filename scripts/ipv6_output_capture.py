@@ -34,7 +34,7 @@ def stamp(row):
     return row.get('monotonic_ns', row['ns'])
 
 
-def inspect(rows, lane, log, native=False):
+def inspect_original(rows, lane, log, native=False):
     log = log.replace('\r\n', '\n')
     require(log.count('IPV6_OUTPUT_PASS adapters=2 cases=432 policies=9 scopes=2 copied_vectors=1 close_reuse=1') == 1 and
             'IPV6_OUTPUT_FAIL' not in log, 'actual output client completed the full workload')
@@ -73,7 +73,10 @@ def inspect(rows, lane, log, native=False):
     firmware, mld = [], 0
     data_indices, fragments, raw_indices, quiet_pairs = [], [], [], []
     ids = set()
-    for index, row in enumerate(rows):
+    # AF_PACKET can deliver opposite-direction records out of kernel timestamp order.
+    # Keep original indices and clocks; validate causal order using those clocks.
+    ordered = sorted(enumerate(rows), key=lambda item: (stamp(item[1]), item[0])) if native else enumerate(rows)
+    for index, row in ordered:
         frame = row['frame']
         if frame[12:14] == b'\x88\xb8':
             require(len(frame) == 60 and frame[14:20] == b'IP6O' + bytes([lane, 0]) and
@@ -114,6 +117,8 @@ def inspect(rows, lane, log, native=False):
             else:
                 require(active is not None and number == active['number'] and active['end'] is not None,
                         'one output end acknowledgement')
+                require(stamp(row) >= stamp(rows[active['end']]), 'original end acknowledgement clock follows request')
+                require('last_data' not in active or stamp(row) >= stamp(rows[active['last_data']]), 'original end acknowledgement clock follows all data')
                 if wanted[-1]:
                     require(not active['body'] and not active['done'], 'rejected application call emitted no datagram')
                     require(stamp(row) - stamp(rows[active['end']]) >= 50000000, 'full original fifty-millisecond rejection observation')
@@ -155,11 +160,13 @@ def inspect(rows, lane, log, native=False):
             continue
         require(active is not None and active['start'] is not None and not active['policy'][-1] and not active['done'],
                 'one original datagram belongs to its accepted application call')
+        require(stamp(row) >= stamp(rows[active['start']]), 'original data clock follows begin acknowledgement')
         kind, scope, configuration, size, mtu, allowed, _ = active['policy']
         own, target = (link, remote_link) if scope else (local, remote)
         require(frame[:12] == peer + guest and source == own and destination == target and hop == 64 and
                 length + 40 <= 1500, 'original data source, route and interface MTU')
         data_indices.append(index)
+        active['last_data'] = index
         if protocol == 44:
             require(allowed and length + 40 <= mtu and len(body) > 8 and not body[1],
                     'permitted complete Fragment header and socket fragment size')
@@ -199,7 +206,15 @@ def inspect(rows, lane, log, native=False):
                     data=data_indices, fragments=fragments, raw=raw_indices, quiet=quiet_pairs)
 
 
-def verify_capture(path, lane, log_path, archive, native=False, statistics=None, interface_index=None):
+def inspect(rows, lane, log, native=False, interface_index=None, native_send_class=None):
+    from ipv6_send_controls_capture import boundary, inspect as inspect_send
+    result, proof = inspect_original(rows[:boundary(rows, lane)], lane, log, native)
+    controls, _ = inspect_send(rows, lane, log, native, interface_index, native_send_class)
+    result['send_controls'] = controls
+    return result, proof
+
+
+def verify_capture(path, lane, log_path, archive, native=False, statistics=None, interface_index=None, native_send_class=None):
     path, log_path = Path(path), Path(log_path)
     original, original_log = path.read_bytes(), log_path.read_bytes()
     rows, log = read_capture(path), original_log.decode(errors='replace')
@@ -213,16 +228,26 @@ def verify_capture(path, lane, log_path, archive, native=False, statistics=None,
             row['stamp'] = row['ns'] // 1000
             selected.append(row)
         clock = bind_native_clock(path, selected, statistics)
-    result, proof = inspect(rows, lane, log, native)
+    result, proof = inspect(rows, lane, log, native, interface_index, native_send_class)
     controls = ('missing-data', 'duplicate-data', 'fragment-id', 'fragment-offset', 'checksum',
                 'wrong-source', 'wrong-MAC', 'missing-end-ACK', 'short-quiet', 'wrong-case-result',
-                'wrong-case-configuration', 'valid-checksum-wrong-raw')
+                'wrong-case-configuration', 'valid-checksum-wrong-raw',
+                'data-before-begin-ACK', 'end-ACK-before-data')
     rejected = []
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as saved:
         for name in controls:
             changed, changed_log = copy.deepcopy(rows), log
             index = proof['data'][0]
-            if name == 'missing-data':
+            if name in ('data-before-begin-ACK', 'end-ACK-before-data'):
+                data = proof['data'][0]
+                before = next(n for n in range(len(changed)) if changed[n]['frame'][12:14] == b'\x88\xb9' and
+                              changed[n]['frame'][19] == 2 and changed[n]['frame'][32] == 1 and int.from_bytes(changed[n]['frame'][20:24], 'big') == 0)
+                after = next(n for n in range(len(changed)) if changed[n]['frame'][12:14] == b'\x88\xb9' and
+                             changed[n]['frame'][19] == 3 and changed[n]['frame'][32] == 1 and int.from_bytes(changed[n]['frame'][20:24], 'big') == 0)
+                target, reference = (data, before) if name == 'data-before-begin-ACK' else (after, data)
+                changed[target]['ns'] = changed[reference]['ns'] - 1000
+                changed[target]['monotonic_ns'] = stamp(changed[reference]) - 1000
+            elif name == 'missing-data':
                 del changed[index]
             elif name == 'duplicate-data':
                 changed.insert(index, copy.deepcopy(changed[index]))
@@ -260,13 +285,19 @@ def verify_capture(path, lane, log_path, archive, native=False, statistics=None,
             saved.writestr(name + '.pcap', encode_capture(changed))
             saved.writestr(name + '.log', changed_log)
             try:
-                inspect(changed, lane, changed_log, native)
+                inspect(changed, lane, changed_log, native, interface_index, native_send_class)
             except ValueError as failure:
                 rejected.append(dict(name=name, reason=str(failure)))
             else:
                 raise ValueError('accepted damaged IPv6 output evidence: ' + name)
         saved.writestr('rejections.json', json.dumps(rejected, indent=2))
     require(path.read_bytes() == original and log_path.read_bytes() == original_log, 'original output evidence remains unchanged')
+    from ipv6_send_controls_capture import verify_capture as verify_send
+    controls = verify_send(path, lane, log_path,
+                           Path(archive).with_name(Path(archive).stem + '-send-controls.zip'),
+                           native, interface_index, native_send_class)
+    controls['native_clock_qualified'] = bool(clock)
     result.update(damaged_rejected=len(rejected), original_sha256=hashlib.sha256(original).hexdigest(),
-                  archive_sha256=hashlib.sha256(Path(archive).read_bytes()).hexdigest(), native_clock=clock)
+                  archive_sha256=hashlib.sha256(Path(archive).read_bytes()).hexdigest(), native_clock=clock,
+                  send_controls=controls)
     return result

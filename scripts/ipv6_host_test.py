@@ -68,6 +68,7 @@ def prepare(linkage, directory, suite='host', image_directory=None):
         'scripts/ipv6_error_controls_contract.py', 'scripts/ipv6_error_controls_test.py',
         'scripts/ipv6_copy_model.py', 'userspace/tests/net/ipv6_copy_model.c',
         'scripts/ipv6_send_controls_contract.py', 'scripts/ipv6_send_controls_test.py',
+        'scripts/ipv6_send_controls_peer.py', 'scripts/ipv6_send_controls_capture.py',
         'scripts/ipv6_send_model.py', 'userspace/tests/net/ipv6_send_model.c',
         'scripts/ipv6_error_metadata_peer.py', 'scripts/ipv6_error_metadata_capture.py',
         'scripts/network_test.py', 'scripts/tcp_fault_test.py', 'scripts/image.py',
@@ -164,6 +165,7 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
                    f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
     elif suite == 'output':
         markers = ['IPV6_OUTPUT_PASS adapters=2 cases=432 policies=9 scopes=2 copied_vectors=1 close_reuse=1',
+                   'IPV6_SEND_WIRE_DONE adapters=2 cases=192 variants=24 scopes=2 transports=2',
                    'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0', f'Firmware: {firmware.upper()}',
                    f'virtio-net: index=1 transport={transport}', 'e1000: index=2 model=82540EM']
     elif suite == 'pmtu':

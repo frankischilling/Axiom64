@@ -8,7 +8,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fetch import ROOT
-from ipv6_configuration_test import observations, REFERENCE
+from ipv6_configuration_test import observations, guest_identity, REFERENCE
 
 
 class ConfigurationObservations(unittest.TestCase):
@@ -39,6 +39,16 @@ class ConfigurationObservations(unittest.TestCase):
             with self.subTest(mutation=number):
                 self.assertNotEqual(text, self.text)
                 self.assertFalse(observations(text)['passed'])
+
+    def test_actual_guest_transport(self):
+        text = 'Firmware: BIOS\nvirtio-net: index=1 transport=modern\nvirtio-net: index=2 transport=modern\n'
+        self.assertTrue(guest_identity(text, 'bios', 'modern'))
+        self.assertFalse(guest_identity(text, 'bios', 'legacy'))
+        self.assertFalse(guest_identity(text, 'uefi', 'modern'))
+        self.assertFalse(guest_identity(text.replace('index=2', 'index=3'), 'bios', 'modern'))
+        legacy = text.replace('modern', 'legacy')
+        self.assertTrue(guest_identity(legacy, 'bios', 'legacy'))
+        self.assertFalse(guest_identity(legacy, 'bios', 'modern'))
 
 
 if __name__ == '__main__':

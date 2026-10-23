@@ -1398,6 +1398,9 @@ jobs:
             build/tcp-*.pcap
             build/tcp-*.clocks.jsonl
             build/tcp-host-libraries/**
+            build/tcp-icmp-native
+            build/musl/build/*/manifest.json
+            build/musl/runtime/*/manifest.json
             build/tcp-*-inputs.json
             build/tcp-*-inputs-damaged/**
             build/tcp-fault-*-peer.json

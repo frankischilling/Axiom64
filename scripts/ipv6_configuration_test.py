@@ -26,6 +26,20 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def adapter_model(transport):
+    if transport == 'e1000':
+        return 'e1000'
+    return 'virtio-net-pci,' + ('disable-legacy=on' if transport == 'modern' else 'disable-modern=on')
+
+
+def guest_identity(text, firmware, transport):
+    markers = ['Firmware: ' + firmware.upper()]
+    for index in (1, 2):
+        markers.append(f'e1000: index={index} model=82540EM' if transport == 'e1000' else
+                       f'virtio-net: index={index} transport={transport}')
+    return all(marker in text for marker in markers)
+
+
 def observations(text):
     lines = text.splitlines()
     actual = [line for line in lines if line.startswith('IO_') and
@@ -167,8 +181,7 @@ def main():
                         '-nic', 'none', '-cdrom', str(image), '-display', 'none', '-serial', 'stdio',
                         '-monitor', 'none', '-no-reboot', '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
                     for lane in range(2):
-                        model = 'e1000' if transport == 'e1000' else (
-                            'virtio-net-pci,disable-legacy=' + ('on' if transport == 'modern' else 'off'))
+                        model = adapter_model(transport)
                         command += ['-netdev', f'user,id=n{lane},ipv6=off', '-device',
                             f'{model},netdev=n{lane},addr={lane + 4:x},mac=52:54:00:12:34:{16 + lane:02x}']
                     if firmware == 'uefi':
@@ -177,9 +190,13 @@ def main():
                         command += ['-drive', 'if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd',
                                     '-drive', 'if=pflash,format=raw,file=' + str(variables)]
                     row = execute(command, output, guest=True)
+                    row['actual_firmware_and_adapters'] = guest_identity(
+                        (output / 'serial.log').read_text(), firmware, transport)
+                    row['passed'] &= row['actual_firmware_and_adapters']
                     row.update(profile=profile, firmware=firmware, transport=transport,
                                image_audit=audit, kernel_sha256=digest(case / 'kernel.elf'),
                                client_sha256=digest(program))
+                    (output / 'receipt.json').write_text(json.dumps(row, indent=2) + '\n')
                     rows.append(row)
                     (args.directory / 'results.json').write_text(json.dumps(rows, indent=2) + '\n')
                     if not row['passed']:

@@ -21,6 +21,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#if !defined(SIOCGSTAMP) || !defined(SIOCGSTAMPNS)
+#include <linux/sockios.h>
+#endif
+
 #define PROTOCOL 0x88b5
 static const unsigned char peer[6] = {2, 0x41, 0x58, 0x50, 0x4b, 0};
 

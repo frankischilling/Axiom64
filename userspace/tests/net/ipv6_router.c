@@ -302,28 +302,47 @@ static void manual_address(unsigned lane, int remove) {
 
 static void replacement_check(unsigned lane, const char* phase, unsigned flags, unsigned preferred,
                               unsigned valid) {
-    struct inventory inventory = snapshot(lane);
-    const struct address_record* address = find(&inventory, prefix_address(lane, 1, 1));
-    check(address != NULL, "manual replacement address remains assigned");
-    unsigned count = routes(&inventory, prefix_address(lane, 1, 0), 64), permanent = 0;
-    struct in6_addr empty = {0}, prefix = prefix_address(lane, 1, 0);
-    for (unsigned at = 0; at < inventory.route_count; at++) {
-        const struct route_record* route = inventory.routes + at;
-        permanent += route->prefix == 64 && !memcmp(&route->destination, &prefix, 16) &&
-                     !memcmp(&route->gateway, &empty, 16) && route->protocol == RTPROT_KERNEL &&
-                     route->metric == 256 && !route->expires;
+    uint64_t began = now();
+    int waited = 0;
+    for (;;) {
+        struct inventory inventory = snapshot(lane);
+        const struct address_record* address = find(&inventory, prefix_address(lane, 1, 1));
+        check(address != NULL, "manual replacement address remains assigned");
+        unsigned count = routes(&inventory, prefix_address(lane, 1, 0), 64), permanent = 0;
+        struct in6_addr empty = {0}, prefix = prefix_address(lane, 1, 0);
+        for (unsigned at = 0; at < inventory.route_count; at++) {
+            const struct route_record* route = inventory.routes + at;
+            permanent += route->prefix == 64 && !memcmp(&route->destination, &prefix, 16) &&
+                         !memcmp(&route->gateway, &empty, 16) && route->protocol == RTPROT_KERNEL &&
+                         route->metric == 256 && !route->expires;
+        }
+        int metadata = address->valid <= valid &&
+                       address->valid >= (valid == UINT32_MAX ? valid : valid - 2) &&
+                       address->preferred <= preferred &&
+                       address->preferred >=
+                           (preferred > 2 && preferred != UINT32_MAX ? preferred - 2 : preferred) &&
+                       count == 1 && permanent == 1;
+        if (metadata && address->flags == flags) {
+            printf("IPV6_ROUTER_REPLACEMENT lane=%u phase=%s flags=%x preferred=%u valid=%u "
+                   "prefix_routes=%u prefix_permanent=%u\n",
+                   lane, phase, address->flags, address->preferred, address->valid, count,
+                   permanent);
+            report(lane, &inventory);
+            return;
+        }
+        // Linux can publish a zero preferred cache before its deferred
+        // deprecation flag update. Every other field must already match.
+        check(
+            metadata && strcmp(phase, "replaced") && strcmp(phase, "readded") &&
+                (address->flags ^ flags) == IFA_F_DEPRECATED && now() - began < 1000000000ULL,
+            "replacement keeps Linux metadata, protected lifetimes and permanent connected prefix");
+        if (!waited)
+            printf("IPV6_ROUTER_DEPRECATION_WAIT lane=%u phase=%s flags=%x preferred=%u valid=%u\n",
+                   lane, phase, address->flags, address->preferred, address->valid);
+        waited = 1;
+        struct timespec delay = {0, 20000000};
+        check(!nanosleep(&delay, NULL), "bounded Linux deprecation-flag observation");
     }
-    check(address->flags == flags && address->valid <= valid &&
-              address->valid >= (valid == UINT32_MAX ? valid : valid - 2) &&
-              address->preferred <= preferred &&
-              address->preferred >=
-                  (preferred > 2 && preferred != UINT32_MAX ? preferred - 2 : preferred) &&
-              count == 1 && permanent == 1,
-          "replacement keeps Linux metadata, protected lifetimes and permanent connected prefix");
-    printf("IPV6_ROUTER_REPLACEMENT lane=%u phase=%s flags=%x preferred=%u valid=%u "
-           "prefix_routes=%u prefix_permanent=%u\n",
-           lane, phase, address->flags, address->preferred, address->valid, count, permanent);
-    report(lane, &inventory);
 }
 
 static void expired_default(unsigned lane) {
@@ -486,8 +505,14 @@ int main(void) {
         probe(lane, 5, 1300);
         barrier(lane, 18);
     }
+    for (unsigned lane = 0; lane < 2; lane++)
+        barrier(lane, 19);
+    for (unsigned phase = 20; phase <= 22; phase++)
+        for (unsigned lane = 0; lane < 2; lane++)
+            barrier(lane, phase);
     puts("IPV6_ROUTER_PASS adapters=2 invalid_each=8 mac_policy_each=1 flags=4 finite_seconds=8 "
-         "protection_seconds=7200 replacement_each=6 retransmit_milliseconds=2000,3000");
+         "protection_seconds=7200 replacement_each=6 retransmit_milliseconds=2000,3000 "
+         "routed_reply_each=2");
     close(control);
     return 0;
 }

@@ -32,7 +32,11 @@ class Peer:
         self.neighbor_retries = []
         self.retry_target = self.prefixes[1][:-1] + b'\x44'
         self.replacements = []
+        self.routed_requests, self.routed_replies = {}, []
         self.started = time.monotonic_ns()
+
+    def bind_peers(self, peers):
+        self.peers = peers
 
     def frame(self, source, destination, payload, hops=255, protocol=58):
         payload = bytearray(payload)
@@ -166,6 +170,27 @@ class Peer:
             require(self.udp == [2, 3, 4, 5] and len(self.neighbor_retries) == 2,
                     'actual delayed neighbor resolution and UDP completion')
             self.ack(phase)
+        elif phase == 19:
+            self.outgoing.append(self.advertisement(lifetime=0, prefixes=False,
+                                                   hops=41 + self.lane * 10))
+            self.ack(phase)
+        elif phase in (20, 21):
+            self.pending = phase
+            source = self.peers[1 - self.lane].retry_target
+            payload = b'RARC' + bytes([self.lane, phase]) + bytes(at * 11 + phase for at in range(6, 16))
+            if phase == 20:
+                body = b'\x80\0\0\0' + struct.pack('!HH', 0x5241, self.lane) + payload
+            else:
+                body = bytearray(struct.pack('!HHHH', 48000 + self.lane, 48999, 24, 0) + payload)
+                struct.pack_into('!H', body, 6, checksum(source + self.addresses[1] +
+                    struct.pack('!I3xB', len(body), 17) + body) or 65535)
+            original = self.frame(source, self.addresses[1], body, hops=64,
+                                  protocol=58 if phase == 20 else 17)
+            self.routed_requests[phase] = original
+            self.outgoing.append(original)
+        elif phase == 22:
+            require(len(self.routed_replies) == 2, 'both cross-interface kernel replies complete')
+            self.ack(phase)
         else:
             raise ValueError('unknown router phase')
 
@@ -229,6 +254,23 @@ class Peer:
             return
         require(protocol in (17, 58) and not checksum(source + destination +
                 struct.pack('!I3xB', len(body), protocol) + body), 'router upper-layer checksum')
+        if protocol == 58 and body[0] in (129, 1):
+            phase = 20 if body[0] == 129 else 21
+            sender = self.peers[1 - self.lane]
+            require(sender.pending == phase and source == sender.addresses[1] and
+                    destination == self.retry_target and frame[:6] == self.mac and
+                    hops == 41 + self.lane * 10, 'actual kernel reply uses its outgoing learned hop limit')
+            original = sender.routed_requests[phase]
+            if phase == 20:
+                require(body[1] == 0 and body[4:] == original[58:],
+                        'cross-interface original echo identifier and payload')
+            else:
+                require(body[:2] == b'\x01\x04' and body[4:8] == bytes(4) and body[8:] == original[14:],
+                        'cross-interface complete original port-error quote')
+            sender.routed_replies.append(dict(phase=phase, incoming=sender.lane,
+                                             outgoing=self.lane, hops=hops))
+            sender.ack(phase)
+            return
         if protocol == 17:
             require(len(body) == 24 and body[:4] == struct.pack('!HH', 47000 + self.lane, 47001) and
                     int.from_bytes(body[4:6], 'big') == len(body) and body[6:8] != bytes(2),
@@ -293,7 +335,7 @@ class Peer:
     def result(self):
         counts = {target.hex():sum(row['target'] == target.hex() for row in self.dad)
                   for target in (self.link, self.addresses[1], self.addresses[3])}
-        passed = (self.complete == list(range(19)) and len(self.replacements) == 6 and self.udp == [2, 3, 4, 5] and len(self.neighbor_retries) == 2 and self.bad_sent and
+        passed = (self.complete == list(range(23)) and len(self.replacements) == 6 and self.udp == [2, 3, 4, 5] and len(self.neighbor_retries) == 2 and len(self.routed_replies) == 2 and self.bad_sent and
                   self.mac_policy == self.native and
                   counts[self.link.hex()] == 1 and counts[self.addresses[1].hex()] == 2 and
                   counts[self.addresses[3].hex()] == 2 and len(self.rs) >= (1 if self.native else 2))
@@ -303,5 +345,6 @@ class Peer:
                     multicast_source_link_layer_cases=1 if 9 in self.complete else 0, solicitations_ns=self.rs,
                     dad=self.dad, dad_counts=counts, advertisements=self.advertisements, replacements=self.replacements,
                     neighbor_retries_ns=self.neighbor_retries, retransmit_milliseconds=2000 + self.lane * 1000,
+                    routed_replies=self.routed_replies,
                     native_zero_lifetime_RA_stopped_solicitation=self.native and len(self.rs) == 1,
                     firmware_frames=self.firmware, native_MLD=self.mld, packet_clock_qualified=False)

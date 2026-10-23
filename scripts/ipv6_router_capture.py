@@ -61,6 +61,16 @@ def inspect(path, lane, text, native=False, statistics=None, linux_vm=False):
     remote = prefixes[2][:-1] + b'\x42'
     retry_target = prefixes[1][:-1] + b'\x44'
     neighbor_retries, neighbor_replies = [], []
+    other_guest = bytes.fromhex(f'5254001234{17 - lane:02x}')
+    other_identifier = bytes([other_guest[0] ^ 2]) + other_guest[1:3] + b'\xff\xfe' + other_guest[3:]
+    other_prefix = ipaddress.IPv6Address(f'2001:db8:{0x41 - lane:x}:1::').packed
+    other_generated = other_prefix[:8] + other_identifier
+    other_retry = other_prefix[:-1] + b'\x44'
+    routed_requests, routed_replies = [], []
+
+    def routed_payload(incoming, phase):
+        return b'RARC' + bytes([incoming, phase]) + bytes(at * 11 + phase for at in range(6, 16))
+
     rows = list(raw_records(path) if native else qemu_records(path))
     requests, replies, bad, advertisements, dad, rs, udp, echoes, timed = [], [], [], [], [], [], [], [], []
     active, mld, prelude = False, 0, 0
@@ -135,7 +145,8 @@ def inspect(path, lane, text, native=False, statistics=None, linux_vm=False):
             position=len(advertisements)
             expected=[(0,48,1400,None,None),(4,61,1300,8,2),(0,61,1300,0,0),
                       (0,61,1300,10000,6000),(0,61,1300,0,0),
-                      (0,61,1300,0,0),(0,61,1300,100,60),(0,61,1300,0,0),(0,61,1300,100,60),(0,61,1300,None,None)]
+                      (0,61,1300,0,0),(0,61,1300,100,60),(0,61,1300,0,0),(0,61,1300,100,60),
+                      (0,61,1300,None,None),(0,41+lane*10,1300,None,None)]
             require(position<len(expected),'bounded valid advertisement count')
             lifetime,hop,mtu_value,valid,preferred=expected[position]
             require((int.from_bytes(body[6:8],'big'),body[4],mtu)==(lifetime,hop,[mtu_value]),
@@ -152,6 +163,37 @@ def inspect(path, lane, text, native=False, statistics=None, linux_vm=False):
             advertisements.append(row)
             continue
         require(not fragmented and not check,'captured valid kernel/peer upper-layer checksum')
+        if not outgoing and ((protocol==58 and body[0]==128) or
+                             (protocol==17 and body[8:12]==b'RARC')):
+            phase=20 if protocol==58 else 21
+            require(source==other_retry and destination==generated[1] and hops==64 and
+                    frame[:6]==guest and len(body)==24 and body[8:]==routed_payload(lane,phase),
+                    'captured original cross-interface reply input')
+            if phase==20:
+                require(body[1]==0 and body[4:8]==struct.pack('!HH',0x5241,lane),
+                        'captured original cross-interface echo identifier')
+            else:
+                require(body[:6]==struct.pack('!HHH',48000+lane,48999,24) and body[6:8]!=bytes(2),
+                        'captured original closed-port datagram')
+            routed_requests.append((phase,row))
+            continue
+        if outgoing and protocol==58 and body[0] in (129,1):
+            phase=20 if body[0]==129 else 21
+            require(source==other_generated and destination==retry_target and frame[:6]==peer and
+                    hops==41+lane*10, 'captured routed kernel reply uses outgoing learned hop limit')
+            if phase==20:
+                require(len(body)==24 and body[1]==0 and body[4:8]==struct.pack('!HH',0x5241,1-lane) and
+                        body[8:]==routed_payload(1-lane,phase),
+                        'captured routed echo retains original identifier and payload')
+            else:
+                quoted=bytearray(struct.pack('!HHHH',48001-lane,48999,24,0)+routed_payload(1-lane,phase))
+                struct.pack_into('!H',quoted,6,checksum(retry_target+other_generated+
+                    struct.pack('!I3xB',len(quoted),17)+quoted) or 65535)
+                original=struct.pack('!IHBB',6<<28,len(quoted),17,64)+retry_target+other_generated+quoted
+                require(body[:2]==b'\x01\x04' and body[4:8]==bytes(4) and body[8:]==original,
+                        'captured routed error retains the complete original datagram quote')
+            routed_replies.append((phase,row))
+            continue
         if protocol==17:
             require(len(body)==24 and body[6:8]!=bytes(2) and int.from_bytes(body[4:6],'big')==24,
                     'captured original UDP length/checksum fields')
@@ -201,13 +243,16 @@ def inspect(path, lane, text, native=False, statistics=None, linux_vm=False):
                 require(destination==generated[1] and body[4:8]==b'\x60\0\0\0',
                         'captured solicited delayed neighbor advertisement')
                 neighbor_replies.append(row)
-    require([phase for phase,_ in requests]==list(range(19)) and
-            [phase for phase,_ in replies]==list(range(19)),'captured complete router phase union')
-    require(sorted(bad)==list(range(9)) and len(advertisements)==10,'every original malformed/policy and valid advertisement is retained')
+    require([phase for phase,_ in requests]==list(range(23)) and
+            [phase for phase,_ in replies]==list(range(23)),'captured complete router phase union')
+    require(sorted(bad)==list(range(9)) and len(advertisements)==11,'every original malformed/policy and valid advertisement is retained')
     require([phase for phase,_ in udp]==[2,3,4,5] and [phase for phase,_ in echoes]==[2,3,4,5],
             'captured complete generated-source UDP exchange union')
     require(len(neighbor_retries)==2 and len(neighbor_replies)==1,
             'captured initial/retry solicitations and one delayed answer')
+    require([phase for phase,_ in routed_requests]==[20,21] and
+            [phase for phase,_ in routed_replies]==[20,21],
+            'captured complete cross-interface echo and error union')
     counts={target.hex():sum(value==target for value,_ in dad) for target in (link,generated[1],generated[3])}
     require(counts=={link.hex():1,generated[1].hex():2,generated[3].hex():2},'captured initial and post-expiry DAD counts')
     require(len(rs)>=(1 if linux else 2),'captured router solicitations')
@@ -244,6 +289,12 @@ def inspect(path, lane, text, native=False, statistics=None, linux_vm=False):
             require(microseconds(replies[17][1])<=microseconds(neighbor_retries[0]) and
                     microseconds(neighbor_retries[1])<=microseconds(neighbor_replies[0])<=microseconds(udp[3][1])<=microseconds(echoes[3][1])<=microseconds(requests[18][1]),
                     'captured timer admission, resolution, UDP and completion order')
+            for phase,row in routed_requests:
+                require(microseconds(replies[19][1])<=microseconds(row)<=microseconds(replies[phase][1]),
+                        'captured cross-interface input and acknowledgment ordering')
+            for _,row in routed_replies:
+                require(microseconds(advertisements[10])<=microseconds(row)<=microseconds(requests[22][1]),
+                        'captured learned hop update precedes routed reply and completion')
             require(microseconds(requests[5][1])-microseconds(advertisements[1])>=3980000,
                     'captured default-router expiry keeps four real seconds')
             require(microseconds(requests[6][1])-microseconds(advertisements[1])>=7980000,
@@ -262,5 +313,6 @@ def inspect(path, lane, text, native=False, statistics=None, linux_vm=False):
                 malformed_and_policy_cases=sorted(bad),valid_advertisements=len(advertisements),
                 generated_UDP_pairs=4,replacement_states=6,neighbor_retransmissions=2,
                 retransmit_milliseconds=2000+lane*1000,dad_counts=counts,solicitations=len(rs),native_MLD=mld,
+                routed_replies=2,routed_reply_hop_limit=41+lane*10,
                 native_clock=clock,native_clock_error=clock_error,timing_error=timing_error,
                 original_timestamps_preserved=True,sha256=hashlib.sha256(path.read_bytes()).hexdigest())

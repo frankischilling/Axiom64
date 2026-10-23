@@ -3,6 +3,7 @@
 #include "net/ipv6/fragmentation.hpp"
 #include "net/inet6.hpp"
 #include "core/random.hpp"
+#include "net/ipv6/router.hpp"
 
 namespace ax {
 namespace {
@@ -188,10 +189,12 @@ ip6::FragmentPiece submit(Output& item, const Ipv6Path& path) {
 } // namespace
 
 int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsigned bound,
-              uint8_t protocol, uint8_t hop_limit, const void* data, size_t length,
+              uint8_t protocol, int16_t hop_limit, const void* data, size_t length,
               Inet6Socket* owner, bool fragmentable, uint32_t socket_mtu, bool interface_mtu,
               uint8_t traffic_class, const ip6::OutputExtensions* extensions,
               Ipv6SourcePolicy source_policy) {
+    if (hop_limit < -1 || hop_limit > 255)
+        return -22;
     const ip6::OutputExtensions empty;
     const auto& options = extensions ? *extensions : empty;
     int extra = ip6::output_extension_size(options);
@@ -207,7 +210,8 @@ int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsig
     if (length > 65535 - size_t(extra) ||
         (!fragmentable && length + extra + ip6::header_size > path.mtu))
         return -90;
-    return queue(path.source, first, bound, protocol, hop_limit, data, length, false, owner,
+    uint8_t hops = hop_limit < 0 ? ip6::link_hop_limit(path.index) : hop_limit;
+    return queue(path.source, first, bound, protocol, hops, data, length, false, owner,
                  fragmentable, socket_mtu, interface_mtu, traffic_class, extensions, &destination,
                  source_policy);
 }

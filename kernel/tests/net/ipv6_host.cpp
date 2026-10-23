@@ -461,6 +461,71 @@ static void echo_and_ownership() {
     }
 }
 
+static void routed_reply_hops() {
+    auto learn = [](unsigned lane, unsigned hops) {
+        std::vector<uint8_t> data(24);
+        data[0] = 134;
+        data[4] = hops;
+        data[16] = data[17] = 1;
+        const uint8_t peer[6] = {2, 0x49, 0x50, 0x36, uint8_t(lane), 1};
+        memcpy(data.data() + 18, peer, 6);
+        deliver(lane, incoming(lane, address(lane, 0x80, true), ip6::all_nodes(), data));
+    };
+    bool matched = true;
+    for (bool deferred : {false, true})
+        for (unsigned incoming_lane = 0; incoming_lane < 2; incoming_lane++)
+            for (bool error : {false, true}) {
+                reset();
+                unsigned outgoing_lane = 1 - incoming_lane;
+                for (unsigned lane = 0; lane < 2; lane++) {
+                    assert(!change(lane + 1, address(lane, 2)));
+                    assert(
+                        !ip6::configuration_write(lane + 1, ip6::ConfigurationKey::accept_ra, 1));
+                    learn(lane, 41 + lane * 10);
+                    deliver(lane, solicitation(lane, address(lane, 2)));
+                }
+                std::vector<uint8_t> data(24);
+                if (error) {
+                    data[0] = 0x12;
+                    data[1] = 0x34;
+                    data[2] = 0xab;
+                    data[3] = 0xcd;
+                    data[5] = data.size();
+                } else
+                    data[0] = 128;
+                for (unsigned at = 8; at < data.size(); at++)
+                    data[at] = at * 7 + incoming_lane;
+                auto original = incoming(incoming_lane, address(outgoing_lane, 1),
+                                         address(incoming_lane, 2), data, 64, error ? 17 : 58);
+                blocked = deferred;
+                deliver(incoming_lane, original);
+                if (deferred) {
+                    // A later advertisement cannot change an admitted reply.
+                    learn(0, 141);
+                    learn(1, 151);
+                    blocked = 0;
+                    net_poll();
+                }
+                auto reply = last(outgoing_lane, error ? 1 : 129);
+                assert(reply.header.source == address(incoming_lane, 2) &&
+                       reply.header.destination == address(outgoing_lane, 1));
+                if (error)
+                    assert(reply.payload[1] == 4 && reply.length == original.size() - 14 + 8 &&
+                           !memcmp(reply.payload + 8, original.data() + 14, original.size() - 14));
+                else
+                    assert(reply.length == data.size() &&
+                           !memcmp(reply.payload + 4, data.data() + 4, data.size() - 4));
+                unsigned expected = 41 + outgoing_lane * 10;
+                std::printf("IPV6_REPLY_HOPS incoming=%u outgoing=%u error=%u deferred=%u "
+                            "observed=%u expected=%u\n",
+                            incoming_lane, outgoing_lane, error, deferred, reply.header.hop_limit,
+                            expected);
+                std::fflush(stdout);
+                matched &= reply.header.hop_limit == expected;
+            }
+    assert(matched);
+}
+
 static void direct_neighbor_replies() {
     reset();
     assert(!change(1, address(0, 2), true, false, 128));
@@ -3287,6 +3352,7 @@ int main() {
     }
     dad();
     echo_and_ownership();
+    routed_reply_hops();
     routes_and_deadlines();
     legacy_route_inventory();
     local_route_visibility();

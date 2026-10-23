@@ -34,6 +34,8 @@ class RouterCapture(unittest.TestCase):
         self.assertEqual(proof['replacement_states'], 6)
         self.assertEqual(proof['neighbor_retransmissions'], 2)
         self.assertEqual(proof['retransmit_milliseconds'], 2000)
+        self.assertEqual(proof['routed_replies'], 2)
+        self.assertEqual(proof['routed_reply_hop_limit'], 41)
 
     def write(self, path, rows):
         with path.open('wb') as stream:
@@ -111,6 +113,8 @@ class RouterCapture(unittest.TestCase):
         line = next(line for line in self.text.splitlines()
                     if line.startswith('IPV6_ROUTER_REPLACEMENT lane=0 phase=zero '))
         for damaged in (None, line.replace('flags=a2', 'flags=22'),
+                        line.replace('flags=a2', 'flags=82'),
+                        line.replace('IPV6_ROUTER_REPLACEMENT ', 'IPV6_ROUTER_DEPRECATION_WAIT '),
                         line.replace('prefix_permanent=1', 'prefix_permanent=0'),
                         line.replace('prefix_routes=1', 'prefix_routes=2'),
                         line.replace('valid=7200', 'valid=4294967295')):
@@ -187,6 +191,49 @@ class RouterCapture(unittest.TestCase):
             break
         else:
             self.fail('actual nonzero advertised neighbor timer is missing')
+
+    def test_routed_reply_rejects_incoming_interface_hop_limit(self):
+        rows = [dict(row) for row in self.rows]
+        for row in rows:
+            frame = bytearray(row['frame'])
+            if len(frame) < 78 or frame[6:12] != bytes.fromhex('525400123410') or frame[54] != 129:
+                continue
+            self.assertEqual(frame[21], 41)
+            frame[21] = 51
+            row['frame'] = bytes(frame)
+            self.rejected(rows=rows)
+            break
+        else:
+            self.fail('actual routed echo reply is missing')
+
+    def test_routed_error_rejects_checksum_valid_changed_quote(self):
+        rows = [dict(row) for row in self.rows]
+        for row in rows:
+            frame = bytearray(row['frame'])
+            if len(frame) < 126 or frame[6:12] != bytes.fromhex('525400123410') or frame[54:56] != b'\x01\x04':
+                continue
+            self.assertEqual(frame[69], 64)
+            frame[69] = 63
+            frame[56:58] = bytes(2)
+            payload = frame[54:]
+            struct.pack_into('!H', frame, 56, checksum(bytes(frame[22:54]) +
+                struct.pack('!I3xB', len(payload), 58) + bytes(payload)))
+            row['frame'] = bytes(frame)
+            self.rejected(rows=rows)
+            break
+        else:
+            self.fail('actual routed port-error quote is missing')
+
+    def test_missing_routed_echo_reply(self):
+        rows = [dict(row) for row in self.rows]
+        for index, row in enumerate(rows):
+            frame = row['frame']
+            if len(frame) >= 78 and frame[6:12] == bytes.fromhex('525400123410') and frame[54] == 129:
+                del rows[index]
+                self.rejected(rows=rows)
+                break
+        else:
+            self.fail('actual routed echo reply is missing')
 
 
 if __name__ == '__main__':

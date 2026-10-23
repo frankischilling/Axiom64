@@ -68,8 +68,9 @@ int ipv6_path(const ip6::Address& source, const ip6::Address& destination, unsig
 void ipv6_mtu_changed(unsigned index, uint32_t previous);
 
 // Success owns a copy until device acceptance or bounded resolution failure.
+// A hop limit of -1 snapshots the selected outgoing interface's default.
 int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsigned bound_index,
-              uint8_t protocol, uint8_t hop_limit, const void*, size_t,
+              uint8_t protocol, int16_t hop_limit, const void*, size_t,
               Inet6Socket* owner = nullptr, bool fragmentable = true, uint32_t socket_mtu = 0,
               bool interface_mtu = false, uint8_t traffic_class = 0,
               const ip6::OutputExtensions* extensions = nullptr,

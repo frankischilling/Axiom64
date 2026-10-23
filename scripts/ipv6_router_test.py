@@ -23,7 +23,7 @@ from tcp_fault_test import exercise
 from tcp_fixture_inputs import audit_fixture, digest
 
 SOURCE = 'userspace/tests/net/ipv6_router.c'
-MARKER = 'IPV6_ROUTER_PASS adapters=2 invalid_each=8 mac_policy_each=1 flags=4 finite_seconds=8 protection_seconds=7200 replacement_each=6 retransmit_milliseconds=2000,3000'
+MARKER = 'IPV6_ROUTER_PASS adapters=2 invalid_each=8 mac_policy_each=1 flags=4 finite_seconds=8 protection_seconds=7200 replacement_each=6 retransmit_milliseconds=2000,3000 routed_reply_each=2'
 
 
 def build(profile, directory):

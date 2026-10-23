@@ -66,8 +66,7 @@ void diagnostic(unsigned index, const uint8_t* original, size_t length, uint8_t 
     uint16_t check = ip6::checksum(destination, source, 58, error, 8 + quoted);
     error[2] = check >> 8;
     error[3] = check;
-    ipv6_send(destination, source, source.link_local() ? index : 0, 58, ip6::link_hop_limit(index),
-              error, 8 + quoted);
+    ipv6_send(destination, source, source.link_local() ? index : 0, 58, -1, error, 8 + quoted);
     release(error);
 }
 
@@ -273,8 +272,8 @@ void ipv6_receive(const NetInfo& info, const void* frame, size_t length) {
     uint16_t check = ip6::checksum(destination, source, 58, reply, packet.length);
     reply[2] = check >> 8;
     reply[3] = check;
-    ipv6_send(destination, source, source.link_local() ? info.index : 0, 58,
-              ip6::link_hop_limit(info.index), reply, packet.length);
+    ipv6_send(destination, source, source.link_local() ? info.index : 0, 58, -1, reply,
+              packet.length);
     release(reply);
 }
 

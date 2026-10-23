@@ -1149,7 +1149,9 @@ jobs:
         run: make test-dns-tcp
       - name: Test route message validation with sanitizers
         if: matrix.suite == 'network'
-        run: make test-netlink-codec
+        run: |
+          make test-netlink-codec
+          python3 scripts/tests/netlink_peer_test.py
       - name: Test NETLINK_ROUTE ownership, lifetime, limits, and routed packets
         if: matrix.suite == 'network'
         run: make test-netlink
@@ -1402,6 +1404,7 @@ jobs:
             build/dns-tcp-*
             build/normal-init-*-dns-packets.json
             build/paired-network/**
+            build/netlink-wire/**
             build/*.png
             build/*.dump
             build/tcp-*.pcap

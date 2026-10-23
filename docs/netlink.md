@@ -48,6 +48,7 @@ Poll and epoll report read availability and capacity for a minimum acknowledgmen
 
 ```sh
 make test-netlink-codec
+python3 scripts/tests/netlink_peer_test.py
 make test-netlink
 make test-address-codec
 make test-netlink-inventory-codec
@@ -70,7 +71,7 @@ Static/dynamic musl, BIOS/UEFI, and modern/legacy virtio produce eight guest
 cases, with 30 raw dumps per case. Three native libc profiles run the same
 BusyBox sequence in isolated Linux network namespaces.
 
-Each boot exchanges six routed UDP packets with two independent Ethernet peers. The peers verify checksums, ports, payload, IP destination/source, and ARP next hop for default, on-link, and preserved unowned gateway routes. Firmware traffic is separated by the Ring 3 readiness marker. Evidence is in `build/netlink-*.log` and `build/netlink-results.json`.
+Each boot exchanges six routed UDP packets with two independent Ethernet peers. The peers verify checksums, ports, payload, IP destination/source, and ARP next hop for default, on-link, and preserved unowned gateway routes. The fixture disables IPv6 before the client starts. Firmware traffic is separated by the Ring 3 readiness marker, and the peer still rejects unexpected protocols. Evidence in `build/netlink-wire/` includes the reopened boot-image audit, source and executable hashes, logs, two packet captures per boot, and actual firmware and adapter observations. A captured automatic DAD frame remains a negative replay fixture.
 
 The native comparison creates two veth pairs in a private Linux network namespace and leaves both peers down. It waits for actual carrier loss, compares direct-route insertion before an address, atomic address assignment, duplicate rejection, filtered dumps and explicit deletion, then runs the earlier common message, lifetime, route ownership, and adapter checks. Linux flushes device routes when its last address is removed, so its comparison deletes the independent routes before withdrawing those addresses. Axiom64's explicit-route retention across address withdrawal is checked separately in the guest. Host interfaces/routes stay outside the namespace; `build/netlink-native-results.json` records the tested Linux kernel. Axiom64-specific quotas and rejection policies are tested separately in the guest. CI runs both comparisons alongside the earlier networking, full userspace/thread, storage, desktop, ext2-root, formatting, and corresponding-source gates.
 

@@ -17,11 +17,12 @@ struct PacketSocket {
     uint32_t receive_limit = packet_queue_bytes;
     uint32_t packets = 0, dropped = 0;
     uint64_t last_realtime_ticks = 0;
-    bool timestamp_valid = false;
+    bool timestamp_valid = false, timestamp_enabled = false;
     PacketFrame* queue[packet_queue_size]{};
 };
 
 static PacketSocket sockets[packet_sockets];
+static unsigned timestamp_sockets;
 
 static uint16_t network_protocol(uint16_t host) {
     return uint16_t((host << 8) | (host >> 8));
@@ -41,6 +42,8 @@ void packet_consume(PacketSocket* socket) {
 void packet_close(PacketSocket* socket) {
     while (socket->count)
         packet_consume(socket);
+    if (socket->timestamp_enabled)
+        timestamp_sockets--;
     socket->used = false;
 }
 
@@ -49,13 +52,21 @@ const PacketFrame* packet_front(PacketSocket* socket) {
 }
 
 void packet_observed(PacketSocket* socket, const PacketFrame& frame) {
-    socket->last_realtime_ticks = frame.realtime_ticks;
+    socket->last_realtime_ticks = socket->timestamp_enabled ? frame.realtime_ticks : 0;
     socket->timestamp_valid = true;
 }
 
 int packet_timestamp(PacketSocket* socket, int64_t (&value)[2], bool nanoseconds) {
+    if (!socket->timestamp_enabled) {
+        socket->timestamp_enabled = true;
+        timestamp_sockets++;
+    }
     if (!socket->timestamp_valid)
         return -2;
+    if (!socket->last_realtime_ticks) {
+        clock_refresh();
+        socket->last_realtime_ticks = clock_realtime_ticks();
+    }
     uint64_t timestamp = socket->last_realtime_ticks;
     value[0] = timestamp / 100;
     value[1] = (timestamp % 100) * (nanoseconds ? 10000000 : 10000);
@@ -86,8 +97,11 @@ void packet_deliver(const NetInfo& info, const void* data, size_t length, unsign
         protocol = network_protocol(length >= 16 && bytes[14] == 0xff && bytes[15] == 0xff ? 1 : 4);
     PacketAddress address{17, protocol, int32_t(info.index), 1, uint8_t(type), 6, {}};
     memcpy(address.address, bytes + 6, 6);
-    clock_refresh();
-    uint64_t timestamp = clock_realtime_ticks();
+    uint64_t timestamp = 0;
+    if (timestamp_sockets) {
+        clock_refresh();
+        timestamp = clock_realtime_ticks();
+    }
     for (auto& socket : sockets) {
         if (!socket.used || &socket == sender || !socket.protocol ||
             (socket.index && socket.index != info.index) ||

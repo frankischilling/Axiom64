@@ -57,6 +57,11 @@ def capture_receipts(text):
         r'dequeue_ms=(\d+)\r?$', text, re.M))
     require(len(matches) == text.count('ICMP_FRAME ') and matches,
             'complete packet arrival receipts')
+    ready = list(re.finditer(r'^ICMP_CAPTURE_READY lane=(\d+) index=(\d+) timestamp_error=(\d+)\r?$', text, re.M))
+    require(len(ready) == 2 and {int(value[1]) for value in ready} == {0, 1} and
+            all(int(value[3]) == 2 and anchors[0].end() < value.start() < matches[0].start()
+                for value in ready), 'both packet timestamp observers armed before traffic')
+    indices = {int(value[1]): int(value[2]) for value in ready}
     receipts = []
     for value in matches:
         lane, index, size, kind, digest, clock, realtime, dequeue = value.groups()
@@ -67,6 +72,8 @@ def capture_receipts(text):
         lower, upper = realtime - offset_upper, realtime - offset_lower
         require(begin[0] <= lower <= upper <= dequeue * 1000000 + 999999 and
                 dequeue <= end[2] // 1000000, 'actual packet arrival precedes dequeue')
+        require(int(lane) in indices and indices[int(lane)] == int(index),
+                'armed timestamp observer owns the actual capture interface')
         receipts.append(dict(lane=int(lane), index=int(index), size=int(size), kind=int(kind),
                              digest=digest, driver_ms=clock, driver_lower_ms=lower // 1000000,
                              driver_upper_ms=upper // 1000000, packet_realtime_ns=realtime,

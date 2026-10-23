@@ -46,7 +46,8 @@ static unsigned long long realtime(void) {
     return (unsigned long long)value.tv_sec * 1000000000 + value.tv_nsec;
 }
 
-static void timestamp_probe(int fd, int index, unsigned long long begin, unsigned long long end) {
+static unsigned long long timestamp_probe(int fd, int index, unsigned long long begin,
+                                          unsigned long long end) {
     struct timespec stamp, alias, consumed, unchanged;
     check(ioctl(fd, SIOCGSTAMPNS, &stamp) == -1 && errno == ENOENT,
           "queued packet has no previously read timestamp");
@@ -89,6 +90,23 @@ static void timestamp_probe(int fd, int index, unsigned long long begin, unsigne
     printf("PACKET_TIMESTAMP_PASS index=%d begin_ns=%llu end_ns=%llu arrival_ns=%llu "
            "dequeue_ns=%llu\n",
            index, begin, end, arrival, dequeue);
+    return arrival;
+}
+
+static void lazy_timestamp_probe(int fd, int index, unsigned long long arrival) {
+    struct timespec value;
+    unsigned long long before = realtime();
+    errno = 0;
+    check(ioctl(fd, SIOCGSTAMPNS, &value) == 0 && value.tv_sec >= 0 && value.tv_nsec >= 0 &&
+              value.tv_nsec < 1000000000,
+          "unarmed first timestamp query");
+    unsigned long long after = realtime();
+    unsigned long long stamp = (unsigned long long)value.tv_sec * 1000000000 + value.tv_nsec;
+    printf("PACKET_TIMESTAMP_LAZY index=%d before_ns=%llu stamp_ns=%llu after_ns=%llu "
+           "arrival_ns=%llu\n",
+           index, before, stamp, after, arrival);
+    check(before <= stamp && stamp <= after && stamp >= arrival + 100000000,
+          "unarmed first timestamp uses query time");
 }
 
 static void buffer_options(unsigned maximum) {
@@ -392,6 +410,7 @@ static void nic(int control, int index, unsigned sequences) {
     check(epoll_ctl(epoll, EPOLL_CTL_ADD, fd, &event) == 0, "epoll add");
     // Keep enough independent frames in flight to cross the 16-bit queue
     // indices without turning every frame into a timer-paced round trip.
+    unsigned long long first_arrival = 0;
     for (unsigned base = 0; base < sequences; base += 16) {
         unsigned end = sequences - base < 16 ? sequences : base + 16;
         for (unsigned sequence = base; sequence < end; sequence++) {
@@ -418,7 +437,7 @@ static void nic(int control, int index, unsigned sequences) {
                       event.data.u64 == 0x123456789abcdef0ull,
                   "epoll RX while tasks blocked");
             if (sequence == 0)
-                timestamp_probe(timestamp, index, timestamp_begin, realtime());
+                first_arrival = timestamp_probe(timestamp, index, timestamp_begin, realtime());
             struct pollfd poller = {.fd = fd, .events = POLLIN};
             check(poll(&poller, 1, 0) == 1 && (poller.revents & POLLIN), "poll RX");
             int available = 0;
@@ -467,6 +486,8 @@ static void nic(int control, int index, unsigned sequences) {
             check(recv(observer, bytes, sizeof(bytes), 0) == (ssize_t)length,
                   "independent listener");
             received(bytes, sent, length, NULL, mac, index);
+            if (sequence == 0)
+                lazy_timestamp_probe(observer, index, first_arrival);
             check(recv(disabled, bytes, sizeof(bytes), 0) == -1 && errno == EAGAIN,
                   "zero protocol filter");
             check(recv(other, bytes, sizeof(bytes), 0) == -1 && errno == EAGAIN, "protocol filter");

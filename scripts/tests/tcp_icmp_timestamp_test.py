@@ -16,6 +16,8 @@ class PacketArrivalClock(unittest.TestCase):
         return (
             f'ICMP_CAPTURE_CLOCK phase=begin monotonic_before_ns=54000000000 '
             f'realtime_ns={offset + 54000000000} monotonic_after_ns=54000000000\n'
+            'ICMP_CAPTURE_READY lane=0 index=1 timestamp_error=2\n'
+            'ICMP_CAPTURE_READY lane=1 index=2 timestamp_error=2\n'
             f'ICMP_FRAME lane=0 index=1 length=70 kind=0 hash=0123456789abcdef '
             f'monotonic_ms={arrival // 1000000} packet_realtime_ns={offset + arrival} '
             f'dequeue_ms={dequeue}\n'
@@ -56,6 +58,16 @@ class PacketArrivalClock(unittest.TestCase):
                                 54580, 54760))
         self.assertFalse(within(dict(driver_lower_ms=54650, driver_upper_ms=54761),
                                 54580, 54760))
+
+    def test_unarmed_or_late_observer_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'observers armed before traffic'):
+            capture_receipts(self.log().replace('timestamp_error=2', 'timestamp_error=0', 1))
+        text = self.log()
+        ready = 'ICMP_CAPTURE_READY lane=0 index=1 timestamp_error=2\n'
+        text = text.replace(ready, '').replace('ICMP_CAPTURE_CLOCK phase=end',
+                                               ready + 'ICMP_CAPTURE_CLOCK phase=end')
+        with self.assertRaisesRegex(ValueError, 'observers armed before traffic'):
+            capture_receipts(text)
 
 
 if __name__ == '__main__':

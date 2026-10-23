@@ -35,6 +35,7 @@ void packet_consume(PacketSocket*);
 
 // Capture admission time belongs to the queued bytes, including delayed reads.
 void packet_observed(PacketSocket*, const PacketFrame&);
+// The first query enables recording on the shared socket description.
 int packet_timestamp(PacketSocket*, int64_t (&value)[2], bool nanoseconds);
 
 unsigned packet_interface(PacketSocket*);

@@ -222,13 +222,19 @@ def mutations(build, row, lane, destination, cases):
     def damage_clock(folder, kind):
         text = (folder / row['log']).read_text()
         match = receipt(text, item['frame'])
-        if kind == 'dequeue-as-arrival':
+        if kind == 'forged-arrival-mapping':
             dequeue = re.search(r'dequeue_ms=(\d+)', match[0])[1]
             damaged = re.sub(r'monotonic_ms=\d+', 'monotonic_ms=' + str(int(dequeue) + 1000), match[0])
         elif kind == 'missing-packet-timestamp':
             damaged = re.sub(r' packet_realtime_ns=\d+ dequeue_ms=\d+', '', match[0])
         elif kind == 'arrival-after-dequeue':
             damaged = re.sub(r'dequeue_ms=\d+', 'dequeue_ms=0', match[0])
+        elif kind == 'unarmed-observer':
+            expression = r'(^ICMP_CAPTURE_READY lane=' + str(lane) + r' index=\d+ timestamp_error=)2'
+            text, count = re.subn(expression, r'\g<1>0', text, flags=re.M)
+            require(count == 1, 'actual timestamp arming observation to damage')
+            (folder / row['log']).write_text(text)
+            return
         else:
             anchor = re.search(r'^ICMP_CAPTURE_CLOCK phase=end .*$', text, re.M)
             if kind == 'missing-clock-anchor':
@@ -242,10 +248,10 @@ def mutations(build, row, lane, destination, cases):
         text = text[:match.start()] + damaged + text[match.end():]
         (folder / row['log']).write_text(text)
 
-    for kind in ('dequeue-as-arrival', 'missing-packet-timestamp', 'arrival-after-dequeue',
-                 'missing-clock-anchor', 'stepped-arrival-clock'):
+    for kind in ('forged-arrival-mapping', 'missing-packet-timestamp', 'arrival-after-dequeue',
+                 'missing-clock-anchor', 'stepped-arrival-clock', 'unarmed-observer'):
         reject(kind, lambda folder, kind=kind: damage_clock(folder, kind))
-    require(len(results) == 16, 'all synchronized quote, control, clock and input damage cases')
+    require(len(results) == 17, 'all synchronized quote, control, clock and input damage cases')
     return results
 
 

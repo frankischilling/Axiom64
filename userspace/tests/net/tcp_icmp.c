@@ -141,7 +141,11 @@ static void capture_start(void) {
                                       .sll_ifindex = (int)indices[lane]};
         CHECK(observers[lane] >= 0 && indices[lane] &&
               bind(observers[lane], (struct sockaddr*)&address, sizeof(address)) == 0);
-        printf("ICMP_CAPTURE_READY lane=%u index=%u\n", lane, indices[lane]);
+        // Linux enables per-packet stamping on the first timestamp query.
+        struct timespec initial;
+        CHECK(ioctl(observers[lane], SIOCGSTAMPNS, &initial) == -1 && errno == ENOENT);
+        printf("ICMP_CAPTURE_READY lane=%u index=%u timestamp_error=%d\n", lane, indices[lane],
+               errno);
     }
     CHECK(pthread_create(&observer, NULL, collect, NULL) == 0);
 }

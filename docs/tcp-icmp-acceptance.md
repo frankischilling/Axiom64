@@ -71,7 +71,9 @@ IPv4 frame must match both the peer journal and an actual packet-socket receipt,
 including direction, interface, whole-frame hash and monotonic time. Socket start/end
 clocks and actual packets establish the silence and delivery intervals.
 
-The observer obtains each frame's queued realtime timestamp through `SIOCGSTAMPNS`
+The observer arms `SIOCGSTAMPNS` before traffic and requires `ENOENT` before its
+first receive, enabling Linux packet stamping from the first frame. It obtains
+each frame's queued realtime timestamp through the same ioctl
 and records dequeue time separately. Actual monotonic/realtime/monotonic clock
 brackets before and after collection must admit one stable offset. The reader
 checks the recorded conversion and requires the complete clock uncertainty interval
@@ -82,12 +84,12 @@ observe a timely quote without falsely labeling its dequeue time as late deliver
 
 The complete matrix requires 22 captures, 1,254 finished cases, 1,408 descriptor
 cycles, 4,070 quoted errors, 1,386 stale quotes and 2,948 unrelated-stream checkpoints.
-Sixteen synchronized corruptions per
+Seventeen synchronized corruptions per
 capture must be rejected: wrong error, unowned sequence/address, omitted or noncausal
 error, stale quote relabeled current, poisoned or omitted recovery, shortened timeout
-and a forged product fingerprint, plus an omitted unrelated-stream reply. Five more
+and a forged product fingerprint, plus an omitted unrelated-stream reply. Six more
 controls forge the arrival conversion, omit the packet timestamp, place arrival after
-dequeue, omit a clock anchor or step its realtime clock. All 352
+dequeue, omit a clock anchor, step its realtime clock or leave the observer unarmed. All 374
 damaged PCAP/journal/receipt/input bundles
 are retained with rejection reasons and hashes under `build/tcp-icmp-damaged/`.
 

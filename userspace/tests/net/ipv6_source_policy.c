@@ -145,6 +145,8 @@ static const struct source_case cases[] = {
      {{"::192.0.2.1", 64, 1, 0}, {"2001:db8:10::1", 128, 0, 0}},
      "::192.0.2.1",
      0},
+    {"no-address-unicast", "2001:db8:99::2", {{0}}, "::1", 0},
+    {"no-address-site", "fec0:1::2", {{0}}, "::1", 0},
 };
 
 static unsigned sequence;

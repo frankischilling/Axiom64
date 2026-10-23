@@ -22,8 +22,8 @@ class SourcePolicyControls(unittest.TestCase):
             path = Path(directory) / 'mixed.log'
             path.write_text(text)
             proof = verify_saved(path, Path(directory) / 'controls.zip')
-        self.assertEqual(proof['observations'], 106)
-        self.assertEqual(proof['damaged_rejected'], 116)
+        self.assertEqual(proof['observations'], 114)
+        self.assertEqual(proof['damaged_rejected'], 124)
 
 
 if __name__ == '__main__':

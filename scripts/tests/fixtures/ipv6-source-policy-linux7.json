@@ -3,10 +3,10 @@
   "reference": {
     "kernel": "7.0.0-1017-azure",
     "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
-    "source_sha256": "c8404370351433d176eda72c33127fa63a431977cdbc460671105266571c477f",
-    "program_sha256": "e529497ec2d1ac5c75795a480c54c06256e79dea6f14eab8589e074229ed217e",
-    "initramfs_sha256": "c9e72b25d943703296e3d350ecc5defa3daf13cf3e4ad6e22ce83f11e53b0b03",
-    "original_log_sha256": "e71d59d7836d2d3dc3e4366a7e88972f1e20352fd596d1cbbf7b97ad53668028",
+    "source_sha256": "a8e09d6e4a1b4e2e9562038a9099e9399724b982ea423930a99ba1367118bf6d",
+    "program_sha256": "72f09a553bd7f9c1dd02470689488ed08d6bee3ed889a276344df7249206c84a",
+    "initramfs_sha256": "7b670a2442c217a3d4a0bf7c7e68e6ed5be7cf0dfa13faada3d448324d672925",
+    "original_log_sha256": "e2ed045c804b69fe55d1dad192b792d563e3893f64fd2201a1d8b5458732122b",
     "actual_program_completed": true,
     "actual_cpio_reopened": true,
     "packet_acceptance": false
@@ -384,6 +384,34 @@
       "source": "::c000:201"
     },
     {
+      "lane": 0,
+      "case": "no-address-unicast",
+      "bound": 0,
+      "error": 0,
+      "source": "::1"
+    },
+    {
+      "lane": 0,
+      "case": "no-address-unicast",
+      "bound": 1,
+      "error": 0,
+      "source": "::1"
+    },
+    {
+      "lane": 0,
+      "case": "no-address-site",
+      "bound": 0,
+      "error": 0,
+      "source": "::1"
+    },
+    {
+      "lane": 0,
+      "case": "no-address-site",
+      "bound": 1,
+      "error": 0,
+      "source": "::1"
+    },
+    {
       "lane": 1,
       "case": "outgoing-before-prefix",
       "bound": 0,
@@ -753,6 +781,34 @@
       "bound": 1,
       "error": 0,
       "source": "::c000:201"
+    },
+    {
+      "lane": 1,
+      "case": "no-address-unicast",
+      "bound": 0,
+      "error": 0,
+      "source": "::1"
+    },
+    {
+      "lane": 1,
+      "case": "no-address-unicast",
+      "bound": 1,
+      "error": 0,
+      "source": "::1"
+    },
+    {
+      "lane": 1,
+      "case": "no-address-site",
+      "bound": 0,
+      "error": 0,
+      "source": "::1"
+    },
+    {
+      "lane": 1,
+      "case": "no-address-site",
+      "bound": 1,
+      "error": 0,
+      "source": "::1"
     }
   ]
 }

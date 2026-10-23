@@ -685,7 +685,7 @@ static void finite_address_dad() {
         ipv6_poll();
         assert(address_observation(lane + 1, local).flags == 0x40);
         Ipv6Path path;
-        assert(ipv6_path({}, remote, lane + 1, path) == -99);
+        assert(!ipv6_path({}, remote, lane + 1, path) && path.source.loopback());
         ticks = 1050;
         assert(!configure_lifetime(lane + 1, local, 2, 8, 0x105, 96, 0));
         auto refreshed = address_observation(lane + 1, local);
@@ -1246,7 +1246,13 @@ static void source_fragmentation() {
                    !ip6::checksum(local, remote, 58, retained_payload.data(), 4000));
             assert(std::equal(original.begin() + 4, original.begin() + 4000,
                               retained_payload.begin() + 4));
-            assert(inet6_send(raw, target, original.data(), 4000, true) == -99);
+            Ipv6Path fresh;
+            assert(!ipv6_path({}, remote, lane + 1, fresh) && fresh.source.loopback());
+            const auto emitted_before_fallback = emitted[lane].size();
+            assert(inet6_send(raw, target, original.data(), 4000, true) == 4000);
+            net_poll();
+            assert(!raw->transmitted && !inet6_error(raw) &&
+                   emitted[lane].size() == emitted_before_fallback);
         } else {
             assert(inet6_send(raw, target, original.data(), 4000, true) == 4000);
             shutdown_after_polls = 2;
@@ -2612,6 +2618,8 @@ static void manual_source_policy() {
     // Actual UDP connect/getsockname observations on Linux, with the default
     // label table and both automatic routing and SO_BINDTODEVICE.
     const Case cases[] = {
+        {"no-address-unicast", "2001:db8:99::2", {}, "::1", 0},
+        {"no-address-site", "fec0:1::2", {}, "::1", 0},
         {"outgoing-before-prefix",
          "2001:db8:99::2",
          {{"2001:db8:10::1", 64, false, false}, {"2001:db8:99::1", 128, false, true}},
@@ -2762,6 +2770,115 @@ static void manual_source_policy() {
     reset();
 }
 
+static void loopback_source_output() {
+    const auto loopback = policy_address("::1");
+    const uint8_t mac[6] = {0x52, 0x55, 0, 0x85, 0x40, 1};
+    for (unsigned lane = 0; lane < 2; lane++) {
+        const auto remote = address(lane, 7);
+        const unsigned index = lane + 1;
+        for (unsigned bound : {0u, index}) {
+            for (unsigned type : {2u, 3u}) {
+                for (bool resolved : {false, true}) {
+                    for (bool closed : {false, true}) {
+                        for (size_t length : {size_t(32), size_t(4000)}) {
+                            reset();
+                            assert(!ipv6_route_control({{}, {}, index, 1024, 0, 3}, false, true));
+                            if (resolved)
+                                ip6::neighbor_solicitation(index, remote, mac);
+                            auto socket = inet6_allocate(type);
+                            assert(socket);
+                            socket->local = loopback;
+                            socket->peer = remote;
+                            socket->peer_port = type == 2 ? 8080 : 0;
+                            socket->index = bound;
+                            socket->connected = true;
+                            std::vector<uint8_t> payload(length, 0x54);
+                            payload[0] = 128;
+                            payload[1] = 0;
+                            assert(inet6_send(socket, inet6_peer(socket), payload.data(), length) ==
+                                   int64_t(length));
+                            assert(socket->transmitted);
+                            if (closed) {
+                                inet6_close(socket);
+                                socket = inet6_allocate(type);
+                                assert(socket && !socket->transmitted && !inet6_error(socket));
+                            }
+                            net_poll();
+                            // RFC 4291 keeps loopback sources inside the node, including
+                            // cached neighbors, fragments and finally closed owners.
+                            assert(emitted[0].empty() && emitted[1].empty());
+                            assert(!socket->transmitted && !inet6_error(socket));
+                            inet6_close(socket);
+                            assert(allocations.empty());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    reset();
+    auto receiver = inet6_allocate(2);
+    assert(receiver);
+    receiver->local = loopback;
+    assert(!inet6_bind_port(receiver, loopback, 8080));
+    auto sender = inet6_allocate(2);
+    assert(sender);
+    sender->local = loopback;
+    const uint8_t payload[] = {1, 2, 3, 4};
+    Inet6Address target{10, htons(8080), 0, loopback, 0};
+    assert(inet6_send(sender, target, payload, sizeof(payload), true) == sizeof(payload));
+    net_poll();
+    assert(inet6_available(receiver) == sizeof(payload) && !sender->transmitted);
+    assert(emitted[0].empty() && emitted[1].empty());
+    inet6_close(sender);
+    inet6_close(receiver);
+    assert(allocations.empty());
+    reset();
+}
+
+static void loopback_source_mtu() {
+    const auto loopback = policy_address("::1");
+    const uint8_t mac[6] = {0x52, 0x55, 0, 0x85, 0x40, 1};
+    for (unsigned lane = 0; lane < 2; lane++) {
+        const auto remote = address(lane, 7);
+        const unsigned index = lane + 1;
+        for (unsigned bound : {0u, index}) {
+            for (unsigned type : {2u, 3u}) {
+                for (bool resolved : {false, true}) {
+                    reset();
+                    assert(!ipv6_route_control({{}, {}, index, 1024, 0, 3}, false, true));
+                    if (resolved)
+                        ip6::neighbor_solicitation(index, remote, mac);
+                    auto socket = inet6_allocate(type);
+                    assert(socket);
+                    socket->local = loopback;
+                    socket->peer = remote;
+                    socket->peer_port = type == 2 ? 8080 : 0;
+                    socket->index = bound;
+                    socket->connected = true;
+                    socket->pmtu_mode = 2;
+                    std::vector<uint8_t> payload(1600, 0x54);
+                    payload[0] = 128;
+                    payload[1] = 0;
+                    assert(inet6_send(socket, inet6_peer(socket), payload.data(), payload.size()) ==
+                           -90);
+                    assert(!socket->transmitted && !inet6_error(socket));
+                    assert(inet6_send(socket, inet6_peer(socket), payload.data(), 1400) == 1400);
+                    assert(socket->transmitted);
+                    // Admission used 1500; completion must observe the reduced MTU.
+                    assert(!net_configure(index, true, 1280));
+                    net_poll();
+                    assert(!socket->transmitted && inet6_error(socket, true) == 90);
+                    assert(emitted[0].empty() && emitted[1].empty());
+                    inet6_close(socket);
+                    assert(allocations.empty());
+                }
+            }
+        }
+    }
+    reset();
+}
+
 static void reviewed_source_edges() {
     reset();
     static NetAdapter third;
@@ -2842,6 +2959,8 @@ int main() {
     finite_address_dad();
     source_lifetime_preferences();
     manual_source_policy();
+    loopback_source_output();
+    loopback_source_mtu();
     cross_interface_source_output();
     retired_neighbor_source();
     finite_prefix_lifetimes();

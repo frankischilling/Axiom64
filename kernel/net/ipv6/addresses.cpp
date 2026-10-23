@@ -107,7 +107,7 @@ const Ipv6Address* source_for(unsigned index, const ip6::Address& destination) {
     const Ipv6Address* best = nullptr;
     unsigned best_rank = 0;
     for (unsigned n = 0; auto entry = ipv6_address(n); n++) {
-        if (!ready(*entry) || entry->address.loopback() ||
+        if (!ready(*entry) ||
             ((destination.link_local() || destination.multicast()) && entry->index != index))
             continue;
         unsigned rank = source_rank(*entry, index, destination);
@@ -229,7 +229,7 @@ int ipv6_path(const ip6::Address& requested, const ip6::Address& destination, un
         path = {source, destination, ipv6_loopback, 65536, 0, 128};
         return 0;
     }
-    if (destination.loopback() || requested.loopback())
+    if (destination.loopback())
         return -101;
     Ipv6Route inventory[ipv6_route_capacity + ipv6_address_capacity + 1];
     size_t count = ipv6_routes(inventory, sizeof(inventory) / sizeof(*inventory));

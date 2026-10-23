@@ -214,7 +214,7 @@ def run(linkage, firmware, transport, image, inputs, directory, suite='host'):
     missing = [marker for marker in markers if marker not in text]
     if suite == 'host' and 'IPV6_QUEUED_SOURCE_DONE adapters=2 cases=16 UDP=8 raw=8 expiry=8 close_reuse=8' not in text:
         missing.append('complete queued-source cohort')
-    if suite == 'host' and 'IPV6_SOURCE_POLICY_PASS adapters=2 observations=106' not in text:
+    if suite == 'host' and 'IPV6_SOURCE_POLICY_PASS adapters=2 observations=114' not in text:
         missing.append('complete manual-source policy cohort')
     unchanged = all(digest(ROOT / name) == expected for group in ('products', 'sources')
                     for name, expected in inputs[group].items())

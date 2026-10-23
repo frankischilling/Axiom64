@@ -10,7 +10,7 @@ from fetch import ROOT
 
 FIXTURE = ROOT / 'scripts/tests/fixtures/ipv6-source-policy-linux7.json'
 PREFIX = 'IPV6_SOURCE_POLICY'
-MARKER = 'IPV6_SOURCE_POLICY_PASS adapters=2 observations=106'
+MARKER = 'IPV6_SOURCE_POLICY_PASS adapters=2 observations=114'
 LINK_SOURCES = frozenset(ipaddress.IPv6Address(value).packed for value in ('fe80::1', 'fe80::10'))
 
 
@@ -46,7 +46,7 @@ def verify_log(text):
     if (expected['schema'] != 1 or reference['kernel'] != '7.0.0-1017-azure' or
             reference['source_sha256'] != hashlib.sha256(source.read_bytes()).hexdigest() or
             not reference['actual_program_completed'] or not reference['actual_cpio_reopened'] or
-            len(expected['observations']) != 106):
+            len(expected['observations']) != 114):
         raise ValueError('complete executed source-bound Linux source-policy reference')
     observed = records(text)
     if observed != expected['observations']:

@@ -258,6 +258,14 @@ void output_poll() {
             if (item.socket_mtu && !item.fragmentable)
                 path.mtu = min(path.mtu, item.socket_mtu);
         }
+        // RFC 4291 keeps loopback addresses inside the node. Consume admitted
+        // bytes before neighbor work, including cached paths and detached owners.
+        if (path.index != ipv6_loopback &&
+            (path.source.loopback() || item.destination.loopback())) {
+            // Preserve deferred EMSGSIZE if the MTU changed after admission.
+            clear(item, !item.fragmentable && item.length - ethernet_header > path.mtu ? -90 : 0);
+            continue;
+        }
         if (path.index == ipv6_loopback) {
             memset(item.mac, 0, sizeof(item.mac));
         } else if (item.destination.multicast())

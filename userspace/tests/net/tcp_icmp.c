@@ -17,6 +17,9 @@
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
+#ifdef __GLIBC__
+#include <linux/sockios.h>
+#endif
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
@@ -39,6 +42,30 @@ static pthread_t observer;
 static int companions[2][2], listeners[2];
 static int passive_listeners[2][ICMP_CASES];
 static unsigned companion_checks[2][2];
+static uint64_t capture_before, capture_realtime, capture_after;
+
+static uint64_t nanoseconds(clockid_t clock) {
+    struct timespec stamp;
+    CHECK(clock_gettime(clock, &stamp) == 0 && stamp.tv_sec >= 0 && stamp.tv_nsec >= 0 &&
+          stamp.tv_nsec < 1000000000);
+    return (uint64_t)stamp.tv_sec * 1000000000 + stamp.tv_nsec;
+}
+
+static void capture_clock(const char* phase) {
+    uint64_t before = nanoseconds(CLOCK_MONOTONIC);
+    uint64_t realtime = nanoseconds(CLOCK_REALTIME);
+    uint64_t after = nanoseconds(CLOCK_MONOTONIC);
+    CHECK(after >= before && after - before <= 100000000);
+    if (!strcmp(phase, "begin")) {
+        capture_before = before;
+        capture_realtime = realtime;
+        capture_after = after;
+    }
+    printf("ICMP_CAPTURE_CLOCK phase=%s monotonic_before_ns=%llu realtime_ns=%llu "
+           "monotonic_after_ns=%llu\n",
+           phase, (unsigned long long)before, (unsigned long long)realtime,
+           (unsigned long long)after);
+}
 
 static uint64_t milliseconds(void) {
     struct timespec stamp;
@@ -68,13 +95,23 @@ static void drain(unsigned lane) {
         observed[lane]++;
         if (frame[12] != 8 || frame[13] != 0)
             continue;
+        struct timespec arrival;
+        CHECK(ioctl(observers[lane], SIOCGSTAMPNS, &arrival) == 0 && arrival.tv_sec >= 0 &&
+              arrival.tv_nsec >= 0 && arrival.tv_nsec < 1000000000);
+        uint64_t realtime = (uint64_t)arrival.tv_sec * 1000000000 + arrival.tv_nsec;
+        uint64_t dequeue = milliseconds();
+        __int128 mapped = (__int128)realtime - capture_realtime + capture_before +
+                          (capture_after - capture_before) / 2;
+        CHECK(mapped >= 0 && mapped <= UINT64_MAX);
         uint64_t digest = UINT64_C(0xcbf29ce484222325);
         for (ssize_t at = 0; at < length; at++)
             digest = (digest ^ frame[at]) * UINT64_C(0x100000001b3);
         ipv4_frames[lane]++;
-        printf("ICMP_FRAME lane=%u index=%u length=%zd kind=%u hash=%016llx monotonic_ms=%llu\n",
+        printf("ICMP_FRAME lane=%u index=%u length=%zd kind=%u hash=%016llx monotonic_ms=%llu "
+               "packet_realtime_ns=%llu dequeue_ms=%llu\n",
                lane, indices[lane], length, source.sll_pkttype, (unsigned long long)digest,
-               (unsigned long long)milliseconds());
+               (unsigned long long)(mapped / 1000000), (unsigned long long)realtime,
+               (unsigned long long)dequeue);
     }
 }
 
@@ -91,6 +128,7 @@ static void* collect(void* unused) {
 }
 
 static void capture_start(void) {
+    capture_clock("begin");
     for (unsigned lane = 0; lane < 2; lane++) {
         char name[16];
         snprintf(name, sizeof(name), "eth%u", lane);
@@ -112,6 +150,7 @@ static void capture_stop(void) {
     CHECK(usleep(100000) == 0);
     atomic_store(&stop, 1);
     CHECK(pthread_join(observer, NULL) == 0);
+    capture_clock("end");
     for (unsigned lane = 0; lane < 2; lane++) {
         unsigned statistics[2];
         socklen_t size = sizeof(statistics);

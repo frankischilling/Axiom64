@@ -23,7 +23,11 @@ SOURCES = ('Makefile', 'scripts/tcp_capture_clock.py', 'scripts/tests/tcp_clock_
            'kernel/net/tcp/connection.cpp', 'kernel/include/net/tcp/connection.hpp',
            'kernel/net/tcp/socket.cpp', 'kernel/include/net/tcp/socket.hpp',
            'kernel/net/ipv4/core.cpp', 'kernel/net/ipv4/socket.cpp',
-           'scripts/tests/tcp_icmp_error_order_test.py')
+           'scripts/tests/tcp_icmp_error_order_test.py', 'scripts/tcp_icmp_capture.py',
+           'scripts/tests/tcp_icmp_timestamp_test.py', 'scripts/tests/tcp_icmp_capture_test.py',
+           'kernel/include/net/packet.hpp', 'kernel/net/packet.cpp', 'kernel/io/io.cpp',
+           'kernel/abi/linux/syscall.cpp', 'kernel/arch/x86_64/clock.cpp',
+           'kernel/arch/x86_64/rtc.cpp', 'kernel/include/core/time.hpp')
 SOURCES = tuple(dict.fromkeys(SOURCES + IPV4_MODULES))
 
 

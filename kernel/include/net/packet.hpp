@@ -18,6 +18,7 @@ static_assert(sizeof(PacketAddress) == 20);
 struct PacketFrame {
     PacketAddress source;
     size_t length;
+    uint64_t realtime_ticks;
 };
 
 inline const uint8_t* packet_bytes(const PacketFrame* frame) {
@@ -31,6 +32,10 @@ bool packet_ready(PacketSocket*, bool write);
 const PacketFrame* packet_front(PacketSocket*);
 
 void packet_consume(PacketSocket*);
+
+// Capture admission time belongs to the queued bytes, including delayed reads.
+void packet_observed(PacketSocket*, const PacketFrame&);
+int packet_timestamp(PacketSocket*, int64_t (&value)[2], bool nanoseconds);
 
 unsigned packet_interface(PacketSocket*);
 

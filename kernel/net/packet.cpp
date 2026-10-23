@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/packet.hpp"
 #include "process/task.hpp"
+#include "core/time.hpp"
 
 namespace ax {
 constexpr unsigned packet_queue_size = 256, packet_sockets = 256;
@@ -15,6 +16,8 @@ struct PacketSocket {
     unsigned queue_limit = 32;
     uint32_t receive_limit = packet_queue_bytes;
     uint32_t packets = 0, dropped = 0;
+    uint64_t last_realtime_ticks = 0;
+    bool timestamp_valid = false;
     PacketFrame* queue[packet_queue_size]{};
 };
 
@@ -45,6 +48,20 @@ const PacketFrame* packet_front(PacketSocket* socket) {
     return socket->count ? socket->queue[socket->head] : nullptr;
 }
 
+void packet_observed(PacketSocket* socket, const PacketFrame& frame) {
+    socket->last_realtime_ticks = frame.realtime_ticks;
+    socket->timestamp_valid = true;
+}
+
+int packet_timestamp(PacketSocket* socket, int64_t (&value)[2], bool nanoseconds) {
+    if (!socket->timestamp_valid)
+        return -2;
+    uint64_t timestamp = socket->last_realtime_ticks;
+    value[0] = timestamp / 100;
+    value[1] = (timestamp % 100) * (nanoseconds ? 10000000 : 10000);
+    return 0;
+}
+
 size_t packet_available(PacketSocket* socket) {
     auto frame = packet_front(socket);
     return frame ? frame->length : 0;
@@ -69,6 +86,8 @@ void packet_deliver(const NetInfo& info, const void* data, size_t length, unsign
         protocol = network_protocol(length >= 16 && bytes[14] == 0xff && bytes[15] == 0xff ? 1 : 4);
     PacketAddress address{17, protocol, int32_t(info.index), 1, uint8_t(type), 6, {}};
     memcpy(address.address, bytes + 6, 6);
+    clock_refresh();
+    uint64_t timestamp = clock_realtime_ticks();
     for (auto& socket : sockets) {
         if (!socket.used || &socket == sender || !socket.protocol ||
             (socket.index && socket.index != info.index) ||
@@ -86,7 +105,7 @@ void packet_deliver(const NetInfo& info, const void* data, size_t length, unsign
             socket.dropped++;
             continue;
         }
-        *frame = {address, length};
+        *frame = {address, length, timestamp};
         memcpy(frame + 1, data, length);
         socket.queue[(socket.head + socket.count) % packet_queue_size] = frame;
         socket.count++;
@@ -100,6 +119,7 @@ int64_t packet_read(PacketSocket* socket, void* data, size_t length) {
         return -11;
     size_t copied = min(length, frame->length);
     memcpy(data, packet_bytes(frame), copied);
+    packet_observed(socket, *frame);
     packet_consume(socket);
     return copied;
 }

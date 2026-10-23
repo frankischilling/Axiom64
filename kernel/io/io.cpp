@@ -702,6 +702,8 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
         at += count;
         remaining -= count;
     }
+    if (frame)
+        packet_observed(request.handle->packet, *frame);
     uint32_t actual_address = nl    ? sizeof(NetlinkAddress)
                               : ip  ? sizeof(InetAddress)
                               : ip6 ? sizeof(Inet6Address)

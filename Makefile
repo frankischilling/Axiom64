@@ -997,10 +997,12 @@ test-tcp-pmtu-native: test-tcp-pmtu-observer-retirement
 	$(PYTHON) scripts/tcp_fault_native.py --wire pmtu
 test-tcp-pmtu-sockets:
 	$(PYTHON) scripts/tcp_fault_test.py --wire pmtu
-.PHONY: test-tcp-icmp-native test-tcp-icmp-sockets
-test-tcp-icmp-native:
+.PHONY: test-tcp-icmp-native test-tcp-icmp-sockets test-tcp-icmp-timestamps
+test-tcp-icmp-timestamps:
+	$(PYTHON) scripts/tests/tcp_icmp_timestamp_test.py -v
+test-tcp-icmp-native: test-tcp-icmp-timestamps
 	$(PYTHON) scripts/tcp_fault_native.py --wire icmp
-test-tcp-icmp-sockets:
+test-tcp-icmp-sockets: test-tcp-icmp-timestamps
 	$(PYTHON) scripts/tcp_fault_test.py --wire icmp
 build/tcp-lifetime-native: userspace/tests/net/tcp_lifetime.c
 	@mkdir -p build

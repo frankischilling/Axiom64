@@ -562,6 +562,12 @@ static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
         int size = packet_available(h->packet);
         return copy_result(arg, &size, 4);
     }
+    if (h->packet && (request == 0x8906 || request == 0x8907 || request == 0x80108906 ||
+                      request == 0x80108907)) {
+        int64_t value[2];
+        int error = packet_timestamp(h->packet, value, request == 0x8907 || request == 0x80108907);
+        return error ? error : copy_result(arg, value, sizeof(value));
+    }
     if (request == 0x541b && h->inet) {
         int size = inet_available(h->inet);
         return copy_result(arg, &size, sizeof(size));

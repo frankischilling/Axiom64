@@ -29,6 +29,7 @@ guest `SO_ERROR` user copy preserves the pending value.
 
 ```sh
 make test-tcp-icmp
+make test-tcp-icmp-timestamps
 sudo -n python3 scripts/tests/tcp_icmp_error_order_test.py
 sudo -n make test-tcp-icmp-native
 make test-tcp-icmp-sockets
@@ -70,12 +71,23 @@ IPv4 frame must match both the peer journal and an actual packet-socket receipt,
 including direction, interface, whole-frame hash and monotonic time. Socket start/end
 clocks and actual packets establish the silence and delivery intervals.
 
+The observer obtains each frame's queued realtime timestamp through `SIOCGSTAMPNS`
+and records dequeue time separately. Actual monotonic/realtime/monotonic clock
+brackets before and after collection must admit one stable offset. The reader
+checks the recorded conversion and requires the complete clock uncertainty interval
+to fit each original socket window. Missing timestamps, inconsistent clock anchors
+and substituted dequeue clocks fail acceptance. Packet timestamps, observation
+windows and protocol deadlines remain unchanged. A delayed collector can therefore
+observe a timely quote without falsely labeling its dequeue time as late delivery.
+
 The complete matrix requires 22 captures, 1,254 finished cases, 1,408 descriptor
 cycles, 4,070 quoted errors, 1,386 stale quotes and 2,948 unrelated-stream checkpoints.
-Eleven synchronized corruptions per
+Sixteen synchronized corruptions per
 capture must be rejected: wrong error, unowned sequence/address, omitted or noncausal
 error, stale quote relabeled current, poisoned or omitted recovery, shortened timeout
-and a forged product fingerprint, plus an omitted unrelated-stream reply. All 242
+and a forged product fingerprint, plus an omitted unrelated-stream reply. Five more
+controls forge the arrival conversion, omit the packet timestamp, place arrival after
+dequeue, omit a clock anchor or step its realtime clock. All 352
 damaged PCAP/journal/receipt/input bundles
 are retained with rejection reasons and hashes under `build/tcp-icmp-damaged/`.
 

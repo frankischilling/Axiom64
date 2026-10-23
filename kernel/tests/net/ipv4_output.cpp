@@ -3,12 +3,17 @@
 #include "net/ipv4_wire.hpp"
 #include "net/inet.hpp"
 #include "net/udp.hpp"
+#include "net/ipv6/configuration.hpp"
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
 
 namespace ax {
+int random_read(void*, size_t, bool) {
+    std::abort();
+}
+
 uint64_t ticks = 100;
 
 void* alloc(size_t length) {
@@ -202,6 +207,8 @@ static void pending_reply_ownership(uint32_t source) {
 }
 
 int main() {
+    assert(!ip6::configuration_write(ip6::configuration_all, ip6::ConfigurationKey::generation_mode,
+                                     1));
     NetAdapter adapters[2];
     for (unsigned n = 0; n < 2; n++) {
         auto& adapter = adapters[n];

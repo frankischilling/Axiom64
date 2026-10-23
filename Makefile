@@ -2,7 +2,7 @@ CXX = g++
 NASM = nasm
 PYTHON = python3
 IPV4_WORKERS ?= 2
-IPV6_CORE = $(wildcard kernel/net/ipv6/*.cpp)
+IPV6_CORE = $(wildcard kernel/net/ipv6/*.cpp) kernel/core/random/primitives.cpp
 MUSL_CC = gcc -specs="$(CURDIR)/build/musl/build/compiler.specs"
 CLANG_FORMAT ?= clang-format-20
 CXXFLAGS = -std=c++20 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pie -fno-threadsafe-statics -fno-use-cxa-atexit -fno-builtin -m64 -mno-red-zone -mcmodel=kernel -mgeneral-regs-only -Ikernel/include -Ivendor
@@ -713,6 +713,11 @@ test-ipv6-host:
 	$(PYTHON) scripts/ipv6_host_test.py
 test-ipv6-host-native:
 	$(PYTHON) scripts/ipv6_host_native.py
+.PHONY: test-ipv6-configuration test-ipv6-configuration-native
+test-ipv6-configuration:
+	$(PYTHON) scripts/ipv6_configuration_test.py --directory build/ipv6-configuration-wire
+test-ipv6-configuration-native:
+	$(PYTHON) scripts/ipv6_configuration_test.py --native --directory build/ipv6-configuration-native
 test-ipv6-lifetimes-contract:
 	$(PYTHON) scripts/ipv6_lifetime_contract.py --native-directory build/ipv6-host-native-wire --guest-directory build/ipv6-host-wire --output-directory build/ipv6-lifetime-contract
 .PHONY: test-ipv6-sockets test-ipv6-sockets-native
@@ -768,7 +773,7 @@ test-ipv6-fragments-native: test-ipv6-fragment-observation
 build/ipv6-wire-host: kernel/tests/net/ipv6_wire.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
-build/ipv6-host: kernel/tests/net/ipv6_host.cpp $(IPV6_CORE) kernel/net/ipv6/socket/send_control.cpp kernel/net/ethernet.cpp kernel/net/netlink/ipv6.cpp kernel/net/netlink/addresses.cpp kernel/net/netlink/inventory.cpp kernel/net/netlink/routes.cpp $(call rwildcard,kernel/include/,*.hpp)
+build/ipv6-host: kernel/tests/net/ipv6_host.cpp $(IPV6_CORE) kernel/fs/proc/ipv6.cpp kernel/net/ipv6/socket/send_control.cpp kernel/net/ethernet.cpp kernel/net/netlink/ipv6.cpp kernel/net/netlink/addresses.cpp kernel/net/netlink/inventory.cpp kernel/net/netlink/routes.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 build/ipv6-reassembly-host: kernel/tests/net/ipv6_reassembly.cpp kernel/net/ipv6/reassembly.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/reassembly.hpp kernel/include/net/ipv6/wire.hpp kernel/include/core/base.hpp

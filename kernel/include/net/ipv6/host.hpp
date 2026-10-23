@@ -28,7 +28,7 @@ void output_shutdown();
 
 void address_poll();
 
-void address_duplicate(unsigned index, const Address&);
+void address_duplicate(unsigned index, const Address&, const uint8_t* nonce = nullptr);
 
 void address_reset();
 
@@ -42,7 +42,7 @@ void route_poll();
 
 void route_reset();
 
-int dad_probe(const Ipv6Address&);
+int dad_probe(const Ipv6Address&, const uint8_t* nonce = nullptr);
 
 void neighbor_reset();
 

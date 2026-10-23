@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/ipv6/host.hpp"
 #include "net/ipv6/reassembly.hpp"
+#include "net/ipv6/configuration.hpp"
+#include "core/random.hpp"
 
 namespace ax {
 ip6::PathMtuCache ip6::path_mtu_cache;
@@ -12,6 +14,9 @@ struct AddressSlot {
     uint64_t created = 0, updated = 0;
     uint64_t due = 0;
     bool sent = false;
+    unsigned probes = 0, required = 1;
+    uint8_t nonce[6]{};
+    bool nonce_valid = false;
 };
 
 AddressSlot addresses[ipv6_address_capacity];
@@ -26,7 +31,7 @@ uint32_t remaining(uint32_t lifetime, uint64_t age) {
 }
 
 uint16_t configured_flags(const Ipv6Address& value, Ipv6AddressLifetimes lifetime) {
-    return (value.flags & (2 | 0x200)) | (lifetime.valid == UINT32_MAX ? 0x80 : 0) |
+    return (value.flags & (2 | 0x200 | 0x800)) | (lifetime.valid == UINT32_MAX ? 0x80 : 0) |
            (lifetime.preferred ? 0 : 0x20);
 }
 
@@ -121,9 +126,12 @@ const Ipv6Address* source_for(unsigned index, const ip6::Address& destination) {
 } // namespace
 
 const Ipv6Address* ipv6_address(unsigned position) {
-    if (!position)
-        return &loopback();
-    return --position < address_count ? &addresses[position].value : nullptr;
+    if (!ip6::configuration_disabled(ipv6_loopback)) {
+        if (!position)
+            return &loopback();
+        position--;
+    }
+    return position < address_count ? &addresses[position].value : nullptr;
 }
 
 Ipv6AddressCacheInfo ipv6_address_cache(const Ipv6Address& value) {
@@ -145,10 +153,12 @@ int ipv6_address_add(const Ipv6Address& value, Ipv6AddressLifetimes lifetime, bo
         return -22;
     if (!net_info(value.index))
         return -19;
+    if (ip6::configuration_disabled(value.index))
+        return -13;
     if (value.prefix > 128 || value.address.unspecified() || value.address.multicast() ||
         value.address.loopback() || value.address.mapped())
         return -22;
-    if (value.flags & ~uint16_t(0x80 | 2 | 0x200))
+    if (value.flags & ~uint16_t(0x80 | 2 | 0x200 | 0x800))
         return -95;
     if (net_info(value.index)->mtu < ip6::minimum_mtu)
         return -22;
@@ -183,7 +193,10 @@ int ipv6_address_add(const Ipv6Address& value, Ipv6AddressLifetimes lifetime, bo
     entry.value.flags = configured_flags(value, lifetime);
     entry.lifetime = lifetime;
     entry.created = entry.updated = ticks;
-    if (!(value.flags & 2))
+    int32_t probes = 1;
+    ip6::configuration_read(value.index, ip6::ConfigurationKey::dad_transmits, probes);
+    entry.required = uint8_t(probes);
+    if (!(value.flags & 2) && probes)
         entry.value.flags |= 0x40;
     return 0;
 }
@@ -199,6 +212,7 @@ int ipv6_address_remove(unsigned index, const ip6::Address& address) {
                 ip6::reassembly_discard(&address, index);
                 ip6::path_mtu_cache.discard_source(address, address.link_local() ? index : 0);
             }
+            ip6::configuration_address_removed(index, address);
             return 0;
         }
     return -99;
@@ -281,6 +295,8 @@ uint64_t address_deadline(const Ipv6Address& value) {
 }
 
 bool usable(unsigned index) {
+    if (configuration_disabled(index))
+        return false;
     if (index == ipv6_loopback)
         return true;
     auto info = net_info(index);
@@ -303,22 +319,42 @@ void address_poll() {
             continue;
         if (!usable(entry.value.index)) {
             entry.sent = false;
+            entry.probes = 0;
+            entry.nonce_valid = false;
             continue;
         }
-        if (entry.sent) {
-            if (ticks >= entry.due)
-                entry.value.flags &= ~uint16_t(0x40);
-        } else if (!dad_probe(entry.value) && (entry.value.flags & 0x40)) {
+        if (entry.sent && ticks < entry.due)
+            continue;
+        if (!entry.required || (entry.sent && entry.probes >= entry.required)) {
+            entry.value.flags &= ~uint16_t(0x40);
+            continue;
+        }
+        int32_t enhanced = 1;
+        int32_t global_enhanced = 1;
+        configuration_read(entry.value.index, ConfigurationKey::enhanced_dad, enhanced);
+        configuration_read(configuration_all, ConfigurationKey::enhanced_dad, global_enhanced);
+        enhanced = enhanced || global_enhanced;
+        if (enhanced && !entry.nonce_valid) {
+            if (random_read(entry.nonce, sizeof(entry.nonce)))
+                continue;
+            entry.nonce_valid = true;
+        }
+        if (!dad_probe(entry.value, enhanced ? entry.nonce : nullptr) &&
+            (entry.value.flags & 0x40)) {
             entry.sent = true;
+            entry.probes++;
             entry.due = ticks + 100;
         }
     }
 }
 
-void address_duplicate(unsigned index, const Address& address) {
+void address_duplicate(unsigned index, const Address& address, const uint8_t* nonce) {
     for (unsigned n = 0; n < address_count; n++) {
-        auto& entry = addresses[n].value;
+        auto& slot = addresses[n];
+        auto& entry = slot.value;
         if (entry.index == index && entry.address == address && (entry.flags & 0x40)) {
+            if (nonce && slot.nonce_valid && !memcmp(nonce, slot.nonce, sizeof(slot.nonce)))
+                continue;
             entry.flags |= 8;
             log("IPv6 duplicate address index=%u\n", uint64_t(index));
         }

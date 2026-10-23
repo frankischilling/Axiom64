@@ -2,6 +2,7 @@
 #include "net/ipv6/host.hpp"
 #include "net/ipv6/reassembly.hpp"
 #include "net/inet6.hpp"
+#include "net/ipv6/configuration.hpp"
 
 namespace ax {
 namespace {
@@ -121,8 +122,11 @@ bool member(unsigned index, const ip6::Address& address) {
     return false;
 }
 
-bool options(const uint8_t* data, size_t length, unsigned wanted, const uint8_t*& mac) {
+bool options(const uint8_t* data, size_t length, unsigned wanted, const uint8_t*& mac,
+             const uint8_t** nonce = nullptr) {
     mac = nullptr;
+    if (nonce)
+        *nonce = nullptr;
     for (size_t at = 24; at < length;) {
         if (length - at < 2 || !data[at + 1])
             return false;
@@ -134,6 +138,8 @@ bool options(const uint8_t* data, size_t length, unsigned wanted, const uint8_t*
                 return false;
             mac = data + at + 2;
         }
+        if (nonce && !*nonce && data[at] == 14 && size == 8)
+            *nonce = data + at + 2;
         at += size;
     }
     return true;
@@ -148,8 +154,9 @@ void discovery(const NetInfo& info, const ip6::Packet& packet, const uint8_t* se
     if (target.unspecified() || target.multicast())
         return;
     const uint8_t* mac;
+    const uint8_t* nonce;
     bool solicitation = bytes[0] == 135;
-    if (!options(bytes, packet.length, solicitation ? 1 : 2, mac))
+    if (!options(bytes, packet.length, solicitation ? 1 : 2, mac, &nonce))
         return;
     bool zero = packet.header.source.unspecified();
     if (solicitation) {
@@ -157,7 +164,7 @@ void discovery(const NetInfo& info, const ip6::Packet& packet, const uint8_t* se
             return;
         if (!ipv6_owned(info.index, target)) {
             if (zero && memcmp(sender, info.mac, 6))
-                ip6::address_duplicate(info.index, target);
+                ip6::address_duplicate(info.index, target, nonce);
             return;
         }
         if (!zero && mac)
@@ -269,6 +276,7 @@ void ipv6_poll() {
     if (polling)
         return;
     polling = true;
+    ip6::configuration_poll();
     ip6::address_poll();
     ip6::route_poll();
     ip6::reassembly_expire(ticks, fragment_expired);
@@ -282,6 +290,7 @@ void ipv6_shutdown() {
     ip6::neighbor_reset();
     ip6::reassembly_discard();
     ip6::address_reset();
+    ip6::configuration_reset();
     error_tokens = 16;
     error_epoch = ticks;
 }
@@ -307,14 +316,19 @@ int neighbor_probe(unsigned index, const Address& source, const Address& target,
     return control(index, source, destination, mac, data, sizeof(data), false);
 }
 
-int dad_probe(const Ipv6Address& address) {
-    uint8_t data[24]{};
+int dad_probe(const Ipv6Address& address, const uint8_t* nonce) {
+    uint8_t data[32]{};
     data[0] = 135;
     memcpy(data + 8, address.address.bytes, 16);
+    if (nonce) {
+        data[24] = 14;
+        data[25] = 1;
+        memcpy(data + 26, nonce, 6);
+    }
     auto destination = solicited_node(address.address);
     uint8_t mac[6];
     multicast_mac(destination, mac);
-    return control(address.index, {}, destination, mac, data, sizeof(data), false);
+    return control(address.index, {}, destination, mac, data, nonce ? sizeof(data) : 24, false);
 }
 } // namespace ip6
 } // namespace ax

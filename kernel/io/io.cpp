@@ -491,6 +491,46 @@ struct VectorCursor {
     }
 };
 
+static int64_t control_attempt(Task& task, IoRequest& request, const ControlFileOps& control) {
+    auto handle = request.handle;
+    size_t length = 0;
+    for (size_t n = 0; n < request.count; n++) {
+        const auto& vector = request.vectors[n];
+        if (vector.base > user_limit || vector.length > user_limit - vector.base)
+            return -14;
+        length += vector.length;
+    }
+    // Linux vector I/O returns before the filesystem for an empty iterator.
+    if (!length && (request.call.rax == 19 || request.call.rax == 20))
+        return 0;
+    if (request.write && node_readonly(handle->node))
+        return -30;
+    if (control.access(handle->node, request.write ? 2 : 4, false))
+        return -1;
+    auto buffer = static_cast<uint8_t*>(alloc(length + 1));
+    if (!buffer)
+        return -12;
+    VectorCursor cursor{request};
+    // Copy every input page before invoking a state-changing handler. A late
+    // vector or page fault must not commit a valid prefix of a sysctl write.
+    if (request.write && !cursor.copy(task, buffer, length)) {
+        release(buffer);
+        return -14;
+    }
+    buffer[length] = 0;
+    uint64_t offset = handle->offset;
+    int64_t result =
+        request.write ? write_handle(handle, buffer, length) : read_handle(handle, buffer, length);
+    if (result > int64_t(length))
+        panic("control file exceeds captured operation");
+    if (result > 0 && !request.write && !cursor.copy(task, buffer, size_t(result)))
+        result = -14;
+    if (result < 0)
+        handle->offset = offset;
+    release(buffer);
+    return result;
+}
+
 static int64_t local_stream_attempt(Task& task, IoRequest& request) {
     auto handle = request.handle;
     size_t remaining = 0;
@@ -918,8 +958,9 @@ static int64_t attempt(Task& task, IoRequest& request) {
     size_t done = 0;
     int64_t result = 0;
     uint64_t old_offset = h->offset;
+    auto control = node_control(h->node);
     // Scalar empty reads reach device readiness; empty readv requests keep their shortcut.
-    if (f.rax == 0 && !request.single.length)
+    if (f.rax == 0 && !request.single.length && !control)
         result = f.rsi >= user_limit ? -14 : read_handle(h, nullptr, 0);
     if (request.positioned)
         h->offset = f.r10;
@@ -947,7 +988,12 @@ static int64_t attempt(Task& task, IoRequest& request) {
             result = local_stream_attempt(task, request);
         completion = true;
     }
-    bool limited_write = request.write && h->node && (h->node->mode & 0170000) == regular_file;
+    if (!completion && control) {
+        result = control_attempt(task, request, *control);
+        completion = true;
+    }
+    bool limited_write =
+        request.write && !control && h->node && (h->node->mode & 0170000) == regular_file;
     size_t budget = 0;
     if (limited_write) {
         for (size_t i = 0; i < request.count; i++) {

@@ -3,6 +3,7 @@
 #include "net/ipv4_wire.hpp"
 #include "net/tcp/socket.hpp"
 #include "net/tcp/connection.hpp"
+#include "net/ipv6/configuration.hpp"
 #include "../../net/ipv4/socket.hpp"
 #include <cassert>
 #include <cstdio>
@@ -128,6 +129,8 @@ static InetSocket* connect(NetAdapter& adapter, uint32_t peer, unsigned binding 
 }
 
 int main() {
+    assert(!ip6::configuration_write(ip6::configuration_all, ip6::ConfigurationKey::generation_mode,
+                                     1));
     NetAdapter adapters[2];
     for (unsigned n = 0; n < 2; n++) {
         auto& adapter = adapters[n];

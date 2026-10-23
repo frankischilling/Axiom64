@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/ipv4.hpp"
 #include "net/inet.hpp"
+#include "net/ipv6/configuration.hpp"
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
 
 namespace ax {
+int random_read(void*, size_t, bool) {
+    std::abort();
+}
+
 uint64_t ticks = 100;
 
 void* alloc(size_t length) {
@@ -295,6 +300,8 @@ static void link_lifecycle() {
 }
 
 int main() {
+    assert(!ip6::configuration_write(ip6::configuration_all, ip6::ConfigurationKey::generation_mode,
+                                     1));
     NetAdapter adapters[2];
     for (unsigned index = 1; index <= 2; index++) {
         auto& adapter = adapters[index - 1];

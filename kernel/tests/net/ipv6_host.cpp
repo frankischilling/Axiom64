@@ -2,6 +2,8 @@
 #include "net/ipv6/host.hpp"
 #include "net/netlink.hpp"
 #include "net/ipv6/reassembly.hpp"
+#include "net/ipv6/configuration.hpp"
+#include "fs/proc/ipv6.hpp"
 #include "../../net/ipv6/socket.hpp"
 #include <arpa/inet.h>
 #include <algorithm>
@@ -30,11 +32,16 @@ uint64_t ticks;
 
 int random_read(void* output, size_t size, bool insecure) {
     static uint32_t next = 0x89abcdef;
-    assert(size == sizeof(next) && !insecure);
+    assert((size == sizeof(next) || size == 6 || size == 16) && !insecure);
     if (!entropy_available)
         return -11;
-    memcpy(output, &next, size);
-    next++;
+    auto bytes = static_cast<uint8_t*>(output);
+    for (size_t at = 0; at < size;) {
+        size_t count = std::min(size - at, sizeof(next));
+        memcpy(bytes + at, &next, count);
+        next++;
+        at += count;
+    }
     return 0;
 }
 
@@ -137,6 +144,12 @@ static int change(unsigned index, const ip6::Address& value, bool nodad = true, 
 
 static void reset() {
     ipv6_shutdown();
+    assert(!ip6::configuration_write(ip6::configuration_default,
+                                     ip6::ConfigurationKey::enhanced_dad, 0));
+    assert(
+        !ip6::configuration_write(ip6::configuration_all, ip6::ConfigurationKey::enhanced_dad, 0));
+    assert(!ip6::configuration_write(ip6::configuration_all, ip6::ConfigurationKey::generation_mode,
+                                     1));
     assert(allocations.empty());
     emitted[0].clear();
     emitted[1].clear();
@@ -2914,6 +2927,317 @@ static void reviewed_source_edges() {
     reset();
 }
 
+static void automatic_link_configuration() {
+    using Key = ip6::ConfigurationKey;
+    auto setting = [](unsigned index, Key key) {
+        int32_t value = -999;
+        assert(!ip6::configuration_read(index, key, value));
+        return value;
+    };
+    auto automatic = [](unsigned index, bool privacy) {
+        for (unsigned n = 0; auto entry = ipv6_address(n); n++)
+            if (entry->index == index && entry->address.link_local() &&
+                bool(entry->flags & 0x800) == privacy)
+                return entry->address;
+        return ip6::Address{};
+    };
+    for (unsigned lane = 0; lane < 2; lane++) {
+        reset();
+        unsigned index = lane + 1;
+        assert(ip6::configuration_write(index, Key::generation_mode, 4) == -22);
+        assert(ip6::configuration_write(index, Key::generation_mode, 2) == -22);
+        assert(ip6::configuration_write(999, Key::generation_mode, 0) == -19);
+        assert(!ip6::configuration_write(index, Key::generation_mode, 0,
+                                         ip6::ConfigurationWrite::netlink));
+        assert(automatic(index, false).unspecified());
+        ipv6_poll();
+        assert(automatic(index, false).unspecified() && emitted[lane].empty());
+        assert(!net_configure(index, false, 1500));
+        assert(!net_configure(index, true, 1500));
+        auto eui = automatic(index, false);
+        assert(eui.link_local() && eui.bytes[8] == (adapters[lane].info.mac[0] ^ 2) &&
+               eui.bytes[11] == 0xff && eui.bytes[12] == 0xfe &&
+               eui.bytes[15] == adapters[lane].info.mac[5]);
+        assert(ipv6_owned(index, eui, true) && !ipv6_owned(index, eui));
+        ipv6_poll();
+        assert(emitted[lane].size() == 1 && emitted[lane].back().size() == 78);
+        ticks += 100;
+        ipv6_poll();
+        assert(ipv6_owned(index, eui));
+        assert(!ip6::configuration_write(index, Key::generation_mode, 1));
+        assert(ipv6_owned(index, eui));
+        assert(!ipv6_address_remove(index, eui));
+        assert(!ip6::configuration_write(index, Key::generation_mode, 0,
+                                         ip6::ConfigurationWrite::netlink));
+        assert(!ip6::configuration_write(index, Key::generation_mode, 0));
+        ipv6_poll();
+        assert(automatic(index, false).unspecified());
+        assert(!ip6::configuration_write(index, Key::generation_mode, 1));
+        assert(!ip6::configuration_write(index, Key::generation_mode, 0));
+        assert(automatic(index, false) == eui);
+        assert(!ip6::configuration_write(index, Key::disabled, 1));
+        assert(automatic(index, false).unspecified() && !ip6::usable(index));
+        assert(ipv6_address_add({address(lane, 1), index, 0x82, 64}) == -13);
+        assert(ipv6_route_control({{}, {}, index, 1024, 0, 3}, false, true) == -13);
+        assert(!ip6::configuration_write(index, Key::generation_mode, 0,
+                                         ip6::ConfigurationWrite::netlink));
+        assert(!ip6::configuration_write(index, Key::disabled, 0));
+        assert(automatic(index, false) == eui);
+        entropy_available = false;
+        assert(!ip6::configuration_write(index, Key::generation_mode, 3));
+        assert(automatic(index, true).unspecified());
+        assert(ip6::configuration_write(index, Key::generation_mode, 2) == -22);
+        entropy_available = true;
+        ipv6_poll();
+        auto privacy = automatic(index, true);
+        assert(privacy.link_local() && !(privacy == eui));
+        assert(!net_configure(index, false, 1500));
+        assert(automatic(index, false).unspecified() && automatic(index, true).unspecified());
+        assert(!net_configure(index, true, 1500));
+        assert(automatic(index, true) == privacy);
+        assert(!ip6::configuration_write(index, Key::generation_mode, 2,
+                                         ip6::ConfigurationWrite::netlink));
+        assert(!net_configure(index, false, 1500));
+        assert(!net_configure(index, true, 1500));
+        assert(automatic(index, true) == privacy);
+        assert(setting(index, Key::generation_mode) == 2);
+        assert(setting(2 - lane, Key::generation_mode) == 1);
+        assert(!ip6::configuration_write(ip6::configuration_default, Key::generation_mode, 0));
+        assert(setting(index, Key::generation_mode) == 2);
+        assert(!ip6::configuration_write(ip6::configuration_all, Key::generation_mode, 1));
+        assert(setting(ip6::configuration_default, Key::generation_mode) == 1);
+        assert(setting(index, Key::generation_mode) == 1);
+        assert(setting(2 - lane, Key::generation_mode) == 1);
+    }
+    reset();
+    auto secret = policy_address("2001:db8::1234"), retrieved = policy_address("::dead");
+    const auto unchanged = retrieved;
+    assert(ip6::configuration_secret_read(ip6::configuration_all, retrieved) == -5);
+    assert(ip6::configuration_secret_read(ip6::configuration_default, retrieved) == -5);
+    assert(ip6::configuration_secret_read(1, retrieved) == -5 && retrieved == unchanged);
+    assert(ip6::configuration_secret(999, secret) == -19);
+    assert(ip6::configuration_secret(ip6::configuration_all, secret) == -5);
+    assert(!ip6::configuration_secret(1, secret));
+    assert(!ip6::configuration_secret_read(1, retrieved) && retrieved == secret);
+    assert(setting(1, Key::generation_mode) == 2 && setting(2, Key::generation_mode) == 1);
+    ipv6_poll();
+    assert(automatic(1, true).unspecified() && emitted[0].empty());
+    assert(!net_configure(1, false, 1500));
+    assert(!net_configure(1, true, 1500));
+    auto first_private = automatic(1, true);
+    assert(first_private.link_local());
+    auto replacement = policy_address("2001:db8::5678");
+    assert(!ip6::configuration_secret(1, replacement));
+    ipv6_poll();
+    assert(automatic(1, true) == first_private);
+    assert(!ip6::configuration_secret_read(1, retrieved) && retrieved == replacement);
+    assert(!ip6::configuration_secret(ip6::configuration_default, secret));
+    assert(setting(ip6::configuration_default, Key::generation_mode) == 1);
+    assert(setting(ip6::configuration_all, Key::generation_mode) == 1);
+    assert(setting(1, Key::generation_mode) == 2 && setting(2, Key::generation_mode) == 2 &&
+           setting(ipv6_loopback, Key::generation_mode) == 2);
+    assert(ip6::configuration_secret_read(2, retrieved) == -5);
+    assert(!ip6::configuration_secret_read(ip6::configuration_default, retrieved) &&
+           retrieved == secret);
+    ipv6_poll();
+    assert(automatic(2, true).unspecified() && automatic(1, true) == first_private);
+    assert(!net_configure(2, false, 1500));
+    assert(!net_configure(2, true, 1500));
+    assert(automatic(2, true).link_local());
+    assert(!ip6::configuration_secret_read(1, retrieved) && retrieved == replacement);
+    reset();
+    assert(ip6::configuration_secret_read(1, retrieved) == -5);
+    assert(ip6::configuration_secret_read(ip6::configuration_default, retrieved) == -5);
+    assert(ip6::configuration_write(1, Key::router_solicitations, -2) == -22);
+    assert(!ip6::configuration_write(ip6::configuration_all, Key::autoconf, 0));
+    assert(setting(1, Key::autoconf) == 1 && setting(2, Key::autoconf) == 1 &&
+           setting(ip6::configuration_default, Key::autoconf) == 1);
+    assert(!ip6::configuration_write(1, Key::enhanced_dad, 1));
+    assert(!ip6::configuration_write(1, Key::generation_mode, 0));
+    auto eui = automatic(1, false);
+    ipv6_poll();
+    assert(emitted[0].size() == 1 && emitted[0][0].size() == 86);
+    auto packet = ip6::decode(emitted[0][0].data() + 14, emitted[0][0].size() - 14);
+    assert(packet.length == 32 && packet.payload[24] == 14 && packet.payload[25] == 1);
+    std::vector<uint8_t> solicitation(packet.payload, packet.payload + packet.length);
+    auto destination = ip6::solicited_node(eui);
+    auto looped = incoming(0, {}, destination, solicitation);
+    ipv6_receive(adapters[0].info, looped.data(), looped.size());
+    assert(ipv6_owned(1, eui, true));
+    solicitation[26] ^= 1;
+    auto duplicate = incoming(0, {}, destination, solicitation);
+    ipv6_receive(adapters[0].info, duplicate.data(), duplicate.size());
+    assert(!ipv6_owned(1, eui, true));
+    reset();
+    assert(!ip6::configuration_write(1, Key::dad_transmits, 2));
+    assert(!ip6::configuration_write(1, Key::generation_mode, 0));
+    eui = automatic(1, false);
+    ipv6_poll();
+    ticks = 100;
+    ipv6_poll();
+    assert(emitted[0].size() == 2 && !ipv6_owned(1, eui));
+    ticks = 200;
+    ipv6_poll();
+    assert(ipv6_owned(1, eui));
+    reset();
+    assert(!ip6::configuration_write(ip6::configuration_all, Key::enhanced_dad, 1));
+    assert(setting(1, Key::enhanced_dad) == 0);
+    assert(!ip6::configuration_write(1, Key::generation_mode, 0));
+    ipv6_poll();
+    assert(emitted[0].size() == 1 && emitted[0][0].size() == 86);
+    reset();
+    assert(!ip6::configuration_write(1, Key::dad_transmits, 256));
+    assert(!ip6::configuration_write(1, Key::generation_mode, 0));
+    eui = automatic(1, false);
+    ipv6_poll();
+    assert(emitted[0].empty() && ipv6_owned(1, eui));
+    reset();
+    auto loopback = policy_address("::1");
+    assert(ipv6_owned(ipv6_loopback, loopback));
+    assert(!ip6::configuration_write(ipv6_loopback, Key::disabled, 1));
+    assert(!ipv6_owned(ipv6_loopback, loopback) && !ip6::usable(ipv6_loopback));
+    Ipv6Route inventory[ipv6_route_capacity + ipv6_address_capacity + 1];
+    size_t count = ipv6_routes(inventory, sizeof(inventory) / sizeof(*inventory));
+    for (size_t n = 0; n < count; n++)
+        assert(inventory[n].index != ipv6_loopback);
+    assert(!ip6::configuration_write(ipv6_loopback, Key::disabled, 0));
+    assert(ipv6_owned(ipv6_loopback, loopback));
+    reset();
+    assert(!ip6::configuration_write(1, Key::generation_mode, 3));
+    auto reused = automatic(1, true);
+    assert(!ipv6_address_remove(1, reused));
+    assert(!ipv6_address_add({reused, 1, 0x880, 64}));
+    ip6::address_duplicate(1, reused);
+    ipv6_poll();
+    assert(automatic(1, true) == reused && !ipv6_owned(1, reused, true));
+    reset();
+    assert(!ip6::configuration_write(1, Key::generation_mode, 3));
+    auto current = automatic(1, true);
+    for (unsigned attempt = 0; attempt < 4; attempt++) {
+        ipv6_poll();
+        std::vector<uint8_t> data(24);
+        data[0] = 135;
+        memcpy(data.data() + 8, current.bytes, 16);
+        auto conflict = incoming(0, {}, ip6::solicited_node(current), data);
+        ipv6_receive(adapters[0].info, conflict.data(), conflict.size());
+        assert(!ipv6_owned(1, current, true));
+        ipv6_poll();
+        auto next = automatic(1, true);
+        if (attempt < 3) {
+            assert(!next.unspecified() && !(next == current));
+            current = next;
+        } else
+            assert(next == current && !ipv6_owned(1, next, true));
+    }
+    reset();
+}
+
+static void configuration_files() {
+    using Key = ip6::ConfigurationKey;
+    reset();
+    auto value = [](unsigned property) {
+        char bytes[64]{};
+        uint64_t offset = 0;
+        auto count = proc6::read(1, property, offset, bytes, sizeof(bytes) - 1);
+        assert(count > 0 && offset == uint64_t(count));
+        return std::strtol(bytes, nullptr, 10);
+    };
+
+    struct Numeric {
+        const char* text;
+        int result, value;
+    };
+
+    const Numeric cases[] = {{" 1 \n", 4, 1},
+                             {"+1\n", -22, 1},
+                             {"0x1\n", 4, 1},
+                             {"00\n", 3, 0},
+                             {"1junk\n", -22, 0},
+                             {"1 0\n", 4, 1},
+                             {"", 0, 1},
+                             {"\n", -22, 1},
+                             {"4294967296\n", -22, 1},
+                             {"-0\n", -22, 1},
+                             {"4\n", -22, 1},
+                             {"08\n", -22, 1},
+                             {"000000000000000000001\n", -22, 1}};
+    for (const auto& item : cases) {
+        uint64_t offset = 0;
+        assert(proc6::write(1, 0, offset, item.text, strlen(item.text)) == item.result);
+        assert(offset == 0 && value(0) == item.value);
+    }
+    uint64_t offset = 0;
+    char bytes[64]{};
+    assert(proc6::read(1, 0, offset, bytes, 1) == 1 && bytes[0] == '1');
+    assert(proc6::read(1, 0, offset, bytes, 1) == 0 && offset == 1);
+    assert(proc6::write(1, 0, offset, "0\n", 2) == 2 && offset == 3 && value(0) == 1);
+    offset = 0;
+    assert(proc6::write(1, 2, offset, "1 2\n", 4) == 2 && offset == 2 && value(2) == 1);
+    assert(proc6::write(1, 2, offset, "bad", 3) == 3 && offset == 5 && value(2) == 1);
+    for (unsigned property = 1; property < proc6::secret_property; property++) {
+        offset = 0;
+        assert(proc6::write(1, property, offset, "-1\n", 3) == 3);
+        assert(offset == 3 && value(property) == -1);
+    }
+    offset = 0;
+    assert(proc6::write(1, 6, offset, "-2\n", 3) == -22 && offset == 0 && value(6) == -1);
+    assert(proc6::write(1, 3, offset, "-2147483648\n", 12) == 12 && offset == 12);
+    assert(value(3) == INT32_MIN);
+    offset = 0;
+    assert(proc6::write(1, 3, offset, "2147483648\n", 11) == -22 && offset == 0);
+    assert(value(3) == INT32_MIN);
+    reset();
+    offset = 0;
+    assert(proc6::read(1, proc6::secret_property, offset, bytes, 0) == -5);
+    assert(proc6::write(1, proc6::secret_property, offset, nullptr, 0) == 0);
+    assert(proc6::read(1, proc6::secret_property, offset, bytes, sizeof(bytes)) == 40);
+    assert(!memcmp(bytes, "0000:0000:0000:0000:0000:0000:0000:0000\n", 40));
+    const char* valid[] = {"2001:db8::1234\n", "::\n", "::ffff:192.0.2.7\n", "1:2:3:4:5:6:7:8\n",
+                           "1:2:3:4:5:6:192.0.2.7\n"};
+    for (auto text : valid) {
+        offset = 0;
+        size_t length = strlen(text);
+        assert(proc6::write(1, proc6::secret_property, offset, text, length) == int64_t(length));
+        assert(offset == length);
+        ip6::Address expected;
+        char address[48]{};
+        memcpy(address, text, length - 1);
+        assert(inet_pton(AF_INET6, address, expected.bytes) == 1);
+        ip6::Address actual;
+        assert(!ip6::configuration_secret_read(1, actual) && actual == expected);
+        offset = 0;
+        assert(proc6::read(1, proc6::secret_property, offset, bytes, 4) == 4);
+        assert(proc6::read(1, proc6::secret_property, offset, bytes + 4, sizeof(bytes) - 4) == 36);
+        assert(offset == 40 && bytes[39] == '\n');
+        assert(proc6::read(1, proc6::secret_property, offset, bytes, 1) == 0);
+    }
+    ip6::Address preserved;
+    assert(!ip6::configuration_secret_read(1, preserved));
+    const char* invalid[] = {
+        "bad\n",     "1:2:3:4:5:6:7\n",     "1:2:3:4:5:6:7:8:9\n", "1:2:3:4:5:6:7:8:g\n",
+        "1::2::3\n", "::ffff:192.0.2.256\n"};
+    for (auto text : invalid) {
+        offset = 0;
+        assert(proc6::write(1, proc6::secret_property, offset, text, strlen(text)) == -5);
+        ip6::Address actual;
+        assert(!ip6::configuration_secret_read(1, actual) && actual == preserved && offset == 0);
+    }
+    offset = 0;
+    assert(proc6::write(ip6::configuration_all, proc6::secret_property, offset, "::", 2) == -5);
+    assert(proc6::read(ip6::configuration_all, proc6::secret_property, offset, bytes, 1) == -5);
+    unsigned index;
+    assert(proc6::scope_index("all", index) && index == ip6::configuration_all);
+    assert(proc6::scope_index("default", index) && index == ip6::configuration_default);
+    assert(proc6::scope_index("lo", index) && index == ipv6_loopback);
+    assert(proc6::scope_index(net_info(1)->name, index) && index == 1);
+    assert(!proc6::scope_index("missing", index));
+    assert(!strcmp(proc6::property_name(6), "router_solicitations"));
+    assert(!proc6::property_name(proc6::property_count));
+    int32_t mode;
+    assert(!ip6::configuration_read(1, Key::generation_mode, mode) && mode == 2);
+    reset();
+}
+
 int main() {
     for (unsigned n = 0; n < 2; n++) {
         auto& adapter = adapters[n];
@@ -2984,6 +3308,8 @@ int main() {
         routed_error_destinations(mode);
     copied_error_queues();
     reviewed_source_edges();
+    automatic_link_configuration();
+    configuration_files();
     reset();
     std::puts("IPV6_HOST_PASS adapters=2 DAD=1 duplicate=1 NS=1 NA=1 echo=1 owned_copy=1");
 }

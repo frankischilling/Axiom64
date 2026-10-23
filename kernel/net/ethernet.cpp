@@ -3,6 +3,7 @@
 #include "net/packet.hpp"
 #include "net/ipv4.hpp"
 #include "net/ipv6.hpp"
+#include "net/ipv6/configuration.hpp"
 #include "drivers/platform/pci.hpp"
 
 namespace ax {
@@ -40,6 +41,7 @@ unsigned net_register(NetAdapter& adapter) {
         uint64_t(info.index), info.name, uint64_t(info.mtu), uint64_t(info.carrier),
         uint64_t(info.mac[0]), uint64_t(info.mac[1]), uint64_t(info.mac[2]), uint64_t(info.mac[3]),
         uint64_t(info.mac[4]), uint64_t(info.mac[5]));
+    ip6::configuration_registered(info.index);
     return info.index;
 }
 
@@ -74,6 +76,7 @@ int net_configure(unsigned index, bool administrative, uint32_t mtu) {
     uint32_t previous_mtu = writable.mtu;
     writable.administrative = administrative;
     writable.mtu = mtu;
+    ip6::configuration_changed(index);
     if (previous_mtu != mtu) {
         ipv4_mtu_changed(index, previous_mtu);
         ipv6_mtu_changed(index, previous_mtu);

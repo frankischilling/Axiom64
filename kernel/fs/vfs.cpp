@@ -260,12 +260,21 @@ bool node_readonly(Node* node) {
     return node && node->mount->readonly;
 }
 
+const ControlFileOps* node_control(Node* node) {
+    node = file_node(node);
+    return node && node->mount && node->mount->ops && node->mount->ops->control
+               ? node->mount->ops->control(node)
+               : nullptr;
+}
+
 int node_access(Node* node, unsigned mask, bool real) {
     node = file_node(node);
     if (!node)
         return -2;
     if (node->mount->ops->refresh)
         node->mount->ops->refresh(node);
+    if (auto control = node_control(node))
+        return control->access(node, mask, real);
     const Credentials boot{};
     return credential_access(current ? current->credentials : boot, node->uid, node->gid,
                              node->mode, mask, real);
@@ -481,6 +490,8 @@ int node_truncate(Node* node, uint64_t size) {
         queue_signal(current, 25, current->process->pid);
         return -27;
     }
+    if (auto control = node_control(node))
+        return control->truncate(node, size);
     if (int error = node_drop_file_capabilities(node))
         return error;
     if (current && !capable(current->credentials, Capability::fsetid)) {
@@ -979,6 +990,11 @@ int64_t pipe_read(Pipe* pipe, void* buffer, size_t length, bool peek) {
 int64_t read_handle(Handle* h, void* buf, size_t len) {
     if ((h->flags & 3) == 1)
         return -9;
+    if (auto control = node_control(h->node)) {
+        if (control->access(h->node, 4, false))
+            return -1;
+        return control->read(h, buf, len);
+    }
     if (h->event) {
         int64_t result = eventfd_read(h->event, buf, len);
         if (result > 0)
@@ -1020,6 +1036,8 @@ int write_handle_limit(Handle* h, size_t& length) {
         return -9;
     if (node_readonly(node))
         return -30;
+    if (node_control(node))
+        return 0;
     if (!current)
         return 0;
     uint64_t offset = h->flags & 02000 ? node->size : h->offset;
@@ -1035,6 +1053,13 @@ int write_handle_limit(Handle* h, size_t& length) {
 int64_t write_handle(Handle* h, const void* buf, size_t len) {
     if ((h->flags & 3) == 0)
         return -9;
+    if (auto control = node_control(h->node)) {
+        if (node_readonly(h->node))
+            return -30;
+        if (control->access(h->node, 2, false))
+            return -1;
+        return control->write(h, buf, len);
+    }
     if (h->event) {
         int64_t result = eventfd_write(h->event, buf, len);
         if (result > 0)

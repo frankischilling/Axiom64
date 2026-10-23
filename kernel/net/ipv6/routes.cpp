@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/ipv6/host.hpp"
+#include "net/ipv6/configuration.hpp"
 
 namespace ax {
 namespace {
@@ -66,6 +67,8 @@ int ipv6_route_control(const Ipv6Route& requested, bool remove, bool exclusive) 
     auto route = requested;
     if (!net_info(route.index))
         return -19;
+    if (!remove && ip6::configuration_disabled(route.index))
+        return -13;
     if (route.prefix > 128 || route.destination.multicast() || route.gateway.multicast() ||
         route.gateway.loopback() || route.gateway.mapped())
         return -22;
@@ -133,7 +136,7 @@ size_t ipv6_routes(Ipv6Route* output, size_t capacity) {
         output[count++] = routes[n];
     for (unsigned n = 0; n < prefix_count && count < capacity; n++)
         output[count++] = prefixes[n];
-    if (count < capacity) {
+    if (count < capacity && !ip6::configuration_disabled(ipv6_loopback)) {
         ip6::Address loopback;
         loopback.bytes[15] = 1;
         output[count++] = {loopback, {}, ipv6_loopback, 256, 128, 2};

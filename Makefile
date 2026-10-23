@@ -723,6 +723,16 @@ test-ipv6-link-configuration:
 	$(PYTHON) scripts/ipv6_configuration_test.py --link-mode --directory build/ipv6-link-configuration-wire
 test-ipv6-link-configuration-native:
 	$(PYTHON) scripts/ipv6_configuration_test.py --link-mode --native --directory build/ipv6-link-configuration-native
+.PHONY: test-ipv6-socket-configuration test-ipv6-socket-configuration-native
+test-ipv6-socket-configuration:
+	$(PYTHON) scripts/ipv6_configuration_test.py --socket-mode --directory build/ipv6-socket-configuration-wire
+test-ipv6-socket-configuration-native:
+	$(PYTHON) scripts/ipv6_configuration_test.py --socket-mode --native --directory build/ipv6-socket-configuration-native
+.PHONY: test-ipv6-router test-ipv6-router-native
+test-ipv6-router:
+	$(PYTHON) scripts/ipv6_router_test.py --directory build/ipv6-router-wire
+test-ipv6-router-native:
+	$(PYTHON) scripts/ipv6_router_test.py --native --directory build/ipv6-router-native
 test-ipv6-lifetimes-contract:
 	$(PYTHON) scripts/ipv6_lifetime_contract.py --native-directory build/ipv6-host-native-wire --guest-directory build/ipv6-host-wire --output-directory build/ipv6-lifetime-contract
 .PHONY: test-ipv6-sockets test-ipv6-sockets-native
@@ -778,7 +788,7 @@ test-ipv6-fragments-native: test-ipv6-fragment-observation
 build/ipv6-wire-host: kernel/tests/net/ipv6_wire.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
-build/ipv6-host: kernel/tests/net/ipv6_host.cpp kernel/tests/net/ipv6_link_configuration.cpp $(IPV6_CORE) kernel/fs/proc/ipv6.cpp kernel/net/ipv6/socket/send_control.cpp kernel/net/ethernet.cpp kernel/net/netlink/ipv6.cpp kernel/net/netlink/addresses.cpp kernel/net/netlink/link.cpp kernel/net/netlink/inventory.cpp kernel/net/netlink/routes.cpp $(call rwildcard,kernel/include/,*.hpp)
+build/ipv6-host: kernel/tests/net/ipv6_host.cpp kernel/tests/net/ipv6_link_configuration.cpp kernel/tests/net/ipv6_router.cpp $(IPV6_CORE) kernel/fs/proc/ipv6.cpp kernel/net/ipv6/socket/send_control.cpp kernel/net/ethernet.cpp kernel/net/netlink/ipv6.cpp kernel/net/netlink/addresses.cpp kernel/net/netlink/link.cpp kernel/net/netlink/inventory.cpp kernel/net/netlink/routes.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 build/ipv6-reassembly-host: kernel/tests/net/ipv6_reassembly.cpp kernel/net/ipv6/reassembly.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/reassembly.hpp kernel/include/net/ipv6/wire.hpp kernel/include/core/base.hpp

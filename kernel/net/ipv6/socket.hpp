@@ -22,8 +22,10 @@ struct Inet6Socket {
     bool used = false, bound = false, connected = false, reuse = false, port_locked = false;
     bool v6only = false, dont_fragment = false, receive_errors = false;
     bool receive_packet_info = false, receive_hops = false, receive_traffic_class = false;
+    bool receive_legacy_hops = false;
     bool receive_hop_options = false, receive_routing = false, receive_destination_options = false;
-    uint8_t type = 3, protocol = 58, hops = 64, pmtu_mode = 1, traffic_class = 0;
+    uint8_t type = 3, protocol = 58, pmtu_mode = 1, traffic_class = 0;
+    int16_t hops = -1;
     uint32_t socket_mtu = 0;
     unsigned index = 0, head = 0, count = 0, shutdown = 0;
     uint16_t local_port = 0, peer_port = 0;
@@ -48,6 +50,7 @@ int inet6_bind_port(Inet6Socket*, const ip6::Address&, uint16_t port);
 void inet6_destination_clear(Inet6Socket*);
 void inet6_destination_store(Inet6Socket*, const Ipv6Path&, const ip6::Address&);
 int inet6_destination_mtu(Inet6Socket*, uint32_t&);
+uint8_t inet6_default_hops(const Inet6Socket*);
 ip6::Address inet6_destination_output(Inet6Socket*, const Ipv6Path&, const ip6::Address& first,
                                       const ip6::Address& requested);
 void inet6_icmp_error(unsigned index, const ip6::Packet&, const uint8_t*, size_t);

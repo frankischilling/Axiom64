@@ -105,6 +105,16 @@ using namespace ax;
 
 void ipv6_link_configuration_tests(void (*reset)());
 
+void ipv6_router_tests(void (*reset)());
+
+const std::vector<std::vector<uint8_t>>& ipv6_emitted(unsigned lane) {
+    return emitted[lane];
+}
+
+void ipv6_test_budget(unsigned value) {
+    send_budget = value;
+}
+
 static ip6::Address address(unsigned lane, unsigned host, bool link = false) {
     ip6::Address result;
     if (link) {
@@ -166,6 +176,8 @@ static void reset() {
     for (auto& adapter : adapters) {
         adapter.info.live = adapter.info.carrier = true;
         assert(!net_configure(adapter.info.index, true, 1500));
+        assert(!ip6::configuration_write(adapter.info.index,
+                                         ip6::ConfigurationKey::router_solicitations, 0));
     }
 }
 
@@ -3313,6 +3325,7 @@ int main() {
     automatic_link_configuration();
     configuration_files();
     ipv6_link_configuration_tests(reset);
+    ipv6_router_tests(reset);
     reset();
     std::puts("IPV6_HOST_PASS adapters=2 DAD=1 duplicate=1 NS=1 NA=1 echo=1 owned_copy=1");
 }

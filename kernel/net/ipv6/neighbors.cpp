@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/ipv6/host.hpp"
+#include "net/ipv6/router.hpp"
 
 namespace ax::ip6 {
 namespace {
@@ -127,7 +128,7 @@ void neighbor_advertisement(unsigned index, const Address& address, const uint8_
         else if (changed)
             entry->state = State::stale;
     }
-    entry->due = ticks + 3000;
+    entry->due = ticks + link_reachable(index);
     entry->touched = ticks;
 }
 
@@ -186,7 +187,7 @@ void neighbor_poll() {
                              state == State::probe ? entry.mac : nullptr)) &&
             entry.state == state) {
             entry.attempts++;
-            entry.due = ticks + 100;
+            entry.due = ticks + link_retransmit(entry.index);
         }
     }
 }

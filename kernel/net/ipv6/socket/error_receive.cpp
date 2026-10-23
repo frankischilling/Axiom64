@@ -52,6 +52,7 @@ size_t control_out(Task& task, const Message& message, const Inet6Socket* socket
                         record.traffic_class);
         output.extensions(socket, inet6_error_bytes(&record) + record.length,
                           record.extension_length, record.extension_protocol);
+        output.legacy_metadata(socket, record.hops);
     }
     uint8_t body[44];
     memcpy(body, &record.error, 16);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "socket.hpp"
+#include "net/ipv6/router.hpp"
 
 namespace ax {
 Inet6Socket inet6_sockets[inet6_socket_count];
@@ -339,8 +340,9 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
     bytes[check_at] = checksum >> 8;
     bytes[check_at + 1] = checksum;
     // Socket admission has selected this source; copied output retains it through queue waits.
-    error = ipv6_send(path.source, effective, index, socket->protocol, options.hops, bytes, size,
-                      socket, fragmentable, socket->socket_mtu, socket->pmtu_mode >= 3,
+    uint8_t hops = options.hops < 0 ? ip6::link_hop_limit(path.index) : options.hops;
+    error = ipv6_send(path.source, effective, index, socket->protocol, hops, bytes, size, socket,
+                      fragmentable, socket->socket_mtu, socket->pmtu_mode >= 3,
                       options.traffic_class, &options.extensions, Ipv6SourcePolicy::retained);
     release(bytes);
     if (!error)

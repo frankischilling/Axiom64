@@ -35,6 +35,8 @@ struct Ipv6Route {
     uint8_t prefix = 0, protocol = 3;
     uint64_t owner = 0;
     uint64_t expires = 0;
+    int8_t preference = 0;
+    bool learned = false;
 };
 
 struct Ipv6Path {

@@ -3,6 +3,7 @@
 #include "net/ipv6/reassembly.hpp"
 #include "net/ipv6/configuration.hpp"
 #include "core/random.hpp"
+#include "net/ipv6/router.hpp"
 
 namespace ax {
 ip6::PathMtuCache ip6::path_mtu_cache;
@@ -13,26 +14,29 @@ struct AddressSlot {
     Ipv6AddressLifetimes lifetime;
     uint64_t created = 0, updated = 0;
     uint64_t due = 0;
+    uint64_t owner = 0;
     bool sent = false;
     unsigned probes = 0, required = 1;
     uint8_t nonce[6]{};
     bool nonce_valid = false;
+    bool prefix_route = true;
 };
 
 AddressSlot addresses[ipv6_address_capacity];
 unsigned address_count;
+uint64_t next_address_owner;
 
 bool ready(const Ipv6Address& entry) {
-    return !(entry.flags & (0x40 | 8)) && ((entry.flags & 0x80) || ipv6_address_cache(entry).valid);
+    return !(entry.flags & (0x40 | 8)) && ipv6_address_cache(entry).valid;
 }
 
 uint32_t remaining(uint32_t lifetime, uint64_t age) {
     return lifetime == UINT32_MAX ? UINT32_MAX : age >= lifetime ? 0 : lifetime - age;
 }
 
-uint16_t configured_flags(const Ipv6Address& value, Ipv6AddressLifetimes lifetime) {
-    return (value.flags & (2 | 0x200 | 0x800)) | (lifetime.valid == UINT32_MAX ? 0x80 : 0) |
-           (lifetime.preferred ? 0 : 0x20);
+uint16_t configured_flags(const Ipv6Address& value, Ipv6AddressLifetimes lifetime, bool manual) {
+    return (value.flags & (2 | 0x100 | 0x200 | 0x800)) |
+           (manual && lifetime.valid == UINT32_MAX ? 0x80 : 0) | (lifetime.preferred ? 0 : 0x20);
 }
 
 const Ipv6Address& loopback() {
@@ -148,7 +152,8 @@ Ipv6AddressCacheInfo ipv6_address_cache(const Ipv6Address& value) {
     return {0, 0, 0, 0};
 }
 
-int ipv6_address_add(const Ipv6Address& value, Ipv6AddressLifetimes lifetime, bool replace) {
+static int address_add(const Ipv6Address& value, Ipv6AddressLifetimes lifetime, bool replace,
+                       bool prefix_route) {
     if (!lifetime.valid || lifetime.preferred > lifetime.valid)
         return -22;
     if (!net_info(value.index))
@@ -158,7 +163,7 @@ int ipv6_address_add(const Ipv6Address& value, Ipv6AddressLifetimes lifetime, bo
     if (value.prefix > 128 || value.address.unspecified() || value.address.multicast() ||
         value.address.loopback() || value.address.mapped())
         return -22;
-    if (value.flags & ~uint16_t(0x80 | 2 | 0x200 | 0x800))
+    if (value.flags & ~uint16_t(0x80 | 2 | 0x100 | 0x200 | 0x800))
         return -95;
     if (net_info(value.index)->mtu < ip6::minimum_mtu)
         return -22;
@@ -169,14 +174,24 @@ int ipv6_address_add(const Ipv6Address& value, Ipv6AddressLifetimes lifetime, bo
         if (!replace)
             return -17;
         Ipv6Address updated = entry.value;
-        updated.flags = (entry.value.flags & (0x40 | 8)) | configured_flags(value, lifetime);
-        if (!(updated.flags & 0x200)) {
-            int error = ip6::prefix_add(updated, lifetime.valid,
-                                        (entry.value.flags & 0x80) && !(entry.value.flags & 0x200));
-            if (error)
-                return error;
-        } else if ((entry.value.flags & 0x80) && !(entry.value.flags & 0x200))
-            ip6::prefix_remove(entry.value);
+        // A PIO refresh changes lifetimes and deprecation, retaining address
+        // metadata and any connected prefix installed through netlink.
+        updated.flags =
+            prefix_route
+                ? (entry.value.flags & (0x40 | 8)) | configured_flags(value, lifetime, true)
+                : (entry.value.flags & ~uint16_t(0x20)) | (lifetime.preferred ? 0 : 0x20);
+        if (prefix_route) {
+            if (!(updated.flags & 0x200)) {
+                int error = ip6::prefix_add(updated, lifetime.valid,
+                                            entry.prefix_route && (entry.value.flags & 0x80) &&
+                                                !(entry.value.flags & 0x200));
+                if (error)
+                    return error;
+            } else if (entry.prefix_route && (entry.value.flags & 0x80) &&
+                       !(entry.value.flags & 0x200))
+                ip6::prefix_remove(entry.value);
+            entry.prefix_route = true;
+        }
         entry.value = updated;
         entry.lifetime = lifetime;
         entry.updated = ticks;
@@ -184,15 +199,19 @@ int ipv6_address_add(const Ipv6Address& value, Ipv6AddressLifetimes lifetime, bo
     }
     if (address_count == ipv6_address_capacity)
         return -105;
-    int error = ip6::prefix_add(value, lifetime.valid);
+    int error = prefix_route ? ip6::prefix_add(value, lifetime.valid) : 0;
     if (error)
         return error;
     auto& entry = addresses[address_count++];
     entry = {};
     entry.value = value;
-    entry.value.flags = configured_flags(value, lifetime);
+    entry.prefix_route = prefix_route;
+    entry.value.flags = configured_flags(value, lifetime, prefix_route);
     entry.lifetime = lifetime;
     entry.created = entry.updated = ticks;
+    if (!++next_address_owner)
+        ++next_address_owner;
+    entry.owner = next_address_owner;
     int32_t probes = 1;
     ip6::configuration_read(value.index, ip6::ConfigurationKey::dad_transmits, probes);
     entry.required = uint8_t(probes);
@@ -201,10 +220,15 @@ int ipv6_address_add(const Ipv6Address& value, Ipv6AddressLifetimes lifetime, bo
     return 0;
 }
 
+int ipv6_address_add(const Ipv6Address& value, Ipv6AddressLifetimes lifetime, bool replace) {
+    return address_add(value, lifetime, replace, true);
+}
+
 int ipv6_address_remove(unsigned index, const ip6::Address& address) {
     for (unsigned n = 0; n < address_count; n++)
         if (addresses[n].value.index == index && addresses[n].value.address == address) {
-            ip6::prefix_remove(addresses[n].value);
+            if (addresses[n].prefix_route)
+                ip6::prefix_remove(addresses[n].value);
             for (unsigned next = n + 1; next < address_count; next++)
                 addresses[next - 1] = addresses[next];
             addresses[--address_count] = {};
@@ -221,8 +245,7 @@ int ipv6_address_remove(unsigned index, const ip6::Address& address) {
 bool ipv6_owned(unsigned index, const ip6::Address& address, bool tentative) {
     for (unsigned n = 0; auto entry = ipv6_address(n); n++)
         if ((!index || entry->index == index) && entry->address == address && !(entry->flags & 8) &&
-            (tentative || ready(*entry)) &&
-            ((entry->flags & 0x80) || ipv6_address_cache(*entry).valid))
+            (tentative || ready(*entry)) && ipv6_address_cache(*entry).valid)
             return true;
     return false;
 }
@@ -255,7 +278,9 @@ int ipv6_path(const ip6::Address& requested, const ip6::Address& destination, un
             !destination.matches(candidate.destination, candidate.prefix))
             continue;
         if (!best || candidate.prefix > best->prefix ||
-            (candidate.prefix == best->prefix && candidate.metric < best->metric))
+            (candidate.prefix == best->prefix &&
+             (candidate.metric < best->metric ||
+              (candidate.metric == best->metric && candidate.preference > best->preference))))
             best = &candidate;
     }
     if (!best)
@@ -270,7 +295,7 @@ int ipv6_path(const ip6::Address& requested, const ip6::Address& destination, un
                !ipv6_owned(source.link_local() ? best->index : 0, source))
         return -99;
     path = {source,      best->gateway.unspecified() ? destination : best->gateway,
-            best->index, net_info(best->index)->mtu,
+            best->index, ip6::link_mtu(best->index),
             best->owner, best->prefix};
     if (!interface_mtu)
         path.mtu = ip6::path_mtu_cache.lookup(ip6::path_key(path, destination), path.mtu, ticks);
@@ -278,11 +303,29 @@ int ipv6_path(const ip6::Address& requested, const ip6::Address& destination, un
 }
 
 void ipv6_mtu_changed(unsigned index, uint32_t previous) {
-    if (auto info = net_info(index))
-        ip6::path_mtu_cache.update_mtu(index, previous, info->mtu);
+    if (net_info(index))
+        ip6::path_mtu_cache.update_mtu(index, previous, ip6::link_mtu(index));
 }
 
 namespace ip6 {
+int automatic_address(const Ipv6Address& value, Ipv6AddressLifetimes lifetime, bool replace) {
+    return address_add(value, lifetime, replace, false);
+}
+
+uint64_t address_owner(unsigned index, const Address& address) {
+    for (unsigned n = 0; n < address_count; n++)
+        if (addresses[n].value.index == index && addresses[n].value.address == address)
+            return addresses[n].owner;
+    return 0;
+}
+
+bool address_manages_prefix(unsigned index, const Address& address) {
+    for (unsigned n = 0; n < address_count; n++)
+        if (addresses[n].value.index == index && addresses[n].value.address == address)
+            return addresses[n].prefix_route;
+    return false;
+}
+
 uint64_t address_deadline(const Ipv6Address& value) {
     for (unsigned n = 0; n < address_count; n++) {
         const auto& entry = addresses[n];
@@ -343,7 +386,7 @@ void address_poll() {
             (entry.value.flags & 0x40)) {
             entry.sent = true;
             entry.probes++;
-            entry.due = ticks + 100;
+            entry.due = ticks + link_retransmit(entry.value.index);
         }
     }
 }

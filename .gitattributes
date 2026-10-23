@@ -5,6 +5,8 @@
 scripts/tests/fixtures/normal-console/interrupted-prompt.txt -text -whitespace
 scripts/tests/fixtures/account-rotation-interrupted-data.txt -text -whitespace
 scripts/tests/fixtures/qmp-pre-greeting-resume.jsonl -text -whitespace
+scripts/tests/fixtures/ipv6-router-bios-modern.log -text -whitespace
+scripts/tests/fixtures/ipv6-router-bios-modern.pcap binary
 # Preserve checked patch bytes and the whitespace required by unified context.
 vendor/musl/patches/*.patch -text -whitespace
 # Preserve pinned verification inputs and complete upstream license bytes.

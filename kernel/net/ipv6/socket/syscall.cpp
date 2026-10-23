@@ -207,10 +207,9 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             return error;
         }
         if (b == 1 && c == 25) {
-            if (length > 16)
-                return -22;
-            char name[17]{};
-            if (length && !task.memory->space.copy_in(name, d, length))
+            char name[16]{};
+            size_t copied = min(size_t(length), sizeof(name) - 1);
+            if (copied && !task.memory->space.copy_in(name, d, copied))
                 return -14;
             unsigned index = 0;
             if (name[0]) {
@@ -222,8 +221,7 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
                 if (!index)
                     return -19;
             }
-            if (socket->index && index != socket->index &&
-                !capable(task.credentials, Capability::net_raw))
+            if (socket->index && !capable(task.credentials, Capability::net_raw))
                 return -1;
             socket->index = index;
             inet6_destination_clear(socket);
@@ -278,8 +276,9 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
                                       : uint64_t(inet6_queue_bytes);
             uint32_t bound = max(uint32_t(min(uint64_t(max(value, 0)) * 2, limit)), uint32_t(2048));
             (c == 8 ? socket->receive_limit : socket->send_limit) = bound;
-        } else if (b == 41 && (c == 49 || c == 51 || c == 66)) {
-            (c == 49   ? socket->receive_packet_info
+        } else if (b == 41 && (c == 8 || c == 49 || c == 51 || c == 66)) {
+            (c == 8    ? socket->receive_legacy_hops
+             : c == 49 ? socket->receive_packet_info
              : c == 51 ? socket->receive_hops
                        : socket->receive_traffic_class) = value != 0;
         } else if (b == 41 && (c == 53 || c == 56 || c == 58)) {
@@ -290,7 +289,7 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             if (value < -1 || value > 255)
                 return -22;
             if (c == 16)
-                socket->hops = value == -1 ? 64 : value;
+                socket->hops = value;
             else {
                 uint8_t selected = value == -1 ? 0 : value;
                 if (socket->traffic_class != selected) {
@@ -333,12 +332,21 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
         if (b == 58 && c == 1 && socket->type == 3)
             return output(task, socket->filter, sizeof(socket->filter), d, frame.r8, true);
         if (b == 1 && c == 25) {
+            uint32_t length;
+            int error = output_length(task, frame.r8, length);
+            if (error)
+                return error;
+            if (socket->index && length < 16)
+                return -22;
             const char* name = "";
             if (socket->index == ipv6_loopback)
                 name = "lo";
             else if (auto info = net_info(socket->index))
                 name = info->name;
-            return output(task, name, name[0] ? strlen(name) + 1 : 0, d, frame.r8, true);
+            else if (socket->index)
+                return -19;
+            return output_bytes(task, name, name[0] ? strlen(name) + 1 : 0, d, frame.r8, length,
+                                false);
         }
         int value;
         if (b == 1) {
@@ -357,11 +365,12 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             else
                 return -92;
         } else if (b == 41 && c == 16)
-            value = socket->hops;
+            value = socket->hops < 0 ? inet6_default_hops(socket) : socket->hops;
         else if (b == 41 && c == 67)
             value = socket->traffic_class;
-        else if (b == 41 && (c == 49 || c == 51 || c == 66))
-            value = c == 49   ? socket->receive_packet_info
+        else if (b == 41 && (c == 8 || c == 49 || c == 51 || c == 66))
+            value = c == 8    ? socket->receive_legacy_hops
+                    : c == 49 ? socket->receive_packet_info
                     : c == 51 ? socket->receive_hops
                               : socket->receive_traffic_class;
         else if (b == 41 && (c == 53 || c == 56 || c == 58))

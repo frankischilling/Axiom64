@@ -27,6 +27,10 @@ int configuration_secret(unsigned index, const Address&);
 int configuration_secret_read(unsigned index, Address&);
 
 bool configuration_disabled(unsigned index);
+
+// Construct the identifier for a supplied /64 prefix without publishing it.
+int configuration_identifier(unsigned index, Address&, unsigned& counter, bool& privacy);
+
 void configuration_registered(unsigned index);
 void configuration_changed(unsigned index);
 void configuration_address_removed(unsigned index, const Address&);

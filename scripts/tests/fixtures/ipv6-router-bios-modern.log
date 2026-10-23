@@ -1,0 +1,190 @@
+Axiom64 x86-64
+Firmware: BIOS
+Memory: 233 MiB available, isolated four-level paging
+CPU: GDT, TSS, IDT, SYSCALL and PIT initialized
+Clock: HPET 64-bit counter, 100 Hz accounting
+Clock: RTC UTC seconds=1792770365
+RANDOM_SOURCE rdseed=1 trust_cpu=1
+PCI: 7 functions discovered
+RANDOM_READY source=rdseed bits=256
+VFS: imported 26 nodes from initramfs
+PCI: 7 functions discovered
+Framebuffer: 1024x768 pitch=4096 bpp=32
+NET_DEVICE index=1 name=eth0 mtu=1500 carrier=1 mac=52:54:0:12:34:10
+virtio-net: index=1 transport=modern rx=256 tx=256 features=100010020
+NET_DEVICE index=2 name=eth1 mtu=1500 carrier=1 mac=52:54:0:12:34:11
+virtio-net: index=2 transport=modern rx=256 tx=256 features=100010020
+PCI: 7 functions discovered
+Entering userspace in Ring 3
+exec pid=1 /sbin/init (static ELF)
+exec pid=1 /bin/busybox (static ELF)
+exec pid=2 /bin/ipv6-router (static ELF)
+IPV6_ROUTER_PHASE_PASS lane=0 phase=0
+IPV6_ROUTER_PHASE_PASS lane=1 phase=0
+IPV6_ROUTER_PHASE_PASS lane=0 phase=1
+IPV6_ROUTER_INVENTORY lane=0 addresses=1 routes=1
+IPV6_ROUTER_ADDRESS lane=0 address=fe80::5054:ff:fe12:3410 flags=80 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ROUTE lane=0 destination=fe80::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_PHASE_PASS lane=0 phase=2
+IPV6_ROUTER_PHASE_PASS lane=1 phase=1
+IPV6_ROUTER_INVENTORY lane=1 addresses=1 routes=1
+IPV6_ROUTER_ADDRESS lane=1 address=fe80::5054:ff:fe12:3411 flags=80 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ROUTE lane=1 destination=fe80::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_PHASE_PASS lane=1 phase=2
+IPV6_ROUTER_PHASE_PASS lane=0 phase=3
+IPV6_ROUTER_INVENTORY lane=0 addresses=3 routes=4
+IPV6_ROUTER_ADDRESS lane=0 address=fe80::5054:ff:fe12:3410 flags=80 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ADDRESS lane=0 address=2001:db8:40:1:5054:ff:fe12:3410 flags=100 preferred=1 valid=7
+IPV6_ROUTER_ADDRESS lane=0 address=2001:db8:40:3:5054:ff:fe12:3410 flags=100 preferred=1 valid=7
+IPV6_ROUTER_ROUTE lane=0 destination=::/0 gateway=fe80::42 metric=1024 protocol=9 expires=299
+IPV6_ROUTER_ROUTE lane=0 destination=2001:db8:40:1::/64 gateway=:: metric=256 protocol=2 expires=699
+IPV6_ROUTER_ROUTE lane=0 destination=2001:db8:40:2::/64 gateway=:: metric=256 protocol=2 expires=699
+IPV6_ROUTER_ROUTE lane=0 destination=fe80::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_PHASE_PASS lane=0 phase=4
+IPV6_ROUTER_PHASE_PASS lane=1 phase=3
+IPV6_ROUTER_INVENTORY lane=1 addresses=3 routes=4
+IPV6_ROUTER_ADDRESS lane=1 address=fe80::5054:ff:fe12:3411 flags=80 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ADDRESS lane=1 address=2001:db8:41:1:5054:ff:fe12:3411 flags=100 preferred=1 valid=7
+IPV6_ROUTER_ADDRESS lane=1 address=2001:db8:41:3:5054:ff:fe12:3411 flags=100 preferred=1 valid=7
+IPV6_ROUTER_ROUTE lane=1 destination=::/0 gateway=fe80::42 metric=1024 protocol=9 expires=299
+IPV6_ROUTER_ROUTE lane=1 destination=2001:db8:41:1::/64 gateway=:: metric=256 protocol=2 expires=699
+IPV6_ROUTER_ROUTE lane=1 destination=2001:db8:41:2::/64 gateway=:: metric=256 protocol=2 expires=699
+IPV6_ROUTER_ROUTE lane=1 destination=fe80::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_PHASE_PASS lane=1 phase=4
+IPV6_ROUTER_INVENTORY lane=0 addresses=3 routes=3
+IPV6_ROUTER_ADDRESS lane=0 address=fe80::5054:ff:fe12:3410 flags=80 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ADDRESS lane=0 address=2001:db8:40:1:5054:ff:fe12:3410 flags=120 preferred=0 valid=4
+IPV6_ROUTER_ADDRESS lane=0 address=2001:db8:40:3:5054:ff:fe12:3410 flags=120 preferred=0 valid=4
+IPV6_ROUTER_ROUTE lane=0 destination=2001:db8:40:1::/64 gateway=:: metric=256 protocol=2 expires=400
+IPV6_ROUTER_ROUTE lane=0 destination=2001:db8:40:2::/64 gateway=:: metric=256 protocol=2 expires=400
+IPV6_ROUTER_ROUTE lane=0 destination=fe80::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_PHASE_PASS lane=0 phase=5
+IPV6_ROUTER_INVENTORY lane=1 addresses=3 routes=3
+IPV6_ROUTER_ADDRESS lane=1 address=fe80::5054:ff:fe12:3411 flags=80 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ADDRESS lane=1 address=2001:db8:41:1:5054:ff:fe12:3411 flags=120 preferred=0 valid=4
+IPV6_ROUTER_ADDRESS lane=1 address=2001:db8:41:3:5054:ff:fe12:3411 flags=120 preferred=0 valid=4
+IPV6_ROUTER_ROUTE lane=1 destination=2001:db8:41:1::/64 gateway=:: metric=256 protocol=2 expires=399
+IPV6_ROUTER_ROUTE lane=1 destination=2001:db8:41:2::/64 gateway=:: metric=256 protocol=2 expires=399
+IPV6_ROUTER_ROUTE lane=1 destination=fe80::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_PHASE_PASS lane=1 phase=5
+IPV6_ROUTER_PHASE_PASS lane=0 phase=6
+IPV6_ROUTER_PHASE_PASS lane=0 phase=7
+IPV6_ROUTER_PHASE_PASS lane=0 phase=8
+IPV6_ROUTER_PHASE_PASS lane=0 phase=9
+IPV6_ROUTER_MAC_POLICY lane=0 installed=0
+IPV6_ROUTER_PHASE_PASS lane=0 phase=10
+IPV6_ROUTER_REPLACEMENT lane=0 phase=replaced flags=82 preferred=4294967295 valid=4294967295 prefix_routes=1 prefix_permanent=1
+IPV6_ROUTER_INVENTORY lane=0 addresses=3 routes=2
+IPV6_ROUTER_ADDRESS lane=0 address=fe80::5054:ff:fe12:3410 flags=80 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ADDRESS lane=0 address=2001:db8:40:1:5054:ff:fe12:3410 flags=82 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ADDRESS lane=0 address=2001:db8:40:3:5054:ff:fe12:3410 flags=120 preferred=0 valid=7200
+IPV6_ROUTER_ROUTE lane=0 destination=fe80::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_ROUTE lane=0 destination=2001:db8:40:1::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_PHASE_PASS lane=0 phase=11
+IPV6_ROUTER_REPLACEMENT lane=0 phase=zero flags=a2 preferred=0 valid=7200 prefix_routes=1 prefix_permanent=1
+IPV6_ROUTER_INVENTORY lane=0 addresses=3 routes=2
+IPV6_ROUTER_ADDRESS lane=0 address=fe80::5054:ff:fe12:3410 flags=80 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ADDRESS lane=0 address=2001:db8:40:1:5054:ff:fe12:3410 flags=a2 preferred=0 valid=7200
+IPV6_ROUTER_ADDRESS lane=0 address=2001:db8:40:3:5054:ff:fe12:3410 flags=120 preferred=0 valid=7200
+IPV6_ROUTER_ROUTE lane=0 destination=fe80::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_ROUTE lane=0 destination=2001:db8:40:1::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_PHASE_PASS lane=0 phase=12
+IPV6_ROUTER_REPLACEMENT lane=0 phase=finite flags=82 preferred=60 valid=7200 prefix_routes=1 prefix_permanent=1
+IPV6_ROUTER_INVENTORY lane=0 addresses=3 routes=3
+IPV6_ROUTER_ADDRESS lane=0 address=fe80::5054:ff:fe12:3410 flags=80 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ADDRESS lane=0 address=2001:db8:40:1:5054:ff:fe12:3410 flags=82 preferred=60 valid=7200
+IPV6_ROUTER_ADDRESS lane=0 address=2001:db8:40:3:5054:ff:fe12:3410 flags=100 preferred=60 valid=7200
+IPV6_ROUTER_ROUTE lane=0 destination=2001:db8:40:1::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_ROUTE lane=0 destination=2001:db8:40:2::/64 gateway=:: metric=256 protocol=2 expires=10000
+IPV6_ROUTER_ROUTE lane=0 destination=fe80::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_PHASE_PASS lane=0 phase=13
+IPV6_ROUTER_REPLACEMENT lane=0 phase=readded flags=82 preferred=4294967295 valid=4294967295 prefix_routes=1 prefix_permanent=1
+IPV6_ROUTER_INVENTORY lane=0 addresses=3 routes=3
+IPV6_ROUTER_ADDRESS lane=0 address=fe80::5054:ff:fe12:3410 flags=80 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ADDRESS lane=0 address=2001:db8:40:3:5054:ff:fe12:3410 flags=100 preferred=60 valid=7200
+IPV6_ROUTER_ADDRESS lane=0 address=2001:db8:40:1:5054:ff:fe12:3410 flags=82 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ROUTE lane=0 destination=2001:db8:40:1::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_ROUTE lane=0 destination=2001:db8:40:2::/64 gateway=:: metric=256 protocol=2 expires=10000
+IPV6_ROUTER_ROUTE lane=0 destination=fe80::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_PHASE_PASS lane=0 phase=14
+IPV6_ROUTER_REPLACEMENT lane=0 phase=readd-zero flags=a2 preferred=0 valid=7200 prefix_routes=1 prefix_permanent=1
+IPV6_ROUTER_INVENTORY lane=0 addresses=3 routes=2
+IPV6_ROUTER_ADDRESS lane=0 address=fe80::5054:ff:fe12:3410 flags=80 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ADDRESS lane=0 address=2001:db8:40:3:5054:ff:fe12:3410 flags=120 preferred=0 valid=7200
+IPV6_ROUTER_ADDRESS lane=0 address=2001:db8:40:1:5054:ff:fe12:3410 flags=a2 preferred=0 valid=7200
+IPV6_ROUTER_ROUTE lane=0 destination=fe80::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_ROUTE lane=0 destination=2001:db8:40:1::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_PHASE_PASS lane=0 phase=15
+IPV6_ROUTER_REPLACEMENT lane=0 phase=readd-finite flags=82 preferred=60 valid=7200 prefix_routes=1 prefix_permanent=1
+IPV6_ROUTER_INVENTORY lane=0 addresses=3 routes=3
+IPV6_ROUTER_ADDRESS lane=0 address=fe80::5054:ff:fe12:3410 flags=80 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ADDRESS lane=0 address=2001:db8:40:3:5054:ff:fe12:3410 flags=100 preferred=60 valid=7200
+IPV6_ROUTER_ADDRESS lane=0 address=2001:db8:40:1:5054:ff:fe12:3410 flags=82 preferred=60 valid=7200
+IPV6_ROUTER_ROUTE lane=0 destination=2001:db8:40:1::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_ROUTE lane=0 destination=2001:db8:40:2::/64 gateway=:: metric=256 protocol=2 expires=10000
+IPV6_ROUTER_ROUTE lane=0 destination=fe80::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_PHASE_PASS lane=0 phase=16
+IPV6_ROUTER_PHASE_PASS lane=1 phase=6
+IPV6_ROUTER_PHASE_PASS lane=1 phase=7
+IPV6_ROUTER_PHASE_PASS lane=1 phase=8
+IPV6_ROUTER_PHASE_PASS lane=1 phase=9
+IPV6_ROUTER_MAC_POLICY lane=1 installed=0
+IPV6_ROUTER_PHASE_PASS lane=1 phase=10
+IPV6_ROUTER_REPLACEMENT lane=1 phase=replaced flags=82 preferred=4294967295 valid=4294967295 prefix_routes=1 prefix_permanent=1
+IPV6_ROUTER_INVENTORY lane=1 addresses=3 routes=2
+IPV6_ROUTER_ADDRESS lane=1 address=fe80::5054:ff:fe12:3411 flags=80 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ADDRESS lane=1 address=2001:db8:41:1:5054:ff:fe12:3411 flags=82 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ADDRESS lane=1 address=2001:db8:41:3:5054:ff:fe12:3411 flags=120 preferred=0 valid=7200
+IPV6_ROUTER_ROUTE lane=1 destination=fe80::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_ROUTE lane=1 destination=2001:db8:41:1::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_PHASE_PASS lane=1 phase=11
+IPV6_ROUTER_REPLACEMENT lane=1 phase=zero flags=a2 preferred=0 valid=7200 prefix_routes=1 prefix_permanent=1
+IPV6_ROUTER_INVENTORY lane=1 addresses=3 routes=2
+IPV6_ROUTER_ADDRESS lane=1 address=fe80::5054:ff:fe12:3411 flags=80 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ADDRESS lane=1 address=2001:db8:41:1:5054:ff:fe12:3411 flags=a2 preferred=0 valid=7200
+IPV6_ROUTER_ADDRESS lane=1 address=2001:db8:41:3:5054:ff:fe12:3411 flags=120 preferred=0 valid=7200
+IPV6_ROUTER_ROUTE lane=1 destination=fe80::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_ROUTE lane=1 destination=2001:db8:41:1::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_PHASE_PASS lane=1 phase=12
+IPV6_ROUTER_REPLACEMENT lane=1 phase=finite flags=82 preferred=60 valid=7200 prefix_routes=1 prefix_permanent=1
+IPV6_ROUTER_INVENTORY lane=1 addresses=3 routes=3
+IPV6_ROUTER_ADDRESS lane=1 address=fe80::5054:ff:fe12:3411 flags=80 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ADDRESS lane=1 address=2001:db8:41:1:5054:ff:fe12:3411 flags=82 preferred=60 valid=7200
+IPV6_ROUTER_ADDRESS lane=1 address=2001:db8:41:3:5054:ff:fe12:3411 flags=100 preferred=60 valid=7200
+IPV6_ROUTER_ROUTE lane=1 destination=2001:db8:41:1::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_ROUTE lane=1 destination=2001:db8:41:2::/64 gateway=:: metric=256 protocol=2 expires=10000
+IPV6_ROUTER_ROUTE lane=1 destination=fe80::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_PHASE_PASS lane=1 phase=13
+IPV6_ROUTER_REPLACEMENT lane=1 phase=readded flags=82 preferred=4294967295 valid=4294967295 prefix_routes=1 prefix_permanent=1
+IPV6_ROUTER_INVENTORY lane=1 addresses=3 routes=3
+IPV6_ROUTER_ADDRESS lane=1 address=fe80::5054:ff:fe12:3411 flags=80 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ADDRESS lane=1 address=2001:db8:41:3:5054:ff:fe12:3411 flags=100 preferred=60 valid=7200
+IPV6_ROUTER_ADDRESS lane=1 address=2001:db8:41:1:5054:ff:fe12:3411 flags=82 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ROUTE lane=1 destination=2001:db8:41:1::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_ROUTE lane=1 destination=2001:db8:41:2::/64 gateway=:: metric=256 protocol=2 expires=9998
+IPV6_ROUTER_ROUTE lane=1 destination=fe80::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_PHASE_PASS lane=1 phase=14
+IPV6_ROUTER_REPLACEMENT lane=1 phase=readd-zero flags=a2 preferred=0 valid=7200 prefix_routes=1 prefix_permanent=1
+IPV6_ROUTER_INVENTORY lane=1 addresses=3 routes=2
+IPV6_ROUTER_ADDRESS lane=1 address=fe80::5054:ff:fe12:3411 flags=80 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ADDRESS lane=1 address=2001:db8:41:3:5054:ff:fe12:3411 flags=120 preferred=0 valid=7200
+IPV6_ROUTER_ADDRESS lane=1 address=2001:db8:41:1:5054:ff:fe12:3411 flags=a2 preferred=0 valid=7200
+IPV6_ROUTER_ROUTE lane=1 destination=fe80::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_ROUTE lane=1 destination=2001:db8:41:1::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_PHASE_PASS lane=1 phase=15
+IPV6_ROUTER_REPLACEMENT lane=1 phase=readd-finite flags=82 preferred=60 valid=7200 prefix_routes=1 prefix_permanent=1
+IPV6_ROUTER_INVENTORY lane=1 addresses=3 routes=3
+IPV6_ROUTER_ADDRESS lane=1 address=fe80::5054:ff:fe12:3411 flags=80 preferred=4294967295 valid=4294967295
+IPV6_ROUTER_ADDRESS lane=1 address=2001:db8:41:3:5054:ff:fe12:3411 flags=100 preferred=60 valid=7200
+IPV6_ROUTER_ADDRESS lane=1 address=2001:db8:41:1:5054:ff:fe12:3411 flags=82 preferred=60 valid=7200
+IPV6_ROUTER_ROUTE lane=1 destination=2001:db8:41:1::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_ROUTE lane=1 destination=2001:db8:41:2::/64 gateway=:: metric=256 protocol=2 expires=9999
+IPV6_ROUTER_ROUTE lane=1 destination=fe80::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_ROUTER_PHASE_PASS lane=1 phase=16
+IPV6_ROUTER_PHASE_PASS lane=0 phase=17
+IPV6_ROUTER_PHASE_PASS lane=1 phase=17
+IPV6_ROUTER_PHASE_PASS lane=0 phase=18
+IPV6_ROUTER_PHASE_PASS lane=1 phase=18
+IPV6_ROUTER_PASS adapters=2 invalid_each=8 mac_policy_each=1 flags=4 finite_seconds=8 protection_seconds=7200 replacement_each=6 retransmit_milliseconds=2000,3000
+AXIOM64_TESTS_PASS
+AXIOM64_EXIT status=0

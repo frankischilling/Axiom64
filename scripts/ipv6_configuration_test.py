@@ -21,6 +21,7 @@ from tcp_fixture_inputs import audit_fixture
 SOURCE = 'userspace/tests/net/ipv6_configuration.c'
 REFERENCE = 'scripts/tests/fixtures/ipv6-configuration-linux7.json'
 LINK_MODE = False
+SOCKET_MODE = False
 
 
 def digest(path):
@@ -43,6 +44,12 @@ def guest_identity(text, firmware, transport):
 
 def observations(text):
     lines = text.splitlines()
+    if SOCKET_MODE:
+        actual = [line for line in lines if line.startswith('SOCKET_IO ')]
+        expected = json.loads((ROOT / REFERENCE).read_text())['observations']
+        complete = lines.count('SOCKET_IO_COMPLETE') == 1
+        return dict(passed=actual == expected and complete and 'SOCKET_IO_FATAL' not in text,
+                    observations=actual, expected_count=len(expected), complete=complete)
     if LINK_MODE:
         actual = [line for line in lines if line.startswith('LINK_IO ')]
         expected = json.loads((ROOT / REFERENCE).read_text())['observations']
@@ -107,6 +114,8 @@ def native_child(args):
     if not args.parent_net_ns or Path('/proc/self/ns/net').stat().st_ino == args.parent_net_ns:
         raise ValueError('configuration comparison requires a private network namespace')
     args.directory.mkdir(exist_ok=False)
+    if SOCKET_MODE:
+        subprocess.run(['ip', 'link', 'set', 'lo', 'up'], check=True)
     for lane in range(2):
         name, peer = f'eth{lane}', f'peer{lane}'
         subprocess.run(['ip', 'link', 'add', name, 'type', 'veth', 'peer', 'name', peer], check=True)
@@ -126,11 +135,13 @@ def native_child(args):
 
 
 def main():
-    global SOURCE, REFERENCE, LINK_MODE
+    global SOURCE, REFERENCE, LINK_MODE, SOCKET_MODE
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--directory', type=Path, default=ROOT / 'build/ipv6-configuration')
     parser.add_argument('--native', action='store_true')
-    parser.add_argument('--link-mode', action='store_true', help='compare netlink address-generation controls')
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument('--link-mode', action='store_true', help='compare netlink address-generation controls')
+    modes.add_argument('--socket-mode', action='store_true', help='compare device binding and hop-limit controls')
     parser.add_argument('--child', choices=('static', 'dynamic', 'native'), help=argparse.SUPPRESS)
     parser.add_argument('--parent-net-ns', type=int, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -138,6 +149,12 @@ def main():
         LINK_MODE = True
         SOURCE = 'userspace/tests/net/ipv6_link_configuration.c'
         REFERENCE = 'scripts/tests/fixtures/ipv6-link-configuration-linux7.json'
+    if args.socket_mode:
+        SOCKET_MODE = True
+        SOURCE = 'userspace/tests/net/ipv6_socket_configuration.c'
+        REFERENCE = 'scripts/tests/fixtures/ipv6-socket-configuration-linux7.json'
+        if digest(ROOT / SOURCE) != json.loads((ROOT / REFERENCE).read_text())['source_sha256']:
+            raise ValueError('socket client differs from the measured Linux reference source')
     args.directory = args.directory.resolve()
     if args.child:
         native_child(args)
@@ -168,6 +185,8 @@ def main():
                        '--child', profile, '--parent-net-ns', str(Path('/proc/self/ns/net').stat().st_ino)]
             if args.link_mode:
                 command.append('--link-mode')
+            if args.socket_mode:
+                command.append('--socket-mode')
             subprocess.run(command, cwd=ROOT, check=True)
             rows.append(json.loads((case / 'receipt.json').read_text()))
             print('IPV6_CONFIGURATION_NATIVE_PASS ' + profile, flush=True)

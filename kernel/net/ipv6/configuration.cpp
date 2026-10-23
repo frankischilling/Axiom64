@@ -3,6 +3,7 @@
 #include "net/ipv6/host.hpp"
 #include "core/random.hpp"
 #include "core/random/primitives.hpp"
+#include "net/ipv6/router.hpp"
 
 namespace ax::ip6 {
 namespace {
@@ -64,6 +65,7 @@ bool physical_ready(unsigned index) {
 }
 
 void withdraw(unsigned index) {
+    router_link_reset(index);
     for (unsigned position = 0; auto entry = ipv6_address(position);) {
         if (entry->index == index && index != ipv6_loopback) {
             Address address = entry->address;
@@ -71,11 +73,7 @@ void withdraw(unsigned index) {
         } else
             position++;
     }
-    Ipv6Route routes[ipv6_route_capacity + ipv6_address_capacity + 1];
-    size_t count = ipv6_routes(routes, sizeof(routes) / sizeof(*routes));
-    for (size_t position = 0; position < count; position++)
-        if (routes[position].index == index)
-            ipv6_route_control(routes[position], true, false);
+    route_withdraw(index);
 }
 
 bool reserved(const Address& address) {
@@ -215,6 +213,35 @@ int configuration_read(unsigned index, ConfigurationKey key, int32_t& value) {
     if (!selected)
         return -22;
     value = *selected;
+    return 0;
+}
+
+int configuration_identifier(unsigned index, Address& address, unsigned& counter, bool& privacy) {
+    auto state = select(index);
+    auto info = net_info(index);
+    if (!state || !info)
+        return -19;
+    privacy = state->values.mode == 2 || state->values.mode == 3;
+    if (privacy) {
+        const uint8_t* secret = state->secret_initialized     ? state->secret
+                                : defaults.secret_initialized ? defaults.secret
+                                                              : nullptr;
+        if (!secret && state->values.mode == 3) {
+            int error = random_read(state->secret, sizeof(state->secret));
+            if (error)
+                return error;
+            state->secret_initialized = true;
+            secret = state->secret;
+        }
+        if (!secret)
+            return -22;
+        return opaque_identifier(address, info->mac, secret, counter) ? 0 : -99;
+    }
+    memcpy(address.bytes + 8, info->mac, 3);
+    address.bytes[8] ^= 2;
+    address.bytes[11] = 0xff;
+    address.bytes[12] = 0xfe;
+    memcpy(address.bytes + 13, info->mac + 3, 3);
     return 0;
 }
 

@@ -78,12 +78,20 @@ void Inet6ControlWriter::extensions(const Inet6Socket* socket, const uint8_t* by
     }
 }
 
+void Inet6ControlWriter::legacy_metadata(const Inet6Socket* socket, uint8_t hops) {
+    if (socket->receive_legacy_hops) {
+        int value = hops;
+        append(8, &value, sizeof(value));
+    }
+}
+
 size_t inet6_receive_control(Task& task, Inet6Socket* socket, const Inet6Frame& frame,
                              uint64_t address, uint64_t capacity, uint32_t& flags) {
     Inet6ControlWriter output(task, address, capacity, flags);
     output.metadata(socket, frame.destination, frame.index, frame.hops, frame.traffic_class);
     output.extensions(socket, inet6_bytes(&frame) + frame.length, frame.extension_length,
                       frame.extension_protocol);
+    output.legacy_metadata(socket, frame.hops);
     return output.used;
 }
 } // namespace ax

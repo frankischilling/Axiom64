@@ -19,7 +19,8 @@ static_assert(sizeof(Inet6Address) == 28);
 struct Inet6SendControl {
     ip6::Address source;
     unsigned index = 0;
-    uint8_t hops = 64, traffic_class = 0;
+    int16_t hops = -1;
+    uint8_t traffic_class = 0;
     bool dont_fragment = false, present = false;
     ip6::OutputExtensions extensions;
     Ipv6SourcePolicy source_policy = Ipv6SourcePolicy::assigned;

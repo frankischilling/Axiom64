@@ -132,10 +132,27 @@ int ipv6_route_control(const Ipv6Route& requested, bool remove, bool exclusive) 
 
 size_t ipv6_routes(Ipv6Route* output, size_t capacity) {
     size_t count = 0;
-    for (unsigned n = 0; n < route_count && count < capacity; n++)
-        output[count++] = routes[n];
-    for (unsigned n = 0; n < prefix_count && count < capacity; n++)
-        output[count++] = prefixes[n];
+    auto append = [&](const Ipv6Route& route) {
+        // Manual and advertised ownership remain separate. Their identical
+        // connected prefix has one observable route with the longer lifetime.
+        for (size_t n = 0; n < count; n++) {
+            auto& current = output[n];
+            if (route.learned == current.learned || route.protocol != 2 || current.protocol != 2 ||
+                route.metric != current.metric || !route.gateway.unspecified() ||
+                !current.gateway.unspecified() || !same_prefix(route, current))
+                continue;
+            if ((current.expires && (!route.expires || route.expires > current.expires)) ||
+                (current.expires == route.expires && !route.learned))
+                current = route;
+            return;
+        }
+        if (count < capacity)
+            output[count++] = route;
+    };
+    for (unsigned n = 0; n < route_count; n++)
+        append(routes[n]);
+    for (unsigned n = 0; n < prefix_count; n++)
+        append(prefixes[n]);
     if (count < capacity && !ip6::configuration_disabled(ipv6_loopback)) {
         ip6::Address loopback;
         loopback.bytes[15] = 1;
@@ -145,6 +162,52 @@ size_t ipv6_routes(Ipv6Route* output, size_t capacity) {
 }
 
 namespace ip6 {
+bool learned_route_present(uint64_t handle) {
+    for (unsigned n = 0; n < route_count; n++)
+        if (handle && routes[n].owner == handle)
+            return true;
+    return false;
+}
+
+int learned_route(const Ipv6Route& requested, uint64_t& handle, bool remove) {
+    if (!net_info(requested.index))
+        return -19;
+    for (unsigned n = 0; n < route_count; n++) {
+        auto& current = routes[n];
+        if (!handle || current.owner != handle)
+            continue;
+        if (remove) {
+            erase(routes, route_count, n);
+            handle = 0;
+            return 0;
+        }
+        if (current.index != requested.index || current.prefix != requested.prefix ||
+            !(current.destination == requested.destination) ||
+            !(current.gateway == requested.gateway))
+            return -22;
+        if (current.expires && ticks >= current.expires) {
+            path_mtu_cache.discard_route(current.owner);
+            handle = owner();
+        }
+        current = requested;
+        current.owner = handle;
+        current.learned = true;
+        return 0;
+    }
+    handle = 0;
+    if (remove)
+        return 0;
+    if (configuration_disabled(requested.index))
+        return -13;
+    if (route_count == ipv6_route_capacity)
+        return -105;
+    auto route = requested;
+    route.owner = handle = owner();
+    route.learned = true;
+    routes[route_count++] = route;
+    return 0;
+}
+
 int prefix_add(const Ipv6Address& value, uint32_t valid, bool replace_permanent) {
     if (value.flags & 0x200)
         return 0;
@@ -166,7 +229,7 @@ int prefix_add(const Ipv6Address& value, uint32_t valid, bool replace_permanent)
             return 0;
         }
     for (unsigned n = 0; n < route_count; n++)
-        if (same_prefix(prefix, routes[n]) && routes[n].metric == 256 &&
+        if (!routes[n].learned && same_prefix(prefix, routes[n]) && routes[n].metric == 256 &&
             routes[n].gateway.unspecified()) {
             update(routes[n]);
             return 0;
@@ -185,18 +248,21 @@ void prefix_remove(const Ipv6Address& value) {
     uint64_t expires = ticks;
     for (unsigned n = 0; auto entry = ipv6_address(n); n++)
         if (entry != &value && entry->index == value.index && entry->prefix == value.prefix &&
+            address_manages_prefix(entry->index, entry->address) &&
             entry->address.matches(value.address, value.prefix)) {
-            if (entry->flags & (0x80 | 0x200))
+            if (entry->flags & 0x200)
+                return;
+            uint64_t deadline = address_deadline(*entry);
+            if (!deadline)
                 return;
             remaining = true;
-            uint64_t deadline = address_deadline(*entry);
             if (deadline > expires)
                 expires = deadline;
         }
     auto prefix = prefix_for(value);
     if (remaining) {
         auto selected = lowest_metric([&](const Ipv6Route& route) {
-            return same_prefix(prefix, route) && route.gateway.unspecified();
+            return !route.learned && same_prefix(prefix, route) && route.gateway.unspecified();
         });
         if (selected.entries && !selected.entries[selected.position].expires) {
             selected.entries[selected.position].expires = expires;
@@ -206,8 +272,20 @@ void prefix_remove(const Ipv6Address& value) {
         return;
     }
     erase_lowest_metric([&](const Ipv6Route& route) {
-        return same_prefix(prefix, route) && route.gateway.unspecified();
+        return !route.learned && same_prefix(prefix, route) && route.gateway.unspecified();
     });
+}
+
+void route_withdraw(unsigned index) {
+    auto discard = [&](Ipv6Route* entries, unsigned& count) {
+        for (unsigned n = 0; n < count;)
+            if (entries[n].index == index)
+                erase(entries, count, n);
+            else
+                n++;
+    };
+    discard(routes, route_count);
+    discard(prefixes, prefix_count);
 }
 
 void route_poll() {

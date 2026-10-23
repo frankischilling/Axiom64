@@ -3,6 +3,7 @@
 #include "net/ipv6/reassembly.hpp"
 #include "net/inet6.hpp"
 #include "net/ipv6/configuration.hpp"
+#include "net/ipv6/router.hpp"
 
 namespace ax {
 namespace {
@@ -65,7 +66,8 @@ void diagnostic(unsigned index, const uint8_t* original, size_t length, uint8_t 
     uint16_t check = ip6::checksum(destination, source, 58, error, 8 + quoted);
     error[2] = check >> 8;
     error[3] = check;
-    ipv6_send(destination, source, source.link_local() ? index : 0, 58, 64, error, 8 + quoted);
+    ipv6_send(destination, source, source.link_local() ? index : 0, 58, ip6::link_hop_limit(index),
+              error, 8 + quoted);
     release(error);
 }
 
@@ -251,6 +253,10 @@ void ipv6_receive(const NetInfo& info, const void* frame, size_t length) {
         ip6::checksum(source, destination, 58, packet.payload, packet.length))
         return;
     inet6_deliver(info.index, packet);
+    if (packet.payload[0] == 134) {
+        ip6::router_receive(info.index, packet);
+        return;
+    }
     if (packet.payload[0] == 135 || packet.payload[0] == 136) {
         discovery(info, packet, bytes + 6);
         return;
@@ -267,8 +273,8 @@ void ipv6_receive(const NetInfo& info, const void* frame, size_t length) {
     uint16_t check = ip6::checksum(destination, source, 58, reply, packet.length);
     reply[2] = check >> 8;
     reply[3] = check;
-    ipv6_send(destination, source, source.link_local() ? info.index : 0, 58, 64, reply,
-              packet.length);
+    ipv6_send(destination, source, source.link_local() ? info.index : 0, 58,
+              ip6::link_hop_limit(info.index), reply, packet.length);
     release(reply);
 }
 
@@ -278,6 +284,7 @@ void ipv6_poll() {
     polling = true;
     ip6::configuration_poll();
     ip6::address_poll();
+    ip6::router_poll();
     ip6::route_poll();
     ip6::reassembly_expire(ticks, fragment_expired);
     ip6::output_poll();
@@ -286,6 +293,7 @@ void ipv6_poll() {
 }
 
 void ipv6_shutdown() {
+    ip6::router_reset();
     ip6::output_shutdown();
     ip6::neighbor_reset();
     ip6::reassembly_discard();
@@ -296,6 +304,22 @@ void ipv6_shutdown() {
 }
 
 namespace ip6 {
+int router_probe(unsigned index, const Address& source) {
+    auto info = net_info(index);
+    if (!info)
+        return -19;
+    uint8_t data[16]{};
+    data[0] = 133;
+    data[8] = 1;
+    data[9] = 1;
+    memcpy(data + 10, info->mac, 6);
+    auto destination = all_nodes();
+    destination.bytes[15] = 2;
+    uint8_t mac[6];
+    multicast_mac(destination, mac);
+    return control(index, source, destination, mac, data, sizeof(data), false);
+}
+
 int neighbor_probe(unsigned index, const Address& source, const Address& target,
                    const uint8_t* unicast_mac) {
     auto info = net_info(index);

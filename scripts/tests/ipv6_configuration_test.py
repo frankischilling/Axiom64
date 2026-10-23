@@ -81,5 +81,36 @@ class LinkConfigurationObservations(unittest.TestCase):
                 self.assertFalse(observations(text)['passed'])
 
 
+class SocketConfigurationObservations(unittest.TestCase):
+    def setUp(self):
+        reference = 'scripts/tests/fixtures/ipv6-socket-configuration-linux7.json'
+        self.records = json.loads((ROOT / reference).read_text())['observations']
+        self.text = '\n'.join([*self.records, 'SOCKET_IO_COMPLETE']) + '\n'
+        self.settings = patch.multiple(configuration, SOCKET_MODE=True, REFERENCE=reference)
+        self.settings.start()
+        self.addCleanup(self.settings.stop)
+
+    def test_actual_binding_and_control_records(self):
+        self.assertTrue(observations(self.text)['passed'])
+        mutations = [
+            self.text.replace('size=40 result=0 errno=0', 'size=40 result=-1 errno=22'),
+            self.text.replace('case=ordinary-same size=40 result=-1 errno=1',
+                              'case=ordinary-same size=40 result=0 errno=0'),
+            self.text.replace('41:8:20:77,', '41:8:20:-1,'),
+            self.text.replace('41:8:20:64,', ''),
+            self.text.replace('41:8:16:-1,', ''),
+            self.text.replace('flags=8 used=40', 'flags=0 used=40'),
+            self.text.replace('SOCKET_IO_COMPLETE\n', ''),
+            self.text + 'SOCKET_IO_COMPLETE\n',
+            self.text + 'SOCKET_IO_FATAL errno=14\n',
+            self.text.replace(self.records[0] + '\n', ''),
+            self.text + self.records[0] + '\n',
+        ]
+        for number, text in enumerate(mutations):
+            with self.subTest(mutation=number):
+                self.assertNotEqual(text, self.text)
+                self.assertFalse(observations(text)['passed'])
+
+
 if __name__ == '__main__':
     unittest.main()

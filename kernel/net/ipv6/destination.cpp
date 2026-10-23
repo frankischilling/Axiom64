@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "socket.hpp"
 #include "net/ipv6/host.hpp"
+#include "net/ipv6/router.hpp"
 
 namespace ax {
 void inet6_destination_clear(Inet6Socket* socket) {
@@ -26,9 +27,17 @@ int inet6_destination_mtu(Inet6Socket* socket, uint32_t& value) {
     value = ip6::path_mtu_cache.metric(destination.metric);
     if (!value) {
         auto info = net_info(destination.path.index);
-        value = info && info == destination.adapter ? info->mtu : destination.path.mtu;
+        value =
+            info && info == destination.adapter ? ip6::link_mtu(info->index) : destination.path.mtu;
     }
     return 0;
+}
+
+uint8_t inet6_default_hops(const Inet6Socket* socket) {
+    const auto& destination = socket->destination;
+    return destination.valid && destination.adapter == net_info(destination.path.index)
+               ? ip6::link_hop_limit(destination.path.index)
+               : 64;
 }
 
 static bool destination_reuses(Inet6Socket* socket, const Ipv6Path& path,

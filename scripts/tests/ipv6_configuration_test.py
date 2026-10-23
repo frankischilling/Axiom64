@@ -5,9 +5,11 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fetch import ROOT
+import ipv6_configuration_test as configuration
 from ipv6_configuration_test import observations, guest_identity, REFERENCE
 
 
@@ -49,6 +51,34 @@ class ConfigurationObservations(unittest.TestCase):
         legacy = text.replace('modern', 'legacy')
         self.assertTrue(guest_identity(legacy, 'bios', 'legacy'))
         self.assertFalse(guest_identity(legacy, 'bios', 'modern'))
+
+
+class LinkConfigurationObservations(unittest.TestCase):
+    def setUp(self):
+        reference = 'scripts/tests/fixtures/ipv6-link-configuration-linux7.json'
+        self.records = json.loads((ROOT / reference).read_text())['observations']
+        self.text = '\n'.join([*self.records, 'LINK_IO_COMPLETE parent=38 child=1']) + '\n'
+        self.settings = patch.multiple(configuration, LINK_MODE=True, REFERENCE=reference)
+        self.settings.start()
+        self.addCleanup(self.settings.stop)
+
+    def test_actual_mode_and_error_records(self):
+        self.assertTrue(observations(self.text)['passed'])
+        mutations = [
+            self.text.replace('result=-34', 'result=-22'),
+            self.text.replace('result=-1 mode=1', 'result=0 mode=1'),
+            self.text.replace('query=0 observed=3', 'query=0 observed=1'),
+            self.text.replace('query6=0 observed6=2', 'query6=0 observed6=-1'),
+            self.text.replace('LINK_IO_COMPLETE parent=38 child=1\n', ''),
+            self.text + 'LINK_IO_COMPLETE parent=38 child=1\n',
+            self.text + 'LINK_IO_FATAL errno=14\n',
+            self.text.replace(self.records[0] + '\n', ''),
+            self.text + self.records[0] + '\n',
+        ]
+        for number, text in enumerate(mutations):
+            with self.subTest(mutation=number):
+                self.assertNotEqual(text, self.text)
+                self.assertFalse(observations(text)['passed'])
 
 
 if __name__ == '__main__':

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/netlink.hpp"
+#include "net/ipv6/configuration.hpp"
 
 namespace ax {
 namespace {
@@ -66,14 +67,15 @@ unsigned prefix(uint32_t mask) {
 }
 
 bool link(Writer& output, const NetlinkHeader& request, uint32_t port, const NetInfo& info,
-          bool loopback) {
+          bool loopback, bool dump, bool inet6) {
     size_t start = output.size;
-    NetlinkHeader message{0, 16, 2, request.sequence, port};
+    NetlinkHeader message{0, 16, uint16_t(dump ? 2 : 0), request.sequence, port};
     uint32_t flags = loopback ? 0x49
                               : 2 | 0x1000 | (info.administrative ? 1 : 0) |
                                     (info.carrier && info.live ? 0x10040 : 0);
     uint32_t queue_length = 0; // There is no separate software transmit queue.
-    LinkHeader header{0, 0, uint16_t(loopback ? 772 : 1), int32_t(info.index), flags, 0};
+    LinkHeader header{uint8_t(inet6 ? 10 : 0), 0,     uint16_t(loopback ? 772 : 1),
+                      int32_t(info.index),     flags, 0};
     uint8_t broadcast[6];
     memset(broadcast, loopback ? 0 : 0xff, sizeof(broadcast));
     uint8_t state = loopback ? 0 : info.administrative && info.carrier && info.live ? 6 : 2;
@@ -83,6 +85,14 @@ bool link(Writer& output, const NetlinkHeader& request, uint32_t port, const Net
         !output.attribute(1, info.mac, sizeof(info.mac)) ||
         !output.attribute(2, broadcast, sizeof(broadcast)) ||
         !output.attribute(13, &queue_length, 4) || !output.attribute(16, &state, 1))
+        return false;
+    int32_t mode;
+    if (ip6::configuration_read(info.index, ip6::ConfigurationKey::generation_mode, mode))
+        return false;
+    // AF_UNSPEC replies nest the IPv6 family inside IFLA_AF_SPEC. An IPv6
+    // dump carries the same family attributes directly in IFLA_PROTINFO.
+    uint8_t family[12]{12, 0, 10, 0, 5, 0, 8, 0, uint8_t(mode), 0, 0, 0};
+    if (!(inet6 ? output.attribute(12, family + 4, 8) : output.attribute(26, family, 12)))
         return false;
     output.finish(start, message);
     return true;
@@ -130,21 +140,30 @@ bool address6(Writer& output, const NetlinkHeader& request, uint32_t port,
 
 int netlink_inventory_reply(const void* data, const NetlinkHeader& request, uint32_t port,
                             void* reply, bool strict, size_t& size) {
-    if ((request.type != 18 && request.type != 22) ||
-        (request.flags & (1 | 0x300)) != (1 | 0x300) || (request.flags & ~(1 | 4 | 0x300)))
+    bool direct = request.type == 18 && !(request.flags & 0x300);
+    if ((request.type != 18 && request.type != 22) || !(request.flags & 1) ||
+        (!direct && (request.flags & 0x300) != 0x300) || (request.flags & ~(1 | 4 | 0x300)))
         return -95;
     if (request.length < sizeof(request))
         return -22;
     size_t body = request.length - sizeof(request);
     size_t complete = request.type == 18 ? sizeof(LinkHeader) : sizeof(AddressHeader);
-    if (!body || (body > 4 && body != complete) || (strict && body != complete))
+    if (!body || (body > 4 && body != complete) || ((strict || direct) && body != complete))
         return -22;
     auto input = static_cast<const uint8_t*>(data) + sizeof(request);
     if (input[0] && input[0] != 2 && input[0] != 10 && !(request.type == 18 && input[0] == 17))
         return -97;
+    int32_t selected = 0;
+    if (direct) {
+        memcpy(&selected, input + 4, sizeof(selected));
+        if (selected <= 0)
+            return -22;
+        if (unsigned(selected) != ipv4_loopback && !net_info(unsigned(selected)))
+            return -19;
+    }
     // rtgenmsg contains only the family; legacy senders leave its alignment bytes uninitialized.
     for (size_t i = 1; body == complete && i < body; i++)
-        if (input[i])
+        if (input[i] && !(direct && i >= 4 && i < 8))
             return -22; // Filtered inventories and additional attributes remain unsupported.
     Writer output(reply);
     for (unsigned index = 1; index <= ipv4_loopback; index++) {
@@ -154,10 +173,10 @@ int netlink_inventory_reply(const void* data, const NetlinkHeader& request, uint
         memcpy(lo.name, "lo", 3);
         lo.mtu = 65536;
         auto info = loopback ? &lo : net_info(index);
-        if (!info)
+        if (!info || (direct && index != unsigned(selected)))
             continue;
         if (request.type == 18) {
-            if (!link(output, request, port, *info, loopback))
+            if (!link(output, request, port, *info, loopback, !direct, !direct && input[0] == 10))
                 return -90;
         } else if (input[0] != 10)
             for (unsigned n = 0; auto entry = ipv4_address(n); n++)
@@ -169,6 +188,18 @@ int netlink_inventory_reply(const void* data, const NetlinkHeader& request, uint
         for (unsigned n = 0; auto entry = ipv6_address(n); n++)
             if (!address6(output, request, port, *entry))
                 return -90;
+    if (direct) {
+        if (request.flags & 4) {
+            NetlinkHeader acknowledgement{36, 2, 0x100, request.sequence, port};
+            int status = 0;
+            if (!output.append(&acknowledgement, sizeof(acknowledgement)) ||
+                !output.append(&status, sizeof(status)) ||
+                !output.append(&request, sizeof(request)))
+                return -90;
+        }
+        size = output.size;
+        return 0;
+    }
     NetlinkHeader done{20, 3, 2, request.sequence, port};
     int status = 0;
     if (!output.append(&done, sizeof(done)) || !output.append(&status, sizeof(status)))

@@ -46,6 +46,8 @@ int netlink_inventory_reply(const void*, const NetlinkHeader&, uint32_t port, vo
 
 int netlink_address_change(const void*, const NetlinkHeader&);
 
+int netlink_link_change(const void*, const NetlinkHeader&);
+
 int netlink_ipv6_address_change(const void*, const NetlinkHeader&);
 
 int netlink_ipv6_route(const void*, const NetlinkHeader&, uint32_t port, void*, size_t capacity,

@@ -973,11 +973,22 @@ jobs:
           if-no-files-found: warn
           path: build/ipv4-gateways-native
       - name: Test IPv6 proc configuration on both firmware paths and three adapters
-        if: matrix.suite == 'network'
-        run: make test-ipv6-configuration
+        if: matrix.suite == 'configuration'
+        run: make test-ipv6-configuration test-ipv6-link-configuration
       - name: Compare IPv6 proc configuration with three isolated Linux linkages
-        if: matrix.suite == 'network'
-        run: sudo -n make test-ipv6-configuration-native
+        if: matrix.suite == 'configuration'
+        run: sudo -n make test-ipv6-configuration-native test-ipv6-link-configuration-native
+      - name: Upload IPv6 configuration ABI evidence
+        if: always() && matrix.suite == 'configuration'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv6-configuration
+          if-no-files-found: warn
+          path: |
+            build/ipv6-configuration-wire
+            build/ipv6-configuration-native
+            build/ipv6-link-configuration-wire
+            build/ipv6-link-configuration-native
       - name: Test IPv6 address control, DAD, neighbor discovery and echo on both adapters
         if: matrix.suite == 'network'
         run: make test-ipv6-host
@@ -1038,8 +1049,6 @@ jobs:
           name: ipv6-host
           if-no-files-found: warn
           path: |
-            build/ipv6-configuration-wire
-            build/ipv6-configuration-native
             build/ipv6-host-wire
             build/ipv6-host-native-wire
             build/ipv6-lifetime-contract

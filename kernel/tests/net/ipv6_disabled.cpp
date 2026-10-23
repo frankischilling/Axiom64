@@ -1,8 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // An empty IPv6 namespace for the isolated IPv4 netlink codec fixtures.
 #include "net/netlink.hpp"
+#include "net/ipv6/configuration.hpp"
 
 namespace ax {
+int netlink_link_change(const void*, const NetlinkHeader&) {
+    return -95;
+}
+
+namespace ip6 {
+int configuration_read(unsigned, ConfigurationKey key, int32_t& value) {
+    if (key != ConfigurationKey::generation_mode)
+        return -97;
+    value = 0;
+    return 0;
+}
+} // namespace ip6
+
 const Ipv6Address* ipv6_address(unsigned) {
     return nullptr;
 }

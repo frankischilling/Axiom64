@@ -103,6 +103,8 @@ int ipv4_address_remove(unsigned, uint32_t, uint32_t) {
 
 using namespace ax;
 
+void ipv6_link_configuration_tests(void (*reset)());
+
 static ip6::Address address(unsigned lane, unsigned host, bool link = false) {
     ip6::Address result;
     if (link) {
@@ -3310,6 +3312,7 @@ int main() {
     reviewed_source_edges();
     automatic_link_configuration();
     configuration_files();
+    ipv6_link_configuration_tests(reset);
     reset();
     std::puts("IPV6_HOST_PASS adapters=2 DAD=1 duplicate=1 NS=1 NA=1 echo=1 owned_copy=1");
 }

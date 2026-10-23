@@ -20,6 +20,7 @@ from tcp_fixture_inputs import audit_fixture
 
 SOURCE = 'userspace/tests/net/ipv6_configuration.c'
 REFERENCE = 'scripts/tests/fixtures/ipv6-configuration-linux7.json'
+LINK_MODE = False
 
 
 def digest(path):
@@ -42,6 +43,12 @@ def guest_identity(text, firmware, transport):
 
 def observations(text):
     lines = text.splitlines()
+    if LINK_MODE:
+        actual = [line for line in lines if line.startswith('LINK_IO ')]
+        expected = json.loads((ROOT / REFERENCE).read_text())['observations']
+        complete = lines.count('LINK_IO_COMPLETE parent=38 child=1') == 1
+        return dict(passed=actual == expected and complete and 'LINK_IO_FATAL' not in text,
+                    observations=actual, expected_count=len(expected), complete=complete)
     actual = [line for line in lines if line.startswith('IO_') and
               not line.startswith('IO_SECRET_ADDRESS ')]
     expected = json.loads((ROOT / REFERENCE).read_text())['observations']
@@ -119,12 +126,18 @@ def native_child(args):
 
 
 def main():
+    global SOURCE, REFERENCE, LINK_MODE
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--directory', type=Path, default=ROOT / 'build/ipv6-configuration')
     parser.add_argument('--native', action='store_true')
+    parser.add_argument('--link-mode', action='store_true', help='compare netlink address-generation controls')
     parser.add_argument('--child', choices=('static', 'dynamic', 'native'), help=argparse.SUPPRESS)
     parser.add_argument('--parent-net-ns', type=int, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.link_mode:
+        LINK_MODE = True
+        SOURCE = 'userspace/tests/net/ipv6_link_configuration.c'
+        REFERENCE = 'scripts/tests/fixtures/ipv6-link-configuration-linux7.json'
     args.directory = args.directory.resolve()
     if args.child:
         native_child(args)
@@ -153,6 +166,8 @@ def main():
             command = ['unshare', '--mount', '--net', '--pid', '--fork', '--mount-proc',
                        sys.executable, str(Path(__file__).resolve()), '--directory', str(case),
                        '--child', profile, '--parent-net-ns', str(Path('/proc/self/ns/net').stat().st_ino)]
+            if args.link_mode:
+                command.append('--link-mode')
             subprocess.run(command, cwd=ROOT, check=True)
             rows.append(json.loads((case / 'receipt.json').read_text()))
             print('IPV6_CONFIGURATION_NATIVE_PASS ' + profile, flush=True)

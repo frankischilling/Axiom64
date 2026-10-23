@@ -55,7 +55,7 @@ def inspect(path, lane, text, native=False, statistics=None, linux_vm=False):
     link = ipaddress.IPv6Address('fe80::').packed[:8] + identifier
     router = ipaddress.IPv6Address('fe80::42').packed
     prefixes = {kind:ipaddress.IPv6Address(f'2001:db8:{0x40 + lane:x}:{kind:x}::').packed
-                for kind in (1,2,3,4)}
+                for kind in range(1,9)}
     generated = {kind:prefix[:8] + identifier for kind,prefix in prefixes.items()}
     distant = ipaddress.IPv6Address('2001:db8:ffff::42').packed
     remote = prefixes[2][:-1] + b'\x42'
@@ -146,7 +146,8 @@ def inspect(path, lane, text, native=False, statistics=None, linux_vm=False):
             expected=[(0,48,1400,None,None),(4,61,1300,8,2),(0,61,1300,0,0),
                       (0,61,1300,10000,6000),(0,61,1300,0,0),
                       (0,61,1300,0,0),(0,61,1300,100,60),(0,61,1300,0,0),(0,61,1300,100,60),
-                      (0,61,1300,None,None),(0,41+lane*10,1300,None,None)]
+                      (0,61,1300,None,None),(0,41+lane*10,1300,None,None),
+                      (0,41+lane*10,1300,0,0),(0,41+lane*10,1300,100,60)]
             require(position<len(expected),'bounded valid advertisement count')
             lifetime,hop,mtu_value,valid,preferred=expected[position]
             require((int.from_bytes(body[6:8],'big'),body[4],mtu)==(lifetime,hop,[mtu_value]),
@@ -155,7 +156,8 @@ def inspect(path, lane, text, native=False, statistics=None, linux_vm=False):
                     int.from_bytes(body[12:16],'big')==(2000+lane*1000 if position==9 else 0),
                     'captured original per-interface advertised neighbor timer')
             require(len(pios)==(0 if valid is None else 4),'captured complete independent prefix flag cohort')
-            for option,(kind_number,flags) in zip(pios,((1,0xc0),(2,0x80),(3,0x40),(4,0))):
+            pio_flags = ((1,0xc0),(2,0x80),(3,0x40),(4,0)) if position < 11 else ((5,0xc0),(6,0x40),(7,0xc0),(8,0x40))
+            for option,(kind_number,flags) in zip(pios,pio_flags):
                 require(len(option)==32 and option[1:4]==bytes([4,64,flags]) and
                         int.from_bytes(option[4:8],'big')==valid and
                         int.from_bytes(option[8:12],'big')==preferred and option[16:]==prefixes[kind_number],
@@ -243,9 +245,9 @@ def inspect(path, lane, text, native=False, statistics=None, linux_vm=False):
                 require(destination==generated[1] and body[4:8]==b'\x60\0\0\0',
                         'captured solicited delayed neighbor advertisement')
                 neighbor_replies.append(row)
-    require([phase for phase,_ in requests]==list(range(23)) and
-            [phase for phase,_ in replies]==list(range(23)),'captured complete router phase union')
-    require(sorted(bad)==list(range(9)) and len(advertisements)==11,'every original malformed/policy and valid advertisement is retained')
+    require([phase for phase,_ in requests]==list(range(27)) and
+            [phase for phase,_ in replies]==list(range(27)),'captured complete router phase union')
+    require(sorted(bad)==list(range(9)) and len(advertisements)==13,'every original malformed/policy and valid advertisement is retained')
     require([phase for phase,_ in udp]==[2,3,4,5] and [phase for phase,_ in echoes]==[2,3,4,5],
             'captured complete generated-source UDP exchange union')
     require(len(neighbor_retries)==2 and len(neighbor_replies)==1,
@@ -273,6 +275,26 @@ def inspect(path, lane, text, native=False, statistics=None, linux_vm=False):
                 expected[2]-(2 if expected[2]==60 else 0)<=preferred<=expected[2] and
                 expected[3]-(0 if expected[3]==4294967295 else 2)<=valid<=expected[3],
                 'actual replacement preserves Linux metadata and protected lifetimes')
+    first_pio_lines = [line for line in text.splitlines() if line.startswith(f'IPV6_ROUTER_FIRST_PIO lane={lane} ')]
+    require(len(first_pio_lines)==12,'twelve complete first-PIO state observations')
+    last_stamp = None
+    for position,line in enumerate(first_pio_lines):
+        match=re.fullmatch(r'IPV6_ROUTER_FIRST_PIO lane=([01]) phase=(configured|zero|finite) kind=([5-8]) '
+            r'flags=([0-9a-f]+) preferred=(\d+) valid=(\d+) prefix_routes=1 prefix_permanent=([01]) observed_ns=(\d+)',line)
+        require(match is not None,'complete first-PIO flags, cache and prefix metadata')
+        phase,kind=match.group(2),int(match.group(3))
+        flags,preferred,valid=int(match.group(4),16),int(match.group(5)),int(match.group(6))
+        expected_phase,expected_kind=('configured','zero','finite')[position//4],5+position%4
+        expected_flags=2 | (0x80 if kind<7 else 0) | (0x20 if phase=='zero' else 0)
+        expected_preferred=(4294967295 if kind<7 else 6000) if phase=='configured' else (0 if phase=='zero' else 60)
+        expected_valid=(4294967295 if kind<7 else 10000) if phase=='configured' else 7200
+        require((phase,kind,flags,int(match.group(7)))==(expected_phase,expected_kind,expected_flags,int(kind<7)) and
+                expected_preferred-(2 if expected_preferred not in (0,4294967295) else 0)<=preferred<=expected_preferred and
+                expected_valid-(0 if expected_valid==4294967295 else 2)<=valid<=expected_valid,
+                'actual first zero PIO preserves flags and protected configured lifetimes')
+        stamp=int(match.group(8))
+        require(last_stamp is None or stamp>=last_stamp,'nondecreasing original first-PIO clocks')
+        last_stamp=stamp
     clock,clock_error=None,None
     if native:
         try:
@@ -289,6 +311,9 @@ def inspect(path, lane, text, native=False, statistics=None, linux_vm=False):
             require(microseconds(replies[17][1])<=microseconds(neighbor_retries[0]) and
                     microseconds(neighbor_retries[1])<=microseconds(neighbor_replies[0])<=microseconds(udp[3][1])<=microseconds(echoes[3][1])<=microseconds(requests[18][1]),
                     'captured timer admission, resolution, UDP and completion order')
+            for phase,position in ((24,11),(25,12)):
+                require(microseconds(requests[phase][1])<=microseconds(advertisements[position])<=microseconds(replies[phase][1]),
+                        'captured first-PIO request, advertisement and acknowledgment ordering')
             for phase,row in routed_requests:
                 require(microseconds(replies[19][1])<=microseconds(row)<=microseconds(replies[phase][1]),
                         'captured cross-interface input and acknowledgment ordering')
@@ -313,6 +338,6 @@ def inspect(path, lane, text, native=False, statistics=None, linux_vm=False):
                 malformed_and_policy_cases=sorted(bad),valid_advertisements=len(advertisements),
                 generated_UDP_pairs=4,replacement_states=6,neighbor_retransmissions=2,
                 retransmit_milliseconds=2000+lane*1000,dad_counts=counts,solicitations=len(rs),native_MLD=mld,
-                routed_replies=2,routed_reply_hop_limit=41+lane*10,
+                routed_replies=2,routed_reply_hop_limit=41+lane*10,first_pio_states=12,
                 native_clock=clock,native_clock_error=clock_error,timing_error=timing_error,
                 original_timestamps_preserved=True,sha256=hashlib.sha256(path.read_bytes()).hexdigest())

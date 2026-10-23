@@ -192,6 +192,18 @@ void prefix_information(unsigned index, const uint8_t* option, size_t length) {
     for (unsigned bit = option[2]; bit < 128; bit++)
         address.bytes[bit / 8] &= ~(1u << (7 - bit % 8));
     auto prefix = prefix_slot(index, address, option[2], valid && (option[3] & 0xc0));
+    if (!prefix && !valid && (option[3] & 0x40) && option[2] == 64 &&
+        enabled(index, ConfigurationKey::autoconf)) {
+        // A first zero PIO can refresh an existing configured address. Do
+        // not allocate a prefix slot for an unmatched zero advertisement.
+        auto candidate = address;
+        unsigned counter = 0;
+        bool privacy = false;
+        if (!configuration_identifier(index, candidate, counter, privacy))
+            if (auto current = assigned_address(index, candidate);
+                current && ipv6_address_cache(*current).valid)
+                prefix = prefix_slot(index, address, option[2], true);
+    }
     if (!prefix)
         return;
     if (option[3] & 0x80) {

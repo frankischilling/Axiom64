@@ -380,6 +380,100 @@ void renewed_ownership(void (*reset)()) {
     assert(cached && zero && finite && identity);
 }
 
+void initial_zero(void (*reset)()) {
+    bool all = true;
+    unsigned cases = 0;
+    for (unsigned flags : {0x40u, 0xc0u})
+        for (uint32_t initial : {UINT32_MAX, 100u, 10000u}) {
+            prepare(reset);
+            Ipv6AddressLifetimes lifetime{initial == UINT32_MAX ? initial : initial / 2, initial};
+            assert(!ipv6_address_add({generated(), 1, 2, 64}, lifetime));
+            auto owner = ip6::address_owner(1, generated());
+            uint64_t route_owner = 0, route_expires = 0;
+            for (const auto& route : routes())
+                if (route.destination == network() && route.prefix == 64 && !route.learned) {
+                    route_owner = route.owner;
+                    route_expires = route.expires;
+                }
+            assert(route_owner && !learned());
+            ticks = 200;
+            auto remaining = initial == UINT32_MAX ? initial : initial - 2;
+            auto expected = std::min(remaining, 7200u);
+            auto data = advertisement(0);
+            prefix(data, flags, 0, 0);
+            send(data);
+            auto entry = find(generated());
+            assert(entry);
+            auto cache = ipv6_address_cache(*entry);
+            unsigned observed_routes = 0;
+            bool route_identity = false;
+            for (const auto& route : routes())
+                if (route.destination == network() && route.prefix == 64) {
+                    observed_routes++;
+                    route_identity = !route.learned && route.owner == route_owner &&
+                                     route.expires == route_expires;
+                }
+            auto expected_flags = initial == UINT32_MAX ? 0xa2 : 0x22;
+            bool matched = cache.preferred == 0 && cache.valid == expected &&
+                           entry->flags == expected_flags && cache.created == 0 &&
+                           cache.updated == 200 && ip6::address_owner(1, generated()) == owner &&
+                           ip6::address_manages_prefix(1, generated()) && !learned() &&
+                           observed_routes == 1 && route_identity;
+            std::printf("IPV6_ROUTER_FIRST_ZERO flags=%x initial=%u observed_flags=%x "
+                        "preferred=%u valid=%u expected=%u owner=%u prefix=%u matched=%u\n",
+                        flags, initial, entry->flags, cache.preferred, cache.valid, expected,
+                        ip6::address_owner(1, generated()) == owner, route_identity, matched);
+            std::fflush(stdout);
+            all &= matched;
+            cases++;
+            if (matched) {
+                ticks += uint64_t(expected) * 100;
+                assert(!ipv6_owned(1, generated()) && !ipv6_owned(1, generated(), true));
+                ipv6_poll();
+                assert(!find(generated()));
+            }
+        }
+    assert(cases == 6 && all);
+
+    // A matching manual address is untouched when A, /64, or autoconf
+    // eligibility is absent, or when only the prefix (not the IID) matches.
+    for (unsigned kind = 0; kind < 6; kind++) {
+        prepare(reset);
+        auto address = generated();
+        if (kind == 5)
+            address.bytes[15] ^= 1;
+        assert(!ipv6_address_add({address, 1, 2, 64}));
+        if (kind == 3)
+            assert(!ip6::configuration_write(1, ip6::ConfigurationKey::autoconf, 0));
+        if (kind == 4)
+            assert(!ip6::configuration_write(1, ip6::ConfigurationKey::accept_ra, 0));
+        auto data = advertisement(0);
+        prefix(data, kind == 0 ? 0 : kind == 1 ? 0x80 : 0xc0, 0, 0, 1, kind == 2 ? 63 : 64);
+        send(data);
+        auto entry = find(address);
+        assert(entry && entry->flags == 0x82);
+        auto cache = ipv6_address_cache(*entry);
+        assert(cache.preferred == UINT32_MAX && cache.valid == UINT32_MAX && !learned());
+    }
+
+    // More distinct zero PIOs than the bounded prefix capacity cannot
+    // consume the slots required by a later useful advertisement.
+    for (unsigned flags : {0x40u, 0xc0u}) {
+        prepare(reset);
+        for (unsigned n = 0; n < ipv6_address_capacity * 2; n++) {
+            auto data = advertisement(0);
+            prefix(data, flags, 0, 0, 10 + n);
+            send(data);
+        }
+        assert(!learned() && !find(generated()));
+        auto data = advertisement(0);
+        prefix(data, flags, 100, 60);
+        send(data);
+        assert(find(generated()) && learned() == bool(flags & 0x80));
+    }
+    std::puts("IPV6_ROUTER_FIRST_ZERO_PASS refreshed=6 ignored=6 capacity=2");
+}
+
 void coalesced_withdrawal(void (*reset)()) {
     prepare(reset);
     auto data = advertisement(0);
@@ -605,6 +699,7 @@ void ipv6_router_tests(void (*reset)()) {
     admission(reset);
     flags_and_dad(reset);
     renewed_ownership(reset);
+    initial_zero(reset);
     coalesced_withdrawal(reset);
     retransmission(reset);
     lifetimes(reset);

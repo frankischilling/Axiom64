@@ -15,6 +15,7 @@ from ext2_test import check_fs, debugfs, dump
 from fetch import ROOT
 from manager_peer import ManagerPeer
 from normal_dns_peer import NormalDns
+from normal_ipv6_peer import AutomaticIpv6Control
 from qmp import Qmp
 from qemu_acceleration import Acceleration
 from normal_login import ConsoleLogin, install_observer
@@ -38,6 +39,7 @@ class SupervisionPeer(ManagerPeer):
         self.initial_discovers = None
         self.restart_discover_transaction = None
         self.before_manager = {}
+        self.ipv6_control = AutomaticIpv6Control(self.guest)
         self.dns = NormalDns(self, mask if mask is not None else int(bool(healthy)) << lane)
 
     def deliver(self, frame, manager_ready):
@@ -48,6 +50,8 @@ class SupervisionPeer(ManagerPeer):
             self.packet(frame)
 
     def packet(self, frame):
+        if self.ipv6_control.receive(frame):
+            return
         if self.dns.intercept(frame):
             return
         before = self.discovers
@@ -173,6 +177,7 @@ def fixture():
                        'scripts/account_normal_test.py', 'scripts/disk_root.py', 'scripts/image.py',
                        'scripts/fixture_archive.py',
                        'scripts/manager_peer.py', 'scripts/dhcp_peer.py', 'scripts/normal_dns_peer.py',
+                       'scripts/normal_ipv6_peer.py',
                        'userspace/tests/net/init-supervision.cpp', 'userspace/tests/net/normal-dns.c')})
     (directory / 'inputs.json').write_text(json.dumps(inputs, indent=2) + '\n')
     return disk, images, directory, inputs
@@ -464,6 +469,10 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout, directo
     packets = directory / (label + '-dns-packets.json')
     packets.write_text(json.dumps({'scenario': scenario, 'mask': mask, 'peers': dns}, indent=2) + '\n')
     result['dns_packets'] = packets.name
+    ipv6 = directory / (label + '-ipv6-packets.json')
+    ipv6.write_text(json.dumps({'scenario': scenario,
+        'peers': [peer.ipv6_control.evidence() for peer in peers]}, indent=2) + '\n')
+    result['ipv6_packets'] = ipv6.name
     try:
         check(error is None and returncode == 0 and stage == 'poweroff', 'normal boot did not finish cleanly')
         check(set(passed) == set(PHASES) and len(screenshots) == 2, 'all actual console/desktop/supervision phases')

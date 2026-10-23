@@ -36,6 +36,51 @@ class RouterCapture(unittest.TestCase):
         self.assertEqual(proof['retransmit_milliseconds'], 2000)
         self.assertEqual(proof['routed_replies'], 2)
         self.assertEqual(proof['routed_reply_hop_limit'], 41)
+        self.assertEqual(proof['valid_advertisements'], 13)
+        self.assertEqual(proof['first_pio_states'], 12)
+        self.assertEqual(self.metadata['router_phases'], 27)
+
+    def test_first_pio_state_union_flags_lifetimes_and_prefix_ownership(self):
+        line = next(line for line in self.text.splitlines()
+                    if line.startswith('IPV6_ROUTER_FIRST_PIO lane=0 phase=zero kind=5 '))
+        for damaged in (None, line.replace('flags=a2', 'flags=82'),
+                        line.replace('valid=7200', 'valid=4294967295'),
+                        line.replace('preferred=0', 'preferred=1'),
+                        line.replace('kind=5', 'kind=6'),
+                        line.replace('prefix_permanent=1', 'prefix_permanent=0'),
+                        line.replace('IPV6_ROUTER_FIRST_PIO ', 'IPV6_ROUTER_FIRST_PIO_WAIT ')):
+            text = self.text.replace(line + '\n', '' if damaged is None else damaged + '\n')
+            self.assertNotEqual(text, self.text)
+            self.rejected(text=text)
+
+    def test_checksum_valid_first_zero_pio_damage(self):
+        import ipaddress
+        prefix = ipaddress.IPv6Address('2001:db8:40:5::').packed
+        for field, relative, value in (('valid', 7, 1), ('autonomous', 3, 0x80),
+                                        ('network', 23, 9)):
+            rows = [dict(row) for row in self.rows]
+            changed = False
+            for row in rows:
+                frame = bytearray(row['frame'])
+                if len(frame) < 110 or frame[20] != 58 or frame[54] != 134:
+                    continue
+                at = 70
+                while at + 2 <= len(frame) and frame[at] != 3:
+                    size = frame[at + 1] * 8
+                    if not size or at + size > len(frame):
+                        break
+                    at += size
+                if at + 32 > len(frame) or frame[at] != 3 or frame[at + 16:at + 32] != prefix or any(frame[at + 4:at + 12]):
+                    continue
+                frame[at + relative] = value
+                frame[56:58] = bytes(2)
+                struct.pack_into('!H', frame, 56, checksum(bytes(frame[22:54]) +
+                    struct.pack('!I3xB', len(frame) - 54, 58) + bytes(frame[54:])))
+                row['frame'] = bytes(frame)
+                changed = True
+                break
+            self.assertTrue(changed, field)
+            self.rejected(rows=rows)
 
     def write(self, path, rows):
         with path.open('wb') as stream:

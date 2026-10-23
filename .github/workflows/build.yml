@@ -225,6 +225,7 @@ jobs:
           python3 scripts/tests/network_fixture_test.py 2>&1 | tee build/ipv4-policy/fixture.log
           python3 scripts/tests/ipv6_configuration_test.py 2>&1 | tee build/ipv4-policy/ipv6-configuration.log
           python3 scripts/tests/ipv6_router_capture_test.py 2>&1 | tee build/ipv4-policy/ipv6-router-capture.log
+          python3 scripts/tests/dns_fixture_test.py 2>&1 | tee build/ipv4-policy/dns-fixture.log
           python3 scripts/tests/ipv4_aliases_test.py 2>&1 | tee build/ipv4-policy/aliases.log
           python3 scripts/tests/ipv4_fragment_observation_test.py -v 2>&1 | tee build/ipv4-policy/fragment-observation.log
           python3 scripts/tests/ipv4_expiry_damage_test.py -v 2>&1 | tee build/ipv4-policy/expiry-damage.log
@@ -1572,13 +1573,14 @@ jobs:
           name: axiom64-tcp-fixtures
           if-no-files-found: error
           path: build/axiom64-tcp-*.iso
-      - name: Upload DNS TCP boot fixtures and providers
+      - name: Upload DNS boot fixtures and providers
         if: always() && matrix.suite == 'network'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: axiom64-dns-tcp-fixtures
           if-no-files-found: error
           path: |
+            build/dns-fixture/**
             build/axiom64-dns-tcp-*.iso
             build/dns-tcp-static
             build/dns-tcp-dynamic

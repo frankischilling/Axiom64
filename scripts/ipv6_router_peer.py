@@ -19,7 +19,7 @@ class Peer:
         self.link = ipaddress.IPv6Address('fe80::').packed[:8] + identifier
         self.router = ipaddress.IPv6Address('fe80::42').packed
         self.prefixes = {kind: ipaddress.IPv6Address(f'2001:db8:{0x40 + lane:x}:{kind:x}::').packed
-                         for kind in (1, 2, 3, 4)}
+                         for kind in range(1, 9)}
         self.addresses = {kind: prefix[:8] + identifier for kind, prefix in self.prefixes.items()}
         self.remote = self.prefixes[2][:-1] + b'\x42'
         self.distant = ipaddress.IPv6Address('2001:db8:ffff::42').packed
@@ -31,7 +31,7 @@ class Peer:
         self.mac_policy = None
         self.neighbor_retries = []
         self.retry_target = self.prefixes[1][:-1] + b'\x44'
-        self.replacements = []
+        self.replacements, self.first_pio = [], []
         self.routed_requests, self.routed_replies = {}, []
         self.started = time.monotonic_ns()
 
@@ -48,11 +48,11 @@ class Peer:
         return mac + self.mac + b'\x86\xdd' + struct.pack('!IHBB', 6 << 28, len(payload), protocol, hops) + source + destination + payload
 
     def advertisement(self, lifetime=4, valid=8, preferred=2, hops=61, mtu=1300, prefixes=True,
-                      source=None, bad_prefix=None, retransmit=0):
+                      source=None, bad_prefix=None, retransmit=0, pio_flags=None):
         body = bytearray(struct.pack('!BBHBBHII', 134, 0, 0, hops, 0, lifetime, 0, retransmit))
         body += b'\x01\x01' + self.mac
         if prefixes:
-            for kind, flags in ((1, 0xc0), (2, 0x80), (3, 0x40), (4, 0)):
+            for kind, flags in (pio_flags or ((1, 0xc0), (2, 0x80), (3, 0x40), (4, 0))):
                 prefix = bad_prefix if bad_prefix is not None else self.prefixes[kind]
                 body += struct.pack('!BBBBIII16s', 3, 4, 64, flags, valid, preferred, 0, prefix)
         body += struct.pack('!BBHI', 5, 1, 0, mtu)
@@ -191,8 +191,22 @@ class Peer:
         elif phase == 22:
             require(len(self.routed_replies) == 2, 'both cross-interface kernel replies complete')
             self.ack(phase)
+        elif phase in range(23, 27):
+            self.pending = phase
+            self.first_pio_ready()
         else:
             raise ValueError('unknown router phase')
+
+    def first_pio_ready(self):
+        phase = self.pending
+        counts = {23: 4, 24: 4, 25: 8, 26: 12}
+        if phase not in counts or len(self.first_pio) != counts[phase]:
+            return
+        if phase in (24, 25):
+            self.outgoing.append(self.advertisement(lifetime=0, valid=0 if phase == 24 else 100,
+                preferred=0 if phase == 24 else 60, hops=41 + self.lane * 10,
+                pio_flags=((5, 0xc0), (6, 0x40), (7, 0xc0), (8, 0x40))))
+        self.ack(phase)
 
     def replacement_ready(self):
         phase = self.pending
@@ -205,6 +219,25 @@ class Peer:
         self.ack(phase)
 
     def line(self, line):
+        if line.startswith(f'IPV6_ROUTER_FIRST_PIO lane={self.lane} '.encode()):
+            match = re.fullmatch(rb'IPV6_ROUTER_FIRST_PIO lane=([01]) phase=(configured|zero|finite) kind=([5-8]) '
+                rb'flags=([0-9a-f]+) preferred=(\d+) valid=(\d+) prefix_routes=1 prefix_permanent=([01]) observed_ns=(\d+)', line.strip())
+            require(match is not None and len(self.first_pio) < 12, 'complete first-PIO state observation')
+            phase, kind = match.group(2).decode(), int(match.group(3))
+            flags, preferred, valid = int(match.group(4), 16), int(match.group(5)), int(match.group(6))
+            expected_phase, expected_kind = ('configured', 'zero', 'finite')[len(self.first_pio) // 4], 5 + len(self.first_pio) % 4
+            expected_flags = 2 | (0x80 if kind < 7 else 0) | (0x20 if phase == 'zero' else 0)
+            expected_preferred = (4294967295 if kind < 7 else 6000) if phase == 'configured' else (0 if phase == 'zero' else 60)
+            expected_valid = (4294967295 if kind < 7 else 10000) if phase == 'configured' else 7200
+            require((phase, kind, flags, int(match.group(7))) == (expected_phase, expected_kind, expected_flags, int(kind < 7)) and
+                    expected_preferred - (2 if expected_preferred not in (0, 4294967295) else 0) <= preferred <= expected_preferred and
+                    expected_valid - (0 if expected_valid == 4294967295 else 2) <= valid <= expected_valid,
+                    'first zero PIO refreshes matching permanent and finite configured addresses')
+            stamp = int(match.group(8))
+            require(not self.first_pio or stamp >= self.first_pio[-1]['observed_ns'], 'nondecreasing original first-PIO observation clocks')
+            self.first_pio.append(dict(phase=phase, kind=kind, flags=flags, preferred=preferred, valid=valid, observed_ns=stamp))
+            self.first_pio_ready()
+            return
         if line.startswith(f'IPV6_ROUTER_REPLACEMENT lane={self.lane} '.encode()):
             match = re.fullmatch(rb'IPV6_ROUTER_REPLACEMENT lane=([01]) phase=(replaced|zero|finite|readded|readd-zero|readd-finite) '
                 rb'flags=([0-9a-f]+) preferred=(\d+) valid=(\d+) prefix_routes=1 prefix_permanent=1',
@@ -335,7 +368,7 @@ class Peer:
     def result(self):
         counts = {target.hex():sum(row['target'] == target.hex() for row in self.dad)
                   for target in (self.link, self.addresses[1], self.addresses[3])}
-        passed = (self.complete == list(range(23)) and len(self.replacements) == 6 and self.udp == [2, 3, 4, 5] and len(self.neighbor_retries) == 2 and len(self.routed_replies) == 2 and self.bad_sent and
+        passed = (self.complete == list(range(27)) and len(self.first_pio) == 12 and len(self.replacements) == 6 and self.udp == [2, 3, 4, 5] and len(self.neighbor_retries) == 2 and len(self.routed_replies) == 2 and self.bad_sent and
                   self.mac_policy == self.native and
                   counts[self.link.hex()] == 1 and counts[self.addresses[1].hex()] == 2 and
                   counts[self.addresses[3].hex()] == 2 and len(self.rs) >= (1 if self.native else 2))
@@ -345,6 +378,6 @@ class Peer:
                     multicast_source_link_layer_cases=1 if 9 in self.complete else 0, solicitations_ns=self.rs,
                     dad=self.dad, dad_counts=counts, advertisements=self.advertisements, replacements=self.replacements,
                     neighbor_retries_ns=self.neighbor_retries, retransmit_milliseconds=2000 + self.lane * 1000,
-                    routed_replies=self.routed_replies,
+                    routed_replies=self.routed_replies, first_pio=self.first_pio,
                     native_zero_lifetime_RA_stopped_solicitation=self.native and len(self.rs) == 1,
                     firmware_frames=self.firmware, native_MLD=self.mld, packet_clock_qualified=False)

@@ -263,7 +263,8 @@ static void probe(unsigned lane, unsigned phase, int mtu) {
     close(fd);
 }
 
-static void manual_address(unsigned lane, int remove) {
+static void configured_address(unsigned lane, unsigned kind, int remove, uint32_t preferred,
+                               uint32_t valid) {
     int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
     check(fd >= 0, "manual replacement netlink socket");
 
@@ -281,9 +282,10 @@ static void manual_address(unsigned lane, int remove) {
         NLM_F_REQUEST | NLM_F_ACK | (remove ? 0 : NLM_F_CREATE | NLM_F_REPLACE), 1, 0};
     request.address = (struct ifaddrmsg){AF_INET6, 64, IFA_F_NODAD, 0, indices[lane]};
     request.address_field = (struct rtattr){20, IFA_ADDRESS};
-    request.value = prefix_address(lane, 1, 1);
+    request.value = prefix_address(lane, kind, 1);
     request.cache_field = (struct rtattr){20, IFA_CACHEINFO};
-    request.cache.ifa_prefered = request.cache.ifa_valid = UINT32_MAX;
+    request.cache.ifa_prefered = preferred;
+    request.cache.ifa_valid = valid;
     struct sockaddr_nl kernel = {.nl_family = AF_NETLINK};
     check(sendto(fd, &request, sizeof(request), 0, (struct sockaddr*)&kernel, sizeof(kernel)) ==
               sizeof(request),
@@ -298,6 +300,10 @@ static void manual_address(unsigned lane, int remove) {
     memcpy(&result, NLMSG_DATA((struct nlmsghdr*)response), sizeof(result));
     check(!result.error, "manual replacement result");
     close(fd);
+}
+
+static void manual_address(unsigned lane, int remove) {
+    configured_address(lane, 1, remove, UINT32_MAX, UINT32_MAX);
 }
 
 static void replacement_check(unsigned lane, const char* phase, unsigned flags, unsigned preferred,
@@ -342,6 +348,57 @@ static void replacement_check(unsigned lane, const char* phase, unsigned flags, 
         waited = 1;
         struct timespec delay = {0, 20000000};
         check(!nanosleep(&delay, NULL), "bounded Linux deprecation-flag observation");
+    }
+}
+
+static int lifetime_matches(uint32_t actual, uint32_t expected) {
+    return actual <= expected &&
+           actual >= (expected > 2 && expected != UINT32_MAX ? expected - 2 : expected);
+}
+
+static void first_pio_check(unsigned lane, unsigned kind, const char* phase) {
+    int configured = !strcmp(phase, "configured"), deprecated = !strcmp(phase, "zero");
+    unsigned flags =
+        IFA_F_NODAD | (kind < 7 ? IFA_F_PERMANENT : 0) | (deprecated ? IFA_F_DEPRECATED : 0);
+    uint32_t valid = configured ? (kind < 7 ? UINT32_MAX : 10000) : 7200;
+    uint32_t preferred = configured ? (kind < 7 ? UINT32_MAX : 6000) : deprecated ? 0 : 60;
+    uint64_t began = now();
+    int waited = 0;
+    for (;;) {
+        struct inventory inventory = snapshot(lane);
+        const struct address_record* address = find(&inventory, prefix_address(lane, kind, 1));
+        check(address != NULL, "first PIO keeps the configured address");
+        struct in6_addr empty = {0}, prefix = prefix_address(lane, kind, 0);
+        unsigned count = routes(&inventory, prefix, 64), permanent = 0, finite = 0;
+        for (unsigned at = 0; at < inventory.route_count; at++) {
+            const struct route_record* route = inventory.routes + at;
+            if (route->prefix == 64 && !memcmp(&route->destination, &prefix, 16) &&
+                !memcmp(&route->gateway, &empty, 16) && route->protocol == RTPROT_KERNEL &&
+                route->metric == 256) {
+                permanent += !route->expires;
+                finite += route->expires > 0;
+            }
+        }
+        int metadata = lifetime_matches(address->valid, valid) &&
+                       lifetime_matches(address->preferred, preferred) && count == 1 &&
+                       permanent == (kind < 7) && finite == (kind >= 7);
+        if (metadata && address->flags == flags) {
+            printf("IPV6_ROUTER_FIRST_PIO lane=%u phase=%s kind=%u flags=%x preferred=%u valid=%u "
+                   "prefix_routes=%u prefix_permanent=%u observed_ns=%llu\n",
+                   lane, phase, kind, address->flags, address->preferred, address->valid, count,
+                   permanent, (unsigned long long)now());
+            report(lane, &inventory);
+            return;
+        }
+        check(metadata && deprecated && (address->flags ^ flags) == IFA_F_DEPRECATED &&
+                  now() - began < 1000000000ULL,
+              "first PIO has exact final flags, protected cache and configured prefix");
+        if (!waited)
+            printf("IPV6_ROUTER_FIRST_PIO_WAIT lane=%u phase=%s kind=%u flags=%x\n", lane, phase,
+                   kind, address->flags);
+        waited = 1;
+        struct timespec delay = {0, 20000000};
+        check(!nanosleep(&delay, NULL), "bounded first-PIO deprecation-bit observation");
     }
 }
 
@@ -510,9 +567,28 @@ int main(void) {
     for (unsigned phase = 20; phase <= 22; phase++)
         for (unsigned lane = 0; lane < 2; lane++)
             barrier(lane, phase);
+    // These prefixes have never appeared in a PIO. Configure both
+    // permanent and finite addresses before their first zero advertisement.
+    for (unsigned lane = 0; lane < 2; lane++) {
+        for (unsigned kind = 5; kind <= 8; kind++)
+            configured_address(lane, kind, 0, kind < 7 ? UINT32_MAX : 6000,
+                               kind < 7 ? UINT32_MAX : 10000);
+        for (unsigned kind = 5; kind <= 8; kind++)
+            first_pio_check(lane, kind, "configured");
+        barrier(lane, 23);
+    }
+    for (unsigned lane = 0; lane < 2; lane++) {
+        barrier(lane, 24);
+        for (unsigned kind = 5; kind <= 8; kind++)
+            first_pio_check(lane, kind, "zero");
+        barrier(lane, 25);
+        for (unsigned kind = 5; kind <= 8; kind++)
+            first_pio_check(lane, kind, "finite");
+        barrier(lane, 26);
+    }
     puts("IPV6_ROUTER_PASS adapters=2 invalid_each=8 mac_policy_each=1 flags=4 finite_seconds=8 "
          "protection_seconds=7200 replacement_each=6 retransmit_milliseconds=2000,3000 "
-         "routed_reply_each=2");
+         "routed_reply_each=2 first_pio_each=12");
     close(control);
     return 0;
 }

@@ -74,7 +74,8 @@ bool automatic(unsigned index) {
     return false;
 }
 
-void query(unsigned index, unsigned family, bool dump, bool ack) {
+void query(unsigned index, unsigned family, bool dump, bool ack,
+           uint32_t expected_flags = UINT32_MAX, unsigned expected_mtu = 0) {
     uint8_t input[32]{};
     NetlinkHeader request{sizeof(input), 18, uint16_t(1 | (dump ? 0x300 : 0) | (ack ? 4 : 0)),
                           0x13572468, 0};
@@ -107,7 +108,17 @@ void query(unsigned index, unsigned family, bool dump, bool ack) {
             unsigned selected;
             memcpy(&selected, output.data() + at + 20, 4);
             assert(dump || selected == index);
-            bool found = false;
+            if (selected == index && expected_flags != UINT32_MAX) {
+                uint32_t flags;
+                memcpy(&flags, output.data() + at + 24, 4);
+                assert(flags == expected_flags);
+            }
+            int32_t generation = -1;
+            int status = ip6::configuration_read(selected, ip6::ConfigurationKey::generation_mode,
+                                                 generation);
+            assert(!status || status == -19);
+            assert(!(dump && family == 10) || !status);
+            bool found = false, found_mtu = false;
             for (size_t field = at + 32; field < at + response.length;) {
                 uint16_t length, type;
                 memcpy(&length, output.data() + field, 2);
@@ -117,26 +128,48 @@ void query(unsigned index, unsigned family, bool dump, bool ack) {
                     size_t inner = field + (type == 26 ? 8 : 4);
                     assert(length == (type == 26 ? 16 : 12) && output[inner] == 5 &&
                            !output[inner + 1] && output[inner + 2] == 8 && !output[inner + 3] &&
-                           output[inner + 4] == mode(selected));
+                           output[inner + 4] == generation);
                     found = true;
+                } else if (type == 4 && selected == index && expected_mtu) {
+                    uint32_t mtu;
+                    assert(length == 8 && !found_mtu);
+                    memcpy(&mtu, output.data() + field + 4, 4);
+                    assert(mtu == expected_mtu);
+                    found_mtu = true;
                 }
                 field += (length + 3u) & ~3u;
             }
-            assert(found);
+            assert(found == !status);
+            assert(selected != index || !expected_mtu || found_mtu);
             links++;
         }
         at += (response.length + 3u) & ~3u;
     }
     unsigned expected = 1;
     if (dump) {
+        expected = 0;
         for (unsigned at = 1; at <= max_net_devices; at++)
-            expected += net_info(at) != nullptr;
+            if (net_info(at)) {
+                int32_t ignored;
+                expected +=
+                    family != 10 ||
+                    !ip6::configuration_read(at, ip6::ConfigurationKey::generation_mode, ignored);
+            }
+        expected++; // Loopback always has an IPv6 configuration object.
     }
     if (links != expected || endings != unsigned(dump || ack))
         std::fprintf(stderr, "link query index=%u family=%u dump=%u ack=%u links=%u endings=%u\n",
                      index, family, dump, ack, links, endings);
     assert(links == expected && endings == unsigned(dump || ack));
     requests++;
+}
+
+void query_state(unsigned index, uint32_t flags, unsigned mtu) {
+    for (unsigned family : {0u, 10u}) {
+        query(index, family, false, false, flags, mtu);
+        query(index, family, false, true, flags, mtu);
+        query(index, family, true, false, flags, mtu);
+    }
 }
 } // namespace
 
@@ -184,6 +217,18 @@ void ipv6_link_configuration_tests(void (*reset)()) {
         uint32_t size = later.size();
         memcpy(later.data(), &size, 4);
         assert(submit(later) == -22 && mode(index) == 0);
+        query_state(index, 0x11043, 1500);
+        assert(!net_configure(index, false, 1500));
+        query_state(index, 0x1002, 1500);
+        assert(!net_configure(index, true, 1500));
+        query_state(index, 0x11043, 1500);
+        assert(!net_configure(index, true, 1279));
+        int32_t absent;
+        assert(ip6::configuration_read(index, ip6::ConfigurationKey::generation_mode, absent) ==
+               -19);
+        query_state(index, 0x11043, 1279);
+        assert(!net_configure(index, true, 1500));
+        query_state(index, 0x11043, 1500);
     }
     reset();
     std::printf("IPV6_LINK_CONFIGURATION_PASS requests=%u adapters=2 atomic_errors=checked "

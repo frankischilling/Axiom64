@@ -70,3 +70,10 @@ The ownership conflict observer tracks previously conflicted identities while a
 replacement appears. It keeps the complete final owner inventory and rejects
 multiple fresh candidates. Queried ownership records are emitted in one checked
 write, preserving them when the kernel reports a duplicate address.
+
+
+Ethernet link queries survive retirement of an interface's IPv6 scope at an MTU
+below 1280. Ordinary netlink replies retain the device's flags and MTU and omit
+unavailable IPv6 attributes. IPv6-specific dumps skip that scope. Restoration
+reports the newly inherited generation mode. Native and guest comparisons check
+the original netlink reply bytes alongside ioctl and proc observations.

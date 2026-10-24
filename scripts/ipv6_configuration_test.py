@@ -23,6 +23,7 @@ REFERENCE = 'scripts/tests/fixtures/ipv6-configuration-linux7.json'
 LINK_MODE = False
 SOCKET_MODE = False
 LIFETIME_MODE = False
+DEVICE_MODE = False
 
 
 def lifetime_reference(release=None):
@@ -54,6 +55,9 @@ def guest_identity(text, firmware, transport):
 
 def observations(text):
     lines = text.splitlines()
+    if DEVICE_MODE:
+        from ipv6_device_inventory import observations as device_observations
+        return device_observations(text, json.loads((ROOT / REFERENCE).read_text()))
     if LIFETIME_MODE:
         actual = [line for line in lines if line.startswith('LIFETIME_IO ')]
         fixture = json.loads((ROOT / REFERENCE).read_text())
@@ -153,7 +157,7 @@ def native_child(args):
 
 
 def main():
-    global SOURCE, REFERENCE, LINK_MODE, SOCKET_MODE, LIFETIME_MODE
+    global SOURCE, REFERENCE, LINK_MODE, SOCKET_MODE, LIFETIME_MODE, DEVICE_MODE
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--directory', type=Path, default=ROOT / 'build/ipv6-configuration')
     parser.add_argument('--native', action='store_true')
@@ -161,9 +165,16 @@ def main():
     modes.add_argument('--link-mode', action='store_true', help='compare netlink address-generation controls')
     modes.add_argument('--socket-mode', action='store_true', help='compare device binding and hop-limit controls')
     modes.add_argument('--lifetime-mode', action='store_true', help='compare interface configuration lifetimes')
+    modes.add_argument('--device-mode', action='store_true', help='compare link inventories across device transitions')
     parser.add_argument('--child', choices=('static', 'dynamic', 'native'), help=argparse.SUPPRESS)
     parser.add_argument('--parent-net-ns', type=int, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.device_mode:
+        DEVICE_MODE = True
+        SOURCE = 'userspace/tests/net/ipv6_device_inventory.c'
+        REFERENCE = 'scripts/tests/fixtures/ipv6-device-inventory-linux7.json'
+        if digest(ROOT / SOURCE) != json.loads((ROOT / REFERENCE).read_text())['source_sha256']:
+            raise ValueError('device inventory client differs from the measured Linux reference source')
     if args.link_mode:
         LINK_MODE = True
         SOURCE = 'userspace/tests/net/ipv6_link_configuration.c'
@@ -180,7 +191,7 @@ def main():
         REFERENCE = lifetime_reference(platform.release() if args.native or args.child else None)
         if digest(ROOT / SOURCE) != json.loads((ROOT / REFERENCE).read_text())['source_sha256']:
             raise ValueError('lifetime client differs from the measured Linux reference source')
-    if not args.link_mode and not args.socket_mode and not args.lifetime_mode:
+    if not args.link_mode and not args.socket_mode and not args.lifetime_mode and not args.device_mode:
         if digest(ROOT / SOURCE) != json.loads((ROOT / REFERENCE).read_text())['client_source_sha256']:
             raise ValueError('proc configuration client differs from the measured Linux reference source')
     args.directory = args.directory.resolve()
@@ -193,6 +204,8 @@ def main():
     names = [SOURCE, REFERENCE, 'scripts/ipv6_configuration_test.py', 'scripts/account_store_guest.py',
              'scripts/compile_uapi_client.py', 'scripts/tcp_fixture_inputs.py', 'scripts/image.py',
              'Makefile', 'sources.lock.json', 'dependencies.json', 'boot/limine.conf']
+    if DEVICE_MODE:
+        names.append('scripts/ipv6_device_inventory.py')
     if not args.native:
         names += [path.relative_to(ROOT).as_posix() for path in (ROOT / 'kernel').rglob('*')
                   if path.is_file() and path.suffix in ('.cpp', '.hpp', '.asm', '.ld')]
@@ -217,6 +230,8 @@ def main():
                 command.append('--socket-mode')
             if args.lifetime_mode:
                 command.append('--lifetime-mode')
+            if args.device_mode:
+                command.append('--device-mode')
             subprocess.run(command, cwd=ROOT, check=True)
             rows.append(json.loads((case / 'receipt.json').read_text()))
             print('IPV6_CONFIGURATION_NATIVE_PASS ' + profile, flush=True)

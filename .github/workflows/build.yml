@@ -234,6 +234,7 @@ jobs:
           python3 scripts/tests/ipv6_owner_launch_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-owner-launch.log
           python3 scripts/tests/ipv6_owner_capture_test.py --archive build/ipv4-policy/ipv6-owner-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-owner-capture.log
           python3 scripts/tests/ipv6_device_capture_test.py --archive build/ipv4-policy/ipv6-device-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-device-capture.log
+          python3 scripts/tests/ipv6_device_inventory_test.py --archive build/ipv4-policy/ipv6-device-inventory-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-device-inventory.log
           python3 scripts/tests/dns_fixture_test.py 2>&1 | tee build/ipv4-policy/dns-fixture.log
           python3 scripts/tests/ipv4_aliases_test.py 2>&1 | tee build/ipv4-policy/aliases.log
           python3 scripts/tests/ipv4_fragment_observation_test.py -v 2>&1 | tee build/ipv4-policy/fragment-observation.log
@@ -1028,6 +1029,12 @@ jobs:
       - name: Compare ready IPv6 device owners with three isolated native Linux linkages
         if: matrix.suite == 'configuration'
         run: sudo -n make test-ipv6-device-native
+      - name: Verify link inventories across administrative and invalid-MTU transitions
+        if: matrix.suite == 'configuration'
+        run: make test-ipv6-device-inventory
+      - name: Compare device inventories with three isolated native Linux linkages
+        if: matrix.suite == 'configuration'
+        run: sudo -n make test-ipv6-device-inventory-native
       - name: Upload IPv6 configuration ABI evidence
         if: always() && matrix.suite == 'configuration'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1051,6 +1058,8 @@ jobs:
             build/ipv6-owner-native
             build/ipv6-device-wire
             build/ipv6-device-native
+            build/ipv6-device-inventory-wire
+            build/ipv6-device-inventory-native
       - name: Test IPv6 address control, DAD, neighbor discovery and echo on both adapters
         if: matrix.suite == 'network'
         run: make test-ipv6-host

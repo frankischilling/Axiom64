@@ -22,3 +22,4 @@ scripts/tests/fixtures/ipv6-owner-*.pcap binary
 scripts/tests/fixtures/ipv6-device/**/serial.log -text -whitespace
 scripts/tests/fixtures/ipv6-device/**/*.pcap binary
 scripts/tests/fixtures/ipv6-device/**/*.clocks.jsonl -text -whitespace
+scripts/tests/fixtures/ipv6-device-inventory-*.log -text -whitespace

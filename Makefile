@@ -754,6 +754,14 @@ test-ipv6-device:
 test-ipv6-device-native:
 	$(PYTHON) scripts/ipv6_device_test.py --native --directory build/ipv6-device-native
 
+.PHONY: test-ipv6-device-inventory test-ipv6-device-inventory-native
+
+test-ipv6-device-inventory:
+	$(PYTHON) scripts/ipv6_configuration_test.py --device-mode --directory build/ipv6-device-inventory-wire
+
+test-ipv6-device-inventory-native:
+	$(PYTHON) scripts/ipv6_configuration_test.py --device-mode --native --directory build/ipv6-device-inventory-native
+
 test-ipv6-lifetimes-contract:
 	$(PYTHON) scripts/ipv6_lifetime_contract.py --native-directory build/ipv6-host-native-wire --guest-directory build/ipv6-host-wire --output-directory build/ipv6-lifetime-contract
 .PHONY: test-ipv6-sockets test-ipv6-sockets-native

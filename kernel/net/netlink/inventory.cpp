@@ -68,6 +68,14 @@ unsigned prefix(uint32_t mask) {
 
 bool link(Writer& output, const NetlinkHeader& request, uint32_t port, const NetInfo& info,
           bool loopback, bool dump, bool inet6) {
+    int32_t mode = 0;
+    int status = ip6::configuration_read(info.index, ip6::ConfigurationKey::generation_mode, mode);
+    if (status && status != -19)
+        return false;
+    // A device can outlive its IPv6 scope, for example while MTU is below 1280.
+    // Family-specific dumps omit it; ordinary link replies retain the device.
+    if (inet6 && status)
+        return true;
     size_t start = output.size;
     NetlinkHeader message{0, 16, uint16_t(dump ? 2 : 0), request.sequence, port};
     uint32_t flags = loopback
@@ -87,14 +95,13 @@ bool link(Writer& output, const NetlinkHeader& request, uint32_t port, const Net
         !output.attribute(2, broadcast, sizeof(broadcast)) ||
         !output.attribute(13, &queue_length, 4) || !output.attribute(16, &state, 1))
         return false;
-    int32_t mode;
-    if (ip6::configuration_read(info.index, ip6::ConfigurationKey::generation_mode, mode))
-        return false;
     // AF_UNSPEC replies nest the IPv6 family inside IFLA_AF_SPEC. An IPv6
     // dump carries the same family attributes directly in IFLA_PROTINFO.
-    uint8_t family[12]{12, 0, 10, 0, 5, 0, 8, 0, uint8_t(mode), 0, 0, 0};
-    if (!(inet6 ? output.attribute(12, family + 4, 8) : output.attribute(26, family, 12)))
-        return false;
+    if (!status) {
+        uint8_t family[12]{12, 0, 10, 0, 5, 0, 8, 0, uint8_t(mode), 0, 0, 0};
+        if (!(inet6 ? output.attribute(12, family + 4, 8) : output.attribute(26, family, 12)))
+            return false;
+    }
     output.finish(start, message);
     return true;
 }

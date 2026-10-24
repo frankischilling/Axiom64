@@ -351,3 +351,30 @@ inventory remain failed and unchanged.
 The configuration evidence upload checks whether its path-descriptor producer
 ran. An earlier failed step can skip that producer without causing a second
 missing-files error. When the producer runs, missing evidence remains an error.
+
+
+`make test-ipv6-device-inventory` compares twelve guest profiles with the complete
+measured Linux device inventory. `sudo -n make test-ipv6-device-inventory-native`
+runs the three native linkages in isolated namespaces. The same client records
+twelve administrative/MTU states and 48 complete raw netlink transactions per
+execution. Direct and dumped AF_UNSPEC/AF_INET6 replies retain exact interface
+flags, MTU, scope presence and retained/inherited generation attributes.
+
+Six source-bound native executions on Linux 6.17/7.0 and all twelve guest profiles
+pass. Independent readers open two actual guest images, parse all 864 raw
+transactions and compare 1,080 observations. The client takes its existing ordinary
+netlink query before the ioctl snapshot: Linux synchronizes pending carrier work
+during that query. An earlier immediate ioctl snapshot observed 0x1003 before the
+following netlink reply reported 0x11043; its original log remains rejected. The
+earlier guest's eight low-MTU EMSGSIZE replies also remain rejected. No failed
+producer was repeated unchanged.
+
+`python3 scripts/tests/ipv6_device_inventory_test.py --archive build/device-inventory-damaged.zip -v`
+reopens the actual Linux record and both original failures, and archives/reopens
+nine damaged variants. Coherent flag/MTU changes, changed raw or serialized
+sequences, request-family changes, missing queries/replies/completion and an
+administratively down device reporting RUNNING all reject. The current reader
+replays all eighteen original profiles and rejects 162 archived changed records.
+These checks establish device ABI behavior; they do not establish DAD wire clocks.
+The sanitizer model separately exercises both query layouts, acknowledgments,
+unavailable scopes, exact flags, required MTU fields and restored defaults.

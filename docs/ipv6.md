@@ -229,3 +229,18 @@ checked write, preserving complete queried metadata alongside kernel diagnostics
 The changed client passes 48 guest and 24 native profiles with independent image,
 capture and damage checks. Retrying and exhausted owners across device transitions
 still need their separate wire coverage.
+
+
+Ordinary link queries now remain available when an MTU below 1280 retires the
+interface's IPv6 scope. Direct AF_UNSPEC and AF_INET6 queries still return the
+device's flags and MTU, without inventing IPv6 generation attributes. An AF_INET6
+dump omits the retired scope and retains the other interfaces. Restoring a usable
+MTU exposes the replacement scope and its inherited generation mode. Administrative
+shutdown retains that mode while clearing operational flags.
+
+The shared inventory client passes six native and twelve guest profiles, including
+both firmware modes, both musl linkages and all three adapters. Independent readers
+open both guest images, parse 864 original raw netlink transactions and compare
+1,080 observations. They reject 162 archived changed records. These are device ABI
+checks; retrying and exhausted owners and pending regeneration still need wire
+coverage. Full current-revision hosted acceptance remains required.

@@ -10,6 +10,34 @@ ROOT=Path(__file__).resolve().parents[2]
 
 
 class OwnershipArguments(unittest.TestCase):
+    def test_retiring_owners_keep_the_fresh_candidate_unique(self):
+        with tempfile.TemporaryDirectory(prefix='axiom64-owner-inventory-') as temporary:
+            program=Path(temporary)/'inventory'
+            built=subprocess.run(['gcc','-std=gnu11','-O2','-Wall','-Wextra','-Werror',
+                'userspace/tests/net/ipv6_owner_inventory_model.c','-o',str(program)],cwd=ROOT,
+                stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+            self.assertEqual(built.returncode,0,built.stdout.decode(errors='replace'))
+            rejected={'legacy','two-fresh','duplicate-fresh','oversized-context'}
+            for kind in ('legacy','context','reverse','failed-old','old-only','wrong-state',
+                         'wrong-prefix','two-fresh','duplicate-fresh','oversized-context'):
+                with self.subTest(kind=kind):
+                    result=subprocess.run([str(program),kind],stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,timeout=2)
+                    self.assertEqual(result.returncode,int(kind in rejected),result.stdout.decode(errors='replace'))
+                    self.assertIn(b'IPV6_OWNER_FAIL' if kind in rejected else b'IPV6_OWNER_INVENTORY_PASS',result.stdout)
+
+    def test_queried_record_uses_one_complete_write(self):
+        with tempfile.TemporaryDirectory(prefix='axiom64-owner-record-') as temporary:
+            program=Path(temporary)/'record'
+            source=ROOT/'scripts/tests/fixtures/ipv6-owner-serial-model.c'
+            built=subprocess.run(['gcc','-std=gnu11','-O2','-Wall','-Wextra','-Werror','-I',str(ROOT),
+                str(source),'-Wl,--wrap=printf','-Wl,--wrap=write','-Wl,--wrap=poll',
+                '-Wl,--wrap=recv','-o',str(program)],cwd=ROOT,
+                stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+            self.assertEqual(built.returncode,0,built.stdout.decode(errors='replace'))
+            result=subprocess.run([str(program)],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=2)
+            self.assertEqual(result.returncode,0,result.stdout.decode(errors='replace'))
+
     def test_both_finite_queries_precede_either_ACK_wait(self):
         source=r'''
 #define _GNU_SOURCE

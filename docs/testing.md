@@ -160,6 +160,33 @@ The original three retained ownership fixture groups reject 73 damaged controls.
 
 `scripts/tests/ipv6_owner_capture_test.py` reopens all four actual fixture groups and rejects 109 serialized packet/log corruptions, including coherent metadata edits, early/late retry packets, shortened quiet windows, lost permanent owners and invented NODAD probes. `--archive build/ipv6-owner-damaged.zip` preserves a separate ZIP for each group and reopens every archived control. `ipv6_owner_peer_test.py` verifies the live conflict barrier, explicit cleanup policy, fresh-PIO admission, equal monotonic ticks and rejected backward observations. `ipv6_owner_launch_test.py` executes eight invalid argument forms and requires rejection before privileged configuration. These checks supplement the complete wire and native matrices.
 
+`make test-ipv6-device` adds 36 ready-owner profiles for administrative, MTU and
+carrier transitions. Both linkages, both firmware paths and all three adapters
+remain required, with two workers and a separate sixty-second deadline per
+profile. `sudo -n make test-ipv6-device-native` adds nine native comparisons through
+isolated static musl, dynamic musl and glibc clients. The same clients have been
+checked on Linux 6.17 and 7.0. Controls travel over the healthy companion while
+the subject is unavailable; native carrier changes use a veth port and a separate
+administratively up promiscuous bridge observer. The readers match every serial
+field to captured metadata, retain full four-second quiet windows and enforce
+DAD completion observations between one and 2.1 seconds. They bind each adapter's prelude to its own
+logical BEGIN captured on the companion. Firmware IPv6 traffic before that
+boundary stays in the original capture; the same traffic after BEGIN is rejected.
+
+The original kernel fails the administrative case by retaining `IFF_RUNNING`
+while down. Its image and packets remain unchanged. The corrected kernel passes
+all 36 clients. The first new reader rejected 18 completed UEFI executions because
+it parsed firmware multicast as workload; those original producer receipts remain
+failed. An audited reader correction independently accepts all 36 original packet
+sets without rerunning their producers. Six images, 72 guest captures and 36 native
+captures are independently checked; 594 changed evidence copies reject, including a 999.9-millisecond completion for every guest profile.
+`scripts/tests/ipv6_device_capture_test.py` reopens actual Linux and UEFI fixtures,
+checks native clock/loss rejection, and serializes twelve guest damage cases per
+action, including a 999.9-millisecond completion and firmware moved after BEGIN.
+`--archive build/ipv6-device-damaged.zip` retains and reopens an archive per action.
+These tests cover ready owners; retrying and exhausted device owners remain open.
+
+
 `make test-ipv6-wire` also checks DAD state per address owner: retained permanent failures, stable retries after a generation-mode change, both link-local jitter endpoints, four distinct retained failures, finite configured-address removal and fresh recreation. Stable takeover tests preserve infinite, NODAD and six/ten-second finite lifetimes, exact flags, retry holds and last-owner prefix cleanup. Eight same-client Linux 7/static guest comparisons independently reopen eight images and 32 captures. NODAD replacements become usable without another probe; finite replacements retain their requested lifetimes. Earlier peers that acknowledged before injecting a conflict could shorten the observation. Those short reference windows remain excluded; corrected barriers retain the same client wait and require at least four captured seconds after the actual conflict. Full matrix coverage for these additional comparisons and complete hosted qualification remain required.
 
 `python3 scripts/tests/ipv6_dad_inventory_test.py -v` drives the actual C observer through fourteen cases. Retiring and replacement dump records may overlap in either order before the old failed flag is visible; selection excludes the preceding identity, while final inventories still require exact counts. Duplicate fresh candidates fail. `python3 scripts/tests/ipv6_dad_capture_test.py -v` reopens actual guest/Linux captures and rejects 39 serialized packet, inventory, lifetime and timing mutations. Policy and launcher tests check the source-pinned native cleanup boundary and exact client argv/exit propagation. These checks and the full DAD matrices run in existing jobs; all 210 required jobs and earlier matrices remain intact. Full current-revision hosted qualification remains required.
@@ -306,3 +333,21 @@ The complete output client also emits 256 local extension observations. `make te
 The same output cohort adds 160 sticky-header sends and 1,024 local sticky observations without removing earlier cases. `make test-ipv6-output-contract` runs the scalar, extension and sticky comparisons. The latter two use separate frozen observations from actual complete Linux 7 clients, with shared execution/source/product admission. They reject 143 and 176 changed logs across eleven profiles. The sticky packet reader adds 35 damaged controls per capture; all five output phases require 131 per capture. Its queued sends retain the complete fifty-millisecond rejection intervals and ownership exchanges. The earlier campaign retains its glibc and dynamic-musl clock failures. All three current native linkages pass original packet-clock checks with zero drops, and all eight current guest profiles pass. The current sticky fixture comes from a fresh complete Linux 7 execution; all 1,024 observation rows remain byte-identical. The output target runs two VM workers with every profile and the unchanged 120-second per-guest deadline. The preceding hosted four-worker dynamic profiles timed out; full current-revision hosted validation remains required.
 
 Production host checks also exercise routed PMTU retention and SRH error ownership on both adapters, including zero/one/two remaining segments, TLVs, final versus wire destinations, invalid-SRH fallback and first-Routing-header selection. The full host, codec, reassembly, fragmentation and PMTU tests run under address and undefined-behavior sanitizers. Actual Linux 7 and four static guest firmware/transport cells separately check learned first-hop connection metrics and fresh-path error delivery. Cached Routing output is checked by `make test-ipv6-cached` and `sudo -n make test-ipv6-cached-native`, included in the existing output targets. The 128-send/128-local-error cohort compares retained host routes, live PMTU exceptions and fresh lookups across both adapters/scopes/transports, with exact copied headers, pseudo-header checksums, peer/getter state, traffic-class invalidation, extension-adjusted local error information and original ancillary bytes. Each capture rejects and replays 26 damaged controls. Three native profiles and eight guest profiles pass; original native clocks qualify with zero drops. Full fifty-millisecond PTB observations remain unchanged. The same complete client runs on Linux 7; reference VM execution supplies no native timing qualification. The broader current native error-queue and ten-minute-expiry regressions complete their clients but fail original clock binding; those campaigns remain rejected. Full current-revision hosted acceptance, native error/expiry timing and all original IPv6 requirements remain required.
+
+
+Ownership observations now remember the identities already conflicted in the
+current trial. A Linux dump may publish a tentative replacement while still
+reporting its retiring predecessor as tentative. The client selects the single
+unconflicted owner and still rejects duplicate or multiple fresh candidates.
+The final exhaustion inventory still requires all four failed permanent owners.
+Each ownership control record is formatted completely and emitted with one
+checked write, so a kernel diagnostic between output calls cannot split it.
+All 48 guest and 24 native ownership profiles pass with these changes. Independent
+readers reopen eight images and 144 captures, reject 2,616 guest damage cases and
+48 changed native packet-clock copies, and retain all original timing, metadata,
+latency and loss checks. The original interrupted record and earlier ambiguous
+inventory remain failed and unchanged.
+
+The configuration evidence upload checks whether its path-descriptor producer
+ran. An earlier failed step can skip that producer without causing a second
+missing-files error. When the producer runs, missing evidence remains an error.

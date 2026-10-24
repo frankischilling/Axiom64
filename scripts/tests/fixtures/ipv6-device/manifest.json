@@ -1,0 +1,229 @@
+{
+  "schema": 1,
+  "cases": {
+    "linux7-administrative": {
+      "provider": "Linux7",
+      "action": "administrative",
+      "native": true,
+      "kernel_release": "7.0.0-1017-azure",
+      "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
+      "actual_native_clocksource": "hpet",
+      "client_sha256": "bc680c5edcf5515a68c7fb28dd392ebf424c424b7cc01285c0634974173f11da",
+      "actual_client_source_sha256": "8f6e44ccfbf16e9d14859b7c9a250163d57408fb4d9c66efba115ac8a3c04722",
+      "original_producer_receipt_sha256": "ce0962e28ac504991201e431155164f698fa71e27315ae0465ed091826a327e7",
+      "original_producer_acceptance": true,
+      "independently_opened_and_qualified": true,
+      "actual_image_opened": false,
+      "original_packet_and_serial_bytes_unchanged": true,
+      "full_F12_complete": false,
+      "files": {
+        "lane0.clocks.jsonl": {
+          "bytes": 13199,
+          "sha256": "4ec331f81b15c1677cb311dff781e16ff81c584da291e2c96b45168d54be3242"
+        },
+        "statistics.json": {
+          "bytes": 1605,
+          "sha256": "bbf1bf34dbec7e961ec60d8b6524f45f44dd0dfbee445bf4e8aa9d55d409728d"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 13199,
+          "sha256": "da2517f979b403cd03bf642bdaf5f805fa69401040ddca5168ff9e19609decc4"
+        },
+        "lane0.pcap": {
+          "bytes": 4162,
+          "sha256": "7a94dcaae038355d8b4c42398930b4358ff019bbd7c5c36644a5c27e82dff08c"
+        },
+        "lane1.pcap": {
+          "bytes": 4162,
+          "sha256": "786f1dc84978d8c3b18c282de4c75378587b4958f545620835577f0094f5c012"
+        },
+        "serial.log": {
+          "bytes": 9288,
+          "sha256": "81682624bb87ae1c440343e8b8c3db94c2c2a39963f659f22d1cb74e4752db92"
+        }
+      }
+    },
+    "linux7-mtu": {
+      "provider": "Linux7",
+      "action": "mtu",
+      "native": true,
+      "kernel_release": "7.0.0-1017-azure",
+      "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
+      "actual_native_clocksource": "hpet",
+      "client_sha256": "bc680c5edcf5515a68c7fb28dd392ebf424c424b7cc01285c0634974173f11da",
+      "actual_client_source_sha256": "8f6e44ccfbf16e9d14859b7c9a250163d57408fb4d9c66efba115ac8a3c04722",
+      "original_producer_receipt_sha256": "375789e13e2755d167a4981aebf45fd2ad1a326a1e3ee5a07da1daa1cbe8afd8",
+      "original_producer_acceptance": true,
+      "independently_opened_and_qualified": true,
+      "actual_image_opened": false,
+      "original_packet_and_serial_bytes_unchanged": true,
+      "full_F12_complete": false,
+      "files": {
+        "lane0.clocks.jsonl": {
+          "bytes": 13199,
+          "sha256": "d534d6d33cf6f18b527c3cf22435597763affba1ddbdeb2a390c50763103f9e3"
+        },
+        "statistics.json": {
+          "bytes": 1605,
+          "sha256": "574acbacada97524c24d84d1ee35a526a9f6aa163a7d63ff28b8fb8e8e1f7570"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 13458,
+          "sha256": "669af401c12c5d946c1415100516637d3e23e7f6f4f3ac5e55f4c8b58b521213"
+        },
+        "lane0.pcap": {
+          "bytes": 4162,
+          "sha256": "93a65a52a601e1e19c705ca4f16a05c369b2b34dd890bf6413e2301fe690d4ef"
+        },
+        "lane1.pcap": {
+          "bytes": 4268,
+          "sha256": "8299bcfadbfcac3dd2b774e14651d961069b9d5c91254a6c174e12d5a8cc225f"
+        },
+        "serial.log": {
+          "bytes": 9277,
+          "sha256": "e71ecd2b4adf0f6a071aa4bb9a4157853c9a50f931d953265fbfc309e45f8c2b"
+        }
+      }
+    },
+    "linux7-carrier": {
+      "provider": "Linux7",
+      "action": "carrier",
+      "native": true,
+      "kernel_release": "7.0.0-1017-azure",
+      "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
+      "actual_native_clocksource": "hpet",
+      "client_sha256": "bc680c5edcf5515a68c7fb28dd392ebf424c424b7cc01285c0634974173f11da",
+      "actual_client_source_sha256": "8f6e44ccfbf16e9d14859b7c9a250163d57408fb4d9c66efba115ac8a3c04722",
+      "original_producer_receipt_sha256": "dd51d20241f37c3095e13e127f6431df0456ba84a2fe6a71e7f30ff5114e41c5",
+      "original_producer_acceptance": true,
+      "independently_opened_and_qualified": true,
+      "actual_image_opened": false,
+      "original_packet_and_serial_bytes_unchanged": true,
+      "full_F12_complete": false,
+      "files": {
+        "lane0.clocks.jsonl": {
+          "bytes": 14606,
+          "sha256": "b3e2a41fe20873b202126eaeeb3926b009158859264abc83d2e5fcc5e6ae0f94"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "0757413c68aa3699c5efad8933a2eed38bd52766e7967731ed0954ba2929cc83"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 14606,
+          "sha256": "67d626be21393480433360c480a9bddac8504dea042a5eaadbc7f7af7bdc9d96"
+        },
+        "carrier.json": {
+          "bytes": 3431,
+          "sha256": "4256af0300c30a7521fec6220db0be81f63b2ed147594e4be4c9228370b320cc"
+        },
+        "lane0.pcap": {
+          "bytes": 4456,
+          "sha256": "18cae72ee9d14989ef6e083789ed21736958d57776fb6e8c57df2873436c9148"
+        },
+        "lane1.pcap": {
+          "bytes": 4456,
+          "sha256": "053f9ee92f2f80cbbe592065def66a3c667a1bdbf9ae491f938654d518592d6d"
+        },
+        "serial.log": {
+          "bytes": 10733,
+          "sha256": "b3ef8d8f25b1ec650e486c02c90ee783ca79a0564b4614597056948f56b566b7"
+        }
+      }
+    },
+    "axiom-administrative": {
+      "provider": "Axiom64",
+      "action": "administrative",
+      "native": false,
+      "kernel_release": null,
+      "kernel_sha256": "3bfe67de7057f27cda4eed75383a682ff5129538bdcd965a6ee23b584b745da3",
+      "actual_native_clocksource": null,
+      "client_sha256": "bc680c5edcf5515a68c7fb28dd392ebf424c424b7cc01285c0634974173f11da",
+      "actual_client_source_sha256": "8f6e44ccfbf16e9d14859b7c9a250163d57408fb4d9c66efba115ac8a3c04722",
+      "original_producer_receipt_sha256": "926b7309ef387cd6b9f8a149fc0f9347ff12748744294def3cd6a1032b9807a1",
+      "original_producer_acceptance": false,
+      "independently_opened_and_qualified": true,
+      "actual_image_opened": true,
+      "original_packet_and_serial_bytes_unchanged": true,
+      "full_F12_complete": false,
+      "files": {
+        "lane0.pcap": {
+          "bytes": 3616,
+          "sha256": "8f73a99bcebbd311b2267497cc0c3c52e18b1a8b4431ffcd49a9cac28863b91b"
+        },
+        "lane1.pcap": {
+          "bytes": 3616,
+          "sha256": "cbfcf7a3ade099aded5dd2e7563b05b6220a0689bdd458e5f6d9c28e11031be8"
+        },
+        "serial.log": {
+          "bytes": 10516,
+          "sha256": "db914054934eb61618d5544cbc81bf00af6201a6c58be27d4a6803578f82e9bb"
+        }
+      }
+    },
+    "axiom-mtu": {
+      "provider": "Axiom64",
+      "action": "mtu",
+      "native": false,
+      "kernel_release": null,
+      "kernel_sha256": "3bfe67de7057f27cda4eed75383a682ff5129538bdcd965a6ee23b584b745da3",
+      "actual_native_clocksource": null,
+      "client_sha256": "bc680c5edcf5515a68c7fb28dd392ebf424c424b7cc01285c0634974173f11da",
+      "actual_client_source_sha256": "8f6e44ccfbf16e9d14859b7c9a250163d57408fb4d9c66efba115ac8a3c04722",
+      "original_producer_receipt_sha256": "98309336c639d2156c049f2cad8bf346a381d865fe31ba180f8665be2eaf6942",
+      "original_producer_acceptance": false,
+      "independently_opened_and_qualified": true,
+      "actual_image_opened": true,
+      "original_packet_and_serial_bytes_unchanged": true,
+      "full_F12_complete": false,
+      "files": {
+        "lane0.pcap": {
+          "bytes": 3616,
+          "sha256": "2dd493ad8d87063f0974a446fbb5584bffd8762d0a13243d7e5402a0fe79c0ad"
+        },
+        "lane1.pcap": {
+          "bytes": 3616,
+          "sha256": "b555a4904aa4ba87428805a319fb0bd33c3fdfd425ee7121294c8efb5a77ed40"
+        },
+        "serial.log": {
+          "bytes": 10505,
+          "sha256": "a7e146c095085edc522aad60f3cc16b544e09b9071d37991a75ff39eebc23ffb"
+        }
+      }
+    },
+    "axiom-carrier": {
+      "provider": "Axiom64",
+      "action": "carrier",
+      "native": false,
+      "kernel_release": null,
+      "kernel_sha256": "3bfe67de7057f27cda4eed75383a682ff5129538bdcd965a6ee23b584b745da3",
+      "actual_native_clocksource": null,
+      "client_sha256": "bc680c5edcf5515a68c7fb28dd392ebf424c424b7cc01285c0634974173f11da",
+      "actual_client_source_sha256": "8f6e44ccfbf16e9d14859b7c9a250163d57408fb4d9c66efba115ac8a3c04722",
+      "original_producer_receipt_sha256": "9d7134f55a9d3038d0deecc389eddd3731995430c5d8617b6ae5059c1246327b",
+      "original_producer_acceptance": false,
+      "independently_opened_and_qualified": true,
+      "actual_image_opened": true,
+      "original_packet_and_serial_bytes_unchanged": true,
+      "full_F12_complete": false,
+      "files": {
+        "carrier.json": {
+          "bytes": 1068,
+          "sha256": "1611eba3ccbe4a97da4df16f7cd783c341bb8fa348fe5c227328141dcdc3b504"
+        },
+        "lane0.pcap": {
+          "bytes": 4122,
+          "sha256": "5d7592cc7835c4644534327e940a6df0b020c64265cb4312027615a8f319ffdd"
+        },
+        "lane1.pcap": {
+          "bytes": 4122,
+          "sha256": "4bd51de49c8918a4baa8c754a5c4f3ca8fb6b89f271c91fd143f5bbc5798776f"
+        },
+        "serial.log": {
+          "bytes": 11873,
+          "sha256": "a3f40bcbce6b460b1adeb66c28866ba7e53a5368dbe943a4989dbce086adf556"
+        }
+      }
+    }
+  }
+}

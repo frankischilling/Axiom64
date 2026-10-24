@@ -155,9 +155,10 @@ int64_t net_ioctl(Task& task, uint64_t request, uint64_t pointer) {
         memcpy(req.value, &info->index, 4);
         break;
     case 0x8913: {
-        uint16_t flags = index == ipv4_loopback ? 0x49
-                                                : 2 | 0x1000 | (info->administrative ? 1 : 0) |
-                                                      (info->carrier && info->live ? 0x40 : 0);
+        uint16_t flags = index == ipv4_loopback
+                             ? 0x49
+                             : 2 | 0x1000 | (info->administrative ? 1 : 0) |
+                                   (info->administrative && info->carrier && info->live ? 0x40 : 0);
         memcpy(req.value, &flags, 2);
         break;
     }

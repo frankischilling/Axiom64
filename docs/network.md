@@ -56,3 +56,17 @@ Optional-feature tests validate the negotiated bits, carrier fallback without ST
 The contracts follow [virtio 1.2](https://docs.oasis-open.org/virtio/virtio/v1.2/virtio-v1.2.html), [Linux packet sockets](https://man7.org/linux/man-pages/man7/packet.7.html), [Linux interface ioctls](https://man7.org/linux/man-pages/man7/netdevice.7.html), and [QEMU's e1000 model](https://github.com/qemu/qemu/blob/v8.2.2/hw/net/e1000.c). The controlled peer uses [QEMU's socket framing](https://github.com/qemu/qemu/blob/v8.2.2/net/socket.c).
 
 The corrected local matrix passes all 46 boots with the original capacity, readiness, wakeup and timing checks. Independent inspection opens 34 distinct images, binds their actual kernel and packet client, replays the original serial observer and rejects 104 archived changed logs. A controlled diagnostic first reproduces exhaustion with two IPv6 router solicitations occupying the full ring, then passes with the explicit link precondition. Its added five-second diagnostic pause is separate from the complete matrix. Current hosted acceptance remains required.
+
+
+Ready IPv6 link-local owners are checked across administrative shutdown, carrier
+loss and an MTU crossing the 1280-byte minimum. Administrative restoration repeats
+DAD with the retained key; MTU restoration uses current defaults and a fresh scope;
+carrier restoration preserves the ready address. Operational link flags clear on
+administrative shutdown. See [IPv6](ipv6.md) and the device-transition commands in
+[testing](testing.md). Retrying and exhausted owners still need wire coverage.
+
+
+The ownership conflict observer tracks previously conflicted identities while a
+replacement appears. It keeps the complete final owner inventory and rejects
+multiple fresh candidates. Queried ownership records are emitted in one checked
+write, preserving them when the kernel reports a duplicate address.

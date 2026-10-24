@@ -70,9 +70,10 @@ bool link(Writer& output, const NetlinkHeader& request, uint32_t port, const Net
           bool loopback, bool dump, bool inet6) {
     size_t start = output.size;
     NetlinkHeader message{0, 16, uint16_t(dump ? 2 : 0), request.sequence, port};
-    uint32_t flags = loopback ? 0x49
-                              : 2 | 0x1000 | (info.administrative ? 1 : 0) |
-                                    (info.carrier && info.live ? 0x10040 : 0);
+    uint32_t flags = loopback
+                         ? 0x49
+                         : 2 | 0x1000 | (info.administrative ? 1 : 0) |
+                               (info.administrative && info.carrier && info.live ? 0x10040 : 0);
     uint32_t queue_length = 0; // There is no separate software transmit queue.
     LinkHeader header{uint8_t(inet6 ? 10 : 0), 0,     uint16_t(loopback ? 772 : 1),
                       int32_t(info.index),     flags, 0};

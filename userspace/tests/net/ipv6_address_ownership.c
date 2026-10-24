@@ -93,13 +93,21 @@ static void control_wait(const struct pending_control* pending) {
     }
     uint32_t fields[3];
     memcpy(fields, frame + 24, sizeof(fields));
-    printf("IPV6_OWNER_CONTROL lane=%u phase=%u kind=%u case=%u stage=%u flags=%x "
-           "preferred=%u valid=%u target=",
-           lane, frame[19], frame[20], frame[21], frame[22], ntohl(fields[0]), ntohl(fields[1]),
-           ntohl(fields[2]));
-    for (unsigned at = 36; at < 52; at++)
-        printf("%02x", frame[at]);
-    printf(" observed_ns=%llu\n", (unsigned long long)pending->stamp);
+    static const char digits[] = "0123456789abcdef";
+    char target[33], line[384];
+    for (unsigned at = 0; at < 16; at++) {
+        target[2 * at] = digits[frame[36 + at] >> 4];
+        target[2 * at + 1] = digits[frame[36 + at] & 15];
+    }
+    target[32] = 0;
+    int size =
+        snprintf(line, sizeof(line),
+                 "IPV6_OWNER_CONTROL lane=%u phase=%u kind=%u case=%u stage=%u flags=%x "
+                 "preferred=%u valid=%u target=%s observed_ns=%llu\n",
+                 lane, frame[19], frame[20], frame[21], frame[22], ntohl(fields[0]),
+                 ntohl(fields[1]), ntohl(fields[2]), target, (unsigned long long)pending->stamp);
+    check(size > 0 && (size_t)size < sizeof(line) && write(STDOUT_FILENO, line, size) == size,
+          "complete ownership query record");
 }
 
 static void control(unsigned lane, unsigned kind, unsigned scenario, unsigned stage,
@@ -264,7 +272,32 @@ static struct address_record exact(unsigned lane, struct in6_addr address) {
     return result;
 }
 
-static void wait_pair(unsigned scenario, int link, int tentative, struct address_record values[2]) {
+static unsigned select_owner(const struct inventory* inventory, unsigned lane, unsigned scenario,
+                             int link, int tentative, const struct in6_addr* previous,
+                             unsigned previous_count, struct address_record* selected) {
+    check(previous_count <= 4 && (!previous_count || previous),
+          "bounded conflicted owner identities");
+    unsigned found = 0;
+    for (unsigned at = 0; at < inventory->address_count; at++) {
+        const struct address_record* value = inventory->addresses + at;
+        if (!matches(value, lane, scenario, link) || (value->flags & IFA_F_DADFAILED) ||
+            !!(value->flags & IFA_F_TENTATIVE) != tentative)
+            continue;
+        int conflicted = 0;
+        for (unsigned old = 0; old < previous_count; old++)
+            conflicted |= !memcmp(&value->address, previous + old, 16);
+        if (conflicted)
+            continue;
+        *selected = *value;
+        found++;
+    }
+    check(found <= 1, "one selected active ownership candidate");
+    return found;
+}
+
+static void wait_pair_after(unsigned scenario, int link, int tentative,
+                            struct address_record values[2], const struct in6_addr previous[2][4],
+                            unsigned previous_count) {
     unsigned complete = 0;
     uint64_t began = now();
     while (complete != 3) {
@@ -272,16 +305,9 @@ static void wait_pair(unsigned scenario, int link, int tentative, struct address
             if (complete & (1U << lane))
                 continue;
             struct inventory inventory = snapshot(lane);
-            unsigned found = 0;
-            for (unsigned at = 0; at < inventory.address_count; at++) {
-                const struct address_record* value = inventory.addresses + at;
-                if (!matches(value, lane, scenario, link) || (value->flags & IFA_F_DADFAILED) ||
-                    !!(value->flags & IFA_F_TENTATIVE) != tentative)
-                    continue;
-                values[lane] = *value;
-                found++;
-            }
-            check(found <= 1, "one selected active ownership candidate");
+            unsigned found =
+                select_owner(&inventory, lane, scenario, link, tentative,
+                             previous ? previous[lane] : NULL, previous_count, values + lane);
             if (found)
                 complete |= 1U << lane;
         }
@@ -289,6 +315,10 @@ static void wait_pair(unsigned scenario, int link, int tentative, struct address
         if (complete != 3)
             pause_poll();
     }
+}
+
+static void wait_pair(unsigned scenario, int link, int tentative, struct address_record values[2]) {
+    wait_pair_after(scenario, link, tentative, values, NULL, 0);
 }
 
 static void reset(unsigned scenario, int mode) {
@@ -404,9 +434,12 @@ static void lifecycle_cases(unsigned first, unsigned last) {
             }
         }
         unsigned trials = scenario == 7 ? 4 : 1;
+        struct in6_addr previous[2][4] = {0};
         for (unsigned trial = 0; trial < trials; trial++) {
             struct address_record values[2];
-            wait_pair(scenario, link, 1, values);
+            // A netlink dump can include the last conflicted tentative record
+            // alongside its replacement before publishing DADFAILED.
+            wait_pair_after(scenario, link, 1, values, previous, trial);
             if (!trial)
                 memcpy(originals, values, sizeof(originals));
             if (scenario == 6) {
@@ -429,8 +462,10 @@ static void lifecycle_cases(unsigned first, unsigned last) {
                 if (rotate_secrets && trial == 1)
                     secret_change(lane, scenario);
                 values[lane] = exact(lane, values[lane].address);
-                if (link)
+                if (link) {
                     control(lane, CONFLICT, scenario, trial, &values[lane]);
+                    previous[lane][trial] = values[lane].address;
+                }
             }
             // Each interface can wait for Linux's initial DAD delay. Publish
             // both fresh finite queries before either wait can age the other.

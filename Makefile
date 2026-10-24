@@ -746,6 +746,14 @@ test-ipv6-ownership:
 test-ipv6-ownership-native:
 	$(PYTHON) scripts/ipv6_owner_test.py --native --group all --directory build/ipv6-owner-native
 
+.PHONY: test-ipv6-device test-ipv6-device-native
+
+test-ipv6-device:
+	$(PYTHON) scripts/ipv6_device_test.py --directory build/ipv6-device-wire
+
+test-ipv6-device-native:
+	$(PYTHON) scripts/ipv6_device_test.py --native --directory build/ipv6-device-native
+
 test-ipv6-lifetimes-contract:
 	$(PYTHON) scripts/ipv6_lifetime_contract.py --native-directory build/ipv6-host-native-wire --guest-directory build/ipv6-host-wire --output-directory build/ipv6-lifetime-contract
 .PHONY: test-ipv6-sockets test-ipv6-sockets-native

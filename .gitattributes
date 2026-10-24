@@ -18,3 +18,7 @@ scripts/tests/fixtures/ipv6-dad-*.log -text -whitespace
 scripts/tests/fixtures/ipv6-dad-*.pcap binary
 scripts/tests/fixtures/ipv6-owner-*.log -text -whitespace
 scripts/tests/fixtures/ipv6-owner-*.pcap binary
+# Preserve device-transition serial, packet and clock evidence exactly.
+scripts/tests/fixtures/ipv6-device/**/serial.log -text -whitespace
+scripts/tests/fixtures/ipv6-device/**/*.pcap binary
+scripts/tests/fixtures/ipv6-device/**/*.clocks.jsonl -text -whitespace

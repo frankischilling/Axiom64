@@ -197,3 +197,35 @@ UDP output with a Routing header can reuse a retained first-hop host route. This
 `make test-ipv6-cached` and `sudo -n make test-ipv6-cached-native` exercise 128 routed sends, 128 local MTU-error dequeues and four real PTB seed exchanges per execution. Eight variants cover fresh paths, learned exceptions, explicit host routes, unconnected/named sends, shared aliases, header/traffic-class invalidation, unchanged traffic classes, scalar ancillary controls and a different per-message first hop. Type-2 and Segment Routing headers cover both adapters, global/link-local scope and raw/UDP. The same complete client passes all three native linkages and eight guest firmware/transport/linkage profiles. Original native clocks qualify with zero drops; both guest images are reopened against their actual products. A complete Linux 7 reference VM also runs the same source-bound client; reference VM execution does not qualify native capture clocks. Independent readers reconstruct every emitted header, checksum, payload, original control byte and local error record and preserve the full fifty-millisecond PTB observation. They reject and replay 26 damaged controls per capture, including internally consistent wrong-cache headers/checksums and changed error destinations or MTU information. Sanitizer tests cover route changes, expiry, late exception learning and deferred output after header replacement and owner closure. The existing output targets include this cohort without adding hosted jobs. The broader current native error-queue and ten-minute-expiry regressions complete all three clients, but independent readers reject their original clock binding. Those captures remain excluded; the passing cached/output campaigns do not qualify them. These checks leave current-head native error/expiry timing, complete incoming Routing/Mobile IPv6, current-revision hosted acceptance and the remaining feature scope open.
 
 `make test-ipv6-link-configuration` checks 39 measured Linux 7 observations across twelve actual guest profiles. `sudo -n make test-ipv6-link-configuration-native` compares three isolated native linkages. Requests cover all four modes, stable-secret requirements, nested and unflagged attributes, short and extended scalar values, permissions, missing interfaces and the matching proc and direct link-query state. Host sanitizers also check address retention, generation after link restart, malformed nested bounds, atomic rejection and bounded replies. Local configuration I/O passes all fifteen profiles, for 585 observations. Generation updates accept AF_UNSPEC or AF_INET6; unrelated link mutations and explicit interface tokens remain unsupported. Direct queries select a positive interface index; name-based and filtered queries remain unfinished. These checks do not establish packet clocks, router discovery, SLAAC or complete hosted acceptance.
+
+
+Ready link-local owners now have device-transition wire coverage. Administrative
+shutdown removes their addresses while retaining the interface's IPv6 settings;
+restoration generates the same stable identity and performs fresh DAD. An MTU
+below 1280 removes the IPv6 scope. Restoring a usable MTU inherits the current
+default key and performs fresh DAD for the new identity. Carrier loss preserves
+the ready owner and does not start another DAD exchange on restoration. Both
+ioctl and netlink operational flags now require an administratively up device
+with a live carrier. This follows the [Linux operational-state
+model](https://docs.kernel.org/networking/operstates.html).
+
+The shared client passes 18 native Linux 6.17/7.0 profiles and 36 guest profiles
+across BIOS/UEFI, static/dynamic musl and modern/legacy virtio plus e1000. Independent
+readers reopen six guest images and 108 native/guest captures. Companion-adapter
+controls carry actual address, key, MTU and flag queries while the selected link
+is unavailable. The first recorded ready query must follow its captured probe by at least one
+second and no more than 2.1 seconds. Four-second outage and restored observations,
+original native packet clocks, bounded reader latency and zero drops remain
+required. Retrying and exhausted owners, pending regeneration and the remaining
+automatic-address and router requirements are still open.
+
+
+Ownership conflict observers distinguish a retiring address from its fresh
+replacement by the identities already conflicted in that trial. Temporary
+overlap in queried tentative flags does not make the replacement ambiguous;
+two fresh candidates still fail. Final failed-owner counts, raw flags, lifetimes,
+connected routes and packet timing remain required. Ownership records use one
+checked write, preserving complete queried metadata alongside kernel diagnostics.
+The changed client passes 48 guest and 24 native profiles with independent image,
+capture and damage checks. Retrying and exhausted owners across device transitions
+still need their separate wire coverage.

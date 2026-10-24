@@ -759,6 +759,14 @@ static void wait_link(int fd, const char* name, int up) {
     check(0, "UDP link transition deadline");
 }
 
+static void administrative_down(int fd, struct ifreq* request, unsigned lane) {
+    request->ifr_flags &= ~IFF_UP;
+    check(ioctl(fd, SIOCSIFFLAGS, request) == 0 && ioctl(fd, SIOCGIFFLAGS, request) == 0 &&
+              !(request->ifr_flags & (IFF_UP | IFF_RUNNING)),
+          "UDP administrative down clears operational flags");
+    printf("UDP_ADMIN_DOWN index=%u flags=%x\n", lane + 1, (unsigned short)request->ifr_flags);
+}
+
 static void link_change(int fd, unsigned lane) {
     char name[16];
     snprintf(name, sizeof(name), "eth%u", lane);
@@ -785,10 +793,7 @@ static void link_change(int fd, unsigned lane) {
     struct ifreq request = {0};
     strcpy(request.ifr_name, name);
     check(ioctl(fd, SIOCGIFFLAGS, &request) == 0, "UDP administrative flags");
-    request.ifr_flags &= ~IFF_UP;
-    check(ioctl(fd, SIOCSIFFLAGS, &request) == 0 && ioctl(fd, SIOCGIFFLAGS, &request) == 0 &&
-              (request.ifr_flags & IFF_RUNNING),
-          "UDP admin down preserves carrier");
+    administrative_down(fd, &request, lane);
     check(send(fd, data, sizeof(data), 0) == -1 && errno == ENETDOWN,
           "UDP admin down prevents output");
     request.ifr_flags |= IFF_UP;

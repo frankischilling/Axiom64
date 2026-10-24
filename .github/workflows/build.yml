@@ -236,6 +236,7 @@ jobs:
           python3 scripts/tests/ipv6_device_capture_test.py --archive build/ipv4-policy/ipv6-device-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-device-capture.log
           python3 scripts/tests/ipv6_device_inventory_test.py --archive build/ipv4-policy/ipv6-device-inventory-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-device-inventory.log
           python3 scripts/tests/packet_administrative_test.py -v 2>&1 | tee build/ipv4-policy/packet-administrative.log
+          python3 scripts/tests/administrative_flags_test.py -v 2>&1 | tee build/ipv4-policy/administrative-flags.log
           python3 scripts/tests/manager_link_state_test.py -v 2>&1 | tee build/ipv4-policy/manager-link-state.log
           python3 scripts/tests/ipv6_device_record_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-device-record.log
           python3 scripts/tests/dns_fixture_test.py 2>&1 | tee build/ipv4-policy/dns-fixture.log

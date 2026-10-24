@@ -926,6 +926,14 @@ static void arp_reply_pressure(unsigned lane) {
     printf("IPV4_ARP_REPLY_PASS index=%u\n", lane + 1);
 }
 
+static void administrative_down(int fd, struct ifreq* interface, unsigned lane) {
+    interface->ifr_flags &= ~IFF_UP;
+    check(ioctl(fd, SIOCSIFFLAGS, interface) == 0 && ioctl(fd, SIOCGIFFLAGS, interface) == 0 &&
+              !(interface->ifr_flags & (IFF_UP | IFF_RUNNING)),
+          "administrative down clears operational flags");
+    printf("IPV4_ADMIN_DOWN index=%u flags=%x\n", lane + 1, (unsigned short)interface->ifr_flags);
+}
+
 static void link_change(unsigned lane) {
     int fd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
     check(fd >= 0, "link-change raw socket");
@@ -960,10 +968,7 @@ static void link_change(unsigned lane) {
             check(close(local) == 0, "carrier-loss loopback close");
         }
     }
-    interface.ifr_flags &= ~IFF_UP;
-    check(ioctl(fd, SIOCSIFFLAGS, &interface) == 0 && ioctl(fd, SIOCGIFFLAGS, &interface) == 0 &&
-              !(interface.ifr_flags & IFF_UP) && (interface.ifr_flags & IFF_RUNNING),
-          "administrative down preserves carrier");
+    administrative_down(fd, &interface, lane);
     unsigned char bytes[64];
     request_bytes(bytes);
     struct sockaddr_in destination = {.sin_family = AF_INET,

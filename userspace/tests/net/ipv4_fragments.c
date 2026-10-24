@@ -121,8 +121,17 @@ static void output_control(int fd, const struct sockaddr_in* peer, unsigned lane
 static void acknowledgement(int fd, unsigned lane, const char tag[2], unsigned test, unsigned phase,
                             int timeout) {
     struct pollfd event = {fd, POLLIN, 0};
-    require(poll(&event, 1, timeout) == 1 && (event.revents & POLLIN),
-            "output acknowledgement readiness");
+    int ready = poll(&event, 1, timeout);
+    if (ready != 1 || !(event.revents & POLLIN)) {
+        int failure = ready < 0 ? errno : ready == 0 ? ETIMEDOUT : EIO;
+        fprintf(stderr,
+                "IPV4_FRAGMENT_ACK_FAIL index=%u tag=%c%c test=%u phase=%u timeout_ms=%d "
+                "poll=%d revents=%x errno=%d\n",
+                lane + 1, tag[0], tag[1], test, phase, timeout, ready,
+                (unsigned short)event.revents, failure);
+        errno = failure;
+        require(0, "output acknowledgement readiness");
+    }
     unsigned char bytes[52];
     require(recv(fd, bytes, sizeof(bytes), MSG_TRUNC) == sizeof(bytes) && bytes[0] == 0x45 &&
                 bytes[9] == IPPROTO_ICMP && bytes[20] == 0 && bytes[21] == 0 &&

@@ -19,7 +19,6 @@ struct Configuration {
     bool administrative = false, ready = false, pending = false;
     Address generated;
     unsigned dad_counter = 0;
-    bool generated_privacy = false;
 };
 
 Configuration interfaces[max_net_devices + 1], defaults, all;
@@ -162,14 +161,12 @@ void generate(unsigned index, Configuration& state) {
     }
     // An unchanged write or a normal poll must not resurrect an address that
     // userspace explicitly removed. Only an initialization event reaches here.
-    int error = ipv6_address_add({address, index, uint16_t(privacy ? 0x880 : 0x80), 64});
+    int error = automatic_address({address, index, uint16_t(privacy ? 0x880 : 0x80), 64},
+                                  {UINT32_MAX, UINT32_MAX}, false, state.dad_counter);
     if (error && error != -17)
         state.pending = true;
     else if (!error) {
         state.generated = address;
-        state.generated_privacy = privacy;
-        if (privacy && state.dad_counter)
-            address_retry_dad(index, address, address_owner(index, address));
     }
 }
 
@@ -218,12 +215,13 @@ int configuration_read(unsigned index, ConfigurationKey key, int32_t& value) {
     return 0;
 }
 
-int configuration_identifier(unsigned index, Address& address, unsigned& counter, bool& privacy) {
+static int identifier(unsigned index, Address& address, unsigned& counter, bool& privacy,
+                      bool stable) {
     auto state = select(index);
     auto info = net_info(index);
     if (!state || !info)
         return -19;
-    privacy = state->values.mode == 2 || state->values.mode == 3;
+    privacy = stable || state->values.mode == 2 || state->values.mode == 3;
     if (privacy) {
         const uint8_t* secret = state->secret_initialized     ? state->secret
                                 : defaults.secret_initialized ? defaults.secret
@@ -245,6 +243,15 @@ int configuration_identifier(unsigned index, Address& address, unsigned& counter
     address.bytes[12] = 0xfe;
     memcpy(address.bytes + 13, info->mac + 3, 3);
     return 0;
+}
+
+int configuration_identifier(unsigned index, Address& address, unsigned& counter, bool& privacy) {
+    return identifier(index, address, counter, privacy, false);
+}
+
+int configuration_stable_identifier(unsigned index, Address& address, unsigned& counter) {
+    bool privacy = true;
+    return identifier(index, address, counter, privacy, true);
 }
 
 int configuration_write(unsigned index, ConfigurationKey key, int32_t value,
@@ -336,11 +343,20 @@ void configuration_changed(unsigned index) {
         generate(index, *state);
 }
 
+void configuration_address_regenerated(unsigned index, const Address& original,
+                                       const Address& replacement, unsigned counter) {
+    auto state = select(index);
+    if (state && state->generated == original) {
+        state->generated = replacement;
+        state->dad_counter = counter;
+        state->pending = false;
+    }
+}
+
 void configuration_address_removed(unsigned index, const Address& address) {
     auto state = select(index);
     if (state && state->generated == address) {
         state->generated = {};
-        state->generated_privacy = false;
     }
 }
 
@@ -350,21 +366,6 @@ void configuration_poll() {
             continue;
         configuration_changed(index);
         auto state = select(index);
-        if (state && state->generated_privacy && state->values.mode >= 2) {
-            for (unsigned position = 0; auto entry = ipv6_address(position); position++) {
-                if (entry->index != index || !(entry->address == state->generated) ||
-                    !(entry->flags & 8))
-                    continue;
-                state->generated_privacy = false;
-                if (state->dad_counter < 3) {
-                    auto duplicate = entry->address;
-                    ipv6_address_remove(index, duplicate);
-                    state->dad_counter++;
-                    state->pending = true;
-                }
-                break;
-            }
-        }
         if (state && state->pending)
             generate(index, *state);
     }

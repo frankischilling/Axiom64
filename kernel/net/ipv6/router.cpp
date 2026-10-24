@@ -29,7 +29,7 @@ struct Prefix {
     uint64_t route = 0, route_expires = 0, owner = 0;
     uint64_t valid = 0, preferred = 0;
     bool valid_forever = false, preferred_forever = false;
-    bool pending = false, privacy = false;
+    bool pending = false;
 };
 
 Link links[max_net_devices];
@@ -155,15 +155,6 @@ const Ipv6Address* owned_address(const Prefix& prefix) {
     return assigned_address(prefix.index, prefix.address);
 }
 
-bool shared_prefix(const Prefix& prefix) {
-    for (unsigned n = 0; auto entry = ipv6_address(n); n++)
-        if (entry->index == prefix.index && entry->prefix == prefix.length &&
-            !(entry->address == prefix.address) &&
-            entry->address.matches(prefix.prefix, prefix.length))
-            return true;
-    return false;
-}
-
 void generate(Prefix& prefix) {
     auto valid = remaining(prefix.valid, prefix.valid_forever);
     if (!valid) {
@@ -180,15 +171,12 @@ void generate(Prefix& prefix) {
         return;
     }
     Ipv6Address value{address, prefix.index, uint16_t(0x100 | (privacy ? 0x800 : 0)), 64};
-    error =
-        automatic_address(value, {remaining(prefix.preferred, prefix.preferred_forever), valid});
+    error = automatic_address(value, {remaining(prefix.preferred, prefix.preferred_forever), valid},
+                              false, prefix.counter);
     prefix.pending = false;
     if (!error) {
         prefix.address = address;
         prefix.owner = address_owner(prefix.index, address);
-        prefix.privacy = privacy;
-        if (privacy && prefix.counter)
-            address_retry_dad(prefix.index, address, prefix.owner);
     }
 }
 
@@ -232,10 +220,9 @@ void prefix_information(unsigned index, const uint8_t* option, size_t length) {
         auto candidate = prefix->prefix;
         bool privacy = false;
         if (!configuration_identifier(index, candidate, prefix->counter, privacy))
-            if (auto current = assigned_address(index, candidate)) {
+            if (assigned_address(index, candidate)) {
                 prefix->address = candidate;
                 prefix->owner = address_owner(index, candidate);
-                prefix->privacy = current->flags & 0x800;
                 prefix->pending = false;
             }
     }
@@ -341,6 +328,69 @@ void router_receive(unsigned index, const Packet& packet) {
     }
 }
 
+void router_address_regenerated(const Ipv6Address& original, uint64_t owner,
+                                const Ipv6Address& replacement, uint64_t replacement_owner,
+                                unsigned counter) {
+    for (auto& prefix : prefixes) {
+        if (prefix.index != original.index || prefix.owner != owner ||
+            !(prefix.address == original.address))
+            continue;
+        prefix.address = replacement.address;
+        prefix.owner = replacement_owner;
+        prefix.counter = counter;
+        prefix.pending = false;
+        // Regeneration copies the failed object's configured lifetimes;
+        // the independently learned on-link route keeps its deadline.
+        auto lifetime =
+            address_lifetimes(replacement.index, replacement.address, replacement_owner);
+        prefix.valid_forever = lifetime.valid == UINT32_MAX;
+        prefix.preferred_forever = lifetime.preferred == UINT32_MAX;
+        prefix.valid = deadline(lifetime.valid);
+        prefix.preferred = deadline(lifetime.preferred);
+    }
+}
+
+void router_address_removed(const Ipv6Address& removed, uint64_t owner) {
+    if (!owner)
+        return;
+    for (auto& prefix : prefixes) {
+        if (prefix.index != removed.index || prefix.length != removed.prefix ||
+            !removed.address.matches(prefix.prefix, prefix.length))
+            continue;
+        if (prefix.owner == owner && prefix.address == removed.address) {
+            prefix.owner = 0;
+            prefix.pending = false;
+        }
+        if ((removed.flags & 0x200) || !prefix.route)
+            continue;
+        bool shared = false, retained = false;
+        uint64_t expires = ticks;
+        for (unsigned n = 0; auto entry = ipv6_address(n); n++) {
+            if (entry->index != prefix.index || entry->prefix != prefix.length ||
+                !entry->address.matches(prefix.prefix, prefix.length))
+                continue;
+            shared = true;
+            auto deadline = address_deadline(*entry);
+            if ((entry->flags & (0x80 | 0x200)) || !deadline) {
+                retained = true;
+                break;
+            }
+            expires = max(expires, deadline);
+        }
+        Ipv6Route route{prefix.prefix, {}, prefix.index, 256, prefix.length, 2};
+        if (!shared) {
+            // Exhausting the final automatic address retires only this
+            // prefix's learned route. Other addresses and route owners
+            // retain their independent objects.
+            learned_route(route, prefix.route, true);
+        } else if (!retained && !prefix.route_expires && learned_route_present(prefix.route)) {
+            route.expires = expires;
+            if (!learned_route(route, prefix.route))
+                prefix.route_expires = expires;
+        }
+    }
+}
+
 void router_poll() {
     for (auto& router : routers)
         if (router.index && (ticks >= router.expires || !learned_route_present(router.route))) {
@@ -360,37 +410,6 @@ void router_poll() {
         if (prefix.owner) {
             auto current = owned_address(prefix);
             if (!current) {
-                prefix.owner = 0;
-                prefix.pending = false;
-            } else if ((current->flags & 8) && prefix.privacy && prefix.counter < 3) {
-                auto lifetime = address_lifetimes(prefix.index, prefix.address, prefix.owner);
-                if (!lifetime.valid) {
-                    prefix.owner = 0;
-                    prefix.pending = false;
-                } else {
-                    // Regeneration copies the failed object's configured lifetimes;
-                    // the independently learned on-link route keeps its deadline.
-                    prefix.valid_forever = lifetime.valid == UINT32_MAX;
-                    prefix.preferred_forever = lifetime.preferred == UINT32_MAX;
-                    prefix.valid = deadline(lifetime.valid);
-                    prefix.preferred = deadline(lifetime.preferred);
-                    auto address = prefix.address;
-                    ipv6_address_remove(prefix.index, address);
-                    prefix.owner = 0;
-                    prefix.counter++;
-                    prefix.pending = true;
-                }
-            } else if ((current->flags & 8) && !(current->flags & 0x80)) {
-                bool shared = shared_prefix(prefix);
-                auto address = prefix.address;
-                ipv6_address_remove(prefix.index, address);
-                if (!shared) {
-                    // Exhausting the final automatic address retires only this
-                    // prefix's learned route. Other addresses and route owners
-                    // retain their independent objects.
-                    Ipv6Route route{prefix.prefix, {}, prefix.index, 256, prefix.length, 2};
-                    learned_route(route, prefix.route, true);
-                }
                 prefix.owner = 0;
                 prefix.pending = false;
             }

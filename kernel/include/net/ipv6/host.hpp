@@ -30,9 +30,6 @@ void address_poll();
 
 void address_duplicate(unsigned index, const Address&, const uint8_t* nonce = nullptr);
 
-// A stable retry defers DAD only for the newly generated address owner.
-void address_retry_dad(unsigned index, const Address&, uint64_t owner);
-
 void address_reset();
 
 uint64_t address_deadline(const Ipv6Address&);
@@ -65,7 +62,9 @@ Ipv6AddressLifetimes address_lifetimes(unsigned index, const Address&, uint64_t 
 
 bool address_manages_prefix(unsigned index, const Address&);
 
-int automatic_address(const Ipv6Address&, Ipv6AddressLifetimes, bool replace = false);
+// The PRF counter follows this generated owner through later configuration changes.
+int automatic_address(const Ipv6Address&, Ipv6AddressLifetimes, bool replace = false,
+                      unsigned stable_counter = 0);
 
 void neighbor_reset();
 

@@ -22,6 +22,7 @@ from ipv4_path_mtu_capture import verify_capture as verify_path_mtu
 from ipv4_path_mtu_lifetime_capture import verify_capture as verify_path_lifetime
 from ipv4_query_model import query_model
 from tcp_fault_native import Capture
+from native_ipv4_state import NativeIpv4State
 
 
 def digest(path):
@@ -61,6 +62,29 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
     directory.mkdir(exist_ok=False)
     peers = [FragmentPeer(lane, native=True) for lane in range(2)]
     taps, captures, statistics, links = [], [], [], []
+    state = None
+    state_errors, observed_events, observed_deadlines = [], [0, 0], set()
+    capture_finalization = []
+
+    def observe(reason):
+        if state is None:
+            return
+        try:
+            state.snapshot(reason)
+        except Exception as exception:
+            state_errors.append(f'{reason}: {type(exception).__name__}: {exception}')
+
+    def observe_expiry(lane):
+        expiry = peers[lane].expiry
+        for position in range(observed_events[lane], len(expiry.events)):
+            observe(f'expiry lane {lane}: {expiry.events[position]["name"]}')
+        observed_events[lane] = len(expiry.events)
+        if expiry.start is not None and not expiry.acknowledged:
+            for seconds in (59, 66, 100):
+                key = lane, seconds
+                if key not in observed_deadlines and time.monotonic() - expiry.start >= seconds:
+                    observed_deadlines.add(key)
+                    observe(f'expiry lane {lane}: elapsed {seconds} seconds')
     process = None
     error = None
     command = client(profile, pmtu_only, lifetime_only)
@@ -76,7 +100,7 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                'scripts/ipv4_path_mtu_lifetime.py', 'scripts/ipv4_path_mtu_lifetime_capture.py',
                'userspace/tests/net/ipv4_fragments.h', 'scripts/ipv4_fragments.py',
                'scripts/ipv4_fragment_native.py', 'scripts/ipv4_expiry_capture.py',
-               'scripts/tcp_fault_native.py', 'Makefile']
+               'scripts/tcp_fault_native.py', 'scripts/native_ipv4_state.py', 'Makefile']
     before = dict(profile=profile, pmtu_only=pmtu_only, lifetime_only=lifetime_only, query_model=model,
                   kernel=platform.uname()._asdict(), command=command,
                   source_sha256={name: digest(ROOT / name) for name in sources},
@@ -87,7 +111,8 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                   expiry_quote_upper_seconds=peers[0].expiry.latest_quote_seconds,
                   expiry_context_gap_seconds=peers[0].expiry.context_gap_seconds,
                   expiry_quiet_delay_seconds=peers[0].expiry.quiet_delay_seconds,
-                  namespace_linkage='private network namespace; two private TAP devices')
+                  namespace_linkage='private network namespace; two private TAP devices',
+                  read_only_kernel_state='native-kernel-state.jsonl')
     (directory / 'preexecution.json').write_text(json.dumps(before, indent=2) + '\n')
     products = directory / 'products'
     products.mkdir(exist_ok=False)
@@ -101,6 +126,8 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
 
     fragment_timeout = None
     try:
+        state = NativeIpv4State(directory)
+        observe('before namespace configuration')
         # Match the unchanged guest policy in this private network namespace only.
         subprocess.run(['sysctl', '-w', 'net.ipv4.ipfrag_time=60'], check=True)
         fragment_timeout = int(Path('/proc/sys/net/ipv4/ipfrag_time').read_text())
@@ -119,6 +146,7 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                             'mtu', '1500', 'txqueuelen', '8192', 'up'], check=True)
             selector.register(descriptor, selectors.EVENT_READ, lane)
             captures.append(Capture(name, directory / f'lane{lane}.pcap'))
+        observe('interfaces ready before client execution')
         with (directory / 'client.log').open('wb') as log:
             process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
                                        stdin=subprocess.DEVNULL, cwd=ROOT)
@@ -130,6 +158,7 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                     raise RuntimeError(f'fragment client exited {process.returncode}')
                 for lane, peer in enumerate(peers):
                     send_packets(taps, captures, peers, lane, peer.expiry.tick())
+                    observe_expiry(lane)
                 for key, _ in selector.select(.02):
                     lane = key.data
                     frame = os.read(key.fd, 65535)
@@ -166,6 +195,7 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                             raise ValueError('truncated native control packet')
                         if expiry:
                             send_packets(taps, captures, peers, lane, peers[lane].expiry.receive(packet))
+                            observe_expiry(lane)
                         else:
                             send_packets(taps, captures, peers, lane,
                                          [(payload, False) for payload in peers[lane].receive(packet)])
@@ -179,6 +209,7 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
     except Exception as exception:
         error = f'{type(exception).__name__}: {exception}'
     finally:
+        observe('before client and capture shutdown')
         if process is not None and process.poll() is None:
             process.terminate()
             try:
@@ -186,10 +217,14 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-        for capture in captures:
+        for lane, capture in enumerate(captures):
             try:
-                statistics.append(capture.close())
+                stats = capture.close()
+                statistics.append(stats)
+                capture_finalization.append(dict(lane=lane, statistics=stats, error=None))
             except Exception as exception:
+                capture_finalization.append(dict(lane=lane, statistics=None,
+                    error=f'{type(exception).__name__}: {exception}'))
                 error = error or f'capture: {exception}'
         for lane in range(len(taps)):
             try:
@@ -205,6 +240,15 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
         selector.close()
         for descriptor in taps:
             os.close(descriptor)
+        observe('after capture and interface statistics')
+        state_report = dict(path='native-kernel-state.jsonl', complete=False, diagnostic_only=True)
+        if state is not None:
+            try:
+                state_report = state.close()
+            except Exception as exception:
+                state_errors.append(f'close: {type(exception).__name__}: {exception}')
+        if state_errors or not state_report['complete']:
+            error = error or 'native kernel-state evidence is incomplete'
     text = (directory / 'client.log').read_text(errors='replace') if process else ''
     completed = [peer.completed for peer in peers]
     acknowledged = [peer.acknowledged for peer in peers]
@@ -261,6 +305,8 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                   path_mtu_lifetime_capture_audits=lifetime_audits,
                   link_statistics=links,
                   seconds=time.monotonic() - started, capture_statistics=statistics,
+                  native_kernel_state=state_report, native_kernel_state_errors=state_errors,
+                  capture_finalization=capture_finalization,
                   source_sha256=before['source_sha256'],
                   passed=(error is None and process is not None and process.returncode == 0 and
                           (lifetime_only or all(peer.path_mtu.passed for peer in peers)) and

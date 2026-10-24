@@ -824,11 +824,20 @@ static void finite_address_dad() {
         ticks = 1000;
         assert(!configure_lifetime(lane + 1, local, 2, 8, 0x605, 64, 0));
         ipv6_poll();
+        auto failed_owner = ip6::address_owner(lane + 1, local);
+        assert(failed_owner);
         deliver(lane, advertisement(lane, local, ip6::all_nodes()));
-        assert((address_observation(lane + 1, local).flags & 0x48) == 0x48);
-        assert(!configure_lifetime(lane + 1, local, 2, 8, 0x105));
-        assert((address_observation(lane + 1, local).flags & 0x48) == 0x48);
-        assert(!ipv6_owned(lane + 1, local, true));
+        // Linux removes a failed finite configured owner before its lifetime expires.
+        // A later successful RTM_NEWADDR starts DAD for a new address owner.
+        assert(!address_observation(lane + 1, local).present &&
+               !ip6::address_owner(lane + 1, local));
+        assert(!configure_lifetime(lane + 1, local, 2, 8, 0x105, 64, 0));
+        auto replacement = address_observation(lane + 1, local);
+        assert(replacement.present && replacement.flags == 0x40 && replacement.cache[0] == 2 &&
+               replacement.cache[1] == 8);
+        assert(ip6::address_owner(lane + 1, local) &&
+               ip6::address_owner(lane + 1, local) != failed_owner);
+        assert(!ipv6_owned(lane + 1, local) && ipv6_owned(lane + 1, local, true));
         reset();
     }
 }
@@ -3206,24 +3215,60 @@ static void automatic_link_configuration() {
     ip6::address_duplicate(1, reused);
     ipv6_poll();
     assert(automatic(1, true) == reused && !ipv6_owned(1, reused, true));
-    reset();
-    assert(!ip6::configuration_write(1, Key::generation_mode, 3));
-    auto current = automatic(1, true);
-    for (unsigned attempt = 0; attempt < 4; attempt++) {
-        ipv6_poll();
-        std::vector<uint8_t> data(24);
-        data[0] = 135;
-        memcpy(data.data() + 8, current.bytes, 16);
-        auto conflict = incoming(0, {}, ip6::solicited_node(current), data);
-        ipv6_receive(adapters[0].info, conflict.data(), conflict.size());
-        assert(!ipv6_owned(1, current, true));
-        ipv6_poll();
-        auto next = automatic(1, true);
-        if (attempt < 3) {
-            assert(!next.unspecified() && !(next == current));
-            current = next;
-        } else
-            assert(next == current && !ipv6_owned(1, next, true));
+    for (unsigned lane = 0; lane < 2; lane++) {
+        reset();
+        unsigned index = lane + 1;
+        assert(!ip6::configuration_write(index, Key::generation_mode, 3));
+        auto current = automatic(index, true);
+        std::vector<ip6::Address> failed;
+        std::vector<uint64_t> owners;
+        for (unsigned attempt = 0; attempt < 4; attempt++) {
+            if (attempt)
+                ticks += 201;
+            ipv6_poll();
+            bool probed = false;
+            for (const auto& bytes : emitted[lane]) {
+                auto packet = ip6::decode(bytes.data() + 14, bytes.size() - 14);
+                probed |= packet.protocol == 58 && packet.length == 24 &&
+                          packet.payload[0] == 135 &&
+                          !memcmp(packet.payload + 8, current.bytes, 16);
+            }
+            assert(probed && ipv6_owned(index, current, true));
+            failed.push_back(current);
+            owners.push_back(ip6::address_owner(index, current));
+            std::vector<uint8_t> data(24);
+            data[0] = 135;
+            memcpy(data.data() + 8, current.bytes, 16);
+            auto conflict = incoming(lane, {}, ip6::solicited_node(current), data);
+            ipv6_receive(adapters[lane].info, conflict.data(), conflict.size());
+            assert(!ipv6_owned(index, current, true));
+            ipv6_poll();
+            // Linux retains all four permanent failures after exhausting retries.
+            // The next candidate must be selected independently of those owners.
+            for (unsigned at = 0; at < failed.size(); at++) {
+                auto retained = address_observation(index, failed[at]);
+                assert(retained.present && retained.flags == 0x8c8 &&
+                       retained.cache[0] == UINT32_MAX && retained.cache[1] == UINT32_MAX &&
+                       ip6::address_owner(index, failed[at]) == owners[at]);
+            }
+            ip6::Address next;
+            unsigned candidates = 0;
+            for (unsigned at = 0; auto entry = ipv6_address(at); at++)
+                if (entry->index == index && entry->address.link_local() && entry->flags == 0x8c0) {
+                    next = entry->address;
+                    candidates++;
+                }
+            if (attempt < 3) {
+                assert(candidates == 1 && !next.unspecified() && !(next == current));
+                current = next;
+            } else {
+                assert(!candidates);
+                auto probe_count = emitted[lane].size();
+                ticks += 410;
+                ipv6_poll();
+                assert(emitted[lane].size() == probe_count);
+            }
+        }
     }
     reset();
 }

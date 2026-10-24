@@ -31,9 +31,14 @@ bool configuration_disabled(unsigned index);
 // Construct the identifier for a supplied /64 prefix without publishing it.
 int configuration_identifier(unsigned index, Address&, unsigned& counter, bool& privacy);
 
+// A stable owner's retry keeps its algorithm across later generation-mode changes.
+int configuration_stable_identifier(unsigned index, Address&, unsigned& counter);
+
 void configuration_registered(unsigned index);
 void configuration_changed(unsigned index);
 void configuration_address_removed(unsigned index, const Address&);
+void configuration_address_regenerated(unsigned index, const Address&, const Address&,
+                                       unsigned counter);
 void configuration_poll();
 void configuration_reset();
 } // namespace ax::ip6

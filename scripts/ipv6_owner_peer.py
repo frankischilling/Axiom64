@@ -42,9 +42,9 @@ def multicast_report(frame):
 class Peer(RouterPeer):
     def __init__(self, lane, group='global', native=False, retain_routes=False):
         super().__init__(lane, native)
-        require(group in ('global', 'lifecycle'), 'known ownership group')
+        require(group in ('global', 'lifecycle', 'secret'), 'known ownership group')
         self.group, self.retain_routes = group, retain_routes
-        self.cases = list(range(1, 5) if group == 'global' else range(5, 10))
+        self.cases = list(range(1, 5) if group == 'global' else (1, 7) if group == 'secret' else range(5, 10))
         self.prefixes.update({case: ipaddress.IPv6Address(f'2001:db8:{0x40+lane:x}:{case:x}::').packed
                               for case in self.cases})
         self.frames, self.controls, self.ended = [], [], []
@@ -179,7 +179,7 @@ class Peer(RouterPeer):
         if kind in (HELLO,BEGIN,MODE,END,FINISH):
             require(frame[24:52] == bytes(28), 'non-address ownership operations contain no invented metadata')
         if kind == HELLO:
-            require(phase == case == 0 and stage == int(self.group == 'lifecycle'), 'one explicit initial group')
+            require(phase == case == 0 and stage == {'global':0, 'lifecycle':1, 'secret':2}[self.group], 'one explicit initial group')
             self.ready = True
         elif kind == BEGIN:
             require(self.ready and len(self.ended) < len(self.cases) and case == self.cases[len(self.ended)] and

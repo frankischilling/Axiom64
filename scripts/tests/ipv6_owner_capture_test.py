@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from ipv6_owner_capture import inspect
-from ipv6_owner_damage import controls, COMMON, GLOBAL, LIFECYCLE
+from ipv6_owner_damage import controls, COMMON, GLOBAL, LIFECYCLE, SECRET
 
 FIXTURES=Path(__file__).resolve().parent/'fixtures'
 ARCHIVE=None
@@ -28,16 +28,17 @@ class ActualOwnershipCapture(unittest.TestCase):
         return (FIXTURES/f'ipv6-owner-axiom-{group}.log').read_text()
 
     def test_actual_global_and_lifecycle_packets(self):
-        for group in ('global','lifecycle'):
+        for group in ('global','lifecycle','secret'):
             text=self.fixture(group)
             for lane in range(2):
                 with self.subTest(group=group,lane=lane):
                     result=inspect(FIXTURES/f'ipv6-owner-axiom-{group}-lane{lane}.pcap',lane,text,group)
                     self.assertTrue(result['passed'])
-                    self.assertEqual(len(result['cases']),4 if group=='global' else 5)
+                    self.assertEqual(len(result['cases']),{'global':4,'lifecycle':5,'secret':2}[group])
+                    self.assertEqual(len(result['actual_changed_secret_readbacks']),2 if group=='secret' else 0)
 
     def test_serialized_corruptions_are_rejected(self):
-        for group,extra in [('global',GLOBAL),('lifecycle',LIFECYCLE)]:
+        for group,extra in [('global',GLOBAL),('lifecycle',LIFECYCLE),('secret',SECRET)]:
             with self.subTest(group=group):
                 archive=ARCHIVE.with_name(ARCHIVE.stem+'-'+group+ARCHIVE.suffix) if ARCHIVE else None
                 result=controls(FIXTURES/f'ipv6-owner-axiom-{group}-lane0.pcap',0,self.fixture(group),group,archive)

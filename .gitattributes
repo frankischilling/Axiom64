@@ -3,6 +3,7 @@
 *.cpio binary
 # Keep captured serial bytes, including CRLF and terminal escape sequences.
 scripts/tests/fixtures/normal-console/interrupted-prompt.txt -text -whitespace
+scripts/tests/fixtures/normal-console/manager-bound-prompt.txt -text -whitespace
 scripts/tests/fixtures/account-rotation-interrupted-data.txt -text -whitespace
 scripts/tests/fixtures/qmp-pre-greeting-resume.jsonl -text -whitespace
 scripts/tests/fixtures/ipv6-router-bios-modern.log -text -whitespace

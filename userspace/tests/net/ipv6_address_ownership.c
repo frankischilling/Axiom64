@@ -25,17 +25,26 @@ enum operation {
 
 static unsigned phases[2];
 static int retain_routes;
+static int rotate_secrets;
 
 static void pause_poll(void) {
     struct timespec delay = {0, 20000000};
     check(!nanosleep(&delay, NULL), "owner inventory polling");
 }
 
-static void control(unsigned lane, unsigned kind, unsigned scenario, unsigned stage,
-                    const struct address_record* value) {
+struct pending_control {
+    unsigned char frame[60];
+    unsigned lane;
+    uint64_t stamp;
+};
+
+static struct pending_control control_send(unsigned lane, unsigned kind, unsigned scenario,
+                                           unsigned stage, const struct address_record* value) {
+    struct pending_control pending = {.lane = lane};
     unsigned phase = phases[lane]++;
     check(phase < 255, "bounded ownership controls");
-    unsigned char frame[60] = {2, 'I', 'P', '6', lane, 0};
+    unsigned char* frame = pending.frame;
+    memcpy(frame, (unsigned char[6]){2, 'I', 'P', '6', lane, 0}, 6);
     memcpy(frame + 6, macs[lane], 6);
     frame[12] = IPV6_BARRIER_PROTOCOL >> 8;
     frame[13] = IPV6_BARRIER_PROTOCOL & 255;
@@ -51,7 +60,7 @@ static void control(unsigned lane, unsigned kind, unsigned scenario, unsigned st
         memcpy(frame + 24, fields, sizeof(fields));
         memcpy(frame + 36, &value->address, 16);
     }
-    uint64_t stamp = now();
+    uint64_t stamp = pending.stamp = now();
     for (unsigned at = 0; at < 8; at++)
         frame[52 + at] = stamp >> (56 - at * 8);
     struct sockaddr_ll target = {.sll_family = AF_PACKET,
@@ -59,10 +68,16 @@ static void control(unsigned lane, unsigned kind, unsigned scenario, unsigned st
                                  .sll_ifindex = indices[lane],
                                  .sll_halen = 6};
     memcpy(target.sll_addr, frame, 6);
-    check(sendto(packets[lane], frame, sizeof(frame), 0, (struct sockaddr*)&target,
-                 sizeof(target)) == sizeof(frame),
+    check(sendto(packets[lane], frame, sizeof(pending.frame), 0, (struct sockaddr*)&target,
+                 sizeof(target)) == sizeof(pending.frame),
           "complete ownership control");
-    uint64_t began = now();
+    return pending;
+}
+
+static void control_wait(const struct pending_control* pending) {
+    unsigned lane = pending->lane;
+    const unsigned char* frame = pending->frame;
+    uint64_t began = pending->stamp;
     for (;;) {
         unsigned char reply[1600];
         struct pollfd item = {.fd = packets[lane], .events = POLLIN};
@@ -74,13 +89,30 @@ static void control(unsigned lane, unsigned kind, unsigned scenario, unsigned st
             break;
         check(now() - began < 10000000000ULL, "finite ownership control");
     }
+    uint32_t fields[3];
+    memcpy(fields, frame + 24, sizeof(fields));
     printf("IPV6_OWNER_CONTROL lane=%u phase=%u kind=%u case=%u stage=%u flags=%x "
            "preferred=%u valid=%u target=",
-           lane, phase, kind, scenario, stage, value ? value->flags : 0,
-           value ? value->preferred : 0, value ? value->valid : 0);
+           lane, frame[19], frame[20], frame[21], frame[22], ntohl(fields[0]), ntohl(fields[1]),
+           ntohl(fields[2]));
     for (unsigned at = 36; at < 52; at++)
         printf("%02x", frame[at]);
-    printf(" observed_ns=%llu\n", (unsigned long long)stamp);
+    printf(" observed_ns=%llu\n", (unsigned long long)pending->stamp);
+}
+
+static void control(unsigned lane, unsigned kind, unsigned scenario, unsigned stage,
+                    const struct address_record* value) {
+    struct pending_control pending = control_send(lane, kind, scenario, stage, value);
+    control_wait(&pending);
+}
+
+static void control_pair(unsigned kind, unsigned scenario, unsigned stage,
+                         const struct address_record values[2]) {
+    struct pending_control pending[2];
+    for (unsigned lane = 0; lane < 2; lane++)
+        pending[lane] = control_send(lane, kind, scenario, stage, values + lane);
+    for (unsigned lane = 0; lane < 2; lane++)
+        control_wait(pending + lane);
 }
 
 static void controls(unsigned kind, unsigned scenario, unsigned stage) {
@@ -92,6 +124,31 @@ static void property(unsigned lane, const char* name, int value) {
     char scope[16];
     snprintf(scope, sizeof(scope), "eth%u", lane);
     scalar(scope, name, value);
+}
+
+static void secret_change(unsigned lane, unsigned scenario) {
+    const char* text = scenario == 1 ? "2001:db8:6d00::5678\n" : "2001:db8:6d00::9abc\n";
+    char path[160], actual[64] = {0};
+    snprintf(path, sizeof(path), "/proc/sys/net/ipv6/conf/eth%u/stable_secret", lane);
+    int fd = open(path, O_WRONLY | O_CLOEXEC);
+    check(fd >= 0 && write(fd, text, strlen(text)) == (ssize_t)strlen(text),
+          "change the actual pending owner's stable secret");
+    close(fd);
+    fd = open(path, O_RDONLY | O_CLOEXEC);
+    ssize_t length = fd < 0 ? -1 : read(fd, actual, sizeof(actual) - 1);
+    check(fd >= 0 && length == 40 && actual[length - 1] == '\n',
+          "read back the complete changed stable secret");
+    close(fd);
+    actual[length - 1] = 0;
+    char expected[64];
+    strcpy(expected, text);
+    expected[strlen(expected) - 1] = 0;
+    struct in6_addr value, wanted;
+    check(inet_pton(AF_INET6, actual, &value) == 1 && inet_pton(AF_INET6, expected, &wanted) == 1 &&
+              !memcmp(&value, &wanted, 16),
+          "changed stable secret matches actual kernel readback");
+    printf("IPV6_OWNER_SECRET lane=%u case=%u value=%s observed_ns=%llu\n", lane, scenario, actual,
+           (unsigned long long)now());
 }
 
 static int mutate(unsigned lane, struct in6_addr value, int remove, unsigned flags,
@@ -140,7 +197,34 @@ static int matches(const struct address_record* value, unsigned lane, unsigned s
 }
 
 static void report(unsigned lane, unsigned scenario, unsigned stage, int link) {
-    struct inventory inventory = snapshot(lane);
+    struct inventory inventory;
+    uint64_t began = now();
+    int waited = 0;
+    for (;;) {
+        inventory = snapshot(lane);
+        int pending = 0;
+        if (scenario == 8 && stage == 5 && !link)
+            for (unsigned at = 0; at < inventory.address_count; at++) {
+                const struct address_record* value = inventory.addresses + at;
+                // Linux may publish the zero preferred cache before its deferred
+                // DEPRECATED flag. Keep the required metadata and query it again.
+                if (matches(value, lane, scenario, 0) && value->flags == 0 &&
+                    value->preferred == 0 && value->valid == 6) {
+                    pending = 1;
+                    if (!waited)
+                        printf("IPV6_OWNER_DEPRECATION_WAIT lane=%u case=8 flags=0 preferred=0 "
+                               "valid=6 observed_ns=%llu\n",
+                               lane, (unsigned long long)now());
+                }
+            }
+        check(!waited || now() - began < 1000000000ULL,
+              "bounded actual finite deprecation metadata");
+        if (!pending)
+            break;
+        check(now() - began < 1000000000ULL, "bounded actual finite deprecation metadata");
+        waited = 1;
+        pause_poll();
+    }
     unsigned count = 0;
     for (unsigned at = 0; at < inventory.address_count; at++) {
         const struct address_record* value = inventory.addresses + at;
@@ -260,8 +344,8 @@ static void recovery(unsigned scenario, int link, const struct address_record ol
     check(first == 3 && ready == 3, "both actual stable retries become ready");
 }
 
-static void global_cases(void) {
-    for (unsigned scenario = 1; scenario <= 4; scenario++) {
+static void global_cases(unsigned last) {
+    for (unsigned scenario = 1; scenario <= last; scenario++) {
         reset(scenario, scenario == 2 ? 0 : 2);
         struct address_record links[2], original[2];
         wait_pair(scenario, 1, 0, links);
@@ -281,6 +365,8 @@ static void global_cases(void) {
             reports(scenario, 5, 0);
         } else {
             for (unsigned lane = 0; lane < 2; lane++) {
+                if (rotate_secrets)
+                    secret_change(lane, scenario);
                 struct address_record value = exact(lane, original[lane].address);
                 control(lane, CONFLICT, scenario, 0, &value);
             }
@@ -299,8 +385,8 @@ static void global_cases(void) {
     }
 }
 
-static void lifecycle_cases(void) {
-    for (unsigned scenario = 5; scenario <= 9; scenario++) {
+static void lifecycle_cases(unsigned first, unsigned last) {
+    for (unsigned scenario = first; scenario <= last; scenario++) {
         int link = scenario <= 7;
         reset(scenario, link ? 2 : 1);
         struct address_record originals[2] = {0};
@@ -335,9 +421,16 @@ static void lifecycle_cases(void) {
                 }
             }
             for (unsigned lane = 0; lane < 2; lane++) {
+                if (rotate_secrets && trial == 1)
+                    secret_change(lane, scenario);
                 values[lane] = exact(lane, values[lane].address);
-                control(lane, CONFLICT, scenario, trial, &values[lane]);
+                if (link)
+                    control(lane, CONFLICT, scenario, trial, &values[lane]);
             }
+            // Each interface can wait for Linux's initial DAD delay. Publish
+            // both fresh finite queries before either wait can age the other.
+            if (!link)
+                control_pair(CONFLICT, scenario, trial, values);
         }
         if (scenario == 5 || scenario == 6)
             recovery(scenario, 1, originals);
@@ -374,10 +467,12 @@ static void lifecycle_cases(void) {
 int main(int argc, char** argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
     check((argc == 3 || argc == 4) && !strcmp(argv[1], "--group") &&
-              (!strcmp(argv[2], "global") || !strcmp(argv[2], "lifecycle")) &&
+              (!strcmp(argv[2], "global") || !strcmp(argv[2], "lifecycle") ||
+               !strcmp(argv[2], "secret")) &&
               (argc == 3 || !strcmp(argv[3], "--retain-exhausted-routes")),
           "known ownership group and pinned prefix policy");
     int global = !strcmp(argv[2], "global");
+    rotate_secrets = !strcmp(argv[2], "secret");
     retain_routes = argc == 4;
     scalar("all", "disable_ipv6", 1);
     scalar("default", "disable_ipv6", 1);
@@ -413,16 +508,21 @@ int main(int argc, char** argv) {
         check(!bind(packets[lane], (struct sockaddr*)&binding, sizeof(binding)),
               "ownership observation binding");
     }
-    controls(HELLO, 0, global ? 0 : 1);
+    controls(HELLO, 0, global ? 0 : rotate_secrets ? 2 : 1);
     if (global)
-        global_cases();
-    else
-        lifecycle_cases();
+        global_cases(4);
+    else if (rotate_secrets) {
+        global_cases(1);
+        lifecycle_cases(7, 7);
+    } else
+        lifecycle_cases(5, 9);
     controls(FINISH, 0, 0);
     for (unsigned lane = 0; lane < 2; lane++)
         close(packets[lane]);
     close(fd);
-    printf("IPV6_OWNER_PASS adapters=2 group=%s cases_each=%u quiet_seconds=4\n",
-           global ? "global" : "lifecycle", global ? 4 : 5);
+    printf("IPV6_OWNER_PASS adapters=2 group=%s cases_each=%u quiet_seconds=4\n", argv[2],
+           global           ? 4
+           : rotate_secrets ? 2
+                            : 5);
     return 0;
 }

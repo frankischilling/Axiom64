@@ -25,7 +25,8 @@ from tcp_fixture_inputs import audit_fixture, digest
 
 SOURCE = 'userspace/tests/net/ipv6_address_ownership.c'
 def marker(group):
-    return f'IPV6_OWNER_PASS adapters=2 group={group} cases_each={4 if group == "global" else 5} quiet_seconds=4'
+    count = {'global':4, 'lifecycle':5, 'secret':2}[group]
+    return f'IPV6_OWNER_PASS adapters=2 group={group} cases_each={count} quiet_seconds=4'
 
 
 def build(profile, directory):
@@ -189,7 +190,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--native', action='store_true')
     parser.add_argument('--directory', type=Path, default=ROOT / 'build/ipv6-owner-wire')
-    parser.add_argument('--group', choices=('global','lifecycle','both'), default='both')
+    parser.add_argument('--group', choices=('global','lifecycle','secret','both','all'), default='both')
     parser.add_argument('--firmware', choices=('bios','uefi','both'), default='both')
     parser.add_argument('--transport', choices=('modern','legacy','e1000','all'), default='all')
     parser.add_argument('--linkage', choices=('static','dynamic','both'), default='both')
@@ -205,11 +206,11 @@ def main():
         raise SystemExit(result.returncode)
     args.directory = args.directory.resolve()
     if args.child:
-        if args.group == 'both':parser.error('native child needs one explicit group')
+        if args.group in ('both','all'):parser.error('native child needs one explicit group')
         raise SystemExit(0 if native_child(args)['passed'] else 1)
     if args.native and os.geteuid():
         raise ValueError('native ownership comparisons require isolated privileged namespaces')
-    groups = ('global','lifecycle') if args.group == 'both' else (args.group,)
+    groups = ('global','lifecycle','secret') if args.group == 'all' else ('global','lifecycle') if args.group == 'both' else (args.group,)
     args.directory.mkdir(parents=True, exist_ok=False)
     inputs = source_inputs(not args.native)
     (args.directory / 'source-inputs.json').write_text(json.dumps(inputs,indent=2) + '\n')

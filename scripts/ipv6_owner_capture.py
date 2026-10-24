@@ -11,11 +11,11 @@ from tcp_capture_clock import bind_native_clock, microseconds, raw_records
 
 
 def plan(group):
-    result = [(0,0,int(group == 'lifecycle'))]
+    result = [(0,0,{'global':0, 'lifecycle':1, 'secret':2}[group])]
     def snapshot(case,stage,count):
         result.extend([(2,case,stage)] * count)
         result.append((3,case,stage))
-    for case in range(1,5) if group == 'global' else range(5,10):
+    for case in range(1,5) if group == 'global' else (1,7) if group == 'secret' else range(5,10):
         result.append((1,case,0 if case == 2 else 1 if case >= 8 else 2))
         if case <= 4:
             for stage in (0,1,2):snapshot(case,stage,1)
@@ -39,14 +39,14 @@ def plan(group):
 
 
 def inspect(path,lane,text,group,native=False,statistics=None,native_kernel_release=None):
-    require(group in ('global','lifecycle') and lane in (0,1), 'known ownership group and NIC')
+    require(group in ('global','lifecycle','secret') and lane in (0,1), 'known ownership group and NIC')
     retain = retain_exhausted_prefix(native_kernel_release) if native else False
     guest=bytes.fromhex(f'5254001234{16+lane:02x}')
     peer=bytes([2,0x49,0x50,0x36,lane,1]);control=bytes([2,0x49,0x50,0x36,lane,0])
     identifier=bytes([guest[0]^2])+guest[1:3]+b'\xff\xfe'+guest[3:]
     link=ipaddress.IPv6Address('fe80::').packed[:8]+identifier
     router=ipaddress.IPv6Address('fe80::42').packed;all_nodes=ipaddress.IPv6Address('ff02::1').packed
-    cases=list(range(1,5) if group=='global' else range(5,10))
+    cases=list(range(1,5) if group=='global' else (1,7) if group=='secret' else range(5,10))
     prefixes={case:ipaddress.IPv6Address(f'2001:db8:{0x40+lane:x}:{case:x}::').packed for case in cases}
     rows=list(raw_records(path) if native else qemu_records(path))
     expected=plan(group);requests=[];replies=[];probes={case:[] for case in cases}
@@ -165,6 +165,40 @@ def inspect(path,lane,text,group,native=False,statistics=None,native_kernel_rele
     def exact(value,flags,preferred,valid):
         require((value['flags'],value['preferred'],value['valid'])==(flags,preferred,valid),
                 'captured exact raw address flags and cache lifetimes')
+    wait_rows = re.findall(r'^IPV6_OWNER_DEPRECATION_WAIT lane=([01]) case=8 flags=0 preferred=0 '
+                           r'valid=6 observed_ns=(\d+)\r?$', text, re.M)
+    require(len(wait_rows) == sum(line.startswith('IPV6_OWNER_DEPRECATION_WAIT') for line in text.splitlines()) and
+            (not wait_rows or group == 'lifecycle'), 'complete finite deprecation-wait observations in the selected group')
+    waits = [int(stamp) for actual_lane, stamp in wait_rows if int(actual_lane) == lane]
+    require(len(waits) <= 1, 'at most one bounded deprecation wait per actual interface')
+    if waits:
+        later = values(8, 5)
+        require(len(later) == 1 and later[0]['flags'] == 0x20 and
+                (later[0]['preferred'], later[0]['valid']) == (0, 6) and
+                summaries[8,4]['guest_ns'] <= waits[0] < later[0]['guest_ns'] and
+                later[0]['guest_ns'] - waits[0] < 1000000000,
+                'fresh actual deprecation metadata completes within one second after the original cache boundary')
+    secret_pattern = (r'^IPV6_OWNER_SECRET lane=([01]) case=(1|7) value=([0-9a-f:]+) '
+                      r'observed_ns=(\d+)\r?$')
+    secret_rows = re.findall(secret_pattern, text, re.M)
+    require(len(secret_rows) == sum(line.startswith('IPV6_OWNER_SECRET') for line in text.splitlines()) ==
+            (4 if group == 'secret' else 0), 'complete exact changed-secret readback records')
+    secret_changes = []
+    if group == 'secret':
+        for case in (1, 7):
+            selected_secret = [row for row in secret_rows if int(row[0]) == lane and int(row[1]) == case]
+            require(len(selected_secret) == 1, 'one actual changed-secret readback per selected interface and case')
+            _, _, value, observed = selected_secret[0]
+            require(ipaddress.IPv6Address(value) == ipaddress.IPv6Address(
+                '2001:db8:6d00::5678' if case == 1 else '2001:db8:6d00::9abc'),
+                'actual changed stable secret equals the selected deterministic test input')
+            after = summaries[case, 2] if case == 1 else next(
+                row for row in requests if (row['kind'], row['case'], row['stage']) == (4, 7, 0))
+            before = next(row for row in requests if (row['kind'], row['case'], row['stage']) ==
+                          (4, case, int(case == 7)))
+            require(after['guest_ns'] <= int(observed) <= before['guest_ns'],
+                    'changed-secret readback lies between the actual previous query and selected conflict')
+            secret_changes.append(dict(case=case, value=value, observed_ns=int(observed)))
     inf=0xffffffff;reports=[]
     for case in cases:
         case_probes=probes[case];case_conflicts=conflicts[case]
@@ -312,4 +346,6 @@ def inspect(path,lane,text,group,native=False,statistics=None,native_kernel_rele
     return dict(passed=True,lane=lane,group=group,cases=reports,original_capture_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
         actual_frames=len(rows),queried_controls=len(requests),native_clock=clock,native_multicast_reports=mld,
         firmware_sha256=firmware,native_kernel_release=native_kernel_release,retained_finite_prefix_policy=retain,
+        actual_changed_secret_readbacks=secret_changes,
+        actual_deprecation_wait_observations=waits,
         original_packet_times_not_rescaled=True,full_F12_complete=False)

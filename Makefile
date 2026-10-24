@@ -736,10 +736,10 @@ test-ipv6-router-native:
 .PHONY: test-ipv6-ownership test-ipv6-ownership-native
 
 test-ipv6-ownership:
-	$(PYTHON) scripts/ipv6_owner_test.py --directory build/ipv6-owner-wire
+	$(PYTHON) scripts/ipv6_owner_test.py --group all --directory build/ipv6-owner-wire
 
 test-ipv6-ownership-native:
-	$(PYTHON) scripts/ipv6_owner_test.py --native --directory build/ipv6-owner-native
+	$(PYTHON) scripts/ipv6_owner_test.py --native --group all --directory build/ipv6-owner-native
 
 test-ipv6-lifetimes-contract:
 	$(PYTHON) scripts/ipv6_lifetime_contract.py --native-directory build/ipv6-host-native-wire --guest-directory build/ipv6-host-wire --output-directory build/ipv6-lifetime-contract
@@ -796,7 +796,7 @@ test-ipv6-fragments-native: test-ipv6-fragment-observation
 build/ipv6-wire-host: kernel/tests/net/ipv6_wire.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
-build/ipv6-host: kernel/tests/net/ipv6_host.cpp kernel/tests/net/ipv6_link_configuration.cpp kernel/tests/net/ipv6_router.cpp $(IPV6_CORE) kernel/fs/proc/ipv6.cpp kernel/net/ipv6/socket/send_control.cpp kernel/net/ethernet.cpp kernel/net/netlink/ipv6.cpp kernel/net/netlink/addresses.cpp kernel/net/netlink/link.cpp kernel/net/netlink/inventory.cpp kernel/net/netlink/routes.cpp $(call rwildcard,kernel/include/,*.hpp)
+build/ipv6-host: kernel/tests/net/ipv6_host.cpp kernel/tests/net/ipv6_link_configuration.cpp kernel/tests/net/ipv6_router.cpp kernel/tests/net/ipv6_address_lifecycle.cpp $(IPV6_CORE) kernel/fs/proc/ipv6.cpp kernel/net/ipv6/socket/send_control.cpp kernel/net/ethernet.cpp kernel/net/netlink/ipv6.cpp kernel/net/netlink/addresses.cpp kernel/net/netlink/link.cpp kernel/net/netlink/inventory.cpp kernel/net/netlink/routes.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 build/ipv6-reassembly-host: kernel/tests/net/ipv6_reassembly.cpp kernel/net/ipv6/reassembly.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/reassembly.hpp kernel/include/net/ipv6/wire.hpp kernel/include/core/base.hpp

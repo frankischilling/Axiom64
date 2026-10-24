@@ -113,6 +113,8 @@ void ipv6_link_configuration_tests(void (*reset)());
 
 void ipv6_router_tests(void (*reset)());
 
+void ipv6_address_lifecycle_tests(void (*reset)());
+
 const std::vector<std::vector<uint8_t>>& ipv6_emitted(unsigned lane) {
     return emitted[lane];
 }
@@ -3519,6 +3521,7 @@ int main() {
     reviewed_source_edges();
     automatic_link_configuration();
     fresh_link_dad_cycles();
+    ipv6_address_lifecycle_tests(reset);
     configuration_files();
     ipv6_link_configuration_tests(reset);
     ipv6_router_tests(reset);

@@ -390,9 +390,20 @@ static void first_pio_check(unsigned lane, unsigned kind, const char* phase) {
             report(lane, &inventory);
             return;
         }
-        check(metadata && deprecated && (address->flags ^ flags) == IFA_F_DEPRECATED &&
-                  now() - began < 1000000000ULL,
-              "first PIO has exact final flags, protected cache and configured prefix");
+        uint64_t observed = now(), elapsed = observed - began;
+        int pending = metadata && deprecated && (address->flags ^ flags) == IFA_F_DEPRECATED &&
+                      elapsed < 1000000000ULL;
+        if (!pending) {
+            printf("IPV6_ROUTER_FIRST_PIO_REJECT lane=%u phase=%s kind=%u flags=%x "
+                   "expected_flags=%x preferred=%u expected_preferred=%u valid=%u "
+                   "expected_valid=%u prefix_routes=%u prefix_permanent=%u prefix_finite=%u "
+                   "metadata=%u elapsed_ns=%llu observed_ns=%llu\n",
+                   lane, phase, kind, address->flags, flags, address->preferred, preferred,
+                   address->valid, valid, count, permanent, finite, metadata,
+                   (unsigned long long)elapsed, (unsigned long long)observed);
+            report(lane, &inventory);
+        }
+        check(pending, "first PIO has exact final flags, protected cache and configured prefix");
         if (!waited)
             printf("IPV6_ROUTER_FIRST_PIO_WAIT lane=%u phase=%s kind=%u flags=%x\n", lane, phase,
                    kind, address->flags);

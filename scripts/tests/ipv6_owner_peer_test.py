@@ -13,6 +13,15 @@ FIXTURE=Path(__file__).resolve().parent/'fixtures/ipv6-owner-axiom-global-lane0.
 
 
 class OwnershipPeer(unittest.TestCase):
+    def test_zero_preferred_cache_requires_the_actual_deprecation_flag(self):
+        value=dict(target=bytes.fromhex('20010db8004000080000000000000023'),
+                   flags=0,preferred=0,valid=6)
+        peer=Peer(0,'lifecycle',native=True)
+        with self.assertRaisesRegex(ValueError,'finite DAD or NODAD recreation'):
+            peer.inventory(8,5,[value],1,1)
+        value['flags']=0x20
+        peer.inventory(8,5,[value],1,1)
+
     def guest_prefix(self):
         frames=[row['frame'] for row in qemu_records(FIXTURE) if row['frame'][6:12]==bytes.fromhex('525400123410')]
         stop=next(i for i,f in enumerate(frames) if f[12:14]==b'\x88\xc3' and f[20]==4)

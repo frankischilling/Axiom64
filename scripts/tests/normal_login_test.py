@@ -6,6 +6,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from normal_login import ConsoleLogin, PASSWORD
+from console_prompt import shell_prompt_end
 
 PROVISION = (b'Administrator name: admin\r\nNew password: \r\nConfirm password: \r\n'
              b'Administrator created. Please log in.\r\n')
@@ -113,6 +114,34 @@ class NormalLoginTests(unittest.TestCase):
         login.consume(SESSION + raw[:complete])
         self.assertEqual(writes[-1], b'/bin/second\n')
         self.assertEqual(len(writes), count + 1)
+
+    def test_network_manager_record_can_interrupt_a_queued_prompt(self):
+        login, writes = self.replay(SESSION)
+        login.command('/bin/first')
+        login.command('/bin/second')
+        count = len(writes)
+        raw = (Path(__file__).parent / 'fixtures/normal-console/manager-bound-prompt.txt').read_bytes()
+        for size in range(len(raw)):
+            login.consume(SESSION + raw[:size])
+            self.assertEqual(len(writes), count)
+        login.consume(SESSION + raw)
+        self.assertEqual(writes[-1], b'/bin/second\n')
+        self.assertEqual(len(writes), count + 1)
+        login.consume(SESSION + raw)
+        self.assertEqual(len(writes), count + 1)
+
+    def test_only_complete_known_manager_records_join_a_split_prompt(self):
+        raw = (Path(__file__).parent / 'fixtures/normal-console/manager-bound-prompt.txt').read_bytes()
+        self.assertEqual(shell_prompt_end(raw), len(raw))
+        self.assertEqual(shell_prompt_end(b'prefix\n' + raw, len(b'prefix\n')), len(b'prefix\n' + raw))
+        for old, new in ((b'method=dhcp', b'method=unknown'),
+                         (b'address=0a170128', b'address=0a17012z'),
+                         (b'generation=1', b'generation=bad'),
+                         (b'index=1', b'index=0'),
+                         (b'\n', b'')):
+            with self.subTest(old=old):
+                self.assertIn(old, raw)
+                self.assertIsNone(shell_prompt_end(raw.replace(old, new)))
 
 
 if __name__ == '__main__':

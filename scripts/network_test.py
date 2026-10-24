@@ -220,7 +220,8 @@ def run(firmware, transport, models, queue, timeout, wrap, gdb=False, fault=None
     count = capacity + 2 if pressure else (1 if fault == 'id' else 2) if fault else 65621 if wrap else 67
     required = ['AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0']
     if pressure:
-        required += [f'PACKET_PRESSURE_PASS slots={capacity}']
+        required += ['PACKET_PRESSURE_IPV6_DISABLED index=1',
+                     f'PACKET_PRESSURE_PASS slots={capacity}']
         debug_text = debug_log.read_text(errors='replace') if debug_log else ''
         injected = f'PACKET_TX_DEFERRED model={models[0]}' in debug_text and \
                    f'PACKET_TX_RELEASED model={models[0]}' in debug_text

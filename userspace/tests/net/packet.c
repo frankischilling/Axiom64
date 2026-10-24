@@ -529,6 +529,18 @@ static void transmit_pressure(void) {
           "pressure interface discovery");
     unsigned char mac[6], sent[128], bytes[128];
     memcpy(mac, request.ifr_hwaddr.sa_data, 6);
+    // This trial owns the entire TX budget. Automatic IPv6 control traffic
+    // would otherwise consume slots while completion observation is deferred.
+    char path[128], configured[4] = {0};
+    snprintf(path, sizeof(path), "/proc/sys/net/ipv6/conf/%s/disable_ipv6", request.ifr_name);
+    int configuration = open(path, O_WRONLY | O_CLOEXEC);
+    check(configuration >= 0 && write(configuration, "1\n", 2) == 2 && close(configuration) == 0,
+          "pressure disables automatic IPv6 before interface activation");
+    configuration = open(path, O_RDONLY | O_CLOEXEC);
+    check(configuration >= 0 && read(configuration, configured, sizeof(configured)) == 2 &&
+              !memcmp(configured, "1\n", 2) && close(configuration) == 0,
+          "pressure IPv6 precondition readback");
+    printf("PACKET_PRESSURE_IPV6_DISABLED index=1\n");
     request.ifr_flags = IFF_UP;
     check(ioctl(control, SIOCSIFFLAGS, &request) == 0, "pressure interface up");
     int fd = raw(1, PROTOCOL, 0);

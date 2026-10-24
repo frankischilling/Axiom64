@@ -366,12 +366,15 @@ static void global_cases(unsigned last) {
                 remove_owner(lane, scenario, 0, original[lane].address);
             reports(scenario, 5, 0);
         } else {
+            struct address_record conflicts[2];
             for (unsigned lane = 0; lane < 2; lane++) {
                 if (rotate_secrets)
                     secret_change(lane, scenario);
-                struct address_record value = exact(lane, original[lane].address);
-                control(lane, CONFLICT, scenario, 0, &value);
+                conflicts[lane] = exact(lane, original[lane].address);
             }
+            // Publish both fresh caches before either initial DAD delay can
+            // age the other interface's finite takeover metadata.
+            control_pair(CONFLICT, scenario, 0, conflicts);
             recovery(scenario, 0, original);
             reports(scenario, 3, 0);
             struct address_record replacement[2];

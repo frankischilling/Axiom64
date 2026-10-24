@@ -970,6 +970,20 @@ jobs:
       - name: Test virtio and e1000 Ethernet with packet sockets
         if: matrix.suite == 'network'
         run: make test-network
+      - name: Retain the actual Ethernet image and packet client
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-ethernet-fixtures
+          retention-days: 1
+          compression-level: 1
+          if-no-files-found: error
+          path: |
+            build/network-test.iso
+            build/rootfs-network.cpio
+            build/net-tests
+            userspace/tests/net/packet.c
+            userspace/tests/net/run.sh
       - name: Compare gateway routing with three native Linux linkages
         if: matrix.suite == 'network'
         run: sudo -n make test-ipv4-gateways-native

@@ -168,6 +168,8 @@ void generate(unsigned index, Configuration& state) {
     else if (!error) {
         state.generated = address;
         state.generated_privacy = privacy;
+        if (privacy && state.dad_counter)
+            address_retry_dad(index, address, address_owner(index, address));
     }
 }
 

@@ -25,6 +25,7 @@ unsigned callback_index = 1;
 unsigned inject_after_polls;
 std::vector<uint8_t> injected_frame;
 bool entropy_available = true;
+int forced_dad_jitter = -1;
 } // namespace
 
 namespace ax {
@@ -35,6 +36,11 @@ int random_read(void* output, size_t size, bool insecure) {
     assert((size == sizeof(next) || size == 6 || size == 16) && !insecure);
     if (!entropy_available)
         return -11;
+    if (size == sizeof(uint32_t) && forced_dad_jitter >= 0) {
+        uint32_t value = forced_dad_jitter;
+        memcpy(output, &value, sizeof(value));
+        return 0;
+    }
     auto bytes = static_cast<uint8_t*>(output);
     for (size_t at = 0; at < size;) {
         size_t count = std::min(size - at, sizeof(next));
@@ -111,8 +117,18 @@ const std::vector<std::vector<uint8_t>>& ipv6_emitted(unsigned lane) {
     return emitted[lane];
 }
 
+void ipv6_test_carrier(unsigned lane, bool up) {
+    assert(lane < 2);
+    adapters[lane].info.carrier = up;
+}
+
 void ipv6_test_budget(unsigned value) {
     send_budget = value;
+}
+
+void ipv6_test_dad_jitter(int value) {
+    assert(value >= -1 && value <= 100);
+    forced_dad_jitter = value;
 }
 
 static ip6::Address address(unsigned lane, unsigned host, bool link = false) {
@@ -170,6 +186,7 @@ static void reset() {
     send_budget = UINT32_MAX;
     fail_allocations = shutdown_after_polls = remove_after_polls = shrink_after_polls = 0;
     entropy_available = true;
+    forced_dad_jitter = -1;
     callback_index = 1;
     inject_after_polls = 0;
     injected_frame.clear();

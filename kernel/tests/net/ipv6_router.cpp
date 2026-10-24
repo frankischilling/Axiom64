@@ -11,6 +11,8 @@
 using namespace ax;
 const std::vector<std::vector<uint8_t>>& ipv6_emitted(unsigned lane);
 void ipv6_test_budget(unsigned value);
+void ipv6_test_carrier(unsigned lane, bool up);
+void ipv6_test_dad_jitter(int value);
 
 namespace {
 ip6::Address local(unsigned host = 1) {
@@ -474,6 +476,337 @@ void initial_zero(void (*reset)()) {
     std::puts("IPV6_ROUTER_FIRST_ZERO_PASS refreshed=6 ignored=6 capacity=2");
 }
 
+const Ipv6Address* prefix_address() {
+    auto destination = network();
+    for (unsigned at = 0; auto entry = ipv6_address(at); at++)
+        if (entry->index == 1 && !memcmp(entry->address.bytes, destination.bytes, 8))
+            return entry;
+    return nullptr;
+}
+
+unsigned dad_probes(const ip6::Address& address) {
+    unsigned count = 0;
+    for (const auto& bytes : ipv6_emitted(0)) {
+        auto packet = ip6::decode(bytes.data() + 14, bytes.size() - 14);
+        count += packet.protocol == 58 && packet.length >= 24 && packet.payload[0] == 135 &&
+                 !memcmp(packet.payload + 8, address.bytes, 16);
+    }
+    return count;
+}
+
+void conflict(const ip6::Address& address) {
+    std::vector<uint8_t> data(32);
+    data[0] = 136;
+    data[4] = 0x20;
+    std::copy(address.bytes, address.bytes + 16, data.begin() + 8);
+    data[24] = 2;
+    data[25] = 1;
+    data[26] = 2;
+    data[31] = 0x80;
+    send(data);
+}
+
+void stable_conflicts(void (*reset)()) {
+    unsigned rounded_holds = 0;
+    for (int jitter : {0, 100}) {
+        prepare(reset);
+        assert(!ip6::configuration_secret(1, network(99)));
+        auto data = advertisement(0);
+        prefix(data, 0xc0, 100, 60);
+        send(data);
+        auto original = prefix_address()->address;
+        ipv6_poll();
+        assert(dad_probes(original) == 1);
+        ticks = 50;
+        conflict(original);
+        ipv6_poll();
+        assert(!find(original) && prefix_address());
+        auto replacement = prefix_address()->address;
+        ipv6_test_dad_jitter(jitter);
+        ipv6_poll();
+        // A conflict late in tick 50 has not waited a full second at tick 150.
+        // Check both endpoints of the unchanged zero-to-one-second jitter.
+        ticks = 150 + jitter;
+        ipv6_poll();
+        unsigned before_full_interval = dad_probes(replacement);
+        ticks++;
+        ipv6_poll();
+        unsigned after_full_interval = dad_probes(replacement);
+        bool matched = !before_full_interval && after_full_interval == 1;
+        rounded_holds += matched;
+        std::printf("IPV6_ROUTER_DAD_TICK_BOUNDARY jitter=%d before=%u after=%u matched=%u\n",
+                    jitter, before_full_interval, after_full_interval, matched);
+        std::fflush(stdout);
+    }
+    assert(rounded_holds == 2);
+
+    unsigned delayed = 0, stable_removed = 0, plain_removed = 0, inherited = 0;
+    unsigned cleaned_prefixes = 0, protected_routes = 0;
+    for (unsigned flags : {0x40u, 0xc0u}) {
+        prepare(reset);
+        assert(!ip6::configuration_secret(1, network(99)));
+        auto data = advertisement(0);
+        prefix(data, flags, 100, 60);
+        send(data);
+        assert(prefix_address() && (prefix_address()->flags & 0x800));
+        auto original = prefix_address()->address;
+        auto owner = ip6::address_owner(1, original);
+        ipv6_poll();
+        assert(dad_probes(original) == 1);
+        ticks = 50;
+        conflict(original);
+        ipv6_poll();
+        ipv6_poll();
+        assert(!find(original) && prefix_address());
+        auto replacement = prefix_address()->address;
+        assert(!(replacement == original) && ip6::address_owner(1, replacement) != owner);
+        unsigned early = dad_probes(replacement);
+        ticks = 149;
+        ipv6_poll();
+        unsigned before_minimum = dad_probes(replacement);
+        ticks = 251;
+        ipv6_poll();
+        unsigned at_maximum = dad_probes(replacement);
+        bool matched = !early && !before_minimum && at_maximum == 1;
+        delayed += matched;
+        std::printf("IPV6_ROUTER_STABLE_DELAY flags=%x early=%u before_minimum=%u "
+                    "at_maximum=%u matched=%u\n",
+                    flags, early, before_minimum, at_maximum, matched);
+        std::fflush(stdout);
+
+        prepare(reset);
+        assert(!ip6::configuration_secret(1, network(99)));
+        data = advertisement(0);
+        prefix(data, flags, 100, 60);
+        send(data);
+        std::vector<ip6::Address> attempted;
+        for (unsigned trial = 0; trial < 4; trial++) {
+            assert(prefix_address() && (prefix_address()->flags & 0x840) == 0x840);
+            auto address = prefix_address()->address;
+            assert(std::find(attempted.begin(), attempted.end(), address) == attempted.end());
+            attempted.push_back(address);
+            conflict(address);
+            ipv6_poll();
+        }
+        bool removed = !prefix_address();
+        stable_removed += removed;
+        cleaned_prefixes += !learned();
+        std::printf("IPV6_ROUTER_STABLE_LIMIT flags=%x attempts=%zu failed_visible=%u "
+                    "prefix_route=%u matched=%u\n",
+                    flags, attempted.size(), !removed, learned(), removed);
+        std::fflush(stdout);
+
+        prepare(reset);
+        assert(!ip6::configuration_secret(1, network(99)));
+        assert(!ip6::configuration_write(1, ip6::ConfigurationKey::dad_transmits, 3));
+        data = advertisement(0);
+        prefix(data, flags, 100, 60);
+        send(data);
+        original = prefix_address()->address;
+        ipv6_poll();
+        ticks = 100;
+        ipv6_poll();
+        ticks = 200;
+        ipv6_poll();
+        assert(dad_probes(original) == 3 && (prefix_address()->flags & 0x40));
+        ticks = 250;
+        conflict(original);
+        ipv6_poll();
+        assert(!find(original) && prefix_address());
+        auto cache = ipv6_address_cache(*prefix_address());
+        matched = cache.preferred == 60 && cache.valid == 100 && cache.created == 250 &&
+                  cache.updated == 250;
+        inherited += matched;
+        for (const auto& route : routes())
+            if (route.learned && route.prefix == 64)
+                assert(route.expires == 10000);
+        std::printf("IPV6_ROUTER_STABLE_LIFETIMES flags=%x preferred=%u valid=%u created=%u "
+                    "updated=%u matched=%u\n",
+                    flags, cache.preferred, cache.valid, cache.created, cache.updated, matched);
+        std::fflush(stdout);
+
+        prepare(reset);
+        data = advertisement(0);
+        prefix(data, flags, 100, 60);
+        send(data);
+        assert(prefix_address() && !(prefix_address()->flags & 0x880));
+        original = prefix_address()->address;
+        conflict(original);
+        ipv6_poll();
+        removed = !find(original);
+        plain_removed += removed;
+        cleaned_prefixes += !learned();
+        std::printf("IPV6_ROUTER_PLAIN_CONFLICT flags=%x failed_visible=%u prefix_route=%u "
+                    "matched=%u\n",
+                    flags, !removed, learned(), removed);
+        std::fflush(stdout);
+    }
+
+    for (bool stale : {false, true}) {
+        prepare(reset);
+        assert(!ip6::configuration_secret(1, network(99)));
+        auto data = advertisement(0);
+        prefix(data, 0xc0, 100, 60);
+        prefix(data, 0x80, 100, 60, 2);
+        send(data);
+        auto initial = routes();
+        auto advertised = std::find_if(initial.begin(), initial.end(), [](const auto& route) {
+            return route.learned && route.destination == network();
+        });
+        auto unrelated = std::find_if(initial.begin(), initial.end(), [](const auto& route) {
+            return route.learned && route.destination == network(2);
+        });
+        assert(advertised != initial.end() && unrelated != initial.end());
+        uint64_t unrelated_owner = unrelated->owner;
+        if (stale)
+            assert(!ipv6_route_control(*advertised, true, false));
+        Ipv6Route manual{network(), {}, 1, stale ? 256u : 10u, 64, 3};
+        assert(!ipv6_route_control(manual, false, true));
+        auto with_manual = routes();
+        auto configured =
+            std::find_if(with_manual.begin(), with_manual.end(), [&](const auto& route) {
+                return !route.learned && route.destination == network() &&
+                       route.metric == manual.metric;
+            });
+        assert(configured != with_manual.end());
+        uint64_t manual_owner = configured->owner;
+        for (unsigned trial = 0; trial < 4; trial++) {
+            assert(prefix_address());
+            auto address = prefix_address()->address;
+            conflict(address);
+            ipv6_poll();
+        }
+        bool manual_present = false, unrelated_present = false;
+        for (const auto& route : routes()) {
+            manual_present |= route.owner == manual_owner && !route.learned &&
+                              route.destination == network() && route.metric == manual.metric &&
+                              route.protocol == 3 && !route.expires;
+            unrelated_present |= route.owner == unrelated_owner && route.learned &&
+                                 route.destination == network(2) && route.expires == 10000;
+        }
+        bool matched = !prefix_address() && manual_present && unrelated_present;
+        protected_routes += matched;
+        std::printf("IPV6_ROUTER_EXHAUSTED_OWNER stale=%u manual=%u unrelated=%u matched=%u\n",
+                    stale, manual_present, unrelated_present, matched);
+        std::fflush(stdout);
+    }
+
+    for (unsigned kind : {0u, 1u, 2u}) {
+        prepare(reset);
+        assert(!ip6::configuration_secret(1, network(99)));
+        auto data = advertisement(0);
+        prefix(data, 0xc0, 100, 60);
+        send(data);
+        auto initial = routes();
+        auto advertised = std::find_if(initial.begin(), initial.end(), [](const auto& route) {
+            return route.learned && route.destination == network();
+        });
+        assert(advertised != initial.end());
+        uint64_t route_owner = advertised->owner;
+        auto configured = network();
+        configured.bytes[15] = 0x77;
+        assert(!(configured == prefix_address()->address));
+        uint16_t flags = kind == 1 ? 0x202 : 2;
+        Ipv6AddressLifetimes lifetime{kind == 2 ? 60u : UINT32_MAX, kind == 2 ? 100u : UINT32_MAX};
+        assert(!ipv6_address_add({configured, 1, flags, 64}, lifetime));
+        uint64_t configured_owner = ip6::address_owner(1, configured);
+        for (unsigned trial = 0; trial < 4; trial++) {
+            const Ipv6Address* candidate = nullptr;
+            for (unsigned n = 0; auto entry = ipv6_address(n); n++)
+                if (entry->index == 1 && (entry->flags & 0x800) &&
+                    entry->address.matches(network(), 64))
+                    candidate = entry;
+            assert(candidate);
+            auto address = candidate->address;
+            conflict(address);
+            ipv6_poll();
+        }
+        auto current = find(configured);
+        bool matched = current && ip6::address_owner(1, configured) == configured_owner &&
+                       ipv6_address_cache(*current).valid == lifetime.valid &&
+                       ip6::learned_route_present(route_owner);
+        protected_routes += matched;
+        std::printf("IPV6_ROUTER_SHARED_PREFIX kind=%u retained=%u\n", kind, matched);
+        std::fflush(stdout);
+    }
+
+    prepare(reset);
+    auto carrier_data = advertisement(0);
+    prefix(carrier_data, 0x40, 100, 60);
+    send(carrier_data);
+    auto first = prefix_address()->address;
+    ipv6_poll();
+    assert(dad_probes(first) == 1);
+    ticks = 50;
+    ipv6_test_carrier(0, false);
+    ipv6_poll();
+    ticks = 60;
+    ipv6_test_carrier(0, true);
+    ipv6_poll();
+    bool initial_restart = dad_probes(first) == 2;
+
+    prepare(reset);
+    assert(!ip6::configuration_secret(1, network(99)));
+    carrier_data = advertisement(0);
+    prefix(carrier_data, 0x40, 100, 60);
+    send(carrier_data);
+    first = prefix_address()->address;
+    ipv6_poll();
+    ticks = 10;
+    conflict(first);
+    ipv6_poll();
+    ipv6_poll();
+    assert(prefix_address() && !find(first));
+    auto retried = prefix_address()->address;
+    ticks = 20;
+    ipv6_test_carrier(0, false);
+    ipv6_poll();
+    ticks = 30;
+    ipv6_test_carrier(0, true);
+    ipv6_poll();
+    ticks = 109;
+    ipv6_poll();
+    bool stable_hold = !dad_probes(retried);
+    ticks = 211;
+    ipv6_poll();
+    stable_hold &= dad_probes(retried) == 1;
+    ticks = 220;
+    ipv6_test_carrier(0, false);
+    ipv6_poll();
+    ticks = 230;
+    ipv6_test_carrier(0, true);
+    ipv6_poll();
+    bool retry_restart = dad_probes(retried) == 2;
+    std::printf("IPV6_ROUTER_DAD_CARRIER initial_restart=%u stable_hold=%u retry_restart=%u\n",
+                initial_restart, stable_hold, retry_restart);
+    std::fflush(stdout);
+
+    // A failed configured permanent object remains visible; exhausting an
+    // automatic address must not delete that independent userspace object.
+    prepare(reset);
+    assert(!ipv6_address_add({generated(), 1, 0x80, 64}));
+    auto owner = ip6::address_owner(1, generated());
+    auto data = advertisement(0);
+    prefix(data, 0xc0, 100, 60);
+    send(data);
+    conflict(generated());
+    ipv6_poll();
+    auto current = find(generated());
+    bool permanent =
+        current && (current->flags & 0x88) == 0x88 && ip6::address_owner(1, generated()) == owner;
+    std::printf("IPV6_ROUTER_PREFIX_CLEANUP cleaned=%u protected=%u expected=4,5\n",
+                cleaned_prefixes, protected_routes);
+    std::fflush(stdout);
+    assert(cleaned_prefixes == 4 && protected_routes == 5);
+    std::printf("IPV6_ROUTER_CONFLICT_SUMMARY delayed=%u stable_removed=%u plain_removed=%u "
+                "configured_permanent=%u inherited=%u carrier=%u\n",
+                delayed, stable_removed, plain_removed, permanent, inherited,
+                initial_restart && stable_hold && retry_restart);
+    std::fflush(stdout);
+    assert(delayed == 2 && stable_removed == 2 && plain_removed == 2 && permanent &&
+           inherited == 2 && initial_restart && stable_hold && retry_restart);
+}
+
 void coalesced_withdrawal(void (*reset)()) {
     prepare(reset);
     auto data = advertisement(0);
@@ -700,6 +1033,7 @@ void ipv6_router_tests(void (*reset)()) {
     flags_and_dad(reset);
     renewed_ownership(reset);
     initial_zero(reset);
+    stable_conflicts(reset);
     coalesced_withdrawal(reset);
     retransmission(reset);
     lifetimes(reset);

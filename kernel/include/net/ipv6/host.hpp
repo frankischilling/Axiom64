@@ -30,6 +30,9 @@ void address_poll();
 
 void address_duplicate(unsigned index, const Address&, const uint8_t* nonce = nullptr);
 
+// A stable retry defers DAD only for the newly generated address owner.
+void address_retry_dad(unsigned index, const Address&, uint64_t owner);
+
 void address_reset();
 
 uint64_t address_deadline(const Ipv6Address&);
@@ -56,6 +59,9 @@ int learned_route(const Ipv6Route&, uint64_t& owner, bool remove = false);
 bool learned_route_present(uint64_t owner);
 
 uint64_t address_owner(unsigned index, const Address&);
+
+// Copy stored lifetimes only while the expected object owns this address.
+Ipv6AddressLifetimes address_lifetimes(unsigned index, const Address&, uint64_t owner);
 
 bool address_manages_prefix(unsigned index, const Address&);
 

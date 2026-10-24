@@ -13,3 +13,5 @@ vendor/musl/patches/*.patch -text -whitespace
 vendor/gnu-utmp-reader/* -text -whitespace
 scripts/tests/fixtures/normal-init-default-ipv6-lane0.pcap binary
 scripts/tests/fixtures/normal-init-default-ipv6-lane1.pcap binary
+scripts/tests/fixtures/ipv6-dad-*.log -text -whitespace
+scripts/tests/fixtures/ipv6-dad-*.pcap binary

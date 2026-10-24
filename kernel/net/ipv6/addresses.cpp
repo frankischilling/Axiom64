@@ -15,7 +15,7 @@ struct AddressSlot {
     uint64_t created = 0, updated = 0;
     uint64_t due = 0;
     uint64_t owner = 0;
-    bool sent = false;
+    bool sent = false, regenerated = false;
     unsigned probes = 0, required = 1;
     uint8_t nonce[6]{};
     bool nonce_valid = false;
@@ -319,6 +319,27 @@ uint64_t address_owner(unsigned index, const Address& address) {
     return 0;
 }
 
+Ipv6AddressLifetimes address_lifetimes(unsigned index, const Address& address, uint64_t owner) {
+    for (unsigned n = 0; n < address_count; n++) {
+        const auto& entry = addresses[n];
+        if (owner && entry.owner == owner && entry.value.index == index &&
+            entry.value.address == address)
+            return entry.lifetime;
+    }
+    return {0, 0};
+}
+
+void address_retry_dad(unsigned index, const Address& address, uint64_t owner) {
+    for (unsigned n = 0; n < address_count; n++) {
+        auto& entry = addresses[n];
+        if (owner && entry.owner == owner && entry.value.index == index &&
+            entry.value.address == address && (entry.value.flags & 0x40) && !entry.sent) {
+            entry.regenerated = true;
+            return;
+        }
+    }
+}
+
 bool address_manages_prefix(unsigned index, const Address& address) {
     for (unsigned n = 0; n < address_count; n++)
         if (addresses[n].value.index == index && addresses[n].value.address == address)
@@ -364,9 +385,19 @@ void address_poll() {
             entry.sent = false;
             entry.probes = 0;
             entry.nonce_valid = false;
+            if (!entry.regenerated)
+                entry.due = 0;
             continue;
         }
-        if (entry.sent && ticks < entry.due)
+        if (entry.regenerated && !entry.due) {
+            uint32_t random;
+            if (random_read(&random, sizeof(random)))
+                continue;
+            // Round past the sampled tick so a conflict just before the
+            // next tick still waits a complete second, plus bounded jitter.
+            entry.due = ticks + 101 + random % 101;
+        }
+        if (ticks < entry.due)
             continue;
         if (!entry.required || (entry.sent && entry.probes >= entry.required)) {
             entry.value.flags &= ~uint16_t(0x40);
@@ -384,6 +415,7 @@ void address_poll() {
         }
         if (!dad_probe(entry.value, enhanced ? entry.nonce : nullptr) &&
             (entry.value.flags & 0x40)) {
+            entry.regenerated = false;
             entry.sent = true;
             entry.probes++;
             entry.due = ticks + link_retransmit(entry.value.index);

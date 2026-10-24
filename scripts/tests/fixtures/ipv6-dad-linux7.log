@@ -1,0 +1,127 @@
+CONTROL_REFERENCE_KERNEL=7.0.0-1017-azure
+CONTROL_REFERENCE_CLIENT_SHA256=19d40251a1d50803e3c52d98167b54ca3e2a09eb97c394561b17089cebf3aafd /bin/client
+IPV6_DAD_CONTROL lane=0 phase=0 kind=0 scenario=0 trial=0 observed_ns=3332373455
+IPV6_DAD_CONTROL lane=1 phase=0 kind=0 scenario=0 trial=0 observed_ns=3342494614
+IPV6_DAD_LINK lane=1 stage=0 address=fe80::d9dd:6604:3bb9:60a1 flags=880 preferred=4294967295 valid=4294967295
+IPV6_DAD_LINK lane=0 stage=0 address=fe80::bfe7:7faa:d8eb:e14b flags=880 preferred=4294967295 valid=4294967295
+IPV6_DAD_CONTROL lane=0 phase=1 kind=1 scenario=1 trial=0 observed_ns=5592191167
+IPV6_DAD_CONTROL lane=1 phase=1 kind=1 scenario=1 trial=0 observed_ns=5600842987
+IPV6_DAD_ADDRESS lane=0 scenario=1 trial=0 address=2001:db8:40:1:9633:ede2:1586:9c21 flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=0 phase=2 kind=2 scenario=1 trial=0 observed_ns=5603705517
+IPV6_DAD_ADDRESS lane=1 scenario=1 trial=0 address=2001:db8:41:1:27c0:ce78:8175:7cb2 flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=1 phase=2 kind=2 scenario=1 trial=0 observed_ns=5605713337
+IPV6_DAD_ADDRESS lane=1 scenario=1 trial=1 address=2001:db8:41:1:6107:6b93:886b:7a0 flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=1 phase=3 kind=3 scenario=1 trial=1 observed_ns=6056616247
+IPV6_DAD_ADDRESS lane=0 scenario=1 trial=1 address=2001:db8:40:1:d1ed:7051:bf3:6481 flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=0 phase=3 kind=3 scenario=1 trial=1 observed_ns=6414843637
+IPV6_DAD_UDP lane=0 scenario=1 bytes=16
+IPV6_DAD_UDP lane=1 scenario=1 bytes=16
+IPV6_DAD_ROUTE lane=0 scenario=1 destination=2001:db8:40:1::/64 gateway=:: metric=256 protocol=2 expires=5653
+IPV6_DAD_FINISH lane=0 scenario=1 count=1 flags=900 preferred=28 valid=58 prefix_routes=1 expires=5653 observed_ns=9063202487
+IPV6_DAD_CONTROL lane=0 phase=4 kind=4 scenario=1 trial=0 observed_ns=9063606047
+IPV6_DAD_ROUTE lane=1 scenario=1 destination=2001:db8:41:1::/64 gateway=:: metric=256 protocol=2 expires=5653
+IPV6_DAD_FINISH lane=1 scenario=1 count=1 flags=900 preferred=27 valid=57 prefix_routes=1 expires=5653 observed_ns=9064949207
+IPV6_DAD_CONTROL lane=1 phase=4 kind=4 scenario=1 trial=0 observed_ns=9065504377
+IPV6_DAD_CONTROL lane=0 phase=5 kind=1 scenario=2 trial=0 observed_ns=9066703437
+IPV6_DAD_CONTROL lane=1 phase=5 kind=1 scenario=2 trial=0 observed_ns=9068343307
+IPV6_DAD_ADDRESS lane=0 scenario=2 trial=0 address=2001:db8:40:2:df4e:8dd2:8fe8:bc2d flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=0 phase=6 kind=2 scenario=2 trial=0 observed_ns=9070833647
+IPV6_DAD_ADDRESS lane=1 scenario=2 trial=0 address=2001:db8:41:2:9dc0:324:1d10:bb31 flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=1 phase=6 kind=2 scenario=2 trial=0 observed_ns=9072687217
+IPV6_DAD_ADDRESS lane=0 scenario=2 trial=1 address=2001:db8:40:2:5752:8c8a:857c:bef flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=0 phase=7 kind=2 scenario=2 trial=1 observed_ns=9074841897
+IPV6_DAD_ADDRESS lane=1 scenario=2 trial=1 address=2001:db8:41:2:f7a8:3c0f:d93b:8457 flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=1 phase=7 kind=2 scenario=2 trial=1 observed_ns=10069124907
+IPV6_DAD_ADDRESS lane=0 scenario=2 trial=2 address=2001:db8:40:2:573:ad49:4ac7:edc5 flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=0 phase=8 kind=2 scenario=2 trial=2 observed_ns=10156951707
+IPV6_DAD_ADDRESS lane=1 scenario=2 trial=2 address=2001:db8:41:2:aa4e:f882:add6:5d3c flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=1 phase=8 kind=2 scenario=2 trial=2 observed_ns=12049252627
+IPV6_DAD_ADDRESS lane=0 scenario=2 trial=3 address=2001:db8:40:2:2636:5db7:fb71:2167 flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=0 phase=9 kind=2 scenario=2 trial=3 observed_ns=12051725737
+IPV6_DAD_ADDRESS lane=1 scenario=2 trial=3 address=2001:db8:41:2:9604:59bb:9ecb:1411 flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=1 phase=9 kind=2 scenario=2 trial=3 observed_ns=13730703417
+IPV6_DAD_FINISH lane=0 scenario=2 count=0 flags=0 preferred=0 valid=0 prefix_routes=0 expires=0 observed_ns=18748003987
+IPV6_DAD_CONTROL lane=0 phase=10 kind=4 scenario=2 trial=0 observed_ns=18748834227
+IPV6_DAD_FINISH lane=1 scenario=2 count=0 flags=0 preferred=0 valid=0 prefix_routes=0 expires=0 observed_ns=18750457457
+IPV6_DAD_CONTROL lane=1 phase=10 kind=4 scenario=2 trial=0 observed_ns=18750834727
+IPV6_DAD_CONTROL lane=0 phase=11 kind=1 scenario=3 trial=0 observed_ns=18751994927
+IPV6_DAD_CONTROL lane=1 phase=11 kind=1 scenario=3 trial=0 observed_ns=18753873127
+IPV6_DAD_ADDRESS lane=0 scenario=3 trial=0 address=2001:db8:40:3:ef0b:fc89:a70e:118e flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=0 phase=12 kind=2 scenario=3 trial=0 observed_ns=18756515847
+IPV6_DAD_ADDRESS lane=1 scenario=3 trial=0 address=2001:db8:41:3:3585:1d:ffdf:1940 flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=1 phase=12 kind=2 scenario=3 trial=0 observed_ns=18758596527
+IPV6_DAD_ADDRESS lane=0 scenario=3 trial=1 address=2001:db8:40:3:7bde:ccf4:2e4d:43b4 flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=0 phase=13 kind=2 scenario=3 trial=1 observed_ns=19128343537
+IPV6_DAD_ADDRESS lane=1 scenario=3 trial=1 address=2001:db8:41:3:5c:1c21:17ff:16dd flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=1 phase=13 kind=2 scenario=3 trial=1 observed_ns=19670927487
+IPV6_DAD_ADDRESS lane=1 scenario=3 trial=2 address=2001:db8:41:3:ecd3:b6e9:a386:7f4d flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=1 phase=14 kind=2 scenario=3 trial=2 observed_ns=20857805567
+IPV6_DAD_ADDRESS lane=0 scenario=3 trial=2 address=2001:db8:40:3:baf7:e777:40fb:3606 flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=0 phase=14 kind=2 scenario=3 trial=2 observed_ns=21074715627
+IPV6_DAD_ADDRESS lane=0 scenario=3 trial=3 address=2001:db8:40:3:cc36:5c3d:9863:31d8 flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=0 phase=15 kind=2 scenario=3 trial=3 observed_ns=22174390117
+IPV6_DAD_ADDRESS lane=1 scenario=3 trial=3 address=2001:db8:41:3:d6e2:17b6:3a9f:e09 flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=1 phase=15 kind=2 scenario=3 trial=3 observed_ns=22876238687
+IPV6_DAD_FINISH lane=0 scenario=3 count=0 flags=0 preferred=0 valid=0 prefix_routes=0 expires=0 observed_ns=27013002887
+IPV6_DAD_CONTROL lane=0 phase=16 kind=4 scenario=3 trial=0 observed_ns=27014923067
+IPV6_DAD_FINISH lane=1 scenario=3 count=0 flags=0 preferred=0 valid=0 prefix_routes=0 expires=0 observed_ns=27020489567
+IPV6_DAD_CONTROL lane=1 phase=16 kind=4 scenario=3 trial=0 observed_ns=27021337357
+IPV6_DAD_CONTROL lane=0 phase=17 kind=6 scenario=4 trial=0 observed_ns=27023020227
+IPV6_DAD_CONTROL lane=1 phase=17 kind=6 scenario=4 trial=0 observed_ns=27024959297
+IPV6_DAD_LINK lane=0 stage=4 address=fe80::5054:ff:fe12:3410 flags=80 preferred=4294967295 valid=4294967295
+IPV6_DAD_LINK lane=0 stage=4 address=fe80::bfe7:7faa:d8eb:e14b flags=880 preferred=4294967295 valid=4294967295
+IPV6_DAD_LINK lane=1 stage=4 address=fe80::5054:ff:fe12:3411 flags=80 preferred=4294967295 valid=4294967295
+IPV6_DAD_LINK lane=1 stage=4 address=fe80::d9dd:6604:3bb9:60a1 flags=880 preferred=4294967295 valid=4294967295
+IPV6_DAD_CONTROL lane=0 phase=18 kind=1 scenario=4 trial=0 observed_ns=28763799057
+IPV6_DAD_CONTROL lane=1 phase=18 kind=1 scenario=4 trial=0 observed_ns=28768866227
+IPV6_DAD_ADDRESS lane=0 scenario=4 trial=0 address=2001:db8:40:4:5054:ff:fe12:3410 flags=140 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=0 phase=19 kind=2 scenario=4 trial=0 observed_ns=28778948627
+IPV6_DAD_ADDRESS lane=1 scenario=4 trial=0 address=2001:db8:41:4:5054:ff:fe12:3411 flags=140 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=1 phase=19 kind=2 scenario=4 trial=0 observed_ns=28787418647
+IPV6_DAD_FINISH lane=0 scenario=4 count=0 flags=0 preferred=0 valid=0 prefix_routes=0 expires=0 observed_ns=32773914177
+IPV6_DAD_CONTROL lane=0 phase=20 kind=4 scenario=4 trial=0 observed_ns=32775948677
+IPV6_DAD_FINISH lane=1 scenario=4 count=0 flags=0 preferred=0 valid=0 prefix_routes=0 expires=0 observed_ns=32779943247
+IPV6_DAD_CONTROL lane=1 phase=20 kind=4 scenario=4 trial=0 observed_ns=32781658847
+IPV6_DAD_CONTROL lane=0 phase=21 kind=6 scenario=5 trial=0 observed_ns=32783644607
+IPV6_DAD_CONTROL lane=1 phase=21 kind=6 scenario=5 trial=0 observed_ns=32785043127
+IPV6_DAD_LINK lane=0 stage=5 address=fe80::5054:ff:fe12:3410 flags=80 preferred=4294967295 valid=4294967295
+IPV6_DAD_LINK lane=0 stage=5 address=fe80::bfe7:7faa:d8eb:e14b flags=880 preferred=4294967295 valid=4294967295
+IPV6_DAD_LINK lane=1 stage=5 address=fe80::5054:ff:fe12:3411 flags=80 preferred=4294967295 valid=4294967295
+IPV6_DAD_LINK lane=1 stage=5 address=fe80::d9dd:6604:3bb9:60a1 flags=880 preferred=4294967295 valid=4294967295
+IPV6_DAD_CONTROL lane=0 phase=22 kind=1 scenario=5 trial=0 observed_ns=32797789707
+IPV6_DAD_CONTROL lane=1 phase=22 kind=1 scenario=5 trial=0 observed_ns=32799606697
+IPV6_DAD_ADDRESS lane=0 scenario=5 trial=0 address=2001:db8:40:5::abcd flags=c0 preferred=4294967295 valid=4294967295
+IPV6_DAD_CONTROL lane=0 phase=23 kind=2 scenario=5 trial=0 observed_ns=32810032007
+IPV6_DAD_ADDRESS lane=1 scenario=5 trial=0 address=2001:db8:41:5::abcd flags=c0 preferred=4294967295 valid=4294967295
+IPV6_DAD_CONTROL lane=1 phase=23 kind=2 scenario=5 trial=0 observed_ns=32814306707
+IPV6_DAD_ROUTE lane=0 scenario=5 destination=2001:db8:40:5::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_DAD_FINISH lane=0 scenario=5 count=1 flags=c8 preferred=4294967295 valid=4294967295 prefix_routes=1 expires=0 observed_ns=36373425027
+IPV6_DAD_CONTROL lane=0 phase=24 kind=4 scenario=5 trial=0 observed_ns=36374260347
+IPV6_DAD_ROUTE lane=1 scenario=5 destination=2001:db8:41:5::/64 gateway=:: metric=256 protocol=2 expires=0
+IPV6_DAD_FINISH lane=1 scenario=5 count=1 flags=c8 preferred=4294967295 valid=4294967295 prefix_routes=1 expires=0 observed_ns=36377982287
+IPV6_DAD_CONTROL lane=1 phase=24 kind=4 scenario=5 trial=0 observed_ns=36378708117
+IPV6_DAD_CONTROL lane=0 phase=25 kind=5 scenario=5 trial=0 observed_ns=36391563007
+IPV6_DAD_CONTROL lane=1 phase=25 kind=5 scenario=5 trial=0 observed_ns=36393212907
+IPV6_DAD_CONTROL lane=0 phase=26 kind=1 scenario=6 trial=0 observed_ns=36394893957
+IPV6_DAD_CONTROL lane=1 phase=26 kind=1 scenario=6 trial=0 observed_ns=36397840487
+IPV6_DAD_ADDRESS lane=0 scenario=6 trial=0 address=2001:db8:40:6:9b48:7f08:55da:7b53 flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=0 phase=27 kind=2 scenario=6 trial=0 observed_ns=36403850267
+IPV6_DAD_ADDRESS lane=1 scenario=6 trial=0 address=2001:db8:41:6:294b:73b8:99e8:509 flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=1 phase=27 kind=2 scenario=6 trial=0 observed_ns=36406839247
+IPV6_DAD_ADDRESS lane=1 scenario=6 trial=1 address=2001:db8:41:6:f908:81fe:7e96:dce9 flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=1 phase=28 kind=3 scenario=6 trial=1 observed_ns=39008856817
+IPV6_DAD_ADDRESS lane=0 scenario=6 trial=1 address=2001:db8:40:6:c07f:7a83:e5a2:70a3 flags=940 preferred=30 valid=60
+IPV6_DAD_CONTROL lane=0 phase=28 kind=3 scenario=6 trial=1 observed_ns=39381991337
+IPV6_DAD_UDP lane=0 scenario=6 bytes=16
+IPV6_DAD_UDP lane=1 scenario=6 bytes=16
+IPV6_DAD_ROUTE lane=0 scenario=6 destination=2001:db8:40:6::/64 gateway=:: metric=256 protocol=2 expires=5226
+IPV6_DAD_FINISH lane=0 scenario=6 count=1 flags=900 preferred=26 valid=56 prefix_routes=1 expires=5226 observed_ns=44132581267
+IPV6_DAD_CONTROL lane=0 phase=29 kind=4 scenario=6 trial=0 observed_ns=44133684407
+IPV6_DAD_ROUTE lane=1 scenario=6 destination=2001:db8:41:6::/64 gateway=:: metric=256 protocol=2 expires=5226
+IPV6_DAD_FINISH lane=1 scenario=6 count=1 flags=900 preferred=25 valid=55 prefix_routes=1 expires=5226 observed_ns=44138543967
+IPV6_DAD_CONTROL lane=1 phase=29 kind=4 scenario=6 trial=0 observed_ns=44139531227
+IPV6_DAD_CONTROL lane=0 phase=30 kind=9 scenario=0 trial=0 observed_ns=44140840087
+IPV6_DAD_CONTROL lane=1 phase=30 kind=9 scenario=0 trial=0 observed_ns=44142044887
+IPV6_DAD_PASS adapters=2 scenarios_each=6 tentative_each=14 conflicts_each=12 global_probes_each=18 link_probes_each=2 exhausted_observation_seconds=3
+CONTROL_REFERENCE_STATUS=0
+[   44.207199] reboot: Power down

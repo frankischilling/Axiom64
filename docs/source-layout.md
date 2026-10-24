@@ -18,7 +18,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/ipc/` | Sockets, event counters, readiness, shared memory |
 | `kernel/net/` | Ethernet interfaces, interface/route ioctls, and Linux raw packet sockets |
 | `kernel/net/ipv4/` | IPv4 routes/output, bounded reassembly, shared path-MTU limits and fragment emission, ARP cache/timers, ICMP, and Internet socket descriptions |
-| `kernel/net/ipv6/` | IPv6 wire and quoted-error validation, bounded reassembly, source-fragment encoding, owned output queues, route-owned path-MTU limits, scoped address/route ownership, DAD, neighbor state, copied extended-error queues and raw/UDP socket ownership; `router.cpp` owns solicitation schedules, learned routers/prefixes, per-link advertised parameters and SLAAC lifetimes, including first-PIO refresh of matching configured addresses; `output.cpp` snapshots inherited hop limits after route selection; nested `socket/` owns Linux controls and error-receive copying |
+| `kernel/net/ipv6/` | IPv6 wire and quoted-error validation, bounded reassembly, source-fragment encoding, owned output queues, route-owned path-MTU limits, scoped address/route ownership, DAD, neighbor state, copied extended-error queues and raw/UDP socket ownership; `router.cpp` owns solicitation schedules, learned routers/prefixes, per-link advertised parameters and SLAAC lifetimes, including first-PIO refresh, stable conflict regeneration and owned exhausted-prefix cleanup; `output.cpp` snapshots inherited hop limits after route selection; nested `socket/` owns Linux controls and error-receive copying |
 | `kernel/net/udp/` | UDP lengths, pseudo-header checksums, payload delivery, and transmission |
 | `kernel/net/tcp/` | TCP wire/state/sender policy, socket ownership, timers, ISNs, TIME_WAIT and quoted ICMP errors |
 | `kernel/net/netlink/` | Link/address inventories, IPv6 link-generation controls, route/address message validation, owned replies, and control socket lifecycle |
@@ -46,6 +46,8 @@ Build and port helpers remain under `scripts/`; pinned dependency inputs are in 
 Installed-startup supervision uses `scripts/normal_manager_test.py`. Its `normal_ipv6_peer.py` helper owns strict validation and bounded retention of default DAD/router-solicitation frames; the existing manager and DNS peers keep their IPv4 checks.
 
 The IPv4 resolver fixture stays in `scripts/dns_test.py`. It owns isolated initramfs/ISO inputs and per-execution source, program and packet retention; `dns_peer.py` keeps the strict protocol checks. Its boot script selects the IPv4-only test configuration before either resolver client starts.
+
+Controlled DAD comparisons use `userspace/tests/net/ipv6_dad.c` and its bounded netlink inventory header. `ipv6_dad_inventory_model.c` exercises the actual candidate selector. The matching `scripts/ipv6_dad_test.py`, peer, independent capture reader, native policy and damaged-evidence generator keep execution, observation and rejection checks separate. The shared native `Capture` in `tcp_fault_native.py` configures its timestamp/buffer before reception and stops new input before draining queued records; packet and clock counts still have to match exactly.
 
 The corresponding-source bundle walks kernel and userspace folders recursively, so it includes the same sources and headers used by the build. [Testing](testing.md) describes the existing guest and host suites; [architecture](architecture.md) describes interfaces and current limits.
 

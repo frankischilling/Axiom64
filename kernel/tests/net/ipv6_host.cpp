@@ -281,6 +281,9 @@ static void dad() {
     assert(!ipv6_owned(1, local));
     ticks = 100;
     net_poll();
+    assert(!ipv6_owned(1, local));
+    ticks = 101;
+    net_poll();
     assert(ipv6_owned(1, local));
     assert(change(1, local, true, true, 63) == -99 && ipv6_owned(1, local));
     assert(change(1, local) == -17 && change(1, local, true, true) == 0);
@@ -383,6 +386,9 @@ static void routes_and_deadlines() {
     net_poll();
     assert(!ipv6_owned(1, address(0, 2)));
     ticks = 600;
+    net_poll();
+    assert(!ipv6_owned(1, address(0, 2)));
+    ticks = 601;
     net_poll();
     assert(ipv6_owned(1, address(0, 2)));
 }
@@ -805,6 +811,9 @@ static void finite_address_dad() {
         ipv6_poll();
         assert(!ipv6_owned(lane + 1, local));
         ticks = 1100;
+        ipv6_poll();
+        assert(!ipv6_owned(lane + 1, local));
+        ticks = 1101;
         ipv6_poll();
         assert(ipv6_owned(lane + 1, local) && address_observation(lane + 1, local).flags == 0);
         ticks = 1250;
@@ -2566,6 +2575,9 @@ static void local_route_visibility() {
     net_poll();
     ticks = 100;
     net_poll();
+    assert(local_route_inventory(2).empty());
+    ticks = 101;
+    net_poll();
     assert(local_route_inventory(2).size() == 1);
     ticks = 200;
     assert(local_route_inventory(1).size() == 1);
@@ -3137,6 +3149,9 @@ static void automatic_link_configuration() {
         assert(emitted[lane].size() == 1 && emitted[lane].back().size() == 78);
         ticks += 100;
         ipv6_poll();
+        assert(!ipv6_owned(index, eui));
+        ticks++;
+        ipv6_poll();
         assert(ipv6_owned(index, eui));
         assert(!ip6::configuration_write(index, Key::generation_mode, 1));
         assert(ipv6_owned(index, eui));
@@ -3249,8 +3264,14 @@ static void automatic_link_configuration() {
     ipv6_poll();
     ticks = 100;
     ipv6_poll();
+    assert(emitted[0].size() == 1 && !ipv6_owned(1, eui));
+    ticks = 101;
+    ipv6_poll();
     assert(emitted[0].size() == 2 && !ipv6_owned(1, eui));
-    ticks = 200;
+    ticks = 201;
+    ipv6_poll();
+    assert(!ipv6_owned(1, eui));
+    ticks = 202;
     ipv6_poll();
     assert(ipv6_owned(1, eui));
     reset();

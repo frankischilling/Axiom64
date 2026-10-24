@@ -184,6 +184,8 @@ captures are independently checked; 594 changed evidence copies reject, includin
 checks native clock/loss rejection, and serializes twelve guest damage cases per
 action, including a 999.9-millisecond completion and firmware moved after BEGIN.
 `--archive build/ipv6-device-damaged.zip` retains and reopens an archive per action.
+A later DAD readiness change exposed restored completions below the existing one-second minimum in eleven guest profiles. The failed images and captures remain rejected. Rounding the kernel deadline past its sampled ten-millisecond tick passes all 36 changed guests with the same client binaries and original bounds. Together with the 18 unchanged native comparisons, independent readers check six images and 108 captures and reject all 594 serialized and reopened negative copies. The actual client now emits each queried control record with one checked write; its formatter model also rejects short and interrupted writes. The sanitizer model requires tentative state at the old tick boundary and readiness one tick later. Full current-source hosted qualification remains required.
+
 These tests cover ready owners; retrying and exhausted device owners remain open.
 
 

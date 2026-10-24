@@ -446,7 +446,7 @@ void address_poll() {
         n++;
         if (!(entry.value.flags & 0x40) || (entry.value.flags & 8))
             continue;
-        if (!usable(entry.value.index)) {
+        if (!configuration_dad_ready(entry.value.index)) {
             entry.sent = false;
             entry.probes = 0;
             entry.nonce_valid = false;
@@ -479,12 +479,16 @@ void address_poll() {
                 continue;
             entry.nonce_valid = true;
         }
-        if (!dad_probe(entry.value, enhanced ? entry.nonce : nullptr) &&
-            (entry.value.flags & 0x40)) {
+        int error = dad_probe(entry.value, enhanced ? entry.nonce : nullptr);
+        // Linux consumes scheduled DAD attempts while carrier is unavailable.
+        // Other output failures retain the existing admission retry behavior.
+        if ((!error || error == -100) && (entry.value.flags & 0x40)) {
             entry.regenerated = false;
             entry.sent = true;
             entry.probes++;
-            entry.due = ticks + link_retransmit(entry.value.index);
+            // A transmitted frame follows the sampled 10 ms tick. Round past
+            // that tick to retain a complete retransmit interval on the wire.
+            entry.due = ticks + link_retransmit(entry.value.index) + 1;
         }
     }
 }

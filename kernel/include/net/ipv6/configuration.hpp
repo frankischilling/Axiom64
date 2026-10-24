@@ -33,6 +33,10 @@ uint64_t configuration_generation(unsigned index);
 
 bool configuration_disabled(unsigned index);
 
+// DAD retains readiness across physical carrier loss after this IPv6 scope
+// first became operational. Administrative shutdown and disablement clear it.
+bool configuration_dad_ready(unsigned index);
+
 // New SLAAC owners and stable DAD retries share the per-interface address limit.
 // Manual addresses and initial link-local generation retain their own admission.
 bool configuration_autoconf_allowed(unsigned index);

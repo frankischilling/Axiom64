@@ -244,6 +244,9 @@ void flags_and_dad(void (*reset)()) {
         ipv6_poll();
         ticks = 100;
         ipv6_poll();
+        assert(!ipv6_owned(1, generated()));
+        ticks = 101;
+        ipv6_poll();
         assert(ipv6_owned(1, generated()));
         assert(ipv6_address_cache(*find(generated())).valid == 99);
         auto target = network();
@@ -318,6 +321,9 @@ void replacement(void (*reset)()) {
     send(data);
     ipv6_poll();
     ticks = 100;
+    ipv6_poll();
+    assert(!ipv6_owned(1, generated()));
+    ticks = 101;
     ipv6_poll();
     assert(ipv6_owned(1, generated()));
     auto owner = ip6::address_owner(1, generated());
@@ -636,6 +642,9 @@ void stable_linklocal_conflicts(void (*reset)()) {
             }
             ticks = 251 + jitter;
             ipv6_poll();
+            assert(!ipv6_owned(index, replacement));
+            ticks = 252 + jitter;
+            ipv6_poll();
             bool ready = replacements == 1 && ipv6_owned(index, replacement);
             if (mode_changed)
                 assert(ipv6_owned(index, plain));
@@ -710,6 +719,9 @@ void configured_stable_takeover(void (*reset)()) {
         assert(ipv6_owned(1, replacement) == nodad);
         ticks = 351;
         ipv6_poll();
+        assert(ipv6_owned(1, replacement) == nodad);
+        ticks = 352;
+        ipv6_poll();
         auto completed = find(replacement);
         assert(completed && ipv6_owned(1, replacement) && !ipv6_owned(1, original));
         unsigned completed_flags = completed->flags;
@@ -744,6 +756,78 @@ void configured_stable_takeover(void (*reset)()) {
         std::fflush(stdout);
         assert(matched && lifecycle);
     }
+}
+
+void carrier_dad_readiness(void (*reset)()) {
+    using Key = ip6::ConfigurationKey;
+    reset();
+    ipv6_test_carrier(0, false);
+    ip6::configuration_reset();
+    assert(!ip6::configuration_write(ip6::configuration_default, Key::generation_mode, 1));
+    assert(!ip6::configuration_write(ip6::configuration_default, Key::enhanced_dad, 0));
+    assert(!ip6::configuration_write(ip6::configuration_all, Key::enhanced_dad, 0));
+    assert(!ip6::configuration_write(ip6::configuration_all, Key::generation_mode, 1));
+    auto pending = network(77);
+    assert(!ipv6_address_add({pending, 1, 0x80, 64}));
+    ipv6_poll();
+    ticks = 500;
+    ipv6_poll();
+    assert(find(pending) && (find(pending)->flags & 0x40) && !dad_probes(pending));
+    ipv6_test_carrier(0, true);
+    ipv6_poll();
+    assert(dad_probes(pending) == 1);
+    ticks = 600;
+    ipv6_poll();
+    assert(find(pending) && (find(pending)->flags & 0x40));
+    ticks = 601;
+    ipv6_poll();
+    assert(find(pending) && !(find(pending)->flags & 0x40));
+
+    prepare(reset);
+    assert(!ip6::configuration_write(1, Key::disabled, 1));
+    ipv6_test_carrier(0, false);
+    assert(!ip6::configuration_write(1, Key::disabled, 0));
+    pending = network(78);
+    assert(!ipv6_address_add({pending, 1, 0x80, 64}));
+    ipv6_poll();
+    ticks = 500;
+    ipv6_poll();
+    assert(find(pending) && (find(pending)->flags & 0x40) && !dad_probes(pending));
+    ipv6_test_carrier(0, true);
+    ipv6_poll();
+    assert(dad_probes(pending) == 1);
+    ticks = 600;
+    ipv6_poll();
+    assert(find(pending) && (find(pending)->flags & 0x40));
+    ticks = 601;
+    ipv6_poll();
+    assert(find(pending) && !(find(pending)->flags & 0x40));
+
+    prepare(reset);
+    assert(!ip6::configuration_write(1, Key::dad_transmits, 3));
+    pending = network(79);
+    assert(!ipv6_address_add({pending, 1, 0x80, 64}));
+    ipv6_poll();
+    assert(dad_probes(pending) == 1);
+    ticks = 50;
+    ipv6_test_carrier(0, false);
+    ipv6_poll();
+    for (uint64_t at : {100u, 101u, 201u, 202u, 302u}) {
+        ticks = at;
+        ipv6_poll();
+        assert(find(pending) && (find(pending)->flags & 0x40) && dad_probes(pending) == 1);
+    }
+    ticks = 303;
+    ipv6_poll();
+    assert(find(pending) && !(find(pending)->flags & 0x40) && dad_probes(pending) == 1);
+    ticks = 350;
+    ipv6_test_carrier(0, true);
+    ipv6_poll();
+    assert(dad_probes(pending) == 1);
+    assert(!net_configure(1, false, 1500) && !find(pending));
+    assert(!net_configure(1, true, 1500) && !find(pending));
+    std::puts(
+        "IPV6_ROUTER_DAD_READINESS never_ready=1 disabled=1 carrier_budget=1 administrative=1");
 }
 
 void stable_conflicts(void (*reset)()) {
@@ -849,7 +933,13 @@ void stable_conflicts(void (*reset)()) {
         ipv6_poll();
         ticks = 100;
         ipv6_poll();
-        ticks = 200;
+        assert(dad_probes(original) == 1 && (prefix_address()->flags & 0x40));
+        ticks = 101;
+        ipv6_poll();
+        ticks = 201;
+        ipv6_poll();
+        assert(dad_probes(original) == 2 && (prefix_address()->flags & 0x40));
+        ticks = 202;
         ipv6_poll();
         assert(dad_probes(original) == 3 && (prefix_address()->flags & 0x40));
         ticks = 250;
@@ -983,10 +1073,26 @@ void stable_conflicts(void (*reset)()) {
     ticks = 50;
     ipv6_test_carrier(0, false);
     ipv6_poll();
-    ticks = 60;
+    ticks = 99;
+    ipv6_poll();
+    assert(find(first) && (find(first)->flags & 0x40));
+    ticks = 100;
+    ipv6_poll();
+    assert(find(first) && (find(first)->flags & 0x40));
+    ticks = 101;
+    ipv6_poll();
+    bool initial_completed_down =
+        find(first) && !(find(first)->flags & 0x40) && dad_probes(first) == 1;
+    std::printf("IPV6_ROUTER_DAD_PENDING completed_down=%u probes=%u\n", initial_completed_down,
+                dad_probes(first));
+    std::fflush(stdout);
+    assert(initial_completed_down);
+    std::puts("IPV6_ROUTER_DAD_INTERVAL before_ceiling=1 at_ceiling=1");
+    ticks = 160;
     ipv6_test_carrier(0, true);
     ipv6_poll();
-    bool initial_restart = dad_probes(first) == 2;
+    bool initial_retained = dad_probes(first) == 1 && find(first) && !(find(first)->flags & 0x40);
+    assert(initial_retained);
 
     prepare(reset);
     assert(!ip6::configuration_secret(1, network(99)));
@@ -1019,9 +1125,10 @@ void stable_conflicts(void (*reset)()) {
     ticks = 230;
     ipv6_test_carrier(0, true);
     ipv6_poll();
-    bool retry_restart = dad_probes(retried) == 2;
-    std::printf("IPV6_ROUTER_DAD_CARRIER initial_restart=%u stable_hold=%u retry_restart=%u\n",
-                initial_restart, stable_hold, retry_restart);
+    bool retry_retained = dad_probes(retried) == 1;
+    assert(stable_hold && retry_retained);
+    std::printf("IPV6_ROUTER_DAD_CARRIER initial_retained=%u stable_hold=%u retry_retained=%u\n",
+                initial_retained, stable_hold, retry_retained);
     std::fflush(stdout);
 
     // A failed configured permanent object remains visible; exhausting an
@@ -1044,10 +1151,10 @@ void stable_conflicts(void (*reset)()) {
     std::printf("IPV6_ROUTER_CONFLICT_SUMMARY delayed=%u stable_removed=%u plain_removed=%u "
                 "configured_permanent=%u inherited=%u carrier=%u\n",
                 delayed, stable_removed, plain_removed, permanent, inherited,
-                initial_restart && stable_hold && retry_restart);
+                initial_retained && stable_hold && retry_retained);
     std::fflush(stdout);
     assert(delayed == 2 && stable_removed == 2 && plain_removed == 2 && permanent &&
-           inherited == 2 && initial_restart && stable_hold && retry_restart);
+           inherited == 2 && initial_retained && stable_hold && retry_retained);
 }
 
 void coalesced_withdrawal(void (*reset)()) {
@@ -1278,6 +1385,7 @@ void ipv6_router_tests(void (*reset)()) {
     renewed_ownership(reset);
     initial_zero(reset);
     stable_conflicts(reset);
+    carrier_dad_readiness(reset);
     coalesced_withdrawal(reset);
     retransmission(reset);
     lifetimes(reset);

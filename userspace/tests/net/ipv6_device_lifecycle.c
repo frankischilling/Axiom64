@@ -17,6 +17,26 @@ static void pause_poll(void) {
     check(!nanosleep(&delay, NULL), "device observation polling");
 }
 
+static void emit_control_record(const unsigned char frame[60], uint64_t stamp) {
+    char target[33], line[256];
+    static const char hex[] = "0123456789abcdef";
+    for (unsigned at = 0; at < 16; at++) {
+        target[at * 2] = hex[frame[36 + at] >> 4];
+        target[at * 2 + 1] = hex[frame[36 + at] & 15];
+    }
+    target[32] = 0;
+    uint32_t fields[3];
+    memcpy(fields, frame + 24, sizeof(fields));
+    int size =
+        snprintf(line, sizeof(line),
+                 "IPV6_DEVICE_CONTROL lane=%u phase=%u kind=%u action=%u subject=%u stage=%u "
+                 "flags=%x preferred=%u valid=%u target=%s observed_ns=%llu\n",
+                 frame[18], frame[19], frame[20], frame[21], frame[22], frame[23], ntohl(fields[0]),
+                 ntohl(fields[1]), ntohl(fields[2]), target, (unsigned long long)stamp);
+    check(size > 0 && (size_t)size < sizeof(line) && write(STDOUT_FILENO, line, size) == size,
+          "complete device query record");
+}
+
 static void control(unsigned subject, unsigned kind, unsigned stage,
                     const struct address_record* value) {
     unsigned lane = 1 - subject, phase = phases[lane]++;
@@ -66,15 +86,7 @@ static void control(unsigned subject, unsigned kind, unsigned stage,
         check(now() - stamp < 10000000000ULL, "finite device control");
     }
     check(!close(observation), "close companion observation");
-    uint32_t fields[3];
-    memcpy(fields, frame + 24, sizeof(fields));
-    printf("IPV6_DEVICE_CONTROL lane=%u phase=%u kind=%u action=%u subject=%u stage=%u "
-           "flags=%x preferred=%u valid=%u target=",
-           lane, phase, kind, action, subject, stage, ntohl(fields[0]), ntohl(fields[1]),
-           ntohl(fields[2]));
-    for (unsigned at = 36; at < 52; at++)
-        printf("%02x", frame[at]);
-    printf(" observed_ns=%llu\n", (unsigned long long)stamp);
+    emit_control_record(frame, stamp);
 }
 
 static void property(const char* scope, const char* name, int value) {

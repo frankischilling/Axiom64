@@ -213,6 +213,7 @@ void assign(unsigned index, Configuration& state, ConfigurationKey key, int32_t 
         return;
     if (key == ConfigurationKey::disabled && changed) {
         state.pending = false;
+        state.ready = !value && physical_ready(index);
         if (value)
             withdraw(index);
         else
@@ -340,6 +341,16 @@ bool configuration_disabled(unsigned index) {
     return !state || state->values.disabled;
 }
 
+bool configuration_dad_ready(unsigned index) {
+    if (index == ipv6_loopback)
+        return !configuration_disabled(index);
+    auto info = net_info(index);
+    if (!info || !info->live || !info->administrative)
+        return false;
+    auto state = select(index);
+    return state && !state->values.disabled && state->ready;
+}
+
 bool configuration_autoconf_allowed(unsigned index) {
     auto state = select(index);
     if (!state)
@@ -376,14 +387,16 @@ void configuration_changed(unsigned index) {
     auto state = select(index);
     if (!state)
         return;
-    bool ready = physical_ready(index);
+    bool ready = !state->values.disabled && physical_ready(index);
     if (state->administrative && !info->administrative) {
         withdraw(index);
         state->pending = false;
     }
+    if (!info->administrative || state->values.disabled)
+        state->ready = false;
     bool initialize = ready && !state->ready;
     state->administrative = info->administrative;
-    state->ready = ready;
+    state->ready |= ready;
     if (initialize)
         generate(index, *state);
 }

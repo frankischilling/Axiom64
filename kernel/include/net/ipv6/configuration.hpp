@@ -12,7 +12,8 @@ enum class ConfigurationKey : uint8_t {
     autoconf,
     dad_transmits,
     enhanced_dad,
-    router_solicitations
+    router_solicitations,
+    max_addresses
 };
 
 // Linux netlink stores the generation mode; a changed sysctl mode also starts
@@ -27,6 +28,10 @@ int configuration_secret(unsigned index, const Address&);
 int configuration_secret_read(unsigned index, Address&);
 
 bool configuration_disabled(unsigned index);
+
+// New SLAAC owners and stable DAD retries share the per-interface address limit.
+// Manual addresses and initial link-local generation retain their own admission.
+bool configuration_autoconf_allowed(unsigned index);
 
 // Construct the identifier for a supplied /64 prefix without publishing it.
 int configuration_identifier(unsigned index, Address&, unsigned& counter, bool& privacy);

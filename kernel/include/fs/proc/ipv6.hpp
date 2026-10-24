@@ -3,7 +3,7 @@
 #include "core/base.hpp"
 
 namespace ax::proc6 {
-constexpr unsigned property_count = 8, secret_property = 7;
+constexpr unsigned property_count = 9, secret_property = 8;
 
 const char* property_name(unsigned);
 

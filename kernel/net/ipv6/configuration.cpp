@@ -9,7 +9,7 @@ namespace ax::ip6 {
 namespace {
 struct Values {
     int32_t mode = 0, disabled = 0, accept_ra = 1, autoconf = 1;
-    int32_t dad_transmits = 1, enhanced_dad = 1, solicitations = -1;
+    int32_t dad_transmits = 1, enhanced_dad = 1, solicitations = -1, max_addresses = 16;
 };
 
 struct Configuration {
@@ -53,6 +53,8 @@ int32_t* field(Values& values, ConfigurationKey key) {
         return &values.enhanced_dad;
     case ConfigurationKey::router_solicitations:
         return &values.solicitations;
+    case ConfigurationKey::max_addresses:
+        return &values.max_addresses;
     }
     return nullptr;
 }
@@ -314,6 +316,19 @@ int configuration_secret_read(unsigned index, Address& secret) {
 bool configuration_disabled(unsigned index) {
     auto state = select(index);
     return !state || state->values.disabled;
+}
+
+bool configuration_autoconf_allowed(unsigned index) {
+    auto state = select(index);
+    if (!state)
+        return false;
+    int32_t maximum = state->values.max_addresses;
+    if (!maximum)
+        return true;
+    unsigned count = 0;
+    for (unsigned at = 0; auto entry = ipv6_address(at); at++)
+        count += entry->index == index;
+    return maximum > 0 && count < unsigned(maximum);
 }
 
 void configuration_registered(unsigned index) {

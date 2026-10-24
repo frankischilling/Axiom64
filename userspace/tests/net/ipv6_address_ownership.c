@@ -20,7 +20,9 @@ enum operation {
     END,
     FINISH,
     FIRST,
-    READY
+    READY,
+    ADVERTISE,
+    LIMIT
 };
 
 static unsigned phases[2];
@@ -464,14 +466,81 @@ static void lifecycle_cases(unsigned first, unsigned last) {
     }
 }
 
+static void limit_change(unsigned lane, unsigned scenario, unsigned stage, int maximum) {
+    property(lane, "max_addresses", maximum);
+    char path[128], bytes[32] = {0}, expected[32];
+    snprintf(path, sizeof(path), "/proc/sys/net/ipv6/conf/eth%u/max_addresses", lane);
+    snprintf(expected, sizeof(expected), "%d\n", maximum);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    check(fd >= 0 && read(fd, bytes, sizeof(bytes) - 1) == (ssize_t)strlen(expected) &&
+              !strcmp(bytes, expected),
+          "read back actual per-interface address limit");
+    close(fd);
+    printf("IPV6_OWNER_LIMIT lane=%u case=%u stage=%u value=%d observed_ns=%llu\n", lane, scenario,
+           stage, maximum, (unsigned long long)now());
+    // The ACK anchors the following quiet window after the actual readback.
+    struct address_record observed = {.flags = (uint32_t)maximum};
+    control(lane, LIMIT, scenario, stage, &observed);
+}
+
+static void quiet_window(void) {
+    uint64_t began = now();
+    while (now() - began < 4100000000ULL)
+        pause_poll();
+}
+
+static void capacity_cases(void) {
+    for (unsigned scenario = 10; scenario <= 11; scenario++) {
+        int link = scenario == 11;
+        for (unsigned lane = 0; lane < 2; lane++)
+            limit_change(lane, scenario, 0, link ? 1 : 2);
+        reset(scenario, 2);
+        struct address_record values[2];
+        wait_pair(scenario, 1, link, values);
+        reports(scenario, 0, 1);
+        if (!link) {
+            wait_pair(scenario, 0, 1, values);
+            reports(scenario, 1, 0);
+        }
+        for (unsigned lane = 0; lane < 2; lane++)
+            values[lane] = exact(lane, values[lane].address);
+        control_pair(CONFLICT, scenario, 0, values);
+        quiet_window();
+        reports(scenario, 3, link);
+        if (link) {
+            for (unsigned lane = 0; lane < 2; lane++) {
+                struct in6_addr manual = prefix_address(lane, scenario, 1);
+                memset(manual.s6_addr, 0, 8);
+                manual.s6_addr[0] = 0xfe;
+                manual.s6_addr[1] = 0x80;
+                check(!mutate(lane, manual, 0, NLM_F_CREATE | NLM_F_EXCL, IFA_F_NODAD, UINT32_MAX,
+                              UINT32_MAX),
+                      "manual NODAD owner bypasses the automatic address limit");
+            }
+        }
+        reports(scenario, 4, 1);
+        for (unsigned lane = 0; lane < 2; lane++)
+            limit_change(lane, scenario, 1, 0);
+        quiet_window();
+        reports(scenario, 5, link);
+        if (!link) {
+            controls(ADVERTISE, scenario, 0);
+            wait_pair(scenario, 0, 0, values);
+            reports(scenario, 6, 0);
+        }
+        controls(END, scenario, 0);
+    }
+}
+
 int main(int argc, char** argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
     check((argc == 3 || argc == 4) && !strcmp(argv[1], "--group") &&
               (!strcmp(argv[2], "global") || !strcmp(argv[2], "lifecycle") ||
-               !strcmp(argv[2], "secret")) &&
+               !strcmp(argv[2], "secret") || !strcmp(argv[2], "capacity")) &&
               (argc == 3 || !strcmp(argv[3], "--retain-exhausted-routes")),
           "known ownership group and pinned prefix policy");
     int global = !strcmp(argv[2], "global");
+    int capacity = !strcmp(argv[2], "capacity");
     rotate_secrets = !strcmp(argv[2], "secret");
     retain_routes = argc == 4;
     scalar("all", "disable_ipv6", 1);
@@ -508,21 +577,23 @@ int main(int argc, char** argv) {
         check(!bind(packets[lane], (struct sockaddr*)&binding, sizeof(binding)),
               "ownership observation binding");
     }
-    controls(HELLO, 0, global ? 0 : rotate_secrets ? 2 : 1);
+    controls(HELLO, 0, global ? 0 : rotate_secrets ? 2 : capacity ? 3 : 1);
     if (global)
         global_cases(4);
     else if (rotate_secrets) {
         global_cases(1);
         lifecycle_cases(7, 7);
-    } else
+    } else if (capacity)
+        capacity_cases();
+    else
         lifecycle_cases(5, 9);
     controls(FINISH, 0, 0);
     for (unsigned lane = 0; lane < 2; lane++)
         close(packets[lane]);
     close(fd);
     printf("IPV6_OWNER_PASS adapters=2 group=%s cases_each=%u quiet_seconds=4\n", argv[2],
-           global           ? 4
-           : rotate_secrets ? 2
-                            : 5);
+           global                       ? 4
+           : rotate_secrets || capacity ? 2
+                                        : 5);
     return 0;
 }

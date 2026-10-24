@@ -21,6 +21,12 @@ LIFECYCLE = ('ordinary-recreation-nodad','ordinary-recreation-cache-before-flag'
 SECRET = ('missing-secret-readback','duplicate-secret-readback','wrong-secret-value',
           'early-secret-readback','late-secret-readback','wrong-secret-scope',
           'wrong-secret-failed-flags','wrong-secret-exhausted-count','wrong-secret-retry-lifetime')
+CAPACITY = ('missing-limit-readback','duplicate-limit-readback','wrong-limit-value','wrong-limit-scope',
+            'early-limit-readback','late-limit-readback','short-release-quiet','short-release-guest-quiet',
+            'wrong-failed-limit-flags','wrong-manual-limit-flags','wrong-fresh-owner','wrong-fresh-cache',
+            'missing-fresh-pio','wrong-fresh-pio-lifetime','invented-quota-retry','wrong-quota-count',
+            'orphan-quota-prefix','missing-limit-control','coherent-wrong-limit',
+            'late-limit-ack','nonzero-limit-control-metadata')
 
 
 def controls(path,lane,text,group,archive=None):
@@ -58,13 +64,15 @@ def controls(path,lane,text,group,archive=None):
     def recalculate(frame):
         frame[56:58]=bytes(2)
         struct.pack_into('!H',frame,56,checksum(bytes(frame[22:54])+struct.pack('!I3xB',len(frame)-54,58)+bytes(frame[54:])))
-    first_case=1 if group in ('global','secret') else 5
+    first_case=10 if group=='capacity' else 1 if group in ('global','secret') else 5
     na=packet(136,first_case);ns=packet(135,first_case)
     conflict=select(4,first_case);phase=rows[conflict]['frame'][19]
     ack=next(i for i,row in enumerate(rows) if row['frame'][12:14]==b'\x88\xc3' and row['frame'][:6]==guest and row['frame'][19:21]==bytes([phase,1]))
-    retry_target=rows[select(9,first_case)]['frame'][36:52]
-    retry=next(i for i,row in enumerate(rows) if row['frame'][12:14]==b'\x86\xdd' and row['frame'][20]==58 and row['frame'][54]==135 and row['frame'][62:78]==retry_target)
-    labels=COMMON+({'global':GLOBAL,'lifecycle':LIFECYCLE,'secret':SECRET}[group])
+    if group!='capacity':
+        retry_target=rows[select(9,first_case)]['frame'][36:52]
+        retry=next(i for i,row in enumerate(rows) if row['frame'][12:14]==b'\x86\xdd' and row['frame'][20]==58 and row['frame'][54]==135 and row['frame'][62:78]==retry_target)
+    common=tuple(label for label in COMMON if group!='capacity' or label not in ('early-retry','late-retry'))
+    labels=common+({'global':GLOBAL,'lifecycle':LIFECYCLE,'secret':SECRET,'capacity':CAPACITY}[group])
     with tempfile.TemporaryDirectory(prefix='axiom64-owner-damaged-') as temporary:
         temporary=Path(temporary)
         for label in labels:
@@ -86,14 +94,14 @@ def controls(path,lane,text,group,archive=None):
             elif label=='extra-probe':
                 index=select(7,first_case);extra=copy.deepcopy(rows[ns]);extra['stamp']=rows[index]['stamp']-1;changed.insert(index,extra)
             elif label=='short-quiet-window':
-                case=1 if group=='global' else 7;index=select(3,case,3);last_na=packet(136,case)
+                case=10 if group=='capacity' else 1 if group=='global' else 7;index=select(3,case,3);last_na=packet(136,case)
                 if case==7:
                     last_na=max(i for i,row in enumerate(rows[:index]) if row['frame'][12:14]==b'\x86\xdd' and row['frame'][20]==58 and row['frame'][54]==136)
                 changed[index]['stamp']=rows[last_na]['stamp']+3000000
             elif label=='early-retry':changed[retry]['stamp']=rows[na]['stamp']+500000
             elif label=='late-retry':changed[retry]['stamp']=rows[na]['stamp']+2200000
             elif label=='backward-guest-clock':
-                index=select(9,first_case);previous=max(int.from_bytes(row['frame'][52:60],'big') for row in rows[:index] if row['frame'][12:14]==b'\x88\xc3' and row['frame'][6:12]==guest)
+                index=select(11 if group=='capacity' else 9,first_case);previous=max(int.from_bytes(row['frame'][52:60],'big') for row in rows[:index] if row['frame'][12:14]==b'\x88\xc3' and row['frame'][6:12]==guest)
                 edit(index,lambda f:f.__setitem__(slice(52,60),(previous-1).to_bytes(8,'big')),True)
             elif label=='opposite-prefix-policy':edit(select(0),lambda f:f.__setitem__(23,1))
             elif label=='truncated-capture':raw=original[:-1]
@@ -140,6 +148,58 @@ def controls(path,lane,text,group,archive=None):
             elif label=='wrong-secret-failed-flags':edit(select(2,7,3),lambda f:struct.pack_into('!I',f,24,0x8c0),True)
             elif label=='wrong-secret-exhausted-count':edit(select(3,7,3),lambda f:struct.pack_into('!I',f,24,3),True)
             elif label=='wrong-secret-retry-lifetime':edit(select(9,1),lambda f:struct.pack_into('!II',f,28,6,10),True)
+            elif label in CAPACITY[:6]:
+                pattern=r'^IPV6_OWNER_LIMIT lane='+str(lane)+r' case=10 stage=0 .*\r?$'
+                found=re.findall(pattern,log,re.M);assert len(found)==1
+                line=found[0]
+                if label=='missing-limit-readback':replacement=''
+                elif label=='duplicate-limit-readback':replacement=line+'\n'+line
+                elif label=='wrong-limit-value':replacement=line.replace('value=2','value=3')
+                elif label=='wrong-limit-scope':replacement=line.replace('lane='+str(lane),'lane='+str(1-lane))
+                else:
+                    index=select(12,10,0)
+                    if label=='early-limit-readback':
+                        stamp=max(int.from_bytes(row['frame'][52:60],'big') for row in rows[:index]
+                                  if row['frame'][12:14]==b'\x88\xc3' and row['frame'][6:12]==guest)-1
+                    else:stamp=int.from_bytes(rows[index]['frame'][52:60],'big')+1
+                    replacement=re.sub(r'observed_ns=\d+',f'observed_ns={stamp}',line)
+                log,count=re.subn(pattern,lambda match:replacement,log,flags=re.M);assert count==1
+            elif label=='short-release-quiet':
+                index=select(3,10,5);changed[index]['stamp']=rows[select(3,10,4)]['stamp']+3000000
+            elif label=='short-release-guest-quiet':
+                found=re.findall(r'^IPV6_OWNER_LIMIT lane='+str(lane)+r' case=10 stage=1 value=0 observed_ns=(\d+)\r?$',log,re.M)
+                assert len(found)==1;stamp=int(found[0])+3000000000
+                edit(select(3,10,5),lambda f:f.__setitem__(slice(52,60),stamp.to_bytes(8,'big')),True)
+            elif label=='wrong-failed-limit-flags':edit(select(2,11,3),lambda f:struct.pack_into('!I',f,24,0x880),True)
+            elif label=='wrong-manual-limit-flags':edit(select(2,11,4,lambda f:not f[27]&8),lambda f:struct.pack_into('!I',f,24,0x80),True)
+            elif label=='wrong-fresh-owner':edit(select(2,10,6),lambda f:f.__setitem__(51,f[51]^1),True)
+            elif label=='wrong-fresh-cache':edit(select(2,10,6),lambda f:struct.pack_into('!II',f,28,26,56),True)
+            elif label in ('missing-fresh-pio','wrong-fresh-pio-lifetime'):
+                fresh=next(i for i in range(select(11,10),select(7,10)) if rows[i]['frame'][12:14]==b'\x86\xdd' and
+                           rows[i]['frame'][20]==58 and rows[i]['frame'][54]==134)
+                if label=='missing-fresh-pio':del changed[fresh]
+                else:
+                    def change(f):struct.pack_into('!I',f,82,61);recalculate(f)
+                    edit(fresh,change)
+            elif label=='invented-quota-retry':
+                index=select(3,10,3)
+                target=rows[conflict]['frame'][36:52]
+                prior=next(i for i,row in enumerate(rows[:na]) if row['frame'][12:14]==b'\x86\xdd' and
+                           row['frame'][20]==58 and row['frame'][54]==135 and row['frame'][62:78]==target)
+                extra=copy.deepcopy(rows[prior]);extra['stamp']=rows[index]['stamp']-1;changed.insert(index,extra)
+            elif label=='wrong-quota-count':edit(select(3,11,5),lambda f:struct.pack_into('!I',f,24,1),True)
+            elif label=='orphan-quota-prefix':edit(select(3,10,3),lambda f:struct.pack_into('!I',f,28,1),True)
+            elif label=='missing-limit-control':del changed[select(12,10,1)]
+            elif label=='coherent-wrong-limit':
+                edit(select(12,10,0),lambda f:struct.pack_into('!I',f,24,3),True)
+                pattern=r'(^IPV6_OWNER_LIMIT lane='+str(lane)+r' case=10 stage=0 value=)2( observed_ns=\d+\r?$)'
+                log,count=re.subn(pattern,lambda match:match[1]+'3'+match[2],log,flags=re.M);assert count==1
+            elif label=='late-limit-ack':
+                phase=rows[select(12,10,1)]['frame'][19]
+                index=next(i for i,row in enumerate(rows) if row['frame'][12:14]==b'\x88\xc3' and
+                           row['frame'][:6]==guest and row['frame'][19:21]==bytes([phase,1]))
+                changed[index]['stamp']=rows[select(3,10,5)]['stamp']-3000000
+            elif label=='nonzero-limit-control-metadata':edit(select(12,10,1),lambda f:struct.pack_into('!I',f,28,1),True)
             else:raise ValueError('unknown ownership corruption')
             data=raw if raw is not None else encode(changed)
             assert data!=original or log!=text

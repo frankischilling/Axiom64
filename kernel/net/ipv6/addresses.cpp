@@ -340,6 +340,8 @@ static int regenerate_address(unsigned position, const Address& replacement, uns
     if (replacement == original.value.address ||
         !replacement.matches(original.value.address, original.value.prefix))
         return -22;
+    if (!configuration_autoconf_allowed(original.value.index))
+        return -105;
     auto value = original.value;
     value.address = replacement;
     value.flags &= ~uint16_t(0x40 | 8 | 0x20);

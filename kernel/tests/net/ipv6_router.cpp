@@ -130,6 +130,65 @@ void prepare(void (*reset)()) {
     assert(!ip6::configuration_write(1, ip6::ConfigurationKey::accept_ra, 1));
 }
 
+void address_limits(void (*reset)()) {
+    using Key = ip6::ConfigurationKey;
+    for (unsigned index : {1u, 2u})
+        for (int maximum : {-1, 0, 1, 2}) {
+            reset();
+            assert(!ipv6_address_add({local(), index, 2, 64}));
+            assert(!ip6::configuration_write(index, Key::accept_ra, 1));
+            assert(!ip6::configuration_write(index, Key::max_addresses, maximum));
+            auto address = [&](unsigned number) {
+                auto value = network(number);
+                bool privacy = false;
+                unsigned counter = 0;
+                assert(!ip6::configuration_identifier(index, value, counter, privacy));
+                return value;
+            };
+            auto find_at = [&](const ip6::Address& value) -> const Ipv6Address* {
+                for (unsigned at = 0; auto entry = ipv6_address(at); at++)
+                    if (entry->index == index && entry->address == value)
+                        return entry;
+                return nullptr;
+            };
+            auto advertise = [&](unsigned number, uint32_t valid, uint32_t preferred) {
+                auto data = advertisement(0);
+                prefix(data, 0xc0, valid, preferred, number);
+                auto bytes = frame(data);
+                ipv6_receive(*net_info(index), bytes.data(), bytes.size());
+                ipv6_poll();
+            };
+            advertise(1, 100, 60);
+            const auto first = address(1), second = address(2);
+            bool allowed = maximum == 0 || maximum == 2;
+            assert(bool(find_at(first)) == allowed);
+            // The learned on-link route survives a denied automatic address.
+            auto inventory = routes();
+            assert(std::any_of(inventory.begin(), inventory.end(), [&](const auto& route) {
+                return route.index == index && route.prefix == 64 && route.destination == network();
+            }));
+            advertise(2, 100, 60);
+            assert(bool(find_at(second)) == (maximum == 0));
+            if (allowed) {
+                const auto owner = ip6::address_owner(index, first);
+                assert(!ip6::configuration_write(index, Key::max_addresses, -1));
+                advertise(1, 200, 90);
+                assert(ip6::address_owner(index, first) == owner);
+                const auto lifetime = ip6::address_lifetimes(index, first, owner);
+                assert(lifetime.preferred == 90 && lifetime.valid == 200);
+            } else {
+                assert(!ip6::configuration_write(index, Key::max_addresses, 0));
+                ticks += 100;
+                ipv6_poll();
+                assert(!find_at(first));
+                advertise(1, 100, 60);
+                assert(find_at(first));
+            }
+            std::printf("IPV6_SLAAC_LIMIT index=%u maximum=%d refresh_and_routes=1\n", index,
+                        maximum);
+        }
+}
+
 void admission(void (*reset)()) {
     for (unsigned kind = 0; kind < 9; kind++) {
         prepare(reset);
@@ -1213,6 +1272,7 @@ void output_parameters(void (*reset)()) {
 } // namespace
 
 void ipv6_router_tests(void (*reset)()) {
+    address_limits(reset);
     admission(reset);
     flags_and_dad(reset);
     renewed_ownership(reset);

@@ -171,6 +171,10 @@ void generate(Prefix& prefix) {
         return;
     }
     Ipv6Address value{address, prefix.index, uint16_t(0x100 | (privacy ? 0x800 : 0)), 64};
+    if (!configuration_autoconf_allowed(prefix.index)) {
+        prefix.pending = false;
+        return;
+    }
     error = automatic_address(value, {remaining(prefix.preferred, prefix.preferred_forever), valid},
                               false, prefix.counter);
     prefix.pending = false;

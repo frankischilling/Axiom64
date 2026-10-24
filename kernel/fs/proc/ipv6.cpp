@@ -5,11 +5,14 @@
 
 namespace ax::proc6 {
 namespace {
-constexpr ip6::ConfigurationKey keys[] = {
-    ip6::ConfigurationKey::generation_mode,     ip6::ConfigurationKey::disabled,
-    ip6::ConfigurationKey::accept_ra,           ip6::ConfigurationKey::autoconf,
-    ip6::ConfigurationKey::dad_transmits,       ip6::ConfigurationKey::enhanced_dad,
-    ip6::ConfigurationKey::router_solicitations};
+constexpr ip6::ConfigurationKey keys[] = {ip6::ConfigurationKey::generation_mode,
+                                          ip6::ConfigurationKey::disabled,
+                                          ip6::ConfigurationKey::accept_ra,
+                                          ip6::ConfigurationKey::autoconf,
+                                          ip6::ConfigurationKey::dad_transmits,
+                                          ip6::ConfigurationKey::enhanced_dad,
+                                          ip6::ConfigurationKey::router_solicitations,
+                                          ip6::ConfigurationKey::max_addresses};
 
 bool space(char c) {
     return c == ' ' || (c >= '\t' && c <= '\r');
@@ -200,8 +203,8 @@ int64_t secret_write(unsigned index, uint64_t& offset, const void* input, size_t
 
 const char* property_name(unsigned property) {
     static constexpr const char* names[] = {
-        "addr_gen_mode", "disable_ipv6",         "accept_ra",    "autoconf", "dad_transmits",
-        "enhanced_dad",  "router_solicitations", "stable_secret"};
+        "addr_gen_mode", "disable_ipv6",         "accept_ra",     "autoconf",     "dad_transmits",
+        "enhanced_dad",  "router_solicitations", "max_addresses", "stable_secret"};
     return property < property_count ? names[property] : nullptr;
 }
 

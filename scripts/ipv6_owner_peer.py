@@ -8,7 +8,7 @@ import time
 from ipv6_host_peer import checksum, require
 from ipv6_router_peer import Peer as RouterPeer
 
-HELLO, BEGIN, ADDRESS, SUMMARY, CONFLICT, MODE, DELETE, END, FINISH, FIRST, READY = range(11)
+HELLO, BEGIN, ADDRESS, SUMMARY, CONFLICT, MODE, DELETE, END, FINISH, FIRST, READY, ADVERTISE, LIMIT = range(13)
 INFINITY = 0xffffffff
 
 
@@ -42,15 +42,19 @@ def multicast_report(frame):
 class Peer(RouterPeer):
     def __init__(self, lane, group='global', native=False, retain_routes=False):
         super().__init__(lane, native)
-        require(group in ('global', 'lifecycle', 'secret'), 'known ownership group')
+        require(group in ('global', 'lifecycle', 'secret', 'capacity'), 'known ownership group')
         self.group, self.retain_routes = group, retain_routes
-        self.cases = list(range(1, 5) if group == 'global' else (1, 7) if group == 'secret' else range(5, 10))
+        self.cases = list(range(1, 5) if group == 'global' else (1, 7) if group == 'secret' else
+                          (10, 11) if group == 'capacity' else range(5, 10))
         self.prefixes.update({case: ipaddress.IPv6Address(f'2001:db8:{0x40+lane:x}:{case:x}::').packed
                               for case in self.cases})
         self.frames, self.controls, self.ended = [], [], []
         self.case, self.finished, self.pending = 0, False, None
         self.inventories, self.samples, self.probes, self.conflicts, self.removals = {}, {}, {}, {}, {}
         self.mode_changed = False
+        self.pio_replayed = False
+        self.capacity_summaries = {}
+        self.capacity_limits = {}
 
     def line(self, line):
         pass
@@ -81,7 +85,9 @@ class Peer(RouterPeer):
     def inventory(self, case, stage, rows, count, routes):
         require(count == len(rows) and len({row['target'] for row in rows}) == count,
                 'actual complete unique address inventory')
-        if case <= 4:
+        if case >= 10:
+            self.capacity_inventory(case, stage, rows, count, routes)
+        elif case <= 4:
             if stage == 0:
                 require(count == 1 and rows[0]['flags'] == (0x80 if case == 2 else 0x880) and
                         rows[0]['preferred'] == rows[0]['valid'] == INFINITY and
@@ -163,6 +169,48 @@ class Peer(RouterPeer):
             else:
                 raise ValueError('unknown finite configured inventory stage')
 
+    def capacity_inventory(self, case, stage, rows, count, routes):
+        if case == 10 and stage in (3, 5):
+            require(count == 0 and routes == int(self.retain_routes),
+                    'quota-failed finite owner stays absent with the selected prefix cleanup')
+            return
+        link = case == 11 or stage in (0, 4)
+        require(all((ipaddress.IPv6Address(row['target']).is_link_local if link else
+                     row['target'][:8] == self.prefixes[case][:8]) for row in rows),
+                'capacity inventory uses its actual selected interface prefix')
+        require(routes == 1, 'capacity owners retain one connected prefix')
+        if case == 10:
+            require(count == 1, 'one selected capacity address owner')
+            value = rows[0]
+            if link:
+                require(value['flags'] == 0x880 and value['preferred'] == value['valid'] == INFINITY and
+                        value['target'] != self.link, 'original stable link-local owner survives global quota failure')
+                if stage == 0:
+                    self.outgoing.append(self.advertisement(lifetime=0, valid=60, preferred=30,
+                        hops=64, mtu=1500, pio_flags=((case, 0xc0),)))
+                else:
+                    require(value['target'] == self.inventories[case, 0][0]['target'],
+                            'quota failure preserves the unrelated original link-local identity')
+            elif stage == 1:
+                require(value['flags'] == 0x940 and (value['preferred'], value['valid']) == (30, 60),
+                        'original finite stable SLAAC metadata before the quota conflict')
+            else:
+                require(stage == 6 and self.pio_replayed and value['flags'] == 0x900 and
+                        27 <= value['preferred'] <= 30 and value['valid'] == value['preferred'] + 30 and
+                        value['target'] == self.inventories[case, 1][0]['target'],
+                        'fresh PIO creates the original stable identity with fresh finite lifetimes')
+        else:
+            require(case == 11 and stage in (0, 3, 4, 5) and count == (2 if stage in (4, 5) else 1) and
+                    all(row['preferred'] == row['valid'] == INFINITY for row in rows),
+                    'complete permanent quota and manual-bypass inventory')
+            original = self.inventories[case, 0][0]['target']
+            stable = [row for row in rows if row['target'] == original]
+            require(len(stable) == 1 and original != self.link and stable[0]['flags'] ==
+                    (0x8c0 if stage == 0 else 0x8c8), 'failed permanent quota owner retains its actual identity')
+            if count == 2:
+                require(any(row['target'] == self.link and row['flags'] == 0x82 for row in rows),
+                        'manual NODAD address bypasses the occupied automatic-address budget')
+
     def control_frame(self, frame):
         require(len(frame) == 60 and frame[:12] == self.control + self.guest and
                 frame[14:19] == b'IP6O' + bytes([self.lane]), 'complete ownership control identity')
@@ -176,17 +224,20 @@ class Peer(RouterPeer):
         require(stamp > 0 and (not self.controls or stamp >= self.controls[-1]['guest_ns']) and
                 policy == (int(self.retain_routes) if kind == HELLO else 0),
                 'actual monotonic observation and exact pinned cleanup policy')
-        if kind in (HELLO,BEGIN,MODE,END,FINISH):
+        if kind in (HELLO,BEGIN,MODE,END,FINISH,ADVERTISE):
             require(frame[24:52] == bytes(28), 'non-address ownership operations contain no invented metadata')
         if kind == HELLO:
-            require(phase == case == 0 and stage == {'global':0, 'lifecycle':1, 'secret':2}[self.group], 'one explicit initial group')
+            require(phase == case == 0 and stage == {'global':0, 'lifecycle':1, 'secret':2, 'capacity':3}[self.group], 'one explicit initial group')
             self.ready = True
         elif kind == BEGIN:
             require(self.ready and len(self.ended) < len(self.cases) and case == self.cases[len(self.ended)] and
                     (not self.case or self.ended[-1:] == [self.case]) and
-                    stage == (0 if case == 2 else 1 if case >= 8 else 2),
+                    stage == (2 if case >= 10 else 0 if case == 2 else 1 if case >= 8 else 2),
                     'ordered ownership cases and actual selected generation mode')
+            require(case<10 or (case,0) in self.capacity_limits,
+                    'captured actual quota precedes capacity initialization')
             self.case, self.mode_changed = case, False
+            self.pio_replayed = False
             self.probes[case] = {}
         elif kind == ADDRESS:
             require(case == self.case, 'snapshot belongs to active ownership case')
@@ -194,16 +245,30 @@ class Peer(RouterPeer):
         elif kind == SUMMARY:
             require(case == self.case and valid == 0, 'complete actual ownership inventory summary')
             self.inventory(case,stage,self.inventories.get((case,stage),[]),flags,preferred)
+            if case >= 10:
+                self.capacity_summaries[case,stage] = time.monotonic_ns()
+                if stage == 5:
+                    require((case,1) in self.capacity_limits,
+                            'captured actual quota release precedes the final quiet inventory')
+                    previous = next(row for row in self.controls if row['case'] == case and
+                                    row['kind'] == SUMMARY and row['stage'] == 4)
+                    require(time.monotonic_ns() - self.capacity_limits[case,1]['observed_host_ns'] >= 4e9 and
+                            value['guest_ns'] - previous['guest_ns'] >= 4000000000,
+                            'full real quiet window after the address limit is raised')
             if stage == 3 and case != 2:
                 latest = max(row['observed_ns'] for key,row in self.conflicts.items() if key[0] == case)
                 require(time.monotonic_ns() - latest >= 4e9, 'full real four-second post-conflict observation')
+            if case == 10 and stage == 6:
+                started = next(row for row in self.controls if row['case'] == case and row['kind'] == ADVERTISE)
+                require(value['guest_ns'] - started['guest_ns'] <= 3100000000,
+                        'fresh quota PIO completes actual DAD within its original inventory bound')
         elif kind == CONFLICT:
             require(case == self.case and (case,stage) not in self.conflicts and
                     stage in (range(4) if case == 7 else range(1)), 'one selected actual conflict per trial')
-            expected = {1:0x8c0,3:0x8c2,4:0x840}.get(case, 0x8c0 if case <= 7 else 0x40)
-            lifetimes = (6,10) if case == 4 else (2,8) if case >= 8 else (INFINITY,INFINITY)
+            expected = {1:0x8c0,3:0x8c2,4:0x840,10:0x940,11:0x8c0}.get(case, 0x8c0 if case <= 7 else 0x40)
+            lifetimes = (30,60) if case == 10 else (INFINITY,INFINITY) if case == 11 else (6,10) if case == 4 else (2,8) if case >= 8 else (INFINITY,INFINITY)
             require(flags == expected and (preferred,valid) == lifetimes and
-                    (ipaddress.IPv6Address(value['target']).is_link_local if case <= 7 and case >= 5 else
+                    (ipaddress.IPv6Address(value['target']).is_link_local if case == 11 or case <= 7 and case >= 5 else
                      value['target'][:8] == self.prefixes[case][:8]), 'queried exact selected conflict owner')
             require(case != 6 or self.mode_changed, 'mode write precedes conflict release')
             self.pending = value
@@ -228,17 +293,36 @@ class Peer(RouterPeer):
             require((case,stage) not in self.removals, 'one explicit removal per selected owner')
             self.removals[case,stage] = value
         elif kind == END:
-            expected_stages = ([0,1,2,5] if case == 2 else [0,1,2,3,4,5] if case <= 4 else
+            expected_stages = ([0,1,3,4,5,6] if case == 10 else [0,3,4,5] if case == 11 else [0,1,2,5] if case == 2 else [0,1,2,3,4,5] if case <= 4 else
                                [3] if case <= 7 else [3,4,5])
             summaries = [row['stage'] for row in self.controls if row['case'] == case and row['kind'] == SUMMARY]
             require(case == self.case and stage == 0 and summaries == expected_stages,
                     'every required actual ownership inventory completes before case end')
             probes = self.probes[case]
-            require(sum(map(len,probes.values())) == {1:3,2:2,3:2,4:3,5:2,6:3,7:4,8:2,9:1}[case],
+            require(sum(map(len,probes.values())) == {1:3,2:2,3:2,4:3,5:2,6:3,7:4,8:2,9:1,10:3,11:1}[case],
                     'exact original DAD probes; NODAD adds none and exhaustion remains quiet')
             require(len([key for key in self.conflicts if key[0] == case]) == (0 if case == 2 else 4 if case == 7 else 1),
                     'all selected ownership conflicts completed')
             self.ended.append(case)
+        elif kind == ADVERTISE:
+            require(case == self.case == 10 and stage == 0 and not self.pio_replayed and
+                    any(row['kind'] == SUMMARY and row['case'] == case and row['stage'] == 5 for row in self.controls),
+                    'one explicit fresh PIO follows the complete no-resurrection inventory')
+            self.pio_replayed = True
+            self.outgoing.append(self.advertisement(lifetime=0, valid=60, preferred=30,
+                hops=64, mtu=1500, pio_flags=((case, 0xc0),)))
+        elif kind == LIMIT:
+            require(self.group == 'capacity' and case in (10,11) and stage in (0,1) and
+                    (case,stage) not in self.capacity_limits and preferred == valid == 0 and
+                    value['target'] == bytes(16) and flags == ((2 if case==10 else 1) if stage==0 else 0),
+                    'one exact captured per-interface quota or release')
+            if stage==0:
+                require(case == self.cases[len(self.ended)] and (not self.case or self.ended[-1:]==[self.case]),
+                        'quota control precedes initialization of the next capacity case')
+            else:
+                require(case == self.case and (case,4) in self.capacity_summaries,
+                        'quota release follows the actual pre-release inventory')
+            self.capacity_limits[case,stage] = dict(value, observed_host_ns=time.monotonic_ns())
         elif kind == FINISH:
             require(case == stage == 0 and self.ended == self.cases and not self.finished,
                     'all ownership cases finish exactly once')
@@ -278,7 +362,7 @@ class Peer(RouterPeer):
         require(destination == b'\xff\x02'+bytes(9)+b'\x01\xff'+target[-3:] and
                 frame[:6] == b'\x33\x33\xff'+target[-3:], 'exact ownership solicited-node destinations')
         link=ipaddress.IPv6Address(target).is_link_local
-        require((link and self.case <= 7) or (not link and target[:8] == self.prefixes[self.case][:8]),
+        require((link and (self.case <= 7 or self.case >= 10)) or (not link and target[:8] == self.prefixes[self.case][:8]),
                 'DAD target belongs to current ownership case')
         if self.case == 2:
             require(target == (self.link if link else self.prefixes[2][:8]+self.link[8:]), 'exact EUI64 generation')
@@ -287,7 +371,9 @@ class Peer(RouterPeer):
         elif target == self.link:
             require(self.case == 6 and self.mode_changed, 'EUI64 probe only after explicit mode-zero write')
         probes=self.probes[self.case].setdefault(target,[])
-        maximum=2 if self.case == 8 else 1
+        maximum=2 if self.case == 8 or self.case == 10 and not link else 1
+        if self.case == 10 and not link and probes:
+            require(self.pio_replayed, 'a fresh PIO is required before another global DAD probe')
         require(len(probes)<maximum, 'no unrequested DAD retransmission')
         probes.append(dict(observed_ns=time.monotonic_ns(), frame=frame.hex()))
         self.conflict()

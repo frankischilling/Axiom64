@@ -244,6 +244,52 @@ static void extra(void) {
     puts("SYSCTL_FRONTEND_COMPLETE");
 }
 
+static int maximum(const char* scope) {
+    int fd = scoped_open(scope, "max_addresses", O_RDONLY);
+    must(fd >= 0);
+    char bytes[32] = {0};
+    ssize_t length = read(fd, bytes, sizeof(bytes) - 1);
+    must(length > 0 && close(fd) == 0);
+    return atoi(bytes);
+}
+
+static void maximum_scope(const char* label) {
+    printf("IO_MAX_SCOPE label=%s all=%d default=%d eth0=%d eth1=%d lo=%d\n", label, maximum("all"),
+           maximum("default"), maximum("eth0"), maximum("eth1"), maximum("lo"));
+}
+
+static void maximum_write(const char* scope, const char* value) {
+    int fd = scoped_open(scope, "max_addresses", O_WRONLY);
+    must(fd >= 0);
+    errno = 0;
+    ssize_t result = write(fd, value, strlen(value));
+    int error = result < 0 ? errno : 0;
+    printf("IO_MAX_WRITE scope=%s result=%ld error=%d offset=%ld value=%d\n", scope, (long)result,
+           error, (long)lseek(fd, 0, SEEK_CUR), maximum(scope));
+    must(close(fd) == 0);
+}
+
+static void maximum_controls(void) {
+    maximum_scope("initial");
+    maximum_write("eth0", "2\n");
+    maximum_scope("per-interface");
+    maximum_write("all", "1\n");
+    maximum_scope("all");
+    maximum_write("default", "3\n");
+    maximum_scope("default");
+    const char* values[] = {"-1\n",          "0\n",          "2147483647\n",
+                            "-2147483648\n", "2147483648\n", "-2147483649\n",
+                            "1junk\n",       "1 2\n",        "0x10\n"};
+    const char* labels[] = {"negative",  "unlimited", "maximum",    "minimum", "overflow",
+                            "underflow", "suffix",    "two-values", "hex"};
+    for (unsigned at = 0; at < sizeof(values) / sizeof(values[0]); at++)
+        write_value(labels[at], "max_addresses", values[at]);
+    maximum_write("all", "16\n");
+    maximum_write("default", "16\n");
+    maximum_scope("restored");
+    puts("SYSCTL_MAX_ADDRESSES_COMPLETE");
+}
+
 int main(void) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     must(getuid() == 0);
@@ -306,5 +352,6 @@ int main(void) {
     }
     printf("SYSCTL_IO_COMPLETE counted=%u\n", count);
     extra();
+    maximum_controls();
     return 0;
 }

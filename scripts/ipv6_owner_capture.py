@@ -11,13 +11,24 @@ from tcp_capture_clock import bind_native_clock, microseconds, raw_records
 
 
 def plan(group):
-    result = [(0,0,{'global':0, 'lifecycle':1, 'secret':2}[group])]
+    result = [(0,0,{'global':0, 'lifecycle':1, 'secret':2, 'capacity':3}[group])]
     def snapshot(case,stage,count):
         result.extend([(2,case,stage)] * count)
         result.append((3,case,stage))
-    for case in range(1,5) if group == 'global' else (1,7) if group == 'secret' else range(5,10):
-        result.append((1,case,0 if case == 2 else 1 if case >= 8 else 2))
-        if case <= 4:
+    for case in range(1,5) if group == 'global' else (1,7) if group == 'secret' else (10,11) if group == 'capacity' else range(5,10):
+        if case>=10:result.append((12,case,0))
+        result.append((1,case,2 if case >= 10 else 0 if case == 2 else 1 if case >= 8 else 2))
+        if case >= 10:
+            snapshot(case,0,1)
+            if case == 10:snapshot(case,1,1)
+            result.append((4,case,0))
+            snapshot(case,3,int(case == 11))
+            snapshot(case,4,2 if case == 11 else 1)
+            result.append((12,case,1))
+            snapshot(case,5,2 if case == 11 else 0)
+            if case == 10:
+                result.append((11,case,0));snapshot(case,6,1)
+        elif case <= 4:
             for stage in (0,1,2):snapshot(case,stage,1)
             if case == 2:
                 result.append((6,case,0));snapshot(case,5,0)
@@ -39,14 +50,14 @@ def plan(group):
 
 
 def inspect(path,lane,text,group,native=False,statistics=None,native_kernel_release=None):
-    require(group in ('global','lifecycle','secret') and lane in (0,1), 'known ownership group and NIC')
+    require(group in ('global','lifecycle','secret','capacity') and lane in (0,1), 'known ownership group and NIC')
     retain = retain_exhausted_prefix(native_kernel_release) if native else False
     guest=bytes.fromhex(f'5254001234{16+lane:02x}')
     peer=bytes([2,0x49,0x50,0x36,lane,1]);control=bytes([2,0x49,0x50,0x36,lane,0])
     identifier=bytes([guest[0]^2])+guest[1:3]+b'\xff\xfe'+guest[3:]
     link=ipaddress.IPv6Address('fe80::').packed[:8]+identifier
     router=ipaddress.IPv6Address('fe80::42').packed;all_nodes=ipaddress.IPv6Address('ff02::1').packed
-    cases=list(range(1,5) if group=='global' else (1,7) if group=='secret' else range(5,10))
+    cases=list(range(1,5) if group=='global' else (1,7) if group=='secret' else (10,11) if group=='capacity' else range(5,10))
     prefixes={case:ipaddress.IPv6Address(f'2001:db8:{0x40+lane:x}:{case:x}::').packed for case in cases}
     rows=list(raw_records(path) if native else qemu_records(path))
     expected=plan(group);requests=[];replies=[];probes={case:[] for case in cases}
@@ -67,9 +78,9 @@ def inspect(path,lane,text,group,native=False,statistics=None,native_kernel_rele
                         'actual nondecreasing guest monotonic observations')
                 value=dict(row=row,kind=kind,case=case,stage=stage,flags=flags,preferred=preferred,
                            valid=valid,target=f[36:52],guest_ns=stamp)
-                if kind in (0,1,5,7,8):require(f[24:52]==bytes(28),'captured non-address controls have no invented metadata')
+                if kind in (0,1,5,7,8,11):require(f[24:52]==bytes(28),'captured non-address controls have no invented metadata')
                 if kind==1:active=case
-                elif kind in (2,3,4,6,9,10):require(case==active,'captured metadata belongs to current ownership case')
+                elif kind in (2,3,4,6,9,10,11):require(case==active,'captured metadata belongs to current ownership case')
                 if kind==2:snapshots.setdefault((case,stage),[]).append(value)
                 if kind==3:
                     require((case,stage) not in summaries,'one actual summary per snapshot')
@@ -118,7 +129,7 @@ def inspect(path,lane,text,group,native=False,statistics=None,native_kernel_rele
                 'captured complete ownership neighbor-discovery checksum, code and hop limit')
         if body[0]==134:
             preferred,valid=(60,100) if active==2 else (30,60)
-            require(not outgoing and active<=4 and source==router and destination==all_nodes and
+            require(not outgoing and (active<=4 or active==10) and source==router and destination==all_nodes and
                     f[:6]==b'\x33\x33\0\0\0\x01' and len(body)==64 and
                     body[4:16]==bytes([64,0])+bytes(10) and body[16:24]==b'\x01\x01'+peer and
                     body[24:56]==struct.pack('!BBBBIII16s',3,4,64,0xc0,valid,preferred,0,prefixes[active]) and
@@ -154,7 +165,7 @@ def inspect(path,lane,text,group,native=False,statistics=None,native_kernel_rele
         rows=snapshots.get((case,stage),[]);summary=summaries[case,stage]
         require(summary['flags']==len(rows) and summary['valid']==0 and len({row['target'] for row in rows})==len(rows),
                 'complete unique actual address inventory and exact summary')
-        expected_prefix=ipaddress.IPv6Address('fe80::').packed if (stage==0 or 5<=case<=7) else prefixes[case]
+        expected_prefix=ipaddress.IPv6Address('fe80::').packed if (stage==0 or 5<=case<=7 or case==11 or case==10 and stage==4) else prefixes[case]
         require(summary['target']==expected_prefix and all(row['target'][:8]==expected_prefix[:8] for row in rows),
                 'actual summary and all address owners use the selected prefix')
         return rows
@@ -199,10 +210,39 @@ def inspect(path,lane,text,group,native=False,statistics=None,native_kernel_rele
             require(after['guest_ns'] <= int(observed) <= before['guest_ns'],
                     'changed-secret readback lies between the actual previous query and selected conflict')
             secret_changes.append(dict(case=case, value=value, observed_ns=int(observed)))
+    limit_rows = re.findall(r'^IPV6_OWNER_LIMIT lane=([01]) case=(10|11) stage=([01]) value=(-?\d+) '
+                            r'observed_ns=(\d+)\r?$', text, re.M)
+    require(len(limit_rows) == sum(line.startswith('IPV6_OWNER_LIMIT') for line in text.splitlines()) ==
+            (8 if group == 'capacity' else 0), 'complete exact actual per-interface limit readbacks')
+    limit_changes = []
+    if group == 'capacity':
+        for case in (10,11):
+            for stage in (0,1):
+                found = [row for row in limit_rows if (int(row[0]),int(row[1]),int(row[2])) == (lane,case,stage)]
+                require(len(found)==1,'one actual limit readback per selected interface, case and stage')
+                _,_,_,maximum,observed = found[0];stamp=int(observed)
+                require(int(maximum)==(2 if case==10 else 1) if stage==0 else int(maximum)==0,
+                        'actual per-interface limit matches the selected quota and release')
+                control=next(row for row in requests if (row['kind'],row['case'],row['stage'])==(12,case,stage))
+                require(control['flags']==int(maximum) and control['preferred']==control['valid']==0 and
+                        control['target']==bytes(16), 'captured limit control matches its actual readback')
+                if stage==0:
+                    begin=one(case,1);previous=requests[requests.index(control)-1]
+                    require(previous['guest_ns']<=stamp<=control['guest_ns']<=begin['guest_ns'],
+                            'actual quota readback precedes its fresh initialization')
+                else:
+                    require(summaries[case,4]['guest_ns']<=stamp<=control['guest_ns']<summaries[case,5]['guest_ns'] and
+                            summaries[case,5]['guest_ns']-control['guest_ns']>=4000000000,
+                            'full guest-clock quiet interval follows the actual raised-limit readback')
+                    ack=replies[requests.index(control)]
+                    require(microseconds(summaries[case,5]['row'])-microseconds(ack)>=4000000,
+                            'full original packet-clock quiet interval follows the actual raised-limit ACK')
+                limit_changes.append(dict(case=case,stage=stage,value=int(maximum),observed_ns=stamp,
+                                          request_guest_ns=control['guest_ns'],ack_index=replies[requests.index(control)]['index']))
     inf=0xffffffff;reports=[]
     for case in cases:
         case_probes=probes[case];case_conflicts=conflicts[case]
-        require(len(case_probes)=={1:3,2:2,3:2,4:3,5:2,6:3,7:4,8:2,9:1}[case] and
+        require(len(case_probes)=={1:3,2:2,3:2,4:3,5:2,6:3,7:4,8:2,9:1,10:3,11:1}[case] and
                 len(case_conflicts)==(0 if case==2 else 4 if case==7 else 1),
                 'exact actual probe/conflict counts including quiet and NODAD cases')
         begin=one(case,1);end=one(case,7)
@@ -214,16 +254,69 @@ def inspect(path,lane,text,group,native=False,statistics=None,native_kernel_rele
                     'actual conflict is queued after queried metadata and before its ACK')
             preceding=[probe for probe in case_probes if probe['target']==request['target'] and probe['row']['index']<conflict['row']['index']]
             require(len(preceding)==1,'one actual matching DAD probe before conflict injection')
-            flags={1:0x8c0,3:0x8c2,4:0x840}.get(case,0x8c0 if case<=7 else 0x40)
-            preferred,valid=(6,10) if case==4 else (2,8) if case>=8 else (inf,inf)
+            flags={1:0x8c0,3:0x8c2,4:0x840,10:0x940,11:0x8c0}.get(case,0x8c0 if case<=7 else 0x40)
+            preferred,valid=(30,60) if case==10 else (inf,inf) if case==11 else (6,10) if case==4 else (2,8) if case>=8 else (inf,inf)
             exact(request,flags,preferred,valid)
-        quiet=0;retry_gaps=[]
+        quiet=0;retry_gaps=[];details={}
         if case!=2:
             final=summaries[case,3]
             quiet=microseconds(final['row'])-microseconds(case_conflicts[-1]['row'])
             require(quiet>=4000000 and final['guest_ns']-selected[-1]['guest_ns']>=4000000000,
                     'full four-second original packet and guest-clock observation after final conflict')
-        if case<=4:
+        if case>=10:
+            initial=values(case,0)[0]
+            exact(initial,0x8c0 if case==11 else 0x880,inf,inf)
+            require(initial['target']!=link,'actual capacity owner uses stable generation')
+            limit=next(row for row in requests if (row['kind'],row['case'],row['stage'])==(12,case,1))
+            raised_quiet=microseconds(summaries[case,5]['row'])-microseconds(replies[requests.index(limit)])
+            require(raised_quiet>=4000000,'full original packet-clock quiet interval after quota release')
+            require(microseconds(summaries[case,5]['row'])-microseconds(summaries[case,4]['row'])>=4000000,
+                    'the original queried-inventory quiet interval also remains complete')
+            details['quiet_after_limit_us']=raised_quiet
+            if case==10:
+                require(len(advertisements[case])==2,'initial and explicit fresh quota PIO are both retained')
+                original=values(case,1)[0];retained=values(case,4)[0];fresh=values(case,6)[0]
+                exact(original,0x940,30,60);exact(retained,0x880,inf,inf)
+                require(retained['target']==initial['target'] and selected[0]['target']==original['target'] and
+                        not values(case,3) and not values(case,5),
+                        'finite quota failure leaves the unrelated link-local owner and no resurrected global')
+                for stage in (1,6):require(summaries[case,stage]['preferred']==1,'actual quota PIO owns one connected prefix')
+                for stage in (3,5):require(summaries[case,stage]['preferred']==int(retain),'quota failure follows selected prefix cleanup policy')
+                require(summaries[case,0]['preferred']==summaries[case,4]['preferred']==1,
+                        'unrelated link-local connected prefix remains intact')
+                release=one(case,11);first_ra,second_ra=advertisements[case]
+                require(summaries[case,0]['row']['index']<first_ra['index']<original['row']['index'] and
+                        summaries[case,5]['row']['index']<release['row']['index']<second_ra['index']<
+                        replies[requests.index(release)]['index'],
+                        'actual fresh PIO follows the complete quiet query and precedes its release ACK')
+                link_probes=[probe for probe in case_probes if probe['target']==initial['target']]
+                globals=[probe for probe in case_probes if probe['target']==original['target']]
+                require(len(link_probes)==1 and len(globals)==2 and link_probes[0]['row']['index']<first_ra['index'] and
+                        first_ra['index']<globals[0]['row']['index']<case_conflicts[0]['row']['index'] and
+                        second_ra['index']<globals[1]['row']['index']<fresh['row']['index'],
+                        'only an explicit new PIO restarts DAD for the original stable identity')
+                require(fresh['target']==original['target'] and fresh['flags']==0x900 and
+                        27<=fresh['preferred']<=30 and fresh['valid']==fresh['preferred']+30 and
+                        microseconds(fresh['row'])-microseconds(globals[1]['row'])>=900000 and
+                        0<fresh['guest_ns']-release['guest_ns']<=3100000000 and
+                        microseconds(fresh['row'])-microseconds(release['row'])<=3100000,
+                        'fresh quota owner completes DAD and retains actual new PIO lifetimes')
+                details['fresh_DAD_us']=microseconds(fresh['row'])-microseconds(globals[1]['row'])
+            else:
+                require(not advertisements[case] and selected[0]['target']==initial['target'] and
+                        case_probes[0]['target']==initial['target'], 'permanent quota failure uses only the actual initial link-local DAD')
+                for stage in (3,4,5):
+                    complete=values(case,stage)
+                    require(len(complete)==(1 if stage==3 else 2) and summaries[case,stage]['preferred']==1,
+                            'permanent quota owner and manual bypass retain one connected prefix')
+                    failed=[value for value in complete if value['target']==initial['target']]
+                    require(len(failed)==1,'failed permanent quota identity stays visible exactly once')
+                    exact(failed[0],0x8c8,inf,inf)
+                    if stage!=3:
+                        manual=[value for value in complete if value['target']==link]
+                        require(len(manual)==1,'one independently created manual EUI64 owner bypasses the quota')
+                        exact(manual[0],0x82,inf,inf)
+        elif case<=4:
             initial_link=values(case,0)[0];automatic=values(case,1)[0];replaced=values(case,2)[0]
             exact(initial_link,0x80 if case==2 else 0x880,inf,inf)
             require((initial_link['target']==link)==(case==2),'actual initial link-local generation algorithm')
@@ -342,10 +435,11 @@ def inspect(path,lane,text,group,native=False,statistics=None,native_kernel_rele
                             'ordinary recreation sends one fresh probe after verified failed-owner removal')
                 else:require(len(case_probes)==1,'NODAD recreation sends no extra probe through the whole observation')
         reports.append(dict(case=case,actual_DAD_probes=len(case_probes),actual_conflicts=len(case_conflicts),
-                            quiet_us=quiet,retry_gaps_us=retry_gaps))
+                            quiet_us=quiet,retry_gaps_us=retry_gaps,**details))
     return dict(passed=True,lane=lane,group=group,cases=reports,original_capture_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
         actual_frames=len(rows),queried_controls=len(requests),native_clock=clock,native_multicast_reports=mld,
         firmware_sha256=firmware,native_kernel_release=native_kernel_release,retained_finite_prefix_policy=retain,
         actual_changed_secret_readbacks=secret_changes,
+        actual_limit_readbacks=limit_changes,
         actual_deprecation_wait_observations=waits,
         original_packet_times_not_rescaled=True,full_F12_complete=False)

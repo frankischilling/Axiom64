@@ -132,6 +132,106 @@ void capacity_failures(void (*reset)()) {
         }
 }
 
+void policy_limits(void (*reset)()) {
+    using Key = ip6::ConfigurationKey;
+    reset();
+    for (unsigned scope : {ip6::configuration_all, ip6::configuration_default, 1u, 2u}) {
+        int32_t value = 0;
+        assert(!ip6::configuration_read(scope, Key::max_addresses, value) && value == 16);
+    }
+    assert(!ip6::configuration_write(ip6::configuration_all, Key::max_addresses, 1));
+    assert(!ip6::configuration_write(ip6::configuration_default, Key::max_addresses, 2));
+    int32_t value = 0;
+    assert(!ip6::configuration_read(1, Key::max_addresses, value) && value == 16);
+    ip6::configuration_registered(1);
+    assert(!ip6::configuration_read(1, Key::max_addresses, value) && value == 2);
+    assert(!ip6::configuration_read(2, Key::max_addresses, value) && value == 16);
+
+    for (unsigned lane = 0; lane < 2; lane++)
+        for (bool permanent : {false, true})
+            for (int maximum : {-1, 1}) {
+                reset();
+                unsigned index = lane + 1;
+                assert(!ip6::configuration_write(index, Key::max_addresses, maximum));
+                assert(!ip6::configuration_secret(index, prefix(9)));
+                const auto original = identifier(index, prefix(lane), 0);
+                const auto retry = identifier(index, prefix(lane), 1);
+                Ipv6AddressLifetimes lifetime =
+                    permanent ? Ipv6AddressLifetimes{} : Ipv6AddressLifetimes{60, 120};
+                assert(!ipv6_address_add({original, index, 0x800, 64}, lifetime));
+                const auto owner = ip6::address_owner(index, original);
+                assert(!ip6::configuration_autoconf_allowed(index));
+                // The other adapter's manual address does not consume this policy budget.
+                auto unrelated = prefix(20);
+                unrelated.bytes[15] = 1;
+                assert(!ipv6_address_add({unrelated, 2 - lane, 0x202, 64}));
+                const auto unrelated_owner = ip6::address_owner(2 - lane, unrelated);
+                ipv6_poll();
+                probe(lane, original);
+                conflict(index, original);
+                assert(!find(index, retry) && bool(find(index, original)) == permanent);
+                if (permanent)
+                    assert(find(index, original)->flags == 0x8c8 &&
+                           ip6::address_owner(index, original) == owner);
+                auto manual = prefix(21);
+                manual.bytes[15] = 1;
+                assert(!ipv6_address_add({manual, index, 0x202, 64}));
+                assert(ipv6_owned(index, manual));
+                assert(!ip6::configuration_write(index, Key::max_addresses, 0));
+                assert(ip6::configuration_autoconf_allowed(index));
+                const auto emitted = ipv6_emitted(lane).size();
+                ticks += 1000;
+                ipv6_poll();
+                assert(!find(index, retry) && ipv6_emitted(lane).size() == emitted);
+                assert(ip6::address_owner(2 - lane, unrelated) == unrelated_owner);
+                std::printf("IPV6_DAD_LIMIT lane=%u permanent=%u maximum=%d no_resurrection=1\n",
+                            lane, permanent, maximum);
+            }
+    for (unsigned lane = 0; lane < 2; lane++)
+        for (bool permanent : {false, true})
+            for (int maximum : {0, 2}) {
+                reset();
+                unsigned index = lane + 1;
+                assert(!ip6::configuration_write(index, Key::max_addresses, maximum));
+                assert(!ip6::configuration_secret(index, prefix(9)));
+                const auto original = identifier(index, prefix(lane), 0);
+                const auto first_retry = identifier(index, prefix(lane), 1);
+                const auto second_retry = identifier(index, prefix(lane), 2);
+                Ipv6AddressLifetimes lifetime =
+                    permanent ? Ipv6AddressLifetimes{} : Ipv6AddressLifetimes{60, 120};
+                assert(!ipv6_address_add({original, index, 0x800, 64}, lifetime));
+                ipv6_test_dad_jitter(100);
+                ipv6_poll();
+                conflict(index, original);
+                assert(find(index, first_retry) && bool(find(index, original)) == permanent);
+                ticks = 201;
+                ipv6_poll();
+                probe(lane, first_retry);
+                conflict(index, first_retry);
+                bool room = !maximum || !permanent;
+                assert(bool(find(index, second_retry)) == room);
+                assert(bool(find(index, first_retry)) == permanent);
+                if (room) {
+                    auto owner = ip6::address_owner(index, second_retry);
+                    auto copied = ip6::address_lifetimes(index, second_retry, owner);
+                    assert(copied.preferred == lifetime.preferred &&
+                           copied.valid == lifetime.valid);
+                }
+                std::printf("IPV6_DAD_LIMIT_PROGRESS lane=%u permanent=%u maximum=%d retry2=%u\n",
+                            lane, permanent, maximum, room);
+            }
+    for (unsigned lane = 0; lane < 2; lane++) {
+        reset();
+        unsigned index = lane + 1;
+        assert(!ip6::configuration_write(index, Key::max_addresses, -1));
+        assert(!ip6::configuration_write(index, Key::generation_mode, 0));
+        bool link = false;
+        for (unsigned at = 0; auto entry = ipv6_address(at); at++)
+            link |= entry->index == index && entry->address.link_local();
+        assert(link && !ip6::configuration_autoconf_allowed(index));
+    }
+}
+
 void changed_secrets(void (*reset)()) {
     using Key = ip6::ConfigurationKey;
     for (unsigned lane = 0; lane < 2; lane++)
@@ -245,6 +345,7 @@ void link_lifecycle(void (*reset)()) {
 
 void ipv6_address_lifecycle_tests(void (*reset)()) {
     capacity_failures(reset);
+    policy_limits(reset);
     changed_secrets(reset);
     link_lifecycle(reset);
     reset();

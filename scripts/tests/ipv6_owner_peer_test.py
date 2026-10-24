@@ -4,6 +4,7 @@ from pathlib import Path
 import struct
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from ipv6_owner_peer import Peer
@@ -13,6 +14,27 @@ FIXTURE=Path(__file__).resolve().parent/'fixtures/ipv6-owner-axiom-global-lane0.
 
 
 class OwnershipPeer(unittest.TestCase):
+    def test_capacity_needs_an_explicit_fresh_PIO_before_another_probe(self):
+        path=FIXTURE.with_name('ipv6-owner-axiom-capacity-lane0.pcap')
+        rows=[row for row in qemu_records(path) if row['frame'][6:12]==bytes.fromhex('525400123410')]
+        release=next(i for i,row in enumerate(rows) if row['frame'][12:14]==b'\x88\xc3' and row['frame'][20]==11)
+        peer=Peer(0,'capacity')
+        for row in rows[:release]:
+            with patch('ipv6_owner_peer.time.monotonic_ns',return_value=row['stamp']*1000):
+                peer.receive(row['frame'])
+            peer.outgoing.clear()
+        fresh=next(row for row in rows[release+1:] if row['frame'][12:14]==b'\x86\xdd' and
+                   row['frame'][20]==58 and row['frame'][54]==135)
+        with self.assertRaisesRegex(ValueError,'fresh PIO is required'):
+            peer.receive(fresh['frame'])
+        peer.outgoing.clear()
+        peer.receive(rows[release]['frame'])
+        self.assertEqual([frame[12:14] for frame in peer.outgoing],[b'\x86\xdd',b'\x88\xc3'])
+        self.assertEqual(peer.outgoing[0][54],134)
+        peer.outgoing.clear()
+        peer.receive(fresh['frame'])
+        self.assertEqual(len(peer.probes[10][fresh['frame'][62:78]]),2)
+
     def test_zero_preferred_cache_requires_the_actual_deprecation_flag(self):
         value=dict(target=bytes.fromhex('20010db8004000080000000000000023'),
                    flags=0,preferred=0,valid=6)

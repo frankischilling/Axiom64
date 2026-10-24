@@ -3442,6 +3442,7 @@ static void configuration_files() {
     assert(proc6::scope_index(net_info(1)->name, index) && index == 1);
     assert(!proc6::scope_index("missing", index));
     assert(!strcmp(proc6::property_name(6), "router_solicitations"));
+    assert(!strcmp(proc6::property_name(7), "max_addresses"));
     assert(!proc6::property_name(proc6::property_count));
     int32_t mode;
     assert(!ip6::configuration_read(1, Key::generation_mode, mode) && mode == 2);

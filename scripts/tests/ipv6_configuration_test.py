@@ -17,7 +17,7 @@ class ConfigurationObservations(unittest.TestCase):
     def setUp(self):
         records = json.loads((ROOT / REFERENCE).read_text())['observations']
         self.text = '\n'.join([*records, 'SYSCTL_IO_COMPLETE counted=30',
-                               'SYSCTL_FRONTEND_COMPLETE']) + '\n'
+                               'SYSCTL_FRONTEND_COMPLETE', 'SYSCTL_MAX_ADDRESSES_COMPLETE']) + '\n'
 
     def test_measured_records(self):
         self.assertTrue(observations(self.text)['passed'])
@@ -36,6 +36,12 @@ class ConfigurationObservations(unittest.TestCase):
             self.text.replace('SYSCTL_FRONTEND_COMPLETE\n', ''),
             self.text + 'SYSCTL_FRONTEND_COMPLETE\n',
             self.text + 'SYSCTL_IO_FATAL errno=14\n',
+            self.text.replace('IO_MAX_SCOPE label=all all=1 default=16 eth0=2 eth1=16 lo=16',
+                              'IO_MAX_SCOPE label=all all=1 default=16 eth0=1 eth1=16 lo=16'),
+            self.text.replace('label=negative name=max_addresses result=3 error=0 value=-1',
+                              'label=negative name=max_addresses result=-1 error=22 value=2'),
+            self.text.replace('SYSCTL_MAX_ADDRESSES_COMPLETE\n', ''),
+            self.text + 'SYSCTL_MAX_ADDRESSES_COMPLETE\n',
         ]
         for number, text in enumerate(mutations):
             with self.subTest(mutation=number):

@@ -60,7 +60,8 @@ def observations(text):
               not line.startswith('IO_SECRET_ADDRESS ')]
     expected = json.loads((ROOT / REFERENCE).read_text())['observations']
     complete = (lines.count('SYSCTL_IO_COMPLETE counted=30') == 1 and
-                lines.count('SYSCTL_FRONTEND_COMPLETE') == 1)
+                lines.count('SYSCTL_FRONTEND_COMPLETE') == 1 and
+                lines.count('SYSCTL_MAX_ADDRESSES_COMPLETE') == 1)
     return dict(passed=actual == expected and complete and 'SYSCTL_IO_FATAL' not in text,
                 observations=actual, expected_count=len(expected), complete=complete,
                 address_snapshots=[line for line in lines if line.startswith('IO_SECRET_ADDRESS ')])
@@ -155,6 +156,9 @@ def main():
         REFERENCE = 'scripts/tests/fixtures/ipv6-socket-configuration-linux7.json'
         if digest(ROOT / SOURCE) != json.loads((ROOT / REFERENCE).read_text())['source_sha256']:
             raise ValueError('socket client differs from the measured Linux reference source')
+    if not args.link_mode and not args.socket_mode:
+        if digest(ROOT / SOURCE) != json.loads((ROOT / REFERENCE).read_text())['client_source_sha256']:
+            raise ValueError('proc configuration client differs from the measured Linux reference source')
     args.directory = args.directory.resolve()
     if args.child:
         native_child(args)

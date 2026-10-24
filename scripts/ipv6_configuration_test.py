@@ -22,6 +22,16 @@ SOURCE = 'userspace/tests/net/ipv6_configuration.c'
 REFERENCE = 'scripts/tests/fixtures/ipv6-configuration-linux7.json'
 LINK_MODE = False
 SOCKET_MODE = False
+LIFETIME_MODE = False
+
+
+def lifetime_reference(release=None):
+    # The measured kernels differ only in malformed disable_ipv6 writes.
+    labels = {'6.17.0-1022-azure': 'linux617', '7.0.0-1017-azure': 'linux7'}
+    if release is not None and release not in labels:
+        raise ValueError('configuration lifetime comparison needs an audited Linux release')
+    label = labels[release] if release is not None else 'linux7'
+    return 'scripts/tests/fixtures/ipv6-configuration-lifetime-' + label + '.json'
 
 
 def digest(path):
@@ -44,6 +54,13 @@ def guest_identity(text, firmware, transport):
 
 def observations(text):
     lines = text.splitlines()
+    if LIFETIME_MODE:
+        actual = [line for line in lines if line.startswith('LIFETIME_IO ')]
+        fixture = json.loads((ROOT / REFERENCE).read_text())
+        complete = lines.count(fixture['complete_marker']) == 1
+        return dict(passed=actual == fixture['observations'] and complete and
+                    'LIFETIME_IO_FATAL' not in text, observations=actual,
+                    expected_count=len(fixture['observations']), complete=complete)
     if SOCKET_MODE:
         actual = [line for line in lines if line.startswith('SOCKET_IO ')]
         expected = json.loads((ROOT / REFERENCE).read_text())['observations']
@@ -136,13 +153,14 @@ def native_child(args):
 
 
 def main():
-    global SOURCE, REFERENCE, LINK_MODE, SOCKET_MODE
+    global SOURCE, REFERENCE, LINK_MODE, SOCKET_MODE, LIFETIME_MODE
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--directory', type=Path, default=ROOT / 'build/ipv6-configuration')
     parser.add_argument('--native', action='store_true')
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument('--link-mode', action='store_true', help='compare netlink address-generation controls')
     modes.add_argument('--socket-mode', action='store_true', help='compare device binding and hop-limit controls')
+    modes.add_argument('--lifetime-mode', action='store_true', help='compare interface configuration lifetimes')
     parser.add_argument('--child', choices=('static', 'dynamic', 'native'), help=argparse.SUPPRESS)
     parser.add_argument('--parent-net-ns', type=int, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -156,7 +174,13 @@ def main():
         REFERENCE = 'scripts/tests/fixtures/ipv6-socket-configuration-linux7.json'
         if digest(ROOT / SOURCE) != json.loads((ROOT / REFERENCE).read_text())['source_sha256']:
             raise ValueError('socket client differs from the measured Linux reference source')
-    if not args.link_mode and not args.socket_mode:
+    if args.lifetime_mode:
+        LIFETIME_MODE = True
+        SOURCE = 'userspace/tests/net/ipv6_configuration_lifetime.c'
+        REFERENCE = lifetime_reference(platform.release() if args.native or args.child else None)
+        if digest(ROOT / SOURCE) != json.loads((ROOT / REFERENCE).read_text())['source_sha256']:
+            raise ValueError('lifetime client differs from the measured Linux reference source')
+    if not args.link_mode and not args.socket_mode and not args.lifetime_mode:
         if digest(ROOT / SOURCE) != json.loads((ROOT / REFERENCE).read_text())['client_source_sha256']:
             raise ValueError('proc configuration client differs from the measured Linux reference source')
     args.directory = args.directory.resolve()
@@ -191,6 +215,8 @@ def main():
                 command.append('--link-mode')
             if args.socket_mode:
                 command.append('--socket-mode')
+            if args.lifetime_mode:
+                command.append('--lifetime-mode')
             subprocess.run(command, cwd=ROOT, check=True)
             rows.append(json.loads((case / 'receipt.json').read_text()))
             print('IPV6_CONFIGURATION_NATIVE_PASS ' + profile, flush=True)

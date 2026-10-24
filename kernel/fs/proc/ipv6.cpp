@@ -212,7 +212,7 @@ const char* scope_name(unsigned cookie) {
     if (cookie < 3)
         return cookie == 0 ? "all" : cookie == 1 ? "default" : "lo";
     auto info = cookie - 2 <= max_net_devices ? net_info(cookie - 2) : nullptr;
-    return info ? info->name : nullptr;
+    return info && ip6::configuration_generation(info->index) ? info->name : nullptr;
 }
 
 bool scope_index(const char* name, unsigned& index) {
@@ -224,13 +224,18 @@ bool scope_index(const char* name, unsigned& index) {
         index = ipv6_loopback;
     else {
         for (unsigned at = 1; at <= max_net_devices; at++)
-            if (auto info = net_info(at); info && !strcmp(info->name, name)) {
+            if (auto info = net_info(at);
+                info && !strcmp(info->name, name) && ip6::configuration_generation(at)) {
                 index = at;
                 return true;
             }
         return false;
     }
     return true;
+}
+
+uint64_t scope_generation(unsigned index) {
+    return ip6::configuration_generation(index);
 }
 
 int64_t read(unsigned index, unsigned property, uint64_t& offset, void* output, size_t length) {

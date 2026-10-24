@@ -1016,6 +1016,8 @@ jobs:
           path: |
             build/ipv6-configuration-wire
             build/ipv6-configuration-native
+            build/ipv6-configuration-lifetime-wire
+            build/ipv6-configuration-lifetime-native
             build/ipv6-link-configuration-wire
             build/ipv6-link-configuration-native
             build/ipv6-socket-configuration-wire

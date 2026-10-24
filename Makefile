@@ -719,10 +719,15 @@ test-ipv6-configuration:
 test-ipv6-configuration-native:
 	$(PYTHON) scripts/ipv6_configuration_test.py --native --directory build/ipv6-configuration-native
 .PHONY: test-ipv6-link-configuration test-ipv6-link-configuration-native
-test-ipv6-link-configuration:
+test-ipv6-link-configuration: test-ipv6-configuration-lifetime
 	$(PYTHON) scripts/ipv6_configuration_test.py --link-mode --directory build/ipv6-link-configuration-wire
-test-ipv6-link-configuration-native:
+test-ipv6-link-configuration-native: test-ipv6-configuration-lifetime-native
 	$(PYTHON) scripts/ipv6_configuration_test.py --link-mode --native --directory build/ipv6-link-configuration-native
+.PHONY: test-ipv6-configuration-lifetime test-ipv6-configuration-lifetime-native
+test-ipv6-configuration-lifetime:
+	$(PYTHON) scripts/ipv6_configuration_test.py --lifetime-mode --directory build/ipv6-configuration-lifetime-wire
+test-ipv6-configuration-lifetime-native:
+	$(PYTHON) scripts/ipv6_configuration_test.py --lifetime-mode --native --directory build/ipv6-configuration-lifetime-native
 .PHONY: test-ipv6-socket-configuration test-ipv6-socket-configuration-native
 test-ipv6-socket-configuration:
 	$(PYTHON) scripts/ipv6_configuration_test.py --socket-mode --directory build/ipv6-socket-configuration-wire

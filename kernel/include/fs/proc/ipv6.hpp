@@ -11,6 +11,7 @@ const char* property_name(unsigned);
 const char* scope_name(unsigned cookie);
 
 bool scope_index(const char*, unsigned&);
+uint64_t scope_generation(unsigned);
 
 int64_t read(unsigned index, unsigned property, uint64_t& offset, void*, size_t);
 

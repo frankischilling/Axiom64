@@ -267,10 +267,19 @@ const ControlFileOps* node_control(Node* node) {
                : nullptr;
 }
 
+int node_validate(Node* node) {
+    node = file_node(node);
+    return node && node->mount && node->mount->ops && node->mount->ops->validate
+               ? node->mount->ops->validate(node)
+               : 0;
+}
+
 int node_access(Node* node, unsigned mask, bool real) {
     node = file_node(node);
     if (!node)
         return -2;
+    if (int error = node_validate(node))
+        return error;
     if (node->mount->ops->refresh)
         node->mount->ops->refresh(node);
     if (auto control = node_control(node))
@@ -479,6 +488,8 @@ int rename_node(const Path& from, const Path& to, bool no_replace) {
 }
 
 int node_truncate(Node* node, uint64_t size) {
+    if (int error = node_validate(node))
+        return error;
     node = file_node(node);
     if (int64_t(size) < 0)
         return -22;
@@ -991,6 +1002,8 @@ int64_t read_handle(Handle* h, void* buf, size_t len) {
     if ((h->flags & 3) == 1)
         return -9;
     if (auto control = node_control(h->node)) {
+        if (int error = node_validate(h->node))
+            return error;
         if (control->access(h->node, 4, false))
             return -1;
         return control->read(h, buf, len);
@@ -1054,6 +1067,8 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
     if ((h->flags & 3) == 0)
         return -9;
     if (auto control = node_control(h->node)) {
+        if (int error = node_validate(h->node))
+            return error;
         if (node_readonly(h->node))
             return -30;
         if (control->access(h->node, 2, false))

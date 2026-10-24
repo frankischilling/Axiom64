@@ -27,6 +27,10 @@ int configuration_secret(unsigned index, const Address&);
 
 int configuration_secret_read(unsigned index, Address&);
 
+// Zero means no IPv6 configuration object exists. Retained proc descriptions
+// bind to one generation and cannot attach to a later interface initialization.
+uint64_t configuration_generation(unsigned index);
+
 bool configuration_disabled(unsigned index);
 
 // New SLAAC owners and stable DAD retries share the per-interface address limit.

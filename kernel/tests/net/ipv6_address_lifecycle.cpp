@@ -232,6 +232,61 @@ void policy_limits(void (*reset)()) {
     }
 }
 
+void configuration_lifetimes(void (*reset)()) {
+    using Key = ip6::ConfigurationKey;
+    for (unsigned lane = 0; lane < 2; lane++) {
+        reset();
+        unsigned index = lane + 1;
+        assert(!ip6::configuration_secret(index, prefix(10)));
+        assert(!ip6::configuration_write(index, Key::max_addresses, 3));
+        assert(!ip6::configuration_write(index, Key::disabled, 1));
+        assert(!ip6::configuration_write(index, Key::disabled, 0));
+        const auto first = identifier(index, prefix(lane, true), 0);
+        const auto first_owner = ip6::address_owner(index, first);
+        assert(first_owner);
+        uint64_t original = ip6::configuration_generation(index);
+        uint64_t companion = ip6::configuration_generation(2 - lane);
+        assert(original && companion);
+        ipv6_test_carrier(lane, false);
+        ipv6_poll();
+        assert(ip6::configuration_generation(index) == original);
+        assert(!net_configure(index, true, 1279));
+        int32_t value = 0;
+        ip6::Address secret;
+        assert(!ip6::configuration_generation(index));
+        assert(ip6::configuration_read(index, Key::max_addresses, value) == -19);
+        assert(ip6::configuration_secret_read(index, secret) == -19);
+        assert(ip6::configuration_generation(2 - lane) == companion);
+        assert(!ip6::configuration_write(ip6::configuration_default, Key::max_addresses, 7));
+        assert(!ip6::configuration_write(ip6::configuration_default, Key::generation_mode, 1));
+        assert(!ip6::configuration_secret(ip6::configuration_default, prefix(11)));
+        assert(!net_configure(index, true, 1500));
+        uint64_t restored = ip6::configuration_generation(index);
+        assert(restored && restored != original);
+        assert(!ip6::configuration_read(index, Key::max_addresses, value) && value == 7);
+        assert(!ip6::configuration_read(index, Key::generation_mode, value) && value == 2);
+        assert(!ip6::configuration_secret_read(index, secret) && secret == prefix(11));
+        assert(!ip6::configuration_secret(ip6::configuration_default, prefix(12)));
+        assert(!ip6::configuration_secret_read(index, secret) && secret == prefix(11));
+        ipv6_test_carrier(lane, true);
+        ipv6_poll();
+        const auto initialized = identifier(index, prefix(lane, true), 0);
+        assert(!(initialized == first) && !find(index, first));
+        assert(ip6::address_owner(index, initialized) &&
+               ip6::address_owner(index, initialized) != first_owner);
+        probe(lane, initialized);
+        assert(ip6::configuration_generation(index) == restored);
+        assert(!net_configure(index, false, 1500));
+        assert(ip6::configuration_generation(index) == restored);
+        assert(!net_configure(index, true, 1500));
+        assert(ip6::configuration_generation(index) == restored);
+        assert(ip6::configuration_generation(2 - lane) == companion);
+        std::printf("IPV6_CONFIGURATION_LIFETIME lane=%u carrier_preserves=1 mtu_retires=1 "
+                    "defaults_copied=1 administrative_preserves=1\n",
+                    lane);
+    }
+}
+
 void changed_secrets(void (*reset)()) {
     using Key = ip6::ConfigurationKey;
     for (unsigned lane = 0; lane < 2; lane++)
@@ -330,10 +385,19 @@ void link_lifecycle(void (*reset)()) {
             } else {
                 assert(!net_configure(index, true, 1500));
                 ipv6_poll();
-                assert(ip6::address_owner(index, first) &&
-                       ip6::address_owner(index, first) != first_owner && !find(index, retry));
-                assert(ipv6_emitted(lane).size() == emitted + 1);
-                probe(lane, first);
+                if (action == 2) {
+                    // The fixture's manual default survives; the local key does not.
+                    int32_t mode = 0;
+                    assert(!ip6::configuration_read(index, Key::generation_mode, mode) &&
+                           mode == 1);
+                    assert(!find(index, first) && !find(index, retry));
+                    assert(ipv6_emitted(lane).size() == emitted);
+                } else {
+                    assert(ip6::address_owner(index, first) &&
+                           ip6::address_owner(index, first) != first_owner && !find(index, retry));
+                    assert(ipv6_emitted(lane).size() == emitted + 1);
+                    probe(lane, first);
+                }
             }
             assert(ip6::address_owner(2 - lane, unrelated) == unrelated_owner &&
                    ipv6_owned(2 - lane, unrelated));
@@ -346,6 +410,7 @@ void link_lifecycle(void (*reset)()) {
 void ipv6_address_lifecycle_tests(void (*reset)()) {
     capacity_failures(reset);
     policy_limits(reset);
+    configuration_lifetimes(reset);
     changed_secrets(reset);
     link_lifecycle(reset);
     reset();

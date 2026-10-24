@@ -14,6 +14,7 @@ struct Values {
 
 struct Configuration {
     Values values;
+    uint64_t generation = 0;
     uint8_t secret[16]{};
     bool secret_initialized = false, initialized = false;
     bool administrative = false, ready = false, pending = false;
@@ -21,19 +22,33 @@ struct Configuration {
 };
 
 Configuration interfaces[max_net_devices + 1], defaults, all;
+uint64_t next_generation = 1;
+
+void initialize(Configuration& state) {
+    random::erase(&state, sizeof(state));
+    state.values = defaults.values;
+    if (defaults.secret_initialized) {
+        memcpy(state.secret, defaults.secret, sizeof(state.secret));
+        state.secret_initialized = true;
+        state.values.mode = 2;
+    }
+    state.generation = next_generation++;
+    state.initialized = true;
+}
 
 Configuration* select(unsigned index) {
     if (index == configuration_all)
         return &all;
     if (index == configuration_default)
         return &defaults;
-    if (index != ipv6_loopback && !net_info(index))
-        return nullptr;
-    auto& state = interfaces[index - 1];
-    if (!state.initialized) {
-        state.values = defaults.values;
-        state.initialized = true;
+    if (index != ipv6_loopback) {
+        auto info = net_info(index);
+        if (!info || info->mtu < minimum_mtu)
+            return nullptr;
     }
+    auto& state = interfaces[index - 1];
+    if (!state.initialized)
+        initialize(state);
     return &state;
 }
 
@@ -313,6 +328,13 @@ int configuration_secret_read(unsigned index, Address& secret) {
     return 0;
 }
 
+uint64_t configuration_generation(unsigned index) {
+    auto state = select(index);
+    if (!state)
+        return 0;
+    return index == configuration_all || index == configuration_default ? 1 : state->generation;
+}
+
 bool configuration_disabled(unsigned index) {
     auto state = select(index);
     return !state || state->values.disabled;
@@ -335,20 +357,27 @@ void configuration_registered(unsigned index) {
     auto state = select(index);
     if (!state)
         return;
-    random::erase(state, sizeof(*state));
-    state->values = defaults.values;
-    state->initialized = true;
+    initialize(*state);
     configuration_changed(index);
 }
 
 void configuration_changed(unsigned index) {
-    auto state = select(index);
     auto info = net_info(index);
-    if (!state || !info)
+    if (!info)
+        return;
+    auto& stored = interfaces[index - 1];
+    if (info->mtu < minimum_mtu) {
+        if (stored.initialized) {
+            withdraw(index);
+            random::erase(&stored, sizeof(stored));
+        }
+        return;
+    }
+    auto state = select(index);
+    if (!state)
         return;
     bool ready = physical_ready(index);
-    if ((state->administrative && !info->administrative) ||
-        (state->ready && info->mtu < minimum_mtu)) {
+    if (state->administrative && !info->administrative) {
         withdraw(index);
         state->pending = false;
     }

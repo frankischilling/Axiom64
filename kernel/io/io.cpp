@@ -503,6 +503,8 @@ static int64_t control_attempt(Task& task, IoRequest& request, const ControlFile
     // Linux vector I/O returns before the filesystem for an empty iterator.
     if (!length && (request.call.rax == 19 || request.call.rax == 20))
         return 0;
+    if (int error = node_validate(handle->node))
+        return error;
     if (request.write && node_readonly(handle->node))
         return -30;
     if (control.access(handle->node, request.write ? 2 : 4, false))

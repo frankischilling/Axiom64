@@ -37,6 +37,7 @@ struct Entry {
     Kind kind;
     int pid, tgid;
     unsigned network_index = 0, property = 0;
+    uint64_t network_generation = 0;
 };
 
 struct Proc {
@@ -175,13 +176,23 @@ static bool within(Node* node, Node* ancestor) {
     return false;
 }
 
+static int validate(Node* node) {
+    auto item = entry(node);
+    if (item->kind != Kind::network_scope && item->kind != Kind::network_property)
+        return 0;
+    uint64_t generation = proc6::scope_generation(item->network_index);
+    return generation && generation == item->network_generation ? 0 : -2;
+}
+
 static void collect(Proc* state) {
     // Retained descriptions/cwd pin the entire ancestor chain. A TID subtree
     // can retire independently while its thread group continues to live.
     for (;;) {
         Entry* dead = nullptr;
         for (auto item = state->entries; item; item = item->next)
-            if ((item->kind == Kind::process || item->kind == Kind::thread) && !task(item->pid) &&
+            if ((((item->kind == Kind::process || item->kind == Kind::thread) &&
+                  !task(item->pid)) ||
+                 (item->kind == Kind::network_scope && validate(&item->node))) &&
                 !node_referenced(&item->node)) {
                 dead = item;
                 break;
@@ -257,6 +268,8 @@ static Entry* make(Proc* state, Mount* mount, Node* parent, const char* name, Ki
 }
 
 static int lookup(Node* parent, const char* name, Node*& output) {
+    if (int error = validate(parent))
+        return error;
     auto context = entry(parent);
     auto owner = context->pid ? task(context->pid) : nullptr;
     if (context->pid && !owner)
@@ -264,6 +277,7 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     Kind kind;
     int selected_pid = context->pid, group = context->tgid;
     unsigned network_index = context->network_index, property = 0;
+    uint64_t network_generation = context->network_generation;
     if (context->kind == Kind::root && !strcmp(name, "self"))
         kind = Kind::self;
     else if (context->kind == Kind::root && !strcmp(name, "thread-self"))
@@ -281,6 +295,7 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     else if (context->kind == Kind::conf) {
         if (!proc6::scope_index(name, network_index))
             return -2;
+        network_generation = proc6::scope_generation(network_index);
         kind = Kind::network_scope;
     } else if (context->kind == Kind::network_scope) {
         while (property < proc6::property_count && strcmp(name, proc6::property_name(property)))
@@ -318,7 +333,7 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     auto state = static_cast<Proc*>(parent->mount->data);
     collect(state);
     for (auto child = parent->first_child; child; child = child->next_sibling)
-        if (!strcmp(child->name, name)) {
+        if (!strcmp(child->name, name) && !validate(child)) {
             refresh(child);
             output = child;
             return 0;
@@ -328,6 +343,7 @@ static int lookup(Node* parent, const char* name, Node*& output) {
         return -12;
     result->network_index = network_index;
     result->property = property;
+    result->network_generation = network_generation;
     if (kind == Kind::network_property) {
         result->node.mode = regular_file | (property == proc6::secret_property ? 0600 : 0644);
         result->node.links = 1;
@@ -597,11 +613,15 @@ static int control_access(Node* node, unsigned mask, bool real) {
 }
 
 static int64_t control_read(Handle* handle, void* output, size_t length) {
+    if (int error = validate(handle->node))
+        return error;
     auto item = entry(handle->node);
     return proc6::read(item->network_index, item->property, handle->offset, output, length);
 }
 
 static int64_t control_write(Handle* handle, const void* input, size_t length) {
+    if (int error = validate(handle->node))
+        return error;
     auto item = entry(handle->node);
     return proc6::write(item->network_index, item->property, handle->offset, input, length);
 }
@@ -616,6 +636,8 @@ static const ControlFileOps* control(Node* node) {
 }
 
 static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
+    if (int error = validate(node))
+        return error;
     auto context = entry(node);
     if (context->pid && !task(context->pid))
         return -2;
@@ -784,7 +806,8 @@ const FilesystemOps procfs_ops = {lookup,
                                   refresh,
                                   read_description,
                                   close_description,
-                                  control};
+                                  control,
+                                  validate};
 
 Node* procfs_root(Mount* mount) {
     auto state = static_cast<Proc*>(alloc(sizeof(Proc)));

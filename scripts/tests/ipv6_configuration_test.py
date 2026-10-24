@@ -87,6 +87,41 @@ class LinkConfigurationObservations(unittest.TestCase):
                 self.assertFalse(observations(text)['passed'])
 
 
+class LifetimeConfigurationObservations(unittest.TestCase):
+    def test_audited_release_selection(self):
+        self.assertTrue(configuration.lifetime_reference().endswith('-linux7.json'))
+        self.assertTrue(configuration.lifetime_reference('6.17.0-1022-azure').endswith('-linux617.json'))
+        self.assertTrue(configuration.lifetime_reference('7.0.0-1017-azure').endswith('-linux7.json'))
+        with self.assertRaisesRegex(ValueError, 'audited Linux release'):
+            configuration.lifetime_reference('7.0.0-unknown')
+
+    def test_actual_retirement_defaults_and_retained_descriptions(self):
+        for label in ('linux617', 'linux7'):
+            reference = 'scripts/tests/fixtures/ipv6-configuration-lifetime-' + label + '.json'
+            fixture = json.loads((ROOT / reference).read_text())
+            text = '\n'.join([*fixture['observations'], fixture['complete_marker']]) + '\n'
+            with patch.multiple(configuration, LIFETIME_MODE=True, REFERENCE=reference):
+                self.assertTrue(observations(text)['passed'])
+                selected = next(line for line in fixture['observations']
+                                if 'action=1 stage=1 retained=max_addresses seek=0' in line)
+                mutations = [text.replace(selected, selected.replace('read=-1 errno=2', 'read=0 errno=0')),
+                             text.replace('retained_stat=-1 retained_errno=2',
+                                          'retained_stat=0 retained_errno=0'),
+                             text.replace('retained_directory_open=0 errno=2',
+                                          'retained_directory_open=1 errno=0'),
+                             text.replace('same_inode=0 retained_stat=-1',
+                                          'same_inode=1 retained_stat=-1'),
+                             text.replace('read=2 errno=0 bytes=370a',
+                                          'read=2 errno=0 bytes=330a'),
+                             text.replace(fixture['complete_marker'] + '\n', ''),
+                             text + fixture['complete_marker'] + '\n',
+                             text + 'LIFETIME_IO_FATAL errno=14\n']
+                for number, damaged in enumerate(mutations):
+                    with self.subTest(label=label, mutation=number):
+                        self.assertNotEqual(damaged, text)
+                        self.assertFalse(observations(damaged)['passed'])
+
+
 class SocketConfigurationObservations(unittest.TestCase):
     def setUp(self):
         reference = 'scripts/tests/fixtures/ipv6-socket-configuration-linux7.json'

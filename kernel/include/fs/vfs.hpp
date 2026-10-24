@@ -107,6 +107,8 @@ struct FilesystemOps {
     int64_t (*read_description)(Handle*, uint64_t, void*, size_t) = nullptr;
     void (*close_description)(Handle*) = nullptr;
     const ControlFileOps* (*control)(Node*) = nullptr;
+    // Dynamic filesystem objects may retire while descriptions still pin them.
+    int (*validate)(Node*) = nullptr;
 };
 
 struct Mount {
@@ -206,6 +208,7 @@ int node_setattr(Node*, uint32_t, Timestamp, Timestamp);
 int node_access(Node*, unsigned mask, bool real = false);
 
 const ControlFileOps* node_control(Node*);
+int node_validate(Node*);
 int node_chmod(Node*, uint32_t);
 int node_chown(Node*, uint32_t, uint32_t);
 

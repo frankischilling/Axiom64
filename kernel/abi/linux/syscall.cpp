@@ -112,6 +112,8 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
     if ((n->mode & 0170000) == directory && (flags & 3))
         return -21;
     n = file_node(n);
+    if (int error = node_validate(n))
+        return error;
     unsigned mask = (flags & 3) == 0 ? 4 : (flags & 3) == 1 ? 2 : 6;
     if ((flags & 01000) && (n->mode & 0170000) == regular_file)
         mask |= 2;
@@ -183,6 +185,8 @@ static int64_t stat_node(Node* n, uint64_t dst) {
     if (!n)
         return -2;
     n = file_node(n);
+    if (int error = node_validate(n))
+        return error;
     LinuxStat s{};
     if (n->mount->ops->refresh)
         n->mount->ops->refresh(n);

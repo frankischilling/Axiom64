@@ -27,11 +27,26 @@ const NetInfo* net_info(unsigned index) {
     return &value;
 }
 
-const Ipv4Config* ipv4_config(unsigned index) {
-    static Ipv4Config value;
-    value = index == ipv4_loopback
-                ? Ipv4Config{0x7f000001, 0xff000000, 0}
-                : Ipv4Config{0x0a000002 + (index << 8), 0xffffff00, 0x0a0000ff + (index << 8)};
+const Ipv4Address* ipv4_address(unsigned position) {
+    if (position > ipv4_address_capacity)
+        return nullptr;
+    static Ipv4Address value;
+    value = {};
+    if (position == ipv4_address_capacity) {
+        value.config = {0x7f000001, 0xff000000, 0};
+        value.index = ipv4_loopback;
+        memcpy(value.label, "lo", 3);
+    } else {
+        value.index = position % max_net_devices + 1;
+        value.secondary = position >= max_net_devices;
+        value.config = {0x0a000002 + (value.index << 8) + position / max_net_devices, 0xffffff00,
+                        0x0a0000ff + (value.index << 8)};
+        if (value.secondary)
+            std::snprintf(value.label, sizeof(value.label), "eth%u:%u", value.index - 1,
+                          position / max_net_devices);
+        else
+            std::snprintf(value.label, sizeof(value.label), "eth%u", value.index - 1);
+    }
     return &value;
 }
 } // namespace ax
@@ -73,7 +88,10 @@ static int evaluate(const uint8_t* packet, bool strict, unsigned* records = null
         }
         at += header.length;
     }
-    require(count == max_net_devices + 1, "all physical devices and loopback fit one reservation");
+    unsigned expected = request.type == 18 ? max_net_devices + 1
+                        : packet[16] == 10 ? 0
+                                           : ipv4_address_capacity + 1;
+    require(count == expected, "complete device/address inventory fits one reservation");
     if (records)
         *records = count;
     return 0;
@@ -83,7 +101,7 @@ int main() {
     uint8_t packet[128]{};
     unsigned cases = 0;
     for (uint16_t type : {uint16_t(18), uint16_t(22)}) {
-        for (unsigned family : {0u, 2u, 17u}) {
+        for (unsigned family : {0u, 2u, 10u, 17u}) {
             if (type == 22 && family == 17)
                 continue;
             for (unsigned body : {1u, 4u, type == 18 ? 16u : 8u}) {
@@ -94,7 +112,10 @@ int main() {
                 if (body == 4)
                     memset(packet + 17, 0xa5, 3);
                 unsigned records = 0;
-                require(!evaluate(packet, false, &records) && records == 9,
+                require(!evaluate(packet, false, &records) &&
+                            records == (type == 18     ? 9
+                                        : family == 10 ? 0
+                                                       : ipv4_address_capacity + 1),
                         "valid compact and complete dumps");
                 require(evaluate(packet, true) == (body == (type == 18 ? 16u : 8u) ? 0 : -22),
                         "strict dump requires the complete header");

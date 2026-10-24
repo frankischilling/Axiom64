@@ -15,9 +15,15 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
+
+#if !defined(SIOCGSTAMP) || !defined(SIOCGSTAMPNS)
+#include <linux/sockios.h>
+#endif
 
 #define PROTOCOL 0x88b5
 static const unsigned char peer[6] = {2, 0x41, 0x58, 0x50, 0x4b, 0};
@@ -36,6 +42,75 @@ static int raw(int index, int protocol, int flags) {
         .sll_family = AF_PACKET, .sll_protocol = htons(protocol), .sll_ifindex = index};
     check(bind(fd, (struct sockaddr*)&address, sizeof(address)) == 0, "bind");
     return fd;
+}
+
+static unsigned long long realtime(void) {
+    struct timespec value;
+    check(clock_gettime(CLOCK_REALTIME, &value) == 0, "timestamp reference clock");
+    return (unsigned long long)value.tv_sec * 1000000000 + value.tv_nsec;
+}
+
+static unsigned long long timestamp_probe(int fd, int index, unsigned long long begin,
+                                          unsigned long long end) {
+    struct timespec stamp, alias, consumed, unchanged;
+    check(ioctl(fd, SIOCGSTAMPNS, &stamp) == -1 && errno == ENOENT,
+          "queued packet has no previously read timestamp");
+    check(usleep(150000) == 0, "delay packet dequeue");
+    unsigned char bytes[7];
+    check(recv(fd, bytes, sizeof(bytes), MSG_PEEK | MSG_TRUNC) == 64, "timestamp frame peek");
+    unsigned long long dequeue = realtime();
+    check(ioctl(fd, SIOCGSTAMPNS, &stamp) == 0 && stamp.tv_sec >= 0 && stamp.tv_nsec >= 0 &&
+              stamp.tv_nsec < 1000000000,
+          "peek updates packet timestamp");
+    unsigned long long arrival = (unsigned long long)stamp.tv_sec * 1000000000 + stamp.tv_nsec;
+    check(begin <= arrival && arrival <= end && dequeue >= arrival + 100000000,
+          "timestamp belongs to admission before delayed dequeue");
+    int duplicate = dup(fd);
+    check(duplicate >= 0 && ioctl(duplicate, SIOCGSTAMPNS, &alias) == 0 &&
+              alias.tv_sec == stamp.tv_sec && alias.tv_nsec == stamp.tv_nsec,
+          "packet timestamp belongs to shared description");
+    check(ioctl(fd, SIOCGSTAMPNS, (void*)1) == -1 && errno == EFAULT &&
+              ioctl(fd, SIOCGSTAMPNS, &unchanged) == 0 && unchanged.tv_sec == stamp.tv_sec &&
+              unchanged.tv_nsec == stamp.tv_nsec,
+          "timestamp copy fault preserves observation");
+    check(recv(duplicate, bytes, sizeof(bytes), MSG_TRUNC) == 64 &&
+              ioctl(fd, SIOCGSTAMPNS, &consumed) == 0 && consumed.tv_sec == stamp.tv_sec &&
+              consumed.tv_nsec == stamp.tv_nsec,
+          "consuming the peeked frame retains its timestamp");
+    struct timeval micros;
+    check(ioctl(fd, SIOCGSTAMP, &micros) == 0 && micros.tv_sec == stamp.tv_sec &&
+              micros.tv_usec == stamp.tv_nsec / 1000 && ioctl(fd, 0x80108907UL, &alias) == 0 &&
+              alias.tv_sec == stamp.tv_sec && alias.tv_nsec == stamp.tv_nsec &&
+              ioctl(fd, 0x80108906UL, &micros) == 0 && micros.tv_sec == stamp.tv_sec &&
+              micros.tv_usec == stamp.tv_nsec / 1000,
+          "old and time64 packet timestamp ioctls");
+    check(close(fd) == 0 && ioctl(duplicate, SIOCGSTAMPNS, &alias) == 0 &&
+              alias.tv_sec == stamp.tv_sec && alias.tv_nsec == stamp.tv_nsec &&
+              close(duplicate) == 0,
+          "timestamp survives original descriptor close");
+    int fresh = raw(index, 0, SOCK_NONBLOCK);
+    check(ioctl(fresh, SIOCGSTAMPNS, &alias) == -1 && errno == ENOENT && close(fresh) == 0,
+          "fresh description has no retired timestamp");
+    printf("PACKET_TIMESTAMP_PASS index=%d begin_ns=%llu end_ns=%llu arrival_ns=%llu "
+           "dequeue_ns=%llu\n",
+           index, begin, end, arrival, dequeue);
+    return arrival;
+}
+
+static void lazy_timestamp_probe(int fd, int index, unsigned long long arrival) {
+    struct timespec value;
+    unsigned long long before = realtime();
+    errno = 0;
+    check(ioctl(fd, SIOCGSTAMPNS, &value) == 0 && value.tv_sec >= 0 && value.tv_nsec >= 0 &&
+              value.tv_nsec < 1000000000,
+          "unarmed first timestamp query");
+    unsigned long long after = realtime();
+    unsigned long long stamp = (unsigned long long)value.tv_sec * 1000000000 + value.tv_nsec;
+    printf("PACKET_TIMESTAMP_LAZY index=%d before_ns=%llu stamp_ns=%llu after_ns=%llu "
+           "arrival_ns=%llu\n",
+           index, before, stamp, after, arrival);
+    check(before <= stamp && stamp <= after && stamp >= arrival + 100000000,
+          "unarmed first timestamp uses query time");
 }
 
 static void buffer_options(unsigned maximum) {
@@ -305,6 +380,12 @@ static void nic(int control, int index, unsigned sequences) {
     int one = 1;
     check(setsockopt(observer, SOL_PACKET, PACKET_IGNORE_OUTGOING, &one, sizeof(one)) == 0,
           "ignore outgoing");
+    int timestamp = raw(index, PROTOCOL, SOCK_NONBLOCK);
+    struct timespec empty_stamp;
+    check(ioctl(timestamp, SIOCGSTAMPNS, &empty_stamp) == -1 && errno == ENOENT &&
+              setsockopt(timestamp, SOL_PACKET, PACKET_IGNORE_OUTGOING, &one, sizeof(one)) == 0,
+          "fresh packet timestamp and incoming filter");
+    unsigned long long timestamp_begin = realtime();
     check(fcntl(fd, F_GETFD) & FD_CLOEXEC, "close-on-exec");
     check(fcntl(observer, F_GETFL) & O_NONBLOCK, "nonblocking");
     struct stat stat;
@@ -333,6 +414,7 @@ static void nic(int control, int index, unsigned sequences) {
     check(epoll_ctl(epoll, EPOLL_CTL_ADD, fd, &event) == 0, "epoll add");
     // Keep enough independent frames in flight to cross the 16-bit queue
     // indices without turning every frame into a timer-paced round trip.
+    unsigned long long first_arrival = 0;
     for (unsigned base = 0; base < sequences; base += 16) {
         unsigned end = sequences - base < 16 ? sequences : base + 16;
         for (unsigned sequence = base; sequence < end; sequence++) {
@@ -358,6 +440,8 @@ static void nic(int control, int index, unsigned sequences) {
             check(epoll_wait(epoll, &event, 1, 3000) == 1 && (event.events & EPOLLIN) &&
                       event.data.u64 == 0x123456789abcdef0ull,
                   "epoll RX while tasks blocked");
+            if (sequence == 0)
+                first_arrival = timestamp_probe(timestamp, index, timestamp_begin, realtime());
             struct pollfd poller = {.fd = fd, .events = POLLIN};
             check(poll(&poller, 1, 0) == 1 && (poller.revents & POLLIN), "poll RX");
             int available = 0;
@@ -406,6 +490,8 @@ static void nic(int control, int index, unsigned sequences) {
             check(recv(observer, bytes, sizeof(bytes), 0) == (ssize_t)length,
                   "independent listener");
             received(bytes, sent, length, NULL, mac, index);
+            if (sequence == 0)
+                lazy_timestamp_probe(observer, index, first_arrival);
             check(recv(disabled, bytes, sizeof(bytes), 0) == -1 && errno == EAGAIN,
                   "zero protocol filter");
             check(recv(other, bytes, sizeof(bytes), 0) == -1 && errno == EAGAIN, "protocol filter");

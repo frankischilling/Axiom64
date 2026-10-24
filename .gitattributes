@@ -3,9 +3,18 @@
 *.cpio binary
 # Keep captured serial bytes, including CRLF and terminal escape sequences.
 scripts/tests/fixtures/normal-console/interrupted-prompt.txt -text -whitespace
+scripts/tests/fixtures/normal-console/manager-bound-prompt.txt -text -whitespace
 scripts/tests/fixtures/account-rotation-interrupted-data.txt -text -whitespace
 scripts/tests/fixtures/qmp-pre-greeting-resume.jsonl -text -whitespace
+scripts/tests/fixtures/ipv6-router-bios-modern.log -text -whitespace
+scripts/tests/fixtures/ipv6-router-bios-modern.pcap binary
 # Preserve checked patch bytes and the whitespace required by unified context.
 vendor/musl/patches/*.patch -text -whitespace
 # Preserve pinned verification inputs and complete upstream license bytes.
 vendor/gnu-utmp-reader/* -text -whitespace
+scripts/tests/fixtures/normal-init-default-ipv6-lane0.pcap binary
+scripts/tests/fixtures/normal-init-default-ipv6-lane1.pcap binary
+scripts/tests/fixtures/ipv6-dad-*.log -text -whitespace
+scripts/tests/fixtures/ipv6-dad-*.pcap binary
+scripts/tests/fixtures/ipv6-owner-*.log -text -whitespace
+scripts/tests/fixtures/ipv6-owner-*.pcap binary

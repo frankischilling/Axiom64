@@ -126,8 +126,9 @@ int64_t netlink_send(NetlinkSocket* socket, unsigned process, const void* data, 
         if (count == queue_count)
             return -90;
         positions[count] = at;
-        capacities[count] =
-            socket->capped && !routing_dump(header.type) ? 36 : routing_capacity(header);
+        capacities[count] = socket->capped && !routing_dump(header.type)
+                                ? 36
+                                : routing_capacity(header, bytes + at);
         total += capacities[count++];
         if (header.length == length - at)
             break;

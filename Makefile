@@ -1,6 +1,8 @@
 CXX = g++
 NASM = nasm
 PYTHON = python3
+IPV4_WORKERS ?= 2
+IPV6_CORE = $(wildcard kernel/net/ipv6/*.cpp) kernel/core/random/primitives.cpp
 MUSL_CC = gcc -specs="$(CURDIR)/build/musl/build/compiler.specs"
 CLANG_FORMAT ?= clang-format-20
 CXXFLAGS = -std=c++20 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pie -fno-threadsafe-statics -fno-use-cxa-atexit -fno-builtin -m64 -mno-red-zone -mcmodel=kernel -mgeneral-regs-only -Ikernel/include -Ivendor
@@ -212,9 +214,9 @@ test-credentials:
 	$(PYTHON) scripts/credentials_test.py
 RANDOM_CORE = kernel/core/random/primitives.cpp kernel/core/random/engine.cpp
 .PHONY: test-netlink-inventory test-netlink-inventory-native test-netlink-inventory-codec
-build/netlink-inventory-codec: kernel/tests/net/inventory.cpp kernel/net/netlink/inventory.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp
+build/netlink-inventory-codec: kernel/tests/net/inventory.cpp kernel/net/netlink/inventory.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp kernel/tests/net/ipv6_disabled.cpp kernel/net/ipv6/wire.cpp
 	@mkdir -p build
-	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/inventory.cpp kernel/net/netlink/inventory.cpp -o $@
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 test-netlink-inventory-codec: build/netlink-inventory-codec
 	ASAN_OPTIONS=detect_leaks=1 ./build/netlink-inventory-codec
 build/netlink-inventory-native: userspace/tests/net/inventory.c
@@ -421,9 +423,15 @@ build/root-tests: userspace/tests/fs/root.c
 build/net-tests: userspace/tests/net/packet.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
-build/ipv4-tests: userspace/tests/net/ipv4.c
+build/ipv4-tests: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h userspace/tests/net/ipv4_path_mtu.c userspace/tests/net/ipv4_path_mtu.h userspace/tests/net/ipv4_query.h userspace/tests/net/ipv4_aliases.c userspace/tests/net/ipv4_aliases.h userspace/tests/net/ipv4_gateways.c userspace/tests/net/ipv4_gateways.h userspace/tests/net/ipv4_unconfigured.c userspace/tests/net/ipv4_unconfigured.h scripts/compile_uapi_client.py scripts/linux_uapi.py scripts/build_openssl.py ports.lock.json
 	@mkdir -p build
-	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $(filter %.c,$^)
+build/ipv4-native: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h userspace/tests/net/ipv4_path_mtu.c userspace/tests/net/ipv4_path_mtu.h userspace/tests/net/ipv4_query.h userspace/tests/net/ipv4_aliases.c userspace/tests/net/ipv4_aliases.h userspace/tests/net/ipv4_gateways.c userspace/tests/net/ipv4_gateways.h userspace/tests/net/ipv4_unconfigured.c userspace/tests/net/ipv4_unconfigured.h
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@
+build/ipv4-dynamic: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h userspace/tests/net/ipv4_path_mtu.c userspace/tests/net/ipv4_path_mtu.h userspace/tests/net/ipv4_query.h userspace/tests/net/ipv4_aliases.c userspace/tests/net/ipv4_aliases.h userspace/tests/net/ipv4_gateways.c userspace/tests/net/ipv4_gateways.h userspace/tests/net/ipv4_unconfigured.c userspace/tests/net/ipv4_unconfigured.h scripts/compile_uapi_client.py scripts/linux_uapi.py scripts/build_openssl.py ports.lock.json
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^)
 build/udp-tests: userspace/tests/net/udp.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
@@ -573,12 +581,15 @@ build/resolver-native: $(RESOLVER_SOURCES) $(RESOLVER_HEADERS)
 build/thread-static: userspace/tests/threads/pthreads.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -lm -o $@
-build/thread-io-static: userspace/tests/threads/io.c
+build/thread-io-static: userspace/tests/threads/io.c userspace/tests/threads/vectors.c
 	@mkdir -p build
-	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
-build/thread-io-dynamic: userspace/tests/threads/io.c
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $(filter %.c,$^) -o $@
+build/thread-io-dynamic: userspace/tests/threads/io.c userspace/tests/threads/vectors.c
 	@mkdir -p build
-	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DIO_LINKAGE='"dynamic"' $< -o $@
+	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DIO_LINKAGE='"dynamic"' $(filter %.c,$^) -o $@
+build/io-vectors-native: userspace/tests/threads/vectors.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DIO_VECTORS_MAIN -DIO_LINKAGE='"native"' $< -o $@
 build/thread-dynamic: userspace/tests/threads/pthreads.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DTHREAD_LINKAGE='"dynamic"' $< -lm -o $@
@@ -633,15 +644,241 @@ test-root-io: disk-root
 test-network:
 	$(PYTHON) scripts/network_matrix.py
 test-ipv4:
-	$(PYTHON) scripts/ipv4_matrix.py
+	$(PYTHON) scripts/ipv4_matrix.py --workers $(IPV4_WORKERS)
+
+.PHONY: test-ipv4-gateways test-ipv4-gateways-native
+test-ipv4-gateways:
+	$(PYTHON) scripts/tests/compile_uapi_client_test.py
+	$(PYTHON) scripts/tests/network_fixture_test.py
+	$(PYTHON) scripts/ipv4_gateway_test.py --workers 4
+test-ipv4-gateways-native:
+	$(PYTHON) scripts/ipv4_alias_native.py --suite gateways
 test-udp:
 	$(PYTHON) scripts/udp_matrix.py
-build/netlink-codec-host: kernel/tests/net/netlink.cpp kernel/net/netlink/routes.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp
+build/netlink-codec-host: kernel/tests/net/netlink.cpp kernel/net/netlink/routes.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp kernel/tests/net/ipv6_disabled.cpp kernel/net/ipv6/wire.cpp
 	@mkdir -p build
-	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/netlink.cpp kernel/net/netlink/routes.cpp -o $@
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 test-netlink-codec: build/netlink-codec-host
 	./build/netlink-codec-host
-.PHONY: test-tcp-wire
+.PHONY: test-ipv6-wire test-tcp-wire
+build/ipv6-copy-model-native: userspace/tests/net/ipv6_copy_model.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/ipv6-send-model-native: userspace/tests/net/ipv6_send_model.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/ipv6-%-native: userspace/tests/net/ipv6_%.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $(IPV6_FIXTURE_FLAGS) $(filter %.c,$^) -o $@
+build/ipv6-%-static: userspace/tests/net/ipv6_%.c scripts/compile_uapi_client.py scripts/build_openssl.py ports.lock.json
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(IPV6_FIXTURE_FLAGS) -static $(filter %.c,$^)
+build/ipv6-%-dynamic: userspace/tests/net/ipv6_%.c scripts/compile_uapi_client.py scripts/build_openssl.py ports.lock.json
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(IPV6_FIXTURE_FLAGS) $(filter %.c,$^)
+build/ipv6-sockets-native build/ipv6-sockets-static build/ipv6-sockets-dynamic build/ipv6-output-native build/ipv6-output-static build/ipv6-output-dynamic: userspace/tests/net/ipv6_fixture.h
+build/ipv6-host-native build/ipv6-host-static build/ipv6-host-dynamic: userspace/tests/net/ipv6_address_lifetimes.c userspace/tests/net/ipv6_source_policy.c
+build/ipv6-source-policy-native: userspace/tests/net/ipv6_source_policy.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DIPV6_SOURCE_POLICY_STANDALONE $< -o $@
+build/ipv6-source-policy-static build/ipv6-source-policy-dynamic: userspace/tests/net/ipv6_source_policy.c scripts/compile_uapi_client.py scripts/build_openssl.py ports.lock.json
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -DIPV6_SOURCE_POLICY_STANDALONE $(if $(filter %-static,$@),-static) $(filter %.c,$^)
+build/ipv6-output-native build/ipv6-output-static build/ipv6-output-dynamic: IPV6_FIXTURE_FLAGS = -DIPV6_SEND_CONTROLS_INTEGRATED
+build/ipv6-output-native build/ipv6-output-static build/ipv6-output-dynamic: userspace/tests/net/ipv6_send_controls.c userspace/tests/net/ipv6_send_controls_wire.c userspace/tests/net/ipv6_extension_wire.c userspace/tests/net/ipv6_routing_wire.c userspace/tests/net/ipv6_extension_controls.c userspace/tests/net/ipv6_sticky_controls.c userspace/tests/net/ipv6_sticky_wire.c
+build/ipv6-pmtu-native build/ipv6-pmtu-static build/ipv6-pmtu-dynamic: userspace/tests/net/ipv6_fixture.h
+build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: userspace/tests/net/ipv6_fixture.h
+build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: IPV6_FIXTURE_FLAGS = -DIPV6_ERROR_CONTROLS_INTEGRATED
+build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: userspace/tests/net/ipv6_error_controls.c
+build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: userspace/tests/net/ipv6_error_metadata.c userspace/tests/net/ipv6_receive_extensions.c
+build/ipv6-cached-native build/ipv6-cached-static build/ipv6-cached-dynamic: userspace/tests/net/ipv6_fixture.h
+build/ipv6-expiry-native build/ipv6-expiry-static build/ipv6-expiry-dynamic: userspace/tests/net/ipv6_fixture.h
+build/ipv6-controls-native build/ipv6-controls-static build/ipv6-controls-dynamic: userspace/tests/net/ipv6_fixture.h
+build/ipv6-controls-native build/ipv6-controls-static build/ipv6-controls-dynamic: IPV6_FIXTURE_FLAGS = -DIPV6_CONTROLS_INTEGRATED
+build/ipv6-controls-native build/ipv6-controls-static build/ipv6-controls-dynamic: userspace/tests/net/ipv6_control.c userspace/tests/net/ipv6_control_faults.c userspace/tests/net/ipv6_control_header_faults.c
+.PHONY: test-ipv6-copy-model
+test-ipv6-copy-model:
+	$(PYTHON) scripts/tests/ipv6_copy_model_test.py
+
+test-ipv6-controls-native test-ipv6-errors-native: test-ipv6-copy-model
+
+.PHONY: test-ipv6-send-model
+test-ipv6-send-model:
+	$(PYTHON) scripts/tests/ipv6_send_model_test.py
+
+test-ipv6-output-native test-ipv6-output-contract: test-ipv6-send-model
+
+.PHONY: test-ipv6-host test-ipv6-host-native test-ipv6-lifetimes-contract
+test-ipv6-host:
+	$(PYTHON) scripts/ipv6_host_test.py
+test-ipv6-host-native:
+	$(PYTHON) scripts/ipv6_host_native.py
+.PHONY: test-ipv6-configuration test-ipv6-configuration-native
+test-ipv6-configuration:
+	$(PYTHON) scripts/ipv6_configuration_test.py --directory build/ipv6-configuration-wire
+test-ipv6-configuration-native:
+	$(PYTHON) scripts/ipv6_configuration_test.py --native --directory build/ipv6-configuration-native
+.PHONY: test-ipv6-link-configuration test-ipv6-link-configuration-native
+test-ipv6-link-configuration:
+	$(PYTHON) scripts/ipv6_configuration_test.py --link-mode --directory build/ipv6-link-configuration-wire
+test-ipv6-link-configuration-native:
+	$(PYTHON) scripts/ipv6_configuration_test.py --link-mode --native --directory build/ipv6-link-configuration-native
+.PHONY: test-ipv6-socket-configuration test-ipv6-socket-configuration-native
+test-ipv6-socket-configuration:
+	$(PYTHON) scripts/ipv6_configuration_test.py --socket-mode --directory build/ipv6-socket-configuration-wire
+test-ipv6-socket-configuration-native:
+	$(PYTHON) scripts/ipv6_configuration_test.py --socket-mode --native --directory build/ipv6-socket-configuration-native
+.PHONY: test-ipv6-router test-ipv6-router-native
+test-ipv6-router:
+	$(PYTHON) scripts/ipv6_router_test.py --directory build/ipv6-router-wire
+test-ipv6-router-native:
+	$(PYTHON) scripts/ipv6_router_test.py --native --directory build/ipv6-router-native
+.PHONY: test-ipv6-ownership test-ipv6-ownership-native
+
+test-ipv6-ownership:
+	$(PYTHON) scripts/ipv6_owner_test.py --group all --directory build/ipv6-owner-wire
+
+test-ipv6-ownership-native:
+	$(PYTHON) scripts/ipv6_owner_test.py --native --group all --directory build/ipv6-owner-native
+
+test-ipv6-lifetimes-contract:
+	$(PYTHON) scripts/ipv6_lifetime_contract.py --native-directory build/ipv6-host-native-wire --guest-directory build/ipv6-host-wire --output-directory build/ipv6-lifetime-contract
+.PHONY: test-ipv6-sockets test-ipv6-sockets-native
+test-ipv6-sockets:
+	$(PYTHON) scripts/ipv6_host_test.py --suite sockets
+test-ipv6-sockets-native:
+	$(PYTHON) scripts/ipv6_host_native.py --suite sockets
+.PHONY: test-ipv6-output test-ipv6-output-native
+test-ipv6-output: test-ipv6-cached
+	$(PYTHON) scripts/ipv6_host_test.py --suite output --workers 2
+test-ipv6-output-native: test-ipv6-cached-native
+	$(PYTHON) scripts/ipv6_host_native.py --suite output
+.PHONY: test-ipv6-output-contract
+test-ipv6-output-contract:
+	$(PYTHON) scripts/ipv6_send_controls_test.py
+	$(PYTHON) scripts/ipv6_extension_contract.py --native-directory build/ipv6-output-native-wire --guest-directory build/ipv6-output-wire --output-directory build/ipv6-extension-contract
+	$(PYTHON) scripts/ipv6_sticky_contract.py --native-directory build/ipv6-output-native-wire --guest-directory build/ipv6-output-wire --output-directory build/ipv6-sticky-contract
+.PHONY: test-ipv6-pmtu test-ipv6-pmtu-native test-ipv6-pmtu-observation
+test-ipv6-pmtu-observation:
+	$(PYTHON) scripts/tests/ipv6_pmtu_observation_test.py -v
+	$(PYTHON) scripts/tests/packet_observation_test.py -v
+test-ipv6-pmtu: test-ipv6-pmtu-observation
+	$(PYTHON) scripts/ipv6_host_test.py --suite pmtu --workers 4
+test-ipv6-pmtu-native: test-ipv6-pmtu-observation
+	$(PYTHON) scripts/ipv6_host_native.py --suite pmtu
+.PHONY: test-ipv6-errors test-ipv6-errors-native
+test-ipv6-errors:
+	$(PYTHON) scripts/ipv6_host_test.py --suite errors --workers 4
+test-ipv6-errors-native:
+	$(PYTHON) scripts/ipv6_host_native.py --suite errors --workers 3
+.PHONY: test-ipv6-errors-contract
+test-ipv6-errors-contract:
+	$(PYTHON) scripts/ipv6_error_controls_test.py
+	$(PYTHON) scripts/ipv6_receive_extensions_contract.py --native-directory build/ipv6-errors-native-wire --guest-directory build/ipv6-errors-wire --output-directory build/ipv6-receive-extensions-contract
+.PHONY: test-ipv6-expiry test-ipv6-expiry-native
+test-ipv6-expiry:
+	$(PYTHON) scripts/ipv6_host_test.py --suite expiry --workers 4
+test-ipv6-expiry-native:
+	$(PYTHON) scripts/ipv6_host_native.py --suite expiry --workers 3
+.PHONY: test-ipv6-controls test-ipv6-controls-native
+test-ipv6-controls:
+	$(PYTHON) scripts/ipv6_host_test.py --suite controls --workers 4
+test-ipv6-controls-native:
+	$(PYTHON) scripts/ipv6_host_native.py --suite controls --workers 3
+.PHONY: test-ipv6-controls-contract
+test-ipv6-controls-contract:
+	$(PYTHON) scripts/ipv6_controls_contract_test.py
+.PHONY: test-ipv6-fragments test-ipv6-fragments-native
+test-ipv6-fragments: test-ipv6-fragment-observation
+	$(PYTHON) scripts/ipv6_host_test.py --suite fragments --workers 4
+test-ipv6-fragments-native: test-ipv6-fragment-observation
+	$(PYTHON) scripts/ipv6_host_native.py --suite fragments
+build/ipv6-wire-host: kernel/tests/net/ipv6_wire.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/wire.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+build/ipv6-host: kernel/tests/net/ipv6_host.cpp kernel/tests/net/ipv6_link_configuration.cpp kernel/tests/net/ipv6_router.cpp kernel/tests/net/ipv6_address_lifecycle.cpp $(IPV6_CORE) kernel/fs/proc/ipv6.cpp kernel/net/ipv6/socket/send_control.cpp kernel/net/ethernet.cpp kernel/net/netlink/ipv6.cpp kernel/net/netlink/addresses.cpp kernel/net/netlink/link.cpp kernel/net/netlink/inventory.cpp kernel/net/netlink/routes.cpp $(call rwildcard,kernel/include/,*.hpp)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
+build/ipv6-reassembly-host: kernel/tests/net/ipv6_reassembly.cpp kernel/net/ipv6/reassembly.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/reassembly.hpp kernel/include/net/ipv6/wire.hpp kernel/include/core/base.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+.PHONY: test-ipv6-reassembly
+test-ipv6-reassembly: build/ipv6-reassembly-host
+	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-reassembly-host
+build/ipv6-fragmentation-host: kernel/tests/net/ipv6_fragmentation.cpp kernel/net/ipv6/fragmentation.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/fragmentation.hpp kernel/include/net/ipv6/wire.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+.PHONY: test-ipv6-fragmentation
+test-ipv6-fragmentation: build/ipv6-fragmentation-host
+	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-fragmentation-host
+build/ipv6-path-mtu-host: kernel/tests/net/ipv6_path_mtu.cpp kernel/net/ipv6/path_mtu.cpp kernel/net/ipv6/icmp.cpp kernel/net/ipv6/extensions.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/path_mtu.hpp kernel/include/net/ipv6/icmp.hpp kernel/include/net/ipv6/wire.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+.PHONY: test-ipv6-path-mtu
+test-ipv6-path-mtu: build/ipv6-path-mtu-host
+	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-path-mtu-host
+.PHONY: test-ipv6-fragment-observation
+test-ipv6-fragment-observation:
+	$(PYTHON) scripts/tests/ipv6_fragment_observation_test.py -v
+.PHONY: test-ipv6-host-maintenance test-ipv6-queued-source-log test-ipv6-queued-source-clock
+test-ipv6-queued-source-clock:
+	$(PYTHON) scripts/tests/ipv6_queued_sources_clock_test.py
+
+test-ipv6-queued-source-log:
+	$(PYTHON) scripts/tests/ipv6_queued_sources_log_test.py
+
+test-ipv6-host-maintenance: test-ipv6-source-policy-contract
+	$(PYTHON) scripts/tests/ipv6_host_maintenance_test.py -v
+
+.PHONY: test-ipv6-source-policy-contract
+test-ipv6-source-policy-contract:
+	$(PYTHON) scripts/tests/ipv6_source_policy_contract_test.py
+test-ipv6-wire: test-ipv6-copy-model test-ipv6-send-model test-ipv6-fragment-observation test-ipv6-host-maintenance test-ipv6-queued-source-log test-ipv6-queued-source-clock build/ipv6-wire-host build/ipv6-host build/ipv6-reassembly-host build/ipv6-fragmentation-host build/ipv6-path-mtu-host
+	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-path-mtu-host
+	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-fragmentation-host
+	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-reassembly-host
+	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-host
+	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-wire-host
+build/ipv4-reassembly-host: kernel/tests/net/ipv4_reassembly.cpp kernel/net/ipv4/reassembly.cpp kernel/include/net/ipv4/reassembly.hpp kernel/include/net/ipv4_wire.hpp kernel/include/core/base.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/ipv4_reassembly.cpp kernel/net/ipv4/reassembly.cpp -o $@
+.PHONY: test-ipv4-reassembly
+test-ipv4-reassembly: build/ipv4-reassembly-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-reassembly-host
+build/ipv4-fragmentation-host: kernel/tests/net/ipv4_fragmentation.cpp kernel/net/ipv4/fragmentation.cpp kernel/include/net/ipv4/fragmentation.hpp kernel/include/net/ipv4_wire.hpp kernel/include/core/base.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/ipv4_fragmentation.cpp kernel/net/ipv4/fragmentation.cpp -o $@
+.PHONY: test-ipv4-fragmentation
+test-ipv4-fragmentation: build/ipv4-fragmentation-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-fragmentation-host
+build/ipv4-path-mtu-host: kernel/tests/net/ipv4_path_mtu.cpp kernel/net/ipv4/path_mtu.cpp kernel/include/net/ipv4/path_mtu.hpp kernel/include/net/ipv4_wire.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/ipv4_path_mtu.cpp kernel/net/ipv4/path_mtu.cpp -o $@
+.PHONY: test-ipv4-path-mtu
+test-ipv4-path-mtu: build/ipv4-path-mtu-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-path-mtu-host
+build/ipv4-paths-host: kernel/tests/net/ipv4_paths.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(call rwildcard,kernel/include/,*.hpp)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
+.PHONY: test-ipv4-paths
+build/ipv4-output-host: kernel/tests/net/ipv4_output.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(call rwildcard,kernel/include/,*.hpp)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
+build/ipv4-socket-output-host: kernel/tests/net/ipv4_socket_output.cpp kernel/net/ipv4/socket.cpp kernel/net/udp/core.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(call rwildcard,kernel/include/,*.hpp) kernel/net/ipv4/socket.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
+test-ipv4-paths: build/ipv4-paths-host build/ipv4-addresses-host build/ipv4-output-host build/ipv4-socket-output-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-paths-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-output-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-socket-output-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-addresses-host
+build/ipv4-addresses-host: kernel/tests/net/ipv4_addresses.cpp kernel/net/ipv4/addresses.cpp $(call rwildcard,kernel/include/,*.hpp)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+.PHONY: test-ipv4-fragments-native
+test-ipv4-fragments-native:
+	$(PYTHON) scripts/ipv4_fragment_native.py
+
 build/tcp-wire-host: kernel/tests/net/tcp_wire.cpp kernel/net/tcp/wire.cpp kernel/include/net/tcp/wire.hpp kernel/include/net/ipv4_wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_wire.cpp kernel/net/tcp/wire.cpp -o $@
@@ -657,8 +894,12 @@ build/tcp-connection-host: kernel/tests/net/tcp_connection.cpp kernel/net/tcp/co
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_connection.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp -o $@
 .PHONY: test-tcp-connection
-test-tcp-connection: build/tcp-connection-host
+build/tcp-socket-output-host: kernel/tests/net/tcp_socket_output.cpp kernel/net/ipv4/socket.cpp kernel/net/udp/core.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) kernel/core/random/primitives.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/icmp.cpp kernel/net/tcp/isn.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/socket.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/wire.cpp $(call rwildcard,kernel/include/,*.hpp) kernel/net/ipv4/socket.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
+test-tcp-connection: build/tcp-connection-host build/tcp-socket-output-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/tcp-connection-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/tcp-socket-output-host
 build/tcp-icmp-host: kernel/tests/net/tcp_icmp.cpp kernel/net/tcp/icmp.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp kernel/include/net/tcp/icmp.hpp kernel/include/net/tcp/connection.hpp kernel/include/net/tcp/time_wait.hpp kernel/include/net/tcp/sender.hpp kernel/include/net/tcp/wire.hpp kernel/include/net/ipv4_wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_icmp.cpp kernel/net/tcp/icmp.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp -o $@
@@ -777,15 +1018,19 @@ build/tcp-pressure-dynamic: userspace/tests/net/tcp_pressure.c
 .PHONY: test-tcp-pressure
 test-tcp-pressure:
 	$(PYTHON) scripts/tcp_pressure_test.py
-.PHONY: test-tcp-pmtu-native test-tcp-pmtu-sockets
-test-tcp-pmtu-native:
+.PHONY: test-tcp-pmtu-native test-tcp-pmtu-sockets test-tcp-pmtu-observer-retirement
+test-tcp-pmtu-observer-retirement:
+	$(PYTHON) scripts/tests/tcp_pmtu_observer_retirement_test.py
+test-tcp-pmtu-native: test-tcp-pmtu-observer-retirement
 	$(PYTHON) scripts/tcp_fault_native.py --wire pmtu
 test-tcp-pmtu-sockets:
 	$(PYTHON) scripts/tcp_fault_test.py --wire pmtu
-.PHONY: test-tcp-icmp-native test-tcp-icmp-sockets
-test-tcp-icmp-native:
+.PHONY: test-tcp-icmp-native test-tcp-icmp-sockets test-tcp-icmp-timestamps
+test-tcp-icmp-timestamps:
+	$(PYTHON) scripts/tests/tcp_icmp_timestamp_test.py -v
+test-tcp-icmp-native: test-tcp-icmp-timestamps
 	$(PYTHON) scripts/tcp_fault_native.py --wire icmp
-test-tcp-icmp-sockets:
+test-tcp-icmp-sockets: test-tcp-icmp-timestamps
 	$(PYTHON) scripts/tcp_fault_test.py --wire icmp
 build/tcp-lifetime-native: userspace/tests/net/tcp_lifetime.c
 	@mkdir -p build
@@ -891,9 +1136,9 @@ test-tcp-persist:
 	$(PYTHON) scripts/tcp_fault_test.py --wire persist
 test-tcp-persist-native:
 	$(PYTHON) scripts/tcp_fault_native.py --wire persist
-build/address-codec-host: kernel/tests/net/address.cpp kernel/net/netlink/addresses.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp kernel/include/net/ipv4_wire.hpp
+build/address-codec-host: kernel/tests/net/address.cpp kernel/net/netlink/addresses.cpp kernel/net/ipv4/addresses.cpp kernel/include/net/ipv4/addresses.hpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp kernel/include/net/ipv4_wire.hpp kernel/tests/net/ipv6_disabled.cpp kernel/net/ipv6/wire.cpp
 	@mkdir -p build
-	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/address.cpp kernel/net/netlink/addresses.cpp -o $@
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 test-address-codec: build/address-codec-host
 	./build/address-codec-host
 test-netlink:
@@ -917,9 +1162,13 @@ test-resolver-native: build/resolver-native
 test-threads:
 	$(PYTHON) scripts/boot_test.py --suite threads --firmware both --timeout 170
 .PHONY: test-thread-io-native
-test-thread-io-native: build/thread-io-static build/thread-io-dynamic
-	./build/thread-io-static
-	./build/thread-io-dynamic
+test-thread-io-native: build/thread-io-static build/thread-io-dynamic build/io-vectors-native
+	./build/thread-io-static >build/thread-io-static-native.log
+	cat build/thread-io-static-native.log
+	./build/thread-io-dynamic >build/thread-io-dynamic-native.log
+	cat build/thread-io-dynamic-native.log
+	./build/io-vectors-native >build/io-vectors-native.log
+	cat build/io-vectors-native.log
 test-thread-io:
 	$(PYTHON) scripts/boot_test.py --suite threads --phase io --firmware both --timeout 90
 build/virtqueue-tests: kernel/tests/drivers/virtio/queue.cpp kernel/drivers/virtio/queue.cpp kernel/include/drivers/virtio/queue.hpp kernel/include/core/base.hpp
@@ -946,6 +1195,7 @@ clean:
 MUSL_INPUTS = sources.lock.json scripts/build_musl.py scripts/musl_cc.py $(wildcard vendor/musl/patches/*.patch)
 MUSL_PROGRAMS = build/address-query-static build/address-query-dynamic build/credentials-static build/credentials-dynamic build/random-static build/random-dynamic build/abi-static build/file-lock-static build/file-lock-dynamic build/clock-elapsed-tests build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/net-tests build/ipv4-tests build/udp-tests build/dns-static build/dns-dynamic build/normal-dns-static build/normal-dns-dynamic build/netlink-tests build/network-manager-faults build/network-manager-dynamic-faults build/network-manager build/network-manager-dynamic build/manager-tests build/manager-protocol build/manager-link build/init-supervision build/ownership-tests build/ownership-dynamic build/configuration-tests build/dhcp-codec-tests build/dhcp-state-tests build/dhcp-profile-tests build/profile-privacy-tests build/profile-privacy-dynamic build/dhcp-transport-tests build/resolver-tests build/thread-static build/thread-io-static build/thread-io-dynamic build/thread-dynamic build/futex-static build/futex-dynamic build/lifecycle-static build/lifecycle-dynamic build/x11-probe build/tcp-static build/tcp-dynamic build/tcp-fault-static build/tcp-fault-dynamic build/tcp-lifetime-static build/tcp-lifetime-dynamic build/tcp-challenge-static build/tcp-challenge-dynamic build/tcp-timeout-static build/tcp-timeout-dynamic
 MUSL_PROGRAMS += build/tcp-icmp-static build/tcp-icmp-dynamic
+MUSL_PROGRAMS += build/ipv4-dynamic
 MUSL_PROGRAMS += build/tcp-pmtu-static build/tcp-pmtu-dynamic
 MUSL_PROGRAMS += build/tcp-pressure-static build/tcp-pressure-dynamic
 MUSL_PROGRAMS += build/tcp-reconnect-static build/tcp-reconnect-dynamic
@@ -978,3 +1228,9 @@ build/dns-tcp-static: userspace/tests/net/dns-tcp.c userspace/tests/net/dns/cont
 build/dns-tcp-dynamic: userspace/tests/net/dns-tcp.c userspace/tests/net/dns/contract.h $(MUSL_INPUTS) | musl-toolchain
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DDNS_LINKAGE='"dynamic"' $< -o $@
+
+.PHONY: test-ipv6-cached test-ipv6-cached-native
+test-ipv6-cached:
+	$(PYTHON) scripts/ipv6_host_test.py --suite cached --workers 4
+test-ipv6-cached-native:
+	$(PYTHON) scripts/ipv6_host_native.py --suite cached

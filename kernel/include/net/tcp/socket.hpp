@@ -31,7 +31,7 @@ unsigned tcp_shutdown_state(InetSocket*);
 size_t tcp_available(InetSocket*);
 int tcp_error(InetSocket*, bool clear);
 int tcp_so_error(InetSocket*, bool clear);
-void tcp_failed(InetSocket*, int error);
+void tcp_failed(InetSocket*, int error, unsigned failed_index = 0);
 void tcp_limits(InetSocket*);
 bool tcp_option(InetSocket*, unsigned option, int& value, bool set, int& error);
 } // namespace ax

@@ -9,6 +9,7 @@
 #include "ipc/eventfd.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
+#include "net/inet6.hpp"
 #include "net/netlink.hpp"
 #include "process/task.hpp"
 #include "process/signals.hpp"
@@ -259,12 +260,21 @@ bool node_readonly(Node* node) {
     return node && node->mount->readonly;
 }
 
+const ControlFileOps* node_control(Node* node) {
+    node = file_node(node);
+    return node && node->mount && node->mount->ops && node->mount->ops->control
+               ? node->mount->ops->control(node)
+               : nullptr;
+}
+
 int node_access(Node* node, unsigned mask, bool real) {
     node = file_node(node);
     if (!node)
         return -2;
     if (node->mount->ops->refresh)
         node->mount->ops->refresh(node);
+    if (auto control = node_control(node))
+        return control->access(node, mask, real);
     const Credentials boot{};
     return credential_access(current ? current->credentials : boot, node->uid, node->gid,
                              node->mode, mask, real);
@@ -480,6 +490,8 @@ int node_truncate(Node* node, uint64_t size) {
         queue_signal(current, 25, current->process->pid);
         return -27;
     }
+    if (auto control = node_control(node))
+        return control->truncate(node, size);
     if (int error = node_drop_file_capabilities(node))
         return error;
     if (current && !capable(current->credentials, Capability::fsetid)) {
@@ -909,6 +921,8 @@ void close_handle(Handle* h) {
         packet_close(h->packet);
     if (h->inet)
         inet_close(h->inet);
+    if (h->inet6)
+        inet6_close(h->inet6);
     if (h->netlink)
         netlink_close(h->netlink);
     if (h->epoll)
@@ -941,6 +955,8 @@ bool handle_ready(Handle* h, bool write) {
         return packet_ready(h->packet, write);
     if (h->inet)
         return inet_ready(h->inet, write);
+    if (h->inet6)
+        return inet6_ready(h->inet6, write);
     if (h->netlink)
         return netlink_ready(h->netlink, write);
     if (h->epoll)
@@ -955,9 +971,30 @@ bool handle_ready(Handle* h, bool write) {
     return device_ready(h, write);
 }
 
+int64_t pipe_read(Pipe* pipe, void* buffer, size_t length, bool peek) {
+    if (!length)
+        return 0;
+    if (!pipe->size)
+        return pipe->writers ? -11 : 0;
+    length = min(length, pipe->size);
+    auto bytes = static_cast<uint8_t*>(buffer);
+    for (size_t n = 0; n < length; n++)
+        bytes[n] = pipe->bytes[(pipe->head + n) % sizeof(pipe->bytes)];
+    if (!peek) {
+        pipe->head = (pipe->head + length) % sizeof(pipe->bytes);
+        pipe->size -= length;
+    }
+    return length;
+}
+
 int64_t read_handle(Handle* h, void* buf, size_t len) {
     if ((h->flags & 3) == 1)
         return -9;
+    if (auto control = node_control(h->node)) {
+        if (control->access(h->node, 4, false))
+            return -1;
+        return control->read(h, buf, len);
+    }
     if (h->event) {
         int64_t result = eventfd_read(h->event, buf, len);
         if (result > 0)
@@ -972,21 +1009,12 @@ int64_t read_handle(Handle* h, void* buf, size_t len) {
         return packet_read(h->packet, buf, len);
     if (h->inet)
         return inet_read(h->inet, buf, len);
+    if (h->inet6)
+        return inet6_read(h->inet6, buf, len);
     if (h->netlink)
         return netlink_read(h->netlink, buf, len);
-    auto data = (uint8_t*)buf;
-    if (h->pipe) {
-        auto p = h->pipe;
-        if (!p->size)
-            return p->writers ? -11 : 0;
-        size_t n = min(len, p->size);
-        for (size_t i = 0; i < n; i++) {
-            data[i] = p->bytes[p->head];
-            p->head = (p->head + 1) % sizeof(p->bytes);
-        }
-        p->size -= n;
-        return n;
-    }
+    if (h->pipe)
+        return pipe_read(h->pipe, buf, len);
     auto n = h->node;
     if (!n)
         return -9;
@@ -1008,6 +1036,8 @@ int write_handle_limit(Handle* h, size_t& length) {
         return -9;
     if (node_readonly(node))
         return -30;
+    if (node_control(node))
+        return 0;
     if (!current)
         return 0;
     uint64_t offset = h->flags & 02000 ? node->size : h->offset;
@@ -1023,6 +1053,13 @@ int write_handle_limit(Handle* h, size_t& length) {
 int64_t write_handle(Handle* h, const void* buf, size_t len) {
     if ((h->flags & 3) == 0)
         return -9;
+    if (auto control = node_control(h->node)) {
+        if (node_readonly(h->node))
+            return -30;
+        if (control->access(h->node, 2, false))
+            return -1;
+        return control->write(h, buf, len);
+    }
     if (h->event) {
         int64_t result = eventfd_write(h->event, buf, len);
         if (result > 0)
@@ -1037,6 +1074,8 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
         return packet_write(h->packet, buf, len);
     if (h->inet)
         return inet_send(h->inet, inet_peer(h->inet), buf, len);
+    if (h->inet6)
+        return inet6_send(h->inet6, inet6_peer(h->inet6), buf, len);
     if (h->netlink)
         return netlink_send(h->netlink, current->process->pid, buf, len);
     auto data = (const uint8_t*)buf;

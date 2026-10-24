@@ -193,6 +193,7 @@ class QueuedOutput:
             self.companion_bases[lane] = companion.app_sent
             self.stages[lane] = 'armed'
             self.holds[lane].arm()
+            self.events.append(dict(stage=stage, lane=lane, monotonic_ns=time.monotonic_ns()))
             flow.phases[0].control()
         elif stage == 'HELD':
             check(self.stages[lane] == 'armed' and len(flow.phases[0].received) == flow.old_prefix,
@@ -211,7 +212,8 @@ class QueuedOutput:
                   len(flow.phases[1].received) >= 528, 'actual successor survives the old copy lifetime')
             self.holds[lane].finish()
             self.stages[lane] = 'completed'
-        self.events.append(dict(stage=stage, lane=lane, monotonic_ns=time.monotonic_ns()))
+        if stage != 'ARM':
+            self.events.append(dict(stage=stage, lane=lane, monotonic_ns=time.monotonic_ns()))
         self.save()
         for peer in self.peers:
             peer.flows[-1].flush()

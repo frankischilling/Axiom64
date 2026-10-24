@@ -204,6 +204,8 @@ for firmware in firmwares:
                      for linkage in ["static", "dynamic"]]
         required += [f"THREAD_IO_TIMEOUTS_UNMAPPED_PASS linkage={linkage} operations=8 readable_faults=2"
                      for linkage in ["static", "dynamic"]]
+        required += [f"THREAD_IO_VECTORS_PASS linkage={linkage} metadata=77 faults=24 writes=20 empty=16 chunks=18"
+                     for linkage in ["static", "dynamic"]]
     if args.suite == "threads":
         required += (["THREAD_MUTEX_COND_PASS"] if args.phase == "cond" else
                      ["THREAD_IO_TESTS_PASS linkage=static", "THREAD_IO_TESTS_PASS linkage=dynamic"] if args.phase == "io" else
@@ -220,7 +222,7 @@ for firmware in firmwares:
     if desktop_checks and not screenshot.exists():
         missing.append("desktop screenshot")
     passed = not timed_out and not capture_error and returncode == (0 if args.interactive else 1) and not missing
-    passed &= not any(marker in text for marker in ["PANIC:", "FAULT ", "ABI_FAIL", "IPC_FAIL", "SIGNAL_FAIL", "VFS_FAIL", "THREAD_FAIL", "THREAD_IO_FAIL", "FUTEX_FAIL", "LIFECYCLE_FAIL", "X11_FAIL", "BOOT_ROOT_FAIL", "FILESYSTEM_SHUTDOWN_FAIL", "ACCOUNT_NORMAL_FAIL"])
+    passed &= not any(marker in text for marker in ["PANIC:", "FAULT ", "ABI_FAIL", "IPC_FAIL", "SIGNAL_FAIL", "VFS_FAIL", "THREAD_FAIL", "THREAD_IO_FAIL", "THREAD_IO_VECTOR_FAIL", "FUTEX_FAIL", "LIFECYCLE_FAIL", "X11_FAIL", "BOOT_ROOT_FAIL", "FILESYSTEM_SHUTDOWN_FAIL", "ACCOUNT_NORMAL_FAIL"])
     if args.interactive:
         passed &= login.ready and 'ACCOUNT_NORMAL_IDENTITY_PASS uid=1000 gid=1000 groups=2 ' in text
     if args.disk_root and passed:

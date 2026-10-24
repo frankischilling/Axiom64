@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
-#include "core/base.hpp"
+#include "net/ipv4.hpp"
 
 namespace ax {
 struct InetSocket;
 
 struct UdpOutput {
-    uint32_t source, destination;
+    Ipv4Source source;
+    uint32_t destination;
     unsigned index;
     uint16_t source_port, destination_port;
     uint8_t ttl;
     bool broadcast;
+    bool cache_destination = true;
 };
 
 enum class UdpInput { dropped, unbound, delivered };

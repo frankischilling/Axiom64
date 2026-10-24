@@ -28,28 +28,41 @@ def authenticated_index(signed, cache, output, suite, mirror):
     url = mirror + 'dists/' + suite + '/main/source/by-hash/SHA256/' + expected
     cached = index.exists()
     interrupted = None
+    attempts = []
     if cached:
         data = index.read_bytes()
     else:
-        try:
-            with urllib.request.urlopen(url, timeout=60) as response:
-                declared = response.headers.get('Content-Length')
-                try:
-                    data = response.read(size + 1)
-                except http.client.IncompleteRead as error:
-                    data = error.partial
-                    interrupted = 'incomplete HTTP response'
-                if declared and declared.isdecimal() and len(data) < int(declared):
-                    interrupted = 'incomplete HTTP response'
-        except urllib.error.HTTPError as error:
-            (diagnostic / 'fetch.json').write_text(json.dumps(dict(url=url, status=error.code), indent=2) + '\n')
-            error.close()
-            raise
+        canonical = mirror + 'dists/' + suite + '/main/source/Sources.xz'
+        for position, candidate in enumerate((url, canonical)):
+            url = candidate
+            try:
+                with urllib.request.urlopen(url, timeout=60) as response:
+                    attempts.append(dict(url=url, status=response.status))
+                    declared = response.headers.get('Content-Length')
+                    try:
+                        data = response.read(size + 1)
+                    except http.client.IncompleteRead as error:
+                        data = error.partial
+                        interrupted = 'incomplete HTTP response'
+                    if declared and declared.isdecimal() and len(data) < int(declared):
+                        interrupted = 'incomplete HTTP response'
+                break
+            except urllib.error.HTTPError as error:
+                status = error.code
+                attempts.append(dict(url=url, status=status))
+                (diagnostic / 'fetch.json').write_text(json.dumps(dict(
+                    url=url, status=status, attempts=attempts, passed=False,
+                    expected_sha256=expected, expected_bytes=size), indent=2) + '\n')
+                error.close()
+                # A publishing mirror can expose the signed Release before its
+                # hash path. The canonical bytes must match that same signature.
+                if position != 0 or status != 404:
+                    raise
     actual = hashlib.sha256(data).hexdigest()
     passed = interrupted is None and len(data) == size and actual == expected
     (diagnostic / 'Sources.xz').write_bytes(data)
     (diagnostic / 'fetch.json').write_text(json.dumps(dict(
-        url=url, cached=cached, expected_sha256=expected, expected_bytes=size,
+        url=url, cached=cached, attempts=attempts, expected_sha256=expected, expected_bytes=size,
         actual_sha256=actual, actual_bytes=len(data), interrupted=interrupted, passed=passed), indent=2) + '\n')
     if not passed:
         raise ValueError('signed Ubuntu Sources index checksum differs')

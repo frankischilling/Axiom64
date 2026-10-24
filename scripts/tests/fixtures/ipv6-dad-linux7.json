@@ -1,0 +1,34 @@
+{
+  "provider": "Linux",
+  "linux_vm": true,
+  "native": false,
+  "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
+  "client_sha256": "19d40251a1d50803e3c52d98167b54ca3e2a09eb97c394561b17089cebf3aafd",
+  "image_sha256": "22c341caf27174f09ca56eed77ff63285abe322bce5f232e2032dd8d54eb5323",
+  "client_sources": {
+    "userspace/tests/net/ipv6_dad.c": "1bba243251796586cec8301c02c35872be7423fda812a736f221fb4c893ff039",
+    "userspace/tests/net/ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6",
+    "userspace/tests/net/ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b"
+  },
+  "files": {
+    "ipv6-dad-linux7.log": {
+      "bytes": 12280,
+      "sha256": "3713aed615eb479ade630d6cd24e69eaf11b2688274603ec6072dccca635609f"
+    },
+    "ipv6-dad-linux7-lane0.pcap": {
+      "bytes": 14908,
+      "sha256": "0fa45ac59b5862fa151361aff46714f49385b49fa0d9c060d8b610f0e0d365d4"
+    },
+    "ipv6-dad-linux7-lane1.pcap": {
+      "bytes": 15140,
+      "sha256": "5ee83536a43de2e8a394e6c7d9cc3bc341fa909b996c9b323eb0fc21704a040d"
+    }
+  },
+  "scenarios_each": 6,
+  "tentative_each": 14,
+  "global_DAD_probes_each": 18,
+  "link_local_DAD_probes_each": 2,
+  "conflicts_each": 12,
+  "original_packet_timestamps_unchanged": true,
+  "full_F12_complete": false
+}

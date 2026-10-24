@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/proc.hpp"
+#include "fs/proc/ipv6.hpp"
 #include "process/task.hpp"
 #include "core/random.hpp"
 #include "core/random/primitives.hpp"
@@ -59,6 +60,30 @@ void erase(void* memory, size_t length) {
         *bytes++ = 0;
 }
 } // namespace random
+
+// This model isolates process identity and boot UUIDs. Network configuration
+// uses its real backend in the IPv6 model and in guest ABI tests.
+namespace proc6 {
+const char* property_name(unsigned) {
+    std::abort();
+}
+
+const char* scope_name(unsigned) {
+    return nullptr;
+}
+
+bool scope_index(const char*, unsigned&) {
+    return false;
+}
+
+int64_t read(unsigned, unsigned, uint64_t&, void*, size_t) {
+    std::abort();
+}
+
+int64_t write(unsigned, unsigned, uint64_t&, const void*, size_t) {
+    std::abort();
+}
+} // namespace proc6
 } // namespace ax
 
 static ax::Node* child(ax::Node* parent, const char* name) {

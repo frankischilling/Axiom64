@@ -69,7 +69,7 @@ def build(provider, linkage, directory, native_runtime=None):
     return program, provenance
 
 
-def execute(command, log, firmware=None):
+def execute(command, log, firmware=None, expected_exec_order='filename-first'):
     started = time.monotonic_ns()
     timed_out = False
     with log.open('wb') as output:
@@ -84,7 +84,9 @@ def execute(command, log, firmware=None):
     text = log.read_text().replace('\r\n', '\n')
     lines = text.splitlines()
     count = sum(line.startswith('RESOURCE_LIMIT_OBSERVATION ') for line in lines)
+    models = [line for line in lines if line.startswith('RESOURCE_EXEC_MODEL ')]
     passed = not timed_out and process.returncode == (1 if firmware else 0) and count == 11 and \
+        models == ['RESOURCE_EXEC_MODEL order=' + expected_exec_order] and \
         lines.count('RESOURCE_LIMIT_PASS observations=11 scope=interface-descriptors-files-processes-exec-memory-cpu-data-stack-isolation') == 1 and not any(
         marker in text for marker in ('RESOURCE_LIMIT_FAIL', 'PANIC:', 'FAULT pid='))
     if firmware:
@@ -92,7 +94,7 @@ def execute(command, log, firmware=None):
             'AXIOM64_EXIT status=0' in text and 'Firmware: ' + firmware.upper() in text
     return dict(command=command, returncode=process.returncode, timed_out=timed_out,
                 elapsed_ns=time.monotonic_ns() - started, observations=count,
-                log=str(log), log_sha256=digest(log), passed=passed)
+                log=str(log), log_sha256=digest(log), expected_exec_order=expected_exec_order, passed=passed)
 
 
 def main():
@@ -108,7 +110,16 @@ def main():
         raise RuntimeError('the Linux resource-limit comparison requires root')
     args.directory.mkdir(parents=True, exist_ok=False)
     source = snapshot_inputs(args.directory)
-    (args.directory / 'host-kernel.json').write_text(json.dumps(platform.uname()._asdict(), indent=2) + '\n')
+    kernel = platform.uname()._asdict()
+    (args.directory / 'host-kernel.json').write_text(json.dumps(kernel, indent=2) + '\n')
+    exec_order = 'filename-first'
+    if args.native:
+        major = kernel['release'].split('.')[0]
+        if not major.isdecimal():
+            raise RuntimeError('native kernel has no numeric release major')
+        exec_order = 'quota-first' if int(major) >= 7 else 'filename-first'
+    (args.directory / 'exec-model.json').write_text(json.dumps(dict(
+        native=args.native, expected_exec_order=exec_order, kernel=kernel), indent=2) + '\n')
     if args.retain_host_source:
         from file_capabilities.host_sources import capture
         corresponding_source = capture(args.directory / 'inputs')
@@ -133,7 +144,7 @@ def main():
                     assert digest(accessible) == inputs['binary_sha256']
                     command = ['unshare', '--mount', '--pid', '--ipc', '--fork', '--kill-child',
                                '--mount-proc', str(accessible), '--native']
-                    row = execute(command, case / 'native.log')
+                    row = execute(command, case / 'native.log', expected_exec_order=exec_order)
                     row.update(provider=provider, linkage=linkage, inputs=inputs)
                     rows.append(row)
                 else:

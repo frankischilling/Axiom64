@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/proc.hpp"
+#include "fs/proc/ipv6.hpp"
+#include "net/ethernet.hpp"
 #include "process/task.hpp"
 #include "core/random.hpp"
 #include "core/random/primitives.hpp"
@@ -18,7 +20,12 @@ enum class Kind {
     sys,
     kernel,
     random,
-    boot_id
+    boot_id,
+    net,
+    ipv6,
+    conf,
+    network_scope,
+    network_property
 };
 
 // Kernel execution serializes generation. Every proc mount observes this same boot.
@@ -29,6 +36,7 @@ struct Entry {
     Entry* next = nullptr;
     Kind kind;
     int pid, tgid;
+    unsigned network_index = 0, property = 0;
 };
 
 struct Proc {
@@ -255,6 +263,7 @@ static int lookup(Node* parent, const char* name, Node*& output) {
         return -2;
     Kind kind;
     int selected_pid = context->pid, group = context->tgid;
+    unsigned network_index = context->network_index, property = 0;
     if (context->kind == Kind::root && !strcmp(name, "self"))
         kind = Kind::self;
     else if (context->kind == Kind::root && !strcmp(name, "thread-self"))
@@ -263,7 +272,23 @@ static int lookup(Node* parent, const char* name, Node*& output) {
         kind = Kind::sys;
     else if (context->kind == Kind::sys && !strcmp(name, "kernel"))
         kind = Kind::kernel;
-    else if (context->kind == Kind::kernel && !strcmp(name, "random"))
+    else if (context->kind == Kind::sys && !strcmp(name, "net"))
+        kind = Kind::net;
+    else if (context->kind == Kind::net && !strcmp(name, "ipv6"))
+        kind = Kind::ipv6;
+    else if (context->kind == Kind::ipv6 && !strcmp(name, "conf"))
+        kind = Kind::conf;
+    else if (context->kind == Kind::conf) {
+        if (!proc6::scope_index(name, network_index))
+            return -2;
+        kind = Kind::network_scope;
+    } else if (context->kind == Kind::network_scope) {
+        while (property < proc6::property_count && strcmp(name, proc6::property_name(property)))
+            property++;
+        if (property == proc6::property_count)
+            return -2;
+        kind = Kind::network_property;
+    } else if (context->kind == Kind::kernel && !strcmp(name, "random"))
         kind = Kind::random;
     else if (context->kind == Kind::random && !strcmp(name, "boot_id"))
         kind = Kind::boot_id;
@@ -301,6 +326,12 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     auto result = make(state, parent->mount, parent, name, kind, selected_pid, group);
     if (!result)
         return -12;
+    result->network_index = network_index;
+    result->property = property;
+    if (kind == Kind::network_property) {
+        result->node.mode = regular_file | (property == proc6::secret_property ? 0600 : 0644);
+        result->node.links = 1;
+    }
     output = &result->node;
     return 0;
 }
@@ -543,6 +574,47 @@ static void close_description(Handle* handle) {
     }
 }
 
+static int control_access(Node* node, unsigned mask, bool real) {
+    if (mask & 1)
+        return -13;
+    const Credentials boot{};
+    const auto& credentials = current ? current->credentials : boot;
+    uint64_t capabilities = credentials.effective;
+    // access(2) substitutes the real user's capability set unless securebits
+    // disable the normal setuid fixups. sysctl ownership still uses euid/egid.
+    if (real && !(credentials.securebits & 4))
+        capabilities = credentials.user.real ? 0 : credentials.permitted;
+    bool administrator = capabilities & (1ull << unsigned(Capability::net_admin));
+    bool group = !credentials.group.effective;
+    if (credentials.groups)
+        for (unsigned at = 0; at < credentials.groups->count; at++)
+            group |= !credentials.groups->ids[at];
+    unsigned mode = node->mode & 0777;
+    unsigned allowed = administrator || !credentials.user.effective ? mode >> 6
+                       : group                                      ? mode >> 3
+                                                                    : mode;
+    return mask & ~allowed & 7 ? -13 : 0;
+}
+
+static int64_t control_read(Handle* handle, void* output, size_t length) {
+    auto item = entry(handle->node);
+    return proc6::read(item->network_index, item->property, handle->offset, output, length);
+}
+
+static int64_t control_write(Handle* handle, const void* input, size_t length) {
+    auto item = entry(handle->node);
+    return proc6::write(item->network_index, item->property, handle->offset, input, length);
+}
+
+static int control_truncate(Node*, size_t) {
+    return 0;
+}
+
+static const ControlFileOps* control(Node* node) {
+    static const ControlFileOps ops{control_access, control_read, control_write, control_truncate};
+    return entry(node)->kind == Kind::network_property ? &ops : nullptr;
+}
+
 static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
     auto context = entry(node);
     if (context->pid && !task(context->pid))
@@ -555,7 +627,7 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
         memcpy(result.name, cookie ? ".." : ".", cookie ? 3 : 2);
         return 1;
     }
-    char name[16];
+    char name[256];
     if (context->kind == Kind::root && cookie < 5) {
         const char* link = cookie == 2 ? "self" : cookie == 3 ? "thread-self" : "sys";
         Node* selected = nullptr;
@@ -598,14 +670,32 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
         } else
             return 0;
     } else if (context->kind == Kind::sys || context->kind == Kind::kernel ||
-               context->kind == Kind::random) {
-        if (cookie != 2)
+               context->kind == Kind::random || context->kind == Kind::net ||
+               context->kind == Kind::ipv6) {
+        if (cookie > (context->kind == Kind::sys ? 3u : 2u))
             return 0;
-        const char* child = context->kind == Kind::sys      ? "kernel"
+        const char* child = context->kind == Kind::sys      ? (cookie == 2 ? "kernel" : "net")
                             : context->kind == Kind::kernel ? "random"
+                            : context->kind == Kind::net    ? "ipv6"
+                            : context->kind == Kind::ipv6   ? "conf"
                                                             : "boot_id";
         memcpy(name, child, strlen(child) + 1);
-        result.next = 3;
+        result.next = cookie + 1;
+    } else if (context->kind == Kind::conf) {
+        const char* selected = nullptr;
+        for (; cookie - 2 < max_net_devices + 3; cookie++)
+            if ((selected = proc6::scope_name(unsigned(cookie - 2))))
+                break;
+        if (!selected)
+            return 0;
+        memcpy(name, selected, strlen(selected) + 1);
+        result.next = cookie + 1;
+    } else if (context->kind == Kind::network_scope) {
+        if (cookie - 2 >= proc6::property_count)
+            return 0;
+        auto selected = proc6::property_name(unsigned(cookie - 2));
+        memcpy(name, selected, strlen(selected) + 1);
+        result.next = cookie + 1;
     } else
         return -20;
     Node* selected = nullptr;
@@ -642,8 +732,8 @@ static int truncate(Node*, size_t) {
     return -30;
 }
 
-static int setattr(Node*, uint32_t, Timestamp, Timestamp, uint32_t, uint32_t) {
-    return -30;
+static int setattr(Node* node, uint32_t, Timestamp, Timestamp, uint32_t, uint32_t) {
+    return entry(node)->kind == Kind::network_property ? -1 : -30;
 }
 
 static int sync(Mount*, Node*, bool) {
@@ -671,11 +761,30 @@ static void destroy(Mount* mount) {
 }
 } // namespace
 
-const FilesystemOps procfs_ops = {
-    lookup,           create,           link,    remove,  rename,     read,    write,
-    truncate,         setattr,          readdir, sync,    map_shared, stats,   destroy,
-    nullptr,          nullptr,          nullptr, nullptr, nullptr,    nullptr, refresh,
-    read_description, close_description};
+const FilesystemOps procfs_ops = {lookup,
+                                  create,
+                                  link,
+                                  remove,
+                                  rename,
+                                  read,
+                                  write,
+                                  truncate,
+                                  setattr,
+                                  readdir,
+                                  sync,
+                                  map_shared,
+                                  stats,
+                                  destroy,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  nullptr,
+                                  refresh,
+                                  read_description,
+                                  close_description,
+                                  control};
 
 Node* procfs_root(Mount* mount) {
     auto state = static_cast<Proc*>(alloc(sizeof(Proc)));

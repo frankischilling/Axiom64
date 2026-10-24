@@ -26,7 +26,9 @@ def fixture(linkage, scenario, affected, observer='manager-protocol'):
                ('lib/ld-musl-x86_64.so.1', musl_loader())]
     files.update({name: (0o100755, source.read_bytes()) for name, source in sources})
     binary = 'network-manager-dynamic' if linkage == 'dynamic' else 'network-manager'
-    script = (f'#!/bin/sh\nset -e\n/bin/{observer} /sbin/{binary} {scenario} /tmp {affected}\n'
+    script = ('#!/bin/sh\nset -e\n'
+              "printf '1\\n' > /proc/sys/net/ipv6/conf/all/addr_gen_mode\n"
+              f'/bin/{observer} /sbin/{binary} {scenario} /tmp {affected}\n'
               'echo AXIOM64_TESTS_PASS\n')
     files['etc/net-test.sh'] = (0o100755, script.encode())
     temporary = ROOT / 'build/rootfs-manager-observer.cpio'

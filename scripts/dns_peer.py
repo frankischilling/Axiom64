@@ -238,5 +238,5 @@ class Peer(Answers):
 
     def validate(self):
         result = super().validate()
-        check(self.arp == 2, 'one nameserver ARP after each linkage configures the adapter')
+        check(self.arp == 1, 'unchanged adapter configuration retains one nameserver ARP mapping')
         return dict(**result, arp=self.arp, foreign=self.foreign, frames=self.frames)

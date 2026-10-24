@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Retain the actual clients and runtime inputs used for device-loss acceptance."""
 from tcp_icmp_inputs import record as record_inputs
+from tcp_icmp_inputs import IPV4_MODULES
 
 SOURCES = ('Makefile', 'userspace/tests/net/tcp_device.c',
            'scripts/tcp_device/__init__.py', 'scripts/tcp_device/run.py',
@@ -20,6 +21,7 @@ SOURCES = ('Makefile', 'userspace/tests/net/tcp_device.c',
            'kernel/net/ipv4/core.cpp', 'kernel/net/tcp/connection.cpp',
            'kernel/include/net/tcp/connection.hpp', 'kernel/net/tcp/socket.cpp',
            'kernel/include/net/tcp/socket.hpp')
+SOURCES = tuple(dict.fromkeys(SOURCES + IPV4_MODULES))
 
 
 def record(linkage, affected, native=False, image=None):

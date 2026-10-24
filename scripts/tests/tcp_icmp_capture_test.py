@@ -72,7 +72,8 @@ def mutations(build, row, lane, destination, cases):
 
     def receipt(text, frame, occurrence=0):
         matches = list(re.finditer(r'^ICMP_FRAME lane=' + str(lane) + r' index=\d+ length=\d+ kind=\d+ '
-                                  r'hash=' + fnv(frame) + r' monotonic_ms=(\d+)\r?$', text, re.M))
+                                  r'hash=' + fnv(frame) + r' monotonic_ms=(\d+) '
+                                  r'packet_realtime_ns=(\d+) dequeue_ms=\d+\r?$', text, re.M))
         require(len(matches) > occurrence, 'original actual driver receipt to damage')
         return matches[occurrence]
 
@@ -153,6 +154,7 @@ def mutations(build, row, lane, destination, cases):
             source_receipt = receipt(text, source['frame'])
             moved_receipt = receipt(text, frame)
             line = re.sub(r'monotonic_ms=\d+', 'monotonic_ms=' + source_receipt[1], moved_receipt[0])
+            line = re.sub(r'packet_realtime_ns=\d+', 'packet_realtime_ns=' + source_receipt[2], line)
             text = text[:moved_receipt.start()] + text[moved_receipt.end():]
             source_receipt = receipt(text, source['frame'])
             text = text[:source_receipt.start()] + line + '\n' + text[source_receipt.start():]
@@ -216,7 +218,40 @@ def mutations(build, row, lane, destination, cases):
                                   int.from_bytes(item['frame'][34:36], 'big') == 47000 + lane * 1000 and
                                   item['frame'][-1:] == b'Q')
     reject('omitted-companion', lambda folder: synchronized(folder, companion_at, None))
-    require(len(results) == 11, 'all synchronized quote, control, clock and input damage cases')
+
+    def damage_clock(folder, kind):
+        text = (folder / row['log']).read_text()
+        match = receipt(text, item['frame'])
+        if kind == 'forged-arrival-mapping':
+            dequeue = re.search(r'dequeue_ms=(\d+)', match[0])[1]
+            damaged = re.sub(r'monotonic_ms=\d+', 'monotonic_ms=' + str(int(dequeue) + 1000), match[0])
+        elif kind == 'missing-packet-timestamp':
+            damaged = re.sub(r' packet_realtime_ns=\d+ dequeue_ms=\d+', '', match[0])
+        elif kind == 'arrival-after-dequeue':
+            damaged = re.sub(r'dequeue_ms=\d+', 'dequeue_ms=0', match[0])
+        elif kind == 'unarmed-observer':
+            expression = r'(^ICMP_CAPTURE_READY lane=' + str(lane) + r' index=\d+ timestamp_error=)2'
+            text, count = re.subn(expression, r'\g<1>0', text, flags=re.M)
+            require(count == 1, 'actual timestamp arming observation to damage')
+            (folder / row['log']).write_text(text)
+            return
+        else:
+            anchor = re.search(r'^ICMP_CAPTURE_CLOCK phase=end .*$', text, re.M)
+            if kind == 'missing-clock-anchor':
+                damaged = ''
+            else:
+                damaged = re.sub(r'realtime_ns=(\d+)',
+                                 lambda value: 'realtime_ns=' + str(int(value[1]) + 1000000000), anchor[0])
+            text = text[:anchor.start()] + damaged + text[anchor.end():]
+            (folder / row['log']).write_text(text)
+            return
+        text = text[:match.start()] + damaged + text[match.end():]
+        (folder / row['log']).write_text(text)
+
+    for kind in ('forged-arrival-mapping', 'missing-packet-timestamp', 'arrival-after-dequeue',
+                 'missing-clock-anchor', 'stepped-arrival-clock', 'unarmed-observer'):
+        reject(kind, lambda folder, kind=kind: damage_clock(folder, kind))
+    require(len(results) == 17, 'all synchronized quote, control, clock and input damage cases')
     return results
 
 

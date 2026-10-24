@@ -8,6 +8,7 @@ struct Pty;
 struct Socket;
 struct PacketSocket;
 struct InetSocket;
+struct Inet6Socket;
 struct NetlinkSocket;
 struct Epoll;
 struct Eventfd;
@@ -69,6 +70,15 @@ struct FilesystemStats {
     uint64_t type, block_size, blocks, free_blocks, files, free_files;
 };
 
+// Control files consume a complete I/O operation and own their description's
+// position. Ordinary files and sequential proc snapshots keep the usual path.
+struct ControlFileOps {
+    int (*access)(Node*, unsigned mask, bool real);
+    int64_t (*read)(Handle*, void*, size_t);
+    int64_t (*write)(Handle*, const void*, size_t);
+    int (*truncate)(Node*, size_t);
+};
+
 // Methods return Linux negative errors; read/write return a byte count on success.
 // VFS checks mount policy and namespace constraints before calling an adapter.
 struct FilesystemOps {
@@ -96,6 +106,7 @@ struct FilesystemOps {
     void (*refresh)(Node*) = nullptr;
     int64_t (*read_description)(Handle*, uint64_t, void*, size_t) = nullptr;
     void (*close_description)(Handle*) = nullptr;
+    const ControlFileOps* (*control)(Node*) = nullptr;
 };
 
 struct Mount {
@@ -138,6 +149,7 @@ struct Handle {
     Socket* socket = nullptr;
     PacketSocket* packet = nullptr;
     InetSocket* inet = nullptr;
+    Inet6Socket* inet6 = nullptr;
     NetlinkSocket* netlink = nullptr;
     Epoll* epoll = nullptr;
     Eventfd* event = nullptr;
@@ -192,6 +204,8 @@ int node_truncate(Node*, uint64_t);
 
 int node_setattr(Node*, uint32_t, Timestamp, Timestamp);
 int node_access(Node*, unsigned mask, bool real = false);
+
+const ControlFileOps* node_control(Node*);
 int node_chmod(Node*, uint32_t);
 int node_chown(Node*, uint32_t, uint32_t);
 
@@ -221,6 +235,9 @@ void retain(Handle*);
 void close_handle(Handle*);
 
 int64_t read_handle(Handle*, void*, size_t);
+
+// Preview queued pipe bytes without consuming them during a user copy.
+int64_t pipe_read(Pipe*, void*, size_t, bool peek = false);
 
 // Clamp a complete regular-file write before inspecting user payload pages.
 int write_handle_limit(Handle*, size_t&);

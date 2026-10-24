@@ -96,6 +96,23 @@ undelivered until restoration, with no socket error. Each complete stream carrie
 6224 data bytes and four control bytes. Wider route policies, longer outages and
 permanent device failure still require their wider acceptance cases.
 
+An unbound stream selects its current route without turning its earlier output
+interface into a device binding. Its four-tuple can receive replies on either
+adapter; an explicit device binding still restricts input and output. Shared
+path-MTU learning uses that same route selection. Live and TIME_WAIT tuples use
+overlapping device bindings to prevent conflicting reuse, while disjoint explicit
+bindings have separate ownership. A failed IPv4-owned copy records its actual
+output device. An unbound stream retains its bytes and original deadlines when a
+healthy replacement route exists; absent recovery or an explicit failed binding
+preserves the existing fatal error contract.
+
+`make test-tcp-connection` includes a sanitizer check through the production socket,
+TCP, IPv4 and Ethernet modules. It verifies both route withdrawals, exact retained
+output, a live companion, migration to another adapter, current-path PMTU, failed
+queued-copy recovery, TIME_WAIT replies, tuple-binding conflicts, reset routing
+and fatal device errors. These module checks do not replace the complete native
+and guest routing, lifetime and device matrices.
+
 `scripts/tcp_recovery_capture.py` independently reconstructs both streams, the
 Q/H control positions, every ACK and both closes. It checks actual physical-link
 operations, administrative state, complete companion progress and carrier-byte
@@ -302,15 +319,17 @@ The optional `--quick` client diagnostic does not establish expiry acceptance.
 
 ## Path MTU recovery
 
-A validated ICMP destination-unreachable/code 4 hint can lower an established connection's effective send MSS without aborting the socket. The quote must own the emitted tuple, interface and outstanding sequence range. Hints below 68 bytes, nonreducing values and hints that cannot reduce the quoted packet are ignored. A zero next-hop MTU selects the next lower RFC 1191 plateau. Peer-advertised MSS and the local receive MSS remain separate from the path limit.
+A validated ICMP destination-unreachable/code 4 hint can lower an established connection's effective send MSS without aborting the socket. The quote must own the emitted tuple, interface and outstanding sequence range. Hints below 68 bytes, nonreducing values and hints that cannot reduce the quoted packet are ignored. A zero next-hop MTU lowers the shared route estimate to its default floor; the legacy decoder can also supply a lower transport candidate for a small quoted packet. Peer-advertised MSS and the local receive MSS remain separate from the path limit.
 
-The sender retains the original unacknowledged bytes and highest transmitted sequence while splitting the outstanding flight. It sends one resized packet, waits for ACK progress, then retransmits the remaining flight within the peer window and congestion allowance. FIN ownership and sequence wrap follow the same cursor. PMTU feedback preserves congestion state, retransmission backoff and configured/default delivery deadlines. Repeated or invalid hints cannot restart those deadlines. `IP_PMTUDISC_DONT` and `IP_PMTUDISC_PROBE` do not learn TCP segment sizes from ICMP. General route caching, fragmentation and the complete discovery-policy contract remain required.
+The sender retains the original unacknowledged bytes and highest transmitted sequence while splitting the outstanding flight. It sends one resized packet, waits for ACK progress, then retransmits the remaining flight within the peer window and congestion allowance. FIN ownership and sequence wrap follow the same cursor. PMTU feedback preserves congestion state, retransmission backoff and configured/default delivery deadlines. Repeated or invalid hints cannot restart those deadlines. `IP_PMTUDISC_DONT` can populate the shared route cache without forcing an immediate transport retry. PROBE can adapt the TCP segment limit while IP output bypasses the learned limit. INTERFACE and OMIT do not accept hints. New active and passive connections use the shared path limit; accepted sockets inherit the listener's discovery policy. Complete discovery-policy and cached-route lifecycle equivalence still require broader acceptance.
 
 Only oversized IPv4 copies belonging to the affected socket are cancelled. Submission retains borrowed storage until the network driver returns, including when a receive callback cancels that packet. Other interfaces and owners keep their queues.
 
 `make test-tcp-pmtu` runs sanitizer models for quote validation, wrap, FIN, partial ACKs, failed enqueue, changing windows, congestion and unchanged deadlines. `sudo -n make test-tcp-pmtu-native` and `make test-tcp-pmtu-sockets` run three native libc profiles and all eight mixed-NIC VM profiles. Each NIC has twelve independent paths, with 4096 bytes in each direction, active/passive opens, valid and legacy hints, consecutive reductions and eight damaged/unowned/nonreducing controls. Separate destination addresses prevent Linux's shared PMTU cache from hiding a later case. Linux accepts an invalid quoted inner IPv4 checksum; the guest retains its stricter validation. The native case explicitly requires recovery from that hint, while the guest requires a later valid hint.
 
 The application records real driver frames and zero-drop counters. `scripts/tcp_pmtu_capture.py` checks original quoted packets, deliberate mutations, observation clocks, MSS values, tuple-specific payloads, full closes and source/product/provider hashes. `scripts/tests/tcp_pmtu_capture_test.py` checks rejection of damaged evidence. The full transport and VM-readiness requirements remain open. The recovery rules follow [RFC 1191](https://www.rfc-editor.org/rfc/rfc1191.html) and the quote-ownership guidance in [RFC 5927](https://www.rfc-editor.org/rfc/rfc5927.html).
+
+Observer shutdown retains its real 100 ms observation, joins the collector, retires its old receive protocol and drains the remaining queue before reading statistics. This preserves packets arriving after the collector's final read. `make test-tcp-pmtu-observer-retirement` wraps the actual collector join, injects a real frame on each isolated native adapter, and requires both complete frames to be read with zero drops. The native PMTU target includes this regression. Counter failures report received, drained and dropped totals; every original workload frame and the zero-drop assertions remain required.
 
 [Quoted ICMP acceptance](tcp-icmp-acceptance.md) adds bounded quote decoding, emitted tuple/sequence ownership, pending connection failures, established soft diagnostics and their timeout/consumption policy. Additional message/address/reconnect/option behavior, complete PMTU policies and route caching, error queues and complete Linux TCP options remain required, along with the controlled NIC and lifetime tests. Actual libc DNS TCP fallback and response ownership are covered by the [resolver tests](dns.md). IPv6 transport, urgent/OOB handling, TLS, full entropy/ISN acceptance and SMP are separate outstanding work. The VM operating system and required workloads come first; HP-specific development follows the readiness review in [HP hardware readiness](feature-roadmap.md), after most roadmap requirements and all prerequisites have evidence. Physical boot tests and installation readiness follow the required HP driver work.
 

@@ -5,6 +5,7 @@
 namespace ax {
 struct Task;
 struct InetSocket;
+struct Ipv4Destination;
 
 struct InetAddress {
     uint16_t family, port;
@@ -25,9 +26,19 @@ inline const uint8_t* inet_bytes(const InetFrame* frame) {
 
 void inet_close(InetSocket*);
 
+// Borrow only destination state that this output lookup may replace or clear.
+// Raw output preserves failed lookups and refreshes only an existing cache.
+Ipv4Destination* inet_output_destination(InetSocket*, uint32_t address, bool lookup_failed);
+
 bool inet_payload(InetSocket*);
 
-bool inet_dont_fragment(const InetSocket*);
+bool inet_dont_fragment(const InetSocket*, bool path_locked = false);
+
+bool inet_fragmentation_allowed(const InetSocket*);
+
+bool inet_use_path_mtu(const InetSocket*);
+
+bool inet_accept_path_mtu(const InetSocket*);
 
 bool inet_ready(InetSocket*, bool write);
 
@@ -45,9 +56,10 @@ size_t inet_available(InetSocket*);
 
 int inet_error(InetSocket*, bool clear = false);
 
-void inet_failed(InetSocket*, int error);
+// An output error carries its failed device; zero identifies other diagnostics.
+void inet_failed(InetSocket*, int error, unsigned failed_index = 0);
 
-void inet_icmp_error(unsigned index, const uint8_t* quote, int error);
+void inet_icmp_error(unsigned index, const uint8_t* quote, int error, uint16_t announced_mtu = 0);
 
 void inet_reclaim(InetSocket*, size_t length);
 
@@ -58,7 +70,7 @@ bool inet_datagram_deliver(unsigned index, uint32_t source, uint32_t destination
                            uint16_t source_port, uint16_t destination_port, bool broadcast,
                            const void*, size_t);
 
-int64_t inet_send(InetSocket*, const InetAddress&, const void*, size_t);
+int64_t inet_send(InetSocket*, const InetAddress&, const void*, size_t, bool named = false);
 
 int64_t inet_read(InetSocket*, void*, size_t);
 

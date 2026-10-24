@@ -12,15 +12,16 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/abi/linux/` | Linux syscall dispatch and ABI structures |
 | `kernel/mm/` | Physical and virtual memory, mapping/protection and heap admission limits, grow-down stacks |
 | `kernel/process/` | Tasks, scheduling, CPU accounting, process resource tables, signals, futexes, child-event waits and checked executable argument capture |
-| `kernel/fs/` | VFS, RAM filesystems, procfs process identity, xattrs and advisory file locks; ext2 storage and EA codec have their own subfolder |
+| `kernel/fs/` | VFS, RAM filesystems, procfs process identity and IPv6 configuration controls, xattrs and advisory file locks; ext2 storage and EA codec have their own subfolder |
 | `kernel/security/` | Task credential transitions and bounded file capability decoding |
-| `kernel/io/` | Retained blocking I/O requests |
+| `kernel/io/` | Retained blocking I/O requests and captured vector bounds shared with IPv6 error receives |
 | `kernel/ipc/` | Sockets, event counters, readiness, shared memory |
 | `kernel/net/` | Ethernet interfaces, interface/route ioctls, and Linux raw packet sockets |
-| `kernel/net/ipv4/` | IPv4 routes/output, ARP cache/timers, ICMP, and Internet socket descriptions |
+| `kernel/net/ipv4/` | IPv4 routes/output, bounded reassembly, shared path-MTU limits and fragment emission, ARP cache/timers, ICMP, and Internet socket descriptions |
+| `kernel/net/ipv6/` | IPv6 wire and quoted-error validation, bounded reassembly, source-fragment encoding, owned output queues, route-owned path-MTU limits, scoped address/route ownership, DAD, neighbor state, copied extended-error queues and raw/UDP socket ownership; `router.cpp` owns solicitation schedules, learned routers/prefixes, per-link advertised parameters and SLAAC lifetimes, including first-PIO refresh, stable conflict regeneration and owned exhausted-prefix cleanup; `output.cpp` snapshots inherited hop limits after route selection; nested `socket/` owns Linux controls and error-receive copying |
 | `kernel/net/udp/` | UDP lengths, pseudo-header checksums, payload delivery, and transmission |
 | `kernel/net/tcp/` | TCP wire/state/sender policy, socket ownership, timers, ISNs, TIME_WAIT and quoted ICMP errors |
-| `kernel/net/netlink/` | Link/address inventories, route/address message validation, owned replies, and control socket lifecycle |
+| `kernel/net/netlink/` | Link/address inventories, IPv6 link-generation controls, route/address message validation, owned replies, and control socket lifecycle |
 | `kernel/drivers/platform/` | PCI, PIIX4 power off, and current platform device interfaces |
 | `kernel/drivers/block/` | Block request policy and raw I/O |
 | `kernel/drivers/net/` | PCI virtio-net and QEMU e1000 adapters |
@@ -41,6 +42,12 @@ Make discovers kernel C++ sources recursively, excluding `kernel/tests/`. Object
 Userspace program targets name their source files explicitly. Initramfs dependencies include session scripts and configuration recursively, plus the native toolchain fixtures. The root-filesystem builder preserves the guest installation paths, including `/sbin/init`, `/etc/boot-test.sh`, and `/root/toolchain-test`.
 
 Build and port helpers remain under `scripts/`; pinned dependency inputs are in the lock files and `vendor/`. Documentation belongs under `docs/`. Generated outputs, downloaded archives, private answers, local evidence, and worktrees remain in the ignored `build/`, `downloads/`, and `.local/` directories.
+
+Installed-startup supervision uses `scripts/normal_manager_test.py`. Its `normal_ipv6_peer.py` helper owns strict validation and bounded retention of default DAD/router-solicitation frames; the existing manager and DNS peers keep their IPv4 checks.
+
+The IPv4 resolver fixture stays in `scripts/dns_test.py`. It owns isolated initramfs/ISO inputs and per-execution source, program and packet retention; `dns_peer.py` keeps the strict protocol checks. Its boot script selects the IPv4-only test configuration before either resolver client starts.
+
+Controlled DAD comparisons use `userspace/tests/net/ipv6_dad.c` and its bounded netlink inventory header. `ipv6_dad_inventory_model.c` exercises the actual candidate selector. The matching `scripts/ipv6_dad_test.py`, peer, independent capture reader, native policy and damaged-evidence generator keep execution, observation and rejection checks separate. The shared native `Capture` in `tcp_fault_native.py` configures its timestamp/buffer before reception and stops new input before draining queued records; packet and clock counts still have to match exactly.
 
 The corresponding-source bundle walks kernel and userspace folders recursively, so it includes the same sources and headers used by the build. [Testing](testing.md) describes the existing guest and host suites; [architecture](architecture.md) describes interfaces and current limits.
 

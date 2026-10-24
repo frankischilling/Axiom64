@@ -18,7 +18,7 @@ bool socket_timeout_syscall(Task& task, const Frame& frame, Handle* handle, int6
         result = -9;
         return true;
     }
-    if (!handle->socket && !handle->inet && !handle->packet && !handle->netlink) {
+    if (!handle->socket && !handle->inet && !handle->inet6 && !handle->packet && !handle->netlink) {
         result = -88;
         return true;
     }

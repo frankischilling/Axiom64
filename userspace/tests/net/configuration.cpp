@@ -113,6 +113,9 @@ static void receipt(int fd, const Message& message, int expected) {
     memcpy(&header, reply, 16);
     memcpy(&result, reply + 16, 4);
     memcpy(&echo, reply + 20, 16);
+    if (result != -expected)
+        fprintf(stderr, "CONFIGURATION_ACK_MISMATCH sequence=%u type=%u expected=%d actual=%d\n",
+                message.header.nlmsg_seq, message.header.nlmsg_type, -expected, result);
     check(header.nlmsg_len == 36 && header.nlmsg_type == NLMSG_ERROR &&
               header.nlmsg_flags == NLM_F_CAPPED && header.nlmsg_seq == message.header.nlmsg_seq &&
               header.nlmsg_pid == local.nl_pid && result == -expected &&
@@ -146,8 +149,16 @@ static void message_contract(bool native) {
         exchange(fd, remove, 0);
         verify_address(lane, 0);
         exchange(fd, remove, EADDRNOTAVAIL);
+        Message secondary(lane, false);
+        secondary.body.ifa_flags |= IFA_F_SECONDARY;
+        exchange(fd, secondary, 0);
+        verify_address(lane, address(lane), 0xffffff80);
+        ioctl_address(lane, SIOCSIFADDR, address(lane, 77));
+        verify_address(lane, address(lane, 77), 0xff000000);
+        ioctl_address(lane, SIOCSIFADDR, 0);
+        verify_address(lane, 0);
         if (!native) {
-            for (unsigned kind = 0; kind < 9; kind++) {
+            for (unsigned kind = 0; kind < 10; kind++) {
                 Message invalid(lane, false);
                 int expected = EINVAL;
                 switch (kind) {
@@ -155,11 +166,11 @@ static void message_contract(bool native) {
                     invalid.body.ifa_prefixlen = 33;
                     break;
                 case 1:
-                    invalid.body.ifa_family = AF_INET6;
+                    invalid.body.ifa_family = AF_UNIX;
                     expected = EAFNOSUPPORT;
                     break;
                 case 2:
-                    invalid.body.ifa_flags |= IFA_F_SECONDARY;
+                    invalid.body.ifa_flags |= IFA_F_TENTATIVE;
                     expected = EOPNOTSUPP;
                     break;
                 case 3:
@@ -183,6 +194,9 @@ static void message_contract(bool native) {
                 case 8:
                     invalid.body.ifa_index = 65535;
                     expected = ENODEV;
+                    break;
+                case 9:
+                    invalid.body.ifa_family = AF_INET6;
                     break;
                 }
                 exchange(fd, invalid, expected);
@@ -327,7 +341,7 @@ static void manual_preservation(const net::Store& runtime) {
         check(restarted.open(interfaces[lane], runtime) == 0 && !owned(observer, lane) &&
                   restarted.apply(address(lane), lease) == EBUSY && restarted.withdraw() == 0,
               "restart and failed acquisition preserve a manually changed address");
-        verify_address(lane, address(lane, 77), lease.mask);
+        verify_address(lane, address(lane, 77), 0xff000000);
         ioctl_address(lane, SIOCSIFADDR, 0);
     }
     puts("CONFIGURATION_MANUAL_PRESERVATION_PASS interfaces=2");

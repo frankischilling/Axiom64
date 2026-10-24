@@ -23,7 +23,7 @@ struct TimeWaitRecord {
     tcp::TimeWait state;
     uint32_t local = 0, peer = 0;
     uint16_t local_port = 0, peer_port = 0;
-    unsigned index = 0, binding_index = 0;
+    unsigned binding_index = 0;
     uint8_t ttl = 64;
     bool used = false, pending = false, reuse = false, reserved = false;
 };
@@ -136,6 +136,7 @@ void release_automatic_port(InetSocket* socket) {
 void reset_connect(InetSocket* socket) {
     // Owned packets may outlive this attempt; their callbacks cannot reach its successor.
     ipv4_detach_owner(socket);
+    socket->destination = {};
     release_time_wait(socket);
     socket->mss_cache = socket->stream->segment_size();
     socket->stream->~Connection();
@@ -146,7 +147,6 @@ void reset_connect(InetSocket* socket) {
         socket->local = 0;
     socket->peer = 0;
     socket->peer_port = 0;
-    socket->stream_index = 0;
     socket->transmitted = 0;
     socket->shutdown = 0;
     socket->error = 0;
@@ -166,7 +166,6 @@ bool transfer_time_wait(InetSocket* socket) {
     record.peer = socket->peer;
     record.local_port = socket->local_port;
     record.peer_port = socket->peer_port;
-    record.index = socket->stream_index;
     record.binding_index = socket->index;
     record.ttl = socket->ttl;
     record.reuse = socket->reuse;
@@ -325,7 +324,7 @@ int tcp_error(InetSocket* socket, bool clear) {
     return error;
 }
 
-void tcp_failed(InetSocket* socket, int error) {
+void tcp_failed(InetSocket* socket, int error, unsigned failed_index) {
     if (!socket || !socket->used)
         return;
     // IPv4 may discard an owned copy when an interface goes down or the copy
@@ -335,6 +334,15 @@ void tcp_failed(InetSocket* socket, int error) {
         return;
     if (socket->stream && socket->stream->state() == tcp::State::closed)
         return;
+    // A discarded copy on a failed device does not end an unbound stream if
+    // routing now provides another healthy output device. TCP retains its bytes
+    // and its original retransmission and delivery deadlines.
+    if (error == 5 && failed_index && !socket->index && socket->stream) {
+        Ipv4Path replacement;
+        if (!ipv4_path(socket->local, socket->peer, 0, replacement) &&
+            replacement.index != failed_index)
+            return;
+    }
     if (!tcp_error(socket, false))
         socket->error = error;
     if (socket->stream && socket->stream->state() != tcp::State::closed)
@@ -360,11 +368,20 @@ void tcp_icmp_error(unsigned index, const uint8_t* bytes, size_t length) {
             (socket.index && socket.index != index))
             continue;
         if (quote.too_big) {
-            // DONT and PROBE do not learn packet sizes from incoming ICMP.
-            if (!socket.mtu_policy || socket.mtu_policy >= 3)
+            if (!inet_accept_path_mtu(&socket) || !socket.stream->owns_pmtu_quote(quote.sequence))
                 continue;
             uint16_t mtu = tcp::quoted_path_mtu(quote);
-            if (mtu && socket.stream->reduce_mss(quote.sequence, uint16_t(mtu - 40)))
+            if (!mtu)
+                continue;
+            uint32_t learned = ipv4_learn_pmtu(quote.local, quote.peer, socket.index,
+                                               quote.next_hop_mtu, quote.quoted_length);
+            if (learned)
+                mtu = min(mtu, uint16_t(learned));
+            if (learned)
+                ipv4_destination(socket.destination, socket.local, socket.peer, socket.index);
+            // DONT can populate the route cache without forcing a transport retry.
+            // PROBE bypasses that cache at IP output, but TCP still adapts its MSS.
+            if (socket.mtu_policy && socket.stream->reduce_mss(quote.sequence, uint16_t(mtu - 40)))
                 ipv4_discard_oversized(&socket, mtu);
         } else
             socket.stream->quoted_error(quote.sequence, quote.error, quote.abort_request);
@@ -387,10 +404,11 @@ int tcp_connect(InetSocket* socket, const InetAddress& address) {
     uint32_t peer = __builtin_bswap32(address.address);
     if (!peer)
         peer = 0x7f000001;
-    Ipv4Path path;
-    int error = ipv4_path(socket->bound ? socket->local : 0, peer, socket->index, path);
+    Ipv4Destination retained;
+    int error = ipv4_destination(retained, socket->bound ? socket->local : 0, peer, socket->index);
     if (error)
         return error;
+    const auto& path = retained.path;
     if (!socket->local_port) {
         error = inet_bind_port(socket, socket->bound ? socket->local : 0, 0);
         if (error)
@@ -399,18 +417,18 @@ int tcp_connect(InetSocket* socket, const InetAddress& address) {
     for (auto& other : inet_sockets)
         if (other.used && &other != socket && other.type == 1 && other.stream &&
             other.local == path.source && other.peer == peer &&
-            other.local_port == socket->local_port && other.peer_port == address.port)
+            other.local_port == socket->local_port && other.peer_port == address.port &&
+            (!socket->index || !other.index || socket->index == other.index))
             return -99;
     expire_time_wait(now_ms());
     for (auto& record : time_waits)
         if (record.used && record.local == path.source && record.peer == peer &&
             record.local_port == socket->local_port && record.peer_port == address.port &&
-            record.index == path.index)
+            (!socket->index || !record.binding_index || socket->index == record.binding_index))
             return -99;
     socket->local = path.source;
     socket->peer = peer;
     socket->peer_port = address.port;
-    socket->stream_index = path.index;
     uint64_t now = now_ms();
     uint32_t initial;
     error = sequence(socket, initial, now);
@@ -419,6 +437,7 @@ int tcp_connect(InetSocket* socket, const InetAddress& address) {
     error = make_stream(socket, now);
     if (error)
         return error;
+    socket->destination = retained;
     socket->error = 0;
     socket->error_seen = false;
     uint16_t limit = socket->user_mss ? socket->user_mss : 1460;
@@ -646,7 +665,8 @@ void tcp_receive(unsigned index, uint32_t source, uint32_t destination, const vo
     expire_time_wait(now);
     for (auto& record : time_waits)
         if (record.used && record.local == destination && record.peer == source &&
-            record.index == index && record.local_port == segment.destination &&
+            (!record.binding_index || record.binding_index == index) &&
+            record.local_port == segment.destination &&
             record.peer_port == __builtin_bswap16(segment.source)) {
             auto action = tcp::time_wait_input(record.state, segment, now);
             if (action == tcp::TimeWaitAction::remove)
@@ -661,7 +681,7 @@ void tcp_receive(unsigned index, uint32_t source, uint32_t destination, const vo
             (socket.index && socket.index != index))
             continue;
         if (socket.stream && socket.local == destination && socket.peer == source &&
-            socket.peer_port == __builtin_bswap16(segment.source) && socket.stream_index == index) {
+            socket.peer_port == __builtin_bswap16(segment.source)) {
             socket.stream->input(segment, now);
             if (socket.listener && !socket.accept_queued && synchronized(&socket)) {
                 auto parent = socket.listener;
@@ -689,21 +709,25 @@ void tcp_receive(unsigned index, uint32_t source, uint32_t destination, const vo
         child->local_port = segment.destination;
         child->peer_port = __builtin_bswap16(segment.source);
         child->index = listener->index;
-        child->stream_index = index;
         child->receive_limit = listener->receive_limit;
         child->send_limit = listener->send_limit;
         child->reuse = listener->reuse;
         child->nodelay = listener->nodelay;
         child->user_timeout = listener->user_timeout;
         child->user_mss = listener->user_mss;
+        child->mtu_policy = listener->mtu_policy;
         uint32_t initial;
         if (sequence(child, initial, now) || make_stream(child, now)) {
             reclaim(child);
             return;
         }
-        const auto info = index == ipv4_loopback ? nullptr : net_info(index);
         uint16_t limit = child->user_mss ? child->user_mss : 1460;
-        uint16_t mss = info ? min(limit, uint16_t(info->mtu > 40 ? info->mtu - 40 : 1)) : limit;
+        if (ipv4_destination(child->destination, destination, source, child->index)) {
+            reclaim(child);
+            return;
+        }
+        const auto& path = child->destination.path;
+        uint16_t mss = min(limit, uint16_t(path.mtu > 40 ? path.mtu - 40 : 1));
         if (!child->stream->passive(initial, segment, now, mss)) {
             reclaim(child);
             return;
@@ -722,7 +746,7 @@ void tcp_receive(unsigned index, uint32_t source, uint32_t destination, const vo
         reset.flags |= tcp::ack;
         reset.acknowledgment = segment.sequence + tcp::sequence_length(segment);
     }
-    emit(nullptr, index, destination, source, reset, 64);
+    emit(nullptr, listener ? listener->index : 0, destination, source, reset, 64);
 }
 
 void tcp_poll() {
@@ -734,8 +758,8 @@ void tcp_poll() {
     for (auto& socket : inet_sockets) {
         if (!socket.used || socket.type != 1 || !socket.stream)
             continue;
-        if (socket.stream_index && socket.stream_index != ipv4_loopback) {
-            auto info = net_info(socket.stream_index);
+        if (socket.index && socket.index != ipv4_loopback) {
+            auto info = net_info(socket.index);
             if (!info || !info->live)
                 tcp_failed(&socket, 5);
         }
@@ -744,8 +768,7 @@ void tcp_poll() {
         for (unsigned at = 0; pending && at < 4; at++) {
             segment.source = socket.local_port;
             segment.destination = __builtin_bswap16(socket.peer_port);
-            int error =
-                emit(&socket, socket.stream_index, socket.local, socket.peer, segment, socket.ttl);
+            int error = emit(&socket, socket.index, socket.local, socket.peer, segment, socket.ttl);
             // A temporary queue, interface or route failure rejects this enqueue.
             // TCP retains its bytes and owns the local retry and delivery deadlines.
             if (error == -11 || error == -12 || error == -105 || error == -100 || error == -101) {
@@ -778,7 +801,8 @@ void tcp_poll() {
         segment.acknowledgment = record.state.receive;
         segment.window = record.state.window;
         segment.flags = tcp::ack;
-        int error = emit(nullptr, record.index, record.local, record.peer, segment, record.ttl);
+        int error =
+            emit(nullptr, record.binding_index, record.local, record.peer, segment, record.ttl);
         if (!error || (error != -11 && error != -12 && error != -105))
             record.pending = false;
     }

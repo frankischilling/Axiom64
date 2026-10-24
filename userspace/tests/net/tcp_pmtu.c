@@ -111,10 +111,24 @@ static void capture_stop(void) {
     atomic_store(&stop, 1);
     CHECK(pthread_join(observer, NULL) == 0);
     for (unsigned lane = 0; lane < 2; lane++) {
-        unsigned statistics[2];
+        // Retire the old receive hook before draining its queued packets. A
+        // packet can arrive after the collector exits and before this call.
+        struct sockaddr_ll retired = {.sll_family = AF_PACKET,
+                                      .sll_protocol = htons(0x88b6),
+                                      .sll_ifindex = (int)indices[lane]};
+        CHECK(bind(observers[lane], (struct sockaddr*)&retired, sizeof(retired)) == 0);
+        drain(lane);
+        unsigned statistics[2] = {0};
         socklen_t size = sizeof(statistics);
-        CHECK(getsockopt(observers[lane], 263, 6, statistics, &size) == 0 &&
-              size == sizeof(statistics) && statistics[0] == observed[lane] && !statistics[1]);
+        int result = getsockopt(observers[lane], 263, 6, statistics, &size);
+        if (result || size != sizeof(statistics) || statistics[0] != observed[lane] ||
+            statistics[1])
+            fprintf(stderr,
+                    "PMTU_CAPTURE_ERROR lane=%u result=%d size=%u packets=%u observed=%u "
+                    "dropped=%u\n",
+                    lane, result, size, statistics[0], observed[lane], statistics[1]);
+        CHECK(!result && size == sizeof(statistics) && statistics[0] == observed[lane] &&
+              !statistics[1]);
         printf("PMTU_CAPTURE_PASS lane=%u index=%u packets=%u dropped=%u ipv4=%u\n", lane,
                indices[lane], statistics[0], statistics[1], ipv4_frames[lane]);
         CHECK(close(observers[lane]) == 0);

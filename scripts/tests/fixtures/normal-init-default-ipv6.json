@@ -1,0 +1,45 @@
+{
+  "origin": "Focused boot of the actual published normal image, intentionally stopped after both first router solicitations.",
+  "commit": "c31e285370438eaba1f0b3496747bb2c02e45143",
+  "workflow": 39991456835,
+  "kernel_sha256": "8f047c00d0955d87b3eb2307cf68c15f5755c3956b7e4a89cfb1d573dbeb7f8d",
+  "normal_image_sha256": "8563d3fa66077272d85a92b938f6673378f952c97149a823fa59ea6117f2b4ea",
+  "original_capture_timestamps_preserved": true,
+  "full_normal_init_acceptance": false,
+  "captures": [
+    {
+      "lane": 0,
+      "file": "normal-init-default-ipv6-lane0.pcap",
+      "sha256": "5a14026d828e19f10fa5e4627c5df43903e9ef3fd1d1ee467189c585a1de625b",
+      "automatic_controls": [
+        {
+          "type": 135,
+          "bytes": 86,
+          "sha256": "95bbd21a9528f2f5eaf9ae984c4a6afacc865f78853e5859988c6ab22163d132"
+        },
+        {
+          "type": 133,
+          "bytes": 70,
+          "sha256": "4384256535c8ed852d1338532a963113ba7fc73e5d82e46d15bafc726700d1ae"
+        }
+      ]
+    },
+    {
+      "lane": 1,
+      "file": "normal-init-default-ipv6-lane1.pcap",
+      "sha256": "a8925a4f2ab97b1803d270b28ee89d0adf07003530923e13d3515227d6aaf10d",
+      "automatic_controls": [
+        {
+          "type": 135,
+          "bytes": 86,
+          "sha256": "01059377ea56c22ad9b27385605ca04d0b3da0da44a6ecfb57c73dae1588c856"
+        },
+        {
+          "type": 133,
+          "bytes": 70,
+          "sha256": "e1353e231b4b43fa9205e611ff91eac27d8e45d0afb2bc4a0c86807e70e8dcd9"
+        }
+      ]
+    }
+  ]
+}

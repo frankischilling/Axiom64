@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Compare controlled TCP faults with Linux in nested private network namespaces."""
 import argparse
+import ctypes
 import hashlib
 import json
 import os
@@ -29,18 +30,20 @@ def clock_pair():
 class Capture:
     def __init__(self, interface, path):
         self.clock_start = clock_pair()
-        self.socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
+        self.socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0)
         # Linux SO_RCVBUFFORCE reserves a per-socket burst budget without
         # changing host sysctls. This isolated fixture already requires root.
         self.socket.setsockopt(socket.SOL_SOCKET, 33, 4 * 1024 * 1024)
         self.buffer_bytes = self.socket.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
         check(self.buffer_bytes >= 4 * 1024 * 1024, 'independent capture reserves its packet burst budget')
-        self.socket.bind((interface, 0))
         # Linux SO_TIMESTAMPNS_NEW returns two signed 64-bit values in system
         # realtime, which can jump. Preserve it and record monotonic read time
         # separately so elapsed protocol checks do not mix clock domains.
         self.socket.setsockopt(socket.SOL_SOCKET, 64, 1)
         self.socket.settimeout(.05)
+        # Enable reception only after its timestamp and buffer are ready, and
+        # restrict the socket to this interface before it can accept a frame.
+        self.socket.bind((interface, 3))
         self.output = path.open('wb')
         self.output.write(struct.pack('<IHHIIII', 0xa1b2c3d4, 2, 4, 0, 0, 65535, 1))
         self.clocks_path = path.with_suffix('.clocks.jsonl')
@@ -48,6 +51,8 @@ class Capture:
         self.frame_count = 0
         self.stopping = threading.Event()
         self.error = None
+        self.injection = None
+        self.injection_lock = threading.Lock()
         self.thread = threading.Thread(target=self.collect, daemon=True)
         self.thread.start()
 
@@ -78,13 +83,58 @@ class Capture:
                     sha256=hashlib.sha256(frame).hexdigest(), kernel_realtime_ns=timestamp,
                     **observed)) + '\n')
                 self.frame_count += 1
+                if self.injection is not None:
+                    with self.injection_lock:
+                        waiting = self.injection
+                        if waiting is not None and waiting['frame'] == frame and not waiting['ready'].is_set():
+                            waiting['monotonic_ns'] = observed['receipt_monotonic_ns']
+                            waiting['ready'].set()
         except Exception as exception:
             self.error = exception
 
-    def close(self):
-        self.stopping.set()
-        self.thread.join(timeout=1)
+    def watch(self, frame):
+        """Return a pollable receipt for one future actual packet injection."""
+        waiting = dict(frame=bytes(frame), ready=threading.Event(), monotonic_ns=None)
+        with self.injection_lock:
+            check(self.injection is None, 'one outstanding independently observed injection')
+            self.injection = waiting
+        def observed():
+            check(self.error is None, 'independent input monitor remains healthy')
+            with self.injection_lock:
+                if not waiting['ready'].is_set():
+                    return None
+                if self.injection is waiting:
+                    self.injection = None
+                return waiting['monotonic_ns'] / 1e9
+        return observed
+
+    def observe_injection(self, frame, send, timeout=2):
+        """Send one exact frame and wait for its independent monotonic receipt."""
+        waiting = dict(frame=frame, ready=threading.Event(), monotonic_ns=None)
+        with self.injection_lock:
+            check(self.injection is None, 'one outstanding independently observed injection')
+            self.injection = waiting
         try:
+            check(send(frame) == len(frame), 'complete independently observed injection')
+            check(waiting['ready'].wait(timeout) and self.error is None,
+                  'independent capture observes the injected frame within its deadline')
+            return waiting['monotonic_ns'] / 1e9
+        finally:
+            with self.injection_lock:
+                self.injection = None
+
+    def close(self):
+        try:
+            # SO_ATTACH_FILTER with BPF_RET 0 stops future input before the
+            # reader drains its existing queue. Otherwise a late packet can
+            # enter the socket after the reader's final timeout but before
+            # PACKET_STATISTICS, leaving no corresponding clock record.
+            reject = ctypes.create_string_buffer(struct.pack('=HBBI', 6, 0, 0, 0))
+            self.socket.setsockopt(socket.SOL_SOCKET, 26,
+                                   struct.pack('@HP', 1, ctypes.addressof(reject)))
+            clock_stop = clock_pair()
+            self.stopping.set()
+            self.thread.join(timeout=1)
             check(not self.thread.is_alive() and self.error is None,
                   f'independent packet monitor completes: {self.error}')
             # Linux SOL_PACKET/PACKET_STATISTICS counts kernel receive drops.
@@ -97,9 +147,12 @@ class Capture:
                         monotonic_receipts=self.clocks_path.name,
                         monotonic_receipts_sha256=hashlib.sha256(self.clocks_path.read_bytes()).hexdigest(),
                         receipt_frames=self.frame_count, original_packet_times_not_rescaled=True,
-                        clock_start=self.clock_start, clock_end=clock_pair())
+                        clock_start=self.clock_start, clock_stop=clock_stop, clock_end=clock_pair())
         finally:
+            self.stopping.set()
             self.socket.close()
+            if self.thread.is_alive():
+                self.thread.join(timeout=1)
             self.output.close()
             self.clocks.close()
 

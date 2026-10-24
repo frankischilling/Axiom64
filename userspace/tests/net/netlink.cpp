@@ -438,6 +438,8 @@ static void early_route_state(int fd, unsigned lane, const Route& expected, cons
 }
 
 static void unconfigured_send(unsigned lane) {
+    check(!(interface_flags(lane) & IFF_RUNNING),
+          "source fallback retains the physical carrier absence");
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     char name[IF_NAMESIZE];
     check(fd >= 0 && if_indextoname(indexes[lane], name) &&
@@ -449,8 +451,8 @@ static void unconfigured_send(unsigned lane) {
     target.sin_addr.s_addr = htonl(0xc6336401);
     char payload = 'x';
     check(sendto(fd, &payload, 1, 0, reinterpret_cast<sockaddr*>(&target), sizeof(target)) == -1 &&
-              errno == ENETUNREACH,
-          "direct route without a source address does not permit packet transmission");
+              errno == ENETDOWN,
+          "unconfigured device-bound output still requires physical carrier");
     check(close(fd) == 0, "close source-guard probe");
 }
 
@@ -715,7 +717,7 @@ static void malformed(int fd) {
             request.size = 27;
             break;
         case 1:
-            request.bytes[16] = AF_INET6;
+            request.bytes[16] = AF_UNIX;
             expected = EAFNOSUPPORT;
             break;
         case 2:

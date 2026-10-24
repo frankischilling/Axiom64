@@ -1,0 +1,2 @@
+[?2004hbaNETWORK_MANAGER_BOUND index=1 method=dhcp address=0a170128 generation=1
+sh-5.2$ 

@@ -512,6 +512,12 @@ static int64_t block_bytes(Handle* h, void* data, size_t len, bool write) {
     return done;
 }
 
+bool device_ignores_buffer(Handle* handle, bool write) {
+    auto node = handle->node;
+    return node && (node->mode & 0170000) == character && !handle->pty &&
+           (node->device == Device::null || (write && node->device == Device::zero));
+}
+
 int64_t device_read(Handle* h, void* data, size_t len) {
     if (h->node->device == Device::block)
         return block_bytes(h, data, len, false);

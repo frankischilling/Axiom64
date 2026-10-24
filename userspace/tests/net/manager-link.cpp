@@ -8,6 +8,13 @@
 namespace {
 constexpr char manual_resolver[] = "nameserver 192.0.2.53\nsearch operator.example\n";
 
+bool link_state_matches(const ax::dhcp::Interface& current, bool disabled, bool down, bool up) {
+    // A disabled profile stays administratively down after the physical link returns.
+    // Linux IFF_RUNNING therefore remains clear for that profile.
+    return (!down || !current.carrier) &&
+           (!up || (disabled ? !current.up && !current.carrier : current.carrier));
+}
+
 struct Observer {
     Fixture fixture;
     unsigned affected;
@@ -231,8 +238,8 @@ struct Observer {
                                               : owned         ? 0x0a170128U + (affected << 8)
                                                               : 0);
             if (correct_address && generation(1 - affected) == healthy_generation &&
-                generation(affected) == target_generation && (!down || !current.carrier) &&
-                (!up || current.carrier) && (owned || withdrawn()))
+                generation(affected) == target_generation &&
+                link_state_matches(current, disabled, down, up) && (owned || withdrawn()))
                 break;
             check(milliseconds() < until, "bounded actual ownership/generation transition");
             frames();

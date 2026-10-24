@@ -233,6 +233,7 @@ def run(firmware, transport, models, queue, timeout, wrap, gdb=False, fault=None
         required += [f'PACKET_TESTS_PASS nics={len(models)}']
         required += [f'PACKET_NIC_PASS index={lane + 1} frames={count + (1 if mtu >= 9000 and model == "virtio" else 0)}'
                      for lane, model in enumerate(models)]
+        required += [f'PACKET_ADMIN_FLAGS index={lane + 1} flags=1002' for lane in range(len(models))]
         if status:
             required += [f'PACKET_LINK_PASS index={lane + 1}' for lane in range(len(models))]
         injected = True
@@ -240,6 +241,10 @@ def run(firmware, transport, models, queue, timeout, wrap, gdb=False, fault=None
                  if model == 'virtio' else f'e1000: index={lane + 1} model=82540EM rx=64 tx=64'
                  for lane, model in enumerate(models)]
     missing = [marker for marker in required if marker not in text]
+    administrative_flags = [dict(index=int(index), flags=int(flags, 16)) for index, flags in re.findall(
+        r'^PACKET_ADMIN_FLAGS index=(\d+) flags=([0-9a-f]+)\r?$', text, re.M)]
+    administrative_flags_valid = (not administrative_flags if fault or pressure else
+        administrative_flags == [dict(index=lane + 1, flags=0x1002) for lane in range(len(models))])
     timestamp_observations = [dict(zip(('index', 'begin_ns', 'end_ns', 'arrival_ns', 'dequeue_ns'),
                                        map(int, value))) for value in re.findall(
         r'^PACKET_TIMESTAMP_PASS index=(\d+) begin_ns=(\d+) end_ns=(\d+) arrival_ns=(\d+) '
@@ -274,10 +279,11 @@ def run(firmware, transport, models, queue, timeout, wrap, gdb=False, fault=None
                   rx_queue=queue, tx_queue=256, wrap=wrap,
                   fault=fault, pressure=pressure, injected=injected, status_feature=status, host_mtu=mtu,
                   features_valid=features_valid,
+                  administrative_flags=administrative_flags, administrative_flags_valid=administrative_flags_valid,
                   timestamp_observations=timestamp_observations, timestamps_valid=bool(timestamps_valid),
                   lazy_timestamp_observations=lazy_observations,
                   passed=returncode == 1 and not timed_out and not error and not missing and injected and
-                         features_valid and timestamps_valid and
+                         features_valid and timestamps_valid and administrative_flags_valid and
                          [state['frames'] for state in peers] == expected_counts,
                   returncode=returncode, timed_out=timed_out, error=error, missing=missing,
                   host_frames=[state['frames'] for state in peers],

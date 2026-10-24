@@ -34,9 +34,10 @@ class Hardware:
         return int(response[1], 0)
 
     def carrier(self, up):
-        self.monitor.command('set_link', dict(name=f'nic{self.affected}', up=up))
+        result = self.monitor.command('set_link', dict(name=f'nic{self.affected}', up=up))
+        check(result == {}, 'selected physical carrier command succeeded')
         self.records.append(dict(operation='carrier', up=up, lane=self.affected,
-                                 host_monotonic=time.monotonic()))
+                                 qmp_result=result, host_monotonic=time.monotonic()))
 
     def remove(self):
         # CF8 is shared with the guest's PCI access; stop it for this short I/O

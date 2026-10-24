@@ -68,6 +68,32 @@ class StoppedGuest:
 
 
 class RemovalTests(unittest.TestCase):
+    def test_carrier_receipts_require_the_actual_qmp_acknowledgment(self):
+        class Monitor:
+            def __init__(self, result):
+                self.result, self.calls = result, []
+
+            def command(self, name, arguments):
+                self.calls.append((name, arguments))
+                return self.result
+
+        for lane in (0, 1):
+            for up in (False, True):
+                with self.subTest(lane=lane, up=up):
+                    hardware = Hardware.__new__(Hardware)
+                    hardware.affected, hardware.records = lane, []
+                    hardware.monitor = Monitor({})
+                    hardware.carrier(up)
+                    self.assertEqual(hardware.monitor.calls,
+                                     [('set_link', dict(name=f'nic{lane}', up=up))])
+                    self.assertEqual(hardware.records[0]['qmp_result'], {})
+                    for invalid in (None, True, {'unexpected': 1}):
+                        hardware.monitor = Monitor(invalid)
+                        hardware.records = []
+                        with self.assertRaisesRegex(RuntimeError, 'carrier command succeeded'):
+                            hardware.carrier(up)
+                        self.assertEqual(hardware.records, [])
+
     def fixture(self, affected=1, transport='modern', address=0x80002000):
         guest = StoppedGuest(affected, transport, address)
         hardware = Hardware.__new__(Hardware)

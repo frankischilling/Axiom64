@@ -357,6 +357,16 @@ static unsigned mtu_test(int control, struct ifreq* request, int fd, int index,
     return 1;
 }
 
+static void administrative_down(int control, struct ifreq* request, int index) {
+    check(ioctl(control, SIOCGIFFLAGS, request) == 0, "read flags");
+    request->ifr_flags &= ~IFF_UP;
+    check(ioctl(control, SIOCSIFFLAGS, request) == 0 && ioctl(control, SIOCGIFFLAGS, request) == 0,
+          "administrative shutdown flag readback");
+    printf("PACKET_ADMIN_FLAGS index=%d flags=%x\n", index, (unsigned short)request->ifr_flags);
+    check((unsigned short)request->ifr_flags == (IFF_BROADCAST | IFF_MULTICAST),
+          "admin down clears administrative and operational flags");
+}
+
 static void nic(int control, int index, unsigned sequences) {
     struct ifreq request = {0};
     request.ifr_ifindex = index;
@@ -511,12 +521,7 @@ static void nic(int control, int index, unsigned sequences) {
     duplicate = retained_receive(duplicate, index, mac, sequences + 49);
     unsigned jumbo = mtu_test(control, &request, duplicate, index, mac, sequences + 51);
     check(close(duplicate) == 0, "last socket close");
-    check(ioctl(control, SIOCGIFFLAGS, &request) == 0, "read flags");
-    request.ifr_flags &= ~IFF_UP;
-    check(ioctl(control, SIOCSIFFLAGS, &request) == 0 &&
-              ioctl(control, SIOCGIFFLAGS, &request) == 0 && !(request.ifr_flags & IFF_UP) &&
-              (request.ifr_flags & IFF_RUNNING),
-          "admin down preserves carrier");
+    administrative_down(control, &request, index);
     printf("PACKET_NIC_PASS index=%d frames=%u\n", index, sequences + 51 + jumbo);
 }
 

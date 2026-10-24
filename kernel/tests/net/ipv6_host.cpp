@@ -820,24 +820,28 @@ static void finite_address_dad() {
         ipv6_poll();
         assert(!ipv6_owned(lane + 1, local, true) && ipv6_path({}, remote, lane + 1, path) == -101);
 
-        reset();
-        ticks = 1000;
-        assert(!configure_lifetime(lane + 1, local, 2, 8, 0x605, 64, 0));
-        ipv6_poll();
-        auto failed_owner = ip6::address_owner(lane + 1, local);
-        assert(failed_owner);
-        deliver(lane, advertisement(lane, local, ip6::all_nodes()));
-        // Linux removes a failed finite configured owner before its lifetime expires.
-        // A later successful RTM_NEWADDR starts DAD for a new address owner.
-        assert(!address_observation(lane + 1, local).present &&
-               !ip6::address_owner(lane + 1, local));
-        assert(!configure_lifetime(lane + 1, local, 2, 8, 0x105, 64, 0));
-        auto replacement = address_observation(lane + 1, local);
-        assert(replacement.present && replacement.flags == 0x40 && replacement.cache[0] == 2 &&
-               replacement.cache[1] == 8);
-        assert(ip6::address_owner(lane + 1, local) &&
-               ip6::address_owner(lane + 1, local) != failed_owner);
-        assert(!ipv6_owned(lane + 1, local) && ipv6_owned(lane + 1, local, true));
+        // Retain the original NODAD recreation input alongside ordinary DAD.
+        for (unsigned requested_flags : {0u, 2u}) {
+            reset();
+            ticks = 1000;
+            assert(!configure_lifetime(lane + 1, local, 2, 8, 0x605, 64, 0));
+            ipv6_poll();
+            auto failed_owner = ip6::address_owner(lane + 1, local);
+            assert(failed_owner);
+            deliver(lane, advertisement(lane, local, ip6::all_nodes()));
+            // Linux removes a failed finite configured owner before its lifetime expires.
+            // A later successful RTM_NEWADDR starts DAD for a new address owner.
+            assert(!address_observation(lane + 1, local).present &&
+                   !ip6::address_owner(lane + 1, local));
+            assert(!configure_lifetime(lane + 1, local, 2, 8, 0x105, 64, requested_flags));
+            auto replacement = address_observation(lane + 1, local);
+            assert(replacement.present && replacement.flags == (requested_flags ? 2u : 0x40u) &&
+                   replacement.cache[0] == 2 && replacement.cache[1] == 8);
+            assert(ip6::address_owner(lane + 1, local) &&
+                   ip6::address_owner(lane + 1, local) != failed_owner);
+            assert(ipv6_owned(lane + 1, local) == bool(requested_flags) &&
+                   ipv6_owned(lane + 1, local, true));
+        }
         reset();
     }
 }
@@ -3032,6 +3036,69 @@ static void reviewed_source_edges() {
     reset();
 }
 
+static void fresh_link_dad_cycles() {
+    using Key = ip6::ConfigurationKey;
+    for (unsigned lane = 0; lane < 2; lane++) {
+        for (bool administrative : {false, true}) {
+            reset();
+            unsigned index = lane + 1;
+            assert(!ip6::configuration_secret(index, policy_address("2001:db8::1234")));
+            assert(!ip6::configuration_write(index, Key::disabled, 1));
+            assert(!ip6::configuration_write(index, Key::disabled, 0));
+            auto candidate = [&]() {
+                ip6::Address result;
+                unsigned count = 0;
+                for (unsigned at = 0; auto value = ipv6_address(at); at++)
+                    if (value->index == index && value->address.link_local() &&
+                        (value->flags & 0x848) == 0x840) {
+                        result = value->address;
+                        count++;
+                    }
+                assert(count == 1);
+                return result;
+            };
+            const auto original = candidate();
+            const auto original_owner = ip6::address_owner(index, original);
+            ipv6_poll();
+            deliver(lane, advertisement(lane, original, ip6::all_nodes()));
+            ipv6_poll();
+            auto retry = candidate();
+            assert(!(retry == original));
+            if (administrative) {
+                assert(!net_configure(index, false, 1500));
+                assert(!net_configure(index, true, 1500));
+            } else {
+                assert(!ip6::configuration_write(index, Key::disabled, 1));
+                assert(!ip6::configuration_write(index, Key::disabled, 0));
+            }
+            auto fresh = candidate();
+            std::printf("IPV6_FRESH_DAD lane=%u administrative=%u original_identity=%u\n", lane,
+                        administrative, fresh == original);
+            std::fflush(stdout);
+            assert(fresh == original);
+            assert(ip6::address_owner(index, fresh) != original_owner);
+            for (unsigned trial = 0; trial < 4; trial++) {
+                auto selected = candidate();
+                // The model advances to the maximum existing retry deadline;
+                // real packet-clock bounds remain covered by wire tests.
+                ticks += 210;
+                ipv6_poll();
+                auto probe = last(lane, 135);
+                assert(!memcmp(probe.payload + 8, selected.bytes, 16));
+                deliver(lane, advertisement(lane, selected, ip6::all_nodes()));
+                ipv6_poll();
+            }
+            unsigned failed = 0;
+            for (unsigned at = 0; auto value = ipv6_address(at); at++)
+                if (value->index == index && value->address.link_local()) {
+                    assert(value->flags == 0x8c8);
+                    failed++;
+                }
+            assert(failed == 4);
+        }
+    }
+}
+
 static void automatic_link_configuration() {
     using Key = ip6::ConfigurationKey;
     auto setting = [](unsigned index, Key key) {
@@ -3451,6 +3518,7 @@ int main() {
     copied_error_queues();
     reviewed_source_edges();
     automatic_link_configuration();
+    fresh_link_dad_cycles();
     configuration_files();
     ipv6_link_configuration_tests(reset);
     ipv6_router_tests(reset);

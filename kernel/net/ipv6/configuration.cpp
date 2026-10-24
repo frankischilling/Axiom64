@@ -18,7 +18,6 @@ struct Configuration {
     bool secret_initialized = false, initialized = false;
     bool administrative = false, ready = false, pending = false;
     Address generated;
-    unsigned dad_counter = 0;
 };
 
 Configuration interfaces[max_net_devices + 1], defaults, all;
@@ -136,6 +135,9 @@ void generate(unsigned index, Configuration& state) {
     address.bytes[0] = 0xfe;
     address.bytes[1] = 0x80;
     bool privacy = mode == 2 || mode == 3;
+    // A fresh initialization owns a new retry budget; retired owners cannot
+    // consume attempts or delay the first probe of the new address.
+    unsigned counter = 0;
     if (privacy) {
         const uint8_t* secret = state.secret_initialized      ? state.secret
                                 : defaults.secret_initialized ? defaults.secret
@@ -150,7 +152,7 @@ void generate(unsigned index, Configuration& state) {
         }
         if (!secret)
             return;
-        if (!opaque_identifier(address, info->mac, secret, state.dad_counter))
+        if (!opaque_identifier(address, info->mac, secret, counter))
             return;
     } else {
         memcpy(address.bytes + 8, info->mac, 3);
@@ -162,7 +164,7 @@ void generate(unsigned index, Configuration& state) {
     // An unchanged write or a normal poll must not resurrect an address that
     // userspace explicitly removed. Only an initialization event reaches here.
     int error = automatic_address({address, index, uint16_t(privacy ? 0x880 : 0x80), 64},
-                                  {UINT32_MAX, UINT32_MAX}, false, state.dad_counter);
+                                  {UINT32_MAX, UINT32_MAX}, false, counter);
     if (error && error != -17)
         state.pending = true;
     else if (!error) {
@@ -286,7 +288,6 @@ int configuration_secret(unsigned index, const Address& secret) {
     random::erase(state->secret, sizeof(state->secret));
     memcpy(state->secret, secret.bytes, sizeof(state->secret));
     state->secret_initialized = true;
-    state->dad_counter = 0;
     // Installing a key selects privacy mode without generating an address.
     // A default key changes existing interfaces, not the default mode itself.
     if (index == configuration_default) {
@@ -344,11 +345,10 @@ void configuration_changed(unsigned index) {
 }
 
 void configuration_address_regenerated(unsigned index, const Address& original,
-                                       const Address& replacement, unsigned counter) {
+                                       const Address& replacement) {
     auto state = select(index);
     if (state && state->generated == original) {
         state->generated = replacement;
-        state->dad_counter = counter;
         state->pending = false;
     }
 }

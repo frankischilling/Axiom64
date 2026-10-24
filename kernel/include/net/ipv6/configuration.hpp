@@ -37,8 +37,7 @@ int configuration_stable_identifier(unsigned index, Address&, unsigned& counter)
 void configuration_registered(unsigned index);
 void configuration_changed(unsigned index);
 void configuration_address_removed(unsigned index, const Address&);
-void configuration_address_regenerated(unsigned index, const Address&, const Address&,
-                                       unsigned counter);
+void configuration_address_regenerated(unsigned index, const Address&, const Address&);
 void configuration_poll();
 void configuration_reset();
 } // namespace ax::ip6

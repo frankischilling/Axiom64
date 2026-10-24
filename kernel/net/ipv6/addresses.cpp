@@ -355,7 +355,7 @@ static int regenerate_address(unsigned position, const Address& replacement, uns
     router_address_regenerated(original.value, original.owner, created.value, created.owner,
                                counter);
     configuration_address_regenerated(original.value.index, original.value.address,
-                                      created.value.address, counter);
+                                      created.value.address);
     if (!(original.value.flags & 0x80))
         ipv6_address_remove(original.value.index, original.value.address);
     return 0;

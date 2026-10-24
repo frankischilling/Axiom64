@@ -15,3 +15,5 @@ scripts/tests/fixtures/normal-init-default-ipv6-lane0.pcap binary
 scripts/tests/fixtures/normal-init-default-ipv6-lane1.pcap binary
 scripts/tests/fixtures/ipv6-dad-*.log -text -whitespace
 scripts/tests/fixtures/ipv6-dad-*.pcap binary
+scripts/tests/fixtures/ipv6-owner-*.log -text -whitespace
+scripts/tests/fixtures/ipv6-owner-*.pcap binary

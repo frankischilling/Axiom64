@@ -2,6 +2,7 @@
 #pragma once
 #include "net/inet.hpp"
 #include "net/ipv4.hpp"
+#include "net/tcp/address.hpp"
 
 namespace ax::tcp {
 class Connection;
@@ -26,6 +27,23 @@ struct InetSocket {
     unsigned shutdown = 0;
     uint64_t order = 0;
     InetFrame* queue[inet_queue_count]{};
+
+    // Stream descriptions share one engine and port table across Internet domains.
+    bool ipv6 = false, wire6 = false, v6only = false, bind_completed = false;
+    ip6::Address local6, peer6;
+
+    tcp::Binding binding(uint32_t local4) const {
+        return {wire6 ? tcp::Address::ipv6(local6) : tcp::Address::ipv4(local4), index,
+                ipv6 && wire6 && !v6only && local6.unspecified()};
+    }
+
+    tcp::Address stream_local() const {
+        return wire6 ? tcp::Address::ipv6(local6) : tcp::Address::ipv4(local);
+    }
+
+    tcp::Address stream_peer() const {
+        return wire6 ? tcp::Address::ipv6(peer6) : tcp::Address::ipv4(peer);
+    }
 
     tcp::Connection* stream = nullptr;
     InetSocket* listener = nullptr;

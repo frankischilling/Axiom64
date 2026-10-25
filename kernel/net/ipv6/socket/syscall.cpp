@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../socket.hpp"
 #include "process/task.hpp"
+#include "net/tcp/socket.hpp"
 
 namespace ax {
 namespace {
@@ -60,6 +61,8 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
     auto handle = a < max_fds ? task.files->entries[a].handle : nullptr;
     auto socket = handle ? handle->inet6 : nullptr;
     if (frame.rax == 41) {
+        if ((b & 0xf) == 1)
+            return tcp6_syscall(task, frame);
         if (b & ~uint64_t(0x8080f))
             return -22;
         unsigned type = b & 0xf;

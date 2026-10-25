@@ -10,6 +10,9 @@
 #include <vector>
 
 namespace ax {
+void tcp_receive(unsigned, const ip6::Address&, const ip6::Address&, const void*, size_t) {
+}
+
 int random_read(void*, size_t, bool) {
     std::abort();
 }
@@ -37,9 +40,13 @@ int tcp_error(InetSocket*, bool) {
     return 0;
 }
 
-int64_t tcp_write(InetSocket*, const void*, size_t) {
+int64_t tcp_write(InetSocket*, const void*, size_t, bool) {
     assert(false);
     return -5;
+}
+
+bool tcp_port_busy(const tcp::Binding&, uint16_t, bool) {
+    return false;
 }
 
 bool tcp_port_busy(uint32_t, uint16_t, unsigned, bool) {

@@ -128,6 +128,8 @@ static InetSocket* connect(NetAdapter& adapter, uint32_t peer, unsigned binding 
     return socket;
 }
 
+void tcp_ipv6_socket_tests();
+
 int main() {
     assert(!ip6::configuration_write(ip6::configuration_all, ip6::ConfigurationKey::generation_mode,
                                      1));
@@ -398,6 +400,7 @@ int main() {
     send_error[2] = 0;
     assert(tcp_connect(rejected, {}) == 0);
     inet_close(rejected);
+    tcp_ipv6_socket_tests();
     puts("TCP_SOCKET_ROUTE_OUTPUT_PASS connected host companion exact_retry reroute pmtu "
          "failed_copy time_wait tuple_binding reset fatal_failure driver_error");
 }

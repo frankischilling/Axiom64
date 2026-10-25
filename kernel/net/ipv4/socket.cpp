@@ -70,6 +70,7 @@ void inet_consume(InetSocket* socket) {
 
 void inet_dispose(InetSocket* socket) {
     ipv4_detach_owner(socket);
+    ipv6_detach_output(socket);
     while (socket->count)
         inet_consume(socket);
     socket->used = false;
@@ -105,8 +106,17 @@ unsigned inet_shutdown(InetSocket* socket) {
 }
 
 bool inet_port_conflict(InetSocket* socket, uint32_t local, uint16_t port) {
-    if (socket->type == 1 && tcp_port_busy(local, port, socket->index, socket->reuse))
-        return true;
+    if (socket->type == 1) {
+        const auto binding = socket->binding(local);
+        if (tcp_port_busy(binding, port, socket->reuse))
+            return true;
+        for (auto& other : inet_sockets)
+            if (other.used && &other != socket && other.type == 1 && other.local_port == port &&
+                binding.overlaps(other.binding(other.local)) &&
+                (!socket->reuse || !other.reuse || other.listening))
+                return true;
+        return false;
+    }
     for (auto& other : inet_sockets)
         if (other.used && &other != socket && other.type == socket->type &&
             other.local_port == port &&
@@ -419,6 +429,11 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
     }
     if (!socket)
         return -88;
+    if (tcp_ipv6(socket)) {
+        if (frame.rax == 42 || frame.rax == 49 || frame.rax == 51 || frame.rax == 52 ||
+            ((frame.rax == 54 || frame.rax == 55) && b == 41))
+            return tcp6_syscall(task, frame);
+    }
     if (inet_stream(socket)) {
         if (frame.rax == 42)
             return io_syscall(task, frame);
@@ -607,7 +622,7 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             else if (c == 38)
                 value = socket->protocol;
             else if (c == 39)
-                value = 2;
+                value = tcp_ipv6(socket) ? 10 : 2;
             else
                 return -92;
         } else if (b == 6 && inet_stream(socket)) {

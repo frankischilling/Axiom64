@@ -302,7 +302,7 @@ The full current-revision feature workflow and matching downloaded evidence
 remain required before integration.
 
 
-## TCP transport preparation
+## TCP streams under development
 
 The TCP segment codec now accepts IPv6 source and destination addresses. IPv4
 and IPv6 share header, option and payload processing, with separate family
@@ -334,12 +334,32 @@ queue limits and timing. Run `make test-tcp-isn test-tcp-connection test-ipv6-wi
 ABI client. The latter checks 72 address imports, ten V6ONLY updates and sixteen
 name-copy cases, including truncated structures, unsupported families, negative
 lengths and failed destination copies. That same C source passes with glibc and
-both pinned musl linkages on native Linux. Its guest acceptance remains pending.
+both pinned musl linkages on native Linux. The exact static and dynamic musl
+programs also pass all 98 cases in local BIOS and UEFI guests. Actual image
+readback checks their binaries, source, loader and kernel. The first dynamic
+fixture omitted its declared interpreter; its failed image remains retained,
+and the corrected fixture contains the same executable and loader bytes.
 
-These are transport prerequisites. IPv6 stream sockets still return
-`EPROTONOSUPPORT`. The local client under `userspace/tests/net/tcp6/` passes on
-Linux with pure IPv6 and mapped IPv4 streams, descriptor aliases, vector I/O,
-half-close replies and port ownership. The same executable fails socket creation
-on the retained Axiom64 baseline. Connection routing, listeners, accepted
-descriptors, dual-stack ownership, ICMPv6 errors, MTU recovery, lifetimes and
-real-interface TCP exchanges still need implementation and guest evidence.
+Stream descriptions now use the existing TCP engine for IPv4 and IPv6. They
+share active-open admission, listener/accept queues, descriptor aliases, copied
+I/O, errors, retransmission timers and compact TIME_WAIT storage. Canonical
+tuples retain all sixteen IPv6 bytes; mapped descriptions name the same IPv4
+wire endpoints and port owners. A dual-stack wildcard overlaps both families,
+while a V6ONLY wildcard permits a separate IPv4 listener. Completed binds lock
+V6ONLY updates. Names and accepted peers use the 28-byte IPv6 layout.
+
+The unchanged local application now passes in Axiom64 with native IPv6 and
+mapped IPv4 streams, descriptor aliases, vector I/O, peeking, half-close replies
+and both wildcard port modes. Its retained earlier baseline still fails socket
+creation with `EPROTONOSUPPORT`. A second retained guest exposed separate flushes
+of one writev call's vectors. A real socket/IPv6 loopback host regression observes
+127 bytes before the remaining 386; queuing the call's copied prefix before
+flushing delivers all 513 bytes together. Every return path flushes admitted
+bytes, including partial copies, errors and blocking waits. Stream reads can
+still return short results under ordinary network delivery.
+
+These are local loopback and ABI results. Real-interface active/passive traffic,
+ICMPv6 quoted errors and PMTU recovery, source/route lifetime rules, wider IPv6
+socket controls, dual-stack failure cases and full current-revision guest/native
+fault and timing matrices remain required. Complete IPv6 TCP acceptance remains
+unfinished.

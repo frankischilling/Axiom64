@@ -344,6 +344,8 @@ static int prepare(Task& task, IoRequest& request) {
     }
     if (f.rax == 42 && inet_stream(request.handle->inet)) {
         request.connect = request.write = true;
+        if (tcp_ipv6(request.handle->inet))
+            return tcp6_import(task, f.rsi, uint32_t(f.rdx), request.inet6_destination, true);
         if (f.rdx < sizeof(uint16_t))
             return -22;
         request.inet_destination = {};
@@ -437,7 +439,7 @@ static int64_t stream_transfer(Task& task, IoRequest& request, const Iovec& vect
             if (!result) {
                 if (!task.memory->space.copy_in(buffer, address, count))
                     return done ? int64_t(done) : -14;
-                result = tcp_write(socket, buffer, count);
+                result = tcp_write(socket, buffer, count, false);
             }
         } else {
             bool peek = request.flags & 2;
@@ -802,6 +804,19 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
 
 static int64_t stream_attempt(Task& task, IoRequest& request) {
     net_poll();
+
+    // A write call queues its copied prefix before flushing, including vectors
+    // and page-sized copies. Every exit flushes that prefix, even after a fault
+    // or a retained wait; no user pointer enters the transport queue.
+    struct Flush {
+        bool write;
+
+        ~Flush() {
+            if (write)
+                tcp_poll();
+        }
+    } flush{request.write};
+
     while (request.cursor < request.count) {
         const auto& original = request.vectors[request.cursor];
         Iovec vector{original.base + request.cursor_offset,
@@ -913,7 +928,8 @@ static int64_t attempt(Task& task, IoRequest& request) {
         net_poll();
         if (!request.started) {
             request.started = true;
-            int result = tcp_connect(h->inet, request.inet_destination);
+            int result = tcp_ipv6(h->inet) ? tcp6_connect(h->inet, request.inet6_destination)
+                                           : tcp_connect(h->inet, request.inet_destination);
             if ((result != -115 && result != -114) || !request.stream_blocking)
                 return result;
             request.connect_error = result;

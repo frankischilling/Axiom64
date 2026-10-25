@@ -2,6 +2,7 @@
 #include "net/ipv6/host.hpp"
 #include "net/ipv6/reassembly.hpp"
 #include "net/inet6.hpp"
+#include "net/tcp/socket.hpp"
 #include "net/ipv6/configuration.hpp"
 #include "net/ipv6/router.hpp"
 
@@ -240,6 +241,10 @@ void ipv6_receive(const NetInfo& info, const void* frame, size_t length) {
     }
     if (packet.length < 4)
         return;
+    if (packet.protocol == 6) {
+        tcp_receive(info.index, source, destination, packet.payload, packet.length);
+        return;
+    }
     if (packet.protocol == 17) {
         if (source.unspecified())
             return;

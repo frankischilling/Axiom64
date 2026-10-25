@@ -29,6 +29,9 @@ int forced_dad_jitter = -1;
 } // namespace
 
 namespace ax {
+void tcp_receive(unsigned, const ip6::Address&, const ip6::Address&, const void*, size_t) {
+}
+
 uint64_t ticks;
 
 int random_read(void* output, size_t size, bool insecure) {

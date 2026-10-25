@@ -10,6 +10,9 @@
 #include <vector>
 
 namespace ax {
+void tcp_receive(unsigned, const ip6::Address&, const ip6::Address&, const void*, size_t) {
+}
+
 int random_read(void*, size_t, bool) {
     std::abort();
 }

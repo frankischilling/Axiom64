@@ -53,6 +53,8 @@ def source_inputs(guest):
             path = Path(name).resolve()
             if path.is_relative_to(ROOT / 'scripts') and path.suffix == '.py':
                 names.add(path.relative_to(ROOT).as_posix())
+    if not guest:
+        names.add('scripts/native_address_worker.py')
     if guest:
         names.update(path.relative_to(ROOT).as_posix() for path in (ROOT / 'kernel').rglob('*')
                      if path.is_file() and path.suffix in ('.cpp', '.hpp', '.asm', '.ld'))

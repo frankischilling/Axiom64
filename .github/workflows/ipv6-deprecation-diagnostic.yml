@@ -11,13 +11,29 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install native diagnostic tools
-        run: sudo apt-get update && sudo apt-get install -y gcc iproute2
+        run: sudo apt-get update && sudo apt-get install -y gcc iproute2 musl-tools ethtool
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          key: ${{ runner.os }}-downloads-v1-${{ hashFiles('dependencies.json', 'ports.lock.json', 'sources.lock.json', 'vendor/gnu-utmp-reader/inputs.json') }}
+          path: |
+            downloads/*.tar.*
+            downloads/cacert-*.pem
+            downloads/ports
+            downloads/sources
       - name: Collect original assertion and native worker scheduling
         run: sudo --preserve-env=GITHUB_SHA python3 -B scripts/diagnostics/ipv6_deprecation.py --serialize-worker --directory "$PWD/build/native-deprecation"
+      - name: Verify actual native ownership and cancellation
+        run: sudo python3 -B scripts/tests/native_address_worker_test.py --directory "$PWD/build/native-address-worker-tests901"
+      - name: Qualify the complete three-linkage native router fixture
+        run: sudo python3 -B scripts/native_address_worker.py --receipt "$PWD/build/ipv6-router-native-worker901.json" -- python3 -B scripts/ipv6_router_test.py --native --directory "$PWD/build/ipv6-router-native901"
       - name: Retain diagnostic evidence including failures
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: native-ipv6-deprecation-diagnostic
-          path: build/native-deprecation/
+          name: native-ipv6-reference-qualification
+          path: |
+            build/native-deprecation/
+            build/native-address-worker-tests901/
+            build/ipv6-router-native-worker901.json
+            build/ipv6-router-native901/
           retention-days: 7

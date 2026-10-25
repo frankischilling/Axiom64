@@ -204,9 +204,12 @@ void stop_listener(InetSocket* socket) {
         }
 }
 
-void output_complete(void* identity, size_t, int error, unsigned index) {
+void output_complete(void* identity, size_t bytes, int error, unsigned index) {
+    auto socket = static_cast<InetSocket*>(identity);
+    if (error == -125 || (error == -90 && tcp6_path_mtu(socket, bytes)))
+        return;
     if (error)
-        tcp_failed(static_cast<InetSocket*>(identity), -error, index);
+        tcp_failed(socket, -error, index);
 }
 
 int emit(InetSocket* owner, unsigned index, const tcp::Address& local, const tcp::Address& peer,
@@ -924,6 +927,8 @@ void tcp_poll() {
             if (!info || !info->live)
                 tcp_failed(&socket, 5);
         }
+        if (socket.wire6)
+            tcp6_path_mtu(&socket);
         tcp::Segment segment;
         bool pending = socket.stream->next(now, segment);
         for (unsigned at = 0; pending && at < 4; at++) {
@@ -936,6 +941,10 @@ void tcp_poll() {
             if (error == -11 || error == -12 || error == -105 || error == -100 || error == -101) {
                 socket.stream->output_blocked(now);
                 break;
+            }
+            if (error == -90 && socket.wire6 && tcp6_path_mtu(&socket, 60 + segment.length)) {
+                pending = socket.stream->next(now, segment);
+                continue;
             }
             if (error) {
                 tcp_failed(&socket, -error);

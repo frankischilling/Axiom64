@@ -358,8 +358,37 @@ flushing delivers all 513 bytes together. Every return path flushes admitted
 bytes, including partial copies, errors and blocking waits. Stream reads can
 still return short results under ordinary network delivery.
 
-These are local loopback and ABI results. Real-interface active/passive traffic,
-ICMPv6 quoted errors and PMTU recovery, source/route lifetime rules, wider IPv6
-socket controls, dual-stack failure cases and full current-revision guest/native
-fault and timing matrices remain required. Complete IPv6 TCP acceptance remains
-unfinished.
+The common MSS lifecycle client now covers both Internet domains. Fresh, bound
+and listening IPv6 sockets report `TCP_MAXSEG=536`, matching Linux; 1,220 bytes
+remains the post-handshake fallback when an IPv6 peer omits the MSS option.
+Aliases, invalid updates, listener inheritance, connected updates, disconnects
+and reconnects share the established IPv4 test cases. Three native libc/linkage
+profiles and the exact static/dynamic programs in BIOS and UEFI guests pass.
+The earlier guest that reported 1,220 before a handshake remains retained.
+
+TCP now receives validated ICMPv6 quotes through the shared IPv6 error reader.
+The first eight transport bytes identify ports and sequence; a quoted IPv6
+declaration still needs room for a complete TCP header. Full addresses, bound
+interface and the connection's sent sequence range select the owner. Active
+opens receive the corresponding error; passive requests distinguish hard and
+soft errors, and established streams expose a soft diagnostic through SO_ERROR.
+Thirteen active and thirteen passive Ethernet host cases cover these states and
+keep a separate established stream unaffected. Damaged outer checksums, short
+quotes, wrong addresses/ports/interfaces and unowned sequence numbers reject.
+
+Owned Packet Too Big reports lower the route estimate and repacketize the
+connection's buffered bytes. Superseded copied output completes once with
+cancellation, including when a device submission is active. A trusted path or
+device MTU change also caps later TCP packets. An unquoted update keeps the
+ordinary retransmission timer; a known dropped copy may request immediate
+repacketization. Sender, delivery and retry clocks retain their original
+deadlines. These policies follow [IPv6 path MTU discovery](https://www.rfc-editor.org/rfc/rfc8201.html#section-5.4).
+Sanitized Ethernet host cases verify exact retry bytes, deferred MTU failure,
+stale errors, soft-error consumption, rejected ACKs and bounded cancellation.
+Run `make test-tcp-pmtu test-tcp-connection test-ipv6-wire test-tcp6-native`.
+
+The error and MTU path currently has host-model evidence. Real-interface guest
+active/passive traffic, paired native ICMPv6/PMTU captures, source/route lifetime
+rules, wider IPv6 socket controls, dual-stack failure cases and full
+current-revision fault and timing matrices remain required. Complete IPv6 TCP
+acceptance remains unfinished.

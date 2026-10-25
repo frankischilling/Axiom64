@@ -4,6 +4,10 @@
 #include "net/inet6.hpp"
 #include "net/tcp/address.hpp"
 
+namespace ax::ip6 {
+struct ErrorQuote;
+}
+
 namespace ax {
 constexpr unsigned tcp_time_wait_count = 1024;
 struct Handle;
@@ -20,6 +24,9 @@ void tcp_close(InetSocket*);
 void tcp_poll();
 void tcp_receive(unsigned index, uint32_t source, uint32_t destination, const void*, size_t);
 void tcp_icmp_error(unsigned index, const uint8_t*, size_t);
+void tcp6_icmp_error(unsigned index, const ip6::ErrorQuote&);
+// Refresh a trusted current path; true retires an oversized failed copied packet.
+bool tcp6_path_mtu(InetSocket*, size_t failed_packet_bytes = 0);
 int tcp_connect(InetSocket*, const InetAddress&);
 int tcp6_connect(InetSocket*, const Inet6Address&);
 void tcp_receive(unsigned index, const ip6::Address& source, const ip6::Address& destination,

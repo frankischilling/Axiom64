@@ -66,10 +66,10 @@ void acknowledge(tcp::Connection& connection, uint32_t sequence, uint64_t now,
     connection.input(response, now);
 }
 
-uint32_t establish(tcp::Connection& connection) {
-    assert(connection.segment_size() == 536);
-    connection.active(UINT32_MAX - 2048, 0);
-    assert(connection.segment_size() == 1460);
+uint32_t establish(tcp::Connection& connection, uint16_t fresh = 536, uint16_t limit = 1460) {
+    assert(connection.segment_size() == fresh);
+    connection.active(UINT32_MAX - 2048, 0, limit);
+    assert(connection.segment_size() == limit);
     auto syn = take(connection, 0);
     assert(syn.flags == tcp::syn);
     tcp::Segment response{};
@@ -80,7 +80,7 @@ uint32_t establish(tcp::Connection& connection) {
     response.flags = tcp::syn | tcp::ack;
     connection.input(response, 10);
     assert(connection.state() == tcp::State::established);
-    assert(connection.segment_size() == 1460);
+    assert(connection.segment_size() == limit);
     auto ack = take(connection, 10);
     assert(ack.flags == tcp::ack && ack.bytes.empty());
     connection.nodelay(true);
@@ -293,6 +293,88 @@ void windows_and_congestion() {
     assert(congestion.window() <= 4 * 256);
 }
 
+void trusted_path_changes() {
+    for (auto family : {tcp::Family::ipv4, tcp::Family::ipv6}) {
+        tcp::Connection before_open(family);
+        before_open.active(12345, 0, 1440);
+        assert(before_open.path_mss(1200));
+        auto syn = take(before_open, 0);
+        tcp::Segment response{};
+        response.flags = tcp::syn | tcp::ack;
+        response.sequence = 54321;
+        response.acknowledgment = syn.sequence + 1;
+        response.maximum_segment = 1440;
+        response.window = 32768;
+        before_open.input(response, 10);
+        assert(before_open.segment_size() == 1200);
+        take(before_open, 10);
+
+        tcp::Connection unsent(family);
+        uint32_t origin = establish(unsent, family == tcp::Family::ipv6 ? 1220 : 536);
+        auto bytes = data();
+        assert(unsent.write(bytes.data(), bytes.size(), 20) == bytes.size());
+        tcp::Segment candidate;
+        assert(unsent.next(20, candidate) && candidate.length == 1460);
+        assert(unsent.path_mss(1220));
+        assert(unsent.next_send() == origin);
+        auto packet = take(unsent, 20);
+        assert(packet.sequence == origin && packet.bytes.size() == 1220);
+        check_bytes(packet, origin, 1220);
+        assert(!unsent.path_mss(1500) && !unsent.path_mss(0));
+        assert(unsent.segment_size() == 1220);
+
+        tcp::Connection pending(family);
+        origin = establish(pending, family == tcp::Family::ipv6 ? 1220 : 536);
+        pending.user_timeout(250);
+        assert(pending.write(bytes.data(), bytes.size(), 20) == bytes.size());
+        while (pending.next(20, candidate))
+            pending.emitted(20);
+        assert(pending.path_mss(1220));
+        // An unrelated path notification caps later packets without pretending
+        // that this connection's already emitted bytes were quoted or lost.
+        assert(!pending.next(21, candidate));
+        assert(!pending.path_mss(1220) && !pending.path_mss(1440));
+        pending.next(269, candidate);
+        assert(pending.state() == tcp::State::established);
+        pending.next(270, candidate);
+        assert(pending.state() == tcp::State::closed && pending.error() == 110);
+
+        tcp::Connection baseline_timer(family), changed_timer(family);
+        establish(baseline_timer, family == tcp::Family::ipv6 ? 1220 : 536);
+        establish(changed_timer, family == tcp::Family::ipv6 ? 1220 : 536);
+        for (auto connection : {&baseline_timer, &changed_timer}) {
+            assert(connection->write(bytes.data(), bytes.size(), 20) == bytes.size());
+            while (connection->next(20, candidate))
+                connection->emitted(20);
+        }
+        assert(changed_timer.path_mss(1220));
+        uint64_t baseline_retry = 0, changed_retry = 0;
+        for (uint64_t now = 21; now <= 5000 && (!baseline_retry || !changed_retry); now++) {
+            if (!baseline_retry && baseline_timer.next(now, candidate)) {
+                assert(candidate.length == 1460);
+                baseline_retry = now;
+            }
+            if (!changed_retry && changed_timer.next(now, candidate)) {
+                assert(candidate.length == 1220);
+                changed_retry = now;
+            }
+        }
+        assert(baseline_retry && baseline_retry == changed_retry);
+
+        tcp::Connection dropped(family);
+        origin = establish(dropped, family == tcp::Family::ipv6 ? 1220 : 536);
+        assert(dropped.write(bytes.data(), bytes.size(), 20) == bytes.size());
+        while (dropped.next(20, candidate))
+            dropped.emitted(20);
+        assert(dropped.path_mss(1220, true));
+        packet = take(dropped, 21);
+        assert(packet.sequence == origin && packet.bytes.size() == 1220);
+        check_bytes(packet, origin, 1220);
+    }
+    puts("TCP_PATH_MSS_PASS families=2 pre_handshake prepared_copy unquoted_RTO "
+         "owned_drop original_deadline no_increase");
+}
+
 void quote_policy() {
     tcp::IcmpError quote;
     assert(ax::tcp::decode_icmp_error(captured.data(), captured.size(), quote));
@@ -343,6 +425,7 @@ int main() {
     if (passed)
         std::puts("TCP_PMTU_QUOTE_PASS checks=7");
     if (passed) {
+        trusted_path_changes();
         quote_policy();
         repacketization();
         original_ack_remains_owned();

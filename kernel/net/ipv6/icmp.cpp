@@ -31,12 +31,14 @@ bool error_quote(const uint8_t* bytes, size_t length, ErrorQuote& result) {
         protocol = quote[at];
         at += size;
     }
-    if ((protocol != 17 && protocol != 58) || at > quoted || quoted - at < 8)
+    if ((protocol != 6 && protocol != 17 && protocol != 58) || at > quoted || quoted - at < 8 ||
+        (protocol == 6 && declared - at < 20))
         return false;
     ErrorQuote value;
     memcpy(value.source.bytes, quote + 8, 16);
     memcpy(value.destination.bytes, quote + 24, 16);
-    memcpy(value.transport_destination.bytes, protocol == 17 ? final : quote + 24, 16);
+    memcpy(value.transport_destination.bytes, protocol == 6 || protocol == 17 ? final : quote + 24,
+           16);
     if (value.source.unspecified() || value.source.multicast() || value.source.mapped() ||
         value.destination.unspecified() || value.destination.multicast() ||
         value.destination.mapped() || value.transport_destination.unspecified() ||

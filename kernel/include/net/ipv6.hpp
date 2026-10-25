@@ -90,6 +90,10 @@ int ipv6_send_owned(Ipv6OutputOwner, const ip6::Address& source, const ip6::Addr
                     unsigned bound_index, uint8_t protocol, int16_t hop_limit, const void*, size_t,
                     Ipv6SourcePolicy = Ipv6SourcePolicy::assigned);
 
+// Retire superseded copied transport packets above this IPv6 path MTU.
+// Each completion reports -ECANCELED, including deferred device submission.
+void ipv6_discard_oversized(void* identity, uint32_t mtu);
+
 // Detach callbacks only; admitted packet bytes retain their original bounded lifetime.
 void ipv6_detach_output(void* identity);
 

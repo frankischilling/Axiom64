@@ -138,3 +138,10 @@ share packet storage and callback retirement. `ipv6_output_owner.cpp` exercises
 that production queue's admission, copying, completion and detachment. The
 `tcp6/abi.c` application checks Linux address imports, V6ONLY updates and name
 copy faults; `make test-tcp6-native` runs it and the local exchange client.
+
+IPv6 TCP quote ownership and path-MTU adaptation live in
+`kernel/net/tcp/icmp_ipv6.cpp`; the connection engine retains sequence, sender
+and timer policy. `kernel/tests/net/tcp_ipv6_error.cpp` exercises the actual
+Ethernet/error/output path. The shared MSS lifecycle client is
+`userspace/tests/net/tcp_maxseg.c`; `tcp6/mss.c` selects IPv6 without copying
+its option, alias, inheritance and reconnect cases.

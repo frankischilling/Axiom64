@@ -21,6 +21,9 @@ ax::NetAdapter adapters[2];
 unsigned blocked;
 unsigned send_budget = UINT32_MAX;
 unsigned fail_allocations, shutdown_after_polls, remove_after_polls, shrink_after_polls;
+unsigned cancel_after_polls;
+void* cancelled_owner;
+void (*cancel_probe)(void*);
 unsigned callback_index = 1;
 unsigned inject_after_polls;
 std::vector<uint8_t> injected_frame;
@@ -28,7 +31,12 @@ bool entropy_available = true;
 int forced_dad_jitter = -1;
 } // namespace
 
+#include "net/ipv6/icmp.hpp"
+
 namespace ax {
+void tcp6_icmp_error(unsigned, const ip6::ErrorQuote&) {
+}
+
 void tcp_receive(unsigned, const ip6::Address&, const ip6::Address&, const void*, size_t) {
 }
 
@@ -129,6 +137,12 @@ void ipv6_test_carrier(unsigned lane, bool up) {
     adapters[lane].info.carrier = up;
 }
 
+void ipv6_test_cancel_on_poll(void* identity, unsigned polls, void (*probe)(void*)) {
+    cancelled_owner = identity;
+    cancel_after_polls = polls;
+    cancel_probe = probe;
+}
+
 void ipv6_test_budget(unsigned value) {
     send_budget = value;
 }
@@ -192,6 +206,9 @@ static void reset() {
     blocked = 0;
     send_budget = UINT32_MAX;
     fail_allocations = shutdown_after_polls = remove_after_polls = shrink_after_polls = 0;
+    cancel_after_polls = 0;
+    cancelled_owner = nullptr;
+    cancel_probe = nullptr;
     entropy_available = true;
     forced_dad_jitter = -1;
     callback_index = 1;
@@ -3492,6 +3509,11 @@ int main() {
                 assert(!net_configure(1, true, 1280));
             if (remove_after_polls && !--remove_after_polls)
                 assert(!change(1, address(0, 2), true, true));
+            if (cancel_after_polls && !--cancel_after_polls) {
+                ipv6_discard_oversized(cancelled_owner, 1280);
+                if (cancel_probe)
+                    cancel_probe(cancelled_owner);
+            }
             if (shutdown_after_polls && !--shutdown_after_polls)
                 net_shutdown();
         };

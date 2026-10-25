@@ -28,7 +28,7 @@ void Connection::initialize(uint32_t initial, uint64_t now, uint16_t maximum_seg
     initial_send = send_unacknowledged = send_next = initial;
     send_base = initial + 1;
     local_mss = maximum_segment ? minimum(maximum_segment, uint16_t(1460)) : 1460;
-    mss = local_mss;
+    path_limit = mss = local_mss;
     opened_at = progress_at = last_send = now;
     persist_at = after(now, persist_interval);
     syn_pending = true;
@@ -42,7 +42,8 @@ void Connection::active(uint32_t initial, uint64_t now, uint16_t maximum_segment
 }
 
 void Connection::negotiate(const Segment& segment) {
-    mss = minimum(local_mss, segment.maximum_segment ? segment.maximum_segment : fallback_mss);
+    mss = minimum(minimum(local_mss, path_limit),
+                  segment.maximum_segment ? segment.maximum_segment : fallback_mss);
     congestion = Congestion(mss);
     peer_window = segment.window;
     maximum_peer_window = peer_window;
@@ -196,13 +197,24 @@ bool Connection::owns_pmtu_quote(uint32_t sequence) const {
 bool Connection::reduce_mss(uint32_t sequence, uint16_t maximum_segment) {
     if (!maximum_segment || maximum_segment >= mss || !owns_pmtu_quote(sequence))
         return false;
+    return path_mss(maximum_segment, true);
+}
+
+bool Connection::path_mss(uint16_t maximum_segment, bool retry) {
+    if (!maximum_segment || status == State::closed || status == State::time_wait)
+        return false;
+    path_limit = minimum(path_limit, maximum_segment);
+    if (maximum_segment >= mss)
+        return false;
     candidate = Output::none;
     mss = maximum_segment;
     congestion.segment_size(mss);
-    resegment_next = send_unacknowledged;
-    resegment_end = send_next;
-    resegmenting = resegment_wait = true;
-    retransmit_pending = false;
+    if (retry && syn_emitted && !handshake() && send_unacknowledged != send_next) {
+        resegment_next = send_unacknowledged;
+        resegment_end = send_next;
+        resegmenting = resegment_wait = true;
+        retransmit_pending = false;
+    }
     return true;
 }
 

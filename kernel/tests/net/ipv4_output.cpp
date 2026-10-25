@@ -9,7 +9,12 @@
 #include <cstdlib>
 #include <vector>
 
+#include "net/ipv6/icmp.hpp"
+
 namespace ax {
+void tcp6_icmp_error(unsigned, const ip6::ErrorQuote&) {
+}
+
 void tcp_receive(unsigned, const ip6::Address&, const ip6::Address&, const void*, size_t) {
 }
 

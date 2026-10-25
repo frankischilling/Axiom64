@@ -250,6 +250,14 @@ bool ipv6_output_ready() {
     return false;
 }
 
+void ipv6_discard_oversized(void* identity, uint32_t mtu) {
+    if (!identity || mtu < ip6::minimum_mtu)
+        return;
+    for (auto& item : outputs)
+        if (item.bytes && item.owner.identity == identity && item.length - ethernet_header > mtu)
+            clear(item, -125);
+}
+
 void ipv6_detach_output(void* identity) {
     if (!identity)
         return;

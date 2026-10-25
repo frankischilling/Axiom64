@@ -8,6 +8,7 @@
 
 const std::vector<std::vector<uint8_t>>& ipv6_emitted(unsigned lane);
 void ipv6_test_budget(unsigned value);
+void ipv6_test_cancel_on_poll(void*, unsigned polls, void (*probe)(void*));
 
 namespace {
 struct Owner {
@@ -51,6 +52,20 @@ void ipv6_output_owner_tests(void (*reset)()) {
            owner.index == ipv6_loopback);
     ipv6_poll();
     assert(owner.completions == 1);
+
+    // Superseded TCP copies complete once with cancellation, not device success.
+    Owner superseded;
+    uint8_t superseded_bytes[1400]{};
+    assert(!ipv6_send_owned(superseded.output(), loop, loop, 0, 6, 64, superseded_bytes,
+                            sizeof(superseded_bytes)));
+    ipv6_discard_oversized(&superseded, 1279);
+    assert(!superseded.completions);
+    ipv6_discard_oversized(&superseded, 1280);
+    assert(superseded.completions == 1 && superseded.error == -125 && superseded.bytes == 1440 &&
+           superseded.index == ipv6_loopback);
+    ipv6_discard_oversized(&superseded, 1280);
+    ipv6_poll();
+    assert(superseded.completions == 1 && ipv6_output_ready());
 
     // Retiring an identity preserves queued bytes but removes every late callback.
     Owner retired;
@@ -103,6 +118,21 @@ void ipv6_output_owner_tests(void (*reset)()) {
         assert(frame[at] == 0x71);
 
     std::array<uint8_t, 1461> large{};
+    Owner in_submission;
+    before = ipv6_emitted(0).size();
+    assert(
+        !ipv6_send_owned(in_submission.output(), local, multicast, 1, 6, 64, large.data(), 1460));
+    ipv6_test_cancel_on_poll(&in_submission, 1, [](void* identity) {
+        // The device still borrows the packet; completion must wait for return.
+        assert(!static_cast<Owner*>(identity)->completions);
+    });
+    ipv6_poll();
+    assert(in_submission.completions == 1 && in_submission.error == -125 &&
+           in_submission.bytes == 1500 && in_submission.index == 1 &&
+           ipv6_emitted(0).size() == before && ipv6_output_ready());
+    ipv6_poll();
+    assert(in_submission.completions == 1);
+
     Owner oversized;
     assert(ipv6_send_owned(oversized.output(), local, multicast, 1, 6, 64, large.data(),
                            large.size()) == -90);
@@ -137,6 +167,7 @@ void ipv6_output_owner_tests(void (*reset)()) {
     ipv6_poll();
     assert(rerouted.completions == 1 && rerouted.error == -113 && rerouted.index == 2);
     reset();
-    std::puts("IPV6_OUTPUT_OWNER_PASS admission completion errno egress capacity detach reuse "
-              "reentrant_detach shutdown physical_copy mtu_shrink expiry reroute once");
+    std::puts(
+        "IPV6_OUTPUT_OWNER_PASS admission completion errno egress capacity detach reuse "
+        "reentrant_detach reentrant_cancel shutdown physical_copy mtu_shrink expiry reroute once");
 }

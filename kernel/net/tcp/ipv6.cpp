@@ -82,7 +82,6 @@ int64_t tcp6_syscall(Task& task, const Frame& frame) {
         if (!socket)
             return -23;
         socket->ipv6 = socket->wire6 = true;
-        socket->mss_cache = 1220;
         auto opened = open_handle(nullptr, 2 | ((b & 0x800) ? 04000 : 0));
         if (!opened) {
             inet_close(socket);

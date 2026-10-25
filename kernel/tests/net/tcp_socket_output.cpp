@@ -129,6 +129,7 @@ static InetSocket* connect(NetAdapter& adapter, uint32_t peer, unsigned binding 
 }
 
 void tcp_ipv6_socket_tests();
+void tcp_ipv6_error_tests(ax::NetAdapter&);
 
 int main() {
     assert(!ip6::configuration_write(ip6::configuration_all, ip6::ConfigurationKey::generation_mode,
@@ -401,6 +402,7 @@ int main() {
     assert(tcp_connect(rejected, {}) == 0);
     inet_close(rejected);
     tcp_ipv6_socket_tests();
+    tcp_ipv6_error_tests(adapters[0]);
     puts("TCP_SOCKET_ROUTE_OUTPUT_PASS connected host companion exact_retry reroute pmtu "
          "failed_copy time_wait tuple_binding reset fatal_failure driver_error");
 }

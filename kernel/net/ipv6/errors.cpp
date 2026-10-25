@@ -2,6 +2,7 @@
 #include "socket.hpp"
 #include "net/ipv6/host.hpp"
 #include "net/ipv6/icmp.hpp"
+#include "net/tcp/socket.hpp"
 
 namespace ax {
 void inet6_icmp_error(unsigned index, const ip6::Packet& packet, const uint8_t* bytes,
@@ -11,6 +12,10 @@ void inet6_icmp_error(unsigned index, const ip6::Packet& packet, const uint8_t* 
     if (!ip6::error_quote(bytes, length, quote) ||
         !ipv6_owned(quote.source.link_local() ? index : 0, quote.source))
         return;
+    if (quote.protocol == 6) {
+        tcp6_icmp_error(index, quote);
+        return;
+    }
     auto learn = [&](unsigned bound, Inet6Socket* owner = nullptr) {
         Ipv6Path path;
         if (!ipv6_path(quote.source, quote.destination, bound, path, true)) {

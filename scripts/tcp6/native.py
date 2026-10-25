@@ -50,7 +50,9 @@ def client(directory, profile):
     return result.returncode
 
 
-def child(directory, profile, parent_namespace):
+def child(directory, profile, parent_namespace, suite='loss'):
+    from tcp6.profiles import definition
+    config = definition(suite)
     own_namespace = Path('/proc/self/ns/net').stat().st_ino
     check(own_namespace != parent_namespace, 'native TCP6 runs in a new network namespace')
     settings = {}
@@ -67,7 +69,7 @@ def child(directory, profile, parent_namespace):
         settings[key] = command('sysctl', '-n', key)
         check(settings[key] == str(value), 'actual native namespace setting')
     taps, captures, statistics, interfaces = [], [], [], []
-    peers = [Peer(lane, minimum_fin_ms=180, native=True) for lane in range(2)]
+    peers = [config['peer'](lane, minimum_fin_ms=180, native=True) for lane in range(2)]
     products = json.loads((directory / 'products.json').read_text())
     check(all(digest(directory / name) == fingerprint for name, fingerprint in products.items()),
           'exact frozen native executable inputs')
@@ -80,10 +82,12 @@ def child(directory, profile, parent_namespace):
             command('ip', 'link', 'set', 'dev', name, 'address', peer.guest.hex(':'), 'mtu', '1500')
             command('ip', 'link', 'set', 'dev', name, 'up')
             captures.append(Capture(name, directory / f'lane{lane}.pcap'))
+            if hasattr(peer, 'observe_input'):
+                peer.observe_input = captures[-1].watch
             interfaces.append(json.loads(command('ip', '-j', '-d', 'link', 'show', 'dev', name))[0])
         write(directory / 'interfaces.json', interfaces)
         invocation = [sys.executable, '-B', 'scripts/tcp6_test.py', '--client', profile,
-                      '--output-directory', str(directory)]
+                      '--output-directory', str(directory), '--suite', suite]
         write(directory / 'preexecution.json', dict(profile=profile, kernel=platform.release(),
             namespace=own_namespace, parent_namespace=parent_namespace, settings=settings,
             command=invocation, deadline_seconds=150, products=products,
@@ -111,14 +115,14 @@ def child(directory, profile, parent_namespace):
     audits = []
     if not error:
         try:
-            audits = [verify(directory / f'lane{lane}.pcap', lane, text, native=True,
+            audits = [config['verify'](directory / f'lane{lane}.pcap', lane, text, native=True,
                              statistics=statistics[lane]) for lane in range(2)]
         except Exception as failure:
             error = f'independent capture: {failure}'
     passed = (not error and returncode == 0 and len(results) == 2 and
-              text.splitlines().count('TCP6_FAULT_PASS flows=4 bytes_each=65536') == 1 and
+              text.splitlines().count(config['marker']) == 1 and
               all(digest(directory / name) == fingerprint for name, fingerprint in products.items()))
-    receipt = dict(passed=passed, profile=profile, native=True, error=error, returncode=returncode,
+    receipt = dict(passed=passed, profile=profile, native=True, suite=suite, error=error, returncode=returncode,
         results=[{key: value for key, value in row.items() if key != 'frames'} for row in results],
         capture_statistics=statistics, start_monotonic_ns=began, end_monotonic_ns=time.monotonic_ns(),
         independent_capture_audited=len(audits) == 2, capture_audits=audits)

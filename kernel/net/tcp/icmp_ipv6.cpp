@@ -38,7 +38,12 @@ void tcp6_icmp_error(unsigned index, const ip6::ErrorQuote& quote) {
             socket.stream->quoted_error(sequence, quote.error, quote.hard);
             continue;
         }
-        if (quote.information < ip6::minimum_mtu || !socket.stream->owns_pmtu_quote(sequence))
+        if (quote.information < ip6::minimum_mtu || !socket.stream->owns_pmtu_quote(sequence, true))
+            continue;
+        // A hint which cannot lower the effective peer/path MSS must not create
+        // a shared route exception. Idle established streams can still own the
+        // inclusive SND.NXT quote, without manufacturing a retransmission.
+        if (quote.information - 60 >= socket.stream->segment_size())
             continue;
         Ipv6Path path;
         if (ipv6_path(quote.source, quote.destination, socket.index, path, true))
@@ -46,7 +51,7 @@ void tcp6_icmp_error(unsigned index, const ip6::ErrorQuote& quote) {
         uint32_t mtu = ip6::path_mtu_cache.learn(ip6::path_key(path, quote.destination), path.mtu,
                                                  quote.information, ticks);
         uint16_t limit = uint16_t(min(mtu - 60, 1460u));
-        if (socket.stream->reduce_mss(sequence, limit))
+        if (socket.stream->path_mss(limit, true))
             ipv6_discard_oversized(&socket, mtu);
     }
 }

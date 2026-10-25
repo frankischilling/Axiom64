@@ -108,7 +108,7 @@ class Connection {
     // versus established error policy remain with the connection.
     void quoted_error(uint32_t sequence, int error, bool abort_request);
     // PMTU cache learning needs sequence ownership even when MSS is already smaller.
-    bool owns_pmtu_quote(uint32_t sequence) const;
+    bool owns_pmtu_quote(uint32_t sequence, bool include_idle = false) const;
     // The caller owns IP-family, tuple and policy validation. Keep all sent sequence owned
     // while repacketizing its buffered bytes; delivery and RTO clocks do not restart.
     bool reduce_mss(uint32_t sequence, uint16_t maximum_segment);

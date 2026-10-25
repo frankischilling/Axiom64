@@ -48,6 +48,12 @@ class Capture(OriginalCapture):
                     sha256=hashlib.sha256(frame).hexdigest(), kernel_realtime_ns=stamp,
                     arrival_lower_ns=empty, **observed)) + '\n')
                 self.frame_count += 1
+                if self.injection is not None:
+                    with self.injection_lock:
+                        waiting = self.injection
+                        if waiting is not None and waiting['frame'] == frame and not waiting['ready'].is_set():
+                            waiting['monotonic_ns'] = observed['receipt_monotonic_after_ns']
+                            waiting['ready'].set()
         except Exception as failure:
             self.error = failure
 

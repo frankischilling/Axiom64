@@ -35,8 +35,10 @@ def packet(frame):
 
 
 class Flow(IPv4Flow):
+    maximum_segment = 536
+
     def send(self, flags=16, sequence=None, data=b'', window=8192, acknowledgment=None):
-        options = bytes.fromhex('02040218') if flags & SYN else b''
+        options = struct.pack('!BBH', 2, 4, self.maximum_segment) if flags & SYN else b''
         sequence = self.origin + self.sent + int(self.fin_sent) if sequence is None else sequence
         if acknowledgment is None:
             acknowledgment = 0 if self.guest_origin is None else self.guest_next
@@ -52,6 +54,8 @@ class Flow(IPv4Flow):
 
 class Peer(IPv4Peer):
     flow_type = Flow
+    barrier_protocol = b'\x88\xc1'
+    barrier_magic = b'IP6T'
 
     def __init__(self, lane, minimum_fin_ms=850, native=False):
         super().__init__(lane, minimum_fin_ms)
@@ -75,10 +79,10 @@ class Peer(IPv4Peer):
         check(len(frame) >= 14 and frame[6:12] == self.guest, 'IPv6 loss interface owner')
         record = dict(direction='receive', ms=(time.monotonic() - self.began) * 1000, frame=frame.hex())
         self.frames.append(record)
-        if frame[12:14] == b'\x88\xc1':
+        if frame[12:14] == self.barrier_protocol:
             control = bytes([2, ord('I'), ord('P'), ord('6'), self.lane, 0])
             check(not self.ready and len(frame) == 60 and frame[:6] == control and
-                  frame[14:20] == b'IP6T' + bytes([self.lane, 0]) and not any(frame[20:]),
+                  frame[14:20] == self.barrier_magic + bytes([self.lane, 0]) and not any(frame[20:]),
                   'one original IPv6 readiness barrier')
             self.ready = True
             answer = bytearray(frame)

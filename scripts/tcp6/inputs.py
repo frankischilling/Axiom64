@@ -35,12 +35,14 @@ def freeze(directory):
                 source_inputs_sha256=digest(directory / 'source-inputs.json'), files=len(records))
 
 
-def program(directory, profile):
-    binary = ROOT / 'build' / ('tcp6-fault-' + profile)
+def program(directory, profile, suite='loss'):
+    from tcp6.profiles import definition
+    config = definition(suite)
+    binary = ROOT / 'build' / (config['program'] + '-' + profile)
     manifest = binary.with_suffix('.inputs.json')
     if profile == 'native':
         command = ['gcc', '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
-                   '-DTCP_IPV6', 'userspace/tests/net/tcp_fault.c', '-o', str(binary)]
+                   *config['flags'], config['source'], '-o', str(binary)]
         before = sources(command, ROOT)
         subprocess.run(command, cwd=ROOT, check=True)
         if before != sources(command, ROOT):

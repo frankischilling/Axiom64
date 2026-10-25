@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import os
+import posixpath
 from pathlib import Path
 import struct
 import tempfile
@@ -35,14 +36,17 @@ def source(directory):
     return records
 
 
-def products(directory, profile, sources, native):
+def products(directory, profile, sources, native, suite='loss'):
+    from tcp6.profiles import definition
+    config = definition(suite)
     compiled = json.loads((directory / 'program.inputs.json').read_text())
     require(digest(directory / 'program') == compiled['product']['sha256'] and
             (directory / 'program').stat().st_size == compiled['product']['bytes'],
             'actual executed program matches its compiler product')
-    require('-DTCP_IPV6' in compiled['command'] and
+    require(('-DTCP_IPV6' in compiled['command']) == (suite == 'loss') and config['source'] in compiled['command'] and
             ('-static' in compiled['command']) == (profile == 'static') and
-            compiled['sources'] and all(sources.get(name) == fingerprint
+            compiled['sources'] and all(not name.startswith('/') and '\\' not in name and
+            not posixpath.normpath(name).startswith('../') and sources.get(posixpath.normpath(name)) == fingerprint
             for name, fingerprint in compiled['sources'].items()),
             'exact IPv6 client compilation sources and linkage')
     elf = (directory / 'program').read_bytes()
@@ -69,7 +73,7 @@ def products(directory, profile, sources, native):
         return dict(passed=True, program_sha256=digest(directory / 'program'), image_opened=False)
     saved = json.loads((directory / 'image-audit.json').read_text())
     require(digest(directory / 'image.iso') == saved['audit']['sha256'] and
-            saved['executables']['bin/tcp6-fault'] == digest(directory / 'program') and
+            saved['executables']['bin/' + config['program']] == digest(directory / 'program') and
             saved['executables']['source/program.inputs.json'] == digest(directory / 'program.inputs.json') and
             digest(directory / 'kernel.elf') == saved['kernel_sha256'], 'exact guest image, kernel and original client')
     reopened = audit_fixture(directory / 'image.iso', saved['kernel_sha256'],
@@ -179,19 +183,23 @@ def damaged(path, lane, log, native, output, statistics=None):
     return dict(passed=True, rejected=rejected, archive_sha256=digest(archive_path))
 
 
-def damaged_products(directory, profile, sources, native, output):
+def damaged_products(directory, profile, sources, native, output, suite='loss'):
+    from tcp6.profiles import definition
+    source_name = definition(suite)['source']
     names = ['program', 'program.inputs.json', *(['loader'] if profile == 'dynamic' else [])]
     original = {name: (directory / name).read_bytes() for name in names}
     original['products.json'] = json.dumps({name: hashlib.sha256(data).hexdigest()
                                           for name, data in original.items()}).encode()
     variants = {}
-    for name in ('program-bytes', 'source-binding', 'linkage', 'compiler-size', 'elf-format'):
+    for name in ('program-bytes', 'source-binding', 'source-escape', 'linkage', 'compiler-size', 'elf-format'):
         files = original.copy()
         compiled = json.loads(files['program.inputs.json'])
         if name == 'program-bytes':
             files['program'] = files['program'][:-1] + bytes([files['program'][-1] ^ 1])
         elif name == 'source-binding':
-            compiled['sources']['userspace/tests/net/tcp_fault.c'] = '0' * 64
+            compiled['sources'][source_name] = '0' * 64
+        elif name == 'source-escape':
+            compiled['sources']['../' + source_name] = compiled['sources'].pop(source_name)
         elif name == 'linkage':
             if '-static' in compiled['command']:
                 compiled['command'].remove('-static')
@@ -234,7 +242,7 @@ def damaged_products(directory, profile, sources, native, output):
                 os.link(directory / 'image.iso', case / 'image.iso')
                 os.link(directory / 'kernel.elf', case / 'kernel.elf')
             try:
-                products(case, profile, sources, native=not image_control)
+                products(case, profile, sources, native=not image_control, suite=suite)
             except ValueError as failure:
                 rejected.append(dict(name=name, reason=str(failure)))
             else:
@@ -282,6 +290,9 @@ def audit(directory, output=None, expected=None):
     reader_source = freeze(audit_output)
     sources = source(directory)
     matrix = json.loads((directory / 'receipt.json').read_text())
+    from tcp6.profiles import definition
+    suite = matrix.get('suite', 'loss')
+    config = definition(suite)
     require(matrix['results'] and matrix['passed'] and matrix.get('complete') is True,
             'complete successful producer observations exist')
     full_matrix = matrix_shape(matrix['results'], expected)
@@ -292,9 +303,9 @@ def audit(directory, output=None, expected=None):
         profile = item['profile']
         case = directory / profile
         native = 'firmware' not in item
-        product = products(case, profile, sources, native)
+        product = products(case, profile, sources, native, suite)
         if profile not in product_controls:
-            product_controls[profile] = damaged_products(case, profile, sources, native, audit_output)
+            product_controls[profile] = damaged_products(case, profile, sources, native, audit_output, suite)
         output = case if native else case / (item['firmware'] + '-' + item['transport'])
         controls = audit_output / (profile + ('-native' if native else '-' + item['firmware'] + '-' + item['transport']))
         controls.mkdir()
@@ -305,12 +316,15 @@ def audit(directory, output=None, expected=None):
         for lane in range(2):
             statistics = saved['capture_statistics'][lane] if native else None
             path = output / f'lane{lane}.pcap'
-            reopened = verify(path, lane, log, native, statistics)
+            reopened = config['verify'](path, lane, log, native, statistics)
             require(reopened['sha256'] == saved['capture_audits'][lane]['sha256'], 'original accepted packet capture unchanged')
-            captures.append(dict(capture=reopened, negative_controls=damaged(path, lane, log, native, controls, statistics)))
+            checker = damaged
+            if suite == 'pmtu':
+                from tcp6.pmtu_capture import damaged as checker
+            captures.append(dict(capture=reopened, negative_controls=checker(path, lane, log, native, controls, statistics)))
         rows.append(dict(profile=profile, native=native, product=product, captures=captures,
                          firmware=item.get('firmware'), transport=item.get('transport')))
-    result = dict(passed=True, source_files=len(sources), profiles=len(rows),
+    result = dict(passed=True, suite=suite, source_files=len(sources), profiles=len(rows),
                   captures=2 * len(rows), rejected_capture_controls=sum(
                       len(capture['negative_controls']['rejected']) for row in rows for capture in row['captures']),
                   rejected_product_controls=sum(len(row['rejected']) for row in product_controls.values()),

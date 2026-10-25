@@ -59,7 +59,7 @@ tcp::Segment segment(const std::vector<uint8_t>& frame) {
 }
 
 void answer(InetSocket* socket, uint32_t acknowledgment, uint16_t flags = tcp::ack,
-            bool old_sequence = false) {
+            bool old_sequence = false, uint16_t maximum_segment = 1440) {
     tcp::Segment reply;
     reply.source = __builtin_bswap16(socket->peer_port);
     reply.destination = socket->local_port;
@@ -69,7 +69,7 @@ void answer(InetSocket* socket, uint32_t acknowledgment, uint16_t flags = tcp::a
     reply.acknowledgment = acknowledgment;
     reply.flags = flags;
     reply.window = 65535;
-    reply.maximum_segment = flags & tcp::syn ? 1440 : 0;
+    reply.maximum_segment = flags & tcp::syn ? maximum_segment : 0;
     std::vector<uint8_t> bytes(24);
     size_t length = tcp::encode(socket->peer6, socket->local6, reply, bytes.data(), bytes.size());
     assert(length);
@@ -228,6 +228,48 @@ void handshake_errors() {
     puts("TCP6_ICMP_HANDSHAKE_PASS active=13 passive=13 codes errors sequence listener companion");
 }
 
+void metric_ownership() {
+    auto small = connect(241, false);
+    auto opening = segment(sent.back());
+    answer(small, opening.sequence + 1, tcp::syn | tcp::ack, false, 536);
+    tcp_poll();
+    ipv6_poll();
+    assert(small->stream->segment_size() == 536);
+    uint8_t data[200] = {};
+    assert(tcp_write(small, data, sizeof(data)) == sizeof(data));
+    ipv6_poll();
+    auto original = sent.back();
+    error(small, quote(original, 2, 0, 1280));
+    Ipv6Path path;
+    assert(!ipv6_path(small->local6, small->peer6, small->index, path) && path.mtu == 1500);
+    assert(small->stream->segment_size() == 536);
+    retire(small);
+
+    auto idle = connect(242);
+    original = sent.back();
+    auto packet = segment(original);
+    assert(packet.flags == tcp::ack && !packet.length && !idle->stream->queued());
+    assert(!idle->stream->owns_pmtu_quote(packet.sequence));
+    assert(idle->stream->owns_pmtu_quote(packet.sequence, true));
+    size_t before = sent.size();
+    error(idle, quote(original, 2, 0, 1280));
+    assert(idle->stream->segment_size() == 1220 && !idle->stream->queued());
+    assert(!ipv6_path(idle->local6, idle->peer6, idle->index, path) && path.mtu == 1280);
+    tcp_poll();
+    ipv6_poll();
+    assert(sent.size() == before && !tcp_so_error(idle, false));
+    retire(idle);
+
+    auto pending = connect(243, false);
+    original = sent.back();
+    error(pending, quote(original, 2, 0, 1280));
+    assert(pending->stream->state() == tcp::State::syn_sent);
+    assert(!ipv6_path(pending->local6, pending->peer6, pending->index, path) && path.mtu == 1500);
+    assert(pending->stream->segment_size() == 1440 && !tcp_so_error(pending, false));
+    retire(pending);
+    puts("TCP6_PMTU_METRICS_PASS small_peer_no_cache idle_quote_no_retry pending_SYN_ignored");
+}
+
 } // namespace
 
 void tcp_ipv6_error_tests(ax::NetAdapter& adapter) {
@@ -336,6 +378,7 @@ void tcp_ipv6_error_tests(ax::NetAdapter& adapter) {
     retire(socket);
     assert(!net_configure(1, true, 1500));
     handshake_errors();
+    metric_ownership();
     ipv6_shutdown();
     tcp_poll();
     assert(!net_configure(1, true, 1500));

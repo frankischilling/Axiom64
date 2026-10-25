@@ -16,15 +16,17 @@ from tcp6.inputs import digest, write
 from tcp6.peer import Peer
 
 
-def prepare(directory, profile):
+def prepare(directory, profile, suite='loss'):
+    from tcp6.profiles import definition
+    name = definition(suite)['program']
     compiled = json.loads((directory / 'program.inputs.json').read_text())
     image = account_store_guest.fixture(directory, 'build', profile,
         program_builder=lambda *args: (directory / 'program', compiled),
-        filename='tcp6-fault', command='/bin/tcp6-fault',
+        filename=name, command='/bin/' + name,
         extra_products={'source/program.inputs.json': directory / 'program.inputs.json'})
-    script = b'#!/bin/sh\nset -e\n/bin/tcp6-fault\necho AXIOM64_TESTS_PASS\n'
+    script = f'#!/bin/sh\nset -e\n/bin/{name}\necho AXIOM64_TESTS_PASS\n'.encode()
     executables = {'sbin/init': digest(ROOT / 'build/init'),
-        'bin/tcp6-fault': digest(directory / 'program'),
+        'bin/' + name: digest(directory / 'program'),
         'bin/busybox': digest(ROOT / ('build/busybox-' + LOCK['busybox']['version']) / 'busybox'),
         'lib/ld-musl-x86_64.so.1': digest(loader('build')),
         'source/program.inputs.json': digest(directory / 'program.inputs.json')}
@@ -34,10 +36,12 @@ def prepare(directory, profile):
     return image
 
 
-def run(directory, profile, firmware, transport, image):
+def run(directory, profile, firmware, transport, image, suite='loss'):
+    from tcp6.profiles import definition
+    config = definition(suite)
     output = directory / (firmware + '-' + transport)
     output.mkdir()
-    peers = [Peer(lane) for lane in range(2)]
+    peers = [config['peer'](lane) for lane in range(2)]
     servers = []
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '512M',
         '-cdrom', str(image), '-nic', 'none', '-display', 'none', '-serial', 'stdio',
@@ -52,6 +56,9 @@ def run(directory, profile, firmware, transport, image):
                                      else 'disable-modern=on')) if lane == 0 else 'e1000'
         command += ['-device', f'{device},netdev=peer{lane},addr={lane + 4:x},mac={peer.guest.hex(":")}',
                     '-object', f'filter-dump,id=cap{lane},netdev=peer{lane},file={output / ("lane" + str(lane) + ".pcap")}']
+        if hasattr(peer, 'observe_input'):
+            from packet_observation import PcapObservation
+            peer.observe_input = PcapObservation(output / f'lane{lane}.pcap').watch
     firmware_inputs = {}
     if firmware == 'uefi':
         variables = output / 'OVMF_VARS.fd'
@@ -84,17 +91,17 @@ def run(directory, profile, firmware, transport, image):
     audits = []
     if not error:
         try:
-            audits = [verify(output / f'lane{lane}.pcap', lane, text) for lane in range(2)]
+            audits = [config['verify'](output / f'lane{lane}.pcap', lane, text) for lane in range(2)]
         except Exception as failure:
             error = f'independent capture: {failure}'
     lines = text.splitlines()
     passed = (not error and returncode == 1 and len(audits) == 2 and
-              lines.count('TCP6_FAULT_PASS flows=4 bytes_each=65536') == 1 and
+              lines.count(config['marker']) == 1 and
               lines.count('AXIOM64_TESTS_PASS') == 1 and 'Firmware: ' + firmware.upper() in text and
               not any(marker in text for marker in ('PANIC:', 'FAULT pid=', 'TCP_FAULT_FAIL')) and
               products == dict(image_sha256=digest(image), kernel_sha256=digest(directory / 'kernel.elf'),
                                program_sha256=digest(directory / 'program')))
-    receipt = dict(passed=passed, profile=profile, native=False, firmware=firmware,
+    receipt = dict(passed=passed, profile=profile, native=False, suite=suite, firmware=firmware,
         transport=transport, returncode=returncode, error=error, products=products,
         start_monotonic_ns=began, end_monotonic_ns=time.monotonic_ns(), capture_audits=audits,
         independent_capture_audited=len(audits) == 2,

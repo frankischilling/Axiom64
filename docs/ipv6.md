@@ -407,7 +407,27 @@ translated or rescaled. Existing native IPv4 and IPv6 clock readers keep their
 original requirements. Freshly reopened damaged packets, byte patterns, timing,
 compiler bindings, ELF linkage and boot-product bindings must be rejected.
 
-The error and MTU path still has host-model evidence. Paired native/guest
-ICMPv6/PMTU captures, source/route lifetime rules, wider IPv6 socket controls,
-dual-stack failure cases and complete current-revision fault and timing matrices
-remain required. Complete IPv6 TCP acceptance remains unfinished.
+`make test-tcp6-pmtu` and `sudo -n make test-tcp6-pmtu-native` compare 22
+Packet Too Big cases per adapter using the same actual C program in native Linux
+and the guest. The three native linkages and eight guest firmware/linkage/virtio
+profiles cover active/passive global-address streams, repeated reductions,
+MSS-limited peers, quoted handshake packets, stale and idle sequences, rejected
+checksums/tuples/ports/short quotes, the IPv6 MTU floor and wrong quoted protocols.
+Each case transfers 4,096 exact bytes in both directions. Independent readers
+reconstruct streams, actual quoted packets and acknowledged closes. Invalid
+hints must remain ineffective for at least fifty real milliseconds before a
+valid notification; native timer lower bounds include the observer uncertainty.
+
+TCP checks the effective MSS before creating a shared route exception. A peer
+MSS of 536 therefore leaves a reported 1,280-byte hint ineffective, including
+for a later UDP route-metric query. An established idle stream can own an exact
+SND.NXT quote and lower its MSS without manufacturing retransmitted bytes.
+These behaviors follow native observations and the
+[Linux IPv6 TCP error path](https://github.com/torvalds/linux/blob/v7.0/net/ipv6/tcp_ipv6.c).
+The initial SYN and passive SYN-ACK cases ignore the tested 1,280-byte hint.
+This does not establish all pending-handshake socket-option behavior.
+
+The ordinary ICMPv6 error path still needs paired native/guest acceptance.
+Scoped TCP paths, cache expiry, source/route/device lifetimes, wider IPv6 socket
+controls, dual-stack failure cases and complete current-revision fault and timing
+matrices also remain required. Complete IPv6 TCP acceptance remains unfinished.

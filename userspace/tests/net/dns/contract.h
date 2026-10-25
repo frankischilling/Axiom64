@@ -49,7 +49,7 @@ struct capture {
     unsigned count;
 
     struct {
-        unsigned lane, length, kind;
+        unsigned lane, length, kind, ether_type;
         unsigned long long hash;
         long milliseconds;
     } frames[DNS_CAPTURE_FRAMES];
@@ -66,11 +66,11 @@ static void capture_drain(struct capture* state, unsigned lane) {
             check(errno == EAGAIN, "capture queue drain");
             return;
         }
-        check(size >= 14 && size <= (ssize_t)sizeof(frame) && length == sizeof(source) &&
-                  source.sll_family == AF_PACKET &&
-                  source.sll_ifindex == (int)state->indices[lane] &&
-                  source.sll_protocol == htons(0x800) && source.sll_halen == 6,
-              "actual IPv4 frame metadata");
+        check(
+            size >= 14 && size <= (ssize_t)sizeof(frame) && length == sizeof(source) &&
+                source.sll_family == AF_PACKET && source.sll_ifindex == (int)state->indices[lane] &&
+                source.sll_protocol == htons((frame[12] << 8) | frame[13]) && source.sll_halen == 6,
+            "actual Ethernet frame metadata");
         unsigned long long hash = 0xcbf29ce484222325ULL;
         for (ssize_t i = 0; i < size; i++)
             hash = (hash ^ frame[i]) * 0x100000001b3ULL;
@@ -79,6 +79,7 @@ static void capture_drain(struct capture* state, unsigned lane) {
         state->frames[state->count].lane = lane;
         state->frames[state->count].length = (unsigned)size;
         state->frames[state->count].kind = source.sll_pkttype;
+        state->frames[state->count].ether_type = (frame[12] << 8) | frame[13];
         state->frames[state->count].hash = hash;
         state->frames[state->count++].milliseconds = milliseconds();
         state->packets[lane]++;
@@ -117,13 +118,13 @@ static void capture_start(struct capture* state) {
         state->indices[lane] = if_nametoindex(name);
         check(state->indices[lane] != 0, "capture interface index");
         state->descriptors[lane] =
-            socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, htons(0x800));
+            socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, htons(3));
         struct sockaddr_ll address = {.sll_family = AF_PACKET,
-                                      .sll_protocol = htons(0x800),
+                                      .sll_protocol = htons(3),
                                       .sll_ifindex = (int)state->indices[lane]};
         check(state->descriptors[lane] >= 0 &&
                   bind(state->descriptors[lane], (struct sockaddr*)&address, sizeof(address)) == 0,
-              "capture IPv4 socket binding");
+              "capture Ethernet socket binding");
     }
     check(pthread_create(&state->thread, NULL, capture_run, state) == 0, "capture thread");
 }
@@ -131,11 +132,28 @@ static void capture_start(struct capture* state) {
 static void capture_stop(struct capture* state) {
     atomic_store(&state->stop, 1);
     check(pthread_join(state->thread, NULL) == 0, "capture join");
-    for (unsigned i = 0; i < state->count; i++)
-        printf("DNS_FRAME linkage=%s index=%u length=%u hash=%016llx packet_type=%u "
-               "monotonic_ms=%ld\n",
-               DNS_LINKAGE, state->frames[i].lane + 1, state->frames[i].length,
-               state->frames[i].hash, state->frames[i].kind, state->frames[i].milliseconds);
+    for (unsigned lane = 0; lane < 2; lane++) {
+        // Retire reception before the final drain and packet statistics.
+        struct sockaddr_ll retired = {.sll_family = AF_PACKET,
+                                      .sll_protocol = htons(0x88b6),
+                                      .sll_ifindex = (int)state->indices[lane]};
+        check(bind(state->descriptors[lane], (struct sockaddr*)&retired, sizeof(retired)) == 0,
+              "capture retirement");
+        capture_drain(state, lane);
+    }
+    for (unsigned i = 0; i < state->count; i++) {
+        if (state->frames[i].ether_type == 0x800)
+            printf("DNS_FRAME linkage=%s index=%u length=%u hash=%016llx packet_type=%u "
+                   "monotonic_ms=%ld\n",
+                   DNS_LINKAGE, state->frames[i].lane + 1, state->frames[i].length,
+                   state->frames[i].hash, state->frames[i].kind, state->frames[i].milliseconds);
+        else
+            printf("DNS_LINK_FRAME linkage=%s index=%u length=%u hash=%016llx packet_type=%u "
+                   "ether_type=%04x monotonic_ms=%ld\n",
+                   DNS_LINKAGE, state->frames[i].lane + 1, state->frames[i].length,
+                   state->frames[i].hash, state->frames[i].kind, state->frames[i].ether_type,
+                   state->frames[i].milliseconds);
+    }
     for (unsigned lane = 0; lane < 2; lane++) {
         uint32_t statistics[2] = {0};
         socklen_t length = sizeof(statistics);

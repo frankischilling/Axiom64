@@ -435,10 +435,10 @@ build/ipv4-dynamic: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragment
 build/udp-tests: userspace/tests/net/udp.c scripts/compile_uapi_client.py scripts/linux_uapi.py scripts/build_openssl.py ports.lock.json scripts/build_musl.py sources.lock.json dependencies.json Makefile
 	@mkdir -p build
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $(filter %.c,$^)
-build/dns-static: userspace/tests/net/dns.c
+build/dns-static: userspace/tests/net/dns.c userspace/tests/net/dns/contract.h
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
-build/dns-dynamic: userspace/tests/net/dns.c
+build/dns-dynamic: userspace/tests/net/dns.c userspace/tests/net/dns/contract.h
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -DDNS_LINKAGE='"dynamic"' $< -o $@
 build/normal-dns-static: userspace/tests/net/normal-dns.c

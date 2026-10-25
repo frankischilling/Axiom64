@@ -1,0 +1,15 @@
+{
+  "scope": "original BIOS modern DNS observer evidence; complete firmware matrix retained separately",
+  "producer_base": "c70598fbe65c18fa0ec6e686b1ce31cac6c064d3",
+  "producer_changes": {
+    "scripts/dns_test.py": "f35b7e2d8d1f34a837e114ac204bd7ce4292bec546c32eea42fbac817292fbc5",
+    "userspace/tests/net/dns/contract.h": "24188c1086d078b0e817aef9466a7ab23166c0aa6e22dd135e58cba915567b43",
+    "Makefile": "a2621ffe6aa422f6534c6af59d1b891a013359c81c7b849299ac30366d446ac0"
+  },
+  "files": {
+    "dns-bios-modern.log": "2c60c6b308e022392c9a735e2b076f6c1992ff9baf20f4e4fce332aa9824c4dc",
+    "dns-bios-modern-packets.json": "2ce2e52e4c3c3a5022138ab573d762b90eb2728f0f658f92726720ee78bfe1f6",
+    "lane0.pcap": "40a830018db4a30fa2556b20353e72dcd66cbc9d7dfecb4b9f7cf13434df9e55",
+    "lane1.pcap": "21658ed3b9669090f52bf6395bc2f094e9f4e067ee1ca308eb92c5b93d62766a"
+  }
+}

@@ -1228,10 +1228,14 @@ jobs:
         run: ./build/udp-tests
       - name: Compare actual musl DNS with native Linux in private namespaces
         if: matrix.suite == 'network'
-        run: sudo -n make test-dns-native
+        run: |
+          sudo -n python3 scripts/tests/dns_packet_observer_test.py
+          sudo -n make test-dns-native
       - name: Test musl DNS queries, search rules, retries, and deadlines on both adapters
         if: matrix.suite == 'network'
-        run: make test-dns
+        run: |
+          make test-dns
+          python3 scripts/tests/dns_capture_test.py --matrix-results build/dns-results.json
       - name: Compare actual patched musl DNS TCP framing with native glibc
         if: matrix.suite == 'network'
         run: sudo -n make test-dns-tcp-native
@@ -1494,6 +1498,8 @@ jobs:
             build/manager-link-*-packets.json
             build/axiom64-manager-address-query-*.iso
             build/dns-*-packets.json
+            build/dns-packet-observer/**
+            build/dns-capture-controls/**
             build/dns-tcp-*
             build/normal-init-*-dns-packets.json
             build/paired-network/**
@@ -1667,6 +1673,7 @@ jobs:
             build/axiom64-dns-tcp-*.iso
             build/dns-tcp-static
             build/dns-tcp-dynamic
+            build/dns-tcp-inputs/**
             build/musl/**/manifest.json
             build/musl/**/COPYRIGHT
             build/musl/**/res_msend.c

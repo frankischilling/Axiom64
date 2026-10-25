@@ -14,6 +14,8 @@ The kernel provides [IPv4 TCP streams](tcp.md). A checked local musl patch valid
 sudo -n make test-dns-native
 make test-dns
 python3 scripts/tests/dns_fixture_test.py
+sudo -n python3 scripts/tests/dns_packet_observer_test.py
+python3 scripts/tests/dns_capture_test.py --matrix-results build/dns-results.json
 sudo -n make test-dns-tcp-native
 make test-dns-tcp
 ```
@@ -22,7 +24,9 @@ The native comparison creates new mount and network namespaces before binding pr
 
 The guest matrix uses virtio-net and e1000 together in four independent kernels: BIOS/UEFI and modern/legacy virtio. Every kernel runs both musl linkages. The boot script disables IPv6 before these AF_INET-only clients start; ordinary startup keeps its default IPv6 configuration. The original 30-second profile deadline remains required. Each linkage checks 17 lookup cases, eight concurrent queries and 128 reclamation cycles. Results are freed, and a subsequent descriptor allocation must reuse the baseline slot after repeated resolver socket creation/closure.
 
-Independent Ethernet peers verify DNS questions, exact query inventories and order, interface addresses, IPv4/UDP lengths and checksums, retries and complete answer bytes. A test-only packet observer records the actual kernel's incoming/outgoing frame lengths, hashes, types and monotonic clocks. Every peer frame must match a guest receipt, and both capture sockets must report zero drops. Receipts are collected in bounded memory and printed after the observer stops so console output does not delay capture during repeated lookups.
+Independent Ethernet peers verify DNS questions, exact query inventories and order, interface addresses, IPv4/UDP lengths and checksums, retries and complete answer bytes. A test-only packet observer uses ETH_P_ALL to receive outgoing packets as well as incoming replies. It records lengths, hashes, packet types and monotonic clocks, with separate records for non-IPv4 Ethernet traffic. Every IPv4 peer frame must match both a guest receipt and an original physical capture record. Non-IPv4 receipts must own captured frames, and both capture sockets must report exact totals and zero drops. The observer retires reception and drains late packets before checking statistics. Receipts are collected in bounded memory and printed after the observer stops so console output does not delay capture during repeated lookups.
+
+The actual C observer regression sends both directions and non-IPv4 frames, then injects a late outgoing packet after its collector joins. The capture reader reopens archived corruptions of packet bytes, receipts, interface identity, clocks, statistics and PCAP bounds. Its default input is an unchanged actual BIOS trace under `scripts/tests/fixtures/dns-observer`; the matrix option checks all four current guest traces. The same observer and Ethernet accounting also serve the TCP fallback tests.
 
 Evidence uses `build/dns-*`: native/guest results, serial logs and complete packet JSON. Each guest execution also owns a new `build/dns-fixture/run-*` directory containing its source snapshots, exact programs and loader, kernel, initramfs, reopened ISO, serial logs, both original Ethernet captures and result records. Incoming frames are saved before strict peer validation, including a rejected frame and its error. The network CI job retains these directories even after failure. Capture-backed host regressions retain the original rejection of unexpected IPv6 after resolver configuration. The existing ABI/thread/signal/VFS/compiler/desktop/input, driver/storage/ext2/root, format/sanitizer and corresponding-source checks remain required before integration. These checks establish the bounded UDP lookup behavior described above.
 

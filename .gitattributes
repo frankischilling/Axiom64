@@ -35,3 +35,5 @@ scripts/tests/fixtures/icmp-observer-clock/tcp-icmp-linux-static-lane0.clocks.js
 scripts/tests/fixtures/icmp-observer-clock/tcp-icmp-linux-static-lane0.pcap -text
 scripts/tests/fixtures/udp-wire/**/*.pcap binary
 scripts/tests/fixtures/udp-wire/**/serial.log -text -whitespace
+scripts/tests/fixtures/dns-observer/*.log -text -whitespace
+scripts/tests/fixtures/dns-observer/*.pcap binary

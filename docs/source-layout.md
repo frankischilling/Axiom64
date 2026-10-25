@@ -47,6 +47,12 @@ Installed-startup supervision uses `scripts/normal_manager_test.py`. Its `normal
 
 The IPv4 resolver fixture stays in `scripts/dns_test.py`. It owns isolated initramfs/ISO inputs and per-execution source, program and packet retention; `dns_peer.py` keeps the strict protocol checks. Its boot script selects the IPv4-only test configuration before either resolver client starts.
 
+`scripts/dns_observer.py` binds both UDP and TCP resolver driver records to
+original Ethernet captures. The actual C collector lives in
+`userspace/tests/net/dns/contract.h`; its regression checks both packet directions,
+non-IPv4 records and packets queued after collector shutdown. The capture tests
+archive and freshly reopen damaged copies of actual DNS evidence.
+
 Controlled DAD comparisons use `userspace/tests/net/ipv6_dad.c` and its bounded netlink inventory header. `ipv6_dad_inventory_model.c` exercises the actual candidate selector. The matching `scripts/ipv6_dad_test.py`, peer, independent capture reader, native policy and damaged-evidence generator keep execution, observation and rejection checks separate. The shared native `Capture` in `tcp_fault_native.py` configures its timestamp/buffer before reception and stops new input before draining queued records; packet and clock counts still have to match exactly.
 
 The corresponding-source bundle walks kernel and userspace folders recursively, so it includes the same sources and headers used by the build. [Testing](testing.md) describes the existing guest and host suites; [architecture](architecture.md) describes interfaces and current limits.

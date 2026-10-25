@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Run actual libc UDP-to-TCP DNS fallback over both guest Ethernet drivers."""
 import argparse
-from collections import Counter
 import hashlib
 import json
 from pathlib import Path
@@ -15,6 +14,7 @@ from fetch import ROOT, LOCK
 from build_musl import loader, ensure
 from dns_tcp_peer import Peer, check
 from tcp_fault_test import exercise
+from dns_observer import audit as audit_dns_observer
 
 
 def digest(path):
@@ -24,7 +24,11 @@ def digest(path):
 def fixture(linkage):
     subprocess.run(['make', '-s', '-j2', 'build/axiom64.elf', 'build/init',
                     f'build/dns-tcp-{linkage}', 'busybox'], cwd=ROOT, check=True)
-    interpreter = loader('runtime')
+    retained = ROOT / 'build/dns-tcp-inputs'
+    retained.mkdir(exist_ok=True)
+    directory = Path(tempfile.mkdtemp(prefix=linkage + '-', dir=retained))
+    interpreter = directory / 'ld-musl-x86_64.so.1'
+    shutil.copyfile(loader('runtime'), interpreter)
     files = {name: (0o40755, b'') for name in
              ('bin', 'sbin', 'lib', 'etc', 'dev', 'proc', 'sys', 'tmp', 'run')}
     inputs = [('sbin/init', ROOT / 'build/init'),
@@ -56,33 +60,8 @@ def fixture(linkage):
     return image
 
 
-def capture_audit(peers, text, linkage):
-    rows = re.findall(r'^DNS_FRAME linkage=(static|dynamic) index=(\d+) length=(\d+) '
-                      r'hash=([0-9a-f]{16}) packet_type=(\d+) monotonic_ms=(\d+)\r?$', text, re.M)
-    actual = Counter((int(index), int(length), value, int(kind))
-                     for _, index, length, value, kind, _ in rows)
-    expected = Counter()
-    for peer in peers:
-        for row in peer.frames:
-            frame = bytes.fromhex(row['frame'])
-            if frame[12:14] != b'\x08\x00':
-                continue
-            value = 0xcbf29ce484222325
-            for byte in frame:
-                value = (value ^ byte) * 0x100000001b3 & 0xffffffffffffffff
-            expected[(peer.lane + 1, len(frame), f'{value:016x}',
-                      4 if row['direction'] == 'query' else 0)] += 1
-    check(actual == expected and bool(actual), 'every independent IPv4 frame has an exact driver receipt')
-    captures = re.findall(r'^DNS_CAPTURE_PASS linkage=(static|dynamic) index=(\d+) '
-                         r'packets=(\d+) dropped=(\d+)\r?$', text, re.M)
-    check(len(captures) == 2 and {(kind, int(index)) for kind, index, _, _ in captures} ==
-          {(linkage, 1), (linkage, 2)}, 'both actual driver observers in the requested client')
-    for kind, index, count, dropped in captures:
-        selected = [row for row in rows if row[:2] == (kind, index)]
-        clocks = [int(row[-1]) for row in selected]
-        check(int(dropped) == 0 and int(count) == len(selected) and clocks == sorted(clocks),
-              'complete driver observer with monotonic clocks and no loss')
-    return len(rows)
+def capture_audit(peers, text, linkage, captures):
+    return audit_dns_observer(peers, text, captures, (linkage,))
 
 
 def run(linkage, firmware, transport, image, timeout):
@@ -142,7 +121,7 @@ def run(linkage, firmware, transport, image, timeout):
     receipts = 0
     if not error and not missing and status == 1:
         try:
-            receipts = capture_audit(peers, text, linkage)
+            receipts = capture_audit(peers, text, linkage, captures)
         except Exception as failure:
             error = str(failure)
     result = dict(linkage=linkage, firmware=firmware, transport=transport, returncode=status,

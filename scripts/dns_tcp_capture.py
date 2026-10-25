@@ -9,6 +9,7 @@ import re
 import struct
 from tcp_capture import checksum
 from tcp_fault_capture import decode as decode_tcp, require, MASK
+from dns_observer import link_receipts
 
 FAILURES = ('wrong-id', 'wrong-name', 'wrong-type', 'wrong-class', 'query-bit',
             'opcode', 'short-prefix', 'short-body', 'short-frame', 'refused', 'connect-refused', 'compression-loop')
@@ -192,7 +193,8 @@ def verify(path, lane, evidence, text, linkage, native=False):
         require(Counter(row[:3] for row in receipts) == expected and receipts, 'PCAP matches all actual driver receipts')
         clocks = [int(row[-1]) for row in receipts]
         require(clocks == sorted(clocks), 'actual driver receipt clocks are ordered')
-        require(f'DNS_CAPTURE_PASS linkage={linkage} index={lane + 1} packets={len(receipts)} dropped=0' in text,
+        links = link_receipts(text, path, lane, linkage)
+        require(f'DNS_CAPTURE_PASS linkage={linkage} index={lane + 1} packets={len(receipts) + links} dropped=0' in text,
                 'zero-drop complete driver capture')
     owners, by_port, flows = [], {}, []
     for row in rows:

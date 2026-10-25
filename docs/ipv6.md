@@ -300,3 +300,22 @@ reopen all six captures and 72 first-PIO records with the original clocks and
 strict lifetime, flag and packet checks. Both original affinities are restored.
 The full current-revision feature workflow and matching downloaded evidence
 remain required before integration.
+
+
+## TCP transport preparation
+
+The TCP segment codec now accepts IPv6 source and destination addresses. IPv4
+and IPv6 share header, option and payload processing, with separate family
+checksum adapters. IPv6 checks use every address byte and the upper-layer length
+without extension headers. Fixed independent packets, malformed headers, source
+and destination changes, odd payloads, overlapping copies, valid zero checksum
+fields and the 65,535-byte upper-layer bound have sanitizer checks through
+`make test-tcp-wire`. Existing IPv4 wire and connection checks remain required.
+
+This prepares the transport codec. IPv6 stream sockets still return
+`EPROTONOSUPPORT`. The local client under `userspace/tests/net/tcp6/` passes on
+Linux with pure IPv6 and mapped IPv4 streams, descriptor aliases, vector I/O,
+half-close replies and port ownership. The same executable fails socket creation
+on the retained Axiom64 baseline. Connection routing, listeners, accepted
+descriptors, dual-stack ownership, ICMPv6 errors, MTU recovery, lifetimes and
+real-interface TCP exchanges still need implementation and guest evidence.

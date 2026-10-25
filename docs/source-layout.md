@@ -119,3 +119,11 @@ native router reference. It serializes ownership, propagates command exits,
 retires its child process group on cancellation and records restoration.
 `scripts/tests/native_address_worker_test.py` exercises those paths against the
 actual host masks. Guest clients and kernel sources do not use this helper.
+
+
+TCP wire processing shares one header/option/payload implementation in
+`kernel/net/tcp/wire.cpp`. Its private `wire_detail.hpp` interface is used by the
+IPv6 checksum adapter in `wire_ipv6.cpp`; callers use the typed overloads in
+`kernel/include/net/tcp/wire.hpp`. The two address families retain independent
+fixed packet checks. The local IPv6 TCP application client is under
+`userspace/tests/net/tcp6/`; stream-socket integration remains unfinished.

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "net/tcp/wire.hpp"
+#include "wire_detail.hpp"
 #include "net/ipv4_wire.hpp"
 
 namespace ax::tcp {
@@ -13,13 +13,10 @@ uint16_t checksum(uint32_t source, uint32_t destination, const uint8_t* data, si
 }
 } // namespace
 
-bool decode(uint32_t source, uint32_t destination, const void* packet, size_t length,
-            Segment& output) {
-    if (!packet || length < 20 || length > maximum_segment_size)
-        return false;
+bool detail::decode(const void* packet, size_t length, Segment& output) {
     const auto* bytes = static_cast<const uint8_t*>(packet);
     size_t header = size_t(bytes[12] >> 4) * 4;
-    if (header < 20 || header > length || checksum(source, destination, bytes, length))
+    if (header < 20 || header > length)
         return false;
     Segment value{};
     value.source = ip4::get16(bytes);
@@ -65,12 +62,18 @@ bool decode(uint32_t source, uint32_t destination, const void* packet, size_t le
     return true;
 }
 
-size_t encode(uint32_t source, uint32_t destination, const Segment& value, void* packet,
-              size_t capacity) {
+bool decode(uint32_t source, uint32_t destination, const void* packet, size_t length,
+            Segment& output) {
+    return packet && length >= 20 && length <= maximum_segment_size &&
+           !checksum(source, destination, static_cast<const uint8_t*>(packet), length) &&
+           detail::decode(packet, length, output);
+}
+
+size_t detail::encode(const Segment& value, void* packet, size_t capacity, size_t maximum) {
     size_t header = value.maximum_segment ? 24 : 20;
     if (!packet || value.has_window_scale || (value.maximum_segment && !(value.flags & syn)) ||
-        (value.length && !value.payload) || value.length > maximum_segment_size - header ||
-        header > capacity || value.length > capacity - header)
+        (value.length && !value.payload) || value.length > maximum - header || header > capacity ||
+        value.length > capacity - header)
         return 0;
     auto* bytes = static_cast<uint8_t*>(packet);
     auto* destination_bytes = bytes + header;
@@ -97,7 +100,15 @@ size_t encode(uint32_t source, uint32_t destination, const Segment& value, void*
         ip4::put16(bytes + 22, value.maximum_segment);
     }
     size_t length = header + value.length;
-    ip4::put16(bytes + 16, checksum(source, destination, bytes, length));
+    return length;
+}
+
+size_t encode(uint32_t source, uint32_t destination, const Segment& value, void* packet,
+              size_t capacity) {
+    size_t length = detail::encode(value, packet, capacity, maximum_segment_size);
+    if (length)
+        ip4::put16(static_cast<uint8_t*>(packet) + 16,
+                   checksum(source, destination, static_cast<const uint8_t*>(packet), length));
     return length;
 }
 

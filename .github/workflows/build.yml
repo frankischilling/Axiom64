@@ -234,6 +234,9 @@ jobs:
           python3 scripts/tests/ipv6_owner_launch_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-owner-launch.log
           python3 scripts/tests/ipv6_owner_capture_test.py --archive build/ipv4-policy/ipv6-owner-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-owner-capture.log
           python3 scripts/tests/ipv6_device_capture_test.py --archive build/ipv4-policy/ipv6-device-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-device-capture.log
+          python3 scripts/tests/ipv6_device_pending_capture_test.py --archive build/ipv4-policy/ipv6-device-pending-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-device-pending-capture.log
+          python3 scripts/tests/ipv6_device_pending_record_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-device-pending-record.log
+          python3 scripts/tests/qemu_capture_delivery_test.py -v 2>&1 | tee build/ipv4-policy/qemu-capture-delivery.log
           python3 scripts/tests/ipv6_device_inventory_test.py --archive build/ipv4-policy/ipv6-device-inventory-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-device-inventory.log
           python3 scripts/tests/packet_administrative_test.py -v 2>&1 | tee build/ipv4-policy/packet-administrative.log
           python3 scripts/tests/administrative_flags_test.py -v 2>&1 | tee build/ipv4-policy/administrative-flags.log
@@ -1027,10 +1030,10 @@ jobs:
       - name: Compare IPv6 address ownership with three isolated native Linux linkages
         if: matrix.suite == 'configuration'
         run: sudo -n make test-ipv6-ownership-native
-      - name: Verify ready IPv6 owners across administrative, carrier and MTU transitions
+      - name: Verify IPv6 DAD states across administrative, carrier and MTU transitions
         if: matrix.suite == 'configuration'
         run: make test-ipv6-device
-      - name: Compare ready IPv6 device owners with three isolated native Linux linkages
+      - name: Compare IPv6 device DAD states with three isolated native Linux linkages
         if: matrix.suite == 'configuration'
         run: sudo -n make test-ipv6-device-native
       - name: Verify link inventories across administrative and invalid-MTU transitions

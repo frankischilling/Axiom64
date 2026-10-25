@@ -23,3 +23,8 @@ scripts/tests/fixtures/ipv6-device/**/serial.log -text -whitespace
 scripts/tests/fixtures/ipv6-device/**/*.pcap binary
 scripts/tests/fixtures/ipv6-device/**/*.clocks.jsonl -text -whitespace
 scripts/tests/fixtures/ipv6-device-inventory-*.log -text -whitespace
+scripts/tests/fixtures/ipv6-device-pending/**/serial.log -text -whitespace
+scripts/tests/fixtures/ipv6-device-pending/**/*.pcap binary
+scripts/tests/fixtures/ipv6-device-pending/**/*.clocks.jsonl -text -whitespace
+scripts/tests/fixtures/ipv6-device-delivery/**/serial.log -text -whitespace
+scripts/tests/fixtures/ipv6-device-delivery/**/*.pcap binary

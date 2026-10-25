@@ -78,6 +78,23 @@ The remaining socket work must preserve Linux `sockaddr_in6` sizes and scope ide
 
 The complete feature still requires IPv6 socket/control equivalence, complete source selection and neighbor behavior, automatic configuration, multicast reporting and general membership, complete ICMPv6 errors and fragmented transport acceptance, outgoing extension controls, complete path-MTU handling, router advertisements and complete finite-address wire acceptance. Complete Linux IPv6 socket/control interfaces, UDP/TCP integration and native/guest wire coverage remain required. BIOS/UEFI, both adapters and applicable linkage/device variants must retain their existing coverage.
 
+The device test family now includes probing, pre-probe regeneration, retrying and
+four-conflict exhaustion alongside ready owners. Its shared C helpers retain the
+ready client's behavior. The independent decoder binds actual queries and ACKs
+to both physical captures; separate contracts check ready and pending ownership,
+route counts, link state and real timing. Twelve focused Axiom64 and 24 pinned
+Linux diagnostics pass independent inspection, including their actual guest
+images. Guest conflict acknowledgments now wait for the selected adapter's complete
+original capture record. A controlled delayed-ACK execution also verifies the
+first ready observation before the initial post-loss inventory. Eleven rejected
+e1000 ordering cases from the first expanded matrix remain failed. The corrected
+complete local matrix passes all 180 guest profiles and all 90 native comparisons
+on the two pinned Linux kernels. Independent readers reopen thirty guest images
+and 540 captures, bind 432 physical conflict-delivery receipts, and reject 5,862
+serialized and freshly reopened corruptions. Original timing, drop and deadline
+gates remain unchanged. Complete current-source hosted acceptance remains required.
+See [testing](testing.md) for the retained observation windows and evidence limits.
+
 ## Socket integration
 
 `kernel/net/ipv6/socket.cpp` owns bounded IPv6 datagram descriptions, raw ICMPv6 filtering, UDP demultiplexing and copied receive queues. Its syscall implementation is under `kernel/net/ipv6/socket/`. The shared retained-I/O module captures `sockaddr_in6`, vectors and owned output bytes. Final close detaches asynchronous callbacks without discarding already queued packets or touching a reused socket slot. Readiness, receive/send deadlines, descriptor metadata and interface controls use the same description lifetime.
@@ -218,8 +235,8 @@ controls carry actual address, key, MTU and flag queries while the selected link
 is unavailable. The first recorded ready query must follow its captured probe by at least one
 second and no more than 2.1 seconds. Four-second outage and restored observations,
 original native packet clocks, bounded reader latency and zero drops remain
-required. Retrying and exhausted owners, pending regeneration and the remaining
-automatic-address and router requirements are still open.
+required. The expanded local device-state matrix below covers retrying, exhausted
+and regenerating owners; complete automatic-address and router acceptance remains open.
 
 
 Ownership conflict observers distinguish a retiring address from its fresh
@@ -229,8 +246,8 @@ two fresh candidates still fail. Final failed-owner counts, raw flags, lifetimes
 connected routes and packet timing remain required. Ownership records use one
 checked write, preserving complete queried metadata alongside kernel diagnostics.
 The changed client passes 48 guest and 24 native profiles with independent image,
-capture and damage checks. Retrying and exhausted owners across device transitions
-still need their separate wire coverage.
+capture and damage checks. The expanded device-state matrix below supplies
+separate local wire coverage for retrying and exhausted owners across transitions.
 
 
 Ordinary link queries now remain available when an MTU below 1280 retires the
@@ -244,5 +261,5 @@ The shared inventory client passes six native and twelve guest profiles, includi
 both firmware modes, both musl linkages and all three adapters. Independent readers
 open both guest images, parse 864 original raw netlink transactions and compare
 1,080 observations. They reject 162 archived changed records. These are device ABI
-checks; retrying and exhausted owners and pending regeneration still need wire
+checks. The expanded device-state matrix above supplies separate local wire
 coverage. Full current-revision hosted acceptance remains required.

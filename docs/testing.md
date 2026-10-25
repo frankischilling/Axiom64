@@ -160,10 +160,10 @@ The original three retained ownership fixture groups reject 73 damaged controls.
 
 `scripts/tests/ipv6_owner_capture_test.py` reopens all four actual fixture groups and rejects 109 serialized packet/log corruptions, including coherent metadata edits, early/late retry packets, shortened quiet windows, lost permanent owners and invented NODAD probes. `--archive build/ipv6-owner-damaged.zip` preserves a separate ZIP for each group and reopens every archived control. `ipv6_owner_peer_test.py` verifies the live conflict barrier, explicit cleanup policy, fresh-PIO admission, equal monotonic ticks and rejected backward observations. `ipv6_owner_launch_test.py` executes eight invalid argument forms and requires rejection before privileged configuration. These checks supplement the complete wire and native matrices.
 
-`make test-ipv6-device` adds 36 ready-owner profiles for administrative, MTU and
+The ready-state subset contains 36 profiles for administrative, MTU and
 carrier transitions. Both linkages, both firmware paths and all three adapters
 remain required, with two workers and a separate sixty-second deadline per
-profile. `sudo -n make test-ipv6-device-native` adds nine native comparisons through
+profile. The ready-state subset includes nine native comparisons through
 isolated static musl, dynamic musl and glibc clients. The same clients have been
 checked on Linux 6.17 and 7.0. Controls travel over the healthy companion while
 the subject is unavailable; native carrier changes use a veth port and a separate
@@ -186,7 +186,59 @@ action, including a 999.9-millisecond completion and firmware moved after BEGIN.
 `--archive build/ipv6-device-damaged.zip` retains and reopens an archive per action.
 A later DAD readiness change exposed restored completions below the existing one-second minimum in eleven guest profiles. The failed images and captures remain rejected. Rounding the kernel deadline past its sampled ten-millisecond tick passes all 36 changed guests with the same client binaries and original bounds. Together with the 18 unchanged native comparisons, independent readers check six images and 108 captures and reject all 594 serialized and reopened negative copies. The actual client now emits each queried control record with one checked write; its formatter model also rejects short and interrupted writes. The sanitizer model requires tentative state at the old tick boundary and readiness one tick later. Full current-source hosted qualification remains required.
 
-These tests cover ready owners; retrying and exhausted device owners remain open.
+The device runner now selects all five states by default: ready, probing,
+regenerating before a replacement probe, retrying after that probe, and exhausted
+after four selected conflicts. `make test-ipv6-device` therefore requires 180
+guest profiles; `sudo -n make test-ipv6-device-native` requires 45 comparisons on
+the running Linux kernel. `--state ready` selects the original subset. Each
+pending-state program is built once per linkage and reused with explicit state
+arguments. Both workers, each sixty-second deadline and the complete observation
+windows remain unchanged.
+
+The pending client queries actual owners before each selected conflict. Its
+companion acknowledges only after the matching advertisement is recorded on the
+subject adapter. Guest runs wait for the complete exact frame in the original
+QEMU capture; draining a host TCP send queue alone cannot establish delivery
+order across adapters. Carrier loss retains failed and current owners and permits DAD progress;
+administrative down and invalid MTU remove the owners and restart DAD on recovery.
+Readers require exact owner sets and connected-prefix counts without imposing
+address dump order. Probing and retrying use the actual probe-to-ready interval
+of one to 2.1 seconds. Regenerating during carrier loss has no replacement wire
+probe, so its first ready observation must follow the actual conflict by two to
+3.1 seconds. If the first post-loss inventory already sees readiness, the client
+records it there before publishing that inventory. Host regressions check that
+later polls cannot replace or duplicate the observation.
+
+The retained diagnostic fixtures contain twelve static BIOS/modern Axiom64
+executions and 24 glibc executions on the two pinned Linux kernels. Independent
+inspection reopens twelve actual images and 72 captures. The committed reader
+tests replay those original observations and reject 304 corrupted copies after
+closing and reopening their archives. The shared decoder also matches all
+54 original ready-state results and the exact rejection reasons for their 594
+archived controls. These checks establish the diagnostic and reader subsets;
+the complete corrected matrix is qualified separately below. Complete hosted
+acceptance for the expanded source remains required.
+
+The first expanded run completes all 180 guest clients and 90 native cases.
+Eleven e1000 guest captures fail the required conflict-before-ACK order; their
+original receipts, images and captures remain failed. A physical capture receipt
+now gates each guest conflict ACK. The focused changed-controller execution
+passes the original reader with the same client and kernel. A separate real
+1.1-second delay of each first down-link ACK verifies that readiness is published
+before the initial post-loss address inventory, rather than deferred to a poll.
+`scripts/tests/qemu_capture_delivery_test.py` retains the original failed trace,
+the corrected diagnostic and the delayed-ACK trace. It rejects incomplete records,
+replaced or truncated files and excess frames without changing packet timestamps.
+The corrected complete local matrix passes all 180 guest profiles and 45 native
+profiles on each pinned Linux kernel. Independent readers reopen thirty guest
+images and 540 original captures, match 432 physical delivery receipts to their
+exact advertisements, and reject 5,862 serialized and freshly extracted corruptions.
+The 4,494 guest controls retain every original ready-state rejection; the 1,368
+native controls also reject excess reader latency, unstable clock offsets and
+coherently changed conflict owners. The original sixty-second deadlines, both
+workers, full observation windows, exact packet counts and zero-drop requirements
+remain unchanged. Complete current-source hosted and feature acceptance remain
+required; the earlier eleven failed ordering cases remain rejected.
 
 
 `make test-ipv6-wire` also checks DAD state per address owner: retained permanent failures, stable retries after a generation-mode change, both link-local jitter endpoints, four distinct retained failures, finite configured-address removal and fresh recreation. Stable takeover tests preserve infinite, NODAD and six/ten-second finite lifetimes, exact flags, retry holds and last-owner prefix cleanup. Eight same-client Linux 7/static guest comparisons independently reopen eight images and 32 captures. NODAD replacements become usable without another probe; finite replacements retain their requested lifetimes. Earlier peers that acknowledged before injecting a conflict could shorten the observation. Those short reference windows remain excluded; corrected barriers retain the same client wait and require at least four captured seconds after the actual conflict. Full matrix coverage for these additional comparisons and complete hosted qualification remain required.

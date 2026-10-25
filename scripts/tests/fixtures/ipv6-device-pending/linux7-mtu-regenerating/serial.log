@@ -1,0 +1,78 @@
+IPV6_DEVICE_PROPERTY scope=default name=addr_gen_mode value=2 observed_ns=255859413406
+IPV6_DEVICE_PROPERTY scope=default name=accept_ra value=0 observed_ns=255862820996
+IPV6_DEVICE_PROPERTY scope=default name=autoconf value=0 observed_ns=255864211706
+IPV6_DEVICE_PROPERTY scope=default name=dad_transmits value=1 observed_ns=255865151016
+IPV6_DEVICE_PROPERTY scope=default name=enhanced_dad value=1 observed_ns=255865329176
+IPV6_DEVICE_PROPERTY scope=default name=router_solicitations value=0 observed_ns=255865452946
+IPV6_DEVICE_PROPERTY scope=default name=max_addresses value=16 observed_ns=255865570626
+IPV6_DEVICE_PROPERTY scope=default name=disable_ipv6 value=0 observed_ns=255865695996
+IPV6_DEVICE_PROPERTY scope=eth0 name=addr_gen_mode value=2 observed_ns=255865999836
+IPV6_DEVICE_PROPERTY scope=eth0 name=accept_ra value=0 observed_ns=255867463926
+IPV6_DEVICE_PROPERTY scope=eth0 name=autoconf value=0 observed_ns=255867601606
+IPV6_DEVICE_PROPERTY scope=eth0 name=dad_transmits value=1 observed_ns=255867717476
+IPV6_DEVICE_PROPERTY scope=eth0 name=enhanced_dad value=1 observed_ns=255867830556
+IPV6_DEVICE_PROPERTY scope=eth0 name=router_solicitations value=0 observed_ns=255867965526
+IPV6_DEVICE_PROPERTY scope=eth0 name=max_addresses value=16 observed_ns=255869409326
+IPV6_DEVICE_CONTROL lane=1 phase=0 kind=0 action=1 subject=0 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=255870268946
+IPV6_DEVICE_CONTROL lane=1 phase=1 kind=1 action=1 subject=0 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=255876712406
+IPV6_DEVICE_CONTROL lane=1 phase=2 kind=11 action=1 subject=0 stage=0 flags=1 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=255882453706
+IPV6_DEVICE_PROPERTY scope=eth0 name=disable_ipv6 value=0 observed_ns=255889342466
+IPV6_DEVICE_CONTROL lane=1 phase=3 kind=2 action=1 subject=0 stage=10 flags=8c0 preferred=4294967295 valid=4294967295 target=fe800000000000008004c31ca1593ef6 observed_ns=256808859886
+IPV6_DEVICE_CONTROL lane=1 phase=4 kind=12 action=1 subject=0 stage=0 flags=8c0 preferred=4294967295 valid=4294967295 target=fe800000000000008004c31ca1593ef6 observed_ns=256812376256
+IPV6_DEVICE_CONTROL lane=1 phase=5 kind=2 action=1 subject=0 stage=14 flags=8c0 preferred=4294967295 valid=4294967295 target=fe8000000000000062270cd796d3afe6 observed_ns=256821370576
+IPV6_DEVICE_CONTROL lane=1 phase=6 kind=7 action=1 subject=0 stage=0 flags=0 preferred=0 valid=0 target=fd000000000000000000000000000010 observed_ns=256824881046
+IPV6_DEVICE_CONTROL lane=1 phase=7 kind=6 action=1 subject=0 stage=0 flags=1043 preferred=1500 valid=1 target=00000000000000000000000000000000 observed_ns=256830970876
+IPV6_DEVICE_CONTROL lane=1 phase=8 kind=2 action=1 subject=0 stage=0 flags=8c0 preferred=4294967295 valid=4294967295 target=fe8000000000000062270cd796d3afe6 observed_ns=256836014126
+IPV6_DEVICE_CONTROL lane=1 phase=9 kind=2 action=1 subject=0 stage=0 flags=8c8 preferred=4294967295 valid=4294967295 target=fe800000000000008004c31ca1593ef6 observed_ns=256841208536
+IPV6_DEVICE_CONTROL lane=1 phase=10 kind=3 action=1 subject=0 stage=0 flags=2 preferred=1 valid=0 target=00000000000000000000000000000000 observed_ns=256843358096
+IPV6_DEVICE_CONTROL lane=1 phase=11 kind=4 action=1 subject=0 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=256847882046
+IPV6_DEVICE_CONTROL lane=1 phase=12 kind=6 action=1 subject=0 stage=1 flags=1043 preferred=1279 valid=0 target=00000000000000000000000000000000 observed_ns=256854787606
+IPV6_DEVICE_CONTROL lane=1 phase=13 kind=3 action=1 subject=0 stage=1 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=256859026626
+IPV6_DEVICE_CONTROL lane=1 phase=14 kind=6 action=1 subject=0 stage=2 flags=1043 preferred=1279 valid=0 target=00000000000000000000000000000000 observed_ns=260982447146
+IPV6_DEVICE_CONTROL lane=1 phase=15 kind=3 action=1 subject=0 stage=2 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=260985543706
+IPV6_DEVICE_CONTROL lane=1 phase=16 kind=4 action=1 subject=0 stage=1 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=260989582656
+IPV6_DEVICE_CONTROL lane=1 phase=17 kind=6 action=1 subject=0 stage=3 flags=1043 preferred=1500 valid=1 target=00000000000000000000000000000000 observed_ns=260996683476
+IPV6_DEVICE_CONTROL lane=1 phase=18 kind=10 action=1 subject=0 stage=3 flags=880 preferred=4294967295 valid=4294967295 target=fe800000000000009f80ae30a6dbc6e6 observed_ns=262378940036
+IPV6_DEVICE_CONTROL lane=1 phase=19 kind=7 action=1 subject=0 stage=4 flags=0 preferred=0 valid=0 target=fd000000000000000000000000000100 observed_ns=266492957566
+IPV6_DEVICE_CONTROL lane=1 phase=20 kind=6 action=1 subject=0 stage=4 flags=1043 preferred=1500 valid=1 target=00000000000000000000000000000000 observed_ns=266496794546
+IPV6_DEVICE_CONTROL lane=1 phase=21 kind=2 action=1 subject=0 stage=4 flags=880 preferred=4294967295 valid=4294967295 target=fe800000000000009f80ae30a6dbc6e6 observed_ns=266501629046
+IPV6_DEVICE_CONTROL lane=1 phase=22 kind=3 action=1 subject=0 stage=4 flags=1 preferred=1 valid=0 target=00000000000000000000000000000000 observed_ns=266505290946
+IPV6_DEVICE_CONTROL lane=1 phase=23 kind=8 action=1 subject=0 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=266507443556
+IPV6_DEVICE_PROPERTY scope=eth0 name=disable_ipv6 value=1 observed_ns=266513845646
+IPV6_DEVICE_PROPERTY scope=eth1 name=addr_gen_mode value=2 observed_ns=266515239076
+IPV6_DEVICE_PROPERTY scope=eth1 name=accept_ra value=0 observed_ns=266516159316
+IPV6_DEVICE_PROPERTY scope=eth1 name=autoconf value=0 observed_ns=266516320096
+IPV6_DEVICE_PROPERTY scope=eth1 name=dad_transmits value=1 observed_ns=266516451276
+IPV6_DEVICE_PROPERTY scope=eth1 name=enhanced_dad value=1 observed_ns=266516557426
+IPV6_DEVICE_PROPERTY scope=eth1 name=router_solicitations value=0 observed_ns=266516663026
+IPV6_DEVICE_PROPERTY scope=eth1 name=max_addresses value=16 observed_ns=266516768436
+IPV6_DEVICE_CONTROL lane=0 phase=0 kind=0 action=1 subject=1 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=266516781456
+IPV6_DEVICE_CONTROL lane=0 phase=1 kind=1 action=1 subject=1 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=266520827716
+IPV6_DEVICE_CONTROL lane=0 phase=2 kind=11 action=1 subject=1 stage=0 flags=1 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=266524368066
+IPV6_DEVICE_PROPERTY scope=eth1 name=disable_ipv6 value=0 observed_ns=266530888226
+IPV6_DEVICE_CONTROL lane=0 phase=3 kind=2 action=1 subject=1 stage=10 flags=8c0 preferred=4294967295 valid=4294967295 target=fe80000000000000f1151342acb63d09 observed_ns=266674939916
+IPV6_DEVICE_CONTROL lane=0 phase=4 kind=12 action=1 subject=1 stage=0 flags=8c0 preferred=4294967295 valid=4294967295 target=fe80000000000000f1151342acb63d09 observed_ns=266679329466
+IPV6_DEVICE_CONTROL lane=0 phase=5 kind=2 action=1 subject=1 stage=14 flags=8c0 preferred=4294967295 valid=4294967295 target=fe80000000000000566ca548a455418b observed_ns=266695923236
+IPV6_DEVICE_CONTROL lane=0 phase=6 kind=7 action=1 subject=1 stage=0 flags=0 preferred=0 valid=0 target=fd000000000000000000000000000011 observed_ns=266701462656
+IPV6_DEVICE_CONTROL lane=0 phase=7 kind=6 action=1 subject=1 stage=0 flags=1043 preferred=1500 valid=1 target=00000000000000000000000000000000 observed_ns=266705608736
+IPV6_DEVICE_CONTROL lane=0 phase=8 kind=2 action=1 subject=1 stage=0 flags=8c0 preferred=4294967295 valid=4294967295 target=fe80000000000000566ca548a455418b observed_ns=266712198386
+IPV6_DEVICE_CONTROL lane=0 phase=9 kind=2 action=1 subject=1 stage=0 flags=8c8 preferred=4294967295 valid=4294967295 target=fe80000000000000f1151342acb63d09 observed_ns=266716396346
+IPV6_DEVICE_CONTROL lane=0 phase=10 kind=3 action=1 subject=1 stage=0 flags=2 preferred=1 valid=0 target=00000000000000000000000000000000 observed_ns=266720308496
+IPV6_DEVICE_CONTROL lane=0 phase=11 kind=4 action=1 subject=1 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=266727559516
+IPV6_DEVICE_CONTROL lane=0 phase=12 kind=6 action=1 subject=1 stage=1 flags=1043 preferred=1279 valid=0 target=00000000000000000000000000000000 observed_ns=266733252286
+IPV6_DEVICE_CONTROL lane=0 phase=13 kind=3 action=1 subject=1 stage=1 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=266739685276
+IPV6_DEVICE_CONTROL lane=0 phase=14 kind=6 action=1 subject=1 stage=2 flags=1043 preferred=1279 valid=0 target=00000000000000000000000000000000 observed_ns=270854458486
+IPV6_DEVICE_CONTROL lane=0 phase=15 kind=3 action=1 subject=1 stage=2 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=270857686156
+IPV6_DEVICE_CONTROL lane=0 phase=16 kind=4 action=1 subject=1 stage=1 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=270863601136
+IPV6_DEVICE_CONTROL lane=0 phase=17 kind=6 action=1 subject=1 stage=3 flags=1043 preferred=1500 valid=1 target=00000000000000000000000000000000 observed_ns=270869755266
+IPV6_DEVICE_CONTROL lane=0 phase=18 kind=10 action=1 subject=1 stage=3 flags=880 preferred=4294967295 valid=4294967295 target=fe800000000000009f80ae30a6dbc6e6 observed_ns=272099446106
+IPV6_DEVICE_CONTROL lane=0 phase=19 kind=7 action=1 subject=1 stage=4 flags=0 preferred=0 valid=0 target=fd000000000000000000000000000100 observed_ns=276210923446
+IPV6_DEVICE_CONTROL lane=0 phase=20 kind=6 action=1 subject=1 stage=4 flags=1043 preferred=1500 valid=1 target=00000000000000000000000000000000 observed_ns=276213531266
+IPV6_DEVICE_CONTROL lane=0 phase=21 kind=2 action=1 subject=1 stage=4 flags=880 preferred=4294967295 valid=4294967295 target=fe800000000000009f80ae30a6dbc6e6 observed_ns=276219792466
+IPV6_DEVICE_CONTROL lane=0 phase=22 kind=3 action=1 subject=1 stage=4 flags=1 preferred=1 valid=0 target=00000000000000000000000000000000 observed_ns=276223423846
+IPV6_DEVICE_CONTROL lane=0 phase=23 kind=8 action=1 subject=1 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=276226193366
+IPV6_DEVICE_PROPERTY scope=eth1 name=disable_ipv6 value=1 observed_ns=276229271256
+IPV6_DEVICE_CONTROL lane=1 phase=24 kind=9 action=1 subject=0 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=276229334876
+IPV6_DEVICE_CONTROL lane=0 phase=24 kind=9 action=1 subject=1 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=276232549536
+IPV6_DEVICE_PASS adapters=2 action=mtu state=regenerating quiet_seconds=4
+TCP_FAULT_NATIVE_DONE status=0

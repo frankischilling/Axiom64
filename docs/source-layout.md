@@ -51,6 +51,14 @@ Controlled DAD comparisons use `userspace/tests/net/ipv6_dad.c` and its bounded 
 
 The corresponding-source bundle walks kernel and userspace folders recursively, so it includes the same sources and headers used by the build. [Testing](testing.md) describes the existing guest and host suites; [architecture](architecture.md) describes interfaces and current limits.
 
+Device transition clients share `userspace/tests/net/ipv6_device_fixture.h`.
+The ready and pending programs retain separate state contracts. Their shared
+`scripts/ipv6_device_frames.py` decoder reads original physical captures; the
+live peer does not supply its acceptance decisions. `qemu_capture_delivery.py`
+waits for complete captured frames before guest conflict acknowledgments. Its
+regressions retain an actual ordering failure and a real first-inventory ready
+observation under a predefined delayed acknowledgment.
+
 ## Formatting
 
 The root `.clang-format` contains C++20 and C profiles. Kernel sources, headers, and host tests use the C++ profile. Userspace C sources use the C profile, and native C++ test programs use the C++ profile. Both preserve include order and use four spaces and a 100-column limit. Function bodies use multiple lines, and `SeparateDefinitionBlocks: Always` inserts a blank line between function, class, struct, and enum definitions. Keep one blank line between function prototypes too; `MaxEmptyLinesToKeep: 1` preserves that spacing. The Makefile continues to select C11 and C++20 for compilation.

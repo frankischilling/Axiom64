@@ -1,0 +1,50 @@
+[
+  {
+    "packets": 59,
+    "dropped": 0,
+    "buffer_bytes": 8388608,
+    "monotonic_receipts": "lane0.clocks.jsonl",
+    "monotonic_receipts_sha256": "bbc95f2379d84bc68fc12e6bc0023ec5032bab0cde7637840cb507a314797bb2",
+    "receipt_frames": 59,
+    "original_packet_times_not_rescaled": true,
+    "clock_start": {
+      "receipt_monotonic_ns": 241385857746,
+      "receipt_realtime_ns": 1792874870491445509,
+      "receipt_monotonic_after_ns": 241385883136
+    },
+    "clock_stop": {
+      "receipt_monotonic_ns": 276363442936,
+      "receipt_realtime_ns": 1792874905469029869,
+      "receipt_monotonic_after_ns": 276363465846
+    },
+    "clock_end": {
+      "receipt_monotonic_ns": 276391567546,
+      "receipt_realtime_ns": 1792874905497148899,
+      "receipt_monotonic_after_ns": 276391582676
+    }
+  },
+  {
+    "packets": 58,
+    "dropped": 0,
+    "buffer_bytes": 8388608,
+    "monotonic_receipts": "lane1.clocks.jsonl",
+    "monotonic_receipts_sha256": "22b134fddd512476dc93f894106e98034a67e653603ba78e5f4a84b55babca3d",
+    "receipt_frames": 58,
+    "original_packet_times_not_rescaled": true,
+    "clock_start": {
+      "receipt_monotonic_ns": 242995331726,
+      "receipt_realtime_ns": 1792874872100917289,
+      "receipt_monotonic_after_ns": 242995354926
+    },
+    "clock_stop": {
+      "receipt_monotonic_ns": 276392899556,
+      "receipt_realtime_ns": 1792874905498482369,
+      "receipt_monotonic_after_ns": 276392917246
+    },
+    "clock_end": {
+      "receipt_monotonic_ns": 276439160886,
+      "receipt_realtime_ns": 1792874905544861489,
+      "receipt_monotonic_after_ns": 276439296456
+    }
+  }
+]

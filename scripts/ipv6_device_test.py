@@ -19,18 +19,24 @@ from fetch import ROOT
 from ipv6_configuration_test import adapter_model, guest_identity
 from ipv6_device_capture import inspect
 from ipv6_device_peer import Peer, Carrier
+from ipv6_device_pending_peer import Peer as PendingPeer
+from ipv6_device_pending_capture import inspect as inspect_pending, STATES as PENDING_STATES
+from qemu_capture_delivery import Delivery
 from tcp_fault_native import Capture
 from tcp_fault_test import exercise
 from tcp_fixture_inputs import audit_fixture, digest
 
 SOURCE = 'userspace/tests/net/ipv6_device_lifecycle.c'
-def marker(action):
-    return f'IPV6_DEVICE_PASS adapters=2 action={action} state=ready quiet_seconds=4'
+PENDING_SOURCE = 'userspace/tests/net/ipv6_device_pending.c'
+STATES = ('ready', *PENDING_STATES)
+def marker(action, state="ready"):
+    return f'IPV6_DEVICE_PASS adapters=2 action={action} state={state} quiet_seconds=4'
 
 
-def build(profile, directory):
-    program = directory / ('ipv6-device-' + profile)
-    flags = ['-std=gnu11', '-O2', '-g', '-Wall', '-Wextra', '-Werror', SOURCE]
+def build(profile, directory, state="ready"):
+    program = directory / ('ipv6-device-' + ('pending-' if state != 'ready' else '') + profile)
+    source = SOURCE if state == 'ready' else PENDING_SOURCE
+    flags = ['-std=gnu11', '-O2', '-g', '-Wall', '-Wextra', '-Werror', source]
     if profile == 'native':
         command = ['gcc', *flags, '-o', str(program)]
         inputs = sources(command, ROOT)
@@ -47,7 +53,7 @@ def build(profile, directory):
 
 
 def source_inputs(guest):
-    names = {SOURCE, 'userspace/tests/net/ipv6_fixture.h', 'userspace/tests/net/ipv6_dad_inventory.h', 'Makefile', 'dependencies.json',
+    names = {SOURCE, PENDING_SOURCE, 'userspace/tests/net/ipv6_device_fixture.h', 'userspace/tests/net/ipv6_fixture.h', 'userspace/tests/net/ipv6_dad_inventory.h', 'Makefile', 'dependencies.json',
              'sources.lock.json', 'boot/limine.conf'}
     for module in list(sys.modules.values()):
         name = getattr(module, '__file__', None)
@@ -63,19 +69,22 @@ def source_inputs(guest):
     return {name:digest(ROOT / name) for name in sorted(names)}
 
 
-def outcome(directory, text, reports, error, status, native=False, statistics=None, action="administrative"):
-    receipt = dict(action=action, returncode=status, error=error, peer_reports=reports,
+def outcome(directory, text, reports, error, status, native=False, statistics=None, action="administrative", state="ready"):
+    receipt = dict(action=action, state=state, returncode=status, error=error, peer_reports=reports,
                    log_sha256=digest(directory / 'serial.log'), full_DAD_acceptance=False)
     receipt['functional_passed'] = (status == (0 if native else 1) and error is None and
         len(reports) == 2 and all(row['passed'] for row in reports) and
-        text.splitlines().count(marker(action)) == 1 and
+        text.splitlines().count(marker(action, state)) == 1 and
         not any(marker in text for marker in ('IPV6_DEVICE_FAIL', 'PANIC:', 'FAULT pid=')))
     audits, audit_error = [], None
     if receipt['functional_passed']:
         try:
-            audits = [inspect(directory / f'lane{lane}.pcap', lane, text, action, native=native,
-                              statistics=statistics if native else None,
-                              native_kernel_release=platform.release() if native else None) for lane in range(2)]
+            reader = inspect if state == 'ready' else inspect_pending
+            options = {} if state == 'ready' else dict(state=state)
+            audits = [reader(directory / f'lane{lane}.pcap', lane, text, action, native=native,
+                             statistics=statistics if native else None,
+                             native_kernel_release=platform.release() if native else None,
+                             **options) for lane in range(2)]
         except (ValueError, OSError) as exception:
             audit_error = str(exception)
     receipt.update(capture_audits=audits, capture_audit_error=audit_error,
@@ -85,13 +94,16 @@ def outcome(directory, text, reports, error, status, native=False, statistics=No
     return receipt
 
 
-def guest_run(profile, firmware, transport, case, action):
+def guest_run(profile, firmware, transport, case, action, state="ready"):
     directory = case / (firmware + '-' + transport)
     directory.mkdir(exist_ok=False)
     workspace = tempfile.TemporaryDirectory(prefix='axiom64-ipv6-device-')
     monitor = Path(workspace.name) / 'qmp.sock'
     carrier = Carrier(directory / 'carrier.json', monitor) if action == 'carrier' else None
-    peers, servers = [Peer(lane, action, carrier=carrier) for lane in range(2)], []
+    delivery = Delivery(directory) if state != 'ready' else None
+    peers = [Peer(lane, action, carrier=carrier) if state == 'ready' else
+             PendingPeer(lane, action, state, carrier=carrier, delivery=delivery) for lane in range(2)]
+    servers = []
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '256M',
         '-nic', 'none', '-cdrom', str(case / 'image.iso'), '-display', 'none', '-serial', 'stdio',
         '-monitor', 'none', '-qmp', f'unix:{monitor},server=on,wait=off', '-no-reboot', '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
@@ -119,7 +131,7 @@ def guest_run(profile, firmware, transport, case, action):
             if carrier is not None:
                 carrier.close()
             workspace.cleanup()
-    receipt = outcome(directory, text, reports, error, status, action=action)
+    receipt = outcome(directory, text, reports, error, status, action=action, state=state)
     identity = guest_identity(text, firmware, transport)
     receipt.update(profile=profile, firmware=firmware, transport=transport, command=command,
                    actual_firmware_and_adapters=identity)
@@ -137,7 +149,9 @@ def native_child(args):
     for scope in ('all', 'default'):
         Path(f'/proc/sys/net/ipv6/conf/{scope}/disable_ipv6').write_text('1\n')
     carrier = Carrier(args.directory / 'carrier.json') if args.action == 'carrier' else None
-    peers, channels, captures = [Peer(lane, args.action, native=True, carrier=carrier) for lane in range(2)], [], []
+    peers = [Peer(lane, args.action, native=True, carrier=carrier) if args.state == 'ready' else
+             PendingPeer(lane, args.action, args.state, native=True, carrier=carrier) for lane in range(2)]
+    channels, captures = [], []
     offloads = {}
     for lane in range(2):
         for command in (
@@ -160,8 +174,10 @@ def native_child(args):
         channels.append(channel)
         captures.append(Capture(f'bridge{lane}', args.directory / f'lane{lane}.pcap'))
     (args.directory / 'offloads.json').write_text(json.dumps(offloads, indent=2) + '\n')
-    program = args.directory.parent.parent / ('ipv6-device-' + args.child)
+    program = args.program.resolve()
     command = [str(program), '--action', args.action]
+    if args.state != 'ready':
+        command += ['--state', args.state]
     if args.child == 'dynamic':
         command.insert(0, str(loader('build')))
     audit_compile(program, ROOT)
@@ -188,7 +204,7 @@ def native_child(args):
                     monitor_errors.append(str(exception))
             if carrier is not None:
                 carrier.close()
-    receipt = outcome(args.directory, text, reports, error, status, native=True, statistics=statistics, action=args.action)
+    receipt = outcome(args.directory, text, reports, error, status, native=True, statistics=statistics, action=args.action, state=args.state)
     unchanged = all(digest(ROOT / name) == wanted for name, wanted in inputs.items())
     receipt.update(profile=args.child, command=command, actual_process_exit=code, captures=statistics,
         packet_monitor_errors=monitor_errors,
@@ -205,6 +221,8 @@ def main():
     parser.add_argument('--native', action='store_true')
     parser.add_argument('--directory', type=Path, default=ROOT / 'build/ipv6-device-wire')
     parser.add_argument('--action', choices=('administrative','mtu','carrier','all'), default='all')
+    parser.add_argument('--state', choices=(*STATES, 'all'), default='all')
+    parser.add_argument('--program', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--firmware', choices=('bios','uefi','both'), default='both')
     parser.add_argument('--transport', choices=('modern','legacy','e1000','all'), default='all')
     parser.add_argument('--linkage', choices=('static','dynamic','both'), default='both')
@@ -220,11 +238,13 @@ def main():
         raise SystemExit(result.returncode)
     args.directory = args.directory.resolve()
     if args.child:
-        if args.action == 'all':parser.error('native child needs one explicit action')
+        if args.action == 'all' or args.state == 'all' or args.program is None:
+            parser.error('native child needs an explicit action, state and program')
         raise SystemExit(0 if native_child(args)['passed'] else 1)
     if args.native and os.geteuid():
         raise ValueError('native device lifecycle comparisons require isolated privileged namespaces')
     actions = ('administrative','mtu','carrier') if args.action == 'all' else (args.action,)
+    states = STATES if args.state == 'all' else (args.state,)
     args.directory.mkdir(parents=True, exist_ok=False)
     inputs = source_inputs(not args.native)
     (args.directory / 'source-inputs.json').write_text(json.dumps(inputs,indent=2) + '\n')
@@ -233,46 +253,56 @@ def main():
     profiles = ('static','dynamic','native') if args.native else (('static','dynamic') if args.linkage == 'both' else (args.linkage,))
     rows,cases = [],[]
     for profile in profiles:
-        program,manifest = build(profile,args.directory)
-        for action in actions:
-            case = args.directory / action / profile
-            case.parent.mkdir(exist_ok=True)
-            command = '/bin/ipv6-device --action ' + action
-            if args.native:
-                launch = ['unshare','--mount','--net','--pid','--fork','--mount-proc',sys.executable,
-                    str(Path(__file__).resolve()),'--child',profile,'--action',action,'--directory',str(case),
-                    '--parent-net-ns',str(Path('/proc/self/ns/net').stat().st_ino)]
-                result = subprocess.run(launch,cwd=ROOT)
-                receipt = json.loads((case / 'receipt.json').read_text())
-                receipt['passed'] &= result.returncode == 0
-                rows.append(receipt)
-                print(f'IPV6_DEVICE_NATIVE {action}/{profile} passed={receipt["passed"]}',flush=True)
-            else:
-                case.mkdir()
-                def builder(provider,linkage,directory):return program,manifest
-                image = fixture(case,'build',profile,program_builder=builder,filename='ipv6-device',
-                    command=command,extra_products={'source/client.c':ROOT / SOURCE,
-                    'source/ipv6_fixture.h':ROOT / 'userspace/tests/net/ipv6_fixture.h',
-                    'source/ipv6_dad_inventory.h':ROOT / 'userspace/tests/net/ipv6_dad_inventory.h',
-                    'source/client.inputs.json':program.with_suffix('.inputs.json')})
-                products = json.loads((case / 'products.json').read_text())
-                audit_fixture(image,products['kernel.elf']['sha256'],
-                    {name:row['sha256'] for name,row in products.items() if name not in ('image.iso','root.cpio','kernel.elf')},
-                    ('#!/bin/sh\nset -e\n'+command+'\necho AXIOM64_TESTS_PASS\n').encode())
-                cases.extend((profile,firmware,transport,case,action)
-                    for firmware in (('bios','uefi') if args.firmware == 'both' else (args.firmware,))
-                    for transport in (('modern','legacy','e1000') if args.transport == 'all' else (args.transport,)))
+        programs = {}
+        for state in states:
+            family = 'ready' if state == 'ready' else 'pending'
+            if family not in programs:
+                programs[family] = build(profile, args.directory, state)
+            program, manifest = programs[family]
+            for action in actions:
+                case = args.directory / state / action / profile
+                case.parent.mkdir(parents=True, exist_ok=True)
+                command = '/bin/ipv6-device --action ' + action
+                if state != 'ready':
+                    command += ' --state ' + state
+                if args.native:
+                    launch = ['unshare','--mount','--net','--pid','--fork','--mount-proc',sys.executable,
+                        str(Path(__file__).resolve()),'--child',profile,'--action',action,'--directory',str(case),
+                        '--parent-net-ns',str(Path('/proc/self/ns/net').stat().st_ino),
+                        '--state',state,'--program',str(program)]
+                    result = subprocess.run(launch,cwd=ROOT)
+                    receipt = json.loads((case / 'receipt.json').read_text())
+                    receipt['passed'] &= result.returncode == 0
+                    rows.append(receipt)
+                    print(f'IPV6_DEVICE_NATIVE {state}/{action}/{profile} passed={receipt["passed"]}',flush=True)
+                else:
+                    case.mkdir()
+                    def builder(provider,linkage,directory):return program,manifest
+                    image = fixture(case,'build',profile,program_builder=builder,filename='ipv6-device',
+                        command=command,extra_products={'source/client.c':ROOT / (SOURCE if state == 'ready' else PENDING_SOURCE),
+                        'source/ipv6_device_fixture.h':ROOT / 'userspace/tests/net/ipv6_device_fixture.h',
+                        'source/ipv6_fixture.h':ROOT / 'userspace/tests/net/ipv6_fixture.h',
+                        'source/ipv6_dad_inventory.h':ROOT / 'userspace/tests/net/ipv6_dad_inventory.h',
+                        'source/client.inputs.json':program.with_suffix('.inputs.json')})
+                    products = json.loads((case / 'products.json').read_text())
+                    audit_fixture(image,products['kernel.elf']['sha256'],
+                        {name:row['sha256'] for name,row in products.items() if name not in ('image.iso','root.cpio','kernel.elf')},
+                        ('#!/bin/sh\nset -e\n'+command+'\necho AXIOM64_TESTS_PASS\n').encode())
+                    cases.extend((profile,firmware,transport,case,action,state)
+                        for firmware in (('bios','uefi') if args.firmware == 'both' else (args.firmware,))
+                        for transport in (('modern','legacy','e1000') if args.transport == 'all' else (args.transport,)))
     if not args.native:
         with ThreadPoolExecutor(max_workers=args.workers) as workers:
             pending = [workers.submit(guest_run,*case) for case in cases]
             for completed in as_completed(pending):
                 row = completed.result();rows.append(row)
-                print(f'IPV6_DEVICE_GUEST {row["action"]}/{row["profile"]}/{row["firmware"]}/{row["transport"]} passed={row["passed"]}',flush=True)
+                print(f'IPV6_DEVICE_GUEST {row["state"]}/{row["action"]}/{row["profile"]}/{row["firmware"]}/{row["transport"]} passed={row["passed"]}',flush=True)
                 (args.directory / 'results.json').write_text(json.dumps(rows,indent=2) + '\n')
     unchanged = all(digest(ROOT / name) == wanted for name,wanted in inputs.items())
     proof = dict(passed=bool(rows) and all(row['passed'] for row in rows) and unchanged,profiles=len(rows),
-        actions=actions,source_unchanged=unchanged,full_matrix=len(rows)==len(actions)*(3 if args.native else 12),
-        ready_device_lifecycle_subset=True,full_F12_complete=False)
+        actions=actions,states=states,source_unchanged=unchanged,
+        full_matrix=len(rows)==len(states)*len(actions)*(3 if args.native else 12),
+        device_lifecycle_subset=True,full_F12_complete=False)
     (args.directory / 'results.json').write_text(json.dumps(rows,indent=2) + '\n')
     (args.directory / 'acceptance.json').write_text(json.dumps(proof,indent=2) + '\n')
     print(json.dumps(proof),flush=True)

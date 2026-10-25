@@ -263,3 +263,40 @@ open both guest images, parse 864 original raw netlink transactions and compare
 1,080 observations. They reject 162 archived changed records. These are device ABI
 checks. The expanded device-state matrix above supplies separate local wire
 coverage. Full current-revision hosted acceptance remains required.
+
+
+## Native router reference scheduling
+
+The router client still requires the exact final `DEPRECATED` flag within one
+second, correct preferred and protected valid lifetimes, and the configured
+connected prefix. The complete three-linkage native comparison uses the same
+client and packet scenarios as before. A host wrapper keeps packet processing
+and unbound address work on one available CPU for that command, records actual
+affinities, and restores the original settings after success, failure or
+cancellation. The stock SMP kernel remains unchanged. The wrapper requires a
+dedicated reference host because its temporary worker mask is global.
+
+A [retained native diagnosis](https://github.com/frankischilling/Axiom64/actions/runs/40199257659)
+reproduces the Linux 6.17 worker race on its tenth trial. The last prefix requests
+immediate work while another CPU scans addresses; that worker rearms the same
+item for 120,680 jiffies. No following worker runs for 121.715 seconds, and the
+original one-second assertion remains failed. A separate observation records
+the actual flag 120.721 seconds after that failure.
+
+The [controlled scheduling experiment](https://github.com/frankischilling/Axiom64/actions/runs/40200539095)
+uses the same stock four-CPU kernel and byte-identical C executable. All 3,000
+trials pass without changing the advertisement, clocks, flags or original bound.
+Independent readers reopen 3,036 frames, 12,000 final address records and 96,297
+trace events with zero drops, and verify both original masks were restored.
+This experiment diagnoses the native fixture; it does not qualify complete
+router behavior or current-revision hosted feature acceptance.
+
+
+The [complete native fixture qualification](https://github.com/frankischilling/Axiom64/actions/runs/40201420532)
+passes all three original libc/linkage profiles and five actual ownership,
+failed-exit and cancellation controls. All three executables are byte-identical
+to their counterparts in the original failed comparison. Independent readers
+reopen all six captures and 72 first-PIO records with the original clocks and
+strict lifetime, flag and packet checks. Both original affinities are restored.
+The full current-revision feature workflow and matching downloaded evidence
+remain required before integration.

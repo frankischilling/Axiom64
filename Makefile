@@ -734,11 +734,14 @@ test-ipv6-socket-configuration:
 	$(PYTHON) scripts/ipv6_configuration_test.py --socket-mode --directory build/ipv6-socket-configuration-wire
 test-ipv6-socket-configuration-native:
 	$(PYTHON) scripts/ipv6_configuration_test.py --socket-mode --native --directory build/ipv6-socket-configuration-native
+.PHONY: test-native-address-worker
+test-native-address-worker:
+	$(PYTHON) scripts/tests/native_address_worker_test.py
 .PHONY: test-ipv6-router test-ipv6-router-native
 test-ipv6-router:
 	$(PYTHON) scripts/ipv6_router_test.py --directory build/ipv6-router-wire
 test-ipv6-router-native:
-	$(PYTHON) scripts/ipv6_router_test.py --native --directory build/ipv6-router-native
+	$(PYTHON) scripts/native_address_worker.py --receipt build/ipv6-router-native-worker.json -- $(PYTHON) scripts/ipv6_router_test.py --native --directory build/ipv6-router-native
 .PHONY: test-ipv6-ownership test-ipv6-ownership-native
 
 test-ipv6-ownership:

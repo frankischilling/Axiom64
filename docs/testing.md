@@ -4,6 +4,24 @@
 
 `sudo -n python3 scripts/ipv4_alias_native.py` compares labelled address lifetimes with three native Linux linkages and two captured TAP links each. The normal guest IPv4 profiles exercise the same alias client on both adapters. Alias packets must retain their selected source and hardware identity across primary deletion. Independent capture checks run after each native or normal guest comparison; twenty-two damaged fixtures per adapter must fail. Captures, original logs and compressed negative fixtures remain in the evidence artifacts. Sanitizer inventory/route checks and thirteen damaged peer controls run in the existing build job; native alias evidence stays in the network job. Both musl IPv4 clients compile with the pinned target UAPI helper. Complete current-revision acceptance remains required.
 
+The native IPv6 router comparison runs on a dedicated reference host through
+`scripts/native_address_worker.py`. It selects one CPU shared by the calling
+process and unbound workers, records the actual masks and child affinity, then
+restores the original settings. The stock SMP kernel, all three libc/linkage
+profiles, both adapters, original packets, expected flags and sixty-second
+profile deadlines remain in use. This scheduling constraint prevents a measured
+Linux address-worker race from losing an immediate deprecation update. It does
+not change guest scheduling or the one-second flag observation bound.
+
+`sudo -n make test-native-address-worker` checks actual CPU-mask ownership,
+successful and failed commands, SIGTERM/SIGINT cancellation, child retirement
+and competing ownership. The native router receipt is retained as
+`build/ipv6-router-native-worker.json`; these controls retain their logs and
+results under `build/native-address-worker-tests/`. The wrapper changes the
+host's global unbound-workqueue mask temporarily. Use the native target only on
+a dedicated test host. An unexpected outside mask change fails the run while
+preserving that other owner's value.
+
 Run the full test suite:
 
 ```sh

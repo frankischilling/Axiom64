@@ -1024,7 +1024,7 @@ jobs:
         run: make test-ipv6-router
       - name: Compare controlled IPv6 router discovery with three isolated Linux linkages
         if: matrix.suite == 'configuration'
-        run: sudo -n make test-ipv6-router-native
+        run: sudo -n make test-native-address-worker test-ipv6-router-native
       - name: Verify IPv6 stable DAD conflicts and prefix ownership on real guest adapters
         if: matrix.suite == 'configuration'
         run: python3 scripts/ipv6_dad_test.py --directory build/ipv6-dad-wire
@@ -1073,6 +1073,8 @@ jobs:
             build/ipv6-socket-configuration-native
             build/ipv6-router-wire
             build/ipv6-router-native
+            build/ipv6-router-native-worker.json
+            build/native-address-worker-tests
             build/ipv6-dad-wire
             build/ipv6-dad-native
             build/ipv6-owner-wire

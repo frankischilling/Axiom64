@@ -112,3 +112,10 @@ traces, profile results, commands and image/source bindings without using the li
 peer's validator. `scripts/tests/udp_capture_test.py` archives and freshly reopens
 physical and metadata corruptions; `udp_capture_fixture_test.py` exercises unchanged
 actual captures under `scripts/tests/fixtures/udp-wire/`.
+
+
+`scripts/native_address_worker.py` owns temporary host CPU-mask changes for the
+native router reference. It serializes ownership, propagates command exits,
+retires its child process group on cancellation and records restoration.
+`scripts/tests/native_address_worker_test.py` exercises those paths against the
+actual host masks. Guest clients and kernel sources do not use this helper.

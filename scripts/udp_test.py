@@ -17,7 +17,7 @@ from qmp import Qmp
 from network_fault import inject
 
 
-def run(firmware, transport, timeout=90, fault=False, debugger_delay=0):
+def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *, capture_directory=None, image=None):
     label = f'udp-{firmware}-{transport}' + ('-fault' if fault else '')
     log = ROOT / 'build' / (label + '.log')
     selector = selectors.DefaultSelector()
@@ -29,7 +29,7 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0):
     debugger = debug_log = None
     servers, peers = [], [Peer(lane, fault) for lane in range(2)]
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '2G',
-               '-cdrom', str(ROOT / 'build/udp-test.iso'), '-nic', 'none', '-display', 'none',
+               '-cdrom', str(image or ROOT / 'build/udp-test.iso'), '-nic', 'none', '-display', 'none',
                '-serial', 'stdio', '-monitor', 'none', '-no-reboot',
                '-qmp', f'unix:{control},server=on,wait=off',
                '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
@@ -52,6 +52,13 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0):
         shutil.copyfile('/usr/share/OVMF/OVMF_VARS_4M.fd', variables)
         command += ['-drive', 'if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd',
                     '-drive', f'if=pflash,format=raw,file={variables}']
+    if capture_directory is not None:
+        capture_directory = Path(capture_directory)
+        capture_directory.mkdir(parents=True, exist_ok=False)
+        for lane in range(2):
+            command += ['-object', f'filter-dump,id=retained{lane},netdev=peer{lane},'
+                        f'file={capture_directory}/lane{lane}.pcap']
+        (capture_directory / 'command.json').write_text(json.dumps(command, indent=2) + '\n')
     started, timed_out, error = time.monotonic(), False, None
     with log.open('wb') as output:
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)

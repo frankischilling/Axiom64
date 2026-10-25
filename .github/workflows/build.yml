@@ -242,6 +242,7 @@ jobs:
           python3 scripts/tests/packet_protocol_test.py -v 2>&1 | tee build/ipv4-policy/packet-protocol.log
           python3 scripts/tests/packet_protocol_observation_test.py --archive build/ipv4-policy/packet-protocol-observation-damaged.zip -v 2>&1 | tee build/ipv4-policy/packet-protocol-observation.log
           python3 scripts/tests/tcp_icmp_observer_clock_test.py --archive build/ipv4-policy/icmp-observer-clock-damaged.zip -v 2>&1 | tee build/ipv4-policy/icmp-observer-clock.log
+          python3 scripts/tests/udp_capture_fixture_test.py --archive build/ipv4-policy/udp-wire-damaged.zip -v 2>&1 | tee build/ipv4-policy/udp-wire.log
           python3 scripts/tests/administrative_flags_test.py -v 2>&1 | tee build/ipv4-policy/administrative-flags.log
           python3 scripts/tests/manager_link_state_test.py -v 2>&1 | tee build/ipv4-policy/manager-link-state.log
           python3 scripts/tests/ipv6_device_record_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-device-record.log
@@ -1478,6 +1479,7 @@ jobs:
           name: axiom64-evidence-${{ matrix.suite }}
           path: |
             build/*.log
+            build/udp-wire/**
             build/*.trace
             build/*.gdb
             build/*results.json

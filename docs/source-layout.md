@@ -97,3 +97,12 @@ and the direction-specific relationship between driver and independent packet
 timestamps. The shared clock binder exposes exact realtime metadata only when
 requested. `scripts/tests/tcp_icmp_observer_clock_test.py` uses original bytes
 under `scripts/tests/fixtures/icmp-observer-clock/` and archives damaged copies.
+
+`scripts/udp_inputs.py` retains the actual static UDP client, compiler/provider
+inputs and both immutable boot images. `udp_matrix.py` runs the existing eight
+profiles through `udp_test.py`, which adds passive captures when an evidence
+directory is supplied. `scripts/udp_capture.py` checks complete original physical
+traces, profile results, commands and image/source bindings without using the live
+peer's validator. `scripts/tests/udp_capture_test.py` archives and freshly reopens
+physical and metadata corruptions; `udp_capture_fixture_test.py` exercises unchanged
+actual captures under `scripts/tests/fixtures/udp-wire/`.

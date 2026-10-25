@@ -33,3 +33,5 @@ scripts/tests/fixtures/packet-protocol-observation/**/serial.log -text -whitespa
 scripts/tests/fixtures/icmp-observer-clock/serial.log -text
 scripts/tests/fixtures/icmp-observer-clock/tcp-icmp-linux-static-lane0.clocks.jsonl -text
 scripts/tests/fixtures/icmp-observer-clock/tcp-icmp-linux-static-lane0.pcap -text
+scripts/tests/fixtures/udp-wire/**/*.pcap binary
+scripts/tests/fixtures/udp-wire/**/serial.log -text -whitespace

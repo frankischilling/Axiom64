@@ -45,10 +45,42 @@ musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread userspace/tests/
 
 The matrix requires eight boots: BIOS/UEFI and modern/legacy virtio, each with normal traffic and a real virtio RX completion fault. The modern UEFI fault case adds five seconds of debugger setup delay to prove that host startup cannot consume guest ARP deadlines. Both adapters run together. The host peers construct and validate Ethernet/IP/UDP packets independently; guest socket operations execute in the kernel.
 
-Normal cases require odd and maximum-MTU payloads, zero payloads, checksum-zero encoding, fourteen malformed forms per interface, source/peer filtering, client and server exchanges, loss/duplication/reordering, exact ICMP quotes, broadcast copies, byte quotas, and 48 proven broadcast arrivals retaining the oldest 32 on a lagging socket. A 33rd send blocks behind 32 unresolved outputs; the host then checks all original ports and payloads after descriptor and buffer replacement. QMP changes carrier state, and administrative state is tested separately. Administrative shutdown must clear both `IFF_UP` and `IFF_RUNNING`; the client records the queried flags before checking `ENETDOWN` and restored transfers. The corrected observer passes all eight local guest cases with the original ninety-second bound and delayed UEFI fault case. Independent inspection opens both images and sixteen passive captures, checks the flag records and selected recovery/fault-isolation transfers, and rejects 76 serialized and reopened corruptions. Broader independent UDP scenario coverage and final-source hosted qualification remain required.
+Normal cases require odd and maximum-MTU payloads, zero payloads, checksum-zero encoding, fourteen malformed forms per interface, source/peer filtering, client and server exchanges, loss/duplication/reordering, exact ICMP quotes, broadcast copies, byte quotas, and 48 proven broadcast arrivals retaining the oldest 32 on a lagging socket. A 33rd send blocks behind 32 unresolved outputs; the host then checks all original ports and payloads after descriptor and buffer replacement. QMP changes carrier state, and administrative state is tested separately. Administrative shutdown must clear both `IFF_UP` and `IFF_RUNNING`; the client records the queried flags before checking `ENETDOWN` and restored transfers. The corrected observer passes all eight local guest cases with the original ninety-second bound and delayed UEFI fault case. Independent inspection opens both images and sixteen passive captures, checks the flag records and selected recovery/fault-isolation transfers, and rejects 76 serialized and reopened corruptions. That audit covers queried flags and selected transfers. Complete wire inspection is recorded below; final-source hosted and wider socket acceptance remain required.
 
 Common cases cover bind conflicts, disconnect policy, reused ports, shutdown, truncation and copy faults, zero-size receives, a 65507-byte loopback payload, retained receive metadata, interruption/restart, fork ownership, and 128 resource-reuse cycles. Guest checks also prove the exact 2048-byte send quota, including 28 header bytes. CI runs the common cases on native Linux. Fault cases pause the guest while GDB installs the breakpoint, then require the actual corrupted completion, persistent device errors, and an exchange on the remaining adapter. Results are `build/udp-results.json`; serial and debugger evidence use `build/udp-*.log` and `build/udp-*.gdb`.
 
 This slice does not implement multicast membership, UDP segmentation/offload, ancillary data, error queues, socket deadlines, message batches, Unix datagram data, or the complete Linux socket contract. Ports are sequential, and current tasks run as root; accounts, permissions, and secure randomness remain prerequisites for exposed services.
 
 Protocol references are [UDP](https://www.rfc-editor.org/rfc/rfc768), [host requirements](https://www.rfc-editor.org/rfc/rfc1122), and [UDP surplus-area handling](https://www.rfc-editor.org/rfc/rfc9868). Linux comparisons use [Linux 6.12 UDP](https://github.com/torvalds/linux/blob/v6.12/net/ipv4/udp.c), [Internet socket operations](https://github.com/torvalds/linux/blob/v6.12/net/ipv4/af_inet.c), and [IP sysctls](https://github.com/torvalds/linux/blob/v6.12/Documentation/networking/ip-sysctl.rst). The tested contracts cover the behavior above; complete conformance remains planned.
+
+The complete matrix now retains normal and failed-device images separately under
+`build/udp-wire/`, together with the actual kernel, client, original compile manifest,
+static libc inputs, sources, commands, serial logs and both passive physical captures.
+The UDP target uses the pinned UAPI compiler helper and rebuilds when its recipes
+or locked inputs change. The unchanged C source produces the same executable bytes
+in the local preflight; the common native test also passes.
+
+`python3 scripts/udp_capture.py` independently checks the complete captured wire
+scenario and opens both actual images. It checks exact datagram order and bytes,
+all declared malformed variants, quoted errors, broadcast arrivals and acknowledgments,
+retained pending sends, address resolution and both recovery paths. It validates
+bootstrap IPv6 traffic separately before the static IPv4 exchange. The reader also
+requires the original guest completion records, numeric administrative queries,
+producer counters and emulator command.
+
+`make test-udp` runs the original eight guest profiles and then archives and freshly
+reopens damaged physical, result, log, command and input evidence. The existing
+ninety-second deadlines and delayed UEFI fault remain required. The source fixtures
+under `scripts/tests/fixtures/udp-wire/` retain actual normal and fault captures;
+`python3 scripts/tests/udp_capture_fixture_test.py --archive build/udp-fixture-damaged.zip -v`
+checks all four captures and 244 archived changes without running a guest.
+The updated public controller passes all eight local profiles with the original
+client bytes and unchanged kernel. Independent readers open both images and
+inspect sixteen captures containing 1,709 frames. All 1,370 archived and freshly
+extracted corruptions reject: 976 physical, 372 profile and 22 source/product
+controls. The quick actual-data fixture retains 244 additional checks. A review
+first preserves two accepted copies with an invalid PCAP timestamp fraction and
+an unrelated image directory. The corrected reader rejects both, and reopens
+the original successful guests without repeating them. Original raw packet times,
+source epochs and earlier reader receipts remain preserved. Complete current-source
+hosted and wider socket acceptance remain required.

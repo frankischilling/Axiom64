@@ -432,9 +432,9 @@ build/ipv4-native: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments
 build/ipv4-dynamic: userspace/tests/net/ipv4.c userspace/tests/net/ipv4_fragments.c userspace/tests/net/ipv4_fragments.h userspace/tests/net/ipv4_path_mtu.c userspace/tests/net/ipv4_path_mtu.h userspace/tests/net/ipv4_query.h userspace/tests/net/ipv4_aliases.c userspace/tests/net/ipv4_aliases.h userspace/tests/net/ipv4_gateways.c userspace/tests/net/ipv4_gateways.h userspace/tests/net/ipv4_unconfigured.c userspace/tests/net/ipv4_unconfigured.h scripts/compile_uapi_client.py scripts/linux_uapi.py scripts/build_openssl.py ports.lock.json
 	@mkdir -p build
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^)
-build/udp-tests: userspace/tests/net/udp.c
+build/udp-tests: userspace/tests/net/udp.c scripts/compile_uapi_client.py scripts/linux_uapi.py scripts/build_openssl.py ports.lock.json scripts/build_musl.py sources.lock.json dependencies.json Makefile
 	@mkdir -p build
-	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $(filter %.c,$^)
 build/dns-static: userspace/tests/net/dns.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread $< -o $@
@@ -655,6 +655,7 @@ test-ipv4-gateways-native:
 	$(PYTHON) scripts/ipv4_alias_native.py --suite gateways
 test-udp:
 	$(PYTHON) scripts/udp_matrix.py
+	$(PYTHON) scripts/tests/udp_capture_test.py
 build/netlink-codec-host: kernel/tests/net/netlink.cpp kernel/net/netlink/routes.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp kernel/tests/net/ipv6_disabled.cpp kernel/net/ipv6/wire.cpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@

@@ -1,0 +1,49 @@
+{
+  "cases": [
+    {
+      "fault": false,
+      "files": {
+        "lane0.pcap": {
+          "bytes": 27690,
+          "sha256": "eaca2d6710bb0263a40260acdd1a5be6a8751a71744b7733501cbfd258024aef"
+        },
+        "lane1.pcap": {
+          "bytes": 27690,
+          "sha256": "c9b9c0fbae1f4c2cff221e3bd90f62e48defc40bf3a84f198ba078b3194c04df"
+        },
+        "serial.log": {
+          "bytes": 2476,
+          "sha256": "572228bea427ab1be44466062bff4f49b22f93f2c42564c46df0447ba032ef10"
+        }
+      },
+      "source_commit": "c6348f606b68ff7c305d800855992b955196e2d8",
+      "actual_kernel_sha256": "0f1670c7e39b7d9855d383b4ab6400a23e45ae7803ce6a0c830fd7a0c6a3c681",
+      "actual_client_sha256": "eea951e5ef7797fd611050c51b85a3721392074ed3060894e48840e814d7fccd",
+      "original_producer_passed": true,
+      "full_matrix_acceptance": false
+    },
+    {
+      "fault": true,
+      "files": {
+        "lane0.pcap": {
+          "bytes": 278,
+          "sha256": "73fab4331399774e67c026677467d792e584f6db2226b155578a05b1c00b851e"
+        },
+        "lane1.pcap": {
+          "bytes": 456,
+          "sha256": "017aa21b560ef9b5a5f814a8f954eadf91261ba09b8833eeedf5dba24010dd9c"
+        },
+        "serial.log": {
+          "bytes": 1656,
+          "sha256": "66503c2ef6542d50a1061ff03dfca50f55136ec8f5df85b530f6227f63eb8777"
+        }
+      },
+      "source_commit": "c6348f606b68ff7c305d800855992b955196e2d8",
+      "actual_kernel_sha256": "0f1670c7e39b7d9855d383b4ab6400a23e45ae7803ce6a0c830fd7a0c6a3c681",
+      "actual_client_sha256": "eea951e5ef7797fd611050c51b85a3721392074ed3060894e48840e814d7fccd",
+      "original_producer_passed": true,
+      "full_matrix_acceptance": false
+    }
+  ],
+  "source_epoch": "original complete UDP captures; reader-only regression fixtures"
+}

@@ -1,0 +1,23 @@
+name: Native IPv6 deprecation diagnosis
+on:
+  push:
+    branches: [diagnostic/ipv6-deprecation-native]
+permissions:
+  contents: read
+jobs:
+  collect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install native diagnostic tools
+        run: sudo apt-get update && sudo apt-get install -y gcc iproute2
+      - name: Collect original assertion and native worker scheduling
+        run: sudo --preserve-env=GITHUB_SHA python3 -B scripts/diagnostics/ipv6_deprecation.py --directory "$PWD/build/native-deprecation"
+      - name: Retain diagnostic evidence including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-ipv6-deprecation-diagnostic
+          path: build/native-deprecation/
+          retention-days: 7

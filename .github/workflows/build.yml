@@ -192,6 +192,7 @@ jobs:
           python3 scripts/build_libcap.py --provider all
           make -j2 build/tcp-native build/tcp-static build/tcp-dynamic
           make -j2 build/tcp-fault-native build/tcp-fault-static build/tcp-fault-dynamic
+          make -j2 build/tcp6-fault-native build/tcp6-fault-static build/tcp6-fault-dynamic
           make -j2 build/tcp-challenge-native build/tcp-challenge-static build/tcp-challenge-dynamic
           make -j2 build/tcp-malformed-native build/tcp-malformed-static build/tcp-malformed-dynamic
           make -j2 build/tcp-device-native build/tcp-device-static build/tcp-device-dynamic
@@ -777,6 +778,13 @@ jobs:
       - name: Verify actual TCP retransmissions on both emulated NICs
         if: matrix.suite == 'tcp-fault-loss'
         run: make test-tcp-fault
+      - name: Compare IPv6 TCP loss with all native and guest linkages and NICs
+        if: matrix.suite == 'tcp-fault-loss'
+        run: |
+          sudo -n python3 scripts/tests/tcp6_observation_test.py
+          sudo -n python3 scripts/tests/tcp6_native_cleanup_test.py
+          sudo -n make test-tcp6-wire-native
+          make test-tcp6-wire
       - name: Independently verify TCP loss captures and reject damaged evidence
         if: matrix.suite == 'tcp-fault-loss'
         run: |
@@ -1689,6 +1697,8 @@ jobs:
           if-no-files-found: error
           path: |
             build/axiom64-tcp-fault-*.iso
+            build/tcp6-native-wire/**
+            build/tcp6-guest-wire/**
             build/axiom64-tcp-reordering-*.iso
             build/axiom64-tcp-persist-*.iso
             build/axiom64-tcp-timeout-*.iso

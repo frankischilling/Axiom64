@@ -22,6 +22,26 @@ host's global unbound-workqueue mask temporarily. Use the native target only on
 a dedicated test host. An unexpected outside mask change fails the run while
 preserving that other owner's value.
 
+IPv6 TCP loss comparisons use `sudo -n make test-tcp6-wire-native` and
+`make test-tcp6-wire`. The existing TCP loss CI job runs all three native
+linkages and eight guest firmware/linkage/transport profiles, each with
+virtio-net and e1000. It retains both complete evidence directories, including
+boot images, source snapshots, exact clients, independent captures and damaged
+controls. It adds no job or replacement coverage. The default output directories
+must be new; use `scripts/tcp6_test.py --output-directory PATH` for another run.
+`python3 scripts/tcp6_audit.py DIRECTORY --output-directory NEW_PATH` independently
+reopens existing evidence without rerunning its producer. Kernel realtime packet
+timestamps remain untouched. A native monotonic arrival bracket of at most
+fifty milliseconds supplies a conservative lower bound for each retry interval;
+an overdue reader fails capture acceptance. The quiet-queue observer check is
+`sudo -n python3 scripts/tests/tcp6_observation_test.py`. These checks cover the
+active/passive loss subset; ICMPv6, PMTU and full TCP6 lifetime acceptance remain
+open.
+
+`sudo -n python3 scripts/tests/tcp6_native_cleanup_test.py` injects a peer failure
+after an actual native client starts. The wrapper and client must retire as one
+owned process group, and both TAP interfaces must disappear.
+
 Run the full test suite:
 
 ```sh

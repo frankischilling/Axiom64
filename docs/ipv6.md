@@ -387,8 +387,27 @@ Sanitized Ethernet host cases verify exact retry bytes, deferred MTU failure,
 stale errors, soft-error consumption, rejected ACKs and bounded cancellation.
 Run `make test-tcp-pmtu test-tcp-connection test-ipv6-wire test-tcp6-native`.
 
-The error and MTU path currently has host-model evidence. Real-interface guest
-active/passive traffic, paired native ICMPv6/PMTU captures, source/route lifetime
-rules, wider IPv6 socket controls, dual-stack failure cases and full
-current-revision fault and timing matrices remain required. Complete IPv6 TCP
-acceptance remains unfinished.
+`make test-tcp6-wire` exercises actual active and passive Ethernet streams on
+virtio-net and e1000, across BIOS/UEFI, static/dynamic musl and modern/legacy
+virtio. `sudo -n make test-tcp6-wire-native` runs the same client with glibc and
+both musl linkages in isolated Linux network namespaces. Each profile transfers
+65,536 exact bytes in each direction on four streams. The controlled peer drops
+the first handshake, data and FIN transmissions. Independent captures must prove
+their retransmissions, original elapsed timer bounds, peer sequence wrap,
+advertised MSS limits and acknowledged half-closes. The IPv4 loss client and
+state machine remain shared; only address configuration and wire encoding vary.
+
+Each run retains complete public source, compiler inputs, exact executables,
+packet captures and logs. The guest reader reopens the actual ISO kernel,
+initramfs, loader, program and boot script. Native captures retain original
+kernel realtime timestamps and separately bound packet arrivals with actual
+empty-queue and receive observations on the monotonic clock. Timer checks use
+the conservative difference between these bounds; timestamps are never
+translated or rescaled. Existing native IPv4 and IPv6 clock readers keep their
+original requirements. Freshly reopened damaged packets, byte patterns, timing,
+compiler bindings, ELF linkage and boot-product bindings must be rejected.
+
+The error and MTU path still has host-model evidence. Paired native/guest
+ICMPv6/PMTU captures, source/route lifetime rules, wider IPv6 socket controls,
+dual-stack failure cases and complete current-revision fault and timing matrices
+remain required. Complete IPv6 TCP acceptance remains unfinished.

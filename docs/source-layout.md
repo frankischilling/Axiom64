@@ -129,7 +129,8 @@ fixed packet checks. The local IPv6 TCP application client is under
 `userspace/tests/net/tcp6/`. `kernel/net/tcp/ipv6.cpp` owns the IPv6 stream
 syscall front; both families keep the common connection/socket engine.
 `net/tcp/address.hpp` defines canonical wire identities and binding overlap.
-Real-interface and route/error/lifetime integration remain unfinished.
+Real-interface loss recovery has paired native/guest checks; full
+route/error/lifetime integration remains unfinished.
 The shared connection engine selects family-specific fallback MSS without
 duplicating its state machine. `isn.cpp` retains one keyed hash implementation
 and separate IPv4/IPv6 tuple encodings. The IPv6 output queue accepts a transport
@@ -145,3 +146,10 @@ and timer policy. `kernel/tests/net/tcp_ipv6_error.cpp` exercises the actual
 Ethernet/error/output path. The shared MSS lifecycle client is
 `userspace/tests/net/tcp_maxseg.c`; `tcp6/mss.c` selects IPv6 without copying
 its option, alias, inheritance and reconnect cases.
+
+The IPv6 Ethernet loss coordinator is `scripts/tcp6_test.py`. Its focused
+`scripts/tcp6/` package separates wire encoding, native TAP ownership, guest
+boots, source/product binding, monotonic packet observations and independent
+capture reconstruction. `scripts/tcp6_audit.py` reopens retained evidence and
+serialized damaged controls. The client uses `TCP_IPV6` in the existing
+`userspace/tests/net/tcp_fault.c`; IPv4 keeps the same workload and deadlines.

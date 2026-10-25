@@ -961,6 +961,17 @@ build/tcp6-local-native: userspace/tests/net/tcp6/local.c
 	@mkdir -p build
 	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
 .PHONY: test-tcp6-native
+build/tcp6-fault-native: userspace/tests/net/tcp_fault.c userspace/tests/net/ipv6_fixture.h
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DTCP_IPV6 $< -o $@
+build/tcp6-fault-static build/tcp6-fault-dynamic: userspace/tests/net/tcp_fault.c userspace/tests/net/ipv6_fixture.h scripts/compile_uapi_client.py
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -DTCP_IPV6 $(if $(filter %-static,$@),-static) $(filter %.c,$^)
+.PHONY: test-tcp6-wire test-tcp6-wire-native
+test-tcp6-wire:
+	$(PYTHON) scripts/tcp6_test.py
+test-tcp6-wire-native:
+	$(PYTHON) scripts/tcp6_test.py --native
 build/tcp6-mss-native: userspace/tests/net/tcp6/mss.c userspace/tests/net/tcp_maxseg.c userspace/tests/net/tcp_maxseg.h
 	@mkdir -p build
 	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $(filter %.c,$^) -o $@

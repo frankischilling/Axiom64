@@ -13,6 +13,12 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef TCP_IPV6
+#define IPV6_TEST_LABEL "TCP6_FAULT"
+#define IPV6_BARRIER_PROTOCOL 0x88c1
+#define IPV6_BARRIER_MAGIC "IP6T"
+#include "ipv6_fixture.h"
+#endif
 #ifdef TCP_CHALLENGE
 #include <sys/wait.h>
 #endif
@@ -39,7 +45,11 @@ static uint64_t milliseconds(void) {
     return (uint64_t)value.tv_sec * 1000 + value.tv_nsec / 1000000;
 }
 
-static void configure(void) {
+static void configure_interfaces(void) {
+#ifdef TCP_IPV6
+    CHECK(close(fixture_interfaces()) == 0);
+    puts("TCP6_FAULT_CONFIG_PASS nics=2");
+#else
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     CHECK(fd >= 0);
     for (unsigned lane = 0; lane < 2; lane++) {
@@ -57,18 +67,29 @@ static void configure(void) {
     }
     CHECK(close(fd) == 0);
     puts("TCP_FAULT_CONFIG_PASS nics=2");
+#endif
 }
 
 static void flow(unsigned lane, unsigned role) {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    int fd = socket(
+#ifdef TCP_IPV6
+        AF_INET6,
+#else
+        AF_INET,
+#endif
+        SOCK_STREAM, 0);
     CHECK(fd >= 0);
     struct timeval timeout = {20, 0};
     CHECK(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0);
     CHECK(setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) == 0);
+#ifdef TCP_IPV6
+    struct sockaddr_in6 destination = address(lane, role ? 2 : 1, (role ? 44010 : 44000) + lane, 0);
+#else
     struct sockaddr_in destination = {.sin_family = AF_INET,
                                       .sin_port = htons((role ? 44010 : 44000) + lane),
                                       .sin_addr.s_addr =
                                           htonl((role ? 0x0a170102 : 0x0a170101) + (lane << 8))};
+#endif
     uint64_t started = milliseconds();
     if (!role) {
         CHECK(connect(fd, (struct sockaddr*)&destination, sizeof(destination)) == 0);
@@ -116,10 +137,14 @@ int main(int argc, char** argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
     signal(SIGPIPE, SIG_IGN);
     alarm(120);
-    if (argc == 1)
-        configure();
-    else
+    if (argc != 1)
         CHECK(argc == 2 && !strcmp(argv[1], "--native"));
+#ifdef TCP_IPV6
+    configure_interfaces();
+#else
+    if (argc == 1)
+        configure_interfaces();
+#endif
 #ifdef TCP_CHALLENGE
     if (argc == 1) {
         // QEMU's e1000 receive-control write starts a one-second queue flush delay.
@@ -154,5 +179,8 @@ int main(int argc, char** argv) {
 #endif
     CHECK(usleep(200000) == 0);
     puts("TCP_FAULT_PASS flows=4 bytes_each=65536");
+#ifdef TCP_IPV6
+    puts("TCP6_FAULT_PASS flows=4 bytes_each=65536");
+#endif
     return 0;
 }

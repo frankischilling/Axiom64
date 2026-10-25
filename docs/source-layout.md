@@ -72,3 +72,28 @@ make check-format
 ```
 
 The targets cover project C/C++ sources and headers under `kernel/` and `userspace/`. Imported headers under `vendor/` retain their upstream formatting. Set `CLANG_FORMAT=/path/to/clang-format-20` when the executable uses another name. Clang-format 20 or newer can read the separate C profile; version 20 is used for the checked formatting. CI runs `make check-format`, and the corresponding-source bundle includes the configuration.
+
+`kernel/tests/net/packet.cpp` exercises the production packet demultiplexer with
+captured bytes. `scripts/tests/packet_protocol_test.py` builds that sanitizer model.
+The shared `userspace/tests/net/packet.c` listener check runs in ordinary Ethernet
+boots and in the isolated three-linkage comparison under
+`scripts/packet_protocol_native.py`. Native orchestration and retained evidence
+remain outside the kernel and guest implementation.
+
+`network_test.packet_protocol_observations` checks ordered numeric listener
+queries and completion records for both guest and native comparisons.
+`scripts/tests/packet_protocol_observation_test.py` uses unchanged actual logs
+under `scripts/tests/fixtures/packet-protocol-observation/` to check ordinary,
+fault and pressure modes and serialized corruptions.
+
+`scripts/tcp_capture_link.py` reconciles non-IPv4 receipts from the ICMP, PMTU
+and pressure observers against original Ethernet records. Its negative writer
+preserves unrelated raw records. `scripts/tests/tcp_capture_link_test.py` retains
+and freshly reopens damaged real-profile receipts; `tcp_packet_observer_test.py`
+wraps the actual C collectors and injects late frames through isolated adapters.
+
+`scripts/tcp_icmp_capture.py` checks guest packet ordering, native dequeue order
+and the direction-specific relationship between driver and independent packet
+timestamps. The shared clock binder exposes exact realtime metadata only when
+requested. `scripts/tests/tcp_icmp_observer_clock_test.py` uses original bytes
+under `scripts/tests/fixtures/icmp-observer-clock/` and archives damaged copies.

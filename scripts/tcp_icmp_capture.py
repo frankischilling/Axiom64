@@ -9,6 +9,7 @@ from tcp_capture_clock import bind_native_clock, microseconds
 import re
 import struct
 from fetch import ROOT
+from tcp_capture_link import audit_link_receipts, fnv
 
 
 def require(value, message):
@@ -23,13 +24,6 @@ def checksum(data):
     while total > 65535:
         total = (total & 65535) + (total >> 16)
     return total ^ 65535
-
-
-def fnv(frame):
-    result = 0xcbf29ce484222325
-    for byte in frame:
-        result = (result ^ byte) * 0x100000001b3 & 0xffffffffffffffff
-    return f'{result:016x}'
 
 
 def within(item, start, end):
@@ -81,13 +75,34 @@ def capture_receipts(text):
     return receipts
 
 
+def audit_driver_receipt_clocks(receipts, native=False):
+    # Native packet timestamps can precede socket enqueueing by different
+    # amounts. The recorded dequeue clock describes their delivery order.
+    field = 'dequeue_ms' if native else 'packet_realtime_ns'
+    clocks = [value[field] for value in receipts]
+    require(clocks == sorted(clocks),
+            'ordered native driver dequeue clocks' if native else 'ordered guest driver packet clocks')
+
+
+def audit_native_observer_clocks(items):
+    for item in items:
+        driver = item['packet_realtime_ns']
+        physical = item['capture_realtime_ns']
+        if item['outgoing']:
+            require(driver <= physical, 'native outgoing driver stamp precedes independent receive')
+        else:
+            require(physical <= driver, 'native incoming driver stamp follows independent transmit')
+
+
 def packets(path, statistics=None):
     raw = path.read_bytes()
     require(len(raw) >= 24 and raw[:4] == bytes.fromhex('d4c3b2a1'), 'PCAP header')
     header = struct.unpack_from('<IHHIIII', raw)
     require(header[1:3] == (2, 4) and header[6] == 1, 'Ethernet PCAP version')
     at, previous, rows = 24, 0, []
+    record_index = -1
     while at < len(raw):
+        record_index += 1
         require(at + 16 <= len(raw), 'complete PCAP record')
         seconds, microseconds, size, original = struct.unpack_from('<IIII', raw, at)
         at += 16
@@ -113,10 +128,10 @@ def packets(path, statistics=None):
                     'actual TCP header, payload bounds and pseudo-header checksum')
         else:
             require(ip[9] == 1, 'only TCP and ICMP in the isolated fixture')
-        rows.append(dict(stamp=stamp, frame=frame, ip=ip[:total], body=body, protocol=ip[9]))
+        rows.append(dict(record_index=record_index, stamp=stamp, frame=frame, ip=ip[:total], body=body, protocol=ip[9]))
     require(rows, 'nonempty actual traffic')
     if statistics is not None:
-        bind_native_clock(path, rows, statistics)
+        bind_native_clock(path, rows, statistics, include_realtime=True)
     return rows
 
 
@@ -447,9 +462,11 @@ def audit_row(root, row, cases, input_root=None, host_libraries=None):
             all_packets.append(item)
         _, index, count, dropped, ip_count = next(value for value in capture_stats if int(value[0]) == lane)
         lane_receipts = [value for value in receipts if value['lane'] == lane]
-        clocks = [value['packet_realtime_ns'] for value in lane_receipts]
-        require(int(count) >= int(ip_count) == len(lane_receipts) and int(dropped) == 0 and clocks == sorted(clocks) and
+        require(int(count) >= int(ip_count) == len(lane_receipts) and int(dropped) == 0 and
                 all(value['index'] == int(index) for value in lane_receipts), 'zero-drop driver receipt accounting and clocks')
+        audit_driver_receipt_clocks(lane_receipts, native)
+        audit_link_receipts(text, 'ICMP', root / row['captures'][lane], lane,
+                            int(index), int(count), int(ip_count))
         if not native:
             require(int(index) == lane + 1, 'actual virtio/e1000 driver observer index')
     require(actual == expected and bool(actual), f'every independent IPv4 packet has its exact actual driver receipt: missing={list((expected-actual).items())[:4]} extra={list((actual-expected).items())[:4]}')
@@ -550,6 +567,8 @@ def audit_row(root, row, cases, input_root=None, host_libraries=None):
     require(text.count('ICMP_BLOCKED_READ_PASS lane=0 error=111') == 1 and
             set(re.findall(r'^ICMP_SOFT_CONSUMED lane=(\d+) error=111\r?$', text, re.M)) == {'0', '1'},
             'actual blocked read and SO_ERROR soft consumption')
+    if native:
+        audit_native_observer_clocks(all_packets)
     return dict(linkage=row['linkage'], native=native, captures=len(frames), cases=114, cycles=128,
                 companion_streams=4, companion_checkpoints=4 * (len(cases) + 10),
                 quoted_errors=sum(quoted.values()), stale_quotes=sum(stale_quotes.values()),

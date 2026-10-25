@@ -336,3 +336,29 @@ Observer shutdown retains its real 100 ms observation, joins the collector, reti
 Native packet timing retains the original kernel timestamp and an independent paired realtime/monotonic receipt for every frame. Paired anchors bracket capture startup and completion. The reader requires one clock offset supported by both anchors and all frame pairs and applies that constant translation to the kernel timestamps. Reader scheduling cannot enlarge or compress packet intervals; inconsistent clock offsets reject the evidence. Linux documents the [packet timestamp clock](https://docs.kernel.org/networking/timestamping.html) and [clock domains](https://docs.kernel.org/core-api/timekeeping.html).
 
 The complete PMTU and pressure audit commands require three unique native linkage profiles or all eight guest linkage, firmware and transport profiles. Missing, repeated, unknown or mixed profiles fail before artifact inspection. The per-row auditor remains available for focused diagnosis.
+
+The ICMP, PMTU and pressure observers use `ETH_P_ALL` to receive outgoing frames.
+They record each non-IPv4 receipt with its exact interface, direction, length,
+EtherType and frame hash. The reader reconciles the complete driver count with
+IPv4 and non-IPv4 receipts and binds each claimed frame to the independent capture.
+Capture prelude traffic can precede observer startup; unexplained driver packets
+and nonzero drops still reject. Damaged IPv4 fixtures retain every unrelated raw
+frame and timestamp.
+
+ICMP and pressure shutdown now retire their receive hooks and drain queued packets
+after joining the collector, as PMTU already does. The ICMP end clock anchor follows
+the final drains. `sudo -n python3 scripts/tests/tcp_packet_observer_test.py` wraps
+the actual three C observers, injects real frames after their collector joins,
+and checks all six native/guest capture branches. It reproduces four failures
+before retirement and passes all six branches afterward.
+
+Complete local qualification passes eight guest profiles per family and three
+native linkages per family on each of pinned Linux 6.17 and Linux 7: 42 profiles,
+six independently opened images and 84 original captures. Independent readers
+reject 1,940 archived and freshly extracted corruptions, including 924 non-IPv4
+receipt controls. Four additional archived clock controls and 720 native capture
+clock corruptions pass their rejection checks. The corrected reader reopens the
+original producer evidence with its actual source and product bindings. Earlier
+late-arrival, insufficient negative-control and invalid ordering-assumption results
+remain preserved. Complete current-source hosted and wider transport acceptance
+remain required.

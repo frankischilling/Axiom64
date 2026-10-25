@@ -1,0 +1,6 @@
+ICMP_CAPTURE_CLOCK phase=begin monotonic_before_ns=192638017274 realtime_ns=1792896910059729061 monotonic_after_ns=192638161494
+ICMP_CAPTURE_READY lane=0 index=6 timestamp_error=2
+ICMP_CAPTURE_READY lane=1 index=8 timestamp_error=2
+ICMP_FRAME lane=0 index=6 length=54 kind=4 hash=2cf82ca7b6b51ea8 monotonic_ms=193425 packet_realtime_ns=1792896910846767061 dequeue_ms=193426
+ICMP_FRAME lane=0 index=6 length=70 kind=0 hash=7b6310b732c5ee26 monotonic_ms=193425 packet_realtime_ns=1792896910846707961 dequeue_ms=193427
+ICMP_CAPTURE_CLOCK phase=end monotonic_before_ns=270397819334 realtime_ns=1792896987819403151 monotonic_after_ns=270397829214

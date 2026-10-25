@@ -176,6 +176,56 @@ static void received(const unsigned char* bytes, const unsigned char* sent, size
               "host frame metadata");
 }
 
+// A protocol-specific listener receives the peer reply without an outgoing copy.
+static void protocol_observation(int observer, const unsigned char* sent, size_t length,
+                                 const unsigned char mac[6], int index) {
+    struct pollfd item = {.fd = observer, .events = POLLIN};
+    check(poll(&item, 1, 3000) == 1 && (item.revents & POLLIN),
+          "protocol listener receives actual peer reply");
+    unsigned char bytes[1518];
+    struct sockaddr_ll address = {0};
+    socklen_t size = sizeof(address);
+    check(recvfrom(observer, bytes, sizeof(bytes), MSG_DONTWAIT, (struct sockaddr*)&address,
+                   &size) == (ssize_t)length &&
+              size == sizeof(address),
+          "protocol listener receives one complete frame");
+    printf("PACKET_PROTOCOL_OBSERVATION index=%d type=%u length=%zu\n", index, address.sll_pkttype,
+           length);
+    received(bytes, sent, length, &address, mac, index);
+    check(close(observer) == 0, "close protocol listener before pressure trials");
+    printf("PACKET_PROTOCOL_PASS index=%d\n", index);
+}
+
+// Run the same listener check on isolated native interfaces without device-only trials.
+static void protocol_selection(void) {
+    int control = socket(AF_PACKET, SOCK_RAW | SOCK_CLOEXEC, 0);
+    check(control >= 0, "protocol comparison control");
+    for (unsigned lane = 0; lane < 2; lane++) {
+        struct ifreq request = {0};
+        snprintf(request.ifr_name, sizeof(request.ifr_name), "eth%u", lane);
+        check(ioctl(control, SIOCGIFINDEX, &request) == 0, "protocol comparison interface");
+        int index = request.ifr_ifindex;
+        check(ioctl(control, SIOCGIFHWADDR, &request) == 0, "protocol comparison MAC");
+        unsigned char mac[6], sent[64], bytes[1518];
+        memcpy(mac, request.ifr_hwaddr.sa_data, 6);
+        check(ioctl(control, SIOCGIFFLAGS, &request) == 0, "protocol comparison flags");
+        request.ifr_flags |= IFF_UP;
+        check(ioctl(control, SIOCSIFFLAGS, &request) == 0, "protocol comparison interface up");
+        int sender = raw(index, PROTOCOL, 0), observer = raw(index, PROTOCOL, SOCK_NONBLOCK);
+        frame(sent, sizeof(sent), mac, lane, 0);
+        check(write(sender, sent, sizeof(sent)) == sizeof(sent), "protocol comparison sends frame");
+        protocol_observation(observer, sent, sizeof(sent), mac, index);
+        struct pollfd item = {.fd = sender, .events = POLLIN};
+        check(poll(&item, 1, 3000) == 1 && (item.revents & POLLIN) &&
+                  recv(sender, bytes, sizeof(bytes), 0) == sizeof(sent),
+              "protocol comparison sender receives exact reply");
+        received(bytes, sent, sizeof(sent), NULL, mac, index);
+        check(close(sender) == 0, "protocol comparison sender close");
+    }
+    check(close(control) == 0, "protocol comparison control close");
+    puts("PACKET_PROTOCOL_SELECTION_PASS lanes=2");
+}
+
 static void link_state(int control, struct ifreq* request, int index) {
     if (getenv("AXIOM64_LINK_TEST") && !strcmp(getenv("AXIOM64_LINK_TEST"), "0"))
         return;
@@ -386,6 +436,7 @@ static void nic(int control, int index, unsigned sequences) {
           "carrier");
     link_state(control, &request, index);
     int fd = raw(index, PROTOCOL, SOCK_CLOEXEC), observer = raw(index, PROTOCOL, SOCK_NONBLOCK);
+    int protocol_listener = raw(index, PROTOCOL, SOCK_NONBLOCK);
     int disabled = raw(index, 0, SOCK_NONBLOCK), other = raw(index, PROTOCOL + 1, SOCK_NONBLOCK);
     int one = 1;
     check(setsockopt(observer, SOL_PACKET, PACKET_IGNORE_OUTGOING, &one, sizeof(one)) == 0,
@@ -500,8 +551,10 @@ static void nic(int control, int index, unsigned sequences) {
             check(recv(observer, bytes, sizeof(bytes), 0) == (ssize_t)length,
                   "independent listener");
             received(bytes, sent, length, NULL, mac, index);
-            if (sequence == 0)
+            if (sequence == 0) {
+                protocol_observation(protocol_listener, sent, length, mac, index);
                 lazy_timestamp_probe(observer, index, first_arrival);
+            }
             check(recv(disabled, bytes, sizeof(bytes), 0) == -1 && errno == EAGAIN,
                   "zero protocol filter");
             check(recv(other, bytes, sizeof(bytes), 0) == -1 && errno == EAGAIN, "protocol filter");
@@ -626,6 +679,10 @@ int main(int argc, char** argv) {
         unsigned long value = strtoul(argv[2], &end, 10);
         check(value && value <= 0x3fffffff && !*end, "native receive maximum argument");
         maximum = (unsigned)value;
+    }
+    if (argc == 2 && !strcmp(argv[1], "protocol-selection")) {
+        protocol_selection();
+        return 0;
     }
     buffer_options(maximum);
     if (argc > 1 && !strcmp(argv[1], "buffer-options"))

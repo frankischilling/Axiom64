@@ -70,6 +70,31 @@ def reply(frame, lane):
     return guest + peer + frame[12:]
 
 
+def packet_protocol_observations(text, indices):
+    """Bind each protocol-listener query and pass to its actual selected interface."""
+    events, observations, passes = [], [], []
+    malformed = False
+    for line in text.splitlines():
+        if line.startswith('PACKET_PROTOCOL_OBSERVATION'):
+            match = re.fullmatch(r'PACKET_PROTOCOL_OBSERVATION index=(\d+) type=(\d+) length=(\d+)', line)
+            if match:
+                index, kind, length = map(int, match.groups())
+                observations.append(dict(index=index, type=kind, length=length))
+                events.append(('observation', index, kind, length))
+            else:
+                malformed = True
+        elif line.startswith('PACKET_PROTOCOL_PASS'):
+            match = re.fullmatch(r'PACKET_PROTOCOL_PASS index=(\d+)', line)
+            if match:
+                index = int(match[1])
+                passes.append(index)
+                events.append(('pass', index))
+            else:
+                malformed = True
+    expected = [event for index in indices for event in (('observation', index, 0, 64), ('pass', index))]
+    return dict(passed=not malformed and events == expected, observations=observations, passes=passes)
+
+
 def run(firmware, transport, models, queue, timeout, wrap, gdb=False, fault=None, status=True, mtu=0, pressure=False):
     label = f'network-{firmware}-{transport}-{"-".join(models)}-q{queue}{"-wrap" if wrap else ""}{"-fault-" + fault if fault else ""}{"-no-status" if not status else ""}{"-mtu" + str(mtu) if mtu else ""}{"-pressure" if pressure else ""}'
     log = ROOT / 'build' / (label + '.log')
@@ -240,7 +265,10 @@ def run(firmware, transport, models, queue, timeout, wrap, gdb=False, fault=None
     required += [f'virtio-net: index={lane + 1} transport={transport} rx={queue} tx=256'
                  if model == 'virtio' else f'e1000: index={lane + 1} model=82540EM rx=64 tx=64'
                  for lane, model in enumerate(models)]
+    if not fault and not pressure:
+        required += [f'PACKET_PROTOCOL_PASS index={lane + 1}' for lane in range(len(models))]
     missing = [marker for marker in required if marker not in text]
+    protocol = packet_protocol_observations(text, [] if fault or pressure else range(1, len(models) + 1))
     administrative_flags = [dict(index=int(index), flags=int(flags, 16)) for index, flags in re.findall(
         r'^PACKET_ADMIN_FLAGS index=(\d+) flags=([0-9a-f]+)\r?$', text, re.M)]
     administrative_flags_valid = (not administrative_flags if fault or pressure else
@@ -279,11 +307,13 @@ def run(firmware, transport, models, queue, timeout, wrap, gdb=False, fault=None
                   rx_queue=queue, tx_queue=256, wrap=wrap,
                   fault=fault, pressure=pressure, injected=injected, status_feature=status, host_mtu=mtu,
                   features_valid=features_valid,
+                  protocol_observations=protocol['observations'], protocol_passes=protocol['passes'],
+                  protocol_selection_valid=protocol['passed'],
                   administrative_flags=administrative_flags, administrative_flags_valid=administrative_flags_valid,
                   timestamp_observations=timestamp_observations, timestamps_valid=bool(timestamps_valid),
                   lazy_timestamp_observations=lazy_observations,
                   passed=returncode == 1 and not timed_out and not error and not missing and injected and
-                         features_valid and timestamps_valid and administrative_flags_valid and
+                         features_valid and timestamps_valid and administrative_flags_valid and protocol['passed'] and
                          [state['frames'] for state in peers] == expected_counts,
                   returncode=returncode, timed_out=timed_out, error=error, missing=missing,
                   host_frames=[state['frames'] for state in peers],

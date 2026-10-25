@@ -239,6 +239,9 @@ jobs:
           python3 scripts/tests/qemu_capture_delivery_test.py -v 2>&1 | tee build/ipv4-policy/qemu-capture-delivery.log
           python3 scripts/tests/ipv6_device_inventory_test.py --archive build/ipv4-policy/ipv6-device-inventory-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-device-inventory.log
           python3 scripts/tests/packet_administrative_test.py -v 2>&1 | tee build/ipv4-policy/packet-administrative.log
+          python3 scripts/tests/packet_protocol_test.py -v 2>&1 | tee build/ipv4-policy/packet-protocol.log
+          python3 scripts/tests/packet_protocol_observation_test.py --archive build/ipv4-policy/packet-protocol-observation-damaged.zip -v 2>&1 | tee build/ipv4-policy/packet-protocol-observation.log
+          python3 scripts/tests/tcp_icmp_observer_clock_test.py --archive build/ipv4-policy/icmp-observer-clock-damaged.zip -v 2>&1 | tee build/ipv4-policy/icmp-observer-clock.log
           python3 scripts/tests/administrative_flags_test.py -v 2>&1 | tee build/ipv4-policy/administrative-flags.log
           python3 scripts/tests/manager_link_state_test.py -v 2>&1 | tee build/ipv4-policy/manager-link-state.log
           python3 scripts/tests/ipv6_device_record_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-device-record.log
@@ -856,6 +859,7 @@ jobs:
         run: |
           dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' libc6:amd64 > build/tcp-icmp-native-package.txt
           cp /usr/share/doc/libc6/copyright build/tcp-icmp-native-copyright.txt
+          sudo -n python3 scripts/tests/tcp_packet_observer_test.py
           sudo -n python3 scripts/tests/tcp_icmp_error_order_test.py
           sudo -n make test-tcp-icmp-native
           make test-tcp-icmp-sockets
@@ -865,6 +869,7 @@ jobs:
         if: matrix.suite == 'tcp-fault-icmp'
         run: |
           sudo -n python3 scripts/packet_buffer_native.py
+          sudo -n python3 scripts/packet_protocol_native.py
           sudo -n make test-tcp-pmtu-native
           make test-tcp-pmtu-sockets
           python3 scripts/tcp_pmtu_capture.py build/tcp-pmtu-native-results.json --output build/tcp-pmtu-native-audit.json
@@ -877,6 +882,7 @@ jobs:
           python3 scripts/tcp_pressure_capture.py build/tcp-pressure-native-results.json --output build/tcp-pressure-native-audit.json
           python3 scripts/tcp_pressure_capture.py build/tcp-pressure-results.json --output build/tcp-pressure-guest-audit.json
           python3 scripts/tests/tcp_pressure_capture_test.py 2>&1 | tee build/tcp-pressure-damage.log
+          python3 scripts/tests/tcp_capture_link_test.py 2>&1 | tee build/tcp-link-receipt-damage.log
       - name: Verify disconnect sequence isolation and completed tuple ownership
         if: matrix.suite == 'tcp-fault-icmp'
         run: |
@@ -1031,8 +1037,15 @@ jobs:
         if: matrix.suite == 'configuration'
         run: sudo -n make test-ipv6-ownership-native
       - name: Verify IPv6 DAD states across administrative, carrier and MTU transitions
-        if: matrix.suite == 'configuration'
+        if: matrix.suite == 'ipv6-expiry'
         run: make test-ipv6-device
+      - name: Upload IPv6 device guest evidence
+        if: always() && matrix.suite == 'ipv6-expiry'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv6-device-wire
+          if-no-files-found: error
+          path: build/ipv6-device-wire
       - name: Compare IPv6 device DAD states with three isolated native Linux linkages
         if: matrix.suite == 'configuration'
         run: sudo -n make test-ipv6-device-native
@@ -1063,7 +1076,6 @@ jobs:
             build/ipv6-dad-native
             build/ipv6-owner-wire
             build/ipv6-owner-native
-            build/ipv6-device-wire
             build/ipv6-device-native
             build/ipv6-device-inventory-wire
             build/ipv6-device-inventory-native
@@ -1524,6 +1536,7 @@ jobs:
             build/tcp-pressure-*-inputs.json
             build/tcp-pressure-*-audit.json
             build/tcp-pressure-damaged/**
+            build/tcp-link-receipts-damaged/**
             build/tcp-reconnect-*-peer.json
             build/tcp-reconnect-*-inputs.json
             build/tcp-reconnect-*-audit.json
@@ -1539,6 +1552,7 @@ jobs:
             build/tcp-recovery-*-queue-*.gdb
             build/tcp-recovery-damaged/**
             build/packet-buffer-*-inputs.json
+            build/packet-protocol-native
             build/packet-buffer-native
             build/packet-buffer-static
             build/packet-buffer-dynamic
@@ -1675,6 +1689,7 @@ jobs:
             build/axiom64-tcp-fast-*.iso
             build/axiom64-tcp-lifetime-*.iso
             build/axiom64-tcp-icmp-*.iso
+            build/tcp-packet-observers/**
             build/tcp-pmtu-observer-retirement
             build/axiom64-tcp-pmtu-*.iso
             build/axiom64-tcp-pressure-*.iso

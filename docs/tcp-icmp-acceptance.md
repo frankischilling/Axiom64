@@ -84,14 +84,27 @@ observe a timely quote without falsely labeling its dequeue time as late deliver
 
 The complete matrix requires 22 captures, 1,254 finished cases, 1,408 descriptor
 cycles, 4,070 quoted errors, 1,386 stale quotes and 2,948 unrelated-stream checkpoints.
-Seventeen synchronized corruptions per
-capture must be rejected: wrong error, unowned sequence/address, omitted or noncausal
-error, stale quote relabeled current, poisoned or omitted recovery, shortened timeout
-and a forged product fingerprint, plus an omitted unrelated-stream reply. Six more
-controls forge the arrival conversion, omit the packet timestamp, place arrival after
-dequeue, omit a clock anchor, step its realtime clock or leave the observer unarmed. All 374
-damaged PCAP/journal/receipt/input bundles
+Seventeen synchronized corruptions per guest capture cover wrong errors, unowned
+sequences/addresses, omitted or noncausal errors, stale quotes relabeled current,
+poisoned or omitted recovery, shortened timeouts, forged product fingerprints and
+omitted unrelated-stream replies. Six of these controls forge the arrival
+conversion, omit the packet timestamp, place arrival after dequeue, omit a clock
+anchor, step its realtime clock or leave the observer unarmed. Native captures
+add three controls for reversed dequeue order and timestamps crossing either
+independent observation point. All 392 damaged PCAP/journal/receipt/input bundles
 are retained with rejection reasons and hashes under `build/tcp-icmp-damaged/`.
+
+Native socket dequeue order can differ from packet timestamp order: an original
+Linux 7 capture delivers two valid receipts with packet times reversed by 59.1
+microseconds. The reader checks their recorded dequeue order. It also requires
+each outgoing driver stamp to precede the independent receive stamp and each
+incoming driver stamp to follow the independent transmit stamp. It does not sort
+or rewrite those timestamps. Guest packet timestamp order remains required.
+Stable clock offsets, arrival-to-dequeue bounds, independent reader latency and
+all original protocol windows, counts, drops and deadlines remain enforced.
+`scripts/tests/tcp_icmp_observer_clock_test.py` retains the actual captured pair,
+checks both clock directions and reopens four archived corruptions. Full-profile
+negative controls also exercise these gates through the complete auditor.
 
 The `tcp-fault-icmp` profile runs in the [complete TCP profile matrix](ci-tcp-profiles.md).
 Every required job in the [full workflow](testing.md), including the shared build

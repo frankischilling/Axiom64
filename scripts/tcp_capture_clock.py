@@ -50,8 +50,11 @@ def native_clock_offset(receipts):
     require(lower <= upper, 'one stable native realtime-to-monotonic offset')
     return (lower + upper) // 2, upper - lower
 
-def bind_native_clock(path, rows, statistics):
+def bind_native_clock(path, rows, statistics, *, include_realtime=False):
     """Attach monotonic_ns without changing decoded frame, stamp or ms fields.
+
+    Opting into include_realtime also exposes the exact validated capture
+    timestamp, without changing the default decoded records.
 
     Every raw frame remains bound to its original kernel timestamp and receipt.
     One constant clock translation preserves every kernel packet interval.
@@ -139,6 +142,8 @@ def bind_native_clock(path, rows, statistics):
         # Reader scheduling can delay or batch recvmsg returns. It must not
         # enlarge or compress the independently captured wire interval.
         row['monotonic_ns'] = receipt['kernel_realtime_ns'] - offset
+        if include_realtime:
+            row['capture_realtime_ns'] = receipt['kernel_realtime_ns']
         delays.append(delay)
     require(delays, 'nonempty independently timed native workload')
     return dict(frames=count, timed_frames=len(delays),

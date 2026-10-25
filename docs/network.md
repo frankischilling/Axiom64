@@ -20,7 +20,7 @@ Network polling runs with serialized callers on one CPU, in syscall attempts and
 
 `read`/`write`, `readv`/`writev`, `sendto`/`recvfrom`, and `sendmsg`/`recvmsg` operate on whole frames. Raw sends preserve the caller's Ethernet header. The optional send address selects an interface. Input vectors, address metadata, and the complete TX payload are captured before a blocking attempt; resumption uses the retained open description even if another thread closes and reuses the descriptor. `dup`, fork, and last-close lifetime follow the shared Handle.
 
-Receive supports `MSG_DONTWAIT`, `MSG_PEEK`, and `MSG_TRUNC`. Truncated receives consume one frame unless peeking; `MSG_TRUNC` returns its wire length, and `recvmsg` reports the truncation flag. Source `sockaddr_ll` contains the interface, protocol, Ethernet hardware type, packet type, and source MAC. Each listener owns its copy: by default at most 32 frames and 65536 payload bytes. `SO_RCVBUF` accepts a receive budget, doubles it for queries, and applies a 2304-byte minimum and 425984-byte maximum. A configured listener holds at most 256 frames within that byte budget. Shrinking the budget preserves queued frames and rejects new frames until there is room. A full listener drops new frames without affecting another listener. `PACKET_STATISTICS` reports and resets delivered-plus-dropped packet and drop counts. `PACKET_IGNORE_OUTGOING` disables locally transmitted frames for that listener; the originating socket does not receive its own send.
+Receive supports `MSG_DONTWAIT`, `MSG_PEEK`, and `MSG_TRUNC`. Truncated receives consume one frame unless peeking; `MSG_TRUNC` returns its wire length, and `recvmsg` reports the truncation flag. Source `sockaddr_ll` contains the interface, protocol, Ethernet hardware type, packet type, and source MAC. Each listener owns its copy: by default at most 32 frames and 65536 payload bytes. `SO_RCVBUF` accepts a receive budget, doubles it for queries, and applies a 2304-byte minimum and 425984-byte maximum. A configured listener holds at most 256 frames within that byte budget. Shrinking the budget preserves queued frames and rejects new frames until there is room. A full listener drops new frames without affecting another listener. `PACKET_STATISTICS` reports and resets delivered-plus-dropped packet and drop counts. Outgoing copies go only to `ETH_P_ALL` listeners. A listener selecting a specific EtherType receives matching incoming frames. `PACKET_IGNORE_OUTGOING` suppresses outgoing copies for an all-protocol listener; the originating socket does not receive its own send.
 
 `poll` and epoll report receive availability and TX readiness. A permanently failed bound adapter reports `POLLERR` and I/O returns `EIO`; carrier or administrative down returns `ENETDOWN` on transmission. Nonblocking exhaustion returns `EAGAIN`. `FIONREAD` reports the next frame length. Interface ioctls support name/index, MAC, MTU, flags, and [IPv4 address controls](ipv4.md#configuration-and-routing). `SIOCGIFCONF` lists configured IPv4 interfaces and the fixed loopback address.
 
@@ -63,7 +63,8 @@ loss and an MTU crossing the 1280-byte minimum. Administrative restoration repea
 DAD with the retained key; MTU restoration uses current defaults and a fresh scope;
 carrier restoration preserves the ready address. Operational link flags clear on
 administrative shutdown. See [IPv6](ipv6.md) and the device-transition commands in
-[testing](testing.md). Retrying and exhausted owners still need wire coverage.
+[testing](testing.md). The complete local device-state matrix also covers probing, regeneration, retrying
+and exhausted owners. Complete feature and current-source hosted acceptance remain required.
 
 
 The ownership conflict observer tracks previously conflicted identities while a
@@ -77,3 +78,33 @@ below 1280. Ordinary netlink replies retain the device's flags and MTU and omit
 unavailable IPv6 attributes. IPv6-specific dumps skip that scope. Restoration
 reports the newly inherited generation mode. Native and guest comparisons check
 the original netlink reply bytes alongside ioctl and proc observations.
+
+The protocol-selection regression adds an ordinary listener to each existing
+adapter exchange without sending more workload frames. Its first received frame
+must be the exact peer reply with `PACKET_HOST` metadata; the listener closes before
+queue pressure and descriptor-lifetime trials. `python3 scripts/tests/packet_protocol_test.py -v`
+checks the production demultiplexer under sanitizers with an original captured
+probe, including matching, other, disabled and all protocols, bound and unbound
+interfaces, ignored outgoing traffic and sender exclusion. The kernel follows
+[Linux outgoing packet taps](https://github.com/torvalds/linux/blob/028ef9c96e96197026887c0f092424679298aae8/net/core/dev.c#L2399),
+which visit all-protocol registrations. `sudo -n python3 scripts/packet_protocol_native.py`
+runs the same C listener check through static musl, dynamic musl and glibc in
+isolated native network namespaces and retains actual captures, clock receipts,
+source/compiler manifests and client binaries. These ABI comparisons retain raw
+packet times without claiming native packet-clock qualification. Focused native
+and guest diagnostics expose the old outgoing copy and pass with the filter
+correction using identical client binaries. All 46 complete local Ethernet boots
+pass. Independent readers open 34 actual images and reopen their original logs;
+376 serialized and freshly extracted corruptions reject. The original host reader
+accepted changed numeric protocol queries despite the client's own checks. Its
+correction binds every queried interface, packet type and length to one ordered
+pass record. The original executions and first reader receipts remain unchanged;
+no guest was repeated for that reader correction. Four actual trace fixtures
+retain sixteen archived reader controls. All three native linkages also pass,
+with six original captures and twelve reopened metadata corruptions independently
+checked. The changed kernel also passes all 180 device guests and 90 pinned native
+comparisons. Independent readers reopen thirty device images and 540 captures,
+verify 432 physical conflict-delivery receipts and reject 5,862 archived
+corruptions. Reopening these profiles after the shared clock helper change
+produces identical audits. Complete current-source hosted and feature acceptance
+remain required.

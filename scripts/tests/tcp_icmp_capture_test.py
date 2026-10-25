@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Retain synchronized corruptions of actual ICMP captures and reject each one."""
 import argparse
+from collections import Counter
 import copy
 import hashlib
 import json
@@ -14,7 +15,7 @@ import zipfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tcp_clock_mutations import candidate_auditor
 from fetch import ROOT
-from tcp_icmp_capture import audit_row, checksum, contract, fnv, require
+from tcp_icmp_capture import audit_row, checksum, contract, fnv, require, packets, capture_receipts
 
 
 def records(path):
@@ -79,7 +80,7 @@ def mutations(build, row, lane, destination, cases):
 
     results = []
 
-    def reject(kind, transform):
+    def reject(kind, transform, expected=None):
         # Only the quote-before-SYN control may reschedule copied receipt
         # pairs. Other clock corruptions must retain their native rejection;
         # original observations and packet timestamps remain untouched.
@@ -94,6 +95,8 @@ def mutations(build, row, lane, destination, cases):
                 checked(folder, row, cases)
             except ValueError as error:
                 reason = str(error)
+                if expected is not None:
+                    require(expected in reason, 'native clock control reaches its intended guard: ' + reason)
                 if kind == 'noncausal-error':
                     require('quote' in reason and 'clock' not in reason,
                             'noncausal ICMP control reaches its original quote ownership guard: ' + reason)
@@ -155,6 +158,8 @@ def mutations(build, row, lane, destination, cases):
             moved_receipt = receipt(text, frame)
             line = re.sub(r'monotonic_ms=\d+', 'monotonic_ms=' + source_receipt[1], moved_receipt[0])
             line = re.sub(r'packet_realtime_ns=\d+', 'packet_realtime_ns=' + source_receipt[2], line)
+            dequeue = re.search(r'dequeue_ms=(\d+)', source_receipt[0])[1]
+            line = re.sub(r'dequeue_ms=\d+', 'dequeue_ms=' + dequeue, line)
             text = text[:moved_receipt.start()] + text[moved_receipt.end():]
             source_receipt = receipt(text, source['frame'])
             text = text[:source_receipt.start()] + line + '\n' + text[source_receipt.start():]
@@ -251,7 +256,59 @@ def mutations(build, row, lane, destination, cases):
     for kind in ('forged-arrival-mapping', 'missing-packet-timestamp', 'arrival-after-dequeue',
                  'missing-clock-anchor', 'stepped-arrival-clock', 'unarmed-observer'):
         reject(kind, lambda folder, kind=kind: damage_clock(folder, kind))
-    require(len(results) == 17, 'all synchronized quote, control, clock and input damage cases')
+    if 'client_namespace' in row:
+        text = originals[row['log']].decode()
+        timeline = [value for value in capture_receipts(text) if value['lane'] == lane]
+        anchor = re.search(r'phase=begin monotonic_before_ns=(\d+) realtime_ns=(\d+) '
+                           r'monotonic_after_ns=(\d+)', text)
+        before, realtime, after = map(int, anchor.groups())
+        captured = packets(build / row['captures'][lane], row['capture_statistics'][lane])
+        wire_counts = Counter(fnv(value['frame']) for value in captured)
+        log_counts = Counter(value['digest'] for value in timeline)
+
+        def physical_clock(folder, outgoing):
+            kind = 4 if outgoing else 0
+            for value in captured:
+                digest = fnv(value['frame'])
+                observed = [value for value in timeline if value['digest'] == digest and value['kind'] == kind]
+                if wire_counts[digest] != 1 or log_counts[digest] != 1 or len(observed) != 1:
+                    continue
+                original = observed[0]
+                changed_rt = value['capture_realtime_ns'] + (1 if outgoing else -1)
+                mapped = changed_rt - realtime + before + (after - before) // 2
+                match = receipt(text, value['frame'])
+                line = re.sub(r'packet_realtime_ns=\d+', 'packet_realtime_ns=' + str(changed_rt), match[0])
+                line = re.sub(r'monotonic_ms=\d+', 'monotonic_ms=' + str(mapped // 1000000), line)
+                changed = text[:match.start()] + line + text[match.end():]
+                try:
+                    updated = next(value for value in capture_receipts(changed)
+                                   if value['lane'] == lane and value['digest'] == digest)
+                except ValueError:
+                    continue
+                # Keep every original application window unchanged, so the
+                # complete auditor must reach the independent packet-clock gate.
+                if any(updated[name] != original[name] for name in
+                       ('driver_ms', 'driver_lower_ms', 'driver_upper_ms', 'dequeue_ms')):
+                    continue
+                (folder / row['log']).write_text(changed)
+                return
+            raise ValueError('actual native clock control preserves no original packet window')
+
+        for outgoing in (False, True):
+            reject('outgoing-after-independent-receive' if outgoing else 'incoming-before-independent-transmit',
+                   lambda folder, outgoing=outgoing: physical_clock(folder, outgoing),
+                   'native outgoing driver stamp precedes independent receive' if outgoing else
+                   'native incoming driver stamp follows independent transmit')
+
+        def dequeue_order(folder):
+            first = next(value['frame'] for value in captured
+                         if fnv(value['frame']) == timeline[0]['digest'])
+            match = receipt(text, first)
+            changed = re.sub(r'dequeue_ms=\d+', 'dequeue_ms=' + str(timeline[1]['dequeue_ms'] + 1), match[0])
+            (folder / row['log']).write_text(text[:match.start()] + changed + text[match.end():])
+        reject('driver-dequeue-order', dequeue_order, 'ordered native driver dequeue clocks')
+    require(len(results) == (20 if 'client_namespace' in row else 17),
+            'all synchronized quote, control, clock and input damage cases')
     return results
 
 

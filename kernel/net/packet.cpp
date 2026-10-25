@@ -106,7 +106,7 @@ void packet_deliver(const NetInfo& info, const void* data, size_t length, unsign
         if (!socket.used || &socket == sender || !socket.protocol ||
             (socket.index && socket.index != info.index) ||
             (socket.protocol != network_protocol(3) && socket.protocol != protocol) ||
-            (type == 4 && socket.ignore_outgoing))
+            (type == 4 && (socket.ignore_outgoing || socket.protocol != network_protocol(3))))
             continue;
         socket.packets++;
         if (socket.count >= socket.queue_limit ||

@@ -5,6 +5,7 @@ from collections import Counter
 import json
 from pathlib import Path
 from tcp_capture_profiles import require_complete_profiles
+from tcp_capture_link import audit_link_receipts
 from tcp_capture_clock import microseconds
 import re
 from tcp_icmp_capture import audit_inputs, checksum, fnv, packets, require, tcp_fields
@@ -246,6 +247,8 @@ def audit_row(root, row, input_root=None, host_libraries=None):
         counters = next(value for value in stats if int(value[0]) == lane)
         require(int(counters[3]) == 0 and int(counters[2]) >= int(counters[4]) == len(actual_rows) and
                 {value[1] for value in actual_rows} == {counters[1]}, 'driver identity and zero drops')
+        audit_link_receipts(text, 'PMTU', root / row['captures'][lane], lane,
+                            int(counters[1]), int(counters[2]), int(counters[4]))
         clocks = [int(value[-1]) for value in actual_rows]
         require(clocks == sorted(clocks) and (native or int(counters[1]) == lane + 1),
                 'actual driver receipt clock and NIC identity')

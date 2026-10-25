@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "cases": {
+    "pair": {
+      "indices": [
+        1,
+        2
+      ],
+      "original_producer_passed": true,
+      "scope": "actual captured observer regression only",
+      "full_matrix_acceptance": false,
+      "files": {
+        "serial.log": {
+          "bytes": 2042,
+          "sha256": "a6cbc7c15f11b29dfc8c2b486a50b2ace348ff688fe8f62c22ebfb5caea1cb73"
+        }
+      },
+      "kernel_sha256": "0f1670c7e39b7d9855d383b4ab6400a23e45ae7803ce6a0c830fd7a0c6a3c681",
+      "source_archive_sha256": "c7c5201174982e54f90f18e5032021be9c4d17f21a1ac989d7645177d81ba809",
+      "client_sha256": "3c7be868057f9bfe4760401ed8f15d79a5ff5588972b30a682f00c9f9de399d0"
+    },
+    "eight": {
+      "indices": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "original_producer_passed": true,
+      "scope": "actual captured observer regression only",
+      "full_matrix_acceptance": false,
+      "files": {
+        "serial.log": {
+          "bytes": 6002,
+          "sha256": "30df4501cb927ae814c4f042a5b47dddc560bb3e0162085de68fc7c806fe0793"
+        }
+      },
+      "kernel_sha256": "0f1670c7e39b7d9855d383b4ab6400a23e45ae7803ce6a0c830fd7a0c6a3c681",
+      "source_archive_sha256": "c7c5201174982e54f90f18e5032021be9c4d17f21a1ac989d7645177d81ba809",
+      "client_sha256": "3c7be868057f9bfe4760401ed8f15d79a5ff5588972b30a682f00c9f9de399d0"
+    },
+    "fault": {
+      "indices": [],
+      "original_producer_passed": true,
+      "scope": "actual captured observer regression only",
+      "full_matrix_acceptance": false,
+      "files": {
+        "serial.log": {
+          "bytes": 901,
+          "sha256": "948c83802a65c118ed955110977c23d35705d025be8a5e8ff602bdc24c11b8a4"
+        }
+      },
+      "kernel_sha256": "0f1670c7e39b7d9855d383b4ab6400a23e45ae7803ce6a0c830fd7a0c6a3c681",
+      "source_archive_sha256": "c7c5201174982e54f90f18e5032021be9c4d17f21a1ac989d7645177d81ba809",
+      "client_sha256": "3c7be868057f9bfe4760401ed8f15d79a5ff5588972b30a682f00c9f9de399d0"
+    },
+    "pressure": {
+      "indices": [],
+      "original_producer_passed": true,
+      "scope": "actual captured observer regression only",
+      "full_matrix_acceptance": false,
+      "files": {
+        "serial.log": {
+          "bytes": 962,
+          "sha256": "38def365c52bfd4e1c54b27c893a8b1b6c95d99b98053f973402cbe4dc37b34d"
+        }
+      },
+      "kernel_sha256": "0f1670c7e39b7d9855d383b4ab6400a23e45ae7803ce6a0c830fd7a0c6a3c681",
+      "source_archive_sha256": "c7c5201174982e54f90f18e5032021be9c4d17f21a1ac989d7645177d81ba809",
+      "client_sha256": "3c7be868057f9bfe4760401ed8f15d79a5ff5588972b30a682f00c9f9de399d0"
+    }
+  }
+}

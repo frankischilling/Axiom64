@@ -17,7 +17,7 @@ IPV4_MODULES = ('kernel/include/net/ipv4.hpp', 'kernel/include/net/ethernet.hpp'
                 'kernel/include/net/ipv4/fragmentation.hpp', 'kernel/net/ipv4/fragmentation.cpp',
                 'kernel/include/net/ipv4/path_mtu.hpp', 'kernel/net/ipv4/path_mtu.cpp')
 
-SOURCES = ('Makefile', 'scripts/tcp_capture_clock.py', 'scripts/tests/tcp_clock_mutations.py', 'userspace/tests/net/tcp_icmp.c', 'userspace/tests/net/tcp_icmp_cases.h',
+SOURCES = ('Makefile', 'scripts/tests/tcp_icmp_observer_clock_test.py', 'scripts/tests/fixtures/icmp-observer-clock/manifest.json', 'scripts/tcp_capture_link.py', 'scripts/tests/tcp_packet_observer_test.py', 'scripts/tests/tcp_capture_link_test.py', 'scripts/tcp_capture_clock.py', 'scripts/tests/tcp_clock_mutations.py', 'userspace/tests/net/tcp_icmp.c', 'userspace/tests/net/tcp_icmp_cases.h',
            'scripts/tcp_icmp_peer.py', 'scripts/tcp_icmp_inputs.py', 'scripts/tcp_fault_test.py',
            'scripts/tcp_fault_native.py', 'kernel/net/tcp/icmp.cpp', 'kernel/include/net/tcp/icmp.hpp',
            'kernel/net/tcp/connection.cpp', 'kernel/include/net/tcp/connection.hpp',

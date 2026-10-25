@@ -111,6 +111,8 @@ using namespace ax;
 
 void ipv6_link_configuration_tests(void (*reset)());
 
+void ipv6_output_owner_tests(void (*reset)());
+
 void ipv6_router_tests(void (*reset)());
 
 void ipv6_address_lifecycle_tests(void (*reset)());
@@ -3503,6 +3505,7 @@ int main() {
         assert(net_register(adapter) == n + 1);
         assert(net_configure(n + 1, true, 1500) == 0);
     }
+    ipv6_output_owner_tests(reset);
     dad();
     echo_and_ownership();
     routed_reply_hops();

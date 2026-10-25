@@ -76,6 +76,23 @@ int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsig
               const ip6::OutputExtensions* extensions = nullptr,
               Ipv6SourcePolicy = Ipv6SourcePolicy::assigned);
 
+// Copied transport output may outlive its description. With an owner, successful
+// admission calls complete exactly once unless detached; failed admission never calls it.
+// Completion may reenter output or detach another identity. Caller serializes access
+// and keeps identity alive until completion or detach. Error is a negative errno.
+struct Ipv6OutputOwner {
+    void* identity = nullptr;
+    void (*complete)(void*, size_t bytes, int error, unsigned output_index) = nullptr;
+};
+
+// Transport output uses the selected route/MTU without source fragmentation.
+int ipv6_send_owned(Ipv6OutputOwner, const ip6::Address& source, const ip6::Address& destination,
+                    unsigned bound_index, uint8_t protocol, int16_t hop_limit, const void*, size_t,
+                    Ipv6SourcePolicy = Ipv6SourcePolicy::assigned);
+
+// Detach callbacks only; admitted packet bytes retain their original bounded lifetime.
+void ipv6_detach_output(void* identity);
+
 bool ipv6_output_ready();
 
 // Queued bytes outlive a closed socket, without callbacks to a reused slot.

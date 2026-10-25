@@ -312,7 +312,25 @@ and destination changes, odd payloads, overlapping copies, valid zero checksum
 fields and the 65,535-byte upper-layer bound have sanitizer checks through
 `make test-tcp-wire`. Existing IPv4 wire and connection checks remain required.
 
-This prepares the transport codec. IPv6 stream sockets still return
+The shared connection engine also accepts an explicit IP family. A peer that
+omits the MSS option gets the RFC 9293 fallback of 536 bytes for IPv4 or 1,220
+for IPv6; the local path limit and a supplied peer option still cap sends.
+Twenty-four active/passive host cases check actual sender lengths and original
+retransmission clocks. Sequence-number hashing uses every IPv6 address byte in
+a separate keyed tuple domain, retaining the existing IPv4 results and clock
+wrap behavior. Independent HMAC fixtures check both directions, every address
+byte, ports and key changes.
+
+Copied IPv6 output now offers completion and detachment to transport owners.
+Success, error and the last resolved egress return once per admitted packet;
+failed admission does not call the owner. Detachment removes callbacks while
+owned bytes retain the existing bounded lifetime. Raw and UDP descriptions use
+the same queue through their existing completion adapter. Sanitized host checks
+cover physical payload copies, capacity, identity reuse, reentrant detachment,
+shutdown, MTU shrink, expiry and rerouting. These changes preserve the original
+queue limits and timing. Run `make test-tcp-isn test-tcp-connection test-ipv6-wire`.
+
+These are transport prerequisites. IPv6 stream sockets still return
 `EPROTONOSUPPORT`. The local client under `userspace/tests/net/tcp6/` passes on
 Linux with pure IPv6 and mapped IPv4 streams, descriptor aliases, vector I/O,
 half-close replies and port ownership. The same executable fails socket creation

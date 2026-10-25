@@ -127,3 +127,9 @@ IPv6 checksum adapter in `wire_ipv6.cpp`; callers use the typed overloads in
 `kernel/include/net/tcp/wire.hpp`. The two address families retain independent
 fixed packet checks. The local IPv6 TCP application client is under
 `userspace/tests/net/tcp6/`; stream-socket integration remains unfinished.
+The shared connection engine selects family-specific fallback MSS without
+duplicating its state machine. `isn.cpp` retains one keyed hash implementation
+and separate IPv4/IPv6 tuple encodings. The IPv6 output queue accepts a transport
+completion owner through `net/ipv6.hpp`; its raw/UDP adapter and transport callers
+share packet storage and callback retirement. `ipv6_output_owner.cpp` exercises
+that production queue's admission, copying, completion and detachment.

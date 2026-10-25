@@ -6,6 +6,8 @@
 
 namespace ax::tcp {
 constexpr size_t stream_capacity = 32768;
+// The wire adapter selects the IP family; connection state remains address-independent.
+enum class Family { ipv4, ipv6 };
 enum class State {
     closed,
     syn_sent,
@@ -28,6 +30,10 @@ enum class State {
 // copy has reached the output queue.
 class Connection {
   public:
+    explicit Connection(Family family = Family::ipv4)
+        : mss(family == Family::ipv6 ? 1220 : 536), fallback_mss(mss) {
+    }
+
     State state() const {
         return status;
     }
@@ -143,6 +149,7 @@ class Connection {
     uint32_t window_sequence = 0, window_ack = 0, pending_fin_sequence = 0;
     uint32_t resegment_next = 0, resegment_end = 0;
     uint16_t peer_window = 0, maximum_peer_window = 0, mss = 536, local_mss = 1460;
+    const uint16_t fallback_mss;
     uint16_t acknowledged_history = 0;
     uint32_t timeout_ms = 0, persist_interval = 1000;
     uint64_t opened_at = 0, progress_at = 0, retransmit_at = 0, persist_at = 0;

@@ -42,7 +42,7 @@ void Connection::active(uint32_t initial, uint64_t now, uint16_t maximum_segment
 }
 
 void Connection::negotiate(const Segment& segment) {
-    mss = minimum(local_mss, segment.maximum_segment ? segment.maximum_segment : uint16_t(536));
+    mss = minimum(local_mss, segment.maximum_segment ? segment.maximum_segment : fallback_mss);
     congestion = Congestion(mss);
     peer_window = segment.window;
     maximum_peer_window = peer_window;

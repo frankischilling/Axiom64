@@ -15,7 +15,7 @@ struct Output {
     uint8_t mac[6]{};
     uint64_t expires = 0;
     bool control = false;
-    Inet6Socket* owner = nullptr;
+    Ipv6OutputOwner owner;
     uint8_t* fragment_bytes = nullptr;
     size_t fragment_capacity = 0, fragment_offset = 0;
     uint32_t identification = 0, socket_mtu = 0;
@@ -23,6 +23,7 @@ struct Output {
     bool interface_mtu = false;
     int deferred_error = 0;
     Ipv6SourcePolicy source_policy = Ipv6SourcePolicy::assigned;
+    unsigned output_index = 0;
 };
 
 Output outputs[32];
@@ -38,20 +39,22 @@ void clear(Output& item, int error = 0) {
     }
     auto owner = item.owner;
     size_t cost = item.length - ethernet_header;
+    unsigned index = item.output_index;
     queued_bytes -= item.length + item.fragment_capacity;
     release(item.bytes);
     release(item.fragment_bytes);
     item = {};
-    inet6_complete(owner, cost, error);
+    if (owner.complete)
+        owner.complete(owner.identity, cost, error, index);
 }
 
 int queue(const ip6::Address& source, const ip6::Address& destination, unsigned index,
           uint8_t protocol, uint8_t hop_limit, const void* data, size_t length, bool direct = false,
-          Inet6Socket* owner = nullptr, bool fragmentable = true, uint32_t socket_mtu = 0,
+          Ipv6OutputOwner owner = {}, bool fragmentable = true, uint32_t socket_mtu = 0,
           bool interface_mtu = false, uint8_t traffic_class = 0,
           const ip6::OutputExtensions* extensions = nullptr,
           const ip6::Address* final_destination = nullptr,
-          Ipv6SourcePolicy source_policy = Ipv6SourcePolicy::assigned) {
+          Ipv6SourcePolicy source_policy = Ipv6SourcePolicy::assigned, unsigned output_index = 0) {
     const ip6::OutputExtensions empty;
     const auto& options = extensions ? *extensions : empty;
     int extra = ip6::output_extension_size(options);
@@ -86,6 +89,7 @@ int queue(const ip6::Address& source, const ip6::Address& destination, unsigned 
     if (length)
         memcpy(bytes + ethernet_header + ip6::header_size + extra, data, length);
     *selected = {source, destination, bytes, needed, index, {}, ticks + 400, direct, owner};
+    selected->output_index = output_index;
     selected->fragmentable = fragmentable;
     selected->socket_mtu = socket_mtu;
     selected->interface_mtu = interface_mtu;
@@ -188,12 +192,12 @@ ip6::FragmentPiece submit(Output& item, const Ipv6Path& path) {
 
 } // namespace
 
-int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsigned bound,
-              uint8_t protocol, int16_t hop_limit, const void* data, size_t length,
-              Inet6Socket* owner, bool fragmentable, uint32_t socket_mtu, bool interface_mtu,
-              uint8_t traffic_class, const ip6::OutputExtensions* extensions,
-              Ipv6SourcePolicy source_policy) {
-    if (hop_limit < -1 || hop_limit > 255)
+static int send_owned(const ip6::Address& source, const ip6::Address& destination, unsigned bound,
+                      uint8_t protocol, int16_t hop_limit, const void* data, size_t length,
+                      Ipv6OutputOwner owner, bool fragmentable, uint32_t socket_mtu,
+                      bool interface_mtu, uint8_t traffic_class,
+                      const ip6::OutputExtensions* extensions, Ipv6SourcePolicy source_policy) {
+    if (hop_limit < -1 || hop_limit > 255 || bool(owner.identity) != bool(owner.complete))
         return -22;
     const ip6::OutputExtensions empty;
     const auto& options = extensions ? *extensions : empty;
@@ -213,7 +217,30 @@ int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsig
     uint8_t hops = hop_limit < 0 ? ip6::link_hop_limit(path.index) : hop_limit;
     return queue(path.source, first, bound, protocol, hops, data, length, false, owner,
                  fragmentable, socket_mtu, interface_mtu, traffic_class, extensions, &destination,
-                 source_policy);
+                 source_policy, path.index);
+}
+
+int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsigned bound,
+              uint8_t protocol, int16_t hop_limit, const void* data, size_t length,
+              Inet6Socket* owner, bool fragmentable, uint32_t socket_mtu, bool interface_mtu,
+              uint8_t traffic_class, const ip6::OutputExtensions* extensions,
+              Ipv6SourcePolicy source_policy) {
+    Ipv6OutputOwner completion;
+    if (owner)
+        completion = {owner, [](void* identity, size_t bytes, int error, unsigned) {
+                          inet6_complete(static_cast<Inet6Socket*>(identity), bytes, error);
+                      }};
+    return send_owned(source, destination, bound, protocol, hop_limit, data, length, completion,
+                      fragmentable, socket_mtu, interface_mtu, traffic_class, extensions,
+                      source_policy);
+}
+
+int ipv6_send_owned(Ipv6OutputOwner owner, const ip6::Address& source,
+                    const ip6::Address& destination, unsigned bound, uint8_t protocol,
+                    int16_t hop_limit, const void* data, size_t length,
+                    Ipv6SourcePolicy source_policy) {
+    return send_owned(source, destination, bound, protocol, hop_limit, data, length, owner, false,
+                      0, false, 0, nullptr, source_policy);
 }
 
 bool ipv6_output_ready() {
@@ -223,10 +250,16 @@ bool ipv6_output_ready() {
     return false;
 }
 
-void ipv6_detach_owner(Inet6Socket* owner) {
+void ipv6_detach_output(void* identity) {
+    if (!identity)
+        return;
     for (auto& item : outputs)
-        if (item.owner == owner)
-            item.owner = nullptr;
+        if (item.owner.identity == identity)
+            item.owner = {};
+}
+
+void ipv6_detach_owner(Inet6Socket* owner) {
+    ipv6_detach_output(owner);
 }
 
 namespace ip6 {
@@ -262,6 +295,7 @@ void output_poll() {
             if (item.socket_mtu && !item.fragmentable)
                 path.mtu = min(path.mtu, item.socket_mtu);
         }
+        item.output_index = path.index;
         // RFC 4291 keeps loopback addresses inside the node. Consume admitted
         // bytes before neighbor work, including cached paths and detached owners.
         if (path.index != ipv6_loopback &&

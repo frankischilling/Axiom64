@@ -132,4 +132,6 @@ duplicating its state machine. `isn.cpp` retains one keyed hash implementation
 and separate IPv4/IPv6 tuple encodings. The IPv6 output queue accepts a transport
 completion owner through `net/ipv6.hpp`; its raw/UDP adapter and transport callers
 share packet storage and callback retirement. `ipv6_output_owner.cpp` exercises
-that production queue's admission, copying, completion and detachment.
+that production queue's admission, copying, completion and detachment. The
+`tcp6/abi.c` application checks Linux address imports, V6ONLY updates and name
+copy faults; `make test-tcp6-native` runs it and the local exchange client.

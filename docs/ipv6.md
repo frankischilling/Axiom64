@@ -330,6 +330,12 @@ cover physical payload copies, capacity, identity reuse, reentrant detachment,
 shutdown, MTU shrink, expiry and rerouting. These changes preserve the original
 queue limits and timing. Run `make test-tcp-isn test-tcp-connection test-ipv6-wire`.
 
+`make test-tcp6-native` runs the local stream client and a separate address/control
+ABI client. The latter checks 72 address imports, ten V6ONLY updates and sixteen
+name-copy cases, including truncated structures, unsupported families, negative
+lengths and failed destination copies. That same C source passes with glibc and
+both pinned musl linkages on native Linux. Its guest acceptance remains pending.
+
 These are transport prerequisites. IPv6 stream sockets still return
 `EPROTONOSUPPORT`. The local client under `userspace/tests/net/tcp6/` passes on
 Linux with pure IPv6 and mapped IPv4 streams, descriptor aliases, vector I/O,

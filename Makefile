@@ -954,6 +954,16 @@ build/tcp-isn-host: kernel/tests/net/tcp_isn.cpp kernel/net/tcp/isn.cpp kernel/c
 .PHONY: test-tcp-isn
 test-tcp-isn: build/tcp-isn-host
 	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/tcp-isn-host
+build/tcp6-abi-native: userspace/tests/net/tcp6/abi.c
+	@mkdir -p build
+	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp6-local-native: userspace/tests/net/tcp6/local.c
+	@mkdir -p build
+	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror $< -o $@
+.PHONY: test-tcp6-native
+test-tcp6-native: build/tcp6-abi-native build/tcp6-local-native
+	./build/tcp6-abi-native
+	./build/tcp6-local-native
 build/tcp-native: userspace/tests/net/tcp.c userspace/tests/net/tcp_maxseg.c userspace/tests/net/tcp_maxseg.h
 	@mkdir -p build
 	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@

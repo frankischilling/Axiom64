@@ -30,3 +30,13 @@ It retains evidence for seven days. A green collection job means diagnostics
 completed, including a reproduced failure. Check `namespace/receipt.json` and
 the original serial log for the assertion result. Required feature validation
 still needs the complete current-revision workflow and matching runtime evidence.
+
+
+`--serialize-worker` tests a scheduling remedy on the same stock SMP kernel.
+It pins the diagnostic process and unbound workers to the same available CPU
+before creating the network namespace. This changes the expendable host's
+global unbound-workqueue CPU mask for the diagnostic interval. The driver
+records that mask and restores both original masks before returning. Use this
+option only on a dedicated diagnostic host. Packets, clocks, lifetimes, expected
+flags and the original assertion bounds stay unchanged. The workflow currently
+selects this explicit experiment; it does not change required feature CI.

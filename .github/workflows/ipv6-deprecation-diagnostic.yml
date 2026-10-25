@@ -13,7 +13,7 @@ jobs:
       - name: Install native diagnostic tools
         run: sudo apt-get update && sudo apt-get install -y gcc iproute2
       - name: Collect original assertion and native worker scheduling
-        run: sudo --preserve-env=GITHUB_SHA python3 -B scripts/diagnostics/ipv6_deprecation.py --directory "$PWD/build/native-deprecation"
+        run: sudo --preserve-env=GITHUB_SHA python3 -B scripts/diagnostics/ipv6_deprecation.py --serialize-worker --directory "$PWD/build/native-deprecation"
       - name: Retain diagnostic evidence including failures
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

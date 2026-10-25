@@ -125,7 +125,21 @@ def collect(args):
         'cancel': 'p:{g}/cancel cancel_delayed_work work=%di:x64',
     }
     added = []
+    previous_affinity = os.sched_getaffinity(0)
+    worker_mask = Path('/sys/devices/virtual/workqueue/cpumask')
+    previous_worker_mask = worker_mask.read_text() if args.serialize_worker else None
     try:
+        if args.serialize_worker:
+            cpu = min(previous_affinity)
+            os.sched_setaffinity(0, {cpu})
+            worker_mask.write_text(format(1 << cpu, 'x')+'\n')
+            effective = worker_mask.read_text()
+            if int(effective.strip().replace(',', ''), 16) != 1 << cpu:
+                raise ValueError('actual unbound worker mask differs from selected packet CPU')
+            receipt['worker_affinity_experiment'] = dict(
+                CPU=cpu, actual_mask=effective.strip(), previous_mask=previous_worker_mask.strip(),
+                original_SMP_kernel_unchanged=True,
+                clocks_packets_final_flags_and_deadlines_unchanged=True)
         instance.mkdir()
         (instance/'buffer_size_kb').write_text('16384\n')
         (instance/'trace_clock').write_text('mono\n')
@@ -147,17 +161,42 @@ def collect(args):
         receipt['error'] = type(error).__name__ + ': ' + str(error)
         (directory/'error.log').write_text(traceback.format_exc())
     finally:
+        cleanup_errors = []
         if instance.exists():
-            (instance/'tracing_on').write_text('0\n')
-            (directory/'kernel-trace.log').write_text((instance/'trace').read_text())
-            (directory/'trace-buffer-statistics.json').write_text(json.dumps({
-                file.parent.name:file.read_text() for file in (instance/'per_cpu').glob('cpu*/stats')},
-                indent=2)+'\n')
-            if added:
-                (instance/'events'/group/'enable').write_text('0\n')
-            instance.rmdir()
+            try:
+                (instance/'tracing_on').write_text('0\n')
+                (directory/'kernel-trace.log').write_text((instance/'trace').read_text())
+                (directory/'trace-buffer-statistics.json').write_text(json.dumps({
+                    file.parent.name:file.read_text() for file in (instance/'per_cpu').glob('cpu*/stats')},
+                    indent=2)+'\n')
+                if added:
+                    (instance/'events'/group/'enable').write_text('0\n')
+            except BaseException as error:
+                cleanup_errors.append('trace retention: '+str(error))
+            try:
+                instance.rmdir()
+            except BaseException as error:
+                cleanup_errors.append('trace instance removal: '+str(error))
         for name in reversed(added):
-            trace_command(trace/'kprobe_events', '-:'+group+'/'+name+'\n')
+            try:
+                trace_command(trace/'kprobe_events', '-:'+group+'/'+name+'\n')
+            except BaseException as error:
+                cleanup_errors.append('probe removal '+name+': '+str(error))
+        if previous_worker_mask is not None:
+            try:
+                worker_mask.write_text(previous_worker_mask)
+            except BaseException as error:
+                cleanup_errors.append('worker mask restoration: '+str(error))
+            try:
+                os.sched_setaffinity(0, previous_affinity)
+            except BaseException as error:
+                cleanup_errors.append('process affinity restoration: '+str(error))
+            receipt['original_worker_mask_restored'] = worker_mask.read_text() == previous_worker_mask
+            receipt['original_process_affinity_restored'] = os.sched_getaffinity(0) == previous_affinity
+            if not receipt['original_worker_mask_restored'] or not receipt['original_process_affinity_restored']:
+                cleanup_errors.append('diagnostic affinity restoration incomplete')
+        if cleanup_errors:
+            receipt.update(cleanup_errors=cleanup_errors, collection_completed=False)
         receipt['source_unchanged'] = all(digest(ROOT/name) == value for name,value in inputs.items())
         (directory/'receipt.json').write_text(json.dumps(receipt, indent=2)+'\n')
     print(json.dumps(receipt, indent=2))
@@ -167,6 +206,8 @@ def collect(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--directory', type=Path, required=True)
+    parser.add_argument('--serialize-worker', action='store_true',
+        help='diagnostic only: use one packet/worker CPU on an expendable host, then restore masks')
     parser.add_argument('--child', action='store_true')
     parser.add_argument('--parent-net-ns', type=int)
     args = parser.parse_args()

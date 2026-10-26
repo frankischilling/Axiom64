@@ -691,7 +691,7 @@ build/ipv6-pmtu-native build/ipv6-pmtu-static build/ipv6-pmtu-dynamic: userspace
 build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: IPV6_FIXTURE_FLAGS = -DIPV6_ERROR_CONTROLS_INTEGRATED
 build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: userspace/tests/net/ipv6_error_controls.c
-build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: userspace/tests/net/ipv6_error_metadata.c userspace/tests/net/ipv6_receive_extensions.c
+build/ipv6-errors-native build/ipv6-errors-static build/ipv6-errors-dynamic: userspace/tests/net/ipv6_error_metadata.c userspace/tests/net/ipv6_error_record.h userspace/tests/net/ipv6_receive_extensions.c
 build/ipv6-cached-native build/ipv6-cached-static build/ipv6-cached-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-expiry-native build/ipv6-expiry-static build/ipv6-expiry-dynamic: userspace/tests/net/ipv6_fixture.h
 build/ipv6-controls-native build/ipv6-controls-static build/ipv6-controls-dynamic: userspace/tests/net/ipv6_fixture.h
@@ -792,6 +792,9 @@ test-ipv6-pmtu: test-ipv6-pmtu-observation
 test-ipv6-pmtu-native: test-ipv6-pmtu-observation
 	$(PYTHON) scripts/ipv6_host_native.py --suite pmtu
 .PHONY: test-ipv6-errors test-ipv6-errors-native
+.PHONY: test-ipv6-error-record
+test-ipv6-error-record:
+	$(PYTHON) scripts/tests/ipv6_error_record_test.py -v
 test-ipv6-errors:
 	$(PYTHON) scripts/ipv6_host_test.py --suite errors --workers 4
 test-ipv6-errors-native:
@@ -974,6 +977,17 @@ build/tcp6-pmtu-static build/tcp6-pmtu-dynamic: userspace/tests/net/tcp6/pmtu.c 
 	@mkdir -p build
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) $(filter %.c,$^)
 .PHONY: test-tcp6-wire test-tcp6-wire-native
+build/tcp6-errors-native: userspace/tests/net/tcp6/errors.c userspace/tests/net/ipv6_fixture.h
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp6-errors-static build/tcp6-errors-dynamic: userspace/tests/net/tcp6/errors.c userspace/tests/net/ipv6_fixture.h scripts/compile_uapi_client.py
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) $(filter %.c,$^)
+.PHONY: test-tcp6-errors test-tcp6-errors-native
+test-tcp6-errors:
+	$(PYTHON) scripts/tcp6_test.py --suite errors
+test-tcp6-errors-native:
+	$(PYTHON) scripts/tcp6_test.py --suite errors --native
 test-tcp6-wire:
 	$(PYTHON) scripts/tcp6_test.py
 test-tcp6-wire-native:

@@ -427,7 +427,23 @@ These behaviors follow native observations and the
 The initial SYN and passive SYN-ACK cases ignore the tested 1,280-byte hint.
 This does not establish all pending-handshake socket-option behavior.
 
-The ordinary ICMPv6 error path still needs paired native/guest acceptance.
+`make test-tcp6-errors` and `sudo -n make test-tcp6-errors-native` exercise an
+initial 62-case ordinary-error cohort per interface with the same three native
+and eight guest profiles. Thirteen Destination Unreachable, Time Exceeded and
+Parameter Problem classes cover active-open errors, fatal versus retained
+passive requests, shared-description error consumption and established-stream
+recovery. Ten altered quotes retain their exact original transmissions and
+checksums. Independent readers require actual request generations, complete
+surviving bytes, acknowledged closes and at least fifty real milliseconds of
+error observation. An ignored active-open quote retains a further pending
+interval before its actual handshake.
+
+One case records a measured compatibility difference: the Linux reference
+dispatches an otherwise owned quote whose version nibble was altered to five,
+whereas Axiom64's existing quote decoder rejects it. Both outcomes remain
+explicitly checked. This is not complete quote-parser equivalence. Blocking
+connect interruption, retained calls, error-copy faults, companion isolation,
+same-tuple successor ownership and wider ordinary-error acceptance remain open.
 Scoped TCP paths, cache expiry, source/route/device lifetimes, wider IPv6 socket
 controls, dual-stack failure cases and complete current-revision fault and timing
 matrices also remain required. Complete IPv6 TCP acceptance remains unfinished.

@@ -4,12 +4,7 @@
 #define IPV6_BARRIER_PROTOCOL 0x88be
 #define IPV6_BARRIER_MAGIC "IP6M"
 #include "ipv6_fixture.h"
-
-static void bytes(const void* pointer, size_t length) {
-    const unsigned char* data = pointer;
-    for (size_t at = 0; at < length; at++)
-        printf("%02x", data[at]);
-}
+#include "ipv6_error_record.h"
 
 static void receive_options(int fd, unsigned mask, unsigned outer) {
     const int options[] = {IPV6_RECVPKTINFO, IPV6_RECVHOPLIMIT, IPV6_RECVTCLASS,
@@ -141,27 +136,31 @@ static void run(unsigned lane, unsigned outer) {
         errno = 0;
         long normal = recv(fd, drain, sizeof(drain), MSG_DONTWAIT);
         int normal_error = normal < 0 ? errno : 0;
-        printf("%s_CASE lane=%u case=%u kind=%u scope=%u variant=%u mask=%u "
-               "capacity=%u input_flags=%u result=%ld errno=%d name_length=%u length=%zu "
-               "flags=%u queued=%ld queue_errno=%d normal=%ld normal_errno=%d "
-               "control_visible=%u name_visible=%u before_header=",
-               label, lane, sequence, kind, scoped, variant, mask, capacity, flags, result, error,
-               after.msg_namelen, (size_t)after.msg_controllen, (unsigned)after.msg_flags, queued,
-               queue_error, normal, normal_error, control_visible, name_visible);
-        bytes(&before, sizeof(before));
-        printf(" header=");
-        bytes(&after, sizeof(after));
-        printf(" name=");
-        bytes(name, sizeof(name));
-        printf(" name_prefix=");
-        bytes(output_name, name_visible);
-        printf(" control=");
-        bytes(output_control, control_visible);
-        printf(" payload=");
-        bytes(payload, sizeof(payload));
-        printf(" drain=");
-        bytes(drain, sizeof(drain));
-        puts("");
+        struct metadata_record record = {.label = label,
+                                         .lane = lane,
+                                         .sequence = sequence,
+                                         .kind = kind,
+                                         .scoped = scoped,
+                                         .variant = variant,
+                                         .mask = mask,
+                                         .capacity = capacity,
+                                         .input_flags = flags,
+                                         .result = result,
+                                         .queued = queued,
+                                         .normal = normal,
+                                         .error = error,
+                                         .queue_error = queue_error,
+                                         .normal_error = normal_error,
+                                         .control_visible = control_visible,
+                                         .name_visible = name_visible,
+                                         .before = &before,
+                                         .after = &after,
+                                         .name = name,
+                                         .name_prefix = output_name,
+                                         .control = output_control,
+                                         .payload = payload,
+                                         .drain = drain};
+        check(!emit_metadata_record(&record), "complete error metadata record");
         check(queued == -1 && queue_error == EAGAIN && normal == -1 && normal_error == EAGAIN &&
                   !get(fd, SOL_SOCKET, SO_ERROR) && poll(&pending, 1, 0) == 0,
               "checksum rejection, error dequeue and normal queue independence");

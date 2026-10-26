@@ -154,9 +154,19 @@ capture reconstruction. `scripts/tcp6_audit.py` reopens retained evidence and
 serialized damaged controls. The client uses `TCP_IPV6` in the existing
 `userspace/tests/net/tcp_fault.c`; IPv4 keeps the same workload and deadlines.
 
-`tcp6/profiles.py` selects the loss or path-MTU workload while reusing native
+`tcp6/profiles.py` selects loss, path-MTU or ordinary-error workloads while reusing native
 namespace, TAP, process-group and boot ownership. The PMTU client is
 `userspace/tests/net/tcp6/pmtu.c`; its controlled peer and independent decoder are
 `scripts/tcp6/pmtu_peer.py` and `pmtu_capture.py`. Compiler dependency aliases
 such as `tcp6/../ipv6_fixture.h` are matched against the canonical frozen source
 inventory; paths which escape that inventory reject.
+
+The ordinary-error client is `userspace/tests/net/tcp6/errors.c`.
+`scripts/tcp6/errors_peer.py` injects errors quoting actual transmissions;
+`errors_capture.py` independently reconstructs quotes, request generations,
+surviving streams and monotonic observation bounds. Native malformed-version
+behavior stays explicit rather than being treated as parser equivalence.
+
+`userspace/tests/net/ipv6_error_record.h` formats raw/UDP ICMPv6 metadata into
+one bounded console write. `scripts/tests/ipv6_error_record_test.py` runs that
+actual formatter against retained interrupted bytes and failed-write controls.

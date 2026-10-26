@@ -7,6 +7,7 @@
 #include <grp.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/fsuid.h>
@@ -16,6 +17,7 @@
 #include <sys/statfs.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #define CHECK(expression)                                                                          \
@@ -91,6 +93,26 @@ static int listed(const char* directory, pid_t pid) {
         matches += !strcmp(entry->d_name, name);
     CHECK(closedir(stream) == 0 && matches <= 1);
     return (int)matches;
+}
+
+static unsigned wait_thread_retired(pid_t tid) {
+    char directory[64];
+    CHECK(snprintf(directory, sizeof(directory), "/proc/%d/task", getpid()) <
+          (int)sizeof(directory));
+    struct timespec began, current;
+    CHECK(clock_gettime(CLOCK_MONOTONIC, &began) == 0);
+    unsigned polls = 0;
+    // Joining completes userspace thread teardown. Linux can still expose the
+    // kernel task while it releases its remaining files and process metadata.
+    while (listed(directory, tid)) {
+        CHECK(clock_gettime(CLOCK_MONOTONIC, &current) == 0);
+        int64_t elapsed = (int64_t)(current.tv_sec - began.tv_sec) * 1000000000LL +
+                          current.tv_nsec - began.tv_nsec;
+        CHECK(elapsed >= 0 && elapsed < 1000000000LL);
+        CHECK(usleep(1000) == 0);
+        polls++;
+    }
+    return polls;
 }
 
 static void byte(int fd, int writing) {
@@ -228,6 +250,7 @@ int main(void) {
     observed("thread_directory_direct_tid_lookup_and_independent_thread_credentials");
     byte(finish[1], 1);
     CHECK(pthread_join(thread, NULL) == 0);
+    printf("PROC_THREAD_RETIRED polls=%u\n", wait_thread_retired(tid));
     CHECK(account_process_busy(1010, (gid_t)-1) == 0);
     text = read_all(populated, 31);
     CHECK(*text && strstr(text, "Uid:\t1010\t0\t1011\t1012"));

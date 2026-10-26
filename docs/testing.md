@@ -42,6 +42,32 @@ open.
 after an actual native client starts. The wrapper and client must retire as one
 owned process group, and both TAP interfaces must disappear.
 
+`sudo -n make test-tcp6-errors-native` and `make test-tcp6-errors` exercise 62
+ordinary ICMPv6 TCP cases on each adapter through all three native and eight
+guest profiles. They cover thirteen error classes during active, passive and
+established operation, shared error consumption, acknowledged recovery and ten
+altered quotes. Readers reconstruct actual quotes, passive request generations,
+exact streams, half-closes and conservative monotonic observation bounds.
+Serialized damaged captures and logs must fail after reopening. The malformed
+quoted-version case preserves the measured native/guest difference described
+in [IPv6](ipv6.md); it does not establish complete quote-parser equivalence.
+Source capture retains exact Git inputs in a checkout and bounded public source
+roots in the exported CI tree. Builds, downloads, private files and Python caches
+remain outside that snapshot; private or external link targets reject.
+
+`make test-ipv6-error-record` exercises the actual ICMPv6 metadata formatter with
+a retained interrupted record. A simulated kernel diagnostic follows every write;
+the complete original fields and hexadecimal padding must occupy one bounded
+write. A partial write fails. The original interrupted log remains rejected by
+the unchanged metadata reader. Native and guest error cohorts retain every
+scenario, packet check, clock and deadline.
+
+`sudo -n python3 scripts/proc_retirement_test.py` exercises actual native thread
+retirement with private file tables across both libc providers and glibc, with
+static/dynamic linkage. Each profile requires an observed retirement wait across
+64 cycles; a live-task control must fail. The fixture retains its executable,
+dynamic loader, compiler inputs, original clocks and ninety-second deadline.
+
 `sudo -n make test-tcp6-pmtu-native` and `make test-tcp6-pmtu` exercise 22 IPv6
 TCP Packet Too Big cases on each adapter. They reuse the three native and eight
 guest linkage/firmware/transport profiles. The same strict source, compiler,

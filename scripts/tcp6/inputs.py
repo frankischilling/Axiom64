@@ -19,11 +19,37 @@ def write(path, value):
     path.write_text(json.dumps(value, indent=2) + '\n')
 
 
+def source_names():
+    marker = ROOT / '.git'
+    if marker.exists() or marker.is_symlink():
+        # A checkout keeps exact index/untracked semantics. A broken Git setup
+        # must fail instead of silently switching its source boundary.
+        names = subprocess.check_output(['git', '-c', 'safe.directory=' + str(ROOT),
+                                         'ls-files', '--cached', '--others',
+                                         '--exclude-standard', '-z'], cwd=ROOT).decode().split('\0')
+        return sorted({name for name in names if name and (ROOT / name).is_file()}), 'git'
+    # Hosted test jobs restore the public source and build archive without .git.
+    # Enumerate only publication roots, never build/download/private directories.
+    files = {'.clang-format', '.gitattributes', '.gitignore', 'README.md', 'LICENSE',
+             'Makefile', 'sources.lock.json', 'ports.lock.json', 'dependencies.json'}
+    folders = {'.github', 'kernel', 'userspace', 'boot', 'vendor', 'docs', 'scripts'}
+    if not (ROOT / 'Makefile').is_file():
+        raise ValueError('exported TCP6 source root lacks its Makefile')
+    paths = [ROOT / name for name in files if (ROOT / name).is_file()]
+    paths.extend(path for folder in folders for path in (ROOT / folder).rglob('*')
+                 if path.is_file() and not set(path.relative_to(ROOT).parts) &
+                 {'.git', '.local', '__pycache__'} and path.suffix != '.pyc')
+    names, root = [], ROOT.resolve()
+    for path in paths:
+        actual = path.resolve()
+        if not actual.is_relative_to(root) or actual.relative_to(root).parts[0] not in files | folders:
+            raise ValueError('exported TCP6 source link escapes public inputs')
+        names.append(path.relative_to(ROOT).as_posix())
+    return sorted(set(names)), 'exported-public-roots'
+
+
 def freeze(directory):
-    names = subprocess.check_output(['git', '-c', 'safe.directory=' + str(ROOT),
-                                     'ls-files', '--cached', '--others',
-                                     '--exclude-standard', '-z'], cwd=ROOT).decode().split('\0')
-    names = sorted({name for name in names if name and (ROOT / name).is_file()})
+    names, enumeration = source_names()
     records = {name: digest(ROOT / name) for name in names}
     with zipfile.ZipFile(directory / 'source.zip', 'x', zipfile.ZIP_DEFLATED) as archive:
         for name in names:
@@ -32,7 +58,8 @@ def freeze(directory):
         raise ValueError('TCP6 source changed during its snapshot')
     write(directory / 'source-inputs.json', records)
     return dict(source_zip_sha256=digest(directory / 'source.zip'),
-                source_inputs_sha256=digest(directory / 'source-inputs.json'), files=len(records))
+                source_inputs_sha256=digest(directory / 'source-inputs.json'), files=len(records),
+                enumeration=enumeration)
 
 
 def program(directory, profile, suite='loss'):

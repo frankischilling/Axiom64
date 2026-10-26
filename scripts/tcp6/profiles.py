@@ -15,4 +15,10 @@ def definition(suite):
         return dict(program='tcp6-pmtu', source='userspace/tests/net/tcp6/pmtu.c',
                     flags=[], marker='TCP6_PMTU_PASS lanes=2 cases_each=22 bytes_each=4096',
                     peer=Peer, verify=verify)
+    if suite == 'errors':
+        from tcp6.errors_peer import Peer
+        from tcp6.errors_capture import verify
+        return dict(program='tcp6-errors', source='userspace/tests/net/tcp6/errors.c',
+                    flags=[], marker='TCP6_ERRORS_PASS lanes=2 cases_each=62',
+                    peer=Peer, verify=verify)
     raise ValueError('unknown TCP6 runtime suite')

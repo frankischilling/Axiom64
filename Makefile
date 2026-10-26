@@ -1011,6 +1011,18 @@ test-tcp6-isolation:
 test-tcp6-isolation-native:
 	$(PYTHON) scripts/tcp6_test.py --suite isolation --native
 
+build/tcp6-pending-source-native: userspace/tests/net/tcp6/pending_source.c userspace/tests/net/ipv6_fixture.h
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -Iuserspace/tests/net $< -o $@
+build/tcp6-pending-source-static build/tcp6-pending-source-dynamic: userspace/tests/net/tcp6/pending_source.c userspace/tests/net/ipv6_fixture.h scripts/compile_uapi_client.py
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -Iuserspace/tests/net $(if $(filter %-static,$@),-static) $(filter %.c,$^)
+.PHONY: test-tcp6-pending-source test-tcp6-pending-source-native
+test-tcp6-pending-source:
+	$(PYTHON) scripts/tcp6_test.py --suite pending-source
+test-tcp6-pending-source-native:
+	$(PYTHON) scripts/tcp6_test.py --suite pending-source --native
+
 build/tcp6-source-lifetime-native: userspace/tests/net/tcp6/source_lifetime.c userspace/tests/net/ipv6_fixture.h
 	@mkdir -p build
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -Iuserspace/tests/net $< -o $@

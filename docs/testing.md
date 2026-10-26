@@ -105,9 +105,28 @@ readers reject 112 serialized, checksum-repaired packet/log changes per capture.
 `python3 scripts/tests/tcp6_source_lifetime_evidence_test.py` reopens all 22
 captures and both actual images, verifies 88 flows and 264 output blocks, and
 requires identical complete sources and pinned native/guest clients. Half of
-those output blocks occur while the source is withdrawn. Pending handshakes,
-finite source expiry, route/device removal and full TCP lifetime acceptance
+those output blocks occur while the source is withdrawn. Finite source expiry,
+route/device removal and full TCP lifetime acceptance
 remain required.
+
+`sudo -n make test-tcp6-pending-source-native` and `make test-tcp6-pending-source`
+retain all three native and eight guest profiles for four additional rounds per
+adapter: a connect bound before source withdrawal, explicit and automatic active
+opens awaiting SYN-ACK, and a passive request awaiting its final ACK. A real fresh
+companion exchange and close proves route usability before each observed retry.
+Fresh binds reject the removed source. The peer withholds handshake input until
+source restoration, then checks the exact echo, FINs and final descriptor release.
+The original one-second transport timer and all existing harness bounds remain;
+the independent wire lower bound is the established 850 ms allowance for guest ticks.
+
+`python3 scripts/tests/tcp6_pending_source_evidence_test.py` requires all 22
+captures, both actual images, 176 flows and 88 pending handshakes, with matching
+complete sources and native/guest programs. It rejects 870 serialized controls
+covering source ownership, natural retry timing, handshake sequence, companion
+selection, restoration ordering, close, scalar records and native arrival bounds.
+Checksums and native fingerprints are rebound so altered packets reach the
+semantic checks. Scoped withdrawal, reconnect, finite expiry and route/device
+removal remain required.
 
 `sudo -n make test-tcp6-errors-native` and `make test-tcp6-errors` exercise 62
 ordinary ICMPv6 TCP cases on each adapter through all three native and eight

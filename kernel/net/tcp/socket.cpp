@@ -315,7 +315,16 @@ int disconnect(InetSocket* socket) {
 } // namespace
 
 Ipv6SourcePolicy tcp6_source_policy(const InetSocket* socket) {
-    return socket && synchronized(socket) ? Ipv6SourcePolicy::retained : Ipv6SourcePolicy::assigned;
+    if (socket) {
+        if (socket->bound)
+            return Ipv6SourcePolicy::retained;
+        if (socket->stream) {
+            auto state = socket->stream->state();
+            if (state != tcp::State::closed && state != tcp::State::time_wait)
+                return Ipv6SourcePolicy::retained;
+        }
+    }
+    return Ipv6SourcePolicy::assigned;
 }
 
 bool inet_stream(InetSocket* socket) {
@@ -475,7 +484,8 @@ int connect_to(InetSocket* socket, const tcp::Address& peer, uint16_t port, unsi
     int error;
     if (wire6) {
         error = ipv6_path(socket->bound ? socket->local6 : ip6::Address{}, peer.bytes, index,
-                          destination6);
+                          destination6, false,
+                          socket->bound ? Ipv6SourcePolicy::retained : Ipv6SourcePolicy::assigned);
         local = tcp::Address::ipv6(destination6.source);
         mtu = destination6.mtu;
     } else {

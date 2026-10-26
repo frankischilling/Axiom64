@@ -216,5 +216,10 @@ The established-source TCP workload is `userspace/tests/net/tcp6/source_lifetime
 barriers; `source_capture.py` reconstructs the complete streams independently.
 The existing profile/native/guest/evidence modules retain boot, namespace,
 program, source and packet ownership. `tcp6_source_policy` shares connection
-source ownership between output and path-MTU processing; fresh paths still
-require current address assignment.
+source ownership across output and path-MTU lookups. Bound descriptions and pending
+connections retain their validated source while every output still needs a current route.
+`userspace/tests/net/tcp6/pending_source.c`, `scripts/tcp6/pending_peer.py` and
+`pending_capture.py` measure pre-bound connects, active SYN and passive SYN-ACK retries
+after address removal. The same runner and independent reader retain all three native
+and eight guest profiles, programs, source archives, images and packet clocks.
+Fresh binds and automatic source selection still require current address assignment.

@@ -559,16 +559,23 @@ updates and closure leave accepted children independent. Scalar results share
 the ordered copy module, including unsigned capacities, truncated outputs, aliases
 and copy faults.
 
-A synchronized TCP stream owns its selected IPv6 source. Removing that address
-does not replace the source of the existing stream, including after class or
-device updates clear its destination. Output and path-MTU processing still
-resolve a usable current route. Fresh bind/connect paths retain their assignment
-checks. The source-lifetime comparison measures explicit and automatic global
+A bound TCP description or a pending or established connection owns its selected
+IPv6 source. Removing that address does not replace the source of the existing
+stream, including after class or device updates clear its destination. Output and
+path-MTU processing still resolve a usable current route. Fresh binds and automatic
+source selection retain their assignment checks. A description bound before removal
+can start a connection from its original source. The pending-source comparison
+withholds handshake input while explicit and automatic active opens and a passive
+request emit a natural retry from the removed address. A fresh companion stream
+completes first; handshake input follows source restoration.
+The source-lifetime comparison measures explicit and automatic global
 sources with a companion address preserving reachability, real companion traffic
-before retained-source output, restoration and complete close. Pending-source,
-finite-expiry and route/device-removal behavior remains under development. The
-Linux comparison uses the
+before retained-source output, restoration and complete close. Finite expiry,
+reconnect, scoped withdrawal and route/device removal remain under development.
+The Linux comparison uses the
 [v6.17 connection route path](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/inet6_connection_sock.c).
+Source admission also follows the measured pre-bound behavior and the
+[v6.17 active-open path](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/tcp_ipv6.c).
 
 Live mapped output uses IPv4 TTL/TOS independently of the IPv6 controls. After
 the last descriptor closes, compact TIME-WAIT state retains the IPv6 class for

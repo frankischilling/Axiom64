@@ -552,9 +552,12 @@ TCP descriptions retain separate IPv6 unicast-hop/traffic-class and IPv4 TTL/TOS
 controls. `IPV6_UNICAST_HOPS=-1` reads the held destination's current adapter
 default, or 64 when no destination is held. Changing the normalized traffic class
 or TOS clears the cached destination; setting the same normalized value retains
-it. Device-binding changes also clear the destination. Accepted children copy
-their listener's controls at creation. Scalar results share the ordered copy
-module, including unsigned capacities, truncated outputs, aliases and copy faults.
+it. Device-binding changes also clear the destination. Pending passive requests
+use their live listener's header controls, including SYN-ACK retries. The final
+ACK snapshots those controls into the accepted description. Later listener
+updates and closure leave accepted children independent. Scalar results share
+the ordered copy module, including unsigned capacities, truncated outputs, aliases
+and copy faults.
 
 Live mapped output uses IPv4 TTL/TOS independently of the IPv6 controls. After
 the last descriptor closes, compact TIME-WAIT state retains the IPv6 class for
@@ -569,7 +572,11 @@ The [TCP control wire comparison](testing.md) checks all three families on both
 physical emulated adapters with real router changes, actual byte exchanges and a
 duplicate FIN after final descriptor release. Its independent reader checks
 scalars, complete stream sequences, echoed bytes, live headers and the detached
-reply. Loopback control-state checks separately cover accepted inheritance and
-copy behavior. Passive wire inheritance, wider route/source/device lifetimes,
+reply. Two passive children cover updates while the first handshake is pending,
+accepted-child independence, shared listener descriptors and final listener
+closure. This follows the measured native behavior and the
+[Linux v6.17 passive child path](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/tcp_ipv6.c).
+Loopback control-state checks separately cover inheritance and copy behavior.
+Broader passive behavior and route/source/device lifetimes,
 full expiry observations and complete current-revision hosted acceptance remain
 required. Other IPv6 TCP controls remain deliberately unsupported.

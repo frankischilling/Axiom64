@@ -57,23 +57,35 @@ owned process group, and both TAP interfaces must disappear.
 `make test-tcp6-controls-wire` compare IPv6, mapped and pure IPv4 TCP controls.
 Each family uses three native and eight guest profiles on both adapters, with
 the same pinned musl clients and loader in native and guest executions. Actual
-router advertisements change default hops from 41 to 51. Eleven byte-checked
+router advertisements change default hops from 41 to 51. Eleven active byte-checked
 exchanges per adapter cover traffic-class/TOS cache invalidation, zero and
 explicit IPv6 hops, normalized unchanged values and device reselection. A
 checksum-valid duplicate FIN arrives after the application releases its final
 descriptor; the detached reply must use the measured default hop/TTL and retained
 class/TOS. IPv4 wire output retains its independent live TTL and TOS.
 
+Two passive children add five exchanges per adapter. The first request withholds
+its final ACK while a duplicated listener descriptor changes hops, class, TTL
+and TOS. Its natural SYN-ACK retry must use the updated listener controls; the
+accepted child snapshots those controls at the final ACK. A later listener
+update affects the second child while the first retains its own values. Both
+children exchange bytes after the final listener descriptor closes. The first
+child closes and answers a duplicate FIN while the second exchanges more bytes.
+The second then closes and answers its own duplicate FIN.
+The one-second engine retry timer, original guest clock and established
+850-millisecond physical handshake observation threshold remain unchanged.
+
 The existing packet harness retains the 150-second execution deadline, original
 capture clocks, zero native drops and fifty-millisecond arrival brackets.
-Seventeen damaged packet/log variants per capture are serialized, reopened and
+Ninety damaged packet/log variants per capture are serialized, reopened and
 rejected through the real reader. Header and echo mutations have repaired
 checksums; native frame fingerprints are rebound to reach semantic checks.
 `python3 scripts/tests/tcp6_control_wire_evidence_test.py` reopens all six evidence
 directories and requires every profile, actual image and matching native/guest
-program. Output is retained under `build/tcp6-controls-*-wire/`. These active-open
-checks do not establish passive wire inheritance, wider route/source/device
-lifetimes or complete TIME-WAIT expiry acceptance.
+program. The 33 profiles retain 66 captures, 198 flows, 1,056 exchanges and 1,584
+scalar snapshots. Output is retained under `build/tcp6-controls-*-wire/`. Broader
+passive behavior, route/source/device lifetimes and complete TIME-WAIT expiry
+acceptance remain required.
 
 `sudo -n make test-tcp6-errors-native` and `make test-tcp6-errors` exercise 62
 ordinary ICMPv6 TCP cases on each adapter through all three native and eight

@@ -161,6 +161,100 @@ static void one(unsigned lane) {
     barrier(lane, 3);
 }
 
+static void passive_timeout(int fd) {
+    struct timeval timeout = {5, 0};
+    check(!setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)),
+          "passive receive deadline");
+    check(!setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)),
+          "passive send deadline");
+}
+
+static void passive_controls(int fd, int hops, int traffic, int ttl, int tos) {
+    v6_option(fd, IPV6_UNICAST_HOPS, hops);
+    v6_option(fd, IPV6_TCLASS, traffic);
+    option(fd, IPPROTO_IP, IP_TTL, ttl);
+    option(fd, IPPROTO_IP, IP_TOS, tos);
+}
+
+static void passive_point(unsigned lane, const char* phase, int fd) {
+    int hops = WIRE_FAMILY == 2 ? -2 : get(fd, IPPROTO_IPV6, IPV6_UNICAST_HOPS);
+    int traffic = WIRE_FAMILY == 2 ? -2 : get(fd, IPPROTO_IPV6, IPV6_TCLASS);
+    int ttl = get(fd, IPPROTO_IP, IP_TTL);
+    int tos = get(fd, IPPROTO_IP, IP_TOS);
+    int only = WIRE_FAMILY == 2 ? -2 : get(fd, IPPROTO_IPV6, IPV6_V6ONLY);
+    char binding[16] = {0}, expected[16] = {0};
+    socklen_t capacity = sizeof(binding);
+    snprintf(expected, sizeof(expected), "eth%u", lane);
+    check(!getsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, binding, &capacity) &&
+              capacity == strlen(expected) + 1 && !strcmp(binding, expected),
+          "actual inherited passive device");
+    char record[256];
+    int length = snprintf(record, sizeof(record),
+                          "TCP_CONTROL_PASSIVE_POINT family=%s lane=%u phase=%s hops=%d class=%d "
+                          "ttl=%d tos=%d v6only=%d binding=%s\n",
+                          family_name(), lane, phase, hops, traffic, ttl, tos, only, binding);
+    check(length > 0 && (size_t)length < sizeof(record) && write(1, record, length) == length,
+          "complete observed passive controls");
+}
+
+static void passive_barrier(unsigned lane, unsigned phase) {
+    barrier(lane, phase);
+    check(!fflush(stdout), "complete passive phase record");
+}
+
+static void passive_close(int fd) {
+    check(!shutdown(fd, SHUT_WR), "passive application half-close");
+    readable(fd, POLLIN);
+    char byte;
+    check(recv(fd, &byte, 1, 0) == 0 && !close(fd), "passive EOF and final descriptor release");
+}
+
+static void passive(unsigned lane) {
+    int listener =
+        socket(WIRE_FAMILY == 2 ? AF_INET : AF_INET6, SOCK_STREAM | SOCK_CLOEXEC, IPPROTO_TCP);
+    check(listener >= 0, "actual passive listener");
+    passive_timeout(listener);
+    device(lane, listener, 1);
+    if (WIRE_FAMILY == 0)
+        option(listener, IPPROTO_IPV6, IPV6_V6ONLY, 1);
+    passive_controls(listener, 37, 171, 77, 47);
+    endpoint(listener, lane, 2, 49910 + lane, 0);
+    check(!listen(listener, 4), "actual passive listen");
+    int shared = dup(listener);
+    check(shared >= 0, "shared passive listener description");
+    passive_point(lane, "listener-initial", listener);
+    passive_barrier(lane, 4);
+    passive_controls(shared, 55, 207, 79, 103);
+    passive_point(lane, "listener-pending-update", shared);
+    check(!close(listener), "release original listener descriptor");
+    passive_barrier(lane, 5);
+    int first = accept(shared, NULL, NULL);
+    check(first >= 0, "accept pending passive request");
+    passive_timeout(first);
+    passive_point(lane, "accepted-pending", first);
+    exchange(lane, first, 20);
+    passive_controls(shared, 63, 235, 83, 119);
+    passive_point(lane, "accepted-after-listener-update", first);
+    exchange(lane, first, 21);
+    passive_barrier(lane, 6);
+    int second = accept(shared, NULL, NULL);
+    check(second >= 0, "accept later passive request");
+    passive_timeout(second);
+    passive_point(lane, "accepted-second", second);
+    check(!close(shared), "release final listener descriptor");
+    v6_option(first, IPV6_UNICAST_HOPS, -1);
+    passive_point(lane, "first-default-after-listener-close", first);
+    exchange(lane, first, 22);
+    passive_point(lane, "second-after-listener-close", second);
+    exchange(lane, second, 30);
+    passive_close(first);
+    passive_barrier(lane, 7);
+    passive_point(lane, "second-after-first-detached", second);
+    exchange(lane, second, 31);
+    passive_close(second);
+    passive_barrier(lane, 8);
+}
+
 int main(int argc, char** argv) {
     signal(SIGPIPE, SIG_IGN);
     alarm(120);
@@ -171,12 +265,15 @@ int main(int argc, char** argv) {
     check(!close(control), "actual wire interfaces");
     for (unsigned lane = 0; lane < 2; lane++) {
         one(lane);
+        check(!fflush(stdout), "complete active phase records");
+        passive(lane);
         check(!close(packets[lane]), "Ethernet control release");
     }
     char complete[256];
     int length = snprintf(complete, sizeof(complete),
-                          "TCP_CONTROL_FAMILY_PASS family=%s lanes=2 exchanges_each=11 "
-                          "router_hops=41,51 detached_reply=1\n",
+                          "TCP_CONTROL_FAMILY_PASS family=%s lanes=2 exchanges_each=16 "
+                          "router_hops=41,51 detached_replies=3 passive_flows_each=2 "
+                          "pending_retry=1 listener_closed=1\n",
                           family_name());
     check(length > 0 && (size_t)length < sizeof(complete) && write(1, complete, length) == length,
           "complete wire probe result");

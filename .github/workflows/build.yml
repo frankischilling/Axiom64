@@ -1,4 +1,4 @@
-name: Measure native IPv6 timer dispatch
+name: Measure concurrent native ICMP decisions
 on:
   workflow_dispatch:
 permissions:
@@ -16,29 +16,25 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Install native packet tools
+      - name: Compile the isolated first-error comparison
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends iproute2 ethtool
-      - name: Restore the original native reference product and evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: ipv6-configuration
-          path: ${{ runner.temp }}/device-reference
-          run-id: 40249563493
-          github-token: ${{ github.token }}
-          digest-mismatch: error
-      - name: Trace 24 original native profiles with unchanged protocol clocks and deadlines
+          mkdir -p build
+          mkdir build/icmp-first-errors
+          gcc --version > build/icmp-first-errors/compiler.txt
+          uname -a > build/icmp-first-errors/kernel.txt
+          gcc -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread scripts/diagnostics/icmp_first_errors.c -o build/icmp-first-errors/client
+          sha256sum scripts/diagnostics/icmp_first_errors.c build/icmp-first-errors/client > build/icmp-first-errors/inputs.sha256
+      - name: Compare 256 fixed aligned and staggered packet pairs
         run: |
-          sudo -n python3 -B scripts/diagnostics/ipv6_device_timers.py --reference "${RUNNER_TEMP}/device-reference"
-      - name: Preserve every timing result and original packet clock
+          test "$(uname -r)" = 6.17.0-1022-azure
+          sudo -n timeout 180 build/icmp-first-errors/client 256 > build/icmp-first-errors/results.jsonl
+      - name: Preserve every actual frame, counter and trial
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ipv6-device-timer-diagnostic
+          name: ipv4-first-errors-diagnostic
           if-no-files-found: error
           path: |
-            build/device-timer-diagnostic
-            scripts/diagnostics/ipv6_device_timers.py
-            scripts/diagnostics/native_timer_trace.py
+            build/icmp-first-errors
+            scripts/diagnostics/icmp_first_errors.c
             .github/workflows/build.yml

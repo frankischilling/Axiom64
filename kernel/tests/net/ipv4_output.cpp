@@ -55,6 +55,10 @@ bool inet_use_path_mtu(const InetSocket* socket) {
     return true;
 }
 
+uint8_t inet_traffic_class(const InetSocket*) {
+    std::abort(); // This fixture submits only ownerless output.
+}
+
 void inet_reclaim(InetSocket*, size_t) {
     assert(false && "output fixture has no socket owner");
 }
@@ -134,8 +138,9 @@ static void receive(unsigned index, const std::vector<uint8_t>& frame) {
     ipv4_receive(*net_info(index), frame.data(), frame.size());
 }
 
-static void queue(uint32_t peer) {
-    assert(ipv4_send(nullptr, 0, peer, 1, 1, 64, false, payload, sizeof(payload)) == 0);
+static void queue(uint32_t peer, uint8_t traffic_class = 0) {
+    assert(ipv4_send(nullptr, 0, peer, 1, 1, 64, false, payload, sizeof(payload), true,
+                     traffic_class) == 0);
 }
 
 static void request(size_t position, uint32_t peer, uint32_t source) {
@@ -147,11 +152,12 @@ static void request(size_t position, uint32_t peer, uint32_t source) {
     assert(ip4::get32(frame.data() + 38) == peer);
 }
 
-static void datagram(size_t position, uint32_t peer, uint32_t source) {
+static void datagram(size_t position, uint32_t peer, uint32_t source, uint8_t traffic_class = 0) {
     assert(captured.size() == position + 1 && captured[position].index == 1);
     const auto& frame = captured[position].bytes;
     assert(frame.size() == 60 && !memcmp(frame.data(), peer_mac, 6));
     assert(ip4::get16(frame.data() + 12) == 0x0800);
+    assert(frame[15] == traffic_class && frame[22] == 64);
     assert(ip4::get32(frame.data() + 26) == source);
     assert(ip4::get32(frame.data() + 30) == peer);
     assert(!ip4::checksum(frame.data() + 14, 20));
@@ -161,7 +167,7 @@ static void datagram(size_t position, uint32_t peer, uint32_t source) {
 static void pending_reply_ownership(uint32_t source) {
     constexpr uint32_t peer = 0xc000020a;
     auto before = captured.size();
-    queue(peer);
+    queue(peer, 168);
     auto valid = arp(1, peer, source);
     receive(1, valid); // No ARP attempt yet: a queued output alone is insufficient.
     ipv4_poll();
@@ -184,7 +190,7 @@ static void pending_reply_ownership(uint32_t source) {
     assert(captured.size() == before + 1);
     receive(1, valid);
     ipv4_poll();
-    datagram(before + 1, peer, source);
+    datagram(before + 1, peer, source, 168);
 
     // An unrelated reply cannot seed a future destination's neighbour mapping.
     before = captured.size();

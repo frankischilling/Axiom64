@@ -24,7 +24,7 @@ jobs:
           uname -a > build/icmp-first-errors/kernel.txt
           gcc -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread scripts/diagnostics/icmp_first_errors.c -o build/icmp-first-errors/client
           sha256sum scripts/diagnostics/icmp_first_errors.c build/icmp-first-errors/client > build/icmp-first-errors/inputs.sha256
-      - name: Compare 256 fixed aligned and staggered packet pairs
+      - name: Compare 256 fixed staggered, aligned and primed-aligned pairs
         run: |
           test "$(uname -r)" = 6.17.0-1022-azure
           sudo -n timeout 180 build/icmp-first-errors/client 256 > build/icmp-first-errors/results.jsonl

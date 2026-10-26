@@ -183,7 +183,37 @@ static void hex(const unsigned char* bytes, unsigned size) {
         printf("%02x", bytes[at]);
 }
 
-static int one(unsigned trial, unsigned aligned, int cpu0, int cpu1) {
+static void accept_quote(struct lane* lane) {
+    unsigned char bytes[1600];
+    ssize_t size = read(lane->fd, bytes, sizeof(bytes));
+    require(size >= 14, "complete native frame");
+    if (bytes[12] != 8 || bytes[13] != 0)
+        return;
+    require(size == 70 && bytes[14] == 0x45 && bytes[23] == 1 && bytes[34] == 3 && bytes[35] == 3,
+            "actual closed-port ICMP error");
+    require(!checksum(bytes + 14, 20) && !checksum(bytes + 34, 36), "actual native checksums");
+    require(!memcmp(bytes, lane->frame + 6, 6) && !memcmp(bytes + 6, lane->frame, 6),
+            "returned interface ownership");
+    require(!memcmp(bytes + 42, lane->frame + 14, 28) && !lane->reply_size,
+            "exact original quote once");
+    memcpy(lane->reply, bytes, size);
+    lane->reply_size = size;
+    lane->received = now();
+}
+
+static void print_lane(const struct lane* lane) {
+    printf("{\"cpu\":%d,\"write_before_ns\":%llu,\"write_after_ns\":%llu,\"read_ns\":%llu,"
+           "\"input\":\"",
+           lane->cpu, (unsigned long long)lane->before, (unsigned long long)lane->after,
+           (unsigned long long)lane->received);
+    hex(lane->frame, 60);
+    printf("\",\"reply\":\"");
+    hex(lane->reply, lane->reply_size);
+    printf("\"}");
+}
+
+static int one(unsigned trial, unsigned mode, int cpu0, int cpu1) {
+    unsigned aligned = mode != 0, primed = mode == 2;
     require(!unshare(CLONE_NEWNET), "private network namespace");
     scalar("/proc/sys/net/ipv6/conf/all/disable_ipv6");
     scalar("/proc/sys/net/ipv6/conf/default/disable_ipv6");
@@ -197,6 +227,27 @@ static int one(unsigned trial, unsigned aligned, int cpu0, int cpu1) {
             "fresh native error counters");
     struct timespec delay = {0, 50000000};
     require(!nanosleep(&delay, NULL), "real first-error observation preparation");
+    struct lane primer = lanes[0];
+    if (primed) {
+        put16(primer.frame + 18, 0x7b00);
+        put16(primer.frame + 24, 0);
+        put16(primer.frame + 24, checksum(primer.frame + 14, 20));
+        put16(primer.frame + 34, 61398);
+        put16(primer.frame + 36, 61399);
+        primer.before = now();
+        require(write(primer.fd, primer.frame, sizeof(primer.frame)) == sizeof(primer.frame),
+                "complete real preflight input");
+        primer.after = now();
+        while (!primer.reply_size) {
+            struct pollfd item = {.fd = primer.fd, .events = POLLIN};
+            require(poll(&item, 1, 1) >= 0, "actual preflight quote readiness");
+            if (item.revents & POLLIN)
+                accept_quote(&primer);
+            require(now() - primer.before < 1000000000, "bounded actual preflight quote");
+        }
+        require(counter("OutDestUnreachs") == 1 && counter("OutRateLimitGlobal") == 0,
+                "one actual error completes before the unchanged pair");
+    }
     require(!pthread_barrier_init(&barrier, NULL, 3), "packet barrier");
     pthread_t threads[2];
     for (unsigned at = 0; at < 2; at++)
@@ -217,47 +268,29 @@ static int one(unsigned trial, unsigned aligned, int cpu0, int cpu1) {
         require(poll(items, 2, 1) >= 0, "actual native error readiness");
         for (unsigned at = 0; at < 2; at++)
             if (items[at].revents & POLLIN) {
-                unsigned char bytes[1600];
-                ssize_t size = read(lanes[at].fd, bytes, sizeof(bytes));
-                require(size >= 14, "complete native frame");
-                if (bytes[12] != 8 || bytes[13] != 0)
-                    continue;
-                require(size == 70 && bytes[14] == 0x45 && bytes[23] == 1 && bytes[34] == 3 &&
-                            bytes[35] == 3,
-                        "actual closed-port ICMP error");
-                require(!checksum(bytes + 14, 20) && !checksum(bytes + 34, 36),
-                        "actual native checksums");
-                require(!memcmp(bytes, lanes[at].frame + 6, 6) &&
-                            !memcmp(bytes + 6, lanes[at].frame, 6),
-                        "returned interface ownership");
-                require(!memcmp(bytes + 42, lanes[at].frame + 14, 28) && !lanes[at].reply_size,
-                        "exact original quote once");
-                memcpy(lanes[at].reply, bytes, size);
-                lanes[at].reply_size = size;
-                lanes[at].received = now();
-                received++;
+                accept_quote(lanes + at);
             }
+        received = !!lanes[0].reply_size + !!lanes[1].reply_size;
         global = counter("OutRateLimitGlobal");
-        out = counter("OutDestUnreachs");
+        out = counter("OutDestUnreachs") - primed;
         if (received + global == 2 && out == received)
             break;
     }
     require(received + global == 2 && out == received && counter("OutErrors") == 0,
             "account every original native error decision");
-    printf("{\"trial\":%u,\"aligned\":%s,\"gap_ns\":%u,\"received\":%u,\"rate_global\":%ld,\"out_"
-           "errors\":0,\"lanes\":[",
-           trial, aligned ? "true" : "false", aligned ? 0 : 1000000, received, global);
+    printf("{\"trial\":%u,\"mode\":%u,\"aligned\":%s,\"primed\":%s,\"gap_ns\":%u,\"received\":%u,"
+           "\"rate_global\":%ld,\"out_errors\":0,\"primer\":",
+           trial, mode, aligned ? "true" : "false", primed ? "true" : "false",
+           aligned ? 0 : 1000000, received, global);
+    if (primed)
+        print_lane(&primer);
+    else
+        printf("null");
+    printf(",\"lanes\":[");
     for (unsigned at = 0; at < 2; at++) {
         if (at)
             putchar(',');
-        printf("{\"cpu\":%d,\"write_before_ns\":%llu,\"write_after_ns\":%llu,\"read_ns\":%llu,"
-               "\"input\":\"",
-               lanes[at].cpu, (unsigned long long)lanes[at].before,
-               (unsigned long long)lanes[at].after, (unsigned long long)lanes[at].received);
-        hex(lanes[at].frame, 60);
-        printf("\",\"reply\":\"");
-        hex(lanes[at].reply, lanes[at].reply_size);
-        printf("\"}");
+        print_lane(lanes + at);
         close(lanes[at].fd);
     }
     puts("]}");
@@ -287,23 +320,24 @@ int main(int argc, char** argv) {
     printf("{\"diagnostic_only\":true,\"feature_acceptance\":false,\"kernel\":\"%s\",\"fixed_"
            "trials_each\":%u}\n",
            kernel.release, trials);
-    unsigned drops[2] = {0};
+    unsigned drops[3] = {0};
     for (unsigned trial = 0; trial < trials; trial++)
-        for (unsigned order = 0; order < 2; order++) {
-            unsigned aligned = order ^ (trial & 1);
+        for (unsigned order = 0; order < 3; order++) {
+            unsigned mode = (order + trial) % 3;
             pid_t pid = fork();
             require(pid >= 0, "owned namespace child");
             if (!pid)
-                exit(one(trial, aligned, cpus[0], cpus[1]));
+                exit(one(trial, mode, cpus[0], cpus[1]));
             int status;
             require(waitpid(pid, &status, 0) == pid && WIFEXITED(status),
                     "namespace child retirement");
             int code = WEXITSTATUS(status);
             require(code == 0 || code == 2, "actual first-error experiment completes");
-            drops[aligned] += code == 2;
+            drops[mode] += code == 2;
         }
     printf("{\"diagnostic_complete\":true,\"profiles\":%u,\"staggered_suppressed_profiles\":%u,"
-           "\"aligned_suppressed_profiles\":%u,\"feature_acceptance\":false}\n",
-           trials * 2, drops[0], drops[1]);
+           "\"aligned_suppressed_profiles\":%u,\"primed_suppressed_profiles\":%u,"
+           "\"feature_acceptance\":false}\n",
+           trials * 3, drops[0], drops[1], drops[2]);
     return 0;
 }

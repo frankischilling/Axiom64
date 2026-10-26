@@ -37,6 +37,7 @@ bool inet_dont_fragment(const InetSocket*, bool path_locked = false);
 bool inet_fragmentation_allowed(const InetSocket*);
 
 bool inet_use_path_mtu(const InetSocket*);
+uint8_t inet_traffic_class(const InetSocket*);
 
 bool inet_accept_path_mtu(const InetSocket*);
 

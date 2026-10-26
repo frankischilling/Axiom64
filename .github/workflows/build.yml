@@ -202,6 +202,9 @@ jobs:
           make -j2 build/tcp6-scoped-native build/tcp6-scoped-static build/tcp6-scoped-dynamic
           make -j2 build/tcp6-replies-native build/tcp6-replies-static build/tcp6-replies-dynamic
           make -j2 build/tcp6-isolation-native build/tcp6-isolation-static build/tcp6-isolation-dynamic
+          make -j2 build/tcp6-controls-ipv6-native build/tcp6-controls-ipv6-static build/tcp6-controls-ipv6-dynamic
+          make -j2 build/tcp6-controls-mapped-native build/tcp6-controls-mapped-static build/tcp6-controls-mapped-dynamic
+          make -j2 build/tcp6-controls-ipv4-native build/tcp6-controls-ipv4-static build/tcp6-controls-ipv4-dynamic
           make -j2 build/tcp6-pmtu-native build/tcp6-pmtu-static build/tcp6-pmtu-dynamic
           make -j2 build/tcp6-errors-native build/tcp6-errors-static build/tcp6-errors-dynamic
           make -j2 build/tcp-challenge-native build/tcp-challenge-static build/tcp-challenge-dynamic
@@ -783,6 +786,8 @@ jobs:
           make test-tcp-sockets
           make test-tcp6-abi
           python3 scripts/tests/tcp6_abi_evidence_test.py
+          make test-tcp6-control-state
+          python3 scripts/tests/tcp6_control_state_evidence_test.py
       - name: Test native host TCP client/server transfers and independent NIC captures
         if: matrix.suite == 'tcp'
         run: make test-tcp-native-wire
@@ -827,6 +832,9 @@ jobs:
         run: |
           sudo -n make test-tcp6-isolation-native
           make test-tcp6-isolation
+          sudo -n make test-tcp6-controls-wire-native
+          make test-tcp6-controls-wire
+          python3 scripts/tests/tcp6_control_wire_evidence_test.py
       - name: Independently verify TCP loss captures and reject damaged evidence
         if: matrix.suite == 'tcp-fault-loss'
         run: |
@@ -1728,6 +1736,11 @@ jobs:
             build/tcp6-abi/**
             build/tcp6-abi-damaged/*/changed.zip
             build/tcp6-abi-damaged/results.json
+            build/tcp-control-state/**
+            build/tcp-control-state-damaged/*/changed.zip
+            build/tcp-control-state-damaged/glibc-snapshot.zip
+            build/tcp-control-state-damaged/snapshot-controls.zip
+            build/tcp-control-state-damaged/results.json
       - name: Upload DNS boot fixtures and providers
         if: always() && matrix.suite == 'network'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1765,6 +1778,12 @@ jobs:
             build/tcp6-replies-guest-wire/**
             build/tcp6-isolation-native-wire/**
             build/tcp6-isolation-guest-wire/**
+            build/tcp6-controls-ipv6-native-wire/**
+            build/tcp6-controls-ipv6-guest-wire/**
+            build/tcp6-controls-mapped-native-wire/**
+            build/tcp6-controls-mapped-guest-wire/**
+            build/tcp6-controls-ipv4-native-wire/**
+            build/tcp6-controls-ipv4-guest-wire/**
             build/axiom64-tcp-reordering-*.iso
             build/axiom64-tcp-persist-*.iso
             build/axiom64-tcp-timeout-*.iso

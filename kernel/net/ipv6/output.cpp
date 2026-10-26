@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/ipv6/host.hpp"
+#include "net/ipv6/destination.hpp"
 #include "net/ipv6/fragmentation.hpp"
 #include "net/inet6.hpp"
 #include "core/random.hpp"
@@ -196,7 +197,8 @@ static int send_owned(const ip6::Address& source, const ip6::Address& destinatio
                       uint8_t protocol, int16_t hop_limit, const void* data, size_t length,
                       Ipv6OutputOwner owner, bool fragmentable, uint32_t socket_mtu,
                       bool interface_mtu, uint8_t traffic_class,
-                      const ip6::OutputExtensions* extensions, Ipv6SourcePolicy source_policy) {
+                      const ip6::OutputExtensions* extensions, Ipv6SourcePolicy source_policy,
+                      Ipv6Destination* retained = nullptr) {
     if (hop_limit < -1 || hop_limit > 255 || bool(owner.identity) != bool(owner.complete))
         return -22;
     const ip6::OutputExtensions empty;
@@ -209,6 +211,8 @@ static int send_owned(const ip6::Address& source, const ip6::Address& destinatio
     int error = ipv6_path(source, first, bound, path, interface_mtu, source_policy);
     if (error)
         return error;
+    if (retained)
+        ipv6_destination_store(*retained, path, first);
     if (socket_mtu && !fragmentable)
         path.mtu = min(path.mtu, socket_mtu);
     if (length > 65535 - size_t(extra) ||
@@ -238,9 +242,10 @@ int ipv6_send(const ip6::Address& source, const ip6::Address& destination, unsig
 int ipv6_send_owned(Ipv6OutputOwner owner, const ip6::Address& source,
                     const ip6::Address& destination, unsigned bound, uint8_t protocol,
                     int16_t hop_limit, const void* data, size_t length,
-                    Ipv6SourcePolicy source_policy) {
+                    Ipv6SourcePolicy source_policy, uint8_t traffic_class,
+                    Ipv6Destination* retained) {
     return send_owned(source, destination, bound, protocol, hop_limit, data, length, owner, false,
-                      0, false, 0, nullptr, source_policy);
+                      0, false, traffic_class, nullptr, source_policy, retained);
 }
 
 bool ipv6_output_ready() {

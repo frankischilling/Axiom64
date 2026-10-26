@@ -52,6 +52,10 @@ def products(directory, profile, sources, native, suite='loss'):
             not posixpath.normpath(name).startswith('../') and sources.get(posixpath.normpath(name)) == fingerprint
             for name, fingerprint in compiled['sources'].items()),
             'exact IPv6 client compilation sources and linkage')
+    if config.get('router_hop_control'):
+        require([flag for flag in compiled['command'] if flag.startswith('-DWIRE_FAMILY')] ==
+                [flag for flag in config['flags'] if flag.startswith('-DWIRE_FAMILY')] and
+                '-Iuserspace/tests/net' in compiled['command'], 'fixed TCP control family compilation')
     elf = (directory / 'program').read_bytes()
     require(elf[:7] == b'\x7fELF\2\1\1' and struct.unpack_from('<H', elf, 18)[0] == 62,
             'actual x86-64 executable format')
@@ -204,7 +208,10 @@ def damaged_products(directory, profile, sources, native, output, suite='loss'):
     original['products.json'] = json.dumps({name: hashlib.sha256(data).hexdigest()
                                           for name, data in original.items()}).encode()
     variants = {}
-    for name in ('program-bytes', 'source-binding', 'source-escape', 'linkage', 'compiler-size', 'elf-format'):
+    controls = ['program-bytes', 'source-binding', 'source-escape', 'linkage', 'compiler-size', 'elf-format']
+    if definition(suite).get('router_hop_control'):
+        controls.append('control-family')
+    for name in controls:
         files = original.copy()
         compiled = json.loads(files['program.inputs.json'])
         if name == 'program-bytes':
@@ -220,6 +227,9 @@ def damaged_products(directory, profile, sources, native, output, suite='loss'):
                 compiled['command'].insert(1, '-static')
         elif name == 'compiler-size':
             compiled['product']['bytes'] += 1
+        elif name == 'control-family':
+            compiled['command'] = [flag if not flag.startswith('-DWIRE_FAMILY=') else '-DWIRE_FAMILY=9'
+                                   for flag in compiled['command']]
         else:
             changed = bytearray(files['program'])
             changed[4] = 1
@@ -325,6 +335,16 @@ def audit(directory, output=None, expected=None):
         saved = json.loads((output / 'receipt.json').read_text())
         log = (output / ('client.log' if native else 'guest.log')).read_text()
         require(saved['passed'] and saved['independent_capture_audited'], 'independent original producer capture accepted')
+        if config.get('router_hop_control'):
+            before = json.loads((output / 'preexecution.json').read_text())
+            require(saved['suite'] == suite and before['deadline_seconds'] == 150 and
+                    saved['start_monotonic_ns'] == before['start_monotonic_ns'] and
+                    0 < saved['end_monotonic_ns'] - before['start_monotonic_ns'] <= 150_000_000_000,
+                    'original TCP control execution and deadline')
+            if native:
+                require(all(before['settings'][key] == '1' for key in
+                            ('net.ipv6.conf.all.accept_ra', 'net.ipv6.conf.default.accept_ra')),
+                        'actual owned namespace receives router hop changes')
         captures = []
         for lane in range(2):
             statistics = saved['capture_statistics'][lane] if native else None
@@ -343,6 +363,8 @@ def audit(directory, output=None, expected=None):
                 from tcp6.replies_capture import damaged as checker
             elif suite == 'isolation':
                 from tcp6.isolation_capture import damaged as checker
+            elif 'damaged' in config:
+                checker = config['damaged']
             captures.append(dict(capture=reopened, negative_controls=checker(path, lane, log, native, controls, statistics)))
         rows.append(dict(profile=profile, native=native, product=product, captures=captures,
                          firmware=item.get('firmware'), transport=item.get('transport')))

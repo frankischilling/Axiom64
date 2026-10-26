@@ -38,6 +38,10 @@ bool inet_payload(InetSocket* socket) {
     return socket->type == 3 || socket->type == 2 || socket->type == 1;
 }
 
+uint8_t inet_traffic_class(const InetSocket* socket) {
+    return socket ? socket->tos : 0;
+}
+
 InetSocket* inet_allocate(unsigned type) {
     for (auto& socket : inet_sockets)
         if (!socket.used) {
@@ -72,6 +76,7 @@ void inet_consume(InetSocket* socket) {
 void inet_dispose(InetSocket* socket) {
     ipv4_detach_owner(socket);
     ipv6_detach_output(socket);
+    ipv6_destination_clear(socket->destination6);
     while (socket->count)
         inet_consume(socket);
     socket->used = false;
@@ -556,7 +561,26 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
                     return -19;
             }
             socket->destination = {};
+            ipv6_destination_clear(socket->destination6);
             socket->index = index;
+            return 0;
+        }
+        if (b == 0 && c == 1) { // IP_TOS accepts an integer or a single byte.
+            int32_t length = int32_t(frame.r8);
+            if (length < 0)
+                return -22;
+            uint32_t value = 0;
+            size_t bytes = length >= 4 ? 4 : length ? 1 : 0;
+            if (bytes && !task.memory->space.copy_in(&value, d, bytes))
+                return -14;
+            uint8_t selected = uint8_t(value);
+            if (inet_stream(socket))
+                selected = (selected & ~uint8_t(3)) | (socket->tos & 3);
+            if (selected != socket->tos) {
+                socket->tos = selected;
+                socket->destination = {};
+                ipv6_destination_clear(socket->destination6);
+            }
             return 0;
         }
         int value;
@@ -606,6 +630,10 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             return -14;
         if (int32_t(length) < 0)
             return -22;
+        if (b == 0 && c == 1) {
+            uint32_t capacity = length >= 4 ? 4 : length ? 1 : 0;
+            return socket_integer_result(task, socket->tos, capacity, d, frame.r8);
+        }
         DestinationRelease finish{socket, b == 0 && (c == 10 || c == 14)};
         if (b == 1) {
             if (c == 2 && (socket->type == 2 || socket->type == 1))

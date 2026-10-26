@@ -20,8 +20,8 @@ bool option_write(Task& task, uint64_t destination, const void* bytes, size_t le
 }
 } // namespace
 
-int socket_ipv6_integer(Task& task, int value, uint32_t capacity, uint64_t value_pointer,
-                        uint64_t length_pointer) {
+int socket_integer_result(Task& task, int value, uint32_t capacity, uint64_t value_pointer,
+                          uint64_t length_pointer) {
     uint32_t copied = min(capacity, uint32_t(sizeof(value)));
     if (!option_write(task, length_pointer, &copied, sizeof(copied)) ||
         !option_write(task, value_pointer, &value, copied))

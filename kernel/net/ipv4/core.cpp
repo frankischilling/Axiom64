@@ -901,7 +901,7 @@ uint32_t ipv4_learn_pmtu(uint32_t source, uint32_t destination, unsigned index,
 
 int ipv4_send(InetSocket* owner, Ipv4Source source, uint32_t destination, unsigned bound_index,
               uint8_t protocol, uint8_t ttl, bool broadcast, const void* payload, size_t length,
-              bool cache_destination) {
+              bool cache_destination, uint8_t traffic_class) {
     if (!ttl)
         return -22;
     Selection route;
@@ -937,6 +937,7 @@ int ipv4_send(InetSocket* owner, Ipv4Source source, uint32_t destination, unsign
     memset(bytes, 0, total);
     auto ip = bytes + ethernet_header;
     ip[0] = 0x45;
+    ip[1] = owner ? inet_traffic_class(owner) : traffic_class;
     ip4::put16(ip + 2, 20 + length);
     ip4::put16(ip + 4, ++identifier);
     ip4::put16(ip + 6, inet_dont_fragment(owner, limit.locked) ? 0x4000 : 0);

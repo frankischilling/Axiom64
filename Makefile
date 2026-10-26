@@ -1010,6 +1010,31 @@ test-tcp6-isolation:
 	$(PYTHON) scripts/tcp6_test.py --suite isolation
 test-tcp6-isolation-native:
 	$(PYTHON) scripts/tcp6_test.py --suite isolation --native
+
+# All families share one client; each executable fixes its socket family at build time.
+define TCP6_CONTROL_CLIENT
+build/tcp6-controls-$(1)-native: userspace/tests/net/tcp6/control_wire.c userspace/tests/net/ipv6_fixture.h
+	@mkdir -p build
+	$$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -Iuserspace/tests/net -DWIRE_FAMILY=$(2) $$< -o $$@
+build/tcp6-controls-$(1)-static build/tcp6-controls-$(1)-dynamic: userspace/tests/net/tcp6/control_wire.c userspace/tests/net/ipv6_fixture.h scripts/compile_uapi_client.py
+	@mkdir -p build
+	$$(PYTHON) scripts/compile_uapi_client.py --output $$@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -Iuserspace/tests/net -DWIRE_FAMILY=$(2) $$(if $$(filter %-static,$$@),-static) $$(filter %.c,$$^)
+endef
+$(eval $(call TCP6_CONTROL_CLIENT,ipv6,0))
+$(eval $(call TCP6_CONTROL_CLIENT,mapped,1))
+$(eval $(call TCP6_CONTROL_CLIENT,ipv4,2))
+
+.PHONY: test-tcp6-controls-wire test-tcp6-controls-wire-native
+test-tcp6-controls-wire:
+	$(PYTHON) scripts/tcp6_test.py --suite controls-ipv6
+	$(PYTHON) scripts/tcp6_test.py --suite controls-mapped
+	$(PYTHON) scripts/tcp6_test.py --suite controls-ipv4
+
+test-tcp6-controls-wire-native:
+	$(PYTHON) scripts/tcp6_test.py --suite controls-ipv6 --native
+	$(PYTHON) scripts/tcp6_test.py --suite controls-mapped --native
+	$(PYTHON) scripts/tcp6_test.py --suite controls-ipv4 --native
+
 build/tcp6-pmtu-native: userspace/tests/net/tcp6/pmtu.c userspace/tests/net/ipv6_fixture.h
 	@mkdir -p build
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
@@ -1047,6 +1072,9 @@ test-tcp6-native: build/tcp6-abi-native build/tcp6-local-native build/tcp6-mss-n
 .PHONY: test-tcp6-abi
 test-tcp6-abi: build/axiom64.elf build/init busybox
 	$(PYTHON) scripts/tcp6_abi_test.py
+.PHONY: test-tcp6-control-state
+test-tcp6-control-state: build/axiom64.elf build/init busybox
+	$(PYTHON) scripts/tcp6_control_state_test.py
 build/tcp-native: userspace/tests/net/tcp.c userspace/tests/net/tcp_maxseg.c userspace/tests/net/tcp_maxseg.h
 	@mkdir -p build
 	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@

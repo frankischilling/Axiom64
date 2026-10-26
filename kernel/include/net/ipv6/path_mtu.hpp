@@ -4,7 +4,8 @@
 
 namespace ax::ip6 {
 constexpr unsigned path_mtu_capacity = 64;
-constexpr unsigned path_mtu_reference_capacity = 256;
+// Raw/UDP and shared TCP descriptions each have 256 independently held paths.
+constexpr unsigned path_mtu_reference_capacity = 512;
 constexpr uint64_t path_mtu_lifetime = 60000; // Ten minutes at 100 Hz.
 
 struct PathKey {

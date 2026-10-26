@@ -22,7 +22,7 @@ void inet6_icmp_error(unsigned index, const ip6::Packet& packet, const uint8_t* 
             ip6::path_mtu_cache.learn(ip6::path_key(path, quote.destination), path.mtu,
                                       quote.information, ticks);
             if (owner && owner->connected)
-                inet6_destination_store(owner, path, quote.destination);
+                ipv6_destination_store(owner->destination, path, quote.destination);
         }
     };
     auto enqueue = [&](Inet6Socket& socket) {

@@ -106,7 +106,7 @@ int ipv4_source(Ipv4Source source, uint32_t destination, unsigned bound_index, u
 
 int ipv4_send(InetSocket*, Ipv4Source source, uint32_t destination, unsigned bound_index,
               uint8_t protocol, uint8_t ttl, bool broadcast, const void*, size_t,
-              bool cache_destination = true);
+              bool cache_destination = true, uint8_t traffic_class = 0);
 
 // Last socket close detaches error delivery; accepted packets own their bytes.
 void ipv4_detach_owner(InetSocket*);

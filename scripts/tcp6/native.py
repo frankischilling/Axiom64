@@ -56,12 +56,13 @@ def child(directory, profile, parent_namespace, suite='loss'):
     own_namespace = Path('/proc/self/ns/net').stat().st_ino
     check(own_namespace != parent_namespace, 'native TCP6 runs in a new network namespace')
     settings = {}
+    accept_ra = int(config.get('router_hop_control', False))
     def command(*args):
         return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT).strip()
     for key, value in (
         ('net.ipv6.conf.all.disable_ipv6', 0), ('net.ipv6.conf.default.disable_ipv6', 0),
         ('net.ipv6.conf.default.addr_gen_mode', 1),
-        ('net.ipv6.conf.all.accept_ra', 0), ('net.ipv6.conf.default.accept_ra', 0),
+        ('net.ipv6.conf.all.accept_ra', accept_ra), ('net.ipv6.conf.default.accept_ra', accept_ra),
         ('net.ipv6.conf.all.autoconf', 0), ('net.ipv6.conf.default.autoconf', 0),
         ('net.ipv6.conf.all.enhanced_dad', 0), ('net.ipv6.conf.default.enhanced_dad', 0),
         ('net.ipv6.auto_flowlabels', 0)):

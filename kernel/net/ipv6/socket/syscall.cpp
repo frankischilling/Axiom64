@@ -95,7 +95,7 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
         if (error)
             return error;
         if (frame.rax == 42 && !address.family) {
-            inet6_destination_clear(socket);
+            ipv6_destination_clear(socket->destination);
             socket->peer = {};
             socket->peer_port = 0;
             socket->connected = false;
@@ -145,7 +145,7 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             socket->index = index;
             socket->local = address.address;
             socket->bound = !address.address.unspecified();
-            inet6_destination_clear(socket);
+            ipv6_destination_clear(socket->destination);
         } else {
             if (address.address.unspecified())
                 address.address.bytes[15] = 1;
@@ -166,7 +166,7 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             socket->peer_port = address.port;
             socket->index = index;
             socket->connected = true;
-            inet6_destination_store(socket, path, first);
+            ipv6_destination_store(socket->destination, path, first);
         }
         return 0;
     }
@@ -228,7 +228,7 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             if (socket->index && !capable(task.credentials, Capability::net_raw))
                 return -1;
             socket->index = index;
-            inet6_destination_clear(socket);
+            ipv6_destination_clear(socket->destination);
             return 0;
         }
         if (b == 58 && c == 1 && socket->type == 3) {
@@ -298,7 +298,7 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
                 uint8_t selected = value == -1 ? 0 : value;
                 if (socket->traffic_class != selected) {
                     socket->traffic_class = selected;
-                    inet6_destination_clear(socket);
+                    ipv6_destination_clear(socket->destination);
                 }
             }
         } else if (b == 41 && c == 26) {
@@ -354,7 +354,7 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             else
                 return -92;
         } else if (b == 41 && c == 16)
-            value = socket->hops < 0 ? inet6_default_hops(socket) : socket->hops;
+            value = socket->hops < 0 ? ipv6_destination_hops(socket->destination) : socket->hops;
         else if (b == 41 && c == 67)
             value = socket->traffic_class;
         else if (b == 41 && (c == 8 || c == 49 || c == 51 || c == 66))
@@ -378,14 +378,14 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             value = socket->v6only;
         else if (b == 41 && c == 24) {
             uint32_t mtu;
-            int error = inet6_destination_mtu(socket, mtu);
+            int error = ipv6_destination_mtu(socket->destination, mtu);
             if (error)
                 return error;
             value = mtu;
         } else
             return -92;
         if (b == 41) {
-            return socket_ipv6_integer(task, value, ipv6_length, d, frame.r8);
+            return socket_integer_result(task, value, ipv6_length, d, frame.r8);
         }
         return output(task, &value, sizeof(value), d, frame.r8, true);
     }

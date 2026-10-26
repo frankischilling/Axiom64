@@ -2,6 +2,7 @@
 #include "net/tcp/socket.hpp"
 #include "net/ipv4.hpp"
 #include "net/socket_options.hpp"
+#include "net/ipv6/router.hpp"
 #include "process/task.hpp"
 #include "io/io.hpp"
 #include "../ipv4/socket.hpp"
@@ -64,6 +65,8 @@ int bind(Task& task, InetSocket* socket, const Inet6Address& address) {
     }
     socket->local = local4;
     socket->bound = wire6 ? !value.unspecified() : local4 != 0;
+    if (wire6 && !value.unspecified())
+        socket->v6only = true;
     socket->port_locked = port != 0;
     socket->bind_completed = true;
     return 0;
@@ -105,7 +108,7 @@ int64_t tcp6_syscall(Task& task, const Frame& frame) {
     }
     if (frame.rax == 51 || frame.rax == 52)
         return tcp_address(task, socket, frame.rax == 52, b, c);
-    if (b != 41 || c != 26)
+    if (b != 41 || (c != 16 && c != 26 && c != 67))
         return -92;
     if (frame.rax == 54) {
         if (int32_t(frame.r8) < 4)
@@ -113,16 +116,41 @@ int64_t tcp6_syscall(Task& task, const Frame& frame) {
         int value = 0;
         if (frame.r10 && !task.memory->space.copy_in(&value, frame.r10, 4))
             return -14;
-        if (socket->bind_completed || socket->local_port)
-            return -22;
-        socket->v6only = value != 0;
+        if (c == 26) {
+            if (socket->bind_completed || socket->local_port)
+                return -22;
+            socket->v6only = value != 0;
+        } else {
+            if (value < -1 || value > 255)
+                return -22;
+            if (c == 16)
+                socket->hops = value;
+            else {
+                uint8_t selected = (value < 0 ? 0 : value) & ~uint8_t(3);
+                selected |= socket->traffic_class & 3;
+                if (socket->traffic_class != selected) {
+                    socket->traffic_class = selected;
+                    ipv6_destination_clear(socket->destination6);
+                    socket->destination = {};
+                }
+            }
+        }
         return 0;
     }
     if (frame.rax == 55) {
         uint32_t length;
         if (!task.memory->space.copy_in(&length, frame.r8, 4))
             return -14;
-        return socket_ipv6_integer(task, socket->v6only, length, frame.r10, frame.r8);
+        int value = socket->v6only;
+        if (c == 16) {
+            unsigned index = socket->destination.path.index;
+            value = socket->hops >= 0 ? socket->hops
+                    : socket->wire6   ? ipv6_destination_hops(socket->destination6)
+                    : index           ? ip6::link_hop_limit(index)
+                                      : 64;
+        } else if (c == 67)
+            value = socket->traffic_class;
+        return socket_integer_result(task, value, length, frame.r10, frame.r8);
     }
     return -95;
 }

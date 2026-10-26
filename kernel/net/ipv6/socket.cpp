@@ -37,7 +37,7 @@ void inet6_consume(Inet6Socket* socket) {
 
 void inet6_close(Inet6Socket* socket) {
     ipv6_detach_owner(socket);
-    inet6_destination_clear(socket);
+    ipv6_destination_clear(socket->destination);
     inet6_purge_errors(socket);
     while (socket->count)
         inet6_consume(socket);
@@ -254,7 +254,7 @@ int inet6_send_admit(Inet6Socket* socket, const Inet6Address& address, size_t le
         return error;
     if (socket->type == 2 && socket->connected && !named && !options.present &&
         !options.extensions.routing_length)
-        inet6_destination_store(socket, path, first);
+        ipv6_destination_store(socket->destination, path, first);
     int extra = ip6::output_extension_size(options.extensions);
     if (extra < 0)
         return extra;

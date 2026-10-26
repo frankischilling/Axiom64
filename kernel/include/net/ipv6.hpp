@@ -5,6 +5,7 @@
 
 namespace ax {
 struct Inet6Socket;
+struct Ipv6Destination;
 constexpr unsigned ipv6_address_capacity = 16, ipv6_route_capacity = 16;
 constexpr unsigned ipv6_loopback = max_net_devices + 1;
 
@@ -88,7 +89,8 @@ struct Ipv6OutputOwner {
 // Transport output uses the selected route/MTU without source fragmentation.
 int ipv6_send_owned(Ipv6OutputOwner, const ip6::Address& source, const ip6::Address& destination,
                     unsigned bound_index, uint8_t protocol, int16_t hop_limit, const void*, size_t,
-                    Ipv6SourcePolicy = Ipv6SourcePolicy::assigned);
+                    Ipv6SourcePolicy = Ipv6SourcePolicy::assigned, uint8_t traffic_class = 0,
+                    Ipv6Destination* = nullptr);
 
 // Retire superseded copied transport packets above this IPv6 path MTU.
 // Each completion reports -ECANCELED, including deferred device submission.

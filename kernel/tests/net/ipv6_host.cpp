@@ -1677,7 +1677,7 @@ static void cached_routing_output() {
             assert(!inet6_extension_set(socket, 57, routing, sizeof(routing)));
             socket->connected = variant != 3;
             if (socket->connected)
-                inet6_destination_store(socket, path, first);
+                ipv6_destination_store(socket->destination, path, first);
             if (variant == 4)
                 assert(!inet6_extension_set(socket, 57, routing, sizeof(routing)));
             if (variant == 5)
@@ -1777,16 +1777,16 @@ static void routed_error_destinations(unsigned mode) {
         }
         assert(!inet6_extension_set(socket, 57, routing, routing_size));
         // Model connect after installing the header, as the syscall does.
-        inet6_destination_store(socket, path, first);
+        ipv6_destination_store(socket->destination, path, first);
         Inet6Address target{10, socket->peer_port, 0, final, 0};
         std::vector<uint8_t> payload(128, 0x5b);
         assert(!inet6_send_admit(socket, target, payload.size(), payload.data(), false));
         uint32_t metric = 0;
-        assert(!inet6_destination_mtu(socket, metric) && metric == 1400);
+        assert(!ipv6_destination_mtu(socket->destination, metric) && metric == 1400);
         // Retaining the actual selected route keeps its metric after expiry.
         ticks = ip6::path_mtu_lifetime;
         assert(!ipv6_path(local, first, lane + 1, path) && path.mtu == 1500);
-        assert(!inet6_destination_mtu(socket, metric) && metric == 1400);
+        assert(!ipv6_destination_mtu(socket->destination, metric) && metric == 1400);
         assert(inet6_send(socket, target, payload.data(), payload.size()) == 128);
         net_poll();
         deliver(lane, advertisement(lane, first, local));
@@ -1825,7 +1825,7 @@ static void routed_error_destinations(unsigned mode) {
         deliver(lane, incoming(lane, address(lane, 250), local, quote, 64));
         assert(inet6_error(socket, true) == 90);
         assert(!ipv6_path(local, first, lane + 1, path) && path.mtu == 1280);
-        assert(!inet6_destination_mtu(socket, metric) && metric == 1280);
+        assert(!ipv6_destination_mtu(socket->destination, metric) && metric == 1280);
         auto record = inet6_take_error(socket);
         assert(record && record->destination.address == first &&
                record->destination.port == socket->peer_port);

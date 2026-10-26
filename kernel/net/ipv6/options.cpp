@@ -62,7 +62,7 @@ int inet6_extension_set(Inet6Socket* socket, unsigned kind, const uint8_t* input
     release(const_cast<uint8_t*>(*data));
     *data = bytes;
     *length = actual;
-    inet6_destination_clear(socket);
+    ipv6_destination_clear(socket->destination);
     return 0;
 }
 

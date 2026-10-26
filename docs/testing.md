@@ -42,6 +42,28 @@ open.
 after an actual native client starts. The wrapper and client must retire as one
 owned process group, and both TAP interfaces must disappear.
 
+`sudo -n make test-tcp6-controls-wire-native` and
+`make test-tcp6-controls-wire` compare IPv6, mapped and pure IPv4 TCP controls.
+Each family uses three native and eight guest profiles on both adapters, with
+the same pinned musl clients and loader in native and guest executions. Actual
+router advertisements change default hops from 41 to 51. Eleven byte-checked
+exchanges per adapter cover traffic-class/TOS cache invalidation, zero and
+explicit IPv6 hops, normalized unchanged values and device reselection. A
+checksum-valid duplicate FIN arrives after the application releases its final
+descriptor; the detached reply must use the measured default hop/TTL and retained
+class/TOS. IPv4 wire output retains its independent live TTL and TOS.
+
+The existing packet harness retains the 150-second execution deadline, original
+capture clocks, zero native drops and fifty-millisecond arrival brackets.
+Seventeen damaged packet/log variants per capture are serialized, reopened and
+rejected through the real reader. Header and echo mutations have repaired
+checksums; native frame fingerprints are rebound to reach semantic checks.
+`python3 scripts/tests/tcp6_control_wire_evidence_test.py` reopens all six evidence
+directories and requires every profile, actual image and matching native/guest
+program. Output is retained under `build/tcp6-controls-*-wire/`. These active-open
+checks do not establish passive wire inheritance, wider route/source/device
+lifetimes or complete TIME-WAIT expiry acceptance.
+
 `sudo -n make test-tcp6-errors-native` and `make test-tcp6-errors` exercise 62
 ordinary ICMPv6 TCP cases on each adapter through all three native and eight
 guest profiles. They cover thirteen error classes during active, passive and

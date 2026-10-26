@@ -2,6 +2,7 @@
 #pragma once
 #include "net/inet.hpp"
 #include "net/ipv4.hpp"
+#include "net/ipv6/destination.hpp"
 #include "net/tcp/address.hpp"
 
 namespace ax::tcp {
@@ -21,7 +22,7 @@ struct InetSocket {
     unsigned mtu_policy = 1;
     Ipv4Destination destination;
     int error = 0;
-    uint8_t ttl = 64;
+    uint8_t ttl = 64, tos = 0;
     uint8_t type = 3, protocol = 1;
     uint16_t peer_port = 0, local_port = 0, reported_port = 0;
     unsigned shutdown = 0;
@@ -31,6 +32,9 @@ struct InetSocket {
     // Stream descriptions share one engine and port table across Internet domains.
     bool ipv6 = false, wire6 = false, v6only = false, bind_completed = false;
     ip6::Address local6, peer6;
+    Ipv6Destination destination6;
+    int16_t hops = -1;
+    uint8_t traffic_class = 0;
 
     tcp::Binding binding(uint32_t local4) const {
         return {wire6 ? tcp::Address::ipv6(local6) : tcp::Address::ipv4(local4), index,

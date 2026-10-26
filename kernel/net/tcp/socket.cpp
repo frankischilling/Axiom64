@@ -19,12 +19,22 @@ bool sequence_seeded;
 uint64_t sequence_clock;
 bool polling;
 
+struct HeaderOptions {
+    uint8_t ttl = 64, tos = 0;
+    int16_t hops = -1;
+    uint8_t traffic_class = 0;
+};
+
+HeaderOptions header_options(const InetSocket& socket) {
+    return {socket.ttl, socket.tos, socket.hops, socket.traffic_class};
+}
+
 struct TimeWaitRecord {
     tcp::TimeWait state;
     tcp::Address local, peer;
     uint16_t local_port = 0, peer_port = 0;
     unsigned binding_index = 0;
-    uint8_t ttl = 64;
+    uint8_t traffic_class = 0;
     bool used = false, pending = false, reuse = false, reserved = false;
 };
 
@@ -143,6 +153,7 @@ void reset_connect(InetSocket* socket) {
     ipv4_detach_owner(socket);
     ipv6_detach_output(socket);
     socket->destination = {};
+    ipv6_destination_clear(socket->destination6);
     release_time_wait(socket);
     socket->mss_cache = socket->stream->segment_size();
     socket->stream->~Connection();
@@ -177,7 +188,9 @@ bool transfer_time_wait(InetSocket* socket) {
     record.local_port = socket->local_port;
     record.peer_port = socket->peer_port;
     record.binding_index = socket->index;
-    record.ttl = socket->ttl;
+    // The closed IPv6 description retains its traffic class for both wire
+    // families. IPv4 descriptions retain TOS. Replies use default hops.
+    record.traffic_class = socket->ipv6 ? socket->traffic_class : socket->tos;
     record.reuse = socket->reuse;
     record.used = true;
     socket->time_wait_slot = UINT16_MAX;
@@ -213,7 +226,7 @@ void output_complete(void* identity, size_t bytes, int error, unsigned index) {
 }
 
 int emit(InetSocket* owner, unsigned index, const tcp::Address& local, const tcp::Address& peer,
-         const tcp::Segment& segment, uint8_t ttl) {
+         const tcp::Segment& segment, const HeaderOptions& options) {
     uint8_t bytes[1480];
     size_t size = local.is_ipv4()
                       ? tcp::encode(local.ipv4(), peer.ipv4(), segment, bytes, sizeof(bytes))
@@ -221,9 +234,11 @@ int emit(InetSocket* owner, unsigned index, const tcp::Address& local, const tcp
     if (!size)
         return -90;
     if (local.is_ipv4())
-        return ipv4_send(owner, local.ipv4(), peer.ipv4(), index, 6, ttl, false, bytes, size);
+        return ipv4_send(owner, local.ipv4(), peer.ipv4(), index, 6, options.ttl, false, bytes,
+                         size, true, options.tos);
     return ipv6_send_owned({owner, owner ? output_complete : nullptr}, local.bytes, peer.bytes,
-                           index, 6, ttl, bytes, size);
+                           index, 6, options.hops, bytes, size, Ipv6SourcePolicy::assigned,
+                           options.traffic_class, owner ? &owner->destination6 : nullptr);
 }
 
 int address_out(Task& task, const void* address, uint32_t actual, uint64_t pointer,
@@ -436,15 +451,16 @@ void tcp_icmp_error(unsigned index, const uint8_t* bytes, size_t length) {
 namespace {
 int connect_to(InetSocket* socket, const tcp::Address& peer, uint16_t port, unsigned index) {
     Ipv4Destination destination4;
+    Ipv6Path destination6;
     tcp::Address local;
     uint32_t mtu;
     bool wire6 = !peer.is_ipv4();
     int error;
     if (wire6) {
-        Ipv6Path path;
-        error = ipv6_path(socket->bound ? socket->local6 : ip6::Address{}, peer.bytes, index, path);
-        local = tcp::Address::ipv6(path.source);
-        mtu = path.mtu;
+        error = ipv6_path(socket->bound ? socket->local6 : ip6::Address{}, peer.bytes, index,
+                          destination6);
+        local = tcp::Address::ipv6(destination6.source);
+        mtu = destination6.mtu;
     } else {
         error =
             ipv4_destination(destination4, socket->bound ? socket->local : 0, peer.ipv4(), index);
@@ -489,6 +505,8 @@ int connect_to(InetSocket* socket, const tcp::Address& peer, uint16_t port, unsi
     if (error)
         return error;
     socket->destination = destination4;
+    if (wire6)
+        ipv6_destination_store(socket->destination6, destination6, peer.bytes);
     socket->error = 0;
     socket->error_seen = false;
     uint16_t limit = socket->user_mss ? socket->user_mss : 1460;
@@ -851,6 +869,10 @@ static void receive(unsigned index, const tcp::Address& source, const tcp::Addre
         child->user_timeout = listener->user_timeout;
         child->user_mss = listener->user_mss;
         child->mtu_policy = listener->mtu_policy;
+        child->ttl = listener->ttl;
+        child->tos = listener->tos;
+        child->hops = listener->hops;
+        child->traffic_class = listener->traffic_class;
         uint32_t initial;
         if (sequence(child, initial, now) || make_stream(child, now)) {
             reclaim(child);
@@ -864,6 +886,7 @@ static void receive(unsigned index, const tcp::Address& source, const tcp::Addre
                 reclaim(child);
                 return;
             }
+            ipv6_destination_store(child->destination6, path, child->peer6);
             mtu = path.mtu;
         } else {
             if (ipv4_destination(child->destination, child->local, child->peer, child->index)) {
@@ -897,7 +920,7 @@ static void receive(unsigned index, const tcp::Address& source, const tcp::Addre
     if (!reply_index && !source.is_ipv4() &&
         (source.bytes.link_local() || destination.bytes.link_local()))
         reply_index = index;
-    emit(nullptr, reply_index, destination, source, reset, 64);
+    emit(nullptr, reply_index, destination, source, reset, {});
 }
 
 void tcp_receive(unsigned index, uint32_t source, uint32_t destination, const void* data,
@@ -940,7 +963,7 @@ void tcp_poll() {
             segment.source = socket.local_port;
             segment.destination = __builtin_bswap16(socket.peer_port);
             int error = emit(&socket, socket.index, socket.stream_local(), socket.stream_peer(),
-                             segment, socket.ttl);
+                             segment, header_options(socket));
             // A temporary queue, interface or route failure rejects this enqueue.
             // TCP retains its bytes and owns the local retry and delivery deadlines.
             if (error == -11 || error == -12 || error == -105 || error == -100 || error == -101) {
@@ -977,8 +1000,10 @@ void tcp_poll() {
         segment.acknowledgment = record.state.receive;
         segment.window = record.state.window;
         segment.flags = tcp::ack;
+        HeaderOptions options;
+        options.tos = options.traffic_class = record.traffic_class;
         int error =
-            emit(nullptr, record.binding_index, record.local, record.peer, segment, record.ttl);
+            emit(nullptr, record.binding_index, record.local, record.peer, segment, options);
         if (!error || (error != -11 && error != -12 && error != -105))
             record.pending = false;
     }

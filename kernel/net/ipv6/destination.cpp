@@ -1,27 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "socket.hpp"
+#include "../ipv4/socket.hpp"
 #include "net/ipv6/host.hpp"
 #include "net/ipv6/router.hpp"
 
 namespace ax {
-void inet6_destination_clear(Inet6Socket* socket) {
-    ip6::path_mtu_cache.release(socket->destination.metric);
-    socket->destination = {};
+static_assert(inet6_socket_count + inet_socket_count <= ip6::path_mtu_reference_capacity);
+
+void ipv6_destination_clear(Ipv6Destination& destination) {
+    ip6::path_mtu_cache.release(destination.metric);
+    destination = {};
 }
 
-void inet6_destination_store(Inet6Socket* socket, const Ipv6Path& path,
-                             const ip6::Address& destination) {
-    inet6_destination_clear(socket);
-    socket->destination.path = path;
-    socket->destination.address = destination;
-    socket->destination.metric =
-        ip6::path_mtu_cache.retain(ip6::path_key(path, destination), ticks);
-    socket->destination.adapter = net_info(path.index);
-    socket->destination.valid = true;
+void ipv6_destination_store(Ipv6Destination& destination, const Ipv6Path& path,
+                            const ip6::Address& address) {
+    ipv6_destination_clear(destination);
+    destination.path = path;
+    destination.address = address;
+    destination.metric = ip6::path_mtu_cache.retain(ip6::path_key(path, address), ticks);
+    destination.adapter = net_info(path.index);
+    destination.valid = true;
 }
 
-int inet6_destination_mtu(Inet6Socket* socket, uint32_t& value) {
-    const auto& destination = socket->destination;
+int ipv6_destination_mtu(const Ipv6Destination& destination, uint32_t& value) {
     if (!destination.valid)
         return -107;
     value = ip6::path_mtu_cache.metric(destination.metric);
@@ -33,8 +34,7 @@ int inet6_destination_mtu(Inet6Socket* socket, uint32_t& value) {
     return 0;
 }
 
-uint8_t inet6_default_hops(const Inet6Socket* socket) {
-    const auto& destination = socket->destination;
+uint8_t ipv6_destination_hops(const Ipv6Destination& destination) {
     return destination.valid && destination.adapter == net_info(destination.path.index)
                ? ip6::link_hop_limit(destination.path.index)
                : 64;

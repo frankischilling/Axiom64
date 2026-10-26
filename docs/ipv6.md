@@ -547,3 +547,29 @@ A retained UEFI boot-traffic case has four reader regressions; boot traffic is
 bounded before readiness and remains invalid inside the workload. Broader
 passive, source/device removal and scoped lifetime behavior, and complete
 current-revision hosted acceptance, remain required.
+
+TCP descriptions retain separate IPv6 unicast-hop/traffic-class and IPv4 TTL/TOS
+controls. `IPV6_UNICAST_HOPS=-1` reads the held destination's current adapter
+default, or 64 when no destination is held. Changing the normalized traffic class
+or TOS clears the cached destination; setting the same normalized value retains
+it. Device-binding changes also clear the destination. Accepted children copy
+their listener's controls at creation. Scalar results share the ordered copy
+module, including unsigned capacities, truncated outputs, aliases and copy faults.
+
+Live mapped output uses IPv4 TTL/TOS independently of the IPv6 controls. After
+the last descriptor closes, compact TIME-WAIT state retains the IPv6 class for
+IPv6 descriptions, including mapped connections, or IPv4 TOS for pure IPv4.
+Detached IPv6 replies use the selected adapter's default hops; detached IPv4
+replies use TTL 64. The state remains within the existing bounded record budget.
+These rules follow measured native Linux comparisons and the
+[Linux v6.17 IPv6 controls](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/ipv6_sockglue.c)
+and [IPv4 detached reply path](https://github.com/torvalds/linux/blob/v6.17/net/ipv4/tcp_ipv4.c).
+
+The [TCP control wire comparison](testing.md) checks all three families on both
+physical emulated adapters with real router changes, actual byte exchanges and a
+duplicate FIN after final descriptor release. Its independent reader checks
+scalars, complete stream sequences, echoed bytes, live headers and the detached
+reply. Loopback control-state checks separately cover accepted inheritance and
+copy behavior. Passive wire inheritance, wider route/source/device lifetimes,
+full expiry observations and complete current-revision hosted acceptance remain
+required. Other IPv6 TCP controls remain deliberately unsupported.

@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -114,6 +115,120 @@ static unsigned names(void) {
     return cases;
 }
 
+static unsigned option_copies(void) {
+    const uint32_t capacities[] = {0, 1, 2, 3, 4, 8, 0x80000000, UINT32_MAX};
+    const uint32_t lengths[] = {0, 1, 3, 4, 8, 0x80000000, UINT32_MAX};
+    unsigned cases = 0;
+    long page = sysconf(_SC_PAGESIZE);
+    require(page > 0, "option page size", cases);
+    uint8_t* memory =
+        mmap(NULL, (size_t)page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(memory != MAP_FAILED, "option fault pages", cases);
+    for (unsigned selected = 0; selected < 2; selected++) {
+        int fd = stream(), value = (int)selected;
+        require(!setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &value, 4), "option copy value", cases);
+        for (unsigned at = 0; at < sizeof(capacities) / sizeof(*capacities); at++)
+            for (unsigned valid = 0; valid < 2; valid++) {
+                uint8_t bytes[8], expected[8];
+                memset(bytes, 0xa5, sizeof(bytes));
+                memset(expected, 0xa5, sizeof(expected));
+                socklen_t length = capacities[at];
+                uint32_t copied = length < 4 ? length : 4;
+                errno = 0;
+                long result = syscall(SYS_getsockopt, fd, IPPROTO_IPV6, IPV6_V6ONLY,
+                                      valid ? bytes : NULL, &length);
+                require((result < 0 ? errno : 0) == (!valid && copied ? EFAULT : 0),
+                        "option truncated result", cases);
+                require(length == copied, "option truncated length", cases);
+                if (valid)
+                    memcpy(expected, &value, copied);
+                require(!memcmp(bytes, expected, sizeof(bytes)), "option truncated bytes", cases++);
+            }
+        for (unsigned prefix = 0; prefix < 4; prefix++) {
+            memset(memory, 0xa5, (size_t)page * 2);
+            uint8_t* destination = memory + page - prefix;
+            require(!mprotect(memory + page, (size_t)page, PROT_NONE), "protect option value",
+                    cases);
+            socklen_t length = 8;
+            errno = 0;
+            long result =
+                syscall(SYS_getsockopt, fd, IPPROTO_IPV6, IPV6_V6ONLY, destination, &length);
+            int error = result < 0 ? errno : 0;
+            require(!mprotect(memory + page, (size_t)page, PROT_READ | PROT_WRITE),
+                    "restore option value", cases);
+            uint8_t expected[4] = {0xa5, 0xa5, 0xa5, 0xa5};
+            memcpy(expected, &value, prefix);
+            require(error == EFAULT && length == 4 && !memcmp(destination, expected, 4),
+                    "option value fault prefix and published length", cases++);
+        }
+        for (unsigned prefix = 0; prefix < 4; prefix++) {
+            memset(memory, 0xa5, (size_t)page * 2);
+            uint8_t* destination = memory + page - prefix;
+            uint32_t capacity = 0x11223344, copied = 4;
+            memcpy(destination, &capacity, 4);
+            require(!mprotect(memory + page, (size_t)page, PROT_READ), "protect option length",
+                    cases);
+            uint8_t bytes[4] = {0xa5, 0xa5, 0xa5, 0xa5};
+            errno = 0;
+            long result =
+                syscall(SYS_getsockopt, fd, IPPROTO_IPV6, IPV6_V6ONLY, bytes, destination);
+            int error = result < 0 ? errno : 0;
+            require(!mprotect(memory + page, (size_t)page, PROT_READ | PROT_WRITE),
+                    "restore option length", cases);
+            uint8_t expected[4], untouched[4] = {0xa5, 0xa5, 0xa5, 0xa5};
+            memcpy(expected, &capacity, 4);
+            memcpy(expected, &copied, prefix);
+            require(error == EFAULT && !memcmp(destination, expected, 4) &&
+                        !memcmp(bytes, untouched, 4),
+                    "option length fault precedes value", cases++);
+        }
+        for (uint32_t capacity = 0; capacity <= 5; capacity++) {
+            uint32_t shared = capacity, copied = capacity < 4 ? capacity : 4, expected = copied;
+            memcpy(&expected, &value, copied);
+            require(!syscall(SYS_getsockopt, fd, IPPROTO_IPV6, IPV6_V6ONLY, &shared, &shared) &&
+                        shared == expected,
+                    "option aliased length and value", cases++);
+        }
+        require(!close(fd), "close option copies", cases);
+    }
+    for (unsigned bound = 0; bound < 2; bound++)
+        for (unsigned at = 0; at < sizeof(lengths) / sizeof(*lengths); at++)
+            for (unsigned pointer = 0; pointer < 3; pointer++) {
+                int fd = stream(), value = 1;
+                require(!setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &value, 4),
+                        "initial setter value", cases);
+                if (bound) {
+                    struct sockaddr_in6 address = {.sin6_family = AF_INET6};
+                    require(!bind(fd, (struct sockaddr*)&address, sizeof(address)),
+                            "bind setter option", cases);
+                }
+                require(!mprotect(memory + page, (size_t)page, PROT_NONE), "protect setter value",
+                        cases);
+                const void* input = pointer == 0   ? NULL
+                                    : pointer == 1 ? (const void*)&value
+                                                   : memory + page;
+                int expected = (int32_t)lengths[at] < 0 || lengths[at] < 4 ? EINVAL
+                               : pointer == 2                              ? EFAULT
+                               : bound                                     ? EINVAL
+                                                                           : 0;
+                errno = 0;
+                long result =
+                    syscall(SYS_setsockopt, fd, IPPROTO_IPV6, IPV6_V6ONLY, input, lengths[at]);
+                int error = result < 0 ? errno : 0;
+                require(!mprotect(memory + page, (size_t)page, PROT_READ | PROT_WRITE),
+                        "restore setter value", cases);
+                socklen_t length = 4;
+                value = -1;
+                require(error == expected, "setter pointer and length ordering", cases);
+                require(!getsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &value, &length) &&
+                            length == 4 && value == (!expected && !pointer ? 0 : 1),
+                        "setter failure preserves value", cases);
+                require(!close(fd), "close setter copies", cases++);
+            }
+    require(!munmap(memory, (size_t)page * 2), "release option pages", cases);
+    return cases;
+}
+
 int main(void) {
     int listener = stream(), value = 1;
     require(!setsockopt(listener, IPPROTO_IPV6, IPV6_V6ONLY, &value, sizeof(value)),
@@ -128,8 +243,9 @@ int main(void) {
     unsigned address_cases = addresses(address.sin6_port);
     unsigned option_cases = only_options();
     unsigned name_cases = names();
+    unsigned copy_cases = option_copies();
     require(!close(listener), "close listener", 0);
-    printf("TCP6_ABI_PASS address_cases=%u option_cases=%u name_cases=%u\n", address_cases,
-           option_cases, name_cases);
+    printf("TCP6_ABI_PASS address_cases=%u option_cases=%u name_cases=%u copy_cases=%u\n",
+           address_cases, option_cases, name_cases, copy_cases);
     return 0;
 }

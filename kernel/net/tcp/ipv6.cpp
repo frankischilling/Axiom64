@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/tcp/socket.hpp"
 #include "net/ipv4.hpp"
+#include "net/socket_options.hpp"
 #include "process/task.hpp"
 #include "io/io.hpp"
 #include "../ipv4/socket.hpp"
@@ -109,10 +110,10 @@ int64_t tcp6_syscall(Task& task, const Frame& frame) {
     if (b != 41 || c != 26)
         return -92;
     if (frame.rax == 54) {
-        if (frame.r8 < 4)
+        if (int32_t(frame.r8) < 4)
             return -22;
-        int value;
-        if (!task.memory->space.copy_in(&value, frame.r10, 4))
+        int value = 0;
+        if (frame.r10 && !task.memory->space.copy_in(&value, frame.r10, 4))
             return -14;
         if (socket->bind_completed || socket->local_port)
             return -22;
@@ -120,15 +121,10 @@ int64_t tcp6_syscall(Task& task, const Frame& frame) {
         return 0;
     }
     if (frame.rax == 55) {
-        uint32_t length, actual = 4, value = socket->v6only;
+        uint32_t length;
         if (!task.memory->space.copy_in(&length, frame.r8, 4))
             return -14;
-        if (int32_t(length) < 0)
-            return -22;
-        if ((length && !task.memory->space.copy_out(frame.r10, &value, min(length, actual))) ||
-            !task.memory->space.copy_out(frame.r8, &actual, 4))
-            return -14;
-        return 0;
+        return socket_ipv6_integer(task, socket->v6only, length, frame.r10, frame.r8);
     }
     return -95;
 }

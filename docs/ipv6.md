@@ -346,14 +346,27 @@ shutdown, MTU shrink, expiry and rerouting. These changes preserve the original
 queue limits and timing. Run `make test-tcp-isn test-tcp-connection test-ipv6-wire`.
 
 `make test-tcp6-native` runs the local stream client and a separate address/control
-ABI client. The latter checks 72 address imports, ten V6ONLY updates and sixteen
-name-copy cases, including truncated structures, unsupported families, negative
-lengths and failed destination copies. That same C source passes with glibc and
+ABI client. The latter checks 72 address imports, ten V6ONLY updates, sixteen
+name-copy cases and 102 option-copy cases, including truncated structures,
+unsupported families, negative lengths and failed destination copies. That same C source passes with glibc and
 both pinned musl linkages on native Linux. The exact static and dynamic musl
-programs also pass all 98 cases in local BIOS and UEFI guests. Actual image
+programs also pass the original 98 cases in local BIOS and UEFI guests. Actual image
 readback checks their binaries, source, loader and kernel. The first dynamic
 fixture omitted its declared interpreter; its failed image remains retained,
 and the corrected fixture contains the same executable and loader bytes.
+
+`make test-tcp6-abi` runs all 200 address, V6ONLY and copy cases with both musl
+linkages on native Linux and in BIOS/UEFI guests. The scalar getter publishes its
+clamped length before copying the value, including readable prefixes before a
+protected page and aliased value/length storage. Its unsigned capacity clamps to
+four bytes; the setter rejects negative lengths and treats a null value pointer
+as zero. These rules follow actual native comparisons and the
+[Linux IPv6 option implementation](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/ipv6_sockglue.c).
+Raw/UDP scalar getters share the same copy module. Original cases and deadlines
+remain. The independent reader reopens both actual images, identical native/guest
+programs, source archive and all six execution records. Eighteen serialized and
+reopened controls reject changed counts, deadlines, sources, programs, kernels,
+loaders and incomplete matrices. Complete IPv6 TCP option support remains open.
 
 Stream descriptions now use the existing TCP engine for IPv4 and IPv6. They
 share active-open admission, listener/accept queues, descriptor aliases, copied

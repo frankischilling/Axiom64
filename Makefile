@@ -1044,6 +1044,9 @@ test-tcp6-native: build/tcp6-abi-native build/tcp6-local-native build/tcp6-mss-n
 	./build/tcp6-abi-native
 	./build/tcp6-local-native
 	./build/tcp6-mss-native --native
+.PHONY: test-tcp6-abi
+test-tcp6-abi: build/axiom64.elf build/init busybox
+	$(PYTHON) scripts/tcp6_abi_test.py
 build/tcp-native: userspace/tests/net/tcp.c userspace/tests/net/tcp_maxseg.c userspace/tests/net/tcp_maxseg.h
 	@mkdir -p build
 	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@

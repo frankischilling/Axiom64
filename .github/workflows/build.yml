@@ -776,9 +776,13 @@ jobs:
         run: |
           sudo -n python3 scripts/tests/tcp_auto_port_test.py
           make test-tcp-native
+          make test-tcp6-native
       - name: Test static and dynamic TCP loopback with BIOS and UEFI
         if: matrix.suite == 'tcp'
-        run: make test-tcp-sockets
+        run: |
+          make test-tcp-sockets
+          make test-tcp6-abi
+          python3 scripts/tests/tcp6_abi_evidence_test.py
       - name: Test native host TCP client/server transfers and independent NIC captures
         if: matrix.suite == 'tcp'
         run: make test-tcp-native-wire
@@ -1719,7 +1723,11 @@ jobs:
         with:
           name: axiom64-tcp-fixtures
           if-no-files-found: error
-          path: build/axiom64-tcp-*.iso
+          path: |
+            build/axiom64-tcp-*.iso
+            build/tcp6-abi/**
+            build/tcp6-abi-damaged/*/changed.zip
+            build/tcp6-abi-damaged/results.json
       - name: Upload DNS boot fixtures and providers
         if: always() && matrix.suite == 'network'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -385,11 +385,7 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
         } else
             return -92;
         if (b == 41) {
-            uint32_t copied = min(ipv6_length, uint32_t(sizeof(value)));
-            if (option_copy_out(task, frame.r8, &copied, 4) != 4 ||
-                option_copy_out(task, d, &value, copied) != copied)
-                return -14;
-            return 0;
+            return socket_ipv6_integer(task, value, ipv6_length, d, frame.r8);
         }
         return output(task, &value, sizeof(value), d, frame.r8, true);
     }

@@ -497,3 +497,31 @@ controls, 32 altered products and six incomplete matrices. The same actual C
 program and root image reproduce the wrong-interface reply on the preceding
 kernel. These checks establish this reply cohort; broader scoped connection
 lifetimes and complete current-revision hosted acceptance remain required.
+
+`make test-tcp6-isolation` and `sudo -n make test-tcp6-isolation-native` keep
+identical link-local address/port tuples open simultaneously in two interface
+zones. Four generations cover implicit scoped binding and explicit device
+binding, delivering to the second zone first, shared descriptions and a reset
+in either zone. The other zone still exchanges its exact bytes and completes
+an acknowledged half-close. Original captures prove both handshakes precede
+either data probe and retain complete fifty-millisecond observations. This
+uses the receiving-zone model in [RFC 4007 section 8](https://www.rfc-editor.org/rfc/rfc4007.html#section-8)
+and the interface-aware [Linux v6.17 lookup](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/inet6_hashtables.c).
+
+The same client checks 37 device-query cases for each IPv4/IPv6 TCP, UDP and raw
+socket family. `SO_BINDTODEVICE` readback now shares one implementation for these
+paths. It returns no name bytes for an unbound description, requires a sixteen-byte
+capacity for a bound device, reports the actual terminated name and observes
+binding changes through shared descriptors. Protected-page cases retain the
+actual copied prefixes and name-before-length fault order, following
+[Linux v6.17 socket options](https://github.com/torvalds/linux/blob/v6.17/net/core/sock.c).
+The getter preserves the description's destination state.
+
+All three local Linux 6.6 native profiles and eight guest profiles pass this
+cohort: 88 actual streams, 2,442 device-query cases, twenty-two captures and
+478 reopened packet, product and matrix controls. The same actual client and
+byte-identical root image fail the first device query on the preceding kernel.
+A retained UEFI boot-traffic case has four reader regressions; boot traffic is
+bounded before readiness and remains invalid inside the workload. Broader
+passive, source/device removal and scoped lifetime behavior, and complete
+current-revision hosted acceptance, remain required.

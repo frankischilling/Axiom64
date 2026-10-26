@@ -15,7 +15,7 @@ from tcp6.profiles import definition
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--native', action='store_true')
-    parser.add_argument('--suite', choices=('loss', 'scoped', 'pmtu', 'errors', 'replies'), default='loss')
+    parser.add_argument('--suite', choices=('loss', 'scoped', 'pmtu', 'errors', 'replies', 'isolation'), default='loss')
     parser.add_argument('--profile', choices=('native', 'static', 'dynamic', 'all'), default='all')
     parser.add_argument('--child', choices=('native', 'static', 'dynamic'))
     parser.add_argument('--client', choices=('native', 'static', 'dynamic'))

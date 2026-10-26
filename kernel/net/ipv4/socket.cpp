@@ -4,6 +4,7 @@
 #include "net/ipv4_wire.hpp"
 #include "net/udp.hpp"
 #include "net/tcp/socket.hpp"
+#include "net/socket_options.hpp"
 #include "process/task.hpp"
 #include "socket.hpp"
 #include "io/io.hpp"
@@ -598,6 +599,8 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
         return 0;
     }
     case 55: {
+        if (b == 1 && c == 25)
+            return socket_device_option(task, socket->index, d, frame.r8);
         uint32_t value = 0, length, actual = 4;
         if (!task.memory->space.copy_in(&length, frame.r8, 4))
             return -14;

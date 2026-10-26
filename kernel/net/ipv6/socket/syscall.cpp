@@ -2,6 +2,7 @@
 #include "../socket.hpp"
 #include "process/task.hpp"
 #include "net/tcp/socket.hpp"
+#include "net/socket_options.hpp"
 
 namespace ax {
 namespace {
@@ -334,23 +335,8 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
         }
         if (b == 58 && c == 1 && socket->type == 3)
             return output(task, socket->filter, sizeof(socket->filter), d, frame.r8, true);
-        if (b == 1 && c == 25) {
-            uint32_t length;
-            int error = output_length(task, frame.r8, length);
-            if (error)
-                return error;
-            if (socket->index && length < 16)
-                return -22;
-            const char* name = "";
-            if (socket->index == ipv6_loopback)
-                name = "lo";
-            else if (auto info = net_info(socket->index))
-                name = info->name;
-            else if (socket->index)
-                return -19;
-            return output_bytes(task, name, name[0] ? strlen(name) + 1 : 0, d, frame.r8, length,
-                                false);
-        }
+        if (b == 1 && c == 25)
+            return socket_device_option(task, socket->index, d, frame.r8);
         int value;
         if (b == 1) {
             if (c == 2)

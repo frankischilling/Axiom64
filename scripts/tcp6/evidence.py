@@ -341,6 +341,8 @@ def audit(directory, output=None, expected=None):
                 from tcp6.errors_capture import damaged as checker
             elif suite == 'replies':
                 from tcp6.replies_capture import damaged as checker
+            elif suite == 'isolation':
+                from tcp6.isolation_capture import damaged as checker
             captures.append(dict(capture=reopened, negative_controls=checker(path, lane, log, native, controls, statistics)))
         rows.append(dict(profile=profile, native=native, product=product, captures=captures,
                          firmware=item.get('firmware'), transport=item.get('transport')))

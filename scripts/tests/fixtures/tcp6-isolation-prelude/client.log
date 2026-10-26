@@ -1,0 +1,110 @@
+[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01HBdsDxe: loading Boot0001 "UEFI QEMU DVD-ROM QM00003 " from PciRoot(0x0)/Pci(0x1,0x1)/Ata(Secondary,Master,0x0)
+BdsDxe: starting Boot0001 "UEFI QEMU DVD-ROM QM00003 " from PciRoot(0x0)/Pci(0x1,0x1)/Ata(Secondary,Master,0x0)
+[01;01H[01;01HAxiom64 x86-64
+Firmware: UEFI
+Memory: 445 MiB available, isolated four-level paging
+CPU: GDT, TSS, IDT, SYSCALL and PIT initialized
+Clock: HPET 64-bit counter, 100 Hz accounting
+Clock: RTC UTC seconds=1793000746
+RANDOM_SOURCE rdseed=1 trust_cpu=1
+PCI: 7 functions discovered
+RANDOM_READY source=rdseed bits=256
+VFS: imported 24 nodes from initramfs
+PCI: 7 functions discovered
+Framebuffer: 1024x768 pitch=4096 bpp=32
+NET_DEVICE index=1 name=eth0 mtu=1500 carrier=1 mac=52:54:0:12:34:10
+virtio-net: index=1 transport=modern rx=256 tx=256 features=100010020
+NET_DEVICE index=2 name=eth1 mtu=1500 carrier=1 mac=52:54:0:12:34:11
+e1000: index=2 model=82540EM rx=64 tx=64
+PCI: 7 functions discovered
+Entering userspace in Ring 3
+exec pid=1 /sbin/init (static ELF)
+exec pid=1 /bin/busybox (static ELF)
+exec pid=2 /bin/tcp6-isolation (static ELF)
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=0
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=0
+TCP6_ISOLATION_OPTION_PASS family=2 type=1 queries=37
+TCP6_ISOLATION_OPTION_PASS family=2 type=2 queries=37
+TCP6_ISOLATION_OPTION_PASS family=2 type=3 queries=37
+TCP6_ISOLATION_OPTION_PASS family=10 type=1 queries=37
+TCP6_ISOLATION_OPTION_PASS family=10 type=2 queries=37
+TCP6_ISOLATION_OPTION_PASS family=10 type=3 queries=37
+TCP6_ISOLATION_NAME_PASS round=0 lane=0 explicit_device=0 index=1 local_scope=1 peer_scope=1 local_port=49200 peer_port=49300
+TCP6_ISOLATION_NAME_PASS round=0 lane=1 explicit_device=0 index=2 local_scope=2 peer_scope=2 local_port=49200 peer_port=49300
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=1
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=1
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=2
+TCP6_ISOLATION_DATA_PASS round=0 lane=1 tag=0 bytes=32
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=2
+TCP6_ISOLATION_DATA_PASS round=0 lane=0 tag=0 bytes=32
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=3
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=3
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=4
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=4
+TCP6_ISOLATION_RESET_PASS round=0 victim=0 error=104 consumed=0 survivor_error=0
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=5
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=5
+TCP6_ISOLATION_DATA_PASS round=0 lane=1 tag=1 bytes=32
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=6
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=6
+TCP6_ISOLATION_CLOSE_PASS round=0 survivor=1 eof=1
+TCP6_ISOLATION_NAME_PASS round=1 lane=0 explicit_device=0 index=1 local_scope=1 peer_scope=1 local_port=49201 peer_port=49301
+TCP6_ISOLATION_NAME_PASS round=1 lane=1 explicit_device=0 index=2 local_scope=2 peer_scope=2 local_port=49201 peer_port=49301
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=9
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=9
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=10
+TCP6_ISOLATION_DATA_PASS round=1 lane=1 tag=0 bytes=32
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=10
+TCP6_ISOLATION_DATA_PASS round=1 lane=0 tag=0 bytes=32
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=11
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=11
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=12
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=12
+TCP6_ISOLATION_RESET_PASS round=1 victim=1 error=104 consumed=0 survivor_error=0
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=13
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=13
+TCP6_ISOLATION_DATA_PASS round=1 lane=0 tag=1 bytes=32
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=14
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=14
+TCP6_ISOLATION_CLOSE_PASS round=1 survivor=0 eof=1
+TCP6_ISOLATION_NAME_PASS round=2 lane=0 explicit_device=1 index=1 local_scope=1 peer_scope=1 local_port=49202 peer_port=49302
+TCP6_ISOLATION_NAME_PASS round=2 lane=1 explicit_device=1 index=2 local_scope=2 peer_scope=2 local_port=49202 peer_port=49302
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=17
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=17
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=18
+TCP6_ISOLATION_DATA_PASS round=2 lane=1 tag=0 bytes=32
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=18
+TCP6_ISOLATION_DATA_PASS round=2 lane=0 tag=0 bytes=32
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=19
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=19
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=20
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=20
+TCP6_ISOLATION_RESET_PASS round=2 victim=0 error=104 consumed=0 survivor_error=0
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=21
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=21
+TCP6_ISOLATION_DATA_PASS round=2 lane=1 tag=1 bytes=32
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=22
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=22
+TCP6_ISOLATION_CLOSE_PASS round=2 survivor=1 eof=1
+TCP6_ISOLATION_NAME_PASS round=3 lane=0 explicit_device=1 index=1 local_scope=1 peer_scope=1 local_port=49203 peer_port=49303
+TCP6_ISOLATION_NAME_PASS round=3 lane=1 explicit_device=1 index=2 local_scope=2 peer_scope=2 local_port=49203 peer_port=49303
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=25
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=25
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=26
+TCP6_ISOLATION_DATA_PASS round=3 lane=1 tag=0 bytes=32
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=26
+TCP6_ISOLATION_DATA_PASS round=3 lane=0 tag=0 bytes=32
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=27
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=27
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=28
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=28
+TCP6_ISOLATION_RESET_PASS round=3 victim=1 error=104 consumed=0 survivor_error=0
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=29
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=29
+TCP6_ISOLATION_DATA_PASS round=3 lane=0 tag=1 bytes=32
+TCP6_ISOLATION_PHASE_PASS lane=0 phase=30
+TCP6_ISOLATION_PHASE_PASS lane=1 phase=30
+TCP6_ISOLATION_CLOSE_PASS round=3 survivor=0 eof=1
+TCP6_ISOLATION_PASS rounds=4 zones=2 bytes_each=32 quiet_ms=50
+AXIOM64_TESTS_PASS
+AXIOM64_EXIT status=0

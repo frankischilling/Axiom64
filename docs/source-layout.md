@@ -89,6 +89,15 @@ its own file lock. Distinct archives remain concurrent. The real local-HTTP
 regression under `scripts/tests/ports_download_test.py` covers colliding writers,
 parallel independent destinations and interrupted transfer recovery.
 
+`kernel/net/socket_options.cpp` and `kernel/include/net/socket_options.hpp` own
+device-name queries shared by IPv4/TCP and IPv6 raw/UDP descriptions. The single
+interface hides device lookup, unbound and stale binding results, capacity
+checks and ordered page-copy faults without changing destination state.
+`userspace/tests/net/tcp6/isolation.c` exercises that interface through actual
+syscalls while keeping duplicate scoped streams open. Its independent peer and
+capture reader live under `scripts/tcp6/isolation_*.py`; the retained pre-readiness
+UEFI fixture and four replay tests live under `scripts/tests/`.
+
 ## Formatting
 
 The root `.clang-format` contains C++20 and C profiles. Kernel sources, headers, and host tests use the C++ profile. Userspace C sources use the C profile, and native C++ test programs use the C++ profile. Both preserve include order and use four spaces and a 100-column limit. Function bodies use multiple lines, and `SeparateDefinitionBlocks: Always` inserts a blank line between function, class, struct, and enum definitions. Keep one blank line between function prototypes too; `MaxEmptyLinesToKeep: 1` preserves that spacing. The Makefile continues to select C11 and C++20 for compilation.

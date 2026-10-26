@@ -999,6 +999,17 @@ test-tcp6-replies:
 	$(PYTHON) scripts/tcp6_test.py --suite replies
 test-tcp6-replies-native:
 	$(PYTHON) scripts/tcp6_test.py --suite replies --native
+build/tcp6-isolation-native: userspace/tests/net/tcp6/isolation.c userspace/tests/net/ipv6_fixture.h
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp6-isolation-static build/tcp6-isolation-dynamic: userspace/tests/net/tcp6/isolation.c userspace/tests/net/ipv6_fixture.h scripts/compile_uapi_client.py
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) $(filter %.c,$^)
+.PHONY: test-tcp6-isolation test-tcp6-isolation-native
+test-tcp6-isolation:
+	$(PYTHON) scripts/tcp6_test.py --suite isolation
+test-tcp6-isolation-native:
+	$(PYTHON) scripts/tcp6_test.py --suite isolation --native
 build/tcp6-pmtu-native: userspace/tests/net/tcp6/pmtu.c userspace/tests/net/ipv6_fixture.h
 	@mkdir -p build
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@

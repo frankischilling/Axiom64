@@ -3,6 +3,12 @@
 
 
 def definition(suite):
+    if suite == 'isolation':
+        from tcp6.isolation_peer import Peer
+        from tcp6.isolation_capture import verify
+        return dict(program='tcp6-isolation', source='userspace/tests/net/tcp6/isolation.c',
+                    flags=[], marker='TCP6_ISOLATION_PASS rounds=4 zones=2 bytes_each=32 quiet_ms=50',
+                    peer=Peer, verify=verify)
     if suite == 'replies':
         from tcp6.replies_peer import Peer
         from tcp6.replies_capture import verify

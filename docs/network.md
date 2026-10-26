@@ -108,3 +108,12 @@ verify 432 physical conflict-delivery receipts and reject 5,862 archived
 corruptions. Reopening these profiles after the shared clock helper change
 produces identical audits. Complete current-source hosted and feature acceptance
 remain required.
+
+Internet sockets share `SO_BINDTODEVICE` readback across IPv4/IPv6 TCP, UDP and
+raw descriptions. Unbound queries return zero name bytes; bound queries require
+a sixteen-byte capacity and return the actual terminated interface name.
+Readback observes shared binding changes and preserves destination state.
+The paired [scoped TCP cohort](ipv6.md) checks protected-page copies, result
+lengths, alias lifetime, loopback names and binding release on native Linux and
+the guest. Complete networking and current-revision hosted acceptance remain
+required.

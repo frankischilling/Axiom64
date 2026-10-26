@@ -517,6 +517,21 @@ parallel. A failed transfer leaves the destination unpublished, preserves its
 partial bytes and releases ownership for the next request. Existing pinned
 checksum and signature validation remains in each caller.
 
+`make test-tcp6-isolation` and `sudo -n make test-tcp6-isolation-native` check
+two simultaneously open equal link-local tuples, both binding policies,
+second-zone-first delivery, shared reset ownership, surviving data and
+acknowledged closes. The same client checks 222 `SO_BINDTODEVICE` queries per
+execution across IPv4/IPv6 TCP, UDP and raw sockets, including actual protected
+pages, short capacities, shared descriptors and binding release. All three
+local Linux 6.6 native and eight guest profiles pass with twenty-two original
+captures and 478 reopened negative controls. A same-client, identical-root-image
+old-kernel comparison reproduces the missing query before any TCP handshake.
+`python3 -B scripts/tests/tcp6_isolation_prelude_test.py -v` replays the actual
+UEFI reader failure, permits bounded traffic before the original readiness
+request, and rejects wrong owners, excessive preludes and moved boot frames.
+The original failed verdict is retained. Current-head hosted coverage remains
+part of the existing TCP fault/loss job.
+
 
 The same output cohort adds 128 extension-bearing sends across both adapters, raw/UDP and global/link-local scope. It retains modern/legacy header admission, ordinary-user capability rejection, original ancillary padding, actual fragmentation, DF rejection and four deferred ownership exchanges per adapter. The independent extension reader requires every original header/payload/checksum byte and rejects twenty-five damaged controls per capture. Linux socket output repeats ordinary Destination headers before the Fragment header when no Routing header exists; the generic encoder also retains its protocol layout. Forty-eight extension-chain/MTU cases and the original 54 datagrams/452 pieces run under sanitizers. All eight local guest profiles pass. All three current native linkages pass the complete output campaign, with stable original clock binding and zero drops. Earlier failed captures remain excluded. Current-revision hosted workflow coverage remains mandatory.
 

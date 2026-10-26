@@ -2,6 +2,17 @@
 
 `python3 scripts/tests/account_rotation_disk_test.py -v` checks bounded host-memory device staging, disk fallback, exact copyback after success or guest failure, and retention when the evidence destination rejects copying. Rotation's small device files use this staging while the NBD backend retains its independent cache, flush and fault semantics. The original guest deadlines and native filesystem checks remain required. [VM timing](ci-vm-timing.md) records the focused host-storage comparison and remaining complete-run gates.
 
+Disposable NBD startup retains `backend-startup.json` beside each backend log.
+It records the actual command, executable fingerprint, original five-second
+socket bound and observed outcome. A failed process is sampled before termination:
+bounded proc state, wait channel, memory mappings and host CPU/memory pressure
+remain available even when the backend log and block trace are empty. Launch
+errors and early exits also retain their status and close the owned log handle.
+`python3 scripts/tests/nbd_startup_test.py -v` exercises actual failed processes,
+including a stopped child that must hit the unchanged five-second bound and be
+reaped. These diagnostics preserve the failure verdict; they do not establish the
+cause of a startup stall or grant another attempt.
+
 `sudo -n python3 scripts/ipv4_alias_native.py` compares labelled address lifetimes with three native Linux linkages and two captured TAP links each. The normal guest IPv4 profiles exercise the same alias client on both adapters. Alias packets must retain their selected source and hardware identity across primary deletion. Independent capture checks run after each native or normal guest comparison; twenty-two damaged fixtures per adapter must fail. Captures, original logs and compressed negative fixtures remain in the evidence artifacts. Sanitizer inventory/route checks and thirteen damaged peer controls run in the existing build job; native alias evidence stays in the network job. Both musl IPv4 clients compile with the pinned target UAPI helper. Complete current-revision acceptance remains required.
 
 The native IPv6 router comparison runs on a dedicated reference host through

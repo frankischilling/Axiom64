@@ -101,7 +101,9 @@ jobs:
       - name: Replay actual kernel-interrupted rotation exports without changing captured bytes
         run: python3 scripts/tests/account_rotation_serial_test.py -v
       - name: Verify bounded rotation device storage
-        run: python3 scripts/tests/account_rotation_disk_test.py -v
+        run: |
+          python3 scripts/tests/account_rotation_disk_test.py -v
+          python3 scripts/tests/nbd_startup_test.py -v
       - name: Require exact allocation-map evidence for bounded counter recovery
         run: python3 scripts/tests/ext2_counter_inspection_test.py
       - name: Require every administration variant, concurrency phase and storage fault

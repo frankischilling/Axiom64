@@ -8,10 +8,11 @@ import re
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from ipv6_device_pending_capture import inspect
-from native_ipv6_timers import CONFIG, VALUES, EXPECTED, upper_microseconds
+from native_ipv6_timers import CONFIG, VALUES, EXPECTED, KERNEL, begin, finish, upper_microseconds
 
 FIXTURE=Path(__file__).resolve().parent/'fixtures/ipv6-device-native-timers'
 
@@ -101,6 +102,45 @@ class NativeTimerPolicy(unittest.TestCase):
         self.assertEqual(result['regeneration_upper_us'],3100000)
         with self.assertRaisesRegex(ValueError,'native timer proof only applies'):
             inspect(case/'lane0.pcap',0,text,'carrier','regenerating',native_timer_policy=self.policy)
+
+    def actual_parameters(self):
+        values=dict(EXPECTED)
+        # The proc interface reports this delay in seconds, while the neighbor
+        # retransmission interface explicitly reports milliseconds.
+        for lane in range(2):
+            values[f'/proc/sys/net/ipv6/conf/eth{lane}/router_solicitation_delay']='1\n'
+            values[f'/proc/sys/net/ipv6/neigh/eth{lane}/retrans_time_ms']='1000\n'
+        return values
+
+    def collect_begin(self, values):
+        with patch('native_ipv6_timers.platform.release',return_value=KERNEL), \
+             patch('native_ipv6_timers.Path.exists',return_value=True), \
+             patch('native_ipv6_timers.Path.read_bytes',return_value=b'CONFIG_64BIT=y\nCONFIG_HZ=1000\n'), \
+             patch('native_ipv6_timers.Path.read_text',lambda path:values[path.as_posix()]):
+            return begin(self.case)
+
+    def test_collector_accepts_actual_seconds_and_milliseconds_interfaces(self):
+        started=self.collect_begin(self.actual_parameters())
+        self.assertEqual(started['before']['values'],self.actual_parameters())
+
+    def test_rejected_initial_parameters_remain_as_raw_evidence(self):
+        values=self.actual_parameters()
+        values['/proc/sys/net/ipv6/conf/eth0/dad_transmits']='2\n'
+        with self.assertRaisesRegex(ValueError,'dad_transmits'):
+            self.collect_begin(values)
+        self.assertEqual(json.loads((self.case/VALUES).read_text())['before']['values'],values)
+
+    def test_rejected_final_parameters_preserve_both_observations(self):
+        started=self.collect_begin(self.actual_parameters())
+        values=self.actual_parameters()
+        values['/proc/sys/net/ipv6/idgen_delay']='2\n'
+        with patch('native_ipv6_timers.platform.release',return_value=KERNEL), \
+             patch('native_ipv6_timers.Path.read_text',lambda path:values[path.as_posix()]):
+            with self.assertRaisesRegex(ValueError,'idgen_delay'):
+                finish(self.case,started)
+        evidence=json.loads((self.case/VALUES).read_text())
+        self.assertEqual(evidence['before'],started['before'])
+        self.assertEqual(evidence['after']['values'],values)
 
 
 if __name__=='__main__':

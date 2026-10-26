@@ -51,6 +51,7 @@ def main():
             '--state','regenerating','--directory',str(case),'--parent-net-ns',
             str(Path('/proc/self/ns/net').stat().st_ino),'--program',str(program)]
         status=execute(command,output/f'{trial:02d}.log')
+        assert (case/'receipt.json').is_file(), f'profile {trial:02d} setup failed (exit {status}); see {trial:02d}.log and case raw observations'
         receipt=json.loads((case/'receipt.json').read_text())
         policy=json.loads((case/'native-timer-policy.json').read_text())
         assert policy==receipt['native_timer_policy'] and policy['upper_us']==3212000

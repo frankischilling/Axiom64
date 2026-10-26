@@ -14,7 +14,7 @@ CONFIG = 'native-timer-config.txt'
 VALUES = 'native-timer-values.json'
 EXPECTED = {'/proc/sys/net/ipv6/idgen_delay': '1\n'}
 for lane in range(2):
-    for name, value in (('router_solicitation_delay', 1000), ('dad_transmits', 1),
+    for name, value in (('router_solicitation_delay', 1), ('dad_transmits', 1),
                         ('enhanced_dad', 1)):
         EXPECTED[f'/proc/sys/net/ipv6/conf/eth{lane}/{name}'] = str(value)+'\n'
     EXPECTED[f'/proc/sys/net/ipv6/neigh/eth{lane}/retrans_time_ms'] = '1000\n'
@@ -63,8 +63,19 @@ def sample():
     before = time.monotonic_ns()
     values = {name:Path(name).read_text() for name in EXPECTED}
     after = time.monotonic_ns()
-    require(values == EXPECTED, 'unchanged original DAD and neighbor parameters')
     return dict(begin_ns=before, end_ns=after, values=values)
+
+
+def record_values(directory, values):
+    data = (json.dumps(values, sort_keys=True, indent=2)+'\n').encode()
+    (directory/VALUES).write_bytes(data)
+    return data
+
+
+def parameters(row):
+    changed = {name:dict(expected=value, actual=row['values'].get(name))
+               for name,value in EXPECTED.items() if row['values'].get(name) != value}
+    require(not changed, 'unchanged original DAD and neighbor parameters: '+json.dumps(changed))
 
 
 def begin(directory):
@@ -72,9 +83,12 @@ def begin(directory):
         return None
     path = Path('/boot/config-'+KERNEL)
     data = path.read_bytes() if path.exists() else gzip.decompress(Path('/proc/config.gz').read_bytes())
-    configuration(data)
     (directory/CONFIG).write_bytes(data)
-    return dict(schema=1, kernel=KERNEL, config_sha256=fingerprint(data), before=sample())
+    configuration(data)
+    before = sample()
+    record_values(directory, dict(before=before))
+    parameters(before)
+    return dict(schema=1, kernel=KERNEL, config_sha256=fingerprint(data), before=before)
 
 
 def finish(directory, started):
@@ -82,8 +96,9 @@ def finish(directory, started):
         return None
     require(platform.release() == started['kernel'] == KERNEL, 'same original running kernel')
     values = dict(before=started['before'], after=sample())
-    data = (json.dumps(values, sort_keys=True, indent=2)+'\n').encode()
-    (directory/VALUES).write_bytes(data)
+    data = record_values(directory, values)
+    parameters(values['before'])
+    parameters(values['after'])
     policy = dict(schema=1, kernel=KERNEL, config_sha256=started['config_sha256'],
                   values_sha256=fingerprint(data), upper_us=upper_microseconds())
     (directory/'native-timer-policy.json').write_text(json.dumps(policy,indent=2)+'\n')

@@ -6,9 +6,14 @@ exchanges another 32 bytes on the original healthy stream. It then removes the
 selected device. The failed socket must expose error readiness, its scoped read
 and `SO_ERROR` results, EOF and `EPIPE`. The other original stream continues exact
 request/reply exchanges for at least 5000 milliseconds and acknowledges both FINs.
+The full interval starts after a 64-byte progress exchange has completed. A delay
+before the first progress send therefore cannot consume part of the observation.
+Both the application clock and the original packet clocks must retain the full
+five seconds.
 
 ```sh
 mkdir -p build/tcp-device
+sudo -n python3 scripts/tests/tcp_device_observation_test.py
 sudo -n python3 scripts/tests/tcp_device_native_cleanup_test.py
 sudo -n make test-tcp-device-native
 make test-tcp-device
@@ -26,6 +31,13 @@ receipts remain available with zero-drop capture counters.
 An additional failure probe starts the real C client, pauses it so its own
 timeout cannot mask cleanup, and fails its peer. The fixture must stop its entire
 owned process group. This probe remains separate from TCP timing acceptance.
+
+The observation regression runs the actual native C client and private device
+removal with a 750-millisecond delay before the first surviving progress send.
+It retains the compiled client, injected-delay source, runtime inputs and original
+captures under `build/tcp-device/observation-regression/`. The unchanged public
+auditor must still observe the full five-second packet interval. Socket timers,
+application deadlines and clock settings remain unchanged.
 
 The guest comparison physically removes an emulated PCI adapter with the default
 TCP settings. Both selections run through all static/dynamic musl, BIOS/UEFI and

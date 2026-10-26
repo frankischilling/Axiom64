@@ -364,9 +364,18 @@ as zero. These rules follow actual native comparisons and the
 [Linux IPv6 option implementation](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/ipv6_sockglue.c).
 Raw/UDP scalar getters share the same copy module. Original cases and deadlines
 remain. The independent reader reopens both actual images, identical native/guest
-programs, source archive and all six execution records. Eighteen serialized and
+programs, source archive and all six execution records. Twenty-four serialized and
 reopened controls reject changed counts, deadlines, sources, programs, kernels,
-loaders and incomplete matrices. Complete IPv6 TCP option support remains open.
+loaders, native prevalidation profiles and incomplete matrices. Complete IPv6 TCP option support remains open.
+
+IPv6 TCP address imports check the 24-byte minimum before rejecting an unrelated
+address family, following the [Linux bind](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/af_inet6.c)
+and [TCP connect](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/tcp_ipv6.c)
+paths. The two-byte `AF_UNSPEC` disconnect retains its separate ordering.
+The measured WSL kernel `6.6.87.2-microsoft-standard-WSL2` rejects six short
+`AF_PACKET` requests earlier with `EAFNOSUPPORT`; the client explicitly records
+and checks that exact native profile. Other native kernels and every Axiom64
+guest require the upstream `EINVAL` result. All 72 address cases remain required.
 
 Stream descriptions now use the existing TCP engine for IPv4 and IPv6. They
 share active-open admission, listener/accept queues, descriptor aliases, copied

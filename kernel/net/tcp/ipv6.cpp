@@ -18,8 +18,6 @@ int tcp6_import(Task& task, uint64_t pointer, uint32_t length, Inet6Address& add
     memcpy(&address, bytes, min(size_t(length), sizeof(address)));
     if (length < sizeof(address))
         address.scope = 0;
-    if (address.family == 17)
-        return -97;
     if (connecting && !address.family)
         return 0;
     if (length < 24)

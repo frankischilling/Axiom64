@@ -510,6 +510,14 @@ matrices. A same-client, identical-root-image comparison against the preceding
 kernel reproduces the original wrong-interface reply. These are local results;
 the existing TCP fault job retains complete current-revision hosted acceptance.
 
+`make test-tcp6-abi` preserves all 200 address and option-copy cases across both
+musl linkages and BIOS/UEFI. Its native address checks distinguish the explicitly
+measured WSL prevalidation profile from upstream Linux ordering; guest checks
+always require the upstream minimum-length ordering. An isolated Ubuntu
+6.8.0-147 kernel reproduces the original native failure using the unchanged
+static client. This comparison boots Linux separately and does not substitute
+for Axiom64 guest execution.
+
 `python3 -B scripts/tests/ports_download_test.py -v` exercises the actual archive
 downloader through an owned local HTTP server. Simultaneous cold callers share
 one complete publication, while distinct destinations still download in

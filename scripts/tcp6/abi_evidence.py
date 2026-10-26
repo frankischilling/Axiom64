@@ -9,6 +9,9 @@ from tcp_fixture_inputs import audit_fixture
 
 
 MARKER = 'TCP6_ABI_PASS address_cases=72 option_cases=10 name_cases=16 copy_cases=102'
+WSL_KERNEL = '6.6.87.2-microsoft-standard-WSL2'
+PRECHECK = ('TCP6_ABI_NATIVE_PRECHECK kernel=' + WSL_KERNEL +
+            ' family=17 short_cases=6 errno=97')
 
 
 def require(condition, reason):
@@ -65,6 +68,9 @@ def audit(directory):
                     not any(failure in text for failure in ('TCP6_ABI_FAIL', 'PANIC:', 'FAULT pid=')),
                     'all IPv6 TCP control application observations')
             before = json.loads((case / (environment + '-before.json')).read_text())
+            observed = [line for line in text.splitlines() if line.startswith('TCP6_ABI_NATIVE_PRECHECK')]
+            expected_precheck = [PRECHECK] if environment == 'native' and before['kernel'] == WSL_KERNEL else []
+            require(observed == expected_precheck, 'exact native-only packet-family prevalidation profile')
             require(before['source'] == source and before['program_sha256'] == program,
                     'preexecution IPv6 TCP control source and program')
             command = before['command']

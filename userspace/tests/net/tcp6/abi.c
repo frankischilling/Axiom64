@@ -10,7 +10,10 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
+#include <sys/utsname.h>
 #include <unistd.h>
+
+static int native_packet_precheck;
 
 static void require(int condition, const char* operation, unsigned detail) {
     if (!condition) {
@@ -28,7 +31,9 @@ static int stream(void) {
 static int expected_address(unsigned family, unsigned length, int connecting) {
     if (length < 2 || length > 128)
         return EINVAL;
-    if (family == AF_PACKET)
+    // This measured WSL kernel rejects AF_PACKET before the IPv6 protocol's
+    // minimum-length check. Upstream Linux and Axiom64 check length first.
+    if (native_packet_precheck && family == AF_PACKET)
         return EAFNOSUPPORT;
     if (connecting && family == AF_UNSPEC)
         return 0;
@@ -230,6 +235,13 @@ static unsigned option_copies(void) {
 }
 
 int main(void) {
+    struct utsname identity;
+    require(!uname(&identity), "kernel identity", 0);
+    native_packet_precheck = !strcmp(identity.sysname, "Linux") &&
+                             !strcmp(identity.release, "6.6.87.2-microsoft-standard-WSL2");
+    if (native_packet_precheck)
+        printf("TCP6_ABI_NATIVE_PRECHECK kernel=6.6.87.2-microsoft-standard-WSL2 "
+               "family=17 short_cases=6 errno=97\n");
     int listener = stream(), value = 1;
     require(!setsockopt(listener, IPPROTO_IPV6, IPV6_V6ONLY, &value, sizeof(value)),
             "listener V6ONLY", 0);

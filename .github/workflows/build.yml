@@ -1,4 +1,4 @@
-name: Measure IPv6 device readiness
+name: Measure native IPv6 worker placement
 on:
   workflow_dispatch:
 permissions:
@@ -28,16 +28,17 @@ jobs:
           run-id: 40249563493
           github-token: ${{ github.token }}
           digest-mismatch: error
-      - name: Measure eight interleaved trials without changing any protocol deadline
+      - name: Compare eight ordinary and owned-placement trials with the original client
         run: |
-          sudo -n python3 -B scripts/diagnostics/ipv6_device_ready.py --reference "${RUNNER_TEMP}/device-reference" --directory build/device-ready-diagnostic
+          sudo -n python3 -B scripts/diagnostics/ipv6_device_placement.py --reference "${RUNNER_TEMP}/device-reference"
       - name: Preserve every timing result and original packet clock
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ipv6-device-ready-diagnostic
+          name: ipv6-device-placement-diagnostic
           if-no-files-found: error
           path: |
-            build/device-ready-diagnostic
-            scripts/diagnostics/ipv6_device_ready.py
+            build/device-placement-diagnostic
+            scripts/diagnostics/ipv6_device_placement.py
+            scripts/native_address_worker.py
             .github/workflows/build.yml

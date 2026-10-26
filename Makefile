@@ -933,7 +933,7 @@ build/tcp-connection-host: kernel/tests/net/tcp_connection.cpp kernel/net/tcp/co
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_connection.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp -o $@
 .PHONY: test-tcp-connection
-build/tcp-socket-output-host: kernel/tests/net/tcp_socket_output.cpp kernel/tests/net/tcp_ipv6_socket.cpp kernel/tests/net/tcp_ipv6_error.cpp kernel/net/ipv4/socket.cpp kernel/net/udp/core.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) kernel/core/random/primitives.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/icmp.cpp kernel/net/tcp/isn.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/socket.cpp kernel/net/tcp/icmp_ipv6.cpp kernel/net/tcp/wire_ipv6.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/wire.cpp kernel/net/tcp/wire_detail.hpp $(call rwildcard,kernel/include/,*.hpp) kernel/net/ipv4/socket.hpp
+build/tcp-socket-output-host: kernel/tests/net/tcp_socket_output.cpp kernel/tests/net/tcp_ipv6_socket.cpp kernel/tests/net/tcp_ipv6_error.cpp kernel/tests/net/tcp_ipv6_reset.cpp kernel/net/ipv4/socket.cpp kernel/net/udp/core.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) kernel/core/random/primitives.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/icmp.cpp kernel/net/tcp/isn.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/socket.cpp kernel/net/tcp/icmp_ipv6.cpp kernel/net/tcp/wire_ipv6.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/wire.cpp kernel/net/tcp/wire_detail.hpp $(call rwildcard,kernel/include/,*.hpp) kernel/net/ipv4/socket.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 test-tcp-connection: build/tcp-connection-host build/tcp-socket-output-host
@@ -988,6 +988,17 @@ test-tcp6-scoped:
 	$(PYTHON) scripts/tcp6_test.py --suite scoped
 test-tcp6-scoped-native:
 	$(PYTHON) scripts/tcp6_test.py --suite scoped --native
+build/tcp6-replies-native: userspace/tests/net/tcp6/replies.c userspace/tests/net/ipv6_fixture.h
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/tcp6-replies-static build/tcp6-replies-dynamic: userspace/tests/net/tcp6/replies.c userspace/tests/net/ipv6_fixture.h scripts/compile_uapi_client.py
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) $(filter %.c,$^)
+.PHONY: test-tcp6-replies test-tcp6-replies-native
+test-tcp6-replies:
+	$(PYTHON) scripts/tcp6_test.py --suite replies
+test-tcp6-replies-native:
+	$(PYTHON) scripts/tcp6_test.py --suite replies --native
 build/tcp6-pmtu-native: userspace/tests/net/tcp6/pmtu.c userspace/tests/net/ipv6_fixture.h
 	@mkdir -p build
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@

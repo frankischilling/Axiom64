@@ -498,6 +498,25 @@ Run `make test-account-desktop` for [authenticated graphical sessions](accounts.
 
 The IPv6 output cohort also checks 192 Ethernet ancillary sends per execution after its 432 earlier wire cases and 480 local observations. Run `make test-ipv6-output` and `sudo -n make test-ipv6-output-native` for the eight guest and three native profiles. Distinct unresolved neighbors hold four large datagrams per adapter until a separate packet exchange proves input overwrite, shared-option changes, socket closure and descriptor reuse. Independent readers require actual neighbor release before queued fragments, unchanged original payload/header bytes, full rejection observations and causal packet clocks. They reject fourteen earlier and twenty-eight ancillary damage controls per capture. Musl's protected-control case enters the kernel through the direct syscall; ordinary valid sends retain the libc wrapper. The existing workflow jobs and all earlier variants remain required.
 
+`make test-tcp6-replies` and `sudo -n make test-tcp6-replies-native` compare
+twenty [TCP reply cases](ipv6.md) per adapter across global and identical
+link-local tuples. Both musl linkages, BIOS/UEFI and modern/legacy virtio retain
+e1000 on the companion interface. Three local Linux 6.6 native profiles and eight
+guests pass with twenty-two original captures. Readers require exact reset
+addresses, ports, sequence/acknowledgment values, flags and checksums, and complete
+fifty-millisecond reply/silence observations. They freshly reopen sixteen altered
+captures/logs per interface, actual boot images, compiler products and incomplete
+matrices. A same-client, identical-root-image comparison against the preceding
+kernel reproduces the original wrong-interface reply. These are local results;
+the existing TCP fault job retains complete current-revision hosted acceptance.
+
+`python3 -B scripts/tests/ports_download_test.py -v` exercises the actual archive
+downloader through an owned local HTTP server. Simultaneous cold callers share
+one complete publication, while distinct destinations still download in
+parallel. A failed transfer leaves the destination unpublished, preserves its
+partial bytes and releases ownership for the next request. Existing pinned
+checksum and signature validation remains in each caller.
+
 
 The same output cohort adds 128 extension-bearing sends across both adapters, raw/UDP and global/link-local scope. It retains modern/legacy header admission, ordinary-user capability rejection, original ancillary padding, actual fragmentation, DF rejection and four deferred ownership exchanges per adapter. The independent extension reader requires every original header/payload/checksum byte and rejects twenty-five damaged controls per capture. Linux socket output repeats ordinary Destination headers before the Fragment header when no Routing header exists; the generic encoder also retains its protocol layout. Forty-eight extension-chain/MTU cases and the original 54 datagrams/452 pieces run under sanitizers. All eight local guest profiles pass. All three current native linkages pass the complete output campaign, with stable original clock binding and zero drops. Earlier failed captures remain excluded. Current-revision hosted workflow coverage remains mandatory.
 

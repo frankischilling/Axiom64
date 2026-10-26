@@ -43,6 +43,8 @@ jobs:
             downloads/sources
       - name: Test crypto cache input invalidation and complete product retention
         run: python3 scripts/tests/crypto_cache_test.py -v
+      - name: Verify concurrent cold downloads and interrupted transfer ownership
+        run: python3 -B scripts/tests/ports_download_test.py -v
       - name: Test authenticated Ubuntu index identity and retained download failures
         run: python3 scripts/tests/host_glibc_sources_test.py -v
       - name: Fingerprint crypto recipes and actual host toolchain inputs
@@ -196,6 +198,7 @@ jobs:
           make -j2 build/tcp-fault-native build/tcp-fault-static build/tcp-fault-dynamic
           make -j2 build/tcp6-fault-native build/tcp6-fault-static build/tcp6-fault-dynamic
           make -j2 build/tcp6-scoped-native build/tcp6-scoped-static build/tcp6-scoped-dynamic
+          make -j2 build/tcp6-replies-native build/tcp6-replies-static build/tcp6-replies-dynamic
           make -j2 build/tcp6-pmtu-native build/tcp6-pmtu-static build/tcp6-pmtu-dynamic
           make -j2 build/tcp6-errors-native build/tcp6-errors-static build/tcp6-errors-dynamic
           make -j2 build/tcp-challenge-native build/tcp-challenge-static build/tcp-challenge-dynamic
@@ -807,6 +810,11 @@ jobs:
         run: |
           sudo -n make test-tcp6-scoped-native
           make test-tcp6-scoped
+      - name: Compare scoped and global TCP reset replies on both interfaces
+        if: matrix.suite == 'tcp-fault-loss'
+        run: |
+          sudo -n make test-tcp6-replies-native
+          make test-tcp6-replies
       - name: Independently verify TCP loss captures and reject damaged evidence
         if: matrix.suite == 'tcp-fault-loss'
         run: |
@@ -1736,6 +1744,8 @@ jobs:
             build/tcp6-errors-guest-wire/**
             build/tcp6-scoped-native-wire/**
             build/tcp6-scoped-guest-wire/**
+            build/tcp6-replies-native-wire/**
+            build/tcp6-replies-guest-wire/**
             build/axiom64-tcp-reordering-*.iso
             build/axiom64-tcp-persist-*.iso
             build/axiom64-tcp-timeout-*.iso

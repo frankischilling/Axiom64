@@ -38,3 +38,9 @@ zsh -f
 The example Makefile compiles and runs C and C++ programs, exercises exceptions, threads, synchronization, and the standard library, and checks a rejected C source file. The standalone `build/axiom64.iso` uses a disposable RAM root: directly booting it starts fresh and does not preserve accounts or files. The normal launch commands use the persistent disk described above. [Mounted ext2 data volumes](ext2.md) and [disk-root fixtures](disk-root.md) provide separate storage tests. The initial target is QEMU's emulated PC with PS/2 input and a 1024x768 boot framebuffer.
 
 On the host, `make test-thread-io` runs the focused BIOS/UEFI [blocking I/O tests](io.md#verification-and-limits). `make test-threads` and `make test` include those tests alongside their broader suites.
+
+Concurrent builds share one download owner per archive. Its lock covers the
+cold-cache check, partial transfer and atomic publication, while unrelated
+archives still download in parallel. An interrupted transfer leaves its final
+path unpublished and retains partial bytes. Existing checksum and signature
+checks remain mandatory before any fetched source or package is used.

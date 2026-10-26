@@ -476,3 +476,24 @@ interface/source removal or complete scoped connection lifetime behavior. Those
 paths, cache expiry, source/route/device lifetimes, wider IPv6 socket
 controls, dual-stack failure cases and complete current-revision fault and timing
 matrices also remain required. Complete IPv6 TCP acceptance remains unfinished.
+
+Closed-port and listener reset replies retain the incoming interface zone when
+either IPv6 address is link-local. An unbound wildcard listener does not erase
+that zone. This follows the scoped reply path in
+[Linux v6.17](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/tcp_ipv6.c)
+and the [TCP reset rules](https://www.rfc-editor.org/rfc/rfc9293.html#section-3.5.2).
+Global IPv6 and IPv4 replies retain their existing route selection.
+
+`make test-tcp6-replies` and `sudo -n make test-tcp6-replies-native` run twenty
+cases per adapter across link-local and global scope. They check closed ACK,
+SYN, SYN with payload, FIN and data replies, silence after an incoming RST,
+wildcard listeners, same/other-device bindings and exact scoped address binds.
+Both adapters use identical link-local addresses and ports. Three native and
+eight guest firmware/linkage/transport profiles pass locally, with Linux 6.6 WSL
+as the native reference. Independent readers
+check all twenty-two original captures, actual images/products and full
+fifty-millisecond reply/silence observations. They reopen 352 damaged packet/log
+controls, 32 altered products and six incomplete matrices. The same actual C
+program and root image reproduce the wrong-interface reply on the preceding
+kernel. These checks establish this reply cohort; broader scoped connection
+lifetimes and complete current-revision hosted acceptance remain required.

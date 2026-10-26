@@ -892,7 +892,12 @@ static void receive(unsigned index, const tcp::Address& source, const tcp::Addre
         reset.flags |= tcp::ack;
         reset.acknowledgment = segment.sequence + tcp::sequence_length(segment);
     }
-    emit(nullptr, listener ? listener->index : 0, destination, source, reset, 64);
+    unsigned reply_index = listener ? listener->index : 0;
+    // Link-local identities retain the receiving zone without a bound listener.
+    if (!reply_index && !source.is_ipv4() &&
+        (source.bytes.link_local() || destination.bytes.link_local()))
+        reply_index = index;
+    emit(nullptr, reply_index, destination, source, reset, 64);
 }
 
 void tcp_receive(unsigned index, uint32_t source, uint32_t destination, const void* data,

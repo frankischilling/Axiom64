@@ -78,6 +78,17 @@ client is `scripts/tests/native_icmp_budget.c`; `native_icmp_budget_test.py`
 retains cold/staggered/primed comparisons and independently checks their bytes.
 These helpers supply no kernel or guest implementation.
 
+`userspace/tests/net/tcp6/replies.c` supplies shared native/guest TCP reply
+observations. `scripts/tcp6/replies_peer.py` owns controlled requests;
+`replies_capture.py` independently checks original packets and reopens changed
+evidence. The existing TCP6 runner retains source, compiler products, actual
+images and complete linkage/firmware/transport matrices for this cohort.
+
+`scripts/ports.py` serializes each archive's cold download and publication with
+its own file lock. Distinct archives remain concurrent. The real local-HTTP
+regression under `scripts/tests/ports_download_test.py` covers colliding writers,
+parallel independent destinations and interrupted transfer recovery.
+
 ## Formatting
 
 The root `.clang-format` contains C++20 and C profiles. Kernel sources, headers, and host tests use the C++ profile. Userspace C sources use the C profile, and native C++ test programs use the C++ profile. Both preserve include order and use four spaces and a 100-column limit. Function bodies use multiple lines, and `SeparateDefinitionBlocks: Always` inserts a blank line between function, class, struct, and enum definitions. Keep one blank line between function prototypes too; `MaxEmptyLinesToKeep: 1` preserves that spacing. The Makefile continues to select C11 and C++20 for compilation.

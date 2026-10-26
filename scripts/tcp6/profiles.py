@@ -3,6 +3,12 @@
 
 
 def definition(suite):
+    if suite == 'replies':
+        from tcp6.replies_peer import Peer
+        from tcp6.replies_capture import verify
+        return dict(program='tcp6-replies', source='userspace/tests/net/tcp6/replies.c',
+                    flags=[], marker='TCP6_REPLIES_PASS lanes=2 cases_each=20 quiet_ms=50',
+                    peer=Peer, verify=verify)
     if suite == 'scoped':
         from functools import partial
         from tcp6.scoped_peer import Peer

@@ -68,6 +68,19 @@ static/dynamic linkage. Each profile requires an observed retirement wait across
 64 cycles; a live-task control must fail. The fixture retains its executable,
 dynamic loader, compiler inputs, original clocks and ninety-second deadline.
 
+`sudo -n make test-tcp6-scoped-native` and `make test-tcp6-scoped` retain the full
+TCP loss workload on identical link-local addresses and bound ports across two
+interface zones. A same-zone bind must still report `EADDRINUSE` after close,
+before the other zone opens the identical tuple. Actual local/peer scope IDs,
+all 65,536 bytes in each direction,
+sequence wrap, three retransmission classes and acknowledged half-closes remain
+required. Independent readers reject missing or false scope results as well as
+false retained-port results, damaged packets, clocks, compiler products and
+incomplete matrices. This initial
+cohort leaves cross-zone injection, source/device removal and wider connection
+lifetime acceptance open. It adds commands and retained artifacts to the existing
+TCP loss job while preserving the global-address workload and every deadline.
+
 `sudo -n make test-tcp6-pmtu-native` and `make test-tcp6-pmtu` exercise 22 IPv6
 TCP Packet Too Big cases on each adapter. They reuse the three native and eight
 guest linkage/firmware/transport profiles. The same strict source, compiler,

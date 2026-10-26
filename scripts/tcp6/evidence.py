@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import posixpath
+import re
 from pathlib import Path
 import struct
 import tempfile
@@ -43,7 +44,9 @@ def products(directory, profile, sources, native, suite='loss'):
     require(digest(directory / 'program') == compiled['product']['sha256'] and
             (directory / 'program').stat().st_size == compiled['product']['bytes'],
             'actual executed program matches its compiler product')
-    require(('-DTCP_IPV6' in compiled['command']) == (suite == 'loss') and config['source'] in compiled['command'] and
+    require(('-DTCP_IPV6' in compiled['command']) == (suite in ('loss', 'scoped')) and
+            ('-DTCP_IPV6_LINK_LOCAL' in compiled['command']) == (suite == 'scoped') and
+            config['source'] in compiled['command'] and
             ('-static' in compiled['command']) == (profile == 'static') and
             compiled['sources'] and all(not name.startswith('/') and '\\' not in name and
             not posixpath.normpath(name).startswith('../') and sources.get(posixpath.normpath(name)) == fingerprint
@@ -82,11 +85,11 @@ def products(directory, profile, sources, native, suite='loss'):
                 image=reopened, kernel_sha256=saved['kernel_sha256'])
 
 
-def damaged(path, lane, log, native, output, statistics=None):
+def damaged(path, lane, log, native, output, statistics=None, scoped=False):
     rows = read_capture(path)
     if native:
         bind(path, rows, statistics)
-    inspect(rows, lane, log, native)
+    inspect(rows, lane, log, native, scoped)
     guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
     selected = [n for n, row in enumerate(rows) if row['frame'][12:14] == b'\x86\xdd' and
                 len(row['frame']) >= 74 and row['frame'][20] == 6]
@@ -117,8 +120,8 @@ def damaged(path, lane, log, native, output, statistics=None):
     altered('future-ack', acknowledgments[0], lambda frame: frame.__setitem__(slice(62, 66),
              ((int.from_bytes(frame[62:66], 'big') + (1 << 30)) & 0xffffffff).to_bytes(4, 'big')), True)
     variants['missing-active-flow'] = [row for n, row in enumerate(rows) if n not in selected or
-        int.from_bytes(row['frame'][54:56], 'big') != 44000 + lane and
-        int.from_bytes(row['frame'][56:58], 'big') != 44000 + lane], log
+        int.from_bytes(row['frame'][54:56], 'big') != 44000 + (0 if scoped else lane) and
+        int.from_bytes(row['frame'][56:58], 'big') != 44000 + (0 if scoped else lane)], log
     changed = copy.deepcopy(rows)
     if native:
         changed[syns[1]]['arrival_lower_ns'] = changed[syns[0]]['arrival_upper_ns'] + 1000000
@@ -126,7 +129,17 @@ def damaged(path, lane, log, native, output, statistics=None):
     else:
         changed[syns[1]]['ns'] = changed[syns[0]]['ns'] + 1000000
     variants['short-real-deadline'] = changed, log
-    variants['missing-completion'] = rows, log.replace('TCP6_FAULT_PASS flows=4 bytes_each=65536', '')
+    marker = ('TCP6_SCOPED_FAULT_PASS' if scoped else 'TCP6_FAULT_PASS') + ' flows=4 bytes_each=65536'
+    variants['missing-completion'] = rows, log.replace(marker, '')
+    if scoped:
+        variants['missing-scope-result'] = rows, log.replace(f'TCP6_SCOPED_NAME_PASS lane={lane} role=0',
+                                                           'REMOVED_SCOPE_RESULT', 1)
+        variants['zero-scope'] = rows, re.sub(r'(TCP6_SCOPED_NAME_PASS lane=' + str(lane) +
+            r' role=0 index=)\d+', r'\g<1>0', log, count=1)
+        variants['missing-retained-bind'] = rows, log.replace('TCP6_SCOPED_RETAINED_PASS',
+                                                             'REMOVED_RETAINED_BIND', 1)
+        variants['false-retained-bind'] = rows, log.replace('port=44020 error=98',
+                                                           'port=44020 error=0', 1)
     archive_path = output / (path.stem + '-damaged.zip')
     clock_controls = {}
     if native:
@@ -165,7 +178,7 @@ def damaged(path, lane, log, native, output, statistics=None):
                 if lower is not None:
                     row.update(arrival_lower_ns=lower, arrival_upper_ns=upper)
             try:
-                inspect(changed, lane, archive.read(name + '.log').decode(), native)
+                inspect(changed, lane, archive.read(name + '.log').decode(), native, scoped)
             except ValueError as failure:
                 rejected.append(dict(name=name, reason=str(failure)))
             else:
@@ -319,6 +332,9 @@ def audit(directory, output=None, expected=None):
             reopened = config['verify'](path, lane, log, native, statistics)
             require(reopened['sha256'] == saved['capture_audits'][lane]['sha256'], 'original accepted packet capture unchanged')
             checker = damaged
+            if suite == 'scoped':
+                from functools import partial
+                checker = partial(damaged, scoped=True)
             if suite == 'pmtu':
                 from tcp6.pmtu_capture import damaged as checker
             elif suite == 'errors':

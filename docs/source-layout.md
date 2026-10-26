@@ -167,6 +167,13 @@ The ordinary-error client is `userspace/tests/net/tcp6/errors.c`.
 surviving streams and monotonic observation bounds. Native malformed-version
 behavior stays explicit rather than being treated as parser equivalence.
 
+`scripts/tcp6/scoped_peer.py` selects identical link-local tuples on separate
+interface zones. It reuses the original loss peer and
+`userspace/tests/net/tcp_fault.c` with `TCP_IPV6_LINK_LOCAL`; the common capture
+reader additionally checks actual socket scope IDs, bound ports and observed
+same-zone bind denial after close. Global and
+scoped workloads keep separate program names, source flags and evidence outputs.
+
 `userspace/tests/net/ipv6_error_record.h` formats raw/UDP ICMPv6 metadata into
 one bounded console write. `scripts/tests/ipv6_error_record_test.py` runs that
 actual formatter against retained interrupted bytes and failed-write controls.

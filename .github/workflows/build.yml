@@ -195,6 +195,7 @@ jobs:
           make -j2 build/tcp-native build/tcp-static build/tcp-dynamic
           make -j2 build/tcp-fault-native build/tcp-fault-static build/tcp-fault-dynamic
           make -j2 build/tcp6-fault-native build/tcp6-fault-static build/tcp6-fault-dynamic
+          make -j2 build/tcp6-scoped-native build/tcp6-scoped-static build/tcp6-scoped-dynamic
           make -j2 build/tcp6-pmtu-native build/tcp6-pmtu-static build/tcp6-pmtu-dynamic
           make -j2 build/tcp6-errors-native build/tcp6-errors-static build/tcp6-errors-dynamic
           make -j2 build/tcp-challenge-native build/tcp-challenge-static build/tcp-challenge-dynamic
@@ -800,6 +801,11 @@ jobs:
         run: |
           sudo -n make test-tcp6-errors-native
           make test-tcp6-errors
+      - name: Verify identical link-local TCP tuples retain their interface zones
+        if: matrix.suite == 'tcp-fault-loss'
+        run: |
+          sudo -n make test-tcp6-scoped-native
+          make test-tcp6-scoped
       - name: Independently verify TCP loss captures and reject damaged evidence
         if: matrix.suite == 'tcp-fault-loss'
         run: |
@@ -1718,6 +1724,8 @@ jobs:
             build/tcp6-pmtu-guest-wire/**
             build/tcp6-errors-native-wire/**
             build/tcp6-errors-guest-wire/**
+            build/tcp6-scoped-native-wire/**
+            build/tcp6-scoped-guest-wire/**
             build/axiom64-tcp-reordering-*.iso
             build/axiom64-tcp-persist-*.iso
             build/axiom64-tcp-timeout-*.iso

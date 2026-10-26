@@ -970,6 +970,17 @@ build/tcp6-fault-native: userspace/tests/net/tcp_fault.c userspace/tests/net/ipv
 build/tcp6-fault-static build/tcp6-fault-dynamic: userspace/tests/net/tcp_fault.c userspace/tests/net/ipv6_fixture.h scripts/compile_uapi_client.py
 	@mkdir -p build
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -DTCP_IPV6 $(if $(filter %-static,$@),-static) $(filter %.c,$^)
+build/tcp6-scoped-native: userspace/tests/net/tcp_fault.c userspace/tests/net/ipv6_fixture.h
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DTCP_IPV6 -DTCP_IPV6_LINK_LOCAL $< -o $@
+build/tcp6-scoped-static build/tcp6-scoped-dynamic: userspace/tests/net/tcp_fault.c userspace/tests/net/ipv6_fixture.h scripts/compile_uapi_client.py
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -DTCP_IPV6 -DTCP_IPV6_LINK_LOCAL $(if $(filter %-static,$@),-static) $(filter %.c,$^)
+.PHONY: test-tcp6-scoped test-tcp6-scoped-native
+test-tcp6-scoped:
+	$(PYTHON) scripts/tcp6_test.py --suite scoped
+test-tcp6-scoped-native:
+	$(PYTHON) scripts/tcp6_test.py --suite scoped --native
 build/tcp6-pmtu-native: userspace/tests/net/tcp6/pmtu.c userspace/tests/net/ipv6_fixture.h
 	@mkdir -p build
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@

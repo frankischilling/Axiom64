@@ -18,6 +18,11 @@
 #define IPV6_BARRIER_PROTOCOL 0x88c1
 #define IPV6_BARRIER_MAGIC "IP6T"
 #include "ipv6_fixture.h"
+#ifdef TCP_IPV6_LINK_LOCAL
+enum { tcp6_scoped = 1 };
+#else
+enum { tcp6_scoped = 0 };
+#endif
 #endif
 #ifdef TCP_CHALLENGE
 #include <sys/wait.h>
@@ -83,7 +88,23 @@ static void flow(unsigned lane, unsigned role) {
     CHECK(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0);
     CHECK(setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) == 0);
 #ifdef TCP_IPV6
-    struct sockaddr_in6 destination = address(lane, role ? 2 : 1, (role ? 44010 : 44000) + lane, 0);
+    unsigned port_offset = tcp6_scoped ? 0 : lane;
+    struct sockaddr_in6 destination =
+        address(lane, role ? 2 : 1, (role ? 44010 : 44000) + port_offset, tcp6_scoped);
+#ifdef TCP_IPV6_LINK_LOCAL
+    if (lane == 1 && !role) {
+        int previous = socket(AF_INET6, SOCK_STREAM, 0);
+        CHECK(previous >= 0);
+        struct sockaddr_in6 retained = address(0, 2, 44020, 1);
+        int result = bind(previous, (struct sockaddr*)&retained, sizeof(retained));
+        int error = result < 0 ? errno : 0;
+        CHECK(result == -1 && error == EADDRINUSE && close(previous) == 0);
+        printf("TCP6_SCOPED_RETAINED_PASS first_index=%u second_index=%u port=44020 error=%d\n",
+               indices[0], indices[1], error);
+    }
+#endif
+    if (tcp6_scoped && !role)
+        bind_address(fd, address(lane, 2, 44020, 1));
 #else
     struct sockaddr_in destination = {.sin_family = AF_INET,
                                       .sin_port = htons((role ? 44010 : 44000) + lane),
@@ -105,6 +126,23 @@ static void flow(unsigned lane, unsigned role) {
     }
     uint64_t connected = milliseconds();
     CHECK(connected - started >= 850 && connected - started < 20000);
+#ifdef TCP_IPV6
+    if (tcp6_scoped) {
+        struct sockaddr_in6 local, peer;
+        socklen_t length = sizeof(local);
+        CHECK(getsockname(fd, (struct sockaddr*)&local, &length) == 0 && length == sizeof(local));
+        length = sizeof(peer);
+        CHECK(getpeername(fd, (struct sockaddr*)&peer, &length) == 0 && length == sizeof(peer));
+        struct sockaddr_in6 wanted_local = address(lane, 2, role ? 44010 : 44020, 1);
+        struct sockaddr_in6 wanted_peer = address(lane, 1, role ? 45000 : 44000, 1);
+        CHECK(!memcmp(&local, &wanted_local, sizeof(local)) &&
+              !memcmp(&peer, &wanted_peer, sizeof(peer)));
+        printf("TCP6_SCOPED_NAME_PASS lane=%u role=%u index=%u local_scope=%u peer_scope=%u "
+               "local_port=%u peer_port=%u\n",
+               lane, role, indices[lane], local.sin6_scope_id, peer.sin6_scope_id,
+               ntohs(local.sin6_port), ntohs(peer.sin6_port));
+    }
+#endif
     uint8_t buffer[4096];
     for (size_t position = 0; position < transfer_bytes;) {
         size_t length = sizeof(buffer);
@@ -180,7 +218,8 @@ int main(int argc, char** argv) {
     CHECK(usleep(200000) == 0);
     puts("TCP_FAULT_PASS flows=4 bytes_each=65536");
 #ifdef TCP_IPV6
-    puts("TCP6_FAULT_PASS flows=4 bytes_each=65536");
+    puts(tcp6_scoped ? "TCP6_SCOPED_FAULT_PASS flows=4 bytes_each=65536"
+                     : "TCP6_FAULT_PASS flows=4 bytes_each=65536");
 #endif
     return 0;
 }

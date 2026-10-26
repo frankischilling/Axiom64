@@ -444,6 +444,20 @@ whereas Axiom64's existing quote decoder rejects it. Both outcomes remain
 explicitly checked. This is not complete quote-parser equivalence. Blocking
 connect interruption, retained calls, error-copy faults, companion isolation,
 same-tuple successor ownership and wider ordinary-error acceptance remain open.
-Scoped TCP paths, cache expiry, source/route/device lifetimes, wider IPv6 socket
+`make test-tcp6-scoped` and `sudo -n make test-tcp6-scoped-native` run the full
+active/passive loss workload over link-local addresses. Both interfaces use
+`fe80::2` locally and `fe80::1` at the controlled peer, with identical bound ports.
+After the first connection closes, an actual bind in its zone still reports
+`EADDRINUSE`. The second interface then binds and opens the same tuple in its own
+zone. Each real socket reports local and peer scope IDs equal
+to its actual interface index. All 65,536 bytes in both directions, sequence wrap,
+handshake/data/FIN retransmissions and acknowledged half-closes remain required.
+Three native profiles and eight guest firmware/linkage/transport profiles pass
+locally, with actual image/product readback and independently reopened captures.
+The original global-address workload and all real timing bounds remain.
+
+This initial scoped cohort does not establish cross-interface injection rejection,
+interface/source removal or complete scoped connection lifetime behavior. Those
+paths, cache expiry, source/route/device lifetimes, wider IPv6 socket
 controls, dual-stack failure cases and complete current-revision fault and timing
 matrices also remain required. Complete IPv6 TCP acceptance remains unfinished.

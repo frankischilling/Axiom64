@@ -3,6 +3,14 @@
 
 
 def definition(suite):
+    if suite == 'scoped':
+        from functools import partial
+        from tcp6.scoped_peer import Peer
+        from tcp6.capture import verify
+        return dict(program='tcp6-scoped', source='userspace/tests/net/tcp_fault.c',
+                    flags=['-DTCP_IPV6', '-DTCP_IPV6_LINK_LOCAL'],
+                    marker='TCP6_SCOPED_FAULT_PASS flows=4 bytes_each=65536',
+                    peer=Peer, verify=partial(verify, scoped=True))
     if suite == 'loss':
         from tcp6.peer import Peer
         from tcp6.capture import verify

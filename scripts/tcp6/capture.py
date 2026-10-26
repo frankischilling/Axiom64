@@ -2,6 +2,7 @@
 """Reconstruct TCP6 streams and loss timers without using the transmitting peer."""
 import hashlib
 import ipaddress
+import re
 import struct
 from functools import lru_cache
 from ipv4_expiry_capture import read_capture, checksum
@@ -21,17 +22,36 @@ def expected(lane, role, direction):
                  for n in range(SIZE))
 
 
-def inspect(rows, lane, log, native=False):
-    require(log.splitlines().count('TCP6_FAULT_PASS flows=4 bytes_each=65536') == 1,
+def inspect(rows, lane, log, native=False, scoped=False):
+    marker = ('TCP6_SCOPED_FAULT_PASS' if scoped else 'TCP6_FAULT_PASS') + ' flows=4 bytes_each=65536'
+    require(log.splitlines().count(marker) == 1,
             'one completed actual IPv6 TCP workload')
+    if scoped:
+        names = [tuple(map(int, match)) for match in re.findall(
+            r'^TCP6_SCOPED_NAME_PASS lane=(\d+) role=(\d+) index=(\d+) local_scope=(\d+) '
+            r'peer_scope=(\d+) local_port=(\d+) peer_port=(\d+)\r?$', log, re.M)]
+        require(len(names) == 4 and {(row[0], row[1]) for row in names} ==
+                {(nic, role) for nic in range(2) for role in range(2)}, 'complete actual scoped socket names')
+        zones = {}
+        for nic, role, index, local_scope, peer_scope, local_port, peer_port in names:
+            require(index > 0 and local_scope == peer_scope == index and
+                    local_port == (44010 if role else 44020) and
+                    peer_port == (45000 if role else 44000), 'actual local and peer scope and port')
+            require(nic not in zones or zones[nic] == index, 'one actual interface index per zone')
+            zones[nic] = index
+        require(zones[0] != zones[1], 'identical link-local tuples retain independent interface zones')
+        retained = re.findall(r'^TCP6_SCOPED_RETAINED_PASS first_index=(\d+) second_index=(\d+) '
+                              r'port=44020 error=98\r?$', log, re.M)
+        require(retained == [(str(zones[0]), str(zones[1]))],
+                'same-zone retained port denies binding before the second zone opens')
     for role in range(2):
         require(log.count(f'TCP_FAULT_FLOW_PASS lane={lane} role={role} bytes_each=65536 ') == 1,
                 'one actual active/passive stream result')
     guest = bytes([0x52, 0x54, 0, 0x12, 0x34, 0x10 + lane])
     peer = bytes([2, 0x41, 0x58, 0x54, 0x43, lane])
     control = bytes([2, ord('I'), ord('P'), ord('6'), lane, 0])
-    local = ipaddress.IPv6Address(f'2001:db8:{lane + 1}::2').packed
-    remote = ipaddress.IPv6Address(f'2001:db8:{lane + 1}::1').packed
+    local = ipaddress.IPv6Address('fe80::2' if scoped else f'2001:db8:{lane + 1}::2').packed
+    remote = ipaddress.IPv6Address('fe80::1' if scoped else f'2001:db8:{lane + 1}::1').packed
     ready, reply, flows = None, None, {}
     for index, row in enumerate(rows):
         frame = row['frame']
@@ -75,9 +95,11 @@ def inspect(rows, lane, log, native=False):
         require(20 <= header <= size and not bits & 0x0e00 and not urgent and not flags & 4,
                 'TCP header bounds, reserved bits and no reset')
         local_port, remote_port = (source, target) if outgoing else (target, source)
-        role = 0 if remote_port == 44000 + lane else 1 if (
-            remote_port == 45000 + lane and local_port == 44010 + lane) else None
+        port_offset = 0 if scoped else lane
+        role = 0 if remote_port == 44000 + port_offset else 1 if (
+            remote_port == 45000 + port_offset and local_port == 44010 + port_offset) else None
         require(role is not None, 'actual active/passive TCP6 ports')
+        require(not scoped or local_port == (44010 if role else 44020), 'same bound ports across zones')
         key = role, local_port, remote_port
         flow = flows.setdefault(key, [dict(events=[], data=bytearray(SIZE), seen=bytearray(SIZE)),
                                       dict(events=[], data=bytearray(SIZE), seen=bytearray(SIZE))])
@@ -162,12 +184,12 @@ def inspect(rows, lane, log, native=False):
     return dict(lane=lane, flows=results, captured_frames=len(rows), passed=True)
 
 
-def verify(path, lane, log, native=False, statistics=None):
+def verify(path, lane, log, native=False, statistics=None, scoped=False):
     rows = read_capture(path)
     clock = None
     if native:
         from tcp6.observation import bind
         clock = bind(path, rows, statistics)
-    result = inspect(rows, lane, log, native)
+    result = inspect(rows, lane, log, native, scoped)
     result.update(sha256=hashlib.sha256(path.read_bytes()).hexdigest(), clock=clock)
     return result

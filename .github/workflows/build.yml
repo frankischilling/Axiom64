@@ -1,4 +1,4 @@
-name: Qualify recorded native IPv6 timer policy
+name: Qualify native ICMP preflight with original IPv4 clients
 on:
   workflow_dispatch:
 permissions:
@@ -13,36 +13,42 @@ defaults:
 jobs:
   measure:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install native packet tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends iproute2 ethtool
-      - name: Restore the byte-identical original native client
+      - name: Restore the byte-identical original IPv4 clients
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: ipv6-configuration
-          path: ${{ runner.temp }}/device-reference
+          name: ipv4-fragments-native
+          path: ${{ runner.temp }}/ipv4-reference
           run-id: 40249563493
           github-token: ${{ github.token }}
           digest-mismatch: error
-      - name: Replay the real late-packet fixture and policy corruption controls
-        run: python3 -B scripts/tests/native_ipv6_timers_test.py -v
-      - name: Collect actual before-and-after timer policy across 24 fixed profiles
-        run: sudo -n python3 -B scripts/diagnostics/ipv6_timer_policy.py --reference "${RUNNER_TEMP}/device-reference"
-      - name: Preserve original packets, policy observations and both contract results
+      - name: Build and retain all cold, staggered and primed native controls
+        run: |
+          make build/native-icmp-budget
+          sudo -n python3 -B scripts/native_icmp_budget_test.py
+      - name: Exercise the unchanged full fragment and ten-minute PMTU workloads
+        run: sudo -n python3 -B scripts/diagnostics/native_icmp_preflight.py --reference "${RUNNER_TEMP}/ipv4-reference"
+      - name: Preserve original clients, packets, clock receipts and damaged controls
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: native-timer-policy-diagnostic
+          name: native-icmp-preflight-diagnostic
           if-no-files-found: error
           path: |
-            build/native-timer-policy-diagnostic
-            scripts/native_ipv6_timers.py
-            scripts/ipv6_device_test.py
-            scripts/ipv6_device_pending_capture.py
-            scripts/diagnostics/ipv6_timer_policy.py
-            scripts/tests/native_ipv6_timers_test.py
-            scripts/tests/fixtures/ipv6-device-native-timers
+            build/native-icmp-budget-evidence
+            build/native-icmp-preflight-diagnostic
+            scripts/ipv4_fragment_native.py
+            scripts/native_icmp_preflight.py
+            scripts/native_icmp_preflight_capture.py
+            scripts/native_icmp_budget_test.py
+            scripts/tests/native_icmp_budget.c
+            scripts/diagnostics/native_icmp_preflight.py
+            userspace/tests/net/ipv4*.c
+            userspace/tests/net/ipv4*.h
+            Makefile

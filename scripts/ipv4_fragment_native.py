@@ -23,6 +23,8 @@ from ipv4_path_mtu_lifetime_capture import verify_capture as verify_path_lifetim
 from ipv4_query_model import query_model
 from tcp_fault_native import Capture
 from native_ipv4_state import NativeIpv4State
+from native_icmp_preflight import NativeIcmpPreflight
+from native_icmp_preflight_capture import verify_capture as verify_preflight
 
 
 def digest(path):
@@ -88,6 +90,7 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
     process = None
     error = None
     command = client(profile, pmtu_only, lifetime_only)
+    preflight = NativeIcmpPreflight(directory) if not pmtu_only and not lifetime_only else None
     model = query_model(platform.uname()._asdict())
     sources = ['userspace/tests/net/ipv4.c', 'userspace/tests/net/ipv4_fragments.c',
                'userspace/tests/net/ipv4_aliases.c', 'userspace/tests/net/ipv4_aliases.h',
@@ -100,7 +103,8 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                'scripts/ipv4_path_mtu_lifetime.py', 'scripts/ipv4_path_mtu_lifetime_capture.py',
                'userspace/tests/net/ipv4_fragments.h', 'scripts/ipv4_fragments.py',
                'scripts/ipv4_fragment_native.py', 'scripts/ipv4_expiry_capture.py',
-               'scripts/tcp_fault_native.py', 'scripts/native_ipv4_state.py', 'Makefile']
+               'scripts/tcp_fault_native.py', 'scripts/native_ipv4_state.py',
+               'scripts/native_icmp_preflight.py', 'scripts/native_icmp_preflight_capture.py', 'Makefile']
     before = dict(profile=profile, pmtu_only=pmtu_only, lifetime_only=lifetime_only, query_model=model,
                   kernel=platform.uname()._asdict(), command=command,
                   source_sha256={name: digest(ROOT / name) for name in sources},
@@ -123,6 +127,14 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
             raise ValueError('native product changed while preserving its original bytes')
     started = time.monotonic()
     selector = selectors.DefaultSelector()
+
+    def deliver(lane, packet, expiry):
+        if expiry:
+            send_packets(taps, captures, peers, lane, peers[lane].expiry.receive(packet))
+            observe_expiry(lane)
+        else:
+            send_packets(taps, captures, peers, lane,
+                         [(payload, False) for payload in peers[lane].receive(packet)])
 
     fragment_timeout = None
     try:
@@ -156,6 +168,8 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                     raise TimeoutError(f'IPv4 comparison exceeded its {bound}-second bound')
                 if process.poll() not in (None, 0):
                     raise RuntimeError(f'fragment client exited {process.returncode}')
+                if preflight is not None:
+                    preflight.tick()
                 for lane, peer in enumerate(peers):
                     send_packets(taps, captures, peers, lane, peer.expiry.tick())
                     observe_expiry(lane)
@@ -183,6 +197,12 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                         if os.write(key.fd, response) != len(response):
                             raise OSError('short TAP ARP injection')
                     elif len(frame) >= 34 and frame[12:14] == b'\x08\0':
+                        if preflight is not None and preflight.receive(lane, frame):
+                            observe('native ICMP preflight completed before original fragment input')
+                            for held_lane, held_frame in preflight.release():
+                                held_packet = held_frame[14:14+int.from_bytes(held_frame[16:18], 'big')]
+                                deliver(held_lane, held_packet, peers[held_lane].expiry.accepts(held_packet))
+                            continue
                         packet = frame[14:]
                         total = int.from_bytes(packet[2:4], 'big')
                         packet = packet[:total]
@@ -193,12 +213,10 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                             raise ValueError('native fragment control Ethernet ownership differs')
                         if total > len(packet):
                             raise ValueError('truncated native control packet')
-                        if expiry:
-                            send_packets(taps, captures, peers, lane, peers[lane].expiry.receive(packet))
-                            observe_expiry(lane)
+                        if preflight is not None and not preflight.passed:
+                            preflight.hold(lane, frame, taps, captures)
                         else:
-                            send_packets(taps, captures, peers, lane,
-                                         [(payload, False) for payload in peers[lane].receive(packet)])
+                            deliver(lane, packet, expiry)
                 if process.poll() == 0 and all(
                     (lifetime_only or peer.path_mtu.passed) and
                     (pmtu_only or peer.path_mtu.lifetime.passed) and
@@ -265,8 +283,11 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                                   for lane in range(2))
         markers = markers and all(f'IPV4_FRAGMENT_EXPIRY_PASS index={lane + 1} ' in text for lane in range(2))
     expiry_audits = []
+    preflight_audit = None
     if not pmtu_only and not lifetime_only and error is None and process is not None and process.returncode == 0 and markers:
         try:
+            preflight_audit = verify_preflight(directory, statistics,
+                damage_archive=directory/'native-icmp-preflight-damaged.zip')
             for lane in range(2):
                 expiry_audits.append(verify_capture(directory / f'lane{lane}.pcap', lane,
                     directory / 'client.log', native=True,
@@ -299,6 +320,7 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                   fragment_expiry=[peer.expiry.report() for peer in peers],
                   native_fragment_timeout_seconds=fragment_timeout,
                   fragment_expiry_capture_audits=expiry_audits,
+                  native_icmp_preflight_capture_audit=preflight_audit,
                   path_mtu=[peer.path_mtu.report() for peer in peers],
                   path_mtu_capture_audits=path_audits,
                   path_mtu_lifetime=[peer.path_mtu.lifetime.report() for peer in peers],
@@ -312,7 +334,8 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                           (lifetime_only or all(peer.path_mtu.passed for peer in peers)) and
                           (pmtu_only or all(peer.path_mtu.lifetime.passed for peer in peers)) and
                           (pmtu_only or lifetime_only or (completed == [6, 6] and all(acknowledged) and output_cases == [21, 21] and
-                          all(output_ack) and all(peer.expiry.passed for peer in peers))) and
+                          all(output_ack) and all(peer.expiry.passed for peer in peers) and
+                          preflight.passed and preflight_audit is not None)) and
                           markers and len(statistics) == 2 and
                           len(path_audits) == (0 if lifetime_only else 2) and
                           len(lifetime_audits) == (0 if pmtu_only else 2) and

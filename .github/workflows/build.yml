@@ -46,7 +46,10 @@ jobs:
       - name: Verify concurrent cold downloads and interrupted transfer ownership
         run: python3 -B scripts/tests/ports_download_test.py -v
       - name: Replay scoped TCP UEFI pre-readiness traffic and reject misplaced boot frames
-        run: python3 -B scripts/tests/tcp6_isolation_prelude_test.py -v
+        run: |
+          python3 -B scripts/tests/tcp6_isolation_prelude_test.py -v
+          python3 -B scripts/tests/tcp6_source_handshake_test.py -v
+          python3 -B scripts/tests/manager_link_startup_test.py -v
       - name: Test authenticated Ubuntu index identity and retained download failures
         run: python3 scripts/tests/host_glibc_sources_test.py -v
       - name: Fingerprint crypto recipes and actual host toolchain inputs

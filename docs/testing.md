@@ -109,6 +109,19 @@ those output blocks occur while the source is withdrawn. Finite source expiry,
 route/device removal and full TCP lifetime acceptance
 remain required.
 
+`python3 scripts/tests/tcp6_source_handshake_test.py` replays three actual TCP
+frames from a retained failed observation. The final handshake ACK carries the
+first payload; the peer checks its acknowledgment and sequence before processing
+those bytes. A separate empty ACK remains valid. Wrong sequences, acknowledgments,
+flags, source ownership and payload still reject. This replay qualifies the
+observer; complete native and guest runs remain the runtime gate.
+
+`python3 scripts/tests/manager_link_startup_test.py` forces a real QEMU debugger
+bind failure before guest execution and requires its stderr and command record
+to survive teardown. Carrier/failure runs use a private Unix debugger socket and
+retain emulator commands and exit status in their packet evidence. Existing
+hardware observations, guest deadlines and acceptance checks remain required.
+
 `sudo -n make test-tcp6-pending-source-native` and `make test-tcp6-pending-source`
 retain all three native and eight guest profiles for four additional rounds per
 adapter: a connect bound before source withdrawal, explicit and automatic active

@@ -20,9 +20,9 @@ from qemu_acceleration import Acceleration
 
 
 class Controller:
-    def __init__(self, process, peers, affected, hardware, label, debug_port):
+    def __init__(self, process, peers, affected, hardware, label, debug_target):
         self.process, self.peers, self.affected = process, peers, affected
-        self.hardware, self.label, self.debug_port = hardware, label, debug_port
+        self.hardware, self.label, self.debug_target = hardware, label, debug_target
         self.target, self.healthy = peers[affected], peers[1 - affected]
         self.scenario = self.target.link_scenario
         self.ready = self.initial = self.down = self.progress = self.recovered = self.finished = False
@@ -60,7 +60,7 @@ class Controller:
                 unique = f'{self.label}-rx-{time.monotonic_ns()}'
                 self.armed = ROOT / 'build' / (unique + '.armed')
                 self.debugger, self.debug_log = inject('virtio' if self.affected == 0 else 'e1000',
-                                                       'length', self.debug_port, unique, self.armed)
+                                                       'length', self.debug_target, unique, self.armed)
         match = re.fullmatch(r'MANAGER_LINK_FRAME index=(\d+) length=(\d+) hash=([0-9a-f]{16}) packet_type=(\d+) monotonic_ms=(\d+)', line)
         if match:
             index, length, digest, packet_type, milliseconds = match.groups()
@@ -226,7 +226,7 @@ def run(linkage, scenario, affected, firmware, transport, timeout, image):
     servers = []
     control = tempfile.TemporaryDirectory(prefix='axiom64-manager-link-')
     monitor_path, test_path = (Path(control.name) / name for name in ('qmp.sock', 'qtest.sock'))
-    debug_port = None
+    debug_target = None
     acceleration = Acceleration()
     command = ['qemu-system-x86_64', '-machine', acceleration.machine, '-cpu', 'max', '-m', '512M', '-S',
                '-cdrom', str(image), '-nic', 'none', '-display', 'none', '-serial', 'stdio',
@@ -235,10 +235,9 @@ def run(linkage, scenario, affected, firmware, transport, timeout, image):
                '-qtest', f'unix:{test_path},server=on,wait=off',
                '-qtest-log', str(ROOT / 'build' / (attempt + '-qtest.log'))]
     if scenario == 'rx-length':
-        with socket.socket() as reservation:
-            reservation.bind(('127.0.0.1', 0))
-            debug_port = reservation.getsockname()[1]
-        command += ['-gdb', f'tcp:127.0.0.1:{debug_port}']
+        debug_target = Path(control.name) / 'gdb.sock'
+        command += ['-chardev', f'socket,path={debug_target},server=on,wait=off,id=manager-debug',
+                    '-gdb', 'chardev:manager-debug']
     for lane, model in enumerate(('virtio-net-pci', 'e1000')):
         server = socket.socket()
         server.bind(('127.0.0.1', 0))
@@ -272,7 +271,7 @@ def run(linkage, scenario, affected, firmware, transport, timeout, image):
             hardware = Hardware(monitor, test_path, affected, transport)
             if scenario.endswith('initial'):
                 hardware.carrier(False)
-            controller = Controller(process, peers, affected, hardware, attempt, debug_port)
+            controller = Controller(process, peers, affected, hardware, attempt, debug_target)
             monitor.command('cont')
             while True:
                 now = time.monotonic()
@@ -346,6 +345,10 @@ def run(linkage, scenario, affected, firmware, transport, timeout, image):
             if process.poll() is None:
                 process.kill()
             returncode = process.wait()
+            # Startup can fail before the selector reads stdout. Retain the
+            # emulator's final diagnostic bytes after it has stopped.
+            output.write(process.stdout.read())
+            output.flush()
             if hardware:
                 hardware.close()
             if monitor:
@@ -373,7 +376,9 @@ def run(linkage, scenario, affected, firmware, transport, timeout, image):
                 check(controller.flaps == 2, 'two additional actual carrier flaps were observed')
         except Exception as exception:
             error = str(exception)
-    evidence.write_text(json.dumps(dict(stages=controller.stages if controller else [],
+    evidence.write_text(json.dumps(dict(emulator=dict(command=command, returncode=returncode,
+                                                     deadline_seconds=timeout),
+                                       stages=controller.stages if controller else [],
                                        states=controller.states if controller else [],
                                        failures=controller.failures if controller else [],
                                        hardware=hardware.records if hardware else [], before_ready=before_ready,

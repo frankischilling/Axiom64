@@ -4,6 +4,7 @@ from fetch import ROOT
 
 
 def inject(model, kind, port, prefix, armed):
+    endpoint = f'127.0.0.1:{port}' if isinstance(port, int) else str(port)
     source = f'kernel/drivers/net/{model}.cpp'
     target = f"'{source}'::'ax::(anonymous namespace)::controllers'[0]"
     if model == 'virtio':
@@ -25,7 +26,7 @@ def inject(model, kind, port, prefix, armed):
     script = ROOT / 'build' / (prefix + '.gdb')
     script.write_text('\n'.join([
         'set pagination off', 'set confirm off', f'file {ROOT / "build/axiom64.elf"}',
-        f'target remote 127.0.0.1:{port}', f'set $nic = &{target}',
+        f'target remote {endpoint}', f'set $nic = &{target}',
         f'break -source {location} -line {positions[0]} if {condition}',
         'commands', 'silent', mutation,
         f'printf "PACKET_FAULT_INJECTED model={model} kind={kind}\\n"',

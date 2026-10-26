@@ -38,7 +38,10 @@ class Flow:
             return
         check(self.guest_next is not None and value['ack']==self.remote_next,'source stream acknowledgment')
         if not self.established:
-            check(value['flags']==ACK and not value['data'],'source stream handshake')
+            # RFC 9293 permits payload in the final handshake acknowledgment.
+            # Validate its sequence before processing the ordinary data path.
+            check(value['flags'] in (ACK,ACK|8) and value['seq']==self.guest_next,
+                'source stream handshake')
             self.established=True
         if value['data']:
             tags=[9] if self.companion else [0,1,2,3,4]

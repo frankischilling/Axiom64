@@ -65,6 +65,19 @@ waits for complete captured frames before guest conflict acknowledgments. Its
 regressions retain an actual ordering failure and a real first-inventory ready
 observation under a predefined delayed acknowledgment.
 
+`scripts/native_ipv6_timers.py` records native kernel configuration and actual
+DAD timer parameters around the device client. Its independent capture reader
+uses that bounded proof only for the supported native regeneration contract;
+guest timing stays separate. `scripts/tests/native_ipv6_timers_test.py` replays
+an original late capture and explicitly constructed policy corruption inputs.
+
+`scripts/native_icmp_preflight.py` owns the native fragment peer's acknowledged
+UDP error setup; `native_icmp_preflight_capture.py` reopens its original packets,
+clocks, rate settings and control-release receipt. The native-only C control
+client is `scripts/tests/native_icmp_budget.c`; `native_icmp_budget_test.py`
+retains cold/staggered/primed comparisons and independently checks their bytes.
+These helpers supply no kernel or guest implementation.
+
 ## Formatting
 
 The root `.clang-format` contains C++20 and C profiles. Kernel sources, headers, and host tests use the C++ profile. Userspace C sources use the C profile, and native C++ test programs use the C++ profile. Both preserve include order and use four spaces and a 100-column limit. Function bodies use multiple lines, and `SeparateDefinitionBlocks: Always` inserts a blank line between function, class, struct, and enum definitions. Keep one blank line between function prototypes too; `MaxEmptyLinesToKeep: 1` preserves that spacing. The Makefile continues to select C11 and C++20 for compilation.
@@ -77,7 +90,7 @@ make format
 make check-format
 ```
 
-The targets cover project C/C++ sources and headers under `kernel/` and `userspace/`. Imported headers under `vendor/` retain their upstream formatting. Set `CLANG_FORMAT=/path/to/clang-format-20` when the executable uses another name. Clang-format 20 or newer can read the separate C profile; version 20 is used for the checked formatting. CI runs `make check-format`, and the corresponding-source bundle includes the configuration.
+The targets cover project C/C++ sources and headers under `kernel/` and `userspace/`, plus the native ICMP control client under `scripts/tests/`. Imported headers under `vendor/` retain their upstream formatting. Set `CLANG_FORMAT=/path/to/clang-format-20` when the executable uses another name. Clang-format 20 or newer can read the separate C profile; version 20 is used for the checked formatting. CI runs `make check-format`, and the corresponding-source bundle includes the configuration.
 
 `kernel/tests/net/packet.cpp` exercises the production packet demultiplexer with
 captured bytes. `scripts/tests/packet_protocol_test.py` builds that sanitizer model.

@@ -25,6 +25,7 @@ from qemu_capture_delivery import Delivery
 from tcp_fault_native import Capture
 from tcp_fault_test import exercise
 from tcp_fixture_inputs import audit_fixture, digest
+from native_ipv6_timers import begin as timer_begin, finish as timer_finish
 
 SOURCE = 'userspace/tests/net/ipv6_device_lifecycle.c'
 PENDING_SOURCE = 'userspace/tests/net/ipv6_device_pending.c'
@@ -69,7 +70,8 @@ def source_inputs(guest):
     return {name:digest(ROOT / name) for name in sorted(names)}
 
 
-def outcome(directory, text, reports, error, status, native=False, statistics=None, action="administrative", state="ready"):
+def outcome(directory, text, reports, error, status, native=False, statistics=None, action="administrative", state="ready",
+            native_timer_policy=None):
     receipt = dict(action=action, state=state, returncode=status, error=error, peer_reports=reports,
                    log_sha256=digest(directory / 'serial.log'), full_DAD_acceptance=False)
     receipt['functional_passed'] = (status == (0 if native else 1) and error is None and
@@ -81,6 +83,8 @@ def outcome(directory, text, reports, error, status, native=False, statistics=No
         try:
             reader = inspect if state == 'ready' else inspect_pending
             options = {} if state == 'ready' else dict(state=state)
+            if native_timer_policy is not None:
+                options['native_timer_policy'] = native_timer_policy
             audits = [reader(directory / f'lane{lane}.pcap', lane, text, action, native=native,
                              statistics=statistics if native else None,
                              native_kernel_release=platform.release() if native else None,
@@ -88,6 +92,7 @@ def outcome(directory, text, reports, error, status, native=False, statistics=No
         except (ValueError, OSError) as exception:
             audit_error = str(exception)
     receipt.update(capture_audits=audits, capture_audit_error=audit_error,
+        native_timer_policy=native_timer_policy,
         passed=receipt['functional_passed'] and audit_error is None and len(audits) == 2 and
                all(row['passed'] for row in audits))
     (directory / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
@@ -182,6 +187,8 @@ def native_child(args):
         command.insert(0, str(loader('build')))
     audit_compile(program, ROOT)
     inputs = source_inputs(False)
+    timer_policy = (timer_begin(args.directory) if args.action == 'carrier' and
+                    args.state == 'regenerating' else None)
     launch = [sys.executable, str(Path(__file__).resolve()), '--launch', *command]
     status = None
     with (args.directory / 'serial.log').open('wb') as log:
@@ -204,7 +211,8 @@ def native_child(args):
                     monitor_errors.append(str(exception))
             if carrier is not None:
                 carrier.close()
-    receipt = outcome(args.directory, text, reports, error, status, native=True, statistics=statistics, action=args.action, state=args.state)
+    receipt = outcome(args.directory, text, reports, error, status, native=True, statistics=statistics,
+        action=args.action, state=args.state, native_timer_policy=timer_finish(args.directory,timer_policy))
     unchanged = all(digest(ROOT / name) == wanted for name, wanted in inputs.items())
     receipt.update(profile=args.child, command=command, actual_process_exit=code, captures=statistics,
         packet_monitor_errors=monitor_errors,

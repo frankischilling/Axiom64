@@ -241,6 +241,7 @@ jobs:
           python3 scripts/tests/ipv6_owner_capture_test.py --archive build/ipv4-policy/ipv6-owner-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-owner-capture.log
           python3 scripts/tests/ipv6_device_capture_test.py --archive build/ipv4-policy/ipv6-device-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-device-capture.log
           python3 scripts/tests/ipv6_device_pending_capture_test.py --archive build/ipv4-policy/ipv6-device-pending-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-device-pending-capture.log
+          python3 -B scripts/tests/native_ipv6_timers_test.py -v 2>&1 | tee build/ipv4-policy/native-ipv6-timers.log
           python3 scripts/tests/ipv6_device_pending_record_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-device-pending-record.log
           python3 scripts/tests/qemu_capture_delivery_test.py -v 2>&1 | tee build/ipv4-policy/qemu-capture-delivery.log
           python3 scripts/tests/ipv6_device_inventory_test.py --archive build/ipv4-policy/ipv6-device-inventory-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-device-inventory.log
@@ -1226,7 +1227,9 @@ jobs:
         run: make test-ipv4 IPV4_WORKERS=4
       - name: Compare IPv4 fragment receive behavior with three native Linux linkages
         if: matrix.suite == 'network'
-        run: sudo -n make test-ipv4-fragments-native
+        run: |
+          sudo -n make test-native-icmp-budget
+          sudo -n make test-ipv4-fragments-native
       - name: Compare labelled IPv4 address ownership with native Linux
         if: matrix.suite == 'network'
         run: sudo -n python3 scripts/ipv4_alias_native.py
@@ -1244,6 +1247,13 @@ jobs:
           name: ipv4-fragments-native
           if-no-files-found: warn
           path: build/ipv4-fragments-native
+      - name: Upload cold and primed native ICMP controls
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-icmp-budget
+          if-no-files-found: warn
+          path: build/native-icmp-budget-evidence
       - name: Upload actual normal and failed-device IPv4 images
         if: always() && matrix.suite == 'network'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

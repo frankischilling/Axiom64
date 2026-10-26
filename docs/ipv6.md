@@ -265,7 +265,22 @@ checks. The expanded device-state matrix above supplies separate local wire
 coverage. Full current-revision hosted acceptance remains required.
 
 
-## Native router reference scheduling
+## Native reference timers and router scheduling
+
+Carrier-loss regeneration keeps a 3.1-second first-ready ceiling in Axiom64.
+The Linux 6.17.0-1022-azure reference uses a separate verified timer contract:
+the actual CONFIG_HZ=1000 timer wheel can extend the configured DAD schedule
+to 3.112 seconds. Including the existing 100-millisecond observation allowance
+gives a 3.212-second native ceiling. This follows the
+[Linux v6.17 timer wheel](https://github.com/torvalds/linux/blob/v6.17/kernel/time/timer.c)
+and [IPv6 delay units](https://origin.kernel.org/doc/html/v6.17/networking/ip-sysctl.html).
+Raw configuration and default timer-parameter readbacks must bracket the actual
+client and match their recorded hashes. The reader rejects altered proof;
+older evidence without it retains the 3.1-second contract. Packet clocks,
+protocol settings, complete outage/restored intervals and client deadlines
+remain unchanged. A fixed 24-profile native qualification reopens all 48 captures
+and actual readbacks; two profiles still fail the original 3.1-second contract.
+Complete current-revision hosted acceptance remains required.
 
 The router client still requires the exact final `DEPRECATED` flag within one
 second, correct preferred and protected valid lifetimes, and the configured

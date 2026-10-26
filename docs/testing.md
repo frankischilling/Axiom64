@@ -297,7 +297,16 @@ Readers require exact owner sets and connected-prefix counts without imposing
 address dump order. Probing and retrying use the actual probe-to-ready interval
 of one to 2.1 seconds. Regenerating during carrier loss has no replacement wire
 probe, so its first ready observation must follow the actual conflict by two to
-3.1 seconds. If the first post-loss inventory already sees readiness, the client
+3.1 seconds in Axiom64. A native Linux 6.17.0-1022-azure comparison may use a
+3.212-second ceiling only with the actual kernel configuration and timer values
+recorded before and after the C workload. CONFIG_HZ must be 1000; generation and
+router-solicitation delays must remain one second, neighbor retransmission must
+remain 1000 milliseconds, and DAD/nonce settings must retain their defaults.
+Linux's timer wheel permits a 3.112-second schedule before the original
+100-millisecond observer allowance. Missing, changed or unsupported native
+proof retains the 3.1-second contract or fails validation. Guest comparisons
+always retain 3.1 seconds. Original clocks, four-second observations and
+sixty-second client limits remain unchanged. If the first post-loss inventory already sees readiness, the client
 records it there before publishing that inventory. Host regressions check that
 later polls cannot replace or duplicate the observation.
 
@@ -377,6 +386,26 @@ Run `make test-ipv4-path-mtu test-ipv4-paths` for the shared cache policy and pr
 
 Native IPv4 fragment comparisons also retain read-only Linux reassembly, ICMP, socket, route, neighbor and memory counters in `native-kernel-state.jsonl`. Snapshots bracket setup and shutdown, each expiry event, and the original 59/66/100-second checkpoints. Each snapshot retains raw counter files, actual clock brackets and explicit read failures; the receipt binds its complete file hash. Counters are sequential observations and do not replace packet evidence. Capture-shutdown errors retain their interface index alongside the original client failure; missing capture statistics remain unqualified. Acknowledgement failures report the interface, control phase, actual poll result and events; timeouts report `ETIMEDOUT` instead of an unrelated earlier syscall error. The original fragment lifetime, duplicate and suppression spacing, quiet windows, profile deadlines, packet-clock checks and zero-drop gates remain mandatory. A missing expiry quote still fails.
 
+The full native fragment peer completes one actual closed-port UDP error before
+releasing its first original fragment controls. The independent reader requires
+the exact request and complete returned quote, unchanged default rate settings,
+original packet clocks and byte-identical control release after that quote.
+Twelve serialized altered receipts must fail when reopened. This setup leaves
+the original simultaneous adapter workload, sixty-second reassembly expiry,
+suppression observations and ten-minute PMTU lifetime intact.
+`sudo -n make test-native-icmp-budget` separately retains 256 fresh namespaces
+each for cold simultaneous, staggered and primed simultaneous error pairs.
+Cold global-rate suppression is recorded explicitly; staggered and primed pairs
+must return both original quotes. Its reader reopens ten damaged controls.
+CI retains these native controls in `native-icmp-budget`, alongside the complete
+fragment evidence. These comparisons do not establish guest behavior.
+Qualification with the three original client products reopens six captures and
+all 298 damaged controls, including the original expiry, PMTU and lifetime
+corruptions. Each profile retains both required expiry quotes with zero global
+suppression. All 768 fresh-namespace controls pass their explicit contracts;
+132 cold simultaneous profiles record suppression, while staggered and primed
+pairs return every quote. Complete current-revision hosted CI remains required.
+
 The full native and normal guest clients also retain the actual ten-minute path limit. Both NICs age together, with repeated socket queries and failed DO sends before two complete post-expiry datagrams. Original PCAP timing and native monotonic receipts must prove the unchanged interval. The outer normal-boot limit is 780 seconds to include this additional observation; fault profiles retain their 120-second bound. `--lifetime-only` isolates the complete native PMTU lifetime without claiming the other fragment and policy cases.
 
 `python3 scripts/tests/ipv4_fragment_observation_test.py -v` replays delayed native capture observations through the expiry scheduler. It also exercises the production collector and injection path, checking exact frame matching, missing/short injections, unchanged duplicate timing, the final quiet interval and guest spacing. Native context spacing begins after independent capture receipt; its eight-second requirement and all expiry audit thresholds stay intact.
@@ -423,7 +452,7 @@ Run `python3 scripts/account_transaction_test.py --directory build/account-trans
 
 `scripts/tests/console_prompt_test.py` and `normal_login_test.py` replay retained interrupted Bash prompts at every byte boundary. The normal console readers recognize complete prompts across known kernel diagnostics and complete DHCP `NETWORK_MANAGER_BOUND` records while keeping raw serial evidence and its offsets. The queued command is sent once after the complete prompt; malformed or partial manager records cannot join it. They continue waiting for an incomplete prompt, child progress or unknown inserted text. The graphical recovery tests retain their actual keyboard sessions, framebuffer captures and 180-second deadline.
 
-The corresponding-source archive includes data under `scripts/tests/fixtures/` as well as the scripts. `scripts/tests/source_bundle_inputs_test.py` checks captured serial bytes, retained journal inputs and target observations, then runs the real prompt, rotation-export and native journal-oracle regressions from extracted archives with checkout fallback disabled. Rotation export recognition omits only complete known kernel diagnostic records from its observation view; captured logs stay unchanged, and every decoded file must still equal the native disk export. The complete GNU verification kit retains its separate execution and relinking checks.
+The corresponding-source archive includes C/header helpers under `scripts/`, all data under `scripts/tests/fixtures/`, and the Python/shell scripts. `scripts/tests/source_bundle_inputs_test.py` builds the native ICMP control from extracted source, checks captured serial bytes, retained journal inputs and target observations, then runs the real prompt, rotation-export and native journal-oracle regressions from extracted archives with checkout fallback disabled. Rotation export recognition omits only complete known kernel diagnostic records from its observation view; captured logs stay unchanged, and every decoded file must still equal the native disk export. The complete GNU verification kit retains its separate execution and relinking checks.
 
 Run `make test-vm-state` for the normal persistent launch helper. It checks exclusive ownership, preservation after actual guest changes, incomplete/invalid metadata and symlink rejection, then boots the full packaged userspace twice with administrator creation and later required login. It checks guest data and host filesystems after both boots. Account and existing normal desktop/service gates are required in CI; local results alone do not establish full account acceptance.
 

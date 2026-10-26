@@ -39,6 +39,36 @@ RECOVERY_FIXTURES = (RECOVERY_FIXTURE, NAMED_RECOVERY_FIXTURE, SYMLINK_RECOVERY_
 
 
 class SourceBundleInputsTests(unittest.TestCase):
+    def test_exported_native_icmp_control_builds_from_its_actual_source(self):
+        with tempfile.TemporaryDirectory(prefix='axiom64-native-icmp-source-') as name:
+            root = Path(name) / 'source'
+            root.mkdir()
+            for item in ('sources.lock.json', 'ports.lock.json', 'dependencies.json', 'LICENSE',
+                         'Makefile', 'README.md', '.clang-format', '.gitattributes'):
+                shutil.copyfile(ROOT / item, root / item)
+            for folder in ('kernel', 'userspace', 'boot', 'vendor', 'docs'):
+                (root / folder).mkdir()
+            names = ('scripts/tests/native_icmp_budget.c', 'scripts/native_icmp_budget_test.py',
+                     'scripts/native_icmp_preflight.py', 'scripts/native_icmp_preflight_capture.py')
+            for item in names:
+                target = root / item
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / item, target)
+            configuration = root / 'build/busybox-1.37.0/.config'
+            configuration.parent.mkdir(parents=True)
+            configuration.write_bytes(b'fixture\n')
+            with patch.object(sources, 'ROOT', root), patch.object(sources, 'gnu_reader_kit'), redirect_stdout(io.StringIO()):
+                sources.bundle([])
+            extracted = Path(name) / 'extracted'
+            with tarfile.open(root / 'build/axiom64-sources.tar') as archive:
+                for item in names:
+                    self.assertEqual(archive.extractfile('Axiom64/' + item).read(), (ROOT / item).read_bytes())
+                archive.extractall(extracted, filter='data')
+            result = subprocess.run(['make', '-s', 'build/native-icmp-budget'], cwd=extracted / 'Axiom64',
+                                    capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue((extracted / 'Axiom64/build/native-icmp-budget').is_file())
+
     def test_exported_resource_limits_build_and_run_their_actual_native_policies(self):
         with tempfile.TemporaryDirectory(prefix='axiom64-resource-source-inputs-') as name:
             root = Path(name) / 'source'

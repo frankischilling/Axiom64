@@ -577,6 +577,16 @@ The Linux comparison uses the
 Source admission also follows the measured pre-bound behavior and the
 [v6.17 active-open path](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/tcp_ipv6.c).
 
+The finite-source comparison exercises the same pending cases through automatic
+address retirement. Fresh binds succeed before the configured lifetime ends and
+then reject the source. An independent peer host route survives the address's
+prefix update; route dumps and actual companion traffic establish that route
+ownership separately. TCP retries retain the original tuple before restoration,
+echo and close. This follows measured native behavior and the
+[v6.17 address-lifetime path](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/addrconf.c).
+It does not establish connectivity to an invalid local destination; the test
+delivers handshake input after the address has been restored.
+
 Live mapped output uses IPv4 TTL/TOS independently of the IPv6 controls. After
 the last descriptor closes, compact TIME-WAIT state retains the IPv6 class for
 IPv6 descriptions, including mapped connections, or IPv4 TOS for pure IPv4.

@@ -128,6 +128,28 @@ Checksums and native fingerprints are rebound so altered packets reach the
 semantic checks. Scoped withdrawal, reconnect, finite expiry and route/device
 removal remain required.
 
+`sudo -n make test-tcp6-source-expiry-native` and `make test-tcp6-source-expiry`
+repeat the four pending-source cases through actual address lifetime retirement.
+Netlink configures a five-second valid lifetime and two-second preferred lifetime;
+the client observes successful fresh binds followed by `EADDRNOTAVAIL`. It never
+deletes the selected source. Before/after route dumps retain an independent peer
+`/128` route, and a real companion exchange proves reachability after expiry.
+This avoids mixing source retirement with the prefix route's lifetime update.
+The peer observes the original natural SYN/SYN-ACK retries, withholds handshake
+input until restoration, then checks the exact echo and complete close.
+
+The independent reader requires at least 4.85 seconds between the barrier before
+configuration and the observed retired address, accounting for packet arrival
+brackets and guest ticks without changing the five-second lifetime. All original
+transport, I/O, barrier, alarm and harness deadlines remain. The complete three
+native/eight guest matrix retains 22 captures, 176 flows, 88 pending handshakes
+and 176 surviving host-route snapshots. Run
+`python3 scripts/tests/tcp6_source_expiry_evidence_test.py` to reopen actual images,
+matching programs and complete sources, and reject 1,398 packet/log/timing/route
+controls. Broader address and route expiry, established finite-source behavior,
+reconnect, scoped withdrawal and every existing long cache-expiry window remain
+required.
+
 `sudo -n make test-tcp6-errors-native` and `make test-tcp6-errors` exercise 62
 ordinary ICMPv6 TCP cases on each adapter through all three native and eight
 guest profiles. They cover thirteen error classes during active, passive and

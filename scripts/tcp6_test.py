@@ -17,7 +17,7 @@ def main():
     parser.add_argument('--native', action='store_true')
     parser.add_argument('--suite', choices=('loss', 'scoped', 'pmtu', 'errors', 'replies', 'isolation',
                                           'controls-ipv6', 'controls-mapped', 'controls-ipv4',
-                                          'source-lifetime', 'pending-source'), default='loss')
+                                          'source-lifetime', 'pending-source', 'source-expiry'), default='loss')
     parser.add_argument('--profile', choices=('native', 'static', 'dynamic', 'all'), default='all')
     parser.add_argument('--child', choices=('native', 'static', 'dynamic'))
     parser.add_argument('--client', choices=('native', 'static', 'dynamic'))

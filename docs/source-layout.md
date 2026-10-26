@@ -223,3 +223,10 @@ connections retain their validated source while every output still needs a curre
 after address removal. The same runner and independent reader retain all three native
 and eight guest profiles, programs, source archives, images and packet clocks.
 Fresh binds and automatic source selection still require current address assignment.
+
+`userspace/tests/net/tcp6/source_expiry.c` configures actual finite address lifetimes,
+observes fresh bind retirement and owns an independent peer host route. The
+`scripts/tcp6/expiry_peer.py` specialization retains the pending TCP flow observer;
+`expiry_capture.py` independently reconstructs clocks, complete TCP streams and
+route snapshots. It reuses the existing native/guest/source/product/image boundary
+and provides serialized semantic controls for lifetime, route and transport evidence.

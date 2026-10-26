@@ -14,6 +14,11 @@ def definition(suite):
                     marker=marker(family), peer=partial(Peer, family=family),
                     verify=partial(verify, family=family), damaged=partial(damaged, family=family),
                     router_hop_control=True)
+    if suite == 'source-expiry':
+        from tcp6.expiry_peer import Peer,MARKER
+        from tcp6.expiry_capture import verify,damaged
+        return dict(program='tcp6-source-expiry',source='userspace/tests/net/tcp6/source_expiry.c',
+                    flags=['-Iuserspace/tests/net'],marker=MARKER,peer=Peer,verify=verify,damaged=damaged)
     if suite == 'pending-source':
         from tcp6.pending_peer import Peer,MARKER
         from tcp6.pending_capture import verify,damaged

@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Reopen source, products, boot images and damaged packet evidence independently."""
 import copy
+import errno
 import hashlib
 import json
 import os
 import posixpath
 import re
+import shutil
 from pathlib import Path
 import struct
 import tempfile
@@ -262,8 +264,15 @@ def damaged_products(directory, profile, sources, native, output, suite='loss'):
             if image_control:
                 # Immutable hard links avoid copying a whole retained boot image.
                 # The reader only opens these products; no control writes to them.
-                os.link(directory / 'image.iso', case / 'image.iso')
-                os.link(directory / 'kernel.elf', case / 'kernel.elf')
+                # Another owner or filesystem may forbid links to readable files.
+                # Copies stay in the owned scratch directory and are removed with it.
+                for filename in ('image.iso', 'kernel.elf'):
+                    try:
+                        os.link(directory / filename, case / filename)
+                    except OSError as error:
+                        if error.errno not in (errno.EPERM, errno.EACCES, errno.EXDEV):
+                            raise
+                        shutil.copyfile(directory / filename, case / filename)
             try:
                 products(case, profile, sources, native=not image_control, suite=suite)
             except ValueError as failure:

@@ -17,6 +17,9 @@ uint64_t tcp_generation(const InetSocket*);
 int tcp_cancelled_write_error(InetSocket*);
 bool tcp_port_busy(uint32_t local, uint16_t port, unsigned index, bool reuse);
 bool tcp_port_busy(const tcp::Binding&, uint16_t port, bool reuse);
+enum class Ipv6SourcePolicy : uint8_t;
+// A synchronized stream owns its selected source; fresh paths still validate it.
+Ipv6SourcePolicy tcp6_source_policy(const InetSocket*);
 bool tcp_ipv6(const InetSocket*);
 int tcp6_import(Task&, uint64_t pointer, uint32_t length, Inet6Address&, bool connecting);
 int64_t tcp6_syscall(Task&, const Frame&);

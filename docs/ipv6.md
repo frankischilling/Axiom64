@@ -559,6 +559,17 @@ updates and closure leave accepted children independent. Scalar results share
 the ordered copy module, including unsigned capacities, truncated outputs, aliases
 and copy faults.
 
+A synchronized TCP stream owns its selected IPv6 source. Removing that address
+does not replace the source of the existing stream, including after class or
+device updates clear its destination. Output and path-MTU processing still
+resolve a usable current route. Fresh bind/connect paths retain their assignment
+checks. The source-lifetime comparison measures explicit and automatic global
+sources with a companion address preserving reachability, real companion traffic
+before retained-source output, restoration and complete close. Pending-source,
+finite-expiry and route/device-removal behavior remains under development. The
+Linux comparison uses the
+[v6.17 connection route path](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/inet6_connection_sock.c).
+
 Live mapped output uses IPv4 TTL/TOS independently of the IPv6 controls. After
 the last descriptor closes, compact TIME-WAIT state retains the IPv6 class for
 IPv6 descriptions, including mapped connections, or IPv4 TOS for pure IPv4.

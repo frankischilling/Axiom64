@@ -1011,6 +1011,18 @@ test-tcp6-isolation:
 test-tcp6-isolation-native:
 	$(PYTHON) scripts/tcp6_test.py --suite isolation --native
 
+build/tcp6-source-lifetime-native: userspace/tests/net/tcp6/source_lifetime.c userspace/tests/net/ipv6_fixture.h
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -Iuserspace/tests/net $< -o $@
+build/tcp6-source-lifetime-static build/tcp6-source-lifetime-dynamic: userspace/tests/net/tcp6/source_lifetime.c userspace/tests/net/ipv6_fixture.h scripts/compile_uapi_client.py
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -Iuserspace/tests/net $(if $(filter %-static,$@),-static) $(filter %.c,$^)
+.PHONY: test-tcp6-source-lifetime test-tcp6-source-lifetime-native
+test-tcp6-source-lifetime:
+	$(PYTHON) scripts/tcp6_test.py --suite source-lifetime
+test-tcp6-source-lifetime-native:
+	$(PYTHON) scripts/tcp6_test.py --suite source-lifetime --native
+
 # All families share one client; each executable fixes its socket family at build time.
 define TCP6_CONTROL_CLIENT
 build/tcp6-controls-$(1)-native: userspace/tests/net/tcp6/control_wire.c userspace/tests/net/ipv6_fixture.h

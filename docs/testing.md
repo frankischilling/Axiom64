@@ -87,6 +87,28 @@ scalar snapshots. Output is retained under `build/tcp6-controls-*-wire/`. Broade
 passive behavior, route/source/device lifetimes and complete TIME-WAIT expiry
 acceptance remain required.
 
+`sudo -n make test-tcp6-source-lifetime-native` and
+`make test-tcp6-source-lifetime` compare established global TCP sources across
+address removal. Explicit and automatically selected streams retain their
+original source while a companion address keeps the prefix route usable. A real
+companion exchange completes before the retained-source send. Fresh explicit
+binds to the removed address fail; fresh automatic streams select the companion.
+Three output blocks per stream follow withdrawal, normalized class changes and
+device unbinding. Ethernet barriers observe those exact packets without sending
+TCP input to a missing local destination route. The original source is restored
+before cumulative acknowledgment, another byte-checked echo and complete close.
+
+The shared runner retains all three native and eight guest profiles, both
+adapters, matching native/guest programs and loader, original 150-second case,
+120-second alarm, five-second I/O and ten-second barrier bounds. Independent
+readers reject 112 serialized, checksum-repaired packet/log changes per capture.
+`python3 scripts/tests/tcp6_source_lifetime_evidence_test.py` reopens all 22
+captures and both actual images, verifies 88 flows and 264 output blocks, and
+requires identical complete sources and pinned native/guest clients. Half of
+those output blocks occur while the source is withdrawn. Pending handshakes,
+finite source expiry, route/device removal and full TCP lifetime acceptance
+remain required.
+
 `sudo -n make test-tcp6-errors-native` and `make test-tcp6-errors` exercise 62
 ordinary ICMPv6 TCP cases on each adapter through all three native and eight
 guest profiles. They cover thirteen error classes during active, passive and

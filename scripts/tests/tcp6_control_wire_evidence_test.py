@@ -20,6 +20,8 @@ def main():
     args = parser.parse_args()
     results = []
     complete_source = None
+    audit_root = args.output.parent / (args.output.stem + '-captures')
+    audit_root.mkdir(parents=True, exist_ok=False)
     for family in ('ipv6', 'mapped', 'ipv4'):
         cases = {}
         for environment in ('native', 'guest'):
@@ -28,7 +30,7 @@ def main():
                         if environment == 'native' else [(profile, firmware, transport)
                         for profile in ('static', 'dynamic') for firmware in ('bios', 'uefi')
                         for transport in ('modern', 'legacy')])
-            report = audit(directory, directory / 'reopened-audit', expected=expected)
+            report = audit(directory, audit_root / (family + '-' + environment), expected=expected)
             inventory = source(directory)
             if complete_source is None:
                 complete_source = inventory

@@ -14,6 +14,11 @@ def definition(suite):
                     marker=marker(family), peer=partial(Peer, family=family),
                     verify=partial(verify, family=family), damaged=partial(damaged, family=family),
                     router_hop_control=True)
+    if suite == 'source-lifetime':
+        from tcp6.source_peer import Peer,MARKER
+        from tcp6.source_capture import verify,damaged
+        return dict(program='tcp6-source-lifetime',source='userspace/tests/net/tcp6/source_lifetime.c',
+                    flags=['-Iuserspace/tests/net'],marker=MARKER,peer=Peer,verify=verify,damaged=damaged)
     if suite == 'isolation':
         from tcp6.isolation_peer import Peer
         from tcp6.isolation_capture import verify

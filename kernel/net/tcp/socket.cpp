@@ -250,7 +250,7 @@ int emit(InetSocket* owner, unsigned index, const tcp::Address& local, const tcp
         return ipv4_send(owner, local.ipv4(), peer.ipv4(), index, 6, options.ttl, false, bytes,
                          size, true, options.tos);
     return ipv6_send_owned({owner, owner ? output_complete : nullptr}, local.bytes, peer.bytes,
-                           index, 6, options.hops, bytes, size, Ipv6SourcePolicy::assigned,
+                           index, 6, options.hops, bytes, size, tcp6_source_policy(owner),
                            options.traffic_class, owner ? &owner->destination6 : nullptr);
 }
 
@@ -313,6 +313,10 @@ int disconnect(InetSocket* socket) {
     return 0;
 }
 } // namespace
+
+Ipv6SourcePolicy tcp6_source_policy(const InetSocket* socket) {
+    return socket && synchronized(socket) ? Ipv6SourcePolicy::retained : Ipv6SourcePolicy::assigned;
+}
 
 bool inet_stream(InetSocket* socket) {
     return socket && socket->type == 1;

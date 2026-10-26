@@ -210,3 +210,11 @@ scoped workloads keep separate program names, source flags and evidence outputs.
 `userspace/tests/net/ipv6_error_record.h` formats raw/UDP ICMPv6 metadata into
 one bounded console write. `scripts/tests/ipv6_error_record_test.py` runs that
 actual formatter against retained interrupted bytes and failed-write controls.
+
+The established-source TCP workload is `userspace/tests/net/tcp6/source_lifetime.c`.
+`scripts/tcp6/source_peer.py` coordinates actual output and address-mutation
+barriers; `source_capture.py` reconstructs the complete streams independently.
+The existing profile/native/guest/evidence modules retain boot, namespace,
+program, source and packet ownership. `tcp6_source_policy` shares connection
+source ownership between output and path-MTU processing; fresh paths still
+require current address assignment.

@@ -11,7 +11,8 @@ bool tcp6_path_mtu(InetSocket* socket, size_t failed_bytes) {
     if (!socket || !socket->used || !socket->wire6 || !socket->stream)
         return false;
     Ipv6Path path;
-    if (ipv6_path(socket->local6, socket->peer6, socket->index, path) ||
+    if (ipv6_path(socket->local6, socket->peer6, socket->index, path, false,
+                  tcp6_source_policy(socket)) ||
         path.mtu < ip6::minimum_mtu)
         return false;
     uint16_t limit = uint16_t(min(path.mtu - 60, 1460u));
@@ -46,7 +47,8 @@ void tcp6_icmp_error(unsigned index, const ip6::ErrorQuote& quote) {
         if (quote.information - 60 >= socket.stream->segment_size())
             continue;
         Ipv6Path path;
-        if (ipv6_path(quote.source, quote.destination, socket.index, path, true))
+        if (ipv6_path(quote.source, quote.destination, socket.index, path, true,
+                      tcp6_source_policy(&socket)))
             continue;
         uint32_t mtu = ip6::path_mtu_cache.learn(ip6::path_key(path, quote.destination), path.mtu,
                                                  quote.information, ticks);

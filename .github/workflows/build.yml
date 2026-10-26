@@ -1,4 +1,4 @@
-name: Measure native IPv6 worker placement
+name: Measure native IPv6 timer dispatch
 on:
   workflow_dispatch:
 permissions:
@@ -28,17 +28,17 @@ jobs:
           run-id: 40249563493
           github-token: ${{ github.token }}
           digest-mismatch: error
-      - name: Compare eight ordinary and owned-placement trials with the original client
+      - name: Trace 24 original native profiles with unchanged protocol clocks and deadlines
         run: |
-          sudo -n python3 -B scripts/diagnostics/ipv6_device_placement.py --reference "${RUNNER_TEMP}/device-reference"
+          sudo -n python3 -B scripts/diagnostics/ipv6_device_timers.py --reference "${RUNNER_TEMP}/device-reference"
       - name: Preserve every timing result and original packet clock
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ipv6-device-placement-diagnostic
+          name: ipv6-device-timer-diagnostic
           if-no-files-found: error
           path: |
-            build/device-placement-diagnostic
-            scripts/diagnostics/ipv6_device_placement.py
-            scripts/native_address_worker.py
+            build/device-timer-diagnostic
+            scripts/diagnostics/ipv6_device_timers.py
+            scripts/diagnostics/native_timer_trace.py
             .github/workflows/build.yml

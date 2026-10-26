@@ -130,6 +130,26 @@ class NormalLoginTests(unittest.TestCase):
         login.consume(SESSION + raw)
         self.assertEqual(len(writes), count + 1)
 
+    def test_supervision_records_release_one_queued_revalidation_after_the_complete_prompt(self):
+        login, writes = self.replay(SESSION)
+        login.elevate('/bin/init-supervision kill 2 0 2')
+        progress = SESSION + (b'Password: \nexec pid=27 /bin/init-supervision (static ELF)\r\n'
+                              b'INIT_OBSERVER_PASS phase=kill pid=2 monotonic_ms=9060\r\n')
+        login.consume(progress)
+        login.elevate('/bin/init-supervision revalidating 28 0 2')
+        count = len(writes)
+        raw = (Path(__file__).parent / 'fixtures/normal-console/supervision-interrupted-prompt.txt').read_bytes()
+        for size in range(len(raw)):
+            login.consume(progress + raw[:size])
+            self.assertEqual(len(writes), count)
+        login.consume(progress + raw)
+        self.assertEqual(len(writes), count + 1)
+        self.assertTrue(writes[-1] == b"sudo /bin/busybox sh -c '/bin/init-supervision revalidating 28 0 2'\n")
+        self.assertEqual(login.stage, 'sudo')
+        self.assertIsNone(login.pending)
+        login.consume(progress + raw)
+        self.assertEqual(len(writes), count + 1)
+
     def test_only_complete_known_manager_records_join_a_split_prompt(self):
         raw = (Path(__file__).parent / 'fixtures/normal-console/manager-bound-prompt.txt').read_bytes()
         self.assertEqual(shell_prompt_end(raw), len(raw))

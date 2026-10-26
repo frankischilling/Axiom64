@@ -209,7 +209,9 @@ def bundle(inputs):
                 if name in members:
                     raise RuntimeError("duplicate source bundle input: " + name)
                 members.add(name)
-                archive.add(path, arcname=name)
+                # A shared cache may supply symlinks. Publish the selected
+                # source bytes under their original name, independent of it.
+                archive.add(path.resolve(), arcname=name)
         gnu_reader_kit(archive)
         for path in ["sources.lock.json", "ports.lock.json", "dependencies.json", "LICENSE", "Makefile", "README.md", ".clang-format", ".gitattributes"]:
             archive.add(ROOT / path, arcname=f"Axiom64/{path}")

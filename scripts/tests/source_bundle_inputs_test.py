@@ -19,6 +19,8 @@ import sources
 ROOT = Path(__file__).resolve().parents[2]
 PUBLICATION_HELPER = Path('scripts/ci/storage_evidence.sh')
 FIXTURE = Path('scripts/tests/fixtures/normal-console/interrupted-prompt.txt')
+PROMPT_FIXTURES = (FIXTURE, *(Path('scripts/tests/fixtures/normal-console') / name for name in (
+    'manager-bound-prompt.txt', 'supervision-interrupted-prompt.txt')))
 RECOVERY_FIXTURE = Path('scripts/tests/fixtures/ext2-deleted-open-inode.raw.gz')
 NAMED_RECOVERY_FIXTURE = Path('scripts/tests/fixtures/ext2-named-retirement.raw.gz')
 SYMLINK_RECOVERY_FIXTURE = Path('scripts/tests/fixtures/ext2-named-symlink-retirement.raw.gz')
@@ -39,6 +41,41 @@ RECOVERY_FIXTURES = (RECOVERY_FIXTURE, NAMED_RECOVERY_FIXTURE, SYMLINK_RECOVERY_
 
 
 class SourceBundleInputsTests(unittest.TestCase):
+    def test_exported_port_inputs_are_independent_of_cache_links(self):
+        with tempfile.TemporaryDirectory(prefix='axiom64-source-cache-links-') as temporary:
+            base = Path(temporary)
+            root = base / 'source'
+            root.mkdir()
+            for name in ('sources.lock.json', 'ports.lock.json', 'dependencies.json', 'LICENSE',
+                         'Makefile', 'README.md', '.clang-format', '.gitattributes'):
+                (root / name).write_bytes(b'fixture\n')
+            for folder in ('kernel', 'userspace', 'boot', 'vendor', 'docs', 'scripts'):
+                (root / folder).mkdir()
+            configuration = root / 'build/busybox-1.37.0/.config'
+            configuration.parent.mkdir(parents=True)
+            configuration.write_bytes(b'fixture\n')
+            pin = base / 'pin'
+            content = b'retained source input\n'
+            pin.write_bytes(content)
+            links = []
+            for name, target in (('absolute', pin), ('relative', Path('pin'))):
+                link = base / name
+                link.symlink_to(target)
+                links.append(link)
+            with patch.object(sources, 'ROOT', root), patch.object(sources, 'gnu_reader_kit'), redirect_stdout(io.StringIO()):
+                sources.bundle([('fixture', links)])
+            # The cache disappears before a reader extracts the published archive.
+            pin.unlink()
+            for link in links:
+                link.unlink()
+            extracted = base / 'extracted'
+            with tarfile.open(root / 'build/axiom64-sources.tar') as archive:
+                archive.extractall(extracted, filter='data')
+                for name in ('absolute', 'relative'):
+                    member = archive.getmember('ports/fixture/' + name)
+                    self.assertTrue(member.isfile())
+                    self.assertEqual((extracted / member.name).read_bytes(), content)
+
     def test_exported_native_icmp_control_builds_from_its_actual_source(self):
         with tempfile.TemporaryDirectory(prefix='axiom64-native-icmp-source-') as name:
             root = Path(name) / 'source'
@@ -199,7 +236,7 @@ class SourceBundleInputsTests(unittest.TestCase):
             configuration.parent.mkdir(parents=True)
             configuration.write_bytes(b'fixture\n')
             for item in (Path('scripts/console_prompt.py'), Path('scripts/tests/console_prompt_test.py'),
-                         FIXTURE, *RECOVERY_FIXTURES, PUBLICATION_HELPER):
+                         *PROMPT_FIXTURES, *RECOVERY_FIXTURES, PUBLICATION_HELPER):
                 target = root / item
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / item, target)
@@ -209,7 +246,7 @@ class SourceBundleInputsTests(unittest.TestCase):
                 sources.bundle([])
             extracted = Path(name) / 'extracted'
             with tarfile.open(root / 'build/axiom64-sources.tar') as archive:
-                for fixture in (FIXTURE, *RECOVERY_FIXTURES, PUBLICATION_HELPER):
+                for fixture in (*PROMPT_FIXTURES, *RECOVERY_FIXTURES, PUBLICATION_HELPER):
                     member = archive.getmember('Axiom64/' + fixture.as_posix())
                     self.assertEqual(archive.extractfile(member).read(), (ROOT / fixture).read_bytes())
                 archive.extractall(extracted, filter='data')

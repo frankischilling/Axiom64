@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "diagnostic_only": true,
+  "feature_acceptance": false,
+  "source_run": 40249563493,
+  "source_head": "3afdd933e721973cc6a393afe04ee961ee7f9691",
+  "original_result": "failed",
+  "original_error": "regeneration NA to ready real bound: 3111820",
+  "kernel": "6.17.0-1022-azure",
+  "actual_packet_and_serial_bytes_unchanged": true,
+  "policy_test_receipts": "Constructed by the test to exercise the policy contract; not native runtime qualification.",
+  "files": {
+    "lane0.pcap": {
+      "bytes": 5708,
+      "sha256": "168e9ebb68778fd73b4b57b5a351e21e91bc61811981c376d960993d53a86545"
+    },
+    "lane1.pcap": {
+      "bytes": 5708,
+      "sha256": "c62b8497a637acf74fdcd5d28a4cb90ede1a4726a775523af189fbe2df8e890e"
+    },
+    "lane0.clocks.jsonl": {
+      "bytes": 18926,
+      "sha256": "f3bf017720adaae23886bc7398a9bf15db8241b71eb02a9bcac26dc11f11951e"
+    },
+    "lane1.clocks.jsonl": {
+      "bytes": 18926,
+      "sha256": "f2419db2a9ed9052c3f605d3096acfd107b5abeac7133102ae3dcbd793ba5c7a"
+    },
+    "serial.log": {
+      "bytes": 13728,
+      "sha256": "d8be698138300ab2de948acf75537a83f7ce57728d96ab4e9600b5443304d6e4"
+    },
+    "carrier.json": {
+      "bytes": 3439,
+      "sha256": "15d301e5acbbc3b5f4c188cadab739ec1d2b3a0ced200cf4a513346c4e440f56"
+    },
+    "statistics.json": {
+      "bytes": 1629,
+      "sha256": "b5380f9a40d3ea8d82c6fca3dc92455647523a8a5fbdd94d3f48df0149d326e3"
+    }
+  }
+}

@@ -1,4 +1,4 @@
-name: Measure concurrent native ICMP decisions
+name: Qualify recorded native IPv6 timer policy
 on:
   workflow_dispatch:
 permissions:
@@ -16,25 +16,33 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Compile the isolated first-error comparison
+      - name: Install native packet tools
         run: |
-          mkdir -p build
-          mkdir build/icmp-first-errors
-          gcc --version > build/icmp-first-errors/compiler.txt
-          uname -a > build/icmp-first-errors/kernel.txt
-          gcc -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread scripts/diagnostics/icmp_first_errors.c -o build/icmp-first-errors/client
-          sha256sum scripts/diagnostics/icmp_first_errors.c build/icmp-first-errors/client > build/icmp-first-errors/inputs.sha256
-      - name: Compare 256 fixed staggered, aligned and primed-aligned pairs
-        run: |
-          test "$(uname -r)" = 6.17.0-1022-azure
-          sudo -n timeout 180 build/icmp-first-errors/client 256 > build/icmp-first-errors/results.jsonl
-      - name: Preserve every actual frame, counter and trial
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends iproute2 ethtool
+      - name: Restore the byte-identical original native client
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ipv6-configuration
+          path: ${{ runner.temp }}/device-reference
+          run-id: 40249563493
+          github-token: ${{ github.token }}
+          digest-mismatch: error
+      - name: Replay the real late-packet fixture and policy corruption controls
+        run: python3 -B scripts/tests/native_ipv6_timers_test.py -v
+      - name: Collect actual before-and-after timer policy across 24 fixed profiles
+        run: sudo -n python3 -B scripts/diagnostics/ipv6_timer_policy.py --reference "${RUNNER_TEMP}/device-reference"
+      - name: Preserve original packets, policy observations and both contract results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ipv4-first-errors-diagnostic
+          name: native-timer-policy-diagnostic
           if-no-files-found: error
           path: |
-            build/icmp-first-errors
-            scripts/diagnostics/icmp_first_errors.c
-            .github/workflows/build.yml
+            build/native-timer-policy-diagnostic
+            scripts/native_ipv6_timers.py
+            scripts/ipv6_device_test.py
+            scripts/ipv6_device_pending_capture.py
+            scripts/diagnostics/ipv6_timer_policy.py
+            scripts/tests/native_ipv6_timers_test.py
+            scripts/tests/fixtures/ipv6-device-native-timers

@@ -8,6 +8,7 @@ from ipv6_device_frames import (ACTIONS, HELLO, BEGIN, ADDRESS, SUMMARY, ARM, CH
                                 SECRET, END, FINISH, READY, STATE, CONFLICT, decode)
 from ipv6_router_capture import require
 from tcp_capture_clock import microseconds
+from native_ipv6_timers import inspect as inspect_timer_policy
 
 STATES = ('probing', 'regenerating', 'retrying', 'exhausted')
 
@@ -50,7 +51,7 @@ def _owner(value, flags):
             'exact actual owner flags and lifetimes')
 
 
-def _subject(physicals, subject, action, state):
+def _subject(physicals, subject, action, state, regeneration_upper_us=3100000):
     companion = physicals[1 - subject]
     requests = companion['requests']
     probes, conflicts = physicals[subject]['probes'], physicals[subject]['conflicts']
@@ -162,7 +163,7 @@ def _subject(physicals, subject, action, state):
             require(all(value['target'] != ready['target'] for value in probes),
                     'replacement has no fabricated or observed probe during loss')
             conflict_delay = moment(ready) - moment(conflicts[0])
-            require(2000000 <= conflict_delay <= 3100000,
+            require(2000000 <= conflict_delay <= regeneration_upper_us,
                     f'regeneration NA to ready real bound: {conflict_delay}')
         else:
             matching = [value for value in probes if value['target'] == current['target']]
@@ -222,7 +223,8 @@ def _carrier(path, native):
                     'actual successful selected QMP carrier command')
 
 
-def inspect(path, lane, text, action, state, native=False, statistics=None, native_kernel_release=None):
+def inspect(path, lane, text, action, state, native=False, statistics=None, native_kernel_release=None,
+            native_timer_policy=None):
     require(lane in (0, 1) and action in ACTIONS and state in STATES,
             'known pending device subject, action and state')
     require(not native or isinstance(native_kernel_release, str) and native_kernel_release,
@@ -231,7 +233,14 @@ def inspect(path, lane, text, action, state, native=False, statistics=None, nati
     if action == 'carrier' and state != 'exhausted':
         plans.append(plan(action, state, early_ready=True))
     physicals, clocks = decode(path, text, action, plans, native, statistics, allow_conflicts=True)
-    observations = _subject(physicals, lane, action, state)
+    upper = 3100000
+    if native_timer_policy is not None:
+        require(native and action == 'carrier' and state == 'regenerating',
+                'native timer proof only applies to the selected native regeneration case')
+        controls = [value for physical in physicals for value in physical['requests']]
+        upper = inspect_timer_policy(path.parent, native_timer_policy, native_kernel_release,
+            min(value['guest_ns'] for value in controls), max(value['guest_ns'] for value in controls))
+    observations = _subject(physicals, lane, action, state, upper)
     if action == 'carrier':
         _carrier(path.parent / 'carrier.json', native)
     marker = f'IPV6_DEVICE_PASS adapters=2 action={action} state={state} quiet_seconds=4'
@@ -240,6 +249,7 @@ def inspect(path, lane, text, action, state, native=False, statistics=None, nati
             'one complete successful actual pending device client')
     return dict(passed=True, subject=lane, action=action, state=state, observations=observations,
                 native_clocks=clocks, original_timestamps_preserved=True,
+                regeneration_upper_us=upper, native_timer_policy=native_timer_policy,
                 captures={f'lane{physical}.pcap': hashlib.sha256(
                     (path.parent / f'lane{physical}.pcap').read_bytes()).hexdigest()
                     for physical in range(2)}, full_F12_complete=False)

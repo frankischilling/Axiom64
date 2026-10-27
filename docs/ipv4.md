@@ -22,10 +22,14 @@ state is bounded at 64 sources. INCLUDE responses split into packets that fit
 MTU 68; an overflowing query list falls back to the actual complete ASM state.
 The all-hosts group is implicit and sends no membership reports.
 
-Local native Linux and guest wire diagnostics are under qualification. They do
-not establish complete multicast conformance. Source-filter socket controls,
+The local baseline covers three native Linux libc/linkage profiles and eight
+static/dynamic BIOS/UEFI modern/legacy guest profiles on both adapters. Normal
+and protected ordinary readers reopen complete source, actual images, programs,
+packets and six unchanged native clock gates, and reject twenty-three serialized
+evidence controls. The public cohort auditor requires the same checks for each
+new source epoch. Fresh hosted qualification, source-filter socket controls,
 general IPv6 memberships and MLD, multicast routing, broader lifecycle cases,
-independent evidence controls, and complete current-revision CI remain required.
+and complete multicast conformance remain required.
 Unsupported source-filter controls continue to return `ENOPROTOOPT`.
 
 ## Ownership and progress

@@ -941,6 +941,22 @@ the complete public source, executable, compile inputs, packets, and logs; guest
 runs also retain their own kernel, initramfs, and ISO. Native captures keep
 original kernel timestamps, independent monotonic receipts, and drop counts.
 `python3 scripts/ipv4_multicast_capture.py build/multicast-guest` independently
-reopens the retained evidence. Full linkage/firmware/transport coverage,
-ordinary-user reopening, damaged-evidence checks, and hosted qualification
-remain pending. These diagnostics do not close the broader multicast contract.
+reopens the retained evidence. The complete local cohort covers three native libc/linkage profiles and eight
+guest linkage/firmware/transport profiles. Run it with
+`sudo -n python3 -B scripts/ipv4_multicast_test.py --matrix --directory build/ipv4-multicast-evidence`.
+Then run
+`sudo -n python3 -B scripts/ipv4_multicast_evidence.py build/ipv4-multicast-evidence --output build/ipv4-multicast-audit`.
+Audit output needs a Linux filesystem with POSIX ownership and modes.
+The audit exports the actual complete source into root-owned nonwritable inputs,
+reopens all eleven cases normally and as UID 65534 in an isolated network
+namespace, and requires identical decisions. Twenty-three freshly serialized
+packet, clock, process, compilation, executable and actual-image controls must
+fail for their intended reasons. Original bytes, owners and modes stay unchanged.
+Only verified disposable audit copies are removed after success; failures retain
+their inputs and logs.
+
+The existing build job requires the production multicast sanitizer target. The
+existing network job requires the complete cohort and protected evidence audit;
+its artifact retains all original sources, products, images, captures, native
+clock receipts and rejection controls. Fresh hosted qualification and the wider
+multicast contract remain required.

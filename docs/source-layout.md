@@ -44,6 +44,8 @@ output queue retains complete IGMP frames and handles driver completion.
 `ipv4_multicast_test.py` drives a shared native/guest C client;
 `ipv4_multicast_capture.py` reopens original packets independently of the live
 peer and checks complete source, products, and native kernel packet clocks.
+`ipv4_multicast_evidence.py` owns the complete profile audit, protected ordinary
+reader, serialized rejection controls, and disposal of verified temporary copies.
 
 Make discovers kernel C++ sources recursively, excluding `kernel/tests/`. Object and dependency files mirror the source folders under `build/kernel/`. Compiler-generated dependencies select the headers that each object uses. New sources added to a module folder participate in the next build.
 

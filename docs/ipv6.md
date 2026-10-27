@@ -636,3 +636,15 @@ Loopback control-state checks separately cover inheritance and copy behavior.
 Broader passive behavior and route/source/device lifetimes,
 full expiry observations and complete current-revision hosted acceptance remain
 required. Other IPv6 TCP controls remain deliberately unsupported.
+
+The combined scoped-source/route comparison removes the admitted source only
+from its original zone, proves fresh-bind denial and real fresh companion
+traffic, then carries the retained stream over preferred and fallback routes.
+Both physical fences observe fallback output while the local source is absent.
+The client restores actual ownership before a separate fence releases the echo,
+matching native scoped input behavior. Explicit and automatic streams preserve
+their tuples, original header/getter controls, route restoration, rebinding and
+complete close. The shared three-native/eight-guest comparison retains actual
+images, source, products, clocks and independently reopened packet/ownership
+controls. Actual interface removal, broader expiry and full scoped lifetime
+acceptance remain required.

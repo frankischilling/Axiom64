@@ -1011,6 +1011,18 @@ test-tcp6-isolation:
 test-tcp6-isolation-native:
 	$(PYTHON) scripts/tcp6_test.py --suite isolation --native
 
+build/tcp6-zone-source-route-native: userspace/tests/net/tcp6/zone_source_route.c userspace/tests/net/ipv6_fixture.h
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -Iuserspace/tests/net $< -o $@
+build/tcp6-zone-source-route-static build/tcp6-zone-source-route-dynamic: userspace/tests/net/tcp6/zone_source_route.c userspace/tests/net/ipv6_fixture.h scripts/compile_uapi_client.py
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -Iuserspace/tests/net $(if $(filter %-static,$@),-static) $(filter %.c,$^)
+.PHONY: test-tcp6-zone-source-route test-tcp6-zone-source-route-native
+test-tcp6-zone-source-route:
+	$(PYTHON) scripts/tcp6_test.py --suite zone-source-route
+test-tcp6-zone-source-route-native:
+	$(PYTHON) scripts/tcp6_test.py --suite zone-source-route --native
+
 build/tcp6-zone-route-native: userspace/tests/net/tcp6/zone_route.c userspace/tests/net/ipv6_fixture.h
 	@mkdir -p build
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -Iuserspace/tests/net $< -o $@

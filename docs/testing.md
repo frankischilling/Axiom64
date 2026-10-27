@@ -193,6 +193,36 @@ to survive teardown. Carrier/failure runs use a private Unix debugger socket and
 retain emulator commands and exit status in their packet evidence. Existing
 hardware observations, guest deadlines and acceptance checks remain required.
 
+The combined scoped-source and route comparison runs with
+`sudo -n make test-tcp6-zone-source-route-native` and
+`make test-tcp6-zone-source-route`. An admitted explicit or automatic stream
+retains its tuple after the source is removed only from its original zone.
+Fresh same-zone binds fail while the same address remains valid on the other
+adapter. A fresh automatic companion selects the remaining local address and
+completes actual traffic before binding is cleared. The retained stream crosses
+the preferred route and its fallback while the original source stays withdrawn.
+
+Native Linux can emit the retained fallback packet while refusing its reply on
+the interface whose local destination was removed. Both physical fences wait
+for actual fallback output before the client queries the absent source and
+fresh-bind denial. The client restores ownership through netlink and reopens the
+inventory before a separate fence releases the exact echo. That fence waits for
+the actual TCP acknowledgment. Route restoration, rebinding and complete close
+then retain the original five exchanges and header/getter checks.
+
+`python3 scripts/tests/tcp6_zone_source_route_evidence_test.py` requires three
+native and eight guest profiles, matching actual musl clients, both images and
+22 captures. It reopens 44 retained and 44 companion flows, 264 output blocks,
+220 source inventories, 352 fresh-bind observations, 132 route snapshots and
+1,056 physical fence pairs. Every original native capture frame remains bound to
+its original clocks. A lossless packet subset goes through the existing route
+decoder with unchanged bytes and timestamps; the additional decoder checks all
+companion frames and ownership fences. It rejects 8,526 serialized capture/log
+controls, 32 product controls and six matrix controls. Full 150-second execution,
+120-second alarm, five-second I/O, ten-second barrier and capture-clock bounds
+remain. Actual interface removal, broader expiry/reconnect and complete scoped
+lifetime acceptance remain required.
+
 Storage CI admits at most eight clean administration cases, sixteen
 administration-fault cases and twelve rotation cases concurrently. On the
 observed forty-runner pool, these groups can occupy at most thirty-six slots

@@ -246,3 +246,11 @@ observes fresh bind retirement and owns an independent peer host route. The
 `expiry_capture.py` independently reconstructs clocks, complete TCP streams and
 route snapshots. It reuses the existing native/guest/source/product/image boundary
 and provides serialized semantic controls for lifetime, route and transport evidence.
+
+`userspace/tests/net/tcp6/zone_source_route.c` combines scoped source withdrawal
+with device clearing and route reselection. Its peer and capture reader live in
+`scripts/tcp6/zone_source_route_*.py`. The reader binds complete original native
+clocks before sending an unchanged packet subset to the existing route decoder;
+it checks companion traffic, actual address inventories and ownership fences
+separately. Shared native/guest execution and image/product/source ownership
+remain in the existing TCP6 harness.

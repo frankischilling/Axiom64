@@ -19,6 +19,10 @@ from tcp6.inputs import source_names
 
 
 CONTROL_ERRORS = {
+    "guest-native-timer-proof": "native timer proof cannot alter a guest query interval",
+    "native-incomplete-timer-proof": "native multicast timer policy: complete recorded policy",
+    "native-unsupported-timer-kernel": "native multicast timer policy: actual supported reference kernel",
+    "native-extra-timer-proof-fields": "native multicast timer policy: complete recorded policy",
     "missing-product-inventory": "complete actual multicast product inventory",
     "malformed-ELF-with-refreshed-fingerprints": "actual x86-64 ELF product",
     "foreign-compiled-source": "actual multicast compilation tied to complete original source",
@@ -63,6 +67,21 @@ def create_controls(cohort, destination):
             if name in inputs['products']:
                 inputs['products'][name] = hashlib.sha256(data).hexdigest()
         return dict(changes, **{'inputs.json': encoded(inputs)})
+
+    metadata = json.loads((guest / 'results.json').read_text())
+    metadata['native_timer_policy'] = {}
+    add('guest-native-timer-proof', {'results.json': encoded(metadata)})
+    metadata = json.loads((native / 'results.json').read_text())
+    metadata['native_timer_policy'] = {}
+    add('native-incomplete-timer-proof', {'results.json': encoded(metadata)}, 'linux-static')
+    metadata = json.loads((native / 'results.json').read_text())
+    metadata['native_kernel_release'] = 'unverified-kernel'
+    metadata['native_timer_policy'] = dict(schema=1, kernel='unverified-kernel', config_sha256='0'*64,
+        before_ns=1, after_ns=2, upper_us=1075000)
+    add('native-unsupported-timer-kernel', {'results.json': encoded(metadata)}, 'linux-static')
+    metadata = json.loads((native / 'results.json').read_text())
+    metadata['native_timer_policy'] = dict(metadata.get('native_timer_policy') or {}, extra=True)
+    add('native-extra-timer-proof-fields', {'results.json': encoded(metadata)}, 'linux-static')
 
     inputs = json.loads((guest / 'inputs.json').read_text())
     inputs['products'] = {}

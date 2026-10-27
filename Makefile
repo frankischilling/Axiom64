@@ -1465,6 +1465,7 @@ build/ipv4-multicast-host: kernel/tests/net/ipv4_multicast.cpp kernel/net/ipv4/m
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 test-ipv4-multicast: build/ipv4-multicast-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-multicast-host
+	$(PYTHON) scripts/tests/native_multicast_timers_test.py
 
 build/ipv4-multicast-static: userspace/tests/net/ipv4_multicast.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -static userspace/tests/net/ipv4_multicast.c

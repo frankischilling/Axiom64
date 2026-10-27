@@ -580,7 +580,7 @@ Readers require exact owner sets and connected-prefix counts without imposing
 address dump order. Probing and retrying use the actual probe-to-ready interval
 of one to 2.1 seconds. Regenerating during carrier loss has no replacement wire
 probe, so its first ready observation must follow the actual conflict by two to
-3.1 seconds in Axiom64. A native Linux 6.17.0-1022-azure comparison may use a
+3.1 seconds in Axiom64. A native Linux 6.17.0-1022-azure or 7.0.0-1017-azure comparison may use a
 3.212-second ceiling only with the actual kernel configuration and timer values
 recorded before and after the C workload. CONFIG_HZ must be 1000; generation and
 router-solicitation delays must remain one second, neighbor retransmission must
@@ -968,6 +968,15 @@ runs it through guest virtio-net and e1000. Each directory must be new. It retai
 the complete public source, executable, compile inputs, packets, and logs; guest
 runs also retain their own kernel, initramfs, and ISO. Native captures keep
 original kernel timestamps, independent monotonic receipts, and drop counts.
+Supported native Linux references additionally retain the actual kernel
+configuration before and after every capture interval. The one-second IGMP
+query schedule is enumerated over 64,000 jiffy/delay combinations: the longest
+is 1.065 seconds, followed by the original ten-millisecond observer allowance.
+Only validated native proof selects 1.075 seconds. Guests and missing native
+proof retain 1.01 seconds. Changed configuration, kernel identity, bounds,
+schema or allowance fails validation. Eight host regressions retain the original
+late packets and distinguish diagnostic guard inputs from actual runtime proof.
+
 `python3 scripts/ipv4_multicast_capture.py build/multicast-guest` independently
 reopens the retained evidence. The complete local cohort covers three native libc/linkage profiles and eight
 guest linkage/firmware/transport profiles. Run it with

@@ -8,6 +8,7 @@ import hashlib
 import shutil
 import json
 import os
+import platform
 from pathlib import Path
 import selectors
 import socket
@@ -22,6 +23,7 @@ from ipv4_multicast_peer import Peer
 from tcp6.inputs import freeze
 from compile_uapi_client import sources
 from build_musl import loader
+from native_multicast_timers import CONFIG as TIMER_CONFIG, begin as timer_begin, finish as timer_finish
 
 
 @contextmanager
@@ -99,6 +101,7 @@ def main():
     incoming = [bytearray(), bytearray()]
     serial = directory / 'client.log'
     program = f'ipv4-multicast-{args.profile}'
+    timer_policy = None
     if args.native:
         if args.profile == 'native':
             compile_command = ['gcc', '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
@@ -116,6 +119,7 @@ def main():
         command = [str(ROOT / 'build' / program)]
         if args.profile == 'dynamic':
             command.insert(0, str(loader('build')))
+        timer_policy = timer_begin(directory)
         subprocess.run(['ip', 'link', 'set', 'lo', 'up'], check=True)
         for lane in range(2):
             fd = os.open('/dev/net/tun', os.O_RDWR | os.O_NONBLOCK)
@@ -179,6 +183,8 @@ def main():
             name = 'host-' + library
             shutil.copy2(path, directory / name)
             retained_products[name] = hashlib.sha256((directory / name).read_bytes()).hexdigest()
+    if timer_policy is not None:
+        retained_products[TIMER_CONFIG] = hashlib.sha256((directory / TIMER_CONFIG).read_bytes()).hexdigest()
     (directory / 'inputs.json').write_text(json.dumps(dict(source=frozen, products=retained_products), indent=2) + '\n')
     (directory / 'command.json').write_text(json.dumps(command, indent=2) + '\n')
     links = [None, None]
@@ -258,6 +264,7 @@ def main():
         selector.close()
         for handle in handles:
             os.close(handle) if isinstance(handle, int) else handle.close()
+    timer_policy = timer_finish(directory, timer_policy)
     text = serial.read_text(errors='replace') if serial.exists() else ''
     results = [peer.result() for peer in peers]
     for peer in peers:
@@ -266,6 +273,8 @@ def main():
                   process is not None and process.returncode == (0 if args.native else 1),
                   native=args.native, profile=args.profile, firmware=args.firmware, transport=args.transport, source_root=str(ROOT), source=frozen, products=retained_products,
                   capture_statistics=capture_statistics, diagnostic_only=True,
+                  native_kernel_release=platform.release() if args.native else None,
+                  native_timer_policy=timer_policy,
                   strict_native_clock_and_independent_artifact_audit_pending=True,
                   returncode=process.returncode if process else None, error=error, peers=results)
     (directory / 'results.json').write_text(json.dumps(result, indent=2) + '\n')

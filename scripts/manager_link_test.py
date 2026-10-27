@@ -13,6 +13,7 @@ import time
 from fetch import ROOT
 from manager_image import fixture
 from manager_link_hardware import Hardware
+from manager_link_window import RemovalWindow
 from manager_link_peer import LinkPeer, SCENARIOS, check
 from network_fault import inject
 from qmp import Qmp
@@ -20,7 +21,7 @@ from qemu_acceleration import Acceleration
 
 
 class Controller:
-    def __init__(self, process, peers, affected, hardware, label, debug_target):
+    def __init__(self, process, peers, affected, hardware, label, debug_target, window=None):
         self.process, self.peers, self.affected = process, peers, affected
         self.hardware, self.label, self.debug_target = hardware, label, debug_target
         self.target, self.healthy = peers[affected], peers[1 - affected]
@@ -34,11 +35,14 @@ class Controller:
         self.stale = None
         self.debugger = self.debug_log = self.armed = None
         self.fault = False
+        self.window = window
         self.initially_owned = not any(word in self.scenario for word in
                                        ('initial', 'selecting', 'probing')) and not self.target.disabled and \
             self.scenario != 'rx-length'
         self.target.offer_allowed = not self.interrupted
         self.target.ack_allowed = 'selecting' not in self.scenario and self.scenario != 'rx-length'
+        if window is not None:
+            window.start()
         self.probes_before_return = self.announcements_before_return = 0
 
     def command(self, stage):
@@ -46,6 +50,8 @@ class Controller:
         self.pending = stage
         self.process.stdin.write((stage + '\n').encode())
         self.process.stdin.flush()
+        if stage == 'down' and self.window is not None:
+            self.window.remove_and_release(self.hardware)
 
     def line(self, line):
         match = re.fullmatch(r'MANAGER_LINK_READY scenario=(\S+) affected=(\d+) pid=(\d+) monotonic_ms=(\d+)', line)
@@ -113,7 +119,8 @@ class Controller:
     def interrupt(self):
         self.target.interrupt()
         if self.target.failed:
-            self.hardware.remove()
+            if self.window is None:
+                self.hardware.remove()
         else:
             self.hardware.carrier(False)
         self.interrupted = True
@@ -227,6 +234,7 @@ def run(linkage, scenario, affected, firmware, transport, timeout, image):
     control = tempfile.TemporaryDirectory(prefix='axiom64-manager-link-')
     monitor_path, test_path = (Path(control.name) / name for name in ('qmp.sock', 'qtest.sock'))
     debug_target = None
+    window = None
     acceleration = Acceleration()
     command = ['qemu-system-x86_64', '-machine', acceleration.machine, '-cpu', 'max', '-m', '512M', '-S',
                '-cdrom', str(image), '-nic', 'none', '-display', 'none', '-serial', 'stdio',
@@ -238,6 +246,10 @@ def run(linkage, scenario, affected, firmware, transport, timeout, image):
         debug_target = Path(control.name) / 'gdb.sock'
         command += ['-chardev', f'socket,path={debug_target},server=on,wait=off,id=manager-debug',
                     '-gdb', 'chardev:manager-debug']
+    elif (linkage, scenario, affected, firmware, transport) == ('static', 'disabled-failed', 0, 'bios', 'legacy'):
+        debug_target = Path(control.name) / 'gdb.sock'
+        window = RemovalWindow(image, debug_target, attempt)
+        command += window.arguments()
     for lane, model in enumerate(('virtio-net-pci', 'e1000')):
         server = socket.socket()
         server.bind(('127.0.0.1', 0))
@@ -271,7 +283,7 @@ def run(linkage, scenario, affected, firmware, transport, timeout, image):
             hardware = Hardware(monitor, test_path, affected, transport)
             if scenario.endswith('initial'):
                 hardware.carrier(False)
-            controller = Controller(process, peers, affected, hardware, attempt, debug_target)
+            controller = Controller(process, peers, affected, hardware, attempt, debug_target, window)
             monitor.command('cont')
             while True:
                 now = time.monotonic()
@@ -339,6 +351,11 @@ def run(linkage, scenario, affected, firmware, transport, timeout, image):
         except Exception as exception:
             error = str(exception)
         finally:
+            if window is not None:
+                try:
+                    window.close()
+                except Exception as exception:
+                    error = error or str(exception)
             if controller and controller.debugger and controller.debugger.poll() is None:
                 controller.debugger.kill()
                 controller.debugger.wait()
@@ -371,6 +388,7 @@ def run(linkage, scenario, affected, firmware, transport, timeout, image):
     if error is None and returncode == 1 and not missing:
         try:
             check(controller.finished and controller.down_ms is not None, 'all actual observation stages completed')
+            check(window is None or window.valid, 'actual received-command removal regression completed')
             counts = [peer.verify(controller.down_ms, peers[affected].failed) for peer in peers]
             if scenario == 'carrier-flap':
                 check(controller.flaps == 2, 'two additional actual carrier flaps were observed')
@@ -383,6 +401,7 @@ def run(linkage, scenario, affected, firmware, transport, timeout, image):
                                        failures=controller.failures if controller else [],
                                        hardware=hardware.records if hardware else [], before_ready=before_ready,
                                        debugger=controller.debug_log.name if controller and controller.debug_log else None,
+                                       removal_window=None if window is None else str(window.directory.relative_to(ROOT)),
                                        peers=[dict(counts=peer.counts(), sent=peer.sent,
                                                    received=peer.received) for peer in peers]), indent=2) + '\n')
     result = dict(linkage=linkage, scenario=scenario, affected=affected, firmware=firmware,

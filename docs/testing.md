@@ -381,6 +381,22 @@ Run `python3 scripts/tests/random_crypto_wait_observer_test.py` for the cryptogr
 
 Physical PCI removal in the carrier fixture pauses the guest and preserves its configuration-address register before resuming it. A guest stopped between its address write and data read must still read the selected device. `python3 scripts/tests/manager_link_hardware_test.py` checks this behavior for both adapters and transports, including failed removal verification.
 
+The disabled-profile removal observer waits for an actual raw-descriptor EIO even
+when the profile already has no address, route or active carrier. It retains the
+five-second observation bound. Active managers must also report their own EIO;
+a saved-disabled profile does not require an event from an inactive manager.
+The static BIOS legacy lane-zero case holds the real guest after receiving the
+complete `down` command, removes the selected PCI adapter, then resumes command
+evaluation with its capture flag still clear. The observer must obtain EIO from
+the actual descriptor before accepting the down state. This regression uses a
+verified executable boundary and changes no guest memory, registers or clocks.
+Its source snapshot, actual ISO, embedded kernel/initramfs/programs, debugger
+commands, original state and removal receipts remain in
+`build/manager-link-removal-evidence/`, including failures. Hardware removal
+restores the PCI selector while held and resumes on failed verification. The
+existing profile count, healthy-adapter renewal and teardown checks remain.
+
+
 Normal desktop acceptance drives private administrator creation and login through the installed console, then checks the ordinary session before sending the X11 command. The console driver waits for Bash to return its prompt before sending the next command. Its `printf` acknowledgements contain no complete marker in their input echo. Interleaved console output therefore cannot turn echoed command text into a completion acknowledgement. The host ends the boot only after the window manager, mapped terminal, keyboard acknowledgement, input injection and captured screenshot have all completed. Disk-root shutdown uses authenticated sudo. `python3 scripts/tests/desktop_console_test.py` replays premature acknowledgements, missing readiness, failed identity and actual generated shell output; `python3 scripts/tests/normal_login_test.py` checks split prompts, private elevation input and command return ordering. The BIOS/UEFI boots still exercise the real X11 probe and keyboard/mouse paths.
 
 | Test | Evidence |

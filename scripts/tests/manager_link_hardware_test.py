@@ -116,6 +116,28 @@ class RemovalTests(unittest.TestCase):
                         self.assertEqual(removal['after'][affected], 0xffffffff)
                         self.assertEqual(removal['after'][1 - affected], removal['before'][1 - affected])
 
+    def test_verified_removal_can_keep_the_command_observer_stopped(self):
+        for affected in (0, 1):
+            for transport in ('modern', 'legacy'):
+                with self.subTest(affected=affected, transport=transport):
+                    hardware, guest = self.fixture(affected, transport, 0x8000210c)
+                    hardware.remove(resume=False)
+                    self.assertTrue(guest.removed)
+                    self.assertTrue(guest.stopped)
+                    self.assertEqual(guest.address, guest.saved_address)
+                    self.assertIsNone(guest.resumed_address)
+                    guest.command('cont')
+                    self.assertFalse(guest.stopped)
+                    self.assertEqual(guest.resumed_address, guest.saved_address)
+
+    def test_failed_deferred_removal_still_restores_and_resumes(self):
+        hardware, guest = self.fixture(address=0x8000210c)
+        guest.enumeration_error = True
+        with self.assertRaisesRegex(RuntimeError, 'enumeration failed'):
+            hardware.remove(resume=False)
+        self.assertFalse(guest.stopped)
+        self.assertEqual(guest.resumed_address, guest.saved_address)
+
     def test_failed_enumeration_preserves_interrupted_read_before_resuming(self):
         hardware, guest = self.fixture()
         guest.enumeration_error = True

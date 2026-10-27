@@ -143,19 +143,21 @@ struct Observer {
                affected + 1, unsigned(up), count, (unsigned long long)milliseconds());
     }
 
-    void failure_observation() {
+    void failure_observation(bool manager_active) {
         char path[340], bytes[65536], marker[100];
         snprintf(path, sizeof(path), "%s.%u", fixture.log, fixture.primary);
         snprintf(marker, sizeof(marker), "NETWORK_MANAGER_ERROR index=%u operation=", affected + 1);
         uint64_t until = milliseconds() + 5000;
         for (;;) {
-            text(path, bytes, sizeof(bytes));
-            bool found = false;
-            for (const char* at = bytes; (at = strstr(at, marker)); at++) {
-                const char* end = strchr(at, '\n');
-                const char* error = strstr(at, " errno=5\n");
-                if (end && error && error < end)
-                    found = true;
+            bool found = !manager_active;
+            if (manager_active) {
+                text(path, bytes, sizeof(bytes));
+                for (const char* at = bytes; (at = strstr(at, marker)); at++) {
+                    const char* end = strchr(at, '\n');
+                    const char* error = strstr(at, " errno=5\n");
+                    if (end && error && error < end)
+                        found = true;
+                }
             }
             frames();
             if (found && capture_failed[affected])
@@ -163,8 +165,9 @@ struct Observer {
             check(milliseconds() < until, "actual manager observes permanent driver EIO");
             pause_ms(10);
         }
-        printf("MANAGER_LINK_MANAGER_FAILED index=%u errno=5 monotonic_ms=%llu\n", affected + 1,
-               (unsigned long long)milliseconds());
+        if (manager_active)
+            printf("MANAGER_LINK_MANAGER_FAILED index=%u errno=5 monotonic_ms=%llu\n", affected + 1,
+                   (unsigned long long)milliseconds());
     }
 
     void manual_routes() {
@@ -392,8 +395,8 @@ int main(int argc, char** argv) {
             } else if (!strcmp(command, "down") || !strcmp(command, "progress") ||
                        !strcmp(command, "flap")) {
                 unsigned healthy_generation = !strcmp(command, "down") ? 1 : 2;
-                if (observer.failed && !observer.disabled && !strcmp(command, "down"))
-                    observer.failure_observation();
+                if (observer.failed && !strcmp(command, "down"))
+                    observer.failure_observation(!observer.disabled);
                 if ((!strcmp(command, "down") || !strcmp(command, "flap")) && !observer.failed &&
                     !observer.disabled && !strstr(argv[2], "initial") &&
                     strcmp(argv[2], "rx-length"))

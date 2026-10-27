@@ -39,12 +39,13 @@ class Hardware:
         self.records.append(dict(operation='carrier', up=up, lane=self.affected,
                                  qmp_result=result, host_monotonic=time.monotonic()))
 
-    def remove(self):
+    def remove(self, *, resume=True):
         # CF8 is shared with the guest's PCI access; stop it for this short I/O
         # sequence and restore its selector before resuming an in-flight read.
         # Its clock is never advanced by us.
         self.monitor.command('stop')
         address = None
+        completed = False
         try:
             response = self.io('inl 0xcf8').split()
             check(len(response) == 2, 'complete saved PCI address response')
@@ -68,12 +69,14 @@ class Hardware:
             self.records.append(dict(operation='remove', lane=self.affected, before=before,
                                      pending=pending, after=after, pci=pci,
                                      host_monotonic=time.monotonic()))
+            completed = True
         finally:
             try:
                 if address is not None:
                     self.io(f'outl 0xcf8 {address:#x}')
             finally:
-                self.monitor.command('cont')
+                if resume or not completed:
+                    self.monitor.command('cont')
 
     def close(self):
         self.stream.close()

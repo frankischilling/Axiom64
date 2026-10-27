@@ -1605,6 +1605,7 @@ jobs:
             build/ipv4-gateway-*-inputs.json
             build/manager-protocol-*-packets.json
             build/manager-link-*-packets.json
+            build/manager-link-removal-evidence/**
             build/axiom64-manager-address-query-*.iso
             build/dns-*-packets.json
             build/dns-packet-observer/**

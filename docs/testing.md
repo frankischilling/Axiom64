@@ -193,6 +193,20 @@ to survive teardown. Carrier/failure runs use a private Unix debugger socket and
 retain emulator commands and exit status in their packet evidence. Existing
 hardware observations, guest deadlines and acceptance checks remain required.
 
+Storage CI admits at most eight clean administration cases, sixteen
+administration-fault cases and twelve rotation cases concurrently. On the
+observed forty-runner pool, these groups can occupy at most thirty-six slots
+together, leaving capacity for independent runtime comparisons. Every original
+case, command, profile, artifact, fail-fast policy, deadline and aggregate remains
+required. The [matrix concurrency control](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/run-job-variations#defining-the-maximum-number-of-concurrent-jobs)
+changes admission only.
+
+The network suite waited about forty-five minutes for a runner in the measured
+workflow, despite appearing second in its matrix. Replaying two retained
+schedules favored these bounds across observed durations and conservative
+failure-duration models. The replay assumes fixed runner capacity and historical
+admission order; complete hosted before/after timing remains required.
+
 The network CI job starts its complete native ICMP/fragment/PMTU comparison
 alongside the original Ethernet guest matrix with
 `python3 scripts/ci/network_window.py run`. A shared build finishes before either

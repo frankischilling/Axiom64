@@ -1877,6 +1877,7 @@ jobs:
     timeout-minutes: 75
     strategy:
       fail-fast: false
+      max-parallel: 8
       matrix: ${{ fromJSON(needs.build.outputs.account_clean_matrix) }}
     env:
       PROVIDER: ${{ matrix.provider }}
@@ -1931,6 +1932,7 @@ jobs:
     timeout-minutes: 75
     strategy:
       fail-fast: false
+      max-parallel: 16
       matrix: ${{ fromJSON(needs.build.outputs.account_fault_matrix) }}
     env:
       PROVIDER: ${{ matrix.provider }}
@@ -1983,6 +1985,7 @@ jobs:
     timeout-minutes: 75
     strategy:
       fail-fast: false
+      max-parallel: 12
       matrix: ${{ fromJSON(needs.build.outputs.account_rotation_matrix) }}
     env:
       PROVIDER: ${{ matrix.provider }}

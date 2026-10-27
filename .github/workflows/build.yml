@@ -50,6 +50,7 @@ jobs:
           python3 -B scripts/tests/tcp6_isolation_prelude_test.py -v
           python3 -B scripts/tests/tcp6_source_handshake_test.py -v
           python3 -B scripts/tests/manager_link_startup_test.py -v
+          python3 -B scripts/tests/network_window_test.py -v
       - name: Test authenticated Ubuntu index identity and retained download failures
         run: python3 scripts/tests/host_glibc_sources_test.py -v
       - name: Fingerprint crypto recipes and actual host toolchain inputs
@@ -1061,7 +1062,7 @@ jobs:
             build/musl/**/sysroot/usr/lib/libc.a
       - name: Test virtio and e1000 Ethernet with packet sockets
         if: matrix.suite == 'network'
-        run: make test-network
+        run: python3 -B scripts/ci/network_window.py run
       - name: Retain the actual Ethernet image and packet client
         if: always() && matrix.suite == 'network'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1273,9 +1274,7 @@ jobs:
         run: make test-ipv4 IPV4_WORKERS=4
       - name: Compare IPv4 fragment receive behavior with three native Linux linkages
         if: matrix.suite == 'network'
-        run: |
-          sudo -n make test-native-icmp-budget
-          sudo -n make test-ipv4-fragments-native
+        run: python3 -B scripts/ci/network_window.py audit
       - name: Compare labelled IPv4 address ownership with native Linux
         if: matrix.suite == 'network'
         run: sudo -n python3 scripts/ipv4_alias_native.py
@@ -1292,7 +1291,9 @@ jobs:
         with:
           name: ipv4-fragments-native
           if-no-files-found: warn
-          path: build/ipv4-fragments-native
+          path: |
+            build/ipv4-fragments-native
+            build/network-window
       - name: Upload cold and primed native ICMP controls
         if: always() && matrix.suite == 'network'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

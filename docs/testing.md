@@ -122,6 +122,21 @@ to survive teardown. Carrier/failure runs use a private Unix debugger socket and
 retain emulator commands and exit status in their packet evidence. Existing
 hardware observations, guest deadlines and acceptance checks remain required.
 
+The network CI job starts its complete native ICMP/fragment/PMTU comparison
+alongside the original Ethernet guest matrix with
+`python3 scripts/ci/network_window.py run`. A shared build finishes before either
+worker starts. Native profiles use three private network namespaces; guests use
+their existing isolated emulated devices. The supervisor retains separate logs,
+actual overlap intervals and immutable program hashes, waits for both original
+commands, propagates either failure and retires worker process groups.
+
+`python3 scripts/ci/network_window.py audit` reopens all six native captures and
+their preflight, fragment-expiry, PMTU and lifetime evidence at the original
+comparison step. Every original three-profile case remains required, including
+the sixty-second fragment and ten-minute PMTU lifetimes. The job keeps its
+original deadline, all guest cells, negative controls and artifact uploads. Full
+hosted timing measurements remain necessary before claiming a CI speedup.
+
 `sudo -n make test-tcp6-pending-source-native` and `make test-tcp6-pending-source`
 retain all three native and eight guest profiles for four additional rounds per
 adapter: a connect bound before source withdrawal, explicit and automatic active

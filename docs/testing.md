@@ -663,7 +663,15 @@ suppression observations and ten-minute PMTU lifetime intact.
 `sudo -n make test-native-icmp-budget` separately retains 256 fresh namespaces
 each for cold simultaneous, staggered and primed simultaneous error pairs.
 Cold global-rate suppression is recorded explicitly; staggered and primed pairs
-must return both original quotes. Its reader reopens ten damaged controls.
+must return both original quotes. The staggered second writer waits for the
+first complete input syscall, then observes the original one-millisecond gap.
+A missed shared deadline cannot turn this control into a simultaneous pair.
+The reader checks both actual syscall brackets and reopens twelve damaged
+controls, including collapsed and reversed staggering. The same target also
+runs three production-writer regressions with real pipes and monotonic clocks.
+They delay the first writer by zero, three and twenty milliseconds after the
+start barrier and require both complete payloads plus the original minimum
+gap. These scheduling regressions do not establish ICMP or guest behavior.
 CI retains these native controls in `native-icmp-budget`, alongside the complete
 fragment evidence. These comparisons do not establish guest behavior.
 Qualification with the three original client products reopens six captures and

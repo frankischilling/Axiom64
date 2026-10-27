@@ -64,6 +64,9 @@ def audit(rows, trials=256):
                 row['gap_ns']==(1000000 if mode==0 else 0) and row['out_errors']==0 and
                 row['received']+row['rate_global']==2 and 0<=row['rate_global']<=1,
                 'actual default native error decisions are fully accounted')
+        if mode==0:
+            require(row['lanes'][1]['write_before_ns']>=row['lanes'][0]['write_after_ns']+row['gap_ns'],
+                    'staggered second input follows the completed first write by the original gap')
         assigned=[item['cpu'] for item in row['lanes']]
         if cpus is None:
             cpus=assigned
@@ -94,7 +97,16 @@ def audit(rows, trials=256):
 
 def controls(rows, path):
     at=next(n for n,row in enumerate(rows) if row.get('mode')==2)
+    staggered=next(n for n,row in enumerate(rows) if row.get('mode')==0)
+    def move_second(data,gap):
+        pair=data[staggered]['lanes']
+        shift=pair[0]['write_after_ns']+gap-pair[1]['write_before_ns']
+        for name in ('write_before_ns','write_after_ns','read_ns'):
+            if pair[1][name]:
+                pair[1][name]+=shift
     mutations={
+        'collapsed-stagger':lambda data:move_second(data,999999),
+        'reversed-stagger':lambda data:move_second(data,-1),
         'missing-profile':lambda data:data.pop(1),
         'duplicate-profile':lambda data:data.__setitem__(1,copy.deepcopy(data[2])),
         'missing-primer':lambda data:data[at].__setitem__('primer',None),
@@ -119,7 +131,7 @@ def controls(rows, path):
                 verdicts[name]=str(error)
             else:
                 raise ValueError('native ICMP budget damaged control passed: '+name)
-    require(len(verdicts)==10, 'all serialized damaged controls reopened and rejected')
+    require(len(verdicts)==12, 'all serialized damaged controls reopened and rejected')
     return verdicts
 
 

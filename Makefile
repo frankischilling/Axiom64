@@ -10,7 +10,7 @@ CXXFLAGS = -std=c++20 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-exception
 rwildcard = $(foreach entry,$(wildcard $1*),$(call rwildcard,$(entry)/,$2) $(filter $(subst *,%,$2),$(entry)))
 KERNEL_SOURCES = $(filter-out kernel/tests/%,$(call rwildcard,kernel/,*.cpp))
 KERNEL_OBJECTS = $(patsubst kernel/%.cpp,build/kernel/%.o,$(KERNEL_SOURCES)) build/kernel/arch/x86_64/entry.o
-FORMAT_SOURCES = $(foreach pattern,*.cpp *.hpp,$(call rwildcard,kernel/,$(pattern))) $(foreach pattern,*.c *.h *.cpp *.hpp,$(call rwildcard,userspace/,$(pattern))) scripts/tests/native_icmp_budget.c
+FORMAT_SOURCES = $(foreach pattern,*.cpp *.hpp,$(call rwildcard,kernel/,$(pattern))) $(foreach pattern,*.c *.h *.cpp *.hpp,$(call rwildcard,userspace/,$(pattern))) scripts/tests/native_icmp_budget.c scripts/tests/native_icmp_stagger_regression.c
 
 .PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-network test-ipv4 test-udp test-netlink test-netlink-codec test-address-codec test-configuration test-dhcp-codec test-dhcp-modules test-dhcp-transport test-profiles test-resolver test-resolver-native test-clock-codec test-clock test-file-locks test-file-locks-native test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
 all: image
@@ -914,6 +914,7 @@ build/native-icmp-budget: scripts/tests/native_icmp_budget.c
 .PHONY: test-native-icmp-budget
 test-native-icmp-budget: build/native-icmp-budget
 	$(PYTHON) scripts/native_icmp_budget_test.py
+	$(PYTHON) scripts/tests/native_icmp_stagger_test.py --directory build/native-icmp-budget-evidence/scheduling-regression
 
 build/tcp-wire-host: kernel/tests/net/tcp_wire.cpp kernel/net/tcp/wire.cpp kernel/net/tcp/wire_detail.hpp kernel/include/net/tcp/wire.hpp kernel/include/net/ipv4_wire.hpp
 	@mkdir -p build

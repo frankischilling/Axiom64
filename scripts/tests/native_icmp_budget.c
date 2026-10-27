@@ -9,6 +9,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <sched.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -93,6 +94,8 @@ struct lane {
     unsigned char frame[60], reply[1600];
     unsigned reply_size;
     uint64_t target, before, after, received;
+    struct lane* predecessor;
+    _Atomic uint64_t completed;
 };
 
 static pthread_barrier_t barrier;
@@ -107,13 +110,37 @@ static void* inject(void* argument) {
     require(!code || code == PTHREAD_BARRIER_SERIAL_THREAD, "ready barrier");
     code = pthread_barrier_wait(&barrier);
     require(!code || code == PTHREAD_BARRIER_SERIAL_THREAD, "start barrier");
-    while (now() < lane->target) {
+    uint64_t target = lane->target;
+    if (lane->predecessor) {
+        uint64_t completed;
+        while (!(completed =
+                     atomic_load_explicit(&lane->predecessor->completed, memory_order_acquire))) {
+        }
+        target = completed + 1000000;
+    }
+    while (now() < target) {
     }
     lane->before = now();
     require(write(lane->fd, lane->frame, sizeof(lane->frame)) == sizeof(lane->frame),
             "complete input frame");
     lane->after = now();
+    atomic_store_explicit(&lane->completed, lane->after, memory_order_release);
     return NULL;
+}
+
+static void inject_pair(struct lane lanes[2], unsigned aligned) {
+    require(!pthread_barrier_init(&barrier, NULL, 3), "packet barrier");
+    lanes[1].predecessor = aligned ? NULL : lanes;
+    pthread_t threads[2];
+    for (unsigned at = 0; at < 2; at++)
+        require(!pthread_create(threads + at, NULL, inject, lanes + at), "packet thread");
+    (void)pthread_barrier_wait(&barrier);
+    uint64_t target = now() + 2000000;
+    lanes[0].target = target;
+    lanes[1].target = target + (aligned ? 0 : 1000000);
+    (void)pthread_barrier_wait(&barrier);
+    for (unsigned at = 0; at < 2; at++)
+        require(!pthread_join(threads[at], NULL), "packet thread retirement");
 }
 
 static void address(int fd, const char* name, unsigned operation, const unsigned char bytes[4]) {
@@ -254,17 +281,7 @@ static int one(unsigned trial, unsigned mode, int cpu0, int cpu1) {
         require(counter("OutDestUnreachs") == 1 && counter("OutRateLimitGlobal") == 0,
                 "one actual error completes before the unchanged pair");
     }
-    require(!pthread_barrier_init(&barrier, NULL, 3), "packet barrier");
-    pthread_t threads[2];
-    for (unsigned at = 0; at < 2; at++)
-        require(!pthread_create(threads + at, NULL, inject, lanes + at), "packet thread");
-    (void)pthread_barrier_wait(&barrier);
-    uint64_t target = now() + 2000000;
-    lanes[0].target = target;
-    lanes[1].target = target + (aligned ? 0 : 1000000);
-    (void)pthread_barrier_wait(&barrier);
-    for (unsigned at = 0; at < 2; at++)
-        require(!pthread_join(threads[at], NULL), "packet thread retirement");
+    inject_pair(lanes, aligned);
     unsigned received = 0;
     uint64_t began = now();
     long global = 0, out = 0;

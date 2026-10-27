@@ -224,6 +224,14 @@ after address removal. The same runner and independent reader retain all three n
 and eight guest profiles, programs, source archives, images and packet clocks.
 Fresh binds and automatic source selection still require current address assignment.
 
+`userspace/tests/net/tcp6/scoped_source.c` measures link-local source withdrawal,
+same-address zone ownership and quiet device-binding name queries.
+`scripts/tcp6/scoped_source_peer.py` specializes the source flow observer;
+`scoped_source_capture.py` reconstructs complete streams, zone records and quiet
+intervals, and reopens serialized damaged evidence. The paired reader is
+`scripts/tests/tcp6_scoped_source_evidence_test.py`. Shared native/guest modules
+retain all profiles, images, programs, complete sources and packet clocks.
+
 `userspace/tests/net/tcp6/source_expiry.c` configures actual finite address lifetimes,
 observes fresh bind retirement and owns an independent peer host route. The
 `scripts/tcp6/expiry_peer.py` specialization retains the pending TCP flow observer;

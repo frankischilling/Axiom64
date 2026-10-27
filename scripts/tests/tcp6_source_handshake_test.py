@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Replay the actual payload-bearing final handshake ACK through the live peer."""
+"""Replay actual TCP source-handshake and scoped maintenance frames."""
 from copy import deepcopy
 import hashlib
 import json
@@ -72,6 +72,42 @@ class SourceHandshakeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.flow.receive(dict(self.final, flags=ACK, data=b'',
                                    seq=(self.final['seq'] + 1) & 0xffffffff), (64, 0))
+
+
+
+class ScopedRouterMaintenanceTest(unittest.TestCase):
+    # Actual companion-source solicitation observed during source restoration.
+    frame=bytes.fromhex('33330000000252540012341086dd6000000000103afffe800000000000000000000000000003ff0200000000000000000000000000028500f5b4000000000101525400123410')
+
+    def test_actual_companion_solicitation_is_valid_for_scoped_fixture(self):
+        from tcp6.scoped_source_peer import Peer as ScopedPeer
+        peer=ScopedPeer(0);peer.ready=True
+        peer.receive(self.frame)
+        self.assertEqual(peer.frames[-1]['frame'],self.frame.hex())
+
+    def test_companion_source_is_not_enabled_for_other_workloads(self):
+        peer=Peer(0);peer.ready=True
+        with self.assertRaises(ValueError):peer.receive(self.frame)
+
+    def test_corrupt_companion_solicitations_reject(self):
+        from tcp6.scoped_source_peer import Peer as ScopedPeer
+        from tcp_fault_peer import checksum
+        import struct
+        # Repair checksums after semantic changes so validation reaches each field.
+        for field,offset in (('source',36),('destination',53),('hops',21),
+                             ('link-owner',11),('option-owner',69),('reserved',61)):
+            with self.subTest(field=field):
+                changed=bytearray(self.frame);changed[offset]^=1;changed[56:58]=bytes(2)
+                changed[56:58]=struct.pack('!H',checksum(changed[22:54]+struct.pack('!I3xB',16,58)+changed[54:]))
+                peer=ScopedPeer(0);peer.ready=True
+                with self.assertRaises(ValueError):peer.receive(bytes(changed))
+        changed=bytearray(self.frame);changed[56]^=1
+        peer=ScopedPeer(0);peer.ready=True
+        with self.assertRaises(ValueError):peer.receive(bytes(changed))
+
+    def test_companion_solicitation_requires_readiness(self):
+        from tcp6.scoped_source_peer import Peer as ScopedPeer
+        with self.assertRaises(ValueError):ScopedPeer(0).receive(self.frame)
 
 
 if __name__ == '__main__':

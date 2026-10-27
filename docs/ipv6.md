@@ -571,7 +571,7 @@ completes first; handshake input follows source restoration.
 The source-lifetime comparison measures explicit and automatic global
 sources with a companion address preserving reachability, real companion traffic
 before retained-source output, restoration and complete close. Finite expiry,
-reconnect, scoped withdrawal and route/device removal remain under development.
+reconnect and route/device removal remain under development.
 The Linux comparison uses the
 [v6.17 connection route path](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/inet6_connection_sock.c).
 Source admission also follows the measured pre-bound behavior and the
@@ -586,6 +586,21 @@ echo and close. This follows measured native behavior and the
 [v6.17 address-lifetime path](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/addrconf.c).
 It does not establish connectivity to an invalid local destination; the test
 delivers handshake input after the address has been restored.
+
+The scoped-source comparison measures the same established-source retention
+with link-local addresses and identical TCP tuples in separate interface zones.
+Fresh binding fails only in the withdrawn zone; the other zone retains its
+address. A fresh companion stream proves reachability before retained output.
+After an acknowledged echo, device binding is cleared only for quiet name
+queries and restored before source withdrawal and data. Both name queries
+report zone zero while binding is cleared and the interface index after it is
+restored, matching the
+[Linux v6.17 name path](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/af_inet6.c#L489-L526)
+and the interface-zone model in
+[RFC 4007](https://www.rfc-editor.org/rfc/rfc4007.html#section-6).
+The [complete native/guest comparison](testing.md) preserves actual packet
+ownership, source restoration and closure. Cleared-zone traffic routing,
+route/device removal and full scoped lifetime acceptance remain required.
 
 Live mapped output uses IPv4 TTL/TOS independently of the IPv6 controls. After
 the last descriptor closes, compact TIME-WAIT state retains the IPv6 class for

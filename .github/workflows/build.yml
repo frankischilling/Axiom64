@@ -211,6 +211,7 @@ jobs:
           make -j2 build/tcp6-source-lifetime-native build/tcp6-source-lifetime-static build/tcp6-source-lifetime-dynamic
           make -j2 build/tcp6-pending-source-native build/tcp6-pending-source-static build/tcp6-pending-source-dynamic
           make -j2 build/tcp6-source-expiry-native build/tcp6-source-expiry-static build/tcp6-source-expiry-dynamic
+          make -j2 build/tcp6-scoped-source-native build/tcp6-scoped-source-static build/tcp6-scoped-source-dynamic
           make -j2 build/tcp6-controls-ipv6-native build/tcp6-controls-ipv6-static build/tcp6-controls-ipv6-dynamic
           make -j2 build/tcp6-controls-mapped-native build/tcp6-controls-mapped-static build/tcp6-controls-mapped-dynamic
           make -j2 build/tcp6-controls-ipv4-native build/tcp6-controls-ipv4-static build/tcp6-controls-ipv4-dynamic
@@ -853,6 +854,9 @@ jobs:
           sudo -n make test-tcp6-source-expiry-native
           make test-tcp6-source-expiry
           python3 scripts/tests/tcp6_source_expiry_evidence_test.py
+          sudo -n make test-tcp6-scoped-source-native
+          make test-tcp6-scoped-source
+          python3 scripts/tests/tcp6_scoped_source_evidence_test.py
       - name: Independently verify TCP loss captures and reject damaged evidence
         if: matrix.suite == 'tcp-fault-loss'
         run: |
@@ -1810,6 +1814,10 @@ jobs:
             build/tcp6-source-expiry-guest-wire/**
             build/tcp6-source-expiry-independent.json
             build/tcp6-source-expiry-independent-captures/**
+            build/tcp6-scoped-source-native-wire/**
+            build/tcp6-scoped-source-guest-wire/**
+            build/tcp6-scoped-source-independent.json
+            build/tcp6-scoped-source-independent-captures/**
             build/tcp6-controls-ipv6-native-wire/**
             build/tcp6-controls-ipv6-guest-wire/**
             build/tcp6-controls-mapped-native-wire/**

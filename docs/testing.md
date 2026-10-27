@@ -109,6 +109,37 @@ those output blocks occur while the source is withdrawn. Finite source expiry,
 route/device removal and full TCP lifetime acceptance
 remain required.
 
+`sudo -n make test-tcp6-scoped-source-native` and `make test-tcp6-scoped-source`
+compare explicit and automatic link-local streams after source withdrawal. Both
+adapters use identical IPv6 addresses and ports in separate zones, with distinct
+MAC owners and lane-specific bytes. These rounds run sequentially; the separate
+isolation suite covers simultaneous streams. A fresh bind rejects the removed
+source in its own zone while the same address still binds in the other zone.
+A real automatically selected companion stream completes before retained-source
+output. Hop/class updates retain the original source; restoration precedes
+further TCP input, byte-checked echo and complete close.
+
+After the first echo is acknowledged, a quiet interval clears device binding and
+reads both names with zone zero, then restores binding and reads the original
+interface zones. No TCP input or output is allowed during that cleared-zone
+interval. Binding is restored before source withdrawal or further data. The
+fixture removes only its MAC-derived automatic link-local candidate so native
+and guest automatic selection see matching addresses.
+The scoped peer also validates router solicitations from that configured
+companion. The source-handshake replay tests include an actual companion-source
+solicitation and checksum-repaired source, owner, option and header controls.
+
+`python3 scripts/tests/tcp6_scoped_source_evidence_test.py` reopens all three native
+and eight guest profiles, complete matching sources, identical musl clients and
+loaders, both actual images and 22 captures. It requires 88 flows, 264 output
+blocks, 132 withdrawn-source blocks, 308 getter snapshots, 44 quiet intervals and
+44 other-zone bind witnesses. It rejects 4,588 serialized packet/log/zone/clock
+controls, 32 product controls and six matrix controls. Checksums and native
+fingerprints are rebound for semantic controls. Original 150-second execution,
+120-second alarm, five-second I/O, ten-second barrier and capture-clock bounds
+remain. Cleared-zone wire routing, route/device removal, broader expiry and
+complete networking acceptance remain required.
+
 `python3 scripts/tests/tcp6_source_handshake_test.py` replays three actual TCP
 frames from a retained failed observation. The final handshake ACK carries the
 first payload; the peer checks its acknowledgment and sequence before processing

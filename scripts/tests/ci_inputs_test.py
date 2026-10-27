@@ -24,7 +24,16 @@ class InputArchives(unittest.TestCase):
         self.output.mkdir()
         self.env = dict(os.environ, RUNNER_TEMP=str(self.output))
         self.files = {
-            'dependencies.json': json.dumps({'busybox': {'version': '1.37.0'}}).encode(),
+            'dependencies.json': json.dumps({'busybox': {'version': '1.37.0'},
+                'openssl': {'archive': 'openssl-locked.tar.gz'},
+                'curl': {'archive': 'curl-locked.tar.xz'}}).encode(),
+            'ports.lock.json': json.dumps({'packages': [
+                {'name': 'linux-headers', 'archive': 'linux-headers-locked.apk'}]}).encode(),
+            'downloads/ports/linux-headers-locked.apk': b'pinned Linux UAPI',
+            'build/gnu-reader-controls-extra/result.json': b'keep reader prefix collision',
+            'build/gnu-reader-public-controls-extra/result.json': b'keep public prefix collision',
+            'build/ext2-xattr-codec-extra/result.json': b'keep codec prefix collision',
+            'downloads/openssl-other.tar.gz': b'keep unrelated archive',
             'userspace/source.c': b'int main(void) { return 0; }\n',
             'scripts/check.py': b'pass\n',
             'docs/build.md': b'Build instructions.\n',
@@ -58,6 +67,16 @@ class InputArchives(unittest.TestCase):
             'build/openssl/build/id/static/build/unit.o': b'unused upstream object',
             'build/openssl/build/id/static/build/unit.a': b'unused upstream archive',
         }
+        self.rotation_excluded = {
+            'build/gnu-reader-controls/moved-kit/libc.a': b'completed reader control',
+            'build/gnu-reader-public-controls/moved-kit/libc.a': b'completed public control',
+            'build/ext2-xattr-codec/seed-1024.img': b'completed codec fixture',
+            'downloads/ports/gcc-locked.apk': b'guest compiler package',
+            'downloads/ports/mesa-locked.apk': b'desktop package',
+            'downloads/openssl-locked.tar.gz': b'unrelated OpenSSL source',
+            'downloads/curl-locked.tar.xz': b'unrelated curl source',
+        }
+        self.files.update(self.rotation_excluded)
         for name, data in self.files.items():
             path = self.workspace / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -85,7 +104,7 @@ class InputArchives(unittest.TestCase):
         full_members, full = self.read('full')
         rotation_members, rotation = self.read('rotation')
         removed = {'build/curl/build/id/stage/curl', 'build/openssl/runtime/id/stage/ssl',
-                   'build/rootfs.cpio', 'build/rootfs-desktop.cpio'}
+                   'build/rootfs.cpio', 'build/rootfs-desktop.cpio', *self.rotation_excluded}
         self.assertEqual(set(full) - set(rotation), removed)
         self.assertFalse(set(rotation) - set(full))
         for name in rotation:
@@ -100,9 +119,46 @@ class InputArchives(unittest.TestCase):
         self.assertEqual(rotation_members['build/musl/runtime/id/loader'].linkname, 'libc.so')
         self.assertEqual(full_members['build/musl/runtime/id/loader'].linkname, 'libc.so')
 
+    def test_rotation_omits_completed_controls_and_unrelated_downloads(self):
+        self.assertEqual(self.run_helper('rotation').returncode, 0)
+        members, actual = self.read('rotation')
+        self.assertFalse(set(actual) & set(self.rotation_excluded))
+        for name in ('downloads/ports/linux-headers-locked.apk',
+                     'build/gnu-reader-controls-extra/result.json',
+                     'build/gnu-reader-public-controls-extra/result.json',
+                     'build/ext2-xattr-codec-extra/result.json',
+                     'downloads/openssl-other.tar.gz'):
+            self.assertEqual(actual[name], self.files[name])
+            self.assertEqual(members[name].mode, 0o751)
+            self.assertEqual(members[name].mtime, 1577836800)
+
+    def test_rotation_materializes_required_hard_link_from_excluded_control(self):
+        control = self.workspace / 'build/gnu-reader-controls/moved-kit/libc.a'
+        kept = self.workspace / 'build/gnu-utmp-reader/libc.a'
+        kept.parent.mkdir()
+        os.link(control, kept)
+        self.assertEqual(self.run_helper('rotation').returncode, 0)
+        members, actual = self.read('rotation')
+        self.assertNotIn('build/gnu-reader-controls/moved-kit/libc.a', members)
+        self.assertEqual(actual['build/gnu-utmp-reader/libc.a'], control.read_bytes())
+        self.assertTrue(members['build/gnu-utmp-reader/libc.a'].isfile())
+        self.assertEqual(members['build/gnu-utmp-reader/libc.a'].mode, 0o751)
+        self.assertEqual(members['build/gnu-utmp-reader/libc.a'].mtime, 1577836800)
+
+    def test_rotation_requires_the_pinned_uapi_archive(self):
+        (self.workspace / 'downloads/ports/linux-headers-locked.apk').unlink()
+        result = self.run_helper('rotation')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('linux-headers-locked.apk', result.stderr)
+        self.assertFalse((self.output / 'ci-rotation-inputs.tar.gz').exists())
+
     def test_common_privacy_and_cache_exclusions(self):
         excluded = set(self.files) - {
-            'dependencies.json', 'userspace/source.c', 'scripts/check.py', 'docs/build.md',
+            'dependencies.json', 'ports.lock.json', 'userspace/source.c', 'scripts/check.py', 'docs/build.md',
+            'downloads/ports/linux-headers-locked.apk', 'downloads/openssl-other.tar.gz',
+            'build/gnu-reader-controls-extra/result.json',
+            'build/gnu-reader-public-controls-extra/result.json',
+            'build/ext2-xattr-codec-extra/result.json', *self.rotation_excluded,
             'build/axiom64.elf', 'build/init', 'build/musl/runtime/id/manifest.json',
             'build/musl/runtime/id/libc.so', 'downloads/package.tar.gz',
             'build/curl/build/id/stage/curl', 'build/openssl/runtime/id/stage/ssl',

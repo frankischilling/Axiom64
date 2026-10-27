@@ -997,6 +997,7 @@ jobs:
         if: matrix.suite == 'tcp-fault-icmp'
         run: |
           mkdir -p build/tcp-device
+          sudo -n python3 scripts/tests/tcp_device_pending_site_test.py
           sudo -n python3 scripts/tests/tcp_device_observation_test.py
           sudo -n python3 scripts/tests/tcp_device_native_cleanup_test.py
           sudo -n make test-tcp-device-native

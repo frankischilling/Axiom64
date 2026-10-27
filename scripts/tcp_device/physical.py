@@ -12,6 +12,20 @@ from qmp import Qmp
 from tcp_fault_peer import check
 
 
+def pending_output_line(path):
+    lines = Path(path).read_text().splitlines()
+    starts = [index for index, line in enumerate(lines) if line == 'void ipv4_poll() {']
+    check(len(starts) == 1, 'one IPv4 poll function for owned queue observation')
+    start = starts[0]
+    ends = [index for index in range(start + 1, len(lines)) if lines[index] == '}']
+    check(bool(ends), 'complete IPv4 poll function for owned queue observation')
+    sites = [index + 1 for index in range(start + 1, ends[0])
+             if 'if (!info || !info->live || !info->administrative || !info->carrier)' in lines[index]
+             and lines[index - 1].strip() == 'auto info = net_info(item.index);']
+    check(len(sites) == 1, 'one owned output-queue observation site in IPv4 poll')
+    return sites[0]
+
+
 class Monitor(Qmp):
     def __init__(self, path):
         self.records = []
@@ -77,9 +91,7 @@ class Controller:
         lane = self.affected
         for path in (self.request, self.released, self.armed):
             path.unlink(missing_ok=True)
-        lines = (self.task / 'kernel/net/ipv4/core.cpp').read_text().splitlines()
-        pending = next(index + 1 for index, line in enumerate(lines)
-                       if 'if (!info || !info->live || !info->administrative || !info->carrier)' in line)
+        pending = pending_output_line(self.task / 'kernel/net/ipv4/core.cpp')
         array = "'kernel/net/ipv4/core.cpp'::'ax::(anonymous namespace)::output'"
         python_code = [
             'python', 'import gdb, os, time',

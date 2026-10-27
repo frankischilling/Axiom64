@@ -277,3 +277,8 @@ readiness, pending state, output and signal status. Its serial release protocol
 keeps the child pending through independent guest and native half-second
 observations in `scripts/random_crypto_wait_test.py`. Observer protocol checks
 use real subprocesses in `scripts/tests/random_crypto_wait_observer_test.py`.
+
+`scripts/tcp_device/physical.py` locates the owned output-copy observation
+inside the IPv4 poll function and requires a unique queue site. Competing
+interface guards and absent or ambiguous queue locations are covered by
+`scripts/tests/tcp_device_pending_site_test.py`.

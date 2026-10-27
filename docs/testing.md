@@ -962,3 +962,11 @@ existing network job requires the complete cohort and protected evidence audit;
 its artifact retains all original sources, products, images, captures, native
 clock receipts and rejection controls. Fresh hosted qualification and the wider
 multicast contract remain required.
+
+The TCP device observer selects its owned IPv4 output-copy breakpoint within
+`ipv4_poll`, next to the current queue item lookup. It rejects a missing or
+ambiguous location before arming. Run
+`python3 scripts/tests/tcp_device_pending_site_test.py` to check competing route
+guards, unrelated poll guards and absent or duplicated queue sites. The existing
+physical removal, copied bytes, owner reclamation, surviving stream and clock
+checks remain required.

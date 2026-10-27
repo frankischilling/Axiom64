@@ -1878,14 +1878,41 @@ jobs:
             build/file-capabilities-independent.log
             build/file-capabilities-damage.log
 
+  storage-admission:
+    name: Admit storage after network starts
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Verify and observe this attempt's actual network runner
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python3 -B scripts/tests/storage_admission_test.py -v
+          python3 -B scripts/ci/storage_admission.py
+      - name: Retain the original run and runner observations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-storage-admission
+          path: build/storage-admission.json
+          retention-days: 7
+          if-no-files-found: error
+
   account-storage-clean:
     name: Administration ${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}
-    needs: build
+    needs: [build, storage-admission]
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     strategy:
       fail-fast: false
-      max-parallel: 8
       matrix: ${{ fromJSON(needs.build.outputs.account_clean_matrix) }}
     env:
       PROVIDER: ${{ matrix.provider }}
@@ -1935,12 +1962,11 @@ jobs:
 
   account-storage-fault:
     name: Administration faults ${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.cache }}
-    needs: build
+    needs: [build, storage-admission]
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     strategy:
       fail-fast: false
-      max-parallel: 16
       matrix: ${{ fromJSON(needs.build.outputs.account_fault_matrix) }}
     env:
       PROVIDER: ${{ matrix.provider }}
@@ -1988,12 +2014,11 @@ jobs:
 
   account-rotation-storage:
     name: Rotation faults ${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.scenario }}-${{ matrix.cache }}-${{ matrix.shard }}
-    needs: build
+    needs: [build, storage-admission]
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     strategy:
       fail-fast: false
-      max-parallel: 12
       matrix: ${{ fromJSON(needs.build.outputs.account_rotation_matrix) }}
     env:
       PROVIDER: ${{ matrix.provider }}
@@ -2094,7 +2119,7 @@ jobs:
           path: build/account-storage-coverage
 
   qemu:
-    needs: [build, tests, account-storage-clean, account-storage-fault, account-rotation-storage, account-storage-coverage]
+    needs: [build, tests, storage-admission, account-storage-clean, account-storage-fault, account-rotation-storage, account-storage-coverage]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -2102,6 +2127,7 @@ jobs:
       - name: Require the build and every test suite to pass
         env:
           BUILD_RESULT: ${{ needs.build.result }}
+          ADMISSION_RESULT: ${{ needs.storage-admission.result }}
           TEST_RESULT: ${{ needs.tests.result }}
           ACCOUNT_CLEAN_RESULT: ${{ needs.account-storage-clean.result }}
           ACCOUNT_FAULT_RESULT: ${{ needs.account-storage-fault.result }}
@@ -2109,6 +2135,7 @@ jobs:
           ACCOUNT_COVERAGE_RESULT: ${{ needs.account-storage-coverage.result }}
         run: |
           test "$BUILD_RESULT" = success
+          test "$ADMISSION_RESULT" = success
           test "$TEST_RESULT" = success
           test "$ACCOUNT_CLEAN_RESULT" = success
           test "$ACCOUNT_FAULT_RESULT" = success

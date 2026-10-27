@@ -223,19 +223,33 @@ controls, 32 product controls and six matrix controls. Full 150-second execution
 remain. Actual interface removal, broader expiry/reconnect and complete scoped
 lifetime acceptance remain required.
 
-Storage CI admits at most eight clean administration cases, sixteen
-administration-fault cases and twelve rotation cases concurrently. On the
-observed forty-runner pool, these groups can occupy at most thirty-six slots
-together, leaving capacity for independent runtime comparisons. Every original
-case, command, profile, artifact, fail-fast policy, deadline and aggregate remains
-required. The [matrix concurrency control](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/run-job-variations#defining-the-maximum-number-of-concurrent-jobs)
-changes admission only.
+Storage CI waits until the current network suite owns a runner before releasing
+its administration and rotation matrices. `scripts/ci/storage_admission.py`
+reads this run's exact attempt through the
+[workflow jobs API](https://docs.github.com/en/rest/actions/workflow-jobs).
+It requires the current source head, unique job identity, an assigned runner and
+an executed step. A queued job's `started_at` value does not establish admission.
+A terminal network result also releases unrelated storage coverage; the original
+aggregate still requires the network suite to succeed.
 
-The network suite waited about forty-five minutes for a runner in the measured
-workflow, despite appearing second in its matrix. Replaying two retained
-schedules favored these bounds across observed durations and conservative
-failure-duration models. The replay assumes fixed runner capacity and historical
-admission order; complete hosted before/after timing remains required.
+The admission job has only contents/actions read permissions and checks out the
+source tree. It polls every fifteen seconds for at most one hour, with its
+own 65-minute job deadline. Invalid, stale or incomplete metadata, API errors and
+an unobserved start fail this required job. Every original guest observation and
+job deadline remains unchanged. Once admission is observed, storage matrices use
+the available runner pool without fixed per-matrix caps. All original 210 jobs
+and 304 steps remain, alongside one required admission job with three steps.
+The complete workflow therefore requires all 211 jobs and both aggregates.
+
+The complete fixed-cap comparison reduced network admission after the build
+from 2,693 to 1,128 seconds, but overall executed workflow span grew from 7,565 to
+8,617 seconds. The earlier full workflow failed while the later one passed all
+210 jobs; different revisions and runner conditions prevent a causal speedup
+claim. The fixed bounds did not demonstrate a complete workflow improvement.
+The observed-start policy requires a new complete hosted run and timing
+comparison. `python3 -B scripts/tests/storage_admission_test.py -v` checks real
+recorded job metadata, run/attempt ownership, queued versus executed steps,
+bounded waiting, local HTTP pagination and authentication failures.
 
 The network CI job starts its complete native ICMP/fragment/PMTU comparison
 alongside the original Ethernet guest matrix with

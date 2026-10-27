@@ -1326,6 +1326,7 @@ jobs:
       - name: Test IPv4 UDP, datagram lifetime, checksums, and failed-device sockets
         if: matrix.suite == 'network'
         run: |
+          sudo -n python3 -B scripts/tests/ipv4_multicast_fixture_owner_test.py
           make test-udp
           sudo -n python3 -B scripts/ipv4_multicast_test.py --matrix --directory build/ipv4-multicast-evidence
           sudo -n python3 -B scripts/ipv4_multicast_evidence.py build/ipv4-multicast-evidence --output build/ipv4-multicast-audit

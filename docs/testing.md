@@ -951,6 +951,11 @@ guest linkage/firmware/transport profiles. Run it with
 Then run
 `sudo -n python3 -B scripts/ipv4_multicast_evidence.py build/ipv4-multicast-evidence --output build/ipv4-multicast-audit`.
 Audit output needs a Linux filesystem with POSIX ownership and modes.
+Guest fixture preparation returns the shared `build/rootfs-network.cpio` to
+the build directory owner and group, preserving its previous permissions even
+when preparation fails. Later unprivileged guest tests can rewrite it. Run
+`sudo -n python3 -B scripts/tests/ipv4_multicast_fixture_owner_test.py` for real
+root-to-unprivileged replacement checks, failure propagation and first creation.
 The audit exports the actual complete source into root-owned nonwritable inputs,
 reopens all eleven cases normally and as UID 65534 in an isolated network
 namespace, and requires identical decisions. Twenty-five freshly serialized

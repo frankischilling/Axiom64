@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Retain native Linux or guest multicast wire diagnostics over two real links."""
 import argparse
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import shutil
@@ -10,6 +11,7 @@ import os
 from pathlib import Path
 import selectors
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -20,6 +22,33 @@ from ipv4_multicast_peer import Peer
 from tcp6.inputs import freeze
 from compile_uapi_client import sources
 from build_musl import loader
+
+
+@contextmanager
+def shared_fixture_owner(path):
+    path = Path(path)
+    try:
+        previous = path.lstat()
+    except FileNotFoundError:
+        previous = None
+    if previous is not None and not stat.S_ISREG(previous.st_mode):
+        raise ValueError('shared multicast fixture must be a regular file')
+    directory = path.parent.stat() if path.parent.exists() else None
+    try:
+        yield
+    finally:
+        try:
+            current = path.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            if not stat.S_ISREG(current.st_mode):
+                raise ValueError('shared multicast fixture must remain a regular file')
+            owner = directory if directory is not None else path.parent.stat()
+            if (current.st_uid, current.st_gid) != (owner.st_uid, owner.st_gid):
+                os.chown(path, owner.st_uid, owner.st_gid)
+            if previous is not None and stat.S_IMODE(path.stat().st_mode) != stat.S_IMODE(previous.st_mode):
+                os.chmod(path, stat.S_IMODE(previous.st_mode))
 
 
 def main():
@@ -103,13 +132,14 @@ def main():
     else:
         from network_test import fixture
         image_name = f'ipv4-multicast-{directory.name}.iso'
-        fixture(program=program, script='userspace/tests/net/multicast-run.sh',
-                environment={'AXIOM64_MULTICAST_CLIENT': '/bin/' + program},
-                runtime_loader=loader('runtime') if args.profile == 'dynamic' else None)
-        subprocess.run([sys.executable, 'scripts/image.py', '--test', '--suite', 'network',
-                        '--output-name', image_name], cwd=ROOT, check=True)
-        image = directory / 'guest.iso'
-        os.replace(ROOT / 'build' / image_name, image)
+        with shared_fixture_owner(ROOT / 'build/rootfs-network.cpio'):
+            fixture(program=program, script='userspace/tests/net/multicast-run.sh',
+                    environment={'AXIOM64_MULTICAST_CLIENT': '/bin/' + program},
+                    runtime_loader=loader('runtime') if args.profile == 'dynamic' else None)
+            subprocess.run([sys.executable, 'scripts/image.py', '--test', '--suite', 'network',
+                            '--output-name', image_name], cwd=ROOT, check=True)
+            image = directory / 'guest.iso'
+            os.replace(ROOT / 'build' / image_name, image)
         command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '2G',
                    '-cdrom', str(image), '-nic', 'none', '-display', 'none',
                    '-serial', 'stdio', '-monitor', 'none', '-no-reboot',

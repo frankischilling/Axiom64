@@ -602,6 +602,19 @@ The [complete native/guest comparison](testing.md) preserves actual packet
 ownership, source restoration and closure. Cleared-zone traffic routing,
 route/device removal and full scoped lifetime acceptance remain required.
 
+A separate scoped route comparison sends actual TCP data while device binding
+is cleared. Explicit and automatic sources keep their original full tuple while
+the preferred static host route moves output to the other link. Removing that
+route selects a surviving fallback; restoring it reselects the preferred link.
+Rebinding then returns output and complete close to the original interface.
+The comparison retains actual route inventories, per-link causal fences,
+byte-checked echoes and native-derived names. This measures the
+[Linux v6.17 connection route selection](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/inet6_connection_sock.c#L59-L89)
+through device-binding changes. The [complete route comparison](testing.md)
+requires all native/guest profiles and independently reopened captures and
+images. Combined source withdrawal, interface removal and broader scoped
+lifetime behavior remain required.
+
 Live mapped output uses IPv4 TTL/TOS independently of the IPv6 controls. After
 the last descriptor closes, compact TIME-WAIT state retains the IPv6 class for
 IPv6 descriptions, including mapped connections, or IPv4 TOS for pure IPv4.

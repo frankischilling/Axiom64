@@ -232,6 +232,14 @@ intervals, and reopens serialized damaged evidence. The paired reader is
 `scripts/tests/tcp6_scoped_source_evidence_test.py`. Shared native/guest modules
 retain all profiles, images, programs, complete sources and packet clocks.
 
+`userspace/tests/net/tcp6/zone_route.c` measures cleared-device route selection,
+fallback, restoration and rebinding with both physical links.
+`scripts/tcp6/zone_route_peer.py` shares each stream across the controlled link
+peers through the existing peer-binding hook. `zone_route_capture.py` reconstructs
+both captures, per-link fences, raw route inventories and complete TCP streams.
+`scripts/tests/tcp6_zone_route_evidence_test.py` checks both complete matrices,
+matching clients, actual images and serialized packet/product/matrix controls.
+
 `userspace/tests/net/tcp6/source_expiry.c` configures actual finite address lifetimes,
 observes fresh bind retirement and owns an independent peer host route. The
 `scripts/tcp6/expiry_peer.py` specialization retains the pending TCP flow observer;

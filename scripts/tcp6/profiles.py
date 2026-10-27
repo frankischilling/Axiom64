@@ -14,6 +14,11 @@ def definition(suite):
                     marker=marker(family), peer=partial(Peer, family=family),
                     verify=partial(verify, family=family), damaged=partial(damaged, family=family),
                     router_hop_control=True)
+    if suite == 'zone-route':
+        from tcp6.zone_route_peer import Peer,MARKER
+        from tcp6.zone_route_capture import verify,damaged
+        return dict(program='tcp6-zone-route',source='userspace/tests/net/tcp6/zone_route.c',
+                    flags=['-Iuserspace/tests/net'],marker=MARKER,peer=Peer,verify=verify,damaged=damaged)
     if suite == 'scoped-source':
         from tcp6.scoped_source_peer import Peer,MARKER
         from tcp6.scoped_source_capture import verify,damaged

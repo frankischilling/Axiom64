@@ -140,6 +140,36 @@ fingerprints are rebound for semantic controls. Original 150-second execution,
 remain. Cleared-zone wire routing, route/device removal, broader expiry and
 complete networking acceptance remain required.
 
+`sudo -n make test-tcp6-zone-route-native` and `make test-tcp6-zone-route`
+measure actual TCP routing after device binding is cleared. Each adapter starts
+one explicitly sourced and one automatically sourced stream. Both zones retain
+the same link-local addresses; each stream keeps its complete TCP tuple and
+sequence across five byte-checked exchanges. A bound exchange uses its original
+link. Clearing binding selects the other link's preferred static peer host route
+(metric ten). Deleting that route selects the surviving original-link route
+(metric twenty); restoring it reselects the other link. Rebinding returns output
+and complete close to the original interface. Hop/class controls remain 37/168
+through both route changes. Two-link Ethernet fences wait for actual echo ACKs
+before each mutation.
+
+The independent reader combines both physical captures without imposing a
+synthetic cross-capture clock order. It checks each packet against its own
+link's ordered fences, exact MAC owner, full tuple, payload, sequence and echo.
+Actual raw route dumps retain the two/one/two host-route inventories. Getter
+snapshots retain zero zones while unbound and actual interface zones after
+rebinding. Native clocks still require zero drops and original arrival brackets.
+
+`python3 scripts/tests/tcp6_zone_route_evidence_test.py` requires all three native
+and eight guest profiles, matching sources and musl clients/loaders, both actual
+images, 22 captures, 44 flows, 220 exchanges, 220 getters, 132 route snapshots,
+880 transition fence pairs, 44 route withdrawals and 44 restorations. It rejects
+5,908 serialized packet/log/route/fence controls, 32 product controls and six matrix
+controls. Each corrupted capture is reopened beside its unchanged companion;
+checksums and native fingerprints are rebound for semantic controls. The original
+150-second case, 120-second alarm, five-second I/O, ten-second barrier and capture
+bounds remain. Source withdrawal during these route transitions, actual interface
+removal and full scoped lifetime acceptance remain required.
+
 `python3 scripts/tests/tcp6_source_handshake_test.py` replays three actual TCP
 frames from a retained failed observation. The final handshake ACK carries the
 first payload; the peer checks its acknowledgment and sequence before processing

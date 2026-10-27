@@ -18,7 +18,7 @@ def main():
     if not args.output_directory.resolve().is_relative_to((ROOT / 'build').resolve()):
         parser.error('output must be a fresh owned directory below build/')
     run_matrix(args.output_directory, ABI, audit)
-    print('TCP6_ABI_MATRIX_PASS native=2 guests=4 cases_each=200', flush=True)
+    print('TCP6_ABI_MATRIX_PASS native=2 guests=4 cases_each=216', flush=True)
     return 0
 
 

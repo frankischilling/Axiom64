@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 static int native_packet_precheck;
+static int native_name_length_first;
 
 static void require(int condition, const char* operation, unsigned detail) {
     if (!condition) {
@@ -108,7 +109,11 @@ static unsigned names(void) {
             long result =
                 syscall(SYS_getsockname, fd, valid ? bytes : (void*)(uintptr_t)1, &length);
             require((result < 0 ? errno : 0) == expected_error, "getsockname result", cases);
-            require(length == (expected_error ? lengths[at] : 28), "getsockname length", cases);
+            uint32_t wanted =
+                !expected_error || (native_name_length_first && expected_error == EFAULT)
+                    ? 28
+                    : lengths[at];
+            require(length == wanted, "getsockname length", cases);
             if (!expected_error && valid) {
                 struct sockaddr_in6 empty = {.sin6_family = AF_INET6};
                 size_t copied = lengths[at] < sizeof(empty) ? lengths[at] : sizeof(empty);
@@ -116,6 +121,98 @@ static unsigned names(void) {
             }
             require(!memcmp(bytes, expected, sizeof(bytes)), "getsockname copy and guard", cases);
             require(!close(fd), "close getsockname", cases++);
+        }
+    return cases;
+}
+
+static unsigned name_copy_order(void) {
+    const uint32_t capacities[] = {0, 1, 28, UINT32_MAX};
+    struct sockaddr_in6 empty = {.sin6_family = AF_INET6};
+    long page = sysconf(_SC_PAGESIZE);
+    require(page > 0, "name copy page size", 0);
+    unsigned cases = 0;
+    for (unsigned at = 0; at < 4; at++) {
+        int fd = stream();
+        socklen_t* length =
+            mmap(NULL, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        require(length != MAP_FAILED, "name readonly length allocation", cases);
+        *length = capacities[at];
+        require(!mprotect(length, page, PROT_READ), "name readonly length protection", cases);
+        uint8_t bytes[128], expected[128];
+        memset(bytes, 0xa7, sizeof(bytes));
+        memset(expected, 0xa7, sizeof(expected));
+        int negative = (int32_t)capacities[at] < 0;
+        if (!negative && !native_name_length_first) {
+            size_t count = capacities[at] < sizeof(empty) ? capacities[at] : sizeof(empty);
+            memcpy(expected, &empty, count);
+        }
+        errno = 0;
+        long result = syscall(SYS_getsockname, fd, bytes, length);
+        require(result == -1 && errno == (negative ? EINVAL : EFAULT),
+                "name readonly length result", cases);
+        require(*length == capacities[at] && !memcmp(bytes, expected, sizeof(bytes)),
+                "name readonly length preserves exact prior copy", cases);
+        require(!munmap(length, page) && !close(fd), "name readonly cleanup", cases++);
+    }
+    for (unsigned at = 0; at < 4; at++) {
+        int fd = stream();
+
+        union {
+            uint32_t alignment;
+            uint8_t bytes[128];
+        } output;
+
+        uint8_t expected[128];
+        memset(output.bytes, 0xa7, sizeof(output.bytes));
+        memset(expected, 0xa7, sizeof(expected));
+        memcpy(output.bytes, &capacities[at], 4);
+        memcpy(expected, &capacities[at], 4);
+        int negative = (int32_t)capacities[at] < 0;
+        if (!negative) {
+            uint32_t actual = sizeof(empty);
+            size_t count = capacities[at] < sizeof(empty) ? capacities[at] : sizeof(empty);
+            if (native_name_length_first)
+                memcpy(expected, &actual, 4);
+            memcpy(expected, &empty, count);
+            if (!native_name_length_first)
+                memcpy(expected, &actual, 4);
+        }
+        errno = 0;
+        long result = syscall(SYS_getsockname, fd, output.bytes, output.bytes);
+        require(result == (negative ? -1 : 0) && (!negative || errno == EINVAL),
+                "name aliased result", cases);
+        require(!memcmp(output.bytes, expected, sizeof(expected)), "name aliased exact bytes",
+                cases);
+        require(!close(fd), "name alias cleanup", cases++);
+    }
+    const unsigned prefixes[] = {1, 16, 27, 28};
+    for (unsigned readonly = 0; readonly < 2; readonly++)
+        for (unsigned at = 0; at < 4; at++) {
+            int fd = stream();
+            uint8_t* memory =
+                mmap(NULL, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            socklen_t* length =
+                mmap(NULL, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            require(memory != MAP_FAILED && length != MAP_FAILED, "name partial allocation", cases);
+            memset(memory, 0xa7, page * 2);
+            *length = sizeof(empty);
+            require(!mprotect(memory + page, page, PROT_NONE), "name partial guard", cases);
+            if (readonly)
+                require(!mprotect(length, page, PROT_READ), "name partial readonly length", cases);
+            uint8_t expected[28];
+            memset(expected, 0xa7, sizeof(expected));
+            if (!readonly || !native_name_length_first)
+                memcpy(expected, &empty, prefixes[at]);
+            uint8_t* bytes = memory + page - prefixes[at];
+            errno = 0;
+            long result = syscall(SYS_getsockname, fd, bytes, length);
+            int fault = readonly || prefixes[at] < sizeof(empty);
+            require(result == (fault ? -1 : 0) && (!fault || errno == EFAULT),
+                    "name partial result", cases);
+            require(*length == sizeof(empty) && !memcmp(bytes, expected, prefixes[at]),
+                    "name partial exact prefix", cases);
+            require(!munmap(memory, page * 2) && !munmap(length, page) && !close(fd),
+                    "name partial cleanup", cases++);
         }
     return cases;
 }
@@ -239,6 +336,12 @@ int main(void) {
     require(!uname(&identity), "kernel identity", 0);
     native_packet_precheck = !strcmp(identity.sysname, "Linux") &&
                              !strcmp(identity.release, "6.6.87.2-microsoft-standard-WSL2");
+    // Linux 7 publishes the true name length before attempting the address
+    // copy. The guest retains the measured Linux 6.17 copy-order contract.
+    native_name_length_first =
+        !strcmp(identity.sysname, "Linux") && !strcmp(identity.release, "7.0.0-1017-azure");
+    if (native_name_length_first)
+        printf("TCP6_ABI_NATIVE_NAME_COPY kernel=7.0.0-1017-azure length_first=1\n");
     if (native_packet_precheck)
         printf("TCP6_ABI_NATIVE_PRECHECK kernel=6.6.87.2-microsoft-standard-WSL2 "
                "family=17 short_cases=6 errno=97\n");
@@ -255,6 +358,10 @@ int main(void) {
     unsigned address_cases = addresses(address.sin6_port);
     unsigned option_cases = only_options();
     unsigned name_cases = names();
+    unsigned name_copy_cases = name_copy_order();
+    require(name_copy_cases == 16, "complete name copy cases", name_copy_cases);
+    printf("TCP6_NAME_COPY_PASS cases=%u length_first=%d\n", name_copy_cases,
+           native_name_length_first);
     unsigned copy_cases = option_copies();
     require(!close(listener), "close listener", 0);
     printf("TCP6_ABI_PASS address_cases=%u option_cases=%u name_cases=%u copy_cases=%u\n",

@@ -264,8 +264,17 @@ int address_out(Task& task, const void* address, uint32_t actual, uint64_t point
         return -14;
     if (int32_t(length) < 0)
         return -22;
-    if ((length && !task.memory->space.copy_out(pointer, address, min(length, actual))) ||
-        !task.memory->space.copy_out(length_pointer, &actual, 4))
+    auto bytes = static_cast<const uint8_t*>(address);
+    size_t remaining = min(length, actual);
+    while (remaining) {
+        size_t copied = min(remaining, size_t(page_size - pointer % page_size));
+        if (!task.memory->space.copy_out(pointer, bytes, copied))
+            return -14;
+        pointer += copied;
+        bytes += copied;
+        remaining -= copied;
+    }
+    if (!task.memory->space.copy_out(length_pointer, &actual, 4))
         return -14;
     return 0;
 }

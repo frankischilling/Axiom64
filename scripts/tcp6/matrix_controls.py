@@ -17,7 +17,7 @@ from tcp6.control_contract import ABI, STATE
 
 
 def run_matrix_controls(source, output, suite, audit, log_mutation=None, *,
-                        log_control_label='snapshot', log_failure=None):
+                        log_control_label='snapshot', log_failure=None, additional_log_controls=()):
     if suite not in (ABI, STATE):
         raise ValueError('unknown Internet stream control contract')
     source, output = Path(source).resolve(), Path(output).resolve()
@@ -37,8 +37,13 @@ def run_matrix_controls(source, output, suite, audit, log_mutation=None, *,
     controls += [('missing-profile', 'missing', None, None), ('repeated-profile', 'repeat', None, None),
                  ('program-source', 'source', 'static', None), ('program-image', 'program', 'static', None),
                  ('kernel-image', 'kernel', 'static', None), ('loader-image', 'loader', 'dynamic', None)]
+    log_controls = dict(additional_log_controls)
     if log_mutation is not None:
-        controls.extend((log_control_label + '-' + profile + '-' + environment, 'log', profile, environment)
+        if log_control_label in log_controls:
+            raise ValueError('duplicate control log mutation')
+        log_controls[log_control_label] = (log_mutation, log_failure)
+    for label in log_controls:
+        controls.extend((label + '-' + profile + '-' + environment, 'log:' + label, profile, environment)
                         for profile in ('static', 'dynamic') for environment in ('native', 'bios', 'uefi'))
     results = []
     for label, mutation, profile, environment in controls:
@@ -60,11 +65,12 @@ def run_matrix_controls(source, output, suite, audit, log_mutation=None, *,
             report['results'].pop()
         elif mutation == 'repeat':
             report['results'][-1] = report['results'][0]
-        elif mutation in ('count', 'log'):
+        elif mutation == 'count' or mutation.startswith('log:'):
             name = profile + '/' + ('native.log' if environment == 'native' else environment + '.log')
             data = (source / name).read_bytes()
-            if mutation == 'log':
-                data = log_mutation(data)
+            if mutation.startswith('log:'):
+                change_log, expected_failure = log_controls[mutation.removeprefix('log:')]
+                data = change_log(data)
             else:
                 damaged_marker = re.sub(r'copy_cases=(\d+)', lambda match: 'copy_cases=' + str(int(match[1])-1), suite.marker)
                 data = data.replace(suite.marker.encode(), damaged_marker.encode())
@@ -105,8 +111,8 @@ def run_matrix_controls(source, output, suite, audit, log_mutation=None, *,
         try:
             audit(candidate)
         except (ValueError, AssertionError) as failure:
-            if mutation == 'log' and log_failure is not None:
-                assert str(failure) == log_failure
+            if mutation.startswith('log:') and expected_failure is not None:
+                assert str(failure) == expected_failure
             results.append(dict(label=label, rejected=True, reason=str(failure),
                 changed_files={name: digest(candidate / name) for name in changed},
                 reopened_archive_sha256=digest(archive)))

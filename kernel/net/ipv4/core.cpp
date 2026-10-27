@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/ipv4.hpp"
+#include "net/ipv4/multicast_runtime.hpp"
 #include "net/ipv4/addresses.hpp"
 #include "net/ipv4/reassembly.hpp"
 #include "net/ipv4/fragmentation.hpp"
@@ -39,6 +40,7 @@ struct Output {
     uint32_t next_hop = 0;
     uint64_t expires = 0;
     bool ethernet_ready = false, local = false;
+    bool multicast_loop = false, looped = false;
     bool submitting = false, discard_pending = false;
     int deferred_error = 0;
     uint8_t* fragment_bytes = nullptr;
@@ -308,13 +310,14 @@ static uint32_t preferred_source(unsigned index, uint32_t destination) {
 
 static int select(Ipv4Source requested, uint32_t destination, unsigned bound, Selection& result) {
     uint32_t source = requested.address;
-    if (!destination || (!ip4::unicast(destination) && destination != UINT32_MAX))
+    bool multicast = ip4::multicast(destination);
+    if (!destination || (!ip4::unicast(destination) && !multicast && destination != UINT32_MAX))
         return -101;
     if (source && !ipv4_local(source))
         return -99;
-    if (is_loopback(source) && !is_loopback(destination))
+    if (is_loopback(source) && !is_loopback(destination) && !(multicast && bound == ipv4_loopback))
         return -99;
-    if (is_loopback(destination)) {
+    if (is_loopback(destination) || (multicast && bound == ipv4_loopback)) {
         if (bound && bound != ipv4_loopback)
             return -101;
         result = {requested.selected ? source : loopback.address,
@@ -404,8 +407,28 @@ static int select(Ipv4Source requested, uint32_t destination, unsigned bound, Se
         // Shared exceptions belong to an address on the output device.
         result.path_source = preferred ? preferred->config.address : 0;
     }
+    if (!result.found && multicast)
+        for (unsigned n = 0; auto entry = addresses.at(n); n++) {
+            if (bound && bound != entry->index)
+                continue;
+            auto info = net_info(entry->index);
+            if (!info || !info->live || !info->administrative || !info->carrier)
+                continue;
+            result = {requested.selected ? source : entry->config.address,
+                      destination,
+                      entry->index,
+                      0,
+                      0,
+                      false,
+                      false,
+                      true};
+            result.path_source = entry->config.address;
+            break;
+        }
     if (!result.found)
         return -101;
+    if (multicast)
+        result.next_hop = destination;
     auto info = net_info(result.index);
     if (!info || !info->live)
         return -5;
@@ -473,10 +496,12 @@ static void quoted_error(unsigned index, const uint8_t* payload, size_t length) 
         inet_icmp_error(index, quote, error, error == 90 ? ip4::get16(payload + 6) : 0);
 }
 
-static void input(unsigned index, const uint8_t* bytes, size_t length,
-                  bool link_broadcast = false) {
-    if (length < 20 || bytes[0] != 0x45 || ip4::get16(bytes + 2) < 20 ||
-        ip4::get16(bytes + 2) > length || ip4::checksum(bytes, 20) || !bytes[8] ||
+static void input(unsigned index, const uint8_t* bytes, size_t length, bool link_broadcast = false,
+                  bool looped = false) {
+    size_t header = length ? size_t(bytes[0] & 15) * 4 : 0;
+    if (length < 20 || (bytes[0] >> 4) != 4 || header < 20 || header > length ||
+        (header != 20 && bytes[9] != 2) || ip4::get16(bytes + 2) < header ||
+        ip4::get16(bytes + 2) > length || ip4::checksum(bytes, header) || (!bytes[8] && !looped) ||
         (ip4::get16(bytes + 6) & 0x8000))
         return;
     length = ip4::get16(bytes + 2);
@@ -484,12 +509,18 @@ static void input(unsigned index, const uint8_t* bytes, size_t length,
     auto config = ipv4_config(index);
     bool local = ipv4_local(destination);
     bool broadcast = destination == UINT32_MAX || directed_broadcast(index, destination);
-    if (!config || !ip4::unicast(source) || (!local && !broadcast) ||
+    bool multicast = ip4::multicast(destination) && ipv4_multicast_member(index, destination);
+    if (!config || !ip4::unicast(source) || (!local && !broadcast && !multicast) ||
         (index != ipv4_loopback &&
          (is_loopback(source) || is_loopback(destination) || directed_broadcast(index, source))))
         return;
+    if (bytes[9] == 2) {
+        ipv4_multicast_input(index, bytes, length);
+        return;
+    }
     auto assembled =
-        ip4::reassemble(index, bytes, length, ticks, link_broadcast, reassembly_timeout);
+        looped ? ip4::Reassembled{ip4::FragmentStatus::whole}
+               : ip4::reassemble(index, bytes, length, ticks, link_broadcast, reassembly_timeout);
     if (assembled.status == ip4::FragmentStatus::complete) {
         input(index, assembled.bytes, assembled.length, assembled.link_broadcast);
         release(assembled.bytes);
@@ -819,7 +850,7 @@ int ipv4_source(Ipv4Source source, uint32_t destination, unsigned bound_index, u
 
 static ip4::PathMtu selection_limit(const Selection& route, uint32_t destination) {
     uint32_t device = route.local ? 65535u : net_info(route.index)->mtu;
-    if (!route.local && !route.broadcast)
+    if (!route.local && !route.broadcast && !ip4::multicast(destination))
         return path_mtu.lookup(
             {route.path_source, destination, route.next_hop, route.index, route.path_owner}, device,
             ticks);
@@ -888,7 +919,8 @@ void ipv4_destination_release(Ipv4Destination& retained) {
 uint32_t ipv4_learn_pmtu(uint32_t source, uint32_t destination, unsigned index,
                          uint16_t announced_mtu, uint16_t quoted_length) {
     Selection route;
-    if (select(source, destination, index, route) || route.local || route.broadcast)
+    if (select(source, destination, index, route) || route.local || route.broadcast ||
+        ip4::multicast(destination))
         return 0;
     bool updated;
     auto learned = path_mtu.learn(
@@ -902,7 +934,8 @@ uint32_t ipv4_learn_pmtu(uint32_t source, uint32_t destination, unsigned index,
 int ipv4_send(InetSocket* owner, Ipv4Source source, uint32_t destination, unsigned bound_index,
               uint8_t protocol, uint8_t ttl, bool broadcast, const void* payload, size_t length,
               bool cache_destination, uint8_t traffic_class) {
-    if (!ttl)
+    bool multicast = ip4::multicast(destination);
+    if (!ttl && !multicast)
         return -22;
     Selection route;
     int error = select(source, destination, bound_index, route);
@@ -928,7 +961,8 @@ int ipv4_send(InetSocket* owner, Ipv4Source source, uint32_t destination, unsign
     auto slot = vacant_output();
     if (!slot)
         return -11;
-    if (!route.local && !route.broadcast && !prepare_neighbor(route.index, route.next_hop))
+    if (!route.local && !route.broadcast && !multicast &&
+        !prepare_neighbor(route.index, route.next_hop))
         return -105;
     size_t total = max(size_t(60), ethernet_header + 20 + length);
     auto bytes = static_cast<uint8_t*>(alloc(total));
@@ -955,16 +989,63 @@ int ipv4_send(InetSocket* owner, Ipv4Source source, uint32_t destination, unsign
         if (route.broadcast) {
             memset(bytes, 0xff, 6);
             ready = true;
+        } else if (multicast) {
+            bytes[0] = 1;
+            bytes[1] = 0;
+            bytes[2] = 0x5e;
+            bytes[3] = (destination >> 16) & 0x7f;
+            bytes[4] = destination >> 8;
+            bytes[5] = destination;
+            ready = true;
         }
     }
     *slot = {owner, bytes,      total, route.index, route.next_hop, ticks + retry_interval * 4,
              ready, route.local};
+    slot->multicast_loop = multicast && inet_multicast_loop(owner);
     slot->fragmentable = fragmentable;
     slot->use_path_mtu = use_path_mtu;
     slot->want_df = fragmentable && inet_dont_fragment(owner);
     slot->path_owner = route.path_owner;
     slot->path_source = route.path_source;
     return 0;
+}
+
+bool ipv4_multicast_report(unsigned index, uint32_t destination, const uint8_t* payload,
+                           size_t length) {
+    auto info = net_info(index);
+    auto config = ipv4_config(index);
+    auto slot = vacant_output();
+    if (!info || !config || !config->address || !slot || !info->live || !info->administrative ||
+        !info->carrier || length + 24 > info->mtu)
+        return false;
+    size_t total = max(size_t(60), ethernet_header + 24 + length);
+    auto bytes = static_cast<uint8_t*>(alloc(total));
+    if (!bytes)
+        return false;
+    memset(bytes, 0, total);
+    bytes[0] = 1;
+    bytes[2] = 0x5e;
+    bytes[3] = (destination >> 16) & 0x7f;
+    bytes[4] = destination >> 8;
+    bytes[5] = destination;
+    memcpy(bytes + 6, info->mac, 6);
+    ip4::put16(bytes + 12, 0x0800);
+    auto ip = bytes + ethernet_header;
+    ip[0] = 0x46;
+    ip[1] = 0xc0;
+    ip4::put16(ip + 2, 24 + length);
+    ip4::put16(ip + 4, ++identifier);
+    ip[8] = 1;
+    ip[9] = 2;
+    ip4::put32(ip + 12, config->address);
+    ip4::put32(ip + 16, destination);
+    ip[20] = 0x94;
+    ip[21] = 4;
+    ip4::put16(ip + 10, ip4::checksum(ip, 24));
+    memcpy(ip + 24, payload, length);
+    *slot = {nullptr, bytes, total, index, destination, ticks + retry_interval * 4, true, false};
+    slot->use_path_mtu = false;
+    return true;
 }
 
 void ipv4_detach_owner(InetSocket* owner) {
@@ -988,7 +1069,15 @@ void ipv4_receive(const NetInfo& info, const void* data, size_t length) {
     bool broadcast = true;
     for (unsigned i = 0; i < 6; i++)
         broadcast &= frame[i] == 0xff;
-    if (!broadcast && memcmp(frame, info.mac, 6))
+    bool multicast = false;
+    if (length >= ethernet_header + 20 && ip4::get16(frame + 12) == 0x0800) {
+        uint32_t group = ip4::get32(frame + ethernet_header + 16);
+        uint8_t mac[6]{
+            1, 0, 0x5e, uint8_t((group >> 16) & 0x7f), uint8_t(group >> 8), uint8_t(group)};
+        multicast = ip4::multicast(group) && !memcmp(frame, mac, 6) &&
+                    ipv4_multicast_member(info.index, group);
+    }
+    if (!broadcast && !multicast && memcmp(frame, info.mac, 6))
         return;
     auto type = ip4::get16(frame + 12);
     if (type == 0x0806)
@@ -1001,6 +1090,7 @@ void ipv4_poll() {
     if (polling)
         return;
     polling = true;
+    ipv4_multicast_poll();
     ip4::reassembly_expire(ticks, reassembly_timeout);
     for (auto& neighbor : neighbors) {
         if (neighbor.state != NeighborState::resolving || !neighbor_pending(neighbor) ||
@@ -1036,11 +1126,21 @@ void ipv4_poll() {
     for (auto& item : output) {
         if (!item.bytes)
             continue;
-        if (item.local) {
+        auto packet = item.bytes + ethernet_header;
+        bool multicast = ip4::multicast(ip4::get32(packet + 16));
+        if (item.local || (multicast && item.multicast_loop && !item.looped)) {
+            item.looped = true;
             item.submitting = true;
-            input(item.index, item.bytes + ethernet_header, item.length - ethernet_header);
+            if (!multicast || item.multicast_loop)
+                input(item.index, packet, item.length - ethernet_header, false, multicast);
             item.submitting = false;
-            clear(item, item.deferred_error);
+            if (item.local || item.discard_pending) {
+                clear(item, item.deferred_error);
+                continue;
+            }
+        }
+        if (multicast && !packet[8]) {
+            clear(item);
             continue;
         }
         auto info = net_info(item.index);

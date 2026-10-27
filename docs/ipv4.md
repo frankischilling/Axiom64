@@ -2,6 +2,32 @@
 
 The IPv4 host path runs over [virtio-net and QEMU e1000](network.md). It supports static addresses, loopback, connected and explicit routes, bounded ARP resolution, fragment reassembly, kernel ICMP echo replies, Linux raw ICMP sockets, [UDP datagrams](udp.md) and [TCP streams](tcp.md). BusyBox `ifconfig`, route add/delete, and numeric `ping` exercise the guest implementation. [DHCP](network-manager.md) and [DNS with TCP fallback](dns.md) have their own contracts. IPv6, complete cached-route query policy, multicast and complete IPv4 conformance remain required by the [networking roadmap](feature-roadmap.md).
 
+## IPv4 multicast qualification
+
+The IPv4 host has an initial any-source multicast implementation. Socket
+descriptions own up to 20 group/interface memberships, and interfaces aggregate
+up to 128 live or retiring groups. `IP_ADD_MEMBERSHIP` and
+`IP_DROP_MEMBERSHIP` accept the Linux `ip_mreq` and `ip_mreqn` layouts.
+`IP_MULTICAST_IF`, `IP_MULTICAST_TTL`, `IP_MULTICAST_LOOP`, and
+`IP_MULTICAST_ALL` control output selection, hop limits, local copies, and
+per-socket receive filtering. Duplicate descriptors retain the same interests;
+the last close removes them. Datagram delivery fans out only after interface,
+address, port, peer, and membership filtering.
+
+The host queues real IGMPv3 state changes and delayed query responses with
+Router Alert, TTL 1, and the control traffic class. Older queries select IGMPv1
+or IGMPv2 compatibility, including report suppression and last-reporter leave.
+Link down suspends reports; link up announces retained interests. Source-query
+state is bounded at 64 sources. INCLUDE responses split into packets that fit
+MTU 68; an overflowing query list falls back to the actual complete ASM state.
+The all-hosts group is implicit and sends no membership reports.
+
+Local native Linux and guest wire diagnostics are under qualification. They do
+not establish complete multicast conformance. Source-filter socket controls,
+general IPv6 memberships and MLD, multicast routing, broader lifecycle cases,
+independent evidence controls, and complete current-revision CI remain required.
+Unsupported source-filter controls continue to return `ENOPROTOOPT`.
+
 ## Ownership and progress
 
 `kernel/net/ipv4/addresses.cpp` owns up to 32 labelled Ethernet addresses. `core.cpp` owns 32 explicit routes, 128 interface/address-scoped neighbors, and 32 pending outputs. `socket.cpp` owns raw ICMP and UDP descriptions and receive queues. `kernel/net/udp/core.cpp` validates and constructs UDP datagrams. `kernel/net/ioctl.cpp` translates the Linux interface and legacy route structures. `kernel/include/net/ipv4_wire.hpp` shares wire access and checksum helpers between protocol modules.

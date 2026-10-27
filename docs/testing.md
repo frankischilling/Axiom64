@@ -925,3 +925,22 @@ image-directory copy were first accepted and preserved, then rejected after the
 reader correction. The same original successful guests are reopened; original
 packet times, counts, drop gates and deadlines stay unchanged. Complete current-source
 hosted and wider feature acceptance remain required.
+
+## IPv4 multicast diagnostics
+
+`make test-ipv4-multicast` exercises the production membership and IGMP module
+with address/owner bounds, shared interests, close, retryable queue admission,
+queries, source-list bounds, MTU 68 report splitting, legacy compatibility, and
+link transitions under address/undefined-behavior sanitizers.
+
+`sudo python3 scripts/ipv4_multicast_test.py --native --directory build/multicast-native`
+runs the shared C client against native Linux in an isolated network namespace
+with two TAP interfaces. `python3 scripts/ipv4_multicast_test.py --directory build/multicast-guest`
+runs it through guest virtio-net and e1000. Each directory must be new. It retains
+the complete public source, executable, compile inputs, packets, and logs; guest
+runs also retain their own kernel, initramfs, and ISO. Native captures keep
+original kernel timestamps, independent monotonic receipts, and drop counts.
+`python3 scripts/ipv4_multicast_capture.py build/multicast-guest` independently
+reopens the retained evidence. Full linkage/firmware/transport coverage,
+ordinary-user reopening, damaged-evidence checks, and hosted qualification
+remain pending. These diagnostics do not close the broader multicast contract.

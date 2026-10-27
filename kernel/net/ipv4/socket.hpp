@@ -2,6 +2,7 @@
 #pragma once
 #include "net/inet.hpp"
 #include "net/ipv4.hpp"
+#include "net/ipv4/multicast.hpp"
 #include "net/ipv6/destination.hpp"
 #include "net/tcp/address.hpp"
 
@@ -21,6 +22,7 @@ struct InetSocket {
     size_t bytes = 0, transmitted = 0;
     unsigned mtu_policy = 1;
     Ipv4Destination destination;
+    ip4::MulticastMembership multicast;
     int error = 0;
     uint8_t ttl = 64, tos = 0;
     uint8_t type = 3, protocol = 1;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/inet.hpp"
 #include "net/ipv4.hpp"
+#include "net/ipv4/multicast_runtime.hpp"
 #include "net/ipv4_wire.hpp"
 #include "net/udp.hpp"
 #include "net/tcp/socket.hpp"
@@ -74,6 +75,7 @@ void inet_consume(InetSocket* socket) {
 }
 
 void inet_dispose(InetSocket* socket) {
+    inet_multicast_close(socket);
     ipv4_detach_owner(socket);
     ipv6_detach_output(socket);
     ipv6_destination_clear(socket->destination6);
@@ -299,8 +301,11 @@ bool inet_datagram_deliver(unsigned index, uint32_t source, uint32_t destination
             (socket.peer && socket.peer != source) ||
             (socket.peer_port && __builtin_bswap16(socket.peer_port) != source_port))
             continue;
+        bool multicast = ip4::multicast(destination);
+        if (multicast && !inet_multicast_accepts(&socket, index, destination))
+            continue;
         matched = true;
-        if (broadcast) {
+        if (broadcast || multicast) {
             enqueue(socket, source, source_port, data, length);
             continue;
         }
@@ -335,12 +340,20 @@ int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* da
     if (length + overhead >
         socket->send_limit - min(socket->transmitted, size_t(socket->send_limit)))
         return -11;
-    Ipv4Source source{socket->local};
+    bool multicast = ip4::multicast(destination);
+    Ipv4Source source{ip4::multicast(socket->local) ? 0 : socket->local};
+    unsigned index = socket->index;
+    if (multicast) {
+        if (!index)
+            index = socket->multicast.output_index;
+        if (!source.selected && socket->multicast.output_address)
+            source = socket->multicast.output_address;
+    }
     bool connected = !named && destination == socket->peer;
     if (socket->type == 2 && connected) {
         if (ipv4_destination_current(socket->destination))
             source = Ipv4Source::retained(socket->local);
-        int routed = ipv4_destination(socket->destination, source, destination, socket->index);
+        int routed = ipv4_destination(socket->destination, source, destination, index);
         if (routed)
             return routed == -99 ? -101 : routed;
     }
@@ -353,10 +366,10 @@ int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* da
         }
         UdpOutput output{source,
                          destination,
-                         socket->index,
+                         index,
                          socket->local_port,
                          __builtin_bswap16(address.port),
-                         socket->ttl,
+                         multicast ? socket->multicast.ttl : socket->ttl,
                          socket->broadcast,
                          connected};
         error = udp_send(socket, output, data, length);
@@ -365,8 +378,9 @@ int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* da
         if (error == -99)
             error = -101;
     } else
-        error = ipv4_send(socket, socket->local, destination, socket->index, 1, socket->ttl,
-                          socket->broadcast, data, length);
+        error = ipv4_send(socket, source, destination, index, 1,
+                          multicast ? socket->multicast.ttl : socket->ttl, socket->broadcast, data,
+                          length);
     if (!error)
         socket->transmitted += length + overhead;
     return error ? error : int64_t(length);
@@ -440,6 +454,8 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             ((frame.rax == 54 || frame.rax == 55) && b == 41))
             return tcp6_syscall(task, frame);
     }
+    if ((frame.rax == 54 || frame.rax == 55) && b == 0 && ((c >= 32 && c <= 36) || c == 49))
+        return inet_multicast_option(task, frame, socket);
     if (inet_stream(socket)) {
         if (frame.rax == 42)
             return io_syscall(task, frame);
@@ -482,7 +498,7 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
         if (frame.rax == 49) {
             if ((socket->type == 2 || socket->type == 1) && (socket->local_port || socket->peer))
                 return -22;
-            if (value && !ipv4_local(value))
+            if (value && !ipv4_local(value) && !(socket->type == 2 && ip4::multicast(value)))
                 return -99;
             if (socket->type == 2 || socket->type == 1) {
                 unsigned port = __builtin_bswap16(address.port);
@@ -503,8 +519,13 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
                 value = 0x7f000001;
             }
             Ipv4Destination destination;
-            error = ipv4_destination(destination, socket->bound ? socket->local : 0, value,
-                                     socket->index);
+            unsigned index = socket->index;
+            if (!index && ip4::multicast(value))
+                index = socket->multicast.output_index;
+            uint32_t source = socket->bound && !ip4::multicast(socket->local) ? socket->local : 0;
+            if (!source && ip4::multicast(value))
+                source = socket->multicast.output_address;
+            error = ipv4_destination(destination, source, value, index);
             if (error)
                 return error;
             uint32_t selected = destination.path.source;

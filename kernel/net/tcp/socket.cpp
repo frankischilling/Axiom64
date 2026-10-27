@@ -476,6 +476,8 @@ void tcp_icmp_error(unsigned index, const uint8_t* bytes, size_t length) {
 
 namespace {
 int connect_to(InetSocket* socket, const tcp::Address& peer, uint16_t port, unsigned index) {
+    if (peer.is_ipv4() && (peer.ipv4() >> 28) == 14)
+        return -101;
     Ipv4Destination destination4;
     Ipv6Path destination6;
     tcp::Address local;

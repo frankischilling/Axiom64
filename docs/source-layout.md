@@ -37,6 +37,14 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `userspace/net/dhcp/` | Bounded packet codec, lease state, and bootstrap/UDP transport |
 | `userspace/tests/` | ABI, filesystem, IPC, network, process, thread, storage, desktop, and native toolchain tests |
 
+`kernel/net/ipv4/multicast/` owns socket membership aggregation, bounded IGMP
+query state, report timers, and Linux multicast controls. Its pure membership
+module shares the production interface with sanitizer checks. The existing IPv4
+output queue retains complete IGMP frames and handles driver completion.
+`ipv4_multicast_test.py` drives a shared native/guest C client;
+`ipv4_multicast_capture.py` reopens original packets independently of the live
+peer and checks complete source, products, and native kernel packet clocks.
+
 Make discovers kernel C++ sources recursively, excluding `kernel/tests/`. Object and dependency files mirror the source folders under `build/kernel/`. Compiler-generated dependencies select the headers that each object uses. New sources added to a module folder participate in the next build.
 
 Userspace program targets name their source files explicitly. Initramfs dependencies include session scripts and configuration recursively, plus the native toolchain fixtures. The root-filesystem builder preserves the guest installation paths, including `/sbin/init`, `/etc/boot-test.sh`, and `/root/toolchain-test`.

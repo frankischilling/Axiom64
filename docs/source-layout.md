@@ -271,3 +271,9 @@ on that admission decision and then use the available runner pool. The
 required aggregate includes its result. Its recorded-metadata and HTTP protocol
 checks live in `scripts/tests/storage_admission_test.py`; the original API
 observations and source fingerprints form the uploaded admission report.
+
+`userspace/tests/random/crypto_wait.c` owns the actual OpenSSL child and checks
+readiness, pending state, output and signal status. Its serial release protocol
+keeps the child pending through independent guest and native half-second
+observations in `scripts/random_crypto_wait_test.py`. Observer protocol checks
+use real subprocesses in `scripts/tests/random_crypto_wait_observer_test.py`.

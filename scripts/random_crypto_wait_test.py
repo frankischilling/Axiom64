@@ -49,16 +49,37 @@ def guest_run(command, case, mode):
                 row['blocked_syscall'] = dict(pid=int(pid), prefix_bytes=len(prefix),
                                              prefix_sha256=hashlib.sha256(prefix).hexdigest(),
                                              observed_ns=time.monotonic_ns())
+                sent = time.monotonic_ns()
                 process.stdin.write(b'B')
                 process.stdin.flush()
-                sent = time.monotonic_ns()
                 _, prefix = wait(rb'^CRYPTO_WAIT_BLOCKED mode='+mode.encode()+rb' pid='+pid+
                                  rb' elapsed_ns=\d+ credit=0\r?$')
+                guest_blocked = time.monotonic_ns()
+                # The guest's coarse clock cannot release a native elapsed-time gate.
+                # Keep the real child pending until both observers finish their wait.
+                while True:
+                    prefix = log.read_bytes()
+                    if (process.poll() is not None or b'CRYPTO_WAIT_FAIL ' in prefix or
+                            b'CRYPTO_WAIT_PASS ' in prefix or b'AXIOM64_TESTS_PASS' in prefix):
+                        raise RuntimeError('the actual readiness client released before the host barrier')
+                    remaining = 500_000_000 - (time.monotonic_ns() - sent)
+                    if remaining <= 0:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError('the actual OpenSSL readiness observation expired')
+                    time.sleep(min(.01, remaining / 1_000_000_000))
+                released = time.monotonic_ns()
+                process.stdin.write(b'R')
+                process.stdin.flush()
+                _, prefix = wait(rb'^CRYPTO_WAIT_CONFIRMED mode='+mode.encode()+rb' pid='+pid+
+                                 rb' credit=0\r?$')
                 observed = time.monotonic_ns()
-                row['blocking_barrier'] = dict(sent_ns=sent, observed_ns=observed,
-                                              elapsed_ns=observed-sent, prefix_bytes=len(prefix),
+                row['blocking_barrier'] = dict(sent_ns=sent, guest_blocked_ns=guest_blocked,
+                                              release_ns=released, release_elapsed_ns=released-sent,
+                                              observed_ns=observed, elapsed_ns=observed-sent,
+                                              prefix_bytes=len(prefix),
                                               prefix_sha256=hashlib.sha256(prefix).hexdigest())
-                if observed-sent < 500_000_000:
+                if released-sent < 500_000_000 or observed-sent < 500_000_000:
                     raise RuntimeError('the native observer did not measure the required blocking interval')
                 if mode == 'administrative':
                     seed = os.getrandom(32)
@@ -102,6 +123,14 @@ def observe(row, text, mode, native):
         if not re.search(r'^sys pid='+pid+r' nr=318 a=[0-9a-f]+ b=[0-9a-f]+ c=0\n'
                          r'sys result=-4096$', text, re.MULTILINE):
             raise RuntimeError('the actual OpenSSL process did not block in Linux getrandom')
+        confirmations = re.findall(r'^CRYPTO_WAIT_CONFIRMED mode='+mode+r' pid='+pid+
+                                   r' credit=0$', text, re.MULTILINE)
+        if len(confirmations) != 1:
+            raise RuntimeError('the real client did not confirm the host blocking barrier')
+        barrier = row.get('blocking_barrier', {})
+        if (barrier.get('release_elapsed_ns', 0) < 500_000_000 or
+                barrier.get('elapsed_ns', 0) < 500_000_000):
+            raise RuntimeError('the native observer did not retain its blocking interval')
         row['blocked_ns'] = int(blocks[0])
     outputs = re.findall(r'^CRYPTO_WAIT_OUTPUT mode='+mode+r' bytes=32 hex=([0-9a-f]{64})$',
                          text, re.MULTILINE)

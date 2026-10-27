@@ -88,6 +88,17 @@ int main(int argc, char** argv) {
         printf("CRYPTO_WAIT_BLOCKED mode=%s pid=%d elapsed_ns=%lld credit=0\n", argv[1], child,
                now() - started);
         fflush(stdout);
+        require(read(0, &observation, 1) == 1 && observation == 'R',
+                "host completed real blocking interval");
+        require(waitpid(child, &status, WNOHANG) == 0,
+                "real client remains pending through host interval");
+        unready();
+        errno = 0;
+        result = stat(argv[3], &value);
+        require((result == 0 && value.st_size == 0) || (result == -1 && errno == ENOENT),
+                "no random output through host interval");
+        printf("CRYPTO_WAIT_CONFIRMED mode=%s pid=%d credit=0\n", argv[1], child);
+        fflush(stdout);
         if (!administrative) {
             require(kill(child, SIGTERM) == 0, "pending real client signal");
             require(waitpid(child, &status, 0) == child && WIFSIGNALED(status) &&

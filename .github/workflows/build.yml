@@ -717,6 +717,7 @@ jobs:
         run: |
           firmware=${SUITE#random-crypto-}
           case "$firmware" in bios|uefi) ;; *) exit 1 ;; esac
+          python3 scripts/tests/random_crypto_wait_observer_test.py
           python3 scripts/random_crypto_test.py --firmware "$firmware" --output build/random-lifecycle/crypto
           python3 scripts/random_crypto_wait_test.py --firmware "$firmware" --output build/random-lifecycle/crypto-wait
       - name: Compare and verify real UTC clocks and libc interface inventories needed by crypto clients

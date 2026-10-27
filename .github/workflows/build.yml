@@ -51,6 +51,7 @@ jobs:
           python3 -B scripts/tests/tcp6_source_handshake_test.py -v
           python3 -B scripts/tests/manager_link_startup_test.py -v
           python3 -B scripts/tests/network_window_test.py -v
+          python3 -B scripts/tests/ipv6_owner_pair_test.py -v
       - name: Test authenticated Ubuntu index identity and retained download failures
         run: python3 scripts/tests/host_glibc_sources_test.py -v
       - name: Fingerprint crypto recipes and actual host toolchain inputs

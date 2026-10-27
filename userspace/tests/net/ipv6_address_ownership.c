@@ -420,6 +420,21 @@ static void global_cases(unsigned last) {
     }
 }
 
+static void lifecycle_conflict(unsigned scenario, unsigned trial, int link,
+                               struct address_record values[2], struct in6_addr previous[2][4]) {
+    for (unsigned lane = 0; lane < 2; lane++) {
+        if (rotate_secrets && trial == 1)
+            secret_change(lane, scenario);
+        values[lane] = exact(lane, values[lane].address);
+    }
+    // Publish both queried owners before either initial DAD wait can let
+    // the other adapter complete its tentative candidate.
+    control_pair(CONFLICT, scenario, trial, values);
+    if (link)
+        for (unsigned lane = 0; lane < 2; lane++)
+            previous[lane][trial] = values[lane].address;
+}
+
 static void lifecycle_cases(unsigned first, unsigned last) {
     for (unsigned scenario = first; scenario <= last; scenario++) {
         int link = scenario <= 7;
@@ -458,19 +473,7 @@ static void lifecycle_cases(unsigned first, unsigned last) {
                     close(configuration);
                 }
             }
-            for (unsigned lane = 0; lane < 2; lane++) {
-                if (rotate_secrets && trial == 1)
-                    secret_change(lane, scenario);
-                values[lane] = exact(lane, values[lane].address);
-                if (link) {
-                    control(lane, CONFLICT, scenario, trial, &values[lane]);
-                    previous[lane][trial] = values[lane].address;
-                }
-            }
-            // Each interface can wait for Linux's initial DAD delay. Publish
-            // both fresh finite queries before either wait can age the other.
-            if (!link)
-                control_pair(CONFLICT, scenario, trial, values);
+            lifecycle_conflict(scenario, trial, link, values, previous);
         }
         if (scenario == 5 || scenario == 6)
             recovery(scenario, 1, originals);

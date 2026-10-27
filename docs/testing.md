@@ -33,6 +33,16 @@ host's global unbound-workqueue mask temporarily. Use the native target only on
 a dedicated test host. An unexpected outside mask change fails the run while
 preserving that other owner's value.
 
+IPv6 ownership conflicts publish both adapters' freshly queried metadata before
+waiting for either acknowledgment. This preserves the tentative candidate while
+the other adapter waits for its first DAD probe. Strict owner flags, original
+DAD timers, ten-second control bounds and complete quiet windows remain in use.
+`python3 scripts/tests/ipv6_owner_pair_test.py -v` runs the actual C query/send/wait
+chain against controlled netlink replies and the actual peer validator. Its
+recorded-delay unit model reproduces a second adapter becoming ready during the
+first wait; it supplies no runtime timing qualification. Full native and guest
+ownership comparisons remain required.
+
 IPv6 TCP loss comparisons use `sudo -n make test-tcp6-wire-native` and
 `make test-tcp6-wire`. The existing TCP loss CI job runs all three native
 linkages and eight guest firmware/linkage/transport profiles, each with

@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import struct
 import subprocess
@@ -268,7 +269,12 @@ def verify(directory):
     require(type(metadata.get('native')) is bool, 'explicit multicast execution domain')
     products(directory, metadata, inputs, sources)
     text = (directory / 'client.log').read_text()
-    require('MULTICAST_FAIL' not in text and text.count('MULTICAST_TESTS_PASS') == 1 and all(text.count(marker) == 1 for marker in ('MULTICAST_ABI_PASS', 'MULTICAST_LIFETIME_PASS', 'MULTICAST_OUTPUT_REPORT_PASS')), 'actual multicast client completed every contract')
+    require('MULTICAST_FAIL' not in text and text.count('MULTICAST_TESTS_PASS') == 1 and all(text.count(marker) == 1 for marker in ('MULTICAST_ABI_PASS', 'MULTICAST_TCP_INHERIT_PASS', 'MULTICAST_LIFETIME_PASS', 'MULTICAST_OUTPUT_REPORT_PASS')), 'actual multicast client completed every contract')
+    tcp_flags = re.findall(r'^MULTICAST_TCP_FLAGS role=(\S+) loop=(-?\d+) all=(-?\d+)$', text, re.MULTILINE)
+    require(tcp_flags == [('listener-after-queue', '1', '1'), ('active-defaults', '1', '1'),
+                          ('accepted-snapshot', '0', '0'), ('listener-independent', '0', '0'),
+                          ('accepted-independent', '1', '1')],
+            'actual queued TCP multicast flags and independent descriptions')
     expected_receivers = {1: 1, 2: 2, 3: 1, 4: 0, 5: 0, 6: 2, 7: 2, 8: 0, 9: 2}
     observed = [line for line in text.splitlines() if line.startswith('MULTICAST_INGRESS')]
     require(observed == [f'MULTICAST_INGRESS lane={1 if phase in (6, 9) else 0} phase={phase} receivers={count}' for phase, count in expected_receivers.items()], 'actual socket delivery and quiet observations')

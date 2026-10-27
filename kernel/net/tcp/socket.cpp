@@ -31,7 +31,8 @@ HeaderOptions header_options(const InetSocket& socket) {
 
 // Pending requests use the live listener's headers. The final ACK takes
 // the last snapshot; accepted descriptions then own independent controls.
-void inherit_headers(InetSocket& socket, const InetSocket& listener) {
+// Multicast flag getters retain that same independent listener snapshot.
+void inherit_ip_controls(InetSocket& socket, const InetSocket& listener) {
     if (socket.tos != listener.tos || socket.traffic_class != listener.traffic_class) {
         socket.destination = {};
         ipv6_destination_clear(socket.destination6);
@@ -40,6 +41,8 @@ void inherit_headers(InetSocket& socket, const InetSocket& listener) {
     socket.tos = listener.tos;
     socket.hops = listener.hops;
     socket.traffic_class = listener.traffic_class;
+    socket.multicast.loop = listener.multicast.loop;
+    socket.multicast.all = listener.multicast.all;
 }
 
 struct TimeWaitRecord {
@@ -853,7 +856,7 @@ static void receive(unsigned index, const tcp::Address& source, const tcp::Addre
             socket.stream_peer() == source &&
             socket.peer_port == __builtin_bswap16(segment.source)) {
             if (socket.listener && socket.stream->state() == tcp::State::syn_received)
-                inherit_headers(socket, *socket.listener);
+                inherit_ip_controls(socket, *socket.listener);
             socket.stream->input(segment, now);
             if (socket.listener && !socket.accept_queued && synchronized(&socket)) {
                 auto parent = socket.listener;
@@ -900,7 +903,7 @@ static void receive(unsigned index, const tcp::Address& source, const tcp::Addre
         child->user_timeout = listener->user_timeout;
         child->user_mss = listener->user_mss;
         child->mtu_policy = listener->mtu_policy;
-        inherit_headers(*child, *listener);
+        inherit_ip_controls(*child, *listener);
         uint32_t initial;
         if (sequence(child, initial, now) || make_stream(child, now)) {
             reclaim(child);
@@ -984,7 +987,7 @@ void tcp_poll() {
                 tcp_failed(&socket, 5);
         }
         if (socket.listener && socket.stream->state() == tcp::State::syn_received)
-            inherit_headers(socket, *socket.listener);
+            inherit_ip_controls(socket, *socket.listener);
         if (socket.wire6)
             tcp6_path_mtu(&socket);
         tcp::Segment segment;

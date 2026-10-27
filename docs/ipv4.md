@@ -14,6 +14,12 @@ per-socket receive filtering. Duplicate descriptors retain the same interests;
 the last close removes them. Datagram delivery fans out only after interface,
 address, port, peer, and membership filtering.
 
+`SOCK_STREAM` accepts `IP_MULTICAST_LOOP` and `IP_MULTICAST_ALL`. Passive
+connections snapshot both flags when the handshake completes. Accepting a
+queued child or changing and closing its listener preserves the child's
+independent controls and connected stream. TCP setters for `IP_MULTICAST_IF`
+and `IP_MULTICAST_TTL` return `EINVAL`.
+
 The host queues real IGMPv3 state changes and delayed query responses with
 Router Alert, TTL 1, and the control traffic class. Older queries select IGMPv1
 or IGMPv2 compatibility, including report suppression and last-reporter leave.
@@ -25,7 +31,7 @@ The all-hosts group is implicit and sends no membership reports.
 The local baseline covers three native Linux libc/linkage profiles and eight
 static/dynamic BIOS/UEFI modern/legacy guest profiles on both adapters. Normal
 and protected ordinary readers reopen complete source, actual images, programs,
-packets and six unchanged native clock gates, and reject twenty-three serialized
+packets and six unchanged native clock gates, and reject twenty-five serialized
 evidence controls. The public cohort auditor requires the same checks for each
 new source epoch. Fresh hosted qualification, source-filter socket controls,
 general IPv6 memberships and MLD, multicast routing, broader lifecycle cases,

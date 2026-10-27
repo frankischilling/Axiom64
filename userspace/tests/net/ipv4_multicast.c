@@ -189,6 +189,63 @@ static void abi(void) {
     puts("MULTICAST_ABI_PASS");
 }
 
+static void tcp_flags(int fd, const char* role, int loop, int all) {
+    int actual_loop = -1, actual_all = -1;
+    socklen_t length = sizeof(actual_loop);
+    check(!getsockopt(fd, IPPROTO_IP, IP_MULTICAST_LOOP, &actual_loop, &length) &&
+              length == sizeof(actual_loop),
+          "TCP multicast loop query");
+    length = sizeof(actual_all);
+    check(!getsockopt(fd, IPPROTO_IP, IP_MULTICAST_ALL, &actual_all, &length) &&
+              length == sizeof(actual_all),
+          "TCP multicast all query");
+    printf("MULTICAST_TCP_FLAGS role=%s loop=%d all=%d\n", role, actual_loop, actual_all);
+    check(actual_loop == loop && actual_all == all, "TCP inherited multicast flags");
+}
+
+static void tcp_inheritance(void) {
+    int listener = socket(AF_INET, SOCK_STREAM, 0);
+    int client = socket(AF_INET, SOCK_STREAM, 0);
+    check(listener >= 0 && client >= 0, "TCP multicast inheritance endpoints");
+    option(listener, IP_MULTICAST_LOOP, 0);
+    option(listener, IP_MULTICAST_ALL, 0);
+    struct sockaddr_in local = address(0x7f000001, 0);
+    socklen_t length = sizeof(local);
+    check(!bind(listener, (struct sockaddr*)&local, sizeof(local)) && !listen(listener, 2) &&
+              !getsockname(listener, (struct sockaddr*)&local, &length) && length == sizeof(local),
+          "TCP multicast listener");
+    check(!connect(client, (struct sockaddr*)&local, sizeof(local)), "TCP multicast connect");
+    struct pollfd pending = {.fd = listener, .events = POLLIN};
+    check(poll(&pending, 1, 2000) == 1 && (pending.revents & POLLIN),
+          "TCP child queued before listener mutation");
+    option(listener, IP_MULTICAST_LOOP, 1);
+    option(listener, IP_MULTICAST_ALL, 1);
+    int accepted = accept(listener, NULL, NULL);
+    check(accepted >= 0, "TCP multicast accepted child");
+    tcp_flags(listener, "listener-after-queue", 1, 1);
+    tcp_flags(client, "active-defaults", 1, 1);
+    tcp_flags(accepted, "accepted-snapshot", 0, 0);
+    option(accepted, IP_MULTICAST_LOOP, 1);
+    option(accepted, IP_MULTICAST_ALL, 1);
+    option(listener, IP_MULTICAST_LOOP, 0);
+    option(listener, IP_MULTICAST_ALL, 0);
+    tcp_flags(listener, "listener-independent", 0, 0);
+    tcp_flags(accepted, "accepted-independent", 1, 1);
+    check(!close(listener), "close listener before retained traffic");
+    const char payload[] = "AXMC";
+    char reply[sizeof(payload)] = {0};
+    check(send(client, payload, sizeof(payload), 0) == sizeof(payload) &&
+              recv(accepted, reply, sizeof(reply), MSG_WAITALL) == sizeof(payload) &&
+              !memcmp(payload, reply, sizeof(payload)),
+          "accepted TCP data after listener close");
+    check(send(accepted, reply, sizeof(reply), 0) == sizeof(reply) &&
+              recv(client, reply, sizeof(reply), MSG_WAITALL) == sizeof(payload) &&
+              !memcmp(payload, reply, sizeof(payload)),
+          "retained TCP echo after listener close");
+    check(!close(client) && !close(accepted), "TCP multicast inheritance close");
+    puts("MULTICAST_TCP_INHERIT_PASS");
+}
+
 static void lifetime(void) {
     int owner = endpoint(PORT, GROUP), observer = endpoint(PORT, 0);
     membership(owner, IP_ADD_MEMBERSHIP, 0);
@@ -265,6 +322,7 @@ int main(void) {
     alarm(90);
     configure();
     abi();
+    tcp_inheritance();
     lifetime();
     output();
     close(controls[0]);

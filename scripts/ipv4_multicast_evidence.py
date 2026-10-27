@@ -25,6 +25,8 @@ CONTROL_ERRORS = {
     "different-actual-ISO-kernel": "actual booted ISO contains retained kernel and initramfs",
     "different-actual-initramfs-program": "actual executable inside guest initramfs",
     "missing-client-completion": "actual multicast client completed every contract",
+    "missing-TCP-inheritance-completion": "actual multicast client completed every contract",
+    "wrong-accepted-TCP-flags": "actual queued TCP multicast flags and independent descriptions",
     "false-delivery-observation": "actual socket delivery and quiet observations",
     "failed-actual-process": "actual multicast process completion",
     "omitted-original-input": "actual ingress before acknowledgment",
@@ -88,6 +90,8 @@ def create_controls(cohort, destination):
     add('different-actual-initramfs-program', fingerprints({'rootfs-network.cpio': bytes(archive)}))
     log = (guest / 'client.log').read_bytes()
     add('missing-client-completion', {'client.log': log.replace(b'MULTICAST_TESTS_PASS', b'OMITTED_CLIENT_PASS')})
+    add('missing-TCP-inheritance-completion', {'client.log': log.replace(b'MULTICAST_TCP_INHERIT_PASS', b'OMITTED_TCP_INHERIT_PASS')})
+    add('wrong-accepted-TCP-flags', {'client.log': log.replace(b'role=accepted-snapshot loop=0 all=0', b'role=accepted-snapshot loop=1 all=1')})
     add('false-delivery-observation', {'client.log': log.replace(b'phase=1 receivers=1', b'phase=1 receivers=2')})
     metadata = json.loads((guest / 'results.json').read_text())
     metadata['returncode'] = 3

@@ -937,7 +937,9 @@ link transitions under address/undefined-behavior sanitizers.
 
 `sudo python3 scripts/ipv4_multicast_test.py --native --directory build/multicast-native`
 runs the shared C client against native Linux in an isolated network namespace
-with two TAP interfaces. `python3 scripts/ipv4_multicast_test.py --directory build/multicast-guest`
+with two TAP interfaces and loopback. The same client checks queued TCP
+multicast flag snapshots, independent listener/child changes and real echo
+after listener close. `python3 scripts/ipv4_multicast_test.py --directory build/multicast-guest`
 runs it through guest virtio-net and e1000. Each directory must be new. It retains
 the complete public source, executable, compile inputs, packets, and logs; guest
 runs also retain their own kernel, initramfs, and ISO. Native captures keep
@@ -951,7 +953,7 @@ Then run
 Audit output needs a Linux filesystem with POSIX ownership and modes.
 The audit exports the actual complete source into root-owned nonwritable inputs,
 reopens all eleven cases normally and as UID 65534 in an isolated network
-namespace, and requires identical decisions. Twenty-three freshly serialized
+namespace, and requires identical decisions. Twenty-five freshly serialized
 packet, clock, process, compilation, executable and actual-image controls must
 fail for their intended reasons. Original bytes, owners and modes stay unchanged.
 Only verified disposable audit copies are removed after success; failures retain

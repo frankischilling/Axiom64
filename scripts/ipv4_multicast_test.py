@@ -87,6 +87,7 @@ def main():
         command = [str(ROOT / 'build' / program)]
         if args.profile == 'dynamic':
             command.insert(0, str(loader('build')))
+        subprocess.run(['ip', 'link', 'set', 'lo', 'up'], check=True)
         for lane in range(2):
             fd = os.open('/dev/net/tun', os.O_RDWR | os.O_NONBLOCK)
             fcntl.ioctl(fd, 0x400454ca, struct.pack('16sH', f'eth{lane}'.encode(), 0x1002))

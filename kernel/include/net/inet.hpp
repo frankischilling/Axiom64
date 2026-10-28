@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "core/base.hpp"
+#include "net/ipv4/receive.hpp"
 
 namespace ax {
 struct Task;
@@ -18,6 +19,8 @@ static_assert(sizeof(InetAddress) == 16);
 struct InetFrame {
     InetAddress source;
     size_t length;
+    Ipv4ReceiveMetadata metadata;
+    bool packet_info_prepared;
 };
 
 inline const uint8_t* inet_bytes(const InetFrame* frame) {
@@ -64,12 +67,13 @@ void inet_icmp_error(unsigned index, const uint8_t* quote, int error, uint16_t a
 
 void inet_reclaim(InetSocket*, size_t length);
 
-void inet_deliver(unsigned index, uint32_t source, uint32_t destination, uint8_t protocol,
-                  const void*, size_t);
+void inet_deliver(const Ipv4ReceiveMetadata&, const void*, size_t);
 
-bool inet_datagram_deliver(unsigned index, uint32_t source, uint32_t destination,
-                           uint16_t source_port, uint16_t destination_port, bool broadcast,
-                           const void*, size_t);
+bool inet_datagram_deliver(const Ipv4ReceiveMetadata&, uint16_t source_port,
+                           uint16_t destination_port, bool broadcast, const void*, size_t);
+
+size_t inet_receive_control(Task&, InetSocket*, const InetFrame&, uint64_t address,
+                            uint64_t capacity, uint32_t& flags);
 
 int64_t inet_send(InetSocket*, const InetAddress&, const void*, size_t, bool named = false);
 

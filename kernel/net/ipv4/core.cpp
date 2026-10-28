@@ -532,10 +532,23 @@ static void input(unsigned index, const uint8_t* bytes, size_t length, bool link
         return;
     // Raw listeners receive the complete reassembled IPv4 datagram before
     // transport validation, including malformed UDP payloads.
-    inet_deliver(index, source, destination, bytes[9], bytes, length);
+    uint32_t specific = destination;
+    if (broadcast || multicast) {
+        Selection reverse;
+        if (!select({}, source, 0, reverse))
+            specific = reverse.source;
+        else if (index == ipv4_loopback)
+            specific = loopback.address;
+        else {
+            auto preferred = addresses.preferred(index, source);
+            specific = preferred ? preferred->config.address : 0;
+        }
+    }
+    Ipv4ReceiveMetadata metadata{index,    source,   destination, specific,
+                                 bytes[9], bytes[8], bytes[1]};
+    inet_deliver(metadata, bytes, length);
     if (bytes[9] == 17) {
-        if (udp_receive(index, source, destination, broadcast, bytes + 20, length - 20) ==
-                UdpInput::unbound &&
+        if (udp_receive(metadata, broadcast, bytes + 20, length - 20) == UdpInput::unbound &&
             local && !broadcast && !link_broadcast)
             protocol_error(index, source, destination, bytes, length, 3);
         return;

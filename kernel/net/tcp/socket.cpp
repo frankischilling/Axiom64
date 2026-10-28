@@ -39,6 +39,7 @@ void inherit_ip_controls(InetSocket& socket, const InetSocket& listener) {
     }
     socket.ttl = listener.ttl;
     socket.tos = listener.tos;
+    socket.receive_options = listener.receive_options;
     socket.hops = listener.hops;
     socket.traffic_class = listener.traffic_class;
     socket.multicast.loop = listener.multicast.loop;

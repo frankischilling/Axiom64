@@ -258,23 +258,28 @@ bool inet_ready(InetSocket* socket, bool write) {
                   : (socket->shutdown & 1) || socket->count != 0);
 }
 
-static void enqueue(InetSocket& socket, uint32_t source, uint16_t port, const void* data,
-                    size_t length) {
+static void enqueue(InetSocket& socket, const Ipv4ReceiveMetadata& metadata, uint16_t port,
+                    const void* data, size_t length) {
     if (socket.count == inet_queue_count ||
         length > socket.receive_limit - min(socket.bytes, size_t(socket.receive_limit)))
         return;
     auto frame = static_cast<InetFrame*>(alloc(sizeof(InetFrame) + length));
     if (!frame)
         return;
-    *frame = {{2, __builtin_bswap16(port), network_address(source), {}}, length};
+    *frame = {{2, __builtin_bswap16(port), network_address(metadata.source), {}},
+              length,
+              metadata,
+              socket.receive_options.packet_info};
     memcpy(frame + 1, data, length);
     socket.queue[(socket.head + socket.count) % inet_queue_count] = frame;
     socket.count++;
     socket.bytes += length;
 }
 
-void inet_deliver(unsigned index, uint32_t source, uint32_t destination, uint8_t protocol,
-                  const void* data, size_t length) {
+void inet_deliver(const Ipv4ReceiveMetadata& metadata, const void* data, size_t length) {
+    unsigned index = metadata.index;
+    uint32_t source = metadata.source, destination = metadata.destination;
+    uint8_t protocol = metadata.protocol;
     if ((protocol != 1 && protocol != 17) || !data || length < 20)
         return;
     auto bytes = static_cast<const uint8_t*>(data);
@@ -291,13 +296,15 @@ void inet_deliver(unsigned index, uint32_t source, uint32_t destination, uint8_t
             (protocol == 1 && bytes[header] < 32 &&
              (socket.filter & (uint32_t(1) << bytes[header]))))
             continue;
-        enqueue(socket, source, 0, data, length);
+        enqueue(socket, metadata, 0, data, length);
     }
 }
 
-bool inet_datagram_deliver(unsigned index, uint32_t source, uint32_t destination,
-                           uint16_t source_port, uint16_t destination_port, bool broadcast,
-                           const void* data, size_t length) {
+bool inet_datagram_deliver(const Ipv4ReceiveMetadata& metadata, uint16_t source_port,
+                           uint16_t destination_port, bool broadcast, const void* data,
+                           size_t length) {
+    unsigned index = metadata.index;
+    uint32_t source = metadata.source, destination = metadata.destination;
     InetSocket* best = nullptr;
     unsigned best_score = 0;
     bool matched = false;
@@ -313,7 +320,7 @@ bool inet_datagram_deliver(unsigned index, uint32_t source, uint32_t destination
             continue;
         matched = true;
         if (broadcast || multicast) {
-            enqueue(socket, source, source_port, data, length);
+            enqueue(socket, metadata, source_port, data, length);
             continue;
         }
         unsigned score = (socket.local ? 4 : 0) + (socket.peer ? 4 : 0) +
@@ -324,7 +331,7 @@ bool inet_datagram_deliver(unsigned index, uint32_t source, uint32_t destination
         }
     }
     if (best)
-        enqueue(*best, source, source_port, data, length);
+        enqueue(*best, metadata, source_port, data, length);
     return matched;
 }
 
@@ -606,6 +613,18 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             socket->index = index;
             return 0;
         }
+        if (b == 0 && (c == 8 || c == 12 || c == 13)) {
+            int32_t length = int32_t(frame.r8);
+            if (length < 0)
+                return -22;
+            uint32_t value = 0;
+            size_t bytes = length >= 4 ? 4 : length ? 1 : 0;
+            if (bytes && !task.memory->space.copy_in(&value, d, bytes))
+                return -14;
+            auto& options = socket->receive_options;
+            (c == 8 ? options.packet_info : c == 12 ? options.ttl : options.tos) = value != 0;
+            return 0;
+        }
         if (b == 0 && c == 1) { // IP_TOS accepts an integer or a single byte.
             int32_t length = int32_t(frame.r8);
             if (length < 0)
@@ -671,9 +690,14 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             return -14;
         if (int32_t(length) < 0)
             return -22;
-        if (b == 0 && c == 1) {
+        if (b == 0 && (c == 1 || c == 8 || c == 12 || c == 13)) {
+            const auto& options = socket->receive_options;
+            int selected = c == 1    ? socket->tos
+                           : c == 8  ? options.packet_info
+                           : c == 12 ? options.ttl
+                                     : options.tos;
             uint32_t capacity = length >= 4 ? 4 : length ? 1 : 0;
-            return socket_integer_result(task, socket->tos, capacity, d, frame.r8);
+            return socket_integer_result(task, selected, capacity, d, frame.r8);
         }
         DestinationRelease finish{socket, b == 0 && (c == 10 || c == 14)};
         if (b == 1) {

@@ -1206,6 +1206,16 @@ jobs:
       - name: Compare IPv6 raw and UDP sockets with three native Linux linkages
         if: matrix.suite == 'network'
         run: sudo -n make test-ipv6-sockets-native
+      - name: Compare IPv4 receive controls, faults and description lifetime with Linux
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv4-receive-controls
+      - name: Upload complete IPv4 receive-control evidence
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-receive-controls
+          if-no-files-found: warn
+          path: build/ipv4-receive-controls
       - name: Test IPv6 receive metadata and copy faults on both adapters
         if: matrix.suite == 'network'
         run: make test-ipv6-controls

@@ -760,11 +760,17 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
             return copy_fault(-22);
     }
     uint32_t message_flags = length > request.packet_length ? 0x20 : 0;
-    uint64_t control_length =
-        ip6 && f.rax == 47
-            ? inet6_receive_control(task, request.handle->inet6, *ip6, request.control_pointer,
-                                    request.control_capacity, message_flags)
-            : 0;
+    uint64_t control_length = 0;
+    if (f.rax == 47) {
+        if (ip)
+            control_length =
+                inet_receive_control(task, request.handle->inet, *ip, request.control_pointer,
+                                     request.control_capacity, message_flags);
+        else if (ip6)
+            control_length =
+                inet6_receive_control(task, request.handle->inet6, *ip6, request.control_pointer,
+                                      request.control_capacity, message_flags);
+    }
     if (ip6 && request.address_pointer) {
         // Linux stores the full source length before copying any address bytes.
         uint64_t length_pointer =

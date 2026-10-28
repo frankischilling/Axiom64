@@ -67,7 +67,7 @@ void inet_failed(InetSocket*, int, unsigned) {
     assert(false && "output fixture has no socket error recipient");
 }
 
-void inet_deliver(unsigned, uint32_t, uint32_t, uint8_t, const void*, size_t) {
+void inet_deliver(const Ipv4ReceiveMetadata&, const void*, size_t) {
     assert(false && "ARP fixture must not deliver transport input");
 }
 
@@ -75,7 +75,7 @@ void inet_icmp_error(unsigned, const uint8_t*, int, uint16_t) {
     assert(false && "ARP fixture must not receive an ICMP error");
 }
 
-UdpInput udp_receive(unsigned, uint32_t, uint32_t, bool, const void*, size_t) {
+UdpInput udp_receive(const Ipv4ReceiveMetadata&, bool, const void*, size_t) {
     assert(false && "ARP fixture must not receive UDP");
     return UdpInput::dropped;
 }

@@ -1445,6 +1445,7 @@ MUSL_PROGRAMS += build/ipv4-multicast-source-options-static build/ipv4-multicast
 MUSL_PROGRAMS += build/ipv4-multicast-source-policy-static build/ipv4-multicast-source-policy-dynamic
 MUSL_PROGRAMS += build/ipv4-multicast-source-capacity-static build/ipv4-multicast-source-capacity-dynamic
 MUSL_PROGRAMS += build/ipv4-raw-udp-static build/ipv4-raw-udp-dynamic
+MUSL_PROGRAMS += build/ipv4-receive-controls-static build/ipv4-receive-controls-dynamic
 $(MUSL_PROGRAMS): $(MUSL_INPUTS) | musl-toolchain
 build/rootfs.cpio build/rootfs-desktop.cpio: $(MUSL_INPUTS)
 .PHONY: musl-toolchain
@@ -1550,3 +1551,12 @@ build/ipv4-multicast-queries-host: kernel/tests/net/ipv4_multicast_queries.cpp k
 .PHONY: test-ipv4-multicast-queries
 test-ipv4-multicast-queries: build/ipv4-multicast-queries-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-multicast-queries-host
+
+build/ipv4-receive-controls-native: userspace/tests/net/ipv4_receive_controls.c
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/ipv4-receive-controls-static build/ipv4-receive-controls-dynamic: userspace/tests/net/ipv4_receive_controls.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4_receive_controls.c
+
+.PHONY: test-ipv4-receive-controls
+test-ipv4-receive-controls:
+	$(PYTHON) scripts/ipv4_receive_controls_test.py

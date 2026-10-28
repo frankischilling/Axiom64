@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "net/ipv4.hpp"
+#include "net/ipv4/receive.hpp"
 
 namespace ax {
 struct InetSocket;
@@ -17,8 +18,7 @@ struct UdpOutput {
 
 enum class UdpInput { dropped, unbound, delivered };
 
-UdpInput udp_receive(unsigned index, uint32_t source, uint32_t destination, bool broadcast,
-                     const void*, size_t);
+UdpInput udp_receive(const Ipv4ReceiveMetadata&, bool broadcast, const void*, size_t);
 
 int udp_send(InetSocket* owner, const UdpOutput&, const void*, size_t);
 } // namespace ax

@@ -22,17 +22,17 @@ uint16_t checksum(uint32_t source, uint32_t destination, const uint8_t* bytes, s
 }
 } // namespace
 
-UdpInput udp_receive(unsigned index, uint32_t source, uint32_t destination, bool broadcast,
-                     const void* data, size_t length) {
+UdpInput udp_receive(const Ipv4ReceiveMetadata& metadata, bool broadcast, const void* data,
+                     size_t length) {
     auto bytes = static_cast<const uint8_t*>(data);
     if (length < 8)
         return UdpInput::dropped;
     size_t declared = ip4::get16(bytes + 4);
     if (declared < 8 || declared > length ||
-        (ip4::get16(bytes + 6) && checksum(source, destination, bytes, declared)))
+        (ip4::get16(bytes + 6) && checksum(metadata.source, metadata.destination, bytes, declared)))
         return UdpInput::dropped;
-    return inet_datagram_deliver(index, source, destination, ip4::get16(bytes),
-                                 ip4::get16(bytes + 2), broadcast, bytes + 8, declared - 8)
+    return inet_datagram_deliver(metadata, ip4::get16(bytes), ip4::get16(bytes + 2), broadcast,
+                                 bytes + 8, declared - 8)
                ? UdpInput::delivered
                : UdpInput::unbound;
 }

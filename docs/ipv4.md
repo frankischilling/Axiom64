@@ -2,6 +2,33 @@
 
 The IPv4 host path runs over [virtio-net and QEMU e1000](network.md). It supports static addresses, loopback, connected and explicit routes, bounded ARP resolution, fragment reassembly, kernel ICMP echo replies, Linux raw ICMP/UDP sockets, [UDP datagrams](udp.md) and [TCP streams](tcp.md). BusyBox `ifconfig`, route add/delete, and numeric `ping` exercise the guest implementation. [DHCP](network-manager.md) and [DNS with TCP fallback](dns.md) have their own contracts. IPv6, complete cached-route query policy, multicast and complete IPv4 conformance remain required by the [networking roadmap](feature-roadmap.md).
 
+## Receive metadata
+
+Raw ICMP, raw UDP and UDP descriptions support `IP_PKTINFO`, `IP_RECVTTL` and
+`IP_RECVTOS`. `recvmsg` returns packet information, an integer TTL and a one-byte
+TOS value in that order. Queued datagrams own their header and destination
+metadata. TTL and TOS remain available when enabled after arrival. Packet
+information retains its arrival-time preparation: enabling it only after a
+packet is queued reports the destination address with zero interface and
+specific-destination fields. Current receive-option values select controls at
+read time.
+
+Duplicate and inherited descriptors share receive options until the final
+close. An established TCP child owns an independent snapshot of its listener's
+option flags; TCP stream data does not acquire datagram ancillary records.
+Short option values, truncated control buffers, untouched padding, page-boundary
+fault prefixes, `MSG_PEEK` and `MSG_TRUNC` follow the observed Linux x86-64
+contract.
+
+The common loopback client passes three native libc profiles and four
+static/dynamic BIOS/UEFI guest profiles. Each checks 1,395 receives, 468 control
+fault cases and four description-lifetime cases. All ancillary bytes, visible
+fault prefixes, flags, lengths, errors and consumption results agree after
+mapping the actual loopback interface number. Physical-interface metadata,
+queued address/route changes, payload/source/header fault ordering and broader
+IPv4 ancillary options still require acceptance evidence. See
+[testing](testing.md) for the reproducible command and retained controls.
+
 ## IPv4 multicast qualification
 
 IPv4 socket descriptions own up to 20 group/interface memberships, and
@@ -282,7 +309,7 @@ old kernel and the original down-loopback native fixture. These are loopback
 socket and data observations; Ethernet behavior, broader raw options and current
 source-report/hosted qualification remain required.
 
-Other raw protocols, raw listen/accept/shutdown, ancillary data, `IP_HDRINCL`, error queues and unsupported options return explicit errors. [UDP](udp.md) and [TCP](tcp.md) have their own data and shutdown contracts, using common finite [socket deadlines](io.md). [Task credentials and permission checks](credentials.md) support numeric identities; persistent accounts/login, full isolation, file capabilities and complete secure-randomness acceptance remain prerequisites for the service release.
+Other raw protocols, raw listen/accept/shutdown, `IP_HDRINCL`, error queues and unsupported options return explicit errors. [UDP](udp.md) and [TCP](tcp.md) have their own data and shutdown contracts, using common finite [socket deadlines](io.md). [Task credentials and permission checks](credentials.md) support numeric identities; persistent accounts/login, full isolation, file capabilities and complete secure-randomness acceptance remain prerequisites for the service release.
 
 ## Verification
 

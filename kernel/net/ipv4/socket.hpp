@@ -25,6 +25,7 @@ struct InetSocket {
     ip4::MulticastMembership multicast;
     int error = 0;
     uint8_t ttl = 64, tos = 0;
+    Ipv4ReceiveOptions receive_options;
     uint8_t type = 3, protocol = 1;
     uint16_t peer_port = 0, local_port = 0, reported_port = 0;
     unsigned shutdown = 0;

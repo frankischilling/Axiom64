@@ -1191,3 +1191,21 @@ ambiguous location before arming. Run
 guards, unrelated poll guards and absent or duplicated queue sites. The existing
 physical removal, copied bytes, owner reclamation, surviving stream and clock
 checks remain required.
+
+## IPv4 receive-control comparison
+
+`sudo make test-ipv4-receive-controls` runs the same C client in three isolated
+Linux loopback namespaces and four static/dynamic BIOS/UEFI guests. It retains
+the corresponding source, actual programs and compile manifests, kernel,
+initramfs, ISO, QEMU commands and complete logs under
+`build/ipv4-receive-controls`. Each profile includes 1,395 receives, 468 real
+control-page fault cases and four descriptor/accepted-child lifetime cases.
+The independent reader compares every observation with Linux and rejects 19
+serialized alterations while retaining the original logs.
+
+Accepted-child checks observe actual listener readiness before changing the
+listener, so the child snapshot belongs to an established server connection.
+The check does not infer server progress from client-side `connect` completion.
+This loopback comparison does not establish physical-interface metadata,
+address/route retirement, every receive fault, or complete networking support.
+The existing network CI entry runs this comparison alongside its prior tests.

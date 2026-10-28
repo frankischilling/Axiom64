@@ -1272,6 +1272,7 @@ jobs:
           name: ipv6-host
           if-no-files-found: warn
           path: |
+            build/ipv6-capture-order
             build/ipv6-host-wire
             build/ipv6-host-native-wire
             build/ipv6-lifetime-contract

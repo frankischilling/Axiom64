@@ -56,10 +56,29 @@ def reserve_error_destination(parent_namespace):
                 ephemeral_range=Path('/proc/sys/net/ipv4/ip_local_port_range').read_text())
 
 
+def packet_profile_cpu(profile, parent_namespace):
+    """Keep a native client's barrier delivery and independent collectors on one CPU."""
+    profiles = ('native', 'static', 'dynamic')
+    namespace = Path('/proc/self/ns/net').stat().st_ino
+    if parent_namespace is None or namespace == parent_namespace or profile not in profiles:
+        raise ValueError('packet scheduling requires a known private native profile')
+    if len(list(Path('/proc/self/task').iterdir())) != 1:
+        raise ValueError('packet scheduling must precede collector threads')
+    before = sorted(os.sched_getaffinity(0))
+    cpu = before[profiles.index(profile) % len(before)]
+    os.sched_setaffinity(0, {cpu})
+    actual = sorted(os.sched_getaffinity(0))
+    if actual != [cpu]:
+        raise ValueError('native packet CPU affinity differs from its selected owner')
+    return dict(before=before, selected=cpu, actual=actual, network_namespace=namespace,
+                process=os.getpid(), policy='client-and-capture-on-one-cpu')
+
+
 def child(profile, directory, suite='host', parent_namespace=None):
     namespace = Path('/proc/self/ns/net').stat().st_ino
     if parent_namespace is None or namespace == parent_namespace:
         raise ValueError('native network fixture requires its own network namespace')
+    packet_cpu = packet_profile_cpu(profile, parent_namespace) if suite in ('pmtu', 'errors', 'cached') else None
     directory.mkdir(exist_ok=False)
     program = ROOT / 'build' / ('ipv6-' + suite + '-' + profile)
     command = [str(program)]
@@ -175,6 +194,7 @@ def child(profile, directory, suite='host', parent_namespace=None):
     (directory / 'preexecution.json').write_text(json.dumps(dict(profile=profile,
         kernel=platform.uname()._asdict(), command=command, settings=settings,
         error_destination=error_destination,
+        packet_cpu=packet_cpu,
         network_namespace=namespace, parent_network_namespace=parent_namespace,
         source_sha256=sources, product_sha256=products), indent=2) + '\n')
     peer_type = Peer

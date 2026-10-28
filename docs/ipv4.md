@@ -55,6 +55,25 @@ select IGMPv1 or IGMPv2 compatibility. Link down suspends reports and link up
 announces retained interests. The all-hosts group is implicit and sends no
 membership reports.
 
+The ASM query reader retains a 1.01-second guest ceiling. Native comparisons on
+Linux 6.17.0-1022-azure and 7.0.0-1017-azure can use a separate recorded timer
+contract. The actual x86-64 CONFIG_HZ=1000 configuration must be unchanged before
+and after both complete capture intervals. For the captured one-second query,
+Linux adds two jiffies to its random delay before timer-wheel bucket rounding.
+The longest schedule is 1.065 seconds; the original ten-millisecond observer
+allowance gives a 1.075-second native ceiling. This follows the
+[IGMP timer](https://github.com/torvalds/linux/blob/v7.0/net/ipv4/igmp.c) and
+[timer-wheel](https://github.com/torvalds/linux/blob/v7.0/kernel/time/timer.c)
+calculations. Missing native proof retains the original ceiling; invalid proof
+fails validation. Packet timestamps and the six native clock gates are unchanged.
+
+The ASM cohort requires three native Linux libc/linkage profiles and eight
+static/dynamic BIOS/UEFI modern/legacy guest profiles on both adapters. Normal
+and protected ordinary readers reopen complete source, actual images, programs
+and packets, and reject twenty-nine serialized evidence controls. Every source
+epoch needs fresh qualification. General IPv6 memberships and MLD, multicast routing, broader lifecycle cases,
+and complete multicast conformance remain required.
+
 The local source-report cohort passes 32 guest profiles: settled changes, query
 responses, minimum-MTU/live-MTU behavior and overlapping changes, each with
 static/dynamic linkage, BIOS/UEFI and modern/legacy virtio plus e1000. Independent

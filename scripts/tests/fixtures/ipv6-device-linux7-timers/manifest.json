@@ -1,0 +1,42 @@
+{
+  "diagnostic_only": true,
+  "feature_acceptance": false,
+  "original_kernel": "7.0.0-1017-azure",
+  "original_source": "76d6a6dd496e4c3b9c19bcbb1d2000b09356d286",
+  "original_artifact": "https://github.com/frankischilling/Axiom64/actions/runs/40510849460/artifacts/12741962492",
+  "artifact_sha256": "301c2146152c20d5c443e542d0c966999f6ecc8e2cdaad99cca0e6a9fae9863f",
+  "original_case": "regenerating/carrier/dynamic",
+  "original_error": "regeneration NA to ready real bound: 3110848",
+  "actual_timer_policy_not_collected_in_original_run": true,
+  "files": {
+    "lane0.clocks.jsonl": {
+      "bytes": 18926,
+      "sha256": "36d1978218d8da14ad86b26f19b3d827c40b7920c9c26c1f2b879194b0992bf1"
+    },
+    "statistics.json": {
+      "bytes": 1629,
+      "sha256": "e19fae9d91f099290280d3c337c52ad8228efac9fecad55f32755e46b6b7b0d3"
+    },
+    "lane1.clocks.jsonl": {
+      "bytes": 18926,
+      "sha256": "6c69dfdf8b7bef64c6dfaf61b795bef9826e8ad0ab221eeee17567f25dbd96ac"
+    },
+    "lane0.pcap": {
+      "bytes": 5708,
+      "sha256": "990f322d0b88e6d5c1ee32225796eff37e3aca57a02563201599eb0bd67a2c9d"
+    },
+    "lane1.pcap": {
+      "bytes": 5708,
+      "sha256": "9d023ac15fbd80b11d82a1e5d4dfcc6956206809e60a2094f7e97f971a737f38"
+    },
+    "serial.log": {
+      "bytes": 13728,
+      "sha256": "65b56b34313e28ad6d911cf0ed4bf3fbabea3b90bf7d01317cc0058aa18818fe"
+    },
+    "carrier.json": {
+      "bytes": 3439,
+      "sha256": "d76eefa9330f21813f1b9d4df2b546aafcd5a50170ce71fe2e6061cefba860d8"
+    }
+  },
+  "failed_subject": 1
+}

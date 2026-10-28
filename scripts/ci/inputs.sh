@@ -29,11 +29,33 @@ excludes=(
   --exclude='./build/openssl/*/*/*/build/*.o'
   --exclude='./build/openssl/*/*/*/build/*.a'
 )
+extra_inputs=()
 if [[ "$1" == rotation ]]; then
   excludes+=(--exclude='./build/curl' --exclude='./build/openssl'
-             --exclude='./build/rootfs.cpio' --exclude='./build/rootfs-desktop.cpio')
+             --exclude='./build/rootfs.cpio' --exclude='./build/rootfs-desktop.cpio'
+             --exclude='./build/ext2-xattr-codec'
+             --exclude='./build/gnu-reader-controls'
+             --exclude='./build/gnu-reader-public-controls'
+             --exclude='./downloads/ports')
+  # Storage fixtures use the prepared libc/password products, not the desktop
+  # or guest compiler packages. Keep the pinned UAPI archive used to verify
+  # those products, and leave the complete profile's downloads unchanged.
+  profile_paths=$(python3 - <<'PY'
+import json
+dependencies = json.load(open('dependencies.json'))
+packages = json.load(open('ports.lock.json'))['packages']
+headers, = (package for package in packages if package['name'] == 'linux-headers')
+for name in ('openssl', 'curl'):
+    print('./downloads/' + dependencies[name]['archive'])
+print('downloads/ports/' + headers['archive'])
+PY
+)
+  mapfile -t paths <<< "$profile_paths"
+  excludes+=("--exclude=${paths[0]}" "--exclude=${paths[1]}")
+  extra_inputs+=("${paths[2]}")
 fi
 # Keep source/output times and modes, including the prepared BusyBox inputs.
 tar -cf "$archive" "${excludes[@]}" . \
-  "$busybox_dir/busybox" "$busybox_dir/.config" "$busybox_dir/LICENSE" "$busybox_dir/.axiom64-toolchain"
+  "$busybox_dir/busybox" "$busybox_dir/.config" "$busybox_dir/LICENSE" "$busybox_dir/.axiom64-toolchain" \
+  "${extra_inputs[@]}"
 gzip -1 "$archive"

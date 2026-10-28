@@ -268,11 +268,12 @@ coverage. Full current-revision hosted acceptance remains required.
 ## Native reference timers and router scheduling
 
 Carrier-loss regeneration keeps a 3.1-second first-ready ceiling in Axiom64.
-The Linux 6.17.0-1022-azure reference uses a separate verified timer contract:
+The Linux 6.17.0-1022-azure or 7.0.0-1017-azure reference uses a separate verified timer contract:
 the actual CONFIG_HZ=1000 timer wheel can extend the configured DAD schedule
 to 3.112 seconds. Including the existing 100-millisecond observation allowance
 gives a 3.212-second native ceiling. This follows the
-[Linux v6.17 timer wheel](https://github.com/torvalds/linux/blob/v6.17/kernel/time/timer.c)
+[Linux v6.17 timer wheel](https://github.com/torvalds/linux/blob/v6.17/kernel/time/timer.c) and
+[Linux v7.0 timer wheel](https://github.com/torvalds/linux/blob/v7.0/kernel/time/timer.c)
 and [IPv6 delay units](https://origin.kernel.org/doc/html/v6.17/networking/ip-sysctl.html).
 Raw configuration and default timer-parameter readbacks must bracket the actual
 client and match their recorded hashes. The reader rejects altered proof;

@@ -12,6 +12,7 @@ import tempfile
 import zipfile
 
 from tcp_capture_clock import bind_native_clock
+from native_multicast_timers import inspect as inspect_timer_policy
 
 
 def require(value, reason):
@@ -48,7 +49,7 @@ def records(path):
     return rows
 
 
-def lane(path, number, native, statistics):
+def lane(path, number, native, statistics, query_upper_us=1010000):
     rows = records(path)
     clock = None
     if native:
@@ -147,7 +148,7 @@ def lane(path, number, native, statistics):
     if number == 0:
         require(output == [10, 11] and set(responses) == {200, 201}, 'actual TTL/loop output and query reports')
         for phase in responses:
-            require(0 <= responses[phase] - queries[phase] <= 1010000, 'actual unscaled query-response interval')
+            require(0 <= responses[phase] - queries[phase] <= query_upper_us, 'actual unscaled query-response interval')
         require(any(row['kind'] == 0x17 for row in reports), 'actual last-reporter IGMPv2 leave')
     else:
         require(not output and not queries, 'second interface has no foreign multicast output')
@@ -215,6 +216,8 @@ def products(directory, metadata, inputs, sources, *, program_prefix='ipv4-multi
         expected |= {'host-libc.so.6', 'host-ld-linux-x86-64.so.2'}
     if not metadata['native']:
         expected |= {'axiom64.elf', 'init', 'rootfs-network.cpio', 'guest.iso'}
+    if metadata['native'] and metadata.get('native_timer_policy') is not None:
+        expected.add('native-multicast-config.txt')
     require(set(inputs['products']) == expected, 'complete actual multicast product inventory')
     binary = (directory / program).read_bytes()
     compiled = json.loads((directory / (program + '.inputs.json')).read_text())
@@ -253,6 +256,15 @@ def products(directory, metadata, inputs, sources, *, program_prefix='ipv4-multi
                 'actual booted ISO contains retained kernel and initramfs')
 
 
+def query_timer_upper(directory, metadata):
+    policy = metadata.get('native_timer_policy')
+    if policy is None:
+        return 1010000
+    require(metadata['native'] is True, 'native timer proof cannot alter a guest query interval')
+    return inspect_timer_policy(directory, policy, metadata.get('native_kernel_release'),
+                                metadata['capture_statistics'])
+
+
 def verify(directory):
     directory = Path(directory)
     metadata = json.loads((directory / 'results.json').read_text())
@@ -268,6 +280,7 @@ def verify(directory):
     for name, expected in inputs['products'].items():
         require(Path(name).name == name and digest(name) == expected, 'actual retained multicast product bytes')
     require(type(metadata.get('native')) is bool, 'explicit multicast execution domain')
+    upper = query_timer_upper(directory, metadata)
     products(directory, metadata, inputs, sources)
     text = (directory / 'client.log').read_text()
     require('MULTICAST_FAIL' not in text and text.count('MULTICAST_TESTS_PASS') == 1 and all(text.count(marker) == 1 for marker in ('MULTICAST_ABI_PASS', 'MULTICAST_TCP_INHERIT_PASS', 'MULTICAST_LIFETIME_PASS', 'MULTICAST_OUTPUT_REPORT_PASS')), 'actual multicast client completed every contract')
@@ -282,7 +295,7 @@ def verify(directory):
     require(metadata['returncode'] == (0 if metadata['native'] else 1) and metadata['error'] is None, 'actual multicast process completion')
     clocks = metadata['capture_statistics'] if metadata['native'] else [None, None]
     require(len(clocks) == 2, 'both actual multicast captures')
-    lanes = [lane(directory / f'lane{number}.pcap', number, metadata['native'], clocks[number]) for number in range(2)]
+    lanes = [lane(directory / f'lane{number}.pcap', number, metadata['native'], clocks[number], upper) for number in range(2)]
     return dict(passed=True, source_files=len(sources), native=metadata['native'], lanes=lanes,
                 full_feature_acceptance=False, ordinary_reader_and_full_matrix_pending=True)
 

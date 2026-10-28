@@ -493,7 +493,7 @@ The hosted workflow checks proposed changes, updates to `main`, tags and manual 
 
 Tool installation uses explicit packages without optional recommendations. Only the build job installs clang-format and checks formatting; test jobs reuse the checked sources without downloading the formatter and its LLVM libraries. QEMU runs headless and desktop screenshots come from QMP. The `axiom64-boot` artifact contains the normal image, kernel, and build log. The `axiom64-evidence-*` artifacts contain each job's logs, results, traces, screenshots, and host dumps, including evidence from failed tests. Paired protocol and carrier artifacts retain each linkage's logs and reports in separate directories. `axiom64-disk-root` contains the full root image and boot copies; `axiom64-credentials-fixtures` contains permission-test disk and boot images. `axiom64-sources` carries upstream archives and exact package recipes. `axiom64-ci-inputs` is the internal build archive and expires after one day. A green run applies to its tested commit; check that commit when comparing results with local changes.
 
-Administration clean/fault jobs and their coverage aggregate reuse `axiom64-ci-rotation-inputs`. This focused archive retains their source and prepared build inputs while omitting unrelated curl/OpenSSL products and normal root images. An exact published 414,251,141-byte archive passes the previously cancelled runtime/dynamic/UEFI/legacy/writethrough fault cell locally: nine observed targets across all three fault modes, 29 total phases in 26 minutes 9 seconds, and its coverage index. The same input set also passes that profile's clean and storage controls. All sixteen clean, thirty-two administration-fault and sixty-four rotation jobs retain their commands, coverage and deadlines. Complete hosted acceptance and a full before/after runtime comparison remain required.
+Administration clean/fault jobs and their coverage aggregate reuse `axiom64-ci-rotation-inputs`. This focused archive retains their source and prepared build inputs while omitting unrelated curl/OpenSSL products and normal root images. It also omits completed GNU reader control copies, ext2 codec disk fixtures, unrelated guest compiler/desktop packages and curl/OpenSSL source downloads. The pinned Linux UAPI package, prepared libc/password products, source, build-tool bundle and boot inputs remain available. The complete input profile retains those downloads and controls. An exact published 414,251,141-byte archive passes the previously cancelled runtime/dynamic/UEFI/legacy/writethrough fault cell locally: nine observed targets across all three fault modes, 29 total phases in 26 minutes 9 seconds, and its coverage index. The same input set also passes that profile's clean and storage controls. All sixteen clean, thirty-two administration-fault and sixty-four rotation jobs retain their commands, coverage and deadlines. Complete hosted acceptance and a full before/after runtime comparison remain required.
 
 A subsequent local correction retains an automatically selected source after socket output has been admitted and copied. If that address is removed or expires while output waits, the copied packet keeps its original source while a usable route remains. Pending neighbor resolution chooses another usable local source without renewing its attempts or deadlines. Host regressions cover both adapters, explicit deletion, finite expiry, final close/reuse and source withdrawal during raw fragment submission. Actual Linux 6/7 probes and one static BIOS/modern guest cover four UDP and four fragmented raw observations, with fresh companion controls. Independent inspection reopens twelve captures and rejects 144 serialized changed controls. The public host client now appends sixteen queued-output cases to every original host and lifetime phase: both adapters, UDP and 4,000-byte fragmented raw output, deletion or finite expiry, and live or finally closed/reused descriptors. The finite cases retain one-second preferred/valid lifetimes, sample at 1.1 seconds and require actual absence within 2.5 seconds. Their original packet clocks must still show at least one second before withdrawal. Creation and selected-source neighbor barriers precede removal; delayed resolution and completion acknowledgments require the exact copied output, then fresh companion-source traffic. The complete source-bound Linux 7 client passes all sixteen new cases while preserving all 58 address rows, six source queries, eighteen lifetime exchanges and four expired-input barriers. Every actual client/image/log/capture is checked before binding the reference. All eight current guest profiles pass in 33.6ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“39.9 seconds against the unchanged 45-second deadline. Independent current readers reopen their sixteen captures and reject 240 serialized queued-output controls, including excess neighbor probes. The reference captures reject another thirty controls. The new workload includes its original native capture-bracket and reader-latency gates; a separate regression uses real packet bytes/timestamps and synthetic receipts to reject a 1,501-millisecond queued-reader delay. Those controlled receipts do not establish native timing. All three current native clients complete all sixteen cases with unchanged inputs and zero drops, but all original stable clock-offset gates fail and remain excluded. The eleven-profile local ABI comparison passes and rejects 198 changed logs without qualifying packet timing. Current-source native packet-clock qualification, complete hosted acceptance and broader retained-call/route/cache behavior remain required.
 
@@ -580,7 +580,7 @@ Readers require exact owner sets and connected-prefix counts without imposing
 address dump order. Probing and retrying use the actual probe-to-ready interval
 of one to 2.1 seconds. Regenerating during carrier loss has no replacement wire
 probe, so its first ready observation must follow the actual conflict by two to
-3.1 seconds in Axiom64. A native Linux 6.17.0-1022-azure comparison may use a
+3.1 seconds in Axiom64. A native Linux 6.17.0-1022-azure or 7.0.0-1017-azure comparison may use a
 3.212-second ceiling only with the actual kernel configuration and timer values
 recorded before and after the C workload. CONFIG_HZ must be 1000; generation and
 router-solicitation delays must remain one second, neighbor retransmission must
@@ -801,13 +801,24 @@ matrices. A same-client, identical-root-image comparison against the preceding
 kernel reproduces the original wrong-interface reply. These are local results;
 the existing TCP fault job retains complete current-revision hosted acceptance.
 
-`make test-tcp6-abi` preserves all 200 address and option-copy cases across both
-musl linkages and BIOS/UEFI. Its native address checks distinguish the explicitly
-measured WSL prevalidation profile from upstream Linux ordering; guest checks
-always require the upstream minimum-length ordering. An isolated Ubuntu
-6.8.0-147 kernel reproduces the original native failure using the unchanged
-static client. This comparison boots Linux separately and does not substitute
-for Axiom64 guest execution.
+`make test-tcp6-abi` preserves all 200 address and option-copy cases and adds
+sixteen name-copy checks across both musl linkages and BIOS/UEFI. Protected output
+pages and aliased address/length pointers check exact bytes, faults and write
+order. Axiom64 TCP copies each accessible address prefix before returning a page
+fault, then publishes the length only after the address copy succeeds. The
+four-byte length store remains atomic. Native comparisons retain this measured
+Linux 6.17 contract and separately identify the observed Linux 7.0.0-1017-azure
+length-before-address contract. All three libc profiles pass the same 216 cases
+on isolated Linux 6.6, 6.17 and 7.0 kernels. Both preceding Axiom64 linkage
+controls fail the partial-page regression. The evidence reader also rejects
+missing name-copy observations, changed case counts and forged native ordering
+profiles through serialized controls.
+
+Native address checks distinguish the explicitly measured WSL prevalidation
+profile from upstream Linux ordering; guest checks always require the upstream
+minimum-length ordering. An isolated Ubuntu 6.8.0-147 kernel reproduces the
+original native failure using the unchanged static client. Linux comparisons
+boot separately and do not substitute for Axiom64 guest execution.
 
 `python3 -B scripts/tests/ports_download_test.py -v` exercises the actual archive
 downloader through an owned local HTTP server. Simultaneous cold callers share
@@ -968,6 +979,15 @@ runs it through guest virtio-net and e1000. Each directory must be new. It retai
 the complete public source, executable, compile inputs, packets, and logs; guest
 runs also retain their own kernel, initramfs, and ISO. Native captures keep
 original kernel timestamps, independent monotonic receipts, and drop counts.
+Supported native Linux references additionally retain the actual kernel
+configuration before and after every capture interval. The one-second IGMP
+query schedule is enumerated over 64,000 jiffy/delay combinations: the longest
+is 1.065 seconds, followed by the original ten-millisecond observer allowance.
+Only validated native proof selects 1.075 seconds. Guests and missing native
+proof retain 1.01 seconds. Changed configuration, kernel identity, bounds,
+schema or allowance fails validation. Eight host regressions retain the original
+late packets and distinguish diagnostic guard inputs from actual runtime proof.
+
 `python3 scripts/ipv4_multicast_capture.py build/multicast-guest` independently
 reopens the retained evidence. The complete local cohort covers three native libc/linkage profiles and eight
 guest linkage/firmware/transport profiles. Run it with

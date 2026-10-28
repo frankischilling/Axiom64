@@ -88,7 +88,9 @@ jobs:
       - name: Test copied fixture executables retain Linux execution permissions
         run: python3 scripts/tests/random_executable_copy_test.py -v
       - name: Replay actual RTC firmware writes and reject damaged calendar observations
-        run: python3 scripts/tests/clock_wall_observer_test.py -v
+        run: |
+          python3 scripts/tests/clock_wall_observer_test.py -v
+          python3 scripts/tests/clock_wall_boundary_test.py -v
       - name: Require complete and unaltered storage target shard unions
         run: python3 scripts/tests/account_storage_shards_test.py -v
       - name: Require every rotation variant, target and actual fault mode

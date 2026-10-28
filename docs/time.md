@@ -94,6 +94,7 @@ make test-clock-codec
 make test-rtc-codec
 make test-clock
 make test-clock-wall-native
+make test-clock-wall-boundary
 make test-clock-wall
 python3 scripts/clock_test.py --firmware bios --transport modern --counter tsc --delay 3
 ```
@@ -103,6 +104,17 @@ arithmetic (49152 samples), fractional intervals, invalid scales, backward
 readings, wrap, and saturation. ACPI fixtures include five valid layouts,
 29 malformed cases, and 16000 bounded mutations. Invalid parsing preserves
 the caller's previous result.
+
+Calendar comparisons bracket `gettimeofday` with precise realtime samples and
+the raw `time` syscall with `CLOCK_REALTIME_COARSE` samples. Linux cached seconds
+can trail precise realtime across a second boundary. Every original sample and
+the returned/stored seconds are retained and checked independently. Both clock
+brackets must fit the original independent calendar interval. Boundary fixtures
+exercise the complete client and reject changed values, invalid
+fractions and observations outside their actual brackets. Native process records
+retain the actual kernel, host interval and failure details even when a client
+does not complete. Calendar tolerances, real futex waits and guest clocks retain
+their existing bounds.
 
 RTC sanitizer checks compare 14880 calendar/encoding cases against native
 UTC conversion, all 24 hour encodings, 100 legacy-century dates, 16000 bounded

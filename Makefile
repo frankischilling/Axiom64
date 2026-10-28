@@ -1466,7 +1466,7 @@ test-ipv6-cached-native:
 	$(PYTHON) scripts/ipv6_host_native.py --suite cached
 
 .PHONY: test-ipv4-multicast
-build/ipv4-multicast-host: kernel/tests/net/ipv4_multicast.cpp $(filter-out %/runtime.cpp %/source_options.cpp,$(IPV4_MULTICAST_CORE)) kernel/include/net/ipv4/multicast.hpp kernel/include/net/ipv4/source_filter.hpp kernel/include/net/ipv4/source_aggregate.hpp kernel/include/net/ipv4_wire.hpp
+build/ipv4-multicast-host: kernel/tests/net/ipv4_multicast_memory.cpp kernel/tests/net/ipv4_multicast_memory.hpp kernel/include/net/ipv4/query_sources.hpp kernel/include/core/base.hpp kernel/tests/net/ipv4_multicast.cpp $(filter-out %/runtime.cpp %/source_options.cpp,$(IPV4_MULTICAST_CORE)) kernel/include/net/ipv4/multicast.hpp kernel/include/net/ipv4/source_filter.hpp kernel/include/net/ipv4/source_aggregate.hpp kernel/include/net/ipv4_wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 test-ipv4-multicast: build/ipv4-multicast-host
@@ -1500,7 +1500,7 @@ build/ipv4-source-filter-host: kernel/tests/net/ipv4_source_filter.cpp kernel/ne
 test-ipv4-source-filter: build/ipv4-source-filter-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-source-filter-host
 
-build/ipv4-multicast-source-host: kernel/tests/net/ipv4_multicast_source_host.cpp $(filter-out %/runtime.cpp %/source_options.cpp,$(IPV4_MULTICAST_CORE)) kernel/include/net/ipv4/multicast.hpp kernel/include/net/ipv4/source_filter.hpp kernel/include/net/ipv4/source_aggregate.hpp kernel/include/net/ipv4_wire.hpp
+build/ipv4-multicast-source-host: kernel/tests/net/ipv4_multicast_memory.cpp kernel/tests/net/ipv4_multicast_memory.hpp kernel/include/net/ipv4/query_sources.hpp kernel/include/core/base.hpp kernel/tests/net/ipv4_multicast_source_host.cpp $(filter-out %/runtime.cpp %/source_options.cpp,$(IPV4_MULTICAST_CORE)) kernel/include/net/ipv4/multicast.hpp kernel/include/net/ipv4/source_filter.hpp kernel/include/net/ipv4/source_aggregate.hpp kernel/include/net/ipv4_wire.hpp
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 .PHONY: test-ipv4-multicast-source-host
 test-ipv4-multicast-source-host: build/ipv4-multicast-source-host
@@ -1527,7 +1527,7 @@ build/ipv4-source-reports-host: kernel/tests/net/ipv4_multicast_source_reports.c
 test-ipv4-source-reports: build/ipv4-source-reports-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-source-reports-host
 
-build/ipv4-multicast-source-wire-host: kernel/tests/net/ipv4_multicast_source_wire.cpp $(filter-out %/runtime.cpp %/source_options.cpp,$(IPV4_MULTICAST_CORE)) kernel/include/net/ipv4/multicast.hpp kernel/include/net/ipv4/source_filter.hpp kernel/include/net/ipv4/source_aggregate.hpp kernel/include/net/ipv4_wire.hpp
+build/ipv4-multicast-source-wire-host: kernel/tests/net/ipv4_multicast_memory.cpp kernel/tests/net/ipv4_multicast_memory.hpp kernel/include/net/ipv4/query_sources.hpp kernel/include/core/base.hpp kernel/tests/net/ipv4_multicast_source_wire.cpp $(filter-out %/runtime.cpp %/source_options.cpp,$(IPV4_MULTICAST_CORE)) kernel/include/net/ipv4/multicast.hpp kernel/include/net/ipv4/source_filter.hpp kernel/include/net/ipv4/source_aggregate.hpp kernel/include/net/ipv4_wire.hpp
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 .PHONY: test-ipv4-multicast-source-wire-host
 test-ipv4-multicast-source-wire-host: build/ipv4-multicast-source-wire-host
@@ -1544,3 +1544,9 @@ build/ipv4-raw-udp-native: userspace/tests/net/ipv4_raw_udp.c
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
 build/ipv4-raw-udp-static build/ipv4-raw-udp-dynamic: userspace/tests/net/ipv4_raw_udp.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4_raw_udp.c
+
+build/ipv4-multicast-queries-host: kernel/tests/net/ipv4_multicast_queries.cpp kernel/tests/net/ipv4_multicast_memory.cpp kernel/tests/net/ipv4_multicast_memory.hpp kernel/net/ipv4/multicast/query_sources.cpp kernel/include/net/ipv4/query_sources.hpp kernel/include/core/base.hpp kernel/include/net/ipv4_wire.hpp
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+.PHONY: test-ipv4-multicast-queries
+test-ipv4-multicast-queries: build/ipv4-multicast-queries-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-multicast-queries-host

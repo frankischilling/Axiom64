@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Run and independently reopen all five source-filter cases and 55 profiles."""
+"""Run and independently reopen all six source-filter cases and 66 profiles."""
 import argparse
 from collections import Counter
 import hashlib
@@ -17,7 +17,7 @@ from ipv4_multicast.source_capture import verify as verify_case
 from ipv4_multicast_capture import cpio, require
 from tcp6.inputs import digest, freeze
 
-SCENARIOS = ('delivery', 'settled', 'queries', 'mtu', 'overlap')
+SCENARIOS = ('delivery', 'settled', 'queries', 'mtu', 'overlap', 'query-bounds')
 CLIENT = ('userspace/tests/net/ipv4_multicast_source_wire.c',
           'userspace/tests/net/ipv4_multicast_source_delivery.c',
           'userspace/tests/net/ipv4_multicast_source_delivery.h')
@@ -97,7 +97,7 @@ def verify(directory, domain='all'):
     index = json.loads((directory / 'source-matrix.json').read_text())
     require(domain in ('all', 'guest'), 'explicit source matrix verification domain')
     require(index['version'] == 1 and index['complete'] is True and index['cases'] == specifications(),
-            'source matrix complete fixed 55-profile inventory')
+            'source matrix complete fixed 66-profile inventory')
     inputs = snapshot(directory, index['source'])
     require(digest(directory / 'kernel.elf') == index['kernel_sha256'] and
             set(index['programs']) == {'native', 'static', 'dynamic'} and
@@ -126,7 +126,7 @@ def verify(directory, domain='all'):
     delivery = [row for row in results if row['scenario'] == 'delivery']
     report_lanes = [lane for row in reporting for lane in row['lanes']]
     delivery_lanes = [lane for row in delivery for lane in row['lanes']]
-    return dict(passed=True, domain=domain, profiles=len(results), native_profiles=15 if domain == 'all' else 0, guest_profiles=40,
+    return dict(passed=True, domain=domain, profiles=len(results), native_profiles=18 if domain == 'all' else 0, guest_profiles=48,
                 source_files=len(inputs), actual_kernel_sha256=index['kernel_sha256'],
                 reports=sum(row['reports'] for row in report_lanes),
                 queries=sum(row['queries'] for row in report_lanes),

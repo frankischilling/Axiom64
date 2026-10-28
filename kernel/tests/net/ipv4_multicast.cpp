@@ -226,8 +226,17 @@ static void queries() {
     bytes = query(group, many);
     host.receive(1, group, bytes.data(), bytes.size(), true, 2400);
     host.poll(2500, Sink::emit, &sink);
-    assert(sink.reports.size() == 17 && sink.reports.back().bytes[8] == 2 &&
-           sink.reports.back().bytes.size() == 16);
+    assert(sink.reports.size() == 26);
+    checked = 0;
+    for (unsigned n = 16; n < sink.reports.size(); n++) {
+        const auto& report = sink.reports[n].bytes;
+        assert(report[8] == 1);
+        unsigned count = get16(report.data() + 10);
+        assert(count && count <= 7 && report.size() == 16 + count * 4);
+        for (unsigned source = 0; source < count; source++)
+            assert(get32(report.data() + 16 + source * 4) == many[checked++]);
+    }
+    assert(checked == many.size());
 }
 
 static void compatibility() {

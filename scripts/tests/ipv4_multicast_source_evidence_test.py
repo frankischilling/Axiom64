@@ -29,11 +29,11 @@ def pcap(rows):
     return bytes(body)
 
 
-def mutate_report(frame, *, source=None, kind=None):
+def mutate_report(frame, *, source=None, kind=None, source_index=0):
     frame = bytearray(frame)
     offset = 14 + 24
     if source is not None:
-        struct.pack_into('!I', frame, offset + 16, source)
+        struct.pack_into('!I', frame, offset + 16 + source_index * 4, source)
     if kind is not None:
         frame[offset + 8] = kind
     total = int.from_bytes(frame[16:18], 'big')
@@ -49,6 +49,18 @@ def replace_sources(frame, sources):
     frame.extend(b''.join(struct.pack('!I', source) for source in sources))
     struct.pack_into('!H', frame, 48, len(sources))
     struct.pack_into('!H', frame, 16, len(frame) - 14)
+    frame[24:26] = frame[40:42] = b'\0\0'
+    struct.pack_into('!H', frame, 24, checksum(bytes(frame[14:38])))
+    struct.pack_into('!H', frame, 40, checksum(bytes(frame[38:])))
+    return bytes(frame).ljust(60, b'\0')
+
+
+def trim_query(frame, source):
+    end = 14 + int.from_bytes(frame[16:18], 'big')
+    frame = bytearray(frame[:end - 4])
+    if source:
+        struct.pack_into('!H', frame, 48, int.from_bytes(frame[48:50], 'big') - 1)
+    struct.pack_into('!H', frame, 16, end - 18)
     frame[24:26] = frame[40:42] = b'\0\0'
     struct.pack_into('!H', frame, 24, checksum(bytes(frame[14:38])))
     struct.pack_into('!H', frame, 40, checksum(bytes(frame[38:])))
@@ -80,7 +92,7 @@ def run(source, output):
     rows = records(source / 'lane0.pcap')
     reports = [n for n, row in enumerate(rows) if row['frame'][12:14] == b'\x08\x00' and row['frame'][38] == 0x22]
     assert (len(reports) >= 12 if positive['scenario'] == 'overlap' else
-            len(reports) == {'settled': 14, 'queries': 14, 'mtu': 38}[positive['scenario']])
+            len(reports) == {'settled': 14, 'queries': 14, 'mtu': 38, 'query-bounds': 12}[positive['scenario']])
     reports_by_stage, queries_by_stage = {}, {}
     stage = None
     for n, row in enumerate(rows):
@@ -123,9 +135,18 @@ def run(source, output):
     prefix = {'settled': b'IPV4_SOURCE_WIRE_PASS stages=7',
               'queries': b'IPV4_SOURCE_WIRE_QUERY_PASS stages=12',
               'mtu': b'IPV4_SOURCE_WIRE_MTU_PASS stages=7',
-              'overlap': b'IPV4_SOURCE_WIRE_OVERLAP_PASS stages=7'}[positive['scenario']]
+              'overlap': b'IPV4_SOURCE_WIRE_OVERLAP_PASS stages=7',
+              'query-bounds': b'IPV4_SOURCE_WIRE_QUERY_BOUNDS_PASS stages=8'}[positive['scenario']]
     body = (source / 'client.log').read_bytes().replace(prefix, prefix.replace(b'stages=', b'stages=0'))
     variants.append(('missing-completion', {'client.log': body}, 'actual source multicast client completion'))
+    metadata = json.loads((source / 'results.json').read_text())
+    for field, value, reason in (
+            ('firmware', 'uefi' if metadata['firmware'] == 'bios' else 'bios', 'actual source guest firmware'),
+            ('transport', 'legacy' if metadata['transport'] == 'modern' else 'modern',
+             'actual source paired devices and virtio transport')):
+        changed = dict(metadata)
+        changed[field] = value
+        variants.append(('different-declared-' + field, {'results.json': encoded(changed)}, reason))
     program = 'ipv4-multicast-source-wire-' + positive['profile']
     manifest = json.loads((source / (program + '.inputs.json')).read_text())
     manifest['sources']['userspace/tests/net/ipv4_multicast_source_wire.c'] = '0' * 64
@@ -137,6 +158,46 @@ def run(source, output):
     image[offset] ^= 1
     variants.append(('different-actual-iso-kernel', {'guest.iso': bytes(image)},
                      'actual booted ISO contains retained kernel and initramfs'))
+    if positive['scenario'] == 'query-bounds':
+        n = queries_by_stage[2]
+        variants.append(('omitted-unmatched-65-source-query', {'lane0.pcap': pcap(rows[:n] + rows[n + 1:])},
+                         'every original source query captured'))
+        changed = [dict(row) for row in rows]
+        n = queries_by_stage[7]
+        changed[n]['frame'] = trim_query(changed[n]['frame'], True)
+        variants.append(('truncated-maximum-query-valid-checksums', {'lane0.pcap': pcap(changed)},
+                         'actual complete source query and response interval'))
+        changed = [dict(row) for row in rows]
+        n = queries_by_stage[3]
+        changed[n]['frame'] = trim_query(changed[n]['frame'], False)
+        variants.append(('missing-extra-query-octets-valid-checksums', {'lane0.pcap': pcap(changed)},
+                         'actual complete source query and response interval'))
+        changed = [dict(row) for row in rows]
+        n = reports_by_stage[6][0]
+        changed[n]['frame'] = mutate_report(changed[n]['frame'], source=0xc0000265, source_index=64)
+        variants.append(('different-65th-response-source-valid-checksum', {'lane0.pcap': pcap(changed)},
+                         'RFC 9776 source-query record'))
+        changed = [dict(row) for row in rows]
+        changed[n]['frame'] = replace_sources(mutate_report(changed[n]['frame'], kind=2), [0xc0000201])
+        variants.append(('native-large-exclude-exception-forged-as-guest', {'lane0.pcap': pcap(changed)},
+                         'RFC 9776 source-query record'))
+        n = reports_by_stage[7][1]
+        variants.append(('missing-maximum-query-response-piece', {'lane0.pcap': pcap(rows[:n] + rows[n + 1:])},
+                         'RFC 9776 source-query record'))
+        repeated = dict(rows[n])
+        repeated['stamp'] += 1
+        variants.append(('repeated-maximum-query-response-piece', {'lane0.pcap': pcap(rows[:n + 1] + [repeated] + rows[n + 1:])},
+                         'RFC 9776 source-query record'))
+        lines = []
+        for line in (source / 'client.log').read_text().splitlines():
+            if line.startswith('{'):
+                row = json.loads(line)
+                if row.get('kind') == 'query-link' and row['lane'] == 0:
+                    row['mtu'] = 9000
+                    line = json.dumps(row)
+            lines.append(line)
+        variants.append(('different-actual-query-link-MTU', {'client.log': ('\n'.join(lines) + '\n').encode()},
+                         'actual source query Ethernet MTU on both interfaces'))
     if positive['scenario'] == 'queries':
         changed = [dict(row) for row in rows]
         n = reports_by_stage[8][0]
@@ -272,7 +333,7 @@ def run(source, output):
         for name in originals:
             path = case / name;path.parent.mkdir(parents=True, exist_ok=True);path.symlink_to(source / name)
         inputs = json.loads((source / 'inputs.json').read_text())
-        metadata = json.loads((source / 'results.json').read_text())
+        metadata = json.loads(changes.get('results.json', (source / 'results.json').read_bytes()))
         for name, body in changes.items():
             if name in inputs['products']:
                 inputs['products'][name] = hashlib.sha256(body).hexdigest()

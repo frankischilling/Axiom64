@@ -703,9 +703,20 @@ static void limits(unsigned lane) {
               errno == EAGAIN,
           "UDP descriptor validates destination port and nonblocking empty receive");
     check(close(control) == 0, "UDP control close");
-    check(socket(AF_INET, SOCK_STREAM, IPPROTO_UDP) == -1 && errno == EPROTONOSUPPORT &&
-              socket(AF_INET, SOCK_RAW, IPPROTO_UDP) == -1 && errno == EPROTONOSUPPORT,
-          "invalid stream and unimplemented raw protocols are explicit");
+    check(socket(AF_INET, SOCK_STREAM, IPPROTO_UDP) == -1 && errno == EPROTONOSUPPORT,
+          "UDP protocol rejects stream sockets");
+    control = socket(AF_INET, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, IPPROTO_UDP);
+    check(control >= 0, "raw UDP control socket");
+    int kind = 0, protocol = 0;
+    length = sizeof(kind);
+    check(getsockopt(control, SOL_SOCKET, SO_TYPE, &kind, &length) == 0 && length == sizeof(kind) &&
+              kind == SOCK_RAW,
+          "raw UDP socket type");
+    length = sizeof(protocol);
+    check(getsockopt(control, SOL_SOCKET, SO_PROTOCOL, &protocol, &length) == 0 &&
+              length == sizeof(protocol) && protocol == IPPROTO_UDP,
+          "raw UDP protocol query");
+    check(close(control) == 0, "raw UDP control close");
     printf("IPV4_LIMITS_PASS index=%u\n", lane + 1);
 }
 

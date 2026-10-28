@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "net/ipv4/source_filter.hpp"
+#include "net/ipv4/query_sources.hpp"
 #include "net/ipv4/source_reports.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -34,6 +35,10 @@ class MulticastHost {
     static constexpr unsigned group_capacity = 128, interface_capacity = 16;
     using Emit = bool (*)(void*, unsigned, uint32_t, const uint8_t*, size_t);
 
+    MulticastHost() = default;
+    MulticastHost(const MulticastHost&) = delete;
+    MulticastHost& operator=(const MulticastHost&) = delete;
+
     void seed(uint32_t);
     int join(MulticastMembership&, unsigned index, uint32_t group, uint64_t now);
     int leave(MulticastMembership&, unsigned index, uint32_t group, uint64_t now);
@@ -60,8 +65,8 @@ class MulticastHost {
         MulticastSourceAggregate interest;
         MulticastSourceReports reports;
         uint64_t change = 0, response = 0;
-        uint32_t sources[64]{};
-        unsigned source_count = 0, response_cursor = 0;
+        MulticastQuerySources query;
+        unsigned response_cursor = 0;
         bool last_reporter = false;
     };
 
@@ -73,6 +78,8 @@ class MulticastHost {
         uint64_t v1_until = 0, v2_until = 0;
     };
 
+    // Declared first so pending sets release their copies before this budget.
+    MulticastQueryBudget query_budget;
     Group groups[group_capacity]{};
     Link links[interface_capacity]{};
     uint32_t random_state = 0x4158494f;

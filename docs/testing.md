@@ -1019,12 +1019,12 @@ multicast contract remain required.
 The source-list, aggregate, report counter and production host checks are
 `make test-ipv4-source-filter test-ipv4-source-aggregate
 test-ipv4-multicast-source-host test-ipv4-source-reports
-test-ipv4-multicast-source-wire-host`. They cover transactional admission,
+test-ipv4-multicast-source-wire-host test-ipv4-multicast-queries`. They cover transactional admission,
 hidden contributors at final close, output refusal, legacy retries, query
 selection, MTU changes and separate mode/source retransmission obligations.
 
 The shared C wire client performs actual socket operations on both interfaces.
-Choose `delivery`, `settled`, `queries`, `mtu` or `overlap` with `--source-case`:
+Choose `delivery`, `settled`, `queries`, `mtu`, `overlap` or `query-bounds` with `--source-case`:
 
 ```sh
 sudo -n python3 -B scripts/ipv4_multicast_test.py --suite source --source-case mtu --profile dynamic --firmware uefi --transport legacy --directory build/multicast-source-mtu
@@ -1063,14 +1063,14 @@ reader matches every received byte and source/port against the original wire
 packet and requires complete 200 ms quiet windows, full three-second physical
 observations and exact independent queue masks.
 
-Run the complete five-case cohort and protected root/ordinary-user readbacks:
+Run the complete six-case cohort and protected root/ordinary-user readbacks:
 
 ```sh
 sudo -n env PYTHONPATH=scripts python3 -B -m ipv4_multicast.source_matrix build/ipv4-source-evidence --produce
 sudo -n env PYTHONPATH=scripts python3 -B -m ipv4_multicast.source_protected --directory build/ipv4-source-evidence --output build/ipv4-source-audit
 ```
 
-The default contract requires all 55 profiles: three native linkages and eight
+The default contract requires all 66 profiles: three native linkages and eight
 guest linkage/firmware/transport combinations per case. Each linkage uses one
 byte-identical common C executable. The reader binds the original cohort
 kernel, kernel sources, both C implementation files, header, init, shell and
@@ -1078,7 +1078,7 @@ native/musl runtimes to preexecution fingerprints. Eight serialized cohort
 controls include internally consistent altered ELF/loader images and source
 archives, which individual-case readers accept but cohort binding must reject.
 
-The local current-kernel audit accepts all 40 guests: 1,250 reporting records,
+The retained preceding-kernel local audit accepts all 40 guests: 1,250 reporting records,
 176 queries, 496 complete reporting windows and 32 first-packet barriers, plus
 256 delivery sends, 736 receives, 128 complete quiet windows and 128 complete
 delivery wire windows. Root and UID 65534 each reject 60 reporting, 36 delivery
@@ -1087,18 +1087,56 @@ The overlap regression replays both captured legal report/call interleavings;
 counterfeits still reject missing retries, extra old-mode/final-block copies,
 wrong directions and two retries bundled into one physical packet.
 
-Four of the fifteen local native captures qualify. Eleven original native
+Four of the fifteen preceding local native captures qualify. Eleven original native
 captures retain their failed stable clock-offset checks. For this diagnostic
 situation only, explicitly pass `--domain guest` to the cohort and protected
-readers; production always attempts all 55, default verification still requires
-all 55, and the scoped result records full native/guest acceptance as false.
+readers; production always attempts all 66, default verification still requires
+all 66, and the scoped result records full native/guest acceptance as false.
 CI uses the default full contract in the `ipv4-source-filters` test entry.
 Its 75-minute deadline and original 100-second profile deadlines remain.
 The existing network entry previously took 63 minutes; the additional suite
 runs separately and retains all original entries. Current-source hosted timing
 and full native/guest acceptance remain to be measured.
 
+`query-bounds` requires actual MTU 1500 readback on both interfaces. It injects
+65 unrelated sources into an INCLUDE filter, a checksummed query with four
+additional octets, 65 duplicate sources, and EXCLUDE queries with 65 and 366
+unblocked sources. The independent reader verifies the complete original query
+and response source lists, all checksums and every physical output piece.
+The measured native EXCLUDE difference remains explicit; guest responses follow
+RFC 9776 Table 5. All eight phases retain full three-second observations.
+
+The query store has a shared 256 KiB budget. Sanitized checks exercise complete
+IPv4-sized input lists, sorted unions, caller-buffer ownership, peak budget
+accounting, allocation failure, cursor preservation and teardown. A failed merge
+preserves an accepted query; it cannot convert the response into a full-group
+record. The original production-module replay fails before and passes after
+the correction for both 65-source filters and valid trailing octets.
+
+The expanded protected audit requires 132 serialized controls per identity:
+12 settled, 16 query, 19 MTU, 21 overlap, 20 query-bounds, 36 delivery and eight
+cohort controls. Reporting readback now checks actual firmware boot text and
+the recorded paired-device/virtio transport command. The original serialized
+firmware/transport counterfeits were accepted before these checks; both now
+reject. The six-case audit on the new kernel accepts all 48 guest profiles: 1,440 reporting
+records, 256 actual queries, 624 complete reporting windows and 32 first-packet
+barriers, plus 256 delivery sends, 736 receives, 128 complete 200 ms quiet windows and
+128 complete three-second delivery windows. Root and UID 65534 independently reopen the
+original evidence and each reject all 132 serialized controls. 7 of eighteen local
+native captures qualify. The remaining original native failures stay rejected; the
+explicit guest diagnostic result does not establish full native/guest acceptance.
+Default production and hosted verification require all 66 profiles. Complete
+current-source hosted qualification and broader multicast behavior remain required.
+Diagnostic controls use an independently qualified native delivery capture from the same
+cohort. Every original native outcome remains recorded; the default full contract still
+requires all eighteen native profiles.
+
 ### Raw UDP sockets and source-filtered loopback data
+
+The IPv4 limits fixture requires rejection of a UDP stream socket, successful raw UDP
+creation, exact socket type/protocol queries and final close. All eight normal/fault
+BIOS/UEFI modern/legacy IPv4 profiles pass on the new kernel, retaining both adapters
+and the complete ten-minute learned-limit observations.
 
 `make test-ipv4-paths` includes a production socket/output regression that fails
 with the original implementation: the IPv4 packet uses ICMP despite a UDP raw

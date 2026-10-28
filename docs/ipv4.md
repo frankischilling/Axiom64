@@ -50,9 +50,17 @@ intersect an INCLUDE list with the queried sources, or remove the blocked
 EXCLUDE list from them; an empty result stays silent, as specified in
 [RFC 9776 Table 5](https://www.rfc-editor.org/rfc/rfc9776.html#table-5).
 Measured Linux reference profiles have an explicit EXCLUDE response difference;
-guest acceptance follows the RFC. Pending query storage is bounded at 64
-sources; overflow falls back to the actual full filter. Older general queries
-select IGMPv1 or IGMPv2 compatibility. Link down suspends reports and link up
+guest acceptance follows the RFC. Pending source queries own sorted unique
+source sets within a shared 256 KiB allocation budget. The budget includes both
+copies during a transactional replacement. Allocation refusal preserves the
+accepted set, response cursor and deadline. Responses apply the current filter
+and stream complete INCLUDE records at the actual output MTU; refused output
+retains its cursor. Responses, final close, link down and compatibility changes
+release the corresponding query storage. Valid additional query octets count
+toward checksum verification and are then ignored, following
+[RFC 9776 section 4.1.10](https://datatracker.ietf.org/doc/html/rfc9776#section-4.1.10).
+The socket filter and its separate admission policy retain their existing limits.
+Older general queries select IGMPv1 or IGMPv2 compatibility. Link down suspends reports and link up
 announces retained interests. The all-hosts group is implicit and sends no
 membership reports.
 
@@ -75,7 +83,7 @@ and packets, and reject twenty-nine serialized evidence controls. Every source
 epoch needs fresh qualification. General IPv6 memberships and MLD, multicast routing, broader lifecycle cases,
 and complete multicast conformance remain required.
 
-The current-kernel source-filter cohort passes 40 guest profiles: Ethernet
+The retained preceding-kernel source-filter cohort passes 40 guest profiles: Ethernet
 raw/UDP delivery, settled changes, query responses, minimum/live MTU behavior
 and overlapping changes, each with static/dynamic linkage, BIOS/UEFI and
 modern/legacy virtio plus e1000. Root and UID 65534 independently reopen the
@@ -99,6 +107,22 @@ all 55 profiles and protected readbacks, with the six native clock checks and
 recorded native-only query timer policy intact. Wider query/legacy/link and
 lifetime cases, current-source hosted qualification, general IPv6 membership
 and MLD, multicast routing and complete multicast conformance remain required.
+
+The new query-bounds case preserves those original five scenarios and adds
+65-source INCLUDE/EXCLUDE queries, duplicate query sources, valid trailing
+octets and the complete 366-source query that fits Ethernet MTU 1500. All eight guest profiles pass on both adapters. Each retains 24 report
+records, ten actual queries and sixteen complete three-second observations. Sanitized
+module checks also cover maximum IPv4-sized query lists, accumulated unions,
+owned input bytes, budget/allocation refusal, output refusal and storage lifetime.
+The six-case audit on the new kernel accepts all 48 guest profiles: 1,440 reporting records,
+256 actual queries, 624 complete reporting windows and 32 first-packet barriers, plus
+256 delivery sends, 736 receives, 128 complete 200 ms quiet windows and 128 complete
+three-second delivery windows. Root and UID 65534 independently reopen the original
+evidence and each reject all 132 serialized controls. Seven of eighteen local native
+captures qualify. The remaining original native failures stay rejected; the explicit
+guest diagnostic result does not establish full native/guest acceptance. Default
+production and hosted verification require all 66 profiles. Complete current-source
+hosted qualification and broader multicast behavior remain required.
 
 ## Ownership and progress
 

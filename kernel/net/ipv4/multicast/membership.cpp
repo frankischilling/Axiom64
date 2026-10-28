@@ -74,7 +74,8 @@ void MulticastHost::synchronize(unsigned index, uint64_t now) {
         if (entry.index != index)
             continue;
         entry.response = entry.change = 0;
-        entry.remaining = entry.source_count = entry.response_cursor = 0;
+        entry.remaining = entry.response_cursor = 0;
+        entry.query.clear();
         entry.last_reporter = false;
         entry.reports.cancel();
         if (!entry.interest.owners())
@@ -97,7 +98,7 @@ void MulticastHost::changed(Group& entry, bool previously_present, uint64_t now)
     entry.change = 0;
     if (!present) {
         entry.response = 0;
-        entry.source_count = 0;
+        entry.query.clear();
     }
     if (!links[entry.index].up || entry.address == all_hosts)
         entry.reports.cancel();
@@ -137,7 +138,8 @@ void MulticastHost::link(unsigned index, bool up, uint64_t now, uint32_t mtu) {
             changed(entry, false, now);
         } else {
             entry.response = entry.change = 0;
-            entry.remaining = entry.source_count = entry.response_cursor = 0;
+            entry.remaining = entry.response_cursor = 0;
+            entry.query.clear();
             entry.last_reporter = false;
             entry.reports.cancel();
             if (!entry.interest.owners())
@@ -159,7 +161,8 @@ void MulticastHost::receive(unsigned index, uint32_t destination, const uint8_t*
             return;
         if (auto entry = find(index, address)) {
             entry->response = 0;
-            entry->source_count = entry->response_cursor = 0;
+            entry->response_cursor = 0;
+            entry->query.clear();
             entry->last_reporter = false;
             if (entry->interest.owners()) {
                 entry->change = 0;
@@ -189,7 +192,7 @@ void MulticastHost::receive(unsigned index, uint32_t destination, const uint8_t*
         if (length < 12 || !router_alert)
             return;
         sources = get16(bytes + 10);
-        if (length != 12 + size_t(sources) * 4 || (sources && !address))
+        if (length < 12 + size_t(sources) * 4 || (sources && !address))
             return;
         for (unsigned n = 0; n < sources; n++)
             if (!unicast(get32(bytes + 12 + n * 4)))
@@ -207,26 +210,11 @@ void MulticastHost::receive(unsigned index, uint32_t destination, const uint8_t*
             (address && address != entry.address))
             continue;
         bool whole = !sources || version(index, now) != 3;
-        bool previous_whole = entry.response && !entry.source_count;
+        bool previous_whole = entry.response && !entry.query.size();
         if (whole || previous_whole)
-            entry.source_count = 0;
-        else {
-            for (unsigned n = 0; n < sources; n++) {
-                uint32_t source = get32(bytes + 12 + n * 4);
-                bool present = false;
-                for (unsigned old = 0; old < entry.source_count; old++)
-                    present |= entry.sources[old] == source;
-                if (present)
-                    continue;
-                if (entry.source_count == 64) {
-                    // Bounded query state falls back to a full record of the
-                    // actual current filter, including its source list.
-                    entry.source_count = 0;
-                    break;
-                }
-                entry.sources[entry.source_count++] = source;
-            }
-        }
+            entry.query.clear();
+        else if (!entry.query.merge(bytes + 12, sources, query_budget))
+            continue;
         entry.response_cursor = 0;
         entry.response = sooner(entry.response, now + delay(maximum));
     }
@@ -236,15 +224,25 @@ bool MulticastHost::respond(Group& entry, unsigned maximum, Emit emit, void* con
     uint32_t sources[MulticastSourceAggregate::capacity];
     unsigned count = 0;
     unsigned type = entry.interest.mode() ? 1 : 2;
-    if (entry.source_count) {
-        // RFC 9776 Table 5: INCLUDE intersects the query; EXCLUDE subtracts
-        // its blocked sources. An empty source-specific response is omitted.
-        type = 1;
-        for (unsigned n = 0; n < entry.source_count; n++)
-            if (entry.interest.accepts(entry.sources[n]))
-                sources[count++] = entry.sources[n];
-    } else
-        count = entry.interest.sources(sources, MulticastSourceAggregate::capacity);
+    if (entry.query.size()) {
+        // RFC 9776 Table 5 applies the current filter when the response is
+        // emitted. Retain all queried sources through intervening socket edits.
+        uint32_t selected[MulticastSourceReports::history_capacity];
+        while (entry.response_cursor < entry.query.size()) {
+            unsigned next = entry.response_cursor, copied = 0;
+            while (next < entry.query.size() && copied < maximum) {
+                uint32_t address = entry.query.data()[next++];
+                if (entry.interest.accepts(address))
+                    selected[copied++] = address;
+            }
+            ReportContext output{emit, context, entry.index, entry.address};
+            if (copied && !record(&output, 1, selected, copied))
+                return false;
+            entry.response_cursor = next;
+        }
+        return true;
+    }
+    count = entry.interest.sources(sources, MulticastSourceAggregate::capacity);
     if (type == 1 && !count)
         return true;
     ReportContext output{emit, context, entry.index, entry.address};
@@ -285,7 +283,8 @@ void MulticastHost::poll(uint64_t now, Emit emit, void* context) {
                 if (!respond(entry, maximum, emit, context))
                     continue;
                 entry.response = 0;
-                entry.source_count = entry.response_cursor = 0;
+                entry.response_cursor = 0;
+                entry.query.clear();
             }
         } else {
             if (!entry.interest.owners() && (selected == 1 || !entry.last_reporter)) {
@@ -306,7 +305,8 @@ void MulticastHost::poll(uint64_t now, Emit emit, void* context) {
             }
             if (response) {
                 entry.response = 0;
-                entry.source_count = entry.response_cursor = 0;
+                entry.response_cursor = 0;
+                entry.query.clear();
             }
         }
         entry.last_reporter = entry.interest.owners() != 0;

@@ -75,26 +75,31 @@ for spec in index['cases']:
         native.append(dict(label=spec['label'],accepted=False,reason=type(error).__name__+': '+str(error)))
     else:native.append(dict(label=spec['label'],accepted=True,result=checked))
 if domain=='all':assert all(row['accepted'] for row in native)
+# Failed native cases stay in the audit. Controls need a qualified original.
+delivery_native=next((row['label'] for row in native if row['accepted'] and
+    row['label'].startswith('delivery-linux-')),None)
+if delivery_native is None:raise ValueError('delivery controls require an independently qualified native capture')
 def command(name,args,label):
     with (out/(label+'.log')).open('xb') as log:
         completed=subprocess.run([sys.executable,'-B',str(root/'scripts/tests'/name),*args],cwd=root,stdout=log,stderr=subprocess.STDOUT)
     if completed.returncode:raise RuntimeError((out/(label+'.log')).read_text()[-8000:])
     return json.loads((out/label/'results.json').read_text())
 delivery=command('ipv4_multicast_delivery_evidence_test.py',['--directory',str(corpus/'delivery-guest-dynamic-uefi-legacy'),
-    '--native-directory',str(corpus/'delivery-linux-native'),'--output',str(out/'delivery-controls')],'delivery-controls')
+    '--native-directory',str(corpus/delivery_native),'--output',str(out/'delivery-controls')],'delivery-controls')
 assert delivery['serialized_reopened_controls']==36
 matrix=command('ipv4_multicast_source_matrix_test.py',['--directory',str(corpus),'--domain',domain,
     '--output',str(out/'matrix-controls')],'matrix-controls')
 assert matrix['serialized_reopened_controls']==8
 report=[]
-for scenario,case,count in (('settled','settled-guest-static-bios-modern',10),('queries','queries-guest-dynamic-uefi-legacy',14),
-    ('mtu','mtu-guest-static-uefi-modern',17),('overlap','overlap-guest-dynamic-bios-legacy',19)):
+for scenario,case,count in (('settled','settled-guest-static-bios-modern',12),('queries','queries-guest-dynamic-uefi-legacy',16),
+    ('mtu','mtu-guest-static-uefi-modern',19),('overlap','overlap-guest-dynamic-bios-legacy',21),
+    ('query-bounds','query-bounds-guest-dynamic-uefi-legacy',20)):
     label=scenario+'-controls'
     result=command('ipv4_multicast_source_evidence_test.py',['--directory',str(corpus/case),'--output',str(out/label)],label)
     assert len(result['controls'])==count
     report.append(dict(scenario=scenario,controls=count))
 (out/'result.json').write_text(json.dumps(dict(passed=True,uid=os.getuid(),domain=domain,positive=positive,
-    native=native,delivery_controls=36,matrix_controls=8,report_controls=report,serialized_controls=104),indent=2)+'\\n')
+    native=native,delivery_control_native=delivery_native,delivery_controls=36,matrix_controls=8,report_controls=report,serialized_controls=132),indent=2)+'\\n')
 ''')
         worker.chmod(0o444)
         protected = [worker, *[p for p in root.rglob('*') if p.is_file()]]
@@ -118,7 +123,7 @@ for scenario,case,count in (('settled','settled-guest-static-bios-modern',10),('
             retained = output / ('reader-' + str(uid))
             retained.mkdir()
             summaries = {target / (name + '-controls') for name in
-                         ('delivery', 'matrix', 'settled', 'queries', 'mtu', 'overlap')}
+                         ('delivery', 'matrix', 'settled', 'queries', 'mtu', 'overlap', 'query-bounds')}
             for path in target.rglob('*'):
                 keep = ((path.suffix == '.zip' and path.name != 'source.zip') or
                         (path.suffix == '.log' and path.parent == target) or
@@ -134,7 +139,7 @@ for scenario,case,count in (('settled','settled-guest-static-bios-modern',10),('
         (output / 'protected-after.json').write_text(json.dumps(inventory(protected, scratch), indent=2) + '\n')
     result = dict(passed=True, domain=domain, reader_source=source, readers=readers,
                   protected_inputs_unchanged=len(before), original_runtime_files_unchanged=len(originals),
-                  serialized_controls_each=104, root_and_uid65534=True,
+                  serialized_controls_each=132, root_and_uid65534=True,
                   full_native_guest_acceptance=domain == 'all', full_feature_acceptance=False)
     (output / 'results.json').write_text(json.dumps(result, indent=2) + '\n')
     return result

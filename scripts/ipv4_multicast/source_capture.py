@@ -20,6 +20,19 @@ NATIVE_EXCLUDE_KERNELS = {'6.6.87.2-microsoft-standard-WSL2', '6.17.0-1022-azure
 
 
 def contract(scenario, native, release):
+    if scenario == 'query-bounds':
+        if native:
+            require(release in NATIVE_EXCLUDE_KERNELS, 'measured native-only EXCLUDE query kernel profile')
+        sixty_five = tuple(range(FIRST + 100, FIRST + 165))
+        ethernet_maximum = tuple(range(FIRST + 100, FIRST + 466))
+        expanded = [(1, ethernet_maximum[n:n + 128]) for n in range(0, 366, 128)]
+        reports = {1: [(5, (FIRST,))] * 2, 2: [], 3: [(1, (FIRST,))], 4: [(1, (FIRST,))],
+                   5: [(4, (FIRST,))] * 2,
+                   6: [(2, (FIRST,))] if native else [(1, sixty_five)],
+                   7: [(2, (FIRST,))] if native else expanded, 8: [(3, ())] * 2}
+        queries = {2: (False, sixty_five), 3: (False, (FIRST,), b'\0\0\0\xa7'),
+                   4: (False, (FIRST,) * 65), 6: (False, sixty_five), 7: (False, ethernet_maximum)}
+        return reports, {1: 39, 5: 41, 8: 36}, queries, 'IPV4_SOURCE_WIRE_QUERY_BOUNDS_PASS stages=8 lanes=2 operations=6 queries=10 large_query_sources=65 maximum_query_sources=366'
     if scenario == 'settled':
         return ({stage: [record, record] for stage, record in enumerate(EXPECTED, 1)},
                 dict(enumerate(OPTIONS, 1)), {}, MARKER)
@@ -123,13 +136,14 @@ def lane(path, number, native, statistics, expected, query_cases, mtu=1500, expa
         if body[0] == 0x11:
             require(current in query_cases and current not in queries and controls[-1] == ('done', current),
                     'one query in its actual source observation')
-            general, queried = query_cases[current]
+            general, queried, *additional = query_cases[current]
             destination = bytes.fromhex('e0000001') if general else GROUP
             expected_mac = b'\x01\x00\x5e' + bytes([destination[1] & 127]) + destination[2:]
             require(frame[:12] == expected_mac + peer and ip[12:16] == remote and ip[16:20] == destination,
                     'actual source query addresses and interface')
             expected_body = b'\x11\x0a\0\0' + (bytes(4) if general else GROUP) + b'\x02\x7d' + struct.pack('!H', len(queried))
             expected_body += b''.join(struct.pack('!I', source) for source in queried)
+            expected_body += b''.join(additional)
             require(body[:2] + b'\0\0' + body[4:] == expected_body,
                     'actual complete source query and response interval')
             queries[current] = stamp
@@ -207,6 +221,10 @@ def verify(directory):
     require(parsed and parsed[0]['kind'] == 'kernel' and (parsed[0]['sysname'] == 'Linux') == metadata['native'] and
             parsed[0]['release'], 'actual source multicast kernel and observations')
     scenario = metadata.get('source_case', 'settled')
+    if scenario == 'query-bounds':
+        require(parsed[1:3] == [dict(kind='query-link', lane=number, mtu=1500) for number in range(2)],
+                'actual source query Ethernet MTU on both interfaces')
+        parsed = parsed[:1] + parsed[3:]
     policy = [row for row in parsed if row.get('kind') == 'policy']
     if scenario == 'mtu':
         require(policy == [{'kind': 'policy', 'phase': 'configured', 'previous': 10, 'value': 64, 'mtu': 68},
@@ -255,6 +273,20 @@ def verify(directory):
     if not metadata['native']:
         require(text.splitlines().count('AXIOM64_TESTS_PASS') == 1 and 'AXIOM64_EXIT status=0' in text,
                 'actual source multicast guest completion')
+    if not metadata['native']:
+        require(metadata['firmware'] in ('bios', 'uefi') and
+                text.count('Firmware: ' + metadata['firmware'].upper()) == 1,
+                'actual source guest firmware')
+        command = json.loads((directory / 'command.json').read_text())
+        require(isinstance(command, list) and all(isinstance(value, str) for value in command),
+                'actual source guest launch command')
+        devices = [command[n + 1] for n, value in enumerate(command[:-1]) if value == '-device']
+        require(metadata['transport'] in ('modern', 'legacy') and
+                sum(value.startswith('virtio-net-pci,') for value in devices) == 1 and
+                sum(value.startswith('e1000,') for value in devices) == 1 and
+                any(('disable-legacy=on' if metadata['transport'] == 'modern' else 'disable-modern=on') in value
+                    for value in devices if value.startswith('virtio-net-pci,')),
+                'actual source paired devices and virtio transport')
     upper = query_timer_upper(directory, metadata)
     statistics = metadata['capture_statistics'] if metadata['native'] else [None, None]
     require(len(statistics) == 2, 'both physical source multicast captures')

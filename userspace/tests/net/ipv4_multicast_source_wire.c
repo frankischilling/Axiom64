@@ -18,7 +18,7 @@
 #include <unistd.h>
 
 static unsigned indices[2];
-static int query_case, mtu_case, overlap_case;
+static int query_case, mtu_case, overlap_case, bounds_case;
 static unsigned char macs[2][6];
 static int controls[2], owners[2];
 static const uint32_t group = 0xef7f2a01, first = 0xc0000201;
@@ -61,6 +61,11 @@ static void configure(void) {
             need(!ioctl(fd, SIOCSIFMTU, &request), "minimum interface MTU");
             need(!ioctl(fd, SIOCGIFMTU, &request) && request.ifr_mtu == 68,
                  "actual minimum interface MTU");
+        }
+        if (bounds_case) {
+            need(!ioctl(fd, SIOCGIFMTU, &request) && request.ifr_mtu == 1500,
+                 "source query actual Ethernet MTU");
+            printf("{\"kind\":\"query-link\",\"lane\":%u,\"mtu\":%d}\n", lane, request.ifr_mtu);
         }
         request.ifr_flags = IFF_UP;
         need(!ioctl(fd, SIOCSIFFLAGS, &request), "interface activation");
@@ -242,7 +247,7 @@ static void action(unsigned lane, unsigned stage, unsigned transition) {
             .imsf_interface = source.imr_interface,
             .imsf_fmode = MCAST_EXCLUDE,
             .imsf_numsrc = 1,
-            .imsf_slist = {{.s_addr = htonl(first + (query_case ? 0 : 2))}}};
+            .imsf_slist = {{.s_addr = htonl(first + ((query_case || bounds_case) ? 0 : 2))}}};
         change(lane, stage, option, &filter, IP_MSFILTER_SIZE(1));
     } else if (transition == 7) {
         struct ip_mreqn membership = {.imr_multiaddr.s_addr = htonl(group),
@@ -258,10 +263,12 @@ int main(void) {
     if (!scenario)
         scenario = "settled";
     query_case = !strcmp(scenario, "queries");
+    bounds_case = !strcmp(scenario, "query-bounds");
     mtu_case = !strcmp(scenario, "mtu");
     overlap_case = !strcmp(scenario, "overlap");
     int delivery_case = !strcmp(scenario, "delivery");
-    need(query_case || mtu_case || overlap_case || delivery_case || !strcmp(scenario, "settled"),
+    need(query_case || mtu_case || overlap_case || delivery_case || bounds_case ||
+             !strcmp(scenario, "settled"),
          "known source packet case");
     struct utsname identity;
     need(!uname(&identity), "kernel identity");
@@ -285,13 +292,15 @@ int main(void) {
                "68}\n",
                original_policy, get_policy());
     }
-    unsigned stages = mtu_case ? 7 : query_case ? 12 : 7;
+    unsigned stages = bounds_case ? 8 : mtu_case ? 7 : query_case ? 12 : 7;
     for (unsigned stage = 1; stage <= stages; stage++) {
         unsigned transition = stage;
         if (query_case)
             transition = stage == 1 ? 1 : stage == 2 ? 2 : stage == 7 ? 4 : stage == 12 ? 7 : 0;
         if (mtu_case)
             transition = stage == 3 || stage == 5 || stage == 6 ? 0 : stage;
+        if (bounds_case)
+            transition = stage == 1 ? 1 : stage == 5 ? 4 : stage == 8 ? 7 : 0;
         exchange(stage, 0);
         for (unsigned lane = 0; lane < 2; lane++) {
             if (overlap_case)
@@ -318,13 +327,15 @@ int main(void) {
         set_policy(original_policy);
         printf("{\"kind\":\"policy\",\"phase\":\"restored\",\"value\":%d}\n", get_policy());
     }
-    puts(overlap_case ? "IPV4_SOURCE_WIRE_OVERLAP_PASS stages=7 lanes=2 operations=18 "
-                        "first_packet_barriers=4 full_observations_each=5"
-         : mtu_case
-             ? "IPV4_SOURCE_WIRE_MTU_PASS stages=7 lanes=2 operations=8 queries=6 sources=64 "
-               "minimum_mtu=68 "
-               "restored_mtu=1500 restored_policy=10"
-         : query_case ? "IPV4_SOURCE_WIRE_QUERY_PASS stages=12 lanes=2 operations=8 queries=16"
-                      : "IPV4_SOURCE_WIRE_PASS stages=7 lanes=2 operations=14");
+    puts(
+        bounds_case ? "IPV4_SOURCE_WIRE_QUERY_BOUNDS_PASS stages=8 lanes=2 operations=6 queries=10 "
+                      "large_query_sources=65 maximum_query_sources=366"
+        : overlap_case ? "IPV4_SOURCE_WIRE_OVERLAP_PASS stages=7 lanes=2 operations=18 "
+                         "first_packet_barriers=4 full_observations_each=5"
+        : mtu_case ? "IPV4_SOURCE_WIRE_MTU_PASS stages=7 lanes=2 operations=8 queries=6 sources=64 "
+                     "minimum_mtu=68 "
+                     "restored_mtu=1500 restored_policy=10"
+        : query_case ? "IPV4_SOURCE_WIRE_QUERY_PASS stages=12 lanes=2 operations=8 queries=16"
+                     : "IPV4_SOURCE_WIRE_PASS stages=7 lanes=2 operations=14");
     return 0;
 }

@@ -121,7 +121,7 @@ def run(directory, output, domain='all'):
             for name in bundle.namelist():(candidate / name).write_bytes(bundle.read(name))
         if individual:
             assert verify_case(candidate / individual)['passed']
-        expected = ('source matrix complete fixed 55-profile inventory' if mutation in ('missing-profile', 'repeated-profile', 'missing-scenario')
+        expected = ('source matrix complete fixed 66-profile inventory' if mutation in ('missing-profile', 'repeated-profile', 'missing-scenario')
                     else 'source matrix original preexecution kernel programs and runtimes' if mutation == 'kernel'
                     else 'source matrix full cohort source and linkage binding' if mutation == 'client'
                     else 'source matrix byte-identical executable for each linkage' if mutation == 'same-linkage-executable'

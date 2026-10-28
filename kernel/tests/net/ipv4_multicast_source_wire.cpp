@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/ipv4/multicast.hpp"
 #include "net/ipv4_wire.hpp"
+#include "ipv4_multicast_memory.hpp"
 #include <array>
 #include <cassert>
 #include <cstdio>
@@ -53,8 +54,11 @@ static void settle(MulticastHost& host, Sink& sink, uint64_t now) {
     host.poll(now + 100, Sink::emit, &sink);
 }
 
-static void query(MulticastHost& host, uint64_t now, const std::vector<uint32_t>& sources = {}) {
-    std::vector<uint8_t> bytes(12 + sources.size() * 4);
+static void query(MulticastHost& host, uint64_t now, const std::vector<uint32_t>& sources = {},
+                  bool extra = false) {
+    std::vector<uint8_t> bytes(12 + sources.size() * 4 + (extra ? 4 : 0));
+    if (extra)
+        bytes.back() = 0xa7;
     bytes[0] = 0x11;
     bytes[1] = 10;
     put32(bytes.data() + 4, group);
@@ -246,6 +250,108 @@ static void rfc_queries_and_changes() {
     sink.expect({{1, {a, c}}});
 }
 
+static void query_capacity_and_extra_data() {
+    for (bool exclude : {false, true}) {
+        MulticastHost host;
+        MulticastMembership owner;
+        Sink sink;
+        host.link(1, true, 1, sink.mtu);
+        if (exclude)
+            assert(!host.join(owner, 1, group, 1));
+        assert(!host.source(owner, 1, group, exclude ? 0 : 1, true, a, 64, 1));
+        settle(host, sink, 1);
+        sink.records.clear();
+        auto queried = addresses(100, 64);
+        query(host, 1000, queried);
+        host.poll(1100, Sink::emit, &sink);
+        if (exclude)
+            sink.expect({{1, queried}});
+        else
+            sink.expect({});
+        queried.push_back(a + 164);
+        query(host, 1200, queried);
+        host.poll(1300, Sink::emit, &sink);
+        if (exclude)
+            sink.expect({{1, queried}});
+        else
+            sink.expect({});
+    }
+    MulticastHost host;
+    MulticastMembership owner;
+    Sink sink;
+    host.link(1, true, 1, sink.mtu);
+    assert(!host.source(owner, 1, group, 1, true, a, 64, 1));
+    settle(host, sink, 1);
+    sink.records.clear();
+    query(host, 1000, std::vector<uint32_t>(65, a));
+    host.poll(1100, Sink::emit, &sink);
+    sink.expect({{1, {a}}});
+    query(host, 1200, {a}, true);
+    host.poll(1300, Sink::emit, &sink);
+    sink.expect({{1, {a}}});
+}
+
+static void query_ownership_and_refusal() {
+    assert(multicast_test::live_allocations() == 0);
+    {
+        MulticastHost host;
+        MulticastMembership owner;
+        Sink sink;
+        host.link(1, true, 1, sink.mtu);
+        assert(!host.source(owner, 1, group, 1, true, a, 64, 1));
+        assert(!host.source(owner, 1, group, 1, true, b, 64, 1));
+        settle(host, sink, 1);
+        sink.records.clear();
+        query(host, 1000, {a});
+        assert(multicast_test::live_allocations() == 1);
+        multicast_test::allocation_limit(0);
+        query(host, 1001, {b});
+        host.poll(1100, Sink::emit, &sink);
+        sink.expect({{1, {a}}});
+        assert(multicast_test::live_allocations() == 0);
+        multicast_test::allocation_limit(UINT32_MAX);
+        query(host, 1200, {b});
+        host.poll(1300, Sink::emit, &sink);
+        sink.expect({{1, {b}}});
+        query(host, 1400, {a});
+        host.link(1, false, 1401, sink.mtu);
+        assert(multicast_test::live_allocations() == 0);
+        host.link(1, true, 1402, sink.mtu);
+        settle(host, sink, 1402);
+        sink.records.clear();
+        query(host, 2000, {a});
+        host.close(owner, 2001);
+        assert(multicast_test::live_allocations() == 0);
+    }
+    {
+        MulticastHost host;
+        MulticastMembership owner;
+        Sink sink;
+        host.link(1, true, 1, sink.mtu);
+        assert(!host.join(owner, 1, group, 1));
+        settle(host, sink, 1);
+        sink.records.clear();
+        auto first = addresses(100, 40), second = addresses(140, 40);
+        query(host, 1000, first);
+        query(host, 1001, second);
+        host.poll(1101, Sink::emit, &sink);
+        sink.expect({{1, addresses(100, 80)}});
+        auto maximum = addresses(100, 366);
+        query(host, 1200, maximum);
+        sink.stop_after = 1;
+        host.poll(1300, Sink::emit, &sink);
+        assert(sink.records.size() == 1 && sink.records[0].sources.size() == 128);
+        assert(multicast_test::live_allocations() == 1);
+        sink.stop_after = UINT32_MAX;
+        host.poll(1301, Sink::emit, &sink);
+        sink.expect({{1, std::vector<uint32_t>(maximum.begin(), maximum.begin() + 128)},
+                     {1, std::vector<uint32_t>(maximum.begin() + 128, maximum.begin() + 256)},
+                     {1, std::vector<uint32_t>(maximum.begin() + 256, maximum.end())}});
+        assert(multicast_test::live_allocations() == 0);
+    }
+    assert(multicast_test::live_allocations() == 0);
+}
+
 static void legacy_source_change_preserves_join() {
     MulticastHost host;
     MulticastMembership owner;
@@ -272,6 +378,8 @@ int main() {
     mtu_and_refused_output();
     hidden_history_and_final_close();
     rfc_queries_and_changes();
+    query_capacity_and_extra_data();
+    query_ownership_and_refusal();
     legacy_source_change_preserves_join();
     std::puts("IPv4 production source reports, RFC queries, MTU, backpressure, ownership and "
               "legacy PASS");

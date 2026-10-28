@@ -57,7 +57,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--native', action='store_true')
     parser.add_argument('--suite', choices=('asm', 'source'), default='asm')
-    parser.add_argument('--source-case', choices=('settled', 'queries', 'mtu', 'overlap', 'delivery'), default='settled')
+    parser.add_argument('--source-case', choices=('settled', 'queries', 'mtu', 'overlap', 'delivery', 'query-bounds'), default='settled')
     parser.add_argument('--profile', choices=('native', 'static', 'dynamic'), default='static')
     parser.add_argument('--firmware', choices=('bios', 'uefi'), default='bios')
     parser.add_argument('--transport', choices=('modern', 'legacy'), default='modern')
@@ -79,6 +79,8 @@ def main():
         marker = 'IPV4_SOURCE_WIRE_OVERLAP_PASS stages=7 lanes=2 operations=18 first_packet_barriers=4 full_observations_each=5'
     if args.suite == 'source' and args.source_case == 'delivery':
         marker = 'IPV4_SOURCE_WIRE_DELIVERY_PASS stages=8 lanes=2 actions=48 sends=32 receives=92 quiet_windows=16 source_phases=8'
+    if args.suite == 'source' and args.source_case == 'query-bounds':
+        marker = 'IPV4_SOURCE_WIRE_QUERY_BOUNDS_PASS stages=8 lanes=2 operations=6 queries=10 large_query_sources=65 maximum_query_sources=366'
     if args.matrix:
         directory.mkdir(parents=True, exist_ok=False)
         cases = [(True, profile, 'bios', 'modern') for profile in ('native', 'static', 'dynamic')]
@@ -111,6 +113,9 @@ def main():
         if args.source_case == 'delivery':
             from ipv4_multicast.delivery_peer import DeliveryPeer
             peers = [DeliveryPeer(lane) for lane in range(2)]
+        elif args.source_case == 'query-bounds':
+            from ipv4_multicast.query_bounds_peer import QueryBoundsPeer
+            peers = [QueryBoundsPeer(lane) for lane in range(2)]
         else:
             peers = [SourcePeer(lane, args.source_case) for lane in range(2)]
     else:

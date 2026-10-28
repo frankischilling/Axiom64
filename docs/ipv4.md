@@ -24,10 +24,21 @@ The common loopback client passes three native libc profiles and four
 static/dynamic BIOS/UEFI guest profiles. Each checks 1,395 receives, 468 control
 fault cases and four description-lifetime cases. All ancillary bytes, visible
 fault prefixes, flags, lengths, errors and consumption results agree after
-mapping the actual loopback interface number. Physical-interface metadata,
-queued address/route changes, payload/source/header fault ordering and broader
-IPv4 ancillary options still require acceptance evidence. See
+mapping the actual loopback interface number. Payload/source/header fault
+ordering and broader IPv4 ancillary options still require acceptance evidence. See
 [testing](testing.md) for the reproducible command and retained controls.
+
+The Ethernet receive-metadata comparison passes locally across three native
+libc profiles and eight static/dynamic BIOS/UEFI modern/legacy guests with
+both adapters. Its 156 receives per profile distinguish actual ingress,
+destination and reverse-route specific destination, including multicast,
+broadcasts and delivery to another interface's local alias. Queued values
+survive alias/prefix removal and reverse-route replacement. Independent
+readers decode original packet captures and 180 address/route inventories
+per profile, open the boot images and reject 27 damaged inputs. See the
+[Ethernet metadata checks](testing.md#ipv4-ethernet-receive-metadata). Broader
+receive faults, output controls, device lifetimes and current-source hosted
+acceptance remain required.
 
 ## IPv4 multicast qualification
 

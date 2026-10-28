@@ -1445,6 +1445,7 @@ MUSL_PROGRAMS += build/ipv4-multicast-source-options-static build/ipv4-multicast
 MUSL_PROGRAMS += build/ipv4-multicast-source-policy-static build/ipv4-multicast-source-policy-dynamic
 MUSL_PROGRAMS += build/ipv4-multicast-source-capacity-static build/ipv4-multicast-source-capacity-dynamic
 MUSL_PROGRAMS += build/ipv4-raw-udp-static build/ipv4-raw-udp-dynamic
+MUSL_PROGRAMS += build/ipv4-receive-wire-static build/ipv4-receive-wire-dynamic
 MUSL_PROGRAMS += build/ipv4-receive-controls-static build/ipv4-receive-controls-dynamic
 $(MUSL_PROGRAMS): $(MUSL_INPUTS) | musl-toolchain
 build/rootfs.cpio build/rootfs-desktop.cpio: $(MUSL_INPUTS)
@@ -1560,3 +1561,13 @@ build/ipv4-receive-controls-static build/ipv4-receive-controls-dynamic: userspac
 .PHONY: test-ipv4-receive-controls
 test-ipv4-receive-controls:
 	$(PYTHON) scripts/ipv4_receive_controls_test.py
+
+build/ipv4-receive-wire-native: userspace/tests/net/ipv4_receive_wire.c userspace/tests/net/ipv4_receive_wire_fixture.c userspace/tests/net/ipv4_receive_wire_fixture.h
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $(filter %.c,$^) -o $@
+build/ipv4-receive-wire-static build/ipv4-receive-wire-dynamic: userspace/tests/net/ipv4_receive_wire.c userspace/tests/net/ipv4_receive_wire_fixture.c userspace/tests/net/ipv4_receive_wire_fixture.h scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) $(filter %.c,$^)
+
+.PHONY: test-ipv4-receive-wire
+test-ipv4-receive-wire: build/axiom64.elf build/init busybox
+	$(PYTHON) scripts/ipv4_receive_wire_suite.py

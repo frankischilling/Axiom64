@@ -1209,3 +1209,40 @@ The check does not infer server progress from client-side `connect` completion.
 This loopback comparison does not establish physical-interface metadata,
 address/route retirement, every receive fault, or complete networking support.
 The existing network CI entry runs this comparison alongside its prior tests.
+
+Ethernet metadata acceptance must retain original packets from virtio-net and
+e1000, together with matching native namespace traffic. It must distinguish
+the actual ingress and destination from reverse-route source selection, and
+prove that queued packets retain those values when addresses or routes change.
+
+## IPv4 Ethernet receive metadata
+
+`sudo make test-ipv4-receive-wire` compares three isolated native libc profiles
+with eight static/dynamic BIOS/UEFI guests using modern/legacy virtio-net and
+e1000 together. Each profile receives 156 actual IPv4 packets. Cases cover UDP,
+raw ICMP and raw UDP with paired UDP delivery, arrival-time packet-info
+selection, varied TTL/TOS, primary and secondary addresses, a separate prefix,
+limited and directed broadcasts, multicast reverse-route selection, ingress
+fallback and delivery to another interface's local address.
+
+The client observes the queued payload before removing an alias or prefix, or
+replacing a reverse route. It retains 180 actual netlink inventories per profile
+around arrival, mutation and restoration. The reader decodes those original
+dumps and both Ethernet captures, checks every packet checksum and barrier,
+and compares all control bytes with Linux. Only actual ingress indices are
+mapped between systems. It opens the boot images and checks their kernel,
+initramfs, client, loader and script against retained products and sources.
+
+Evidence stays under `build/ipv4-receive-wire`. The independent reader can be
+run again with eleven `--case` directories:
+
+```sh
+python3 -B scripts/ipv4_receive_wire_contract.py --help
+```
+
+The complete local cohort passes. The reader rejects 27 serialized changes
+to receive metadata, packet/barrier records, inventories, compile inputs and
+boot products while preserving all original input bytes, owners and modes.
+This comparison does not qualify IGMP timers, every receive-copy fault, output
+ancillary controls, hardware removal or complete networking support. Existing
+multicast timing and full workflow requirements remain separate.

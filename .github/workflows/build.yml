@@ -1216,6 +1216,16 @@ jobs:
           name: ipv4-receive-controls
           if-no-files-found: warn
           path: build/ipv4-receive-controls
+      - name: Compare IPv4 Ethernet receive metadata and queued route/address ownership
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv4-receive-wire
+      - name: Upload complete IPv4 Ethernet metadata evidence
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-receive-wire
+          if-no-files-found: warn
+          path: build/ipv4-receive-wire
       - name: Test IPv6 receive metadata and copy faults on both adapters
         if: matrix.suite == 'network'
         run: make test-ipv6-controls

@@ -64,7 +64,7 @@ test-proc-identity:
 	$(PYTHON) scripts/proc_identity_test.py --directory build/proc-identity
 test-proc-identity-native:
 	$(PYTHON) scripts/proc_identity_test.py --directory build/proc-identity-native --native
-build/proc-identity-policy: kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp kernel/process/limits.cpp kernel/include/process/limits.hpp kernel/include/fs/proc.hpp kernel/include/process/task.hpp
+build/proc-identity-policy: kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp kernel/process/limits.cpp kernel/include/fs/proc/ipv4.hpp kernel/include/process/limits.hpp kernel/include/fs/proc.hpp kernel/include/process/task.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp kernel/process/limits.cpp -o $@
 test-proc-identity-policy: build/proc-identity-policy

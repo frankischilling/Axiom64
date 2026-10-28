@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/proc.hpp"
+#include "fs/proc/ipv4.hpp"
 #include "fs/proc/ipv6.hpp"
 #include "process/task.hpp"
 #include "core/random.hpp"
@@ -62,6 +63,18 @@ void erase(void* memory, size_t length) {
         *bytes++ = 0;
 }
 } // namespace random
+
+// Network source policy is outside this identity model. Fail if a test
+// unexpectedly enters that backend instead of supplying production behavior.
+namespace proc4 {
+int64_t source_limit_read(uint64_t&, void*, size_t) {
+    std::abort();
+}
+
+int64_t source_limit_write(uint64_t&, const void*, size_t) {
+    std::abort();
+}
+} // namespace proc4
 
 // This model isolates process identity and boot UUIDs. Network configuration
 // uses its real backend in the IPv6 model and in guest ABI tests.

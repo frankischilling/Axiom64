@@ -27,8 +27,9 @@ from the intersection of EXCLUDE lists. Hidden contributors retain their source
 slots so final close can expose another owner's filter without allocating new
 report history. Sanitized module tests cover these ownership transitions;
 the raw UDP loopback client also checks source-filtered data and shared/final
-description close. Complete Ethernet and broader lifetime acceptance remain
-required.
+description close. The Ethernet client checks independent raw/UDP receive
+queues, INCLUDE/EXCLUDE filters, multicast-all and shared/final descriptions on
+both adapters. Broader lifetime acceptance remains required.
 
 `SOCK_STREAM` accepts `IP_MULTICAST_LOOP` and `IP_MULTICAST_ALL`. Passive
 connections snapshot both flags when the handshake completes. Accepting a
@@ -74,21 +75,30 @@ and packets, and reject twenty-nine serialized evidence controls. Every source
 epoch needs fresh qualification. General IPv6 memberships and MLD, multicast routing, broader lifecycle cases,
 and complete multicast conformance remain required.
 
-The local source-report cohort passes 32 guest profiles: settled changes, query
-responses, minimum-MTU/live-MTU behavior and overlapping changes, each with
-static/dynamic linkage, BIOS/UEFI and modern/legacy virtio plus e1000. Independent
-root and ordinary-user readers reopen complete sources, actual images,
-executables and captures. They verify 1,248 reports, 176 queries, 496 full
-three-second windows, 32 first-packet barriers and 53 altered-evidence controls.
-First-packet barriers may finish within one guest clock tick; the remaining
-observations retain their full three-second wire intervals.
+The current-kernel source-filter cohort passes 40 guest profiles: Ethernet
+raw/UDP delivery, settled changes, query responses, minimum/live MTU behavior
+and overlapping changes, each with static/dynamic linkage, BIOS/UEFI and
+modern/legacy virtio plus e1000. Root and UID 65534 independently reopen the
+complete sources, actual images, executables and captures. Reporting accounts
+for 1,250 records, 176 queries, 496 full three-second windows and 32 first-packet
+barriers. Delivery accounts for 256 sends, 736 receives, 128 full 200 ms quiet
+windows and 128 full three-second wire windows. All 104 serialized packet,
+observation, product and cohort controls reject under both identities.
 
-The reporting corpus remains bound to its retained kernel, before the raw UDP
-extension below. Original native query and MTU clock-discontinuous captures
-remain rejected. The new kernel still needs source-filtered Ethernet delivery
-and reporting revalidation, wider query/legacy/link and lifetime cases,
-latest-source integration and hosted qualification. General IPv6 membership/MLD,
-multicast routing and complete multicast conformance remain open.
+Overlapping updates can occur before an older report retry reaches the wire,
+and a report can be sent between successive socket calls. The independent
+reader accounts for legal operation order, copied output and each remaining
+mode/source retry. One physical packet cannot satisfy two retries of the same
+obligation. The first-packet barriers may finish within one guest clock tick;
+every full observation retains its original three-second wire interval.
+
+All 55 native/guest profiles were attempted. Four native captures qualify;
+eleven retain their rejected realtime-to-monotonic offset checks. The local
+40-guest audit explicitly leaves full native/guest acceptance false. CI requires
+all 55 profiles and protected readbacks, with the six native clock checks and
+recorded native-only query timer policy intact. Wider query/legacy/link and
+lifetime cases, current-source hosted qualification, general IPv6 membership
+and MLD, multicast routing and complete multicast conformance remain required.
 
 ## Ownership and progress
 

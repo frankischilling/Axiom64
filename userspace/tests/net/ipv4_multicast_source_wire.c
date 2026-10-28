@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
+#include "ipv4_multicast_source_delivery.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -259,13 +260,22 @@ int main(void) {
     query_case = !strcmp(scenario, "queries");
     mtu_case = !strcmp(scenario, "mtu");
     overlap_case = !strcmp(scenario, "overlap");
-    need(query_case || mtu_case || overlap_case || !strcmp(scenario, "settled"),
+    int delivery_case = !strcmp(scenario, "delivery");
+    need(query_case || mtu_case || overlap_case || delivery_case || !strcmp(scenario, "settled"),
          "known source packet case");
     struct utsname identity;
     need(!uname(&identity), "kernel identity");
     printf("{\"kind\":\"kernel\",\"sysname\":\"%s\",\"release\":\"%s\",\"case\":\"%s\"}\n",
            identity.sysname, identity.release, scenario);
     configure();
+    if (delivery_case) {
+        ipv4_source_delivery(indices, exchange);
+        for (unsigned lane = 0; lane < 2; lane++)
+            need(!close(owners[lane]) && !close(controls[lane]), "delivery control final close");
+        puts("IPV4_SOURCE_WIRE_DELIVERY_PASS stages=8 lanes=2 actions=48 sends=32 receives=92 "
+             "quiet_windows=16 source_phases=8");
+        return 0;
+    }
     int original_policy = -1;
     if (mtu_case) {
         original_policy = get_policy();

@@ -1024,7 +1024,7 @@ hidden contributors at final close, output refusal, legacy retries, query
 selection, MTU changes and separate mode/source retransmission obligations.
 
 The shared C wire client performs actual socket operations on both interfaces.
-Choose `settled`, `queries`, `mtu` or `overlap` with `--source-case`:
+Choose `delivery`, `settled`, `queries`, `mtu` or `overlap` with `--source-case`:
 
 ```sh
 sudo -n python3 -B scripts/ipv4_multicast_test.py --suite source --source-case mtu --profile dynamic --firmware uefi --transport legacy --directory build/multicast-source-mtu
@@ -1053,16 +1053,50 @@ the original source policy of 10 before completing. Serialized controls retain
 valid packet checksums while removing fragments, repeating sources, exceeding
 the actual MTU, splitting EXCLUDE output or forging restoration observations.
 
-The complete local guest cohort covers all four cases across eight
-linkage/firmware/virtio combinations, with e1000 as the second NIC. Root and
-UID 65534 independently verify all 32 images and 64 captures, 1,248 reports,
-176 queries, 496 complete three-second windows and 32 first-packet barriers.
-Nine settled, thirteen query, sixteen MTU and fifteen overlap serialized
-controls reject for their intended reasons. Original capture/product bytes,
-owners and modes stay unchanged. Native clock-discontinuous query/MTU traces
-remain rejected; these guest results do not qualify native packet clocks,
-source-filtered data/lifetime behavior or the complete feature. Current-source
-hosted qualification remains required.
+The delivery case uses eight independent raw/UDP receivers on each adapter:
+INCLUDE(source A), EXCLUDE(source A), an unjoined multicast-all receiver and an
+unjoined receiver with multicast-all disabled. Both sources are injected as
+actual checksummed UDP packets. Each phase also sends real raw and UDP output.
+The client retains duplicate descriptions, closes originals, closes final
+owners, creates fresh descriptions, rejoins and changes multicast-all. The
+reader matches every received byte and source/port against the original wire
+packet and requires complete 200 ms quiet windows, full three-second physical
+observations and exact independent queue masks.
+
+Run the complete five-case cohort and protected root/ordinary-user readbacks:
+
+```sh
+sudo -n env PYTHONPATH=scripts python3 -B -m ipv4_multicast.source_matrix build/ipv4-source-evidence --produce
+sudo -n env PYTHONPATH=scripts python3 -B -m ipv4_multicast.source_protected --directory build/ipv4-source-evidence --output build/ipv4-source-audit
+```
+
+The default contract requires all 55 profiles: three native linkages and eight
+guest linkage/firmware/transport combinations per case. Each linkage uses one
+byte-identical common C executable. The reader binds the original cohort
+kernel, kernel sources, both C implementation files, header, init, shell and
+native/musl runtimes to preexecution fingerprints. Eight serialized cohort
+controls include internally consistent altered ELF/loader images and source
+archives, which individual-case readers accept but cohort binding must reject.
+
+The local current-kernel audit accepts all 40 guests: 1,250 reporting records,
+176 queries, 496 complete reporting windows and 32 first-packet barriers, plus
+256 delivery sends, 736 receives, 128 complete quiet windows and 128 complete
+delivery wire windows. Root and UID 65534 each reject 60 reporting, 36 delivery
+and eight cohort controls, preserving original bytes, owners and modes.
+The overlap regression replays both captured legal report/call interleavings;
+counterfeits still reject missing retries, extra old-mode/final-block copies,
+wrong directions and two retries bundled into one physical packet.
+
+Four of the fifteen local native captures qualify. Eleven original native
+captures retain their failed stable clock-offset checks. For this diagnostic
+situation only, explicitly pass `--domain guest` to the cohort and protected
+readers; production always attempts all 55, default verification still requires
+all 55, and the scoped result records full native/guest acceptance as false.
+CI uses the default full contract in the `ipv4-source-filters` test entry.
+Its 75-minute deadline and original 100-second profile deadlines remain.
+The existing network entry previously took 63 minutes; the additional suite
+runs separately and retains all original entries. Current-source hosted timing
+and full native/guest acceptance remain to be measured.
 
 ### Raw UDP sockets and source-filtered loopback data
 

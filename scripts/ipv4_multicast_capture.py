@@ -93,7 +93,7 @@ def lane(path, number, native, statistics, query_upper_us=1010000):
         ip = frame[14:]
         require(len(ip) >= 20 and ip[0] >> 4 == 4, 'actual multicast IPv4 version')
         header, total = (ip[0] & 15) * 4, int.from_bytes(ip[2:4], 'big')
-        require(20 <= header <= total <= len(ip) and not checksum(ip[:header]) and not (int.from_bytes(ip[6:8], 'big') & 0x3fff), 'actual multicast IPv4 bounds and checksum')
+        require(20 <= header <= total <= len(ip) and not checksum(ip[:header]) and not (int.from_bytes(ip[6:8], 'big') & ~0x4000), 'actual multicast IPv4 bounds and checksum')
         body = ip[header:total]
         destination = ip[16:20]
         mac = b'\x01\x00\x5e' + bytes([destination[1] & 127]) + destination[2:]

@@ -57,7 +57,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--native', action='store_true')
     parser.add_argument('--suite', choices=('asm', 'source'), default='asm')
-    parser.add_argument('--source-case', choices=('settled', 'queries', 'mtu', 'overlap'), default='settled')
+    parser.add_argument('--source-case', choices=('settled', 'queries', 'mtu', 'overlap', 'delivery'), default='settled')
     parser.add_argument('--profile', choices=('native', 'static', 'dynamic'), default='static')
     parser.add_argument('--firmware', choices=('bios', 'uefi'), default='bios')
     parser.add_argument('--transport', choices=('modern', 'legacy'), default='modern')
@@ -77,6 +77,8 @@ def main():
         marker = 'IPV4_SOURCE_WIRE_MTU_PASS stages=7 lanes=2 operations=8 queries=6 sources=64 minimum_mtu=68 restored_mtu=1500 restored_policy=10'
     if args.suite == 'source' and args.source_case == 'overlap':
         marker = 'IPV4_SOURCE_WIRE_OVERLAP_PASS stages=7 lanes=2 operations=18 first_packet_barriers=4 full_observations_each=5'
+    if args.suite == 'source' and args.source_case == 'delivery':
+        marker = 'IPV4_SOURCE_WIRE_DELIVERY_PASS stages=8 lanes=2 actions=48 sends=32 receives=92 quiet_windows=16 source_phases=8'
     if args.matrix:
         directory.mkdir(parents=True, exist_ok=False)
         cases = [(True, profile, 'bios', 'modern') for profile in ('native', 'static', 'dynamic')]
@@ -106,7 +108,11 @@ def main():
     directory.mkdir(parents=True, exist_ok=False)
     if args.suite == 'source':
         from ipv4_multicast.source_peer import SourcePeer
-        peers = [SourcePeer(lane, args.source_case) for lane in range(2)]
+        if args.source_case == 'delivery':
+            from ipv4_multicast.delivery_peer import DeliveryPeer
+            peers = [DeliveryPeer(lane) for lane in range(2)]
+        else:
+            peers = [SourcePeer(lane, args.source_case) for lane in range(2)]
     else:
         peers = [Peer(lane) for lane in range(2)]
     selector = selectors.DefaultSelector()
@@ -122,7 +128,7 @@ def main():
     if args.native:
         if args.profile == 'native':
             compile_command = ['gcc', '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
-                               client_source, '-o', f'build/{program}']
+                               client_source, *(['userspace/tests/net/ipv4_multicast_source_delivery.c'] if args.suite == 'source' else []), '-o', f'build/{program}']
             before = sources(compile_command, ROOT)
             subprocess.run(compile_command, cwd=ROOT, check=True)
             if before != sources(compile_command, ROOT):

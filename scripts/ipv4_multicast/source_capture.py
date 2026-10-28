@@ -7,7 +7,7 @@ from pathlib import Path
 import struct
 import zipfile
 
-from ipv4_multicast_capture import checksum, products, records, require
+from ipv4_multicast_capture import checksum, products, records, require, query_timer_upper
 from tcp_capture_clock import bind_native_clock
 
 GROUP = bytes.fromhex('ef7f2a01')
@@ -55,7 +55,7 @@ def contract(scenario, native, release):
     return reports, {1: 39, 2: 39, 7: 41, 12: 36}, queries, 'IPV4_SOURCE_WIRE_QUERY_PASS stages=12 lanes=2 operations=8 queries=16'
 
 
-def lane(path, number, native, statistics, expected, query_cases, mtu=1500, expansion_stage=None, first_packet_stages=()):
+def lane(path, number, native, statistics, expected, query_cases, mtu=1500, expansion_stage=None, first_packet_stages=(), query_upper_us=1010000, overlap=False):
     rows = records(path)
     clock = None
     if native:
@@ -68,7 +68,8 @@ def lane(path, number, native, statistics, expected, query_cases, mtu=1500, expa
     current = None
     first_reports = {}
     report_packets = {}
-    for row in rows:
+    events = []
+    for packet_number, row in enumerate(rows):
         frame = row['frame']
         stamp = row.get('monotonic_ns', row['stamp'] * 1000)
         if frame[12:14] == b'\x88\xb9':
@@ -78,12 +79,14 @@ def lane(path, number, native, statistics, expected, query_cases, mtu=1500, expa
                 require(frame[:12] == peer + guest and not any(frame[20:]) and
                         stage == len(started) + 1 and started == completed and stage <= len(expected),
                         'ordered physical source start request')
+                events.append(('begin', stage))
                 started.append(stage);current = stage;report_packets[stage] = 0
                 controls.append(('begin', stage));reports[stage] = []
             elif kind == b'AXSD':
                 require(frame[:12] == peer + guest and not any(frame[20:]) and
                         current == stage and controls[-1] == ('begin-ack', stage),
                         'source operation follows acknowledged start')
+                events.append(('applied', stage))
                 controls.append(('done', stage));windows[stage] = [stamp]
             else:
                 require(kind == b'AXSA' and frame[:12] == guest + peer and not any(frame[21:]) and
@@ -93,9 +96,10 @@ def lane(path, number, native, statistics, expected, query_cases, mtu=1500, expa
                 require(controls[-1] == ('done' if done else 'begin', stage),
                         'source acknowledgment follows its request')
                 controls.append(('done-ack' if done else 'begin-ack', stage))
+                events.append(('end' if done else 'ready', stage))
                 if done:
                     if stage in first_packet_stages:
-                        require(len(reports[stage]) == 1 and stage in first_reports and
+                        require(len(reports[stage]) >= 1 and stage in first_reports and
                                 first_reports[stage] <= stamp,
                                 'actual first report precedes source update barrier')
                     else:
@@ -110,7 +114,7 @@ def lane(path, number, native, statistics, expected, query_cases, mtu=1500, expa
         total = int.from_bytes(ip[2:4], 'big')
         limit = 1500 if expansion_stage and (current or 0) >= expansion_stage else mtu
         require(24 <= total <= len(ip) and total <= limit and not checksum(ip[:24]) and
-                not int.from_bytes(ip[6:8], 'big') & 0x3fff,
+                not int.from_bytes(ip[6:8], 'big') & ~0x4000,
                 'source IGMP original IPv4 bounds and checksum')
         require(ip[1] == 0xc0 and ip[8:10] == b'\x01\x02' and ip[20:24] == b'\x94\x04\0\0',
                 'source IGMP Router Alert TTL and control class')
@@ -134,14 +138,15 @@ def lane(path, number, native, statistics, expected, query_cases, mtu=1500, expa
                 ip[16:20] == bytes.fromhex('e0000016'), 'source IGMP report addresses and interface')
         require(body[:2] == b'\x22\0' and not any(body[4:6]) and int.from_bytes(body[6:8], 'big') > 0,
                 'source IGMPv3 report checksum and header')
-        require(current is not None and controls[-1][0] in ('begin-ack', 'done'),
+        require(current is not None and (overlap or controls[-1][0] in ('begin-ack', 'done')),
                 'source report belongs to an open physical observation')
         if current in query_cases:
-            require(current in queries and 0 <= stamp - queries[current] <= 1_010_000_000,
+            require(current in queries and 0 <= stamp - queries[current] <= query_upper_us * 1000,
                     'actual unscaled source query response interval')
         first_reports.setdefault(current, stamp)
         report_packets[current] += 1
         offset = 8
+        packet_records = set()
         for _ in range(int.from_bytes(body[6:8], 'big')):
             require(offset + 8 <= len(body), 'complete source group record')
             kind, auxiliary, count = struct.unpack_from('!BBH', body, offset)
@@ -149,12 +154,20 @@ def lane(path, number, native, statistics, expected, query_cases, mtu=1500, expa
             require(kind in range(1, 7) and not auxiliary and end <= len(body) and
                     body[offset + 4:offset + 8] == GROUP, 'source group record identity and bounds')
             sources = tuple(struct.unpack_from('!I', body, offset + 8 + n * 4)[0] for n in range(count))
-            reports[current].append((kind, sources));offset = end
+            record = (kind, sources)
+            if overlap:
+                require(record not in packet_records, 'separate physical source report transmissions')
+            packet_records.add(record)
+            events.append(('report', current, packet_number, record))
+            reports[current].append(record);offset = end
         require(offset == len(body), 'all physical source report bytes consumed')
     require(started == completed == list(range(1, len(expected) + 1)) and len(controls) == len(expected) * 4,
             'complete physical source stage inventory')
     require(set(queries) == set(query_cases), 'every original source query captured')
-    for stage, wanted in expected.items():
+    if overlap:
+        from ipv4_multicast.source_overlap import valid
+        require(valid(events), 'native-derived exact source transition and retransmission')
+    for stage, wanted in (() if overlap else expected.items()):
         reason = ('measured native source-query profile' if native else 'RFC 9776 source-query record') if stage in query_cases else 'native-derived exact source transition and retransmission'
         require(reports[stage] == wanted, reason)
         require(report_packets[stage] == len(wanted), 'separate physical source report transmissions')
@@ -166,6 +179,9 @@ def lane(path, number, native, statistics, expected, query_cases, mtu=1500, expa
 def verify(directory):
     directory = Path(directory)
     metadata = json.loads((directory / 'results.json').read_text())
+    if metadata.get('source_case') == 'delivery':
+        from ipv4_multicast.delivery_capture import verify as verify_delivery
+        return verify_delivery(directory)
     inputs = json.loads((directory / 'inputs.json').read_text())
     digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
     require(metadata['suite'] == 'source' and type(metadata['native']) is bool,
@@ -239,9 +255,10 @@ def verify(directory):
     if not metadata['native']:
         require(text.splitlines().count('AXIOM64_TESTS_PASS') == 1 and 'AXIOM64_EXIT status=0' in text,
                 'actual source multicast guest completion')
+    upper = query_timer_upper(directory, metadata)
     statistics = metadata['capture_statistics'] if metadata['native'] else [None, None]
     require(len(statistics) == 2, 'both physical source multicast captures')
-    lanes = [lane(directory / f'lane{number}.pcap', number, metadata['native'], statistics[number], expected, queries, 68 if scenario == 'mtu' else 1500, 6 if scenario == 'mtu' else None, (1, 5) if scenario == 'overlap' else ()) for number in range(2)]
+    lanes = [lane(directory / f'lane{number}.pcap', number, metadata['native'], statistics[number], expected, queries, 68 if scenario == 'mtu' else 1500, 6 if scenario == 'mtu' else None, (1, 5) if scenario == 'overlap' else (), upper, scenario == 'overlap') for number in range(2)]
     return dict(passed=True, native=metadata['native'], profile=metadata['profile'], scenario=scenario,
                 source_files=len(sources), actual_kernel_sha256=None if metadata['native'] else digest(directory / 'axiom64.elf'),
                 stages_each=len(expected), lanes=lanes, full_feature_acceptance=False,

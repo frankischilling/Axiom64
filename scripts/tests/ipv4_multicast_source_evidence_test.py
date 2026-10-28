@@ -79,7 +79,8 @@ def run(source, output):
     variants = []
     rows = records(source / 'lane0.pcap')
     reports = [n for n, row in enumerate(rows) if row['frame'][12:14] == b'\x08\x00' and row['frame'][38] == 0x22]
-    assert len(reports) == {'settled': 14, 'queries': 14, 'mtu': 38, 'overlap': 12}[positive['scenario']]
+    assert (len(reports) >= 12 if positive['scenario'] == 'overlap' else
+            len(reports) == {'settled': 14, 'queries': 14, 'mtu': 38}[positive['scenario']])
     reports_by_stage, queries_by_stage = {}, {}
     stage = None
     for n, row in enumerate(rows):
@@ -92,8 +93,16 @@ def run(source, output):
             elif frame[38] == 0x22:
                 reports_by_stage.setdefault(stage, []).append(n)
     first_source = next(n for n in reports if int.from_bytes(rows[n]['frame'][48:50], 'big'))
+    changed = [dict(row) for row in rows]
+    frame = bytearray(changed[reports[0]]['frame'])
+    frame[20] |= 0x80
+    frame[24:26] = b'\0\0'
+    struct.pack_into('!H', frame, 24, checksum(bytes(frame[14:38])))
+    changed[reports[0]]['frame'] = bytes(frame)
+    variants.append(('reserved-IPv4-bit-valid-checksum', {'lane0.pcap': pcap(changed)},
+                     'source IGMP original IPv4 bounds and checksum'))
     for label, change in (('different-source-valid-checksum', dict(source=0xc0000265)),
-                          ('opposite-record-valid-checksum', dict(kind=6))):
+                          ('opposite-record-valid-checksum', dict(kind=5 if rows[first_source]['frame'][46] == 6 else 6))):
         changed = [dict(row) for row in rows]
         changed[first_source]['frame'] = mutate_report(changed[first_source]['frame'], **change)
         variants.append((label, {'lane0.pcap': pcap(changed)}, 'native-derived exact source transition and retransmission'))
@@ -226,6 +235,27 @@ def run(source, output):
             changed.append(line)
         variants.append(('zero-clock-duration-full-observation', {'client.log': ('\n'.join(changed) + '\n').encode()},
                          'actual guest or native observation clock'))
+    if positive['scenario'] == 'overlap':
+        # A pending old mode report may cross a socket update, but RV=2
+        # never permits a third copy of either the old or new obligation.
+        n = reports_by_stage[1][0]
+        duplicate = dict(rows[n])
+        duplicate['stamp'] += 1
+        triplicate = dict(duplicate)
+        triplicate['stamp'] += 1
+        variants.append(('third-old-mode-copy',
+                         {'lane0.pcap': pcap(rows[:n + 1] + [duplicate, triplicate] + rows[n + 1:])},
+                         'native-derived exact source transition and retransmission'))
+        n = reports_by_stage[3][-1]
+        duplicate = dict(rows[n])
+        duplicate['stamp'] += 1
+        variants.append(('third-final-block-copy',
+                         {'lane0.pcap': pcap(rows[:n + 1] + [duplicate] + rows[n + 1:])},
+                         'native-derived exact source transition and retransmission'))
+        changed = [dict(row) for row in rows]
+        changed[n]['frame'] = mutate_report(changed[n]['frame'], kind=5)
+        variants.append(('final-block-replaced-by-allow', {'lane0.pcap': pcap(changed)},
+                         'native-derived exact source transition and retransmission'))
     pair = next(indices[:2] for indices in reports_by_stage.values() if len(indices) >= 2 and
                 rows[indices[0]]['frame'][46:14 + int.from_bytes(rows[indices[0]]['frame'][16:18], 'big')] ==
                 rows[indices[1]]['frame'][46:14 + int.from_bytes(rows[indices[1]]['frame'][16:18], 'big')])

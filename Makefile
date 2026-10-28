@@ -1533,8 +1533,12 @@ build/ipv4-multicast-source-wire-host: kernel/tests/net/ipv4_multicast_source_wi
 test-ipv4-multicast-source-wire-host: build/ipv4-multicast-source-wire-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-multicast-source-wire-host
 
-build/ipv4-multicast-source-wire-static build/ipv4-multicast-source-wire-dynamic: userspace/tests/net/ipv4_multicast_source_wire.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
-	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4_multicast_source_wire.c
+build/ipv4-multicast-source-wire-native: userspace/tests/net/ipv4_multicast_source_wire.c userspace/tests/net/ipv4_multicast_source_delivery.c userspace/tests/net/ipv4_multicast_source_delivery.h
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $(filter %.c,$^) -o $@
+
+build/ipv4-multicast-source-wire-static build/ipv4-multicast-source-wire-dynamic: userspace/tests/net/ipv4_multicast_source_wire.c userspace/tests/net/ipv4_multicast_source_delivery.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile userspace/tests/net/ipv4_multicast_source_delivery.h
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4_multicast_source_wire.c userspace/tests/net/ipv4_multicast_source_delivery.c
 
 build/ipv4-raw-udp-native: userspace/tests/net/ipv4_raw_udp.c
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@

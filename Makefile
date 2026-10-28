@@ -1559,9 +1559,11 @@ build/ipv4-multicast-queries-host: kernel/tests/net/ipv4_multicast_queries.cpp k
 test-ipv4-multicast-queries: build/ipv4-multicast-queries-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-multicast-queries-host
 
-build/ipv4-receive-controls-native: userspace/tests/net/ipv4_receive_controls.c
+build/ipv4-receive-controls-native: userspace/tests/net/ipv4_receive_controls.c userspace/tests/net/ipv4_receive_result_faults.h
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
-build/ipv4-receive-controls-static build/ipv4-receive-controls-dynamic: userspace/tests/net/ipv4_receive_controls.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+build/ipv4-copy-model-native: userspace/tests/net/ipv4_copy_model.c
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/ipv4-receive-controls-static build/ipv4-receive-controls-dynamic: userspace/tests/net/ipv4_receive_controls.c userspace/tests/net/ipv4_receive_result_faults.h scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4_receive_controls.c
 
 .PHONY: test-ipv4-receive-controls

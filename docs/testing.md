@@ -1201,15 +1201,31 @@ Linux loopback namespaces and four static/dynamic BIOS/UEFI guests. It retains
 the corresponding source, actual programs and compile manifests, kernel,
 initramfs, ISO, QEMU commands and complete logs under
 `build/ipv4-receive-controls`. Each profile includes 1,395 receives, 468 real
-control-page fault cases and four descriptor/accepted-child lifetime cases.
-The independent reader compares every observation with Linux and rejects 19
-serialized alterations while retaining the original logs.
+control-page fault cases, 1,344 payload/vector, source-name and result-header
+cases, and four descriptor/accepted-child lifetime cases. The reader retains
+the original control comparisons and checks each result-copy prefix against
+the actual queued packet. It rejects 28 serialized observation alterations and
+16 serialized changes to the independent probe, its source, program and
+execution records. All altered inputs are reopened before the model checks.
+
+A separate actual-socket probe runs before the libc clients and records both
+`recvfrom` and `recvmsg` source/length faults. Its copied executable, source,
+command and complete-source fingerprints are saved before execution. The
+reader checks that record against the original process result and log. It
+accepts only the address-first or length-first order actually observed on
+that kernel. There is no command-line option to force the model. Local
+validation includes all three libc profiles on Linux 6.6, 6.17 and 7, with
+both store orders observed. The guest follows the Linux 7 length-first order.
+Root and ordinary-user readbacks bind all four actual ISOs, initramfs files,
+programs, loaders, compile manifests and source snapshots without changing
+the original bytes, owners or modes.
 
 Accepted-child checks observe actual listener readiness before changing the
 listener, so the child snapshot belongs to an established server connection.
 The check does not infer server progress from client-side `connect` completion.
-This loopback comparison does not establish physical-interface metadata,
-address/route retirement, every receive fault, or complete networking support.
+This loopback comparison does not establish further ancillary options,
+physical-device failure lifetimes or complete networking support. The separate
+Ethernet comparison below covers interface metadata and queued address/route changes.
 The existing network CI entry runs this comparison alongside its prior tests.
 
 Ethernet metadata acceptance must retain original packets from virtio-net and
@@ -1254,3 +1270,5 @@ Native path-MTU, error-queue and cached-route comparisons place each profile's c
 `sudo -n make test-native-ipv6-capture-order` runs an actual all-protocol C packet client through all three profile CPU selections. Each exchanges 8,192 barrier pairs, binds all original frames to independent clock receipts and rejects serialized reordered, missing and damaged packets. Every 64 pairs, the coordinator waits for the actual final acknowledgment receipt before continuing, bounding the collector backlog while preserving every packet and the existing receipt deadline. The probe uses the host C runtime; the complete IPv6 suites separately retain their three actual libc linkages. The existing error-queue target includes the regression, and the existing IPv6 artifact retains its sources, program, ownership records, captures and controls.
 
 Administration and rotation fault campaigns share the disposable NBD launcher. Each start retains `backend-startup.json` with its exact command, executable hash, socket and trace state, elapsed observation and unchanged five-second bound. On timeout or early exit, the report includes the actual process state before termination and host CPU/memory pressure. Launch errors close the log; failed starts remain failures and grant no retry. The startup regression exercises both callers with actual NBD sockets, early-exit children, stopped children and missing executables. The observed administration baseline failure had an empty backend log and no process report; its cause remains unproven.
+
+The result-fault extension retains all original ancillary and lifetime cases. It adds guarded payload/vector output, invalid or incomplete vector/header input, out-of-range addresses, NULL/truncated/signed source capacities, both orientations of protected message fields, and dequeue/peek observations. All 1,344 cases pass per profile across nine actual Linux comparisons and four guests. The original guest kernel failed 696 cases per guest; its programs, source, images and logs remain retained. The shared copier also passes the existing eight-guest/three-native IPv6 comparison, all 854 cases and 240 rejection controls. Every existing CI job, scenario and real deadline remains required.

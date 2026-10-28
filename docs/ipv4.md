@@ -20,13 +20,28 @@ Short option values, truncated control buffers, untouched padding, page-boundary
 fault prefixes, `MSG_PEEK` and `MSG_TRUNC` follow the observed Linux x86-64
 contract.
 
-The common loopback client passes three native libc profiles and four
-static/dynamic BIOS/UEFI guest profiles. Each checks 1,395 receives, 468 control
-fault cases and four description-lifetime cases. All ancillary bytes, visible
-fault prefixes, flags, lengths, errors and consumption results agree after
-mapping the actual loopback interface number. Payload/source/header fault
-ordering and broader IPv4 ancillary options still require acceptance evidence. See
-[testing](testing.md) for the reproducible command and retained controls.
+The common loopback client passes nine native libc/kernel profiles across
+Linux 6.6, 6.17 and 7, plus four static/dynamic BIOS/UEFI guest profiles. Each
+checks 1,395 receives, 468 control-page faults, 1,344 payload/vector, source-name
+and message-result cases, and four description-lifetime cases. The original
+control rows compare every byte after mapping only the actual loopback index.
+Result cases bind copied bytes to the original queued packet, including its
+validated raw IPv4 header and checksums. Independent root and ordinary-user
+readers reopen all four boot images and reject 28 observation controls and
+16 source/probe/execution controls per native kernel cohort. See
+[testing](testing.md#ipv4-receive-control-comparison) for the command and retained inputs.
+
+Input vector and named `recvmsg` length validation failures leave the packet
+queued. A later payload, source or result-store fault consumes a non-peek
+datagram; `MSG_PEEK` retains it. Payload copies preserve bytes on writable
+pages before a later page fault. `recvfrom` copies payload before reading a
+requested source length, so an invalid length pointer or negative capacity
+fails after that copy. A NULL source pointer ignores the length pointer.
+A NULL `recvmsg` source pointer leaves its caller's length field untouched.
+The guest stores the full 16-byte source length before copying the bounded
+address prefix, as observed on Linux 7. A separate four-case native probe
+retains the address-first behavior of older kernels in the comparison.
+Broader ancillary options and current-source hosted acceptance remain required.
 
 The Ethernet receive-metadata comparison passes locally across three native
 libc profiles and eight static/dynamic BIOS/UEFI modern/legacy guests with
@@ -37,7 +52,7 @@ survive alias/prefix removal and reverse-route replacement. Independent
 readers decode original packet captures and 180 address/route inventories
 per profile, open the boot images and reject 27 damaged inputs. See the
 [Ethernet metadata checks](testing.md#ipv4-ethernet-receive-metadata). Broader
-receive faults, output controls, device lifetimes and current-source hosted
+receive behavior, output controls, device lifetimes and current-source hosted
 acceptance remain required.
 
 ## IPv4 multicast qualification

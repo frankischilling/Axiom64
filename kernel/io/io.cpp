@@ -179,7 +179,7 @@ static int prepare_packet(Task& task, IoRequest& request) {
         Message message;
         if (!task.memory->space.copy_in(&message, f.rsi, sizeof(message)))
             return -14;
-        if (request.handle->inet6 && message.name) {
+        if ((request.handle->inet6 || (!request.write && request.handle->inet)) && message.name) {
             if (int32_t(message.name_length) < 0)
                 return -22;
             message.name_length = min(message.name_length, uint32_t(128));
@@ -208,6 +208,11 @@ static int prepare_packet(Task& task, IoRequest& request) {
         request.single = {f.rsi, min(f.rdx, uint64_t(0x7ffff000))};
         request.vectors = &request.single;
         request.count = 1;
+    }
+    for (size_t i = 0; i < request.count; i++) {
+        const auto& vector = request.vectors[i];
+        if (vector.base >= user_limit || vector.length > user_limit - vector.base)
+            return -14;
     }
     if (request.write && address) {
         if (request.handle->netlink) {
@@ -246,7 +251,7 @@ static int prepare_packet(Task& task, IoRequest& request) {
     if (f.rax == 45 && f.r8) {
         request.address_pointer = f.r8;
         request.address_length_pointer = f.r9;
-        if (!request.handle->inet6 &&
+        if (!request.handle->inet6 && !request.handle->inet &&
             !task.memory->space.copy_in(&request.address_capacity, f.r9, 4))
             return -14;
     }
@@ -652,14 +657,14 @@ static int64_t transfer(Task& task, IoRequest& request, const Iovec& vector, siz
     return done;
 }
 
-static bool copy_packet_address(Task& task, uint64_t destination, const void* data, size_t length) {
+static bool copy_packet_output(Task& task, uint64_t destination, const void* data, size_t length) {
     if (!length)
         return true;
     if (destination >= user_limit || length > user_limit - destination)
         return false;
     auto source = static_cast<const uint8_t*>(data);
     while (length) {
-        // Preserve bytes on writable pages before a later address-copy fault.
+        // Preserve bytes on writable pages before a later output-copy fault.
         size_t count = min(length, size_t(page_size - destination % page_size));
         if (!task.memory->space.copy_out(destination, source, count))
             return false;
@@ -741,7 +746,7 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
     for (size_t i = 0; i < request.count && remaining; i++) {
         const auto& vector = request.vectors[i];
         size_t count = min(remaining, size_t(vector.length));
-        if (count && !task.memory->space.copy_out(vector.base, bytes + at, count))
+        if (count && !copy_packet_output(task, vector.base, bytes + at, count))
             return copy_fault();
         at += count;
         remaining -= count;
@@ -752,7 +757,7 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
                               : ip  ? sizeof(InetAddress)
                               : ip6 ? sizeof(Inet6Address)
                                     : sizeof(PacketAddress);
-    if (ip6 && f.rax == 45 && request.address_pointer) {
+    if ((ip || ip6) && f.rax == 45 && request.address_pointer) {
         if (!task.memory->space.copy_in(&request.address_capacity, request.address_length_pointer,
                                         4))
             return copy_fault();
@@ -771,7 +776,7 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
                 inet6_receive_control(task, request.handle->inet6, *ip6, request.control_pointer,
                                       request.control_capacity, message_flags);
     }
-    if (ip6 && request.address_pointer) {
+    if ((ip || ip6) && request.address_pointer) {
         // Linux stores the full source length before copying any address bytes.
         uint64_t length_pointer =
             f.rax == 47 ? f.rsi + offsetof(Message, name_length) : request.address_length_pointer;
@@ -779,16 +784,17 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
             return copy_fault();
     }
     if (request.address_pointer &&
-        (!copy_packet_address(task, request.address_pointer, source,
-                              min(request.address_capacity, actual_address)) ||
-         (!ip6 && request.address_length_pointer &&
+        (!copy_packet_output(task, request.address_pointer, source,
+                             min(request.address_capacity, actual_address)) ||
+         (!ip && !ip6 && request.address_length_pointer &&
           !task.memory->space.copy_out(request.address_length_pointer, &actual_address, 4))))
         return copy_fault();
     if (f.rax == 47) {
         uint32_t address_length = request.address_pointer ? actual_address : 0;
-        // A NULL IPv6 source-name pointer leaves the caller's length untouched.
-        if ((!ip6 && !task.memory->space.copy_out(f.rsi + offsetof(Message, name_length),
-                                                  &address_length, 4)) ||
+        // A NULL Internet source-name pointer leaves the caller's length untouched.
+        if ((!ip && !ip6 &&
+             !task.memory->space.copy_out(f.rsi + offsetof(Message, name_length), &address_length,
+                                          4)) ||
             !task.memory->space.copy_out(f.rsi + offsetof(Message, flags), &message_flags, 4) ||
             !task.memory->space.copy_out(f.rsi + offsetof(Message, control_length), &control_length,
                                          8))

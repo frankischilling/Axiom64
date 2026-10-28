@@ -15,13 +15,14 @@ from build_musl import loader
 from compile_uapi_client import audit_compile
 from tcp6.inputs import digest, freeze
 from ipv4_receive_controls_contract import DONE, damaged_controls, require, verify
+from ipv4_receive_copy_model import load as load_copy_model, parse_probe, damaged_controls as damaged_model_controls
 
 
 def save(path, value):
     path.write_text(json.dumps(value, indent=2) + '\n')
 
 
-def run(command, directory, expected=0, timeout=120):
+def run(command, directory, expected=0, timeout=120, completion=DONE):
     save(directory / 'command.json', command)
     began = time.monotonic_ns()
     with (directory / 'client.log').open('xb') as output:
@@ -45,7 +46,8 @@ def run(command, directory, expected=0, timeout=120):
     save(directory / 'process.json', result)
     require(not timed_out and process.returncode == expected, 'actual client process failed: ' + str(directory))
     text = (directory / 'client.log').read_text()
-    require(text.count(DONE) == 1 and 'IPV4_RECEIVE_CONTROLS_FAIL' not in text,
+    require(text.count(completion) == 1 and 'IPV4_RECEIVE_CONTROLS_FAIL' not in text and
+            'IPV4_COPY_MODEL_FAIL' not in text,
             'complete common client execution: ' + str(directory))
     return result, text
 
@@ -83,13 +85,30 @@ def main():
     source = freeze(frozen)
     inputs = json.loads((frozen / 'source-inputs.json').read_text())
     detach_kernel()
-    targets = ['build/axiom64.elf', *('build/ipv4-receive-controls-' + profile
+    targets = ['build/axiom64.elf', 'build/init', 'busybox', 'build/ipv4-copy-model-native', *('build/ipv4-receive-controls-' + profile
                for profile in ('native', 'static', 'dynamic'))]
     command = ['make', '-j' + str(args.workers), *targets]
     save(directory / 'build-command.json', command)
     with (directory / 'build.log').open('xb') as output:
         subprocess.run(command, cwd=ROOT, stdout=output, stderr=subprocess.STDOUT, check=True, timeout=600)
     kernel_sha256 = digest(ROOT / 'build/axiom64.elf')
+    probe = directory / 'native-copy-model'
+    probe.mkdir()
+    probe_program = ROOT / 'build/ipv4-copy-model-native'
+    kernel = dict(sysname=os.uname().sysname, release=os.uname().release)
+    shutil.copy2(probe_program, probe / 'program.elf')
+    shutil.copy2(ROOT / 'userspace/tests/net/ipv4_copy_model.c', probe / 'probe.c')
+    probe_command = ['unshare', '--net', sys.executable, '-B', __file__, '--native-child', str(probe / 'program.elf')]
+    save(probe / 'preexecution.json', dict(kernel=kernel, source=source, command=probe_command,
+         program_sha256=digest(probe / 'program.elf'), source_sha256=digest(probe / 'probe.c')))
+    execution, text = run(probe_command, probe, timeout=30, completion='IPV4_COPY_MODEL_DONE cases=4')
+    model = dict(kernel=kernel, order=parse_probe(text, kernel['release']), execution=execution,
+                 command=probe_command, program_sha256=digest(probe_program),
+                 source_sha256=digest(ROOT / 'userspace/tests/net/ipv4_copy_model.c'),
+                 log_sha256=digest(probe / 'client.log'),
+                 preexecution_sha256=digest(probe / 'preexecution.json'))
+    save(directory / 'native-copy-model.json', model)
+    copy_model = load_copy_model(directory, inputs)
     native_texts, guest_texts, results = [], [], []
     for profile in ('native', 'static', 'dynamic'):
         case = directory / ('linux-' + profile)
@@ -138,9 +157,11 @@ def main():
                                     ('kernel.elf', 'program.elf', 'image.iso', 'root.cpio')})
             save(case / 'results.json', result)
             results.append(result)
-    checked = verify(native_texts, guest_texts)
+    checked = verify(native_texts, guest_texts, copy_model)
     checked['serialized_controls_rejected'] = damaged_controls(
-        native_texts, guest_texts, directory / 'damaged-controls.zip')
+        native_texts, guest_texts, directory / 'damaged-controls.zip', copy_model)
+    checked['serialized_model_controls_rejected'] = damaged_model_controls(
+        directory, inputs, directory / 'damaged-model-controls.zip')
     require(all(digest(ROOT / name) == value for name, value in inputs.items()),
             'corresponding source unchanged during complete cohort')
     require(digest(ROOT / 'build/axiom64.elf') == kernel_sha256, 'runtime kernel unchanged')

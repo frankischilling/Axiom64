@@ -390,6 +390,8 @@ static void fault_cases(void) {
     need(!munmap(mapping, (size_t)page * 2), "release fault mappings");
 }
 
+#include "ipv4_receive_result_faults.h"
+
 int main(void) {
     setvbuf(stdout, NULL, _IOFBF, 32768);
     _Static_assert(sizeof(struct cmsghdr) == 16, "Linux x86-64 control header");
@@ -415,7 +417,8 @@ int main(void) {
     }
     description_cases();
     fault_cases();
-    printf("IPV4_RECEIVE_CONTROLS_PASS observations=%u faults=%u checks=%u\n", observations,
-           fault_observations, checks);
+    result_fault_cases();
+    printf("IPV4_RECEIVE_CONTROLS_PASS observations=%u faults=%u result_faults=%u checks=%u\n",
+           observations, fault_observations, result_fault_observations, checks);
     return 0;
 }

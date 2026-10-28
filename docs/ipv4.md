@@ -1,18 +1,34 @@
 # IPv4, ARP, routing, and ping
 
-The IPv4 host path runs over [virtio-net and QEMU e1000](network.md). It supports static addresses, loopback, connected and explicit routes, bounded ARP resolution, fragment reassembly, kernel ICMP echo replies, Linux raw ICMP sockets, [UDP datagrams](udp.md) and [TCP streams](tcp.md). BusyBox `ifconfig`, route add/delete, and numeric `ping` exercise the guest implementation. [DHCP](network-manager.md) and [DNS with TCP fallback](dns.md) have their own contracts. IPv6, complete cached-route query policy, multicast and complete IPv4 conformance remain required by the [networking roadmap](feature-roadmap.md).
+The IPv4 host path runs over [virtio-net and QEMU e1000](network.md). It supports static addresses, loopback, connected and explicit routes, bounded ARP resolution, fragment reassembly, kernel ICMP echo replies, Linux raw ICMP/UDP sockets, [UDP datagrams](udp.md) and [TCP streams](tcp.md). BusyBox `ifconfig`, route add/delete, and numeric `ping` exercise the guest implementation. [DHCP](network-manager.md) and [DNS with TCP fallback](dns.md) have their own contracts. IPv6, complete cached-route query policy, multicast and complete IPv4 conformance remain required by the [networking roadmap](feature-roadmap.md).
 
 ## IPv4 multicast qualification
 
-The IPv4 host has an initial any-source multicast implementation. Socket
-descriptions own up to 20 group/interface memberships, and interfaces aggregate
-up to 128 live or retiring groups. `IP_ADD_MEMBERSHIP` and
-`IP_DROP_MEMBERSHIP` accept the Linux `ip_mreq` and `ip_mreqn` layouts.
+IPv4 socket descriptions own up to 20 group/interface memberships, and
+interfaces aggregate up to 128 live or retiring groups. `IP_ADD_MEMBERSHIP`
+and `IP_DROP_MEMBERSHIP` accept the Linux `ip_mreq` and `ip_mreqn` layouts.
 `IP_MULTICAST_IF`, `IP_MULTICAST_TTL`, `IP_MULTICAST_LOOP`, and
 `IP_MULTICAST_ALL` control output selection, hop limits, local copies, and
 per-socket receive filtering. Duplicate descriptors retain the same interests;
-the last close removes them. Datagram delivery fans out only after interface,
-address, port, peer, and membership filtering.
+the last close removes them. UDP delivery applies interface, address, port,
+peer and source membership filters before selecting a receive queue.
+
+Source membership controls support INCLUDE and EXCLUDE lists through the
+legacy source options, generic group/source options, `IP_MSFILTER` and
+`MCAST_MSFILTER`. A socket filter stores up to 64 ordered unique sources. The
+separate `/proc/sys/net/ipv4/igmp_max_msf` admission policy defaults to 10 and
+does not resize that storage. Its configured signed integer remains readable
+even when it exceeds the fixed storage bound. Existing interests survive a
+later policy reduction. Aggregate/history admission failures preserve the
+previous ownership and pending report state.
+
+Interface aggregation unions INCLUDE interests, or subtracts those interests
+from the intersection of EXCLUDE lists. Hidden contributors retain their source
+slots so final close can expose another owner's filter without allocating new
+report history. Sanitized module tests cover these ownership transitions;
+the raw UDP loopback client also checks source-filtered data and shared/final
+description close. Complete Ethernet and broader lifetime acceptance remain
+required.
 
 `SOCK_STREAM` accepts `IP_MULTICAST_LOOP` and `IP_MULTICAST_ALL`. Passive
 connections snapshot both flags when the handshake completes. Accepting a
@@ -20,23 +36,40 @@ queued child or changing and closing its listener preserves the child's
 independent controls and connected stream. TCP setters for `IP_MULTICAST_IF`
 and `IP_MULTICAST_TTL` return `EINVAL`.
 
-The host queues real IGMPv3 state changes and delayed query responses with
-Router Alert, TTL 1, and the control traffic class. Older queries select IGMPv1
-or IGMPv2 compatibility, including report suppression and last-reporter leave.
-Link down suspends reports; link up announces retained interests. Source-query
-state is bounded at 64 sources. INCLUDE responses split into packets that fit
-MTU 68; an overflowing query list falls back to the actual complete ASM state.
-The all-hosts group is implicit and sends no membership reports.
+IGMPv3 reports carry Router Alert, TTL 1 and the control traffic class. Mode
+changes and individual source changes retain separate retransmission counters;
+refused output preserves the pending cursor and counters. INCLUDE records split
+across packets at the actual link MTU. EXCLUDE records use a stable subset that
+fits one packet, following [RFC 9776 section 4.2.17](https://www.rfc-editor.org/rfc/rfc9776.html#section-4.2.17).
+A live increase from MTU 68 to 1500 restores the complete 64-source EXCLUDE
+query response without changing membership.
 
-The local baseline covers three native Linux libc/linkage profiles and eight
-static/dynamic BIOS/UEFI modern/legacy guest profiles on both adapters. Normal
-and protected ordinary readers reopen complete source, actual images, programs,
-packets and six unchanged native clock gates, and reject twenty-five serialized
-evidence controls. The public cohort auditor requires the same checks for each
-new source epoch. Fresh hosted qualification, source-filter socket controls,
-general IPv6 memberships and MLD, multicast routing, broader lifecycle cases,
-and complete multicast conformance remain required.
-Unsupported source-filter controls continue to return `ENOPROTOOPT`.
+Group and general queries report the current filter. Source-specific queries
+intersect an INCLUDE list with the queried sources, or remove the blocked
+EXCLUDE list from them; an empty result stays silent, as specified in
+[RFC 9776 Table 5](https://www.rfc-editor.org/rfc/rfc9776.html#table-5).
+Measured Linux reference profiles have an explicit EXCLUDE response difference;
+guest acceptance follows the RFC. Pending query storage is bounded at 64
+sources; overflow falls back to the actual full filter. Older general queries
+select IGMPv1 or IGMPv2 compatibility. Link down suspends reports and link up
+announces retained interests. The all-hosts group is implicit and sends no
+membership reports.
+
+The local source-report cohort passes 32 guest profiles: settled changes, query
+responses, minimum-MTU/live-MTU behavior and overlapping changes, each with
+static/dynamic linkage, BIOS/UEFI and modern/legacy virtio plus e1000. Independent
+root and ordinary-user readers reopen complete sources, actual images,
+executables and captures. They verify 1,248 reports, 176 queries, 496 full
+three-second windows, 32 first-packet barriers and 53 altered-evidence controls.
+First-packet barriers may finish within one guest clock tick; the remaining
+observations retain their full three-second wire intervals.
+
+The reporting corpus remains bound to its retained kernel, before the raw UDP
+extension below. Original native query and MTU clock-discontinuous captures
+remain rejected. The new kernel still needs source-filtered Ethernet delivery
+and reporting revalidation, wider query/legacy/link and lifetime cases,
+latest-source integration and hosted qualification. General IPv6 membership/MLD,
+multicast routing and complete multicast conformance remain open.
 
 ## Ownership and progress
 
@@ -160,15 +193,41 @@ An independent capture auditor checks tuple ownership, packet checksums, origina
 
 Broader UDP/TCP fragment corpora, dynamic guest linkage and the remaining complete IP requirements still need independent acceptance evidence. The current receiver continues to require a 20-byte header; variable-header module tests do not establish IP option support in the receive path.
 
-## Raw ICMP socket contract
+<a id="raw-icmp-socket-contract"></a>
 
-`socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)` supports close-on-exec and nonblocking flags, bind/connect/disconnect, duplicate/fork lifetime, address queries, `read`/`write`, vectors, and send/receive message calls. Received data includes the IP header. Source `sockaddr_in` contains `AF_INET`, port zero, and the source IPv4 address. The raw socket's local port metadata is the protocol number; the supplied connect port is peer-query metadata and does not affect transmission. As on the compared Linux path, a zero peer port makes `getpeername` report `ENOTCONN`.
+## Raw IPv4 socket contract
 
-Each listener holds at most 32 datagrams and 65536 bytes, dropping new arrivals when either bound is reached without affecting other listeners. `SO_RCVBUF` and `SO_SNDBUF` double the requested size, clamp it to the supported bound, and impose a 2048-byte minimum. `SO_BINDTODEVICE`, `SO_BROADCAST`, `IP_TTL`, the supported DF policies, and `ICMP_FILTER` are implemented. Bind, peer, interface, and ICMP filters apply independently.
+`socket(AF_INET, SOCK_RAW, protocol)` accepts `IPPROTO_ICMP` and `IPPROTO_UDP`. Both support close-on-exec and nonblocking flags, bind/connect/disconnect, duplicate/fork lifetime, address queries, `read`/`write`, vectors, and send/receive message calls. Received data includes the IP header. Source `sockaddr_in` contains `AF_INET`, port zero, and the source IPv4 address. The raw socket's local port metadata is the protocol number; the supplied connect port is peer-query metadata and does not affect transmission. As on the compared Linux path, a zero peer port makes `getpeername` report `ENOTCONN`.
+
+A raw UDP sender supplies the UDP header as part of its payload; socket-address
+ports do not replace that header. Raw receivers get the complete IPv4 datagram
+before UDP length/checksum validation. A malformed UDP payload can therefore
+reach a matching raw listener while the UDP datagram listener rejects it.
+Independent raw listeners receive separate copies. Logical raw payloads range
+from zero to 65,515 bytes, including any caller-provided transport header.
+Multicast raw input applies protocol, interface, bound-address, peer and source
+membership filters. Raw group binds and `SO_REUSEADDR` are supported.
+
+Each listener holds at most 32 datagrams and 65536 bytes, dropping new arrivals when either bound is reached without affecting other listeners. `SO_RCVBUF` and `SO_SNDBUF` double the requested size, clamp it to the supported bound, and impose a 2048-byte minimum. `SO_BINDTODEVICE`, `SO_BROADCAST`, `IP_TTL`, the supported DF policies, and `ICMP_FILTER` for ICMP are implemented. The UDP raw protocol rejects `ICMP_FILTER` with `EOPNOTSUPP`. Bind, peer, interface, and ICMP filters apply independently.
 
 `SO_SNDBUFFORCE` requires `CAP_NET_ADMIN`, permits a larger send quota and reports the doubled value through `SO_SNDBUF`. It does not enlarge the fixed global IP output table or maximum datagram size. Receive-buffer forcing and complete Linux memory-accounting equivalence remain separate socket requirements.
 
 Receive supports `MSG_PEEK`, `MSG_TRUNC`, and `MSG_DONTWAIT`; sends also accept `MSG_NOSIGNAL`. Poll/epoll and `FIONREAD` expose queue state. An ordinary failed receive copy consumes the selected datagram; a failed peek retains it. This behavior is checked against Linux and leaves the separate packet-socket contract intact. Blocking I/O captures vectors, addresses, and TX bytes and retains the original description through close/reuse. Socket errors take precedence over queued input; a failed `SO_ERROR` copy does not clear the pending error.
+
+The shared raw UDP client passes 220 operations across nine native profiles
+(glibc and both musl linkages on Linux 6.6, 6.17 and 7) and four static/dynamic
+BIOS/UEFI guest profiles. Each execution observes 23 complete packets and 48
+full 200 ms quiet windows. Seven source-filter phases cover INCLUDE/EXCLUDE,
+multicast-all, duplicate-description retention, final close and fresh-description
+isolation. All 79 operations in the original multicast ABI client now pass in
+three native and four guest profiles; its former raw UDP creation failure is
+retained as a control.
+
+Root and ordinary readers reopen the actual programs, sources, runtime libraries,
+initramfs and images, and reject 25 serialized changes. They preserve the failed
+old kernel and the original down-loopback native fixture. These are loopback
+socket and data observations; Ethernet behavior, broader raw options and current
+source-report/hosted qualification remain required.
 
 Other raw protocols, raw listen/accept/shutdown, ancillary data, `IP_HDRINCL`, error queues and unsupported options return explicit errors. [UDP](udp.md) and [TCP](tcp.md) have their own data and shutdown contracts, using common finite [socket deadlines](io.md). [Task credentials and permission checks](credentials.md) support numeric identities; persistent accounts/login, full isolation, file capabilities and complete secure-randomness acceptance remain prerequisites for the service release.
 

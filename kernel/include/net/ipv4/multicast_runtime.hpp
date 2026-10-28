@@ -7,10 +7,14 @@ struct InetSocket;
 struct Task;
 struct Frame;
 bool ipv4_multicast_member(unsigned index, uint32_t group);
-bool inet_multicast_accepts(const InetSocket*, unsigned index, uint32_t group);
+bool ipv4_multicast_source_allowed(unsigned index, uint32_t group, uint32_t source);
+bool inet_multicast_accepts(const InetSocket*, unsigned index, uint32_t group, uint32_t source);
 void inet_multicast_close(InetSocket*);
 bool inet_multicast_loop(const InetSocket*);
 int inet_multicast_option(Task&, const Frame&, InetSocket*);
+int32_t ipv4_multicast_source_limit();
+void ipv4_multicast_source_limit(int32_t);
+
 void ipv4_multicast_poll();
 void ipv4_multicast_input(unsigned index, const uint8_t*, size_t);
 // Queue a complete owned IGMP frame with Router Alert; never transmits inline.

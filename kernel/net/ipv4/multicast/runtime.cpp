@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/ipv4/multicast_runtime.hpp"
+#include "source_options.hpp"
 #include "net/ipv4.hpp"
 #include "net/ipv4_wire.hpp"
 #include "net/socket_options.hpp"
@@ -12,13 +13,15 @@ namespace {
 static_assert(ipv4_loopback < ip4::MulticastHost::interface_capacity);
 ip4::MulticastHost host;
 bool seeded;
+int32_t source_limit = 10;
 
 void refresh() {
     for (unsigned index = 1; index <= max_net_devices; index++) {
         auto info = net_info(index);
-        host.link(index, info && info->live && info->administrative && info->carrier, ticks);
+        host.link(index, info && info->live && info->administrative && info->carrier, ticks,
+                  info ? info->mtu : 68);
     }
-    host.link(ipv4_loopback, true, ticks);
+    host.link(ipv4_loopback, true, ticks, 65535);
 }
 
 unsigned address_index(uint32_t address) {
@@ -52,19 +55,43 @@ int selected_interface(unsigned requested, uint32_t address, uint32_t group, uns
     return 0;
 }
 
+void prepare() {
+    if (!seeded) {
+        uint32_t seed = 0;
+        if (!random_read(&seed, sizeof(seed), true))
+            host.seed(seed);
+        seeded = true;
+    }
+    refresh();
+}
+
 bool emit(void*, unsigned index, uint32_t destination, const uint8_t* bytes, size_t length) {
     // Loopback has no neighboring multicast router or Ethernet transmission.
     return index == ipv4_loopback || ipv4_multicast_report(index, destination, bytes, length);
 }
 } // namespace
 
+int32_t ipv4_multicast_source_limit() {
+    return source_limit;
+}
+
+void ipv4_multicast_source_limit(int32_t value) {
+    source_limit = value;
+}
+
 bool ipv4_multicast_member(unsigned index, uint32_t group) {
     refresh();
     return host.member(index, group);
 }
 
-bool inet_multicast_accepts(const InetSocket* socket, unsigned index, uint32_t group) {
-    return host.accepts(socket->multicast, index, group);
+bool ipv4_multicast_source_allowed(unsigned index, uint32_t group, uint32_t source) {
+    refresh();
+    return host.accepts_source(index, group, source);
+}
+
+bool inet_multicast_accepts(const InetSocket* socket, unsigned index, uint32_t group,
+                            uint32_t source) {
+    return host.accepts(socket->multicast, index, group, source);
 }
 
 bool inet_multicast_loop(const InetSocket* socket) {
@@ -107,6 +134,12 @@ void ipv4_multicast_input(unsigned index, const uint8_t* bytes, size_t length) {
 int inet_multicast_option(Task& task, const Frame& frame, InetSocket* socket) {
     unsigned option = unsigned(frame.rdx);
     auto& owner = socket->multicast;
+    if (option >= 37 && option <= 48) {
+        if (frame.rax == 54)
+            prepare();
+        return multicast_source_option(task, frame, socket, host, selected_interface,
+                                       unsigned(source_limit));
+    }
     if (frame.rax == 55) {
         if (option == 35 || option == 36)
             return -92;
@@ -173,13 +206,7 @@ int inet_multicast_option(Task& task, const Frame& frame, InetSocket* socket) {
             socket->destination = {};
             return 0;
         }
-        if (!seeded) {
-            uint32_t seed = 0;
-            if (!random_read(&seed, sizeof(seed), true))
-                host.seed(seed);
-            seeded = true;
-        }
-        refresh();
+        prepare();
         return host.join(owner, index, group, ticks);
     }
     if (!length)

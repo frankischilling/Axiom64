@@ -54,6 +54,8 @@ def shared_fixture_owner(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--native', action='store_true')
+    parser.add_argument('--suite', choices=('asm', 'source'), default='asm')
+    parser.add_argument('--source-case', choices=('settled', 'queries', 'mtu', 'overlap'), default='settled')
     parser.add_argument('--profile', choices=('native', 'static', 'dynamic'), default='static')
     parser.add_argument('--firmware', choices=('bios', 'uefi'), default='bios')
     parser.add_argument('--transport', choices=('modern', 'legacy'), default='modern')
@@ -61,7 +63,18 @@ def main():
     parser.add_argument('--isolated', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--directory', type=Path, required=True)
     args = parser.parse_args()
+    if args.suite != 'source' and args.source_case != 'settled':
+        parser.error('source packet cases require --suite source')
     directory = args.directory.resolve()
+    prefix = 'ipv4-multicast-source-wire' if args.suite == 'source' else 'ipv4-multicast'
+    client_source = 'userspace/tests/net/ipv4_multicast_source_wire.c' if args.suite == 'source' else 'userspace/tests/net/ipv4_multicast.c'
+    marker = 'IPV4_SOURCE_WIRE_PASS stages=7 lanes=2 operations=14' if args.suite == 'source' else 'MULTICAST_TESTS_PASS'
+    if args.suite == 'source' and args.source_case == 'queries':
+        marker = 'IPV4_SOURCE_WIRE_QUERY_PASS stages=12 lanes=2 operations=8 queries=16'
+    if args.suite == 'source' and args.source_case == 'mtu':
+        marker = 'IPV4_SOURCE_WIRE_MTU_PASS stages=7 lanes=2 operations=8 queries=6 sources=64 minimum_mtu=68 restored_mtu=1500 restored_policy=10'
+    if args.suite == 'source' and args.source_case == 'overlap':
+        marker = 'IPV4_SOURCE_WIRE_OVERLAP_PASS stages=7 lanes=2 operations=18 first_packet_barriers=4 full_observations_each=5'
     if args.matrix:
         directory.mkdir(parents=True, exist_ok=False)
         cases = [(True, profile, 'bios', 'modern') for profile in ('native', 'static', 'dynamic')]
@@ -72,7 +85,7 @@ def main():
         for native, profile, firmware, transport in cases:
             label = f'linux-{profile}' if native else f'guest-{profile}-{firmware}-{transport}'
             command = [sys.executable, '-B', __file__, '--profile', profile, '--firmware', firmware,
-                       '--transport', transport, '--directory', str(directory / label)]
+                       '--transport', transport, '--suite', args.suite, '--source-case', args.source_case, '--directory', str(directory / label)]
             if native:
                 command.append('--native')
             with (directory / (label + '.log')).open('xb') as output:
@@ -87,9 +100,13 @@ def main():
         parser.error('native host libc requires --native')
     if args.native and not args.isolated:
         return subprocess.call(['unshare', '--net', sys.executable, __file__, '--native',
-                                '--isolated', '--profile', args.profile, '--directory', str(directory)], cwd=ROOT)
+                                '--isolated', '--profile', args.profile, '--suite', args.suite, '--source-case', args.source_case, '--directory', str(directory)], cwd=ROOT)
     directory.mkdir(parents=True, exist_ok=False)
-    peers = [Peer(lane) for lane in range(2)]
+    if args.suite == 'source':
+        from ipv4_multicast.source_peer import SourcePeer
+        peers = [SourcePeer(lane, args.source_case) for lane in range(2)]
+    else:
+        peers = [Peer(lane) for lane in range(2)]
     selector = selectors.DefaultSelector()
     handles = []
     captures = []
@@ -98,11 +115,11 @@ def main():
     outgoing = [bytearray(), bytearray()]
     incoming = [bytearray(), bytearray()]
     serial = directory / 'client.log'
-    program = f'ipv4-multicast-{args.profile}'
+    program = f'{prefix}-{args.profile}'
     if args.native:
         if args.profile == 'native':
             compile_command = ['gcc', '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
-                               'userspace/tests/net/ipv4_multicast.c', '-o', f'build/{program}']
+                               client_source, '-o', f'build/{program}']
             before = sources(compile_command, ROOT)
             subprocess.run(compile_command, cwd=ROOT, check=True)
             if before != sources(compile_command, ROOT):
@@ -134,7 +151,7 @@ def main():
         image_name = f'ipv4-multicast-{directory.name}.iso'
         with shared_fixture_owner(ROOT / 'build/rootfs-network.cpio'):
             fixture(program=program, script='userspace/tests/net/multicast-run.sh',
-                    environment={'AXIOM64_MULTICAST_CLIENT': '/bin/' + program},
+                    environment={'AXIOM64_MULTICAST_CLIENT': '/bin/' + program, 'AXIOM64_SOURCE_CASE': args.source_case},
                     runtime_loader=loader('runtime') if args.profile == 'dynamic' else None)
             subprocess.run([sys.executable, 'scripts/image.py', '--test', '--suite', 'network',
                             '--output-name', image_name], cwd=ROOT, check=True)
@@ -195,7 +212,8 @@ def main():
                 outgoing[lane].extend(len(frame).to_bytes(4, 'big') + frame)
     try:
         with serial.open('wb') as output:
-            process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
+            environment = dict(os.environ, AXIOM64_SOURCE_CASE=args.source_case) if args.suite == 'source' else None
+            process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, env=environment)
             while process.poll() is None:
                 if time.monotonic() - started > 100:
                     raise TimeoutError('multicast client deadline')
@@ -262,9 +280,9 @@ def main():
     results = [peer.result() for peer in peers]
     for peer in peers:
         (directory / f'lane{peer.lane}-frames.json').write_text(json.dumps(peer.frames, indent=2) + '\n')
-    result = dict(passed=error is None and 'MULTICAST_TESTS_PASS' in text and all(row['passed'] for row in results) and
+    result = dict(passed=error is None and marker in text and all(row['passed'] for row in results) and
                   process is not None and process.returncode == (0 if args.native else 1),
-                  native=args.native, profile=args.profile, firmware=args.firmware, transport=args.transport, source_root=str(ROOT), source=frozen, products=retained_products,
+                  source_case=args.source_case, suite=args.suite, native=args.native, profile=args.profile, firmware=args.firmware, transport=args.transport, source_root=str(ROOT), source=frozen, products=retained_products,
                   capture_statistics=capture_statistics, diagnostic_only=True,
                   strict_native_clock_and_independent_artifact_audit_pending=True,
                   returncode=process.returncode if process else None, error=error, peers=results)

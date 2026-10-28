@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/proc.hpp"
 #include "fs/proc/ipv6.hpp"
+#include "fs/proc/ipv4.hpp"
 #include "net/ethernet.hpp"
 #include "process/task.hpp"
 #include "core/random.hpp"
@@ -22,6 +23,8 @@ enum class Kind {
     random,
     boot_id,
     net,
+    ipv4,
+    source_limit,
     ipv6,
     conf,
     network_scope,
@@ -290,6 +293,10 @@ static int lookup(Node* parent, const char* name, Node*& output) {
         kind = Kind::net;
     else if (context->kind == Kind::net && !strcmp(name, "ipv6"))
         kind = Kind::ipv6;
+    else if (context->kind == Kind::net && !strcmp(name, "ipv4"))
+        kind = Kind::ipv4;
+    else if (context->kind == Kind::ipv4 && !strcmp(name, "igmp_max_msf"))
+        kind = Kind::source_limit;
     else if (context->kind == Kind::ipv6 && !strcmp(name, "conf"))
         kind = Kind::conf;
     else if (context->kind == Kind::conf) {
@@ -344,8 +351,10 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     result->network_index = network_index;
     result->property = property;
     result->network_generation = network_generation;
-    if (kind == Kind::network_property) {
-        result->node.mode = regular_file | (property == proc6::secret_property ? 0600 : 0644);
+    if (kind == Kind::network_property || kind == Kind::source_limit) {
+        result->node.mode =
+            regular_file |
+            (kind == Kind::network_property && property == proc6::secret_property ? 0600 : 0644);
         result->node.links = 1;
     }
     output = &result->node;
@@ -616,6 +625,8 @@ static int64_t control_read(Handle* handle, void* output, size_t length) {
     if (int error = validate(handle->node))
         return error;
     auto item = entry(handle->node);
+    if (item->kind == Kind::source_limit)
+        return proc4::source_limit_read(handle->offset, output, length);
     return proc6::read(item->network_index, item->property, handle->offset, output, length);
 }
 
@@ -623,6 +634,8 @@ static int64_t control_write(Handle* handle, const void* input, size_t length) {
     if (int error = validate(handle->node))
         return error;
     auto item = entry(handle->node);
+    if (item->kind == Kind::source_limit)
+        return proc4::source_limit_write(handle->offset, input, length);
     return proc6::write(item->network_index, item->property, handle->offset, input, length);
 }
 
@@ -632,7 +645,8 @@ static int control_truncate(Node*, size_t) {
 
 static const ControlFileOps* control(Node* node) {
     static const ControlFileOps ops{control_access, control_read, control_write, control_truncate};
-    return entry(node)->kind == Kind::network_property ? &ops : nullptr;
+    auto kind = entry(node)->kind;
+    return kind == Kind::network_property || kind == Kind::source_limit ? &ops : nullptr;
 }
 
 static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
@@ -693,12 +707,13 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
             return 0;
     } else if (context->kind == Kind::sys || context->kind == Kind::kernel ||
                context->kind == Kind::random || context->kind == Kind::net ||
-               context->kind == Kind::ipv6) {
-        if (cookie > (context->kind == Kind::sys ? 3u : 2u))
+               context->kind == Kind::ipv6 || context->kind == Kind::ipv4) {
+        if (cookie > (context->kind == Kind::sys || context->kind == Kind::net ? 3u : 2u))
             return 0;
         const char* child = context->kind == Kind::sys      ? (cookie == 2 ? "kernel" : "net")
                             : context->kind == Kind::kernel ? "random"
-                            : context->kind == Kind::net    ? "ipv6"
+                            : context->kind == Kind::net    ? (cookie == 2 ? "ipv6" : "ipv4")
+                            : context->kind == Kind::ipv4   ? "igmp_max_msf"
                             : context->kind == Kind::ipv6   ? "conf"
                                                             : "boot_id";
         memcpy(name, child, strlen(child) + 1);
@@ -755,7 +770,8 @@ static int truncate(Node*, size_t) {
 }
 
 static int setattr(Node* node, uint32_t, Timestamp, Timestamp, uint32_t, uint32_t) {
-    return entry(node)->kind == Kind::network_property ? -1 : -30;
+    auto kind = entry(node)->kind;
+    return kind == Kind::network_property || kind == Kind::source_limit ? -1 : -30;
 }
 
 static int sync(Mount*, Node*, bool) {

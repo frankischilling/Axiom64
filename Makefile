@@ -825,7 +825,7 @@ test-ipv6-fragments-native: test-ipv6-fragment-observation
 build/ipv6-wire-host: kernel/tests/net/ipv6_wire.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
-build/ipv6-host: kernel/tests/net/ipv6_host.cpp kernel/tests/net/ipv6_output_owner.cpp kernel/tests/net/ipv6_link_configuration.cpp kernel/tests/net/ipv6_router.cpp kernel/tests/net/ipv6_address_lifecycle.cpp $(IPV6_CORE) kernel/fs/proc/ipv6.cpp kernel/net/ipv6/socket/send_control.cpp kernel/net/ethernet.cpp kernel/net/netlink/ipv6.cpp kernel/net/netlink/addresses.cpp kernel/net/netlink/link.cpp kernel/net/netlink/inventory.cpp kernel/net/netlink/routes.cpp $(call rwildcard,kernel/include/,*.hpp)
+build/ipv6-host: kernel/tests/net/ipv6_host.cpp kernel/tests/net/ipv6_output_owner.cpp kernel/tests/net/ipv6_link_configuration.cpp kernel/tests/net/ipv6_router.cpp kernel/tests/net/ipv6_address_lifecycle.cpp $(IPV6_CORE) kernel/fs/proc/ipv6.cpp kernel/fs/proc/integer.cpp kernel/net/ipv6/socket/send_control.cpp kernel/net/ethernet.cpp kernel/net/netlink/ipv6.cpp kernel/net/netlink/addresses.cpp kernel/net/netlink/link.cpp kernel/net/netlink/inventory.cpp kernel/net/netlink/routes.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 build/ipv6-reassembly-host: kernel/tests/net/ipv6_reassembly.cpp kernel/net/ipv6/reassembly.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/reassembly.hpp kernel/include/net/ipv6/wire.hpp kernel/include/core/base.hpp
@@ -1439,6 +1439,12 @@ MUSL_PROGRAMS += build/netlink-inventory-static build/netlink-inventory-dynamic
 MUSL_PROGRAMS += build/clock-wall-static build/clock-wall-dynamic
 MUSL_PROGRAMS += build/random-snapshot-static build/random-snapshot-dynamic
 MUSL_PROGRAMS += build/generation-exec-static build/generation-exec-dynamic
+MUSL_PROGRAMS += build/ipv4-multicast-source-static build/ipv4-multicast-source-dynamic
+MUSL_PROGRAMS += build/ipv4-multicast-source-wire-static build/ipv4-multicast-source-wire-dynamic
+MUSL_PROGRAMS += build/ipv4-multicast-source-options-static build/ipv4-multicast-source-options-dynamic
+MUSL_PROGRAMS += build/ipv4-multicast-source-policy-static build/ipv4-multicast-source-policy-dynamic
+MUSL_PROGRAMS += build/ipv4-multicast-source-capacity-static build/ipv4-multicast-source-capacity-dynamic
+MUSL_PROGRAMS += build/ipv4-raw-udp-static build/ipv4-raw-udp-dynamic
 $(MUSL_PROGRAMS): $(MUSL_INPUTS) | musl-toolchain
 build/rootfs.cpio build/rootfs-desktop.cpio: $(MUSL_INPUTS)
 .PHONY: musl-toolchain
@@ -1460,7 +1466,7 @@ test-ipv6-cached-native:
 	$(PYTHON) scripts/ipv6_host_native.py --suite cached
 
 .PHONY: test-ipv4-multicast
-build/ipv4-multicast-host: kernel/tests/net/ipv4_multicast.cpp kernel/net/ipv4/multicast/membership.cpp kernel/include/net/ipv4/multicast.hpp kernel/include/net/ipv4_wire.hpp
+build/ipv4-multicast-host: kernel/tests/net/ipv4_multicast.cpp $(filter-out %/runtime.cpp %/source_options.cpp,$(IPV4_MULTICAST_CORE)) kernel/include/net/ipv4/multicast.hpp kernel/include/net/ipv4/source_filter.hpp kernel/include/net/ipv4/source_aggregate.hpp kernel/include/net/ipv4_wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 test-ipv4-multicast: build/ipv4-multicast-host
@@ -1471,3 +1477,65 @@ build/ipv4-multicast-static: userspace/tests/net/ipv4_multicast.c scripts/compil
 
 build/ipv4-multicast-dynamic: userspace/tests/net/ipv4_multicast.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror userspace/tests/net/ipv4_multicast.c
+
+build/ipv4-multicast-source-native: userspace/tests/net/ipv4_multicast_source.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+
+build/ipv4-multicast-source-static build/ipv4-multicast-source-dynamic: userspace/tests/net/ipv4_multicast_source.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4_multicast_source.c
+
+build/ipv4-source-aggregate-host: kernel/tests/net/ipv4_source_aggregate.cpp kernel/net/ipv4/multicast/source_aggregate.cpp kernel/include/net/ipv4/source_aggregate.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/ipv4_source_aggregate.cpp kernel/net/ipv4/multicast/source_aggregate.cpp -o $@
+
+.PHONY: test-ipv4-source-aggregate
+test-ipv4-source-aggregate: build/ipv4-source-aggregate-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-source-aggregate-host
+
+build/ipv4-source-filter-host: kernel/tests/net/ipv4_source_filter.cpp kernel/net/ipv4/multicast/source_filter.cpp kernel/net/ipv4/multicast/source_aggregate.cpp kernel/include/net/ipv4/source_filter.hpp kernel/include/net/ipv4/source_aggregate.hpp
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+.PHONY: test-ipv4-source-filter
+test-ipv4-source-filter: build/ipv4-source-filter-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-source-filter-host
+
+build/ipv4-multicast-source-host: kernel/tests/net/ipv4_multicast_source_host.cpp $(filter-out %/runtime.cpp %/source_options.cpp,$(IPV4_MULTICAST_CORE)) kernel/include/net/ipv4/multicast.hpp kernel/include/net/ipv4/source_filter.hpp kernel/include/net/ipv4/source_aggregate.hpp kernel/include/net/ipv4_wire.hpp
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+.PHONY: test-ipv4-multicast-source-host
+test-ipv4-multicast-source-host: build/ipv4-multicast-source-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-multicast-source-host
+
+build/ipv4-multicast-source-options-native: userspace/tests/net/ipv4_multicast_source_options.c
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/ipv4-multicast-source-options-static build/ipv4-multicast-source-options-dynamic: userspace/tests/net/ipv4_multicast_source_options.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4_multicast_source_options.c
+
+build/ipv4-multicast-source-policy-native: userspace/tests/net/ipv4_multicast_source_policy.c
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/ipv4-multicast-source-policy-static build/ipv4-multicast-source-policy-dynamic: userspace/tests/net/ipv4_multicast_source_policy.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4_multicast_source_policy.c
+
+build/ipv4-multicast-source-capacity-native: userspace/tests/net/ipv4_multicast_source_capacity.c
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/ipv4-multicast-source-capacity-static build/ipv4-multicast-source-capacity-dynamic: userspace/tests/net/ipv4_multicast_source_capacity.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4_multicast_source_capacity.c
+
+build/ipv4-source-reports-host: kernel/tests/net/ipv4_multicast_source_reports.cpp kernel/net/ipv4/multicast/source_reports.cpp kernel/net/ipv4/multicast/source_aggregate.cpp kernel/include/net/ipv4/source_reports.hpp kernel/include/net/ipv4/source_aggregate.hpp kernel/include/net/ipv4/source_filter.hpp
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+.PHONY: test-ipv4-source-reports
+test-ipv4-source-reports: build/ipv4-source-reports-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-source-reports-host
+
+build/ipv4-multicast-source-wire-host: kernel/tests/net/ipv4_multicast_source_wire.cpp $(filter-out %/runtime.cpp %/source_options.cpp,$(IPV4_MULTICAST_CORE)) kernel/include/net/ipv4/multicast.hpp kernel/include/net/ipv4/source_filter.hpp kernel/include/net/ipv4/source_aggregate.hpp kernel/include/net/ipv4_wire.hpp
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+.PHONY: test-ipv4-multicast-source-wire-host
+test-ipv4-multicast-source-wire-host: build/ipv4-multicast-source-wire-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-multicast-source-wire-host
+
+build/ipv4-multicast-source-wire-static build/ipv4-multicast-source-wire-dynamic: userspace/tests/net/ipv4_multicast_source_wire.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4_multicast_source_wire.c
+
+build/ipv4-raw-udp-native: userspace/tests/net/ipv4_raw_udp.c
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/ipv4-raw-udp-static build/ipv4-raw-udp-dynamic: userspace/tests/net/ipv4_raw_udp.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4_raw_udp.c

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include "net/ipv4/source_filter.hpp"
+#include "net/ipv4/source_reports.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -12,6 +14,7 @@ struct MulticastMembership {
     struct Entry {
         uint32_t group = 0;
         unsigned index = 0;
+        MulticastSourceFilter filter;
     };
 
     static constexpr unsigned capacity = 20;
@@ -34,10 +37,18 @@ class MulticastHost {
     void seed(uint32_t);
     int join(MulticastMembership&, unsigned index, uint32_t group, uint64_t now);
     int leave(MulticastMembership&, unsigned index, uint32_t group, uint64_t now);
+    int source(MulticastMembership&, unsigned index, uint32_t group, unsigned mode, bool add,
+               uint32_t address, unsigned limit, uint64_t now);
+    int replace(MulticastMembership&, unsigned index, uint32_t group, unsigned mode,
+                const uint32_t* addresses, unsigned count, unsigned limit, uint64_t now);
+    const MulticastSourceFilter* filter(const MulticastMembership&, unsigned index,
+                                        uint32_t group) const;
     void close(MulticastMembership&, uint64_t now);
     bool member(unsigned index, uint32_t group) const;
-    bool accepts(const MulticastMembership&, unsigned index, uint32_t group) const;
-    void link(unsigned index, bool up, uint64_t now);
+    bool accepts_source(unsigned index, uint32_t group, uint32_t source) const;
+    bool accepts(const MulticastMembership&, unsigned index, uint32_t group,
+                 uint32_t source = 0) const;
+    void link(unsigned index, bool up, uint64_t now, uint32_t mtu = 68);
     void receive(unsigned index, uint32_t destination, const uint8_t*, size_t, bool router_alert,
                  uint64_t now);
     void poll(uint64_t now, Emit, void*);
@@ -45,16 +56,19 @@ class MulticastHost {
   private:
     struct Group {
         uint32_t address = 0;
-        unsigned index = 0, owners = 0, remaining = 0;
+        unsigned index = 0, remaining = 0;
+        MulticastSourceAggregate interest;
+        MulticastSourceReports reports;
         uint64_t change = 0, response = 0;
         uint32_t sources[64]{};
-        unsigned source_count = 0;
+        unsigned source_count = 0, response_cursor = 0;
         bool last_reporter = false;
     };
 
     struct Link {
         bool up = false;
-        unsigned robustness = 2;
+        unsigned robustness = 2, selected = 3;
+        uint32_t mtu = 68;
         uint64_t query_interval = 12500, response_interval = 1000;
         uint64_t v1_until = 0, v2_until = 0;
     };
@@ -65,6 +79,10 @@ class MulticastHost {
     Group* find(unsigned, uint32_t);
     uint64_t delay(uint64_t);
     unsigned version(unsigned index, uint64_t now) const;
-    void changed(Group&, uint64_t now);
+    void synchronize(unsigned index, uint64_t now);
+    void changed(Group&, bool previously_present, uint64_t now);
+    bool respond(Group&, unsigned max_sources, Emit, void*);
+    int commit(MulticastMembership::Entry&, unsigned index, uint32_t group,
+               const MulticastSourceFilter&, uint64_t now);
 };
 } // namespace ax::ip4

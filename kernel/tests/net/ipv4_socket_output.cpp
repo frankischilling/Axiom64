@@ -89,6 +89,74 @@ static int send(NetAdapter&, const void* bytes, size_t length) {
     return 0;
 }
 
+static void raw_udp_delivery() {
+    constexpr uint32_t local = 0x0a170102;
+    assert(ipv4_configure(1, {local, 0xffffff00, 0}) == 0);
+    auto sender = inet_allocate(3);
+    auto first = inet_allocate(3);
+    auto second = inet_allocate(3);
+    auto wrong_device = inet_allocate(3);
+    auto wrong_address = inet_allocate(3);
+    auto wrong_peer = inet_allocate(3);
+    auto icmp = inet_allocate(3);
+    auto udp = inet_allocate(2);
+    assert(sender && first && second && wrong_device && wrong_address && wrong_peer && icmp && udp);
+    for (auto socket : {sender, first, second, wrong_device, wrong_address, wrong_peer}) {
+        socket->protocol = 17;
+        socket->index = 1;
+    }
+    wrong_device->index = 2;
+    wrong_address->local = local + 1;
+    wrong_peer->peer = local + 1;
+    icmp->index = udp->index = 1;
+    udp->local_port = 44801;
+    InetAddress target{2, __builtin_bswap16(uint16_t(12345)), __builtin_bswap32(local), {}};
+    uint8_t datagram[12] = {0xa0, 0x28, 0xaf, 0x01, 0, 12, 0, 0, 0x52, 0x41, 0x57, 0x17};
+    auto check_raw = [&](InetSocket* socket, size_t payload) {
+        auto frame = inet_front(socket);
+        assert(frame && frame->length == 20 + payload);
+        auto bytes = static_cast<const uint8_t*>(inet_bytes(frame));
+        assert(bytes[0] == 0x45 && bytes[9] == 17 && !ip4::checksum(bytes, 20));
+        assert(ip4::get32(bytes + 12) == local && ip4::get32(bytes + 16) == local);
+        assert(!memcmp(bytes + 20, datagram, payload));
+        assert(frame->source.port == 0);
+        inet_consume(socket);
+    };
+    assert(inet_send(sender, target, datagram, sizeof(datagram), true) == sizeof(datagram));
+    ipv4_poll();
+    check_raw(first, sizeof(datagram));
+    check_raw(second, sizeof(datagram));
+    auto received = inet_front(udp);
+    assert(received && received->length == 4 && !memcmp(inet_bytes(received), datagram + 8, 4));
+    inet_consume(udp);
+    assert(!inet_front(icmp) && !inet_front(wrong_device) && !inet_front(wrong_address) &&
+           !inet_front(wrong_peer));
+
+    // Raw delivery precedes UDP minimum-length and checksum validation.
+    assert(inet_send(sender, target, datagram, 0, true) == 0);
+    ipv4_poll();
+    check_raw(first, 0);
+    check_raw(second, 0);
+    assert(!inet_front(udp) && !inet_front(icmp));
+    datagram[7] = 1;
+    assert(inet_send(sender, target, datagram, sizeof(datagram), true) == sizeof(datagram));
+    ipv4_poll();
+    check_raw(first, sizeof(datagram));
+    check_raw(second, sizeof(datagram));
+    assert(!inet_front(udp) && !inet_front(icmp));
+
+    uint8_t quote[28]{};
+    quote[9] = 17;
+    ip4::put32(quote + 12, local);
+    ip4::put32(quote + 16, local);
+    first->peer = second->peer = icmp->peer = local;
+    inet_icmp_error(1, quote, 111, 0);
+    assert(inet_error(first, true) == 111 && inet_error(second, true) == 111);
+    assert(inet_error(icmp, true) == 0);
+    for (auto socket : {sender, first, second, wrong_device, wrong_address, wrong_peer, icmp, udp})
+        inet_dispose(socket);
+}
+
 int main() {
     assert(!ip6::configuration_write(ip6::configuration_all, ip6::ConfigurationKey::generation_mode,
                                      1));
@@ -244,6 +312,7 @@ int main() {
     // previously selected wire source disappears.
     assert(ipv4_destination_mtu(raw->destination, true) == 1500);
     assert(ipv4_destination_mtu(raw->destination, true) == 1500);
+    raw_udp_delivery();
     ipv4_shutdown();
     std::puts("IPV4_SOCKET_OUTPUT_PASS retained-zero named-selection wildcard-selection "
               "ICMP-refresh ARP-ownership removed-source");

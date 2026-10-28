@@ -509,7 +509,9 @@ static void input(unsigned index, const uint8_t* bytes, size_t length, bool link
     auto config = ipv4_config(index);
     bool local = ipv4_local(destination);
     bool broadcast = destination == UINT32_MAX || directed_broadcast(index, destination);
-    bool multicast = ip4::multicast(destination) && ipv4_multicast_member(index, destination);
+    bool multicast = ip4::multicast(destination) &&
+                     (bytes[9] == 2 ? ipv4_multicast_member(index, destination)
+                                    : ipv4_multicast_source_allowed(index, destination, source));
     if (!config || !ip4::unicast(source) || (!local && !broadcast && !multicast) ||
         (index != ipv4_loopback &&
          (is_loopback(source) || is_loopback(destination) || directed_broadcast(index, source))))
@@ -528,6 +530,9 @@ static void input(unsigned index, const uint8_t* bytes, size_t length, bool link
     }
     if (assembled.status != ip4::FragmentStatus::whole)
         return;
+    // Raw listeners receive the complete reassembled IPv4 datagram before
+    // transport validation, including malformed UDP payloads.
+    inet_deliver(index, source, destination, bytes[9], bytes, length);
     if (bytes[9] == 17) {
         if (udp_receive(index, source, destination, broadcast, bytes + 20, length - 20) ==
                 UdpInput::unbound &&
@@ -549,7 +554,6 @@ static void input(unsigned index, const uint8_t* bytes, size_t length, bool link
     size_t payload_length = length - 20;
     if (payload_length < 8)
         return;
-    inet_deliver(index, source, destination, 1, bytes, length);
     if (ip4::checksum(payload, payload_length))
         return;
     if (local && !broadcast && !link_broadcast &&

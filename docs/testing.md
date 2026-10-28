@@ -994,6 +994,104 @@ its artifact retains all original sources, products, images, captures, native
 clock receipts and rejection controls. Fresh hosted qualification and the wider
 multicast contract remain required.
 
+### Source-filter reports
+
+The source-list, aggregate, report counter and production host checks are
+`make test-ipv4-source-filter test-ipv4-source-aggregate
+test-ipv4-multicast-source-host test-ipv4-source-reports
+test-ipv4-multicast-source-wire-host`. They cover transactional admission,
+hidden contributors at final close, output refusal, legacy retries, query
+selection, MTU changes and separate mode/source retransmission obligations.
+
+The shared C wire client performs actual socket operations on both interfaces.
+Choose `settled`, `queries`, `mtu` or `overlap` with `--source-case`:
+
+```sh
+sudo -n python3 -B scripts/ipv4_multicast_test.py --suite source --source-case mtu --profile dynamic --firmware uefi --transport legacy --directory build/multicast-source-mtu
+PYTHONPATH=scripts python3 -B -m ipv4_multicast.source_capture build/multicast-source-mtu
+python3 -B scripts/tests/ipv4_multicast_source_evidence_test.py --directory build/multicast-source-mtu --output build/multicast-source-mtu-controls
+```
+
+Use a fresh directory for each execution and control set. Audit inputs and
+outputs must stay separately below `build/`; protected readback requires a
+Linux filesystem with POSIX ownership and modes. Add `--native --profile
+native` for glibc, or use `--native --profile static|dynamic` for the musl forms.
+A producer completion is diagnostic; the independent reader must also accept
+the original source, actual products, packets and clocks.
+
+Physical pre-action barriers assign reports to the correct operation. Normal
+post-action barriers retain three complete seconds on both interfaces. The
+overlap case instead releases stages 1 and 5 only after a real first report,
+then changes that filter while retransmissions remain pending. Its five other
+stages keep the complete windows. Negative controls reject a missing report,
+an acknowledgment preceding its report and a zero-duration full observation.
+
+The MTU case configures and reads back MTU 68 and source capacity 64, checks
+complete INCLUDE splitting and stable truncated EXCLUDE reports, then changes
+the live MTU to 1500 and requires the full 64-source query response. It restores
+the original source policy of 10 before completing. Serialized controls retain
+valid packet checksums while removing fragments, repeating sources, exceeding
+the actual MTU, splitting EXCLUDE output or forging restoration observations.
+
+The complete local guest cohort covers all four cases across eight
+linkage/firmware/virtio combinations, with e1000 as the second NIC. Root and
+UID 65534 independently verify all 32 images and 64 captures, 1,248 reports,
+176 queries, 496 complete three-second windows and 32 first-packet barriers.
+Nine settled, thirteen query, sixteen MTU and fifteen overlap serialized
+controls reject for their intended reasons. Original capture/product bytes,
+owners and modes stay unchanged. Native clock-discontinuous query/MTU traces
+remain rejected; these guest results do not qualify native packet clocks,
+source-filtered data/lifetime behavior or the complete feature. Current-source
+hosted qualification remains required.
+
+### Raw UDP sockets and source-filtered loopback data
+
+`make test-ipv4-paths` includes a production socket/output regression that fails
+with the original implementation: the IPv4 packet uses ICMP despite a UDP raw
+description. The corrected path checks protocol-specific output and receive
+fanout, address/device/peer isolation, raw delivery before UDP validation and
+protocol-matched ICMP errors under both sanitizers.
+
+Build the shared runtime client with:
+
+```sh
+make build/ipv4-raw-udp-native build/ipv4-raw-udp-static build/ipv4-raw-udp-dynamic
+```
+
+Native execution requires a private network namespace with loopback up. The
+same per-linkage executables run in retained Linux reference initramfs files
+and Axiom64 RAM-root fixtures. The client checks protocol/name metadata,
+ignored socket-address ports, option-fault ordering, independent raw listeners,
+zero and maximum raw payloads, malformed UDP input, INCLUDE/EXCLUDE data,
+multicast-all and duplicate/final-description lifetime. Every quiet observation
+keeps its full 200 ms duration. Guest deadlines remain 40 seconds.
+
+The retained comparison corpus contains nine successful native and four guest
+profiles, plus the original unsupported guest and down-loopback Linux control.
+For a complete exported corpus below `build/`, run:
+
+```sh
+python3 -B scripts/ipv4_raw_udp_evidence.py build/raw-udp-corpus
+python3 -B scripts/tests/ipv4_raw_udp_evidence_test.py --directory build/raw-udp-corpus --output build/raw-udp-controls
+```
+
+Protected root and UID 65534 readbacks agree on 2,860 raw operations, 299 packet
+observations, 624 complete quiet windows and 91 source-filter phase executions.
+The original 79-operation client also passes in all three native and four
+guest profiles. Twenty-five serialized controls reject wrong protocols,
+addresses, payloads, copy errors, shortened observations, missing maximum
+packets, stale source interests, incomplete original checks and changed source,
+executable, loader, kernel and image products. Same-linkage executables remain
+byte-identical, and all comparisons use the same client source. Native
+initramfs fingerprints and every guest runtime product stay bound to the actual
+preexecution records. A previous reader accepted changed ELF padding and a
+changed dynamic loader in a matching image; both original counterfeits are
+retained and rejected after correction, without repeating runtime producers.
+
+These tests establish the listed loopback socket/data cases. They do not
+qualify Ethernet raw UDP, native IGMP packet clocks, the new kernel's complete
+source-report matrix or full current-source hosted acceptance.
+
 The TCP device observer selects its owned IPv4 output-copy breakpoint within
 `ipv4_poll`, next to the current queue item lookup. It rejects a missing or
 ambiguous location before arming. Run

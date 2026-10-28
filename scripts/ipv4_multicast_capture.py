@@ -203,10 +203,11 @@ def cpio(data):
         entries[name] = (fields[1], body)
 
 
-def products(directory, metadata, inputs, sources):
+def products(directory, metadata, inputs, sources, *, program_prefix='ipv4-multicast',
+             source_name='userspace/tests/net/ipv4_multicast.c'):
     profile = metadata.get('profile', 'static')
     require(profile in ('native', 'static', 'dynamic') and (metadata['native'] or profile != 'native'), 'actual multicast linkage')
-    program = 'ipv4-multicast-' + profile
+    program = program_prefix + '-' + profile
     expected = {program, program + '.inputs.json'}
     if profile == 'dynamic':
         expected |= {'musl-build-loader', 'musl-runtime-loader'}
@@ -219,7 +220,7 @@ def products(directory, metadata, inputs, sources):
     compiled = json.loads((directory / (program + '.inputs.json')).read_text())
     require(compiled['product']['sha256'] == hashlib.sha256(binary).hexdigest() and
             compiled['product']['bytes'] == len(binary), 'actual compiled multicast executable')
-    require('userspace/tests/net/ipv4_multicast.c' in compiled['sources'] and
+    require(source_name in compiled['sources'] and
             all(sources.get(name) == value for name, value in compiled['sources'].items()),
             'actual multicast compilation tied to complete original source')
     elf(binary)

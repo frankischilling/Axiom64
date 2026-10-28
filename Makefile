@@ -798,8 +798,11 @@ test-ipv6-error-record:
 	$(PYTHON) scripts/tests/ipv6_error_record_test.py -v
 test-ipv6-errors:
 	$(PYTHON) scripts/ipv6_host_test.py --suite errors --workers 4
-test-ipv6-errors-native:
+test-ipv6-errors-native: test-ipv6-error-destination
 	$(PYTHON) scripts/ipv6_host_native.py --suite errors --workers 3
+.PHONY: test-ipv6-error-destination
+test-ipv6-error-destination:
+	$(PYTHON) scripts/tests/ipv6_error_destination_test.py -v
 .PHONY: test-ipv6-errors-contract
 test-ipv6-errors-contract:
 	$(PYTHON) scripts/ipv6_error_controls_test.py

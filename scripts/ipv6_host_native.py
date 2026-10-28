@@ -29,6 +29,33 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def reserve_error_destination(parent_namespace):
+    """Keep the closed UDP destination out of this fixture's automatic source ports."""
+    namespace = Path('/proc/self/ns/net').stat().st_ino
+    if parent_namespace is None or namespace == parent_namespace:
+        raise ValueError('error destination reservation requires a private network namespace')
+    port = 59999
+    path = Path('/proc/sys/net/ipv4/ip_local_reserved_ports')
+    before = path.read_text()
+
+    def ports(text):
+        result = set()
+        for item in text.strip().split(','):
+            if item:
+                limits = [int(value) for value in item.split('-')]
+                result.update(range(limits[0], limits[-1] + 1))
+        return result
+
+    previous = ports(before)
+    if port not in previous:
+        path.write_text(before.strip() + (',' if before.strip() else '') + str(port) + '\n')
+    after = path.read_text()
+    if ports(after) != previous | {port}:
+        raise ValueError('error destination reservation changed other automatic source ports')
+    return dict(port=port, before=before, after=after, network_namespace=namespace,
+                ephemeral_range=Path('/proc/sys/net/ipv4/ip_local_port_range').read_text())
+
+
 def child(profile, directory, suite='host', parent_namespace=None):
     namespace = Path('/proc/self/ns/net').stat().st_ino
     if parent_namespace is None or namespace == parent_namespace:
@@ -144,8 +171,10 @@ def child(profile, directory, suite='host', parent_namespace=None):
         settings[timer] = int(lifetime)
     for name, value in settings.items():
         subprocess.run(['sysctl', '-q', '-w', f'{name}={value}'], check=True)
+    error_destination = reserve_error_destination(parent_namespace) if suite == 'errors' else None
     (directory / 'preexecution.json').write_text(json.dumps(dict(profile=profile,
         kernel=platform.uname()._asdict(), command=command, settings=settings,
+        error_destination=error_destination,
         network_namespace=namespace, parent_network_namespace=parent_namespace,
         source_sha256=sources, product_sha256=products), indent=2) + '\n')
     peer_type = Peer

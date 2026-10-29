@@ -1321,8 +1321,11 @@ fallbacks face preference changes, deletion/recreation and real administrative
 down/up. Pressure fills use the opposite adapter while the tested send remains
 asleep. Raw route/address inventories and independent Ethernet captures verify
 source selection, held ownership, silent route retirement, fallback retention
-and current defaults. Native retirement policies are measured per route class
-and must agree across libc profiles; guest FIB retirement must discard old sends.
+and current defaults. Native output is recorded separately for each adapter
+and send case. Linux cache replacement can move a held destination away from
+the retired FIB cache, so sends on one kernel may differ. Every emitted native
+packet still requires its original route, source, metadata and payload, followed
+by the required later baseline. Guest FIB retirement must discard old sends.
 
 Native source and peer devices occupy separate private network namespaces.
 Peer devices stay up during source down/up, with recorded reciprocal indices,
@@ -1333,6 +1336,13 @@ sources, actual programs, manifests and all boot images. Independent readers
 reopen these inputs and reject 32 guest evidence controls and six native peer
 topology controls. The existing receive comparison and normal/fault IPv4 matrix,
 including full path-MTU observation intervals, remain required.
+
+`python3 -B scripts/tests/ipv4_send_capture_test.py -v` reopens the original
+mixed native capture and its complete C records, physical frames, transport
+observations and independent clock receipts. Serialized negative cases require
+rejection of changed retained-packet TTL or payload, a missing later baseline,
+capture loss and retired guest output. The full fresh native and guest cohorts
+remain required alongside this captured-data regression.
 
 The Ethernet retirement observer requests three seconds plus the reported monotonic clock resolution to cover coarse-clock quantization. Independent capture readers still require at least three complete seconds; process, syscall and barrier deadlines are unchanged.
 

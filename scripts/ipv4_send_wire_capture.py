@@ -171,24 +171,17 @@ def verify(directory, metadata, records):
     wanted_barriers={(lane,case,phase,reply) for lane in range(2) for case in range(68)
                      for phase in range(3) for reply in range(2)}
     require(set(barriers)==wanted_barriers,'all816 physical ownership barriers including the original600')
-    # Native kernels differ in the lifetime of cached output after final FIB
-    # retirement. Observe that policy explicitly; every successful retired case
-    # must agree. Guest output must follow final-owner discard semantics.
-    retirement = set()
-    for lane in range(2):
-        for case in (36,37,38,40):
-            retirement.add((lane,case,4 if case==38 else 3,0) in data)
-    require(len(retirement)==1 and (metadata['native'] or retirement=={False}),
-        'consistent measured native retirement policy or required guest final-owner discard')
-    retired_emits = True in retirement
-    lifetime_policies={}
-    for mode in range(4):
-        for mutation in (1,2):
-            case=50+mode*3+mutation
-            policies={(lane,case,3,0) in data for lane in range(2)}
-            require(len(policies)==1 and (metadata['native'] or policies=={False}),
-                'consistent measured native lifetime policy or required guest FIB retirement')
-            lifetime_policies[str(mode)+':'+str(mutation)]='retained' if True in policies else 'discarded'
+    # Cache replacement can move a retained Linux destination out of the FIB
+    # cache before retirement. Observe every selection separately; even sends
+    # on one kernel can differ. Guest output still requires final-owner discard.
+    retirement = {(lane,case):(lane,case,4 if case==38 else 3,0) in data
+                  for lane in range(2) for case in (36,37,38,40)}
+    require(metadata['native'] or not any(retirement.values()),
+        'required guest final-owner discard')
+    lifetime = {(lane,case):(lane,case,3,0) in data for lane in range(2)
+                for case in range(50,62) if lifetime_retired(case)}
+    require(metadata['native'] or not any(lifetime.values()),
+        'required guest FIB retirement')
     wanted_data=set()
     for lane in range(2):
         previous=None
@@ -201,10 +194,15 @@ def verify(directory, metadata, records):
             previous=stamps[-1]
             if case>=50:
                 mode,mutation=divmod(case-50,3)
-                emits=not lifetime_retired(case) or lifetime_policies[str(mode)+':'+str(mutation)]=='retained'
+                emits=not lifetime_retired(case) or lifetime[lane,case]
                 phases=(1,3) if emits else (1,)
+            elif case<36:
+                phases=(0,1)
+            elif case in (39,41,42,43,47,49) or (
+                    (lane,case) in retirement and not retirement[lane,case]):
+                phases=(1,)
             else:
-                phases=(0,1) if case<36 else (1,) if case in (39,41,42,43,47,49) or (case<42 and not retired_emits) else (1,4 if waiting_scenario(case)==2 else 3)
+                phases=(1,4 if waiting_scenario(case)==2 else 3)
             for phase in phases:
                 key=lane,case,phase,0
                 wanted_data.add(key)
@@ -233,7 +231,9 @@ def verify(directory, metadata, records):
             request['destination']==reply['sender'] and request['time']<=reply['time'] for request in arp),
             'ARP reply owns an original pending request')
     return dict(data_packets=len(data),physical_barriers=len(barriers),arp_frames=len(arp),
-        retired_route_policy='retained' if retired_emits else 'discarded',
-        lifetime_route_policies=lifetime_policies,
+        retired_route_observations=[dict(lane=lane,case=case,emitted=emitted)
+            for (lane,case),emitted in retirement.items()],
+        lifetime_route_observations=[dict(lane=lane,case=case,mode=(case-50)//3,
+            mutation=(case-50)%3,emitted=emitted) for (lane,case),emitted in lifetime.items()],
         native_clocks=[row[1] for row in captures] if metadata['native'] else None,
         capture_frames=[len(row[0]) for row in captures])

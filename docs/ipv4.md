@@ -382,4 +382,13 @@ The [send comparisons](testing.md#ipv4-send-control-comparison) retain complete
 loopback and physical-interface evidence. Full networking and current-revision
 hosted acceptance remain required.
 
+Native comparisons record each held-send outcome by adapter and case. On Linux,
+[cache replacement](https://github.com/torvalds/linux/blob/v7.0/net/ipv4/route.c#L1490-L1518)
+can move an admitted destination to the uncached list. Ordinary administrative
+[shutdown](https://github.com/torvalds/linux/blob/v7.0/net/ipv4/fib_frontend.c#L1503-L1526)
+does not retire that list through the same path as cached FIB destinations.
+Both discard and retained output occur on the same native kernel. Axiom64 keeps
+its final-owner discard contract. Complete original packet contents, inventories,
+capture clocks, loss checks and observation windows remain required for both.
+
 The Ethernet retirement observer requests three seconds plus the reported monotonic clock resolution to cover coarse-clock quantization. Independent capture readers still require at least three complete seconds; process, syscall and barrier deadlines are unchanged.

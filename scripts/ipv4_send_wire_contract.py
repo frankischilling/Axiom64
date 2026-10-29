@@ -35,17 +35,25 @@ def cohort(values):
     require(len(values)==11 and {(row['native'],row['profile'],row['firmware'],row['transport']) for row in values}==wanted,
         'complete three-native/eight-guest physical send cohort')
     require(all(row['source_inputs']==values[0]['source_inputs'] for row in values),'exact same complete source for every execution')
-    natives=[row for row in values if row['native']]
-    require(len({json.dumps(row['physical']['lifetime_route_policies'],sort_keys=True) for row in natives})==1,
-        'all native linkages observe the same kernel lifetime policies')
+    for row in values:
+        for field,cases in (('retired_route_observations',(36,37,38,40)),
+                            ('lifetime_route_observations',(51,52,54,55,57,58,60,61))):
+            observed=row['physical'][field]
+            wanted={(lane,case) for lane in range(2) for case in cases}
+            require(len(observed)==len(wanted) and
+                {(item['lane'],item['case']) for item in observed}==wanted and
+                all(type(item['emitted']) is bool for item in observed),
+                'complete measured per-adapter and per-case retirement output')
+            require(row['native'] or not any(item['emitted'] for item in observed),
+                'every guest retirement observation requires final-owner discard')
     guests=[row for row in values if not row['native']]
     require(len({row['products']['kernel.elf'] for row in guests})==1,'one actual immutable guest kernel')
     return dict(passed=True,profiles=11,native_profiles=3,guest_profiles=8,ordinary_cases_each=72,
         waiting_cases_each=60,original_waiting_cases_each=24,lifetime_cases_each=36,
         retired_cases_each=28,retired_observation_seconds_each=3,
-        native_retired_route_policies={row['profile']:row['physical']['retired_route_policy'] for row in values if row['native']},
+        native_retired_route_observations={row['profile']:row['physical']['retired_route_observations'] for row in values if row['native']},
         raw_pressure_cases_each=4,physical_barriers_each=816,
-        native_lifetime_route_policies={row['profile']:row['physical']['lifetime_route_policies'] for row in values if row['native']},
+        native_lifetime_route_observations={row['profile']:row['physical']['lifetime_route_observations'] for row in values if row['native']},
         kernel_sha256=guests[0]['products']['kernel.elf'],full_feature_acceptance=False)
 
 

@@ -47,6 +47,20 @@ peer and checks complete source, products, and native kernel packet clocks.
 `ipv4_multicast_evidence.py` owns the complete profile audit, protected ordinary
 reader, serialized rejection controls, and disposal of verified temporary copies.
 
+`kernel/net/ipv4/routes.cpp` owns the mutable main table, automatic-prefix
+deletion state and next-hop lifetime IDs. Its interface keeps the 32 explicit
+slots independent of the 32 address-derived prefixes. Device transitions and
+final-address removal retire route owners without reviving admitted sends.
+`send_control.cpp` validates per-message IPv4 controls; the socket layer retains
+the selected route and controls across output waits. The core owns packet queues,
+neighbor resolution and submission to Ethernet drivers.
+
+`userspace/net/config/route_snapshot.cpp` owns raw main-table route preservation,
+shared inventory decoding and restoration without replacement. Configuration
+keeps those records in its ownership intent before an address transition can
+flush the routes. The native and guest configuration runners share retained
+source and program bindings through `scripts/configuration_inputs.py`.
+
 Make discovers kernel C++ sources recursively, excluding `kernel/tests/`. Object and dependency files mirror the source folders under `build/kernel/`. Compiler-generated dependencies select the headers that each object uses. New sources added to a module folder participate in the next build.
 
 Userspace program targets name their source files explicitly. Initramfs dependencies include session scripts and configuration recursively, plus the native toolchain fixtures. The root-filesystem builder preserves the guest installation paths, including `/sbin/init`, `/etc/boot-test.sh`, and `/root/toolchain-test`.
@@ -282,3 +296,26 @@ use real subprocesses in `scripts/tests/random_crypto_wait_observer_test.py`.
 inside the IPv4 poll function and requires a unique queue site. Competing
 interface guards and absent or ambiguous queue locations are covered by
 `scripts/tests/tcp_device_pending_site_test.py`.
+
+`userspace/tests/net/ipv4_send_wire.c` exercises per-message selection and retained
+IPv4 sends on both Ethernet adapters. `scripts/ipv4_send_wire_lifetime.py`
+reopens complete route and address transitions for named/connected FIB and
+interface-fallback paths. The peer and independent capture reader check physical
+barriers, retained sources, exact datagrams and full retirement windows. Source,
+compiler and boot-image binding share the Ethernet receive fixture boundary.
+
+`scripts/ipv4_send_native.py` owns stable native Ethernet peers in a separate
+network namespace. The client retains its two selected adapters while observers
+remain available through administrative down/up cycles. Original captures,
+namespace identities, peer links and software checksum settings remain inputs
+to the independent reader and serialized native controls.
+
+`scripts/ipv4_send_controls_test.py` runs the common loopback send-control client.
+`ipv4_send_controls_records.py` checks its complete input/result/packet records;
+`ipv4_send_controls_contract.py` independently binds the full cohort to source,
+compile inputs, native runtime providers and actual boot images.
+`ipv4_send_controls_damaged.py` serializes and reopens changed original evidence.
+The `ipv4_send_wire_*` modules separate physical peer exchanges, record decoding,
+capture checks, source/image binding, negative controls and complete cohort runs.
+
+`scripts/ipv4_native_capture_controls.py` reopens altered native client and collector CPU ownership records. The IPv4 fixture reuses `packet_profile_cpu` from `ipv6_host_native.py` before collector threads start, and records actual client and task affinities for the independent input reader.

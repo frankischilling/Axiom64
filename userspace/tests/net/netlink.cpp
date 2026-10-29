@@ -427,7 +427,7 @@ static void early_route_state(int fd, unsigned lane, const Route& expected, cons
         value = entries[0];
     uint32_t address = interface_address(lane);
     unsigned flags = interface_flags(lane);
-    bool configured = !strcmp(phase, "configured") || (native && !present);
+    bool configured = !strcmp(phase, "configured") || !strcmp(phase, "removed");
     check(address == (configured ? 0x0a170128 + (lane << 8) : 0) && (flags & IFF_UP) &&
               !(flags & IFF_RUNNING),
           "route snapshot has the exact address and retains real carrier absence");
@@ -516,18 +516,17 @@ static void early_routes(int fd) {
         early_route_state(fd, lane, direct[lane], "configured", true);
     }
     for (unsigned lane = 0; lane < 2; lane++) {
-        if (!native) {
-            early_address(lane, true);
-            early_route_state(fd, lane, direct[lane], "withdrawn", true);
-            unconfigured_gateway(fd, lane);
-            unconfigured_send(lane);
-        }
         change(fd, direct[lane], true);
         change(fd, direct[lane], true, ESRCH);
         early_route_state(fd, lane, direct[lane], "removed", false);
-        // Linux removes device routes with its last address; compare explicit deletion first.
-        if (native)
-            early_address(lane, true);
+        change(fd, direct[lane], false);
+        early_address(lane, true);
+        early_route_state(fd, lane, direct[lane], "withdrawn", false);
+        change(fd, direct[lane], true, ESRCH);
+        if (!native) {
+            unconfigured_gateway(fd, lane);
+            unconfigured_send(lane);
+        }
         check(!interface_address(lane), "early fixture leaves both interfaces unconfigured");
     }
     puts("NETLINK_EARLY_ROUTES_PASS count=2");
@@ -626,7 +625,18 @@ static void byte_quota(int fd) {
     int capped = 0;
     check(setsockopt(fd, SOL_NETLINK, NETLINK_CAP_ACK, &capped, sizeof(capped)) == 0,
           "full echo accounts for reserved bytes");
-    uint8_t large[3776]{};
+    // Fifteen maximum IPv4 dumps reserve 15 * 4176 bytes. Keep the
+    // original oversized echo as a rejection control, then fill all 65536.
+    uint8_t oversized[3776]{};
+    nlmsghdr rejected{};
+    rejected.nlmsg_len = sizeof(oversized);
+    rejected.nlmsg_type = 0x777;
+    rejected.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+    rejected.nlmsg_seq = ++sequence;
+    memcpy(oversized, &rejected, sizeof(rejected));
+    check(send(fd, oversized, sizeof(oversized), 0) == -1 && errno == EAGAIN,
+          "oversized full echo cannot overrun remaining byte quota");
+    uint8_t large[2876]{};
     nlmsghdr original{};
     original.nlmsg_len = sizeof(large);
     original.nlmsg_type = 0x777;
@@ -946,6 +956,101 @@ static void routed_packet(unsigned lane, unsigned stage, uint32_t destination) {
           "routed echo retains host tuple, exact payload, and interface isolation");
 }
 
+static void administrative(unsigned lane, bool up) {
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    ifreq request{};
+    check(fd >= 0 && if_indextoname(indexes[lane], request.ifr_name),
+          "select administrative lifecycle interface");
+    request.ifr_flags = interface_flags(lane);
+    request.ifr_flags = up ? request.ifr_flags | IFF_UP : request.ifr_flags & ~IFF_UP;
+    check(ioctl(fd, SIOCSIFFLAGS, &request) == 0 && close(fd) == 0,
+          "change real administrative state");
+}
+
+static void automatic_prefixes(int fd) {
+    for (unsigned lane = 0; lane < 2; lane++) {
+        const uint32_t address = 0x0a170128 + (lane << 8);
+        Route prefix = onlink(lane, address & 0xffffff00, 24, 0);
+        prefix.protocol = RTPROT_KERNEL;
+        Route entries[64];
+        check(routes(fd, entries, 64, RTPROT_KERNEL, indexes[lane]) == 1 &&
+                  same(entries[0], prefix),
+              "configured address installs exactly its automatic prefix");
+        Route wrong = prefix;
+        wrong.protocol = RTPROT_STATIC;
+        change(fd, wrong, true, ESRCH);
+        change(fd, prefix, true);
+        change(fd, prefix, true, ESRCH);
+        check(routes(fd, entries, 64, RTPROT_KERNEL, indexes[lane]) == 0 &&
+                  interface_address(lane) == address,
+              "prefix deletion retains the assigned local address");
+
+        int local = socket(AF_INET, SOCK_DGRAM, 0);
+        sockaddr_in endpoint{};
+        endpoint.sin_family = AF_INET;
+        endpoint.sin_addr.s_addr = htonl(address);
+        check(local >= 0 &&
+                  bind(local, reinterpret_cast<sockaddr*>(&endpoint), sizeof(endpoint)) == 0 &&
+                  close(local) == 0,
+              "deleted prefix leaves the local address available for binding");
+        int sender = socket(AF_INET, SOCK_DGRAM, 0);
+        endpoint.sin_addr.s_addr = htonl((address & 0xffffff00) | 44);
+        endpoint.sin_port = htons(46002);
+        const char payload = 'p';
+        check(sender >= 0 &&
+                  sendto(sender, &payload, 1, 0, reinterpret_cast<sockaddr*>(&endpoint),
+                         sizeof(endpoint)) == -1 &&
+                  errno == ENETUNREACH && close(sender) == 0,
+              "fresh unbound output cannot bypass a deleted automatic prefix");
+
+        configuration(lane, SIOCSIFNETMASK, 0xffffff00);
+        configuration(lane, SIOCSIFADDR, address);
+        check(routes(fd, entries, 64, RTPROT_KERNEL, indexes[lane]) == 0,
+              "unchanged address configuration cannot revive a deleted prefix");
+        change(fd, prefix, false);
+        change(fd, prefix, false, EEXIST);
+        check(routes(fd, entries, 64, RTPROT_KERNEL, indexes[lane]) == 1 &&
+                  same(entries[0], prefix),
+              "explicit recreation independently restores the prefix");
+        change(fd, prefix, true);
+        early_address(lane, true);
+        early_address(lane, false);
+        check(routes(fd, entries, 64, RTPROT_KERNEL, indexes[lane]) == 1 &&
+                  same(entries[0], prefix),
+              "address removal and reassignment create a new automatic prefix");
+
+        Route manual = onlink(lane, 0xcb007100, 24, 1700 + lane);
+        manual.protocol = RTPROT_STATIC;
+        change(fd, manual, false);
+        change(fd, prefix, true);
+        administrative(lane, false);
+        check(routes(fd, entries, 64, 0, indexes[lane]) == 0 && interface_address(lane) == address,
+              "administrative down withdraws device routes and retains addresses");
+        change(fd, manual, false, ENETDOWN);
+        const unsigned socket_types[]{SOCK_DGRAM, SOCK_RAW};
+        for (unsigned type : socket_types) {
+            int probe = socket(AF_INET, type, type == SOCK_RAW ? IPPROTO_ICMP : 0);
+            char name[IF_NAMESIZE];
+            check(probe >= 0 && if_indextoname(indexes[lane], name) &&
+                      setsockopt(probe, SOL_SOCKET, SO_BINDTODEVICE, name, strlen(name) + 1) == 0,
+                  "force administrative-down probe to the selected interface");
+            endpoint.sin_port = type == SOCK_RAW ? 0 : htons(46002);
+            const uint8_t echo[]{8, 0, 0, 0, 0x71, 0x19, 0, 1};
+            check(sendto(probe, echo, sizeof(echo), 0, reinterpret_cast<sockaddr*>(&endpoint),
+                         sizeof(endpoint)) == -1 &&
+                      errno == ENETUNREACH && close(probe) == 0,
+                  "fresh UDP/raw forced-interface output reports administrative route absence");
+        }
+        administrative(lane, true);
+        check(routes(fd, entries, 64, RTPROT_KERNEL, indexes[lane]) == 1 &&
+                  same(entries[0], prefix) &&
+                  routes(fd, entries, 64, RTPROT_STATIC, indexes[lane]) == 0,
+              "reactivation restores the automatic prefix without reviving manual routes");
+        change(fd, manual, true, ESRCH);
+    }
+    puts("NETLINK_AUTOMATIC_PREFIXES_PASS count=2");
+}
+
 static void packet_routes(int fd) {
     for (unsigned lane = 0; lane < 2; lane++) {
         Route gateway = onlink(lane, 0, 0, 6000 + lane);
@@ -1009,6 +1114,7 @@ int main(int argc, char** argv) {
     uncapped_reply(fd);
     ownership(fd);
     configuration_adapter(fd);
+    automatic_prefixes(fd);
     if (!native) {
         malformed(fd);
         resource_limits(fd);

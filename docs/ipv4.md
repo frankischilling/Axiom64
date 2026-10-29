@@ -199,6 +199,8 @@ The x86-64 Linux `ifreq` controls support address, netmask, broadcast, name/inde
 
 `SIOCADDRT` and `SIOCDELRT` implement the initial 120-byte Linux `rtentry` contract: connected routes, on-link routes, gateways, default routes, host routes, and metrics. Selection chooses the longest matching prefix, then the lower metric. An omitted device is inferred from a directly connected destination or gateway. A gateway must be a nonlocal unicast address on the selected interface's subnet. Duplicate routes, missing routes, invalid masks/families, and unreachable gateways return explicit errors. [NETLINK_ROUTE](netlink.md) adds bounded main-table dumps and protocol/scope-filtered route control; `/proc/net/route`, policy routing, and the complete Linux routing interface remain planned.
 
+Without an explicitly selected source, automatic prefix routes use their address-derived preferred source. Explicit direct routes and forced-interface fallback use the first primary address on the selected interface. Gateway routes prefer a primary address matching the next hop. A connected UDP description retains its selected nonzero source when a later named send selects another output interface. Complete preferred-source mutation and policy routing remain required.
+
 With a matching controlled peer connected to `eth0`, guest commands include:
 
 ```sh
@@ -208,7 +210,7 @@ ping -n -c 2 -w 5 -I eth0 10.23.1.1
 route del default gw 10.23.1.1 dev eth0
 ```
 
-Physical carrier and `IFF_UP` are independent. Carrier or administrative down rejects wire output with `ENETDOWN`; a permanently failed bound adapter reports `POLLERR` and `EIO`. Loopback remains usable during a physical link outage. Linux operational flags clear `IFF_RUNNING` while the interface is administratively down. The fixture now checks both `IFF_UP` and `IFF_RUNNING` are clear and records the actual flag query before checking output rejection and recovery.
+Physical carrier and `IFF_UP` are independent. Fresh IPv4 output on an administratively down interface returns `ENETUNREACH`. Physical carrier loss returns `ENETDOWN`; a permanently failed bound adapter reports `POLLERR` and `EIO`. Loopback remains usable during a physical link outage. Linux operational flags clear `IFF_RUNNING` while the interface is administratively down. The fixture now checks both `IFF_UP` and `IFF_RUNNING` are clear and records the actual flag query before checking output rejection and recovery.
 
 ## Address alias checks
 
@@ -360,3 +362,24 @@ The output-pressure test fills all 32 pending IP slots, requires `EAGAIN` and ab
 Fault cases corrupt one actual virtio used-head identity at the RX validation boundary, require the bound raw socket's persistent error, and then exchange ICMP through the unaffected e1000 adapter. Full ABI/thread/compiler/signal/VFS/desktop/input, Ethernet, disk, ext2 root/data, delayed-flush, formatting, sanitizer, and corresponding-source checks remain required before integration.
 
 Protocol references are [ARP](https://www.rfc-editor.org/rfc/rfc826), [IPv4](https://www.rfc-editor.org/rfc/rfc791), [ICMP](https://www.rfc-editor.org/rfc/rfc792), and [host requirements](https://www.rfc-editor.org/rfc/rfc1122). Linux contracts are compared with [raw sockets](https://man7.org/linux/man-pages/man7/raw.7.html), [IP sockets](https://man7.org/linux/man-pages/man7/ip.7.html), [interface ioctls](https://man7.org/linux/man-pages/man7/netdevice.7.html), and the pinned [Linux 6.12 raw implementation](https://github.com/torvalds/linux/blob/v6.12/net/ipv4/raw.c) and [Internet address queries](https://github.com/torvalds/linux/blob/v6.12/net/ipv4/af_inet.c). These references define the broader contracts; this initial slice does not claim complete conformance.
+
+
+## Per-message output controls
+
+UDP and raw IPv4 sends import `IP_PKTINFO`, `IP_TTL` and `IP_TOS` into each
+request. The selected interface, source, destination, TTL and TOS belong to that
+request and do not change shared socket defaults. Malformed controls, unsupported
+options and protected input spans preserve Linux error ordering. Socket-memory
+waits defer payload copying; output-table waits retain payload already copied.
+Closing one descriptor does not release a request held through another alias.
+
+Held explicit and automatic-prefix routes survive preference changes, but
+retirement silently discards their admitted packets. Recreating an identical
+route does not revive the old owner. Administrative down/up retires FIB owners;
+an uncached forced-interface fallback retains its separate lifetime. Connected
+UDP retains its nonzero selected source across a later named output selection.
+The [send comparisons](testing.md#ipv4-send-control-comparison) retain complete
+loopback and physical-interface evidence. Full networking and current-revision
+hosted acceptance remain required.
+
+The Ethernet retirement observer requests three seconds plus the reported monotonic clock resolution to cover coarse-clock quantization. Independent capture readers still require at least three complete seconds; process, syscall and barrier deadlines are unchanged.

@@ -2,6 +2,7 @@
 #pragma once
 #include "net/config/profile.hpp"
 #include "net/config/routing.hpp"
+#include "net/config/route_snapshot.hpp"
 
 namespace ax::dhcp {
 struct Interface;
@@ -46,6 +47,7 @@ class Configuration {
     Routing routing_;
     Snapshot active_, before_, after_;
     bool pending_ = false;
+    detail::RouteSnapshot preserved_;
 
     int build(uint32_t, const dhcp::Parameters&, unsigned, uint8_t, Snapshot&) const;
 
@@ -55,9 +57,13 @@ class Configuration {
 
     int set_address(const Snapshot& old, const Snapshot& desired);
 
-    int journal(const Snapshot&, const Snapshot&) const;
+    int journal(const Snapshot&, const Snapshot&, bool preserve = true) const;
 
-    int read_journal(Snapshot&, Snapshot&) const;
+    int read_journal(Snapshot&, Snapshot&);
+
+    int preserve(const Snapshot&, const Snapshot&);
+
+    int restore();
 
     int preflight(const Snapshot&, bool& unchanged);
 

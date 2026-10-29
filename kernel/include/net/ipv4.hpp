@@ -23,6 +23,8 @@ struct Ipv4Route {
     uint32_t destination = 0, mask = 0, gateway = 0;
     unsigned index = 0, metric = 0;
     uint8_t protocol = 3, scope = 255;
+    // Listing metadata; mutation requests select their source independently.
+    uint32_t preferred_source = 0;
 };
 
 constexpr unsigned ipv4_loopback = max_net_devices + 1;
@@ -44,6 +46,9 @@ int ipv4_address_remove(unsigned index, uint32_t address, uint32_t mask);
 
 // A changed link MTU adjusts that interface's exceptions without renewing expiry.
 void ipv4_mtu_changed(unsigned index, uint32_t previous_mtu);
+
+// Administrative transitions retire device routes and queued local output.
+int ipv4_administrative_changed(unsigned index);
 
 int ipv4_route(const Ipv4Route&, bool remove);
 
@@ -104,9 +109,27 @@ uint32_t ipv4_learn_pmtu(uint32_t source, uint32_t destination, unsigned index,
 
 int ipv4_source(Ipv4Source source, uint32_t destination, unsigned bound_index, uint32_t& selected);
 
+// A retained send owns these route values through its memory wait. Later
+// address and route edits affect later calls without selecting this packet again.
+// Retirement of its last next-hop owner silently consumes the held send.
+struct Ipv4SendRoute {
+    Ipv4Path path{};
+    uint32_t destination = 0, next_hop = 0, path_source = 0;
+    uint64_t path_owner = 0;
+    bool local = false, broadcast = false, locked = false;
+};
+
+// Positive output consumption has no queued buffer to charge to the socket.
+constexpr int ipv4_output_discarded = 1;
+
 int ipv4_send(InetSocket*, Ipv4Source source, uint32_t destination, unsigned bound_index,
               uint8_t protocol, uint8_t ttl, bool broadcast, const void*, size_t,
-              bool cache_destination = true, uint8_t traffic_class = 0);
+              bool cache_destination = true, int traffic_class = -1,
+              const Ipv4SendRoute* selected = nullptr);
+
+int ipv4_send_admit(InetSocket*, Ipv4Source source, uint32_t destination, unsigned bound_index,
+                    uint8_t ttl, bool broadcast, size_t length, bool cache_destination,
+                    Ipv4SendRoute* selected = nullptr);
 
 // Last socket close detaches error delivery; accepted packets own their bytes.
 void ipv4_detach_owner(InetSocket*);

@@ -58,7 +58,7 @@ static void acknowledge(int fd) {
     wire_check(!close(fd), "close acknowledged control description");
 }
 
-static void change_address(unsigned lane, uint32_t value, const char* suffix, int add) {
+void wire_change_address(unsigned lane, uint32_t value, const char* suffix, int add) {
     unsigned char bytes[128] = {0};
     struct ifaddrmsg address = {
         .ifa_family = AF_INET, .ifa_prefixlen = 24, .ifa_index = wire_links[lane].index};
@@ -78,7 +78,7 @@ static void change_address(unsigned lane, uint32_t value, const char* suffix, in
                         NLM_F_REQUEST | NLM_F_ACK | (add ? NLM_F_CREATE | NLM_F_EXCL : 0)));
 }
 
-static void change_route(uint32_t target, unsigned index, int add) {
+void wire_change_route_metric(uint32_t target, unsigned index, unsigned metric, int add) {
     unsigned char bytes[96] = {0};
     struct rtmsg route = {.rtm_family = AF_INET,
                           .rtm_dst_len = 32,
@@ -91,12 +91,18 @@ static void change_route(uint32_t target, unsigned index, int add) {
     uint32_t destination = htonl(target);
     field(bytes, &length, RTA_DST, &destination, sizeof(destination));
     field(bytes, &length, RTA_OIF, &index, sizeof(index));
+    if (metric)
+        field(bytes, &length, RTA_PRIORITY, &metric, sizeof(metric));
     acknowledge(request(bytes, length, add ? RTM_NEWROUTE : RTM_DELROUTE,
                         NLM_F_REQUEST | NLM_F_ACK | (add ? NLM_F_CREATE | NLM_F_EXCL : 0)));
 }
 
+void wire_change_route(uint32_t target, unsigned index, int add) {
+    wire_change_route_metric(target, index, 0, add);
+}
+
 static void inventory(unsigned lane, unsigned sequence, unsigned phase, uint32_t target, int routes,
-                      unsigned expected) {
+                      unsigned expected, unsigned expected_count, unsigned expected_prefix) {
     unsigned char message[64] = {0};
     unsigned length;
     if (routes) {
@@ -111,7 +117,7 @@ static void inventory(unsigned lane, unsigned sequence, unsigned phase, uint32_t
     int fd =
         request(message, length, routes ? RTM_GETROUTE : RTM_GETADDR, NLM_F_REQUEST | NLM_F_DUMP);
     int done = 0;
-    unsigned found = 0, selected_index = 0;
+    unsigned found = 0, selected_index = 0, selected_metric = UINT32_MAX;
     while (!done) {
         unsigned char bytes[4096];
         ssize_t count = recv(fd, bytes, sizeof(bytes), 0);
@@ -130,7 +136,7 @@ static void inventory(unsigned lane, unsigned sequence, unsigned phase, uint32_t
                 done = 1;
                 continue;
             }
-            uint32_t local = 0, output = 0;
+            uint32_t local = 0, output = 0, metric = 0;
             unsigned prefix = 0;
             struct rtattr* attribute;
             int attributes;
@@ -147,6 +153,8 @@ static void inventory(unsigned lane, unsigned sequence, unsigned phase, uint32_t
                         memcpy(&local, RTA_DATA(attribute), 4);
                     if (RTA_PAYLOAD(attribute) == 4 && attribute->rta_type == RTA_OIF)
                         memcpy(&output, RTA_DATA(attribute), 4);
+                    if (RTA_PAYLOAD(attribute) == 4 && attribute->rta_type == RTA_PRIORITY)
+                        memcpy(&metric, RTA_DATA(attribute), 4);
                 }
             } else {
                 wire_check(header->nlmsg_type == RTM_NEWADDR &&
@@ -161,20 +169,70 @@ static void inventory(unsigned lane, unsigned sequence, unsigned phase, uint32_t
                     if (RTA_PAYLOAD(attribute) == 4 && attribute->rta_type == IFA_LOCAL)
                         memcpy(&local, RTA_DATA(attribute), 4);
             }
-            if (ntohl(local) == target && prefix == (routes ? 32u : 24u) &&
+            if (ntohl(local) == target && prefix == expected_prefix &&
                 (routes || output == wire_links[lane].index)) {
                 found++;
-                selected_index = output;
+                if (metric <= selected_metric) {
+                    selected_index = output;
+                    selected_metric = metric;
+                }
             }
         }
         wire_check(remaining == 0, "bounded inventory records");
     }
-    wire_check(found == !!expected && (!expected || selected_index == expected),
+    wire_check(found == expected_count && (!expected || selected_index == expected),
                "actual address or route transition readback");
     printf("{\"kind\":\"state\",\"lane\":%u,\"case\":%u,\"phase\":%u,\"routes\":%d,"
            "\"target\":\"%08x\",\"found\":%u,\"index\":%u}\n",
            lane, sequence, phase, routes, target, found, selected_index);
     wire_check(!close(fd), "close inventory description");
+}
+
+void wire_inventory(unsigned lane, unsigned sequence, unsigned phase, uint32_t target, int routes,
+                    unsigned expected) {
+    inventory(lane, sequence, phase, target, routes, expected, !!expected, routes ? 32 : 24);
+}
+
+void wire_inventory_paths(unsigned lane, unsigned sequence, unsigned phase, uint32_t target,
+                          unsigned expected, unsigned count) {
+    inventory(lane, sequence, phase, target, 1, expected, count, 32);
+}
+
+void wire_inventory_prefix(unsigned lane, unsigned sequence, unsigned phase, uint32_t target,
+                           unsigned prefix, unsigned expected, unsigned count) {
+    inventory(lane, sequence, phase, target, 1, expected, count, prefix);
+}
+
+void wire_remove_prefix(unsigned lane) {
+    unsigned char bytes[64] = {0};
+    struct rtmsg route = {.rtm_family = AF_INET,
+                          .rtm_dst_len = 24,
+                          .rtm_table = RT_TABLE_MAIN,
+                          .rtm_protocol = RTPROT_KERNEL,
+                          .rtm_scope = RT_SCOPE_LINK,
+                          .rtm_type = RTN_UNICAST};
+    memcpy(bytes + NLMSG_HDRLEN, &route, sizeof(route));
+    unsigned length = NLMSG_LENGTH(sizeof(route));
+    uint32_t destination = htonl(wire_prefix(lane) & ~255u), index = wire_links[lane].index;
+    field(bytes, &length, RTA_DST, &destination, 4);
+    field(bytes, &length, RTA_OIF, &index, 4);
+    acknowledge(request(bytes, length, RTM_DELROUTE, NLM_F_REQUEST | NLM_F_ACK));
+}
+
+static void open_control(unsigned lane) {
+    wire_links[lane].control =
+        socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, htons(0x88b9));
+    struct sockaddr_ll binding = {.sll_family = AF_PACKET,
+                                  .sll_protocol = htons(0x88b9),
+                                  .sll_ifindex = (int)wire_links[lane].index};
+    wire_check(wire_links[lane].control >= 0 &&
+                   !bind(wire_links[lane].control, (struct sockaddr*)&binding, sizeof(binding)),
+               "Ethernet barrier description");
+}
+
+void wire_reopen_control(unsigned lane) {
+    wire_check(!close(wire_links[lane].control), "release notified barrier description");
+    open_control(lane);
 }
 
 void wire_configure(void) {
@@ -189,17 +247,10 @@ void wire_configure(void) {
         memcpy(wire_links[lane].mac, request.ifr_hwaddr.sa_data, 6);
         request.ifr_flags = IFF_UP;
         wire_check(!ioctl(fd, SIOCSIFFLAGS, &request), "interface activation");
-        change_address(lane, wire_primary(lane), "", 1);
-        change_address(lane, wire_alias(lane), ":rxs", 1);
-        change_address(lane, wire_prefix(lane), ":rxp", 1);
-        wire_links[lane].control =
-            socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, htons(0x88b9));
-        struct sockaddr_ll binding = {.sll_family = AF_PACKET,
-                                      .sll_protocol = htons(0x88b9),
-                                      .sll_ifindex = (int)wire_links[lane].index};
-        wire_check(wire_links[lane].control >= 0 &&
-                       !bind(wire_links[lane].control, (struct sockaddr*)&binding, sizeof(binding)),
-                   "Ethernet barrier description");
+        wire_change_address(lane, wire_primary(lane), "", 1);
+        wire_change_address(lane, wire_alias(lane), ":rxs", 1);
+        wire_change_address(lane, wire_prefix(lane), ":rxp", 1);
+        open_control(lane);
         printf("{\"kind\":\"link\",\"lane\":%u,\"index\":%u,\"mac\":\"", lane,
                wire_links[lane].index);
         wire_hex(wire_links[lane].mac, 6);
@@ -240,31 +291,31 @@ void wire_transition(unsigned lane, unsigned sequence, unsigned scenario, unsign
     struct WireInput input = wire_input(lane, sequence, scenario);
     unsigned own = wire_links[lane].index, other = wire_links[lane ^ 1].index;
     if ((scenario == 7 || scenario == 12) && phase == 0)
-        change_route(input.source, other, 1);
+        wire_change_route(input.source, other, 1);
     if (phase == 1) {
         if (scenario == 10)
-            change_address(lane, wire_alias(lane), ":rxs", 0);
+            wire_change_address(lane, wire_alias(lane), ":rxs", 0);
         if (scenario == 11)
-            change_address(lane, wire_prefix(lane), ":rxp", 0);
+            wire_change_address(lane, wire_prefix(lane), ":rxp", 0);
         if (scenario == 12) {
-            change_route(input.source, other, 0);
-            change_route(input.source, own, 1);
+            wire_change_route(input.source, other, 0);
+            wire_change_route(input.source, own, 1);
         }
     }
     if (phase == 2) {
         if (scenario == 10)
-            change_address(lane, wire_alias(lane), ":rxs", 1);
+            wire_change_address(lane, wire_alias(lane), ":rxs", 1);
         if (scenario == 11)
-            change_address(lane, wire_prefix(lane), ":rxp", 1);
+            wire_change_address(lane, wire_prefix(lane), ":rxp", 1);
         if (scenario == 7 || scenario == 12)
-            change_route(input.source, scenario == 12 ? own : other, 0);
+            wire_change_route(input.source, scenario == 12 ? own : other, 0);
     }
     if (scenario == 10 || scenario == 11)
-        inventory(lane, sequence, phase, scenario == 10 ? wire_alias(lane) : wire_prefix(lane), 0,
-                  phase == 1 ? 0 : own);
+        wire_inventory(lane, sequence, phase, scenario == 10 ? wire_alias(lane) : wire_prefix(lane),
+                       0, phase == 1 ? 0 : own);
     if (scenario == 7 || scenario == 8 || scenario == 12)
-        inventory(lane, sequence, phase, input.source, 1,
-                  scenario == 8 || phase == 2    ? 0
-                  : scenario == 12 && phase == 1 ? own
-                                                 : other);
+        wire_inventory(lane, sequence, phase, input.source, 1,
+                       scenario == 8 || phase == 2    ? 0
+                       : scenario == 12 && phase == 1 ? own
+                                                      : other);
 }

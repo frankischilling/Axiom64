@@ -18,7 +18,7 @@ def require(value, message):
         raise ValueError(message)
 
 
-def audit_fixture(image, kernel_sha256, executables, script):
+def audit_fixture(image, kernel_sha256, executables, script, initramfs_sha256=None):
     with tempfile.TemporaryDirectory(prefix='axiom64-malformed-image-audit-') as temporary:
         directory = Path(temporary)
         subprocess.run(['xorriso', '-osirrox', 'on', '-indev', str(image),
@@ -27,6 +27,9 @@ def audit_fixture(image, kernel_sha256, executables, script):
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         require(digest(directory / 'kernel') == kernel_sha256,
                 'actual ISO contains the fingerprinted running kernel')
+        if initramfs_sha256 is not None:
+            require(digest(directory / 'root.cpio') == initramfs_sha256,
+                    'actual ISO contains the complete retained initramfs')
         entries = archive_entries(directory / 'root.cpio')
     for name, fingerprint in executables.items():
         require(name in entries and entries[name][0] == 0o100755 and

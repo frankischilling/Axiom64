@@ -63,6 +63,11 @@ void inet_reclaim(InetSocket*, size_t) {
     assert(false && "output fixture has no socket owner");
 }
 
+bool inet_stream(InetSocket*) {
+    assert(false && "output fixture has no socket owner");
+    return false;
+}
+
 void inet_failed(InetSocket*, int, unsigned) {
     assert(false && "output fixture has no socket error recipient");
 }

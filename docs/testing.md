@@ -1272,3 +1272,61 @@ Native path-MTU, error-queue and cached-route comparisons place each profile's c
 Administration and rotation fault campaigns share the disposable NBD launcher. Each start retains `backend-startup.json` with its exact command, executable hash, socket and trace state, elapsed observation and unchanged five-second bound. On timeout or early exit, the report includes the actual process state before termination and host CPU/memory pressure. Launch errors close the log; failed starts remain failures and grant no retry. The startup regression exercises both callers with actual NBD sockets, early-exit children, stopped children and missing executables. The observed administration baseline failure had an empty backend log and no process report; its cause remains unproven.
 
 The result-fault extension retains all original ancillary and lifetime cases. It adds guarded payload/vector output, invalid or incomplete vector/header input, out-of-range addresses, NULL/truncated/signed source capacities, both orientations of protected message fields, and dequeue/peek observations. All 1,344 cases pass per profile across nine actual Linux comparisons and four guests. The original guest kernel failed 696 cases per guest; its programs, source, images and logs remain retained. The shared copier also passes the existing eight-guest/three-native IPv6 comparison, all 854 cases and 240 rejection controls. Every existing CI job, scenario and real deadline remains required.
+
+
+## IPv4 send-control comparison
+
+`sudo make test-ipv4-send-controls` runs the same 384-case C client in three
+isolated Linux loopback namespaces and four static/dynamic BIOS/UEFI guests.
+Each execution retains all 768 selected and baseline observations: raw ICMP,
+raw UDP and UDP, named and connected sends, complete ancillary bytes, protected
+input pages, error ordering, automatic binding, shared defaults and actual
+52-byte packets. The original 30-second native and 120-second guest bounds remain.
+
+`build/ipv4-send-controls` retains the complete public source archive, actual
+programs and compile manifests, native namespace identity and live libc maps,
+runtime provider bytes, all four guest images and initramfs archives, original
+commands, process results and logs. The independent reader opens each image
+and binds its kernel, client, loader and boot script to the retained products:
+
+```sh
+python3 scripts/ipv4_send_controls_contract.py --directory build/ipv4-send-controls --output build/ipv4-send-controls-readback.json
+```
+
+Twenty-one serialized damaged-input controls cover the seven original log
+mutations plus source, executable, compile, linkage, runtime provider, firmware,
+kernel, image, initramfs, loader, deadline and complete profile-grid binding.
+These loopback checks supplement the required physical-interface comparison.
+
+## IPv4 Ethernet send controls and route ownership
+
+`sudo make test-ipv4-send-wire` runs three native libc profiles and all eight
+static/dynamic BIOS/UEFI modern/legacy guests on virtio-net and e1000. Each
+profile retains the original 100 cases and adds 36 route-lifetime cases: 136
+cases, 816 physical barriers, 72 ordinary sends, 60 sleeping sends and four raw
+memory-pressure cases. Twenty-eight full three-second retirement observations
+and the original 180-second process, syscall, barrier and socket-timeout bounds
+remain required. Payload, control, header, vector and descriptor mutations
+distinguish admission-time metadata from later copied payload bytes.
+
+Explicit host routes, automatic prefixes, connected UDP and forced-interface
+fallbacks face preference changes, deletion/recreation and real administrative
+down/up. Pressure fills use the opposite adapter while the tested send remains
+asleep. Raw route/address inventories and independent Ethernet captures verify
+source selection, held ownership, silent route retirement, fallback retention
+and current defaults. Native retirement policies are measured per route class
+and must agree across libc profiles; guest FIB retirement must discard old sends.
+
+Native source and peer devices occupy separate private network namespaces.
+Peer devices stay up during source down/up, with recorded reciprocal indices,
+software checksums and disabled segmentation offload. Capture clocks and drop
+receipts retain their original guards. Clock-discontinuous runs remain failures.
+`build/ipv4-send-wire` retains original captures, transport frames, logs, full
+sources, actual programs, manifests and all boot images. Independent readers
+reopen these inputs and reject 32 guest evidence controls and six native peer
+topology controls. The existing receive comparison and normal/fault IPv4 matrix,
+including full path-MTU observation intervals, remain required.
+
+The Ethernet retirement observer requests three seconds plus the reported monotonic clock resolution to cover coarse-clock quantization. Independent capture readers still require at least three complete seconds; process, syscall and barrier deadlines are unchanged.
+
+Native IPv4 packet clients and both independent collectors share one recorded allowed CPU. The existing packet-profile selector rotates libc profiles across available CPUs before creating collector threads. Readers verify the private parent namespace, actual task and client affinity; three serialized CPU/namespace controls supplement every original receive and send control. The existing IPv4 source-filter CI job also runs both complete send cohorts, with every original scenario and timing bound retained.

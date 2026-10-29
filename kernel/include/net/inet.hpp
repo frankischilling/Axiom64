@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "core/base.hpp"
+#include "net/ipv4.hpp"
 #include "net/ipv4/receive.hpp"
 
 namespace ax {
@@ -15,6 +16,14 @@ struct InetAddress {
 };
 
 static_assert(sizeof(InetAddress) == 16);
+
+struct InetSendControl {
+    Ipv4Source source;
+    unsigned index = 0;
+    uint8_t ttl = 64, tos = 0;
+    bool cache_destination = false;
+    Ipv4SendRoute route{};
+};
 
 struct InetFrame {
     InetAddress source;
@@ -75,7 +84,19 @@ bool inet_datagram_deliver(const Ipv4ReceiveMetadata&, uint16_t source_port,
 size_t inet_receive_control(Task&, InetSocket*, const InetFrame&, uint64_t address,
                             uint64_t capacity, uint32_t& flags);
 
-int64_t inet_send(InetSocket*, const InetAddress&, const void*, size_t, bool named = false);
+int inet_capture_send_control(Task&, uint64_t pointer, uint64_t length, uint8_t*& bytes);
+
+int inet_prepare_send(InetSocket*, InetAddress&, bool named, uint32_t address_length,
+                      size_t payload_length, const uint8_t* control, size_t control_length,
+                      InetSendControl&);
+
+size_t inet_send_prefix(const InetSocket*);
+
+int inet_send_admit(InetSocket*, InetAddress&, size_t, InetSendControl&);
+int inet_send_ready(InetSocket*, size_t);
+
+int64_t inet_send(InetSocket*, const InetAddress&, const void*, size_t, bool named = false,
+                  const InetSendControl* control = nullptr);
 
 int64_t inet_read(InetSocket*, void*, size_t);
 

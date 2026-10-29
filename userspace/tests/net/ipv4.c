@@ -986,7 +986,7 @@ static void link_change(unsigned lane) {
                                       .sin_addr.s_addr = htonl(0x0a170101 + (lane << 8))};
     check(sendto(fd, bytes, sizeof(bytes), 0, (struct sockaddr*)&destination,
                  sizeof(destination)) == -1 &&
-              errno == ENETDOWN,
+              errno == ENETUNREACH,
           "administrative down rejects IPv4 output");
     interface.ifr_flags |= IFF_UP;
     check(ioctl(fd, SIOCSIFFLAGS, &interface) == 0, "restore administrative up");

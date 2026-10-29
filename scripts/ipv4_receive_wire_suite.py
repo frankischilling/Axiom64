@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 from fetch import ROOT
+from ipv4_native_capture_controls import damaged as cpu_damaged
 from ipv4_receive_wire_contract import cohort, damaged, protected, verify
 from ipv4_receive_wire_records import require
 from tcp6.inputs import freeze
@@ -44,6 +45,7 @@ def main():
     before = protected(paths)
     result['serialized_controls_rejected'] = damaged(directory / 'static-bios-modern', values,
                                                      directory / 'damaged-controls.zip')
+    result['native_cpu_controls_rejected'] = cpu_damaged(directory / 'linux-native', directory / 'native-cpu-controls.zip', verify)
     require(protected(paths) == before, 'runtime evidence bytes, owners and modes remain exact')
     reader = directory / 'reader-source'
     reader.mkdir()

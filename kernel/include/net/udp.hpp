@@ -14,6 +14,8 @@ struct UdpOutput {
     uint8_t ttl;
     bool broadcast;
     bool cache_destination = true;
+    int traffic_class = -1;
+    const Ipv4SendRoute* selected = nullptr;
 };
 
 enum class UdpInput { dropped, unbound, delivered };

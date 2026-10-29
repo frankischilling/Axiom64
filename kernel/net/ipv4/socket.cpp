@@ -96,7 +96,7 @@ InetAddress inet_peer(InetSocket* socket) {
 }
 
 int inet_target(InetSocket* socket, InetAddress& address, bool named) {
-    if (address.family != 2 && !(socket->type == 2 && address.family == 0))
+    if (address.family != 2 && address.family != 0)
         return -97;
     if (socket->type == 2 && named) {
         if (!address.port)
@@ -335,8 +335,30 @@ bool inet_datagram_deliver(const Ipv4ReceiveMetadata& metadata, uint16_t source_
     return matched;
 }
 
+static int send_capacity(const InetSocket* socket, size_t length) {
+    size_t overhead = socket->type == 2 ? 28 : 20;
+    if (length > 65535 - overhead || length + overhead > socket->send_limit)
+        return -90;
+    if (length + overhead >
+        socket->send_limit - min(socket->transmitted, size_t(socket->send_limit)))
+        return socket->type == 3 ? -105 : -11;
+    return 0;
+}
+
+int inet_send_ready(InetSocket* socket, size_t length) {
+    if (int error = inet_error(socket, true))
+        return -error;
+    if (socket->shutdown & 2)
+        return -32;
+    if (int error = send_capacity(socket, length))
+        return error;
+    // A full output table retains bytes already imported using socket memory.
+    // Only the socket-memory wait defers the user payload copy.
+    return 0;
+}
+
 int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* data, size_t length,
-                  bool named) {
+                  bool named, const InetSendControl* selected) {
     if (inet_stream(socket))
         return tcp_write(socket, data, length);
     if (!inet_payload(socket))
@@ -349,22 +371,13 @@ int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* da
     if (!destination)
         return -89;
     size_t overhead = socket->type == 2 ? 28 : 20;
-    if (length > 65535 - overhead || length + overhead > socket->send_limit)
-        return -90;
-    if (length + overhead >
-        socket->send_limit - min(socket->transmitted, size_t(socket->send_limit)))
-        return -11;
-    bool multicast = ip4::multicast(destination);
-    Ipv4Source source{ip4::multicast(socket->local) ? 0 : socket->local};
-    unsigned index = socket->index;
-    if (multicast) {
-        if (!index)
-            index = socket->multicast.output_index;
-        if (!source.selected && socket->multicast.output_address)
-            source = socket->multicast.output_address;
-    }
-    bool connected = !named && destination == socket->peer;
-    if (socket->type == 2 && connected) {
+    if (int error = send_capacity(socket, length))
+        return error;
+    auto control = selected ? *selected : inet_send_defaults(socket, address, named);
+    Ipv4Source source = control.source;
+    unsigned index = control.index;
+    bool connected = control.cache_destination && !named && destination == socket->peer;
+    if (socket->type == 2 && connected && !control.route.path.index) {
         if (ipv4_destination_current(socket->destination))
             source = Ipv4Source::retained(socket->local);
         int routed = ipv4_destination(socket->destination, source, destination, index);
@@ -383,21 +396,23 @@ int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* da
                          index,
                          socket->local_port,
                          __builtin_bswap16(address.port),
-                         multicast ? socket->multicast.ttl : socket->ttl,
+                         control.ttl,
                          socket->broadcast,
-                         connected};
+                         connected,
+                         control.tos,
+                         control.route.path.index ? &control.route : nullptr};
         error = udp_send(socket, output, data, length);
-        if (connected && socket->destination.path.index)
+        if (connected && !control.route.path.index && socket->destination.path.index)
             socket->destination.source = socket->local;
         if (error == -99)
             error = -101;
     } else
-        error = ipv4_send(socket, source, destination, index, socket->protocol,
-                          multicast ? socket->multicast.ttl : socket->ttl, socket->broadcast, data,
-                          length);
+        error = ipv4_send(socket, source, destination, index, socket->protocol, control.ttl,
+                          socket->broadcast, data, length, control.cache_destination, control.tos,
+                          control.route.path.index ? &control.route : nullptr);
     if (!error)
         socket->transmitted += length + overhead;
-    return error ? error : int64_t(length);
+    return error < 0 ? error : int64_t(length);
 }
 
 int64_t inet_read(InetSocket* socket, void* data, size_t length) {

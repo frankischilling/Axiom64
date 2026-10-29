@@ -94,6 +94,10 @@ void ipv4_shutdown() {
 void ipv4_mtu_changed(unsigned, uint32_t) {
 }
 
+int ipv4_administrative_changed(unsigned) {
+    return 0;
+}
+
 void ipv4_receive(const NetInfo&, const void*, size_t) {
 }
 

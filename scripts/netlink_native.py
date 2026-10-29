@@ -29,7 +29,7 @@ def main():
     text = process.stdout.decode(errors='replace')
     print(text, end='', flush=True)
     names = ['CARRIER_DOWN', 'EARLY_ROUTES', 'LIFECYCLE', 'FORK_LIFETIME', 'MESSAGE_IO', 'UNCAPPED_REPLY',
-             'ROUTE_OWNERSHIP', 'CONFIGURATION_ADAPTER', 'TESTS']
+             'ROUTE_OWNERSHIP', 'CONFIGURATION_ADAPTER', 'AUTOMATIC_PREFIXES', 'TESTS']
     missing = [f'NETLINK_{name}_PASS' for name in names if f'NETLINK_{name}_PASS' not in text]
     result = dict(kernel=platform.release(), returncode=process.returncode, missing=missing,
                   seconds=round(time.monotonic() - started, 3),

@@ -28,6 +28,11 @@ void inet_reclaim(InetSocket*, size_t) {
     assert(false && "path selection must not own a socket output");
 }
 
+bool inet_stream(InetSocket*) {
+    assert(false && "path fixture has no socket owner");
+    return false;
+}
+
 void inet_failed(InetSocket*, int, unsigned) {
     assert(false && "path selection must not deliver a socket error");
 }
@@ -123,6 +128,29 @@ static void route_pressure() {
         assert(ipv4_route(route, true) == 0);
         assert(mtu(1, peer) == 900);
     }
+}
+
+static void route_source_classes() {
+    constexpr uint32_t first = 0x0a170102, other = 0xc6120102, peer = other + 97;
+    assert(ipv4_address_add(1, "eth0:source", {other, 0xffffff00, 0xc61201ff}) == 0);
+    Ipv4Path path;
+    assert(ipv4_path(0, peer, 0, path) == 0 && path.source == other);
+    Ipv4Route direct{peer, 0xffffffff, 0, 1, 9, 4, 253};
+    assert(ipv4_route_control(direct, false, true) == 0);
+    // An explicit direct route has no preferred source; its next hop selects
+    // the first primary, even though another automatic prefix matches the peer.
+    assert(ipv4_path(0, peer, 0, path) == 0 && path.source == first);
+    assert(ipv4_path(other, peer, 0, path) == 0 && path.source == other);
+    assert(ipv4_route_control(direct, true, false) == 0);
+    assert(ipv4_path(0, peer, 0, path) == 0 && path.source == other);
+    Ipv4Route automatic{other & 0xffffff00, 0xffffff00, 0, 1, 0, 2, 253};
+    assert(ipv4_route_control(automatic, true, false) == 0);
+    assert(ipv4_path(0, peer, 0, path) == -101);
+    // Forced-interface fallback also starts at the first primary. A caller's
+    // explicit source remains authoritative and does not restore the FIB route.
+    assert(ipv4_path(0, peer, 1, path) == 0 && path.source == first);
+    assert(ipv4_path(other, peer, 1, path) == 0 && path.source == other);
+    assert(ipv4_address_remove(1, other, 0xffffff00) == 0);
 }
 
 static void address_aliases() {
@@ -238,7 +266,7 @@ static void bound_device_fallback() {
     assert(ipv4_path(alias, peer, 0, path) == -101);
     assert(ipv4_path(alias, peer, 1, path) == 0);
     assert(net_configure(1, false, 1500) == 0);
-    assert(ipv4_path(alias, peer, 1, path) == -100);
+    assert(ipv4_path(alias, peer, 1, path) == -101);
     assert(net_configure(1, true, 1500) == 0);
     assert(ipv4_address_remove(1, alias, 0xffffff00) == 0);
     assert(ipv4_path(alias, peer, 1, path) == -99);
@@ -257,15 +285,38 @@ static void unconfigured_device_fallback() {
     assert(path.index == 1 && path.source == 0 && path.mtu == 1500);
     assert(ipv4_path(0, peer, 0, path) == -101);
     assert(ipv4_path(0, peer, 3, path) == -19);
-    assert(ipv4_path(0, peer, ipv4_loopback, path) == -101);
-    assert(ipv4_path(0x7f000001, peer, 1, path) == -99);
+    assert(ipv4_path(0, peer, ipv4_loopback, path) == 0);
+    assert(path.index == ipv4_loopback && path.source == 0x7f000001 && path.mtu == 65535);
+    assert(ipv4_path(0x7f000001, peer, 1, path) == -22);
     assert(net_configure(1, false, 1500) == 0);
-    assert(ipv4_path(0, peer, 1, path) == -100);
+    assert(ipv4_path(0, peer, 1, path) == -101);
     assert(net_configure(1, true, 1500) == 0);
     assert(ipv4_configure(2, {other, 0xffffff00, 0}) == 0);
     assert(ipv4_path(0, peer, 1, path) == 0 && path.source == other);
     assert(ipv4_configure(1, {primary, 0xffffff00, 0}) == 0);
     assert(ipv4_path(0, peer, 1, path) == 0 && path.source == primary);
+}
+
+static void forced_loopback_output() {
+    constexpr uint32_t primary = 0x0a170102, other = 0x0a170202, peer = 0xc000020a;
+    Ipv4Path path;
+    assert(ipv4_path(0, peer, ipv4_loopback, path) == 0);
+    assert(path.index == ipv4_loopback && path.source == primary && path.mtu == 65535);
+    assert(ipv4_path(other, peer, ipv4_loopback, path) == 0 && path.source == other);
+    assert(ipv4_path(0, 0xef170001, ipv4_loopback, path) == 0 && path.source == primary);
+    assert(ipv4_path(0, 0x7f000001, 1, path) == 0);
+    assert(path.index == 1 && path.source == primary && path.mtu == 1500);
+    assert(ipv4_path(other, 0x7f000001, 1, path) == 0 && path.source == other);
+    assert(ipv4_path(0x7f000001, peer, 1, path) == -22);
+    assert(ipv4_path(0x7f000001, 0x7f000001, 1, path) == -22);
+    assert(ipv4_path(0, 0x7f000001, ipv4_loopback, path) == 0 && path.source == 0x7f000001);
+    assert(ipv4_path(0x7f000001, primary, 1, path) == 0 && path.source == 0x7f000001);
+    assert(ipv4_path(0, 0, 1, path) == 0 && path.source == primary && path.index == ipv4_loopback);
+    assert(ipv4_path(0, 0, 2, path) == 0 && path.source == other && path.index == ipv4_loopback);
+    assert(ipv4_path(0, 0, ipv4_loopback, path) == 0 && path.source == 0x7f000001);
+    assert(ipv4_path(0x7f000001, 0, 1, path) == 0 && path.source == 0x7f000001);
+    assert(ipv4_path(0xcb007108, 0, 3, path) == -99);
+    assert(ipv4_path(0, 0, 3, path) == -19);
 }
 
 static void link_lifecycle() {
@@ -284,9 +335,9 @@ static void link_lifecycle() {
     assert(mtu(1, first) == 900);
     assert(net_configure(1, false, 1500) == 0);
     Ipv4Path path;
-    assert(ipv4_path(0, first, 1, path) == -100);
+    assert(ipv4_path(0, first, 1, path) == -101);
     assert(net_configure(1, true, 1500) == 0);
-    assert(mtu(1, first) == 900);
+    assert(mtu(1, first) == 1500);
     assert(ipv4_configure(1, {0x0a170103, 0xffffff00, 0}) == 0);
     assert(mtu(1, first) == 1500);
     assert(mtu(2, second) == 800);
@@ -313,11 +364,13 @@ int main() {
         assert(net_register(adapter) == index);
         assert(ipv4_configure(index, {0x0a170002 + index * 256, 0xffffff00, 0}) == 0);
     }
+    forced_loopback_output();
     unconfigured_device_fallback();
     bound_device_fallback();
     unrelated_routes();
     shared_next_hop();
     route_pressure();
+    route_source_classes();
     address_aliases();
     retained_destinations();
     link_lifecycle();

@@ -1228,6 +1228,26 @@ jobs:
           name: ipv4-receive-wire
           if-no-files-found: warn
           path: build/ipv4-receive-wire
+      - name: Compare IPv4 send controls and error ordering with Linux
+        if: matrix.suite == 'ipv4-source-filters'
+        run: sudo -n make test-ipv4-send-controls
+      - name: Upload complete IPv4 send-control evidence
+        if: always() && matrix.suite == 'ipv4-source-filters'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-send-controls
+          if-no-files-found: warn
+          path: build/ipv4-send-controls
+      - name: Compare IPv4 Ethernet output and sleeping route ownership with Linux
+        if: matrix.suite == 'ipv4-source-filters'
+        run: sudo -n make test-ipv4-send-wire
+      - name: Upload complete IPv4 Ethernet send evidence
+        if: always() && matrix.suite == 'ipv4-source-filters'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-send-wire
+          if-no-files-found: warn
+          path: build/ipv4-send-wire
       - name: Test IPv6 receive metadata and copy faults on both adapters
         if: matrix.suite == 'network'
         run: make test-ipv6-controls
@@ -1410,11 +1430,25 @@ jobs:
       - name: Test complete IPv4 addresses and configuration recovery
         if: matrix.suite == 'configuration'
         run: make test-configuration
-      - name: Compare address messages with native Linux
+      - name: Compare configuration ownership with three native Linux linkages
         if: matrix.suite == 'configuration'
         run: |
-          make build/configuration-native
-          sudo python3 scripts/configuration_native.py
+          make -j3 build/configuration-native build/configuration-tests build/configuration-dynamic
+          sudo -n python3 scripts/configuration_native.py
+      - name: Reopen original IPv4 configuration journals, source and execution products
+        if: matrix.suite == 'configuration'
+        run: |
+          python3 scripts/configuration_evidence.py build/configuration-wire --complete
+          python3 scripts/configuration_evidence.py build/configuration-native-evidence --complete
+      - name: Retain IPv4 configuration source, programs, journals and boot images
+        if: always() && matrix.suite == 'configuration'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-configuration
+          if-no-files-found: warn
+          path: |
+            build/configuration-wire
+            build/configuration-native-evidence
       - name: Test DHCP codecs, lease state, and profiles with sanitizers
         if: matrix.suite == 'configuration'
         run: make test-dhcp-codec

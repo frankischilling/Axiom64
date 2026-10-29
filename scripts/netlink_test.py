@@ -134,7 +134,7 @@ def run(firmware, transport, timeout, directory=None):
             temporary.cleanup()
     text = log.read_text(errors='replace')
     names = ['CARRIER_DOWN', 'EARLY_ROUTES', 'CARRIER_UP', 'LIFECYCLE', 'FORK_LIFETIME', 'MESSAGE_IO', 'UNCAPPED_REPLY', 'ROUTE_OWNERSHIP',
-             'CONFIGURATION_ADAPTER', 'MALFORMED', 'ROUTE_LIMITS', 'BYTE_QUOTA', 'PRESSURE_LIFETIME',
+             'CONFIGURATION_ADAPTER', 'AUTOMATIC_PREFIXES', 'MALFORMED', 'ROUTE_LIMITS', 'BYTE_QUOTA', 'PRESSURE_LIFETIME',
              'SOCKET_LIMITS', 'ROUTED_PACKETS', 'TESTS']
     missing = [f'NETLINK_{name}_PASS' for name in names if f'NETLINK_{name}_PASS' not in text]
     missing += [value for value in ['AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0'] if value not in text]
@@ -181,6 +181,8 @@ def main():
              'scripts/tcp_fixture_inputs.py', 'scripts/image.py', 'scripts/qmp.py',
              'userspace/tests/net/netlink.cpp', 'userspace/tests/net/netlink.sh',
              'userspace/net/config/routing.cpp', 'userspace/net/config/routing.hpp',
+             'userspace/net/config/route_snapshot.cpp', 'userspace/net/config/route_snapshot.hpp',
+             'scripts/compile_uapi_client.py', 'scripts/build_musl.py', 'scripts/build_openssl.py',
              'userspace/init/main.c', 'userspace/init/console.c', 'userspace/init/console.h',
              'userspace/init/seed_records.h']
     names += [path.relative_to(ROOT).as_posix() for path in (ROOT / 'kernel').rglob('*')

@@ -1,3 +1,5 @@
+ROUTING_SOURCES = userspace/net/config/routing.cpp userspace/net/config/route_snapshot.cpp
+ROUTING_HEADERS = userspace/net/config/routing.hpp userspace/net/config/route_snapshot.hpp
 CXX = g++
 NASM = nasm
 PYTHON = python3
@@ -451,20 +453,20 @@ build/normal-dns-static: userspace/tests/net/normal-dns.c
 build/normal-dns-dynamic: userspace/tests/net/normal-dns.c
 	@mkdir -p build
 	$(MUSL_CC) -std=c11 -O2 -g -Wall -Wextra -Werror -DDNS_LINKAGE='"dynamic"' $< -o $@
-build/netlink-tests: userspace/tests/net/netlink.cpp userspace/net/config/routing.cpp userspace/net/config/routing.hpp
+build/netlink-tests: userspace/tests/net/netlink.cpp $(ROUTING_SOURCES) $(ROUTING_HEADERS)
 	@mkdir -p build
-	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -pthread -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/netlink.cpp userspace/net/config/routing.cpp -o $@
-build/netlink-native: userspace/tests/net/netlink.cpp userspace/net/config/routing.cpp userspace/net/config/routing.hpp
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -pthread -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/netlink.cpp $(ROUTING_SOURCES) -o $@
+build/netlink-native: userspace/tests/net/netlink.cpp $(ROUTING_SOURCES) $(ROUTING_HEADERS)
 	@mkdir -p build
-	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -pthread -Iuserspace userspace/tests/net/netlink.cpp userspace/net/config/routing.cpp -o $@
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -pthread -Iuserspace userspace/tests/net/netlink.cpp $(ROUTING_SOURCES) -o $@
 PROFILE_SOURCES = userspace/net/config/profile.cpp userspace/net/config/saved.cpp
 PROFILE_HEADERS = userspace/net/config/profile.hpp userspace/net/config/saved.hpp userspace/net/dhcp/wire.hpp
 PROFILE_FAULTS = -Wl,--wrap=write,--wrap=read,--wrap=close,--wrap=fsync,--wrap=fchmod,--wrap=fchmodat,--wrap=renameat
 OWNERSHIP_SOURCES = userspace/tests/net/ownership.cpp userspace/net/manager/ownership.cpp userspace/net/config/saved.cpp
 OWNERSHIP_HEADERS = userspace/net/manager/ownership.hpp userspace/net/config/saved.hpp
 OWNERSHIP_FAULTS = -Wl,--wrap=flock
-MANAGER_SOURCES = userspace/net/manager/main.cpp userspace/net/manager/runtime.cpp userspace/net/manager/static.cpp userspace/net/manager/ownership.cpp userspace/net/config/configuration.cpp userspace/net/config/routing.cpp userspace/net/config/resolver.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/state.cpp userspace/net/dhcp/wire.cpp
-MANAGER_HEADERS = userspace/net/manager/runtime.hpp userspace/net/manager/static.hpp userspace/net/manager/ownership.hpp userspace/net/config/configuration.hpp userspace/net/config/routing.hpp userspace/net/config/resolver.hpp $(PROFILE_HEADERS) userspace/net/dhcp/transport.hpp userspace/net/dhcp/state.hpp
+MANAGER_SOURCES = userspace/net/manager/main.cpp userspace/net/manager/runtime.cpp userspace/net/manager/static.cpp userspace/net/manager/ownership.cpp userspace/net/config/configuration.cpp $(ROUTING_SOURCES) userspace/net/config/resolver.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/state.cpp userspace/net/dhcp/wire.cpp
+MANAGER_HEADERS = userspace/net/manager/runtime.hpp userspace/net/manager/static.hpp userspace/net/manager/ownership.hpp userspace/net/config/configuration.hpp $(ROUTING_HEADERS) userspace/net/config/resolver.hpp $(PROFILE_HEADERS) userspace/net/dhcp/transport.hpp userspace/net/dhcp/state.hpp
 MANAGER_NATIVE_SOURCES = $(filter-out userspace/net/manager/main.cpp userspace/net/manager/runtime.cpp,$(MANAGER_SOURCES))
 ADDRESS_QUERY_SOURCES = userspace/tests/net/address-query.cpp userspace/net/dhcp/transport.cpp
 ADDRESS_QUERY_FLAGS = -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -ffunction-sections -fdata-sections -Iuserspace -Wl,--gc-sections,--wrap=ioctl
@@ -496,18 +498,18 @@ build/network-manager: $(MANAGER_SOURCES) $(MANAGER_HEADERS)
 build/network-manager-dynamic: $(MANAGER_SOURCES) $(MANAGER_HEADERS)
 	@mkdir -p build
 	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(MANAGER_SOURCES) -o $@
-build/manager-tests: userspace/tests/net/manager.cpp userspace/tests/net/manager-fixture.hpp userspace/net/config/routing.cpp userspace/net/config/profile.cpp userspace/net/config/saved.cpp userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
+build/manager-tests: userspace/tests/net/manager.cpp userspace/tests/net/manager-fixture.hpp $(ROUTING_SOURCES) userspace/net/config/profile.cpp userspace/net/config/saved.cpp userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
 	@mkdir -p build
-	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/manager.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
-build/manager-protocol: userspace/tests/net/manager-protocol.cpp userspace/tests/net/manager-fixture.hpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/manager.cpp $(ROUTING_SOURCES) $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
+build/manager-protocol: userspace/tests/net/manager-protocol.cpp userspace/tests/net/manager-fixture.hpp $(ROUTING_SOURCES) $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
 	@mkdir -p build
-	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/manager-protocol.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
-build/manager-link: userspace/tests/net/manager-link.cpp userspace/tests/net/manager-fixture.hpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/manager-protocol.cpp $(ROUTING_SOURCES) $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
+build/manager-link: userspace/tests/net/manager-link.cpp userspace/tests/net/manager-fixture.hpp $(ROUTING_SOURCES) $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
 	@mkdir -p build
-	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/manager-link.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
-build/init-supervision: userspace/tests/net/init-supervision.cpp userspace/net/manager/ownership.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/manager-link.cpp $(ROUTING_SOURCES) $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
+build/init-supervision: userspace/tests/net/init-supervision.cpp userspace/net/manager/ownership.cpp $(ROUTING_SOURCES) $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp $(MANAGER_HEADERS)
 	@mkdir -p build
-	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/init-supervision.cpp userspace/net/manager/ownership.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
+	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu userspace/tests/net/init-supervision.cpp userspace/net/manager/ownership.cpp $(ROUTING_SOURCES) $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp -o $@
 build/static-address-host: userspace/tests/net/static-address.cpp userspace/net/manager/static.cpp userspace/net/manager/static.hpp $(PROFILE_SOURCES) $(PROFILE_HEADERS) userspace/net/dhcp/state.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Iuserspace userspace/tests/net/static-address.cpp userspace/net/manager/static.cpp $(PROFILE_SOURCES) -o $@
@@ -534,14 +536,18 @@ build/ownership-tests: $(OWNERSHIP_SOURCES) $(OWNERSHIP_HEADERS)
 build/ownership-dynamic: $(OWNERSHIP_SOURCES) $(OWNERSHIP_HEADERS)
 	@mkdir -p build
 	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -Iuserspace $(OWNERSHIP_SOURCES) $(OWNERSHIP_FAULTS) -o $@
-CONFIGURATION_SOURCES = userspace/tests/net/configuration.cpp userspace/net/config/configuration.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp
-CONFIGURATION_HEADERS = userspace/net/config/configuration.hpp userspace/net/config/routing.hpp $(PROFILE_HEADERS) userspace/net/dhcp/transport.hpp userspace/net/dhcp/wire.hpp userspace/net/dhcp/state.hpp
-build/configuration-tests: $(CONFIGURATION_SOURCES) $(CONFIGURATION_HEADERS)
+CONFIGURATION_SOURCES = userspace/tests/net/configuration.cpp userspace/net/config/configuration.cpp $(ROUTING_SOURCES) $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp
+CONFIGURATION_HEADERS = userspace/net/config/configuration.hpp $(ROUTING_HEADERS) $(PROFILE_HEADERS) userspace/net/dhcp/transport.hpp userspace/net/dhcp/wire.hpp userspace/net/dhcp/state.hpp
+CONFIGURATION_FLAGS = -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu
+build/configuration-tests: $(CONFIGURATION_SOURCES) $(CONFIGURATION_HEADERS) scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
 	@mkdir -p build
-	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(CONFIGURATION_SOURCES) -o $@
-build/configuration-native: $(CONFIGURATION_SOURCES) $(CONFIGURATION_HEADERS)
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- $(CONFIGURATION_FLAGS) -static $(CONFIGURATION_SOURCES) -Wl,--wrap=sendto
+build/configuration-native: $(CONFIGURATION_SOURCES) $(CONFIGURATION_HEADERS) scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
 	@mkdir -p build
-	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -Iuserspace $(CONFIGURATION_SOURCES) -o $@
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ --compiler "$(CXX)" -- $(CONFIGURATION_FLAGS) $(CONFIGURATION_SOURCES) -Wl,--wrap=sendto
+build/configuration-dynamic: $(CONFIGURATION_SOURCES) $(CONFIGURATION_HEADERS) scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- $(CONFIGURATION_FLAGS) $(CONFIGURATION_SOURCES) -Wl,--wrap=sendto
 build/dhcp-codec-tests: userspace/tests/net/dhcp.cpp userspace/net/dhcp/wire.cpp userspace/net/dhcp/wire.hpp
 	@mkdir -p build
 	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace userspace/tests/net/dhcp.cpp userspace/net/dhcp/wire.cpp -o $@
@@ -569,7 +575,7 @@ build/profile-privacy-tests: userspace/tests/net/profile-privacy.cpp $(PROFILE_S
 build/profile-privacy-dynamic: userspace/tests/net/profile-privacy.cpp $(PROFILE_SOURCES) $(PROFILE_HEADERS)
 	@mkdir -p build
 	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -Iuserspace -DPROFILE_LINKAGE='"dynamic"' userspace/tests/net/profile-privacy.cpp $(PROFILE_SOURCES) $(PROFILE_FAULTS) -o $@
-DHCP_TRANSPORT_SOURCES = userspace/tests/net/dhcp-transport.cpp userspace/net/config/configuration.cpp userspace/net/config/routing.cpp $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp userspace/net/dhcp/state.cpp
+DHCP_TRANSPORT_SOURCES = userspace/tests/net/dhcp-transport.cpp userspace/net/config/configuration.cpp $(ROUTING_SOURCES) $(PROFILE_SOURCES) userspace/net/dhcp/transport.cpp userspace/net/dhcp/wire.cpp userspace/net/dhcp/state.cpp
 build/dhcp-transport-tests: $(DHCP_TRANSPORT_SOURCES) $(CONFIGURATION_HEADERS)
 	@mkdir -p build
 	$(MUSL_CC) -std=c++20 -O2 -g -Wall -Wextra -Werror -fno-exceptions -fno-rtti -static -Iuserspace -idirafter /usr/include -idirafter /usr/include/x86_64-linux-gnu $(DHCP_TRANSPORT_SOURCES) -o $@
@@ -895,21 +901,25 @@ build/ipv4-path-mtu-host: kernel/tests/net/ipv4_path_mtu.cpp kernel/net/ipv4/pat
 .PHONY: test-ipv4-path-mtu
 test-ipv4-path-mtu: build/ipv4-path-mtu-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-path-mtu-host
-build/ipv4-paths-host: kernel/tests/net/ipv4_paths.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(call rwildcard,kernel/include/,*.hpp) $(IPV4_MULTICAST_CORE)
+build/ipv4-paths-host: kernel/tests/net/ipv4_paths.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(call rwildcard,kernel/include/,*.hpp) $(IPV4_MULTICAST_CORE)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 .PHONY: test-ipv4-paths
-build/ipv4-output-host: kernel/tests/net/ipv4_output.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(call rwildcard,kernel/include/,*.hpp) $(IPV4_MULTICAST_CORE)
+build/ipv4-output-host: kernel/tests/net/ipv4_output.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(call rwildcard,kernel/include/,*.hpp) $(IPV4_MULTICAST_CORE)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
-build/ipv4-socket-output-host: kernel/tests/net/ipv4_socket_output.cpp kernel/net/ipv4/socket.cpp kernel/net/udp/core.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(call rwildcard,kernel/include/,*.hpp) kernel/net/ipv4/socket.hpp $(IPV4_MULTICAST_CORE)
+build/ipv4-socket-output-host: kernel/tests/net/ipv4_socket_output.cpp kernel/tests/net/ipv4_send_control.cpp kernel/net/ipv4/socket.cpp kernel/net/ipv4/send_control.cpp kernel/net/udp/core.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(call rwildcard,kernel/include/,*.hpp) kernel/net/ipv4/socket.hpp $(IPV4_MULTICAST_CORE)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
-test-ipv4-paths: build/ipv4-paths-host build/ipv4-addresses-host build/ipv4-output-host build/ipv4-socket-output-host
+build/ipv4-routes-host: kernel/tests/net/ipv4_routes.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp $(call rwildcard,kernel/include/,*.hpp)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+test-ipv4-paths: build/ipv4-paths-host build/ipv4-addresses-host build/ipv4-output-host build/ipv4-socket-output-host build/ipv4-routes-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-paths-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-output-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-socket-output-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-addresses-host
+	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-routes-host
 build/ipv4-addresses-host: kernel/tests/net/ipv4_addresses.cpp kernel/net/ipv4/addresses.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
@@ -944,7 +954,7 @@ build/tcp-connection-host: kernel/tests/net/tcp_connection.cpp kernel/net/tcp/co
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_connection.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp -o $@
 .PHONY: test-tcp-connection
-build/tcp-socket-output-host: kernel/tests/net/tcp_socket_output.cpp kernel/tests/net/tcp_ipv6_socket.cpp kernel/tests/net/tcp_ipv6_error.cpp kernel/tests/net/tcp_ipv6_reset.cpp kernel/net/ipv4/socket.cpp kernel/net/udp/core.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) kernel/core/random/primitives.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/icmp.cpp kernel/net/tcp/isn.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/socket.cpp kernel/net/tcp/icmp_ipv6.cpp kernel/net/tcp/wire_ipv6.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/wire.cpp kernel/net/tcp/wire_detail.hpp $(call rwildcard,kernel/include/,*.hpp) kernel/net/ipv4/socket.hpp $(IPV4_MULTICAST_CORE)
+build/tcp-socket-output-host: kernel/tests/net/tcp_socket_output.cpp kernel/tests/net/tcp_ipv6_socket.cpp kernel/tests/net/tcp_ipv6_error.cpp kernel/tests/net/tcp_ipv6_reset.cpp kernel/net/ipv4/socket.cpp kernel/net/udp/core.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) kernel/core/random/primitives.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/icmp.cpp kernel/net/tcp/isn.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/socket.cpp kernel/net/tcp/icmp_ipv6.cpp kernel/net/tcp/wire_ipv6.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/wire.cpp kernel/net/tcp/wire_detail.hpp $(call rwildcard,kernel/include/,*.hpp) kernel/net/ipv4/socket.hpp $(IPV4_MULTICAST_CORE)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 test-tcp-connection: build/tcp-connection-host build/tcp-socket-output-host
@@ -1426,7 +1436,7 @@ clean:
 
 # All guest programs share the checked source-built build provider.
 MUSL_INPUTS = sources.lock.json scripts/build_musl.py scripts/musl_cc.py $(wildcard vendor/musl/patches/*.patch)
-MUSL_PROGRAMS = build/address-query-static build/address-query-dynamic build/credentials-static build/credentials-dynamic build/random-static build/random-dynamic build/abi-static build/file-lock-static build/file-lock-dynamic build/clock-elapsed-tests build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/net-tests build/ipv4-tests build/udp-tests build/dns-static build/dns-dynamic build/normal-dns-static build/normal-dns-dynamic build/netlink-tests build/network-manager-faults build/network-manager-dynamic-faults build/network-manager build/network-manager-dynamic build/manager-tests build/manager-protocol build/manager-link build/init-supervision build/ownership-tests build/ownership-dynamic build/configuration-tests build/dhcp-codec-tests build/dhcp-state-tests build/dhcp-profile-tests build/profile-privacy-tests build/profile-privacy-dynamic build/dhcp-transport-tests build/resolver-tests build/thread-static build/thread-io-static build/thread-io-dynamic build/thread-dynamic build/futex-static build/futex-dynamic build/lifecycle-static build/lifecycle-dynamic build/x11-probe build/tcp-static build/tcp-dynamic build/tcp-fault-static build/tcp-fault-dynamic build/tcp-lifetime-static build/tcp-lifetime-dynamic build/tcp-challenge-static build/tcp-challenge-dynamic build/tcp-timeout-static build/tcp-timeout-dynamic build/ipv4-multicast-static build/ipv4-multicast-dynamic
+MUSL_PROGRAMS = build/address-query-static build/address-query-dynamic build/credentials-static build/credentials-dynamic build/random-static build/random-dynamic build/abi-static build/file-lock-static build/file-lock-dynamic build/clock-elapsed-tests build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/net-tests build/ipv4-tests build/udp-tests build/dns-static build/dns-dynamic build/normal-dns-static build/normal-dns-dynamic build/netlink-tests build/network-manager-faults build/network-manager-dynamic-faults build/network-manager build/network-manager-dynamic build/manager-tests build/manager-protocol build/manager-link build/init-supervision build/ownership-tests build/ownership-dynamic build/configuration-tests build/configuration-dynamic build/dhcp-codec-tests build/dhcp-state-tests build/dhcp-profile-tests build/profile-privacy-tests build/profile-privacy-dynamic build/dhcp-transport-tests build/resolver-tests build/thread-static build/thread-io-static build/thread-io-dynamic build/thread-dynamic build/futex-static build/futex-dynamic build/lifecycle-static build/lifecycle-dynamic build/x11-probe build/tcp-static build/tcp-dynamic build/tcp-fault-static build/tcp-fault-dynamic build/tcp-lifetime-static build/tcp-lifetime-dynamic build/tcp-challenge-static build/tcp-challenge-dynamic build/tcp-timeout-static build/tcp-timeout-dynamic build/ipv4-multicast-static build/ipv4-multicast-dynamic
 MUSL_PROGRAMS += build/tcp-icmp-static build/tcp-icmp-dynamic
 MUSL_PROGRAMS += build/ipv4-dynamic
 MUSL_PROGRAMS += build/tcp-pmtu-static build/tcp-pmtu-dynamic
@@ -1456,6 +1466,8 @@ MUSL_PROGRAMS += build/ipv4-multicast-source-capacity-static build/ipv4-multicas
 MUSL_PROGRAMS += build/ipv4-raw-udp-static build/ipv4-raw-udp-dynamic
 MUSL_PROGRAMS += build/ipv4-receive-wire-static build/ipv4-receive-wire-dynamic
 MUSL_PROGRAMS += build/ipv4-receive-controls-static build/ipv4-receive-controls-dynamic
+MUSL_PROGRAMS += build/ipv4-send-controls-static build/ipv4-send-controls-dynamic
+MUSL_PROGRAMS += build/ipv4-send-wire-static build/ipv4-send-wire-dynamic
 $(MUSL_PROGRAMS): $(MUSL_INPUTS) | musl-toolchain
 build/rootfs.cpio build/rootfs-desktop.cpio: $(MUSL_INPUTS)
 .PHONY: musl-toolchain
@@ -1582,3 +1594,23 @@ build/ipv4-receive-wire-static build/ipv4-receive-wire-dynamic: userspace/tests/
 .PHONY: test-ipv4-receive-wire
 test-ipv4-receive-wire: build/axiom64.elf build/init busybox
 	$(PYTHON) scripts/ipv4_receive_wire_suite.py
+
+build/ipv4-send-controls-native: userspace/tests/net/ipv4_send_controls.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --compiler "$(CC)" --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $<
+
+build/ipv4-send-controls-static build/ipv4-send-controls-dynamic: userspace/tests/net/ipv4_send_controls.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4_send_controls.c
+
+build/ipv4-send-wire-native: userspace/tests/net/ipv4_send_wire.c userspace/tests/net/ipv4_receive_wire_fixture.c userspace/tests/net/ipv4_receive_wire_fixture.h
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@
+
+build/ipv4-send-wire-static build/ipv4-send-wire-dynamic: userspace/tests/net/ipv4_send_wire.c userspace/tests/net/ipv4_receive_wire_fixture.c userspace/tests/net/ipv4_receive_wire_fixture.h scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror -pthread $(if $(filter %-static,$@),-static) $(filter %.c,$^)
+
+.PHONY: test-ipv4-send-controls test-ipv4-send-wire
+test-ipv4-send-controls:
+	$(PYTHON) scripts/ipv4_send_controls_test.py
+test-ipv4-send-wire: build/axiom64.elf build/init busybox
+	$(PYTHON) scripts/ipv4_send_wire_suite.py

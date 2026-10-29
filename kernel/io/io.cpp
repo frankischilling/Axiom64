@@ -47,12 +47,14 @@ struct IoRequest {
     PacketAddress destination;
     unsigned destination_index;
     InetAddress inet_destination;
+    InetSendControl inet_output;
     Inet6Address inet6_destination;
     Inet6SendControl inet6_output;
-    uint8_t* inet6_control_data;
+    uint8_t* send_control_data;
     bool inet_destination_named;
     NetlinkAddress netlink_destination;
     uint8_t* packet_data;
+    bool packet_ready;
     size_t packet_length;
     uint64_t address_pointer, address_length_pointer;
     uint64_t control_pointer, control_capacity;
@@ -71,7 +73,7 @@ static void destroy(IoRequest* request) {
     if (request->vectors != &request->single)
         release(request->vectors);
     release(request->packet_data);
-    release(request->inet6_control_data);
+    release(request->send_control_data);
     close_handle(request->handle);
     release(request);
 }
@@ -171,6 +173,7 @@ static int prepare_packet(Task& task, IoRequest& request) {
     uint64_t address = f.rax == 44 ? f.r8 : 0;
     uint64_t address_length = f.rax == 44 ? f.r9 : 0;
     uint64_t control_pointer = 0, control_length = 0;
+    bool inet_address_copied = false;
     if (f.rax == 19 || f.rax == 20) {
         int error = import_vectors(task, request, f.rsi, f.rdx);
         if (error)
@@ -179,7 +182,7 @@ static int prepare_packet(Task& task, IoRequest& request) {
         Message message;
         if (!task.memory->space.copy_in(&message, f.rsi, sizeof(message)))
             return -14;
-        if ((request.handle->inet6 || (!request.write && request.handle->inet)) && message.name) {
+        if ((request.handle->inet6 || request.handle->inet) && message.name) {
             if (int32_t(message.name_length) < 0)
                 return -22;
             message.name_length = min(message.name_length, uint32_t(128));
@@ -187,7 +190,7 @@ static int prepare_packet(Task& task, IoRequest& request) {
                 message.name = 0;
         }
         if (request.write && message.control_length) {
-            if (!request.handle->inet6)
+            if (!request.handle->inet6 && !request.handle->inet)
                 return -95;
             control_pointer = message.control;
             control_length = message.control_length;
@@ -195,6 +198,17 @@ static int prepare_packet(Task& task, IoRequest& request) {
         if (request.write) {
             address = message.name;
             address_length = message.name_length;
+            if (request.handle->inet && address) {
+                // sendmsg imports its bounded name before importing vectors.
+                // Protocol address-length checks follow control-buffer copying.
+                uint8_t bytes[128];
+                if (address_length && !task.memory->space.copy_in(bytes, address, address_length))
+                    return -14;
+                request.inet_destination = {};
+                memcpy(&request.inet_destination, bytes,
+                       min(size_t(address_length), sizeof(InetAddress)));
+                inet_address_copied = true;
+            }
         } else {
             request.address_pointer = message.name;
             request.address_capacity = message.name_length;
@@ -233,11 +247,16 @@ static int prepare_packet(Task& task, IoRequest& request) {
             if (length < sizeof(Inet6Address))
                 request.inet6_destination.scope = 0;
         } else if (request.handle->inet) {
-            if (address_length < sizeof(InetAddress))
-                return -22;
-            if (!task.memory->space.copy_in(&request.inet_destination, address,
-                                            sizeof(InetAddress)))
-                return -14;
+            if (!inet_address_copied) {
+                uint32_t length = address_length;
+                if (length > 128)
+                    return -22;
+                uint8_t bytes[128];
+                if (length && !task.memory->space.copy_in(bytes, address, length))
+                    return -14;
+                request.inet_destination = {};
+                memcpy(&request.inet_destination, bytes, min(size_t(length), sizeof(InetAddress)));
+            }
         } else {
             if (address_length < sizeof(PacketAddress))
                 return -22;
@@ -259,7 +278,11 @@ static int prepare_packet(Task& task, IoRequest& request) {
         // Import the complete control buffer after vectors and address bytes,
         // before protocol-specific destination and control validation.
         if (int error = inet6_capture_control(task, control_pointer, control_length,
-                                              request.inet6_control_data))
+                                              request.send_control_data))
+            return error;
+    } else if (request.write && request.handle->inet) {
+        if (int error = inet_capture_send_control(task, control_pointer, control_length,
+                                                  request.send_control_data))
             return error;
     }
     for (size_t i = 0; i < request.count; i++)
@@ -279,12 +302,14 @@ static int prepare_packet(Task& task, IoRequest& request) {
             return error;
     } else if (request.handle->inet) {
         request.inet_destination_named = address != 0;
-        int error = inet_target(request.handle->inet, request.inet_destination,
-                                request.inet_destination_named);
+        int error = inet_prepare_send(request.handle->inet, request.inet_destination,
+                                      request.inet_destination_named, uint32_t(address_length),
+                                      request.packet_length, request.send_control_data,
+                                      control_length, request.inet_output);
         if (error)
             return error;
-        if (request.packet_length > 65535 - 20)
-            return -90;
+        release(request.send_control_data);
+        request.send_control_data = nullptr;
     } else {
         if (!request.destination_index || !net_info(request.destination_index))
             return -6;
@@ -295,16 +320,18 @@ static int prepare_packet(Task& task, IoRequest& request) {
     }
     if (request.handle->inet6) {
         int error = inet6_parse_send_control(
-            request.handle->inet6, request.inet6_destination, request.inet6_control_data,
+            request.handle->inet6, request.inet6_destination, request.send_control_data,
             control_length, request.inet6_output, capable(task.credentials, Capability::net_raw));
         if (error)
             return error;
         // Sticky views can change through another alias while output waits.
         // Keep only immutable selected bytes through request teardown.
-        if (int error = inet6_own_send_extensions(request.inet6_output, request.inet6_control_data))
+        if (int error = inet6_own_send_extensions(request.inet6_output, request.send_control_data))
             return error;
     }
-    size_t prefix = request.handle->inet6 ? inet6_send_prefix(request.handle->inet6) : 0;
+    size_t prefix = request.handle->inet6  ? inet6_send_prefix(request.handle->inet6)
+                    : request.handle->inet ? inet_send_prefix(request.handle->inet)
+                                           : 0;
     if (request.packet_length < prefix)
         return -14;
     uint8_t protocol_bytes[2];
@@ -318,6 +345,14 @@ static int prepare_packet(Task& task, IoRequest& request) {
                                          request.packet_length, prefix ? protocol_bytes : nullptr,
                                          request.inet_destination_named, &request.inet6_output))
             return error;
+    } else if (request.handle->inet) {
+        if (int error = inet_send_admit(request.handle->inet, request.inet_destination,
+                                        request.packet_length, request.inet_output))
+            return error;
+        // Route and ancillary input precede the socket-memory wait. User
+        // payload is read after space becomes available, including raw bytes
+        // that were inspected above only for protocol admission.
+        return 0;
     }
     if (request.packet_length) {
         request.packet_data = static_cast<uint8_t*>(alloc(request.packet_length));
@@ -682,9 +717,23 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
         if (request.handle->netlink)
             return netlink_send(request.handle->netlink, task.process->pid, request.packet_data,
                                 request.packet_length);
-        if (request.handle->inet)
+        if (request.handle->inet) {
+            if (!request.packet_ready) {
+                if (int error = inet_send_ready(request.handle->inet, request.packet_length))
+                    return error;
+                if (request.packet_length) {
+                    request.packet_data = static_cast<uint8_t*>(alloc(request.packet_length));
+                    if (!request.packet_data)
+                        return -12;
+                }
+                if (int error = copy_packet(task, request, 0, request.packet_length))
+                    return error;
+                request.packet_ready = true;
+            }
             return inet_send(request.handle->inet, request.inet_destination, request.packet_data,
-                             request.packet_length, request.inet_destination_named);
+                             request.packet_length, request.inet_destination_named,
+                             &request.inet_output);
+        }
         if (request.handle->inet6)
             return inet6_send(request.handle->inet6, request.inet6_destination, request.packet_data,
                               request.packet_length, request.inet_destination_named,

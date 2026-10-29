@@ -22,8 +22,14 @@ from ipv4_receive_wire_peer import ReceivePeer
 from tcp6.inputs import digest, freeze
 
 
-def main():
+def main(config=None):
+    config = config or {}
+    program_name = config.get('program', 'ipv4-receive-wire')
+    client_sources = config.get('sources', ['userspace/tests/net/ipv4_receive_wire.c',
+                                           'userspace/tests/net/ipv4_receive_wire_fixture.c'])
+    completion = config.get('completion', 'IPV4_RECEIVE_WIRE_DONE lanes=2 cases_each=78 observations=156')
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--parent-namespace', type=int, help=argparse.SUPPRESS)
     parser.add_argument('--native', action='store_true')
     parser.add_argument('--isolated', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--profile', choices=('native', 'static', 'dynamic'), default='static')
@@ -37,17 +43,18 @@ def main():
     if args.profile == 'native' and not args.native:
         parser.error('host libc requires native execution')
     if args.native and not args.isolated:
-        return subprocess.call(['unshare', '--net', sys.executable, '-B', __file__, '--native', '--isolated',
-            '--profile', args.profile, '--directory', str(directory)], cwd=ROOT)
+        return subprocess.call(['unshare', '--net', sys.executable, '-B', config.get('entrypoint', __file__), '--native', '--isolated',
+            '--profile', args.profile, '--directory', str(directory),
+            '--parent-namespace', str(os.stat('/proc/self/ns/net').st_ino)], cwd=ROOT)
     directory.mkdir(parents=True, exist_ok=False)
     source = freeze(directory)
     inputs = json.loads((directory / 'source-inputs.json').read_text())
-    program = ROOT / ('build/ipv4-receive-wire-' + args.profile)
+    program = ROOT / ('build/' + program_name + '-' + args.profile)
     if not program.is_file():
         raise ValueError('build the actual client before execution')
     if args.profile == 'native':
         command = ['gcc', '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
-            'userspace/tests/net/ipv4_receive_wire.c', 'userspace/tests/net/ipv4_receive_wire_fixture.c',
+            *config.get('flags', []), *client_sources,
             '-o', str(program)]
         before = sources(command, ROOT)
         subprocess.run(command, cwd=ROOT, check=True)
@@ -59,25 +66,34 @@ def main():
     compiler = audit_compile(program, ROOT)
     shutil.copy2(program.with_suffix('.inputs.json'), directory / 'program.inputs.json')
     shutil.copy2(program, directory / 'program.elf')
-    peers = [ReceivePeer(lane) for lane in range(2)]
+    peers = config['peers']() if 'peers' in config else [ReceivePeer(lane) for lane in range(2)]
     selector = selectors.DefaultSelector()
     handles, captures, statistics = [], [], []
     links = [None, None]
     incoming, outgoing = [bytearray(), bytearray()], [bytearray(), bytearray()]
     configuration = None
+    stable_peers = None
     if args.native:
         if socket.if_nameindex() != [(1, 'lo')]:
             raise ValueError('fresh private native network namespace before any configuration')
-        configuration = dict(namespace_inode=os.stat('/proc/self/ns/net').st_ino, sysctls=[])
+        from ipv6_host_native import packet_profile_cpu
+        configuration = dict(namespace_inode=os.stat('/proc/self/ns/net').st_ino, sysctls=[],
+            parent_namespace_inode=args.parent_namespace, packet_cpu=packet_profile_cpu(args.profile, args.parent_namespace))
         for interface in ('all', 'default'):
             path = Path('/proc/sys/net/ipv4/conf') / interface / 'rp_filter'
             before = path.read_text()
             path.write_text('0\n')
             configuration['sysctls'].append(dict(path=str(path), before=before, configured=path.read_text()))
         subprocess.run(['ip', 'link', 'set', 'lo', 'up'], check=True)
+        if config.get('stable_native_peers'):
+            from ipv4_send_native import NativePeerLinks
+            stable_peers = NativePeerLinks()
         for lane in range(2):
-            fd = os.open('/dev/net/tun', os.O_RDWR | os.O_NONBLOCK)
-            fcntl.ioctl(fd, 0x400454ca, struct.pack('16sH', ('eth' + str(lane)).encode(), 0x1002))
+            if stable_peers is not None:
+                fd, capture = stable_peers.create(lane, peers[lane].mac, directory)
+            else:
+                fd = os.open('/dev/net/tun', os.O_RDWR | os.O_NONBLOCK)
+                fcntl.ioctl(fd, 0x400454ca, struct.pack('16sH', ('eth' + str(lane)).encode(), 0x1002))
             subprocess.run(['ip', 'link', 'set', 'eth' + str(lane), 'address', peers[lane].guest.hex(':')], check=True)
             for family, setting, value in (('ipv6', 'disable_ipv6', '1\n'), ('ipv4', 'rp_filter', '0\n')):
                 path = Path('/proc/sys/net') / family / 'conf' / ('eth' + str(lane)) / setting
@@ -88,7 +104,7 @@ def main():
             handles.append(fd)
             selector.register(fd, selectors.EVENT_READ, ('tap', lane))
             from tcp_fault_native import Capture
-            captures.append(Capture('eth' + str(lane), directory / ('lane' + str(lane) + '.pcap')))
+            captures.append(capture if stable_peers is not None else Capture('eth' + str(lane), directory / ('lane' + str(lane) + '.pcap')))
         configuration['interfaces'] = json.loads(subprocess.check_output(['ip', '-j', 'link', 'show']))
         configuration['initial_addresses'] = json.loads(subprocess.check_output(['ip', '-j', '-4', 'address', 'show']))
         configuration['initial_routes'] = json.loads(subprocess.check_output(['ip', '-j', '-4', 'route', 'show', 'table', 'all']))
@@ -99,7 +115,7 @@ def main():
                 shutil.copy2(path, directory / ('host-' + name))
     else:
         image = fixture(directory, 'build', args.profile, program_builder=lambda *unused: (program, compiler),
-            filename='ipv4-receive-wire', command='/bin/ipv4-receive-wire')
+            filename=program_name, command='/bin/' + program_name)
         command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '512M',
             '-cdrom', str(image), '-nic', 'none', '-display', 'none', '-serial', 'stdio', '-monitor', 'none',
             '-no-reboot', '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
@@ -127,17 +143,24 @@ def main():
     began = time.monotonic()
 
     def send(lane, frames):
-        for frame in frames:
-            peers[lane].frames.append(dict(monotonic_ns=time.monotonic_ns(), direction='peer', data=frame.hex()))
+        for item in frames:
+            target, frame = item if isinstance(item, tuple) else (lane, item)
+            peers[target].frames.append(dict(monotonic_ns=time.monotonic_ns(), direction='peer', data=frame.hex()))
             if args.native:
-                if os.write(handles[lane], frame) != len(frame):
+                handle = handles[target]
+                count = os.write(handle, frame) if isinstance(handle, int) else handle.send(frame)
+                if count != len(frame):
                     raise RuntimeError('complete native Ethernet injection')
             else:
-                outgoing[lane].extend(len(frame).to_bytes(4, 'big') + frame)
+                outgoing[target].extend(len(frame).to_bytes(4, 'big') + frame)
 
     try:
         with (directory / 'client.log').open('xb') as log:
             process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+            if configuration is not None:
+                configuration['packet_cpu']['tasks'] = [dict(tid=int(task.name), actual=sorted(os.sched_getaffinity(int(task.name))))
+                    for task in sorted(Path('/proc/self/task').iterdir())]
+                configuration['packet_cpu']['client'] = dict(pid=process.pid, actual=sorted(os.sched_getaffinity(process.pid)))
             (directory / 'process.json').write_text(json.dumps(dict(pid=process.pid, status='running'), indent=2) + '\n')
             while process.poll() is None:
                 if time.monotonic() - began > 180:
@@ -193,12 +216,15 @@ def main():
     if configuration is not None:
         configuration['final_addresses'] = json.loads(subprocess.check_output(['ip', '-j', '-4', 'address', 'show']))
         configuration['final_routes'] = json.loads(subprocess.check_output(['ip', '-j', '-4', 'route', 'show', 'table', 'all']))
+        if stable_peers is not None:
+            configuration['stable_peer_links'] = stable_peers.snapshot()
+            stable_peers.close()
         (directory / 'native-configuration.json').write_text(json.dumps(configuration, indent=2) + '\n')
     for peer in peers:
         (directory / ('lane' + str(peer.lane) + '-frames.json')).write_text(json.dumps(peer.frames, indent=2) + '\n')
     text = (directory / 'client.log').read_text(errors='replace')
     result = dict(passed=not error and process is not None and process.returncode == (0 if args.native else 1) and
-        text.count('IPV4_RECEIVE_WIRE_DONE lanes=2 cases_each=78 observations=156') == 1 and
+        text.count(completion) == 1 and
         all(peer.result()['passed'] for peer in peers), source=source, native=args.native, profile=args.profile,
         firmware=args.firmware, transport=args.transport, returncode=process.returncode if process else None,
         error=error, peers=[peer.result() for peer in peers], capture_statistics=statistics,
@@ -208,6 +234,8 @@ def main():
                           'host-libc.so.6', 'host-ld-linux-x86-64.so.2')},
         native_kernel_release=platform.release() if args.native else None,
         packet_semantics_and_independent_readback_pending=True, full_feature_acceptance=False)
+    if args.native:
+        result['native_client_pid'] = process.pid if process is not None else None
     result['passed'] = result['passed'] and result['source_unchanged']
     (directory / 'results.json').write_text(json.dumps(result, indent=2) + '\n')
     (directory / 'process.json').write_text(json.dumps(dict(status='completed', returncode=result['returncode']), indent=2) + '\n')

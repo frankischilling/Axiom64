@@ -97,7 +97,7 @@ int parse(const uint8_t* input, const NetlinkHeader& message, Ipv4Route& value, 
     if ((value.destination & value.mask) != value.destination)
         return -22;
     if (message.type == 24) {
-        if (!(message.flags & 0x400) || !(message.flags & 0x200))
+        if (!(message.flags & 0x400))
             return -95;
         if ((!value.index && !value.gateway) || !route.type ||
             (value.gateway ? value.scope != 0 : value.scope != 253))
@@ -110,8 +110,8 @@ int parse(const uint8_t* input, const NetlinkHeader& message, Ipv4Route& value, 
 
 size_t dump(const NetlinkHeader& request, uint32_t port, const Ipv4Route& filter, uint8_t* output) {
     Ipv4Route routes[32 + ipv4_address_capacity + 1];
-    static_assert(32 * 68 + (ipv4_address_capacity + 1) * 52 + 20 <= netlink_family_reply);
-    static_assert(32 * 68 + (ipv4_address_capacity + 1) * 52 + netlink_ipv6_route_reply <=
+    static_assert(32 * 68 + (ipv4_address_capacity + 1) * 60 + 20 <= netlink_family_reply);
+    static_assert(32 * 68 + (ipv4_address_capacity + 1) * 60 + netlink_ipv6_route_reply <=
                   netlink_max_reply);
     size_t count = ipv4_routes(routes, sizeof(routes) / sizeof(routes[0])), size = 0;
     for (size_t i = 0; i < count; i++) {
@@ -134,6 +134,8 @@ size_t dump(const NetlinkHeader& request, uint32_t port, const Ipv4Route& filter
             attribute(output, size, 5, __builtin_bswap32(value.gateway));
         if (value.metric)
             attribute(output, size, 6, value.metric);
+        if (value.preferred_source)
+            attribute(output, size, 7, __builtin_bswap32(value.preferred_source));
         attribute(output, size, 4, value.index);
         header.length = size - start;
         memcpy(output + start, &header, sizeof(header));

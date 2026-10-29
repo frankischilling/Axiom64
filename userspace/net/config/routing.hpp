@@ -4,6 +4,10 @@
 #include <stdint.h>
 
 namespace ax::net {
+namespace detail {
+struct RouteSnapshot;
+}
+
 struct Address {
     uint32_t address = 0, mask = 0, broadcast = 0;
     unsigned index = 0;
@@ -13,6 +17,8 @@ struct Route {
     uint32_t destination = 0, mask = 0, gateway = 0, metric = 0;
     unsigned index = 0;
     uint8_t protocol = 16, scope = 253;
+    uint32_t preferred_source = 0;
+    uint8_t tos = 0;
 };
 
 // A private kernel-port socket with bounded requests and owned reply snapshots.
@@ -20,6 +26,8 @@ struct Route {
 // avoid wildcard removal. Positive errno results; failed lists leave output intact.
 class Routing {
   public:
+    static constexpr size_t capacity = 65;
+
     Routing() = default;
 
     ~Routing();
@@ -48,5 +56,13 @@ class Routing {
     int receive(void*, size_t, size_t&, uint64_t deadline);
 
     int acknowledge(void*, size_t);
+
+    int inventory(Route*, size_t, size_t&, unsigned, uint8_t, detail::RouteSnapshot*);
+
+    int preserve(detail::RouteSnapshot&, unsigned, const Route*, unsigned, const Route*, unsigned);
+
+    int restore(const detail::RouteSnapshot&, unsigned);
+
+    static bool valid(const detail::RouteSnapshot&, unsigned);
 };
 } // namespace ax::net

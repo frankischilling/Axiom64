@@ -74,8 +74,15 @@ int net_configure(unsigned index, bool administrative, uint32_t mtu) {
         return -22;
     auto& writable = devices[index - 1]->info;
     uint32_t previous_mtu = writable.mtu;
+    bool previous_administrative = writable.administrative;
     writable.administrative = administrative;
     writable.mtu = mtu;
+    if (previous_administrative != administrative)
+        if (int error = ipv4_administrative_changed(index)) {
+            writable.administrative = previous_administrative;
+            writable.mtu = previous_mtu;
+            return error;
+        }
     ip6::configuration_changed(index);
     if (previous_mtu != mtu) {
         ipv4_mtu_changed(index, previous_mtu);

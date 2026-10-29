@@ -2,6 +2,7 @@
 #include "net/ipv4.hpp"
 #include "net/ipv4/multicast_runtime.hpp"
 #include "net/ipv4/addresses.hpp"
+#include "net/ipv4/routes.hpp"
 #include "net/ipv4/reassembly.hpp"
 #include "net/ipv4/fragmentation.hpp"
 #include "net/ipv4/path_mtu.hpp"
@@ -13,14 +14,8 @@
 
 namespace ax {
 namespace {
-constexpr unsigned route_count = 32, neighbor_count = 128, output_count = 32;
+constexpr unsigned neighbor_count = 128, output_count = 32;
 constexpr uint64_t neighbor_lifetime = 30000, retry_interval = 100;
-
-struct Route {
-    Ipv4Route value;
-    bool used = false;
-    uint64_t path_owner = 0;
-};
 
 enum class NeighborState : uint8_t { free, resolving, reachable, failed };
 
@@ -61,11 +56,10 @@ struct Selection {
 
 static ip4::AddressBook addresses;
 static Ipv4Config loopback{0x7f000001, 0xff000000, 0};
-static Route routes[route_count];
+static ip4::RouteTable routes;
 static Neighbor neighbors[neighbor_count];
 static Output output[output_count];
 static ip4::PathMtuCache path_mtu;
-static uint64_t next_path_owner;
 static uint64_t destination_generation = 1;
 static uint16_t identifier;
 static bool polling;
@@ -119,7 +113,9 @@ static void clear(Output& item, int error = 0) {
     }
     if (item.owner) {
         inet_reclaim(item.owner, ip4::get16(item.bytes + ethernet_header + 2));
-        if (error)
+        // Local device/address loss drops datagrams without a socket error.
+        // Stream transports still need the failure to retire their state.
+        if (error && (error != 100 || inet_stream(item.owner)))
             inet_failed(item.owner, error, item.index);
     }
     release(item.bytes);
@@ -311,23 +307,27 @@ static uint32_t preferred_source(unsigned index, uint32_t destination) {
 static int select(Ipv4Source requested, uint32_t destination, unsigned bound, Selection& result) {
     uint32_t source = requested.address;
     bool multicast = ip4::multicast(destination);
-    if (!destination || (!ip4::unicast(destination) && !multicast && destination != UINT32_MAX))
+    if (destination && !ip4::unicast(destination) && !multicast && destination != UINT32_MAX)
         return -101;
     if (source && !ipv4_local(source))
         return -99;
-    if (is_loopback(source) && !is_loopback(destination) && !(multicast && bound == ipv4_loopback))
-        return -99;
-    if (is_loopback(destination) || (multicast && bound == ipv4_loopback)) {
-        if (bound && bound != ipv4_loopback)
-            return -101;
-        result = {requested.selected ? source : loopback.address,
-                  destination,
-                  ipv4_loopback,
-                  8,
-                  0,
-                  true,
-                  false,
-                  true};
+    if (bound && bound != ipv4_loopback && !net_info(bound))
+        return -19;
+    if (!destination) {
+        if (!requested.selected)
+            source = bound && bound != ipv4_loopback ? preferred_source(bound, 0) : 0;
+        if (!source)
+            source = loopback.address;
+        result = {source, source, ipv4_loopback, 32, 0, true, false, true};
+        return 0;
+    }
+    if (bound == ipv4_loopback || (is_loopback(destination) && !bound)) {
+        if (!requested.selected) {
+            source = is_loopback(destination) ? loopback.address : preferred_source(0, destination);
+            if (!source)
+                source = loopback.address;
+        }
+        result = {source, destination, ipv4_loopback, 8, 0, true, false, true};
         return 0;
     }
     if (bound && !ipv4_config(bound))
@@ -359,35 +359,21 @@ static int select(Ipv4Source requested, uint32_t destination, unsigned bound, Se
                       true};
             break;
         }
-        if (!entry->secondary && (destination & config->mask) == (config->address & config->mask)) {
-            unsigned prefix = prefix_length(config->mask);
-            if (!result.found || prefix > result.prefix) {
-                result = {requested.selected ? source : config->address,
-                          destination,
-                          index,
-                          prefix,
-                          0,
-                          false,
-                          directed_broadcast(*config, destination),
-                          true};
-                result.path_source = config->address;
-            }
-        }
     }
-    for (const auto& route : routes) {
-        const auto& value = route.value;
-        if (!route.used || (bound && bound != value.index) ||
-            (destination & value.mask) != value.destination)
+    for (unsigned n = 0; auto route = routes.at(n); n++) {
+        const auto& value = route->value;
+        if ((bound && bound != value.index) || (destination & value.mask) != value.destination)
             continue;
-        auto preferred =
-            addresses.preferred(value.index, value.gateway ? value.gateway : destination);
+        auto preferred = addresses.preferred(value.index, value.gateway);
         if (!preferred)
             continue;
         const auto config = &preferred->config;
         unsigned prefix = prefix_length(value.mask);
         if (!result.found || prefix > result.prefix ||
             (prefix == result.prefix && value.metric < result.metric)) {
-            result = {requested.selected ? source : config->address,
+            result = {requested.selected        ? source
+                      : route->preferred_source ? route->preferred_source
+                                                : config->address,
                       value.gateway ? value.gateway : destination,
                       value.index,
                       prefix,
@@ -395,13 +381,14 @@ static int select(Ipv4Source requested, uint32_t destination, unsigned bound, Se
                       false,
                       false,
                       true,
-                      route.path_owner};
-            result.path_source = config->address;
+                      route->owner};
+            result.path_source =
+                route->preferred_source ? route->preferred_source : config->address;
         }
     }
     if (!result.found && bound && bound != ipv4_loopback) {
-        auto preferred = addresses.preferred(bound, destination);
-        uint32_t fallback = preferred_source(bound, destination);
+        auto preferred = addresses.preferred(bound);
+        uint32_t fallback = preferred_source(bound, 0);
         result = {
             requested.selected ? source : fallback, destination, bound, 0, 0, false, false, true};
         // Shared exceptions belong to an address on the output device.
@@ -425,6 +412,8 @@ static int select(Ipv4Source requested, uint32_t destination, unsigned bound, Se
             result.path_source = entry->config.address;
             break;
         }
+    if (result.found && is_loopback(source) && !result.local)
+        return -22;
     if (!result.found)
         return -101;
     if (multicast)
@@ -432,7 +421,9 @@ static int select(Ipv4Source requested, uint32_t destination, unsigned bound, Se
     auto info = net_info(result.index);
     if (!info || !info->live)
         return -5;
-    if (!info->administrative || !info->carrier)
+    if (!info->administrative)
+        return -101;
+    if (!info->carrier)
         return -100;
     return 0;
 }
@@ -631,7 +622,23 @@ static int address_label(unsigned index, const char* label) {
     return 0;
 }
 
-static void addresses_changed(const ip4::AddressBook& before, unsigned index) {
+static uint16_t active_interfaces() {
+    uint16_t active = 0;
+    for (unsigned index = 1; index <= max_net_devices; index++)
+        if (auto info = net_info(index); info && info->administrative)
+            active |= 1u << (index - 1);
+    return active;
+}
+
+static int addresses_changed(const ip4::AddressBook& before, unsigned index) {
+    if (int error = routes.synchronize(addresses, active_interfaces())) {
+        addresses = before;
+        return error;
+    }
+    if (before.preferred(index) && !addresses.preferred(index)) {
+        routes.withdraw(index);
+        path_mtu.discard(index);
+    }
     for (unsigned n = 0; n < ipv4_address_capacity; n++) {
         auto old = before.at(n), current = addresses.at(n);
         if (!old && !current)
@@ -680,6 +687,7 @@ static void addresses_changed(const ip4::AddressBook& before, unsigned index) {
         for (auto& neighbor : neighbors)
             if (neighbor.index == index)
                 neighbor = {};
+    return 0;
 }
 
 int ipv4_configure_label(unsigned index, const char* label, const Ipv4Config& config) {
@@ -687,8 +695,8 @@ int ipv4_configure_label(unsigned index, const char* label, const Ipv4Config& co
         return error;
     auto before = addresses;
     int error = addresses.set(index, label, config);
-    addresses_changed(before, index);
-    return error;
+    int changed = addresses_changed(before, index);
+    return changed ? changed : error;
 }
 
 int ipv4_configure(unsigned index, const Ipv4Config& config) {
@@ -708,9 +716,7 @@ int ipv4_address_add(unsigned index, const char* label, const Ipv4Config& config
         return -19;
     auto before = addresses;
     int error = addresses.add(index, label, config);
-    if (!error)
-        addresses_changed(before, index);
-    return error;
+    return error ? error : addresses_changed(before, index);
 }
 
 int ipv4_address_remove(unsigned index, uint32_t address, uint32_t mask) {
@@ -718,9 +724,7 @@ int ipv4_address_remove(unsigned index, uint32_t address, uint32_t mask) {
         return -19;
     auto before = addresses;
     int error = addresses.remove(index, address, mask);
-    if (!error)
-        addresses_changed(before, index);
-    return error;
+    return error ? error : addresses_changed(before, index);
 }
 
 void ipv4_mtu_changed(unsigned index, uint32_t previous_mtu) {
@@ -730,9 +734,25 @@ void ipv4_mtu_changed(unsigned index, uint32_t previous_mtu) {
     }
 }
 
-static bool same_next_hop(const Ipv4Route& a, const Ipv4Route& b) {
-    return a.index == b.index && a.gateway == b.gateway && a.metric == b.metric &&
-           a.protocol == b.protocol && a.scope == b.scope;
+int ipv4_administrative_changed(unsigned index) {
+    auto info = net_info(index);
+    if (!info)
+        return -19;
+    if (info->administrative) {
+        if (int error = routes.synchronize(addresses, active_interfaces()))
+            return error;
+    } else {
+        routes.withdraw(index);
+        path_mtu.discard(index);
+        for (auto& neighbor : neighbors)
+            if (neighbor.index == index)
+                neighbor = {};
+        for (auto& item : output)
+            if (item.bytes && item.index == index && !item.local)
+                clear(item, 100);
+    }
+    retire_destinations();
+    return 0;
 }
 
 static int change_route(const Ipv4Route& input, bool remove, bool control, bool exclusive) {
@@ -740,24 +760,14 @@ static int change_route(const Ipv4Route& input, bool remove, bool control, bool 
     if (!ip4::mask_valid(value.mask) || (value.destination & value.mask) != value.destination)
         return -22;
     if (remove) {
-        for (auto& route : routes)
-            if (route.used && (!value.index || route.value.index == value.index) &&
-                route.value.destination == value.destination && route.value.mask == value.mask &&
-                (!value.gateway || route.value.gateway == value.gateway) &&
-                (!value.metric || route.value.metric == value.metric) &&
-                (!control || ((!value.protocol || route.value.protocol == value.protocol) &&
-                              (value.scope == 255 || route.value.scope == value.scope)))) {
-                uint64_t owner = route.path_owner;
-                route = {};
-                bool retained = false;
-                for (const auto& other : routes)
-                    retained |= other.used && other.path_owner == owner;
-                if (!retained)
-                    path_mtu.discard_route(owner);
-                retire_destinations();
-                return 0;
-            }
-        return -3;
+        uint64_t owner = 0;
+        int error = routes.erase(value, control, owner);
+        if (!error) {
+            if (!routes.owns(owner))
+                path_mtu.discard_route(owner);
+            retire_destinations();
+        }
+        return error;
     }
     if (!value.index) {
         unsigned best = 0;
@@ -775,6 +785,8 @@ static int change_route(const Ipv4Route& input, bool remove, bool control, bool 
     }
     if (!net_info(value.index) || value.index == ipv4_loopback)
         return -19;
+    if (!net_info(value.index)->administrative)
+        return -100;
     auto preferred = addresses.preferred(value.index, value.gateway);
     const auto config = preferred ? &preferred->config : nullptr;
     if (value.gateway &&
@@ -784,42 +796,10 @@ static int change_route(const Ipv4Route& input, bool remove, bool control, bool 
         return -101;
     if (value.scope == 255)
         value.scope = value.gateway ? 0 : 253;
-    if (exclusive && !value.metric)
-        for (unsigned n = 0; auto entry = ipv4_address(n); n++) {
-            auto connected = &entry->config;
-            if (!entry->secondary && connected->mask == value.mask &&
-                (connected->address & connected->mask) == value.destination)
-                return -17;
-        }
-    Route* empty = nullptr;
-    for (auto& route : routes) {
-        if (exclusive && route.used && route.value.destination == value.destination &&
-            route.value.mask == value.mask && route.value.metric == value.metric)
-            return -17;
-        if (route.used && route.value.index == value.index &&
-            route.value.destination == value.destination && route.value.mask == value.mask &&
-            route.value.gateway == value.gateway && route.value.metric == value.metric) {
-            return -17;
-        }
-        if (!route.used && !empty)
-            empty = &route;
-    }
-    if (!empty)
-        return -105;
-    uint64_t owner = 0;
-    for (const auto& route : routes)
-        if (route.used && same_next_hop(route.value, value)) {
-            owner = route.path_owner;
-            break;
-        }
-    if (!owner) {
-        if (next_path_owner == UINT64_MAX)
-            return -75;
-        owner = ++next_path_owner;
-    }
-    *empty = {value, true, owner};
-    retire_destinations();
-    return 0;
+    int error = routes.insert(value, exclusive);
+    if (!error)
+        retire_destinations();
+    return error;
 }
 
 int ipv4_route(const Ipv4Route& value, bool remove) {
@@ -832,15 +812,27 @@ int ipv4_route_control(const Ipv4Route& value, bool remove, bool exclusive) {
 
 size_t ipv4_routes(Ipv4Route* output, size_t capacity) {
     size_t count = 0;
-    for (unsigned n = 0; auto entry = ipv4_address(n); n++) {
-        const auto config = &entry->config;
-        if (!entry->secondary && count < capacity)
-            output[count++] = {
-                config->address & config->mask, config->mask, 0, entry->index, 0, 2, 253};
-    }
-    for (const auto& route : routes)
-        if (route.used && count < capacity)
-            output[count++] = route.value;
+    auto append = [&](const ip4::RouteTable::Entry& entry) {
+        if (count < capacity) {
+            output[count] = entry.value;
+            output[count++].preferred_source = entry.preferred_source;
+        }
+    };
+    for (unsigned n = 0; auto route = routes.at(n); n++)
+        if (route->automatic)
+            append(*route);
+    if (count < capacity)
+        output[count++] = {loopback.address & loopback.mask,
+                           loopback.mask,
+                           0,
+                           ipv4_loopback,
+                           0,
+                           2,
+                           253,
+                           loopback.address};
+    for (unsigned n = 0; auto route = routes.at(n); n++)
+        if (!route->automatic)
+            append(*route);
     return count;
 }
 
@@ -948,13 +940,12 @@ uint32_t ipv4_learn_pmtu(uint32_t source, uint32_t destination, unsigned index,
     return learned.mtu;
 }
 
-int ipv4_send(InetSocket* owner, Ipv4Source source, uint32_t destination, unsigned bound_index,
-              uint8_t protocol, uint8_t ttl, bool broadcast, const void* payload, size_t length,
-              bool cache_destination, uint8_t traffic_class) {
+static int prepare_output(InetSocket* owner, Ipv4Source source, uint32_t destination,
+                          unsigned bound_index, uint8_t ttl, bool broadcast, size_t length,
+                          bool cache_destination, Selection& route, ip4::PathMtu& limit) {
     bool multicast = ip4::multicast(destination);
     if (!ttl && !multicast)
         return -22;
-    Selection route;
     int error = select(source, destination, bound_index, route);
     auto retained =
         cache_destination ? inet_output_destination(owner, destination, error != 0) : nullptr;
@@ -969,12 +960,68 @@ int ipv4_send(InetSocket* owner, Ipv4Source source, uint32_t destination, unsign
         return -13;
     bool fragmentable = inet_fragmentation_allowed(owner);
     uint32_t mtu = route.local ? 65535u : net_info(route.index)->mtu;
-    ip4::PathMtu limit{mtu};
+    limit = {mtu};
     bool use_path_mtu = inet_use_path_mtu(owner);
     if (use_path_mtu)
         limit = selection_limit(route, destination);
     if (length > 65535 - 20 || (!route.local && length + 20 > limit.mtu && !fragmentable))
         return -90;
+    return 0;
+}
+
+int ipv4_send_admit(InetSocket* owner, Ipv4Source source, uint32_t destination,
+                    unsigned bound_index, uint8_t ttl, bool broadcast, size_t length,
+                    bool cache_destination, Ipv4SendRoute* selected) {
+    Selection route;
+    ip4::PathMtu limit;
+    int error = prepare_output(owner, source, destination, bound_index, ttl, broadcast, length,
+                               cache_destination, route, limit);
+    if (!error && selected)
+        *selected = {{route.source, limit.mtu, route.index},
+                     destination,
+                     route.next_hop,
+                     route.path_source,
+                     route.path_owner,
+                     route.local,
+                     route.broadcast,
+                     limit.locked};
+    return error;
+}
+
+int ipv4_send(InetSocket* owner, Ipv4Source source, uint32_t destination, unsigned bound_index,
+              uint8_t protocol, uint8_t ttl, bool broadcast, const void* payload, size_t length,
+              bool cache_destination, int traffic_class, const Ipv4SendRoute* selected) {
+    Selection route;
+    ip4::PathMtu limit;
+    if (selected) {
+        if (!selected->path.index || selected->destination != destination)
+            return -22;
+        if (selected->path_owner && !routes.owns(selected->path_owner))
+            return ipv4_output_discarded;
+        route = {selected->path.source,
+                 selected->next_hop,
+                 selected->path.index,
+                 0,
+                 0,
+                 selected->local,
+                 selected->broadcast,
+                 true,
+                 selected->path_owner,
+                 selected->path_source};
+        limit = {selected->path.mtu, selected->locked};
+        if (!route.local) {
+            auto info = net_info(route.index);
+            if (!info || !info->live)
+                return -5;
+            if (!info->administrative || !info->carrier)
+                return ipv4_output_discarded;
+        }
+    } else if (int error = prepare_output(owner, source, destination, bound_index, ttl, broadcast,
+                                          length, cache_destination, route, limit))
+        return error;
+    bool multicast = ip4::multicast(destination);
+    bool fragmentable = inet_fragmentation_allowed(owner);
+    bool use_path_mtu = inet_use_path_mtu(owner);
     auto slot = vacant_output();
     if (!slot)
         return -11;
@@ -988,7 +1035,7 @@ int ipv4_send(InetSocket* owner, Ipv4Source source, uint32_t destination, unsign
     memset(bytes, 0, total);
     auto ip = bytes + ethernet_header;
     ip[0] = 0x45;
-    ip[1] = owner ? inet_traffic_class(owner) : traffic_class;
+    ip[1] = traffic_class < 0 ? inet_traffic_class(owner) : uint8_t(traffic_class);
     ip4::put16(ip + 2, 20 + length);
     ip4::put16(ip + 4, ++identifier);
     ip4::put16(ip + 6, inet_dont_fragment(owner, limit.locked) ? 0x4000 : 0);

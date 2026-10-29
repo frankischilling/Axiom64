@@ -20,6 +20,17 @@ extern struct WireLink wire_links[2];
 void wire_check(int, const char*);
 void wire_hex(const void*, size_t);
 void wire_configure(void);
+void wire_reopen_control(unsigned lane);
+void wire_change_address(unsigned lane, uint32_t address, const char* suffix, int add);
+void wire_change_route(uint32_t target, unsigned index, int add);
+void wire_change_route_metric(uint32_t target, unsigned index, unsigned metric, int add);
+void wire_inventory_paths(unsigned lane, unsigned sequence, unsigned phase, uint32_t target,
+                          unsigned expected, unsigned count);
+void wire_remove_prefix(unsigned lane);
+void wire_inventory_prefix(unsigned lane, unsigned sequence, unsigned phase, uint32_t target,
+                           unsigned prefix, unsigned expected, unsigned count);
+void wire_inventory(unsigned lane, unsigned sequence, unsigned phase, uint32_t target, int routes,
+                    unsigned expected);
 void wire_transition(unsigned lane, unsigned sequence, unsigned scenario, unsigned phase);
 struct WireInput wire_input(unsigned lane, unsigned sequence, unsigned scenario);
 

@@ -6,6 +6,7 @@
 using namespace ax;
 
 static unsigned changes;
+static bool full_inventory;
 static Ipv4Route changed;
 
 static void check(bool condition, const char* reason) {
@@ -36,6 +37,21 @@ int ipv4_route_control(const Ipv4Route& route, bool, bool) {
 }
 
 size_t ipv4_routes(Ipv4Route* output, size_t capacity) {
+    if (full_inventory) {
+        size_t count = capacity < 65 ? capacity : 65;
+        for (size_t i = 0; i < count; i++) {
+            bool automatic = i >= 32;
+            output[i] = {uint32_t(0x64400000 + (i << 8)),
+                         0xffffff00,
+                         automatic ? 0u : 0x0a170101u,
+                         unsigned(1 + i % 2),
+                         automatic ? 0u : unsigned(1000 + i),
+                         uint8_t(automatic ? 2 : 16),
+                         uint8_t(automatic ? 253 : 0),
+                         automatic ? uint32_t(0x64400001 + (i << 8)) : 0};
+        }
+        return count;
+    }
     size_t count = capacity < 41 ? capacity : 41;
     for (size_t i = 0; i < count; i++)
         output[i] = {uint32_t(0x64400000 + (i << 8)),
@@ -128,6 +144,38 @@ int main() {
         at += record.length;
     }
     check(records == 41, "connected and explicit route snapshot fits reserved capacity");
+    full_inventory = true;
+    packet[21] = 0; // Include both explicit and kernel-protocol automatic routes.
+    dumped = evaluate(packet, true, result);
+    records = 0;
+    unsigned preferred_sources = 0;
+    for (size_t at = 0; at < dumped;) {
+        NetlinkHeader record;
+        memcpy(&record, result + at, sizeof(record));
+        if (record.type == 24) {
+            records++;
+            for (size_t field = at + 28; field < at + record.length; field += 8) {
+                uint16_t length, type;
+                memcpy(&length, result + field, 2);
+                memcpy(&type, result + field + 2, 2);
+                check(length == 8 && field + length <= at + record.length,
+                      "maximum route attributes retain scalar bounds");
+                if (type == 7) {
+                    uint32_t source;
+                    memcpy(&source, result + field + 4, 4);
+                    check(__builtin_bswap32(source) == uint32_t(0x64400001 + ((records - 1) << 8)),
+                          "preferred source retains network byte order");
+                    preferred_sources++;
+                }
+            }
+        }
+        at += record.length;
+    }
+    check(records == 65 && preferred_sources == 33 && dumped == 4176,
+          "full explicit and automatic inventories fit the exact reserved reply");
+    full_inventory = false;
+    packet[21] = 16;
+
     header = {17, 0x777, 5, 88, 77};
     memcpy(packet, &header, sizeof(header));
     packet[16] = 'A';

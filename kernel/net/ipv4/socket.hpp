@@ -2,6 +2,7 @@
 #pragma once
 #include "net/inet.hpp"
 #include "net/ipv4.hpp"
+#include "net/ipv4_wire.hpp"
 #include "net/ipv4/multicast.hpp"
 #include "net/ipv6/destination.hpp"
 #include "net/tcp/address.hpp"
@@ -68,6 +69,24 @@ struct InetSocket {
 };
 
 extern InetSocket inet_sockets[inet_socket_count];
+
+inline InetSendControl inet_send_defaults(const InetSocket* socket, const InetAddress& address,
+                                          bool named) {
+    uint32_t destination = __builtin_bswap32(address.address);
+    bool multicast = ip4::multicast(destination);
+    InetSendControl result{Ipv4Source{ip4::multicast(socket->local) ? 0 : socket->local},
+                           socket->index, multicast ? socket->multicast.ttl : socket->ttl,
+                           socket->tos,
+                           socket->type == 3 || (!named && destination == socket->peer)};
+    if (multicast) {
+        if (!result.index)
+            result.index = socket->multicast.output_index;
+        if (!result.source.selected && socket->multicast.output_address)
+            result.source = socket->multicast.output_address;
+    }
+    return result;
+}
+
 InetSocket* inet_allocate(unsigned type);
 void inet_dispose(InetSocket*);
 bool inet_port_conflict(InetSocket*, uint32_t local, uint16_t port);

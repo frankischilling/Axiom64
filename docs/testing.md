@@ -316,6 +316,13 @@ exact streams, half-closes and conservative monotonic observation bounds.
 Serialized damaged captures and logs must fail after reopening. The malformed
 quoted-version case preserves the measured native/guest difference described
 in [IPv6](ipv6.md); it does not establish complete quote-parser equivalence.
+Native ordinary-error runs select one allowed CPU before starting collectors.
+The actual C client, wrapper and both capture threads retain kernel affinity
+records; profiles rotate through the original allowed CPU set. Independent
+readers reject seven reopened CPU, namespace and process-record changes per
+profile. The stock Linux kernel keeps its SMP configuration. Other TCP suites
+retain their existing scheduling policy. Packet ordering, original timestamps,
+zero-drop checks, fifty-millisecond arrival bounds and all deadlines remain.
 Source capture retains exact Git inputs in a checkout and bounded public source
 roots in the exported CI tree. Builds, downloads, private files and Python caches
 remain outside that snapshot; private or external link targets reject.

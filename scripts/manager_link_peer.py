@@ -8,7 +8,8 @@ SCENARIOS = ('carrier-initial', 'carrier-selecting', 'carrier-probing', 'carrier
              'carrier-flap', 'carrier-infinite', 'static-initial', 'static-probing',
              'static-bound', 'disabled', 'disabled-initial', 'disabled-failed', 'failed-selecting', 'failed-probing',
              'failed-bound', 'failed-infinite', 'static-failed', 'rx-length',
-             'manual-carrier', 'manual-failed')
+             'manual-carrier', 'manual-failed', 'disabled-manual-carrier',
+             'disabled-manual-failed')
 
 
 class LinkPeer(ProtocolPeer):
@@ -20,7 +21,8 @@ class LinkPeer(ProtocolPeer):
         self.fixed = lane == affected and scenario.startswith('static-')
         self.disabled = lane == affected and scenario.startswith('disabled')
         self.failed = lane == affected and (scenario.startswith('failed-') or
-                                           scenario in ('static-failed', 'manual-failed', 'disabled-failed'))
+                                           scenario in ('static-failed', 'manual-failed', 'disabled-failed',
+                                                       'disabled-manual-failed'))
         self.infinite = lane == affected and scenario.endswith('infinite')
         self.scenario = 'infinite' if self.infinite else 'manual-resolver'
         self.lease_timers = (0xffffffff, 0, 0) if self.infinite else (

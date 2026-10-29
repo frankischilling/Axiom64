@@ -445,6 +445,14 @@ translated or rescaled. Existing native IPv4 and IPv6 clock readers keep their
 original requirements. Freshly reopened damaged packets, byte patterns, timing,
 compiler bindings, ELF linkage and boot-product bindings must be rejected.
 
+The native ordinary-error cohort assigns its actual client and both collectors
+to one recorded allowed CPU before capture starts. Profiles rotate through the
+allowed set. This keeps a peer reply and the next request on the same enqueue
+CPU while the Linux kernel retains its SMP configuration. Actual process and
+thread affinity records are independently reopened and damaged controls reject.
+Capture order, timestamps, timer bounds and zero-drop requirements remain
+unchanged; other TCP cohorts keep their existing scheduling policy.
+
 `make test-tcp6-pmtu` and `sudo -n make test-tcp6-pmtu-native` compare 22
 Packet Too Big cases per adapter using the same actual C program in native Linux
 and the guest. The three native linkages and eight guest firmware/linkage/virtio

@@ -19,7 +19,8 @@ class ManagerLinkState(unittest.TestCase):
             self.assertEqual(build.returncode, 0, build.stdout.decode(errors='replace'))
             for name in ('enabled-up', 'enabled-not-running', 'disabled-up', 'disabled-activated',
                          'disabled-running', 'disabled-down', 'carrier-down', 'carrier-still-up',
-                         'ordinary-observation'):
+                         'ordinary-observation', 'disabled-manual-up', 'disabled-manual-no-running',
+                         'disabled-manual-down', 'disabled-manual-lost-admin'):
                 with self.subTest(name=name):
                     result = subprocess.run([str(program), name], stdout=subprocess.PIPE,
                                             stderr=subprocess.STDOUT, timeout=2)

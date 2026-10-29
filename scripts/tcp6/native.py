@@ -45,9 +45,18 @@ def client(directory, profile):
     command = [str(directory / 'program'), '--native']
     if profile == 'dynamic':
         command.insert(0, str(directory / 'loader'))
-    result = subprocess.run(command, cwd=ROOT)
-    print(f'TCP_FAULT_NATIVE_DONE status={result.returncode}', flush=True)
-    return result.returncode
+    began = time.monotonic_ns()
+    process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL)
+    record = dict(pid=process.pid, owner_pid=os.getpid(), command=command,
+                  actual=sorted(os.sched_getaffinity(process.pid)),
+                  namespace=Path('/proc/self/ns/net').stat().st_ino,
+                  kernel=platform.release(), start_monotonic_ns=began)
+    write(directory / 'client-execution.json', record)
+    returncode = process.wait()
+    record.update(returncode=returncode, end_monotonic_ns=time.monotonic_ns())
+    write(directory / 'client-execution.json', record)
+    print(f'TCP_FAULT_NATIVE_DONE status={returncode}', flush=True)
+    return returncode
 
 
 def child(directory, profile, parent_namespace, suite='loss'):
@@ -55,6 +64,12 @@ def child(directory, profile, parent_namespace, suite='loss'):
     config = definition(suite)
     own_namespace = Path('/proc/self/ns/net').stat().st_ino
     check(own_namespace != parent_namespace, 'native TCP6 runs in a new network namespace')
+    packet_cpu = None
+    if suite == 'errors':
+        from ipv6_host_native import packet_profile_cpu
+        # Error phases require causal request/reply ordering. Enqueue TAP input
+        # and client requests on the same CPU while retaining original captures.
+        packet_cpu = packet_profile_cpu(profile, parent_namespace)
     settings = {}
     accept_ra = int(config.get('router_hop_control', False))
     def command(*args):
@@ -89,13 +104,17 @@ def child(directory, profile, parent_namespace, suite='loss'):
         write(directory / 'interfaces.json', interfaces)
         invocation = [sys.executable, '-B', 'scripts/tcp6_test.py', '--client', profile,
                       '--output-directory', str(directory), '--suite', suite]
-        write(directory / 'preexecution.json', dict(profile=profile, kernel=platform.release(),
-            namespace=own_namespace, parent_namespace=parent_namespace, settings=settings,
-            command=invocation, deadline_seconds=150, products=products,
-            start_monotonic_ns=began))
         process = subprocess.Popen(invocation, cwd=ROOT, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    start_new_session=True)
+        if packet_cpu is not None:
+            packet_cpu['tasks'] = [dict(tid=int(task.name), actual=sorted(os.sched_getaffinity(int(task.name))))
+                                   for task in sorted(Path('/proc/self/task').iterdir())]
+            packet_cpu['wrapper'] = dict(pid=process.pid, actual=sorted(os.sched_getaffinity(process.pid)))
+        write(directory / 'preexecution.json', dict(profile=profile, kernel=platform.release(),
+            namespace=own_namespace, parent_namespace=parent_namespace, settings=settings,
+            command=invocation, deadline_seconds=150, products=products, packet_cpu=packet_cpu,
+            start_monotonic_ns=began))
         with (directory / 'client.log').open('xb') as log:
             text, results, error, returncode = exercise(process, peers, taps, 150, log, raw=True)
         process.wait(timeout=2)

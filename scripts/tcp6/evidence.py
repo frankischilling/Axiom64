@@ -354,6 +354,11 @@ def audit(directory, output=None, expected=None):
                 require(all(before['settings'][key] == '1' for key in
                             ('net.ipv6.conf.all.accept_ra', 'net.ipv6.conf.default.accept_ra')),
                         'actual owned namespace receives router hop changes')
+        scheduling = None
+        if native and suite == 'errors':
+            from tcp6.scheduling import verify as verify_scheduling, damaged as damaged_scheduling
+            scheduling = verify_scheduling(output, profile)
+            scheduling['negative_controls'] = damaged_scheduling(output, profile, controls / 'scheduling.zip')
         captures = []
         for lane in range(2):
             statistics = saved['capture_statistics'][lane] if native else None
@@ -376,7 +381,7 @@ def audit(directory, output=None, expected=None):
                 checker = config['damaged']
             captures.append(dict(capture=reopened, negative_controls=checker(path, lane, log, native, controls, statistics)))
         rows.append(dict(profile=profile, native=native, product=product, captures=captures,
-                         firmware=item.get('firmware'), transport=item.get('transport')))
+                          scheduling=scheduling, firmware=item.get('firmware'), transport=item.get('transport')))
     result = dict(passed=True, suite=suite, source_files=len(sources), profiles=len(rows),
                   captures=2 * len(rows), rejected_capture_controls=sum(
                       len(capture['negative_controls']['rejected']) for row in rows for capture in row['captures']),

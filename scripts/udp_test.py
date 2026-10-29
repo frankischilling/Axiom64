@@ -161,7 +161,8 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *, captu
                      f'UDP_MALFORMED_PASS index={lane + 1} frames=15',
                      f'UDP_CONNECTED_FILTER_PASS index={lane + 1}',
                      f'UDP_SERVER_PASS index={lane + 1}', f'UDP_WIRE_ERRORS_PASS index={lane + 1}']
-        required += [f'UDP_BROADCAST_QUEUE_PASS index={lane + 1} ingress=48 retained=32',
+        required += [f'UDP_ADMIN_ROUTE index={lane + 1} before=552 after=1500',
+                     f'UDP_BROADCAST_QUEUE_PASS index={lane + 1} ingress=48 retained=32',
                      f'UDP_LINK_PASS index={lane + 1}',
                      f'UDP_PRESSURE_PASS index={lane + 1} packets=33',
                      f'UDP_UNREACHABLE_PASS index={lane + 1}']
@@ -176,7 +177,7 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *, captu
         required += ['UDP_PAYLOAD_LIMIT_PASS bytes=65507', 'UDP_BUFFER_LIMIT_PASS bytes=2048 payload=2020']
     missing = [marker for marker in required if marker not in text]
     host_passed = (peers[0].arp == peers[1].arp == 1 and peers[0].frames == 0 and peers[1].frames == 1) if fault else (
-        len(link_events) == 4 and all(p.arp == 1 and p.frames == 4 and p.zero == 1 and p.zero_checksum == 1 and
+        len(link_events) == 4 and all(p.arp == 2 and p.frames == 4 and p.zero == 1 and p.zero_checksum == 1 and
             p.malformed == 14 and p.filter_input == 3 and p.filter_errors == 1 and p.server_replies == 1 and
             p.reordered == 4 and p.closed == 1 and p.quote_errors == 7 and p.controls == set('VFSOCILR') and
             p.broadcast_requests == 3 and p.broadcast_ingress == 48 and p.broadcast_ack == 48 and

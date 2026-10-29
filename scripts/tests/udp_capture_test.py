@@ -13,7 +13,7 @@ import zipfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from fetch import ROOT
 from ipv4_expiry_capture import read_capture, encode_capture, checksum, require
-from udp_capture import audit, audit_capture
+from udp_capture import audit, audit_capture, _payload
 
 
 def payload_tag(lane, phase):
@@ -158,12 +158,12 @@ def raw_damage_cases(data):
     return cases
 
 
-def reject_capture(archive, candidate, lane, fault, expected=None):
+def reject_capture(archive, candidate, lane, fault, expected=None, *, route_retirement=False):
     with tempfile.TemporaryDirectory(prefix='udp-damaged-reopen-') as temporary:
         fresh = Path(temporary)
         with zipfile.ZipFile(archive, 'x', zipfile.ZIP_DEFLATED) as saved:
             saved.writestr('capture.pcap', candidate)
-            saved.writestr('case.json', json.dumps(dict(lane=lane, fault=fault,
+            saved.writestr('case.json', json.dumps(dict(lane=lane, fault=fault, route_retirement=route_retirement,
                 sha256=hashlib.sha256(candidate).hexdigest())) + '\n')
         with zipfile.ZipFile(archive) as saved:
             saved.extractall(fresh)
@@ -171,7 +171,8 @@ def reject_capture(archive, candidate, lane, fault, expected=None):
         require(hashlib.sha256((fresh / 'capture.pcap').read_bytes()).hexdigest() == meta['sha256'],
                 'freshly extracted UDP corruption has its exact serialized bytes')
         try:
-            audit_capture(fresh / 'capture.pcap', meta['lane'], meta['fault'])
+            audit_capture(fresh / 'capture.pcap', meta['lane'], meta['fault'],
+                          route_retirement=meta['route_retirement'])
         except ValueError as error:
             reason = str(error)
             require(expected is None or expected in reason, 'intended UDP corruption guard: ' + reason)
@@ -186,6 +187,7 @@ def profile_controls(directory, reports, destination):
     controls = []
     for row in reports:
         phase = 'fault' if row['fault'] else 'normal'
+        version = json.loads((directory / phase / 'inputs.json').read_text())['version']
         relative = phase + '/' + row['firmware'] + '-' + row['transport']
         case = directory / relative
         originals = {relative + '/' + path.name: path.read_bytes()
@@ -244,6 +246,15 @@ def profile_controls(directory, reports, destination):
                     variants.append((f'wrong-administrative-{index}-{flags}', row,
                                      {relative + '/' + row['log']: changed.encode()},
                                      'exact original UDP administrative-down query flags'))
+        if version == 2 and not row['fault']:
+            for index in (1, 2):
+                marker = f'UDP_ADMIN_ROUTE index={index} before=552 after=1500'
+                for field, replacement in (('missing', ''), ('before', marker.replace('before=552', 'before=1500')),
+                                           ('after', marker.replace('after=1500', 'after=552'))):
+                    changed = text.replace(marker, replacement)
+                    variants.append((f'route-metric-{index}-{field}', row,
+                                     {relative + '/' + row['log']: changed.encode()},
+                                     'exact UDP path metrics before and after administrative route retirement'))
         for label, candidate, changed_files, expected in variants:
             files = dict(originals)
             files.update(changed_files)
@@ -260,7 +271,7 @@ def profile_controls(directory, reports, destination):
                 loaded = json.loads((fresh / 'candidate-row.json').read_text())
                 require(loaded == candidate, 'serialized original UDP profile corruption')
                 try:
-                    audit_case(fresh, loaded)
+                    audit_case(fresh, loaded, version=version)
                 except ValueError as error:
                     reason = str(error)
                     require(expected in reason, 'intended UDP profile corruption guard: ' + reason)
@@ -281,9 +292,12 @@ def input_controls(directory, input_root, destination):
         source = directory / phase
         original = json.loads((source / 'inputs.json').read_text())
         variants = []
-        for label in ('missing-source', 'changed-source', 'changed-product', 'short-deadline',
-                      'wrong-linkage', 'wrong-mode', 'changed-compiler-source', 'forged-UAPI-pin',
-                      'missing-static-compile', 'changed-provider', 'unowned-image-client'):
+        labels = ['missing-source', 'changed-source', 'changed-product', 'short-deadline',
+                  'wrong-linkage', 'wrong-mode', 'changed-compiler-source', 'forged-UAPI-pin',
+                  'missing-static-compile', 'changed-provider', 'unowned-image-client']
+        if original['version'] == 2:
+            labels.append('route-contract-downgrade')
+        for label in labels:
             value = copy.deepcopy(original)
             changed = {}
             if label == 'missing-source':
@@ -304,6 +318,11 @@ def input_controls(directory, input_root, destination):
             elif label == 'wrong-mode':
                 value['fault'] = not value['fault']
                 expected = 'original complete UDP fixture contract'
+            elif label == 'route-contract-downgrade':
+                value['version'] = 1
+                for name in ('scripts/tests/udp_peer_test.py', 'scripts/tests/fixtures/udp-route-retirement.json'):
+                    del value['sources'][name]
+                expected = 'UDP route-lifetime contract matches the actual compiled client source'
             elif label == 'changed-provider':
                 provider = json.loads((source / 'musl-manifest.json').read_text())
                 provider['products']['sysroot/usr/lib/libc.a'] = '0' * 64
@@ -368,15 +387,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--directory', type=Path, default=ROOT / 'build/udp-wire')
     parser.add_argument('--destination', type=Path)
+    parser.add_argument('--audit-output', type=Path, help='write the positive audit outside protected input directories')
     parser.add_argument('--input-root', type=Path, default=ROOT)
     args = parser.parse_args()
     positive = audit(args.directory, args.input_root)
-    (args.directory / 'audit.json').write_text(json.dumps(positive, indent=2) + '\n')
+    audit_output = args.audit_output or args.directory / 'audit.json'
+    audit_output.write_text(json.dumps(positive, indent=2) + '\n')
     destination = args.destination or args.directory / 'damaged'
     destination.mkdir(parents=True, exist_ok=False)
     reports = json.loads((args.directory / 'results.json').read_text())
     controls, originals = [], {}
+    retirement_controls = 0
     for row in reports:
+        phase = args.directory / ('fault' if row['fault'] else 'normal')
+        route_retirement = json.loads((phase / 'inputs.json').read_text())['version'] == 2
         case = args.directory / ('fault' if row['fault'] else 'normal') / (row['firmware'] + '-' + row['transport'])
         for lane in range(2):
             original = case / f'lane{lane}.pcap'
@@ -386,15 +410,26 @@ def main():
             candidates = [(label, encode_capture(changed), expected) for label, changed, expected in
                           damage_cases(rows, lane, row['fault'], read_capture(case / 'lane1.pcap'))]
             candidates += raw_damage_cases(original.read_bytes())
+            if route_retirement and not row['fault']:
+                changed = copy.deepcopy(rows)
+                number = next(n for n, value in enumerate(changed)
+                              if udp_data(value['frame']) == _payload(31, lane, 'R'))
+                packet = bytearray(changed[number]['frame'])
+                packet[20:22] = bytes(2)
+                changed[number]['frame'] = repaired(packet)
+                candidates.append(('retired-path-DF', encode_capture(changed),
+                                   'UDP original discovery flags before and after quoted MTU'))
+                retirement_controls += 1
             for label, data, expected in candidates:
                 require(data != original.read_bytes(), 'an original actual UDP capture was changed')
                 archive = destination / (('fault-' if row['fault'] else 'normal-') +
                     row['firmware'] + '-' + row['transport'] + f'-lane{lane}-' + label + '.zip')
-                reason = reject_capture(archive, data, lane, row['fault'], expected)
+                reason = reject_capture(archive, data, lane, row['fault'], expected,
+                                        route_retirement=route_retirement)
                 controls.append(dict(control=label, lane=lane, firmware=row['firmware'],
                     transport=row['transport'], fault=row['fault'], reason=reason, archive=archive.name,
                     sha256=hashlib.sha256(archive.read_bytes()).hexdigest()))
-    require(len(controls) == 976, 'all complete UDP physical capture corruption cases')
+    require(len(controls) == 976 + retirement_controls, 'all complete UDP physical capture corruption cases')
     physical_controls = len(controls)
     controls += profile_controls(args.directory, reports, destination)
     controls += input_controls(args.directory, args.input_root, destination)

@@ -22,8 +22,11 @@ PRODUCTS = ('image.iso', 'kernel.elf', 'client.elf', 'client.inputs.json', 'clie
             'libc.a', 'compiler.specs')
 
 
-def source_names(root):
+def source_names(root, version=2):
     names = set(SOURCES)
+    if version == 2:
+        names.update(('scripts/tests/udp_peer_test.py',
+                      'scripts/tests/fixtures/udp-route-retirement.json'))
     for prefix in ('kernel', 'userspace/init'):
         names.update(path.relative_to(root).as_posix() for path in (root / prefix).rglob('*')
                      if path.is_file() and path.suffix in ('.cpp', '.hpp', '.c', '.h', '.asm', '.ld'))
@@ -57,7 +60,7 @@ def record(directory, fault):
         products[name] = dict(bytes=original.stat().st_size, sha256=fingerprint)
     require(before == {name: digest(ROOT / name) for name in before},
             'UDP sources stay unchanged while recording the fixture')
-    value = dict(version=1, fault=bool(fault), sources=before, products=products,
+    value = dict(version=2, fault=bool(fault), sources=before, products=products,
                  compilation=compilation, linkage='static',
                  guest_deadline_seconds=90, delayed_UEFI_fault_seconds=5)
     (directory / 'inputs.json').write_text(json.dumps(value, indent=2) + '\n')
@@ -77,11 +80,11 @@ def audit(directory, input_root=ROOT, open_image=True):
     """Verify retained products and their corresponding project source snapshot."""
     directory, input_root = Path(directory), Path(input_root)
     value = json.loads((directory / 'inputs.json').read_text())
-    require(value.get('version') == 1 and type(value.get('fault')) is bool and
+    require(type(value.get('version')) is int and value['version'] in (1, 2) and type(value.get('fault')) is bool and
             directory.name == ('fault' if value['fault'] else 'normal') and
             value.get('linkage') == 'static' and value.get('guest_deadline_seconds') == 90 and
             value.get('delayed_UEFI_fault_seconds') == 5, 'original complete UDP fixture contract')
-    require(set(value['sources']) == source_names(input_root), 'complete UDP fixture source inventory')
+    require(set(value['sources']) == source_names(input_root, value['version']), 'complete UDP fixture source inventory')
     for name, fingerprint in value['sources'].items():
         require(digest(input_root / name) == fingerprint, 'actual UDP fixture source: ' + name)
     require(set(value['products']) == set(PRODUCTS), 'complete retained UDP product inventory')
@@ -89,6 +92,9 @@ def audit(directory, input_root=ROOT, open_image=True):
         file = directory / name
         require(file.is_file() and not file.is_symlink() and file.stat().st_size == product['bytes'] and
                 digest(file) == product['sha256'], 'actual retained UDP product: ' + name)
+    marker = b'#define UDP_ROUTE_LIFETIME_VERSION 2\n'
+    require((marker in (directory / 'client.c').read_bytes()) == (value['version'] == 2),
+            'UDP route-lifetime contract matches the actual compiled client source')
     compilation = json.loads((directory / 'client.inputs.json').read_text())
     require(compilation == value['compilation'] and
             compilation['product']['sha256'] == value['products']['client.elf']['sha256'] and
@@ -112,7 +118,7 @@ def audit(directory, input_root=ROOT, open_image=True):
             provider['products']['sysroot/usr/lib/libc.a'] == value['products']['libc.a']['sha256'] and
             provider['products']['COPYRIGHT'] == value['products']['musl-COPYRIGHT']['sha256'],
             'actual UDP static libc and required notice match the retained provider')
-    result = dict(passed=True, fault=value['fault'], actual_image_opened=False,
+    result = dict(passed=True, version=value['version'], fault=value['fault'], actual_image_opened=False,
                   kernel_sha256=value['products']['kernel.elf']['sha256'],
                   client_sha256=value['products']['client.elf']['sha256'],
                   inputs_sha256=digest(directory / 'inputs.json'))

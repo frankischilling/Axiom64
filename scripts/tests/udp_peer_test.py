@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Keep UDP peer header checks tied to the path's observed hint history."""
 from pathlib import Path
+import json
 import struct
 import sys
 import unittest
@@ -35,6 +36,24 @@ def learned(lane):
 
 
 class UdpPeerTest(unittest.TestCase):
+    def test_actual_administrative_restoration_retires_the_locked_path(self):
+        value = json.loads((Path(__file__).parent / 'fixtures/udp-route-retirement.json').read_text())
+        peer = learned(value['lane'])
+        peer.packet(bytes.fromhex(value['frames']['L']))
+        peer.packet(bytes.fromhex(value['frames']['R']))
+        self.assertFalse(peer.path_locked)
+
+    def test_restored_route_rejects_the_retired_path_flags(self):
+        value = json.loads((Path(__file__).parent / 'fixtures/udp-route-retirement.json').read_text())
+        peer = learned(value['lane'])
+        peer.packet(bytes.fromhex(value['frames']['L']))
+        packet = bytearray.fromhex(value['frames']['R'])
+        packet[20:22] = b'\0\0'
+        packet[24:26] = b'\0\0'
+        struct.pack_into('!H', packet, 24, checksum(bytes(packet[14:34])))
+        with self.assertRaisesRegex(RuntimeError, 'Ethernet/IPv4 header'):
+            peer.packet(bytes(packet))
+
     def test_shared_locked_path_from_another_socket(self):
         for lane in range(2):
             with self.subTest(lane=lane):

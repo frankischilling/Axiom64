@@ -219,8 +219,9 @@ class Peer:
         broadcast = packet[16:20] == b'\xff' * 4
         pressure = packet[16:20] == self.pressure_ip
         expected_mac = b'\xff' * 6 if broadcast else self.pressure_mac if pressure else self.mac
-        expected_flags = (b'\0\0' if self.path_locked and packet[9:10] == b'\x11' and
-                          packet[16:20] == self.ip else b'\x40\0')
+        restored_path = packet[28:32] == b'UDR' + bytes([self.lane]) and 'L' in self.controls
+        expected_flags = (b'\0\0' if self.path_locked and not restored_path and
+                          packet[9:10] == b'\x11' and packet[16:20] == self.ip else b'\x40\0')
         if (len(packet) < 28 or frame[:12] != expected_mac + self.guest or packet[:2] != b'\x45\0' or
                 checksum(packet[:20]) or packet[6:8] != expected_flags or packet[8] != 64 or
                 packet[12:16] != self.guest_ip or (not broadcast and not pressure and packet[16:20] != self.ip)):
@@ -313,6 +314,10 @@ class Peer:
             elif phase == 'I':
                 self.quoted(packet)
             elif phase in ['L', 'R']:
+                if phase == 'R':
+                    if 'L' not in self.controls:
+                        raise RuntimeError('UDP administrative restoration precedes carrier validation')
+                    self.path_locked = False
                 self.reply(source_port, data)
             else:
                 raise RuntimeError('UDP unexpected control phase')

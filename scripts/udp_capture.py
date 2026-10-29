@@ -49,7 +49,8 @@ def _ip_packet(src, dst, body, identifier=0x6400, protocol=17):
     return bytes(header) + body
 
 
-def audit_capture(path, lane, fault=False):
+def audit_capture(path, lane, fault=False, *, route_retirement=False):
+    require(type(route_retirement) is bool, 'known UDP route-lifetime capture contract')
     records = _capture_records(path)
     require(records and all((a['ns'] <= b['ns'] for a, b in zip(records, records[1:]))), 'original UDP capture clocks are ordered')
     guest = bytes([82, 84, 0, 18, 52, 16 + lane])
@@ -124,7 +125,8 @@ def audit_capture(path, lane, fault=False):
         else:
             require(frame[6:12] == peer and frame[:6] in (guest, b'\xff' * 6), 'UDP incoming Ethernet identity')
             incoming.append(dict(frame=frame, ip=ip, number=number))
-    expected_arp = Counter({('request', remote): 1, ('reply', remote): 1})
+    resolution_count = 2 if route_retirement and not fault else 1
+    expected_arp = Counter({('request', remote): resolution_count, ('reply', remote): resolution_count})
     if not fault:
         expected_arp.update({('request', pressure_ip): 1, ('reply', pressure_ip): 1, ('request', unresolved): 3})
     require(Counter(((kind, target) for kind, target, _ in arp)) == expected_arp, 'exact UDP route, pressure and unreachable ARP exchanges')
@@ -162,11 +164,17 @@ def audit_capture(path, lane, fault=False):
         for sequence in range(33):
             emit(45000 + lane, 9000, _payload(129, lane, 'P', sequence), pressure_ip, label=f'P{sequence}')
         for phase in 'LR':
-            emit(control, 9000, _payload(31, lane, phase), flags=bytes(2), label=phase)
+            flags = b'\x40\0' if route_retirement and phase == 'R' else bytes(2)
+            emit(control, 9000, _payload(31, lane, phase), flags=flags, label=phase)
     require([v['signature'] for v in outgoing] == [v['signature'] for v in specs], 'exact complete ordered UDP datagrams, retained bytes and tuples')
     require(all((v['flags'] == s['flags'] for v, s in zip(outgoing, specs))), 'UDP original discovery flags before and after quoted MTU')
     observed = {s['label']: v for v, s in zip(outgoing, specs)}
     require(not outgoing or reply < outgoing[0]['number'], 'UDP output follows physical address resolution')
+    if route_retirement and not fault:
+        resolutions = [(kind, number) for kind, target, number in arp if target == remote]
+        require([kind for kind, _ in resolutions] == ['request', 'reply', 'request', 'reply'] and
+                observed['L']['number'] < resolutions[2][1] < resolutions[3][1] < observed['R']['number'],
+                'UDP restored route independently resolves its neighbor before fresh output')
     expected = []
 
     def incoming_packet(body, identifier=0x6400, protocol=17, src=remote, dst=local, mac=None, trigger=None):
@@ -267,7 +275,7 @@ def audit_capture(path, lane, fault=False):
     return dict(passed=True, records=len(records), bootstrap_frames=len(prelude), ARP_frames=len(arp), outgoing_datagrams=len(outgoing), incoming_frames=len(incoming), emitted_ICMP_errors=len(errors), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
 
 
-def audit_case(directory, row):
+def audit_case(directory, row, *, version=1):
     """Check one original client result against its physical captures and command."""
     import json
     import re
@@ -275,6 +283,8 @@ def audit_case(directory, row):
 
     require(type(row.get('fault')) is bool and row.get('firmware') in ('bios', 'uefi') and
             row.get('transport') in ('modern', 'legacy'), 'known UDP firmware, transport and mode')
+    require(type(version) is int and version in (1, 2), 'known UDP route-lifetime source contract')
+    route_retirement = version == 2
     fault = row['fault']
     phase = Path(directory) / ('fault' if fault else 'normal')
     case = phase / (row['firmware'] + '-' + row['transport'])
@@ -317,6 +327,10 @@ def audit_case(directory, row):
     flags = re.findall(r'^UDP_ADMIN_DOWN index=(\d+) flags=([0-9a-f]+)\r?$', text, re.M)
     require(flags == ([] if fault else [('1', '1002'), ('2', '1002')]),
             'exact original UDP administrative-down query flags')
+    if route_retirement:
+        metrics = re.findall(r'^UDP_ADMIN_ROUTE index=(\d+) before=(\d+) after=(\d+)\r?$', text, re.M)
+        require(metrics == ([] if fault else [('1', '552', '1500'), ('2', '552', '1500')]),
+                'exact UDP path metrics before and after administrative route retirement')
     command = json.loads((case / 'command.json').read_text())
     require(isinstance(command, list) and command and all(isinstance(v, str) for v in command) and command[0] == 'qemu-system-x86_64' and
             '-rtc' not in command and '-icount' not in command and
@@ -341,10 +355,12 @@ def audit_case(directory, row):
         value.startswith(f'filter-dump,id=retained{lane},netdev=peer{lane},file=') and
         Path(value.partition('file=')[2]) == original_image.parent / case.name / f'lane{lane}.pcap'
         for lane, value in enumerate(dumps)), 'both original passive UDP physical captures')
-    captures = [audit_capture(case / f'lane{lane}.pcap', lane, fault) for lane in range(2)]
+    captures = [audit_capture(case / f'lane{lane}.pcap', lane, fault,
+                              route_retirement=route_retirement) for lane in range(2)]
     require(row.get('firmware_frames') == [value['bootstrap_frames'] for value in captures],
             'original UDP bootstrap counters match independent frames')
-    expected = dict(arp=[1, 1], wire_datagrams=[0, 1] if fault else [4, 4])
+    expected = dict(arp=[2, 2] if route_retirement and not fault else [1, 1],
+                    wire_datagrams=[0, 1] if fault else [4, 4])
     if not fault:
         expected.update(zero_payloads=[1, 1], zero_checksums=[1, 1], malformed=[14, 14],
                         filter_inputs=[3, 3], server_replies=[1, 1], filtered_tuple_errors=[1, 1],
@@ -373,7 +389,7 @@ def audit(directory, input_root=None):
     phases = [audit_inputs(directory / ('fault' if fault else 'normal'), input_root or ROOT)
               for fault in (False, True)]
     require([v['fault'] for v in phases] == [False, True], 'actual normal and fault UDP inputs')
-    checked = [audit_case(directory, row) for row in rows]
+    checked = [audit_case(directory, row, version=phases[int(row['fault'])]['version']) for row in rows]
     return dict(passed=True, profiles=8, actual_images_opened=2, captures=16,
                 physical_frames=sum(v['records'] for row in checked for v in row['captures']),
                 phases=phases, rows=checked)

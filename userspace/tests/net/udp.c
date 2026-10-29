@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
+#define UDP_ROUTE_LIFETIME_VERSION 2
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -790,16 +791,29 @@ static void link_change(int fd, unsigned lane) {
     wait_link(fd, name, 1);
     wire_send(fd, lane, 'L', 0, 31);
     wire_receive(fd, lane, 'L', 0, 31);
+    int before_mtu = 0;
+    socklen_t mtu_size = sizeof(before_mtu);
+    check(getsockopt(fd, IPPROTO_IP, IP_MTU, &before_mtu, &mtu_size) == 0 &&
+              mtu_size == sizeof(before_mtu) && before_mtu == 552,
+          "UDP locked path metric before administrative retirement");
     struct ifreq request = {0};
     strcpy(request.ifr_name, name);
     check(ioctl(fd, SIOCGIFFLAGS, &request) == 0, "UDP administrative flags");
     administrative_down(fd, &request, lane);
-    check(send(fd, data, sizeof(data), 0) == -1 && errno == ENETDOWN,
+    // Administrative shutdown retires the route. The connected, device-bound
+    // description then reports the Linux route-selection error.
+    check(send(fd, data, sizeof(data), 0) == -1 && errno == ENETUNREACH,
           "UDP admin down prevents output");
     request.ifr_flags |= IFF_UP;
     check(ioctl(fd, SIOCSIFFLAGS, &request) == 0, "UDP administrative restore");
     wire_send(fd, lane, 'R', 0, 31);
     wire_receive(fd, lane, 'R', 0, 31);
+    int after_mtu = 0;
+    mtu_size = sizeof(after_mtu);
+    check(getsockopt(fd, IPPROTO_IP, IP_MTU, &after_mtu, &mtu_size) == 0 &&
+              mtu_size == sizeof(after_mtu) && after_mtu == 1500,
+          "UDP fresh route retires the previous path metric");
+    printf("UDP_ADMIN_ROUTE index=%u before=%d after=%d\n", lane + 1, before_mtu, after_mtu);
     printf("UDP_LINK_PASS index=%u\n", lane + 1);
 }
 

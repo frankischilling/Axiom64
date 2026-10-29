@@ -6,7 +6,7 @@ A controlled local host-backend loop takes 1.638 seconds for 1,000 writethrough 
 
 The longest manager VM suites are measured with their full acceptance coverage. The successful [baseline CI run](https://github.com/frankischilling/Axiom64/actions/runs/38042782851) spent 746 seconds in normal-init UEFI acceptance and 761 seconds in a paired UEFI/modern/lane1 carrier/failure suite. These runs retain actual lease clocks, independent packets, device faults and desktop/keyboard checks.
 
-The [complete 401-job scheduling baseline](https://github.com/frankischilling/Axiom64/actions/runs/38948650468) uses 52.656 runner-hours across a 6,082-second observed workflow span. Tool installation, shared-input download and extraction account for 33,291 runner-seconds across 399 workers. Its 256 rotation shards cover 64 distinct profiles. The current scheduling combines each profile into one complete target run and pairs normal-init transports in isolated worker workspaces, producing 209 required jobs. All 3,840 rotation faults, 32 normal-init cases and 320 carrier cases remain required, along with every other suite and both aggregates.
+The [complete 401-job scheduling baseline](https://github.com/frankischilling/Axiom64/actions/runs/38948650468) uses 52.656 runner-hours across a 6,082-second observed workflow span. Tool installation, shared-input download and extraction account for 33,291 runner-seconds across 399 workers. Its 256 rotation shards cover 64 distinct profiles. The scheduling combines each profile into one complete target run and pairs normal-init transports in isolated worker workspaces. Basic and expiry rotation profiles also share job input restoration and tool setup, with separate executions and retained evidence. All 3,840 rotation faults, 32 normal-init cases and 320 carrier cases remain required, along with every other suite and both aggregates.
 
 A selected local TCG comparison passes eight normal-init cases under both sequential and paired execution, using the same actual kernel, default root and fixture sources. The sequential run takes 998.694 seconds; the paired run takes 663.274 seconds. The sequential measurement includes cold fixture preparation, so the complete hosted before/after run determines the workflow performance claim. A focused carrier comparison also passes both linkages for bound-carrier and failed-device cases while retaining the healthy interface's original twenty-second T1 observation. Full hosted acceptance and the complete unsharded storage profile remain integration gates.
 
@@ -32,7 +32,7 @@ The [complete TCP profile matrix](ci-tcp-profiles.md) distributes the six indepe
 
 The available mechanisms follow [QEMU's accelerator documentation](https://www.qemu.org/docs/master/system/qemu-manpage.html) and [GitHub's hosted-runner KVM guidance](https://github.blog/changelog/2024-04-02-github-actions-hardware-accelerated-android-virtualization-now-available/). This work concerns VM development infrastructure; HP work still follows the required VM prerequisites.
 
-Rotation fault jobs restore a focused input archive with the same sources, file metadata, kernel and libc/provider products. Full root images and curl/OpenSSL build trees remain in the complete archive used by the other suites. This packaging split retains all 209 jobs, every fault target and every real observation interval. Complete hosted before/after acceptance remains required for a workflow performance claim.
+Rotation fault jobs restore a focused input archive with the same sources, file metadata, kernel and libc/provider products. Full root images and curl/OpenSSL build trees remain in the complete archive used by the other suites. This packaging split retains every required suite, fault target and real observation interval. Complete hosted before/after acceptance remains required for a workflow performance claim.
 
 The expanded IPv6 device cohort reuses existing matrix cells. Its complete 180
 guest profiles run with two workers in the IPv6-expiry job; all 45 native
@@ -56,3 +56,13 @@ cancelled, leaving 208 successful jobs and a failed `qemu` aggregate. Its passin
 source, normal-image and GNU artifact audits do not make that workflow accepted.
 The complete guest-step move above still requires a full hosted run and matching
 independent evidence before any performance or integration claim.
+
+## Rotation scenario scheduling
+
+The complete [212-job baseline](https://github.com/frankischilling/Axiom64/actions/runs/40919695002) passes all required jobs and both aggregates. Its observed span is 5,847 seconds, with 168,614 summed job execution seconds and 303,926 summed queue seconds. Its 64 rotation jobs restore tools and prepared inputs separately for basic and expiry scenarios.
+
+The matrix uses 32 rotation jobs, each running both scenarios in separate steps and directories. All 64 provider/linkage/firmware/transport/scenario/cache profiles keep one observed baseline apiece, every physical write/flush target, all three fault modes and the complete 3,840-case union. A failed basic step does not skip expiry, and either failure leaves the job failed. Each artifact keeps both scenario directories and their separate coverage indices. The coverage aggregate still rejects a missing or duplicated profile, changed source/product binding, missing target, altered deadline or incomplete fault-mode union.
+
+This reduces required job dispatches from 212 to 180 and rotation artifact uploads from 128 to 64. The existing 75-minute job and 90-second guest limits remain. For each unchanged cell, the two measured baseline jobs sum to at most 2,396 seconds (39 minutes 56 seconds). Those sums establish a scheduling candidate, not a measured workflow speedup. Complete hosted before/after runs and retained actual coverage evidence remain required before a performance claim or integration.
+
+`python3 -B scripts/tests/account_storage_ci_test.py -v` checks the complete observed target partition and executes the workflow's shell commands against a recording command fixture. It verifies all 64 profile arguments, distinct evidence paths and companion execution after either scenario fails. These tests establish dispatch and failure handling; actual guest executions, independent filesystem/content checks and published coverage indices establish recovery behavior.

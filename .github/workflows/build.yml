@@ -2098,7 +2098,7 @@ jobs:
           path: build/account-management-fault-index-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.cache }}/coverage-index.json
 
   account-rotation-storage:
-    name: Rotation faults ${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.scenario }}-${{ matrix.cache }}-${{ matrix.shard }}
+    name: Rotation faults ${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.cache }}-${{ matrix.shard }}
     needs: [build, storage-admission]
     runs-on: ubuntu-24.04
     timeout-minutes: 75
@@ -2110,7 +2110,6 @@ jobs:
       LINKAGE: ${{ matrix.linkage }}
       FIRMWARE: ${{ matrix.firmware }}
       TRANSPORT: ${{ matrix.transport }}
-      SCENARIO: ${{ matrix.scenario }}
       CACHE: ${{ matrix.cache }}
       SHARD: ${{ matrix.shard }}
       SHARD_COUNT: ${{ needs.build.outputs.rotation_shard_count }}
@@ -2125,32 +2124,42 @@ jobs:
         run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-rotation-inputs.tar.gz"
       - name: Install build and emulation tools
         run: bash scripts/ci/tools.sh restore
-      - name: Interrupt all assigned rotation writes and flushes in every fault mode
+      - name: Interrupt every basic rotation target in all fault modes
         run: |
-          cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-$SCENARIO-$CACHE-$SHARD"
-          sudo -n python3 scripts/account_logbook_rotation_ext2.py --journal --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --scenario "$SCENARIO" --cache-model "$CACHE" --fault-mode eio pause-before pause-after --shard-count "$SHARD_COUNT" --shard-index "$SHARD" --directory "build/account-rotation-storage-$cell"
+          cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-basic-$CACHE-$SHARD"
+          sudo -n python3 scripts/account_logbook_rotation_ext2.py --journal --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --scenario "basic" --cache-model "$CACHE" --fault-mode eio pause-before pause-after --shard-count "$SHARD_COUNT" --shard-index "$SHARD" --directory "build/account-rotation-storage-$cell"
+          sudo -n python3 scripts/account_rotation_storage_coverage.py collect --directory "build/account-rotation-storage-$cell" --output "build/account-rotation-storage-$cell/coverage-index.json"
+      - name: Interrupt every expiry rotation target in all fault modes
+        if: ${{ !cancelled() }}
+        run: |
+          cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-expiry-$CACHE-$SHARD"
+          sudo -n python3 scripts/account_logbook_rotation_ext2.py --journal --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --scenario "expiry" --cache-model "$CACHE" --fault-mode eio pause-before pause-after --shard-count "$SHARD_COUNT" --shard-index "$SHARD" --directory "build/account-rotation-storage-$cell"
           sudo -n python3 scripts/account_rotation_storage_coverage.py collect --directory "build/account-rotation-storage-$cell" --output "build/account-rotation-storage-$cell/coverage-index.json"
       - name: Give the runner ownership of completed rotation evidence
         if: always()
         run: |
-          cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-$SCENARIO-$CACHE-$SHARD"
-          sudo -n bash scripts/ci/storage_evidence.sh "$(id -u)" "$(id -g)" "build/account-rotation-storage-$cell"
+          cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT"
+          sudo -n bash scripts/ci/storage_evidence.sh "$(id -u)" "$(id -g)" "build/account-rotation-storage-$cell-basic-$CACHE-$SHARD" "build/account-rotation-storage-$cell-expiry-$CACHE-$SHARD"
       - name: Upload complete rotation sources, images, observations and interrupted disks
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: axiom64-account-rotation-storage-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.scenario }}-${{ matrix.cache }}-${{ matrix.shard }}
+          name: axiom64-account-rotation-storage-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.cache }}-${{ matrix.shard }}
           retention-days: 1
           if-no-files-found: error
-          path: build/account-rotation-storage-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.scenario }}-${{ matrix.cache }}-${{ matrix.shard }}
+          path: |
+            build/account-rotation-storage-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-basic-${{ matrix.cache }}-${{ matrix.shard }}
+            build/account-rotation-storage-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-expiry-${{ matrix.cache }}-${{ matrix.shard }}
       - name: Upload rotation coverage index
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: axiom64-account-rotation-index-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.scenario }}-${{ matrix.cache }}-${{ matrix.shard }}
+          name: axiom64-account-rotation-index-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.cache }}-${{ matrix.shard }}
           retention-days: 1
           if-no-files-found: error
-          path: build/account-rotation-storage-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.scenario }}-${{ matrix.cache }}-${{ matrix.shard }}/coverage-index.json
+          path: |
+            build/account-rotation-storage-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-basic-${{ matrix.cache }}-${{ matrix.shard }}/coverage-index.json
+            build/account-rotation-storage-${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-expiry-${{ matrix.cache }}-${{ matrix.shard }}/coverage-index.json
 
   account-storage-coverage:
     name: Complete account storage coverage

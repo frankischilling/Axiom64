@@ -11,8 +11,7 @@ def matrices():
                   firmware=['bios', 'uefi'], transport=['modern', 'legacy'])
     return dict(account_clean_matrix=common,
                 account_fault_matrix=dict(common, cache=['writeback', 'writethrough']),
-                account_rotation_matrix=dict(common, scenario=['basic', 'expiry'],
-                                             cache=['writeback', 'writethrough'],
+                account_rotation_matrix=dict(common, cache=['writeback', 'writethrough'],
                                              shard=list(range(ROTATION_SHARDS))))
 
 

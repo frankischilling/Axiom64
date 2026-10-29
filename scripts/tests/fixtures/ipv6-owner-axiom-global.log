@@ -1,0 +1,166 @@
+Axiom64 x86-64
+Firmware: BIOS
+Memory: 233 MiB available, isolated four-level paging
+CPU: GDT, TSS, IDT, SYSCALL and PIT initialized
+Clock: HPET 64-bit counter, 100 Hz accounting
+Clock: RTC UTC seconds=1792821403
+RANDOM_SOURCE rdseed=1 trust_cpu=1
+PCI: 7 functions discovered
+RANDOM_READY source=rdseed bits=256
+VFS: imported 27 nodes from initramfs
+PCI: 7 functions discovered
+Framebuffer: 1024x768 pitch=4096 bpp=32
+NET_DEVICE index=1 name=eth0 mtu=1500 carrier=1 mac=52:54:0:12:34:10
+virtio-net: index=1 transport=modern rx=256 tx=256 features=100010020
+NET_DEVICE index=2 name=eth1 mtu=1500 carrier=1 mac=52:54:0:12:34:11
+virtio-net: index=2 transport=modern rx=256 tx=256 features=100010020
+PCI: 7 functions discovered
+Entering userspace in Ring 3
+exec pid=1 /sbin/init (static ELF)
+exec pid=1 /bin/busybox (static ELF)
+exec pid=2 /bin/ipv6-owner (static ELF)
+IPV6_OWNER_CONTROL lane=0 phase=0 kind=0 case=0 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=70000000
+IPV6_OWNER_CONTROL lane=1 phase=0 kind=0 case=0 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=80000000
+IPV6_OWNER_CONTROL lane=0 phase=1 kind=1 case=1 stage=2 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=80000000
+IPV6_OWNER_CONTROL lane=1 phase=1 kind=1 case=1 stage=2 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=90000000
+IPV6_OWNER_CONTROL lane=0 phase=2 kind=2 case=1 stage=0 flags=880 preferred=4294967295 valid=4294967295 target=fe8000000000000025c3312f8381d510 observed_ns=1120000000
+IPV6_OWNER_CONTROL lane=0 phase=3 kind=3 case=1 stage=0 flags=1 preferred=1 valid=0 target=fe800000000000000000000000000000 observed_ns=1130000000
+IPV6_OWNER_CONTROL lane=1 phase=2 kind=2 case=1 stage=0 flags=880 preferred=4294967295 valid=4294967295 target=fe8000000000000070390c403cc55809 observed_ns=1140000000
+IPV6_OWNER_CONTROL lane=1 phase=3 kind=3 case=1 stage=0 flags=1 preferred=1 valid=0 target=fe800000000000000000000000000000 observed_ns=1140000000
+IPV6_OWNER_CONTROL lane=0 phase=4 kind=2 case=1 stage=1 flags=940 preferred=30 valid=60 target=20010db800400001b84414718bad8461 observed_ns=1150000000
+IPV6_OWNER_CONTROL lane=0 phase=5 kind=3 case=1 stage=1 flags=1 preferred=1 valid=0 target=20010db8004000010000000000000000 observed_ns=1150000000
+IPV6_OWNER_CONTROL lane=1 phase=4 kind=2 case=1 stage=1 flags=940 preferred=30 valid=60 target=20010db800410001486cab10de150850 observed_ns=1160000000
+IPV6_OWNER_CONTROL lane=1 phase=5 kind=3 case=1 stage=1 flags=1 preferred=1 valid=0 target=20010db8004100010000000000000000 observed_ns=1170000000
+IPV6_OWNER_CONTROL lane=0 phase=6 kind=2 case=1 stage=2 flags=8c0 preferred=4294967295 valid=4294967295 target=20010db800400001b84414718bad8461 observed_ns=1170000000
+IPV6_OWNER_CONTROL lane=0 phase=7 kind=3 case=1 stage=2 flags=1 preferred=1 valid=0 target=20010db8004000010000000000000000 observed_ns=1170000000
+IPV6_OWNER_CONTROL lane=1 phase=6 kind=2 case=1 stage=2 flags=8c0 preferred=4294967295 valid=4294967295 target=20010db800410001486cab10de150850 observed_ns=1180000000
+IPV6_OWNER_CONTROL lane=1 phase=7 kind=3 case=1 stage=2 flags=1 preferred=1 valid=0 target=20010db8004100010000000000000000 observed_ns=1180000000
+IPv6 duplicate address index=1
+IPV6_OWNER_CONTROL lane=0 phase=8 kind=4 case=1 stage=0 flags=8c0 preferred=4294967295 valid=4294967295 target=20010db800400001b84414718bad8461 observed_ns=1180000000
+IPv6 duplicate address index=2
+IPV6_OWNER_CONTROL lane=1 phase=8 kind=4 case=1 stage=0 flags=8c0 preferred=4294967295 valid=4294967295 target=20010db800410001486cab10de150850 observed_ns=1190000000
+IPV6_OWNER_CONTROL lane=0 phase=9 kind=9 case=1 stage=0 flags=8c0 preferred=4294967295 valid=4294967295 target=20010db800400001282d0393187a6b45 observed_ns=1200000000
+IPV6_OWNER_CONTROL lane=1 phase=9 kind=9 case=1 stage=0 flags=8c0 preferred=4294967295 valid=4294967295 target=20010db800410001491d2950aebc30a8 observed_ns=1210000000
+IPV6_OWNER_CONTROL lane=1 phase=10 kind=10 case=1 stage=0 flags=880 preferred=4294967295 valid=4294967295 target=20010db800410001491d2950aebc30a8 observed_ns=3860000000
+IPV6_OWNER_CONTROL lane=0 phase=10 kind=10 case=1 stage=0 flags=880 preferred=4294967295 valid=4294967295 target=20010db800400001282d0393187a6b45 observed_ns=3930000000
+IPV6_OWNER_CONTROL lane=0 phase=11 kind=2 case=1 stage=3 flags=8c8 preferred=4294967295 valid=4294967295 target=20010db800400001b84414718bad8461 observed_ns=5310000000
+IPV6_OWNER_CONTROL lane=0 phase=12 kind=2 case=1 stage=3 flags=880 preferred=4294967295 valid=4294967295 target=20010db800400001282d0393187a6b45 observed_ns=5330000000
+IPV6_OWNER_CONTROL lane=0 phase=13 kind=3 case=1 stage=3 flags=2 preferred=1 valid=0 target=20010db8004000010000000000000000 observed_ns=5340000000
+IPV6_OWNER_CONTROL lane=1 phase=11 kind=2 case=1 stage=3 flags=8c8 preferred=4294967295 valid=4294967295 target=20010db800410001486cab10de150850 observed_ns=5350000000
+IPV6_OWNER_CONTROL lane=1 phase=12 kind=2 case=1 stage=3 flags=880 preferred=4294967295 valid=4294967295 target=20010db800410001491d2950aebc30a8 observed_ns=5360000000
+IPV6_OWNER_CONTROL lane=1 phase=13 kind=3 case=1 stage=3 flags=2 preferred=1 valid=0 target=20010db8004100010000000000000000 observed_ns=5370000000
+IPV6_OWNER_CONTROL lane=0 phase=14 kind=6 case=1 stage=0 flags=0 preferred=0 valid=0 target=20010db800400001b84414718bad8461 observed_ns=5370000000
+IPV6_OWNER_CONTROL lane=1 phase=14 kind=6 case=1 stage=0 flags=0 preferred=0 valid=0 target=20010db800410001486cab10de150850 observed_ns=5370000000
+IPV6_OWNER_CONTROL lane=0 phase=15 kind=2 case=1 stage=4 flags=880 preferred=4294967295 valid=4294967295 target=20010db800400001282d0393187a6b45 observed_ns=5370000000
+IPV6_OWNER_CONTROL lane=0 phase=16 kind=3 case=1 stage=4 flags=1 preferred=1 valid=0 target=20010db8004000010000000000000000 observed_ns=5370000000
+IPV6_OWNER_CONTROL lane=1 phase=15 kind=2 case=1 stage=4 flags=880 preferred=4294967295 valid=4294967295 target=20010db800410001491d2950aebc30a8 observed_ns=5380000000
+IPV6_OWNER_CONTROL lane=1 phase=16 kind=3 case=1 stage=4 flags=1 preferred=1 valid=0 target=20010db8004100010000000000000000 observed_ns=5380000000
+IPV6_OWNER_CONTROL lane=0 phase=17 kind=6 case=1 stage=1 flags=0 preferred=0 valid=0 target=20010db800400001282d0393187a6b45 observed_ns=5390000000
+IPV6_OWNER_CONTROL lane=1 phase=17 kind=6 case=1 stage=1 flags=0 preferred=0 valid=0 target=20010db800410001491d2950aebc30a8 observed_ns=5390000000
+IPV6_OWNER_CONTROL lane=0 phase=18 kind=3 case=1 stage=5 flags=0 preferred=0 valid=0 target=20010db8004000010000000000000000 observed_ns=5390000000
+IPV6_OWNER_CONTROL lane=1 phase=18 kind=3 case=1 stage=5 flags=0 preferred=0 valid=0 target=20010db8004100010000000000000000 observed_ns=5400000000
+IPV6_OWNER_CONTROL lane=0 phase=19 kind=7 case=1 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=5400000000
+IPV6_OWNER_CONTROL lane=1 phase=19 kind=7 case=1 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=5400000000
+IPV6_OWNER_CONTROL lane=0 phase=20 kind=1 case=2 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=5400000000
+IPV6_OWNER_CONTROL lane=1 phase=20 kind=1 case=2 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=5410000000
+IPV6_OWNER_CONTROL lane=0 phase=21 kind=2 case=2 stage=0 flags=80 preferred=4294967295 valid=4294967295 target=fe80000000000000505400fffe123410 observed_ns=6440000000
+IPV6_OWNER_CONTROL lane=0 phase=22 kind=3 case=2 stage=0 flags=1 preferred=1 valid=0 target=fe800000000000000000000000000000 observed_ns=6450000000
+IPV6_OWNER_CONTROL lane=1 phase=21 kind=2 case=2 stage=0 flags=80 preferred=4294967295 valid=4294967295 target=fe80000000000000505400fffe123411 observed_ns=6460000000
+IPV6_OWNER_CONTROL lane=1 phase=22 kind=3 case=2 stage=0 flags=1 preferred=1 valid=0 target=fe800000000000000000000000000000 observed_ns=6460000000
+IPV6_OWNER_CONTROL lane=0 phase=23 kind=2 case=2 stage=1 flags=100 preferred=59 valid=99 target=20010db800400002505400fffe123410 observed_ns=7470000000
+IPV6_OWNER_CONTROL lane=0 phase=24 kind=3 case=2 stage=1 flags=1 preferred=1 valid=0 target=20010db8004000020000000000000000 observed_ns=7480000000
+IPV6_OWNER_CONTROL lane=1 phase=23 kind=2 case=2 stage=1 flags=100 preferred=59 valid=99 target=20010db800410002505400fffe123411 observed_ns=7490000000
+IPV6_OWNER_CONTROL lane=1 phase=24 kind=3 case=2 stage=1 flags=1 preferred=1 valid=0 target=20010db8004100020000000000000000 observed_ns=7490000000
+IPV6_OWNER_CONTROL lane=0 phase=25 kind=2 case=2 stage=2 flags=82 preferred=4294967295 valid=4294967295 target=20010db800400002505400fffe123410 observed_ns=7490000000
+IPV6_OWNER_CONTROL lane=0 phase=26 kind=3 case=2 stage=2 flags=1 preferred=1 valid=0 target=20010db8004000020000000000000000 observed_ns=7500000000
+IPV6_OWNER_CONTROL lane=1 phase=25 kind=2 case=2 stage=2 flags=82 preferred=4294967295 valid=4294967295 target=20010db800410002505400fffe123411 observed_ns=7510000000
+IPV6_OWNER_CONTROL lane=1 phase=26 kind=3 case=2 stage=2 flags=1 preferred=1 valid=0 target=20010db8004100020000000000000000 observed_ns=7520000000
+IPV6_OWNER_CONTROL lane=0 phase=27 kind=6 case=2 stage=0 flags=0 preferred=0 valid=0 target=20010db800400002505400fffe123410 observed_ns=7530000000
+IPV6_OWNER_CONTROL lane=1 phase=27 kind=6 case=2 stage=0 flags=0 preferred=0 valid=0 target=20010db800410002505400fffe123411 observed_ns=7540000000
+IPV6_OWNER_CONTROL lane=0 phase=28 kind=3 case=2 stage=5 flags=0 preferred=0 valid=0 target=20010db8004000020000000000000000 observed_ns=7550000000
+IPV6_OWNER_CONTROL lane=1 phase=28 kind=3 case=2 stage=5 flags=0 preferred=0 valid=0 target=20010db8004100020000000000000000 observed_ns=7550000000
+IPV6_OWNER_CONTROL lane=0 phase=29 kind=7 case=2 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=7550000000
+IPV6_OWNER_CONTROL lane=1 phase=29 kind=7 case=2 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=7550000000
+IPV6_OWNER_CONTROL lane=0 phase=30 kind=1 case=3 stage=2 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=7550000000
+IPV6_OWNER_CONTROL lane=1 phase=30 kind=1 case=3 stage=2 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=7550000000
+IPV6_OWNER_CONTROL lane=0 phase=31 kind=2 case=3 stage=0 flags=880 preferred=4294967295 valid=4294967295 target=fe8000000000000025c3312f8381d510 observed_ns=8580000000
+IPV6_OWNER_CONTROL lane=0 phase=32 kind=3 case=3 stage=0 flags=1 preferred=1 valid=0 target=fe800000000000000000000000000000 observed_ns=8590000000
+IPV6_OWNER_CONTROL lane=1 phase=31 kind=2 case=3 stage=0 flags=880 preferred=4294967295 valid=4294967295 target=fe8000000000000070390c403cc55809 observed_ns=8600000000
+IPV6_OWNER_CONTROL lane=1 phase=32 kind=3 case=3 stage=0 flags=1 preferred=1 valid=0 target=fe800000000000000000000000000000 observed_ns=8610000000
+IPV6_OWNER_CONTROL lane=0 phase=33 kind=2 case=3 stage=1 flags=940 preferred=30 valid=60 target=20010db80040000388703f83f595c7bc observed_ns=8620000000
+IPV6_OWNER_CONTROL lane=0 phase=34 kind=3 case=3 stage=1 flags=1 preferred=1 valid=0 target=20010db8004000030000000000000000 observed_ns=8630000000
+IPV6_OWNER_CONTROL lane=1 phase=33 kind=2 case=3 stage=1 flags=940 preferred=30 valid=60 target=20010db80041000310b2011d8b607f1f observed_ns=8640000000
+IPV6_OWNER_CONTROL lane=1 phase=34 kind=3 case=3 stage=1 flags=1 preferred=1 valid=0 target=20010db8004100030000000000000000 observed_ns=8650000000
+IPV6_OWNER_CONTROL lane=0 phase=35 kind=2 case=3 stage=2 flags=8c2 preferred=4294967295 valid=4294967295 target=20010db80040000388703f83f595c7bc observed_ns=8660000000
+IPV6_OWNER_CONTROL lane=0 phase=36 kind=3 case=3 stage=2 flags=1 preferred=1 valid=0 target=20010db8004000030000000000000000 observed_ns=8660000000
+IPV6_OWNER_CONTROL lane=1 phase=35 kind=2 case=3 stage=2 flags=8c2 preferred=4294967295 valid=4294967295 target=20010db80041000310b2011d8b607f1f observed_ns=8670000000
+IPV6_OWNER_CONTROL lane=1 phase=36 kind=3 case=3 stage=2 flags=1 preferred=1 valid=0 target=20010db8004100030000000000000000 observed_ns=8680000000
+IPv6 duplicate address index=1
+IPV6_OWNER_CONTROL lane=0 phase=37 kind=4 case=3 stage=0 flags=8c2 preferred=4294967295 valid=4294967295 target=20010db80040000388703f83f595c7bc observed_ns=8690000000
+IPv6 duplicate address index=2
+IPV6_OWNER_CONTROL lane=1 phase=37 kind=4 case=3 stage=0 flags=8c2 preferred=4294967295 valid=4294967295 target=20010db80041000310b2011d8b607f1f observed_ns=8700000000
+IPV6_OWNER_CONTROL lane=0 phase=38 kind=9 case=3 stage=0 flags=8c2 preferred=4294967295 valid=4294967295 target=20010db800400003c4221f05cb070f40 observed_ns=8710000000
+IPV6_OWNER_CONTROL lane=1 phase=38 kind=9 case=3 stage=0 flags=8c2 preferred=4294967295 valid=4294967295 target=20010db800410003505e93f74fbf384c observed_ns=8720000000
+IPV6_OWNER_CONTROL lane=1 phase=39 kind=10 case=3 stage=0 flags=882 preferred=4294967295 valid=4294967295 target=20010db800410003505e93f74fbf384c observed_ns=9870000000
+IPV6_OWNER_CONTROL lane=0 phase=39 kind=10 case=3 stage=0 flags=882 preferred=4294967295 valid=4294967295 target=20010db800400003c4221f05cb070f40 observed_ns=10380000000
+IPV6_OWNER_CONTROL lane=0 phase=40 kind=2 case=3 stage=3 flags=8ca preferred=4294967295 valid=4294967295 target=20010db80040000388703f83f595c7bc observed_ns=12830000000
+IPV6_OWNER_CONTROL lane=0 phase=41 kind=2 case=3 stage=3 flags=882 preferred=4294967295 valid=4294967295 target=20010db800400003c4221f05cb070f40 observed_ns=12850000000
+IPV6_OWNER_CONTROL lane=0 phase=42 kind=3 case=3 stage=3 flags=2 preferred=1 valid=0 target=20010db8004000030000000000000000 observed_ns=12860000000
+IPV6_OWNER_CONTROL lane=1 phase=40 kind=2 case=3 stage=3 flags=8ca preferred=4294967295 valid=4294967295 target=20010db80041000310b2011d8b607f1f observed_ns=12870000000
+IPV6_OWNER_CONTROL lane=1 phase=41 kind=2 case=3 stage=3 flags=882 preferred=4294967295 valid=4294967295 target=20010db800410003505e93f74fbf384c observed_ns=12880000000
+IPV6_OWNER_CONTROL lane=1 phase=42 kind=3 case=3 stage=3 flags=2 preferred=1 valid=0 target=20010db8004100030000000000000000 observed_ns=12890000000
+IPV6_OWNER_CONTROL lane=0 phase=43 kind=6 case=3 stage=0 flags=0 preferred=0 valid=0 target=20010db80040000388703f83f595c7bc observed_ns=12900000000
+IPV6_OWNER_CONTROL lane=1 phase=43 kind=6 case=3 stage=0 flags=0 preferred=0 valid=0 target=20010db80041000310b2011d8b607f1f observed_ns=12900000000
+IPV6_OWNER_CONTROL lane=0 phase=44 kind=2 case=3 stage=4 flags=882 preferred=4294967295 valid=4294967295 target=20010db800400003c4221f05cb070f40 observed_ns=12900000000
+IPV6_OWNER_CONTROL lane=0 phase=45 kind=3 case=3 stage=4 flags=1 preferred=1 valid=0 target=20010db8004000030000000000000000 observed_ns=12910000000
+IPV6_OWNER_CONTROL lane=1 phase=44 kind=2 case=3 stage=4 flags=882 preferred=4294967295 valid=4294967295 target=20010db800410003505e93f74fbf384c observed_ns=12920000000
+IPV6_OWNER_CONTROL lane=1 phase=45 kind=3 case=3 stage=4 flags=1 preferred=1 valid=0 target=20010db8004100030000000000000000 observed_ns=12930000000
+IPV6_OWNER_CONTROL lane=0 phase=46 kind=6 case=3 stage=1 flags=0 preferred=0 valid=0 target=20010db800400003c4221f05cb070f40 observed_ns=12930000000
+IPV6_OWNER_CONTROL lane=1 phase=46 kind=6 case=3 stage=1 flags=0 preferred=0 valid=0 target=20010db800410003505e93f74fbf384c observed_ns=12930000000
+IPV6_OWNER_CONTROL lane=0 phase=47 kind=3 case=3 stage=5 flags=0 preferred=0 valid=0 target=20010db8004000030000000000000000 observed_ns=12930000000
+IPV6_OWNER_CONTROL lane=1 phase=47 kind=3 case=3 stage=5 flags=0 preferred=0 valid=0 target=20010db8004100030000000000000000 observed_ns=12930000000
+IPV6_OWNER_CONTROL lane=0 phase=48 kind=7 case=3 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=12930000000
+IPV6_OWNER_CONTROL lane=1 phase=48 kind=7 case=3 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=12950000000
+IPV6_OWNER_CONTROL lane=0 phase=49 kind=1 case=4 stage=2 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=12960000000
+IPV6_OWNER_CONTROL lane=1 phase=49 kind=1 case=4 stage=2 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=12970000000
+IPV6_OWNER_CONTROL lane=0 phase=50 kind=2 case=4 stage=0 flags=880 preferred=4294967295 valid=4294967295 target=fe8000000000000025c3312f8381d510 observed_ns=14000000000
+IPV6_OWNER_CONTROL lane=0 phase=51 kind=3 case=4 stage=0 flags=1 preferred=1 valid=0 target=fe800000000000000000000000000000 observed_ns=14010000000
+IPV6_OWNER_CONTROL lane=1 phase=50 kind=2 case=4 stage=0 flags=880 preferred=4294967295 valid=4294967295 target=fe8000000000000070390c403cc55809 observed_ns=14020000000
+IPV6_OWNER_CONTROL lane=1 phase=51 kind=3 case=4 stage=0 flags=1 preferred=1 valid=0 target=fe800000000000000000000000000000 observed_ns=14030000000
+IPV6_OWNER_CONTROL lane=0 phase=52 kind=2 case=4 stage=1 flags=940 preferred=30 valid=60 target=20010db80040000451ee8ccb94eb6bf1 observed_ns=14040000000
+IPV6_OWNER_CONTROL lane=0 phase=53 kind=3 case=4 stage=1 flags=1 preferred=1 valid=0 target=20010db8004000040000000000000000 observed_ns=14040000000
+IPV6_OWNER_CONTROL lane=1 phase=52 kind=2 case=4 stage=1 flags=940 preferred=30 valid=60 target=20010db800410004c9891739d1252dc4 observed_ns=14040000000
+IPV6_OWNER_CONTROL lane=1 phase=53 kind=3 case=4 stage=1 flags=1 preferred=1 valid=0 target=20010db8004100040000000000000000 observed_ns=14050000000
+IPV6_OWNER_CONTROL lane=0 phase=54 kind=2 case=4 stage=2 flags=840 preferred=6 valid=10 target=20010db80040000451ee8ccb94eb6bf1 observed_ns=14060000000
+IPV6_OWNER_CONTROL lane=0 phase=55 kind=3 case=4 stage=2 flags=1 preferred=1 valid=0 target=20010db8004000040000000000000000 observed_ns=14070000000
+IPV6_OWNER_CONTROL lane=1 phase=54 kind=2 case=4 stage=2 flags=840 preferred=6 valid=10 target=20010db800410004c9891739d1252dc4 observed_ns=14080000000
+IPV6_OWNER_CONTROL lane=1 phase=55 kind=3 case=4 stage=2 flags=1 preferred=1 valid=0 target=20010db8004100040000000000000000 observed_ns=14090000000
+IPv6 duplicate address index=1
+IPV6_OWNER_CONTROL lane=0 phase=56 kind=4 case=4 stage=0 flags=840 preferred=6 valid=10 target=20010db80040000451ee8ccb94eb6bf1 observed_ns=14090000000
+IPv6 duplicate address index=2
+IPV6_OWNER_CONTROL lane=1 phase=56 kind=4 case=4 stage=0 flags=840 preferred=6 valid=10 target=20010db800410004c9891739d1252dc4 observed_ns=14100000000
+IPV6_OWNER_CONTROL lane=0 phase=57 kind=9 case=4 stage=0 flags=840 preferred=6 valid=10 target=20010db800400004c425d819eee9c5da observed_ns=14110000000
+IPV6_OWNER_CONTROL lane=1 phase=57 kind=9 case=4 stage=0 flags=840 preferred=6 valid=10 target=20010db8004100040d9b8787d383a0c0 observed_ns=14120000000
+IPV6_OWNER_CONTROL lane=0 phase=58 kind=10 case=4 stage=0 flags=800 preferred=4 valid=8 target=20010db800400004c425d819eee9c5da observed_ns=16190000000
+IPV6_OWNER_CONTROL lane=1 phase=58 kind=10 case=4 stage=0 flags=800 preferred=4 valid=8 target=20010db8004100040d9b8787d383a0c0 observed_ns=16510000000
+IPV6_OWNER_CONTROL lane=0 phase=59 kind=2 case=4 stage=3 flags=800 preferred=2 valid=6 target=20010db800400004c425d819eee9c5da observed_ns=18220000000
+IPV6_OWNER_CONTROL lane=0 phase=60 kind=3 case=4 stage=3 flags=1 preferred=1 valid=0 target=20010db8004000040000000000000000 observed_ns=18240000000
+IPV6_OWNER_CONTROL lane=1 phase=59 kind=2 case=4 stage=3 flags=800 preferred=2 valid=6 target=20010db8004100040d9b8787d383a0c0 observed_ns=18250000000
+IPV6_OWNER_CONTROL lane=1 phase=60 kind=3 case=4 stage=3 flags=1 preferred=1 valid=0 target=20010db8004100040000000000000000 observed_ns=18250000000
+IPV6_OWNER_CONTROL lane=0 phase=61 kind=6 case=4 stage=0 flags=ffffff9d preferred=0 valid=0 target=20010db80040000451ee8ccb94eb6bf1 observed_ns=18250000000
+IPV6_OWNER_CONTROL lane=1 phase=61 kind=6 case=4 stage=0 flags=ffffff9d preferred=0 valid=0 target=20010db800410004c9891739d1252dc4 observed_ns=18260000000
+IPV6_OWNER_CONTROL lane=0 phase=62 kind=2 case=4 stage=4 flags=800 preferred=2 valid=6 target=20010db800400004c425d819eee9c5da observed_ns=18260000000
+IPV6_OWNER_CONTROL lane=0 phase=63 kind=3 case=4 stage=4 flags=1 preferred=1 valid=0 target=20010db8004000040000000000000000 observed_ns=18260000000
+IPV6_OWNER_CONTROL lane=1 phase=62 kind=2 case=4 stage=4 flags=800 preferred=2 valid=6 target=20010db8004100040d9b8787d383a0c0 observed_ns=18270000000
+IPV6_OWNER_CONTROL lane=1 phase=63 kind=3 case=4 stage=4 flags=1 preferred=1 valid=0 target=20010db8004100040000000000000000 observed_ns=18270000000
+IPV6_OWNER_CONTROL lane=0 phase=64 kind=6 case=4 stage=1 flags=0 preferred=0 valid=0 target=20010db800400004c425d819eee9c5da observed_ns=18280000000
+IPV6_OWNER_CONTROL lane=1 phase=64 kind=6 case=4 stage=1 flags=0 preferred=0 valid=0 target=20010db8004100040d9b8787d383a0c0 observed_ns=18290000000
+IPV6_OWNER_CONTROL lane=0 phase=65 kind=3 case=4 stage=5 flags=0 preferred=0 valid=0 target=20010db8004000040000000000000000 observed_ns=18290000000
+IPV6_OWNER_CONTROL lane=1 phase=65 kind=3 case=4 stage=5 flags=0 preferred=0 valid=0 target=20010db8004100040000000000000000 observed_ns=18300000000
+IPV6_OWNER_CONTROL lane=0 phase=66 kind=7 case=4 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=18310000000
+IPV6_OWNER_CONTROL lane=1 phase=66 kind=7 case=4 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=18320000000
+IPV6_OWNER_CONTROL lane=0 phase=67 kind=8 case=0 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=18330000000
+IPV6_OWNER_CONTROL lane=1 phase=67 kind=8 case=0 stage=0 flags=0 preferred=0 valid=0 target=00000000000000000000000000000000 observed_ns=18340000000
+IPV6_OWNER_PASS adapters=2 group=global cases_each=4 quiet_seconds=4
+AXIOM64_TESTS_PASS
+AXIOM64_EXIT status=0

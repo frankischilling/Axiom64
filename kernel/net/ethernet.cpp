@@ -2,6 +2,8 @@
 #include "net/ethernet.hpp"
 #include "net/packet.hpp"
 #include "net/ipv4.hpp"
+#include "net/ipv6.hpp"
+#include "net/ipv6/configuration.hpp"
 #include "drivers/platform/pci.hpp"
 
 namespace ax {
@@ -39,6 +41,7 @@ unsigned net_register(NetAdapter& adapter) {
         uint64_t(info.index), info.name, uint64_t(info.mtu), uint64_t(info.carrier),
         uint64_t(info.mac[0]), uint64_t(info.mac[1]), uint64_t(info.mac[2]), uint64_t(info.mac[3]),
         uint64_t(info.mac[4]), uint64_t(info.mac[5]));
+    ip6::configuration_registered(info.index);
     return info.index;
 }
 
@@ -51,10 +54,12 @@ void net_poll() {
         if (devices[i]->info.live)
             devices[i]->poll(*devices[i]);
     ipv4_poll();
+    ipv6_poll();
 }
 
 void net_shutdown() {
     ipv4_shutdown();
+    ipv6_shutdown();
     for (unsigned i = 0; i < count; i++) {
         devices[i]->stop(*devices[i]);
         devices[i]->info.live = devices[i]->info.carrier = false;
@@ -68,8 +73,21 @@ int net_configure(unsigned index, bool administrative, uint32_t mtu) {
     if (mtu < 68 || mtu > info->maximum_mtu)
         return -22;
     auto& writable = devices[index - 1]->info;
+    uint32_t previous_mtu = writable.mtu;
+    bool previous_administrative = writable.administrative;
     writable.administrative = administrative;
     writable.mtu = mtu;
+    if (previous_administrative != administrative)
+        if (int error = ipv4_administrative_changed(index)) {
+            writable.administrative = previous_administrative;
+            writable.mtu = previous_mtu;
+            return error;
+        }
+    ip6::configuration_changed(index);
+    if (previous_mtu != mtu) {
+        ipv4_mtu_changed(index, previous_mtu);
+        ipv6_mtu_changed(index, previous_mtu);
+    }
     return 0;
 }
 
@@ -80,6 +98,11 @@ bool net_writable(unsigned index) {
 }
 
 int net_send(unsigned index, const void* frame, size_t length, const void* sender) {
+    return net_send_checked(index, frame, length, nullptr, nullptr, sender);
+}
+
+int net_send_checked(unsigned index, const void* frame, size_t length, int (*validate)(void*),
+                     void* context, const void* sender) {
     auto info = net_info(index);
     if (!info)
         return -19;
@@ -89,6 +112,9 @@ int net_send(unsigned index, const void* frame, size_t length, const void* sende
         return -5;
     if (!info->administrative || !info->carrier)
         return -100;
+    if (validate)
+        if (int error = validate(context))
+            return error;
     if (length < ethernet_header)
         return -22;
     const auto bytes = static_cast<const uint8_t*>(frame);
@@ -124,6 +150,7 @@ void net_receive(NetAdapter& adapter, const void* frame, size_t length) {
     unsigned type = broadcast ? 1 : (bytes[0] & 1) ? 2 : !memcmp(bytes, info.mac, 6) ? 0 : 3;
     packet_deliver(info, frame, length, type, nullptr);
     ipv4_receive(info, frame, length);
+    ipv6_receive(info, frame, length);
 }
 
 void net_tx_complete(NetAdapter& adapter, size_t length, bool error) {

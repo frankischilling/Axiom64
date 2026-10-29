@@ -1,0 +1,32 @@
+{
+  "provider": "Axiom64",
+  "group": "global",
+  "firmware": "bios",
+  "transport": "modern",
+  "linkage": "static",
+  "files": {
+    "ipv6-owner-axiom-global.log": {
+      "bytes": 22321,
+      "sha256": "1d5c9b962b67d0d6cd3454896c242b2aaa9571b1d7ce89ee337b39120aaafa7e"
+    },
+    "ipv6-owner-axiom-global-lane0.pcap": {
+      "bytes": 12222,
+      "sha256": "cf14070afd672198436aac63c492bd83ae22c43544cd61e2bb1c3bf961bd12f4"
+    },
+    "ipv6-owner-axiom-global-lane1.pcap": {
+      "bytes": 12222,
+      "sha256": "d8b32da4807531fd9d95b48619674e67dc010a94f755a73ea41bd753f937a9c5"
+    }
+  },
+  "original_packet_timestamps_unchanged": true,
+  "actual_client_sha256": "bfca4d5e3f6cfbecd0bb18d7501f9196ee7c97cef4503cfb70d22934cbbe7882",
+  "actual_kernel_sha256": "2d487a596fd3687db19eb554770efae7b32523c81e739670967dcf8d96e76b45",
+  "actual_image_sha256": "39db87ebfe377f9d64db9942651f4a0b30511198f0de12ca98f09bef163ddd3f",
+  "source_sha256": {
+    "userspace/tests/net/ipv6_address_ownership.c": "983e1170ec77ccb330466ee0ca8cb196b6c804d89d4019d5e4c919c9210e8393",
+    "userspace/tests/net/ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6",
+    "userspace/tests/net/ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b"
+  },
+  "actual_image_independently_opened": true,
+  "full_F12_complete": false
+}

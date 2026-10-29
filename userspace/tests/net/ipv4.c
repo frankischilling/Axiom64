@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
+#include "ipv4_aliases.h"
+#include "ipv4_gateways.h"
+#include "ipv4_unconfigured.h"
+#include "ipv4_fragments.h"
+#include "ipv4_path_mtu.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <net/if.h>
@@ -658,10 +663,16 @@ static void limits(unsigned lane) {
     struct sockaddr_in destination = {.sin_family = AF_INET,
                                       .sin_addr.s_addr = htonl(0x0a170101 + (lane << 8))};
     unsigned char oversized[1481] = {8}, bytes[64];
+    int discovery = IP_PMTUDISC_DO;
+    check(setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &discovery, sizeof(discovery)) == 0,
+          "require DF for MTU rejection");
     check(sendto(fd, oversized, sizeof(oversized), 0, (struct sockaddr*)&destination,
                  sizeof(destination)) == -1 &&
               errno == EMSGSIZE,
           "IPv4 MTU includes header");
+    discovery = IP_PMTUDISC_WANT;
+    check(setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &discovery, sizeof(discovery)) == 0,
+          "restore default discovery");
     destination.sin_addr.s_addr = htonl(0xffffffff);
     request_bytes(bytes);
     bytes[4] = 'B';
@@ -692,9 +703,20 @@ static void limits(unsigned lane) {
               errno == EAGAIN,
           "UDP descriptor validates destination port and nonblocking empty receive");
     check(close(control) == 0, "UDP control close");
-    check(socket(AF_INET, SOCK_STREAM, IPPROTO_UDP) == -1 && errno == EPROTONOSUPPORT &&
-              socket(AF_INET, SOCK_RAW, IPPROTO_UDP) == -1 && errno == EPROTONOSUPPORT,
-          "invalid stream and unimplemented raw protocols are explicit");
+    check(socket(AF_INET, SOCK_STREAM, IPPROTO_UDP) == -1 && errno == EPROTONOSUPPORT,
+          "UDP protocol rejects stream sockets");
+    control = socket(AF_INET, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, IPPROTO_UDP);
+    check(control >= 0, "raw UDP control socket");
+    int kind = 0, protocol = 0;
+    length = sizeof(kind);
+    check(getsockopt(control, SOL_SOCKET, SO_TYPE, &kind, &length) == 0 && length == sizeof(kind) &&
+              kind == SOCK_RAW,
+          "raw UDP socket type");
+    length = sizeof(protocol);
+    check(getsockopt(control, SOL_SOCKET, SO_PROTOCOL, &protocol, &length) == 0 &&
+              length == sizeof(protocol) && protocol == IPPROTO_UDP,
+          "raw UDP protocol query");
+    check(close(control) == 0, "raw UDP control close");
     printf("IPV4_LIMITS_PASS index=%u\n", lane + 1);
 }
 
@@ -915,6 +937,14 @@ static void arp_reply_pressure(unsigned lane) {
     printf("IPV4_ARP_REPLY_PASS index=%u\n", lane + 1);
 }
 
+static void administrative_down(int fd, struct ifreq* interface, unsigned lane) {
+    interface->ifr_flags &= ~IFF_UP;
+    check(ioctl(fd, SIOCSIFFLAGS, interface) == 0 && ioctl(fd, SIOCGIFFLAGS, interface) == 0 &&
+              !(interface->ifr_flags & (IFF_UP | IFF_RUNNING)),
+          "administrative down clears operational flags");
+    printf("IPV4_ADMIN_DOWN index=%u flags=%x\n", lane + 1, (unsigned short)interface->ifr_flags);
+}
+
 static void link_change(unsigned lane) {
     int fd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
     check(fd >= 0, "link-change raw socket");
@@ -949,17 +979,14 @@ static void link_change(unsigned lane) {
             check(close(local) == 0, "carrier-loss loopback close");
         }
     }
-    interface.ifr_flags &= ~IFF_UP;
-    check(ioctl(fd, SIOCSIFFLAGS, &interface) == 0 && ioctl(fd, SIOCGIFFLAGS, &interface) == 0 &&
-              !(interface.ifr_flags & IFF_UP) && (interface.ifr_flags & IFF_RUNNING),
-          "administrative down preserves carrier");
+    administrative_down(fd, &interface, lane);
     unsigned char bytes[64];
     request_bytes(bytes);
     struct sockaddr_in destination = {.sin_family = AF_INET,
                                       .sin_addr.s_addr = htonl(0x0a170101 + (lane << 8))};
     check(sendto(fd, bytes, sizeof(bytes), 0, (struct sockaddr*)&destination,
                  sizeof(destination)) == -1 &&
-              errno == ENETDOWN,
+              errno == ENETUNREACH,
           "administrative down rejects IPv4 output");
     interface.ifr_flags |= IFF_UP;
     check(ioctl(fd, SIOCSIFFLAGS, &interface) == 0, "restore administrative up");
@@ -972,6 +999,36 @@ static void link_change(unsigned lane) {
 
 int main(int argc, char** argv) {
     setbuf(stdout, NULL);
+    if (argc == 2 && !strcmp(argv[1], "--gateways")) {
+        ipv4_gateway_checks(0);
+        ipv4_gateway_checks(1);
+        ipv4_unconfigured_checks(0);
+        ipv4_unconfigured_checks(1);
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--aliases")) {
+        ipv4_alias_checks(0);
+        ipv4_alias_checks(1);
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--path-mtu-lifetime")) {
+        ipv4_path_mtu_lifetime_checks();
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--path-mtu")) {
+        ipv4_path_mtu_checks(0);
+        ipv4_path_mtu_checks(1);
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--fragments")) {
+        ipv4_fragment_checks(0);
+        ipv4_fragment_checks(1);
+        ipv4_fragment_expiry_checks();
+        ipv4_path_mtu_checks(0);
+        ipv4_path_mtu_checks(1);
+        ipv4_path_mtu_lifetime_checks();
+        return 0;
+    }
     int fd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
     check(fd >= 0, "raw ICMP socket");
     echo(fd, "127.0.0.1", "IPV4_LOOPBACK_PASS");
@@ -989,6 +1046,8 @@ int main(int argc, char** argv) {
     if (argc == 1 || strcmp(argv[1], "--loopback")) {
         queues();
         configuration();
+        ipv4_alias_checks(0);
+        ipv4_alias_checks(1);
         fd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
         check(fd >= 0, "wire raw ICMP socket");
         set_address(fd, "eth0", SIOCSIFNETMASK, "255.255.255.255");
@@ -1004,6 +1063,8 @@ int main(int argc, char** argv) {
         fd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
         check(fd >= 0, "routed wire socket");
         routing(fd);
+        check(close(fd) == 0, "close completed routing observer");
+        fd = -1;
         pressure(0);
         pressure(1);
         arp_failure(0);
@@ -1022,6 +1083,12 @@ int main(int argc, char** argv) {
         cache_replacement(1);
         arp_reply_pressure(0);
         arp_reply_pressure(1);
+        ipv4_fragment_checks(0);
+        ipv4_fragment_checks(1);
+        ipv4_fragment_expiry_checks();
+        ipv4_path_mtu_checks(0);
+        ipv4_path_mtu_checks(1);
+        ipv4_path_mtu_lifetime_checks();
     }
     if (fd >= 0)
         check(close(fd) == 0, "raw ICMP close");

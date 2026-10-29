@@ -7,11 +7,16 @@ class Qmp:
     def __init__(self, path):
         self.socket = socket.socket(socket.AF_UNIX)
         self.socket.settimeout(5)
-        self.socket.connect(str(path))
-        self.stream = self.socket.makefile("rwb")
-        json.loads(self.stream.readline())
-        self.sequence = 0
-        self.command("qmp_capabilities")
+        self.stream = None
+        try:
+            self.socket.connect(str(path))
+            self.stream = self.socket.makefile("rwb")
+            json.loads(self.stream.readline())
+            self.sequence = 0
+            self.command("qmp_capabilities")
+        except Exception:
+            self.close()
+            raise
 
     def command(self, name, arguments=None):
         self.sequence += 1
@@ -29,7 +34,8 @@ class Qmp:
             return response.get("return")
 
     def close(self):
-        self.stream.close()
+        if self.stream is not None:
+            self.stream.close()
         self.socket.close()
 
 

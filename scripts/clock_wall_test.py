@@ -5,6 +5,7 @@ import argparse
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import platform
 import re
 import shutil
 import subprocess
@@ -126,16 +127,41 @@ def check(row, text, before_ns, after_ns, date):
                              text, re.MULTILINE)
     if len(observation) != 1 or 'CLOCK_WALL_PASS ' not in text or 'CLOCK_WALL_FAIL ' in text:
         raise RuntimeError('the wall-clock probe did not complete once')
+    fields = ('precise_first_s', 'precise_first_ns', 'timeval_s', 'timeval_us',
+              'time_return_s', 'time_store_s', 'precise_last_s', 'precise_last_ns',
+              'coarse_first_s', 'coarse_first_ns', 'coarse_last_s', 'coarse_last_ns')
+    pattern = '^CLOCK_WALL_INTERFACES ' + ' '.join(name + r'=(-?\d+)' for name in fields) + '$'
+    samples = re.findall(pattern, text, re.MULTILINE)
+    if len(samples) != 1:
+        raise RuntimeError('the wall interfaces lack one complete precise/coarse observation')
+    interfaces = dict(zip(fields, map(int, samples[0])))
+    first = (interfaces['precise_first_s'], interfaces['precise_first_ns'])
+    last = (interfaces['precise_last_s'], interfaces['precise_last_ns'])
+    coarse_first = (interfaces['coarse_first_s'], interfaces['coarse_first_ns'])
+    coarse_last = (interfaces['coarse_last_s'], interfaces['coarse_last_ns'])
+    if (any(not 0 <= sample[1] < 1_000_000_000 for sample in (first, last, coarse_first, coarse_last))
+            or not 0 <= interfaces['timeval_us'] < 1_000_000
+            or not first[0] <= interfaces['timeval_s'] <= last[0]
+            or not coarse_first[0] <= interfaces['time_store_s'] <= coarse_last[0]
+            or interfaces['time_return_s'] != interfaces['time_store_s']
+            or coarse_first > coarse_last):
+        raise RuntimeError('the wall interfaces differ from their actual precise/coarse brackets')
     seconds, nanoseconds, monotonic_ns = map(int, observation[0])
+    if (seconds, nanoseconds) != last:
+        raise RuntimeError('the calendar observation differs from its precise interface sample')
     actual = seconds * 1_000_000_000 + nanoseconds
     minimum = before_ns if date is None else int(datetime.fromisoformat(date).replace(
         tzinfo=timezone.utc).timestamp()) * 1_000_000_000
     maximum = after_ns if date is None else minimum + after_ns - before_ns
     if not minimum - 1_000_000_000 <= actual <= maximum + 2_000_000_000:
         raise RuntimeError('the guest calendar is outside its independently observed RTC interval')
+    if any(not minimum - 1_000_000_000 <= sample[0] * 1_000_000_000 + sample[1] <= maximum + 2_000_000_000
+           for sample in (coarse_first, coarse_last)):
+        raise RuntimeError('the coarse calendar is outside its independently observed RTC interval')
     if not 0 <= nanoseconds < 1_000_000_000:
         raise RuntimeError('the calendar fraction is invalid')
-    row.update(observed=dict(seconds=seconds, nanoseconds=nanoseconds, monotonic_ns=monotonic_ns),
+    row.update(interfaces=interfaces,
+               observed=dict(seconds=seconds, nanoseconds=nanoseconds, monotonic_ns=monotonic_ns),
                host_interval_ns=[before_ns, after_ns], rtc_interval_ns=[minimum, maximum],
                calendar_tolerance_ns=[1_000_000_000, 2_000_000_000], passed=True)
 
@@ -177,10 +203,17 @@ def main():
             before = time.time_ns()
             row, text = checked_run(command, case / 'native.log', 10)
             after = time.time_ns()
-            row.update(native=True, linkage=linkage, client=fingerprint(case / 'clock-wall'))
-            check(row, text, before, after, None)
-            if row['returncode'] != 0 or row['timed_out']:
-                raise RuntimeError('the native calendar client failed')
+            row.update(native=True, linkage=linkage, client=fingerprint(case / 'clock-wall'),
+                       kernel=platform.uname()._asdict(), host_interval_ns=[before, after])
+            try:
+                check(row, text, before, after, None)
+                if row['returncode'] != 0 or row['timed_out']:
+                    raise RuntimeError('the native calendar client failed')
+            except BaseException as error:
+                row.update(passed=False, error=repr(error))
+                raise
+            finally:
+                (case / 'process.json').write_text(json.dumps(row, indent=2)+'\n')
             results.append(row)
         else:
             folder = out / (linkage + '-image')

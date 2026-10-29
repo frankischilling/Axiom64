@@ -1140,7 +1140,65 @@ static void local_output_retries() {
                 cases);
 }
 
+static void family_segment_defaults() {
+    unsigned cases = 0;
+    for (auto family : {Family::ipv4, Family::ipv6})
+        for (bool passive : {false, true})
+            for (uint16_t local : {uint16_t(1460), uint16_t(900)})
+                for (uint16_t offered : {uint16_t(0), uint16_t(300), uint16_t(1400)}) {
+                    Connection endpoint(family);
+                    assert(endpoint.segment_size() == (family == Family::ipv6 ? 1220 : 536));
+                    Segment peer;
+                    peer.sequence = 800;
+                    peer.flags = syn;
+                    peer.window = 32768;
+                    peer.maximum_segment = offered;
+                    Segment packet;
+                    if (passive) {
+                        assert(endpoint.passive(100, peer, 0, local));
+                        assert(endpoint.next(0, packet));
+                        assert(packet.flags == (syn | ack) && packet.maximum_segment == local);
+                        endpoint.emitted(0);
+                        peer.flags = ack;
+                        peer.sequence++;
+                        peer.acknowledgment = 101;
+                    } else {
+                        endpoint.active(100, 0, local);
+                        assert(endpoint.next(0, packet));
+                        assert(packet.flags == syn && packet.maximum_segment == local);
+                        endpoint.emitted(0);
+                        peer.flags |= ack;
+                        peer.acknowledgment = 101;
+                    }
+                    endpoint.input(peer, 10);
+                    assert(endpoint.state() == State::established);
+                    uint16_t fallback = family == Family::ipv6 ? 1220 : 536;
+                    uint16_t expected = std::min(local, offered ? offered : fallback);
+                    assert(endpoint.segment_size() == expected);
+                    if (!passive) {
+                        assert(endpoint.next(10, packet) && packet.flags == ack);
+                        endpoint.emitted(10);
+                    }
+                    uint8_t bytes[2000];
+                    for (unsigned at = 0; at < sizeof(bytes); at++)
+                        bytes[at] = uint8_t(at * 31);
+                    assert(endpoint.write(bytes, sizeof(bytes), 20) == sizeof(bytes));
+                    assert(endpoint.next(20, packet) && packet.length == expected);
+                    assert(!std::memcmp(packet.payload, bytes, expected));
+                    endpoint.emitted(20);
+                    // MSS negotiation must feed the actual sender and its original loss clock.
+                    assert(endpoint.next(1020, packet) && packet.length == expected);
+                    assert(!std::memcmp(packet.payload, bytes, expected));
+                    endpoint.emitted(1020);
+                    cases++;
+                }
+    std::printf("TCP_FAMILY_MSS_PASS cases=%u active passive ipv4_536 ipv6_1220 "
+                "peer_override local_limit real_sender retransmission\n",
+                cases);
+}
+
 int main() {
+    family_segment_defaults();
     local_output_retries();
     reconnect_sequences();
     default_lifetimes();

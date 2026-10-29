@@ -1,0 +1,43 @@
+Axiom64 x86-64
+Firmware: BIOS
+Memory: 2028 MiB available, isolated four-level paging
+CPU: GDT, TSS, IDT, SYSCALL and PIT initialized
+Clock: HPET 64-bit counter, 100 Hz accounting
+Clock: RTC UTC seconds=1792888729
+RANDOM_SOURCE rdseed=1 trust_cpu=1
+PCI: 7 functions discovered
+RANDOM_READY source=rdseed bits=256
+VFS: imported 21 nodes from initramfs
+PCI: 7 functions discovered
+Framebuffer: 1024x768 pitch=4096 bpp=32
+NET_DEVICE index=1 name=eth0 mtu=1500 carrier=1 mac=52:54:0:12:34:10
+virtio-net: index=1 transport=modern rx=256 tx=256 features=100010020
+NET_DEVICE index=2 name=eth1 mtu=1500 carrier=1 mac=52:54:0:12:34:11
+e1000: index=2 model=82540EM rx=64 tx=64
+PCI: 7 functions discovered
+Entering userspace in Ring 3
+exec pid=1 /sbin/init (static ELF)
+exec pid=1 /bin/busybox (static ELF)
+exec pid=2 /bin/net-tests (static ELF)
+PACKET_BUFFER_OPTIONS_PASS cases=9 maximum=212992
+PACKET_LINK_DOWN index=1
+PACKET_LINK_UP index=1
+PACKET_LINK_PASS index=1
+PACKET_TIMESTAMP_PASS index=1 begin_ns=1792888729100000000 end_ns=1792888729110000000 arrival_ns=1792888729110000000 dequeue_ns=1792888729260000000
+PACKET_PROTOCOL_OBSERVATION index=1 type=0 length=64
+PACKET_PROTOCOL_PASS index=1
+PACKET_TIMESTAMP_LAZY index=1 before_ns=1792888729270000000 stamp_ns=1792888729270000000 after_ns=1792888729270000000 arrival_ns=1792888729110000000
+PACKET_ADMIN_FLAGS index=1 flags=1002
+PACKET_NIC_PASS index=1 frames=67
+PACKET_LINK_DOWN index=2
+PACKET_LINK_UP index=2
+PACKET_LINK_PASS index=2
+PACKET_TIMESTAMP_PASS index=2 begin_ns=1792888729890000000 end_ns=1792888730030000000 arrival_ns=1792888730020000000 dequeue_ns=1792888730180000000
+PACKET_PROTOCOL_OBSERVATION index=2 type=0 length=64
+PACKET_PROTOCOL_PASS index=2
+PACKET_TIMESTAMP_LAZY index=2 before_ns=1792888730190000000 stamp_ns=1792888730190000000 after_ns=1792888730190000000 arrival_ns=1792888730020000000
+PACKET_ADMIN_FLAGS index=2 flags=1002
+PACKET_NIC_PASS index=2 frames=67
+PACKET_TESTS_PASS nics=2
+AXIOM64_TESTS_PASS
+AXIOM64_EXIT status=0

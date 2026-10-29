@@ -6,6 +6,8 @@
 
 namespace ax::tcp {
 constexpr size_t stream_capacity = 32768;
+// The wire adapter selects the IP family; connection state remains address-independent.
+enum class Family { ipv4, ipv6 };
 enum class State {
     closed,
     syn_sent,
@@ -22,12 +24,16 @@ enum class State {
 // A bounded TCP endpoint. The caller owns tuple lookup, packet validation, clock and storage.
 // Input borrows a checksum-validated Segment; no input pointers survive the call.
 // next() borrows send bytes until the immediately following emitted(), output_blocked(),
-// input/read/write, or successful reduce_mss() call. Call emitted() only after copying the packet
+// input/read/write, or successful MSS reduction. Call emitted() only after copying the packet
 // into an owned output queue. Report a temporary enqueue rejection with output_blocked(): it leaves
 // sequence and RTO ownership unchanged, schedules a local retry, and bounds delivery even if no
 // copy has reached the output queue.
 class Connection {
   public:
+    explicit Connection(Family family = Family::ipv4)
+        : mss(family == Family::ipv6 ? 1220 : 536), fallback_mss(mss) {
+    }
+
     State state() const {
         return status;
     }
@@ -101,9 +107,15 @@ class Connection {
     // The caller validates the quote and tuple. Sequence ownership and handshake
     // versus established error policy remain with the connection.
     void quoted_error(uint32_t sequence, int error, bool abort_request);
-    // The caller owns IPv4/tuple/policy validation. Keep all sent sequence owned
+    // PMTU cache learning needs sequence ownership even when MSS is already smaller.
+    bool owns_pmtu_quote(uint32_t sequence, bool include_idle = false) const;
+    // The caller owns IP-family, tuple and policy validation. Keep all sent sequence owned
     // while repacketizing its buffered bytes; delivery and RTO clocks do not restart.
     bool reduce_mss(uint32_t sequence, uint16_t maximum_segment);
+    // A trusted output path may lower the sender ceiling before a packet is sent.
+    // Unquoted path changes preserve the ordinary RTO; a known dropped copy may
+    // request immediate repacketization. Neither changes delivery/retry clocks.
+    bool path_mss(uint16_t maximum_segment, bool retry = false);
     void limits(size_t receive_bytes, size_t send_bytes);
 
     void nodelay(bool enabled) {
@@ -141,6 +153,8 @@ class Connection {
     uint32_t window_sequence = 0, window_ack = 0, pending_fin_sequence = 0;
     uint32_t resegment_next = 0, resegment_end = 0;
     uint16_t peer_window = 0, maximum_peer_window = 0, mss = 536, local_mss = 1460;
+    uint16_t path_limit = 1460;
+    const uint16_t fallback_mss;
     uint16_t acknowledged_history = 0;
     uint32_t timeout_ms = 0, persist_interval = 1000;
     uint64_t opened_at = 0, progress_at = 0, retransmit_at = 0, persist_at = 0;

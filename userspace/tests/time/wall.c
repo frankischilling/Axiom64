@@ -56,15 +56,36 @@ static void filesystem_time(void) {
 int main(void) {
     setbuf(stdout, NULL);
     filesystem_time();
-    struct timespec first, last, resolution;
+    struct timespec first, last, coarse_first, coarse_last, resolution;
     struct timeval wall;
+    require(!clock_gettime(CLOCK_REALTIME_COARSE, &coarse_first), "coarse realtime lower bound");
     require(!clock_gettime(CLOCK_REALTIME, &first), "realtime time");
     require(!gettimeofday(&wall, NULL), "timeval time");
     int64_t seconds = -1;
     long returned = syscall(SYS_time, &seconds);
-    require(returned == seconds && !clock_gettime(CLOCK_REALTIME, &last) &&
-                seconds >= first.tv_sec && seconds <= last.tv_sec && wall.tv_sec >= first.tv_sec &&
-                wall.tv_sec <= last.tv_sec && wall.tv_usec >= 0 && wall.tv_usec < 1000000,
+    require(!clock_gettime(CLOCK_REALTIME, &last) &&
+                !clock_gettime(CLOCK_REALTIME_COARSE, &coarse_last),
+            "wall interface upper bounds");
+    printf("CLOCK_WALL_INTERFACES precise_first_s=%" PRId64 " precise_first_ns=%ld"
+           " timeval_s=%" PRId64 " timeval_us=%ld time_return_s=%ld time_store_s=%" PRId64
+           " precise_last_s=%" PRId64 " precise_last_ns=%ld"
+           " coarse_first_s=%" PRId64 " coarse_first_ns=%ld"
+           " coarse_last_s=%" PRId64 " coarse_last_ns=%ld\n",
+           (int64_t)first.tv_sec, first.tv_nsec, (int64_t)wall.tv_sec, (long)wall.tv_usec, returned,
+           seconds, (int64_t)last.tv_sec, last.tv_nsec, (int64_t)coarse_first.tv_sec,
+           coarse_first.tv_nsec, (int64_t)coarse_last.tv_sec, coarse_last.tv_nsec);
+    // Linux time(2) uses cached seconds, which can trail precise realtime at
+    // a second boundary. Observe each interface inside its actual clock bracket.
+    require(returned == seconds && seconds >= coarse_first.tv_sec &&
+                seconds <= coarse_last.tv_sec && wall.tv_sec >= first.tv_sec &&
+                wall.tv_sec <= last.tv_sec && wall.tv_usec >= 0 && wall.tv_usec < 1000000 &&
+                first.tv_nsec >= 0 && first.tv_nsec < 1000000000 && last.tv_nsec >= 0 &&
+                last.tv_nsec < 1000000000 && coarse_first.tv_nsec >= 0 &&
+                coarse_first.tv_nsec < 1000000000 && coarse_last.tv_nsec >= 0 &&
+                coarse_last.tv_nsec < 1000000000 &&
+                (coarse_first.tv_sec < coarse_last.tv_sec ||
+                 (coarse_first.tv_sec == coarse_last.tv_sec &&
+                  coarse_first.tv_nsec <= coarse_last.tv_nsec)),
             "wall interfaces agree");
     printf("CLOCK_WALL_OBSERVATION seconds=%" PRId64 " nanoseconds=%ld monotonic_ns=%" PRIu64 "\n",
            (int64_t)last.tv_sec, last.tv_nsec, monotonic_ns());

@@ -1,0 +1,44 @@
+[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01H[2J[01;01H[=3h[2J[01;01HBdsDxe: loading Boot0001 "UEFI QEMU DVD-ROM QM00003 " from PciRoot(0x0)/Pci(0x1,0x1)/Ata(Secondary,Master,0x0)
+BdsDxe: starting Boot0001 "UEFI QEMU DVD-ROM QM00003 " from PciRoot(0x0)/Pci(0x1,0x1)/Ata(Secondary,Master,0x0)
+[01;01H[01;01HAxiom64 x86-64
+Firmware: UEFI
+Memory: 1984 MiB available, isolated four-level paging
+CPU: GDT, TSS, IDT, SYSCALL and PIT initialized
+Clock: HPET 64-bit counter, 100 Hz accounting
+Clock: RTC UTC seconds=1792902720
+RANDOM_SOURCE rdseed=1 trust_cpu=1
+PCI: 7 functions discovered
+RANDOM_READY source=rdseed bits=256
+VFS: imported 21 nodes from initramfs
+PCI: 7 functions discovered
+Framebuffer: 1024x768 pitch=4096 bpp=32
+NET_DEVICE index=1 name=eth0 mtu=1500 carrier=1 mac=52:54:0:12:34:10
+virtio-net: index=1 transport=modern rx=256 tx=256 features=100010020
+NET_DEVICE index=2 name=eth1 mtu=1500 carrier=1 mac=52:54:0:12:34:11
+e1000: index=2 model=82540EM rx=64 tx=64
+PCI: 7 functions discovered
+Entering userspace in Ring 3
+exec pid=1 /sbin/init (static ELF)
+exec pid=1 /bin/busybox (static ELF)
+exec pid=2 /bin/udp-tests (static ELF)
+UDP_BINDINGS_PASS
+UDP_ZERO_PEER_PASS
+UDP_LOOPBACK_PASS
+UDP_PAYLOAD_LIMIT_PASS bytes=65507
+UDP_REUSE_PASS
+UDP_SHUTDOWN_PASS
+UDP_ERRORS_PASS
+UDP_RECEIVE_LIFETIME_PASS
+UDP_INTERRUPT_PASS
+UDP_RESTART_PASS
+UDP_FORK_PASS
+UDP_RESOURCE_CYCLES_PASS count=128
+UDP_CAPTURED_RECEIVE_PASS
+UDP_BUFFER_LIMIT_PASS bytes=2048 payload=2020
+UDP_CONFIG_PASS
+UDP_FAULT_READY
+UDP_DEVICE_FAULT_PASS
+UDP_OTHER_NIC_PASS
+UDP_TESTS_PASS
+AXIOM64_TESTS_PASS
+AXIOM64_EXIT status=0

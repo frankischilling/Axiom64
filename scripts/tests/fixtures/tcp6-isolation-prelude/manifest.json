@@ -1,0 +1,20 @@
+{
+  "purpose": "Regression for original pre-readiness UEFI IPv6 boot traffic; no feature acceptance claim.",
+  "original_producer_verdict": "failed independent capture reader; actual client reached its complete marker; original receipt remains unchanged",
+  "original_error": "independent capture: bounded original isolation neighbor maintenance",
+  "original_image_sha256": "a7b18451f2f14cef2e7787a25c373ddf08e9f22be73a73065e61860d9f67c163",
+  "kernel_sha256": "2e399956237087b12e7d6932fd30b91bc6bd9a0864fe64f5e4c92f9f5c2f62ea",
+  "program_sha256": "84261ffae5e7601a0859bbf5a8d452ef118f9295dc5e1b20fbf6f1512e7d8f91",
+  "producer_source": {
+    "source_zip_sha256": "d3ec06eb12f0f2a71ef7c5231c30fc570945ab8ec18293d4321272eb33efbb92",
+    "source_inputs_sha256": "985ea9bbd6c323be5e22bb158fb8aa9e98df2f44758d1c87fb5641322716d44d",
+    "files": 1483,
+    "enumeration": "git"
+  },
+  "files": {
+    "lane0.pcap": "f3251e70d8bfb4dea5c74b4f6502c67befa61cb0f09990b1c4f8a167d6407d83",
+    "lane1.pcap": "90338ec122952ef4fb96a22efe9ba55ba97bdd130e869b341554dc0b81a70aef",
+    "client.log": "8747b8edc3d7ca3120f0b0b4d910112dd9383c5bac80f69207f1b13ffee7a84a",
+    "client.c": "4ad8e952aed9758e9ac8e685c4a1989af9f86a3bcba7a1a59375315e92869bd1"
+  }
+}

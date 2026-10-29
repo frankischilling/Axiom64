@@ -22,17 +22,17 @@ uint16_t checksum(uint32_t source, uint32_t destination, const uint8_t* bytes, s
 }
 } // namespace
 
-UdpInput udp_receive(unsigned index, uint32_t source, uint32_t destination, bool broadcast,
-                     const void* data, size_t length) {
+UdpInput udp_receive(const Ipv4ReceiveMetadata& metadata, bool broadcast, const void* data,
+                     size_t length) {
     auto bytes = static_cast<const uint8_t*>(data);
     if (length < 8)
         return UdpInput::dropped;
     size_t declared = ip4::get16(bytes + 4);
     if (declared < 8 || declared > length ||
-        (ip4::get16(bytes + 6) && checksum(source, destination, bytes, declared)))
+        (ip4::get16(bytes + 6) && checksum(metadata.source, metadata.destination, bytes, declared)))
         return UdpInput::dropped;
-    return inet_datagram_deliver(index, source, destination, ip4::get16(bytes),
-                                 ip4::get16(bytes + 2), broadcast, bytes + 8, declared - 8)
+    return inet_datagram_deliver(metadata, ip4::get16(bytes), ip4::get16(bytes + 2), broadcast,
+                                 bytes + 8, declared - 8)
                ? UdpInput::delivered
                : UdpInput::unbound;
 }
@@ -41,7 +41,11 @@ int udp_send(InetSocket* owner, const UdpOutput& output, const void* data, size_
     if (length > 65535 - 28)
         return -90;
     uint32_t source;
-    int error = ipv4_source(output.source, output.destination, output.index, source);
+    int error = 0;
+    if (output.selected)
+        source = output.selected->path.source;
+    else
+        error = ipv4_source(output.source, output.destination, output.index, source);
     if (error)
         return error;
     auto bytes = static_cast<uint8_t*>(alloc(length + 8));
@@ -54,8 +58,9 @@ int udp_send(InetSocket* owner, const UdpOutput& output, const void* data, size_
     memcpy(bytes + 8, data, length);
     uint16_t sum = checksum(source, output.destination, bytes, length + 8);
     ip4::put16(bytes + 6, sum ? sum : 65535);
-    error = ipv4_send(owner, source, output.destination, output.index, 17, output.ttl,
-                      output.broadcast, bytes, length + 8);
+    error = ipv4_send(owner, Ipv4Source::retained(source), output.destination, output.index, 17,
+                      output.ttl, output.broadcast, bytes, length + 8, output.cache_destination,
+                      output.traffic_class, output.selected);
     release(bytes);
     return error;
 }

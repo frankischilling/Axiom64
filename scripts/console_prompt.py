@@ -5,11 +5,16 @@ SHELL_PROMPT = re.compile(rb'\x1b\[\?2004hbash-[0-9]+\.[0-9]+\$ ')
 KERNEL_RECORD = re.compile(
     rb'(?:exec pid=[0-9]+ [^\r\n]+ \((?:static ELF|dynamic musl)\)|'
     rb'unimplemented syscall [0-9]+ pid=[0-9]+|'
-    rb'RANDOM_RESEEDED source=[a-z0-9_-]+ bits=[0-9]+)\r?\n')
+    rb'RANDOM_RESEEDED source=[a-z0-9_-]+ bits=[0-9]+|'
+    rb'Network manager exited status=[0-9]+; retrying after one second\.|'
+    rb'INIT_MANAGER_REAP pid=[1-9][0-9]* status=[0-9]+ monotonic_ms=[0-9]+|'
+    rb'INIT_MANAGER_SPAWN pid=[1-9][0-9]* monotonic_ms=[0-9]+|'
+    rb'NETWORK_MANAGER_BOUND index=[1-9][0-9]* method=dhcp address=[0-9a-f]{8} generation=[0-9]+)\r?\n')
 
 
 def shell_prompt_end(text, start=0):
-    # Kernel diagnostics are complete records, but can land between separate
+    # Kernel diagnostics and PID1/network-manager status messages are complete
+    # records, but can land between separate
     # userspace writes of one prompt. Preserve the capture and its raw offsets;
     # omit only these known records in the temporary view used for recognition.
     remaining = text[start:]

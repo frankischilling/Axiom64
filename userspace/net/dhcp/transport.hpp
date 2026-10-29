@@ -8,7 +8,9 @@ struct Interface {
     char name[16]{};
     unsigned index = 0;
     Identity identity;
-    bool up = false, carrier = false;
+    bool up = false;
+    // Linux IFF_RUNNING: operational carrier requires administrative UP.
+    bool carrier = false;
 };
 
 // Positive errno on failure; neither function changes interface configuration.

@@ -12,16 +12,21 @@ import socket
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 from fetch import ROOT
 from qmp import Qmp
 from network_fault import defer_tx, inject
 
 
-def fixture(status=True, program='net-tests', script='userspace/tests/net/run.sh', environment=None):
+def fixture(status=True, program='net-tests', script='userspace/tests/net/run.sh', environment=None,
+            runtime_loader=None):
     subprocess.run(['make', 'build/axiom64.elf', 'build/init', f'build/{program}', 'busybox'],
                    cwd=ROOT, check=True)
     files = {name: (0o40755, b'') for name in ['bin', 'sbin', 'etc', 'dev', 'proc', 'sys', 'tmp', 'run', 'root']}
+    if runtime_loader is not None:
+        files['lib'] = (0o40755, b'')
+        files['lib/ld-musl-x86_64.so.1'] = (0o100755, Path(runtime_loader).read_bytes())
     for name, source in [('sbin/init', ROOT / 'build/init'),
                          (f'bin/{program}', ROOT / 'build' / program),
                          ('bin/busybox', ROOT / 'build/busybox-1.37.0/busybox'),
@@ -36,14 +41,19 @@ def fixture(status=True, program='net-tests', script='userspace/tests/net/run.sh
                 data = f'export {key}={shlex.quote(value)}\n'.encode() + data
         files[name] = (0o100755, data)
     destination = ROOT / 'build/rootfs-network.cpio'
-    with destination.open('wb') as output:
-        for inode, (name, (mode, data)) in enumerate([*sorted(files.items()), ('TRAILER!!!', (0, b''))], 1):
-            encoded = name.encode() + b'\0'
-            values = [inode, mode, 0, 0, 1, 0, len(data), 0, 0, 0, 0, len(encoded), 0]
-            output.write(b'070701' + b''.join(f'{value:08x}'.encode() for value in values) + encoded)
-            output.write(bytes(-output.tell() % 4))
-            output.write(data)
-            output.write(bytes(-output.tell() % 4))
+    # Completed ISO staging trees may still link the previous archive. Publish a
+    # new inode only after the full newc stream is closed, preserving those bytes.
+    with tempfile.TemporaryDirectory(prefix='.network-root-', dir=destination.parent) as staging:
+        staged = Path(staging) / destination.name
+        with staged.open('wb') as output:
+            for inode, (name, (mode, data)) in enumerate([*sorted(files.items()), ('TRAILER!!!', (0, b''))], 1):
+                encoded = name.encode() + b'\0'
+                values = [inode, mode, 0, 0, 1, 0, len(data), 0, 0, 0, 0, len(encoded), 0]
+                output.write(b'070701' + b''.join(f'{value:08x}'.encode() for value in values) + encoded)
+                output.write(bytes(-output.tell() % 4))
+                output.write(data)
+                output.write(bytes(-output.tell() % 4))
+        os.replace(staged, destination)
 
 
 def reply(frame, lane):
@@ -58,6 +68,31 @@ def reply(frame, lane):
     if frame[23:] != expected:
         raise RuntimeError('packet payload differs from the host expectation')
     return guest + peer + frame[12:]
+
+
+def packet_protocol_observations(text, indices):
+    """Bind each protocol-listener query and pass to its actual selected interface."""
+    events, observations, passes = [], [], []
+    malformed = False
+    for line in text.splitlines():
+        if line.startswith('PACKET_PROTOCOL_OBSERVATION'):
+            match = re.fullmatch(r'PACKET_PROTOCOL_OBSERVATION index=(\d+) type=(\d+) length=(\d+)', line)
+            if match:
+                index, kind, length = map(int, match.groups())
+                observations.append(dict(index=index, type=kind, length=length))
+                events.append(('observation', index, kind, length))
+            else:
+                malformed = True
+        elif line.startswith('PACKET_PROTOCOL_PASS'):
+            match = re.fullmatch(r'PACKET_PROTOCOL_PASS index=(\d+)', line)
+            if match:
+                index = int(match[1])
+                passes.append(index)
+                events.append(('pass', index))
+            else:
+                malformed = True
+    expected = [event for index in indices for event in (('observation', index, 0, 64), ('pass', index))]
+    return dict(passed=not malformed and events == expected, observations=observations, passes=passes)
 
 
 def run(firmware, transport, models, queue, timeout, wrap, gdb=False, fault=None, status=True, mtu=0, pressure=False):
@@ -210,7 +245,8 @@ def run(firmware, transport, models, queue, timeout, wrap, gdb=False, fault=None
     count = capacity + 2 if pressure else (1 if fault == 'id' else 2) if fault else 65621 if wrap else 67
     required = ['AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0']
     if pressure:
-        required += [f'PACKET_PRESSURE_PASS slots={capacity}']
+        required += ['PACKET_PRESSURE_IPV6_DISABLED index=1',
+                     f'PACKET_PRESSURE_PASS slots={capacity}']
         debug_text = debug_log.read_text(errors='replace') if debug_log else ''
         injected = f'PACKET_TX_DEFERRED model={models[0]}' in debug_text and \
                    f'PACKET_TX_RELEASED model={models[0]}' in debug_text
@@ -222,13 +258,40 @@ def run(firmware, transport, models, queue, timeout, wrap, gdb=False, fault=None
         required += [f'PACKET_TESTS_PASS nics={len(models)}']
         required += [f'PACKET_NIC_PASS index={lane + 1} frames={count + (1 if mtu >= 9000 and model == "virtio" else 0)}'
                      for lane, model in enumerate(models)]
+        required += [f'PACKET_ADMIN_FLAGS index={lane + 1} flags=1002' for lane in range(len(models))]
         if status:
             required += [f'PACKET_LINK_PASS index={lane + 1}' for lane in range(len(models))]
         injected = True
     required += [f'virtio-net: index={lane + 1} transport={transport} rx={queue} tx=256'
                  if model == 'virtio' else f'e1000: index={lane + 1} model=82540EM rx=64 tx=64'
                  for lane, model in enumerate(models)]
+    if not fault and not pressure:
+        required += [f'PACKET_PROTOCOL_PASS index={lane + 1}' for lane in range(len(models))]
     missing = [marker for marker in required if marker not in text]
+    protocol = packet_protocol_observations(text, [] if fault or pressure else range(1, len(models) + 1))
+    administrative_flags = [dict(index=int(index), flags=int(flags, 16)) for index, flags in re.findall(
+        r'^PACKET_ADMIN_FLAGS index=(\d+) flags=([0-9a-f]+)\r?$', text, re.M)]
+    administrative_flags_valid = (not administrative_flags if fault or pressure else
+        administrative_flags == [dict(index=lane + 1, flags=0x1002) for lane in range(len(models))])
+    timestamp_observations = [dict(zip(('index', 'begin_ns', 'end_ns', 'arrival_ns', 'dequeue_ns'),
+                                       map(int, value))) for value in re.findall(
+        r'^PACKET_TIMESTAMP_PASS index=(\d+) begin_ns=(\d+) end_ns=(\d+) arrival_ns=(\d+) '
+        r'dequeue_ns=(\d+)\r?$', text, re.M)]
+    lazy_observations = [dict(zip(('index', 'before_ns', 'stamp_ns', 'after_ns', 'arrival_ns'),
+                                 map(int, value))) for value in re.findall(
+        r'^PACKET_TIMESTAMP_LAZY index=(\d+) before_ns=(\d+) stamp_ns=(\d+) after_ns=(\d+) '
+        r'arrival_ns=(\d+)\r?$', text, re.M)]
+    timestamps_valid = fault or pressure or (
+        len(timestamp_observations) == len(models) and
+        {value['index'] for value in timestamp_observations} == set(range(1, len(models) + 1)) and
+        all(value['begin_ns'] <= value['arrival_ns'] <= value['end_ns'] and
+            value['dequeue_ns'] - value['arrival_ns'] >= 100000000 for value in timestamp_observations) and
+        len(lazy_observations) == len(models) and
+        {value['index'] for value in lazy_observations} == set(range(1, len(models) + 1)) and
+        all(value['before_ns'] <= value['stamp_ns'] <= value['after_ns'] and
+            value['stamp_ns'] - value['arrival_ns'] >= 100000000 and
+            value['arrival_ns'] == next(stamp['arrival_ns'] for stamp in timestamp_observations
+                                        if stamp['index'] == value['index']) for value in lazy_observations))
     features_valid = True
     for lane, model in enumerate(models):
         if model != 'virtio':
@@ -244,8 +307,14 @@ def run(firmware, transport, models, queue, timeout, wrap, gdb=False, fault=None
                   rx_queue=queue, tx_queue=256, wrap=wrap,
                   fault=fault, pressure=pressure, injected=injected, status_feature=status, host_mtu=mtu,
                   features_valid=features_valid,
+                  protocol_observations=protocol['observations'], protocol_passes=protocol['passes'],
+                  protocol_selection_valid=protocol['passed'],
+                  administrative_flags=administrative_flags, administrative_flags_valid=administrative_flags_valid,
+                  timestamp_observations=timestamp_observations, timestamps_valid=bool(timestamps_valid),
+                  lazy_timestamp_observations=lazy_observations,
                   passed=returncode == 1 and not timed_out and not error and not missing and injected and
-                         features_valid and [state['frames'] for state in peers] == expected_counts,
+                         features_valid and timestamps_valid and administrative_flags_valid and protocol['passed'] and
+                         [state['frames'] for state in peers] == expected_counts,
                   returncode=returncode, timed_out=timed_out, error=error, missing=missing,
                   host_frames=[state['frames'] for state in peers],
                   host_foreign=[state['foreign'] for state in peers],

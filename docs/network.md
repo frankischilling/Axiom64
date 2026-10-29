@@ -20,9 +20,11 @@ Network polling runs with serialized callers on one CPU, in syscall attempts and
 
 `read`/`write`, `readv`/`writev`, `sendto`/`recvfrom`, and `sendmsg`/`recvmsg` operate on whole frames. Raw sends preserve the caller's Ethernet header. The optional send address selects an interface. Input vectors, address metadata, and the complete TX payload are captured before a blocking attempt; resumption uses the retained open description even if another thread closes and reuses the descriptor. `dup`, fork, and last-close lifetime follow the shared Handle.
 
-Receive supports `MSG_DONTWAIT`, `MSG_PEEK`, and `MSG_TRUNC`. Truncated receives consume one frame unless peeking; `MSG_TRUNC` returns its wire length, and `recvmsg` reports the truncation flag. Source `sockaddr_ll` contains the interface, protocol, Ethernet hardware type, packet type, and source MAC. Each listener owns its copy: by default at most 32 frames and 65536 payload bytes. `SO_RCVBUF` accepts a receive budget, doubles it for queries, and applies a 2304-byte minimum and 425984-byte maximum. A configured listener holds at most 256 frames within that byte budget. Shrinking the budget preserves queued frames and rejects new frames until there is room. A full listener drops new frames without affecting another listener. `PACKET_STATISTICS` reports and resets delivered-plus-dropped packet and drop counts. `PACKET_IGNORE_OUTGOING` disables locally transmitted frames for that listener; the originating socket does not receive its own send.
+Receive supports `MSG_DONTWAIT`, `MSG_PEEK`, and `MSG_TRUNC`. Truncated receives consume one frame unless peeking; `MSG_TRUNC` returns its wire length, and `recvmsg` reports the truncation flag. Source `sockaddr_ll` contains the interface, protocol, Ethernet hardware type, packet type, and source MAC. Each listener owns its copy: by default at most 32 frames and 65536 payload bytes. `SO_RCVBUF` accepts a receive budget, doubles it for queries, and applies a 2304-byte minimum and 425984-byte maximum. A configured listener holds at most 256 frames within that byte budget. Shrinking the budget preserves queued frames and rejects new frames until there is room. A full listener drops new frames without affecting another listener. `PACKET_STATISTICS` reports and resets delivered-plus-dropped packet and drop counts. Outgoing copies go only to `ETH_P_ALL` listeners. A listener selecting a specific EtherType receives matching incoming frames. `PACKET_IGNORE_OUTGOING` suppresses outgoing copies for an all-protocol listener; the originating socket does not receive its own send.
 
 `poll` and epoll report receive availability and TX readiness. A permanently failed bound adapter reports `POLLERR` and I/O returns `EIO`; carrier or administrative down returns `ENETDOWN` on transmission. Nonblocking exhaustion returns `EAGAIN`. `FIONREAD` reports the next frame length. Interface ioctls support name/index, MAC, MTU, flags, and [IPv4 address controls](ipv4.md#configuration-and-routing). `SIOCGIFCONF` lists configured IPv4 interfaces and the fixed loopback address.
+
+`SIOCGSTAMP` and `SIOCGSTAMPNS`, including their time64 request forms, enable packet timestamp recording on the shared socket description. Query before traffic when admission time matters: a fresh description returns `ENOENT` until a receive succeeds, even when packets are queued. Once armed, peeking selects the frame's queued realtime timestamp without consuming it; reading the same frame retains the same value. Timestamp precision follows the kernel's ten-millisecond clock. Duplicated descriptions share the observation, and an invalid result pointer returns `EFAULT` without losing a selected timestamp. As on Linux, the first query after an unarmed receive samples current realtime; it cannot recover that receive's admission time. Recording ends when the last owning description closes.
 
 `getsockname`, socket type/domain/protocol, the send-buffer query, and receive-buffer setting and queries are supported. Datagram packet sockets, connect/listen/accept/shutdown, socket deadlines, ancillary data, packet mmap rings, BPF, memberships, advanced interface flags, and other unimplemented options return explicit errors. Current tasks run as root; capability-based raw-socket authorization is part of the planned accounts and permissions work. Exposed services still require that work and secure randomness.
 
@@ -43,10 +45,75 @@ The complete matrix runs 46 dedicated boots: 12 mixed-adapter firmware/transport
 
 The harness gives each NIC an isolated loopback TCP peer. It checks the QEMU framing prefix, interface-specific MACs, experimental EtherType, sequence, length, and every payload byte before returning a reply. Firmware-generated traffic is counted separately. Guest checks cover address metadata, vectors, peek/truncation, filters, nonblocking behavior, poll/epoll while idle, duplicate/fork lifetime, and blocked `recvmsg` after descriptor and metadata reuse. A lagging listener retains 32 of 48 replies and records exactly 16 drops while the active listener receives all replies. QMP controls physical carrier down/up independently of the administrator flag.
 
+Each normal profile also delays a separate incoming-frame observer by 150 milliseconds on every adapter. The armed timestamp must fall inside the original send/receipt interval and precede dequeue by at least 100 milliseconds. An unarmed observer receives the same original frame, then its first timestamp query must fall inside the actual query interval. The fixture also checks peek, consume, duplicate lifetime, invalid result pointers, all four timestamp request forms and fresh-description isolation. The host reader requires both actual timestamp observations alongside all earlier frame and device checks.
+
 The wrap phase exchanges 65,621 host-validated frames per NIC. Fault cases use GDB to alter one actual RX completion at its validation boundary in a dedicated VM: oversized virtio/e1000 lengths are dropped before valid traffic resumes; an invalid virtio head quarantines the adapter and wakes the socket with an error. These tests alter the emulated device's completion memory, without adding production test hooks.
 
-TX pressure tests defer driver polling through GDB while the real device transmits and writes completions. They fill all 64 virtio buffers or 63 e1000 descriptors, verify `EAGAIN` and absent write readiness, then resume polling and require epoll to wake an idle sender. The test leaves device-written completions intact and compares every transmitted byte after the caller overwrites its original buffer. This covers delayed completion observation; it does not claim a fault-injected physical DMA engine stall.
+TX pressure tests defer driver polling through GDB while the real device transmits and writes completions. Before enabling the selected link, the client disables per-link IPv6 and reads back that setting. This gives its test payloads the complete transmit budget while completion observation is held; other packet trials retain normal automatic addressing. The pressure trials fill all 64 virtio buffers or 63 e1000 descriptors, verify `EAGAIN` and absent write readiness, then resume polling and require epoll to wake an idle sender. The test leaves device-written completions intact and compares every transmitted byte after the caller overwrites its original buffer. This covers delayed completion observation; it does not claim a fault-injected physical DMA engine stall.
 
 Optional-feature tests validate the negotiated bits, carrier fallback without STATUS, and MTU bounds. A 9000-byte offered virtio MTU sends and receives a 9014-byte frame alongside e1000's 1500-byte limit. Failed receive copies retain a queued frame; zero-length descriptor reads, zero-length receives, and peek/truncation behavior are checked separately. Evidence uses `build/network-*`; full ABI/thread/compiler/signal/VFS/desktop/input, storage, ext2, disk-root, formatting, sanitizer, and source-bundle checks remain required before integration.
 
 The contracts follow [virtio 1.2](https://docs.oasis-open.org/virtio/virtio/v1.2/virtio-v1.2.html), [Linux packet sockets](https://man7.org/linux/man-pages/man7/packet.7.html), [Linux interface ioctls](https://man7.org/linux/man-pages/man7/netdevice.7.html), and [QEMU's e1000 model](https://github.com/qemu/qemu/blob/v8.2.2/hw/net/e1000.c). The controlled peer uses [QEMU's socket framing](https://github.com/qemu/qemu/blob/v8.2.2/net/socket.c).
+
+The corrected local matrix passes all 46 boots with the original capacity, readiness, wakeup and timing checks. Independent inspection opens 34 distinct images, binds their actual kernel and packet client, requires each normal adapter to report administrative-down flags `1002` and rejects 164 archived changed logs. This clears administrative and operational flags while preserving the independent physical-carrier checks. A controlled diagnostic first reproduces exhaustion with two IPv6 router solicitations occupying the full ring, then passes with the explicit link precondition. Its added five-second diagnostic pause is separate from the complete matrix. Current hosted acceptance remains required.
+
+
+Ready IPv6 link-local owners are checked across administrative shutdown, carrier
+loss and an MTU crossing the 1280-byte minimum. Administrative restoration repeats
+DAD with the retained key; MTU restoration uses current defaults and a fresh scope;
+carrier restoration preserves the ready address. Operational link flags clear on
+administrative shutdown. See [IPv6](ipv6.md) and the device-transition commands in
+[testing](testing.md). The complete local device-state matrix also covers probing, regeneration, retrying
+and exhausted owners. Complete feature and current-source hosted acceptance remain required.
+
+
+The ownership conflict observer tracks previously conflicted identities while a
+replacement appears. It keeps the complete final owner inventory and rejects
+multiple fresh candidates. Queried ownership records are emitted in one checked
+write, preserving them when the kernel reports a duplicate address.
+
+
+Ethernet link queries survive retirement of an interface's IPv6 scope at an MTU
+below 1280. Ordinary netlink replies retain the device's flags and MTU and omit
+unavailable IPv6 attributes. IPv6-specific dumps skip that scope. Restoration
+reports the newly inherited generation mode. Native and guest comparisons check
+the original netlink reply bytes alongside ioctl and proc observations.
+
+The protocol-selection regression adds an ordinary listener to each existing
+adapter exchange without sending more workload frames. Its first received frame
+must be the exact peer reply with `PACKET_HOST` metadata; the listener closes before
+queue pressure and descriptor-lifetime trials. `python3 scripts/tests/packet_protocol_test.py -v`
+checks the production demultiplexer under sanitizers with an original captured
+probe, including matching, other, disabled and all protocols, bound and unbound
+interfaces, ignored outgoing traffic and sender exclusion. The kernel follows
+[Linux outgoing packet taps](https://github.com/torvalds/linux/blob/028ef9c96e96197026887c0f092424679298aae8/net/core/dev.c#L2399),
+which visit all-protocol registrations. `sudo -n python3 scripts/packet_protocol_native.py`
+runs the same C listener check through static musl, dynamic musl and glibc in
+isolated native network namespaces and retains actual captures, clock receipts,
+source/compiler manifests and client binaries. These ABI comparisons retain raw
+packet times without claiming native packet-clock qualification. Focused native
+and guest diagnostics expose the old outgoing copy and pass with the filter
+correction using identical client binaries. All 46 complete local Ethernet boots
+pass. Independent readers open 34 actual images and reopen their original logs;
+376 serialized and freshly extracted corruptions reject. The original host reader
+accepted changed numeric protocol queries despite the client's own checks. Its
+correction binds every queried interface, packet type and length to one ordered
+pass record. The original executions and first reader receipts remain unchanged;
+no guest was repeated for that reader correction. Four actual trace fixtures
+retain sixteen archived reader controls. All three native linkages also pass,
+with six original captures and twelve reopened metadata corruptions independently
+checked. The changed kernel also passes all 180 device guests and 90 pinned native
+comparisons. Independent readers reopen thirty device images and 540 captures,
+verify 432 physical conflict-delivery receipts and reject 5,862 archived
+corruptions. Reopening these profiles after the shared clock helper change
+produces identical audits. Complete current-source hosted and feature acceptance
+remain required.
+
+Internet sockets share `SO_BINDTODEVICE` readback across IPv4/IPv6 TCP, UDP and
+raw descriptions. Unbound queries return zero name bytes; bound queries require
+a sixteen-byte capacity and return the actual terminated interface name.
+Readback observes shared binding changes and preserves destination state.
+The paired [scoped TCP cohort](ipv6.md) checks protected-page copies, result
+lengths, alias lifetime, loopback names and binding release on native Linux and
+the guest. Complete networking and current-revision hosted acceptance remain
+required.

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Resolve and fetch musl packages for the guest; never execute package scripts."""
 import argparse
+import fcntl
 import hashlib
 import io
 import json
@@ -16,14 +17,18 @@ TOOLCHAIN = ["gcc", "g++", "binutils", "musl-dev", "linux-headers", "make"]
 
 def download(url, destination):
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if not destination.exists():
-        request = urllib.request.Request(url, headers={"User-Agent": "Axiom64-build"})
-        with urllib.request.urlopen(request, timeout=60) as response:
-            temporary = destination.with_suffix(destination.suffix + ".part")
-            with temporary.open("wb") as output:
-                while chunk := response.read(1024 * 1024):
-                    output.write(chunk)
-            temporary.replace(destination)
+    # Parallel libc/client builds can request the same uncached archive. Keep
+    # its existence check, partial file and publication under one owned lock.
+    with destination.with_suffix(destination.suffix + ".lock").open("a") as guard:
+        fcntl.flock(guard, fcntl.LOCK_EX)
+        if not destination.exists():
+            request = urllib.request.Request(url, headers={"User-Agent": "Axiom64-build"})
+            with urllib.request.urlopen(request, timeout=60) as response:
+                temporary = destination.with_suffix(destination.suffix + ".part")
+                with temporary.open("wb") as output:
+                    while chunk := response.read(1024 * 1024):
+                        output.write(chunk)
+                temporary.replace(destination)
     return destination
 
 

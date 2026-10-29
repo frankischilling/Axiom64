@@ -9,6 +9,7 @@ from tcp_capture_clock import bind_native_clock, microseconds
 import re
 import struct
 from fetch import ROOT
+from tcp_capture_link import audit_link_receipts, fnv
 
 
 def require(value, message):
@@ -25,11 +26,72 @@ def checksum(data):
     return total ^ 65535
 
 
-def fnv(frame):
-    result = 0xcbf29ce484222325
-    for byte in frame:
-        result = (result ^ byte) * 0x100000001b3 & 0xffffffffffffffff
-    return f'{result:016x}'
+def within(item, start, end):
+    return start <= item['driver_lower_ms'] <= item['driver_upper_ms'] <= end
+
+
+def capture_receipts(text):
+    """Bind actual queued packet timestamps to independently bracketed clocks."""
+    anchors = list(re.finditer(
+        r'^ICMP_CAPTURE_CLOCK phase=(begin|end) monotonic_before_ns=(\d+) '
+        r'realtime_ns=(\d+) monotonic_after_ns=(\d+)\r?$', text, re.M))
+    require(len(anchors) == text.count('ICMP_CAPTURE_CLOCK ') == 2 and
+            [value[1] for value in anchors] == ['begin', 'end'],
+            'both packet arrival clock anchors')
+    begin, end = [tuple(int(value[field]) for field in (2, 3, 4)) for value in anchors]
+    require(all(0 <= before <= after and after - before <= 100000000 and realtime > 0
+                for before, realtime, after in (begin, end)) and begin[2] <= end[0],
+            'ordered bounded packet arrival clock anchors')
+    offset_lower = max(realtime - after for before, realtime, after in (begin, end))
+    offset_upper = min(realtime - before for before, realtime, after in (begin, end))
+    require(offset_lower <= offset_upper, 'stable packet arrival clock')
+    matches = list(re.finditer(
+        r'^ICMP_FRAME lane=(\d+) index=(\d+) length=(\d+) kind=(\d+) '
+        r'hash=([0-9a-f]{16}) monotonic_ms=(\d+) packet_realtime_ns=(\d+) '
+        r'dequeue_ms=(\d+)\r?$', text, re.M))
+    require(len(matches) == text.count('ICMP_FRAME ') and matches,
+            'complete packet arrival receipts')
+    ready = list(re.finditer(r'^ICMP_CAPTURE_READY lane=(\d+) index=(\d+) timestamp_error=(\d+)\r?$', text, re.M))
+    require(len(ready) == 2 and {int(value[1]) for value in ready} == {0, 1} and
+            all(int(value[3]) == 2 and anchors[0].end() < value.start() < matches[0].start()
+                for value in ready), 'both packet timestamp observers armed before traffic')
+    indices = {int(value[1]): int(value[2]) for value in ready}
+    receipts = []
+    for value in matches:
+        lane, index, size, kind, digest, clock, realtime, dequeue = value.groups()
+        clock, realtime, dequeue = int(clock), int(realtime), int(dequeue)
+        mapped = realtime - begin[1] + begin[0] + (begin[2] - begin[0]) // 2
+        require(anchors[0].end() < value.start() < anchors[1].start() and
+                mapped >= 0 and clock == mapped // 1000000, 'actual packet arrival mapping')
+        lower, upper = realtime - offset_upper, realtime - offset_lower
+        require(begin[0] <= lower <= upper <= dequeue * 1000000 + 999999 and
+                dequeue <= end[2] // 1000000, 'actual packet arrival precedes dequeue')
+        require(int(lane) in indices and indices[int(lane)] == int(index),
+                'armed timestamp observer owns the actual capture interface')
+        receipts.append(dict(lane=int(lane), index=int(index), size=int(size), kind=int(kind),
+                             digest=digest, driver_ms=clock, driver_lower_ms=lower // 1000000,
+                             driver_upper_ms=upper // 1000000, packet_realtime_ns=realtime,
+                             dequeue_ms=dequeue))
+    return receipts
+
+
+def audit_driver_receipt_clocks(receipts, native=False):
+    # Native packet timestamps can precede socket enqueueing by different
+    # amounts. The recorded dequeue clock describes their delivery order.
+    field = 'dequeue_ms' if native else 'packet_realtime_ns'
+    clocks = [value[field] for value in receipts]
+    require(clocks == sorted(clocks),
+            'ordered native driver dequeue clocks' if native else 'ordered guest driver packet clocks')
+
+
+def audit_native_observer_clocks(items):
+    for item in items:
+        driver = item['packet_realtime_ns']
+        physical = item['capture_realtime_ns']
+        if item['outgoing']:
+            require(driver <= physical, 'native outgoing driver stamp precedes independent receive')
+        else:
+            require(physical <= driver, 'native incoming driver stamp follows independent transmit')
 
 
 def packets(path, statistics=None):
@@ -38,7 +100,9 @@ def packets(path, statistics=None):
     header = struct.unpack_from('<IHHIIII', raw)
     require(header[1:3] == (2, 4) and header[6] == 1, 'Ethernet PCAP version')
     at, previous, rows = 24, 0, []
+    record_index = -1
     while at < len(raw):
+        record_index += 1
         require(at + 16 <= len(raw), 'complete PCAP record')
         seconds, microseconds, size, original = struct.unpack_from('<IIII', raw, at)
         at += 16
@@ -64,10 +128,10 @@ def packets(path, statistics=None):
                     'actual TCP header, payload bounds and pseudo-header checksum')
         else:
             require(ip[9] == 1, 'only TCP and ICMP in the isolated fixture')
-        rows.append(dict(stamp=stamp, frame=frame, ip=ip[:total], body=body, protocol=ip[9]))
+        rows.append(dict(record_index=record_index, stamp=stamp, frame=frame, ip=ip[:total], body=body, protocol=ip[9]))
     require(rows, 'nonempty actual traffic')
     if statistics is not None:
-        bind_native_clock(path, rows, statistics)
+        bind_native_clock(path, rows, statistics, include_realtime=True)
     return rows
 
 
@@ -137,8 +201,8 @@ def verify_controls(packets, quotes, cases, native, windows):
                     'exact one-error or last-error replacement injection count')
             start, end = windows[(lane, ordinal)]
             for item, source in actual_quotes:
-                require(start - 100 <= source['driver_ms'] <= end + 100 and
-                        start - 100 <= item['driver_ms'] <= end + 100,
+                require(within(source, start - 100, end + 100) and
+                        within(item, start - 100, end + 100),
                         'actual quoted transmission and driver delivery occur in their socket lifetime')
                 if item['lane'] == source['lane']:
                     require(item['peer_ms'] >= source['peer_ms'], 'causal independent peer receipt clock')
@@ -196,7 +260,7 @@ def verify_controls(packets, quotes, cases, native, windows):
             if mode in ('SOFT', 'RECOVER', 'CONSUME'):
                 data = [(item, fields) for item, fields in outgoing if fields['data'] == b'one']
                 require(data and all(fields['sequence'] == origin for _, fields in data) and
-                        end - data[0][0]['driver_ms'] >= 2300,
+                        end - data[0][0]['driver_upper_ms'] >= 2300,
                         'actual outstanding bytes retain the configured delivery timeout')
                 if case['mutation'] == 'last-error':
                     require([item['body'][:2] for item, _ in actual_quotes] == [b'\x03\x03', b'\x0c\0'] and
@@ -212,7 +276,7 @@ def verify_controls(packets, quotes, cases, native, windows):
                     require(second and all(fields['sequence'] == (origin + 3) & 0xffffffff and
                                            fields['acknowledgment'] == (peer_origin + 1) & 0xffffffff and
                                            microseconds(item) > microseconds(progress[0][0]) for item, fields in second) and
-                            end - second[0][0]['driver_ms'] >= 2300,
+                            end - second[0][0]['driver_upper_ms'] >= 2300,
                             'actual post-progress bytes remain outstanding until their new delivery timeout')
                     require(not any(fields['flags'] & 16 and fields['acknowledgment'] ==
                                     (origin + 6) & 0xffffffff for _, fields in incoming),
@@ -310,6 +374,9 @@ def audit_row(root, row, cases, input_root=None, host_libraries=None):
     text = (root / row['log']).read_text()
     require('TCP_ICMP_FAIL' not in text and text.count('TCP_ICMP_PASS cases=57 nics=2 cycles=128') == 1,
             'one complete actual application verdict')
+    if native:
+        require(Counter(re.findall(r'^ICMP_RESERVED_PORTS_PASS lane=(\d+)\r?$', text, re.M)) ==
+                Counter({'0': 1, '1': 1}), 'actual active bind attempts exclude every later passive port')
     complete = re.findall(r'^ICMP_CASE_PASS lane=(\d+) case=(\d+) name=([a-z-]+) elapsed_ms=(\d+) '
                           r'start_ms=(\d+) end_ms=(\d+)\r?$', text, re.M)
     require(len(complete) == 114 and {(int(lane), int(ordinal), name) for lane, ordinal, name, *_ in complete} ==
@@ -356,15 +423,14 @@ def audit_row(root, row, cases, input_root=None, host_libraries=None):
     require(len(frames) == 2, 'both actual Ethernet captures')
     peers = json.loads((root / row['peer']).read_text())
     require(len(peers) == 2 and {peer['lane'] for peer in peers} == {0, 1}, 'both independent peer records')
-    receipts = re.findall(r'^ICMP_FRAME lane=(\d+) index=(\d+) length=(\d+) kind=(\d+) '
-                         r'hash=([0-9a-f]{16}) monotonic_ms=(\d+)\r?$', text, re.M)
+    receipts = capture_receipts(text)
     capture_stats = re.findall(r'^ICMP_CAPTURE_PASS lane=(\d+) index=(\d+) packets=(\d+) dropped=(\d+) ipv4=(\d+)\r?$', text, re.M)
     require(len(capture_stats) == 2 and {int(value[0]) for value in capture_stats} == {0, 1},
             'both completed driver observers')
-    actual = Counter((int(lane), int(size), int(kind), digest) for lane, _, size, kind, digest, _ in receipts)
+    actual = Counter((value['lane'], value['size'], value['kind'], value['digest']) for value in receipts)
     receipt_clocks = defaultdict(deque)
-    for lane, _, _, _, digest, clock in receipts:
-        receipt_clocks[(int(lane), digest)].append(int(clock))
+    for value in receipts:
+        receipt_clocks[(value['lane'], value['digest'])].append(value)
     expected = Counter()
     all_packets = []
     for lane, captured in enumerate(frames):
@@ -391,14 +457,16 @@ def audit_row(root, row, cases, input_root=None, host_libraries=None):
             item.update(lane=lane, outgoing=outgoing)
             key = (lane, fnv(frame))
             require(receipt_clocks[key], 'actual receipt clock for each independently captured frame')
-            item['driver_ms'] = receipt_clocks[key].popleft()
+            item.update(receipt_clocks[key].popleft())
             item['peer_ms'] = peer_clocks[frame.hex()].popleft()
             all_packets.append(item)
         _, index, count, dropped, ip_count = next(value for value in capture_stats if int(value[0]) == lane)
-        lane_receipts = [value for value in receipts if int(value[0]) == lane]
-        clocks = [int(value[-1]) for value in lane_receipts]
-        require(int(count) >= int(ip_count) == len(lane_receipts) and int(dropped) == 0 and clocks == sorted(clocks) and
-                all(value[1] == index for value in lane_receipts), 'zero-drop driver receipt accounting and clocks')
+        lane_receipts = [value for value in receipts if value['lane'] == lane]
+        require(int(count) >= int(ip_count) == len(lane_receipts) and int(dropped) == 0 and
+                all(value['index'] == int(index) for value in lane_receipts), 'zero-drop driver receipt accounting and clocks')
+        audit_driver_receipt_clocks(lane_receipts, native)
+        audit_link_receipts(text, 'ICMP', root / row['captures'][lane], lane,
+                            int(index), int(count), int(ip_count))
         if not native:
             require(int(index) == lane + 1, 'actual virtio/e1000 driver observer index')
     require(actual == expected and bool(actual), f'every independent IPv4 packet has its exact actual driver receipt: missing={list((expected-actual).items())[:4]} extra={list((actual-expected).items())[:4]}')
@@ -471,17 +539,16 @@ def audit_row(root, row, cases, input_root=None, host_libraries=None):
         lane, number = int(lane), int(cycle) // 2
         syn = cycle_syns[lane][number]
         own = [(item, source) for item, source in quotes[(lane, -1)] if source is syn]
-        current = next((item for item, _ in own if
-                        item['driver_ms'] >= int(ignored) and item['driver_ms'] <= int(end) + 100), None)
+        current = next((item for item, _ in own if within(item, int(ignored), int(end) + 100)), None)
         require(current is not None, 'actual owned cycle failure follows the observed silence')
-        require(int(start) - 100 <= syn['driver_ms'] <= int(ignored) and
+        require(within(syn, int(start) - 100, int(ignored)) and
                 microseconds(current) - microseconds(syn) >= 140000,
                 'current-generation failure follows actual SYN and the complete silence interval')
         if number:
             stale = next((item for item, source in quotes[(lane, -1)] if
                           source is cycle_syns[lane][number - 1] and microseconds(syn) < microseconds(item) < microseconds(current)), None)
             require(stale is not None, 'actual preceding-generation quote arrives during the new cycle')
-            require(int(start) <= stale['driver_ms'] <= int(ignored) + 100 and
+            require(within(stale, int(start), int(ignored) + 100) and
                     microseconds(current) - microseconds(stale) >= 100000,
                     'actual stale receipt precedes the later current-generation failure')
     for lane, ordinal, _, elapsed, *_ in complete:
@@ -500,6 +567,8 @@ def audit_row(root, row, cases, input_root=None, host_libraries=None):
     require(text.count('ICMP_BLOCKED_READ_PASS lane=0 error=111') == 1 and
             set(re.findall(r'^ICMP_SOFT_CONSUMED lane=(\d+) error=111\r?$', text, re.M)) == {'0', '1'},
             'actual blocked read and SO_ERROR soft consumption')
+    if native:
+        audit_native_observer_clocks(all_packets)
     return dict(linkage=row['linkage'], native=native, captures=len(frames), cases=114, cycles=128,
                 companion_streams=4, companion_checkpoints=4 * (len(cases) + 10),
                 quoted_errors=sum(quoted.values()), stale_quotes=sum(stale_quotes.values()),

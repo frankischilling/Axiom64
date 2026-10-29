@@ -1,0 +1,26 @@
+Axiom64 x86-64
+Firmware: BIOS
+Memory: 2028 MiB available, isolated four-level paging
+CPU: GDT, TSS, IDT, SYSCALL and PIT initialized
+Clock: HPET 64-bit counter, 100 Hz accounting
+Clock: RTC UTC seconds=1792888831
+RANDOM_SOURCE rdseed=1 trust_cpu=1
+PCI: 6 functions discovered
+RANDOM_READY source=rdseed bits=256
+VFS: imported 21 nodes from initramfs
+PCI: 6 functions discovered
+Framebuffer: 1024x768 pitch=4096 bpp=32
+NET_DEVICE index=1 name=eth0 mtu=1500 carrier=1 mac=52:54:0:12:34:10
+virtio-net: index=1 transport=modern rx=512 tx=256 features=100010020
+PCI: 6 functions discovered
+Entering userspace in Ring 3
+exec pid=1 /sbin/init (static ELF)
+exec pid=1 /bin/busybox (static ELF)
+exec pid=2 /bin/net-tests (static ELF)
+PACKET_BUFFER_OPTIONS_PASS cases=9 maximum=212992
+PACKET_PRESSURE_IPV6_DISABLED index=1
+PACKET_PRESSURE_READY
+PACKET_PRESSURE_FULL slots=64
+PACKET_PRESSURE_PASS slots=64
+AXIOM64_TESTS_PASS
+AXIOM64_EXIT status=0

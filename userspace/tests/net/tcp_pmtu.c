@@ -57,8 +57,16 @@ static void drain(unsigned lane) {
         }
         CHECK(length >= 14 && source.sll_ifindex == (int)indices[lane]);
         observed[lane]++;
-        if (frame[12] != 8 || frame[13] != 0)
+        if (frame[12] != 8 || frame[13] != 0) {
+            uint64_t digest = UINT64_C(0xcbf29ce484222325);
+            for (ssize_t at = 0; at < length; at++)
+                digest = (digest ^ frame[at]) * UINT64_C(0x100000001b3);
+            printf("PMTU_LINK_FRAME lane=%u index=%u length=%zd kind=%u ether_type=%02x%02x "
+                   "hash=%016llx monotonic_ms=%llu\n",
+                   lane, indices[lane], length, source.sll_pkttype, frame[12], frame[13],
+                   (unsigned long long)digest, (unsigned long long)milliseconds());
             continue;
+        }
         uint64_t digest = UINT64_C(0xcbf29ce484222325);
         for (ssize_t at = 0; at < length; at++)
             digest = (digest ^ frame[at]) * UINT64_C(0x100000001b3);
@@ -86,7 +94,8 @@ static void capture_start(void) {
         char name[16];
         snprintf(name, sizeof(name), "eth%u", lane);
         indices[lane] = if_nametoindex(name);
-        unsigned protocol = native ? 3 : 0x800;
+        // Outgoing packets are delivered only to ETH_P_ALL observers.
+        unsigned protocol = 3;
         observers[lane] =
             socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, htons(protocol));
         int capacity = 131072, actual;
@@ -111,10 +120,24 @@ static void capture_stop(void) {
     atomic_store(&stop, 1);
     CHECK(pthread_join(observer, NULL) == 0);
     for (unsigned lane = 0; lane < 2; lane++) {
-        unsigned statistics[2];
+        // Retire the old receive hook before draining its queued packets. A
+        // packet can arrive after the collector exits and before this call.
+        struct sockaddr_ll retired = {.sll_family = AF_PACKET,
+                                      .sll_protocol = htons(0x88b6),
+                                      .sll_ifindex = (int)indices[lane]};
+        CHECK(bind(observers[lane], (struct sockaddr*)&retired, sizeof(retired)) == 0);
+        drain(lane);
+        unsigned statistics[2] = {0};
         socklen_t size = sizeof(statistics);
-        CHECK(getsockopt(observers[lane], 263, 6, statistics, &size) == 0 &&
-              size == sizeof(statistics) && statistics[0] == observed[lane] && !statistics[1]);
+        int result = getsockopt(observers[lane], 263, 6, statistics, &size);
+        if (result || size != sizeof(statistics) || statistics[0] != observed[lane] ||
+            statistics[1])
+            fprintf(stderr,
+                    "PMTU_CAPTURE_ERROR lane=%u result=%d size=%u packets=%u observed=%u "
+                    "dropped=%u\n",
+                    lane, result, size, statistics[0], observed[lane], statistics[1]);
+        CHECK(!result && size == sizeof(statistics) && statistics[0] == observed[lane] &&
+              !statistics[1]);
         printf("PMTU_CAPTURE_PASS lane=%u index=%u packets=%u dropped=%u ipv4=%u\n", lane,
                indices[lane], statistics[0], statistics[1], ipv4_frames[lane]);
         CHECK(close(observers[lane]) == 0);

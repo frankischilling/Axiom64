@@ -7,13 +7,28 @@ import subprocess
 from fetch import ROOT, LOCK
 from build_musl import ensure, loader
 
-SOURCES = ('Makefile', 'scripts/tcp_capture_clock.py', 'scripts/tests/tcp_clock_mutations.py', 'userspace/tests/net/tcp_icmp.c', 'userspace/tests/net/tcp_icmp_cases.h',
+IPV4_MODULES = ('kernel/include/net/ipv4.hpp', 'kernel/include/net/ethernet.hpp',
+                'kernel/include/net/inet.hpp',
+                'kernel/net/ipv4/socket.hpp',
+                'kernel/include/net/ipv4/addresses.hpp', 'kernel/net/ipv4/addresses.cpp',
+                'kernel/net/ioctl.cpp',
+                'kernel/net/ethernet.cpp', 'kernel/include/net/ipv4_wire.hpp',
+                'kernel/include/net/ipv4/reassembly.hpp', 'kernel/net/ipv4/reassembly.cpp',
+                'kernel/include/net/ipv4/fragmentation.hpp', 'kernel/net/ipv4/fragmentation.cpp',
+                'kernel/include/net/ipv4/path_mtu.hpp', 'kernel/net/ipv4/path_mtu.cpp')
+
+SOURCES = ('Makefile', 'scripts/tests/tcp_icmp_observer_clock_test.py', 'scripts/tests/fixtures/icmp-observer-clock/manifest.json', 'scripts/tcp_capture_link.py', 'scripts/tests/tcp_packet_observer_test.py', 'scripts/tests/tcp_capture_link_test.py', 'scripts/tcp_capture_clock.py', 'scripts/tests/tcp_clock_mutations.py', 'userspace/tests/net/tcp_icmp.c', 'userspace/tests/net/tcp_icmp_cases.h',
            'scripts/tcp_icmp_peer.py', 'scripts/tcp_icmp_inputs.py', 'scripts/tcp_fault_test.py',
            'scripts/tcp_fault_native.py', 'kernel/net/tcp/icmp.cpp', 'kernel/include/net/tcp/icmp.hpp',
            'kernel/net/tcp/connection.cpp', 'kernel/include/net/tcp/connection.hpp',
            'kernel/net/tcp/socket.cpp', 'kernel/include/net/tcp/socket.hpp',
            'kernel/net/ipv4/core.cpp', 'kernel/net/ipv4/socket.cpp',
-           'scripts/tests/tcp_icmp_error_order_test.py')
+           'scripts/tests/tcp_icmp_error_order_test.py', 'scripts/tcp_icmp_capture.py',
+           'scripts/tests/tcp_icmp_timestamp_test.py', 'scripts/tests/tcp_icmp_capture_test.py',
+           'kernel/include/net/packet.hpp', 'kernel/net/packet.cpp', 'kernel/io/io.cpp',
+           'kernel/abi/linux/syscall.cpp', 'kernel/arch/x86_64/clock.cpp',
+           'kernel/arch/x86_64/rtc.cpp', 'kernel/include/core/time.hpp')
+SOURCES = tuple(dict.fromkeys(SOURCES + IPV4_MODULES))
 
 
 def digest(path):

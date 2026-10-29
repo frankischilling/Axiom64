@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Run real musl DNS through both Ethernet drivers on BIOS and UEFI."""
 import argparse
-from collections import Counter
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -9,43 +9,35 @@ import selectors
 import shutil
 import socket
 import subprocess
+import sys
+import tempfile
 import time
 from fetch import ROOT, LOCK
 from build_musl import loader as musl_loader
 from dns_peer import Peer, check
+from tcp_fixture_inputs import audit_fixture, digest
+from dns_observer import audit as audit_dns_observer
 
 CASES = ('numeric', 'hosts', 'wire-lane0', 'wire-lane1', 'cname', 'search', 'search-bare',
          'absolute', 'ndots', 'nxdomain', 'nodata', 'reply-filter', 'retry', 'timeout',
          'refused', 'servfail', 'parallel-nameservers')
 
 
-def capture_audit(peers, text):
-    receipts = re.findall(r'^DNS_FRAME linkage=(static|dynamic) index=(\d+) length=(\d+) '
-                          r'hash=([0-9a-f]{16}) packet_type=(\d+) monotonic_ms=(\d+)\r?$', text, re.M)
-    actual = Counter((int(index), int(length), digest, int(kind))
-                     for _, index, length, digest, kind, _ in receipts)
-    expected = Counter()
-    for peer in peers:
-        for row in peer.frames:
-            frame = bytes.fromhex(row['frame'])
-            if frame[12:14] != b'\x08\x00':
-                continue
-            value = 0xcbf29ce484222325
-            for byte in frame:
-                value = (value ^ byte) * 0x100000001b3 & 0xffffffffffffffff
-            expected[(peer.lane + 1, len(frame), f'{value:016x}', 4 if row['direction'] == 'query' else 0)] += 1
-    check(actual == expected and bool(actual), 'exact actual driver receipts match every host DNS query/reply frame')
-    captures = re.findall(r'^DNS_CAPTURE_PASS linkage=(static|dynamic) index=(\d+) '
-                          r'packets=(\d+) dropped=(\d+)\r?$', text, re.M)
-    check(len(captures) == 4 and {(linkage, int(index)) for linkage, index, _, _ in captures} ==
-          {(linkage, index) for linkage in ('static', 'dynamic') for index in (1, 2)},
-          'both actual capture sockets in both linkages')
-    for linkage, index, count, dropped in captures:
-        check(int(dropped) == 0 and int(count) == sum(1 for row in receipts if row[:2] == (linkage, index)),
-              'complete capture with no dropped observer frames')
-        clocks = [int(row[-1]) for row in receipts if row[:2] == (linkage, index)]
-        check(clocks == sorted(clocks), 'actual driver receipt clocks are monotonic')
-    return len(receipts)
+def capture_audit(peers, text, directory):
+    return audit_dns_observer(peers, text, [directory / f'lane{lane}.pcap' for lane in range(2)],
+                              ('static', 'dynamic'))
+
+
+def observe_frame(peer, frame, observations):
+    check(len(observations) < 4096, 'bounded DNS frame observations')
+    row = dict(lane=peer.lane, frame=frame.hex(), sha256=hashlib.sha256(frame).hexdigest(),
+               observed_monotonic_ns=time.monotonic_ns(), started_before=peer.started)
+    observations.append(row)
+    try:
+        peer.packet(frame)
+    except Exception as failure:
+        row['rejection'] = str(failure)
+        raise
 
 
 def fixture():
@@ -54,6 +46,23 @@ def fixture():
     expected = json.loads((ROOT / 'sources.lock.json').read_text())['build_musl']['version']
     version = subprocess.check_output(['dpkg-query', '-W', '-f=${Version}', 'musl-dev'], text=True)
     check(version == expected, 'DNS fixture uses the pinned musl build')
+    parent = ROOT / 'build/dns-fixture'
+    parent.mkdir(parents=True, exist_ok=True)
+    directory = Path(tempfile.mkdtemp(prefix='run-', dir=parent))
+    names = {'Makefile', 'dependencies.json', 'sources.lock.json', 'boot/limine.conf',
+             'userspace/tests/net/dns.c', 'userspace/tests/net/dns/contract.h',
+             'userspace/tests/net/dns.sh'}
+    for module in list(sys.modules.values()):
+        name = getattr(module, '__file__', None)
+        if name and Path(name).resolve().is_relative_to(ROOT / 'scripts'):
+            names.add(str(Path(name).resolve().relative_to(ROOT)))
+    inputs = {}
+    for name in sorted(names):
+        target = directory / 'source' / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / name, target)
+        inputs[name] = digest(target)
+    (directory / 'source-inputs.json').write_text(json.dumps(inputs, indent=2) + '\n')
     files = {name: (0o40755, b'') for name in
              ['bin', 'sbin', 'lib', 'etc', 'dev', 'proc', 'sys', 'tmp', 'run', 'root']}
     for name, source in [('sbin/init', ROOT / 'build/init'),
@@ -62,10 +71,13 @@ def fixture():
                          ('bin/busybox', ROOT / 'build' / f"busybox-{LOCK['busybox']['version']}" / 'busybox'),
                          ('lib/ld-musl-x86_64.so.1', musl_loader()),
                          ('etc/net-test.sh', ROOT / 'userspace/tests/net/dns.sh')]:
-        files[name] = (0o100755, source.read_bytes())
+        target = directory / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        files[name] = (0o100755, target.read_bytes())
     files['etc/hosts'] = (0o100644, b'10.23.1.100 local-host.fixture\n')
     files['etc/resolv.conf'] = (0o100644, b'nameserver 10.23.1.1\n')
-    with (ROOT / 'build/rootfs-network.cpio').open('wb') as output:
+    with (directory / 'root.cpio').open('xb') as output:
         for inode, (name, (mode, data)) in enumerate([*sorted(files.items()), ('TRAILER!!!', (0, b''))], 1):
             encoded = name.encode() + b'\0'
             values = [inode, mode, 0, 0, 1, 0, len(data), 0, 0, 0, 0, len(encoded), 0]
@@ -73,19 +85,33 @@ def fixture():
             output.write(bytes(-output.tell() % 4))
             output.write(data)
             output.write(bytes(-output.tell() % 4))
+    shutil.copyfile(ROOT / 'build/axiom64.elf', directory / 'kernel.elf')
     subprocess.run(['python3', 'scripts/image.py', '--test', '--suite', 'network',
-                    '--output-name', 'axiom64-dns.iso'], cwd=ROOT, check=True,
+                    '--initramfs', str(directory / 'root.cpio'), '--output-name', 'image.iso',
+                    '--output-directory', str(directory)], cwd=ROOT, check=True,
                    stdout=subprocess.DEVNULL)
+    products = {name: dict(bytes=(directory / name).stat().st_size, sha256=digest(directory / name))
+                for name in ['kernel.elf', 'root.cpio', 'image.iso',
+                             *(name for name, (mode, _) in files.items() if mode == 0o100755)]}
+    (directory / 'products.json').write_text(json.dumps(products, indent=2) + '\n')
+    audit_fixture(directory / 'image.iso', products['kernel.elf']['sha256'],
+                  {name: row['sha256'] for name, row in products.items()
+                   if name.startswith(('bin/', 'sbin/', 'lib/'))}, files['etc/net-test.sh'][1])
+    return directory
 
 
-def run(firmware, transport, timeout):
+def run(firmware, transport, timeout, fixture_directory):
     label = f'dns-{firmware}-{transport}'
-    log = ROOT / 'build' / (label + '.log')
-    packets = ROOT / 'build' / (label + '-packets.json')
+    directory = fixture_directory / label
+    directory.mkdir()
+    log = directory / (label + '.log')
+    packets = directory / (label + '-packets.json')
+    observations = []
+    inputs = json.loads((fixture_directory / 'source-inputs.json').read_text())
     selector = selectors.DefaultSelector()
     peers, servers = [Peer(lane) for lane in range(2)], []
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '512M',
-               '-cdrom', str(ROOT / 'build/axiom64-dns.iso'), '-nic', 'none', '-display', 'none',
+               '-cdrom', str(fixture_directory / 'image.iso'), '-nic', 'none', '-display', 'none',
                '-serial', 'stdio', '-monitor', 'none', '-no-reboot',
                '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
     for lane, model in enumerate(('virtio-net-pci', 'e1000')):
@@ -99,8 +125,9 @@ def run(firmware, transport, timeout):
         if lane == 0:
             nic += ',disable-legacy=on' if transport == 'modern' else ',disable-modern=on'
         command += ['-netdev', f'socket,id=peer{lane},connect=127.0.0.1:{server.getsockname()[1]}', '-device', nic]
+        command += ['-object', f'filter-dump,id=capture{lane},netdev=peer{lane},file={directory}/lane{lane}.pcap']
     if firmware == 'uefi':
-        variables = ROOT / 'build' / (label + '-OVMF_VARS.fd')
+        variables = directory / 'OVMF_VARS.fd'
         shutil.copyfile('/usr/share/OVMF/OVMF_VARS_4M.fd', variables)
         command += ['-drive', 'if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd',
                     '-drive', f'if=pflash,format=raw,file={variables}']
@@ -140,7 +167,7 @@ def run(firmware, transport, timeout):
                             check(14 <= length <= 65553, 'QEMU Ethernet framing length')
                             if len(peer.input) < length + 4:
                                 break
-                            peer.packet(bytes(peer.input[4:length + 4]))
+                            observe_frame(peer, bytes(peer.input[4:length + 4]), observations)
                             del peer.input[:length + 4]
                     if peer.output:
                         try:
@@ -181,17 +208,25 @@ def run(firmware, transport, timeout):
     if not error and not timed_out and status == 1 and not missing:
         try:
             evidence = [peer.validate() for peer in peers]
-            received_frames = capture_audit(peers, text)
+            received_frames = capture_audit(peers, text, directory)
         except Exception as failure:
             error = str(failure)
-    passed = not timed_out and status == 1 and not error and not missing and bool(evidence) and not any(
+    unchanged = all(digest(ROOT / name) == expected for name, expected in inputs.items())
+    captures = {path.name: dict(bytes=path.stat().st_size, sha256=digest(path))
+                for path in directory.glob('lane*.pcap')}
+    passed = unchanged and len(captures) == 2 and not timed_out and status == 1 and not error and not missing and bool(evidence) and not any(
         marker in text for marker in ('DNS_FAIL', 'PANIC:', 'FAULT pid='))
     packets.write_text(json.dumps({'peers': evidence or [dict(lane=peer.lane, queries=peer.queries,
-        replies=peer.replies, frames=peer.frames) for peer in peers]}, indent=2) + '\n')
+        replies=peer.replies, frames=peer.frames) for peer in peers], 'received_frames': observations}, indent=2) + '\n')
     result = dict(firmware=firmware, transport=transport, returncode=status, timed_out=timed_out,
                   error=error, missing=missing, passed=passed, log=log.name, packets=packets.name,
-                  actual_driver_frames=received_frames,
+                  actual_driver_frames=received_frames, received_frames=len(observations),
+                  evidence_directory=str(directory.relative_to(ROOT)), captures=captures,
+                  source_unchanged=unchanged, products_sha256=digest(fixture_directory / 'products.json'),
                   seconds=round(time.monotonic() - started, 3))
+    (directory / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
+    for path in (log, packets):
+        shutil.copyfile(path, ROOT / 'build' / path.name)
     print(json.dumps(result), flush=True)
     if not passed:
         print(text[-3000:], flush=True)
@@ -205,13 +240,14 @@ def main():
     parser.add_argument('--timeout', type=float, default=30)
     args = parser.parse_args()
     check(args.timeout > 0, 'positive guest timeout')
-    fixture()
+    directory = fixture()
     results = []
     for firmware in ('bios', 'uefi') if args.firmware == 'both' else (args.firmware,):
         for transport in ('modern', 'legacy') if args.transport == 'both' else (args.transport,):
-            result = run(firmware, transport, args.timeout)
+            result = run(firmware, transport, args.timeout, directory)
             results.append(result)
             (ROOT / 'build/dns-results.json').write_text(json.dumps(results, indent=2) + '\n')
+            (directory / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
             if not result['passed']:
                 raise SystemExit('Actual musl DNS guest acceptance failed')
 

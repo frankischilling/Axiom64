@@ -1,0 +1,1566 @@
+{
+  "schema": 1,
+  "scope": "Original static BIOS/modern guest diagnostics and glibc diagnostics on two pinned Linux kernels. These captures exercise readers; the complete device matrix remains separate.",
+  "cases": {
+    "linux617-administrative-probing": {
+      "native": true,
+      "action": "administrative",
+      "state": "probing",
+      "kernel_release": "6.17.0-1022-azure",
+      "kernel_sha256": "c8943d129291f60fa59728d1c82fa43300a292135384e9f2a192515e079622c4",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 9616,
+          "sha256": "da5b4f1c68c83c37eb4fd8e6342e6c5926c08368a9eb3582abcdf39743ee0a87"
+        },
+        "lane0.pcap": {
+          "bytes": 4102,
+          "sha256": "76737fb9318ce26fff660edbae685a07dcf49249aaf77dbec1dfab2538232f3f"
+        },
+        "lane1.pcap": {
+          "bytes": 4102,
+          "sha256": "a5c868327d39b2359479b2dc010823205ff2b7ad37ed47772eb1adb103777724"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 13199,
+          "sha256": "1fd09d95167cee75bc89da276e2edc1dcbfccc0d151f313c545f34af0bcd3ac7"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 13199,
+          "sha256": "1d61a175a9ee8e90d6f6550044fc8e996ed3a1f5c58e56cc7522366695fe7309"
+        },
+        "statistics.json": {
+          "bytes": 1605,
+          "sha256": "203040fc101e019e7fadc06fe24834329593fa4acab64c11d8b7fa5a9d23a67e"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux617-administrative-regenerating": {
+      "native": true,
+      "action": "administrative",
+      "state": "regenerating",
+      "kernel_release": "6.17.0-1022-azure",
+      "kernel_sha256": "c8943d129291f60fa59728d1c82fa43300a292135384e9f2a192515e079622c4",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 10725,
+          "sha256": "9d5058fd86007236ed6ca3acedef63cbd72f61781fee6f36d98662db74bda78f"
+        },
+        "lane0.pcap": {
+          "bytes": 4660,
+          "sha256": "b54accea5c44c2df6c9801bd3350184cbe340e2641faf0a06acdb3e4f6dc92eb"
+        },
+        "lane1.pcap": {
+          "bytes": 4660,
+          "sha256": "d609016e3df77e05ae1e986d5d2d921f8d545db4a6e8df6cf01852e373101649"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 15036,
+          "sha256": "ee6bc4b753e52e131cceddc77a38a6bb1c8795e401b4d0ce7a838412473f0057"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 15016,
+          "sha256": "61c6cd9fe88ded9b2c1abfcca273f561932261a653b4393f511f3bf708e93f94"
+        },
+        "statistics.json": {
+          "bytes": 1613,
+          "sha256": "db8ef060811db8e3edd44a43f6dc57f390f44968704c21bb8459136dbacb4ac4"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux617-administrative-retrying": {
+      "native": true,
+      "action": "administrative",
+      "state": "retrying",
+      "kernel_release": "6.17.0-1022-azure",
+      "kernel_sha256": "c8943d129291f60fa59728d1c82fa43300a292135384e9f2a192515e079622c4",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 11157,
+          "sha256": "c3baa272000c5edebfa27c1e9313ab7ac31bc0a57280dc644cf08f9d83f07ac6"
+        },
+        "lane0.pcap": {
+          "bytes": 5166,
+          "sha256": "4a188a12a1ed39120b863f96f8455f8e73631525a027b8a820c1bd259a9088a0"
+        },
+        "lane1.pcap": {
+          "bytes": 5166,
+          "sha256": "acac39f22c85a5a3eb6d9d9876f63406208829c0e537d3e0f1bfc38f6f6b54ae"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 16433,
+          "sha256": "4ab25d49036e225d9e6214b57faac58c0355b61f5661a91271654d781cd30f15"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 16433,
+          "sha256": "764e5e9ffa7672d6d5660ce38f20c12730f1be38b86da61e04d98f1c771a8b82"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "39ac9aa04808f4a4fffa8bd5aa99280500ab77f80491c029cec675aecfcc6f07"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux617-administrative-exhausted": {
+      "native": true,
+      "action": "administrative",
+      "state": "exhausted",
+      "kernel_release": "6.17.0-1022-azure",
+      "kernel_sha256": "c8943d129291f60fa59728d1c82fa43300a292135384e9f2a192515e079622c4",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 13362,
+          "sha256": "17f101cae2e46cb615ae2cf1ee01f608b4591eaacdff1dd2e064b526bbe22bcc"
+        },
+        "lane0.pcap": {
+          "bytes": 7092,
+          "sha256": "17f08300a3d25be7f793f0b16f8fc61f67f4bd21916a48cd889b1d90c5e35dd7"
+        },
+        "lane1.pcap": {
+          "bytes": 7198,
+          "sha256": "ab516d213cb78c16f894a5d9027e67f4de7ad32ba654f9625683c9019cad0a59"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 21914,
+          "sha256": "c464c75076745590fe0e928d99fbb055ad35fc4d8d3406e66f393cc170a363e3"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 22175,
+          "sha256": "1b3ee427a688f7cc53e4b0d2b674c6d7a9a038a492ae9a6a391c3affa0be633d"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "ef9277f54492db6ed9fc974b1a34cb49ac257fb12ed2566fbdb5f1b017dcd061"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux617-mtu-probing": {
+      "native": true,
+      "action": "mtu",
+      "state": "probing",
+      "kernel_release": "6.17.0-1022-azure",
+      "kernel_sha256": "c8943d129291f60fa59728d1c82fa43300a292135384e9f2a192515e079622c4",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 9675,
+          "sha256": "579fc0595aa587b81e9f91df2506fb3f395557585f53baabbed1264b39a807a5"
+        },
+        "lane0.pcap": {
+          "bytes": 4102,
+          "sha256": "11510ccca0abfbafcdefa686a229320efd17039c19ac5f40b0d53dc6c802638a"
+        },
+        "lane1.pcap": {
+          "bytes": 4208,
+          "sha256": "e97e3f9f30ddca2215546e25e794a2e57bfc0716b29b22166b1774609a8ed477"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 13301,
+          "sha256": "c2804c33df4e350d1a7b9044e54b35cc4e954603c32dbf0a3784556b5a3eed65"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 13562,
+          "sha256": "eb02e6fbf37fc323ca0406993d95286a37cd392f4b30a717c9aa20c316bc48ee"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "1f45bdbaabf92d22ccb20654b9d619d77df6307fdfdc28838b2f956f01b1435f"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux617-mtu-regenerating": {
+      "native": true,
+      "action": "mtu",
+      "state": "regenerating",
+      "kernel_release": "6.17.0-1022-azure",
+      "kernel_sha256": "c8943d129291f60fa59728d1c82fa43300a292135384e9f2a192515e079622c4",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 10782,
+          "sha256": "f33c1fef68bca1e8c5fc113bf7388bda847e49b5fefd62548781dbacf2e9ac7f"
+        },
+        "lane0.pcap": {
+          "bytes": 4660,
+          "sha256": "36451bace17346c148035263333fa60cce3842637700a2550542535f70b2ebbc"
+        },
+        "lane1.pcap": {
+          "bytes": 4766,
+          "sha256": "366596a3cfe60024a5b5d36bf37b8f9cad8fdeeb98f458f3e08d2c578bfa61c9"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 15128,
+          "sha256": "eb4a629a413d82255d8c1997049ae563589ec9e6587b19be44047b7869d5e7ab"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 15389,
+          "sha256": "2134f2014fc175cc188df25f095892326e58576adfb151ad6ff2ddcfa7240e51"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "a048b3cc8389a9f8e7e4dc356d62c289229b05637c6bd8116b2745e5393e5969"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux617-mtu-retrying": {
+      "native": true,
+      "action": "mtu",
+      "state": "retrying",
+      "kernel_release": "6.17.0-1022-azure",
+      "kernel_sha256": "c8943d129291f60fa59728d1c82fa43300a292135384e9f2a192515e079622c4",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 11146,
+          "sha256": "a05dcfb222adb3eb9c77b5271b2f3105eca8d8581bd9b6f8b9f10ecb5b35822c"
+        },
+        "lane0.pcap": {
+          "bytes": 5232,
+          "sha256": "36ced29fd4823260605f9cc0fe91039f8ca7022d67ac7fcaf98b735b21c518ff"
+        },
+        "lane1.pcap": {
+          "bytes": 5232,
+          "sha256": "1304df6c8c2a80c2c20830097c0ac8ced535878843e928a568872658e374449f"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 16694,
+          "sha256": "8e28e406a0270360ae0ebf5a66583b7851f10a4d8c09a29b0d0697f928389826"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 16694,
+          "sha256": "ee0d8c88fdc54fe6d02b570a2f0246ec67a95313af00c793e5449cb6c8c94c8f"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "5f6a8a042df38018922198974238abdde304b0bcf22e0fd81a975aeee7b2c75f"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux617-mtu-exhausted": {
+      "native": true,
+      "action": "mtu",
+      "state": "exhausted",
+      "kernel_release": "6.17.0-1022-azure",
+      "kernel_sha256": "c8943d129291f60fa59728d1c82fa43300a292135384e9f2a192515e079622c4",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 13351,
+          "sha256": "48281d627143b81899542eef5b48e70f1f8bc6f53f0874a49887c9aaeac9c2cc"
+        },
+        "lane0.pcap": {
+          "bytes": 6972,
+          "sha256": "8c6d8e444b6e66bc0ce161895d6abfef03ddda9d7dbf27a7d02559ff6743acf5"
+        },
+        "lane1.pcap": {
+          "bytes": 7078,
+          "sha256": "176b7f7b04aa3e34d6aaa5998f06a5d8f8d7522666008917cd65776ec4426c52"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 21914,
+          "sha256": "87eab444f8e5f3811f8aaa42a9d770f1b32c997a7996755e11dc856f07654af0"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 22175,
+          "sha256": "44da7efc08c80843a70dbfc3c10ac2922ae081b730010960c303959b11494481"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "60feff5a137122e14a0d747eb8522669bbb3286634c9ae96f6190f43939b1f1b"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux617-carrier-probing": {
+      "native": true,
+      "action": "carrier",
+      "state": "probing",
+      "kernel_release": "6.17.0-1022-azure",
+      "kernel_sha256": "c8943d129291f60fa59728d1c82fa43300a292135384e9f2a192515e079622c4",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 11431,
+          "sha256": "79061058618303c1b4751e6751be7c28d0183abedf5b3775ae8b27c1b301e445"
+        },
+        "lane0.pcap": {
+          "bytes": 4654,
+          "sha256": "700545b399af5529292ba0901ce16ff9c74ca1b4b7a3ff3b45fd16a97d81c026"
+        },
+        "lane1.pcap": {
+          "bytes": 4548,
+          "sha256": "c78e4f616198b7296459041eaaac785fb8c200ed78da0dd12d978c044b7378ff"
+        },
+        "carrier.json": {
+          "bytes": 3431,
+          "sha256": "9519fb00667c5e3e034da24f099e693bbe2ac7f88df69255fd0064e15b476c8d"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 15389,
+          "sha256": "357ba6aad38710a6b837ea3764017a0d8783992832cbdceebbba991b96ac790c"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 15128,
+          "sha256": "a8795a6aec05c26e21f664af8b9d530d168a2a352cb434b5a61516f9539a0a9e"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "47f7efa7ad4ab82dc079189aeeed017f0d084d84605d16710e1e2ba27be26921"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux617-carrier-regenerating": {
+      "native": true,
+      "action": "carrier",
+      "state": "regenerating",
+      "kernel_release": "6.17.0-1022-azure",
+      "kernel_sha256": "c8943d129291f60fa59728d1c82fa43300a292135384e9f2a192515e079622c4",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 13636,
+          "sha256": "d545b5a278b8be8ecfbe315ef70a058e722b49c43ee440e6129a9e6a994d3555"
+        },
+        "lane0.pcap": {
+          "bytes": 5602,
+          "sha256": "219580fe8bb9117090d5cada45b1fc2427c27c1657b7dec2b6e0d80bfbd2fc87"
+        },
+        "lane1.pcap": {
+          "bytes": 5708,
+          "sha256": "4528fd3474f89c24c44c4702fd0b949a699a55c823925e002f5d24d30e0abd81"
+        },
+        "carrier.json": {
+          "bytes": 3431,
+          "sha256": "e5854c7ab67dc4616a508e9b4dfc5df1a272f88c1866989cdd0047917fae4bde"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 18521,
+          "sha256": "890387f5905a57e1ed3279a3fe84c2c7a69038149bc1da10166eb249ceabfe15"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 18782,
+          "sha256": "b24b28fe43a139f94dfed40326381f5fd35f5f1a0f8acb2b2ca129a43dd4403d"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "f5f8cbfb6f98064af20cea8ddbdb5bf519b20f521256cbe072c6da4a13349595"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux617-carrier-retrying": {
+      "native": true,
+      "action": "carrier",
+      "state": "retrying",
+      "kernel_release": "6.17.0-1022-azure",
+      "kernel_sha256": "c8943d129291f60fa59728d1c82fa43300a292135384e9f2a192515e079622c4",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 14000,
+          "sha256": "88fae6ca82f163bac83e09259cc242118f5eb0174643ab2064096a315ad775ae"
+        },
+        "lane0.pcap": {
+          "bytes": 6174,
+          "sha256": "fb199e6709688828d58039b5f37938702b81a14436199b6059cdfc997c056707"
+        },
+        "lane1.pcap": {
+          "bytes": 6174,
+          "sha256": "5acf4eb65f4087f0f8d25a671d8899dce31bf284468bb83271361463bb516213"
+        },
+        "carrier.json": {
+          "bytes": 3431,
+          "sha256": "859217d3296d4ca26275c82098539d818fcbf8725676d197c9320ddfa4c0fa69"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 20087,
+          "sha256": "bf4b40e88c4c351ff830a09804609be8fc7bc764711f747f42ef6a01beee4026"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 20087,
+          "sha256": "f423803fd1f4042a35099c95c089730a9aa271df2271af2863f2d6fc5202becd"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "a4a35e30a8582a3cf0eaa279878379bd7488a1ce9e1e7f8f29a3244ef9cf69cb"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux617-carrier-exhausted": {
+      "native": true,
+      "action": "carrier",
+      "state": "exhausted",
+      "kernel_release": "6.17.0-1022-azure",
+      "kernel_sha256": "c8943d129291f60fa59728d1c82fa43300a292135384e9f2a192515e079622c4",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 17665,
+          "sha256": "ec3f2fa9448c86b0bc3317b26e98e23b8343caa96d231b3adca2e84c411817ea"
+        },
+        "lane0.pcap": {
+          "bytes": 8602,
+          "sha256": "5b14a5c7f82c7aa98ffe0e16fcf1cc39ca0d37b5b4dab26da3f11206e57e411f"
+        },
+        "lane1.pcap": {
+          "bytes": 8708,
+          "sha256": "0913fc2e409b77f12a1f90f2f4bc4a7614ef0e3d41d58503a94f4297228c8e31"
+        },
+        "carrier.json": {
+          "bytes": 3431,
+          "sha256": "e61c46171e8ad88a4c57fb26bddcf6daad32c5706cec13b61263d710eff05bce"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 27400,
+          "sha256": "b55a0ceffb060760665090a861e02ea05315c5cd9dfe892f7d2ae89f9deef9e0"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 27662,
+          "sha256": "1a3f0101d5301306262132a13ec6ac56cac301cb05e25849a17c8fae05d3ca61"
+        },
+        "statistics.json": {
+          "bytes": 1621,
+          "sha256": "0f445ed6d378c153a1c7af80428264e9647e5fde196ff425e757b1ab356445ad"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux7-administrative-probing": {
+      "native": true,
+      "action": "administrative",
+      "state": "probing",
+      "kernel_release": "7.0.0-1017-azure",
+      "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 9616,
+          "sha256": "f9dd487c1d5d335d077369d1955925882c3c1a5bb89638e65c31a47bc3c67a53"
+        },
+        "lane0.pcap": {
+          "bytes": 4208,
+          "sha256": "dc112e4aaea0ddfb19939d76247fc891e9da0ac2b5b763813b32271bfc2d63fc"
+        },
+        "lane1.pcap": {
+          "bytes": 4102,
+          "sha256": "5c506f118ba380d0c7df720ab2eeab2a29ff94abb1b7f10a4f42e0d8852f295f"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 13458,
+          "sha256": "a13391995984327b6bbb0ff9c179cd040bdc0ed23bfcc8ea5a8d55621e632f44"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 13199,
+          "sha256": "0477dbcbc8aeebf9c39c4e2872731f731713c66702198b876e42fd7aff8c5277"
+        },
+        "statistics.json": {
+          "bytes": 1605,
+          "sha256": "ba35fe0bbed6869d0b0a34c0074d6eaa4b17f48e5ed322b12a1ea7d219e38f1b"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux7-administrative-regenerating": {
+      "native": true,
+      "action": "administrative",
+      "state": "regenerating",
+      "kernel_release": "7.0.0-1017-azure",
+      "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 10725,
+          "sha256": "94e7b4504934978cf27d62bb4f27be9140cf3557cbc28b40f50aa1989b4f7771"
+        },
+        "lane0.pcap": {
+          "bytes": 4766,
+          "sha256": "1efb9c9ba2508270ad4c3c96f4c78c4f45674f8289fe2eac5349b6b7db9e5d5c"
+        },
+        "lane1.pcap": {
+          "bytes": 4766,
+          "sha256": "d417e1b80f48487c0983c15b089070cbbf0614d1b10cf0baafd3bed8af5531c0"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 15295,
+          "sha256": "73815ac234e70e851ebbddc2fae6626d6f235d03d2e548660f350adf1bf6a18d"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 15275,
+          "sha256": "19ce3ed58d8c477e1412bb368335084e39a35264061130777999f7ccd50556e2"
+        },
+        "statistics.json": {
+          "bytes": 1613,
+          "sha256": "58793c645036873882e1597f375d2f9661ac12fe4748c579a8b263356d751bcd"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux7-administrative-retrying": {
+      "native": true,
+      "action": "administrative",
+      "state": "retrying",
+      "kernel_release": "7.0.0-1017-azure",
+      "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 11157,
+          "sha256": "07fd38247bfd757800a6179303988e508bb7881773e7821ab147e47f7e950636"
+        },
+        "lane0.pcap": {
+          "bytes": 5166,
+          "sha256": "092e777f815f13d9e4e71403eb9d9df1197a42450bc09002658dc5ddbfcc0f42"
+        },
+        "lane1.pcap": {
+          "bytes": 5272,
+          "sha256": "83e18a8e77411d9f5fce05d2aba833c710c8891cdedc8cf1e672dcac03e698b7"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 16433,
+          "sha256": "bd99ca28ba07284f838d2cbf6be8f32abe8b0353eef035596a260431a79f345f"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 16694,
+          "sha256": "9f484f27757de09ea8a9d26661be163efc12bc0943d2508c2b691652ea07a1f4"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "921bb3a252387d29885ca0966cc9f83ec3eebbd858da79ee5e599086c0a5141f"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux7-administrative-exhausted": {
+      "native": true,
+      "action": "administrative",
+      "state": "exhausted",
+      "kernel_release": "7.0.0-1017-azure",
+      "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 13362,
+          "sha256": "0ca95e8ac5f9355da1b0268d3ad81de0bb1b067fde5ee0e1ce48d6c1ae207083"
+        },
+        "lane0.pcap": {
+          "bytes": 7092,
+          "sha256": "67044e086c629299e53cd7874580ba7b211beef1db997a2c3427d1dedf488578"
+        },
+        "lane1.pcap": {
+          "bytes": 7198,
+          "sha256": "781c4ca169b56c3e92a60b9280ae2356420ec2d552020d61858140d73b5c50fa"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 21914,
+          "sha256": "8b427ac8d4cb1fdac910d9741f920ab89099fe4db55ad311f2233e40271ae694"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 22175,
+          "sha256": "1e9232ac000e216dc896e136a9d5acc23b911590d52ac7cad3c9e60ba931dc55"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "850da9de97050f0c1469ec526cbbf875470d6ba2da7723d3590aa174b2b0d355"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux7-mtu-probing": {
+      "native": true,
+      "action": "mtu",
+      "state": "probing",
+      "kernel_release": "7.0.0-1017-azure",
+      "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 9675,
+          "sha256": "fd6291f402355973bd701767f8f5f6d7c842cef9b8f6e9b2e8e389e9ce355bcc"
+        },
+        "lane0.pcap": {
+          "bytes": 4102,
+          "sha256": "611fe33fbe8c8e76ba37547373053edf3313d9bad7b86fa80d37e1568c523377"
+        },
+        "lane1.pcap": {
+          "bytes": 4208,
+          "sha256": "5c40cd4569eb55466c2a3b3308d95fbb6da57a471f3ddabf83c160441f8397f2"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 13301,
+          "sha256": "93bcb36afa5da27c71da784843fe30f2313dba5c3acd20363878cf6caae94e60"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 13562,
+          "sha256": "b34b9e0a46f39bf3b2b834e7e7975c7e8258b4475f566d587a7e270d49644c44"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "ad257c70e8d79309fa8a0b8d05c144df7965cee014e5a990af7d57ef64397260"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux7-mtu-regenerating": {
+      "native": true,
+      "action": "mtu",
+      "state": "regenerating",
+      "kernel_release": "7.0.0-1017-azure",
+      "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 10782,
+          "sha256": "fdd7e394bf4b362337fcbf6413974944a9892a82e5d5fc817a0eed4bd7d988e4"
+        },
+        "lane0.pcap": {
+          "bytes": 4766,
+          "sha256": "80b6708f8511dbf259b23e580b2effea6bdca94dbfd3949b1abbf0824dfa1c32"
+        },
+        "lane1.pcap": {
+          "bytes": 4660,
+          "sha256": "bc435eff860ff32ed0f86fabcbfeef0a7f94c36452cee2e69cac9c77b1ce7530"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 15389,
+          "sha256": "bbc95f2379d84bc68fc12e6bc0023ec5032bab0cde7637840cb507a314797bb2"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 15128,
+          "sha256": "22b134fddd512476dc93f894106e98034a67e653603ba78e5f4a84b55babca3d"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "ac8524e5109f4cea83b78a58b89dea0237b7259951c6dc7b405c0f34f30cb6a0"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux7-mtu-retrying": {
+      "native": true,
+      "action": "mtu",
+      "state": "retrying",
+      "kernel_release": "7.0.0-1017-azure",
+      "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 11146,
+          "sha256": "e41e0ba3ebb80f2b0ca9d01cbe2ef4ae4fbd9ebf896b1beccb3bed70429af12d"
+        },
+        "lane0.pcap": {
+          "bytes": 5232,
+          "sha256": "724f5649da8dac8549915d4e971a79d00b9df1e0a2ec02d5daea36ae1b8526f0"
+        },
+        "lane1.pcap": {
+          "bytes": 5126,
+          "sha256": "8fa59984e7b0e6d7799b8fab8876ac916b468595315564b882085c3699a46ec5"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 16694,
+          "sha256": "a86d0343336695b0a2d538b070c176aa2b485d0702e75dc3afb0bc0d16370920"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 16433,
+          "sha256": "cd1f57d4c7af2f26da4193d9c5adbe95ecb33441f30120da49f8d08b9b8c2088"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "6bc889ef3b25b1c4094a25f2de7f4983c4c39903434859d2cccbc5537aefd360"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux7-mtu-exhausted": {
+      "native": true,
+      "action": "mtu",
+      "state": "exhausted",
+      "kernel_release": "7.0.0-1017-azure",
+      "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 13351,
+          "sha256": "250d649df93af132fd30d8e8fe729d255e0511e2180182882ec6986d22d3ae52"
+        },
+        "lane0.pcap": {
+          "bytes": 7078,
+          "sha256": "63e8b83f330a521228e23c0c86acfe371a6ed116940177eb90eddad01c1ddd90"
+        },
+        "lane1.pcap": {
+          "bytes": 6972,
+          "sha256": "16bdf1f2971f5aa5fd613e8d8f6244aba954afc0be3b711483b1c8e83a33432b"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 22175,
+          "sha256": "09b4bacd7fc6265a93a5b348749bd2cce74adcc6c71b465b076a32731f264a2c"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 21914,
+          "sha256": "8459ffbd00f95315f714a069ca76de1b7fe3f432917e96aac63c61c8237d16ec"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "49b76e8873915e6288e28f535172845b0efca04a6b1253558c6bd2ec9e9bcf59"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux7-carrier-probing": {
+      "native": true,
+      "action": "carrier",
+      "state": "probing",
+      "kernel_release": "7.0.0-1017-azure",
+      "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 11431,
+          "sha256": "b33042617b2e9d6758a463e21d4ba3e8335cd8b2a15107fa7105aa5894ef27f3"
+        },
+        "lane0.pcap": {
+          "bytes": 4654,
+          "sha256": "e009c44a4cfe7cc9d7551b86df0a82bca7a90e06c6293da016a49ba5cc1b16f4"
+        },
+        "lane1.pcap": {
+          "bytes": 4548,
+          "sha256": "6912a878c9ccf1b35d359afc3dca8e944d19c604ff4b47dd1571bcd099511452"
+        },
+        "carrier.json": {
+          "bytes": 3431,
+          "sha256": "7a065f176a49c116fa73b326de83d6c61925c19133b0f842d1ccd18a2e6a0838"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 15389,
+          "sha256": "6626597541af44f9f99541bf145bbd025b73a65f780c48342907ba1a0fb9c123"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 15128,
+          "sha256": "d3246fd5b8792e850e4ad3a17e2199c319198871fdeca15fce2bbe81db787ffe"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "d5d688766bc75750105216b1cc3d80c1aa4985c42ddd0dcb04a5364c38b32b65"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux7-carrier-regenerating": {
+      "native": true,
+      "action": "carrier",
+      "state": "regenerating",
+      "kernel_release": "7.0.0-1017-azure",
+      "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 13636,
+          "sha256": "e67de122bdfa3668a2a5e61f6a61373df4cecbc90927bbceb38b5ba6d7e54a16"
+        },
+        "lane0.pcap": {
+          "bytes": 5708,
+          "sha256": "ff3e1f5e50863f00eb16438470d70513c32c04c4ead7c499a0386a8e6c1604c1"
+        },
+        "lane1.pcap": {
+          "bytes": 5708,
+          "sha256": "3649d0eb4151cc329155179e854dad36ed28c95ed4ed089d2591b7ceefdc2342"
+        },
+        "carrier.json": {
+          "bytes": 3431,
+          "sha256": "51df92a1051a28d35d06ff3a2ae78eb2333ce38c37ef9b0b5351153ea7ca77e5"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 18782,
+          "sha256": "7a794e33c24f83b33faa5b213075f13f54e873a7a407162dfb0d3e9a65e6a057"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 18782,
+          "sha256": "03d3b6789fcca7b465d21bcb1daf552727662af1956358d53ab078bcc5681c86"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "71d10d659896311d72b48e18e105dbbe0541a0621f1b7d3a3360e9b05adffeb0"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux7-carrier-retrying": {
+      "native": true,
+      "action": "carrier",
+      "state": "retrying",
+      "kernel_release": "7.0.0-1017-azure",
+      "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 14000,
+          "sha256": "e5ac5c1feb4a2db278a5b58dea3b08020854fd3d7e6f91c50648e25682dcf6a8"
+        },
+        "lane0.pcap": {
+          "bytes": 6174,
+          "sha256": "09b4bac06517ca03f8a6d83916d13e6a12c2d62947320e721f9337260dfc7b92"
+        },
+        "lane1.pcap": {
+          "bytes": 6174,
+          "sha256": "5ce3b4a153b4eecb07cab210aba70bb7186c416b22658d806c808bf85c563c22"
+        },
+        "carrier.json": {
+          "bytes": 3431,
+          "sha256": "f18450bb54bedcb23acca6182e5bba137eb7b38e1d0afc74120382de809ad2b6"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 20087,
+          "sha256": "cf242ee34877b89dc7ce677e2962e10ae1b1cf9b870a8ca182c7ea212ae6e4d1"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 20087,
+          "sha256": "25e74bffd70e0fb10c7d00b08dccd89bdcc2aa50c4fc8e6c1cf3264c3702726c"
+        },
+        "statistics.json": {
+          "bytes": 1617,
+          "sha256": "137a0d2367cacf8b24b1cc49c26cbd0cb3028502311c20eadbc668b4b2b056df"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "linux7-carrier-exhausted": {
+      "native": true,
+      "action": "carrier",
+      "state": "exhausted",
+      "kernel_release": "7.0.0-1017-azure",
+      "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
+      "client_sha256": "25fbf030119c20c9660c9895fa4fdcd6122a357096cdf4f8d18000c3c26c7335",
+      "files": {
+        "serial.log": {
+          "bytes": 17665,
+          "sha256": "0203fb977ed4d16b702b791d5a20e2005b4763b843a170d96efd8bc1f3a14ca9"
+        },
+        "lane0.pcap": {
+          "bytes": 8708,
+          "sha256": "2408942f587a5194a3f21c57255b7ee991dcb0effaa47ca2f7289b35ec0b0a71"
+        },
+        "lane1.pcap": {
+          "bytes": 8708,
+          "sha256": "954ea92fb46ba5930233706fe6ce64609095ae461dc7655dc5a15d2837980931"
+        },
+        "carrier.json": {
+          "bytes": 3431,
+          "sha256": "2ee999604d908afd0366b2251f4c75f136485557755723a69e9e16f1ea6b7818"
+        },
+        "lane0.clocks.jsonl": {
+          "bytes": 27662,
+          "sha256": "850995894e1e712d0946060dca688891b220df41123480129f23d59740d0ecff"
+        },
+        "lane1.clocks.jsonl": {
+          "bytes": 27662,
+          "sha256": "4968b4034ea4717ed1c869c3579761dd2dfdc3750db2d42c00a45c4fdba66900"
+        },
+        "statistics.json": {
+          "bytes": 1621,
+          "sha256": "151b21bd9e30aed75b37fd936fde9b85f9d379356f85bf404eb43e728e6f50f0"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "66b6d1d3b5e3e1c4ea5cf54075bc713e54ed14d87caebf6faa4d0c5654f840fb",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "axiom-administrative-probing": {
+      "native": false,
+      "action": "administrative",
+      "state": "probing",
+      "kernel_release": null,
+      "kernel_sha256": "042eac4327a44b0541bb95d333c53586228cfe5c2ca9b9c01b9fea6b70b703e6",
+      "client_sha256": "8adf9042dbada4f324da41db460b44be96e936ccf3a29b951b929a0ce173a6e5",
+      "files": {
+        "serial.log": {
+          "bytes": 10483,
+          "sha256": "f786982346592cea599650426684fc25525c6717163bca54ce0aff0a87f0c226"
+        },
+        "lane0.pcap": {
+          "bytes": 3572,
+          "sha256": "59e67de4d5694350e26a01441c18a0e6476c3ecc53c4c452fad37d75949a1cab"
+        },
+        "lane1.pcap": {
+          "bytes": 3572,
+          "sha256": "7d12f9b2eadd83a69abfa18d118dbb4e8100b2d498836ca739237667dee19677"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "4c9deb6ff82bafe1fd68faf960c18b7c86cfeb707dc2639d67d66d3aa70b983c",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "axiom-administrative-regenerating": {
+      "native": false,
+      "action": "administrative",
+      "state": "regenerating",
+      "kernel_release": null,
+      "kernel_sha256": "042eac4327a44b0541bb95d333c53586228cfe5c2ca9b9c01b9fea6b70b703e6",
+      "client_sha256": "8adf9042dbada4f324da41db460b44be96e936ccf3a29b951b929a0ce173a6e5",
+      "files": {
+        "serial.log": {
+          "bytes": 11642,
+          "sha256": "1ee81863fbc3c7647a4f21a21e0b851c4baae145008238e82f52728f52a4cb14"
+        },
+        "lane0.pcap": {
+          "bytes": 4130,
+          "sha256": "8d41dafdc06c074772a7203c2b58b2b3f81167e98356d03fdf84ce2b14672f0e"
+        },
+        "lane1.pcap": {
+          "bytes": 4130,
+          "sha256": "3b79e773f4020c1c369abdf95448b23c751505798a7adef1f1a13898f476068c"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "4c9deb6ff82bafe1fd68faf960c18b7c86cfeb707dc2639d67d66d3aa70b983c",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "axiom-administrative-retrying": {
+      "native": false,
+      "action": "administrative",
+      "state": "retrying",
+      "kernel_release": null,
+      "kernel_sha256": "042eac4327a44b0541bb95d333c53586228cfe5c2ca9b9c01b9fea6b70b703e6",
+      "client_sha256": "8adf9042dbada4f324da41db460b44be96e936ccf3a29b951b929a0ce173a6e5",
+      "files": {
+        "serial.log": {
+          "bytes": 12041,
+          "sha256": "590f67e7a44716020a797a1f9ca431afd92b95488bd81ddcaab6d3b93f4786d4"
+        },
+        "lane0.pcap": {
+          "bytes": 4384,
+          "sha256": "a293f3ece44eb859614c51e52576154ae0b89924c3936861b33a17ba21783b9c"
+        },
+        "lane1.pcap": {
+          "bytes": 4384,
+          "sha256": "e852f5373a6dcfe72cd8d782e61fc79799922e5f1c4786550c6efa03e07df237"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "4c9deb6ff82bafe1fd68faf960c18b7c86cfeb707dc2639d67d66d3aa70b983c",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "axiom-administrative-exhausted": {
+      "native": false,
+      "action": "administrative",
+      "state": "exhausted",
+      "kernel_release": null,
+      "kernel_sha256": "042eac4327a44b0541bb95d333c53586228cfe5c2ca9b9c01b9fea6b70b703e6",
+      "client_sha256": "8adf9042dbada4f324da41db460b44be96e936ccf3a29b951b929a0ce173a6e5",
+      "files": {
+        "serial.log": {
+          "bytes": 14433,
+          "sha256": "adfbab43514a6e78a38a74fbebcd13ff8fe486581c1110e93ab8ec417c370c48"
+        },
+        "lane0.pcap": {
+          "bytes": 5806,
+          "sha256": "6fcc733a6d66aab9675b120bd520f7ea058604ef155d4b55daaa180a64af9e72"
+        },
+        "lane1.pcap": {
+          "bytes": 5806,
+          "sha256": "0ef896418ec417e3a73de5b2c1e04e0e24047ded83e43f6d1c4ef46233a26110"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "4c9deb6ff82bafe1fd68faf960c18b7c86cfeb707dc2639d67d66d3aa70b983c",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "axiom-mtu-probing": {
+      "native": false,
+      "action": "mtu",
+      "state": "probing",
+      "kernel_release": null,
+      "kernel_sha256": "042eac4327a44b0541bb95d333c53586228cfe5c2ca9b9c01b9fea6b70b703e6",
+      "client_sha256": "8adf9042dbada4f324da41db460b44be96e936ccf3a29b951b929a0ce173a6e5",
+      "files": {
+        "serial.log": {
+          "bytes": 10472,
+          "sha256": "3f54a6819293551e9b3722532e1f63817931ee25fe3ffa4c19f4e42f3eef8bc8"
+        },
+        "lane0.pcap": {
+          "bytes": 3572,
+          "sha256": "b26ddf2dbbf45d9d303e60da956fb76f117ab13bee4d734e6966415937ed24d4"
+        },
+        "lane1.pcap": {
+          "bytes": 3572,
+          "sha256": "8a2a04c07e2cf21bab13c87df28daec4031c09035096496e1556ee45d8bf6fdb"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "4c9deb6ff82bafe1fd68faf960c18b7c86cfeb707dc2639d67d66d3aa70b983c",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "axiom-mtu-regenerating": {
+      "native": false,
+      "action": "mtu",
+      "state": "regenerating",
+      "kernel_release": null,
+      "kernel_sha256": "042eac4327a44b0541bb95d333c53586228cfe5c2ca9b9c01b9fea6b70b703e6",
+      "client_sha256": "8adf9042dbada4f324da41db460b44be96e936ccf3a29b951b929a0ce173a6e5",
+      "files": {
+        "serial.log": {
+          "bytes": 11631,
+          "sha256": "9c66fbb9ccb934347e786d2d69a7a1b9aaad07a423f2c545adbcdb7838781b7a"
+        },
+        "lane0.pcap": {
+          "bytes": 4130,
+          "sha256": "0402e31e274fc5bf88e2c5ee8947be722c1866965559409bcb7da84d31bf1ba3"
+        },
+        "lane1.pcap": {
+          "bytes": 4130,
+          "sha256": "33ddd477bff3c0085908f7b16b841c3b0577ab7b69334400f9c4d976be4cd2ec"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "4c9deb6ff82bafe1fd68faf960c18b7c86cfeb707dc2639d67d66d3aa70b983c",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "axiom-mtu-retrying": {
+      "native": false,
+      "action": "mtu",
+      "state": "retrying",
+      "kernel_release": null,
+      "kernel_sha256": "042eac4327a44b0541bb95d333c53586228cfe5c2ca9b9c01b9fea6b70b703e6",
+      "client_sha256": "8adf9042dbada4f324da41db460b44be96e936ccf3a29b951b929a0ce173a6e5",
+      "files": {
+        "serial.log": {
+          "bytes": 12030,
+          "sha256": "f5a0765381f2655de69a59fcb581244c6efca7f2c0f23f9521973d5dc97f21df"
+        },
+        "lane0.pcap": {
+          "bytes": 4384,
+          "sha256": "33ba7de29a6448641ccf4e01885583223872d8dbfb17be083fe976e8deda585b"
+        },
+        "lane1.pcap": {
+          "bytes": 4384,
+          "sha256": "31fcd29bb3294fc3afd259da5ede94d2cc12de91a3f5f0778dff4234313738c3"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "4c9deb6ff82bafe1fd68faf960c18b7c86cfeb707dc2639d67d66d3aa70b983c",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "axiom-mtu-exhausted": {
+      "native": false,
+      "action": "mtu",
+      "state": "exhausted",
+      "kernel_release": null,
+      "kernel_sha256": "042eac4327a44b0541bb95d333c53586228cfe5c2ca9b9c01b9fea6b70b703e6",
+      "client_sha256": "8adf9042dbada4f324da41db460b44be96e936ccf3a29b951b929a0ce173a6e5",
+      "files": {
+        "serial.log": {
+          "bytes": 14426,
+          "sha256": "422d9806def678272500b776415db0fe33db2f18123450260fd1b9639271a285"
+        },
+        "lane0.pcap": {
+          "bytes": 5806,
+          "sha256": "0df43dff6d4eec2c2a9b954f50964f7049ccb461cba76e7725a32ba4f34db2b4"
+        },
+        "lane1.pcap": {
+          "bytes": 5806,
+          "sha256": "976d32a3cc43341a0e24fe14674ea7ce3506602e43219e8b992b49c50ebcdb32"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "4c9deb6ff82bafe1fd68faf960c18b7c86cfeb707dc2639d67d66d3aa70b983c",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "axiom-carrier-probing": {
+      "native": false,
+      "action": "carrier",
+      "state": "probing",
+      "kernel_release": null,
+      "kernel_sha256": "042eac4327a44b0541bb95d333c53586228cfe5c2ca9b9c01b9fea6b70b703e6",
+      "client_sha256": "8adf9042dbada4f324da41db460b44be96e936ccf3a29b951b929a0ce173a6e5",
+      "files": {
+        "serial.log": {
+          "bytes": 12216,
+          "sha256": "6e311786f554583beb38f30c80ad3de6efa72c3f267c38b177a0f95cab13f4e3"
+        },
+        "lane0.pcap": {
+          "bytes": 4230,
+          "sha256": "448beb9b7613bb91841aa80b76cc26a32ef21311c3ec33634d52deda352386df"
+        },
+        "lane1.pcap": {
+          "bytes": 4230,
+          "sha256": "7799a8b187782f9e319daf3a614fb6d94fbe5f293caa0a00c7395d67b1a1b829"
+        },
+        "carrier.json": {
+          "bytes": 1076,
+          "sha256": "31f62daa1d412fe5d5d779f7e08aa85daa151387fd1710977f20920054a40c71"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "4c9deb6ff82bafe1fd68faf960c18b7c86cfeb707dc2639d67d66d3aa70b983c",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "axiom-carrier-regenerating": {
+      "native": false,
+      "action": "carrier",
+      "state": "regenerating",
+      "kernel_release": null,
+      "kernel_sha256": "042eac4327a44b0541bb95d333c53586228cfe5c2ca9b9c01b9fea6b70b703e6",
+      "client_sha256": "8adf9042dbada4f324da41db460b44be96e936ccf3a29b951b929a0ce173a6e5",
+      "files": {
+        "serial.log": {
+          "bytes": 14474,
+          "sha256": "e1ebc0102083a8e5b1495de9c03f7f8aea51f6c33e1f916316180718d694810a"
+        },
+        "lane0.pcap": {
+          "bytes": 5244,
+          "sha256": "98c04e9168d9450814ee377dd3a40f66f39aa7ed6aa18d18e5277947bddf020f"
+        },
+        "lane1.pcap": {
+          "bytes": 5244,
+          "sha256": "b7d697e1e4629452af4ef7562e1ecbd633f474e3d24b8399de2ba0b6e5681921"
+        },
+        "carrier.json": {
+          "bytes": 1076,
+          "sha256": "82c82da9a0ef7837005f1e4c7b419678d38ae86a525e68943f158d885a3f6370"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "4c9deb6ff82bafe1fd68faf960c18b7c86cfeb707dc2639d67d66d3aa70b983c",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "axiom-carrier-retrying": {
+      "native": false,
+      "action": "carrier",
+      "state": "retrying",
+      "kernel_release": null,
+      "kernel_sha256": "042eac4327a44b0541bb95d333c53586228cfe5c2ca9b9c01b9fea6b70b703e6",
+      "client_sha256": "8adf9042dbada4f324da41db460b44be96e936ccf3a29b951b929a0ce173a6e5",
+      "files": {
+        "serial.log": {
+          "bytes": 14859,
+          "sha256": "dc290b45c082e4233ef6042f223e05e895fb3e8e883176677391d5dcc0c0e396"
+        },
+        "lane0.pcap": {
+          "bytes": 5498,
+          "sha256": "372a1231dc60c5e5f3da2e89919d59592593c58c65f0cbec9d23cc79bce25cc4"
+        },
+        "lane1.pcap": {
+          "bytes": 5498,
+          "sha256": "61ce31229ab04b3bb23a94698174b5cd9f6ea94e24e0cebdb77918f192327788"
+        },
+        "carrier.json": {
+          "bytes": 1076,
+          "sha256": "ae814a6a6eca2090f921043cdb2f5ac8171a0ea9281ef9a61b0f17cc739e3b64"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "4c9deb6ff82bafe1fd68faf960c18b7c86cfeb707dc2639d67d66d3aa70b983c",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    },
+    "axiom-carrier-exhausted": {
+      "native": false,
+      "action": "carrier",
+      "state": "exhausted",
+      "kernel_release": null,
+      "kernel_sha256": "042eac4327a44b0541bb95d333c53586228cfe5c2ca9b9c01b9fea6b70b703e6",
+      "client_sha256": "8adf9042dbada4f324da41db460b44be96e936ccf3a29b951b929a0ce173a6e5",
+      "files": {
+        "serial.log": {
+          "bytes": 18727,
+          "sha256": "30873e69f78447a14403f7a304e8c2603c6edd157cb81cba1ad2b2c762240842"
+        },
+        "lane0.pcap": {
+          "bytes": 7528,
+          "sha256": "d80e024bbd54d17e32f5ce9ca14d1a1cb7d6ae6efb3daccee9d861c536c8cc2d"
+        },
+        "lane1.pcap": {
+          "bytes": 7528,
+          "sha256": "86ccb5bc2a5a72661be57c6fe4414e9fb66cfc16bf77955b6d9215fcbd32287b"
+        },
+        "carrier.json": {
+          "bytes": 1076,
+          "sha256": "238c78bf629f9ac26e8329fd2103752bb320bcb224377778fcb560d2207eb205"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "independently_reopened": true,
+      "source_epoch_sha256": "4c9deb6ff82bafe1fd68faf960c18b7c86cfeb707dc2639d67d66d3aa70b983c",
+      "client_sources_sha256": {
+        "ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b",
+        "ipv6_device_pending.c": "41af12f2503887f5f53e7fb33bd9d22cd4207ac04a42a03669c572b688ffcc07",
+        "ipv6_device_fixture.h": "e6d0772dcc092dd5fb3d2a71316d2c2fadbde58db7391c9f04c47543204f300d",
+        "ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6"
+      },
+      "diagnostic_only": true,
+      "pending_device_acceptance": false,
+      "full_F12_complete": false
+    }
+  }
+}

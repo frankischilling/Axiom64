@@ -40,7 +40,9 @@ def fixture(linkage, scenario, root='/tmp', build_image=True):
     binary = 'network-manager-dynamic' if linkage == 'dynamic' else 'network-manager'
     command = (f'/bin/address-query-{linkage} eth0 eth1' if scenario == 'address-query' else
                f'/bin/manager-tests /sbin/{binary} {scenario} {root}')
-    script = f'#!/bin/sh\nset -e\n{command}\necho AXIOM64_TESTS_PASS\n'
+    script = ('#!/bin/sh\nset -e\n'
+              "printf '1\\n' > /proc/sys/net/ipv6/conf/all/addr_gen_mode\n"
+              f'{command}\necho AXIOM64_TESTS_PASS\n')
     files['etc/net-test.sh'] = (0o100755, script.encode())
     with (ROOT / 'build/rootfs-network.cpio').open('wb') as output:
         for inode, (name, (mode, data)) in enumerate([*sorted(files.items()), ('TRAILER!!!', (0, b''))], 1):

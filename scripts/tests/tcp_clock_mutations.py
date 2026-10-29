@@ -10,6 +10,32 @@ import struct
 from tcp_capture_clock import ClockEvidenceError, native_clock_offset, raw_records
 
 
+def reversed_clock_delta(items, path, statistics=None):
+    """Reverse both packet and measured read ordering in a copied candidate."""
+    assert len(items) >= 3
+    delta = items[0]['stamp'] - items[2]['stamp'] - 1
+    if statistics is not None:
+        path = Path(path)
+        encoded = (path.parent / statistics['monotonic_receipts']).read_bytes()
+        assert hashlib.sha256(encoded).hexdigest() == statistics['monotonic_receipts_sha256']
+        receipts = [json.loads(line) for line in encoded.splitlines()]
+        records = list(raw_records(path))
+        assert len(records) == len(receipts) == statistics['packets']
+        for ordinal in (0, 2):
+            item = items[ordinal]
+            index = item['record_index']
+            assert records[index]['frame'] == item['frame'] and records[index]['stamp'] == item['stamp']
+            assert receipts[index]['frame'] == index
+        before = receipts[items[0]['record_index']]['receipt_monotonic_ns']
+        after = receipts[items[2]['record_index']]['receipt_monotonic_after_ns']
+        # Kernel packet stamps and read delays can have different spacing.
+        # Reverse the whole observed read interval, including its uncertainty.
+        delta = min(delta, (before - after) // 1000 - 1)
+        assert after + delta * 1000 < before
+    assert items[2]['stamp'] + delta < items[0]['stamp']
+    return delta
+
+
 class MutationClock:
     """Express hostile timing changes in the same clock as the actual auditor."""
     def __init__(self, path, statistics):

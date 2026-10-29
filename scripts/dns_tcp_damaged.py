@@ -66,6 +66,7 @@ def synchronize(rows, evidence, text, lane, changes, scale=False):
             entry['ms'] /= 10
         log = re.sub(r'monotonic_ms=(\d+)', lambda match: 'monotonic_ms=' + str(int(match[1]) // 10), log)
     count = sum(decode(row['frame'], lane) is not None for row in updated)
+    count += len(re.findall(r'^DNS_LINK_FRAME linkage=\w+ index=' + str(lane + 1) + r' ', log, re.M))
     log = re.sub(r'(DNS_CAPTURE_PASS linkage=\w+ index=' + str(lane + 1) + r' packets=)\d+',
                  lambda match: match[1] + str(count), log)
     return updated, adjusted, log

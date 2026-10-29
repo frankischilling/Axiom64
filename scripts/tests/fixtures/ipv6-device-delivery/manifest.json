@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "cases": {
+    "before": {
+      "action": "mtu",
+      "state": "regenerating",
+      "expected_reader_passed": false,
+      "expected_error": "selected tentative query NA and ACK causality",
+      "actual_client_sha256": "2fe54c0c2b4cd1f0a73bc1de5328ed1fce5215a22f4e23997ee2711ea2107c0c",
+      "actual_kernel_sha256": "042eac4327a44b0541bb95d333c53586228cfe5c2ca9b9c01b9fea6b70b703e6",
+      "actual_ISO_sha256": "ca7ebeb1805e6a6024f134302bc735bc0b0a7e01943c77dd8bc2f0390a5e3049",
+      "public_source_epoch_sha256": "05d283f4fbb7c3f93bae3586e72b40a9abae086e43c344b36dc3a97c26280da2",
+      "controller_epoch_sha256": "05d283f4fbb7c3f93bae3586e72b40a9abae086e43c344b36dc3a97c26280da2",
+      "files": {
+        "serial.log": {
+          "bytes": 11620,
+          "sha256": "1222f6948c1a9ec874708876003f16844f9db6136c76556e149208be2193e4dc"
+        },
+        "lane0.pcap": {
+          "bytes": 4130,
+          "sha256": "255fd2c7923a851844bf206ed4d2b2464e5967907f415026472df809afc93395"
+        },
+        "lane1.pcap": {
+          "bytes": 4130,
+          "sha256": "93ca8c11707633f3fe40a657f9f51e98e434819cf1b6d63d07581ea0963582a4"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "diagnostic_only": true,
+      "full_matrix_acceptance": false
+    },
+    "after": {
+      "action": "mtu",
+      "state": "regenerating",
+      "expected_reader_passed": true,
+      "expected_error": null,
+      "actual_client_sha256": "2fe54c0c2b4cd1f0a73bc1de5328ed1fce5215a22f4e23997ee2711ea2107c0c",
+      "actual_kernel_sha256": "042eac4327a44b0541bb95d333c53586228cfe5c2ca9b9c01b9fea6b70b703e6",
+      "actual_ISO_sha256": "ca7ebeb1805e6a6024f134302bc735bc0b0a7e01943c77dd8bc2f0390a5e3049",
+      "public_source_epoch_sha256": "05d283f4fbb7c3f93bae3586e72b40a9abae086e43c344b36dc3a97c26280da2",
+      "controller_epoch_sha256": "203cb3379753b67843cfcc66fefec0ffe96af9e4358f966af3db2c91e81cc595",
+      "files": {
+        "serial.log": {
+          "bytes": 11620,
+          "sha256": "cc6dcbe78a80fbd2fdbc621bfe840789fcb0e289239861b52095a5b9a431cecc"
+        },
+        "lane0.pcap": {
+          "bytes": 4130,
+          "sha256": "fdbe272cfc4e41582ad26fde0b733d730ba0df8583d094c7206989d3a4defcd1"
+        },
+        "lane1.pcap": {
+          "bytes": 4130,
+          "sha256": "1342a4d123a6fbb86a204adf1e56ef90db66f11bdb629125f982fe1e5e3c0c5f"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "diagnostic_only": true,
+      "full_matrix_acceptance": false
+    },
+    "first-ready": {
+      "action": "carrier",
+      "state": "probing",
+      "expected_reader_passed": true,
+      "expected_error": null,
+      "actual_client_sha256": "2fe54c0c2b4cd1f0a73bc1de5328ed1fce5215a22f4e23997ee2711ea2107c0c",
+      "actual_kernel_sha256": "042eac4327a44b0541bb95d333c53586228cfe5c2ca9b9c01b9fea6b70b703e6",
+      "actual_ISO_sha256": "a53da82acd163bc4ac5064f2aa9d443adf1c8db65e45940f6c44aba5b8e5ccd4",
+      "public_source_epoch_sha256": "05d283f4fbb7c3f93bae3586e72b40a9abae086e43c344b36dc3a97c26280da2",
+      "controller_epoch_sha256": "0dde0c3a8ee20866b263cf2386a79c7fe072e62a00cf313705ea5a760d73bb49",
+      "files": {
+        "serial.log": {
+          "bytes": 12203,
+          "sha256": "4a73d36a23f36cc5a33bd5d118a1de8f2607f040339fd7bb6e4bf521fa09869f"
+        },
+        "lane0.pcap": {
+          "bytes": 4230,
+          "sha256": "7e8ae97f8b266613d2079fec18613c85035363b3c2f9698bda1c33b18f33c45f"
+        },
+        "lane1.pcap": {
+          "bytes": 4230,
+          "sha256": "9e72a19fa4dfea1e047e21627d8338119252225c6d43452d0cc54604d615da6a"
+        },
+        "carrier.json": {
+          "bytes": 1076,
+          "sha256": "15e75d9558e5fe88de958f0339fccdb6d79b56cc83ea9e80c49edce933fd19a4"
+        }
+      },
+      "original_packet_and_serial_bytes_unchanged": true,
+      "diagnostic_only": true,
+      "full_matrix_acceptance": false,
+      "predefined_fault": "delay each first down-link ACK by 1.1 real seconds"
+    }
+  },
+  "scope": "Original failing and corrected physical conflict delivery diagnostics, plus actual first-inventory readiness under a predefined delayed ACK."
+}

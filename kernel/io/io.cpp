@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "io/io.hpp"
+#include "io/vectors.hpp"
 #include "core/time.hpp"
+#include "drivers/platform/devices.hpp"
 #include "fs/file_lock.hpp"
 #include "fs/record_lock.hpp"
 #include "fs/descriptor.hpp"
@@ -8,13 +10,13 @@
 #include "process/signals.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
+#include "net/inet6.hpp"
 #include "net/netlink.hpp"
 #include "net/tcp/socket.hpp"
+#include "security/credentials.hpp"
 
 namespace ax {
-struct Iovec {
-    uint64_t base, length;
-};
+using Iovec = IoVector;
 
 struct Message {
     uint64_t name;
@@ -45,10 +47,17 @@ struct IoRequest {
     PacketAddress destination;
     unsigned destination_index;
     InetAddress inet_destination;
+    InetSendControl inet_output;
+    Inet6Address inet6_destination;
+    Inet6SendControl inet6_output;
+    uint8_t* send_control_data;
+    bool inet_destination_named;
     NetlinkAddress netlink_destination;
     uint8_t* packet_data;
+    bool packet_ready;
     size_t packet_length;
     uint64_t address_pointer, address_length_pointer;
+    uint64_t control_pointer, control_capacity;
     uint32_t address_capacity;
     uint64_t event_value;
     bool event_value_ready;
@@ -64,6 +73,7 @@ static void destroy(IoRequest* request) {
     if (request->vectors != &request->single)
         release(request->vectors);
     release(request->packet_data);
+    release(request->send_control_data);
     close_handle(request->handle);
     release(request);
 }
@@ -84,7 +94,7 @@ int64_t io_interrupted_result(const Task& task) {
 
 static void capture_timeout(IoRequest& request) {
     auto h = request.handle;
-    if (request.locking || (!h->socket && !h->inet && !h->packet && !h->netlink))
+    if (request.locking || (!h->socket && !h->inet && !h->inet6 && !h->packet && !h->netlink))
         return;
     auto timeout = request.write ? h->send_timeout : h->receive_timeout;
     if (!timeout.finite)
@@ -109,7 +119,7 @@ static int64_t timeout_result(const IoRequest& request) {
 
 static int import_vectors(Task& task, IoRequest& request, uint64_t pointer, size_t count) {
     if (count > 1024)
-        return -22;
+        return request.call.rax == 46 || request.call.rax == 47 ? -90 : -22;
     request.count = count;
     if (!count)
         return 0;
@@ -118,19 +128,28 @@ static int import_vectors(Task& task, IoRequest& request, uint64_t pointer, size
         return -12;
     if (!task.memory->space.copy_in(request.vectors, pointer, count * sizeof(Iovec)))
         return -14;
-    uint64_t total = 0;
-    for (size_t i = 0; i < count; i++) {
-        auto& v = request.vectors[i];
-        if (v.length > INT64_MAX - total)
-            return -22;
-        total += v.length;
-    }
     // Linux limits each operation to MAX_RW_COUNT, including vector operations.
-    size_t remaining = 0x7ffff000;
-    for (size_t i = 0; i < count; i++) {
-        auto& v = request.vectors[i];
-        v.length = min(v.length, uint64_t(remaining));
-        remaining -= v.length;
+    int64_t capacity = bound_io_vectors(request.vectors, count);
+    return capacity < 0 ? int(capacity) : 0;
+}
+
+static int copy_packet(Task& task, IoRequest& request, size_t begin, size_t length,
+                       uint8_t* output = nullptr) {
+    if (!output)
+        output = request.packet_data;
+    size_t at = 0, end = begin + length;
+    for (size_t i = 0; i < request.count && at < end; i++) {
+        const auto& vector = request.vectors[i];
+        size_t next = at + vector.length;
+        if (next > begin) {
+            size_t skip = begin > at ? begin - at : 0;
+            size_t copied = min(vector.length - skip, end - at - skip);
+            if (copied &&
+                (vector.base > UINT64_MAX - skip ||
+                 !task.memory->space.copy_in(output + at + skip, vector.base + skip, copied)))
+                return -14;
+        }
+        at = next;
     }
     return 0;
 }
@@ -149,8 +168,12 @@ static int prepare_packet(Task& task, IoRequest& request) {
         request.destination_index = packet_interface(request.handle->packet);
     if (request.write && request.handle->inet)
         request.inet_destination = inet_peer(request.handle->inet);
+    if (request.write && request.handle->inet6)
+        request.inet6_destination = inet6_peer(request.handle->inet6);
     uint64_t address = f.rax == 44 ? f.r8 : 0;
     uint64_t address_length = f.rax == 44 ? f.r9 : 0;
+    uint64_t control_pointer = 0, control_length = 0;
+    bool inet_address_copied = false;
     if (f.rax == 19 || f.rax == 20) {
         int error = import_vectors(task, request, f.rsi, f.rdx);
         if (error)
@@ -159,14 +182,38 @@ static int prepare_packet(Task& task, IoRequest& request) {
         Message message;
         if (!task.memory->space.copy_in(&message, f.rsi, sizeof(message)))
             return -14;
-        if (request.write && message.control_length)
-            return -95;
+        if ((request.handle->inet6 || request.handle->inet) && message.name) {
+            if (int32_t(message.name_length) < 0)
+                return -22;
+            message.name_length = min(message.name_length, uint32_t(128));
+            if (request.write && !message.name_length)
+                message.name = 0;
+        }
+        if (request.write && message.control_length) {
+            if (!request.handle->inet6 && !request.handle->inet)
+                return -95;
+            control_pointer = message.control;
+            control_length = message.control_length;
+        }
         if (request.write) {
             address = message.name;
             address_length = message.name_length;
+            if (request.handle->inet && address) {
+                // sendmsg imports its bounded name before importing vectors.
+                // Protocol address-length checks follow control-buffer copying.
+                uint8_t bytes[128];
+                if (address_length && !task.memory->space.copy_in(bytes, address, address_length))
+                    return -14;
+                request.inet_destination = {};
+                memcpy(&request.inet_destination, bytes,
+                       min(size_t(address_length), sizeof(InetAddress)));
+                inet_address_copied = true;
+            }
         } else {
             request.address_pointer = message.name;
             request.address_capacity = message.name_length;
+            request.control_pointer = message.control;
+            request.control_capacity = message.control_length;
         }
         int error = import_vectors(task, request, message.iov, message.iov_count);
         if (error)
@@ -176,6 +223,11 @@ static int prepare_packet(Task& task, IoRequest& request) {
         request.vectors = &request.single;
         request.count = 1;
     }
+    for (size_t i = 0; i < request.count; i++) {
+        const auto& vector = request.vectors[i];
+        if (vector.base >= user_limit || vector.length > user_limit - vector.base)
+            return -14;
+    }
     if (request.write && address) {
         if (request.handle->netlink) {
             if (address_length < sizeof(NetlinkAddress))
@@ -183,12 +235,28 @@ static int prepare_packet(Task& task, IoRequest& request) {
             if (!task.memory->space.copy_in(&request.netlink_destination, address,
                                             sizeof(NetlinkAddress)))
                 return -14;
-        } else if (request.handle->inet) {
-            if (address_length < sizeof(InetAddress))
+        } else if (request.handle->inet6) {
+            uint32_t length = address_length;
+            if (length > 128)
                 return -22;
-            if (!task.memory->space.copy_in(&request.inet_destination, address,
-                                            sizeof(InetAddress)))
+            uint8_t bytes[128];
+            if (length && !task.memory->space.copy_in(bytes, address, length))
                 return -14;
+            request.inet6_destination = {};
+            memcpy(&request.inet6_destination, bytes, min(size_t(length), sizeof(Inet6Address)));
+            if (length < sizeof(Inet6Address))
+                request.inet6_destination.scope = 0;
+        } else if (request.handle->inet) {
+            if (!inet_address_copied) {
+                uint32_t length = address_length;
+                if (length > 128)
+                    return -22;
+                uint8_t bytes[128];
+                if (length && !task.memory->space.copy_in(bytes, address, length))
+                    return -14;
+                request.inet_destination = {};
+                memcpy(&request.inet_destination, bytes, min(size_t(length), sizeof(InetAddress)));
+            }
         } else {
             if (address_length < sizeof(PacketAddress))
                 return -22;
@@ -202,8 +270,20 @@ static int prepare_packet(Task& task, IoRequest& request) {
     if (f.rax == 45 && f.r8) {
         request.address_pointer = f.r8;
         request.address_length_pointer = f.r9;
-        if (!task.memory->space.copy_in(&request.address_capacity, f.r9, 4))
+        if (!request.handle->inet6 && !request.handle->inet &&
+            !task.memory->space.copy_in(&request.address_capacity, f.r9, 4))
             return -14;
+    }
+    if (request.write && request.handle->inet6) {
+        // Import the complete control buffer after vectors and address bytes,
+        // before protocol-specific destination and control validation.
+        if (int error = inet6_capture_control(task, control_pointer, control_length,
+                                              request.send_control_data))
+            return error;
+    } else if (request.write && request.handle->inet) {
+        if (int error = inet_capture_send_control(task, control_pointer, control_length,
+                                                  request.send_control_data))
+            return error;
     }
     for (size_t i = 0; i < request.count; i++)
         request.packet_length += request.vectors[i].length;
@@ -214,12 +294,22 @@ static int prepare_packet(Task& task, IoRequest& request) {
             return error;
         if (request.packet_length > netlink_max_request)
             return -90;
-    } else if (request.handle->inet) {
-        int error = inet_target(request.handle->inet, request.inet_destination, address != 0);
+    } else if (request.handle->inet6) {
+        request.inet_destination_named = address != 0;
+        int error = inet6_target(request.handle->inet6, request.inet6_destination,
+                                 request.inet_destination_named, uint32_t(address_length));
         if (error)
             return error;
-        if (request.packet_length > 65535 - 20)
-            return -90;
+    } else if (request.handle->inet) {
+        request.inet_destination_named = address != 0;
+        int error = inet_prepare_send(request.handle->inet, request.inet_destination,
+                                      request.inet_destination_named, uint32_t(address_length),
+                                      request.packet_length, request.send_control_data,
+                                      control_length, request.inet_output);
+        if (error)
+            return error;
+        release(request.send_control_data);
+        request.send_control_data = nullptr;
     } else {
         if (!request.destination_index || !net_info(request.destination_index))
             return -6;
@@ -228,20 +318,51 @@ static int prepare_packet(Task& task, IoRequest& request) {
         if (request.packet_length < ethernet_header)
             return -22;
     }
+    if (request.handle->inet6) {
+        int error = inet6_parse_send_control(
+            request.handle->inet6, request.inet6_destination, request.send_control_data,
+            control_length, request.inet6_output, capable(task.credentials, Capability::net_raw));
+        if (error)
+            return error;
+        // Sticky views can change through another alias while output waits.
+        // Keep only immutable selected bytes through request teardown.
+        if (int error = inet6_own_send_extensions(request.inet6_output, request.send_control_data))
+            return error;
+    }
+    size_t prefix = request.handle->inet6  ? inet6_send_prefix(request.handle->inet6)
+                    : request.handle->inet ? inet_send_prefix(request.handle->inet)
+                                           : 0;
+    if (request.packet_length < prefix)
+        return -14;
+    uint8_t protocol_bytes[2];
+    if (prefix) {
+        // Import raw protocol bytes before routing and length admission.
+        if (int error = copy_packet(task, request, 0, prefix, protocol_bytes))
+            return error;
+    }
+    if (request.handle->inet6) {
+        if (int error = inet6_send_admit(request.handle->inet6, request.inet6_destination,
+                                         request.packet_length, prefix ? protocol_bytes : nullptr,
+                                         request.inet_destination_named, &request.inet6_output))
+            return error;
+    } else if (request.handle->inet) {
+        if (int error = inet_send_admit(request.handle->inet, request.inet_destination,
+                                        request.packet_length, request.inet_output))
+            return error;
+        // Route and ancillary input precede the socket-memory wait. User
+        // payload is read after space becomes available, including raw bytes
+        // that were inspected above only for protocol admission.
+        return 0;
+    }
     if (request.packet_length) {
         request.packet_data = static_cast<uint8_t*>(alloc(request.packet_length));
         if (!request.packet_data)
             return -12;
     }
-    size_t at = 0;
-    for (size_t i = 0; i < request.count; i++) {
-        const auto& vector = request.vectors[i];
-        if (vector.length &&
-            !task.memory->space.copy_in(request.packet_data + at, vector.base, vector.length))
-            return -14;
-        at += vector.length;
+    if (prefix) {
+        memcpy(request.packet_data, protocol_bytes, prefix);
     }
-    return 0;
+    return copy_packet(task, request, prefix, request.packet_length - prefix);
 }
 
 static int prepare(Task& task, IoRequest& request) {
@@ -263,6 +384,8 @@ static int prepare(Task& task, IoRequest& request) {
     }
     if (f.rax == 42 && inet_stream(request.handle->inet)) {
         request.connect = request.write = true;
+        if (tcp_ipv6(request.handle->inet))
+            return tcp6_import(task, f.rsi, uint32_t(f.rdx), request.inet6_destination, true);
         if (f.rdx < sizeof(uint16_t))
             return -22;
         request.inet_destination = {};
@@ -284,7 +407,7 @@ static int prepare(Task& task, IoRequest& request) {
     request.accept = f.rax == 43 || f.rax == 288;
     request.positioned = f.rax == 17 || f.rax == 18;
     if ((request.socket || request.accept) && !request.handle->socket && !request.handle->packet &&
-        !request.handle->inet && !request.handle->netlink)
+        !request.handle->inet && !request.handle->inet6 && !request.handle->netlink)
         return -88;
     if (!request.socket && !request.accept &&
         ((request.handle->flags & 3) == (request.write ? 0u : 1u)))
@@ -292,7 +415,7 @@ static int prepare(Task& task, IoRequest& request) {
     if (request.socket)
         request.flags = f.rax == 46 || f.rax == 47 ? f.rdx : f.r10;
     if (request.handle->packet || (request.handle->inet && !inet_stream(request.handle->inet)) ||
-        request.handle->netlink)
+        request.handle->inet6 || request.handle->netlink)
         return prepare_packet(task, request);
     if (request.accept) {
         if (f.rax == 288 && (f.r10 & ~uint64_t(0x80800)))
@@ -356,7 +479,7 @@ static int64_t stream_transfer(Task& task, IoRequest& request, const Iovec& vect
             if (!result) {
                 if (!task.memory->space.copy_in(buffer, address, count))
                     return done ? int64_t(done) : -14;
-                result = tcp_write(socket, buffer, count);
+                result = tcp_write(socket, buffer, count, false);
             }
         } else {
             bool peek = request.flags & 2;
@@ -382,38 +505,209 @@ static int64_t stream_transfer(Task& task, IoRequest& request, const Iovec& vect
     return done;
 }
 
+struct VectorCursor {
+    IoRequest& request;
+    size_t index = 0, offset = 0;
+
+    bool copy(Task& task, uint8_t* buffer, size_t length) {
+        while (length) {
+            while (index < request.count && offset == request.vectors[index].length) {
+                index++;
+                offset = 0;
+            }
+            if (index == request.count)
+                panic("I/O cursor exceeds captured vectors");
+            const auto& vector = request.vectors[index];
+            uint64_t address = vector.base + offset;
+            size_t count = min(length, min(size_t(vector.length - offset),
+                                           size_t(page_size - address % page_size)));
+            bool copied = request.write ? task.memory->space.copy_in(buffer, address, count)
+                                        : task.memory->space.copy_out(address, buffer, count);
+            if (!copied)
+                return false;
+            offset += count;
+            buffer += count;
+            length -= count;
+        }
+        return true;
+    }
+};
+
+static int64_t control_attempt(Task& task, IoRequest& request, const ControlFileOps& control) {
+    auto handle = request.handle;
+    size_t length = 0;
+    for (size_t n = 0; n < request.count; n++) {
+        const auto& vector = request.vectors[n];
+        if (vector.base > user_limit || vector.length > user_limit - vector.base)
+            return -14;
+        length += vector.length;
+    }
+    // Linux vector I/O returns before the filesystem for an empty iterator.
+    if (!length && (request.call.rax == 19 || request.call.rax == 20))
+        return 0;
+    if (int error = node_validate(handle->node))
+        return error;
+    if (request.write && node_readonly(handle->node))
+        return -30;
+    if (control.access(handle->node, request.write ? 2 : 4, false))
+        return -1;
+    auto buffer = static_cast<uint8_t*>(alloc(length + 1));
+    if (!buffer)
+        return -12;
+    VectorCursor cursor{request};
+    // Copy every input page before invoking a state-changing handler. A late
+    // vector or page fault must not commit a valid prefix of a sysctl write.
+    if (request.write && !cursor.copy(task, buffer, length)) {
+        release(buffer);
+        return -14;
+    }
+    buffer[length] = 0;
+    uint64_t offset = handle->offset;
+    int64_t result =
+        request.write ? write_handle(handle, buffer, length) : read_handle(handle, buffer, length);
+    if (result > int64_t(length))
+        panic("control file exceeds captured operation");
+    if (result > 0 && !request.write && !cursor.copy(task, buffer, size_t(result)))
+        result = -14;
+    if (result < 0)
+        handle->offset = offset;
+    release(buffer);
+    return result;
+}
+
+static int64_t local_stream_attempt(Task& task, IoRequest& request) {
+    auto handle = request.handle;
+    size_t remaining = 0;
+    for (size_t n = 0; n < request.count; n++) {
+        const auto& vector = request.vectors[n];
+        if (vector.length &&
+            (vector.base >= user_limit || vector.length > user_limit - vector.base))
+            return -14;
+        remaining += vector.length;
+    }
+    VectorCursor cursor{request};
+    uint8_t buffer[4096];
+    size_t done = 0;
+    bool peek = request.flags & 2;
+    while (remaining) {
+        size_t count = min(remaining, sizeof(buffer));
+        int64_t result;
+        if (request.write) {
+            result = handle->socket          ? socket_write(handle->socket, nullptr, 0)
+                     : handle->pipe->readers ? 0
+                                             : -32;
+            if (!result) {
+                size_t capacity = handle->socket
+                                      ? handle->socket->peer->capacity - handle->socket->peer->size
+                                      : sizeof(Pipe::bytes) - handle->pipe->size;
+                // Small pipe writes wait for the entire request to fit.
+                if (!capacity ||
+                    (handle->pipe && !done && remaining <= sizeof(buffer) && capacity < remaining))
+                    return done ? int64_t(done) : -11;
+                count = min(count, capacity);
+                if (!cursor.copy(task, buffer, count))
+                    return done ? int64_t(done) : -14;
+                result = handle->socket ? socket_write(handle->socket, buffer, count)
+                                        : write_handle(handle, buffer, count);
+            }
+        } else {
+            result = handle->socket
+                         ? socket_read(handle->socket, buffer, count, true, peek ? done : 0)
+                         : pipe_read(handle->pipe, buffer, count, true);
+            if (result > 0) {
+                // Stream copies commit only after their complete returned
+                // chunk reaches userspace, including across vector boundaries.
+                if (!cursor.copy(task, buffer, result))
+                    return done ? int64_t(done) : -14;
+                // Syscalls run with interrupts masked on the current single CPU.
+                int64_t consumed = handle->socket
+                                       ? peek ? result : socket_read(handle->socket, buffer, result)
+                                       : pipe_read(handle->pipe, buffer, result);
+                if (consumed != result)
+                    panic("local stream changed during copy");
+            }
+        }
+        if (result < 0) {
+            if (result == -32 && request.write && !(request.socket && (request.flags & 0x4000)))
+                queue_signal(&task, 13, task.process->pid);
+            return done ? int64_t(done) : result;
+        }
+        done += result;
+        remaining -= result;
+        if (size_t(result) < count)
+            break;
+    }
+    return done;
+}
+
 static int64_t transfer(Task& task, IoRequest& request, const Iovec& vector, size_t peek_offset) {
     auto h = request.handle;
     if (inet_stream(h->inet))
         return stream_transfer(task, request, vector, peek_offset);
-    if (!task.memory->space.valid(vector.base, vector.length, !request.write))
+    if (vector.base >= user_limit || vector.length > user_limit - vector.base)
         return -14;
+    if (device_ignores_buffer(h, request.write))
+        return request.write ? write_handle(h, nullptr, vector.length)
+                             : read_handle(h, nullptr, vector.length);
     uint8_t buffer[4096];
     size_t done = 0;
     while (done < vector.length) {
+        uint64_t address = vector.base + done;
         size_t count = min(size_t(vector.length - done), sizeof(buffer));
-        if (request.write && !task.memory->space.copy_in(buffer, vector.base + done, count))
+        bool regular = h->node && (h->node->mode & 0170000) == regular_file;
+        // File copies commit a page prefix.
+        if (regular)
+            count = min(count, size_t(page_size - address % page_size));
+        if (request.write && !task.memory->space.copy_in(buffer, address, count))
             return done ? int64_t(done) : -14;
-        int64_t n;
-        if (request.socket)
-            n = request.write
-                    ? socket_write(h->socket, buffer, count)
-                    : socket_read(h->socket, buffer, count, request.flags & 2, peek_offset + done);
-        else
-            n = request.write ? write_handle(h, buffer, count) : read_handle(h, buffer, count);
+        uint64_t old_offset = h->offset;
+        // Devices without a non-consuming read must validate this chunk
+        // before changing their queues or hardware state.
+        if (!request.write && !regular && !task.memory->space.valid(address, count, true))
+            return done ? int64_t(done) : -14;
+        int64_t n = request.write ? write_handle(h, buffer, count) : read_handle(h, buffer, count);
         if (n < 0) {
             if (n == -32 && request.write && !(request.socket && (request.flags & 0x4000)))
                 queue_signal(&task, 13, task.process->pid);
             return done ? int64_t(done) : n;
         }
-        if (!request.write && n && !task.memory->space.copy_out(vector.base + done, buffer, n))
-            return done ? int64_t(done) : -14;
+        if (!request.write && n) {
+            size_t copied = 0;
+            while (copied < size_t(n)) {
+                size_t length =
+                    min(size_t(n) - copied, size_t(page_size - (address + copied) % page_size));
+                if (!task.memory->space.copy_out(address + copied, buffer + copied, length)) {
+                    if (regular)
+                        h->offset = old_offset;
+                    return done ? int64_t(done) : -14;
+                }
+                copied += length;
+            }
+        }
         done += n;
         if (size_t(n) < count || (!request.write && !request.socket && h->node &&
                                   (h->node->mode & 0170000) == character))
             break;
     }
     return done;
+}
+
+static bool copy_packet_output(Task& task, uint64_t destination, const void* data, size_t length) {
+    if (!length)
+        return true;
+    if (destination >= user_limit || length > user_limit - destination)
+        return false;
+    auto source = static_cast<const uint8_t*>(data);
+    while (length) {
+        // Preserve bytes on writable pages before a later output-copy fault.
+        size_t count = min(length, size_t(page_size - destination % page_size));
+        if (!task.memory->space.copy_out(destination, source, count))
+            return false;
+        destination += count;
+        source += count;
+        length -= count;
+    }
+    return true;
 }
 
 static int64_t packet_attempt(Task& task, IoRequest& request) {
@@ -423,9 +717,27 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
         if (request.handle->netlink)
             return netlink_send(request.handle->netlink, task.process->pid, request.packet_data,
                                 request.packet_length);
-        if (request.handle->inet)
+        if (request.handle->inet) {
+            if (!request.packet_ready) {
+                if (int error = inet_send_ready(request.handle->inet, request.packet_length))
+                    return error;
+                if (request.packet_length) {
+                    request.packet_data = static_cast<uint8_t*>(alloc(request.packet_length));
+                    if (!request.packet_data)
+                        return -12;
+                }
+                if (int error = copy_packet(task, request, 0, request.packet_length))
+                    return error;
+                request.packet_ready = true;
+            }
             return inet_send(request.handle->inet, request.inet_destination, request.packet_data,
-                             request.packet_length);
+                             request.packet_length, request.inet_destination_named,
+                             &request.inet_output);
+        }
+        if (request.handle->inet6)
+            return inet6_send(request.handle->inet6, request.inet6_destination, request.packet_data,
+                              request.packet_length, request.inet_destination_named,
+                              &request.inet6_output);
         int result = net_send(request.destination_index, request.packet_data, request.packet_length,
                               request.handle->packet);
         return result ? result : int64_t(request.packet_length);
@@ -435,12 +747,23 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
     if (request.handle->inet)
         if (int error = inet_error(request.handle->inet, true))
             return -error;
+    if (request.handle->inet6)
+        if (int error = inet6_error(request.handle->inet6, true))
+            return -error;
     auto frame = request.handle->packet ? packet_front(request.handle->packet) : nullptr;
     auto ip = request.handle->inet ? inet_front(request.handle->inet) : nullptr;
+    auto ip6 = request.handle->inet6 ? inet6_front(request.handle->inet6) : nullptr;
     auto nl = request.handle->netlink ? netlink_front(request.handle->netlink) : nullptr;
-    if (!frame && !ip && !nl) {
+    if (!frame && !ip && !ip6 && !nl) {
         if (request.handle->netlink)
             return -11;
+        if (request.handle->inet6) {
+            int error = inet6_error(request.handle->inet6, true);
+            bool blocking = !(request.handle->flags & 04000) && !(request.flags & 0x40);
+            return error                                                     ? -error
+                   : blocking && (inet6_shutdown(request.handle->inet6) & 1) ? 0
+                                                                             : -11;
+        }
         if (request.handle->inet) {
             int error = inet_error(request.handle->inet, true);
             bool blocking = !(request.handle->flags & 04000) && !(request.flags & 0x40);
@@ -449,46 +772,81 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
         auto info = net_info(packet_interface(request.handle->packet));
         return info && !info->live ? -5 : -11;
     }
-    size_t length = nl ? nl->length : ip ? ip->length : frame->length;
-    const auto bytes = nl ? netlink_bytes(nl) : ip ? inet_bytes(ip) : packet_bytes(frame);
-    const void* source = nl   ? static_cast<const void*>(&nl->source)
-                         : ip ? static_cast<const void*>(&ip->source)
-                              : &frame->source;
-    const auto copy_fault = [&request]() -> int64_t {
+    size_t length = nl ? nl->length : ip ? ip->length : ip6 ? ip6->length : frame->length;
+    const auto bytes = nl    ? netlink_bytes(nl)
+                       : ip  ? inet_bytes(ip)
+                       : ip6 ? inet6_bytes(ip6)
+                             : packet_bytes(frame);
+    const void* source = nl    ? static_cast<const void*>(&nl->source)
+                         : ip  ? static_cast<const void*>(&ip->source)
+                         : ip6 ? static_cast<const void*>(&ip6->source)
+                               : &frame->source;
+    const auto copy_fault = [&request](int error = -14) -> int64_t {
         // Linux raw Internet receives dequeue even when a non-peek copy faults.
         if (request.handle->inet && !(request.flags & 2))
             inet_consume(request.handle->inet);
+        if (request.handle->inet6 && !(request.flags & 2))
+            inet6_consume(request.handle->inet6);
         if (request.handle->netlink && !(request.flags & 2))
             netlink_consume(request.handle->netlink);
-        return -14;
+        return error;
     };
     size_t remaining = min(length, request.packet_length), at = 0;
     for (size_t i = 0; i < request.count && remaining; i++) {
         const auto& vector = request.vectors[i];
         size_t count = min(remaining, size_t(vector.length));
-        if (count && !task.memory->space.copy_out(vector.base, bytes + at, count))
+        if (count && !copy_packet_output(task, vector.base, bytes + at, count))
             return copy_fault();
         at += count;
         remaining -= count;
     }
-    uint32_t actual_address = nl   ? sizeof(NetlinkAddress)
-                              : ip ? sizeof(InetAddress)
-                                   : sizeof(PacketAddress);
+    if (frame)
+        packet_observed(request.handle->packet, *frame);
+    uint32_t actual_address = nl    ? sizeof(NetlinkAddress)
+                              : ip  ? sizeof(InetAddress)
+                              : ip6 ? sizeof(Inet6Address)
+                                    : sizeof(PacketAddress);
+    if ((ip || ip6) && f.rax == 45 && request.address_pointer) {
+        if (!task.memory->space.copy_in(&request.address_capacity, request.address_length_pointer,
+                                        4))
+            return copy_fault();
+        if (int32_t(request.address_capacity) < 0)
+            return copy_fault(-22);
+    }
+    uint32_t message_flags = length > request.packet_length ? 0x20 : 0;
+    uint64_t control_length = 0;
+    if (f.rax == 47) {
+        if (ip)
+            control_length =
+                inet_receive_control(task, request.handle->inet, *ip, request.control_pointer,
+                                     request.control_capacity, message_flags);
+        else if (ip6)
+            control_length =
+                inet6_receive_control(task, request.handle->inet6, *ip6, request.control_pointer,
+                                      request.control_capacity, message_flags);
+    }
+    if ((ip || ip6) && request.address_pointer) {
+        // Linux stores the full source length before copying any address bytes.
+        uint64_t length_pointer =
+            f.rax == 47 ? f.rsi + offsetof(Message, name_length) : request.address_length_pointer;
+        if (!task.memory->space.copy_out(length_pointer, &actual_address, 4))
+            return copy_fault();
+    }
     if (request.address_pointer &&
-        (!task.memory->space.copy_out(request.address_pointer, source,
-                                      min(request.address_capacity, actual_address)) ||
-         (request.address_length_pointer &&
+        (!copy_packet_output(task, request.address_pointer, source,
+                             min(request.address_capacity, actual_address)) ||
+         (!ip && !ip6 && request.address_length_pointer &&
           !task.memory->space.copy_out(request.address_length_pointer, &actual_address, 4))))
         return copy_fault();
     if (f.rax == 47) {
-        uint32_t flags = length > request.packet_length ? 0x20 : 0;
-        uint64_t control_length = 0;
         uint32_t address_length = request.address_pointer ? actual_address : 0;
-        if (!task.memory->space.copy_out(f.rsi + offsetof(Message, name_length), &address_length,
-                                         4) ||
+        // A NULL Internet source-name pointer leaves the caller's length untouched.
+        if ((!ip && !ip6 &&
+             !task.memory->space.copy_out(f.rsi + offsetof(Message, name_length), &address_length,
+                                          4)) ||
+            !task.memory->space.copy_out(f.rsi + offsetof(Message, flags), &message_flags, 4) ||
             !task.memory->space.copy_out(f.rsi + offsetof(Message, control_length), &control_length,
-                                         8) ||
-            !task.memory->space.copy_out(f.rsi + offsetof(Message, flags), &flags, 4))
+                                         8))
             return copy_fault();
     }
     int64_t result = request.flags & 0x20 ? length : at;
@@ -497,6 +855,8 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
             netlink_consume(request.handle->netlink);
         else if (request.handle->inet)
             inet_consume(request.handle->inet);
+        else if (request.handle->inet6)
+            inet6_consume(request.handle->inet6);
         else
             packet_consume(request.handle->packet);
     }
@@ -505,6 +865,19 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
 
 static int64_t stream_attempt(Task& task, IoRequest& request) {
     net_poll();
+
+    // A write call queues its copied prefix before flushing, including vectors
+    // and page-sized copies. Every exit flushes that prefix, even after a fault
+    // or a retained wait; no user pointer enters the transport queue.
+    struct Flush {
+        bool write;
+
+        ~Flush() {
+            if (write)
+                tcp_poll();
+        }
+    } flush{request.write};
+
     while (request.cursor < request.count) {
         const auto& original = request.vectors[request.cursor];
         Iovec vector{original.base + request.cursor_offset,
@@ -616,7 +989,8 @@ static int64_t attempt(Task& task, IoRequest& request) {
         net_poll();
         if (!request.started) {
             request.started = true;
-            int result = tcp_connect(h->inet, request.inet_destination);
+            int result = tcp_ipv6(h->inet) ? tcp6_connect(h->inet, request.inet6_destination)
+                                           : tcp_connect(h->inet, request.inet_destination);
             if ((result != -115 && result != -114) || !request.stream_blocking)
                 return result;
             request.connect_error = result;
@@ -649,7 +1023,7 @@ static int64_t attempt(Task& task, IoRequest& request) {
         int result = file_lock_try(h, uint32_t(f.rsi));
         return result == -11 && !(f.rsi & 4) ? would_block : result;
     }
-    if (h->packet || (h->inet && !inet_stream(h->inet)) || h->netlink) {
+    if (h->packet || (h->inet && !inet_stream(h->inet)) || h->inet6 || h->netlink) {
         int64_t result = packet_attempt(task, request);
         if (result == -11 && !(h->flags & 04000) && !(request.flags & 0x40))
             return would_block;
@@ -663,17 +1037,42 @@ static int64_t attempt(Task& task, IoRequest& request) {
     size_t done = 0;
     int64_t result = 0;
     uint64_t old_offset = h->offset;
+    auto control = node_control(h->node);
     // Scalar empty reads reach device readiness; empty readv requests keep their shortcut.
-    if (f.rax == 0 && !request.single.length)
+    if (f.rax == 0 && !request.single.length && !control)
         result = f.rsi >= user_limit ? -14 : read_handle(h, nullptr, 0);
     if (request.positioned)
         h->offset = f.r10;
     bool completion =
         inet_stream(h->inet) &&
         (request.write ? request.stream_blocking : request.socket && (request.flags & 0x100));
-    if (completion)
+    bool empty_send = false;
+    if (request.socket && request.write) {
+        bool empty = true;
+        for (size_t i = 0; i < request.count; i++)
+            empty &= request.vectors[i].length == 0;
+        if (empty) {
+            empty_send = true;
+            result = inet_stream(h->inet) ? tcp_write(h->inet, nullptr, 0)
+                                          : socket_write(h->socket, nullptr, 0);
+            if (result == -32 && !(request.flags & 0x4000))
+                queue_signal(&task, 13, task.process->pid);
+            completion = true;
+        }
+    }
+    if (completion && !empty_send)
         result = stream_attempt(task, request);
-    bool limited_write = request.write && h->node && (h->node->mode & 0170000) == regular_file;
+    if (!completion && (h->socket || h->pipe)) {
+        if (result >= 0)
+            result = local_stream_attempt(task, request);
+        completion = true;
+    }
+    if (!completion && control) {
+        result = control_attempt(task, request, *control);
+        completion = true;
+    }
+    bool limited_write =
+        request.write && !control && h->node && (h->node->mode & 0170000) == regular_file;
     size_t budget = 0;
     if (limited_write) {
         for (size_t i = 0; i < request.count; i++) {
@@ -754,6 +1153,13 @@ int64_t io_syscall(Task& task, const Frame& frame) {
         return -9;
     if (task.io)
         panic("active I/O at syscall entry");
+    unsigned flags = frame.rax == 47 ? frame.rdx : frame.r10;
+    if (h->inet6 && (frame.rax == 45 || frame.rax == 47) && (flags & 0x2000)) {
+        retain(h);
+        int64_t result = inet6_receive_error(task, h->inet6, frame);
+        close_handle(h);
+        return result;
+    }
     auto request = static_cast<IoRequest*>(alloc(sizeof(IoRequest)));
     if (!request)
         return -12;

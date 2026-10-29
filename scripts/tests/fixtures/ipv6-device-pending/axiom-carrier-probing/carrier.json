@@ -1,0 +1,53 @@
+{
+  "native": false,
+  "events": [
+    {
+      "subject": 0,
+      "up": false,
+      "begin_monotonic_ns": 1426284873532,
+      "qmp": {
+        "command": "set_link",
+        "name": "carrier0",
+        "up": false,
+        "result": {}
+      },
+      "end_monotonic_ns": 1426285734557
+    },
+    {
+      "subject": 0,
+      "up": true,
+      "begin_monotonic_ns": 1430464769398,
+      "qmp": {
+        "command": "set_link",
+        "name": "carrier0",
+        "up": true,
+        "result": {}
+      },
+      "end_monotonic_ns": 1430465193173
+    },
+    {
+      "subject": 1,
+      "up": false,
+      "begin_monotonic_ns": 1434735105636,
+      "qmp": {
+        "command": "set_link",
+        "name": "carrier1",
+        "up": false,
+        "result": {}
+      },
+      "end_monotonic_ns": 1434735656002
+    },
+    {
+      "subject": 1,
+      "up": true,
+      "begin_monotonic_ns": 1438924904686,
+      "qmp": {
+        "command": "set_link",
+        "name": "carrier1",
+        "up": true,
+        "result": {}
+      },
+      "end_monotonic_ns": 1438925478786
+    }
+  ]
+}

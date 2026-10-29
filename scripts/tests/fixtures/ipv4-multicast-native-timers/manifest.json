@@ -1,0 +1,32 @@
+{
+  "diagnostic_only": true,
+  "feature_acceptance": false,
+  "original_artifact": "https://github.com/frankischilling/Axiom64/actions/runs/40510849460/artifacts/12743321899",
+  "artifact_sha256": "df36acb1718a9b0f8615ce01d5ffcc4c4b09ce2d86eaf2a9baac3550c9ac6626",
+  "original_source": "76d6a6dd496e4c3b9c19bcbb1d2000b09356d286",
+  "original_case": "linux-native",
+  "original_query_response_us": 1019833,
+  "original_timer_policy_absent": true,
+  "files": {
+    "lane0.clocks.jsonl": {
+      "bytes": 11825,
+      "sha256": "140fb634e08324d7f20b6e2240501fbf62e154d07918b5484d4ddb6767500469"
+    },
+    "statistics.json": {
+      "bytes": 1627,
+      "sha256": "46b8a942bbea70c202e99148d330a9484076e00779f238e5a2f5143a0ebb8042"
+    },
+    "lane1.clocks.jsonl": {
+      "bytes": 2358,
+      "sha256": "dc0ad228c93ff3b60d72e81103c96ba2ccc49595812bf1b17568e33ccfcc8336"
+    },
+    "lane0.pcap": {
+      "bytes": 3356,
+      "sha256": "144638cef4595232cc0f015a2d421d3901a9036efd9c4448ac1fb5fc3e7f56bb"
+    },
+    "lane1.pcap": {
+      "bytes": 690,
+      "sha256": "bdc9c643c43f5ecb0b65377f02cd90efade2a5f3df916886a463b30a8d889e4e"
+    }
+  }
+}

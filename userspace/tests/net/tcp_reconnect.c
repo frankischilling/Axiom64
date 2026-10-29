@@ -25,10 +25,25 @@ static unsigned current_lane, current_case, current_phase;
         }                                                                                          \
     } while (0)
 
-static uint64_t milliseconds(void) {
+static uint64_t nanoseconds(void) {
     struct timespec now;
     CHECK(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
-    return (uint64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+    return (uint64_t)now.tv_sec * 1000000000 + now.tv_nsec;
+}
+
+static uint64_t milliseconds(void) {
+    return nanoseconds() / 1000000;
+}
+
+static void wait_queued_lifetime(uint64_t began_ns) {
+    uint64_t elapsed = nanoseconds() - began_ns;
+    while (elapsed < 11000000000ULL) {
+        uint64_t remaining = 11000000000ULL - elapsed;
+        if (remaining > 100000000)
+            remaining = 100000000;
+        CHECK(usleep((useconds_t)((remaining + 999) / 1000)) == 0);
+        elapsed = nanoseconds() - began_ns;
+    }
 }
 
 static uint8_t pattern(size_t at, unsigned direction) {
@@ -262,7 +277,8 @@ static void queued_cancellation(void) {
         unsigned char control;
         CHECK(recv(queued_sockets[lane], &control, 1, 0) == 1 && control == 'Q');
         queued_send(lane, 512);
-        uint64_t began = milliseconds();
+        uint64_t began_ns = nanoseconds();
+        uint64_t began = began_ns / 1000000;
         printf("TCP_RECONNECT_QUEUED_HELD lane=%u queued=512\n", lane);
         queued_exchange(1 - lane, 16);
         queued_error(lane, 0);
@@ -286,14 +302,7 @@ static void queued_cancellation(void) {
         queued_phases[lane] = 1;
         queued_sent[lane] = queued_received[lane] = 0;
         queued_exchange(lane, 512);
-        uint64_t elapsed = milliseconds() - began;
-        while (elapsed < 11000) {
-            uint64_t remaining = 11000 - elapsed;
-            if (remaining > 100)
-                remaining = 100;
-            CHECK(usleep((useconds_t)remaining * 1000) == 0);
-            elapsed = milliseconds() - began;
-        }
+        wait_queued_lifetime(began_ns);
         queued_exchange(1 - lane, 16);
         queued_exchange(lane, 16);
         queued_error(lane, 0);

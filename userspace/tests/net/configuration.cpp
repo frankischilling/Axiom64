@@ -113,6 +113,9 @@ static void receipt(int fd, const Message& message, int expected) {
     memcpy(&header, reply, 16);
     memcpy(&result, reply + 16, 4);
     memcpy(&echo, reply + 20, 16);
+    if (result != -expected)
+        fprintf(stderr, "CONFIGURATION_ACK_MISMATCH sequence=%u type=%u expected=%d actual=%d\n",
+                message.header.nlmsg_seq, message.header.nlmsg_type, -expected, result);
     check(header.nlmsg_len == 36 && header.nlmsg_type == NLMSG_ERROR &&
               header.nlmsg_flags == NLM_F_CAPPED && header.nlmsg_seq == message.header.nlmsg_seq &&
               header.nlmsg_pid == local.nl_pid && result == -expected &&
@@ -146,8 +149,16 @@ static void message_contract(bool native) {
         exchange(fd, remove, 0);
         verify_address(lane, 0);
         exchange(fd, remove, EADDRNOTAVAIL);
+        Message secondary(lane, false);
+        secondary.body.ifa_flags |= IFA_F_SECONDARY;
+        exchange(fd, secondary, 0);
+        verify_address(lane, address(lane), 0xffffff80);
+        ioctl_address(lane, SIOCSIFADDR, address(lane, 77));
+        verify_address(lane, address(lane, 77), 0xff000000);
+        ioctl_address(lane, SIOCSIFADDR, 0);
+        verify_address(lane, 0);
         if (!native) {
-            for (unsigned kind = 0; kind < 9; kind++) {
+            for (unsigned kind = 0; kind < 10; kind++) {
                 Message invalid(lane, false);
                 int expected = EINVAL;
                 switch (kind) {
@@ -155,11 +166,11 @@ static void message_contract(bool native) {
                     invalid.body.ifa_prefixlen = 33;
                     break;
                 case 1:
-                    invalid.body.ifa_family = AF_INET6;
+                    invalid.body.ifa_family = AF_UNIX;
                     expected = EAFNOSUPPORT;
                     break;
                 case 2:
-                    invalid.body.ifa_flags |= IFA_F_SECONDARY;
+                    invalid.body.ifa_flags |= IFA_F_TENTATIVE;
                     expected = EOPNOTSUPP;
                     break;
                 case 3:
@@ -183,6 +194,9 @@ static void message_contract(bool native) {
                 case 8:
                     invalid.body.ifa_index = 65535;
                     expected = ENODEV;
+                    break;
+                case 9:
+                    invalid.body.ifa_family = AF_INET6;
                     break;
                 }
                 exchange(fd, invalid, expected);
@@ -260,7 +274,8 @@ static bool contains(net::Routing& observer, const net::Route& expected) {
         if (value.destination == expected.destination && value.mask == expected.mask &&
             value.gateway == expected.gateway && value.metric == expected.metric &&
             value.index == expected.index && value.protocol == expected.protocol &&
-            value.scope == expected.scope)
+            value.scope == expected.scope && value.preferred_source == expected.preferred_source &&
+            value.tos == expected.tos)
             return true;
     }
     return false;
@@ -272,6 +287,158 @@ static size_t owned(net::Routing& observer, unsigned lane, uint8_t protocol = RT
     check(observer.list(saved, 64, count, interfaces[lane].index, protocol) == 0,
           "inspect owned protocol/interface snapshot");
     return count;
+}
+
+static int raw_route(const net::Route& value, bool remove, bool exclusive = true) {
+    int fd = socket(AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC, NETLINK_ROUTE);
+    int one = 1;
+    sockaddr_nl local{};
+    local.nl_family = AF_NETLINK;
+    check(fd >= 0 && setsockopt(fd, SOL_NETLINK, NETLINK_CAP_ACK, &one, sizeof(one)) == 0 &&
+              bind(fd, reinterpret_cast<sockaddr*>(&local), sizeof(local)) == 0,
+          "independent route mutation socket");
+    uint8_t bytes[128]{};
+    static uint32_t sequence = 5000;
+    nlmsghdr header{};
+    header.nlmsg_type = remove ? RTM_DELROUTE : RTM_NEWROUTE;
+    header.nlmsg_flags =
+        NLM_F_REQUEST | NLM_F_ACK | (remove ? 0 : NLM_F_CREATE | (exclusive ? NLM_F_EXCL : 0));
+    header.nlmsg_seq = ++sequence;
+    rtmsg route{};
+    route.rtm_family = AF_INET;
+    route.rtm_table = RT_TABLE_MAIN;
+    route.rtm_protocol = value.protocol;
+    route.rtm_tos = value.tos;
+    route.rtm_scope = value.scope;
+    route.rtm_type = RTN_UNICAST;
+    for (uint32_t mask = value.mask; mask & 0x80000000; mask <<= 1)
+        route.rtm_dst_len++;
+    memcpy(bytes + sizeof(header), &route, sizeof(route));
+    size_t size = sizeof(header) + sizeof(route);
+    auto attribute = [&](unsigned type, uint32_t number) {
+        rtattr field{8, uint16_t(type)};
+        memcpy(bytes + size, &field, sizeof(field));
+        memcpy(bytes + size + 4, &number, 4);
+        size += 8;
+    };
+    if (value.mask)
+        attribute(RTA_DST, htonl(value.destination));
+    if (value.gateway)
+        attribute(RTA_GATEWAY, htonl(value.gateway));
+    if (value.metric)
+        attribute(RTA_PRIORITY, value.metric);
+    attribute(RTA_OIF, value.index);
+    header.nlmsg_len = size;
+    memcpy(bytes, &header, sizeof(header));
+    sockaddr_nl kernel{};
+    kernel.nl_family = AF_NETLINK;
+    check(sendto(fd, bytes, size, 0, reinterpret_cast<sockaddr*>(&kernel), sizeof(kernel)) ==
+              ssize_t(size),
+          "submit independent route attributes");
+    pollfd ready{fd, POLLIN, 0};
+    check(poll(&ready, 1, 1000) == 1 && (ready.revents & POLLIN),
+          "independent route acknowledgment arrives");
+    uint8_t reply[128];
+    ssize_t count = recv(fd, reply, sizeof(reply), 0);
+    nlmsghdr response;
+    int error;
+    check(count == 36, "independent capped acknowledgment size");
+    memcpy(&response, reply, sizeof(response));
+    memcpy(&error, reply + sizeof(response), 4);
+    check(response.nlmsg_type == NLMSG_ERROR && response.nlmsg_seq == sequence && error <= 0 &&
+              error >= -4095 && close(fd) == 0,
+          "independent route acknowledgment identity and errno");
+    return -error;
+}
+
+static void route_variants(const net::Store& runtime) {
+    net::Configuration owner;
+    net::Routing observer;
+    auto initial = parameters(0), changed = parameters(0, 0xffffff80);
+    check(owner.open(interfaces[0], runtime) == 0 && observer.open() == 0 &&
+              owner.apply(address(0), initial, 2001) == 0,
+          "prepare independent route aliases");
+    net::Route first{0xcb007200,  0xffffff00,   0, 3007, interfaces[0].index,
+                     RTPROT_BOOT, RT_SCOPE_LINK};
+    auto second = first;
+    second.protocol = RTPROT_STATIC;
+    check(raw_route(first, false) == 0 && raw_route(second, false, false) == 0 &&
+              raw_route(second, false, false) == EEXIST && contains(observer, first) &&
+              contains(observer, second),
+          "nonexclusive creation preserves distinct protocol aliases and rejects duplicates");
+    check(owner.apply(address(0, 41), changed, 2001) == 0 && contains(observer, first) &&
+              contains(observer, second),
+          "address replacement preserves every independent alias at one priority");
+    check(owner.withdraw() == 0 && contains(observer, first) && contains(observer, second),
+          "final-address withdrawal preserves every independent alias");
+    check(raw_route(first, true) == 0 && raw_route(second, true) == 0,
+          "release each exact protocol alias");
+    for (unsigned variant = 0; variant < 2; variant++) {
+        check(owner.apply(address(0), initial, 2001) == 0, "prepare zero-priority preservation");
+        net::Route manual{
+            variant ? address(0) & 0xffffff00 : 0xcb007300, 0xffffff00,   0, 0, interfaces[0].index,
+            uint8_t(variant ? RTPROT_KERNEL : RTPROT_BOOT), RT_SCOPE_LINK};
+        if (variant)
+            check(raw_route(manual, true) == 0,
+                  "remove the address-derived route before explicit recreation");
+        check(raw_route(manual, false) == 0 && contains(observer, manual),
+              "create a manual zero-priority route without a preferred-source attribute");
+        check(owner.apply(address(0, 41), initial, 2001) == 0 && contains(observer, manual),
+              "manual zero-priority route coexists with the replacement automatic prefix");
+        check(owner.withdraw() == 0 && contains(observer, manual),
+              "zero priority and a kernel protocol tag do not transfer manual ownership");
+        verify_address(0, 0);
+        check(raw_route(manual, true) == 0, "release zero-priority route");
+    }
+    puts("CONFIGURATION_ROUTE_VARIANTS_PASS aliases=2 zero_priority=2");
+}
+
+static void tos_ownership(const net::Store& runtime) {
+    net::Configuration owner;
+    net::Routing observer;
+    auto lease = parameters(0);
+    lease.classless = true;
+    lease.route_count = 1;
+    lease.routes[0] = {0xc6336400, 0xffffff00, 0};
+    check(owner.open(interfaces[0], runtime) == 0 && observer.open() == 0 &&
+              owner.apply(address(0), lease, 2001) == 0,
+          "prepare an owned direct route beside independent TOS aliases");
+    net::Route owned_route{0xc6336400,  0xffffff00,   0, 2001, interfaces[0].index,
+                           RTPROT_DHCP, RT_SCOPE_LINK};
+    auto first = owned_route, second = owned_route;
+    first.tos = 16;
+    second.tos = 8;
+    check(raw_route(first, false) == 0 && raw_route(second, false) == 0 &&
+              contains(observer, first) && contains(observer, second),
+          "different TOS values distinguish otherwise identical manual routes");
+    check(owner.apply(address(0, 41), lease, 2001) == 0 && contains(observer, owned_route) &&
+              contains(observer, first) && contains(observer, second),
+          "replacement retains both manual TOS aliases beside the owned route");
+    check(owner.withdraw() == 0 && !contains(observer, owned_route) && contains(observer, first) &&
+              contains(observer, second),
+          "withdrawal removes only the owned zero-TOS route");
+    check(raw_route(first, true) == 0 && !contains(observer, first) && contains(observer, second) &&
+              raw_route(second, true) == 0,
+          "each exact TOS alias has independent deletion and ownership");
+    puts("CONFIGURATION_TOS_OWNERSHIP_PASS aliases=2");
+}
+
+static void route_lifetime(const net::Store& runtime) {
+    net::Configuration owner;
+    net::Routing observer;
+    net::Route foreign{0xcb007100,  0xffffff00,   0, 3001, interfaces[0].index,
+                       RTPROT_BOOT, RT_SCOPE_LINK};
+    check(owner.open(interfaces[0], runtime) == 0 && observer.open() == 0 &&
+              owner.apply(address(0), parameters(0), 2001) == 0,
+          "prepare final-address route lifetime");
+    check(observer.change(foreign, false) == 0 && contains(observer, foreign),
+          "install independently owned direct route");
+    check(owner.withdraw() == 0, "withdraw the final owned address");
+    verify_address(0, 0);
+    check(contains(observer, foreign),
+          "withdrawing final owned address preserves unrelated direct route");
+    check(observer.change(foreign, true) == 0, "release route lifetime fixture");
+    puts("CONFIGURATION_ROUTE_LIFETIME_PASS");
 }
 
 static void recovery(const net::Store& runtime) {
@@ -327,7 +494,7 @@ static void manual_preservation(const net::Store& runtime) {
         check(restarted.open(interfaces[lane], runtime) == 0 && !owned(observer, lane) &&
                   restarted.apply(address(lane), lease) == EBUSY && restarted.withdraw() == 0,
               "restart and failed acquisition preserve a manually changed address");
-        verify_address(lane, address(lane, 77), lease.mask);
+        verify_address(lane, address(lane, 77), 0xff000000);
         ioctl_address(lane, SIOCSIFADDR, 0);
     }
     puts("CONFIGURATION_MANUAL_PRESERVATION_PASS interfaces=2");
@@ -452,6 +619,46 @@ static void journal_failure(const net::Store& runtime, const char* directory) {
     puts("CONFIGURATION_JOURNAL_FAILURE_PASS");
 }
 
+static int interruption_stage = -1;
+extern "C" ssize_t __real_sendto(int, const void*, size_t, int, const sockaddr*, socklen_t);
+
+extern "C" ssize_t __wrap_sendto(int fd, const void* packet, size_t size, int flags,
+                                 const sockaddr* destination, socklen_t length) {
+    int stage = -1;
+    if (interruption_stage >= 0 && size >= 28) {
+        const auto* bytes = static_cast<const uint8_t*>(packet);
+        nlmsghdr header;
+        memcpy(&header, bytes, sizeof(header));
+        if (header.nlmsg_type == RTM_DELADDR || header.nlmsg_type == RTM_NEWADDR) {
+            ifaddrmsg address;
+            memcpy(&address, bytes + 16, sizeof(address));
+            if (address.ifa_index == interfaces[1].index)
+                stage = header.nlmsg_type == RTM_DELADDR ? 2 : 3;
+        } else if (header.nlmsg_type == RTM_DELROUTE || header.nlmsg_type == RTM_NEWROUTE) {
+            rtmsg route;
+            memcpy(&route, bytes + 16, sizeof(route));
+            uint32_t metric = 0;
+            for (size_t at = 28; at + 4 <= size;) {
+                rtattr field;
+                memcpy(&field, bytes + at, sizeof(field));
+                if (field.rta_len < 4 || field.rta_len > size - at)
+                    break;
+                if (field.rta_type == RTA_PRIORITY && field.rta_len == 8)
+                    memcpy(&metric, bytes + at + 4, 4);
+                at += RTA_ALIGN(field.rta_len);
+            }
+            if (route.rtm_protocol == RTPROT_DHCP && metric == 2002)
+                stage = header.nlmsg_type == RTM_DELROUTE ? 1 : route.rtm_dst_len ? 4 : 5;
+        }
+        if (!interruption_stage && stage == 1)
+            _exit(0); // The production intent is durable; no route has changed.
+    }
+    ssize_t result = __real_sendto(fd, packet, size, flags, destination, length);
+    if (interruption_stage > 0 && stage == interruption_stage && result == ssize_t(size))
+        _exit(0); // Exit after the real kernel request, before consuming its ACK.
+    return result;
+}
+
 static void partial_recovery(const net::Store& runtime, const char* directory) {
     constexpr unsigned lane = 1, metric = 2002;
     char path[300];
@@ -460,7 +667,7 @@ static void partial_recovery(const net::Store& runtime, const char* directory) {
     after.route_count = 1;
     after.routes[0] = {0xc6336400, 0xffffff00, 0};
     net::Configuration owner;
-    uint8_t old_record[4096], new_record[4096], intent[132];
+    uint8_t old_record[4096], new_record[4096], intent[4096];
     check(owner.open(interfaces[lane], runtime) == 0 &&
               owner.apply(address(lane), before, metric) == 0,
           "capture production journal before replacement");
@@ -471,71 +678,129 @@ static void partial_recovery(const net::Store& runtime, const char* directory) {
     check(old_size == 84 && new_size == 108 && owner.withdraw() == 0,
           "documented snapshots contain one old and two new routes");
     owner.close();
-    // Derive an interrupted intent from production-written snapshots. Each
-    // child leaves a real kernel state at one replacement stage and exits.
-    memcpy(intent, new_record, 60);
-    journal_word(intent + 8, sizeof(intent));
-    memcpy(intent + 28, old_record + 44, 16);
-    memcpy(intent + 60, old_record + 60, 24);
-    memcpy(intent + 84, new_record + 60, 48);
-    journal_checksum(intent, sizeof(intent));
-    net::Route gateway{
-        0, 0, address(lane, 1), metric, interfaces[lane].index, RTPROT_DHCP, RT_SCOPE_UNIVERSE};
-    net::Route onlink{0xc6336400,  0xffffff00,   0, metric, interfaces[lane].index,
-                      RTPROT_DHCP, RT_SCOPE_LINK};
+    // Each child leaves a real kernel state at one replacement stage and exits.
+    // Its intent and saved foreign route come from the production journal.
     net::Route foreign{0xcb007100,  0xffffff00,   0, 3002, interfaces[lane].index,
                        RTPROT_BOOT, RT_SCOPE_LINK};
-    net::Address old_address{address(lane), before.mask, address(lane, 255),
-                             interfaces[lane].index};
-    net::Address new_address{address(lane, 41), after.mask, address(lane, 127),
-                             interfaces[lane].index};
     net::Routing observer;
     check(observer.open() == 0, "partial-replacement observer");
-    for (unsigned phase = 0; phase < 6; phase++) {
+    for (unsigned phase = 0; phase < 8; phase++) {
+        unsigned stage = phase < 6 ? phase : 2;
         pid_t child = fork();
         check(child >= 0, "fork partially replaced owner");
         if (!child) {
+            net::Configuration current;
             net::Routing writer;
-            check(writer.open() == 0 && writer.change(old_address, false) == 0 &&
-                      writer.change(gateway, false) == 0 && writer.change(foreign, false) == 0,
+            check(current.open(interfaces[lane], runtime) == 0 &&
+                      current.apply(address(lane), before, metric) == 0 && writer.open() == 0 &&
+                      writer.change(foreign, false) == 0,
                   "prepare recorded old and independent manual state");
-            write_file(path, intent, sizeof(intent));
-            if (phase >= 1)
-                check(writer.change(gateway, true) == 0, "old route removed before process exit");
-            if (phase >= 2)
-                check(writer.change(old_address, true) == 0,
-                      "old address removed before process exit");
-            if (phase >= 3)
-                check(writer.change(new_address, false) == 0,
-                      "new address installed before process exit");
-            if (phase >= 4)
-                check(writer.change(onlink, false) == 0,
-                      "first new route installed before process exit");
-            if (phase >= 5)
-                check(writer.change(gateway, false) == 0,
-                      "all new routes installed before process exit");
-            _exit(0);
+            interruption_stage = stage;
+            current.apply(address(lane, 41), after, metric);
+            check(false, "production replacement must reach the selected interruption");
+            _exit(1);
         }
         int status;
         check(waitpid(child, &status, 0) == child && WIFEXITED(status) && !WEXITSTATUS(status),
               "actual owner exits at a recorded replacement boundary");
         verify_address(lane,
-                       phase < 2    ? old_address.address
-                       : phase == 2 ? 0
-                                    : new_address.address,
-                       phase < 2 ? before.mask : after.mask);
-        check(owned(observer, lane) == (phase == 0  ? 1u
-                                        : phase < 4 ? 0u
-                                                    : phase - 3),
+                       stage < 2    ? address(lane)
+                       : stage == 2 ? 0
+                                    : address(lane, 41),
+                       stage < 2 ? before.mask : after.mask);
+        check(owned(observer, lane) == (stage == 0  ? 1u
+                                        : stage < 4 ? 0u
+                                                    : stage - 3),
               "independent observer confirms each partial route state");
+        check(contains(observer, foreign) == (stage < 2 || stage >= 4),
+              "actual final-address cleanup removes the manual route before restoration");
+        size_t intent_size = read_file(path, intent, sizeof(intent));
+        printf("CONFIGURATION_INTENT_RECORD phase=%u address=%08x owned=%zu foreign=%u length=%zu "
+               "data=",
+               phase, ioctl_address(lane, SIOCGIFADDR), owned(observer, lane),
+               unsigned(contains(observer, foreign)), intent_size);
+        for (size_t n = 0; n < intent_size; n++)
+            printf("%02x", intent[n]);
+        putchar('\n');
+        check(intent_size > 144 && !memcmp(intent + 132, "AXNPRSV1", 8),
+              "production intent persists the exact route before destructive mutation");
+        if (phase == 2) {
+            for (unsigned kind = 0; kind < 8; kind++) {
+                uint8_t corrupt[4096];
+                memcpy(corrupt, intent, intent_size);
+                switch (kind) {
+                case 0:
+                    corrupt[132] ^= 1;
+                    break;
+                case 1:
+                    journal_word(corrupt + 140, UINT32_MAX);
+                    break;
+                case 2:
+                    journal_word(corrupt + 144, 0);
+                    break;
+                case 3:
+                    corrupt[148] = RTM_DELROUTE;
+                    break;
+                case 4:
+                    corrupt[160] = AF_INET6;
+                    break;
+                case 5:
+                    corrupt[161] = 33;
+                    break;
+                case 6: {
+                    bool changed = false;
+                    for (size_t at = 172; at + 4 <= intent_size;) {
+                        rtattr field;
+                        memcpy(&field, corrupt + at, sizeof(field));
+                        check(field.rta_len >= 4 && field.rta_len <= intent_size - at,
+                              "bounded retained attribute fixture");
+                        if (field.rta_type == RTA_OIF) {
+                            journal_word(corrupt + at + 4, 99);
+                            changed = true;
+                            break;
+                        }
+                        at += RTA_ALIGN(field.rta_len);
+                    }
+                    check(changed, "retained record has its real output interface");
+                    break;
+                }
+                case 7:
+                    journal_word(corrupt + 172, UINT32_MAX);
+                    break;
+                }
+                journal_checksum(corrupt, intent_size);
+                write_file(path, corrupt, intent_size);
+                net::Configuration rejected;
+                check(rejected.open(interfaces[lane], runtime) == EINVAL &&
+                          rejected.apply(address(lane), before) == EBADF &&
+                          !owned(observer, lane) && !contains(observer, foreign),
+                      "reopened corrupt preservation cannot change kernel state");
+                verify_address(lane, 0);
+            }
+            write_file(path, intent, intent_size);
+        }
+        auto manual = foreign;
+        if (phase == 6)
+            manual.protocol = RTPROT_STATIC;
+        if (phase == 7)
+            manual.index = interfaces[0].index;
+        if (phase >= 6)
+            check(observer.change(manual, false) == 0, "install manual replacement after exit");
         net::Configuration restarted;
         check(restarted.open(interfaces[lane], runtime) == 0 && !owned(observer, lane) &&
-                  contains(observer, foreign),
+                  contains(observer, manual),
               "intent recovery clears either owned tuple and retains the unrelated route");
+        if (phase >= 6)
+            check(!contains(observer, foreign), "manual replacement wins over saved preservation");
         verify_address(lane, 0);
-        check(observer.change(foreign, true) == 0, "release manual boundary fixture route");
+        printf("CONFIGURATION_INTENT_RESTORED phase=%u address=%08x owned=%zu foreign=%u "
+               "protocol=%u index=%u\n",
+               phase, ioctl_address(lane, SIOCGIFADDR), owned(observer, lane),
+               unsigned(contains(observer, manual)), manual.protocol, manual.index);
+        check(observer.change(manual, true) == 0, "release manual boundary fixture route");
     }
-    puts("CONFIGURATION_INTENT_RECOVERY_PASS phases=6");
+    puts("CONFIGURATION_INTENT_RECOVERY_PASS phases=8 original=6 preservation_controls=8 "
+         "conflicts=2");
 }
 
 static void process_recovery(const net::Store& runtime) {
@@ -556,6 +821,36 @@ static void process_recovery(const net::Store& runtime) {
     check(restarted.open(interfaces[1], runtime) == 0, "recover after actual process exit");
     verify_address(1, 0);
     puts("CONFIGURATION_PROCESS_RECOVERY_PASS");
+}
+
+static void preservation_bound(const net::Store& runtime) {
+    net::Configuration owner;
+    net::Routing observer;
+    auto initial = parameters(0), desired = parameters(0);
+    check(owner.open(interfaces[0], runtime) == 0 && observer.open() == 0 &&
+              owner.apply(address(0), initial, 2001) == 0,
+          "prepare real ownership-journal capacity");
+    net::Route manual[57];
+    for (unsigned n = 0; n < 57; n++) {
+        manual[n] = {0x64400000 + (n << 8), 0xffffff00,   0, 7000 + n, interfaces[0].index,
+                     RTPROT_BOOT,           RT_SCOPE_LINK};
+        check(observer.change(manual[n], false) == 0, "install real preservation-capacity routes");
+    }
+    desired.route_count = dhcp::max_routes;
+    for (unsigned n = 0; n < dhcp::max_routes; n++)
+        desired.routes[n] = {0xac100000 + (n << 8), 0xffffff00, 0};
+    check(owner.apply(address(0, 41), desired, 2001) == ENOSPC && owned(observer, 0) == 1,
+          "oversized preservation intent fails before replacing owned kernel state");
+    verify_address(0, address(0), initial.mask);
+    for (const auto& value : manual)
+        check(contains(observer, value), "journal-capacity refusal preserves every manual route");
+    for (const auto& value : manual)
+        check(observer.change(value, true) == 0, "release preservation-capacity route");
+    check(owner.apply(address(0, 41), desired, 2001) == 0 &&
+              owned(observer, 0) == dhcp::max_routes + 1 && owner.withdraw() == 0,
+          "same description retries after capacity is available without stale restoration");
+    verify_address(0, 0);
+    puts("CONFIGURATION_PRESERVATION_BOUND_PASS manual_routes=57");
 }
 
 static void rollback(const net::Store& runtime) {
@@ -602,20 +897,30 @@ int main(int argc, char** argv) {
         check(ioctl(fd, SIOCSIFFLAGS, &request) == 0 && close(fd) == 0,
               "enable fixture interface without changing carrier");
         verify_address(lane, 0);
+        printf("CONFIGURATION_INTERFACE lane=%u index=%u name=%s\n", lane, interfaces[lane].index,
+               interfaces[lane].name);
     }
     message_contract(native);
-    if (!native) {
+    if (!native)
         address_pressure();
+    {
         char directory[100];
         snprintf(directory, sizeof(directory), "/tmp/axiom64-network-owner-%ld", long(getpid()));
         net::Store runtime(directory);
+        route_lifetime(runtime);
+        route_variants(runtime);
+        if (native)
+            tos_ownership(runtime);
         recovery(runtime);
         manual_preservation(runtime);
         corrupt_journal(runtime, directory);
         journal_failure(runtime, directory);
         partial_recovery(runtime, directory);
         process_recovery(runtime);
-        rollback(runtime);
+        if (native)
+            preservation_bound(runtime);
+        else
+            rollback(runtime);
     }
     puts("CONFIGURATION_TESTS_PASS");
 }

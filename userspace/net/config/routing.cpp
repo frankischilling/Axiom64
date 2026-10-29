@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/config/routing.hpp"
+#include "net/config/route_snapshot.hpp"
 #include <arpa/inet.h>
 #include <errno.h>
-#include <linux/netlink.h>
 #include <linux/if_addr.h>
+#include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <poll.h>
 #include <string.h>
@@ -160,6 +161,7 @@ int Routing::change(const Route& route, bool remove) {
     body.rtm_dst_len = prefix(route.mask);
     body.rtm_table = RT_TABLE_MAIN;
     body.rtm_protocol = route.protocol;
+    body.rtm_tos = route.tos;
     body.rtm_scope = route.scope;
     body.rtm_type = RTN_UNICAST;
     memcpy(packet, &header, sizeof(header));
@@ -171,6 +173,8 @@ int Routing::change(const Route& route, bool remove) {
         attribute(packet, size, RTA_GATEWAY, htonl(route.gateway));
     attribute(packet, size, RTA_PRIORITY, route.metric);
     attribute(packet, size, RTA_OIF, route.index);
+    if (route.preferred_source)
+        attribute(packet, size, RTA_PREFSRC, htonl(route.preferred_source));
     return acknowledge(packet, size);
 }
 
@@ -236,7 +240,12 @@ int Routing::acknowledge(void* packet, size_t size) {
 }
 
 int Routing::list(Route* output, size_t capacity, size_t& count, unsigned index, uint8_t protocol) {
-    if (capacity > 64 || (capacity && !output))
+    return inventory(output, capacity, count, index, protocol, nullptr);
+}
+
+int Routing::inventory(Route* output, size_t capacity, size_t& count, unsigned index,
+                       uint8_t protocol, detail::RouteSnapshot* captured) {
+    if (capacity > Routing::capacity || (capacity && !output))
         return EINVAL;
     uint8_t request[64]{};
     nlmsghdr header{};
@@ -259,7 +268,8 @@ int Routing::list(Route* output, size_t capacity, size_t& count, unsigned index,
     error = send(request, size, sequence);
     if (error)
         return error;
-    Route saved[64];
+    Route saved[Routing::capacity];
+    detail::RouteSnapshot saved_packets;
     size_t copied = 0;
     bool overflow = false;
     for (unsigned packets = 0; packets < 16; packets++) {
@@ -291,6 +301,8 @@ int Routing::list(Route* output, size_t capacity, size_t& count, unsigned index,
                     if (copied)
                         memcpy(output, saved, copied * sizeof(Route));
                     count = copied;
+                    if (captured)
+                        *captured = saved_packets;
                     return 0;
                 }
                 break;
@@ -306,56 +318,27 @@ int Routing::list(Route* output, size_t capacity, size_t& count, unsigned index,
                 error = EPROTO;
                 break;
             }
-            memcpy(&body, reply + at + 16, sizeof(body));
-            if (body.rtm_family != AF_INET || body.rtm_dst_len > 32 ||
-                body.rtm_type != RTN_UNICAST || body.rtm_table != RT_TABLE_MAIN) {
-                error = EPROTO;
-                break;
-            }
             Route value;
-            value.mask = body.rtm_dst_len ? UINT32_MAX << (32 - body.rtm_dst_len) : 0;
-            value.protocol = body.rtm_protocol;
-            value.scope = body.rtm_scope;
-            for (size_t field_at = 28; field_at < header.nlmsg_len;) {
-                rtattr field;
-                if (header.nlmsg_len - field_at < 4) {
-                    error = EPROTO;
-                    break;
-                }
-                memcpy(&field, reply + at + field_at, sizeof(field));
-                if (field.rta_len < 4 || field.rta_len > header.nlmsg_len - field_at) {
-                    error = EPROTO;
-                    break;
-                }
-                if (field.rta_type == RTA_DST || field.rta_type == RTA_GATEWAY ||
-                    field.rta_type == RTA_PRIORITY || field.rta_type == RTA_OIF) {
-                    if (field.rta_len != 8) {
-                        error = EPROTO;
-                        break;
-                    }
-                    uint32_t number;
-                    memcpy(&number, reply + at + field_at + 4, 4);
-                    if (field.rta_type == RTA_DST)
-                        value.destination = ntohl(number);
-                    else if (field.rta_type == RTA_GATEWAY)
-                        value.gateway = ntohl(number);
-                    else if (field.rta_type == RTA_PRIORITY)
-                        value.metric = number;
-                    else
-                        value.index = number;
-                }
-                field_at += RTA_ALIGN(field.rta_len);
-            }
+            error = detail::decode_route(reply + at, header.nlmsg_len, value);
             if (error)
                 break;
             if ((index && value.index != index) || (protocol && value.protocol != protocol)) {
                 error = EPROTO;
                 break;
             }
-            if (copied == 64)
+            if (copied == Routing::capacity)
                 overflow = true;
             else
                 saved[copied++] = value;
+            if (captured) {
+                size_t bytes = NLMSG_ALIGN(header.nlmsg_len);
+                if (bytes > sizeof(saved_packets.bytes) - saved_packets.size)
+                    overflow = true;
+                else {
+                    memcpy(saved_packets.bytes + saved_packets.size, reply + at, bytes);
+                    saved_packets.size += bytes;
+                }
+            }
             at += NLMSG_ALIGN(header.nlmsg_len);
         }
         if (error)

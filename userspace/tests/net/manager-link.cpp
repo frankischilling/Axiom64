@@ -4,14 +4,25 @@
 #include <linux/if_ether.h>
 #include <linux/if_packet.h>
 #include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
 
 namespace {
 constexpr char manual_resolver[] = "nameserver 192.0.2.53\nsearch operator.example\n";
 
+bool link_state_matches(const ax::dhcp::Interface& current, bool disabled, bool down, bool up,
+                        bool operator_up = false) {
+    // A cold disabled profile stays administratively down after the physical link returns.
+    // Linux IFF_RUNNING therefore remains clear for that profile. An operator-up disabled
+    // interface instead retains its administrative state and follows physical carrier.
+    return (!disabled || current.up == operator_up) && (!down || !current.carrier) &&
+           (!up || (disabled && !operator_up ? !current.carrier : current.carrier));
+}
+
 struct Observer {
     Fixture fixture;
     unsigned affected;
-    bool fixed, disabled, failed, before_bound, foreign_address = false;
+    bool fixed, disabled, failed, before_bound, operator_up, foreign_address = false;
     int capture[2];
     bool capture_failed[2]{};
     char profile_bytes[2][2048], manual_path[300];
@@ -21,9 +32,11 @@ struct Observer {
         : fixture(binary, scenario, root), affected(lane), fixed(!strncmp(scenario, "static-", 7)),
           disabled(!strncmp(scenario, "disabled", 8)),
           failed(!strncmp(scenario, "failed-", 7) || !strcmp(scenario, "static-failed") ||
-                 !strcmp(scenario, "manual-failed") || !strcmp(scenario, "disabled-failed")),
+                 !strcmp(scenario, "manual-failed") || !strcmp(scenario, "disabled-failed") ||
+                 !strcmp(scenario, "disabled-manual-failed")),
           before_bound(strstr(scenario, "initial") || strstr(scenario, "selecting") ||
-                       strstr(scenario, "probing") || !strcmp(scenario, "rx-length")) {
+                       strstr(scenario, "probing") || !strcmp(scenario, "rx-length")),
+          operator_up(!strncmp(scenario, "disabled-manual-", 16)) {
         ax::net::Store saved(fixture.saved);
         for (unsigned index = 0; index < 2; index++) {
             ax::net::Profile profile;
@@ -63,6 +76,25 @@ struct Observer {
                       ssize_t(sizeof(manual_resolver) - 1) &&
                   close(fd) == 0 && lstat(manual_path, &manual) == 0,
               "independent private manual resolver file");
+        // Direct routes require IFF_UP even when the physical carrier is absent.
+        // Cold disabled scenarios retain their down state; operator-up variants prove
+        // that exclusion from the manager also preserves pre-existing manual routes.
+        for (unsigned index = 0; index < 2; index++) {
+            if (index == affected && disabled && !operator_up)
+                continue;
+            int control = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+            check(control >= 0, "independent administrative-state control");
+            ifreq request{};
+            memcpy(request.ifr_name, fixture.interfaces[index].name, sizeof(request.ifr_name));
+            check(ioctl(control, SIOCGIFFLAGS, &request) == 0,
+                  "read flags before installing independent manual routes");
+            request.ifr_flags |= IFF_UP;
+            check(ioctl(control, SIOCSIFFLAGS, &request) == 0 && close(control) == 0,
+                  "operator enables interface before direct-route creation");
+            ax::dhcp::Interface current;
+            check(ax::dhcp::query_interface(index + 1, current) == 0 && current.up,
+                  "actual interface is administratively up before route creation");
+        }
         manual_routes();
     }
 
@@ -136,19 +168,21 @@ struct Observer {
                affected + 1, unsigned(up), count, (unsigned long long)milliseconds());
     }
 
-    void failure_observation() {
+    void failure_observation(bool manager_active) {
         char path[340], bytes[65536], marker[100];
         snprintf(path, sizeof(path), "%s.%u", fixture.log, fixture.primary);
         snprintf(marker, sizeof(marker), "NETWORK_MANAGER_ERROR index=%u operation=", affected + 1);
         uint64_t until = milliseconds() + 5000;
         for (;;) {
-            text(path, bytes, sizeof(bytes));
-            bool found = false;
-            for (const char* at = bytes; (at = strstr(at, marker)); at++) {
-                const char* end = strchr(at, '\n');
-                const char* error = strstr(at, " errno=5\n");
-                if (end && error && error < end)
-                    found = true;
+            bool found = !manager_active;
+            if (manager_active) {
+                text(path, bytes, sizeof(bytes));
+                for (const char* at = bytes; (at = strstr(at, marker)); at++) {
+                    const char* end = strchr(at, '\n');
+                    const char* error = strstr(at, " errno=5\n");
+                    if (end && error && error < end)
+                        found = true;
+                }
             }
             frames();
             if (found && capture_failed[affected])
@@ -156,21 +190,29 @@ struct Observer {
             check(milliseconds() < until, "actual manager observes permanent driver EIO");
             pause_ms(10);
         }
-        printf("MANAGER_LINK_MANAGER_FAILED index=%u errno=5 monotonic_ms=%llu\n", affected + 1,
-               (unsigned long long)milliseconds());
+        if (manager_active)
+            printf("MANAGER_LINK_MANAGER_FAILED index=%u errno=5 monotonic_ms=%llu\n", affected + 1,
+                   (unsigned long long)milliseconds());
     }
 
-    void manual_routes() {
+    void manual_routes(bool remove = false) {
         ax::net::Routing writer;
         check(writer.open() == 0, "independent manual route writer");
         for (unsigned lane = 0; lane < 2; lane++) {
-            if (fixture.manual_installed[lane])
+            if (remove != fixture.manual_installed[lane])
                 continue;
             ax::net::Route route{0xc6336400, 0xffffff00, 0, 901 + lane, lane + 1, 4, 253};
-            int error = writer.change(route, false);
+            int error = writer.change(route, remove);
             printf("MANAGER_LINK_MANUAL_ROUTE index=%u error=%d\n", lane + 1, error);
-            check(error == 0, "add each manual route only once");
-            fixture.manual_installed[lane] = true;
+            if (!remove && lane == affected && disabled && !operator_up) {
+                ax::dhcp::Interface current;
+                check(ax::dhcp::query_interface(lane + 1, current) == 0 && !current.up &&
+                          error == ENETDOWN,
+                      "cold disabled interface rejects a direct route without being enabled");
+                continue;
+            }
+            check(error == 0, "add or remove each manual route only once");
+            fixture.manual_installed[lane] = !remove;
         }
     }
 
@@ -231,8 +273,9 @@ struct Observer {
                                               : owned         ? 0x0a170128U + (affected << 8)
                                                               : 0);
             if (correct_address && generation(1 - affected) == healthy_generation &&
-                generation(affected) == target_generation && (!down || !current.carrier) &&
-                (!up || current.carrier) && (owned || withdrawn()))
+                generation(affected) == target_generation &&
+                link_state_matches(current, disabled, down, up, operator_up) &&
+                (owned || withdrawn()))
                 break;
             check(milliseconds() < until, "bounded actual ownership/generation transition");
             frames();
@@ -375,8 +418,10 @@ int main(int argc, char** argv) {
                                      0x0a1701ffU + (observer.affected << 8), observer.affected + 1};
                 ax::net::Address foreign{0xc0000258U + observer.affected, 0xffffff00, 0xc00002ff,
                                          observer.affected + 1};
-                check(writer.open() == 0 && writer.change(old, true) == 0 &&
-                          writer.change(foreign, false) == 0,
+                // Keep the interface addressed while replacing its primary tuple.
+                // Deleting its last address first would flush unrelated Linux routes.
+                check(writer.open() == 0 && writer.change(foreign, false) == 0 &&
+                          writer.change(old, true) == 0,
                       "independent operator replaces owned address through actual netlink");
                 observer.foreign_address = true;
                 check(fixture.address(observer.affected) == foreign.address,
@@ -385,8 +430,8 @@ int main(int argc, char** argv) {
             } else if (!strcmp(command, "down") || !strcmp(command, "progress") ||
                        !strcmp(command, "flap")) {
                 unsigned healthy_generation = !strcmp(command, "down") ? 1 : 2;
-                if (observer.failed && !observer.disabled && !strcmp(command, "down"))
-                    observer.failure_observation();
+                if (observer.failed && !strcmp(command, "down"))
+                    observer.failure_observation(!observer.disabled);
                 if ((!strcmp(command, "down") || !strcmp(command, "flap")) && !observer.failed &&
                     !observer.disabled && !strstr(argv[2], "initial") &&
                     strcmp(argv[2], "rx-length"))
@@ -496,7 +541,7 @@ int main(int argc, char** argv) {
                 text(path, bytes, sizeof(bytes));
                 check(!strstr(bytes, "nameserver "), "signal withdraws owned resolver metadata");
                 printf("MANAGER_LINK_FINAL_RESOLVER nameservers=0 manual_file=1\n");
-                fixture.manual_routes(true);
+                observer.manual_routes(true);
                 finished = true;
             } else
                 check(false, "known actual link observation command");

@@ -145,6 +145,8 @@ int main(int argc, char** argv) {
     CHECK(close(sockets[affected]) == 0);
     printf("TCP_DEVICE_FAILED lane=%u revents=%u read_errno=%d send_errno=%d cleared_error=%d\n",
            affected, (unsigned)readiness.revents, read_error, send_error, error);
+    // Confirm actual stream progress before measuring the full surviving interval.
+    transfer(sockets[healthy], healthy, &sent[healthy], &received[healthy], 64);
     uint64_t began = milliseconds();
     do {
         transfer(sockets[healthy], healthy, &sent[healthy], &received[healthy], 64);

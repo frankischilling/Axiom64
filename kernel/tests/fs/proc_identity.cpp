@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/proc.hpp"
+#include "fs/proc/ipv4.hpp"
+#include "fs/proc/ipv6.hpp"
 #include "process/task.hpp"
 #include "core/random.hpp"
 #include "core/random/primitives.hpp"
@@ -15,6 +17,8 @@ static bool ready = false;
 static int random_error = 0;
 static unsigned random_calls = 0;
 static Node* retained = nullptr;
+static uint64_t network_generation = 1;
+static unsigned network_reads = 0;
 
 void* alloc(size_t size) {
     return std::malloc(size);
@@ -59,12 +63,93 @@ void erase(void* memory, size_t length) {
         *bytes++ = 0;
 }
 } // namespace random
+
+// Network source policy is outside this identity model. Fail if a test
+// unexpectedly enters that backend instead of supplying production behavior.
+namespace proc4 {
+int64_t source_limit_read(uint64_t&, void*, size_t) {
+    std::abort();
+}
+
+int64_t source_limit_write(uint64_t&, const void*, size_t) {
+    std::abort();
+}
+} // namespace proc4
+
+// This model isolates process identity and boot UUIDs. Network configuration
+// uses its real backend in the IPv6 model and in guest ABI tests.
+namespace proc6 {
+const char* property_name(unsigned property) {
+    static const char* names[] = {
+        "addr_gen_mode", "disable_ipv6",         "accept_ra",     "autoconf",     "dad_transmits",
+        "enhanced_dad",  "router_solicitations", "max_addresses", "stable_secret"};
+    return property < property_count ? names[property] : nullptr;
+}
+
+const char* scope_name(unsigned) {
+    return nullptr;
+}
+
+bool scope_index(const char* name, unsigned& index) {
+    index = 1;
+    return !strcmp(name, "eth0") && network_generation;
+}
+
+uint64_t scope_generation(unsigned index) {
+    return index == 1 ? network_generation : 0;
+}
+
+int64_t read(unsigned, unsigned, uint64_t&, void* output, size_t length) {
+    network_reads++;
+    if (!length)
+        return 0;
+    *static_cast<char*>(output) = '7';
+    return 1;
+}
+
+int64_t write(unsigned, unsigned, uint64_t&, const void*, size_t) {
+    std::abort();
+}
+} // namespace proc6
 } // namespace ax
 
 static ax::Node* child(ax::Node* parent, const char* name) {
     ax::Node* result = nullptr;
     assert(ax::procfs_ops.lookup(parent, name, result) == 0 && result);
     return result;
+}
+
+static void network_lifetimes() {
+    ax::Mount mount{};
+    mount.root = ax::procfs_root(&mount);
+    assert(mount.root);
+    auto conf = child(child(child(child(mount.root, "sys"), "net"), "ipv6"), "conf");
+    auto scope = child(conf, "eth0");
+    auto old = child(scope, "max_addresses");
+    ax::retained = old;
+    ax::Handle description{};
+    description.node = old;
+    char value = 0;
+    assert(!ax::procfs_ops.validate(old));
+    assert(ax::procfs_ops.control(old)->read(&description, &value, 1) == 1 && value == '7');
+    unsigned reads = ax::network_reads;
+    ax::network_generation = 0;
+    ax::Node* missing = nullptr;
+    assert(ax::procfs_ops.validate(old) == -2);
+    assert(ax::procfs_ops.lookup(conf, "eth0", missing) == -2);
+    assert(ax::procfs_ops.control(old)->read(&description, &value, 0) == -2);
+    assert(ax::procfs_ops.lookup(scope, "max_addresses", missing) == -2);
+    ax::network_generation = 2;
+    auto replacement = child(child(conf, "eth0"), "max_addresses");
+    assert(replacement != old && replacement->inode != old->inode);
+    assert(ax::procfs_ops.validate(old) == -2 && !ax::procfs_ops.validate(replacement));
+    assert(ax::procfs_ops.control(old)->read(&description, &value, 1) == -2);
+    assert(ax::network_reads == reads);
+    ax::retained = nullptr;
+    assert(child(conf, "eth0") == replacement->parent);
+    assert(conf->first_child && !conf->first_child->next_sibling);
+    ax::procfs_ops.destroy(&mount);
+    ax::network_generation = 1;
 }
 
 static unsigned long long start(const char* text) {
@@ -166,5 +251,6 @@ int main() {
     assert(start(bytes) == 12346);
     ax::procfs_ops.destroy(&mount);
     ax::procfs_ops.destroy(&second);
+    network_lifetimes();
     std::puts("PROC_IDENTITY_KERNEL_PASS secure_uuid=1 lifetime=1 slot_recycle=1");
 }

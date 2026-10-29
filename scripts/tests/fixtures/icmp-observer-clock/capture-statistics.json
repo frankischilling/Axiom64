@@ -1,0 +1,24 @@
+{
+  "packets": 909,
+  "dropped": 0,
+  "buffer_bytes": 8388608,
+  "monotonic_receipts": "tcp-icmp-linux-static-lane0.clocks.jsonl",
+  "monotonic_receipts_sha256": "23e44f354b5a1541b59788f210cd53d1c7c3a9a7ee656fc328ef7eae619f7698",
+  "receipt_frames": 909,
+  "original_packet_times_not_rescaled": true,
+  "clock_start": {
+    "receipt_monotonic_ns": 168565857144,
+    "receipt_realtime_ns": 1792896885987446471,
+    "receipt_monotonic_after_ns": 168565877884
+  },
+  "clock_stop": {
+    "receipt_monotonic_ns": 270670569474,
+    "receipt_realtime_ns": 1792896988092164831,
+    "receipt_monotonic_after_ns": 270670596344
+  },
+  "clock_end": {
+    "receipt_monotonic_ns": 270708636404,
+    "receipt_realtime_ns": 1792896988130224651,
+    "receipt_monotonic_after_ns": 270708654594
+  }
+}

@@ -44,9 +44,9 @@ class OutputHold:
         check(self.gdb_port is not None, 'guest has an owned debugger endpoint')
         script = self.base.with_suffix('.gdb')
         expiry_break = [
-            'break ax::inet_failed if error == 105', 'commands', 'silent',
+            f'break ax::inet_failed if error == 105 && failed_index == {self.lane + 1}', 'commands', 'silent',
             'set $expired = $expired + 1', 'if $expired == 1',
-            'printf "TCP_OUTPUT_EXPIRED index=%u\\n", socket->stream_index', 'end',
+            'printf "TCP_OUTPUT_EXPIRED index=%u\\n", failed_index', 'end',
             'continue', 'end'] if self.expiry else []
         release = (f'printf "TCP_OUTPUT_RELEASED index={self.lane + 1} held=%u expired=%u\\n", $held, $expired'
                    if self.expiry else f'printf "TCP_OUTPUT_RELEASED index={self.lane + 1} held=%u\\n", $held')

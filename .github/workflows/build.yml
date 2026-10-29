@@ -43,6 +43,16 @@ jobs:
             downloads/sources
       - name: Test crypto cache input invalidation and complete product retention
         run: python3 scripts/tests/crypto_cache_test.py -v
+      - name: Verify concurrent cold downloads and interrupted transfer ownership
+        run: python3 -B scripts/tests/ports_download_test.py -v
+      - name: Replay network capture boundaries and retained output
+        run: |
+          python3 -B scripts/tests/tcp6_isolation_prelude_test.py -v
+          python3 -B scripts/tests/tcp6_source_handshake_test.py -v
+          python3 -B scripts/tests/manager_link_startup_test.py -v
+          python3 -B scripts/tests/network_window_test.py -v
+          python3 -B scripts/tests/ipv6_owner_pair_test.py -v
+          python3 -B scripts/tests/ipv4_send_capture_test.py -v
       - name: Test authenticated Ubuntu index identity and retained download failures
         run: python3 scripts/tests/host_glibc_sources_test.py -v
       - name: Fingerprint crypto recipes and actual host toolchain inputs
@@ -65,7 +75,11 @@ jobs:
       - name: Replay actual kernel-interrupted ordinary Bash prompts
         run: python3 scripts/tests/console_prompt_test.py -v
       - name: Check complete and focused input archive boundaries
-        run: python3 scripts/tests/ci_inputs_test.py -v
+        run: |
+          python3 scripts/tests/ci_inputs_test.py -v
+          python3 scripts/tests/ci_tools_test.py -v
+          python3 scripts/tests/tcp6_source_inputs_test.py -v
+          make test-ipv6-error-record
       - name: Run prompt verification from exported corresponding-source inputs
         run: python3 scripts/tests/source_bundle_inputs_test.py -v
       - name: Test seed supervision observes complete ordinary-console records
@@ -75,7 +89,9 @@ jobs:
       - name: Test copied fixture executables retain Linux execution permissions
         run: python3 scripts/tests/random_executable_copy_test.py -v
       - name: Replay actual RTC firmware writes and reject damaged calendar observations
-        run: python3 scripts/tests/clock_wall_observer_test.py -v
+        run: |
+          python3 scripts/tests/clock_wall_observer_test.py -v
+          python3 scripts/tests/clock_wall_boundary_test.py -v
       - name: Require complete and unaltered storage target shard unions
         run: python3 scripts/tests/account_storage_shards_test.py -v
       - name: Require every rotation variant, target and actual fault mode
@@ -93,7 +109,9 @@ jobs:
       - name: Replay actual kernel-interrupted rotation exports without changing captured bytes
         run: python3 scripts/tests/account_rotation_serial_test.py -v
       - name: Verify bounded rotation device storage
-        run: python3 scripts/tests/account_rotation_disk_test.py -v
+        run: |
+          python3 scripts/tests/account_rotation_disk_test.py -v
+          python3 scripts/tests/nbd_startup_test.py -v
       - name: Require exact allocation-map evidence for bounded counter recovery
         run: python3 scripts/tests/ext2_counter_inspection_test.py
       - name: Require every administration variant, concurrency phase and storage fault
@@ -190,6 +208,21 @@ jobs:
           python3 scripts/build_libcap.py --provider all
           make -j2 build/tcp-native build/tcp-static build/tcp-dynamic
           make -j2 build/tcp-fault-native build/tcp-fault-static build/tcp-fault-dynamic
+          make -j2 build/tcp6-fault-native build/tcp6-fault-static build/tcp6-fault-dynamic
+          make -j2 build/tcp6-scoped-native build/tcp6-scoped-static build/tcp6-scoped-dynamic
+          make -j2 build/tcp6-replies-native build/tcp6-replies-static build/tcp6-replies-dynamic
+          make -j2 build/tcp6-isolation-native build/tcp6-isolation-static build/tcp6-isolation-dynamic
+          make -j2 build/tcp6-source-lifetime-native build/tcp6-source-lifetime-static build/tcp6-source-lifetime-dynamic
+          make -j2 build/tcp6-pending-source-native build/tcp6-pending-source-static build/tcp6-pending-source-dynamic
+          make -j2 build/tcp6-source-expiry-native build/tcp6-source-expiry-static build/tcp6-source-expiry-dynamic
+          make -j2 build/tcp6-scoped-source-native build/tcp6-scoped-source-static build/tcp6-scoped-source-dynamic
+          make -j2 build/tcp6-zone-route-native build/tcp6-zone-route-static build/tcp6-zone-route-dynamic
+          make -j2 build/tcp6-zone-source-route-native build/tcp6-zone-source-route-static build/tcp6-zone-source-route-dynamic
+          make -j2 build/tcp6-controls-ipv6-native build/tcp6-controls-ipv6-static build/tcp6-controls-ipv6-dynamic
+          make -j2 build/tcp6-controls-mapped-native build/tcp6-controls-mapped-static build/tcp6-controls-mapped-dynamic
+          make -j2 build/tcp6-controls-ipv4-native build/tcp6-controls-ipv4-static build/tcp6-controls-ipv4-dynamic
+          make -j2 build/tcp6-pmtu-native build/tcp6-pmtu-static build/tcp6-pmtu-dynamic
+          make -j2 build/tcp6-errors-native build/tcp6-errors-static build/tcp6-errors-dynamic
           make -j2 build/tcp-challenge-native build/tcp-challenge-static build/tcp-challenge-dynamic
           make -j2 build/tcp-malformed-native build/tcp-malformed-static build/tcp-malformed-dynamic
           make -j2 build/tcp-device-native build/tcp-device-static build/tcp-device-dynamic
@@ -215,6 +248,51 @@ jobs:
           mkdir -p build/tcp-policy
           make test-tcp-wire test-tcp-sender test-tcp-connection test-tcp-isn test-tcp-time-wait test-tcp-icmp test-tcp-pmtu 2>&1 | tee build/tcp-policy/host.log
           python3 scripts/tests/tcp_input_libraries_test.py
+          python3 scripts/tests/tcp_reconnect_clock_test.py -v 2>&1 | tee build/tcp-policy/reconnect-clock.log
+          python3 scripts/tests/tcp_reconnect_observer_test.py -v 2>&1 | tee build/tcp-policy/reconnect-observer.log
+      - name: Test IPv4 fragment ownership and reassembly with sanitizers
+        run: |
+          mkdir -p build/ipv4-policy
+          python3 scripts/tests/network_fixture_test.py 2>&1 | tee build/ipv4-policy/fixture.log
+          python3 scripts/tests/ipv6_configuration_test.py 2>&1 | tee build/ipv4-policy/ipv6-configuration.log
+          python3 scripts/tests/ipv6_router_capture_test.py 2>&1 | tee build/ipv4-policy/ipv6-router-capture.log
+          python3 scripts/tests/tcp_capture_lifecycle_test.py -v 2>&1 | tee build/ipv4-policy/capture-lifecycle.log
+          python3 scripts/tests/ipv6_dad_policy_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-dad-policy.log
+          python3 scripts/tests/ipv6_dad_launch_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-dad-launch.log
+          python3 scripts/tests/ipv6_dad_inventory_test.py --directory build/ipv4-policy/ipv6-dad-inventory -v 2>&1 | tee build/ipv4-policy/ipv6-dad-inventory.log
+          python3 scripts/tests/ipv6_dad_capture_test.py --archive build/ipv4-policy/ipv6-dad-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-dad-capture.log
+          python3 scripts/tests/ipv6_owner_peer_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-owner-peer.log
+          python3 scripts/tests/ipv6_owner_launch_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-owner-launch.log
+          python3 scripts/tests/ipv6_owner_capture_test.py --archive build/ipv4-policy/ipv6-owner-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-owner-capture.log
+          python3 scripts/tests/ipv6_device_capture_test.py --archive build/ipv4-policy/ipv6-device-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-device-capture.log
+          python3 scripts/tests/ipv6_device_pending_capture_test.py --archive build/ipv4-policy/ipv6-device-pending-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-device-pending-capture.log
+          python3 -B scripts/tests/native_ipv6_timers_test.py -v 2>&1 | tee build/ipv4-policy/native-ipv6-timers.log
+          python3 scripts/tests/ipv6_device_pending_record_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-device-pending-record.log
+          python3 scripts/tests/qemu_capture_delivery_test.py -v 2>&1 | tee build/ipv4-policy/qemu-capture-delivery.log
+          python3 scripts/tests/ipv6_device_inventory_test.py --archive build/ipv4-policy/ipv6-device-inventory-damaged.zip -v 2>&1 | tee build/ipv4-policy/ipv6-device-inventory.log
+          python3 scripts/tests/packet_administrative_test.py -v 2>&1 | tee build/ipv4-policy/packet-administrative.log
+          python3 scripts/tests/packet_protocol_test.py -v 2>&1 | tee build/ipv4-policy/packet-protocol.log
+          python3 scripts/tests/packet_protocol_observation_test.py --archive build/ipv4-policy/packet-protocol-observation-damaged.zip -v 2>&1 | tee build/ipv4-policy/packet-protocol-observation.log
+          python3 scripts/tests/tcp_icmp_observer_clock_test.py --archive build/ipv4-policy/icmp-observer-clock-damaged.zip -v 2>&1 | tee build/ipv4-policy/icmp-observer-clock.log
+          python3 scripts/tests/udp_capture_fixture_test.py --archive build/ipv4-policy/udp-wire-damaged.zip -v 2>&1 | tee build/ipv4-policy/udp-wire.log
+          python3 scripts/tests/administrative_flags_test.py -v 2>&1 | tee build/ipv4-policy/administrative-flags.log
+          python3 scripts/tests/manager_link_state_test.py -v 2>&1 | tee build/ipv4-policy/manager-link-state.log
+          python3 scripts/tests/ipv6_device_record_test.py -v 2>&1 | tee build/ipv4-policy/ipv6-device-record.log
+          python3 scripts/tests/dns_fixture_test.py 2>&1 | tee build/ipv4-policy/dns-fixture.log
+          python3 scripts/tests/ipv4_aliases_test.py 2>&1 | tee build/ipv4-policy/aliases.log
+          python3 scripts/tests/ipv4_fragment_observation_test.py -v 2>&1 | tee build/ipv4-policy/fragment-observation.log
+          python3 scripts/tests/ipv4_fragment_diagnostics_test.py --directory build/ipv4-policy/fragment-diagnostics -v 2>&1 | tee build/ipv4-policy/fragment-diagnostics.log
+          python3 scripts/tests/ipv4_expiry_damage_test.py -v 2>&1 | tee build/ipv4-policy/expiry-damage.log
+          make test-ipv6-wire test-ipv4-reassembly test-ipv4-fragmentation test-ipv4-path-mtu test-ipv4-paths test-ipv4-multicast test-ipv4-source-filter test-ipv4-source-aggregate test-ipv4-multicast-source-host test-ipv4-source-reports test-ipv4-multicast-source-wire-host test-ipv4-multicast-queries 2>&1 | tee build/ipv4-policy/host.log
+      - name: Replay legal source-report interleavings and reject invented retries
+        run: python3 -B scripts/tests/ipv4_multicast_source_overlap_test.py
+      - name: Upload IPv4 policy evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-policy
+          if-no-files-found: warn
+          path: build/ipv4-policy
       - name: Upload TCP policy evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -296,6 +374,8 @@ jobs:
         suite:
           - boot
           - network
+          - ipv4-source-filters
+          - ipv6-expiry
           - configuration
           - storage
           - storage-journal
@@ -399,6 +479,21 @@ jobs:
         run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
       - name: Install build and emulation tools
         run: bash scripts/ci/tools.sh restore
+      - name: Compare all source-filter cases with native Linux and both guest adapters
+        if: matrix.suite == 'ipv4-source-filters'
+        run: sudo -n env PYTHONPATH=scripts python3 -B -m ipv4_multicast.source_matrix build/ipv4-source-evidence --produce
+      - name: Reopen complete source-filter evidence under root and an ordinary identity
+        if: matrix.suite == 'ipv4-source-filters'
+        run: sudo -n env PYTHONPATH=scripts python3 -B -m ipv4_multicast.source_protected --directory build/ipv4-source-evidence --output build/ipv4-source-audit
+      - name: Upload source-filter packets products sources and protected readbacks
+        if: always() && matrix.suite == 'ipv4-source-filters'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-source-filters
+          if-no-files-found: error
+          path: |
+            build/ipv4-source-evidence
+            build/ipv4-source-audit
       - name: Compare ordinary-user HTTP and authenticated HTTPS downloads with native Linux
         if: matrix.suite == 'downloads-native'
         run: |
@@ -528,6 +623,7 @@ jobs:
         run: |
           sudo -n make test-pty-security-native test-parent-death-native test-signal-wait-native
           sudo -n make test-waitid-native test-proc-identity-native test-exec-arguments-native
+          sudo -n python3 scripts/proc_retirement_test.py
           sudo -n python3 scripts/proc_test.py --native --directory build/proc-native
           sudo -n python3 scripts/terminal_flush_test.py --native --directory build/terminal-flush-native
           sudo -n python3 scripts/terminal_flush_test.py --native --sanitize --directory build/terminal-flush-sanitize
@@ -642,6 +738,7 @@ jobs:
         run: |
           firmware=${SUITE#random-crypto-}
           case "$firmware" in bios|uefi) ;; *) exit 1 ;; esac
+          python3 scripts/tests/random_crypto_wait_observer_test.py
           python3 scripts/random_crypto_test.py --firmware "$firmware" --output build/random-lifecycle/crypto
           python3 scripts/random_crypto_wait_test.py --firmware "$firmware" --output build/random-lifecycle/crypto-wait
       - name: Compare and verify real UTC clocks and libc interface inventories needed by crypto clients
@@ -717,9 +814,15 @@ jobs:
         run: |
           sudo -n python3 scripts/tests/tcp_auto_port_test.py
           make test-tcp-native
+          make test-tcp6-native
       - name: Test static and dynamic TCP loopback with BIOS and UEFI
         if: matrix.suite == 'tcp'
-        run: make test-tcp-sockets
+        run: |
+          make test-tcp-sockets
+          make test-tcp6-abi
+          python3 scripts/tests/tcp6_abi_evidence_test.py
+          make test-tcp6-control-state
+          python3 scripts/tests/tcp6_control_state_evidence_test.py
       - name: Test native host TCP client/server transfers and independent NIC captures
         if: matrix.suite == 'tcp'
         run: make test-tcp-native-wire
@@ -732,6 +835,59 @@ jobs:
       - name: Verify actual TCP retransmissions on both emulated NICs
         if: matrix.suite == 'tcp-fault-loss'
         run: make test-tcp-fault
+      - name: Compare IPv6 TCP loss with all native and guest linkages and NICs
+        if: matrix.suite == 'tcp-fault-loss'
+        run: |
+          sudo -n python3 scripts/tests/tcp6_observation_test.py
+          sudo -n python3 scripts/tests/tcp6_native_cleanup_test.py
+          sudo -n make test-tcp6-wire-native
+          make test-tcp6-wire
+      - name: Compare IPv6 TCP path-MTU ownership with native and guest sockets
+        if: matrix.suite == 'tcp-fault-loss'
+        run: |
+          sudo -n make test-tcp6-pmtu-native
+          make test-tcp6-pmtu
+      - name: Compare ordinary ICMPv6 TCP errors with native and guest sockets
+        if: matrix.suite == 'tcp-fault-loss'
+        run: |
+          sudo -n make test-tcp6-errors-native
+          make test-tcp6-errors
+      - name: Verify identical link-local TCP tuples retain their interface zones
+        if: matrix.suite == 'tcp-fault-loss'
+        run: |
+          sudo -n make test-tcp6-scoped-native
+          make test-tcp6-scoped
+      - name: Compare scoped and global TCP reset replies on both interfaces
+        if: matrix.suite == 'tcp-fault-loss'
+        run: |
+          sudo -n make test-tcp6-replies-native
+          make test-tcp6-replies
+      - name: Compare simultaneous scoped streams and shared device-query faults
+        if: matrix.suite == 'tcp-fault-loss'
+        run: |
+          sudo -n make test-tcp6-isolation-native
+          make test-tcp6-isolation
+          sudo -n make test-tcp6-controls-wire-native
+          make test-tcp6-controls-wire
+          python3 scripts/tests/tcp6_control_wire_evidence_test.py
+          sudo -n make test-tcp6-source-lifetime-native
+          make test-tcp6-source-lifetime
+          python3 scripts/tests/tcp6_source_lifetime_evidence_test.py
+          sudo -n make test-tcp6-pending-source-native
+          make test-tcp6-pending-source
+          python3 scripts/tests/tcp6_pending_source_evidence_test.py
+          sudo -n make test-tcp6-source-expiry-native
+          make test-tcp6-source-expiry
+          python3 scripts/tests/tcp6_source_expiry_evidence_test.py
+          sudo -n make test-tcp6-scoped-source-native
+          make test-tcp6-scoped-source
+          python3 scripts/tests/tcp6_scoped_source_evidence_test.py
+          sudo -n make test-tcp6-zone-route-native
+          make test-tcp6-zone-route
+          python3 scripts/tests/tcp6_zone_route_evidence_test.py
+          sudo -n make test-tcp6-zone-source-route-native
+          make test-tcp6-zone-source-route
+          python3 scripts/tests/tcp6_zone_source_route_evidence_test.py
       - name: Independently verify TCP loss captures and reject damaged evidence
         if: matrix.suite == 'tcp-fault-loss'
         run: |
@@ -815,6 +971,7 @@ jobs:
         run: |
           dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' libc6:amd64 > build/tcp-icmp-native-package.txt
           cp /usr/share/doc/libc6/copyright build/tcp-icmp-native-copyright.txt
+          sudo -n python3 scripts/tests/tcp_packet_observer_test.py
           sudo -n python3 scripts/tests/tcp_icmp_error_order_test.py
           sudo -n make test-tcp-icmp-native
           make test-tcp-icmp-sockets
@@ -824,6 +981,7 @@ jobs:
         if: matrix.suite == 'tcp-fault-icmp'
         run: |
           sudo -n python3 scripts/packet_buffer_native.py
+          sudo -n python3 scripts/packet_protocol_native.py
           sudo -n make test-tcp-pmtu-native
           make test-tcp-pmtu-sockets
           python3 scripts/tcp_pmtu_capture.py build/tcp-pmtu-native-results.json --output build/tcp-pmtu-native-audit.json
@@ -836,6 +994,7 @@ jobs:
           python3 scripts/tcp_pressure_capture.py build/tcp-pressure-native-results.json --output build/tcp-pressure-native-audit.json
           python3 scripts/tcp_pressure_capture.py build/tcp-pressure-results.json --output build/tcp-pressure-guest-audit.json
           python3 scripts/tests/tcp_pressure_capture_test.py 2>&1 | tee build/tcp-pressure-damage.log
+          python3 scripts/tests/tcp_capture_link_test.py 2>&1 | tee build/tcp-link-receipt-damage.log
       - name: Verify disconnect sequence isolation and completed tuple ownership
         if: matrix.suite == 'tcp-fault-icmp'
         run: |
@@ -859,6 +1018,8 @@ jobs:
         if: matrix.suite == 'tcp-fault-icmp'
         run: |
           mkdir -p build/tcp-device
+          sudo -n python3 scripts/tests/tcp_device_pending_site_test.py
+          sudo -n python3 scripts/tests/tcp_device_observation_test.py
           sudo -n python3 scripts/tests/tcp_device_native_cleanup_test.py
           sudo -n make test-tcp-device-native
           make test-tcp-device
@@ -902,24 +1063,348 @@ jobs:
         if: matrix.suite == 'boot'
         run: python3 scripts/boot_test.py --interactive --firmware both --timeout 180
 
+      - name: Test delayed IPv6 datagrams and isolated expiry campaign control
+        if: matrix.suite == 'ipv6-expiry'
+        run: |
+          python3 scripts/tests/ipv6_expiry_peer_test.py
+          python3 scripts/tests/ipv6_expiry_neighbor_test.py -v
+          python3 scripts/tests/ipv6_expiry_controller_test.py -v
+      - name: Observe real ten-minute IPv6 path MTU expiry in all eleven profiles
+        if: matrix.suite == 'ipv6-expiry'
+        run: sudo -n python3 scripts/ipv6_expiry_test.py
+      - name: Give the runner ownership of IPv6 expiry evidence
+        if: always() && matrix.suite == 'ipv6-expiry'
+        run: |
+          if test -d build/ipv6-expiry; then
+            sudo -n chown -R "$(id -u):$(id -g)" build/ipv6-expiry
+          fi
+      - name: Upload original IPv6 expiry packets, clocks, images and programs
+        if: always() && matrix.suite == 'ipv6-expiry'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv6-expiry
+          if-no-files-found: error
+          path: |
+            build/ipv6-expiry
+            build/ipv6-expiry-native
+            build/ipv6-expiry-static
+            build/ipv6-expiry-dynamic
+            build/ipv6-expiry-static.inputs.json
+            build/ipv6-expiry-dynamic.inputs.json
+            build/axiom64-ipv6-expiry-*.iso
+            build/musl/**/manifest.json
+            build/musl/**/COPYRIGHT
+            build/musl/**/sysroot/lib/ld-musl-x86_64.so.1
+            build/musl/**/sysroot/usr/lib/libc.a
       - name: Test virtio and e1000 Ethernet with packet sockets
         if: matrix.suite == 'network'
-        run: make test-network
+        run: python3 -B scripts/ci/network_window.py run
+      - name: Retain the actual Ethernet image and packet client
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-ethernet-fixtures
+          retention-days: 1
+          compression-level: 1
+          if-no-files-found: error
+          path: |
+            build/network-test.iso
+            build/rootfs-network.cpio
+            build/net-tests
+            userspace/tests/net/packet.c
+            userspace/tests/net/run.sh
+      - name: Compare gateway routing with three native Linux linkages
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv4-gateways-native
+      - name: Test gateway routing across eight static and dynamic guest profiles
+        if: matrix.suite == 'network'
+        run: make test-ipv4-gateways
+      - name: Upload native gateway routing evidence
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-gateways-native
+          if-no-files-found: warn
+          path: build/ipv4-gateways-native
+      - name: Test IPv6 proc, netlink and socket controls on both firmware paths and three adapters
+        if: matrix.suite == 'configuration'
+        run: make test-ipv6-configuration test-ipv6-link-configuration test-ipv6-socket-configuration
+      - name: Compare IPv6 configuration with three isolated Linux linkages
+        if: matrix.suite == 'configuration'
+        run: sudo -n make test-ipv6-configuration-native test-ipv6-link-configuration-native test-ipv6-socket-configuration-native
+      - name: Test IPv6 router discovery and finite SLAAC across both firmware paths and three adapters
+        if: matrix.suite == 'configuration'
+        run: make test-ipv6-router
+      - name: Compare controlled IPv6 router discovery with three isolated Linux linkages
+        if: matrix.suite == 'configuration'
+        run: sudo -n make test-native-address-worker test-ipv6-router-native
+      - name: Verify IPv6 stable DAD conflicts and prefix ownership on real guest adapters
+        if: matrix.suite == 'configuration'
+        run: python3 scripts/ipv6_dad_test.py --directory build/ipv6-dad-wire
+      - name: Compare IPv6 DAD conflicts with three isolated native Linux linkages
+        if: matrix.suite == 'configuration'
+        run: sudo -n python3 scripts/ipv6_dad_test.py --native --directory build/ipv6-dad-native
+      - name: Verify IPv6 address ownership across both firmware paths and three adapters
+        if: matrix.suite == 'configuration'
+        run: make test-ipv6-ownership
+      - name: Compare IPv6 address ownership with three isolated native Linux linkages
+        if: matrix.suite == 'configuration'
+        run: sudo -n make test-ipv6-ownership-native
+      - name: Verify IPv6 DAD states across administrative, carrier and MTU transitions
+        if: matrix.suite == 'ipv6-expiry'
+        run: make test-ipv6-device
+      - name: Upload IPv6 device guest evidence
+        if: always() && matrix.suite == 'ipv6-expiry'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv6-device-wire
+          if-no-files-found: error
+          path: build/ipv6-device-wire
+      - name: Compare IPv6 device DAD states with three isolated native Linux linkages
+        if: matrix.suite == 'configuration'
+        run: sudo -n make test-ipv6-device-native
+      - name: Verify link inventories across administrative and invalid-MTU transitions
+        if: matrix.suite == 'configuration'
+        run: make test-ipv6-device-inventory
+      - name: Compare device inventories with three isolated native Linux linkages
+        if: matrix.suite == 'configuration'
+        run: sudo -n make test-ipv6-device-inventory-native
+      - name: Upload IPv6 configuration ABI evidence
+        if: always() && matrix.suite == 'configuration'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv6-configuration
+          if-no-files-found: warn
+          path: |
+            build/ipv6-configuration-wire
+            build/ipv6-configuration-native
+            build/ipv6-configuration-lifetime-wire
+            build/ipv6-configuration-lifetime-native
+            build/ipv6-link-configuration-wire
+            build/ipv6-link-configuration-native
+            build/ipv6-socket-configuration-wire
+            build/ipv6-socket-configuration-native
+            build/ipv6-router-wire
+            build/ipv6-router-native
+            build/ipv6-router-native-worker.json
+            build/native-address-worker-tests
+            build/ipv6-dad-wire
+            build/ipv6-dad-native
+            build/ipv6-owner-wire
+            build/ipv6-owner-native
+            build/ipv6-device-native
+            build/ipv6-device-inventory-wire
+            build/ipv6-device-inventory-native
+      - name: Test IPv6 address control, DAD, neighbor discovery and echo on both adapters
+        if: matrix.suite == 'network'
+        run: make test-ipv6-host
+      - name: Compare IPv6 host behavior with three native Linux linkages
+        if: matrix.suite == 'network'
+        run: |
+          sudo -n make test-ipv6-host-native
+          make test-ipv6-lifetimes-contract
+      - name: Test IPv6 raw and UDP socket traffic on both adapters
+        if: matrix.suite == 'network'
+        run: make test-ipv6-sockets
+      - name: Compare IPv6 raw and UDP sockets with three native Linux linkages
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv6-sockets-native
+      - name: Compare IPv4 receive controls, faults and description lifetime with Linux
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv4-receive-controls
+      - name: Upload complete IPv4 receive-control evidence
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-receive-controls
+          if-no-files-found: warn
+          path: build/ipv4-receive-controls
+      - name: Compare IPv4 Ethernet receive metadata and queued route/address ownership
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv4-receive-wire
+      - name: Upload complete IPv4 Ethernet metadata evidence
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-receive-wire
+          if-no-files-found: warn
+          path: build/ipv4-receive-wire
+      - name: Compare IPv4 send controls and error ordering with Linux
+        if: matrix.suite == 'ipv4-source-filters'
+        run: sudo -n make test-ipv4-send-controls
+      - name: Upload complete IPv4 send-control evidence
+        if: always() && matrix.suite == 'ipv4-source-filters'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-send-controls
+          if-no-files-found: warn
+          path: build/ipv4-send-controls
+      - name: Compare IPv4 Ethernet output and sleeping route ownership with Linux
+        if: matrix.suite == 'ipv4-source-filters'
+        run: sudo -n make test-ipv4-send-wire
+      - name: Upload complete IPv4 Ethernet send evidence
+        if: always() && matrix.suite == 'ipv4-source-filters'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-send-wire
+          if-no-files-found: warn
+          path: build/ipv4-send-wire
+      - name: Test IPv6 receive metadata and copy faults on both adapters
+        if: matrix.suite == 'network'
+        run: make test-ipv6-controls
+      - name: Compare IPv6 receive metadata with three native Linux linkages
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv6-controls-native
+      - name: Compare every local IPv6 receive-control and result-copy observation
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv6-controls-contract
+      - name: Test IPv6 source fragmentation and output policy on both adapters
+        if: matrix.suite == 'network'
+        run: make test-ipv6-output
+      - name: Compare IPv6 source output with three native Linux linkages
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv6-output-native
+      - name: Compare IPv6 per-message output controls and fault ordering
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv6-output-contract
+      - name: Test IPv6 learned path MTU and quoted errors on both adapters
+        if: matrix.suite == 'network'
+        run: make test-ipv6-pmtu
+      - name: Compare IPv6 path MTU and quoted errors with three native Linux linkages
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv6-pmtu-native
+      - name: Test IPv6 copied error queues and receive fault ordering on both adapters
+        if: matrix.suite == 'network'
+        run: make test-ipv6-errors
+      - name: Compare IPv6 error queues with three native Linux linkages
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv6-errors-native
+      - name: Compare IPv6 error metadata and protected result copies
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv6-errors-contract
+      - name: Test IPv6 fragment delivery and real sixty-second expiry on both adapters
+        if: matrix.suite == 'network'
+        run: make test-ipv6-fragments
+      - name: Compare IPv6 fragments with three native Linux linkages
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv6-fragments-native
+      - name: Upload IPv6 host evidence
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv6-host
+          if-no-files-found: warn
+          path: |
+            build/ipv6-capture-order
+            build/ipv6-host-wire
+            build/ipv6-host-native-wire
+            build/ipv6-lifetime-contract
+            build/ipv6-host-static.inputs.json
+            build/ipv6-host-dynamic.inputs.json
+            build/axiom64-ipv6-host-*.iso
+            build/ipv6-sockets-wire
+            build/ipv6-sockets-native-wire
+            build/ipv6-sockets-static.inputs.json
+            build/ipv6-sockets-dynamic.inputs.json
+            build/axiom64-ipv6-sockets-*.iso
+            build/ipv6-controls-wire
+            build/ipv6-controls-native-wire
+            build/ipv6-controls-contract
+            build/ipv6-errors-contract
+            build/ipv6-receive-extensions-contract
+            build/ipv6-output-contract
+            build/ipv6-extension-contract
+            build/ipv6-sticky-contract
+            build/ipv6-controls-native
+            build/ipv6-controls-static
+            build/ipv6-controls-dynamic
+            build/ipv6-controls-static.inputs.json
+            build/ipv6-controls-dynamic.inputs.json
+            build/axiom64-ipv6-controls-*.iso
+            build/ipv6-output-wire
+            build/ipv6-output-native-wire
+            build/ipv6-output-static.inputs.json
+            build/ipv6-output-dynamic.inputs.json
+            build/axiom64-ipv6-output-*.iso
+            build/ipv6-cached-wire
+            build/ipv6-cached-native-wire
+            build/ipv6-cached-static.inputs.json
+            build/ipv6-cached-dynamic.inputs.json
+            build/axiom64-ipv6-cached-*.iso
+            build/ipv6-pmtu-wire
+            build/ipv6-pmtu-native-wire
+            build/ipv6-pmtu-static.inputs.json
+            build/ipv6-pmtu-dynamic.inputs.json
+            build/axiom64-ipv6-pmtu-*.iso
+            build/ipv6-errors-wire
+            build/ipv6-errors-native-wire
+            build/ipv6-errors-static.inputs.json
+            build/ipv6-errors-dynamic.inputs.json
+            build/axiom64-ipv6-errors-*.iso
+            build/ipv6-fragments-wire
+            build/ipv6-fragments-native-wire
+            build/ipv6-fragments-static.inputs.json
+            build/ipv6-fragments-dynamic.inputs.json
+            build/axiom64-ipv6-fragments-*.iso
       - name: Test IPv4 routes, ARP, raw ICMP, ping, and failed-device sockets
         if: matrix.suite == 'network'
-        run: make test-ipv4
+        run: make test-ipv4 IPV4_WORKERS=4
+      - name: Compare IPv4 fragment receive behavior with three native Linux linkages
+        if: matrix.suite == 'network'
+        run: python3 -B scripts/ci/network_window.py audit
+      - name: Compare labelled IPv4 address ownership with native Linux
+        if: matrix.suite == 'network'
+        run: sudo -n python3 scripts/ipv4_alias_native.py
+      - name: Upload native labelled-address evidence
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-aliases-native
+          if-no-files-found: warn
+          path: build/ipv4-aliases-native
+      - name: Upload native IPv4 fragment evidence
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-fragments-native
+          if-no-files-found: warn
+          path: |
+            build/ipv4-fragments-native
+            build/network-window
+      - name: Upload cold and primed native ICMP controls
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-icmp-budget
+          if-no-files-found: warn
+          path: build/native-icmp-budget-evidence
+      - name: Upload actual normal and failed-device IPv4 images
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-ipv4-fixtures
+          if-no-files-found: warn
+          path: build/axiom64-ipv4-*.iso
       - name: Test IPv4 UDP, datagram lifetime, checksums, and failed-device sockets
         if: matrix.suite == 'network'
-        run: make test-udp
+        run: |
+          sudo -n python3 -B scripts/tests/ipv4_multicast_fixture_owner_test.py
+          make test-udp
+          sudo -n python3 -B scripts/ipv4_multicast_test.py --matrix --directory build/ipv4-multicast-evidence
+          sudo -n python3 -B scripts/ipv4_multicast_evidence.py build/ipv4-multicast-evidence --output build/ipv4-multicast-audit
       - name: Compare common UDP socket behavior with native Linux
         if: matrix.suite == 'network'
         run: ./build/udp-tests
       - name: Compare actual musl DNS with native Linux in private namespaces
         if: matrix.suite == 'network'
-        run: sudo -n make test-dns-native
+        run: |
+          sudo -n python3 scripts/tests/dns_packet_observer_test.py
+          sudo -n make test-dns-native
       - name: Test musl DNS queries, search rules, retries, and deadlines on both adapters
         if: matrix.suite == 'network'
-        run: make test-dns
+        run: |
+          make test-dns
+          python3 scripts/tests/dns_capture_test.py --matrix-results build/dns-results.json
       - name: Compare actual patched musl DNS TCP framing with native glibc
         if: matrix.suite == 'network'
         run: sudo -n make test-dns-tcp-native
@@ -928,7 +1413,9 @@ jobs:
         run: make test-dns-tcp
       - name: Test route message validation with sanitizers
         if: matrix.suite == 'network'
-        run: make test-netlink-codec
+        run: |
+          make test-netlink-codec
+          python3 scripts/tests/netlink_peer_test.py
       - name: Test NETLINK_ROUTE ownership, lifetime, limits, and routed packets
         if: matrix.suite == 'network'
         run: make test-netlink
@@ -944,11 +1431,25 @@ jobs:
       - name: Test complete IPv4 addresses and configuration recovery
         if: matrix.suite == 'configuration'
         run: make test-configuration
-      - name: Compare address messages with native Linux
+      - name: Compare configuration ownership with three native Linux linkages
         if: matrix.suite == 'configuration'
         run: |
-          make build/configuration-native
-          sudo python3 scripts/configuration_native.py
+          make -j3 build/configuration-native build/configuration-tests build/configuration-dynamic
+          sudo -n python3 scripts/configuration_native.py
+      - name: Reopen original IPv4 configuration journals, source and execution products
+        if: matrix.suite == 'configuration'
+        run: |
+          python3 scripts/configuration_evidence.py build/configuration-wire --complete
+          python3 scripts/configuration_evidence.py build/configuration-native-evidence --complete
+      - name: Retain IPv4 configuration source, programs, journals and boot images
+        if: always() && matrix.suite == 'configuration'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-configuration
+          if-no-files-found: warn
+          path: |
+            build/configuration-wire
+            build/configuration-native-evidence
       - name: Test DHCP codecs, lease state, and profiles with sanitizers
         if: matrix.suite == 'configuration'
         run: make test-dhcp-codec
@@ -1039,6 +1540,7 @@ jobs:
         if: matrix.suite == 'configuration'
         run: make test-file-locks
       - name: Compare Linux path descriptors and test RAM/ext2 lifetime and access
+        id: path_descriptors
         if: matrix.suite == 'configuration'
         run: |
           python3 scripts/tests/path_descriptor_cancellation_test.py -v
@@ -1147,6 +1649,16 @@ jobs:
           path: |
             build/manager-persistent-*.raw
             build/axiom64-manager-persistent-*.iso
+      - name: Upload thread I/O comparison clients
+        if: always() && matrix.suite == 'threads'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-thread-io-clients
+          if-no-files-found: error
+          path: |
+            build/io-vectors-native
+            build/thread-io-static
+            build/thread-io-dynamic
       - name: Upload test evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1154,21 +1666,38 @@ jobs:
           name: axiom64-evidence-${{ matrix.suite }}
           path: |
             build/*.log
+            build/udp-wire/**
+            build/ipv4-multicast-evidence/**
+            build/ipv4-multicast-audit/**
             build/*.trace
             build/*.gdb
             build/*results.json
+            build/ipv4-*.pcap
+            build/ipv4-*-alias-lane*.zip
+            build/ipv4-*-expiry-lane*.zip
+            build/ipv4-*-pmtu-lane*.zip
+            build/ipv4-*-pmtu-lifetime-lane*.zip
+            build/ipv4-gateway-*-lane*-damaged-*.zip
+            build/ipv4-gateway-*-inputs.json
             build/manager-protocol-*-packets.json
             build/manager-link-*-packets.json
+            build/manager-link-removal-evidence/**
             build/axiom64-manager-address-query-*.iso
             build/dns-*-packets.json
+            build/dns-packet-observer/**
+            build/dns-capture-controls/**
             build/dns-tcp-*
             build/normal-init-*-dns-packets.json
             build/paired-network/**
+            build/netlink-wire/**
             build/*.png
             build/*.dump
             build/tcp-*.pcap
             build/tcp-*.clocks.jsonl
             build/tcp-host-libraries/**
+            build/tcp-icmp-native
+            build/musl/build/*/manifest.json
+            build/musl/runtime/*/manifest.json
             build/tcp-*-inputs.json
             build/tcp-*-inputs-damaged/**
             build/tcp-fault-*-peer.json
@@ -1201,6 +1730,7 @@ jobs:
             build/tcp-pressure-*-inputs.json
             build/tcp-pressure-*-audit.json
             build/tcp-pressure-damaged/**
+            build/tcp-link-receipts-damaged/**
             build/tcp-reconnect-*-peer.json
             build/tcp-reconnect-*-inputs.json
             build/tcp-reconnect-*-audit.json
@@ -1216,11 +1746,12 @@ jobs:
             build/tcp-recovery-*-queue-*.gdb
             build/tcp-recovery-damaged/**
             build/packet-buffer-*-inputs.json
+            build/packet-protocol-native
             build/packet-buffer-native
             build/packet-buffer-static
             build/packet-buffer-dynamic
       - name: Upload complete path-descriptor sources, products and filesystem evidence
-        if: always() && matrix.suite == 'configuration'
+        if: always() && matrix.suite == 'configuration' && steps.path_descriptors.outcome != 'skipped'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: axiom64-path-descriptors-evidence
@@ -1316,17 +1847,28 @@ jobs:
         with:
           name: axiom64-tcp-fixtures
           if-no-files-found: error
-          path: build/axiom64-tcp-*.iso
-      - name: Upload DNS TCP boot fixtures and providers
+          path: |
+            build/axiom64-tcp-*.iso
+            build/tcp6-abi/**
+            build/tcp6-abi-damaged/*/changed.zip
+            build/tcp6-abi-damaged/results.json
+            build/tcp-control-state/**
+            build/tcp-control-state-damaged/*/changed.zip
+            build/tcp-control-state-damaged/glibc-snapshot.zip
+            build/tcp-control-state-damaged/snapshot-controls.zip
+            build/tcp-control-state-damaged/results.json
+      - name: Upload DNS boot fixtures and providers
         if: always() && matrix.suite == 'network'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: axiom64-dns-tcp-fixtures
           if-no-files-found: error
           path: |
+            build/dns-fixture/**
             build/axiom64-dns-tcp-*.iso
             build/dns-tcp-static
             build/dns-tcp-dynamic
+            build/dns-tcp-inputs/**
             build/musl/**/manifest.json
             build/musl/**/COPYRIGHT
             build/musl/**/res_msend.c
@@ -1340,6 +1882,50 @@ jobs:
           if-no-files-found: error
           path: |
             build/axiom64-tcp-fault-*.iso
+            build/tcp6-native-wire/**
+            build/tcp6-guest-wire/**
+            build/tcp6-pmtu-native-wire/**
+            build/tcp6-pmtu-guest-wire/**
+            build/tcp6-errors-native-wire/**
+            build/tcp6-errors-guest-wire/**
+            build/tcp6-scoped-native-wire/**
+            build/tcp6-scoped-guest-wire/**
+            build/tcp6-replies-native-wire/**
+            build/tcp6-replies-guest-wire/**
+            build/tcp6-isolation-native-wire/**
+            build/tcp6-isolation-guest-wire/**
+            build/tcp6-source-lifetime-native-wire/**
+            build/tcp6-source-lifetime-guest-wire/**
+            build/tcp6-controls-wire-independent.json
+            build/tcp6-controls-wire-independent-captures/**
+            build/tcp6-source-lifetime-independent.json
+            build/tcp6-source-lifetime-independent-captures/**
+            build/tcp6-pending-source-native-wire/**
+            build/tcp6-pending-source-guest-wire/**
+            build/tcp6-pending-source-independent.json
+            build/tcp6-pending-source-independent-captures/**
+            build/tcp6-source-expiry-native-wire/**
+            build/tcp6-source-expiry-guest-wire/**
+            build/tcp6-source-expiry-independent.json
+            build/tcp6-source-expiry-independent-captures/**
+            build/tcp6-scoped-source-native-wire/**
+            build/tcp6-scoped-source-guest-wire/**
+            build/tcp6-scoped-source-independent.json
+            build/tcp6-scoped-source-independent-captures/**
+            build/tcp6-zone-route-native-wire/**
+            build/tcp6-zone-route-guest-wire/**
+            build/tcp6-zone-route-independent.json
+            build/tcp6-zone-route-independent-captures/**
+            build/tcp6-zone-source-route-native-wire/**
+            build/tcp6-zone-source-route-guest-wire/**
+            build/tcp6-zone-source-route-independent.json
+            build/tcp6-zone-source-route-independent-captures/**
+            build/tcp6-controls-ipv6-native-wire/**
+            build/tcp6-controls-ipv6-guest-wire/**
+            build/tcp6-controls-mapped-native-wire/**
+            build/tcp6-controls-mapped-guest-wire/**
+            build/tcp6-controls-ipv4-native-wire/**
+            build/tcp6-controls-ipv4-guest-wire/**
             build/axiom64-tcp-reordering-*.iso
             build/axiom64-tcp-persist-*.iso
             build/axiom64-tcp-timeout-*.iso
@@ -1351,6 +1937,8 @@ jobs:
             build/axiom64-tcp-fast-*.iso
             build/axiom64-tcp-lifetime-*.iso
             build/axiom64-tcp-icmp-*.iso
+            build/tcp-packet-observers/**
+            build/tcp-pmtu-observer-retirement
             build/axiom64-tcp-pmtu-*.iso
             build/axiom64-tcp-pressure-*.iso
             build/axiom64-tcp-reconnect-*.iso
@@ -1375,9 +1963,37 @@ jobs:
             build/file-capabilities-independent.log
             build/file-capabilities-damage.log
 
+  storage-admission:
+    name: Admit storage after network starts
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Verify and observe this attempt's actual network runner
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python3 -B scripts/tests/storage_admission_test.py -v
+          python3 -B scripts/ci/storage_admission.py
+      - name: Retain the original run and runner observations
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-storage-admission
+          path: build/storage-admission.json
+          retention-days: 7
+          if-no-files-found: error
+
   account-storage-clean:
     name: Administration ${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}
-    needs: build
+    needs: [build, storage-admission]
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     strategy:
@@ -1393,10 +2009,10 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           digest-mismatch: error
-          name: axiom64-ci-inputs
+          name: axiom64-ci-rotation-inputs
           path: ${{ runner.temp }}/ci-inputs
       - name: Restore source and build together
-        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-rotation-inputs.tar.gz"
       - name: Install build and emulation tools
         run: bash scripts/ci/tools.sh restore
       - name: Run actual administration, concurrent commands and fresh-kernel checks
@@ -1431,7 +2047,7 @@ jobs:
 
   account-storage-fault:
     name: Administration faults ${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.cache }}
-    needs: build
+    needs: [build, storage-admission]
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     strategy:
@@ -1448,10 +2064,10 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           digest-mismatch: error
-          name: axiom64-ci-inputs
+          name: axiom64-ci-rotation-inputs
           path: ${{ runner.temp }}/ci-inputs
       - name: Restore source and build together
-        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-rotation-inputs.tar.gz"
       - name: Install build and emulation tools
         run: bash scripts/ci/tools.sh restore
       - name: Interrupt every observed actual administration request and boot normal recovery
@@ -1483,7 +2099,7 @@ jobs:
 
   account-rotation-storage:
     name: Rotation faults ${{ matrix.provider }}-${{ matrix.linkage }}-${{ matrix.firmware }}-${{ matrix.transport }}-${{ matrix.scenario }}-${{ matrix.cache }}-${{ matrix.shard }}
-    needs: build
+    needs: [build, storage-admission]
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     strategy:
@@ -1558,10 +2174,10 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           digest-mismatch: error
-          name: axiom64-ci-inputs
+          name: axiom64-ci-rotation-inputs
           path: ${{ runner.temp }}/ci-inputs
       - name: Restore the exact verified source and build inputs
-        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
+        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-rotation-inputs.tar.gz"
       - name: Download every administration coverage index
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -1588,7 +2204,7 @@ jobs:
           path: build/account-storage-coverage
 
   qemu:
-    needs: [build, tests, account-storage-clean, account-storage-fault, account-rotation-storage, account-storage-coverage]
+    needs: [build, tests, storage-admission, account-storage-clean, account-storage-fault, account-rotation-storage, account-storage-coverage]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -1596,6 +2212,7 @@ jobs:
       - name: Require the build and every test suite to pass
         env:
           BUILD_RESULT: ${{ needs.build.result }}
+          ADMISSION_RESULT: ${{ needs.storage-admission.result }}
           TEST_RESULT: ${{ needs.tests.result }}
           ACCOUNT_CLEAN_RESULT: ${{ needs.account-storage-clean.result }}
           ACCOUNT_FAULT_RESULT: ${{ needs.account-storage-fault.result }}
@@ -1603,6 +2220,7 @@ jobs:
           ACCOUNT_COVERAGE_RESULT: ${{ needs.account-storage-coverage.result }}
         run: |
           test "$BUILD_RESULT" = success
+          test "$ADMISSION_RESULT" = success
           test "$TEST_RESULT" = success
           test "$ACCOUNT_CLEAN_RESULT" = success
           test "$ACCOUNT_FAULT_RESULT" = success

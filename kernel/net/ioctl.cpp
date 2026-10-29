@@ -44,12 +44,15 @@ static const NetInfo* interface(unsigned index) {
     return &lo;
 }
 
-static unsigned interface(const char* name) {
+static unsigned interface(const char* name, bool aliases = false) {
     if (!strcmp(name, "lo"))
         return ipv4_loopback;
-    for (unsigned i = 1; auto info = net_info(i); i++)
-        if (!strcmp(info->name, name))
+    for (unsigned i = 1; auto info = net_info(i); i++) {
+        size_t size = strlen(info->name);
+        if (!strcmp(info->name, name) ||
+            (aliases && !memcmp(info->name, name, size) && name[size] == ':'))
             return i;
+    }
     return 0;
 }
 
@@ -105,14 +108,12 @@ static int list(Task& task, uint64_t pointer) {
         return -22;
     const size_t capacity = config.buffer ? size_t(config.length) : SIZE_MAX;
     size_t copied = 0;
-    for (unsigned index = 1; index <= ipv4_loopback; index++) {
-        const auto info = interface(index);
-        const auto ip = ipv4_config(index);
-        if (!info || !ip || !ip->address || sizeof(Ifreq) > capacity - copied)
+    for (unsigned n = 0; auto item = ipv4_address(n); n++) {
+        if (sizeof(Ifreq) > capacity - copied)
             continue;
         Ifreq entry{};
-        memcpy(entry.name, info->name, sizeof(entry.name));
-        address(entry, ip->address);
+        memcpy(entry.name, item->label, sizeof(entry.name));
+        address(entry, item->config.address);
         if (config.buffer &&
             !task.memory->space.copy_out(config.buffer + copied, &entry, sizeof(entry)))
             return -14;
@@ -141,7 +142,7 @@ int64_t net_ioctl(Task& task, uint64_t request, uint64_t pointer) {
         memcpy(&index, req.value, 4);
     else {
         req.name[15] = 0;
-        index = interface(req.name);
+        index = interface(req.name, true);
     }
     const auto info = interface(index);
     if (!info)
@@ -154,9 +155,10 @@ int64_t net_ioctl(Task& task, uint64_t request, uint64_t pointer) {
         memcpy(req.value, &info->index, 4);
         break;
     case 0x8913: {
-        uint16_t flags = index == ipv4_loopback ? 0x49
-                                                : 2 | 0x1000 | (info->administrative ? 1 : 0) |
-                                                      (info->carrier && info->live ? 0x40 : 0);
+        uint16_t flags = index == ipv4_loopback
+                             ? 0x49
+                             : 2 | 0x1000 | (info->administrative ? 1 : 0) |
+                                   (info->administrative && info->carrier && info->live ? 0x40 : 0);
         memcpy(req.value, &flags, 2);
         break;
     }
@@ -167,12 +169,21 @@ int64_t net_ioctl(Task& task, uint64_t request, uint64_t pointer) {
             return (flags & 1) && !(flags & ~uint16_t(0x49)) ? 0 : -95;
         if (flags & ~uint16_t(1 | 2 | 0x40 | 0x1000))
             return -95;
+        if (req.name[strlen(info->name)] == ':') {
+            const auto current = ipv4_label(index, req.name);
+            if (!current)
+                return -99;
+            return flags & 1 ? 0 : ipv4_address_remove(index, current->address, current->mask);
+        }
         return net_configure(index, flags & 1, info->mtu);
     }
     case 0x8915:
     case 0x8919:
     case 0x891b: {
-        const auto ip = ipv4_config(index);
+        InetAddress hint;
+        memcpy(&hint, req.value, sizeof(hint));
+        const auto ip =
+            ipv4_label(index, req.name, hint.family == 2 ? __builtin_bswap32(hint.address) : 0);
         if (!ip || !ip->address)
             return -99;
         address(req, request == 0x8915   ? ip->address
@@ -187,14 +198,30 @@ int64_t net_ioctl(Task& task, uint64_t request, uint64_t pointer) {
         memcpy(&input, req.value, sizeof(input));
         if (input.family != 2)
             return -97;
-        auto changed = *ipv4_config(index);
+        const auto current = ipv4_label(index, req.name);
+        if (!current && request != 0x8916)
+            return -99;
+        Ipv4Config changed = current ? *current : Ipv4Config{};
         uint32_t value = __builtin_bswap32(input.address);
-        if (request == 0x8916)
+        if (request == 0x8916) {
+            if (current && changed.address == value)
+                return 0;
             changed.address = value;
-        else if (request == 0x891c)
+            changed.mask = value < 0x80000000   ? 0xff000000
+                           : value < 0xc0000000 ? 0xffff0000
+                                                : 0xffffff00;
+            changed.broadcast = value ? value | ~changed.mask : 0;
+        } else if (request == 0x891c) {
+            bool derived = changed.broadcast == (changed.address | ~changed.mask);
             changed.mask = value;
-        changed.broadcast = request == 0x891a ? value : 0;
-        return ipv4_configure(index, changed);
+            if (derived && value < 0xfffffffe)
+                changed.broadcast = changed.address | ~value;
+        } else
+            changed.broadcast = value;
+        int error = ipv4_configure_label(index, req.name, changed);
+        // The Linux netmask ioctl ignores reinsertion's duplicate error after
+        // retiring the old prefix. Address replacement reports that same error.
+        return request == 0x891c && error == -17 ? 0 : error;
     }
     case 0x8921:
         memcpy(req.value, &info->mtu, 4);

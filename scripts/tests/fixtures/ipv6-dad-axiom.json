@@ -1,0 +1,34 @@
+{
+  "provider": "Axiom64",
+  "linux_vm": false,
+  "native": false,
+  "kernel_sha256": "e3ed6f7ac23f1eb8cf7c79d592e674e73f4f181fd3f3429941ecf283951d6808",
+  "client_sha256": "19d40251a1d50803e3c52d98167b54ca3e2a09eb97c394561b17089cebf3aafd",
+  "image_sha256": "58d846025cbf0fa64497792d24d1b61fd65e5cb083ffd8d5b1cd02c956bbdcbb",
+  "client_sources": {
+    "userspace/tests/net/ipv6_dad.c": "1bba243251796586cec8301c02c35872be7423fda812a736f221fb4c893ff039",
+    "userspace/tests/net/ipv6_fixture.h": "c93e5bf222b55c839d49961000afe6c5b228c2b44d4138d0de676925ce2cf9a6",
+    "userspace/tests/net/ipv6_dad_inventory.h": "05b75c116dca812cdfd1222765cf98ef500fbdaf3928ac6cbedf674381feac3b"
+  },
+  "files": {
+    "ipv6-dad-axiom.log": {
+      "bytes": 13751,
+      "sha256": "f3c3fce579e1fd1c4cd180284316bd07fc9e17d69369c2034563e21596e054d2"
+    },
+    "ipv6-dad-axiom-lane0.pcap": {
+      "bytes": 9454,
+      "sha256": "05cd63b5d30290b8c90ad819fc1aa86455533ba308cfe3807575e074cc119bcc"
+    },
+    "ipv6-dad-axiom-lane1.pcap": {
+      "bytes": 9454,
+      "sha256": "cdbb32a90f9a00d9a51413208caebe9fd9099a1770c092f8cfc3e1f8e64183b7"
+    }
+  },
+  "scenarios_each": 6,
+  "tentative_each": 14,
+  "global_DAD_probes_each": 18,
+  "link_local_DAD_probes_each": 2,
+  "conflicts_each": 12,
+  "original_packet_timestamps_unchanged": true,
+  "full_F12_complete": false
+}

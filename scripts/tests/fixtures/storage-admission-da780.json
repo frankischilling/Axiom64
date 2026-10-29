@@ -1,0 +1,37 @@
+{
+  "provenance": {
+    "run_url": "https://github.com/frankischilling/Axiom64/actions/runs/40443500672",
+    "job_url": "https://github.com/frankischilling/Axiom64/actions/runs/40443500672/job/121993638211",
+    "original_result": "completed success",
+    "only_first_actual_step_retained": true
+  },
+  "snapshot": {
+    "run": {
+      "id": 40443500672,
+      "run_attempt": 1,
+      "head_sha": "da780303e094f21d231644aa0d137aaa3bacb7d4"
+    },
+    "jobs": [
+      {
+        "id": 121993638211,
+        "run_id": 40443500672,
+        "head_sha": "da780303e094f21d231644aa0d137aaa3bacb7d4",
+        "name": "Test network",
+        "status": "completed",
+        "conclusion": "success",
+        "runner_id": 1000046739,
+        "runner_name": "GitHub Actions 1000046739",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-27T03:52:47Z",
+            "completed_at": "2026-10-27T03:52:48Z"
+          }
+        ]
+      }
+    ]
+  }
+}

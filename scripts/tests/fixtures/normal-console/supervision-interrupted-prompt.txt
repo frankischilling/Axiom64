@@ -1,0 +1,3 @@
+[?2004hNetwork manager exited status=9; retrying after one second.
+INIT_MANAGER_REAP pid=2 status=9 monotonic_ms=9110
+bash-5.2$ 

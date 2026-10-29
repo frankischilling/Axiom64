@@ -13,6 +13,7 @@
 #include "io/io.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
+#include "net/inet6.hpp"
 #include "net/netlink.hpp"
 #include "core/time.hpp"
 #include "core/random.hpp"
@@ -111,6 +112,8 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
     if ((n->mode & 0170000) == directory && (flags & 3))
         return -21;
     n = file_node(n);
+    if (int error = node_validate(n))
+        return error;
     unsigned mask = (flags & 3) == 0 ? 4 : (flags & 3) == 1 ? 2 : 6;
     if ((flags & 01000) && (n->mode & 0170000) == regular_file)
         mask |= 2;
@@ -182,6 +185,8 @@ static int64_t stat_node(Node* n, uint64_t dst) {
     if (!n)
         return -2;
     n = file_node(n);
+    if (int error = node_validate(n))
+        return error;
     LinuxStat s{};
     if (n->mount->ops->refresh)
         n->mount->ops->refresh(n);
@@ -561,11 +566,22 @@ static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
         int size = packet_available(h->packet);
         return copy_result(arg, &size, 4);
     }
+    if (h->packet && (request == 0x8906 || request == 0x8907 || request == 0x80108906 ||
+                      request == 0x80108907)) {
+        int64_t value[2];
+        int error = packet_timestamp(h->packet, value, request == 0x8907 || request == 0x80108907);
+        return error ? error : copy_result(arg, value, sizeof(value));
+    }
     if (request == 0x541b && h->inet) {
         int size = inet_available(h->inet);
         return copy_result(arg, &size, sizeof(size));
     }
-    if ((h->socket || h->packet || h->inet || h->netlink) && request >= 0x890b && request <= 0x89ff)
+    if (request == 0x541b && h->inet6) {
+        int size = inet6_available(h->inet6);
+        return copy_result(arg, &size, sizeof(size));
+    }
+    if ((h->socket || h->packet || h->inet || h->inet6 || h->netlink) && request >= 0x890b &&
+        request <= 0x89ff)
         return net_ioctl(*current, request, arg);
     if (!h->node ||
         ((h->node->mode & 0170000) != character && (h->node->mode & 0170000) != block_device))
@@ -656,9 +672,10 @@ static int64_t dispatch(Frame* f) {
             s.nlink = 1;
             return copy_result(b, &s, sizeof(s));
         }
-        if (h->pipe || h->socket || h->packet || h->inet || h->netlink || h->epoll) {
+        if (h->pipe || h->socket || h->packet || h->inet || h->inet6 || h->netlink || h->epoll) {
             LinuxStat s{};
-            s.mode = h->socket || h->packet || h->inet || h->netlink ? 0140777 : 0010600;
+            s.mode =
+                h->socket || h->packet || h->inet || h->inet6 || h->netlink ? 0140777 : 0010600;
             s.nlink = 1;
             return copy_result(b, &s, sizeof(s));
         }

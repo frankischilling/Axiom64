@@ -3,9 +3,40 @@
 *.cpio binary
 # Keep captured serial bytes, including CRLF and terminal escape sequences.
 scripts/tests/fixtures/normal-console/interrupted-prompt.txt -text -whitespace
+scripts/tests/fixtures/normal-console/manager-bound-prompt.txt -text -whitespace
 scripts/tests/fixtures/account-rotation-interrupted-data.txt -text -whitespace
 scripts/tests/fixtures/qmp-pre-greeting-resume.jsonl -text -whitespace
+scripts/tests/fixtures/ipv6-router-bios-modern.log -text -whitespace
+scripts/tests/fixtures/ipv6-router-bios-modern.pcap binary
 # Preserve checked patch bytes and the whitespace required by unified context.
 vendor/musl/patches/*.patch -text -whitespace
 # Preserve pinned verification inputs and complete upstream license bytes.
 vendor/gnu-utmp-reader/* -text -whitespace
+scripts/tests/fixtures/normal-init-default-ipv6-lane0.pcap binary
+scripts/tests/fixtures/normal-init-default-ipv6-lane1.pcap binary
+scripts/tests/fixtures/ipv6-dad-*.log -text -whitespace
+scripts/tests/fixtures/ipv6-dad-*.pcap binary
+scripts/tests/fixtures/ipv6-owner-*.log -text -whitespace
+scripts/tests/fixtures/ipv6-owner-*.pcap binary
+# Preserve device-transition serial, packet and clock evidence exactly.
+scripts/tests/fixtures/ipv6-device/**/serial.log -text -whitespace
+scripts/tests/fixtures/ipv6-device/**/*.pcap binary
+scripts/tests/fixtures/ipv6-device/**/*.clocks.jsonl -text -whitespace
+scripts/tests/fixtures/ipv6-device-inventory-*.log -text -whitespace
+scripts/tests/fixtures/ipv6-device-pending/**/serial.log -text -whitespace
+scripts/tests/fixtures/ipv6-device-pending/**/*.pcap binary
+scripts/tests/fixtures/ipv6-device-pending/**/*.clocks.jsonl -text -whitespace
+scripts/tests/fixtures/ipv6-device-delivery/**/serial.log -text -whitespace
+scripts/tests/fixtures/ipv6-device-delivery/**/*.pcap binary
+scripts/tests/fixtures/packet-protocol-observation/**/serial.log -text -whitespace
+
+scripts/tests/fixtures/icmp-observer-clock/serial.log -text
+scripts/tests/fixtures/icmp-observer-clock/tcp-icmp-linux-static-lane0.clocks.jsonl -text
+scripts/tests/fixtures/icmp-observer-clock/tcp-icmp-linux-static-lane0.pcap -text
+scripts/tests/fixtures/udp-wire/**/*.pcap binary
+scripts/tests/fixtures/udp-wire/**/serial.log -text -whitespace
+scripts/tests/fixtures/dns-observer/*.log -text -whitespace
+scripts/tests/fixtures/dns-observer/*.pcap binary
+scripts/tests/fixtures/tcp6-isolation-prelude/client.log -text -whitespace
+scripts/tests/fixtures/tcp6-isolation-prelude/*.pcap binary
+scripts/tests/fixtures/normal-console/supervision-interrupted-prompt.txt -text -whitespace

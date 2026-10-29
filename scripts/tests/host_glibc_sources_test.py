@@ -37,15 +37,18 @@ class HostSourceIndexTests(unittest.TestCase):
         self.requests = []
         self.served = self.data
         self.status = 200
+        self.mutable_status = None
+        self.mutable_data = b'newly published mutable source index'
         self.declared_size = None
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 owner.requests.append(self.path)
-                data = (b'newly published mutable source index' if
-                        self.path.endswith('/main/source/Sources.xz') else owner.served)
-                self.send_response(owner.status)
+                mutable = self.path.endswith('/main/source/Sources.xz')
+                data = owner.mutable_data if mutable else owner.served
+                status = owner.mutable_status if mutable and owner.mutable_status is not None else owner.status
+                self.send_response(status)
                 self.send_header('Content-Length', str(owner.declared_size or len(data)))
                 self.end_headers()
                 self.wfile.write(data)
@@ -143,13 +146,42 @@ class HostSourceIndexTests(unittest.TestCase):
         self.assertEqual(self.index.read_bytes(), b'damaged retained cache')
         self.assertEqual(stat.S_IMODE(self.index.stat().st_mode), 0o600)
 
-    def test_missing_hash_does_not_fall_back_to_a_mutable_url(self):
+    def test_both_missing_index_paths_are_retained(self):
         self.status = 404
         with self.assertRaises(urllib.error.HTTPError):
             self.fetch()
-        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(len(self.requests), 2)
         self.assertIn('/by-hash/SHA256/', self.requests[0])
         self.assertEqual(self.proof()['status'], 404)
+        self.assertFalse(self.index.exists())
+
+    def test_missing_hash_can_use_only_the_exact_signed_index(self):
+        self.status = 404
+        self.mutable_status = 200
+        self.mutable_data = self.data
+        self.assertEqual(self.fetch().read_bytes(), self.data)
+        self.assertEqual(len(self.requests), 2)
+        self.assertEqual(self.proof()['attempts'][0]['status'], 404)
+        self.assertEqual(self.proof()['actual_sha256'], self.digest)
+        self.assertTrue(self.proof()['passed'])
+
+    def test_missing_hash_rejects_a_different_mutable_index(self):
+        self.status = 404
+        self.mutable_status = 200
+        with self.assertRaisesRegex(ValueError, 'checksum differs'):
+            self.fetch()
+        self.assertFalse(self.index.exists())
+        self.assertFalse(self.proof()['passed'])
+        self.assertEqual(self.proof()['attempts'][0]['status'], 404)
+        self.assertEqual((self.output / 'archive-authentication/noble-updates/Sources.xz').read_bytes(), self.mutable_data)
+
+    def test_nonpublication_http_failure_has_no_fallback(self):
+        self.status = 403
+        self.mutable_status = 200
+        self.mutable_data = self.data
+        with self.assertRaises(urllib.error.HTTPError):
+            self.fetch()
+        self.assertEqual(len(self.requests), 1)
         self.assertFalse(self.index.exists())
 
     def test_missing_signed_index_is_rejected_before_network(self):

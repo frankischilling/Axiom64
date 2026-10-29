@@ -33,3 +33,26 @@ The [complete TCP profile matrix](ci-tcp-profiles.md) distributes the six indepe
 The available mechanisms follow [QEMU's accelerator documentation](https://www.qemu.org/docs/master/system/qemu-manpage.html) and [GitHub's hosted-runner KVM guidance](https://github.blog/changelog/2024-04-02-github-actions-hardware-accelerated-android-virtualization-now-available/). This work concerns VM development infrastructure; HP work still follows the required VM prerequisites.
 
 Rotation fault jobs restore a focused input archive with the same sources, file metadata, kernel and libc/provider products. Full root images and curl/OpenSSL build trees remain in the complete archive used by the other suites. This packaging split retains all 209 jobs, every fault target and every real observation interval. Complete hosted before/after acceptance remains required for a workflow performance claim.
+
+The expanded IPv6 device cohort reuses existing matrix cells. Its complete 180
+guest profiles run with two workers in the IPv6-expiry job; all 45 native
+comparisons remain in configuration. The preceding complete hosted workflow
+measures configuration at 3,135 seconds, IPv6-expiry at 1,312 seconds and network
+at 4,210 seconds. Its ready-only device steps take 431 guest and 206 native seconds.
+The expanded local guest cohort takes 2,346 seconds; the native packet observations
+span 1,048 seconds in total. Combining those measurements estimates about 98 minutes
+for unsplit configuration, beyond its unchanged seventy-five-minute limit. Moving
+the complete guest step estimates about 59 minutes for configuration and 61 minutes
+for IPv6-expiry. These estimates do not establish a hosted performance improvement;
+complete before/after workflow timings and matching evidence remain required.
+Every state, action, linkage, firmware and adapter, full observation window,
+per-profile deadline, zero-drop gate, original command and aggregate remains
+required. Guest evidence is retained in `ipv6-device-wire`; native evidence stays
+in `ipv6-configuration`. No jobs or matrix dimensions are added.
+
+The [subsequent unsplit workflow](https://github.com/frankischilling/Axiom64/actions/runs/40145797237)
+confirms the configuration limit: its job exceeds seventy-five minutes and is
+cancelled, leaving 208 successful jobs and a failed `qemu` aggregate. Its passing
+source, normal-image and GNU artifact audits do not make that workflow accepted.
+The complete guest-step move above still requires a full hosted run and matching
+independent evidence before any performance or integration claim.

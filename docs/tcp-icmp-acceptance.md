@@ -29,6 +29,7 @@ guest `SO_ERROR` user copy preserves the pending value.
 
 ```sh
 make test-tcp-icmp
+make test-tcp-icmp-timestamps
 sudo -n python3 scripts/tests/tcp_icmp_error_order_test.py
 sudo -n make test-tcp-icmp-native
 make test-tcp-icmp-sockets
@@ -70,14 +71,40 @@ IPv4 frame must match both the peer journal and an actual packet-socket receipt,
 including direction, interface, whole-frame hash and monotonic time. Socket start/end
 clocks and actual packets establish the silence and delivery intervals.
 
+The observer arms `SIOCGSTAMPNS` before traffic and requires `ENOENT` before its
+first receive, enabling Linux packet stamping from the first frame. It obtains
+each frame's queued realtime timestamp through the same ioctl
+and records dequeue time separately. Actual monotonic/realtime/monotonic clock
+brackets before and after collection must admit one stable offset. The reader
+checks the recorded conversion and requires the complete clock uncertainty interval
+to fit each original socket window. Missing timestamps, inconsistent clock anchors
+and substituted dequeue clocks fail acceptance. Packet timestamps, observation
+windows and protocol deadlines remain unchanged. A delayed collector can therefore
+observe a timely quote without falsely labeling its dequeue time as late delivery.
+
 The complete matrix requires 22 captures, 1,254 finished cases, 1,408 descriptor
 cycles, 4,070 quoted errors, 1,386 stale quotes and 2,948 unrelated-stream checkpoints.
-Eleven synchronized corruptions per
-capture must be rejected: wrong error, unowned sequence/address, omitted or noncausal
-error, stale quote relabeled current, poisoned or omitted recovery, shortened timeout
-and a forged product fingerprint, plus an omitted unrelated-stream reply. All 242
-damaged PCAP/journal/receipt/input bundles
+Seventeen synchronized corruptions per guest capture cover wrong errors, unowned
+sequences/addresses, omitted or noncausal errors, stale quotes relabeled current,
+poisoned or omitted recovery, shortened timeouts, forged product fingerprints and
+omitted unrelated-stream replies. Six of these controls forge the arrival
+conversion, omit the packet timestamp, place arrival after dequeue, omit a clock
+anchor, step its realtime clock or leave the observer unarmed. Native captures
+add three controls for reversed dequeue order and timestamps crossing either
+independent observation point. All 392 damaged PCAP/journal/receipt/input bundles
 are retained with rejection reasons and hashes under `build/tcp-icmp-damaged/`.
+
+Native socket dequeue order can differ from packet timestamp order: an original
+Linux 7 capture delivers two valid receipts with packet times reversed by 59.1
+microseconds. The reader checks their recorded dequeue order. It also requires
+each outgoing driver stamp to precede the independent receive stamp and each
+incoming driver stamp to follow the independent transmit stamp. It does not sort
+or rewrite those timestamps. Guest packet timestamp order remains required.
+Stable clock offsets, arrival-to-dequeue bounds, independent reader latency and
+all original protocol windows, counts, drops and deadlines remain enforced.
+`scripts/tests/tcp_icmp_observer_clock_test.py` retains the actual captured pair,
+checks both clock directions and reopens four archived corruptions. Full-profile
+negative controls also exercise these gates through the complete auditor.
 
 The `tcp-fault-icmp` profile runs in the [complete TCP profile matrix](ci-tcp-profiles.md).
 Every required job in the [full workflow](testing.md), including the shared build

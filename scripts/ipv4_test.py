@@ -16,6 +16,12 @@ from network_test import fixture
 from ipv4_fault import expire, hold_arp_reply
 from network_fault import inject
 from qmp import Qmp
+from ipv4_fragments import FragmentPeer
+from ipv4_aliases import AliasPeer
+from ipv4_alias_capture import verify_capture as verify_alias_capture
+from ipv4_expiry_capture import verify_capture
+from ipv4_path_mtu_capture import verify_capture as verify_path_mtu
+from ipv4_path_mtu_lifetime_capture import verify_capture as verify_path_lifetime
 
 
 def checksum(data):
@@ -71,6 +77,8 @@ class Peer:
         self.reply_pressure_started = False
         self.held_replies = 0
         self.reply_ingress = 0
+        self.fragments = FragmentPeer(lane)
+        self.addresses = AliasPeer(lane)
 
     @staticmethod
     def alias_address(sequence):
@@ -145,6 +153,8 @@ class Peer:
 
     def release(self):
         now = time.monotonic()
+        for packet, broadcast in self.fragments.expiry.tick():
+            self.queue(self.ethernet(packet, broadcast))
         while self.delayed and self.delayed[0][0] <= now:
             _, frame = self.delayed.pop(0)
             self.arp_valid = True
@@ -248,6 +258,15 @@ class Peer:
     def packet(self, frame):
         if frame[6:12] != self.guest:
             raise RuntimeError('unexpected guest source MAC')
+        addresses = self.addresses.receive(frame)
+        if addresses is not None:
+            for response in addresses:
+                self.queue(response)
+            return
+        path_arp = self.fragments.path_mtu.arp_reply(frame)
+        if path_arp is not None:
+            self.queue(path_arp)
+            return
         if frame[12:14] == b'\x08\x06':
             if len(frame) < 42 or frame[28:32] != self.guest_ip:
                 self.foreign += 1
@@ -309,6 +328,24 @@ class Peer:
                 self.foreign += 1
                 return
             packet = frame[14:]
+            if self.fragments.expiry.accepts(packet):
+                if frame[:12] != self.mac + self.guest:
+                    raise RuntimeError('fragment expiry Ethernet ownership differs')
+                total = int.from_bytes(packet[2:4], 'big')
+                if total > len(packet):
+                    raise RuntimeError('truncated fragment expiry packet')
+                for response, broadcast in self.fragments.expiry.receive(packet[:total]):
+                    self.queue(self.ethernet(response, broadcast))
+                return
+            if self.fragments.accepts(packet):
+                if frame[:12] != self.mac + self.guest:
+                    raise RuntimeError('fragment control Ethernet ownership differs')
+                total = int.from_bytes(packet[2:4], 'big')
+                if total > len(packet):
+                    raise RuntimeError('truncated fragment output')
+                for response in self.fragments.receive(packet[:total]):
+                    self.queue(self.ethernet(response))
+                return
             if packet[24:26] == b'CR':
                 self.alias_packet(frame)
                 return
@@ -382,7 +419,7 @@ class Peer:
         self.queue(response)
 
 
-def run(firmware, transport, timeout, fault=False):
+def run(firmware, transport, timeout, fault=False, *, image=None, gdb_port=1237):
     label = f'ipv4-{firmware}-{transport}' + ('-fault' if fault else '')
     log = ROOT / 'build' / (label + '.log')
     selector = selectors.DefaultSelector()
@@ -396,10 +433,9 @@ def run(firmware, transport, timeout, fault=False):
     armed.unlink(missing_ok=True)
     servers, peers = [], [Peer(lane) for lane in range(2)]
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '2G',
-               '-cdrom', str(ROOT / 'build/ipv4-test.iso'), '-nic', 'none', '-display', 'none',
+               '-cdrom', str(image or ROOT / 'build/ipv4-test.iso'), '-nic', 'none', '-display', 'none',
                '-serial', 'stdio', '-monitor', 'none', '-no-reboot',
                '-qmp', f'unix:{control},server=on,wait=off',
-               '-gdb', 'tcp:127.0.0.1:1237',
                '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
     for lane, model in enumerate(['virtio-net-pci', 'e1000']):
         server = socket.socket()
@@ -413,6 +449,9 @@ def run(firmware, transport, timeout, fault=False):
             nic += ',disable-legacy=on' if transport == 'modern' else ',disable-modern=on'
         command += ['-netdev', f'socket,id=peer{lane},connect=127.0.0.1:{server.getsockname()[1]}',
                     '-device', nic]
+        capture = ROOT / 'build' / f'{label}-lane{lane}.pcap'
+        capture.unlink(missing_ok=True)
+        command += ['-object', f'filter-dump,id=cap{lane},netdev=peer{lane},file={capture}']
     if firmware == 'uefi':
         variables = ROOT / 'build' / (label + '-OVMF_VARS.fd')
         shutil.copyfile('/usr/share/OVMF/OVMF_VARS_4M.fd', variables)
@@ -420,7 +459,16 @@ def run(firmware, transport, timeout, fault=False):
                     '-drive', f'if=pflash,format=raw,file={variables}']
     started, timed_out, error = time.monotonic(), False, None
     with log.open('wb') as output:
-        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
+        # Pass the already listening socket to QEMU. Reserving and releasing a
+        # port before launch would let another concurrent worker claim it.
+        with socket.socket() as debug_listener:
+            debug_listener.bind(('127.0.0.1', gdb_port))
+            debug_listener.listen(1)
+            gdb_port = debug_listener.getsockname()[1]
+            command += ['-chardev', f'socket,id=ipv4debug,fd={debug_listener.fileno()},server=on,wait=off',
+                        '-gdb', 'chardev:ipv4debug']
+            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output,
+                stderr=subprocess.STDOUT, pass_fds=(debug_listener.fileno(),))
         try:
             while process.poll() is None:
                 if time.monotonic() - started > timeout:
@@ -428,7 +476,7 @@ def run(firmware, transport, timeout, fault=False):
                     break
                 tail = log.read_text(errors='replace')
                 if fault and fault_debugger is None and 'IPV4_FAULT_READY' in tail:
-                    fault_debugger, fault_log = inject('virtio', 'id', 1237, label, armed)
+                    fault_debugger, fault_log = inject('virtio', 'id', gdb_port, label, armed)
                 if fault_debugger is not None and fault_debugger.poll() not in [None, 0]:
                     raise RuntimeError('raw socket device fault injection failed: ' + fault_log.read_text(errors='replace'))
                 sending = not fault or armed.exists()
@@ -438,7 +486,7 @@ def run(firmware, transport, timeout, fault=False):
                         reply_released = control.with_suffix(f'.reply-{lane + 1}.released')
                         reply_armed.unlink(missing_ok=True)
                         reply_released.unlink(missing_ok=True)
-                        debugger, debug_log = hold_arp_reply(lane + 1, 1237, label, reply_armed, reply_released)
+                        debugger, debug_log = hold_arp_reply(lane + 1, gdb_port, label, reply_armed, reply_released)
                         reply_debuggers[lane] = (debugger, debug_log, reply_armed, reply_released)
                     if lane in reply_debuggers:
                         debugger, debug_log, reply_armed, reply_released = reply_debuggers[lane]
@@ -461,7 +509,7 @@ def run(firmware, transport, timeout, fault=False):
                                 monitor.close()
                             link_events.add(event)
                     if f'IPV4_CACHE_EXPIRY_READY index={lane + 1}' in tail and lane not in debuggers:
-                        debuggers[lane] = expire(lane + 1, 1237, label)
+                        debuggers[lane] = expire(lane + 1, gdb_port, label)
                     if lane in debuggers and not peer.cache_ack:
                         debugger, debug_log = debuggers[lane]
                         if debugger.poll() is not None:
@@ -552,11 +600,18 @@ def run(firmware, transport, timeout, fault=False):
                 'IPV4_ICMP_ERROR_PASS index=1', 'IPV4_ICMP_ERROR_PASS index=2',
                 'IPV4_INPUT_PASS index=1', 'IPV4_INPUT_PASS index=2',
                 'IPV4_CACHE_EXPIRY_PASS index=1', 'IPV4_CACHE_EXPIRY_PASS index=2',
+                'IPV4_ALIAS_PASS index=1 wire_cases=4 local_udp=3',
+                'IPV4_ALIAS_PASS index=2 wire_cases=4 local_udp=3',
                 'IPV4_LIMITS_PASS index=1', 'IPV4_LIMITS_PASS index=2',
                 'IPV4_RECEIVE_LIFETIME_PASS index=1', 'IPV4_RECEIVE_LIFETIME_PASS index=2',
                 'IPV4_LINK_PASS index=1', 'IPV4_LINK_PASS index=2',
                 'IPV4_CACHE_REPLACEMENT_PASS index=1', 'IPV4_CACHE_REPLACEMENT_PASS index=2',
                 'IPV4_ARP_REPLY_PASS index=1', 'IPV4_ARP_REPLY_PASS index=2',
+                'IPV4_FRAGMENT_OUTPUT_PASS index=1 cases=21', 'IPV4_FRAGMENT_OUTPUT_PASS index=2 cases=21',
+                'IPV4_PATH_MTU_PASS index=1 cases=18 policies_each=6',
+                'IPV4_PATH_MTU_PASS index=2 cases=18 policies_each=6',
+                'IPV4_PATH_MTU_LIFETIME_PASS index=1', 'IPV4_PATH_MTU_LIFETIME_PASS index=2',
+                 'IPV4_FRAGMENT_EXPIRY_PASS index=1', 'IPV4_FRAGMENT_EXPIRY_PASS index=2',
                 'IPV4_BUSYBOX_PASS', 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0']
     missing = [marker for marker in required if marker not in text]
     if fault:
@@ -572,7 +627,7 @@ def run(firmware, transport, timeout, fault=False):
             debugger.returncode == 0 and f'IPV4_ARP_REPLY_HELD index={lane + 1}' in debug_log.read_text() and
             f'IPV4_ARP_REPLY_RESUMED index={lane + 1}' in debug_log.read_text()
             for lane, (debugger, debug_log, _, _) in reply_debuggers.items())
-        passed = reply_injected and len(link_events) == 4 and all(peer.arp >= 2 and peer.echo == len(peer.targets) and
+        passed = reply_injected and len(link_events) == 4 and all(peer.addresses.passed and peer.arp >= 2 and peer.echo == len(peer.targets) and
                      peer.bad_arp == 11 and peer.bad_ip == 15 and
                      peer.pressure == 33 and peer.pressure_arp >= 1 and
                      len(peer.missing_arp) == 3 and peer.error_tests == 1 and
@@ -580,8 +635,51 @@ def run(firmware, transport, timeout, fault=False):
                      peer.cache_ack and peer.cache_arp == 1 and peer.broadcast == 1 and
                      peer.lifetime == 1 and peer.alias_echo == 132 and peer.alias_reply == 1 and
                      sum(peer.alias_arp.values()) == 130 and peer.held_replies == 1 and
-                     peer.reply_ingress == 97 for peer in peers)
-    result = dict(firmware=firmware, transport=transport, fault=fault, returncode=returncode, timed_out=timed_out,
+                     peer.reply_ingress == 97 and peer.fragments.completed == 6 and
+                     peer.fragments.waiting is None and peer.fragments.acknowledged and
+                     peer.fragments.output.completed == 21 and peer.fragments.output.waiting is None and
+                     peer.fragments.output.acknowledged and peer.fragments.expiry.passed and
+                     peer.fragments.path_mtu.passed and peer.fragments.path_mtu.lifetime.passed
+                     for peer in peers)
+    alias_audits = []
+    if not fault and passed and returncode == 1 and not timed_out and not error and not missing:
+        try:
+            for lane in range(2):
+                archive = ROOT / 'build' / f'{label}-alias-lane{lane}-{time.monotonic_ns()}.zip'
+                alias_audits.append(verify_alias_capture(ROOT / 'build' / f'{label}-lane{lane}.pcap',
+                                                       lane, log, archive))
+        except Exception as exception:
+            error = f'alias capture audit: {exception}'
+    expiry_audits = []
+    if not fault and passed and returncode == 1 and not timed_out and not error and not missing:
+        try:
+            for lane in range(2):
+                archive = ROOT / 'build' / f'{label}-expiry-lane{lane}-{time.monotonic_ns()}.zip'
+                expiry_audits.append(verify_capture(ROOT / 'build' / f'{label}-lane{lane}.pcap',
+                                                    lane, log, damage_archive=archive))
+        except Exception as exception:
+            error = f'expiry capture audit: {exception}'
+    path_audits = []
+    if not fault and passed and returncode == 1 and not timed_out and not error and not missing:
+        try:
+            for lane in range(2):
+                archive = ROOT / 'build' / f'{label}-pmtu-lane{lane}-{time.monotonic_ns()}.zip'
+                path_audits.append(verify_path_mtu(ROOT / 'build' / f'{label}-lane{lane}.pcap',
+                                                  lane, log, damage_archive=archive))
+        except Exception as exception:
+            error = f'path MTU capture audit: {exception}'
+    lifetime_audits = []
+    if not fault and passed and returncode == 1 and not timed_out and not error and not missing:
+        try:
+            for lane in range(2):
+                archive = ROOT / 'build' / f'{label}-pmtu-lifetime-lane{lane}-{time.monotonic_ns()}.zip'
+                lifetime_audits.append(verify_path_lifetime(ROOT / 'build' / f'{label}-lane{lane}.pcap',
+                    lane, log, damage_archive=archive))
+        except Exception as exception:
+            error = f'path MTU lifetime capture audit: {exception}'
+    result = dict(firmware=firmware, transport=transport, fault=fault,
+                  worker_pid=os.getpid(), gdb_port=gdb_port,
+                  returncode=returncode, timed_out=timed_out,
                   error=error, missing=missing, arp=[peer.arp for peer in peers],
                   echo=[peer.echo for peer in peers], foreign=[peer.foreign for peer in peers],
                   malformed_arp=[peer.bad_arp for peer in peers],
@@ -597,10 +695,29 @@ def run(firmware, transport, timeout, fault=False):
                   cache_replacement_arp=[sum(peer.alias_arp.values()) for peer in peers],
                   cache_replacement_echo=[peer.alias_echo for peer in peers],
                   cache_refresh_reply=[peer.alias_reply for peer in peers],
+                  address_aliases=[dict(cases=peer.addresses.cases, arp_requests=peer.addresses.arp_requests,
+                                        arp_replies=peer.addresses.arp_replies,
+                                        kernel_replies=peer.addresses.kernel_replies,
+                                        passed=peer.addresses.passed) for peer in peers],
                   held_arp_replies=[peer.held_replies for peer in peers],
                   arp_reply_ingress=[min(peer.reply_ingress, 96) for peer in peers],
+                  fragment_cases=[peer.fragments.completed for peer in peers],
+                  fragment_peer_frames=[peer.fragments.frames for peer in peers],
+                  fragment_final_ack=[peer.fragments.acknowledged for peer in peers],
+                  fragment_output_cases=[peer.fragments.output.completed for peer in peers],
+                  fragment_output_frames=[peer.fragments.output.frames for peer in peers],
+                  fragment_output_final_ack=[peer.fragments.output.acknowledged for peer in peers],
+                  fragment_expiry=[peer.fragments.expiry.report() for peer in peers],
+                  address_alias_capture_audits=alias_audits,
+                  fragment_expiry_capture_audits=expiry_audits,
+                  path_mtu=[peer.fragments.path_mtu.report() for peer in peers],
+                  path_mtu_capture_audits=path_audits,
+                  path_mtu_lifetime=[peer.fragments.path_mtu.lifetime.report() for peer in peers],
+                  path_mtu_lifetime_capture_audits=lifetime_audits,
+                  captures=[f'{label}-lane{lane}.pcap' for lane in range(2)],
                   seconds=round(time.monotonic() - started, 2), log=log.name,
-                  passed=returncode == 1 and not timed_out and not error and not missing and passed)
+                  passed=(returncode == 1 and not timed_out and not error and not missing and passed and
+                          (fault or (len(alias_audits) == 2 and all(a['passed'] for a in alias_audits)))))
     print(json.dumps(result), flush=True)
     if not result['passed']:
         print('\n'.join(text.splitlines()[-25:]), flush=True)
@@ -611,7 +728,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--firmware', choices=['bios', 'uefi', 'both'], default='both')
     parser.add_argument('--transport', choices=['modern', 'legacy'], default='modern')
-    parser.add_argument('--timeout', type=int, default=60)
+    parser.add_argument('--timeout', type=int, default=780)
     parser.add_argument('--fault', action='store_true', help='quarantine one real virtio RX queue through GDB')
     args = parser.parse_args()
     fixture(program='ipv4-tests', script='userspace/tests/net/ipv4.sh',

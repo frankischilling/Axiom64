@@ -15,9 +15,15 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
+
+#if !defined(SIOCGSTAMP) || !defined(SIOCGSTAMPNS)
+#include <linux/sockios.h>
+#endif
 
 #define PROTOCOL 0x88b5
 static const unsigned char peer[6] = {2, 0x41, 0x58, 0x50, 0x4b, 0};
@@ -36,6 +42,75 @@ static int raw(int index, int protocol, int flags) {
         .sll_family = AF_PACKET, .sll_protocol = htons(protocol), .sll_ifindex = index};
     check(bind(fd, (struct sockaddr*)&address, sizeof(address)) == 0, "bind");
     return fd;
+}
+
+static unsigned long long realtime(void) {
+    struct timespec value;
+    check(clock_gettime(CLOCK_REALTIME, &value) == 0, "timestamp reference clock");
+    return (unsigned long long)value.tv_sec * 1000000000 + value.tv_nsec;
+}
+
+static unsigned long long timestamp_probe(int fd, int index, unsigned long long begin,
+                                          unsigned long long end) {
+    struct timespec stamp, alias, consumed, unchanged;
+    check(ioctl(fd, SIOCGSTAMPNS, &stamp) == -1 && errno == ENOENT,
+          "queued packet has no previously read timestamp");
+    check(usleep(150000) == 0, "delay packet dequeue");
+    unsigned char bytes[7];
+    check(recv(fd, bytes, sizeof(bytes), MSG_PEEK | MSG_TRUNC) == 64, "timestamp frame peek");
+    unsigned long long dequeue = realtime();
+    check(ioctl(fd, SIOCGSTAMPNS, &stamp) == 0 && stamp.tv_sec >= 0 && stamp.tv_nsec >= 0 &&
+              stamp.tv_nsec < 1000000000,
+          "peek updates packet timestamp");
+    unsigned long long arrival = (unsigned long long)stamp.tv_sec * 1000000000 + stamp.tv_nsec;
+    check(begin <= arrival && arrival <= end && dequeue >= arrival + 100000000,
+          "timestamp belongs to admission before delayed dequeue");
+    int duplicate = dup(fd);
+    check(duplicate >= 0 && ioctl(duplicate, SIOCGSTAMPNS, &alias) == 0 &&
+              alias.tv_sec == stamp.tv_sec && alias.tv_nsec == stamp.tv_nsec,
+          "packet timestamp belongs to shared description");
+    check(ioctl(fd, SIOCGSTAMPNS, (void*)1) == -1 && errno == EFAULT &&
+              ioctl(fd, SIOCGSTAMPNS, &unchanged) == 0 && unchanged.tv_sec == stamp.tv_sec &&
+              unchanged.tv_nsec == stamp.tv_nsec,
+          "timestamp copy fault preserves observation");
+    check(recv(duplicate, bytes, sizeof(bytes), MSG_TRUNC) == 64 &&
+              ioctl(fd, SIOCGSTAMPNS, &consumed) == 0 && consumed.tv_sec == stamp.tv_sec &&
+              consumed.tv_nsec == stamp.tv_nsec,
+          "consuming the peeked frame retains its timestamp");
+    struct timeval micros;
+    check(ioctl(fd, SIOCGSTAMP, &micros) == 0 && micros.tv_sec == stamp.tv_sec &&
+              micros.tv_usec == stamp.tv_nsec / 1000 && ioctl(fd, 0x80108907UL, &alias) == 0 &&
+              alias.tv_sec == stamp.tv_sec && alias.tv_nsec == stamp.tv_nsec &&
+              ioctl(fd, 0x80108906UL, &micros) == 0 && micros.tv_sec == stamp.tv_sec &&
+              micros.tv_usec == stamp.tv_nsec / 1000,
+          "old and time64 packet timestamp ioctls");
+    check(close(fd) == 0 && ioctl(duplicate, SIOCGSTAMPNS, &alias) == 0 &&
+              alias.tv_sec == stamp.tv_sec && alias.tv_nsec == stamp.tv_nsec &&
+              close(duplicate) == 0,
+          "timestamp survives original descriptor close");
+    int fresh = raw(index, 0, SOCK_NONBLOCK);
+    check(ioctl(fresh, SIOCGSTAMPNS, &alias) == -1 && errno == ENOENT && close(fresh) == 0,
+          "fresh description has no retired timestamp");
+    printf("PACKET_TIMESTAMP_PASS index=%d begin_ns=%llu end_ns=%llu arrival_ns=%llu "
+           "dequeue_ns=%llu\n",
+           index, begin, end, arrival, dequeue);
+    return arrival;
+}
+
+static void lazy_timestamp_probe(int fd, int index, unsigned long long arrival) {
+    struct timespec value;
+    unsigned long long before = realtime();
+    errno = 0;
+    check(ioctl(fd, SIOCGSTAMPNS, &value) == 0 && value.tv_sec >= 0 && value.tv_nsec >= 0 &&
+              value.tv_nsec < 1000000000,
+          "unarmed first timestamp query");
+    unsigned long long after = realtime();
+    unsigned long long stamp = (unsigned long long)value.tv_sec * 1000000000 + value.tv_nsec;
+    printf("PACKET_TIMESTAMP_LAZY index=%d before_ns=%llu stamp_ns=%llu after_ns=%llu "
+           "arrival_ns=%llu\n",
+           index, before, stamp, after, arrival);
+    check(before <= stamp && stamp <= after && stamp >= arrival + 100000000,
+          "unarmed first timestamp uses query time");
 }
 
 static void buffer_options(unsigned maximum) {
@@ -99,6 +174,56 @@ static void received(const unsigned char* bytes, const unsigned char* sent, size
                   address->sll_halen == 6 && address->sll_pkttype == PACKET_HOST &&
                   !memcmp(address->sll_addr, expected + 6, 6),
               "host frame metadata");
+}
+
+// A protocol-specific listener receives the peer reply without an outgoing copy.
+static void protocol_observation(int observer, const unsigned char* sent, size_t length,
+                                 const unsigned char mac[6], int index) {
+    struct pollfd item = {.fd = observer, .events = POLLIN};
+    check(poll(&item, 1, 3000) == 1 && (item.revents & POLLIN),
+          "protocol listener receives actual peer reply");
+    unsigned char bytes[1518];
+    struct sockaddr_ll address = {0};
+    socklen_t size = sizeof(address);
+    check(recvfrom(observer, bytes, sizeof(bytes), MSG_DONTWAIT, (struct sockaddr*)&address,
+                   &size) == (ssize_t)length &&
+              size == sizeof(address),
+          "protocol listener receives one complete frame");
+    printf("PACKET_PROTOCOL_OBSERVATION index=%d type=%u length=%zu\n", index, address.sll_pkttype,
+           length);
+    received(bytes, sent, length, &address, mac, index);
+    check(close(observer) == 0, "close protocol listener before pressure trials");
+    printf("PACKET_PROTOCOL_PASS index=%d\n", index);
+}
+
+// Run the same listener check on isolated native interfaces without device-only trials.
+static void protocol_selection(void) {
+    int control = socket(AF_PACKET, SOCK_RAW | SOCK_CLOEXEC, 0);
+    check(control >= 0, "protocol comparison control");
+    for (unsigned lane = 0; lane < 2; lane++) {
+        struct ifreq request = {0};
+        snprintf(request.ifr_name, sizeof(request.ifr_name), "eth%u", lane);
+        check(ioctl(control, SIOCGIFINDEX, &request) == 0, "protocol comparison interface");
+        int index = request.ifr_ifindex;
+        check(ioctl(control, SIOCGIFHWADDR, &request) == 0, "protocol comparison MAC");
+        unsigned char mac[6], sent[64], bytes[1518];
+        memcpy(mac, request.ifr_hwaddr.sa_data, 6);
+        check(ioctl(control, SIOCGIFFLAGS, &request) == 0, "protocol comparison flags");
+        request.ifr_flags |= IFF_UP;
+        check(ioctl(control, SIOCSIFFLAGS, &request) == 0, "protocol comparison interface up");
+        int sender = raw(index, PROTOCOL, 0), observer = raw(index, PROTOCOL, SOCK_NONBLOCK);
+        frame(sent, sizeof(sent), mac, lane, 0);
+        check(write(sender, sent, sizeof(sent)) == sizeof(sent), "protocol comparison sends frame");
+        protocol_observation(observer, sent, sizeof(sent), mac, index);
+        struct pollfd item = {.fd = sender, .events = POLLIN};
+        check(poll(&item, 1, 3000) == 1 && (item.revents & POLLIN) &&
+                  recv(sender, bytes, sizeof(bytes), 0) == sizeof(sent),
+              "protocol comparison sender receives exact reply");
+        received(bytes, sent, sizeof(sent), NULL, mac, index);
+        check(close(sender) == 0, "protocol comparison sender close");
+    }
+    check(close(control) == 0, "protocol comparison control close");
+    puts("PACKET_PROTOCOL_SELECTION_PASS lanes=2");
 }
 
 static void link_state(int control, struct ifreq* request, int index) {
@@ -282,6 +407,16 @@ static unsigned mtu_test(int control, struct ifreq* request, int fd, int index,
     return 1;
 }
 
+static void administrative_down(int control, struct ifreq* request, int index) {
+    check(ioctl(control, SIOCGIFFLAGS, request) == 0, "read flags");
+    request->ifr_flags &= ~IFF_UP;
+    check(ioctl(control, SIOCSIFFLAGS, request) == 0 && ioctl(control, SIOCGIFFLAGS, request) == 0,
+          "administrative shutdown flag readback");
+    printf("PACKET_ADMIN_FLAGS index=%d flags=%x\n", index, (unsigned short)request->ifr_flags);
+    check((unsigned short)request->ifr_flags == (IFF_BROADCAST | IFF_MULTICAST),
+          "admin down clears administrative and operational flags");
+}
+
 static void nic(int control, int index, unsigned sequences) {
     struct ifreq request = {0};
     request.ifr_ifindex = index;
@@ -301,10 +436,17 @@ static void nic(int control, int index, unsigned sequences) {
           "carrier");
     link_state(control, &request, index);
     int fd = raw(index, PROTOCOL, SOCK_CLOEXEC), observer = raw(index, PROTOCOL, SOCK_NONBLOCK);
+    int protocol_listener = raw(index, PROTOCOL, SOCK_NONBLOCK);
     int disabled = raw(index, 0, SOCK_NONBLOCK), other = raw(index, PROTOCOL + 1, SOCK_NONBLOCK);
     int one = 1;
     check(setsockopt(observer, SOL_PACKET, PACKET_IGNORE_OUTGOING, &one, sizeof(one)) == 0,
           "ignore outgoing");
+    int timestamp = raw(index, PROTOCOL, SOCK_NONBLOCK);
+    struct timespec empty_stamp;
+    check(ioctl(timestamp, SIOCGSTAMPNS, &empty_stamp) == -1 && errno == ENOENT &&
+              setsockopt(timestamp, SOL_PACKET, PACKET_IGNORE_OUTGOING, &one, sizeof(one)) == 0,
+          "fresh packet timestamp and incoming filter");
+    unsigned long long timestamp_begin = realtime();
     check(fcntl(fd, F_GETFD) & FD_CLOEXEC, "close-on-exec");
     check(fcntl(observer, F_GETFL) & O_NONBLOCK, "nonblocking");
     struct stat stat;
@@ -333,6 +475,7 @@ static void nic(int control, int index, unsigned sequences) {
     check(epoll_ctl(epoll, EPOLL_CTL_ADD, fd, &event) == 0, "epoll add");
     // Keep enough independent frames in flight to cross the 16-bit queue
     // indices without turning every frame into a timer-paced round trip.
+    unsigned long long first_arrival = 0;
     for (unsigned base = 0; base < sequences; base += 16) {
         unsigned end = sequences - base < 16 ? sequences : base + 16;
         for (unsigned sequence = base; sequence < end; sequence++) {
@@ -358,6 +501,8 @@ static void nic(int control, int index, unsigned sequences) {
             check(epoll_wait(epoll, &event, 1, 3000) == 1 && (event.events & EPOLLIN) &&
                       event.data.u64 == 0x123456789abcdef0ull,
                   "epoll RX while tasks blocked");
+            if (sequence == 0)
+                first_arrival = timestamp_probe(timestamp, index, timestamp_begin, realtime());
             struct pollfd poller = {.fd = fd, .events = POLLIN};
             check(poll(&poller, 1, 0) == 1 && (poller.revents & POLLIN), "poll RX");
             int available = 0;
@@ -406,6 +551,10 @@ static void nic(int control, int index, unsigned sequences) {
             check(recv(observer, bytes, sizeof(bytes), 0) == (ssize_t)length,
                   "independent listener");
             received(bytes, sent, length, NULL, mac, index);
+            if (sequence == 0) {
+                protocol_observation(protocol_listener, sent, length, mac, index);
+                lazy_timestamp_probe(observer, index, first_arrival);
+            }
             check(recv(disabled, bytes, sizeof(bytes), 0) == -1 && errno == EAGAIN,
                   "zero protocol filter");
             check(recv(other, bytes, sizeof(bytes), 0) == -1 && errno == EAGAIN, "protocol filter");
@@ -425,12 +574,7 @@ static void nic(int control, int index, unsigned sequences) {
     duplicate = retained_receive(duplicate, index, mac, sequences + 49);
     unsigned jumbo = mtu_test(control, &request, duplicate, index, mac, sequences + 51);
     check(close(duplicate) == 0, "last socket close");
-    check(ioctl(control, SIOCGIFFLAGS, &request) == 0, "read flags");
-    request.ifr_flags &= ~IFF_UP;
-    check(ioctl(control, SIOCSIFFLAGS, &request) == 0 &&
-              ioctl(control, SIOCGIFFLAGS, &request) == 0 && !(request.ifr_flags & IFF_UP) &&
-              (request.ifr_flags & IFF_RUNNING),
-          "admin down preserves carrier");
+    administrative_down(control, &request, index);
     printf("PACKET_NIC_PASS index=%d frames=%u\n", index, sequences + 51 + jumbo);
 }
 
@@ -443,6 +587,18 @@ static void transmit_pressure(void) {
           "pressure interface discovery");
     unsigned char mac[6], sent[128], bytes[128];
     memcpy(mac, request.ifr_hwaddr.sa_data, 6);
+    // This trial owns the entire TX budget. Automatic IPv6 control traffic
+    // would otherwise consume slots while completion observation is deferred.
+    char path[128], configured[4] = {0};
+    snprintf(path, sizeof(path), "/proc/sys/net/ipv6/conf/%s/disable_ipv6", request.ifr_name);
+    int configuration = open(path, O_WRONLY | O_CLOEXEC);
+    check(configuration >= 0 && write(configuration, "1\n", 2) == 2 && close(configuration) == 0,
+          "pressure disables automatic IPv6 before interface activation");
+    configuration = open(path, O_RDONLY | O_CLOEXEC);
+    check(configuration >= 0 && read(configuration, configured, sizeof(configured)) == 2 &&
+              !memcmp(configured, "1\n", 2) && close(configuration) == 0,
+          "pressure IPv6 precondition readback");
+    printf("PACKET_PRESSURE_IPV6_DISABLED index=1\n");
     request.ifr_flags = IFF_UP;
     check(ioctl(control, SIOCSIFFLAGS, &request) == 0, "pressure interface up");
     int fd = raw(1, PROTOCOL, 0);
@@ -523,6 +679,10 @@ int main(int argc, char** argv) {
         unsigned long value = strtoul(argv[2], &end, 10);
         check(value && value <= 0x3fffffff && !*end, "native receive maximum argument");
         maximum = (unsigned)value;
+    }
+    if (argc == 2 && !strcmp(argv[1], "protocol-selection")) {
+        protocol_selection();
+        return 0;
     }
     buffer_options(maximum);
     if (argc > 1 && !strcmp(argv[1], "buffer-options"))

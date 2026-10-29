@@ -5,6 +5,7 @@ from collections import Counter, defaultdict
 import json
 from pathlib import Path
 from tcp_capture_profiles import require_complete_profiles
+from tcp_capture_link import audit_link_receipts
 from tcp_capture_clock import bind_native_clock, microseconds
 import re
 import struct
@@ -19,7 +20,9 @@ def packets(path, statistics=None):
     header = struct.unpack_from('<IHHIIII', raw)
     require(header[1:3] == (2, 4) and header[6] == 1, 'pressure Ethernet PCAP version')
     at, previous, result = 24, 0, []
+    record_index = -1
     while at < len(raw):
+        record_index += 1
         require(at + 16 <= len(raw), 'complete pressure PCAP record')
         seconds, fraction, size, original = struct.unpack_from('<IIII', raw, at)
         at += 16
@@ -50,7 +53,7 @@ def packets(path, statistics=None):
         else:
             require(len(body) == 24 and int.from_bytes(body[4:6], 'big') == len(body) and
                     body[6:8] != b'\0\0', 'pressure UDP length and transmitted checksum')
-        result.append(dict(frame=frame, ip=ip[:total], body=body, protocol=protocol, stamp=stamp))
+        result.append(dict(record_index=record_index, frame=frame, ip=ip[:total], body=body, protocol=protocol, stamp=stamp))
     require(result, 'nonempty actual pressure traffic')
     if statistics is not None:
         bind_native_clock(path, result, statistics)
@@ -255,8 +258,9 @@ def audit_row(root, row, input_root=None, host_libraries=None, required_phases=2
         require(actual == expected, 'every original pressure IPv4 frame has its real driver receipt')
         counter = next(value for value in stats if int(value[0]) == lane)
         require(counter[3] == '0' and int(counter[2]) >= int(counter[4]) == len(actual_rows) and
-                {value[1] for value in actual_rows} == {counter[1]} and
-                (native or int(counter[2]) == len(actual_rows)), 'correct pressure driver identity and zero drops')
+                {value[1] for value in actual_rows} == {counter[1]}, 'correct pressure driver identity and zero drops')
+        audit_link_receipts(text, 'PRESSURE', root / row['captures'][lane], lane,
+                            int(counter[1]), int(counter[2]), int(counter[4]))
         clocks = [int(value[-1]) for value in actual_rows]
         require(clocks == sorted(clocks) and (native or int(counter[1]) == lane + 1), 'actual pressure receipt clocks')
         tcp = companion(items, lane, required_phases)

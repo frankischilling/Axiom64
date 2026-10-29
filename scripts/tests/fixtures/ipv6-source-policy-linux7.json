@@ -1,0 +1,814 @@
+{
+  "schema": 1,
+  "reference": {
+    "kernel": "7.0.0-1017-azure",
+    "kernel_sha256": "1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5",
+    "source_sha256": "a8e09d6e4a1b4e2e9562038a9099e9399724b982ea423930a99ba1367118bf6d",
+    "program_sha256": "72f09a553bd7f9c1dd02470689488ed08d6bee3ed889a276344df7249206c84a",
+    "initramfs_sha256": "7b670a2442c217a3d4a0bf7c7e68e6ed5be7cf0dfa13faada3d448324d672925",
+    "original_log_sha256": "e2ed045c804b69fe55d1dad192b792d563e3893f64fd2201a1d8b5458732122b",
+    "actual_program_completed": true,
+    "actual_cpio_reopened": true,
+    "packet_acceptance": false
+  },
+  "observations": [
+    {
+      "lane": 0,
+      "case": "outgoing-before-prefix",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 0,
+      "case": "outgoing-before-prefix",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 0,
+      "case": "other-interface-fallback",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:99::1"
+    },
+    {
+      "lane": 0,
+      "case": "other-interface-fallback",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:99::1"
+    },
+    {
+      "lane": 0,
+      "case": "deprecated-before-interface",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:99::1"
+    },
+    {
+      "lane": 0,
+      "case": "deprecated-before-interface",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:99::1"
+    },
+    {
+      "lane": 0,
+      "case": "outgoing-before-label",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 0,
+      "case": "outgoing-before-label",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 0,
+      "case": "label-ula",
+      "bound": 0,
+      "error": 0,
+      "source": "fd42::1"
+    },
+    {
+      "lane": 0,
+      "case": "label-ula",
+      "bound": 1,
+      "error": 0,
+      "source": "fd42::1"
+    },
+    {
+      "lane": 0,
+      "case": "label-global",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 0,
+      "case": "label-global",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 0,
+      "case": "label-6to4",
+      "bound": 0,
+      "error": 0,
+      "source": "2002:1234::1"
+    },
+    {
+      "lane": 0,
+      "case": "label-6to4",
+      "bound": 1,
+      "error": 0,
+      "source": "2002:1234::1"
+    },
+    {
+      "lane": 0,
+      "case": "label-teredo",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:0:1234::1"
+    },
+    {
+      "lane": 0,
+      "case": "label-teredo",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:0:1234::1"
+    },
+    {
+      "lane": 0,
+      "case": "label-6bone",
+      "bound": 0,
+      "error": 0,
+      "source": "3ffe:1234::1"
+    },
+    {
+      "lane": 0,
+      "case": "label-6bone",
+      "bound": 1,
+      "error": 0,
+      "source": "3ffe:1234::1"
+    },
+    {
+      "lane": 0,
+      "case": "label-orchid",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:10::1"
+    },
+    {
+      "lane": 0,
+      "case": "label-orchid",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:10::1"
+    },
+    {
+      "lane": 0,
+      "case": "label-orchid2",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 0,
+      "case": "label-orchid2",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 0,
+      "case": "scope-link",
+      "bound": 0,
+      "error": 0,
+      "source": "fe80::1"
+    },
+    {
+      "lane": 0,
+      "case": "scope-link",
+      "bound": 1,
+      "error": 0,
+      "source": "fe80::1"
+    },
+    {
+      "lane": 0,
+      "case": "scope-link-global-only",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 0,
+      "case": "scope-link-global-only",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 0,
+      "case": "scope-global-link-only",
+      "bound": 0,
+      "error": 0,
+      "source": "fe80::1"
+    },
+    {
+      "lane": 0,
+      "case": "scope-global-link-only",
+      "bound": 1,
+      "error": 0,
+      "source": "fe80::1"
+    },
+    {
+      "lane": 0,
+      "case": "scope-site",
+      "bound": 0,
+      "error": 0,
+      "source": "fec0:1::1"
+    },
+    {
+      "lane": 0,
+      "case": "scope-site",
+      "bound": 1,
+      "error": 0,
+      "source": "fec0:1::1"
+    },
+    {
+      "lane": 0,
+      "case": "scope-before-deprecated",
+      "bound": 0,
+      "error": 0,
+      "source": "fec0:1::1"
+    },
+    {
+      "lane": 0,
+      "case": "scope-before-deprecated",
+      "bound": 1,
+      "error": 0,
+      "source": "fec0:1::1"
+    },
+    {
+      "lane": 0,
+      "case": "scope-site-undersized",
+      "bound": 0,
+      "error": 0,
+      "source": "fec0:1::1"
+    },
+    {
+      "lane": 0,
+      "case": "scope-site-undersized",
+      "bound": 1,
+      "error": 0,
+      "source": "fec0:1::1"
+    },
+    {
+      "lane": 0,
+      "case": "link-no-cross-interface",
+      "bound": 0,
+      "error": 99,
+      "source": "::"
+    },
+    {
+      "lane": 0,
+      "case": "link-no-cross-interface",
+      "bound": 1,
+      "error": 99,
+      "source": "::"
+    },
+    {
+      "lane": 0,
+      "case": "multicast-link",
+      "bound": 1,
+      "error": 0,
+      "source": "fe80::1"
+    },
+    {
+      "lane": 0,
+      "case": "multicast-site",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 0,
+      "case": "multicast-global",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 0,
+      "case": "prefix-cap",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 0,
+      "case": "prefix-cap",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 0,
+      "case": "equal-newest",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:11::1"
+    },
+    {
+      "lane": 0,
+      "case": "equal-newest",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:11::1"
+    },
+    {
+      "lane": 0,
+      "case": "deprecated-before-label",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 0,
+      "case": "deprecated-before-label",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 0,
+      "case": "other-link-only",
+      "bound": 0,
+      "error": 0,
+      "source": "fe80::1"
+    },
+    {
+      "lane": 0,
+      "case": "other-link-only",
+      "bound": 1,
+      "error": 0,
+      "source": "fe80::1"
+    },
+    {
+      "lane": 0,
+      "case": "compat-label",
+      "bound": 0,
+      "error": 0,
+      "source": "::c000:201"
+    },
+    {
+      "lane": 0,
+      "case": "compat-label",
+      "bound": 1,
+      "error": 0,
+      "source": "::c000:201"
+    },
+    {
+      "lane": 0,
+      "case": "deprecated-loopback",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8::1"
+    },
+    {
+      "lane": 0,
+      "case": "deprecated-loopback",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8::1"
+    },
+    {
+      "lane": 0,
+      "case": "compat-deprecated-label",
+      "bound": 0,
+      "error": 0,
+      "source": "::c000:201"
+    },
+    {
+      "lane": 0,
+      "case": "compat-deprecated-label",
+      "bound": 1,
+      "error": 0,
+      "source": "::c000:201"
+    },
+    {
+      "lane": 0,
+      "case": "no-address-unicast",
+      "bound": 0,
+      "error": 0,
+      "source": "::1"
+    },
+    {
+      "lane": 0,
+      "case": "no-address-unicast",
+      "bound": 1,
+      "error": 0,
+      "source": "::1"
+    },
+    {
+      "lane": 0,
+      "case": "no-address-site",
+      "bound": 0,
+      "error": 0,
+      "source": "::1"
+    },
+    {
+      "lane": 0,
+      "case": "no-address-site",
+      "bound": 1,
+      "error": 0,
+      "source": "::1"
+    },
+    {
+      "lane": 1,
+      "case": "outgoing-before-prefix",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 1,
+      "case": "outgoing-before-prefix",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 1,
+      "case": "other-interface-fallback",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:99::1"
+    },
+    {
+      "lane": 1,
+      "case": "other-interface-fallback",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:99::1"
+    },
+    {
+      "lane": 1,
+      "case": "deprecated-before-interface",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:99::1"
+    },
+    {
+      "lane": 1,
+      "case": "deprecated-before-interface",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:99::1"
+    },
+    {
+      "lane": 1,
+      "case": "outgoing-before-label",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 1,
+      "case": "outgoing-before-label",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 1,
+      "case": "label-ula",
+      "bound": 0,
+      "error": 0,
+      "source": "fd42::1"
+    },
+    {
+      "lane": 1,
+      "case": "label-ula",
+      "bound": 1,
+      "error": 0,
+      "source": "fd42::1"
+    },
+    {
+      "lane": 1,
+      "case": "label-global",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 1,
+      "case": "label-global",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 1,
+      "case": "label-6to4",
+      "bound": 0,
+      "error": 0,
+      "source": "2002:1234::1"
+    },
+    {
+      "lane": 1,
+      "case": "label-6to4",
+      "bound": 1,
+      "error": 0,
+      "source": "2002:1234::1"
+    },
+    {
+      "lane": 1,
+      "case": "label-teredo",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:0:1234::1"
+    },
+    {
+      "lane": 1,
+      "case": "label-teredo",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:0:1234::1"
+    },
+    {
+      "lane": 1,
+      "case": "label-6bone",
+      "bound": 0,
+      "error": 0,
+      "source": "3ffe:1234::1"
+    },
+    {
+      "lane": 1,
+      "case": "label-6bone",
+      "bound": 1,
+      "error": 0,
+      "source": "3ffe:1234::1"
+    },
+    {
+      "lane": 1,
+      "case": "label-orchid",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:10::1"
+    },
+    {
+      "lane": 1,
+      "case": "label-orchid",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:10::1"
+    },
+    {
+      "lane": 1,
+      "case": "label-orchid2",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 1,
+      "case": "label-orchid2",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 1,
+      "case": "scope-link",
+      "bound": 0,
+      "error": 0,
+      "source": "fe80::1"
+    },
+    {
+      "lane": 1,
+      "case": "scope-link",
+      "bound": 1,
+      "error": 0,
+      "source": "fe80::1"
+    },
+    {
+      "lane": 1,
+      "case": "scope-link-global-only",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 1,
+      "case": "scope-link-global-only",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 1,
+      "case": "scope-global-link-only",
+      "bound": 0,
+      "error": 0,
+      "source": "fe80::1"
+    },
+    {
+      "lane": 1,
+      "case": "scope-global-link-only",
+      "bound": 1,
+      "error": 0,
+      "source": "fe80::1"
+    },
+    {
+      "lane": 1,
+      "case": "scope-site",
+      "bound": 0,
+      "error": 0,
+      "source": "fec0:1::1"
+    },
+    {
+      "lane": 1,
+      "case": "scope-site",
+      "bound": 1,
+      "error": 0,
+      "source": "fec0:1::1"
+    },
+    {
+      "lane": 1,
+      "case": "scope-before-deprecated",
+      "bound": 0,
+      "error": 0,
+      "source": "fec0:1::1"
+    },
+    {
+      "lane": 1,
+      "case": "scope-before-deprecated",
+      "bound": 1,
+      "error": 0,
+      "source": "fec0:1::1"
+    },
+    {
+      "lane": 1,
+      "case": "scope-site-undersized",
+      "bound": 0,
+      "error": 0,
+      "source": "fec0:1::1"
+    },
+    {
+      "lane": 1,
+      "case": "scope-site-undersized",
+      "bound": 1,
+      "error": 0,
+      "source": "fec0:1::1"
+    },
+    {
+      "lane": 1,
+      "case": "link-no-cross-interface",
+      "bound": 0,
+      "error": 99,
+      "source": "::"
+    },
+    {
+      "lane": 1,
+      "case": "link-no-cross-interface",
+      "bound": 1,
+      "error": 99,
+      "source": "::"
+    },
+    {
+      "lane": 1,
+      "case": "multicast-link",
+      "bound": 1,
+      "error": 0,
+      "source": "fe80::1"
+    },
+    {
+      "lane": 1,
+      "case": "multicast-site",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 1,
+      "case": "multicast-global",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 1,
+      "case": "prefix-cap",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 1,
+      "case": "prefix-cap",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 1,
+      "case": "equal-newest",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:11::1"
+    },
+    {
+      "lane": 1,
+      "case": "equal-newest",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:11::1"
+    },
+    {
+      "lane": 1,
+      "case": "deprecated-before-label",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 1,
+      "case": "deprecated-before-label",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8:10::1"
+    },
+    {
+      "lane": 1,
+      "case": "other-link-only",
+      "bound": 0,
+      "error": 0,
+      "source": "fe80::1"
+    },
+    {
+      "lane": 1,
+      "case": "other-link-only",
+      "bound": 1,
+      "error": 0,
+      "source": "fe80::1"
+    },
+    {
+      "lane": 1,
+      "case": "compat-label",
+      "bound": 0,
+      "error": 0,
+      "source": "::c000:201"
+    },
+    {
+      "lane": 1,
+      "case": "compat-label",
+      "bound": 1,
+      "error": 0,
+      "source": "::c000:201"
+    },
+    {
+      "lane": 1,
+      "case": "deprecated-loopback",
+      "bound": 0,
+      "error": 0,
+      "source": "2001:db8::1"
+    },
+    {
+      "lane": 1,
+      "case": "deprecated-loopback",
+      "bound": 1,
+      "error": 0,
+      "source": "2001:db8::1"
+    },
+    {
+      "lane": 1,
+      "case": "compat-deprecated-label",
+      "bound": 0,
+      "error": 0,
+      "source": "::c000:201"
+    },
+    {
+      "lane": 1,
+      "case": "compat-deprecated-label",
+      "bound": 1,
+      "error": 0,
+      "source": "::c000:201"
+    },
+    {
+      "lane": 1,
+      "case": "no-address-unicast",
+      "bound": 0,
+      "error": 0,
+      "source": "::1"
+    },
+    {
+      "lane": 1,
+      "case": "no-address-unicast",
+      "bound": 1,
+      "error": 0,
+      "source": "::1"
+    },
+    {
+      "lane": 1,
+      "case": "no-address-site",
+      "bound": 0,
+      "error": 0,
+      "source": "::1"
+    },
+    {
+      "lane": 1,
+      "case": "no-address-site",
+      "bound": 1,
+      "error": 0,
+      "source": "::1"
+    }
+  ]
+}

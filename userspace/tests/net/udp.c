@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
+#define UDP_ROUTE_LIFETIME_VERSION 2
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -759,6 +760,14 @@ static void wait_link(int fd, const char* name, int up) {
     check(0, "UDP link transition deadline");
 }
 
+static void administrative_down(int fd, struct ifreq* request, unsigned lane) {
+    request->ifr_flags &= ~IFF_UP;
+    check(ioctl(fd, SIOCSIFFLAGS, request) == 0 && ioctl(fd, SIOCGIFFLAGS, request) == 0 &&
+              !(request->ifr_flags & (IFF_UP | IFF_RUNNING)),
+          "UDP administrative down clears operational flags");
+    printf("UDP_ADMIN_DOWN index=%u flags=%x\n", lane + 1, (unsigned short)request->ifr_flags);
+}
+
 static void link_change(int fd, unsigned lane) {
     char name[16];
     snprintf(name, sizeof(name), "eth%u", lane);
@@ -782,19 +791,29 @@ static void link_change(int fd, unsigned lane) {
     wait_link(fd, name, 1);
     wire_send(fd, lane, 'L', 0, 31);
     wire_receive(fd, lane, 'L', 0, 31);
+    int before_mtu = 0;
+    socklen_t mtu_size = sizeof(before_mtu);
+    check(getsockopt(fd, IPPROTO_IP, IP_MTU, &before_mtu, &mtu_size) == 0 &&
+              mtu_size == sizeof(before_mtu) && before_mtu == 552,
+          "UDP locked path metric before administrative retirement");
     struct ifreq request = {0};
     strcpy(request.ifr_name, name);
     check(ioctl(fd, SIOCGIFFLAGS, &request) == 0, "UDP administrative flags");
-    request.ifr_flags &= ~IFF_UP;
-    check(ioctl(fd, SIOCSIFFLAGS, &request) == 0 && ioctl(fd, SIOCGIFFLAGS, &request) == 0 &&
-              (request.ifr_flags & IFF_RUNNING),
-          "UDP admin down preserves carrier");
-    check(send(fd, data, sizeof(data), 0) == -1 && errno == ENETDOWN,
+    administrative_down(fd, &request, lane);
+    // Administrative shutdown retires the route. The connected, device-bound
+    // description then reports the Linux route-selection error.
+    check(send(fd, data, sizeof(data), 0) == -1 && errno == ENETUNREACH,
           "UDP admin down prevents output");
     request.ifr_flags |= IFF_UP;
     check(ioctl(fd, SIOCSIFFLAGS, &request) == 0, "UDP administrative restore");
     wire_send(fd, lane, 'R', 0, 31);
     wire_receive(fd, lane, 'R', 0, 31);
+    int after_mtu = 0;
+    mtu_size = sizeof(after_mtu);
+    check(getsockopt(fd, IPPROTO_IP, IP_MTU, &after_mtu, &mtu_size) == 0 &&
+              mtu_size == sizeof(after_mtu) && after_mtu == 1500,
+          "UDP fresh route retires the previous path metric");
+    printf("UDP_ADMIN_ROUTE index=%u before=%d after=%d\n", lane + 1, before_mtu, after_mtu);
     printf("UDP_LINK_PASS index=%u\n", lane + 1);
 }
 
@@ -940,8 +959,14 @@ static void wire(unsigned lane) {
     peer.sin_port = 0;
     check(sendto(fd, data, 31, 0, (struct sockaddr*)&peer, sizeof(peer)) == -1 && errno == EINVAL,
           "UDP named zero destination port rejected");
+    int discovery = IP_PMTUDISC_DO;
+    check(setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &discovery, sizeof(discovery)) == 0,
+          "UDP require DF for MTU rejection");
     check(send(fd, data, 1473, 0) == -1 && errno == EMSGSIZE,
           "UDP payload includes IPv4 and UDP overhead in MTU");
+    discovery = IP_PMTUDISC_WANT;
+    check(setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &discovery, sizeof(discovery)) == 0,
+          "UDP restore default discovery");
     wire_send(fd, lane, 'M', 0, 1472);
     wire_receive(fd, lane, 'M', 0, 1472);
     check(send(fd, NULL, 0, 0) == 0, "UDP wire zero payload send");

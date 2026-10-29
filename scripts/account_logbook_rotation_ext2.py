@@ -24,6 +24,7 @@ import time
 import traceback
 
 from account_logbook_rotation_block import backend_command, trace_events
+from nbd_startup import launch_backend
 from account_logbook_rotation_guest import frames, state, projections
 from account_logbook_test import SOURCES
 from account_management_ext2 import working_disk
@@ -50,6 +51,7 @@ MODES = {'lock': 0o600, 'journal': 0o600, 'state': 0o600,
          'utmp': 0o644, 'wtmp': 0o644, 'btmp': 0o600, 'auth.log': 0o600}
 INPUTS = [*SOURCES, CLIENT, 'scripts/account_logbook_rotation_ext2.py',
           'scripts/account_logbook_rotation_block.py', 'scripts/account_logbook_rotation_guest.py',
+          'scripts/nbd_startup.py',
           'scripts/account_logbook_test.py', 'scripts/account_store_guest.py',
           'scripts/account_store_test.py', 'scripts/build_musl.py', 'scripts/ext2_test.py',
           'scripts/fixture_archive.py', 'scripts/random_snapshot_test.py',
@@ -87,16 +89,7 @@ def start_backend(disk, directory, scratch, offset, *, model='writeback', operat
                               control_end_marker=end_marker,
                               cache_model=model, fault_operation=operation, fault_request=request,
                               fault_mode=mode, gate=scratch / 'release')
-    output = (directory / 'backend.log').open('xb')
-    process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT)
-    deadline = time.monotonic() + 5
-    while not socket.exists():
-        if process.poll() is not None or time.monotonic() > deadline:
-            process.kill() if process.poll() is None else None
-            process.wait()
-            output.close()
-            raise RuntimeError('bounded disposable NBD backend did not start')
-        time.sleep(.01)
+    process, output = launch_backend(command, socket, directory)
     return process, output, socket, trace, command
 
 

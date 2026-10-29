@@ -33,6 +33,7 @@ from ext2_counter_inspection import counter_findings
 from ext2_named_retirement_inspection import directory_retirement_findings, named_retirement_findings
 from ext2_recovery_inspection import deleted_allocation_findings
 from random_snapshot_test import QMP
+from nbd_startup import launch_backend
 
 CLIENT = 'userspace/tests/security/account-management-ext2.c'
 INPUTS = [*SOURCES, CLIENT, 'scripts/account_management_ext2.py',
@@ -40,7 +41,7 @@ INPUTS = [*SOURCES, CLIENT, 'scripts/account_management_ext2.py',
           'scripts/ext2_test.py', 'scripts/fixture_archive.py', 'scripts/image.py',
           'Makefile', 'userspace/init/main.c', 'userspace/init/console.c',
           'userspace/init/console.h', 'userspace/init/seed_records.h', 'boot/limine.conf']
-INPUTS += ['scripts/account_logbook_rotation_block.py']
+INPUTS += ['scripts/account_logbook_rotation_block.py', 'scripts/nbd_startup.py']
 INPUTS += ['scripts/account_journal_oracle.py']
 INPUTS += ['scripts/random_snapshot_test.py', 'scripts/account_store_test.py', 'scripts/build_musl.py',
            'scripts/fetch.py', 'scripts/ports.py', 'scripts/sources.py', 'sources.lock.json',
@@ -725,16 +726,7 @@ def backend_start(disk, directory, scratch, offset, model, operation, request, m
     command = backend_command(disk, socket, trace, control_offset=offset, control_marker=ARM,
                               control_end_marker=END, cache_model=model, fault_operation=operation,
                               fault_request=request, fault_mode=mode, gate=scratch / 'release')
-    output = (directory / 'backend.log').open('xb')
-    process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT)
-    deadline = time.monotonic() + 5
-    while not socket.exists():
-        if process.poll() is not None or time.monotonic() >= deadline:
-            process.kill() if process.poll() is None else None
-            process.wait()
-            output.close()
-            raise RuntimeError('bounded actual NBD backend failed to start')
-        time.sleep(.01)
+    process, output = launch_backend(command, socket, directory)
     return process, output, socket, trace, command
 
 

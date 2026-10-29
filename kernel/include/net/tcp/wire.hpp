@@ -3,9 +3,14 @@
 #include <cstddef>
 #include <cstdint>
 
+namespace ax::ip6 {
+struct Address;
+}
+
 namespace ax::tcp {
 constexpr uint8_t fin = 1, syn = 2, rst = 4, psh = 8, ack = 16, urg = 32, ece = 64, cwr = 128;
 constexpr size_t maximum_segment_size = 65535 - 20;
+constexpr size_t maximum_ipv6_segment_size = 65535;
 
 // Addresses/ports/numbers are host order; payload borrows the validated IPv4 packet.
 struct Segment {
@@ -23,6 +28,10 @@ struct Segment {
 bool decode(uint32_t source, uint32_t destination, const void*, size_t, Segment&);
 // Emit a minimal header, optional SYN MSS, and copied payload; zero means invalid/capacity failure.
 size_t encode(uint32_t source, uint32_t destination, const Segment&, void*, size_t capacity);
+// IPv6 addresses retain network-order bytes; payload borrows the validated IPv6 packet.
+// The upper-layer length excludes IPv6 extension headers, including Fragment.
+bool decode(const ip6::Address&, const ip6::Address&, const void*, size_t, Segment&);
+size_t encode(const ip6::Address&, const ip6::Address&, const Segment&, void*, size_t capacity);
 uint32_t sequence_length(const Segment&);
 bool before(uint32_t, uint32_t);
 bool acceptable(uint32_t sequence, uint32_t length, uint32_t next, uint32_t window);

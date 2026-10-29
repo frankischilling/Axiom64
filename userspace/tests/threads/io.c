@@ -24,6 +24,9 @@
 #ifndef IO_LINKAGE
 #define IO_LINKAGE "static"
 #endif
+
+void io_vectors_test(void);
+
 #define CHECK(expr)                                                                                \
     do {                                                                                           \
         if (!(expr)) {                                                                             \
@@ -1014,6 +1017,7 @@ int main(int argc, char** argv) {
     socket_timeouts();
     if (argc == 2 && !strcmp(argv[1], "--timeout-only"))
         return 0;
+    io_vectors_test();
     blocked_receive(0, READ, 0, 0); // Original close/reuse regression.
     blocked_receive(0, READV, 1, 1);
     blocked_receive(1, READ, 1, 0);

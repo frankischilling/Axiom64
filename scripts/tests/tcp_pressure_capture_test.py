@@ -11,8 +11,9 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tcp_clock_mutations import candidate_auditor, candidate_verifier
+from tcp_clock_mutations import candidate_auditor, candidate_verifier, reversed_clock_delta
 from tcp_capture_profiles import require_complete_profiles
+from tcp_capture_link import write_ipv4_candidate
 from tcp_capture_clock import ClockEvidenceError, microseconds
 from fetch import ROOT
 from tcp_icmp_capture import checksum, require, tcp_fields
@@ -29,15 +30,6 @@ def update(item, body, repair=True):
     ip = item['ip'][:20] + body
     item.update(body=bytes(body), ip=bytes(ip),
                 frame=item['frame'][:14] + ip + item['frame'][14 + len(item['ip']):])
-
-
-def write_capture(path, items):
-    with path.open('wb') as output:
-        output.write(struct.pack('<IHHIIII', 0xa1b2c3d4, 2, 4, 0, 0, 65535, 1))
-        for item in items:
-            stamp, frame = item['stamp'], item['frame']
-            output.write(struct.pack('<IIII', stamp // 1000000, stamp % 1000000,
-                                     len(frame), len(frame)) + frame)
 
 
 def rejected(action, label, expected):
@@ -134,7 +126,7 @@ def main():
                 changed = deepcopy(original)
                 mutate(changed, label)
                 path = destination / (name + '-' + label + '.pcap')
-                write_capture(path, changed)
+                write_ipv4_candidate(path, changed, root / row['captures'][0])
                 def verify(candidate, lane, evidence, native=False, statistics=None):
                     values = decoded(candidate, statistics)
                     companion(values, 0, 2)
@@ -181,8 +173,8 @@ def main():
                 (scratch / row['log']).write_text(text)
                 changed = deepcopy(original)
                 require(len(changed) >= 3 and changed[0]['stamp'] > 0, 'original pressure packet clocks exist')
-                changed[2]['stamp'] += microseconds(changed[0]) - microseconds(changed[2]) - 1
-                write_capture(scratch / row['captures'][0], changed)
+                changed[2]['stamp'] += reversed_clock_delta(changed, root / row['captures'][0], statistics)
+                write_ipv4_candidate(scratch / row['captures'][0], changed, root / row['captures'][0])
                 reason = rejected(lambda: checked(scratch, row, args.input_root, libraries),
                                   'reversed-packet-clock', ('ordered bounded native monotonic receipt pairs' if native else
                                                             'monotonic pressure packet clock'))
@@ -202,7 +194,7 @@ def main():
                         item['stamp'] -= difference
                         if 'monotonic_ns' in item:
                             item['monotonic_ns'] -= difference * 1000
-                write_capture(scratch / row['captures'][0], changed)
+                write_ipv4_candidate(scratch / row['captures'][0], changed, root / row['captures'][0])
                 def short_wait():
                     try:
                         checked(scratch, row, args.input_root, libraries)

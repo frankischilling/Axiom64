@@ -13,6 +13,7 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tcp_clock_mutations import candidate_auditor, candidate_verifier
 from tcp_capture_profiles import require_complete_profiles
+from tcp_capture_link import write_ipv4_candidate
 from tcp_capture_clock import ClockEvidenceError, microseconds
 from fetch import ROOT
 from tcp_icmp_capture import checksum, packets, require, tcp_fields
@@ -30,15 +31,6 @@ def update(item, body, repair=True):
     ip = item['ip'][:20] + body
     padding = item['frame'][14 + len(item['ip']):]
     item.update(ip=bytes(ip), body=bytes(body), frame=item['frame'][:14] + ip + padding)
-
-
-def write_capture(path, items):
-    with path.open('wb') as output:
-        output.write(struct.pack('<IHHIIII', 0xa1b2c3d4, 2, 4, 0, 0, 65535, 1))
-        for item in items:
-            stamp, frame = item['stamp'], item['frame']
-            output.write(struct.pack('<IIII', stamp // 1000000, stamp % 1000000,
-                                     len(frame), len(frame)) + frame)
 
 
 def rejected(action, label, expected):
@@ -138,7 +130,7 @@ def main():
                 changed = deepcopy(original)
                 case = damage_wire(changed, label)
                 path = destination / (name + '-' + label + '.pcap')
-                write_capture(path, changed)
+                write_ipv4_candidate(path, changed, root / row['captures'][0])
                 def validate(candidate, lane, case, native=False, statistics=None):
                     try:
                         decoded = packets(candidate, statistics)

@@ -1,10 +1,185 @@
 # IPv4, ARP, routing, and ping
 
-The IPv4 host path runs over [virtio-net and QEMU e1000](network.md). It supports static addresses, loopback, connected and explicit routes, bounded ARP resolution, kernel ICMP echo replies, Linux raw ICMP sockets, [UDP datagrams](udp.md) and ordinary [TCP streams](tcp.md). BusyBox `ifconfig`, route add/delete, and numeric `ping` exercise the guest implementation. [DHCP](network-manager.md) and [DNS with TCP fallback](dns.md) have their own contracts. Full TCP fault/lifetime acceptance, downloads, IPv6 and complete IPv4 conformance remain required by the [networking roadmap](feature-roadmap.md).
+The IPv4 host path runs over [virtio-net and QEMU e1000](network.md). It supports static addresses, loopback, connected and explicit routes, bounded ARP resolution, fragment reassembly, kernel ICMP echo replies, Linux raw ICMP/UDP sockets, [UDP datagrams](udp.md) and [TCP streams](tcp.md). BusyBox `ifconfig`, route add/delete, and numeric `ping` exercise the guest implementation. [DHCP](network-manager.md) and [DNS with TCP fallback](dns.md) have their own contracts. IPv6, complete cached-route query policy, multicast and complete IPv4 conformance remain required by the [networking roadmap](feature-roadmap.md).
+
+## Receive metadata
+
+Raw ICMP, raw UDP and UDP descriptions support `IP_PKTINFO`, `IP_RECVTTL` and
+`IP_RECVTOS`. `recvmsg` returns packet information, an integer TTL and a one-byte
+TOS value in that order. Queued datagrams own their header and destination
+metadata. TTL and TOS remain available when enabled after arrival. Packet
+information retains its arrival-time preparation: enabling it only after a
+packet is queued reports the destination address with zero interface and
+specific-destination fields. Current receive-option values select controls at
+read time.
+
+Duplicate and inherited descriptors share receive options until the final
+close. An established TCP child owns an independent snapshot of its listener's
+option flags; TCP stream data does not acquire datagram ancillary records.
+Short option values, truncated control buffers, untouched padding, page-boundary
+fault prefixes, `MSG_PEEK` and `MSG_TRUNC` follow the observed Linux x86-64
+contract.
+
+The common loopback client passes nine native libc/kernel profiles across
+Linux 6.6, 6.17 and 7, plus four static/dynamic BIOS/UEFI guest profiles. Each
+checks 1,395 receives, 468 control-page faults, 1,344 payload/vector, source-name
+and message-result cases, and four description-lifetime cases. The original
+control rows compare every byte after mapping only the actual loopback index.
+Result cases bind copied bytes to the original queued packet, including its
+validated raw IPv4 header and checksums. Independent root and ordinary-user
+readers reopen all four boot images and reject 28 observation controls and
+16 source/probe/execution controls per native kernel cohort. See
+[testing](testing.md#ipv4-receive-control-comparison) for the command and retained inputs.
+
+Input vector and named `recvmsg` length validation failures leave the packet
+queued. A later payload, source or result-store fault consumes a non-peek
+datagram; `MSG_PEEK` retains it. Payload copies preserve bytes on writable
+pages before a later page fault. `recvfrom` copies payload before reading a
+requested source length, so an invalid length pointer or negative capacity
+fails after that copy. A NULL source pointer ignores the length pointer.
+A NULL `recvmsg` source pointer leaves its caller's length field untouched.
+The guest stores the full 16-byte source length before copying the bounded
+address prefix, as observed on Linux 7. A separate four-case native probe
+retains the address-first behavior of older kernels in the comparison.
+Broader ancillary options and current-source hosted acceptance remain required.
+
+The Ethernet receive-metadata comparison passes locally across three native
+libc profiles and eight static/dynamic BIOS/UEFI modern/legacy guests with
+both adapters. Its 156 receives per profile distinguish actual ingress,
+destination and reverse-route specific destination, including multicast,
+broadcasts and delivery to another interface's local alias. Queued values
+survive alias/prefix removal and reverse-route replacement. Independent
+readers decode original packet captures and 180 address/route inventories
+per profile, open the boot images and reject 27 damaged inputs. See the
+[Ethernet metadata checks](testing.md#ipv4-ethernet-receive-metadata). Broader
+receive behavior, output controls, device lifetimes and current-source hosted
+acceptance remain required.
+
+## IPv4 multicast qualification
+
+IPv4 socket descriptions own up to 20 group/interface memberships, and
+interfaces aggregate up to 128 live or retiring groups. `IP_ADD_MEMBERSHIP`
+and `IP_DROP_MEMBERSHIP` accept the Linux `ip_mreq` and `ip_mreqn` layouts.
+`IP_MULTICAST_IF`, `IP_MULTICAST_TTL`, `IP_MULTICAST_LOOP`, and
+`IP_MULTICAST_ALL` control output selection, hop limits, local copies, and
+per-socket receive filtering. Duplicate descriptors retain the same interests;
+the last close removes them. UDP delivery applies interface, address, port,
+peer and source membership filters before selecting a receive queue.
+
+Source membership controls support INCLUDE and EXCLUDE lists through the
+legacy source options, generic group/source options, `IP_MSFILTER` and
+`MCAST_MSFILTER`. A socket filter stores up to 64 ordered unique sources. The
+separate `/proc/sys/net/ipv4/igmp_max_msf` admission policy defaults to 10 and
+does not resize that storage. Its configured signed integer remains readable
+even when it exceeds the fixed storage bound. Existing interests survive a
+later policy reduction. Aggregate/history admission failures preserve the
+previous ownership and pending report state.
+
+Interface aggregation unions INCLUDE interests, or subtracts those interests
+from the intersection of EXCLUDE lists. Hidden contributors retain their source
+slots so final close can expose another owner's filter without allocating new
+report history. Sanitized module tests cover these ownership transitions;
+the raw UDP loopback client also checks source-filtered data and shared/final
+description close. The Ethernet client checks independent raw/UDP receive
+queues, INCLUDE/EXCLUDE filters, multicast-all and shared/final descriptions on
+both adapters. Broader lifetime acceptance remains required.
+
+`SOCK_STREAM` accepts `IP_MULTICAST_LOOP` and `IP_MULTICAST_ALL`. Passive
+connections snapshot both flags when the handshake completes. Accepting a
+queued child or changing and closing its listener preserves the child's
+independent controls and connected stream. TCP setters for `IP_MULTICAST_IF`
+and `IP_MULTICAST_TTL` return `EINVAL`.
+
+IGMPv3 reports carry Router Alert, TTL 1 and the control traffic class. Mode
+changes and individual source changes retain separate retransmission counters;
+refused output preserves the pending cursor and counters. INCLUDE records split
+across packets at the actual link MTU. EXCLUDE records use a stable subset that
+fits one packet, following [RFC 9776 section 4.2.17](https://www.rfc-editor.org/rfc/rfc9776.html#section-4.2.17).
+A live increase from MTU 68 to 1500 restores the complete 64-source EXCLUDE
+query response without changing membership.
+
+Group and general queries report the current filter. Source-specific queries
+intersect an INCLUDE list with the queried sources, or remove the blocked
+EXCLUDE list from them; an empty result stays silent, as specified in
+[RFC 9776 Table 5](https://www.rfc-editor.org/rfc/rfc9776.html#table-5).
+Measured Linux reference profiles have an explicit EXCLUDE response difference;
+guest acceptance follows the RFC. Pending source queries own sorted unique
+source sets within a shared 256 KiB allocation budget. The budget includes both
+copies during a transactional replacement. Allocation refusal preserves the
+accepted set, response cursor and deadline. Responses apply the current filter
+and stream complete INCLUDE records at the actual output MTU; refused output
+retains its cursor. Responses, final close, link down and compatibility changes
+release the corresponding query storage. Valid additional query octets count
+toward checksum verification and are then ignored, following
+[RFC 9776 section 4.1.10](https://datatracker.ietf.org/doc/html/rfc9776#section-4.1.10).
+The socket filter and its separate admission policy retain their existing limits.
+Older general queries select IGMPv1 or IGMPv2 compatibility. Link down suspends reports and link up
+announces retained interests. The all-hosts group is implicit and sends no
+membership reports.
+
+The ASM query reader retains a 1.01-second guest ceiling. Native comparisons on
+Linux 6.17.0-1022-azure and 7.0.0-1017-azure can use a separate recorded timer
+contract. The actual x86-64 CONFIG_HZ=1000 configuration must be unchanged before
+and after both complete capture intervals. For the captured one-second query,
+Linux adds two jiffies to its random delay before timer-wheel bucket rounding.
+The longest schedule is 1.065 seconds; the original ten-millisecond observer
+allowance gives a 1.075-second native ceiling. This follows the
+[IGMP timer](https://github.com/torvalds/linux/blob/v7.0/net/ipv4/igmp.c) and
+[timer-wheel](https://github.com/torvalds/linux/blob/v7.0/kernel/time/timer.c)
+calculations. Missing native proof retains the original ceiling; invalid proof
+fails validation. Packet timestamps and the six native clock gates are unchanged.
+
+The ASM cohort requires three native Linux libc/linkage profiles and eight
+static/dynamic BIOS/UEFI modern/legacy guest profiles on both adapters. Normal
+and protected ordinary readers reopen complete source, actual images, programs
+and packets, and reject twenty-nine serialized evidence controls. Every source
+epoch needs fresh qualification. General IPv6 memberships and MLD, multicast routing, broader lifecycle cases,
+and complete multicast conformance remain required.
+
+The retained preceding-kernel source-filter cohort passes 40 guest profiles: Ethernet
+raw/UDP delivery, settled changes, query responses, minimum/live MTU behavior
+and overlapping changes, each with static/dynamic linkage, BIOS/UEFI and
+modern/legacy virtio plus e1000. Root and UID 65534 independently reopen the
+complete sources, actual images, executables and captures. Reporting accounts
+for 1,250 records, 176 queries, 496 full three-second windows and 32 first-packet
+barriers. Delivery accounts for 256 sends, 736 receives, 128 full 200 ms quiet
+windows and 128 full three-second wire windows. All 104 serialized packet,
+observation, product and cohort controls reject under both identities.
+
+Overlapping updates can occur before an older report retry reaches the wire,
+and a report can be sent between successive socket calls. The independent
+reader accounts for legal operation order, copied output and each remaining
+mode/source retry. One physical packet cannot satisfy two retries of the same
+obligation. The first-packet barriers may finish within one guest clock tick;
+every full observation retains its original three-second wire interval.
+
+All 55 native/guest profiles were attempted. Four native captures qualify;
+eleven retain their rejected realtime-to-monotonic offset checks. The local
+40-guest audit explicitly leaves full native/guest acceptance false. CI requires
+all 55 profiles and protected readbacks, with the six native clock checks and
+recorded native-only query timer policy intact. Wider query/legacy/link and
+lifetime cases, current-source hosted qualification, general IPv6 membership
+and MLD, multicast routing and complete multicast conformance remain required.
+
+The new query-bounds case preserves those original five scenarios and adds
+65-source INCLUDE/EXCLUDE queries, duplicate query sources, valid trailing
+octets and the complete 366-source query that fits Ethernet MTU 1500. All eight guest profiles pass on both adapters. Each retains 24 report
+records, ten actual queries and sixteen complete three-second observations. Sanitized
+module checks also cover maximum IPv4-sized query lists, accumulated unions,
+owned input bytes, budget/allocation refusal, output refusal and storage lifetime.
+The six-case audit on the new kernel accepts all 48 guest profiles: 1,440 reporting records,
+256 actual queries, 624 complete reporting windows and 32 first-packet barriers, plus
+256 delivery sends, 736 receives, 128 complete 200 ms quiet windows and 128 complete
+three-second delivery windows. Root and UID 65534 independently reopen the original
+evidence and each reject all 132 serialized controls. Seven of eighteen local native
+captures qualify. The remaining original native failures stay rejected; the explicit
+guest diagnostic result does not establish full native/guest acceptance. Default
+production and hosted verification require all 66 profiles. Complete current-source
+hosted qualification and broader multicast behavior remain required.
 
 ## Ownership and progress
 
-`kernel/net/ipv4/core.cpp` owns configuration, 32 explicit routes, 128 interface/address-scoped neighbors, and 32 pending outputs. `socket.cpp` owns raw ICMP and UDP descriptions and receive queues. `kernel/net/udp/core.cpp` validates and constructs UDP datagrams. `kernel/net/ioctl.cpp` translates the Linux interface and legacy route structures. `kernel/include/net/ipv4_wire.hpp` shares wire access and checksum helpers between protocol modules.
+`kernel/net/ipv4/addresses.cpp` owns up to 32 labelled Ethernet addresses. `core.cpp` owns 32 explicit routes, 128 interface/address-scoped neighbors, and 32 pending outputs. `socket.cpp` owns raw ICMP and UDP descriptions and receive queues. `kernel/net/udp/core.cpp` validates and constructs UDP datagrams. `kernel/net/ioctl.cpp` translates the Linux interface and legacy route structures. `kernel/include/net/ipv4_wire.hpp` shares wire access and checksum helpers between protocol modules.
 
 Output owns a heap copy of the complete Ethernet/IP frame before waiting for ARP or driver capacity. A successful send means the bounded queue accepted the bytes. The driver then copies the frame into its own DMA storage and retains it until completion. Closing the socket detaches pending error/accounting references; accepted output keeps its bytes without referring to a reused socket slot. RX validates its bounds and copies each selected datagram into an independent listener queue before recycling the hardware buffer.
 
@@ -18,11 +193,13 @@ Pending IP output has a four-second bound; generated ARP replies have a one-seco
 
 Ethernet interfaces start administratively down and without an IPv4 address. The fixed `lo` interface has index 9, address `127.0.0.1/8`, and MTU 65536; it is a logical interface rather than an Ethernet adapter. Local addresses use the same IPv4/ICMP validation path without hardware transmission.
 
-The x86-64 Linux `ifreq` controls support address, netmask, broadcast, name/index, MAC, flags, and MTU. Masks must be contiguous; invalid updates leave the configuration intact. Address zero disables that interface's IPv4 configuration. A mask shorter than /31 derives the directed broadcast unless explicitly supplied; /31 and /32 have no directed broadcast. Reconfiguration clears that interface's neighbor cache and rejects its pending output with `ENETDOWN`.
+The x86-64 Linux `ifreq` controls support address, netmask, broadcast, name/index, MAC, flags, and MTU. Masks must be contiguous; invalid updates leave the configuration intact. Address zero removes the selected label. Ethernet aliases share their device index, flags, MAC, carrier and MTU; they are addresses rather than additional devices. A new legacy address starts with its classful mask, which a later netmask ioctl can override. A mask shorter than /31 derives the directed broadcast unless explicitly supplied; /31 and /32 have no directed broadcast. Removing a primary address removes its same-prefix secondary addresses, while other prefixes remain usable. Replacing an address or mask follows Linux's deletion and reinsertion lifetime, including duplicate collisions that retire the previous prefix. Invalid masks leave the inventory intact. Removing an address releases its reassembly contexts and pending output; accepted packets belonging to retained addresses keep their bytes. Neighbor mappings remain shared while an existing tuple survives.
 
-`SIOCGIFCONF` returns whole 40-byte entries for assigned Ethernet addresses and loopback. A null buffer queries the required size. `AF_INET/SOCK_DGRAM` and configuration-only `AF_UNIX/SOCK_DGRAM` descriptors support the interface ioctl path used by libc/BusyBox. [Netlink address messages](netlink.md) add exclusive complete-tuple creation and exact address/prefix deletion; [Configuration](network-configuration.md) uses them for owned settings and restart recovery. Internet datagrams implement [IPv4 UDP](udp.md); Unix datagram transport remains required.
+`SIOCGIFCONF` returns whole 40-byte entries with the individual labels for assigned Ethernet addresses and loopback. Queries select a matching label, with an optional address hint, and return `EADDRNOTAVAIL` when that label has no address. Lowering an alias with `SIOCSIFFLAGS` removes that address while keeping the physical interface up. A null buffer queries the required size. `AF_INET/SOCK_DGRAM` and configuration-only `AF_UNIX/SOCK_DGRAM` descriptors support the interface ioctl path used by libc/BusyBox. [Netlink address messages](netlink.md) add exclusive complete-tuple creation and exact address/prefix deletion; [Configuration](network-configuration.md) uses them for owned settings and restart recovery. Internet datagrams implement [IPv4 UDP](udp.md); Unix datagram transport remains required.
 
-`SIOCADDRT` and `SIOCDELRT` implement the initial 120-byte Linux `rtentry` contract: connected routes, on-link routes, gateways, default routes, host routes, and metrics. Selection chooses the longest matching prefix, then the lower metric. An omitted device is inferred from a directly connected destination or gateway. A gateway must be a nonlocal unicast address on the selected interface's subnet. Duplicate routes, missing routes, invalid masks/families, and unreachable gateways return explicit errors. [NETLINK_ROUTE](netlink.md) adds bounded main-table dumps and protocol/scope-filtered route control; `/proc/net/route`, address aliases, policy routing, and the complete Linux routing interface remain planned.
+`SIOCADDRT` and `SIOCDELRT` implement the initial 120-byte Linux `rtentry` contract: connected routes, on-link routes, gateways, default routes, host routes, and metrics. Selection chooses the longest matching prefix, then the lower metric. An omitted device is inferred from a directly connected destination or gateway. A gateway must be a nonlocal unicast address on the selected interface's subnet. Duplicate routes, missing routes, invalid masks/families, and unreachable gateways return explicit errors. [NETLINK_ROUTE](netlink.md) adds bounded main-table dumps and protocol/scope-filtered route control; `/proc/net/route`, policy routing, and the complete Linux routing interface remain planned.
+
+Without an explicitly selected source, automatic prefix routes use their address-derived preferred source. Explicit direct routes and forced-interface fallback use the first primary address on the selected interface. Gateway routes prefer a primary address matching the next hop. A connected UDP description retains its selected nonzero source when a later named send selects another output interface. Complete preferred-source mutation and policy routing remain required.
 
 With a matching controlled peer connected to `eth0`, guest commands include:
 
@@ -33,27 +210,134 @@ ping -n -c 2 -w 5 -I eth0 10.23.1.1
 route del default gw 10.23.1.1 dev eth0
 ```
 
-Physical carrier and `IFF_UP` are independent. Carrier or administrative down rejects wire output with `ENETDOWN`; a permanently failed bound adapter reports `POLLERR` and `EIO`. Loopback remains usable during a physical link outage.
+Physical carrier and `IFF_UP` are independent. Fresh IPv4 output on an administratively down interface returns `ENETUNREACH`. Physical carrier loss returns `ENETDOWN`; a permanently failed bound adapter reports `POLLERR` and `EIO`. Loopback remains usable during a physical link outage. Linux operational flags clear `IFF_RUNNING` while the interface is administratively down. The fixture now checks both `IFF_UP` and `IFF_RUNNING` are clear and records the actual flag query before checking output rejection and recovery.
+
+## Address alias checks
+
+An independent capture auditor checks the original alias tuples, payloads, hardware ownership, ARP resolution order and guest-generated replies. Every normal guest and native alias comparison must pass this audit and reject twenty-two damaged fixtures per adapter. Original captures and compressed negative fixtures remain available with the results.
+
+`sudo -n python3 scripts/ipv4_alias_native.py` runs the real client under three native libc/linkage profiles in separate network namespaces. Each uses two TAP links and retains original captures, monotonic receipts, executable and pinned target-UAPI build records. The regular guest IPv4 matrix runs the same alias client through both guest adapters. Four wire cases per adapter cover a bound secondary source, a different-prefix source, continued output after primary deletion, and restored primary output. The peer also requires guest-generated ARP and ICMP echo replies to aliases before releasing the final barrier. Local UDP checks compare every payload byte, and ioctl/netlink cases check labels, enumeration, duplicate addresses, omitted broadcast, local-only deletion and replacement collisions.
+
+`make test-ipv4-paths` checks the production address inventory and route ownership with sanitizers, including capacity, invalid mutations and shared alias MTUs. `python3 scripts/tests/ipv4_aliases_test.py` rejects thirteen damaged wire controls, including a recomputed checksum with an oversized declared length. Current-revision guest results, independent alias capture auditing, broader address/cache lifecycle equivalence and complete F12 acceptance remain required. Loopback retains its fixed configuration; dynamic lifetimes, address notifications and configurable secondary promotion remain planned.
 
 ## IPv4 and ICMP validation
 
-Input requires IPv4 version 4, a 20-byte header, a valid header checksum, a bounded total length, nonzero TTL, supported flag forms, valid source addressing, and a local or accepted broadcast destination. Ethernet padding is trimmed to the IP total length. Traffic from a NIC cannot impersonate loopback. Options, fragments, and the reserved flag are rejected; forwarding and reassembly are not implemented.
+Ordinary Ethernet input requires IPv4 version 4, a 20-byte header, a valid header checksum, a bounded total length, nonzero TTL, supported flag forms, valid source addressing, and a local, accepted broadcast or accepted multicast destination. Ethernet padding is trimmed to the IP total length. Traffic from a NIC cannot impersonate loopback. General IP options and the reserved flag are rejected. IGMP separately validates its header options and accepts Router Alert. Forwarding remains unimplemented. Fragmented input reaches the transport only after complete reassembly.
 
-Output builds its own 20-byte header, checksum, identifier, TTL, and DF flag. The IP header counts toward the interface MTU; oversized output returns `EMSGSIZE`. `IP_PMTUDISC_DONT` clears DF; the other supported discovery settings retain it. TCP can reduce its own segment size from validated path hints, as described in [TCP recovery](tcp.md#path-mtu-recovery). A shared route PMTU cache and IPv4 fragmentation remain required. Limited and directed broadcasts use the Ethernet broadcast destination and require `SO_BROADCAST`. Multicast, TOS controls, IPv6, and general IP options remain planned.
+Ordinary output builds its own 20-byte header, checksum, identifier, TTL, TOS and DF flag. The IP header counts toward the selected path limit. DONT, WANT and OMIT permit local fragmentation; DO, PROBE and INTERFACE reject an oversized datagram with `EMSGSIZE`. PROBE, INTERFACE and OMIT use the device MTU for transmission. Limited and directed broadcasts use the Ethernet broadcast destination and require `SO_BROADCAST`. Multicast and per-message TTL/TOS controls are supported. General IPv4 header options remain unsupported. See [IPv6](ipv6.md) for IPv6 host and socket support.
+
+One output slot owns the complete datagram and a reusable MTU-sized wire buffer. Each poll submits at most eight fragments per slot. Accepted frames advance the payload cursor; `EAGAIN` retains its current position. The original queue deadline and socket charge cover the whole datagram. MTU changes apply to the remaining bytes, and callback cancellation retains borrowed storage until submission returns. A full 65,535-byte packet therefore does not consume one output slot per fragment.
 
 The ICMP handler checks payload length and checksum before answering a local unicast echo request. Echo replies preserve the identifier, sequence, and payload. It does not answer broadcast echo requests or recursively generate errors for ICMP errors. Unknown local unicast protocols can generate a rate-limited protocol-unreachable response quoting the original header and first eight payload bytes. Valid destination-unreachable and parameter-problem quotes can report matching connected raw-socket errors; malformed or unrelated quotes are ignored.
 
 Raw ICMP listeners receive the complete validated IPv4 datagram before the ICMP handler checks its payload checksum, matching the Linux raw-observer ordering. A raw program can therefore see an invalid ICMP checksum that the kernel handler rejects. Kernel validation and raw observation are tested separately.
 
-## Raw ICMP socket contract
+## Path MTU discovery
 
-`socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)` supports close-on-exec and nonblocking flags, bind/connect/disconnect, duplicate/fork lifetime, address queries, `read`/`write`, vectors, and send/receive message calls. Received data includes the IP header. Source `sockaddr_in` contains `AF_INET`, port zero, and the source IPv4 address. The raw socket's local port metadata is the protocol number; the supplied connect port is peer-query metadata and does not affect transmission. As on the compared Linux path, a zero peer port makes `getpeername` report `ENOTCONN`.
+IPv4 retains up to 64 path limits keyed by the route's preferred source, destination, next hop, interface and route ownership. Source aliases using the same route share its learned limit. Raw ICMP, UDP and TCP share those limits. Valid reports can lower a limit but cannot raise it. Entries expire after ten minutes; ordinary lookups do not renew them. Equal reports refresh only in the second half of that lifetime. Unrelated route edits preserve learned limits. A gateway change selects its own limit; removing that override restores the original path's unexpired limit. Explicit routes with the same interface, gateway, priority, protocol and scope share ownership across prefixes. Removing the last such route releases its limits, and a recreated route starts fresh. Retiring a primary address invalidates its path limits while retained prefixes keep theirs. A link MTU change adjusts only that interface's exceptions and preserves their deadlines. Limits below both link sizes remain unchanged. A lower link clips larger limits; raising a limit that matched the old link permits discovery up to the new MTU. A locked estimate remains locked while it fits; reducing the link to that estimate or below unlocks it. Setting the same MTU preserves its limits.
 
-Each listener holds at most 32 datagrams and 65536 bytes, dropping new arrivals when either bound is reached without affecting other listeners. `SO_RCVBUF` and `SO_SNDBUF` double the requested size, clamp it to the supported bound, and impose a 2048-byte minimum. `SO_BINDTODEVICE`, `SO_BROADCAST`, `IP_TTL`, the supported DF policies, and `ICMP_FILTER` are implemented. Bind, peer, interface, and ICMP filters apply independently.
+Connected descriptions retain their selected destination. `IP_MTU` reads that destination's limit; raw and UDP queries then refresh obsolete route state before releasing the socket. Removing a bound source can therefore return the retained MTU once and `ENOTCONN` on the next query. A subsequent send cannot reselect the removed source and returns `ENETUNREACH`. Duplicate descriptors share this state. UDP output records its selected destination. Raw output refreshes an existing destination after a successful lookup, but preserves it after a failed lookup and does not recreate an absent cache. Explicitly reconnecting records a new destination. Disconnecting or successfully setting `SO_BINDTODEVICE` clears it, including repeated bindings to the same device or an empty name. Unreadable names and nonexistent devices preserve it. TCP retains its own query behavior rather than using the datagram release callback.
+
+This guest query contract follows Linux through 6.6. Linux 6.7 made [`IP_MTU` queries](https://github.com/torvalds/linux/commit/3523bc91e4b4da39ccf18a0252d13108877ece0a) and [`IP_MTU_DISCOVER` accesses](https://github.com/torvalds/linux/commit/ceaa714138a372ac63cc2c5c19ee0882d22827f9) independent of the socket lock. Those accesses leave an obsolete cached destination intact until an operation that refreshes or releases it. Native comparisons select an exact query model from the recorded kernel identity and require the client to report the same model. The policy client checks duplicate queries before an explicit `SO_SNDBUF` operation, then verifies that the shared destination exposes the current learned limit. Both models retain every route, link, discovery-policy and source-lifetime case. Complete guest equivalence with newer Linux query behavior remains required.
+
+After primary-address deletion, newer Linux can detach a retired destination during deferred FIB cleanup. Its cached query can then read the [blackhole device's 68-byte MTU](https://github.com/torvalds/linux/blob/v6.17/drivers/net/loopback.c), while the Ethernet device remains at 1500. Alias checks permit exactly these two positive values only for the read-only model's retired destinations; retained live prefixes and fresh paths keep their exact limits. Each adapter records all 34 retired queries and the live device MTU. Queries through the same description or its duplicate cannot recover from 68 to 1500 before an explicit route refresh. A locked socket operation must still clear the removed-source destination, including queries through its duplicate.
+
+An explicitly device-bound description can send directly through a configured Ethernet adapter when no route matches. Matching gateway routes still take precedence; an unbound description needs a route. The gateway client uses distinct MAC addresses for its original gateway, temporary host-route gateway and direct fallback, while preserving the bound source alias and IP destination. Removing and restoring that source distinguishes raw cache lifetime from UDP output caching. Device-bound Ethernet output also works without a local IPv4 address. A fresh raw or UDP description chooses an address from another Ethernet interface, or zero when none exists; an explicit source remains selected. ARP preserves a nonzero datagram source, or chooses an assigned address when the IP source is zero. Replies on an unconfigured adapter must match the source of an actual successful ARP request and unexpired pending output. Expired output cannot trigger another ARP request. Physical carrier absence still reports `ENETDOWN`; complete Linux carrier and logical-loopback output behavior, and broader retained source/PMTU lifetimes across address changes, remain required.
+
+`make test-ipv4-paths` exercises production route selection, retained destinations, cache ownership and link configuration under AddressSanitizer and UndefinedBehaviorSanitizer. It checks unrelated edits, gateway restoration, shared next hops, route replacement, a full route table, interface isolation and unchanged expiry deadlines. Alias checks also retain raw and UDP descriptions across primary deletion, query through duplicate descriptors, and send original wire bytes from the retained other-prefix raw socket. The path policy client also holds a UDP description before learning, queries through its duplicate, and checks retained values across route and link changes. These checks remain separate from complete TCP cached-route equivalence and wider guest wire acceptance.
+
+Cached connected UDP output uses the description's selected source, including zero. A send that must replace an obsolete or absent route selects a source for that call; later cached sends use the original connected flow. Descriptor writes and vectors follow the same rule. The legacy `IP_MTU` release callback can refresh the route before a send. Newer read-only getters leave that work for the first send, so its wire source can differ while `getsockname` stays zero. Named sends select a source for that call, even when naming the connected peer, and preserve the connected destination. Raw zero-source output follows current source selection. Duplicate descriptors share the description and destination cache. A removed selected nonzero source returns `ENETUNREACH` for named output without clearing that cache. After its ordinary release callback discards the obsolete destination, a restored-source named send leaves it absent; unnamed UDP output creates it again. ICMP destination refresh changes route state without changing the connected flow source. Complete source, error and PMTU lifetime equivalence remains required.
+
+Each of the eighteen wire policy cases also adds and removes an unrelated route, then temporarily overrides its destination with an on-link host route and a gateway host route. Fresh connected descriptions must select the new ownership's device limit and recover the original learned limit after removal. The original description reconnects to the restored path before sending the six policy cases, whose original bytes and fragment checks remain required. The last case lowers the actual interface MTU to 600 and restores 1500; fresh queries must show both changes without retaining the obsolete learned exception. A separate gateway wire cohort checks twelve raw/UDP datagrams per adapter through route replacement, removal, direct fallback and source restoration. The same native process or guest boot adds fourteen fresh datagrams per adapter across zero, other-interface, explicit, own and removed-source configurations. Ethernet barriers acknowledge actual datagrams without requiring an IP address. Retained descriptions also send 110 source-lifetime datagrams per adapter through six address phases and eight output methods. These checks retain duplicate descriptors, distinguish named and unnamed output, compare cache misses with subsequent cached sends, and exercise selected-source removal and restoration. Independent packet audits reject 31 damaged unconfigured-output fixtures per adapter, alongside the twenty-two gateway controls. The production output sanitizer test separately rejects unsolicited, wrong-target, wrong-device, invalid-hardware and expired ARP replies before accepting a matching reply. Complete retained TCP route-query behavior remains required.
+
+The default learned floor is 552 bytes, capped by the device MTU. A report below that floor, including a zero next-hop MTU, locks the estimate. WANT then clears DF so a smaller downstream link can fragment the packet. DO continues to require DF. These policies follow [RFC 1191](https://www.rfc-editor.org/rfc/rfc1191) and the compared [Linux route policy](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/net/ipv4/route.c).
+
+| Discovery policy | Use learned limit for IP output | Learn from an owned ICMP quote | DF on whole output |
+| --- | --- | --- | --- |
+| DONT | Yes | Yes | Clear |
+| WANT | Yes | Yes | Set unless the path is locked |
+| DO | Yes | Yes | Set |
+| PROBE | No | Yes | Set |
+| INTERFACE | No | No | Clear |
+| OMIT | No | No | Clear |
+
+Connected raw and UDP sockets report a valid fragmentation-needed error through `SO_ERROR`, except with DONT. Error notification remains separate from learning, so INTERFACE and OMIT can report `EMSGSIZE` without accepting the hint. Another eligible raw listener can still learn the same shared path. `IP_MTU` reads the retained destination; a description without one returns `ENOTCONN`. Locked discovery-option operations and socket buffer setters also refresh obsolete datagram destinations on release. `IP_TTL` and `SO_ERROR` getters retain their lock-free query behavior. An unreadable or negative option length fails before that release step. Complete cached-route query lifecycle equivalence remains required.
+
+Output captures its discovery policy when accepted. It checks current device and learned limits before each submission, preserving its cursor and owned bytes across backpressure. New TCP connections use the shared limit; established connections require an owned outstanding sequence before learning or resizing. [TCP recovery](tcp.md#path-mtu-recovery) describes retransmission and deadline ownership.
+
+`make test-ipv4-path-mtu` checks production cache ownership, expiry, refresh, bounded eviction, route/interface invalidation, floor locking and clock bounds with both sanitizers. Eighteen wire cases per NIC cover all six policies, shared raw-to-UDP queries, ignored corrupted hints, local fragmentation, required DO silence, small WANT packets at the floor and independent wildcard observers. The actual client checks each socket query and error; the peer requires every payload byte before acknowledging a policy barrier. Barriers can wait for a datagram still queued behind ARP.
+
+The ordinary fragment-native command includes these cases. A focused comparison is `sudo -n python3 scripts/ipv4_fragment_native.py --pmtu-only --directory build/ipv4-pmtu-focused`; that focused mode does not establish fragment or expiry acceptance. The independent `scripts/ipv4_path_mtu_capture.py` auditor checks the original packets, quote provenance, ordered barriers, fragment geometry, checksums and client query results. Sixteen damaged capture/log fixtures per NIC must fail, including false held queries and missing route/link observations. Native capture receipts bind every original frame to its hash and kernel timestamp; both capture and TAP drop counts must remain zero.
+
+The complete clients also age both adapters' learned limits concurrently through the unchanged ten-minute lifetime. An actual 1,128-byte UDP packet supplies each original quote. A corrupted hint must leave the limit unchanged; a valid hint lowers it to 900 bytes. At 300 seconds, each link changes to MTU 1200 and back to 1500 while the learned limit remains 900. Twenty-one lookup rounds, including a round at 590 seconds, require both the original and a fresh DO socket to reject the oversized payload. At 605 seconds both descriptions must transmit all 1,100 application bytes in whole DF packets. Ordinary lookups and failed sends cannot renew the original deadline.
+
+The retained socket's final `IP_MTU` query follows its real send, which refreshes Linux's potentially obsolete cached destination. This expiry check does not establish the complete cached-route query lifecycle described above. The independent `scripts/ipv4_path_mtu_lifetime_capture.py` auditor requires every original quote, lookup barrier, query result and recovered datagram. Original wire timing must prove at least 600 seconds; the client's elapsed clock must agree. Sixteen damaged fixtures per NIC cover early and late recovery, missing descriptions or barriers, false queries and duration, route/quote ownership, wire corruption and missing or false mid-lifetime link observations.
+
+`--lifetime-only` selects this complete ten-minute native comparison without claiming fragment or six-policy acceptance. The full native command and every normal guest profile include it. Both production deadlines and guest clocks remain unchanged.
+
+## Fragment reassembly
+
+The receive module owns up to 32 incomplete datagrams. Each queue copies its accepted payload bytes and tracks their coverage; recycling a hardware RX buffer cannot change them. Source, destination, protocol and identification select a queue. Fragments can arrive through different interfaces. Removing an address releases queues for that destination without changing other destinations' state.
+
+Reassembly accepts out-of-order fragments and identical, fully covered duplicates. Partial overlap, conflicting bytes, inconsistent final lengths, reserved flags and impossible lengths are rejected. Non-final payloads must contain a nonzero multiple of eight bytes. A full queue table rejects new ownership while preserving admitted datagrams. Completed packets cannot exceed 65,535 bytes, including the first header. ECN congestion marks propagate from accepted fragments; mixing Not-ECT with ECN-capable fragments invalidates the datagram. An unfragmented packet's reused identification cannot cancel pending fragments.
+
+Each queue has a fixed 60-second lifetime from its first arrival, following the host reassembly policy in [RFC 1122](https://www.rfc-editor.org/rfc/rfc1122#section-3.3.2). Duplicates do not renew it. Expiry releases the copied bytes and, when an eligible first fragment exists, attempts a rate-limited ICMP Time Exceeded reply quoting that original header and eight payload bytes. Broadcast input and ICMP errors do not trigger another error. Shutdown releases every queue.
+
+`make test-ipv4-reassembly` runs the production module under AddressSanitizer and UndefinedBehaviorSanitizer. It checks ordering, coverage gaps, conflicts, boundary sizes, different header lengths, tuple ownership, duplicate timing, expiry callbacks, ECN/DF reconstruction, queue pressure, allocation failures and randomized fragment partitions. `python3 scripts/tests/network_fixture_test.py` checks that successful or failed archive publication preserves earlier linked staging bytes.
+
+The ordinary IPv4 guest matrix adds six wire cases on each adapter: ordered fragments, reordered duplicates, an acknowledged coverage gap, overlap rejection, a corrupt header followed by a fresh datagram, and a 65,535-byte packet. Guest code checks every completed payload byte and sends a final acknowledgement. Actual packets are retained in `build/ipv4-*-lane*.pcap`; the two normal/fault images are `build/axiom64-ipv4-*.iso`.
+
+`sudo -n make test-ipv4-fragments-native` runs the same client cases with glibc, static musl and dynamic musl through two private Linux TAP interfaces. Independent packet monitors retain original timestamps, monotonic receipt records and kernel drop counts. Each private network namespace sets Linux's `ipfrag_time` to 60 seconds to match the unchanged guest policy. The three linkages run concurrently after one shared build; each owns its TAPs, processes and output directory. Native expiry errors retain Linux's precedence bits and longer quotes, checked separately from the guest's zero-TOS policy. Use a fresh `--directory` beneath `build/` when invoking `scripts/ipv4_fragment_native.py` again; it refuses to overwrite earlier results.
+
+`make test-ipv4-fragmentation` checks the production fragment writer under both sanitizers, including minimum/maximum MTUs, DF rejection, offset and checksum reconstruction, copied-option handling, repeated fragmentation and a changed MTU. Twenty-one output wire cases per NIC compare raw ICMP and UDP, all six discovery policies, exact MTU boundaries, maximum payloads and a maximum datagram at MTU 68. The peer checks every retained application byte after the client overwrites its send buffer. Linux TAP queues hold the complete worst-case burst; both TAP and independent capture drop counts must stay zero. The raw data socket uses `SO_SNDBUFFORCE` with `CAP_NET_ADMIN` to cover Linux's per-fragment memory charges. Its doubled quota and denial after dropping privileges are checked on both systems.
+
+The guest and native clients also age incomplete queues on both adapters concurrently. The peer repeats an identical first fragment after 30 real seconds, requires an ICMP Time Exceeded quote at the original 60-second deadline, and verifies every quoted byte against that first fragment. Guest quotes must arrive within 61 seconds. Native comparisons allow up to 66 seconds for [Linux's timer batching](https://github.com/torvalds/linux/blob/3857c2fe5449541e24afc5efdb0f81a8a8f9a3a0/kernel/time/timer.c#L97); the configured lifetime stays 60 seconds. Missing-first, ICMP-error and Ethernet-broadcast cases start two seconds apart in the guest, and eight seconds apart on Linux so timer batching and rate limiting cannot hide a missing suppression rule. Quiet observation continues until 63 seconds after the last guest context, or 69 seconds after the last native context.
+
+Ordered barriers then prove that a final fragment cannot reuse expired first bytes, while a fresh first fragment completes the reused identity. Results retain host monotonic observations and the client's elapsed clock measurements; no guest clock or production deadline changes.
+
+The native peer waits for the independent collector to record each injected expiry context before starting the next spacing interval. This preserves the full eight-second separation when a preceding fragment burst delays the reader. The final quiet interval also starts after that receipt. Capture timestamps and independent audit thresholds remain unchanged; a missing receipt fails the comparison.
+
+An independent capture auditor checks tuple ownership, packet checksums, original quote bytes, elapsed timing, suppression spacing and reuse barriers. Ten damaged captures per adapter must fail, including both early and late expiry; original captures, native monotonic receipt files and compressed negative fixtures remain available.
+
+Broader UDP/TCP fragment corpora, dynamic guest linkage and the remaining complete IP requirements still need independent acceptance evidence. The current receiver continues to require a 20-byte header; variable-header module tests do not establish IP option support in the receive path.
+
+<a id="raw-icmp-socket-contract"></a>
+
+## Raw IPv4 socket contract
+
+`socket(AF_INET, SOCK_RAW, protocol)` accepts `IPPROTO_ICMP` and `IPPROTO_UDP`. Both support close-on-exec and nonblocking flags, bind/connect/disconnect, duplicate/fork lifetime, address queries, `read`/`write`, vectors, and send/receive message calls. Received data includes the IP header. Source `sockaddr_in` contains `AF_INET`, port zero, and the source IPv4 address. The raw socket's local port metadata is the protocol number; the supplied connect port is peer-query metadata and does not affect transmission. As on the compared Linux path, a zero peer port makes `getpeername` report `ENOTCONN`.
+
+A raw UDP sender supplies the UDP header as part of its payload; socket-address
+ports do not replace that header. Raw receivers get the complete IPv4 datagram
+before UDP length/checksum validation. A malformed UDP payload can therefore
+reach a matching raw listener while the UDP datagram listener rejects it.
+Independent raw listeners receive separate copies. Logical raw payloads range
+from zero to 65,515 bytes, including any caller-provided transport header.
+Multicast raw input applies protocol, interface, bound-address, peer and source
+membership filters. Raw group binds and `SO_REUSEADDR` are supported.
+
+Each listener holds at most 32 datagrams and 65536 bytes, dropping new arrivals when either bound is reached without affecting other listeners. `SO_RCVBUF` and `SO_SNDBUF` double the requested size, clamp it to the supported bound, and impose a 2048-byte minimum. `SO_BINDTODEVICE`, `SO_BROADCAST`, `IP_TTL`, the supported DF policies, and `ICMP_FILTER` for ICMP are implemented. The UDP raw protocol rejects `ICMP_FILTER` with `EOPNOTSUPP`. Bind, peer, interface, and ICMP filters apply independently.
+
+`SO_SNDBUFFORCE` requires `CAP_NET_ADMIN`, permits a larger send quota and reports the doubled value through `SO_SNDBUF`. It does not enlarge the fixed global IP output table or maximum datagram size. Receive-buffer forcing and complete Linux memory-accounting equivalence remain separate socket requirements.
 
 Receive supports `MSG_PEEK`, `MSG_TRUNC`, and `MSG_DONTWAIT`; sends also accept `MSG_NOSIGNAL`. Poll/epoll and `FIONREAD` expose queue state. An ordinary failed receive copy consumes the selected datagram; a failed peek retains it. This behavior is checked against Linux and leaves the separate packet-socket contract intact. Blocking I/O captures vectors, addresses, and TX bytes and retains the original description through close/reuse. Socket errors take precedence over queued input; a failed `SO_ERROR` copy does not clear the pending error.
 
-Other raw protocols, raw listen/accept/shutdown, ancillary data, `IP_HDRINCL`, error queues and unsupported options return explicit errors. [UDP](udp.md) and [TCP](tcp.md) have their own data and shutdown contracts, using common finite [socket deadlines](io.md). [Task credentials and permission checks](credentials.md) support numeric identities; persistent accounts/login, full isolation, file capabilities and complete secure-randomness acceptance remain prerequisites for the service release.
+The shared raw UDP client passes 220 operations across nine native profiles
+(glibc and both musl linkages on Linux 6.6, 6.17 and 7) and four static/dynamic
+BIOS/UEFI guest profiles. Each execution observes 23 complete packets and 48
+full 200 ms quiet windows. Seven source-filter phases cover INCLUDE/EXCLUDE,
+multicast-all, duplicate-description retention, final close and fresh-description
+isolation. All 79 operations in the original multicast ABI client now pass in
+three native and four guest profiles; its former raw UDP creation failure is
+retained as a control.
+
+Root and ordinary readers reopen the actual programs, sources, runtime libraries,
+initramfs and images, and reject 25 serialized changes. They preserve the failed
+old kernel and the original down-loopback native fixture. These are loopback
+socket and data observations; Ethernet behavior, broader raw options and current
+source-report/hosted qualification remain required.
+
+Other raw protocols, raw listen/accept/shutdown, `IP_HDRINCL`, error queues and unsupported options return explicit errors. [UDP](udp.md) and [TCP](tcp.md) have their own data and shutdown contracts, using common finite [socket deadlines](io.md). [Task credentials and permission checks](credentials.md) support numeric identities; persistent accounts/login, full isolation, file capabilities and complete secure-randomness acceptance remain prerequisites for the service release.
 
 ## Verification
 
@@ -65,7 +349,7 @@ python3 scripts/ipv4_test.py --firmware both --fault
 sudo ./build/ipv4-tests --loopback
 ```
 
-The final command runs the common loopback/raw-socket checks on the Linux build host for comparison. The guest matrix has eight boots: BIOS/UEFI and modern/legacy virtio, each with virtio-net and e1000 together, followed by the same four cases with an isolated virtio RX identity fault. Results accumulate in `build/ipv4-results.json`; logs and GDB commands use `build/ipv4-*`. A standalone invocation replaces its result file with that invocation's cases.
+The final command runs the common loopback/raw-socket checks on the Linux build host for comparison. The guest matrix has eight boots: BIOS/UEFI and modern/legacy virtio, each with virtio-net and e1000 together, followed by the same four cases with an isolated virtio RX identity fault. Two isolated worker processes run concurrently by default, sharing one immutable image per phase. `python3 scripts/ipv4_matrix.py --workers 1` runs sequentially; `--workers 4` runs all four phase profiles together. CI uses `make test-ipv4 IPV4_WORKERS=4`; the local Make target defaults to two workers. All eight boots, both adapters, original observations and per-profile deadlines remain required. Every profile retains its original coverage and complete observations. Results accumulate in `build/ipv4-results.json`; logs, worker receipts and GDB commands use `build/ipv4-*`. A standalone invocation replaces its result file with that invocation's cases. The corrected administrative observer passes all eight local cases with the original four-worker CI setting, 780/120-second normal/fault deadlines and complete ten-minute path-MTU lifetime. Independent readers open both images and sixteen captures and reject 564 serialized and reopened packet, query and fault-evidence changes. The four original failed hosted programs remain rejected; final-source hosted qualification remains required.
 
 Independent loopback TCP peers handle QEMU's Ethernet framing. They validate interface-specific MACs, ARP fields/padding, IPv4 route/source/destination/length/checksum/TTL/DF, ICMP checksums, and deterministic payloads. They answer real guest requests; they do not run guest socket operations or substitute for the kernel stack. BusyBox sends two actual ping requests per interface.
 
@@ -73,8 +357,38 @@ Checks cover static ioctls and invalid masks, loopback and /32 local delivery, g
 
 Cache tests resolve 129 distinct neighbors per adapter, retain the newest mapping, resolve the evicted oldest mapping again, and refresh a peer's changed MAC through an actual ARP request. Expiry tests use GDB to move one real reachable entry's expiration to the current tick, then require a new wire ARP request. No production test hooks are added.
 
-The output-pressure test fills all 32 pending IP slots, requires `EAGAIN` and absent write readiness, and resumes a blocked 33rd sender after the peer answers ARP. The ARP reply ownership test separately injects `EAGAIN` at the exact x86-64 Ethernet function entry through GDB. A guest-acknowledged sequence of 96 ARP frames recycles more than a hardware RX ring while the original reply waits; after release the host requires its original 60 bytes. This tests protocol ownership under controlled backpressure. The [Ethernet suite](network.md#verification) separately fills the real driver TX capacity and observes actual completions.
+The output-pressure test fills all 32 pending IP slots, requires `EAGAIN` and absent write readiness, and resumes a blocked 33rd sender after the peer answers ARP. The ARP reply ownership test separately stops at the exact x86-64 Ethernet entry for the queued reply. GDB temporarily replaces that NIC driver's entry with an `EAGAIN` return, then restores and verifies its original bytes after release. This avoids repeated debugger stops while driver polling, RX and the original one-second queue lifetime continue. A guest-acknowledged sequence of 96 ARP frames recycles more than a hardware RX ring while the original reply waits; after release the host requires its original 60 bytes. This tests protocol ownership under controlled backpressure. The [Ethernet suite](network.md#verification) separately fills the real driver TX capacity and observes actual completions.
 
 Fault cases corrupt one actual virtio used-head identity at the RX validation boundary, require the bound raw socket's persistent error, and then exchange ICMP through the unaffected e1000 adapter. Full ABI/thread/compiler/signal/VFS/desktop/input, Ethernet, disk, ext2 root/data, delayed-flush, formatting, sanitizer, and corresponding-source checks remain required before integration.
 
 Protocol references are [ARP](https://www.rfc-editor.org/rfc/rfc826), [IPv4](https://www.rfc-editor.org/rfc/rfc791), [ICMP](https://www.rfc-editor.org/rfc/rfc792), and [host requirements](https://www.rfc-editor.org/rfc/rfc1122). Linux contracts are compared with [raw sockets](https://man7.org/linux/man-pages/man7/raw.7.html), [IP sockets](https://man7.org/linux/man-pages/man7/ip.7.html), [interface ioctls](https://man7.org/linux/man-pages/man7/netdevice.7.html), and the pinned [Linux 6.12 raw implementation](https://github.com/torvalds/linux/blob/v6.12/net/ipv4/raw.c) and [Internet address queries](https://github.com/torvalds/linux/blob/v6.12/net/ipv4/af_inet.c). These references define the broader contracts; this initial slice does not claim complete conformance.
+
+
+## Per-message output controls
+
+UDP and raw IPv4 sends import `IP_PKTINFO`, `IP_TTL` and `IP_TOS` into each
+request. The selected interface, source, destination, TTL and TOS belong to that
+request and do not change shared socket defaults. Malformed controls, unsupported
+options and protected input spans preserve Linux error ordering. Socket-memory
+waits defer payload copying; output-table waits retain payload already copied.
+Closing one descriptor does not release a request held through another alias.
+
+Held explicit and automatic-prefix routes survive preference changes, but
+retirement silently discards their admitted packets. Recreating an identical
+route does not revive the old owner. Administrative down/up retires FIB owners;
+an uncached forced-interface fallback retains its separate lifetime. Connected
+UDP retains its nonzero selected source across a later named output selection.
+The [send comparisons](testing.md#ipv4-send-control-comparison) retain complete
+loopback and physical-interface evidence. Full networking and current-revision
+hosted acceptance remain required.
+
+Native comparisons record each held-send outcome by adapter and case. On Linux,
+[cache replacement](https://github.com/torvalds/linux/blob/v7.0/net/ipv4/route.c#L1490-L1518)
+can move an admitted destination to the uncached list. Ordinary administrative
+[shutdown](https://github.com/torvalds/linux/blob/v7.0/net/ipv4/fib_frontend.c#L1503-L1526)
+does not retire that list through the same path as cached FIB destinations.
+Both discard and retained output occur on the same native kernel. Axiom64 keeps
+its final-owner discard contract. Complete original packet contents, inventories,
+capture clocks, loss checks and observation windows remain required for both.
+
+The Ethernet retirement observer requests three seconds plus the reported monotonic clock resolution to cover coarse-clock quantization. Independent capture readers still require at least three complete seconds; process, syscall and barrier deadlines are unchanged.

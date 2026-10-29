@@ -15,6 +15,16 @@ Axiom64 retains the open file description selected by an I/O syscall while that 
 
 Socket transfers support `MSG_DONTWAIT`, receive `MSG_PEEK`, and send `MSG_NOSIGNAL`. Peeking advances across the captured vectors without consuming bytes. Unsupported transfer flags, `MSG_WAITALL`, named Unix messages, and ancillary sending return `EOPNOTSUPP`. Socket receive/send deadlines are supported as described below. Poll/select/epoll have separate wait state and are not affected by these socket options.
 
+IPv6 raw/UDP [extended error receives](ipv6.md#extended-error-queues) use `MSG_ERRQUEUE` through the same selected description. They return immediately, own their dequeued record during user copies and keep normal receive data independent. They do not create a retained blocking receive attempt.
+
+## Vectored transfers
+
+`readv`, `writev`, `recvmsg` and `sendmsg` capture their vector metadata before waiting. More than 1024 vectors returns `EINVAL` for file operations and `EMSGSIZE` for message operations. Each length must fit a signed 64-bit value. Multiple vectors validate every full address span before clipping the total to `0x7ffff000` bytes; a single vector clips its length before checking the span. These rules follow [Linux v7.0 vector import](https://github.com/torvalds/linux/blob/v7.0/lib/iov_iter.c). Normal I/O and IPv6 error receives share the same bounded metadata policy.
+
+Mapping checks apply to bytes transferred. A large valid span can return a short read or EOF without mappings for its unused tail. Regular-file copies return the completed page prefix on a later fault. Pipe and Unix stream reads keep a faulting chunk queued; bytes already copied to the destination remain visible. Writes to `/dev/null` and `/dev/zero` discard bytes without reading payload pages. Address-span validation still applies.
+
+Empty Unix stream sends check connection and shutdown state. A broken peer returns `EPIPE` and delivers `SIGPIPE` unless `MSG_NOSIGNAL` suppresses it. An empty `writev` retains its zero-byte shortcut.
+
 ## Event counters
 
 The Linux x86-64 `eventfd` and `eventfd2` calls create an unsigned 64-bit counter shared by duplicates, forked descriptions and retained I/O. `EFD_SEMAPHORE`, `EFD_NONBLOCK` and `EFD_CLOEXEC` are supported; unknown flags return `EINVAL`. Descriptor creation uses the current `RLIMIT_NOFILE` admission path. Final description release frees the counter, including after descriptor replacement during a blocked call.
@@ -29,7 +39,7 @@ The download contract client checks flags, size and overflow boundaries, semapho
 
 ## Linux socket deadlines
 
-`SOL_SOCKET` options `SO_RCVTIMEO_OLD`/`SO_SNDTIMEO_OLD` (20/21) and `SO_RCVTIMEO_NEW`/`SO_SNDTIMEO_NEW` (66/67) share receive/send duration state on the open socket description. On Linux x86-64, both forms use two signed 64-bit fields: seconds and microseconds. Unix streams, packet sockets, IPv4 raw/UDP sockets and netlink route sockets use the common dispatcher in `kernel/io/socket_timeout.cpp`. Duplicates and forked descriptors share the options; a new socket description starts with infinite waits, including an accepted Unix stream.
+`SOL_SOCKET` options `SO_RCVTIMEO_OLD`/`SO_SNDTIMEO_OLD` (20/21) and `SO_RCVTIMEO_NEW`/`SO_SNDTIMEO_NEW` (66/67) share receive/send duration state on the open socket description. On Linux x86-64, both forms use two signed 64-bit fields: seconds and microseconds. Unix streams, packet sockets, IPv4/IPv6 raw/UDP sockets and netlink route sockets use the common dispatcher in `kernel/io/socket_timeout.cpp`. Duplicates and forked descriptors share the options; a new socket description starts with infinite waits, including an accepted Unix stream.
 
 Durations round up to the kernel's 10 ms clock units, following the jiffy conversion in [Linux v6.14](https://github.com/torvalds/linux/blob/v6.14/net/core/sock.c). A zero timeval or a duration exceeding `MAX_SCHEDULE_TIMEOUT` selects an infinite wait. A negative seconds field is accepted as an immediate timeout; invalid microseconds return `EDOM`, a short option length returns `EINVAL`, and invalid memory returns `EFAULT`. Failed setters leave the previous value intact. Getters report the rounded duration, copy at most the supplied output capacity, and update the length to the copied size.
 
@@ -83,6 +93,8 @@ make test
 ```
 
 The focused BIOS/UEFI profile runs static and dynamic musl tests. It checks close/dup2/reuse on blocked pipe and socket reads/writes, vectored metadata changes, send/receive messages, accept/listener lifetime, short reads, nonblocking/errors, unmapped buffers, independent fork file tables, caught and nested signals, restart, `siglongjmp`, group stop/continue, failed exec, successful exec, fatal/group exit, an exited leader with a waiting survivor, and repeated resource reuse. Endpoint `EPIPE` and EOF checks detect retained-reference leaks. Guest-only assertions require rejection of the documented unsupported socket paths; the supported cases also run on Linux as contract comparisons.
+
+The same client checks 77 vector metadata/length cases, 24 read-copy cases, 20 write-copy cases, 16 empty-send/signal cases and 18 cross-vector chunk cases. The chunk cases cover read/write vectors and receive/send messages, leading empty vectors, copied prefixes, retained queues and short input that never reaches an invalid tail. Native runs cover both musl linkages and a separate glibc vector client. Guest runs require the complete vector marker for each linkage. Native logs and all three executables are retained with CI evidence. These cases exercise actual descriptors, mapped/unmapped pages, queued bytes, file offsets and signal delivery; they do not establish complete Linux stream or pipe conformance.
 
 Socket timeout checks cover all ten supported operation forms, option validation and old/new aliases, dup/fork sharing, a changed option during an existing wait, descriptor replacement by a ready pipe, listener final close, four caught-signal paths with blocking handler I/O, stop/continue, successful short progress, nonblocking and independent poll waits, all four socket families, and 300 short expiry/reclamation cycles per linkage. Eight unmapped-buffer expiry cases and two readable copy-fault controls also verify final description release and leave a replacement pipe untouched. Native packet/raw tests require the corresponding privileges; unprivileged execution records explicit skips and its actual family count. CI requires all four families in privileged native runs and every guest linkage marker.
 

@@ -13,6 +13,7 @@ namespace ax::net {
 namespace {
 constexpr size_t journal_header = 60, route_bytes = 24;
 constexpr uint8_t magic[]{'A', 'X', 'N', 'W', 'O', 'W', 'N', '1'};
+constexpr uint8_t preserved_magic[]{'A', 'X', 'N', 'P', 'R', 'S', 'V', '1'};
 
 bool mask_valid(uint32_t mask) {
     uint32_t bits = ~mask;
@@ -33,7 +34,7 @@ bool host(uint32_t address, uint32_t mask) {
 bool same_route(const Route& a, const Route& b) {
     return a.destination == b.destination && a.mask == b.mask && a.gateway == b.gateway &&
            a.metric == b.metric && a.index == b.index && a.protocol == b.protocol &&
-           a.scope == b.scope;
+           a.scope == b.scope && a.preferred_source == b.preferred_source && a.tos == b.tos;
 }
 
 uint32_t get(const uint8_t* bytes) {
@@ -80,6 +81,7 @@ int Configuration::close() {
     if (!error)
         error = closed;
     active_ = before_ = after_ = {};
+    preserved_ = {};
     pending_ = false;
     return error;
 }
@@ -141,7 +143,7 @@ bool Configuration::valid(const Snapshot& value) const {
         const auto& route = value.routes[i];
         if (!mask_valid(route.mask) || (route.destination & route.mask) != route.destination ||
             route.index != index_ || route.metric < 2 || route.metric > 32767 ||
-            (route.protocol != 4 && route.protocol != 16) ||
+            route.preferred_source || route.tos || (route.protocol != 4 && route.protocol != 16) ||
             (route.gateway ? route.scope != 0 : route.scope != 253) ||
             (route.gateway && (!host(route.gateway, value.mask) || route.gateway == value.address ||
                                (route.gateway & value.mask) != (value.address & value.mask))))
@@ -229,8 +231,8 @@ int Configuration::set_address(const Snapshot& old, const Snapshot& desired) {
     return error;
 }
 
-int Configuration::journal(const Snapshot& old, const Snapshot& desired) const {
-    uint8_t bytes[journal_header + route_bytes * 2 * (dhcp::max_routes + 1)]{};
+int Configuration::journal(const Snapshot& old, const Snapshot& desired, bool preserve) const {
+    uint8_t bytes[4096]{};
     size_t size = journal_header + route_bytes * (old.count + desired.count);
     memcpy(bytes, magic, sizeof(magic));
     put(bytes + 8, size);
@@ -257,11 +259,21 @@ int Configuration::journal(const Snapshot& old, const Snapshot& desired) const {
             at += route_bytes;
         }
     }
+    if (preserve && preserved_.size) {
+        if (preserved_.size > sizeof(bytes) - size - 12 ||
+            size + 12 + preserved_.size >= sizeof(bytes))
+            return ENOSPC;
+        memcpy(bytes + size, preserved_magic, sizeof(preserved_magic));
+        put(bytes + size + 8, preserved_.size);
+        memcpy(bytes + size + 12, preserved_.bytes, preserved_.size);
+        size += 12 + preserved_.size;
+        put(bytes + 8, size);
+    }
     put(bytes + 12, digest(bytes + 16, size - 16));
     return store_->write(name_, ".owned", bytes, size);
 }
 
-int Configuration::read_journal(Snapshot& old, Snapshot& desired) const {
+int Configuration::read_journal(Snapshot& old, Snapshot& desired) {
     uint8_t bytes[4096];
     size_t size = 0;
     int error = store_->read(name_, ".owned", reinterpret_cast<char*>(bytes), sizeof(bytes), size);
@@ -299,10 +311,20 @@ int Configuration::read_journal(Snapshot& old, Snapshot& desired) const {
         if (!valid(value))
             return EINVAL;
     }
-    if (at != size)
-        return EINVAL;
+    detail::RouteSnapshot preserved;
+    if (at != size) {
+        if (size - at < 12 || memcmp(bytes + at, preserved_magic, sizeof(preserved_magic)))
+            return EINVAL;
+        preserved.size = get(bytes + at + 8);
+        if (preserved.size != size - at - 12 || preserved.size > sizeof(preserved.bytes))
+            return EINVAL;
+        memcpy(preserved.bytes, bytes + at + 12, preserved.size);
+        if (!Routing::valid(preserved, index_))
+            return EINVAL;
+    }
     old = saved[0];
     desired = saved[1];
+    preserved_ = preserved;
     return 0;
 }
 
@@ -316,9 +338,9 @@ int Configuration::preflight(const Snapshot& desired, bool& unchanged) {
     };
     if (current.address && !same_address(current, active_))
         return EBUSY;
-    Route saved[64];
+    Route saved[Routing::capacity];
     size_t count = 0;
-    error = routing_.list(saved, 64, count);
+    error = routing_.list(saved, Routing::capacity, count);
     if (error)
         return error;
     unchanged = same_address(current, desired) && active_.count == desired.count;
@@ -341,7 +363,8 @@ int Configuration::preflight(const Snapshot& desired, bool& unchanged) {
                     owned |= same_route(saved[j], active_.routes[k]);
                 if (!owned && desired.routes[i].destination == saved[j].destination &&
                     desired.routes[i].mask == saved[j].mask &&
-                    desired.routes[i].metric == saved[j].metric)
+                    desired.routes[i].metric == saved[j].metric &&
+                    desired.routes[i].tos == saved[j].tos)
                     return EEXIST;
             }
     return 0;
@@ -367,6 +390,34 @@ int Configuration::mutate(const Address& address, bool remove) {
     return error;
 }
 
+int Configuration::preserve(const Snapshot& old, const Snapshot& desired) {
+    auto previous = preserved_;
+    int error =
+        routing_.preserve(preserved_, index_, old.routes, old.count, desired.routes, desired.count);
+    if (error == EBADF) {
+        error = routing_.open();
+        if (!error)
+            error = routing_.preserve(preserved_, index_, old.routes, old.count, desired.routes,
+                                      desired.count);
+    }
+    size_t owned_bytes = journal_header + route_bytes * (old.count + desired.count);
+    if (!error && preserved_.size && owned_bytes + 12 + preserved_.size >= 4096) {
+        preserved_ = previous;
+        return ENOSPC; // No journal or kernel mutation has occurred.
+    }
+    return error;
+}
+
+int Configuration::restore() {
+    int error = routing_.restore(preserved_, index_);
+    if (error == EBADF) {
+        error = routing_.open();
+        if (!error)
+            error = routing_.restore(preserved_, index_);
+    }
+    return error;
+}
+
 int Configuration::remove_routes(const Snapshot& value) {
     int result = 0;
     for (unsigned i = value.count; i; i--) {
@@ -385,9 +436,9 @@ int Configuration::add_routes(const Snapshot& value) {
                 continue;
             int error = mutate(route, false);
             if (error == EEXIST) {
-                Route saved[64];
+                Route saved[Routing::capacity];
                 size_t count = 0;
-                error = routing_.list(saved, 64, count, index_, route.protocol);
+                error = routing_.list(saved, Routing::capacity, count, index_, route.protocol);
                 bool exists = false;
                 for (size_t j = 0; !error && j < count; j++)
                     exists |= same_route(saved[j], route);
@@ -415,11 +466,18 @@ int Configuration::clear(const Snapshot& old, const Snapshot& desired) {
         result = set_address(current, Snapshot{});
     if (!error)
         error = result;
+    if (!error)
+        error = restore();
     return error;
 }
 
 int Configuration::rollback(const Snapshot& old, const Snapshot& desired) {
-    int error = remove_routes(desired);
+    // A failed committed-record publication can already have renamed the file.
+    // Persist preservation again before rollback can remove another address.
+    int error = journal(old, desired);
+    if (error)
+        return error;
+    error = remove_routes(desired);
     Snapshot current;
     int result = read_address(current);
     if (!error)
@@ -433,11 +491,14 @@ int Configuration::rollback(const Snapshot& old, const Snapshot& desired) {
     if (!error)
         error = set_address(current, old);
     if (!error)
+        error = restore();
+    if (!error)
         error = add_routes(old);
     if (!error)
-        error = old.address ? journal(Snapshot{}, old) : store_->remove(name_, ".owned");
+        error = old.address ? journal(Snapshot{}, old, false) : store_->remove(name_, ".owned");
     if (!error) {
         active_ = old;
+        preserved_ = {};
         pending_ = false;
         before_ = after_ = {};
     }
@@ -462,6 +523,12 @@ int Configuration::apply(uint32_t address, const dhcp::Parameters& parameters, u
         return error;
     before_ = active_;
     after_ = desired;
+    error = preserve(before_, after_);
+    if (error) {
+        before_ = after_ = {};
+        preserved_ = {};
+        return error;
+    }
     pending_ = true;
     error = journal(before_, after_);
     if (!error)
@@ -469,15 +536,18 @@ int Configuration::apply(uint32_t address, const dhcp::Parameters& parameters, u
     if (!error)
         error = set_address(before_, desired);
     if (!error)
+        error = restore();
+    if (!error)
         error = add_routes(desired);
     if (!error)
-        error = journal(Snapshot{}, desired);
+        error = journal(Snapshot{}, desired, false);
     if (error) {
         int restored = rollback(before_, after_);
         return restored ? restored : error;
     }
     active_ = desired;
     before_ = after_ = {};
+    preserved_ = {};
     pending_ = false;
     return 0;
 }
@@ -487,13 +557,24 @@ int Configuration::withdraw() {
         return EBADF;
     Snapshot old = pending_ ? before_ : active_;
     Snapshot desired = pending_ ? after_ : Snapshot{};
-    int error = clear(old, desired);
+    int error = preserve(old, desired);
+    if (error)
+        return error;
+    before_ = old;
+    after_ = desired;
+    pending_ = true;
+    error = journal(old, desired);
+    if (!error)
+        error = clear(old, desired);
     if (!error)
         error = store_->remove(name_, ".owned");
-    if (!error) {
-        active_ = before_ = after_ = {};
-        pending_ = false;
+    if (error) {
+        int restored = rollback(old, desired);
+        return restored ? restored : error;
     }
-    return error;
+    active_ = before_ = after_ = {};
+    preserved_ = {};
+    pending_ = false;
+    return 0;
 }
 } // namespace ax::net

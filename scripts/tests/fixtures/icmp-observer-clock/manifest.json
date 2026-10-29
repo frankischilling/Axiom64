@@ -1,0 +1,31 @@
+{
+  "scope": "actual native observer clock reader regression; selected serial records and complete original lane0 capture",
+  "kernel": "7.0.0-1017-azure",
+  "source_tree": "b2f134330b52b6a6c5a3c5c89b93c8cb5613fc70",
+  "capture": "tcp-icmp-linux-static-lane0.pcap",
+  "selected_physical_record_indices": [
+    134,
+    135
+  ],
+  "original_serial_sha256": "4d4b922e52cdf8d4f489997a4c835e20a10bad220c41f9a427b6030dc2bb2cbd",
+  "original_capture_sha256": "4f5cd6b69d3a0bb4da063e982cae977ade14d9e378104b974797523caf5107d4",
+  "original_clock_receipts_sha256": "23e44f354b5a1541b59788f210cd53d1c7c3a9a7ee656fc328ef7eae619f7698",
+  "files": {
+    "capture-statistics.json": {
+      "bytes": 782,
+      "sha256": "c3b3d2b4121225f02ab7a78327a71ab5a13d4d3f6842d728c7db8a6382d4c015"
+    },
+    "serial.log": {
+      "bytes": 642,
+      "sha256": "aa284c1113bd4d16765d3bee1fa2dbb57263b894552a9821d326bd8291a3f632"
+    },
+    "tcp-icmp-linux-static-lane0.clocks.jsonl": {
+      "bytes": 238048,
+      "sha256": "23e44f354b5a1541b59788f210cd53d1c7c3a9a7ee656fc328ef7eae619f7698"
+    },
+    "tcp-icmp-linux-static-lane0.pcap": {
+      "bytes": 69897,
+      "sha256": "4f5cd6b69d3a0bb4da063e982cae977ade14d9e378104b974797523caf5107d4"
+    }
+  }
+}

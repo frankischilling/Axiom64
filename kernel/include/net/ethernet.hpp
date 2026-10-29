@@ -48,6 +48,11 @@ bool net_writable(unsigned index);
 
 int net_send(unsigned index, const void*, size_t, const void* sender = nullptr);
 
+// Device polling may change protocol ownership or routes. Revalidate the
+// borrowed frame after polling and before copying it to the device.
+int net_send_checked(unsigned index, const void*, size_t, int (*validate)(void*), void* context,
+                     const void* sender = nullptr);
+
 void net_receive(NetAdapter&, const void*, size_t);
 
 void net_tx_complete(NetAdapter&, size_t, bool error = false);

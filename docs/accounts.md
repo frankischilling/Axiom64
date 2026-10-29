@@ -129,6 +129,15 @@ Password-update tests pass six native profiles and eight guests, with 42 and 56 
 
 Process-status comparisons pass six native profiles and eight guests with 48 and 64 observations, plus the GNU ASAN/UBSAN scanner. Both firmware paths run the unchanged broad ABI/thread/IPC/signal/VFS suite. Eight ext2-root procfs cells cover read-only/writable roots, BIOS/UEFI and modern/legacy transports, with eight successful host filesystem checks and unchanged read-only disk bytes. This procfs subset provides process and thread status, enumeration and caller-relative links; wider process diagnostics remain unfinished.
 
+The process-status client observes actual kernel thread retirement after joining,
+before checking that an identity is no longer busy and retained status files have
+their final behavior. Linux can finish userspace teardown before removing the
+task's process metadata. A separate native regression gives the exiting thread a
+private file table, verifies all six libc/linkage profiles over 384 retirements,
+and rejects a live task at the bounded retirement wait. The busy-account scanner
+still counts every visible owner. All original status and descriptor assertions,
+eight observations per execution and ninety-second profile deadlines remain.
+
 Normal-image tests pass two RAM boots and four ext2 create/reboot pairs across BIOS/UEFI and modern/legacy virtio block transports, with eight independent filesystem checks. The installed init and Bash run without a test-mode boot flag. Guest checks cover wrong-password denial, all identity/group values, conventional libc lookups, ordinary shadow denial, private home/file/terminal ownership, authenticated sudo, normal logout, supervisor SIGKILL recovery, a real one-second restart and required login again. Persistent boots retain the same account generation, protected metadata and user-created file. Independent decoding checks all 264 captured journal frames and exact utmp/wtmp/btmp/auth projections, including recovery of leases interrupted by authenticated poweroff.
 
 Persistent administration passes sixteen journaled ext2 variants across both libc providers, static/dynamic linkage, BIOS/UEFI and both block transports. Each variant creates accounts, exercises actual administration commands, runs twelve concurrent updates and verifies the result in a fresh kernel. All 64 boots keep their 120-second deadlines. Independent host inspection checks the retained account files, inode ownership and modes, private home contents and strict filesystem consistency. Running variants serially avoids shared host I/O contention while preserving the actual concurrent commands inside each guest.

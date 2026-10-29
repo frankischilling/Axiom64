@@ -1,0 +1,113 @@
+{
+  "native": true,
+  "events": [
+    {
+      "subject": 0,
+      "up": false,
+      "begin_monotonic_ns": 525739700760,
+      "command": [
+        "ip",
+        "link",
+        "set",
+        "peer0",
+        "down"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "query_command": [
+        "ip",
+        "-j",
+        "link",
+        "show",
+        "dev",
+        "eth0"
+      ],
+      "query_returncode": 0,
+      "query_stdout": "[{\"ifindex\":3,\"link\":\"peer0\",\"ifname\":\"eth0\",\"flags\":[\"NO-CARRIER\",\"BROADCAST\",\"MULTICAST\",\"UP\",\"M-DOWN\"],\"mtu\":1500,\"qdisc\":\"noqueue\",\"operstate\":\"LOWERLAYERDOWN\",\"linkmode\":\"DEFAULT\",\"group\":\"default\",\"txqlen\":1000,\"link_type\":\"ether\",\"address\":\"52:54:00:12:34:10\",\"broadcast\":\"ff:ff:ff:ff:ff:ff\"}]\n",
+      "query_stderr": "",
+      "end_monotonic_ns": 526064593080
+    },
+    {
+      "subject": 0,
+      "up": true,
+      "begin_monotonic_ns": 530277744080,
+      "command": [
+        "ip",
+        "link",
+        "set",
+        "peer0",
+        "up"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "query_command": [
+        "ip",
+        "-j",
+        "link",
+        "show",
+        "dev",
+        "eth0"
+      ],
+      "query_returncode": 0,
+      "query_stdout": "[{\"ifindex\":3,\"link\":\"peer0\",\"ifname\":\"eth0\",\"flags\":[\"BROADCAST\",\"MULTICAST\",\"UP\",\"LOWER_UP\"],\"mtu\":1500,\"qdisc\":\"noqueue\",\"operstate\":\"UP\",\"linkmode\":\"DEFAULT\",\"group\":\"default\",\"txqlen\":1000,\"link_type\":\"ether\",\"address\":\"52:54:00:12:34:10\",\"broadcast\":\"ff:ff:ff:ff:ff:ff\"}]\n",
+      "query_stderr": "",
+      "end_monotonic_ns": 530586945700
+    },
+    {
+      "subject": 1,
+      "up": false,
+      "begin_monotonic_ns": 541201900510,
+      "command": [
+        "ip",
+        "link",
+        "set",
+        "peer1",
+        "down"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "query_command": [
+        "ip",
+        "-j",
+        "link",
+        "show",
+        "dev",
+        "eth1"
+      ],
+      "query_returncode": 0,
+      "query_stdout": "[{\"ifindex\":6,\"link\":\"peer1\",\"ifname\":\"eth1\",\"flags\":[\"NO-CARRIER\",\"BROADCAST\",\"MULTICAST\",\"UP\",\"M-DOWN\"],\"mtu\":1500,\"qdisc\":\"noqueue\",\"operstate\":\"LOWERLAYERDOWN\",\"linkmode\":\"DEFAULT\",\"group\":\"default\",\"txqlen\":1000,\"link_type\":\"ether\",\"address\":\"52:54:00:12:34:11\",\"broadcast\":\"ff:ff:ff:ff:ff:ff\"}]\n",
+      "query_stderr": "",
+      "end_monotonic_ns": 541549631250
+    },
+    {
+      "subject": 1,
+      "up": true,
+      "begin_monotonic_ns": 545753586130,
+      "command": [
+        "ip",
+        "link",
+        "set",
+        "peer1",
+        "up"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": "",
+      "query_command": [
+        "ip",
+        "-j",
+        "link",
+        "show",
+        "dev",
+        "eth1"
+      ],
+      "query_returncode": 0,
+      "query_stdout": "[{\"ifindex\":6,\"link\":\"peer1\",\"ifname\":\"eth1\",\"flags\":[\"BROADCAST\",\"MULTICAST\",\"UP\",\"LOWER_UP\"],\"mtu\":1500,\"qdisc\":\"noqueue\",\"operstate\":\"UP\",\"linkmode\":\"DEFAULT\",\"group\":\"default\",\"txqlen\":1000,\"link_type\":\"ether\",\"address\":\"52:54:00:12:34:11\",\"broadcast\":\"ff:ff:ff:ff:ff:ff\"}]\n",
+      "query_stderr": "",
+      "end_monotonic_ns": 546095748460
+    }
+  ]
+}

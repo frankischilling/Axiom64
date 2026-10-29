@@ -17,7 +17,7 @@ from qmp import Qmp
 from network_fault import inject
 
 
-def run(firmware, transport, timeout=90, fault=False, debugger_delay=0):
+def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *, capture_directory=None, image=None):
     label = f'udp-{firmware}-{transport}' + ('-fault' if fault else '')
     log = ROOT / 'build' / (label + '.log')
     selector = selectors.DefaultSelector()
@@ -29,7 +29,7 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0):
     debugger = debug_log = None
     servers, peers = [], [Peer(lane, fault) for lane in range(2)]
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '2G',
-               '-cdrom', str(ROOT / 'build/udp-test.iso'), '-nic', 'none', '-display', 'none',
+               '-cdrom', str(image or ROOT / 'build/udp-test.iso'), '-nic', 'none', '-display', 'none',
                '-serial', 'stdio', '-monitor', 'none', '-no-reboot',
                '-qmp', f'unix:{control},server=on,wait=off',
                '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
@@ -52,6 +52,13 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0):
         shutil.copyfile('/usr/share/OVMF/OVMF_VARS_4M.fd', variables)
         command += ['-drive', 'if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd',
                     '-drive', f'if=pflash,format=raw,file={variables}']
+    if capture_directory is not None:
+        capture_directory = Path(capture_directory)
+        capture_directory.mkdir(parents=True, exist_ok=False)
+        for lane in range(2):
+            command += ['-object', f'filter-dump,id=retained{lane},netdev=peer{lane},'
+                        f'file={capture_directory}/lane{lane}.pcap']
+        (capture_directory / 'command.json').write_text(json.dumps(command, indent=2) + '\n')
     started, timed_out, error = time.monotonic(), False, None
     with log.open('wb') as output:
         process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
@@ -154,7 +161,8 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0):
                      f'UDP_MALFORMED_PASS index={lane + 1} frames=15',
                      f'UDP_CONNECTED_FILTER_PASS index={lane + 1}',
                      f'UDP_SERVER_PASS index={lane + 1}', f'UDP_WIRE_ERRORS_PASS index={lane + 1}']
-        required += [f'UDP_BROADCAST_QUEUE_PASS index={lane + 1} ingress=48 retained=32',
+        required += [f'UDP_ADMIN_ROUTE index={lane + 1} before=552 after=1500',
+                     f'UDP_BROADCAST_QUEUE_PASS index={lane + 1} ingress=48 retained=32',
                      f'UDP_LINK_PASS index={lane + 1}',
                      f'UDP_PRESSURE_PASS index={lane + 1} packets=33',
                      f'UDP_UNREACHABLE_PASS index={lane + 1}']
@@ -169,7 +177,7 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0):
         required += ['UDP_PAYLOAD_LIMIT_PASS bytes=65507', 'UDP_BUFFER_LIMIT_PASS bytes=2048 payload=2020']
     missing = [marker for marker in required if marker not in text]
     host_passed = (peers[0].arp == peers[1].arp == 1 and peers[0].frames == 0 and peers[1].frames == 1) if fault else (
-        len(link_events) == 4 and all(p.arp == 1 and p.frames == 4 and p.zero == 1 and p.zero_checksum == 1 and
+        len(link_events) == 4 and all(p.arp == 2 and p.frames == 4 and p.zero == 1 and p.zero_checksum == 1 and
             p.malformed == 14 and p.filter_input == 3 and p.filter_errors == 1 and p.server_replies == 1 and
             p.reordered == 4 and p.closed == 1 and p.quote_errors == 7 and p.controls == set('VFSOCILR') and
             p.broadcast_requests == 3 and p.broadcast_ingress == 48 and p.broadcast_ack == 48 and

@@ -1,0 +1,15 @@
+{
+  "origin_kernel": "7.0.0-1017-azure",
+  "origin_program_sha256": "44fbea136881956c875ab60d4c1b00e5844916db4241d77779dc0ae8e6bdaea9",
+  "origin_image_sha256": "7ef7525b0161244d4219bf822f60ab8bf219dc892c59f49ef56e11fb856e143f",
+  "origin_full_log_sha256": "4d12421cbad71e71fd37d01092912ee06f2e56d125e50611565ab2178474e4fe",
+  "origin_capture_sha256": "b5ea438ed38d7f3d0fa85becab4563a76a6cc5528f65dff9d08872036246ef61",
+  "fixture_capture_sha256": "ff2689d2f869ea90aa4ce3ec496c1cfc09bfb39c43717aa9448728d3ebe6cc33",
+  "fixture_serial_sha256": "3309ca6810bc991b4760c65021aff41e2a777775e7bcdd55d73dbf92105aad3d",
+  "original_frames_and_packet_timestamps_exact": true,
+  "container_snaplen_changed_from": 65536,
+  "container_snaplen": 65535,
+  "queued_workload_frames": 126,
+  "clock_receipts_synthetic_in_tests": true,
+  "actual_native_timing_acceptance": false
+}

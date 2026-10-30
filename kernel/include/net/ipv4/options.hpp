@@ -26,7 +26,13 @@ class Options {
     }
 
     size_t size() const {
-        return size_;
+        return size_ & 0x7f;
+    }
+
+    // Linux retains an allocated option value even after an explicit empty set.
+    // Header-included sends reject that value independently of its wire length.
+    bool assigned() const {
+        return size_ != 0;
     }
 
     bool source_route() const {

@@ -278,10 +278,12 @@ The common client checks three native linkage profiles and four static/dynamic
 BIOS/UEFI guest profiles, each with 42,660 option observations and sixteen
 loopback packet cases. A second client checks 36 TCP cases per profile, including
 SYN-derived accepted snapshots, closed-port resets and both forms of TIME-WAIT.
-Both clients check root and ordinary credentials. The independent reader reopens
+A third client checks literal raw headers, scalar option and pointer ordering,
+header-mode defaults, inherited descriptions and ordinary-caller transmission.
+All three clients check root and ordinary credentials. The independent reader reopens
 all four boot images, their complete source, actual clients and native providers.
-It checks original TCP packet bytes and rejects 98 damaged observations, including
-checksum-repaired sequence and option changes. These local results do not yet
+It checks original TCP and raw-header packet bytes and rejects 182 damaged observations,
+including checksum-repaired sequence, option and literal-header changes. These local results do not yet
 establish complete native-provider or Ethernet acceptance. Source-route receive
 policy, full raw/UDP/TCP wire and fragment corpora, option-bearing PMTU feedback,
 broader TCP reply and blocked-send lifetimes and complete hosted
@@ -293,13 +295,32 @@ The ICMP handler checks payload length and checksum before answering a local uni
 
 Raw ICMP listeners receive the complete validated IPv4 datagram before the ICMP handler checks its payload checksum, matching the Linux raw-observer ordering. A raw program can therefore see an invalid ICMP checksum that the kernel handler rejects. Kernel validation and raw observation are tested separately.
 
-Raw descriptions accept Linux protocol numbers 1 through 262, except
-`IPPROTO_RAW` (255), which still requires the unfinished `IP_HDRINCL` contract.
+Raw descriptions accept Linux protocol numbers 1 through 262.
 `SO_PROTOCOL` retains the complete logical number, including values above the
 eight-bit wire field. Creation requires `CAP_NET_RAW`; an inherited raw description
 remains usable by an ordinary process. Raw listeners receive datagrams before
 transport validation, including TCP and IGMP. An eligible listener for an otherwise
 unhandled protocol suppresses protocol-unreachable output.
+
+`IPPROTO_RAW` (255) starts with `IP_HDRINCL` enabled; other raw protocols start
+with it disabled. The flag belongs to the shared description and can be changed
+through an inherited descriptor without another capability check. Queries on UDP
+and TCP return zero; setting the flag requires a raw description. Short setters
+use their first byte, an empty setter clears the flag, and failed copies preserve it.
+
+A header-included send owns the caller's complete packet. It fills total length,
+checksum, a zero source and an eligible zero identifier while preserving the other
+literal fields and options. The message destination selects the route independently
+of the header destination. Such output uses the device MTU, ignores a lower cached
+path limit and never fragments. Headers shorter than twenty bytes or an IHL outside
+the supplied packet fail with `EINVAL`, following current Linux behavior. Even an
+explicitly empty `IP_OPTIONS` value or per-message `IP_RETOPTS` conflicts with this
+mode. `MSG_PROBE` performs admission without reading or emitting payload;
+`MSG_MORE` still submits a complete header-included packet. Queued bytes and the
+captured mode survive later caller-buffer or description changes. Local guest and
+sanitizer checks pass; complete Ethernet and blocked-output qualification remains
+required. A raw listener for protocol 255 receives protocol 255, without acting as
+a wildcard listener for other protocols.
 
 Local RR/TS processing retains the checksum received in the header. A raw reader
 therefore sees the processed option bytes with the original checksum, as on Linux.

@@ -136,6 +136,15 @@ int ipv4_send_admit(InetSocket*, Ipv4Source source, uint32_t destination, unsign
                     uint8_t ttl, bool broadcast, size_t length, bool cache_destination,
                     Ipv4SendRoute* selected = nullptr, const ip4::Options* options = nullptr);
 
+// Literal header output uses the message destination for routing. Its complete
+// packet must fit the device MTU and is never fragmented or recompiled as options.
+int ipv4_send_header_admit(InetSocket*, Ipv4Source, uint32_t destination, unsigned bound_index,
+                           bool broadcast, size_t length, bool cache_destination,
+                           Ipv4SendRoute* selected);
+int ipv4_send_header(InetSocket*, Ipv4Source, uint32_t destination, unsigned bound_index,
+                     bool broadcast, const void*, size_t, bool cache_destination,
+                     const Ipv4SendRoute* selected = nullptr);
+
 // Last socket close detaches error delivery; accepted packets own their bytes.
 void ipv4_detach_owner(InetSocket*);
 // Release only oversized queued copies; the transport retains its original bytes.

@@ -16,6 +16,7 @@ from ipv4_options.fixtures import LEGACY_SOCKET, SOCKET, RECEIVE, socket_table
 from ipv4_options.native_policy import capture_policy
 from ipv4_options_evidence import verify as verify_evidence
 from ipv4_options_evidence_test import verify_controls
+from ipv4_raw_headers_evidence import verify as raw_header_observations
 from tcp6.inputs import digest, freeze
 
 
@@ -120,6 +121,8 @@ def run(command, directory, *, native=False, profile=None, program=None, suites=
                 text.count('IPV4_TCP_OPTIONS_SCOPE_PASS ') == 2 and
                 text.count('IPV4_TCP_OPTIONS_PASS scopes=2 cases=36') == 1 and
                 'IPV4_TCP_OPTIONS_FAIL' not in text, 'complete actual TCP option responses and owned queries')
+    if 'raw' in suites:
+        raw_header_observations(text, native=native)
     if not native:
         require(text.count('AXIOM64_TESTS_PASS') == 1 and text.count('AXIOM64_EXIT status=0') == 1,
                 'successful guest test process')
@@ -154,7 +157,7 @@ def main():
         require(digest(detached) == digest(kernel) and detached.stat().st_nlink == 1, 'verified independent kernel')
         os.replace(detached, kernel)
     targets = ['build/axiom64.elf', 'build/init', 'busybox', 'test-ipv4-options-model',
-               *('build/' + name + '-' + profile for name in ('ipv4-options', 'ipv4-tcp-options')
+               *('build/' + name + '-' + profile for name in ('ipv4-options', 'ipv4-tcp-options', 'ipv4-raw-headers')
                  for profile in ('native', 'static', 'dynamic'))]
     command = ['make', '-j' + str(args.workers), *targets]
     save(directory / 'build-command.json', command)
@@ -164,7 +167,7 @@ def main():
     kernel_sha256 = digest(kernel)
     results = []
     for profile in ('native', 'static', 'dynamic'):
-        for suite, name in (('socket', 'ipv4-options'), ('tcp', 'ipv4-tcp-options')):
+        for suite, name in (('socket', 'ipv4-options'), ('tcp', 'ipv4-tcp-options'), ('raw', 'ipv4-raw-headers')):
             case = directory / ('linux-' + suite + '-' + profile)
             case.mkdir()
             program = ROOT / ('build/' + name + '-' + profile)
@@ -187,16 +190,21 @@ def main():
         provenance = audit_compile(program, ROOT)
         tcp_program = ROOT / ('build/ipv4-tcp-options-' + profile)
         audit_compile(tcp_program, ROOT)
+        raw_program = ROOT / ('build/ipv4-raw-headers-' + profile)
+        audit_compile(raw_program, ROOT)
         for firmware in ('bios', 'uefi'):
             case = directory / (profile + '-' + firmware)
             case.mkdir()
             image = fixture(case, 'build', profile, program_builder=lambda *unused: (program, provenance),
-                            filename='ipv4-options', command='/bin/ipv4-options /etc/options-oracle.tsv && /bin/ipv4-tcp-options',
-                            extra_products={'etc/options-oracle.tsv': table, 'bin/ipv4-tcp-options': tcp_program})
+                            filename='ipv4-options', command='/bin/ipv4-options /etc/options-oracle.tsv && /bin/ipv4-tcp-options && /bin/ipv4-raw-headers',
+                            extra_products={'etc/options-oracle.tsv': table, 'bin/ipv4-tcp-options': tcp_program,
+                                            'bin/ipv4-raw-headers': raw_program})
             shutil.copy2(program, case / 'program.elf')
             shutil.copy2(program.with_suffix('.inputs.json'), case / 'program.inputs.json')
             shutil.copy2(tcp_program, case / 'tcp-program.elf')
             shutil.copy2(tcp_program.with_suffix('.inputs.json'), case / 'tcp-program.inputs.json')
+            shutil.copy2(raw_program, case / 'raw-program.elf')
+            shutil.copy2(raw_program.with_suffix('.inputs.json'), case / 'raw-program.inputs.json')
             require(digest(case / 'kernel.elf') == kernel_sha256, 'actual unchanged boot kernel')
             command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '512M', '-nic', 'none',
                        '-cdrom', str(image), '-display', 'none', '-serial', 'stdio', '-monitor', 'none',
@@ -206,11 +214,12 @@ def main():
                 shutil.copy2('/usr/share/OVMF/OVMF_VARS_4M.fd', variables)
                 command += ['-drive', 'if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd',
                             '-drive', 'if=pflash,format=raw,file=' + str(variables)]
-            result, text = run(command, case, suites=('socket', 'tcp'))
+            result, text = run(command, case, suites=('socket', 'tcp', 'raw'))
             require(text.count('Firmware: ' + firmware.upper()) == 1, 'actual requested guest firmware')
-            result.update(native=False, profile=profile, firmware=firmware, suites=['socket', 'tcp'],
+            result.update(native=False, profile=profile, firmware=firmware, suites=['socket', 'tcp', 'raw'],
                           kernel_sha256=kernel_sha256, program_sha256=digest(program),
                           tcp_program_sha256=digest(tcp_program),
+                          raw_program_sha256=digest(raw_program),
                           products={name: digest(case / name) for name in ('kernel.elf', 'root.cpio', 'image.iso')})
             save(case / 'results.json', result)
             results.append(result)
@@ -223,7 +232,8 @@ def main():
                   native_policy_sha256=digest(directory / 'native-policy.json'),
                   table_sha256=digest(table), native_profiles=3, guest_profiles=4,
                   socket_observations_each=42660, actual_loopback_wire_cases_each=16,
-                  tcp_response_cases_each=36, native_executions=6, guest_boots=4,
+                  tcp_response_cases_each=36, native_executions=9, guest_boots=4,
+                  raw_header_suite=1, raw_header_packets_each=12,
                   ethernet_and_full_feature_acceptance=False)
     save(directory / 'results.json', record)
     save(directory / 'independent-evidence.json', verify_evidence(directory))

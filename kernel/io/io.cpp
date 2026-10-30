@@ -162,7 +162,10 @@ static int prepare_packet(Task& task, IoRequest& request) {
         return -95;
     if (request.positioned)
         return -29;
-    if (request.flags & ~unsigned(request.write ? 0x4040 : 2 | 0x20 | 0x40))
+    unsigned allowed = request.write ? 0x4040 : 2 | 0x20 | 0x40;
+    if (request.write && request.handle->inet && inet_header_included(request.handle->inet))
+        allowed |= 0x8010; // Header-included output accepts MSG_MORE and MSG_PROBE.
+    if (request.flags & ~allowed)
         return -95;
     if (request.write && request.handle->packet)
         request.destination_index = packet_interface(request.handle->packet);
@@ -308,6 +311,7 @@ static int prepare_packet(Task& task, IoRequest& request) {
             control_length, request.inet_output, capable(task.credentials, Capability::net_raw));
         if (error)
             return error;
+        request.inet_output.probe = request.flags & 0x10;
         release(request.send_control_data);
         request.send_control_data = nullptr;
     } else {
@@ -329,9 +333,10 @@ static int prepare_packet(Task& task, IoRequest& request) {
         if (int error = inet6_own_send_extensions(request.inet6_output, request.send_control_data))
             return error;
     }
-    size_t prefix = request.handle->inet6  ? inet6_send_prefix(request.handle->inet6)
-                    : request.handle->inet ? inet_send_prefix(request.handle->inet)
-                                           : 0;
+    size_t prefix = request.handle->inet6 ? inet6_send_prefix(request.handle->inet6)
+                    : request.handle->inet
+                        ? inet_send_prefix(request.handle->inet, &request.inet_output)
+                        : 0;
     if (request.packet_length < prefix)
         return -14;
     uint8_t protocol_bytes[2];
@@ -718,6 +723,8 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
             return netlink_send(request.handle->netlink, task.process->pid, request.packet_data,
                                 request.packet_length);
         if (request.handle->inet) {
+            if (request.inet_output.header_included && request.inet_output.probe)
+                return int64_t(request.packet_length);
             if (!request.packet_ready) {
                 if (int error = inet_send_ready(request.handle->inet, request.packet_length,
                                                 &request.inet_output))

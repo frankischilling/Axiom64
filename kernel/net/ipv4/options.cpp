@@ -99,19 +99,22 @@ int Options::assign(const uint8_t* data, size_t length, const OptionPolicy& poli
     }
     if (next.source_route() && !policy.net_raw)
         return -1;
+    if (!length)
+        next.size_ = 0x80;
     *this = next;
     return 0;
 }
 
 int Options::emit(uint8_t* output, size_t available, uint32_t final_destination,
                   uint32_t route_source, uint32_t timestamp) const {
-    if (available < size_)
+    const size_t length = size();
+    if (available < length)
         return -105;
-    if (size_ && !output)
+    if (length && !output)
         return -22;
-    if (!size_)
+    if (!length)
         return 0;
-    memcpy(output, bytes_, size_);
+    memcpy(output, bytes_, length);
     if (source_route()) {
         const unsigned length = bytes_[route_ + 1];
         for (unsigned index = 3; index + 4 < length; index++)
@@ -128,7 +131,7 @@ int Options::emit(uint8_t* output, size_t available, uint32_t final_destination,
     }
     if (time_address_ != absent)
         put32(output + time_address_, route_source);
-    return size_;
+    return int(length);
 }
 
 int ReceivedOptions::assign(const uint8_t* data, size_t length, uint32_t source,

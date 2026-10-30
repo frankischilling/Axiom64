@@ -203,6 +203,14 @@ int main(int argc, char** argv) {
     assert(std::cin.eof() && observations == 14220);
     output_rules();
     failure_ownership();
+    Options empty;
+    assert(!empty.assigned() && empty.size() == 0);
+    assert(empty.assign(nullptr, 0) == 0 && empty.assigned() && empty.size() == 0);
+    auto retained = empty;
+    assert(retained.assigned() && retained.emit(nullptr, 0, 0, 0, 0) == 0);
+    const uint8_t invalid[] = {7, 2, 0};
+    assert(retained.assign(invalid, sizeof(invalid)) == -22 && retained.assigned() &&
+           retained.size() == 0);
     std::cout << "IPV4_OPTIONS_HOST_PASS native_observations=" << observations
               << " mutation_cases=20000\n";
 }

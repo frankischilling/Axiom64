@@ -32,6 +32,7 @@ struct InetSocket {
     ip4::Options options;
     ip4::Options input_options;
     bool input_options_valid = true;
+    bool header_included = false;
     uint8_t type = 3;
     uint16_t protocol = 1;
     uint16_t peer_port = 0, local_port = 0, reported_port = 0;
@@ -85,6 +86,7 @@ inline InetSendControl inet_send_defaults(const InetSocket* socket, const InetAd
                            socket->tos,
                            socket->type == 3 || (!named && destination == socket->peer)};
     result.options = socket->options;
+    result.header_included = socket->type == 3 && socket->header_included;
     if (multicast) {
         if (!result.index)
             result.index = socket->multicast.output_index;

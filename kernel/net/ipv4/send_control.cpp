@@ -109,14 +109,17 @@ int inet_prepare_send(InetSocket* socket, InetAddress& address, bool named, uint
     return 0;
 }
 
-size_t inet_send_prefix(const InetSocket* socket) {
-    return socket->type == 3 && socket->protocol == 1 ? 2 : 0;
+size_t inet_send_prefix(const InetSocket* socket, const InetSendControl* control) {
+    bool header_included = control ? control->header_included : inet_header_included(socket);
+    return socket->type == 3 && socket->protocol == 1 && !header_included ? 2 : 0;
 }
 
 int inet_send_admit(InetSocket* socket, InetAddress& address, size_t length,
                     InetSendControl& control) {
     if (length > 65535)
         return -90;
+    if (control.header_included && control.options.assigned())
+        return -22;
     if (int error = inet_error(socket, true))
         return -error;
     if (socket->shutdown & 2)
@@ -132,6 +135,13 @@ int inet_send_admit(InetSocket* socket, InetAddress& address, size_t length,
         control.cache_destination = false;
     }
     size_t transport = socket->type == 2 ? 8 : 0;
+    if (control.header_included) {
+        if (int error = ipv4_send_header_admit(
+                socket, control.source, __builtin_bswap32(address.address), control.index,
+                socket->broadcast, length, control.cache_destination, &control.route))
+            return error;
+        return control.probe || length <= socket->send_limit ? 0 : -90;
+    }
     if (int error =
             ipv4_send_admit(socket, control.source, __builtin_bswap32(address.address),
                             control.index, control.ttl, socket->broadcast, length + transport,

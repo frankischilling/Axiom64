@@ -346,8 +346,11 @@ bool inet_datagram_deliver(const Ipv4ReceiveMetadata& metadata, uint16_t source_
     return matched;
 }
 
-static int send_capacity(const InetSocket* socket, size_t length, size_t options) {
-    size_t overhead = (socket->type == 2 ? 28 : 20) + options;
+bool inet_header_included(const InetSocket* socket) {
+    return socket->type == 3 && socket->header_included;
+}
+
+static int send_capacity(const InetSocket* socket, size_t length, size_t overhead) {
     if (length > 65535 - overhead || length + overhead > socket->send_limit)
         return -90;
     if (length + overhead >
@@ -361,8 +364,12 @@ int inet_send_ready(InetSocket* socket, size_t length, const InetSendControl* co
         return -error;
     if (socket->shutdown & 2)
         return -32;
-    if (int error = send_capacity(socket, length,
-                                  control ? control->options.size() : socket->options.size()))
+    const bool header_included = control ? control->header_included : inet_header_included(socket);
+    size_t overhead = header_included
+                          ? 0
+                          : (socket->type == 2 ? 28 : 20) +
+                                (control ? control->options.size() : socket->options.size());
+    if (int error = send_capacity(socket, length, overhead))
         return error;
     // A full output table retains bytes already imported using socket memory.
     // Only the socket-memory wait defers the user payload copy.
@@ -383,8 +390,11 @@ int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* da
     if (!destination)
         return -89;
     auto control = selected ? *selected : inet_send_defaults(socket, address, named);
-    size_t overhead = (socket->type == 2 ? 28 : 20) + control.options.size();
-    if (int error = send_capacity(socket, length, control.options.size()))
+    size_t overhead =
+        control.header_included ? 0 : (socket->type == 2 ? 28 : 20) + control.options.size();
+    if (control.header_included && control.options.assigned())
+        return -22;
+    if (int error = send_capacity(socket, length, overhead))
         return error;
     Ipv4Source source = control.source;
     unsigned index = control.index;
@@ -420,7 +430,11 @@ int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* da
             socket->destination.source = socket->local;
         if (error == -99)
             error = -101;
-    } else
+    } else if (control.header_included)
+        error = ipv4_send_header(socket, source, destination, index, socket->broadcast, data,
+                                 length, control.cache_destination,
+                                 control.route.path.index ? &control.route : nullptr);
+    else
         error = ipv4_send(socket, source, destination, index, socket->protocol, control.ttl,
                           socket->broadcast, data, length, control.cache_destination, control.tos,
                           control.route.path.index ? &control.route : nullptr, &control.options);
@@ -479,14 +493,13 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             return -93;
         if (type == 3 && !capable(task.credentials, Capability::net_raw))
             return -1;
-        // IPPROTO_RAW requires the separate IP_HDRINCL construction contract.
-        if (type == 3 && protocol == 255)
-            return -93;
         socket = inet_allocate(type);
         if (!socket)
             return -23;
-        if (type == 3)
+        if (type == 3) {
             socket->protocol = uint16_t(protocol);
+            socket->header_included = protocol == 255;
+        }
         auto opened = open_handle(nullptr, 2 | ((b & 0x800) ? 04000 : 0));
         if (!opened) {
             inet_close(socket);
@@ -630,6 +643,19 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
         return address_out(task, address, b, c);
     }
     case 54: {
+        if (b == 0 && c == 3) {
+            int32_t length = int32_t(frame.r8);
+            if (length < 0)
+                return -22;
+            uint32_t value = 0;
+            size_t bytes = length >= 4 ? 4 : length ? 1 : 0;
+            if (bytes && !task.memory->space.copy_in(&value, d, bytes))
+                return -14;
+            if (socket->type != 3)
+                return -92;
+            socket->header_included = value != 0;
+            return 0;
+        }
         if (b == 0 && c == 4) {
             int32_t length = int32_t(frame.r8);
             if (length < 0 || length > int32_t(ip4::Options::capacity))
@@ -750,9 +776,10 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
         if (b == 0 && c == 4)
             return socket_bytes_result(task, socket->options.data(), socket->options.size(), length,
                                        d, frame.r8);
-        if (b == 0 && (c == 1 || c == 6 || c == 7 || c == 8 || c == 12 || c == 13)) {
+        if (b == 0 && (c == 1 || c == 3 || c == 6 || c == 7 || c == 8 || c == 12 || c == 13)) {
             const auto& options = socket->receive_options;
             int selected = c == 1    ? socket->tos
+                           : c == 3  ? inet_header_included(socket)
                            : c == 6  ? options.options
                            : c == 7  ? options.return_options
                            : c == 8  ? options.packet_info

@@ -1360,7 +1360,7 @@ the original packet bytes and actual timestamp bounds; source-route packets reje
 by admission policy cannot establish parser results. Accepted completed routes still
 check return-route reversal. This command does not need root or a guest build.
 
-`sudo make test-ipv4-options` runs two C clients in three native linkage profiles
+`sudo make test-ipv4-options` runs three C clients in three native linkage profiles
 and four static/dynamic BIOS/UEFI guest profiles. Each socket-client execution checks 42,660 option
 observations, root and ordinary credentials, fault ordering and sixteen actual
 loopback packet exchanges. Those packets exercise processed route/timestamp slots,
@@ -1379,20 +1379,23 @@ The TCP client adds 36 root/ordinary cases for closed-port resets, accepted opti
 snapshots and duplicate-FIN replies in retained and compacted TIME-WAIT states. It
 replays the actual original FIN with a recomputed transport checksum, then inspects
 the actual kernel reply. Creation and `SO_PROTOCOL` checks cover all 261 supported
-raw protocol numbers. `IPPROTO_RAW`/`IP_HDRINCL` remains unfinished. Raw observations
+raw protocol numbers. The raw-header client separately exercises protocol 255,
+the `IP_HDRINCL` scalar and fault contract, inherited descriptions, literal header
+fields, NOP options, device limits and probe output. It retains twelve complete
+received packets across root and ordinary credentials. Raw observations
 retain Linux's original IP checksum after local option processing; the client
 reconstructs the known zero receive slot to check that original checksum. Physical
 Ethernet checksum acceptance remains separate.
 
-Both clients run in each of the four guest images. The runner retains both audited
+All three clients run in each of the four guest images. The runner retains their audited
 ELFs and their compile inputs while sharing the kernel, loader and boot. Native
-execution has six processes across the three linkage profiles. No extra CI jobs or
-guest boots are added for the TCP client.
+execution has nine processes across the three linkage profiles. All clients share
+the existing CI job and four guest boots.
 
 The runner also reopens all four actual ISOs and checks their kernel, complete
-initramfs, both clients, loader and oracle table. Its independent reader binds the
+initramfs, all three clients, loader and oracle table. Its independent reader binds the
 complete source archive and native provider mappings, checks original TCP headers,
-SYN ownership and replayed FIN sequences, and rejects 98 reopened damaged logs.
+SYN ownership, replayed FIN sequences and literal raw headers, and rejects 182 reopened damaged logs.
 Several controls repair packet checksums so an incorrect sequence, option value or
 ownership cannot pass merely by carrying a valid checksum. The original evidence
 can be checked again with `python3 scripts/ipv4_options_evidence.py build/ipv4-options`.

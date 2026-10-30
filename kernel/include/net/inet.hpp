@@ -23,6 +23,7 @@ struct InetSendControl {
     unsigned index = 0;
     uint8_t ttl = 64, tos = 0;
     bool cache_destination = false;
+    bool header_included = false, probe = false;
     Ipv4SendRoute route{};
     ip4::Options options{};
 };
@@ -93,7 +94,8 @@ int inet_prepare_send(InetSocket*, InetAddress&, bool named, uint32_t address_le
                       size_t payload_length, const uint8_t* control, size_t control_length,
                       InetSendControl&, bool net_raw = false);
 
-size_t inet_send_prefix(const InetSocket*);
+bool inet_header_included(const InetSocket*);
+size_t inet_send_prefix(const InetSocket*, const InetSendControl* = nullptr);
 
 int inet_send_admit(InetSocket*, InetAddress&, size_t, InetSendControl&);
 int inet_send_ready(InetSocket*, size_t, const InetSendControl* = nullptr);

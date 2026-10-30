@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 
 from ipv4_options_evidence import checksum, require, tcp_observations
+from ipv4_raw_headers_evidence import verify as raw_header_observations, damaged_controls as raw_header_controls
 
 
 def replace_packet(text, phase, sample, change, *, last=True, repair=False, flags=None):
@@ -109,6 +110,25 @@ def verify_controls(directory, destination):
             else:
                 raise ValueError('accepted damaged original TCP option evidence: ' + path.name)
     require(len(rows) == 98, 'all fourteen damaged controls in all seven actual TCP profiles')
+    if json.loads((directory / 'results.json').read_text()).get('raw_header_suite') == 1:
+        names = ['linux-raw-' + profile for profile in ('native', 'static', 'dynamic')]
+        names += [profile + '-' + firmware for profile in ('static', 'dynamic') for firmware in ('bios', 'uefi')]
+        for name in names:
+            text = (directory / name / 'client.log').read_text()
+            native = name.startswith('linux-')
+            raw_header_observations(text, native=native)
+            for control, changed in raw_header_controls(text).items():
+                require(changed != text, 'raw-header control changes an actual observation')
+                path = destination / (name + '-raw-' + control + '.log')
+                path.write_text(changed)
+                try:
+                    raw_header_observations(path.read_text(), native=native)
+                except ValueError as error:
+                    rows.append(dict(profile=name, control=control, path=path.name,
+                                     sha256=hashlib.sha256(path.read_bytes()).hexdigest(), reason=str(error)))
+                else:
+                    raise ValueError('accepted damaged raw-header evidence: ' + path.name)
+        require(len(rows) == 182, 'original TCP controls and twelve raw-header controls in seven profiles')
     result = dict(passed=True, rejected=len(rows), controls=rows)
     (destination / 'results.json').write_text(json.dumps(result, indent=2) + '\n')
     return result

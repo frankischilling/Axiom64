@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath
 import re
 import struct
 import zipfile
+from ipv4_raw_headers_evidence import verify as raw_header_observations
 
 from disk_root import archive_entries
 from tcp_fixture_inputs import audit_fixture
@@ -200,12 +201,20 @@ def compilation(path, program, source, inputs, profile):
 def verify(directory):
     record = load(directory / 'results.json')
     require(record['passed'] is True and record['native_profiles'] == 3 and record['guest_profiles'] == 4 and
-            record['native_executions'] == 6 and record['guest_boots'] == 4 and
+            record['native_executions'] in (6, 9) and record['guest_boots'] == 4 and
             record['socket_observations_each'] == 42660 and record['actual_loopback_wire_cases_each'] == 16 and
             record['tcp_response_cases_each'] == 36 and record['ethernet_and_full_feature_acceptance'] is False,
             'complete bounded local cohort without a full-feature claim')
     frozen = directory / 'source'
     inputs = load(frozen / 'source-inputs.json')
+    raw_enabled = 'userspace/tests/net/ipv4/raw_headers.c' in inputs
+    require(record.get('raw_header_suite') == (1 if raw_enabled else None) and
+            record['native_executions'] == (9 if raw_enabled else 6) and
+            (not raw_enabled or record['raw_header_packets_each'] == 12),
+            'raw-header coverage bound to the actual complete producer source')
+    suites = ('socket', 'tcp', 'raw') if raw_enabled else ('socket', 'tcp')
+    program_names = {'socket': 'options', 'tcp': 'tcp-options', 'raw': 'raw-headers'}
+    source_names = {'socket': 'options.c', 'tcp': 'tcp_options.c', 'raw': 'raw_headers.c'}
     source = record['source']
     require(source['files'] == len(inputs) and 1600 <= len(inputs) < 10000 and
             source['source_inputs_sha256'] == digest(frozen / 'source-inputs.json') and
@@ -240,23 +249,24 @@ def verify(directory):
         require(result['status'] == 'completed' and 0 < result['elapsed_ns'] < 120 * 10**9,
                 'completed actual process inside original deadline')
         if result['native']:
-            require(result['suites'] in (['socket'], ['tcp']) and result['profile'] in ('native', 'static', 'dynamic') and
+            require(result['suites'] in ([suite] for suite in suites) and result['profile'] in ('native', 'static', 'dynamic') and
                     result['returncode'] == 0 and result['kernel'] == policy['kernel'] and
                     result['native_fixture'] == native_fixture.name, 'actual native profile identity, policy and exit')
             name = 'linux-' + result['suites'][0] + '-' + result['profile']
         else:
-            require(result['suites'] == ['socket', 'tcp'] and result['profile'] in ('static', 'dynamic') and
+            require(result['suites'] == list(suites) and result['profile'] in ('static', 'dynamic') and
                     result['firmware'] in ('bios', 'uefi') and result['returncode'] == 1,
                     'actual guest profile identity and QEMU exit')
             name = result['profile'] + '-' + result['firmware']
         require(name not in executions and load(directory / name / 'results.json') == result,
                 'one unchanged original result for every actual execution')
         executions[name] = result
-    expected = {'linux-' + suite + '-' + profile for suite in ('socket', 'tcp') for profile in ('native', 'static', 'dynamic')}
+    expected = {'linux-' + suite + '-' + profile for suite in suites for profile in ('native', 'static', 'dynamic')}
     expected |= {profile + '-' + firmware for profile in ('static', 'dynamic') for firmware in ('bios', 'uefi')}
-    require(set(executions) == expected, 'all six native processes and four guest boots')
+    require(set(executions) == expected, 'all original native processes and four guest boots')
     images, tcp, native_loaders, guest_loaders = [], {}, set(), set()
-    script = b'#!/bin/sh\nset -e\n/bin/ipv4-options /etc/options-oracle.tsv && /bin/ipv4-tcp-options\necho AXIOM64_TESTS_PASS\n'
+    script = (b'#!/bin/sh\nset -e\n/bin/ipv4-options /etc/options-oracle.tsv && /bin/ipv4-tcp-options' +
+              (b' && /bin/ipv4-raw-headers' if raw_enabled else b'') + b'\necho AXIOM64_TESTS_PASS\n')
     for name, result in executions.items():
         case = directory / name
         process = load(case / 'process.json')
@@ -269,12 +279,14 @@ def verify(directory):
             socket_observations(text)
         if 'tcp' in result['suites']:
             tcp[name] = tcp_observations(text)
+        if 'raw' in result['suites']:
+            raw_header_observations(text, native=result['native'])
         profile = result['profile']
         if result['native']:
             runtime = result['runtime']
             command = load(case / 'command.json')
             program_at = int(profile == 'dynamic')
-            program_name = 'ipv4-' + ('tcp-options' if result['suites'] == ['tcp'] else 'options') + '-' + profile
+            program_name = 'ipv4-' + program_names[result['suites'][0]] + '-' + profile
             require(len(command) == 1 + program_at + int(result['suites'] == ['socket']) and
                     Path(command[program_at]).name == program_name and runtime['executable'] == command[0],
                     'actual native command selects its observed executable and client')
@@ -288,7 +300,7 @@ def verify(directory):
             require(command[program_at] in mapped_paths and command[0] in mapped_paths,
                     'both commanded program and executable occur in actual process mappings')
             require(Path(runtime['executable']).name == ('ld-musl-x86_64.so.1' if profile == 'dynamic' else
-                    'ipv4-' + ('tcp-options' if result['suites'] == ['tcp'] else 'options') + '-' + profile),
+                    program_name),
                     'observed native executable matches its selected linkage')
             for path, provider in runtime['providers'].items():
                 require(PurePosixPath(path).parent == PurePosixPath('runtime') and
@@ -300,7 +312,7 @@ def verify(directory):
                     for value in runtime['providers'].values()), 'native GNU libc provider is retained')
             if profile != 'native':
                 compilation(case / 'program.inputs.json', case / 'program.elf',
-                            'userspace/tests/net/ipv4/' + ('tcp_options.c' if result['suites'] == ['tcp'] else 'options.c'), inputs, profile)
+                            'userspace/tests/net/ipv4/' + source_names[result['suites'][0]], inputs, profile)
             if profile == 'dynamic':
                 require((case / 'loader.elf').is_file(), 'actual dynamic native loader retained')
                 native_loaders.add(digest(case / 'loader.elf'))
@@ -314,6 +326,11 @@ def verify(directory):
                     digest(case / 'tcp-program.elf') == result['tcp_program_sha256'], 'actual guest firmware and retained boot products')
             compilation(case / 'program.inputs.json', case / 'program.elf', 'userspace/tests/net/ipv4/options.c', inputs, profile)
             compilation(case / 'tcp-program.inputs.json', case / 'tcp-program.elf', 'userspace/tests/net/ipv4/tcp_options.c', inputs, profile)
+            if raw_enabled:
+                require(digest(case / 'raw-program.elf') == result['raw_program_sha256'],
+                        'actual raw-header client executable')
+                compilation(case / 'raw-program.inputs.json', case / 'raw-program.elf',
+                            'userspace/tests/net/ipv4/raw_headers.c', inputs, profile)
             products = load(case / 'products.json')
             command = load(case / 'command.json')
             require(command[0] == 'qemu-system-x86_64' and command[command.index('-nic') + 1] == 'none' and
@@ -324,6 +341,8 @@ def verify(directory):
             entries = archive_entries(case / 'root.cpio')
             required = {'sbin/init', 'bin/busybox', 'lib/ld-musl-x86_64.so.1', 'bin/ipv4-options',
                         'bin/ipv4-tcp-options', 'etc/options-oracle.tsv', 'kernel.elf', 'root.cpio', 'image.iso'}
+            if raw_enabled:
+                required.add('bin/ipv4-raw-headers')
             require(set(products) == required, 'complete original fixture products')
             for path, value in products.items():
                 data = entries[path][1] if path in entries else (case / path).read_bytes()
@@ -331,13 +350,16 @@ def verify(directory):
             require(entries['etc/options-oracle.tsv'][1] == (directory / 'options-oracle.tsv').read_bytes() and
                     products['bin/ipv4-options']['sha256'] == result['program_sha256'] and
                     products['bin/ipv4-tcp-options']['sha256'] == result['tcp_program_sha256'], 'both actual clients and table inside initramfs')
+            if raw_enabled:
+                require(products['bin/ipv4-raw-headers']['sha256'] == result['raw_program_sha256'],
+                        'actual raw-header client inside the booted initramfs')
             executables = {path: products[path]['sha256'] for path in required if path.startswith(('bin/', 'sbin/', 'lib/'))}
             images.append(audit_fixture(case / 'image.iso', record['kernel_sha256'], executables, script,
                                         result['products']['root.cpio']))
             guest_loaders.add(products['lib/ld-musl-x86_64.so.1']['sha256'])
     require(len(guest_loaders) == 1 and native_loaders == guest_loaders,
             'native dynamic clients and all guest images retain the same actual musl loader')
-    return dict(passed=True, source_files=len(inputs), native_executions=6, actual_images_opened=images,
+    return dict(passed=True, source_files=len(inputs), native_executions=9 if raw_enabled else 6, actual_images_opened=images,
                 tcp=tcp, ethernet_and_full_feature_acceptance=False)
 
 

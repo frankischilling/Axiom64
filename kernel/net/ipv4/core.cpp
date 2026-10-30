@@ -48,6 +48,7 @@ struct Output {
     uint32_t path_source = 0;
     size_t packet_length = 0;
     uint32_t header_route_source = 0, header_route_destination = 0;
+    uint32_t admitted_mtu = 0;
     bool header_included = false;
 };
 
@@ -132,6 +133,14 @@ static ip4::FragmentPiece submit(Output& item, const NetInfo& info) {
     auto packet = item.bytes + ethernet_header;
     if (ip4::get16(item.bytes + 12) != 0x0800)
         return {net_send(item.index, item.bytes, item.length), 0, 0, true};
+    if (item.header_included) {
+        auto validate = [](void* context) {
+            return static_cast<Output*>(context)->discard_pending ? -11 : 0;
+        };
+        return {net_send_checked(item.index, item.bytes, item.length, validate, &item, nullptr,
+                                 item.admitted_mtu),
+                0, 0, true};
+    }
     auto limit = item.use_path_mtu ? path_mtu.lookup({item.path_source, ip4::get32(packet + 16),
                                                       item.next_hop, item.index, item.path_owner},
                                                      info.mtu, ticks)
@@ -714,6 +723,9 @@ static int addresses_changed(const ip4::AddressBook& before, unsigned index) {
             break;
         }
     }
+    bool literal_address_survives = false;
+    for (unsigned n = 0; auto old = before.at(n); n++)
+        literal_address_survives |= old->index == index && assigned(index, old->config.address);
     bool retained = false;
     for (unsigned n = 0; auto old = before.at(n); n++) {
         if (old->index != index)
@@ -734,6 +746,12 @@ static int addresses_changed(const ip4::AddressBook& before, unsigned index) {
         ip4::reassembly_discard(old->config.address);
         for (auto& item : output) {
             if (!item.bytes || item.index != index)
+                continue;
+            // An accepted literal packet owns its source bytes and neighbor
+            // selection. Removing one address does not revoke it while another
+            // address from the device remains. Last-address/device loss still
+            // follows the ordinary cancellation path.
+            if (item.header_included && !item.local && literal_address_survives)
                 continue;
             bool ip = item.local || ip4::get16(item.bytes + 12) == 0x0800;
             bool owned =
@@ -1271,6 +1289,7 @@ int ipv4_send_header(InetSocket* owner, Ipv4Source source, uint32_t destination,
     slot->header_included = true;
     slot->header_route_source = selected->path.source;
     slot->header_route_destination = destination;
+    slot->admitted_mtu = selected->path.mtu;
     slot->multicast_loop = multicast && inet_multicast_loop(owner);
     slot->use_path_mtu = false;
     slot->path_owner = selected->path_owner;

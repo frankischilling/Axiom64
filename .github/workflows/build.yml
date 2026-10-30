@@ -1685,6 +1685,9 @@ jobs:
             build/ipv4-*.pcap
             build/ipv4-*-alias-lane*.zip
             build/ipv4-*-expiry-lane*.zip
+            build/ipv4-*-option-fragments-lane*.zip
+            build/ipv4-*-raw-headers-lane*.zip
+            build/ipv4-*-raw-queue-lane*.zip
             build/ipv4-*-pmtu-lane*.zip
             build/ipv4-*-pmtu-lifetime-lane*.zip
             build/ipv4-gateway-*-lane*-damaged-*.zip

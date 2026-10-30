@@ -178,5 +178,30 @@ class InjectionObservation(unittest.TestCase):
                 self.assertEqual(capture.close()['dropped'], 0)
 
 
+class RawQueuePressureSelection(unittest.TestCase):
+    def test_original_earlier_pressure_is_not_the_held_neighbor(self):
+        from ipv4_options.raw_header_queue_capture import verify_capture
+        fixture = Path(__file__).resolve().parent / 'fixtures/ipv4-raw-queue-pressure'
+        provenance = json.loads((fixture / 'provenance.json').read_text())
+        for name, key in (('lane0.pcap', 'fixture_capture_sha256'), ('client.log', 'fixture_log_sha256')):
+            self.assertEqual(hashlib.sha256((fixture / name).read_bytes()).hexdigest(), provenance[key])
+        result = verify_capture(fixture / 'lane0.pcap', 0, fixture / 'client.log')
+        self.assertEqual((result['cases'], result['arp_requests'], result['arp_replies'],
+                          result['literal_packets'], result['control_packets']), (6, 6, 6, 6, 38))
+
+    def test_another_hardware_sender_cannot_release_the_queue(self):
+        from ipv4_options.raw_header_queue_capture import audit
+        from ipv4_expiry_capture import read_capture
+        fixture = Path(__file__).resolve().parent / 'fixtures/ipv4-raw-queue-pressure'
+        rows = read_capture(fixture / 'lane0.pcap')
+        reply = next(row for row in rows if row['frame'][12:14] == b'\x08\x06' and
+                     row['frame'][6:12] == bytes((2, 0x41, 0x58, 0x49, 0x50, 0)))
+        frame = bytearray(reply['frame'])
+        frame[6] ^= 1
+        reply['frame'] = bytes(frame)
+        with self.assertRaises(ValueError):
+            audit(rows, 0, (fixture / 'client.log').read_text())
+
+
 if __name__ == '__main__':
     unittest.main()

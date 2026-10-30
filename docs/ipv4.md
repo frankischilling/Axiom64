@@ -317,9 +317,14 @@ the supplied packet fail with `EINVAL`, following current Linux behavior. Even a
 explicitly empty `IP_OPTIONS` value or per-message `IP_RETOPTS` conflicts with this
 mode. `MSG_PROBE` performs admission without reading or emitting payload;
 `MSG_MORE` still submits a complete header-included packet. Queued bytes and the
-captured mode survive later caller-buffer or description changes. Local guest and
-sanitizer checks pass; complete Ethernet and blocked-output qualification remains
-required. A raw listener for protocol 255 receives protocol 255, without acting as
+captured mode survive later caller-buffer or description changes. A packet admitted
+before a device-MTU reduction retains that admission, while a fresh oversized send
+fails. Removing its selected source preserves accepted nonlocal literal output when
+another assigned address remains; removing the last address or device still cancels
+it. Accepted output also survives route removal and the last descriptor close.
+Focused native and guest checks retain held ARP exchanges and exact output bytes;
+complete current-revision qualification remains required. A raw listener for
+protocol 255 receives protocol 255, without acting as
 a wildcard listener for other protocols.
 
 Local RR/TS processing retains the checksum received in the header. A raw reader
@@ -432,7 +437,7 @@ old kernel and the original down-loopback native fixture. These are loopback
 socket and data observations; Ethernet behavior, broader raw options and current
 source-report/hosted qualification remain required.
 
-Other raw protocols, raw listen/accept/shutdown, `IP_HDRINCL`, error queues and unsupported options return explicit errors. [UDP](udp.md) and [TCP](tcp.md) have their own data and shutdown contracts, using common finite [socket deadlines](io.md). [Task credentials and permission checks](credentials.md) support numeric identities; persistent accounts/login, full isolation, file capabilities and complete secure-randomness acceptance remain prerequisites for the service release.
+Raw listen/accept/shutdown, error queues and unsupported options return explicit errors. [UDP](udp.md) and [TCP](tcp.md) have their own data and shutdown contracts, using common finite [socket deadlines](io.md). [Task credentials and permission checks](credentials.md) support numeric identities; persistent accounts/login, full isolation, file capabilities and complete secure-randomness acceptance remain prerequisites for the service release.
 
 ## Verification
 

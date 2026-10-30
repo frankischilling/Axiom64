@@ -23,6 +23,8 @@ from ipv4_expiry_capture import verify_capture
 from ipv4_path_mtu_capture import verify_capture as verify_path_mtu
 from ipv4_path_mtu_lifetime_capture import verify_capture as verify_path_lifetime
 from ipv4_options.fragment_capture import verify_capture as verify_option_fragments
+from ipv4_options.raw_headers_capture import verify_capture as verify_raw_headers
+from ipv4_options.raw_header_queue_capture import verify_capture as verify_raw_queue
 
 
 def checksum(data):
@@ -259,6 +261,11 @@ class Peer:
     def packet(self, frame):
         if frame[6:12] != self.guest:
             raise RuntimeError('unexpected guest source MAC')
+        queued = self.fragments.raw_queue.receive_frame(frame)
+        if queued is not None:
+            for response in queued:
+                self.queue(response)
+            return
         addresses = self.addresses.receive(frame)
         if addresses is not None:
             for response in addresses:
@@ -325,7 +332,8 @@ class Peer:
                 return
             self.arp_valid = True
         elif frame[12:14] == b'\x08\x00':
-            if len(frame) < 34 or frame[26:30] != self.guest_ip:
+            if len(frame) < 34 or (frame[26:30] != self.guest_ip and
+                                  not self.fragments.raw_headers.pending_literal(frame[14:])):
                 self.foreign += 1
                 return
             packet = frame[14:]
@@ -612,6 +620,8 @@ def run(firmware, transport, timeout, fault=False, *, image=None, gdb_port=1237)
                 'IPV4_FRAGMENT_PASS index=2 cases=12 option_cases=6',
                 'IPV4_FRAGMENT_OUTPUT_PASS index=1 cases=45 option_cases=24',
                 'IPV4_FRAGMENT_OUTPUT_PASS index=2 cases=45 option_cases=24',
+                'IPV4_RAW_HEADER_OUTPUT_PASS index=1 cases=26 inherited_cases=1',
+                'IPV4_RAW_HEADER_OUTPUT_PASS index=2 cases=26 inherited_cases=1',
                 'IPV4_PATH_MTU_PASS index=1 cases=18 policies_each=6',
                 'IPV4_PATH_MTU_PASS index=2 cases=18 policies_each=6',
                 'IPV4_PATH_MTU_LIFETIME_PASS index=1', 'IPV4_PATH_MTU_LIFETIME_PASS index=2',
@@ -643,6 +653,8 @@ def run(firmware, transport, timeout, fault=False, *, image=None, gdb_port=1237)
                      peer.fragments.waiting is None and peer.fragments.acknowledged and
                      peer.fragments.output.completed == 45 and peer.fragments.output.waiting is None and
                      peer.fragments.output.acknowledged and peer.fragments.expiry.passed and
+                     peer.fragments.raw_headers.completed == 26 and peer.fragments.raw_headers.acknowledged and
+                     peer.fragments.raw_queue.completed == 6 and peer.fragments.raw_queue.acknowledged and
                      peer.fragments.path_mtu.passed and peer.fragments.path_mtu.lifetime.passed
                      for peer in peers)
     alias_audits = []
@@ -672,6 +684,24 @@ def run(firmware, transport, timeout, fault=False, *, image=None, gdb_port=1237)
                     lane, log, damage_archive=archive))
         except Exception as exception:
             error = f'option-bearing fragment capture audit: {exception}'
+    raw_header_audits = []
+    if not fault and passed and returncode == 1 and not timed_out and not error and not missing:
+        try:
+            for lane in range(2):
+                archive = ROOT / 'build' / f'{label}-raw-headers-lane{lane}-{time.monotonic_ns()}.zip'
+                raw_header_audits.append(verify_raw_headers(ROOT / 'build' / f'{label}-lane{lane}.pcap',
+                    lane, log, damage_archive=archive))
+        except Exception as exception:
+            error = f'raw-header Ethernet capture audit: {exception}'
+    raw_queue_audits = []
+    if not fault and passed and returncode == 1 and not timed_out and not error and not missing:
+        try:
+            for lane in range(2):
+                archive = ROOT / 'build' / f'{label}-raw-queue-lane{lane}-{time.monotonic_ns()}.zip'
+                raw_queue_audits.append(verify_raw_queue(ROOT / 'build' / f'{label}-lane{lane}.pcap',
+                    lane, log, damage_archive=archive))
+        except Exception as exception:
+            error = f'raw-header queue capture audit: {exception}'
     path_audits = []
     if not fault and passed and returncode == 1 and not timed_out and not error and not missing:
         try:
@@ -726,13 +756,23 @@ def run(firmware, transport, timeout, fault=False, *, image=None, gdb_port=1237)
                   path_mtu=[peer.fragments.path_mtu.report() for peer in peers],
                   path_mtu_capture_audits=path_audits,
                   option_fragment_capture_audits=option_fragment_audits,
+                  raw_header_cases=[peer.fragments.raw_headers.completed for peer in peers],
+                  raw_header_frames=[peer.fragments.raw_headers.frames for peer in peers],
+                  raw_header_final_ack=[peer.fragments.raw_headers.acknowledged for peer in peers],
+                  raw_header_capture_audits=raw_header_audits,
+                  raw_queue_cases=[peer.fragments.raw_queue.completed for peer in peers],
+                  raw_queue_frames=[peer.fragments.raw_queue.frames for peer in peers],
+                  raw_queue_final_ack=[peer.fragments.raw_queue.acknowledged for peer in peers],
+                  raw_queue_capture_audits=raw_queue_audits,
                   path_mtu_lifetime=[peer.fragments.path_mtu.lifetime.report() for peer in peers],
                   path_mtu_lifetime_capture_audits=lifetime_audits,
                   captures=[f'{label}-lane{lane}.pcap' for lane in range(2)],
                   seconds=round(time.monotonic() - started, 2), log=log.name,
                   passed=(returncode == 1 and not timed_out and not error and not missing and passed and
                           (fault or (len(alias_audits) == 2 and all(a['passed'] for a in alias_audits) and
-                                     len(option_fragment_audits) == 2 and all(a['passed'] for a in option_fragment_audits)))))
+                                     len(option_fragment_audits) == 2 and all(a['passed'] for a in option_fragment_audits) and
+                                     len(raw_queue_audits) == 2 and all(a['passed'] for a in raw_queue_audits) and
+                                     len(raw_header_audits) == 2 and all(a['passed'] for a in raw_header_audits)))))
     print(json.dumps(result), flush=True)
     if not result['passed']:
         print('\n'.join(text.splitlines()[-25:]), flush=True)

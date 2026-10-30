@@ -15,7 +15,7 @@ from fetch import LOCK, ROOT
 
 def fixture(directory, provider, linkage, *, program_builder=build, filename='account-store',
             command='/bin/account-store /run/account-store', extra_products=None,
-            kernel_options=()):
+            kernel_options=(), kernel=None):
     program, provenance = program_builder(provider, linkage, directory)
     files = {name: (0o40755, b'') for name in ('bin', 'sbin', 'lib', 'etc', 'dev', 'proc', 'sys', 'tmp', 'run')}
     products = {'sbin/init': ROOT / 'build/init', 'bin/' + filename: program,
@@ -43,11 +43,12 @@ def fixture(directory, provider, linkage, *, program_builder=build, filename='ac
     name = filename + '-' + provider + '-' + linkage + '.iso'
     subprocess.run(['python3', 'scripts/image.py', '--test', '--suite', 'network',
                     '--initramfs', str(cpio), '--output-name', name,
+                    *(['--kernel', str(kernel)] if kernel is not None else []),
                     *(argument for token in kernel_options for argument in ('--kernel-option', token))], cwd=ROOT,
                    stdout=subprocess.DEVNULL, check=True)
     image = directory / 'image.iso'
     shutil.copy2(ROOT / 'build' / name, image)
-    shutil.copy2(ROOT / 'build/axiom64.elf', directory / 'kernel.elf')
+    shutil.copy2(kernel if kernel is not None else ROOT / 'build/axiom64.elf', directory / 'kernel.elf')
     for name in ('image.iso', 'root.cpio', 'kernel.elf'):
         records[name] = dict(bytes=(directory / name).stat().st_size, sha256=digest(directory / name))
     (directory / 'products.json').write_text(json.dumps(records, indent=2) + '\n')

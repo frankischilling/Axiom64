@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #define _GNU_SOURCE
 #include "ipv4_fragments.h"
+#include "ipv4/raw_header_queue.h"
 #include <arpa/inet.h>
 #include <errno.h>
+#include <grp.h>
 #include <net/if.h>
 #include <netinet/in.h>
 #include <poll.h>
@@ -382,6 +384,146 @@ static void output_checks(unsigned lane, const char* name, const struct sockaddr
            sizeof(cases) / sizeof(cases[0]));
 }
 
+static void raw_header_checks(unsigned lane, const char* name, const struct sockaddr_in* peer) {
+    static const size_t lengths[] = {28, 28, 28, 28,   28,   28, 68, 36, 36, 36, 28, 28,    28,
+                                     28, 28, 28, 1500, 1501, 19, 28, 68, 69, 28, 28, 65535, 65536};
+    int control_fd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
+    unsigned filter = ~1u;
+    require(control_fd >= 0 &&
+                setsockopt(control_fd, SOL_SOCKET, SO_BINDTODEVICE, name, strlen(name) + 1) == 0 &&
+                setsockopt(control_fd, 255, 1, &filter, sizeof(filter)) == 0,
+            "raw header control socket");
+    unsigned char* bytes = malloc(65536);
+    require(bytes != NULL, "raw header packet storage");
+    for (unsigned test = 0; test < sizeof(lengths) / sizeof(*lengths); test++) {
+        struct ifreq request = {0};
+        snprintf(request.ifr_name, sizeof(request.ifr_name), "%s", name);
+        request.ifr_mtu = test == 20 || test == 21 ? 68 : 1500;
+        require(ioctl(control_fd, SIOCSIFMTU, &request) == 0, "raw header device MTU");
+        int fd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, test == 22 ? 75 : IPPROTO_RAW);
+        require(fd >= 0 && setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, name, strlen(name) + 1) == 0,
+                "raw header output socket");
+        int enabled = -1;
+        socklen_t option_length = sizeof(enabled);
+        require(getsockopt(fd, IPPROTO_IP, IP_HDRINCL, &enabled, &option_length) == 0 &&
+                    option_length == 4 && enabled == (test != 22),
+                "raw header mode default");
+        enabled = 1;
+        require(setsockopt(fd, IPPROTO_IP, IP_HDRINCL, &enabled, 4) == 0, "raw header mode enable");
+        int ttl = 99, tos = 4;
+        require(setsockopt(fd, IPPROTO_IP, IP_TTL, &ttl, 4) == 0 &&
+                    setsockopt(fd, IPPROTO_IP, IP_TOS, &tos, 4) == 0,
+                "raw header description defaults differ from literal fields");
+        const size_t length = lengths[test];
+        memset(bytes, 0, 65536);
+        size_t header = test == 6 || test == 19 ? 60 : test >= 7 && test <= 9 ? 28 : 20;
+        bytes[0] = (unsigned char)((test == 5 ? 0x60 : 0x40) | header / 4);
+        bytes[1] = 0x5a;
+        bytes[2] = bytes[3] = 0x11;
+        bytes[4] = test == 1 || test == 2 ? 0 : 0x13;
+        bytes[5] = test == 1 || test == 2 ? 0 : 0x57;
+        bytes[6] = test == 2 ? 0x40 : 0;
+        bytes[8] = 35;
+        bytes[9] = 75;
+        bytes[10] = bytes[11] = 0xaa;
+        if (test == 3) {
+            bytes[12] = 192;
+            bytes[14] = 2;
+            bytes[15] = 1;
+        }
+        memcpy(bytes + 16, &peer->sin_addr.s_addr, 4);
+        if (test == 4)
+            bytes[19] = 77;
+        for (size_t at = header; at < length; at++)
+            bytes[at] = (unsigned char)(at * 37 + lane * 31 + test * 11);
+        if (test == 6)
+            memset(bytes + 20, 1, 40);
+        if (test >= 7 && test <= 9) {
+            const unsigned char options[][8] = {{7, 7, 4, 99, 98, 97, 96, 0},
+                                                {131, 7, 4, 10, 23, 9, 77, 0},
+                                                {134, 8, 0, 0, 0, 0, 0, 0}};
+            memcpy(bytes + 20, options[test - 7], 8);
+        }
+        if (test == 10 || test == 11) {
+            const unsigned char options[4] = {1, 1, 1, 1};
+            require(setsockopt(fd, IPPROTO_IP, IP_OPTIONS, options, test == 10 ? 0 : 4) == 0,
+                    "raw header conflicting description options");
+        }
+        send_control(control_fd, peer, lane, "RH", test, 0);
+        acknowledgement(control_fd, lane, "RH", test, 0, 5000);
+        ssize_t sent;
+        if (test == 23) {
+            pid_t child = fork();
+            require(child >= 0, "raw header inherited fork");
+            if (!child) {
+                require(setgroups(0, NULL) == 0 && setgid(65534) == 0 && setuid(65534) == 0,
+                        "raw header ordinary credentials");
+                enabled = 0;
+                require(setsockopt(fd, IPPROTO_IP, IP_HDRINCL, &enabled, 4) == 0,
+                        "raw header inherited clear");
+                enabled = 1;
+                require(setsockopt(fd, IPPROTO_IP, IP_HDRINCL, &enabled, 4) == 0 &&
+                            sendto(fd, bytes, length, 0, (const struct sockaddr*)peer,
+                                   sizeof(*peer)) == (ssize_t)length,
+                        "raw header inherited ordinary output");
+                memset(bytes, 0xa5, length);
+                _exit(0);
+            }
+            int status;
+            require(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+                        WEXITSTATUS(status) == 0,
+                    "raw header ordinary completion");
+            sent = (ssize_t)length;
+        } else if (test == 12 || test == 13) {
+            unsigned char ancillary[CMSG_SPACE(4)] = {0};
+            struct iovec vector = {.iov_base = bytes, .iov_len = length};
+            struct msghdr message = {.msg_name = (void*)peer,
+                                     .msg_namelen = sizeof(*peer),
+                                     .msg_iov = &vector,
+                                     .msg_iovlen = 1,
+                                     .msg_control = ancillary,
+                                     .msg_controllen = test == 12 ? CMSG_SPACE(0) : CMSG_SPACE(4)};
+            struct cmsghdr* control = CMSG_FIRSTHDR(&message);
+            control->cmsg_level = IPPROTO_IP;
+            control->cmsg_type = IP_RETOPTS;
+            control->cmsg_len = test == 12 ? CMSG_LEN(0) : CMSG_LEN(4);
+            if (test == 13)
+                memset(CMSG_DATA(control), 1, 4);
+            sent = sendmsg(fd, &message, 0);
+        } else
+            sent = sendto(fd, bytes, length,
+                          test == 14   ? 0x10
+                          : test == 15 ? MSG_MORE
+                                       : 0,
+                          (const struct sockaddr*)peer, sizeof(*peer));
+        int expected = test >= 10 && test <= 13                 ? EINVAL
+                       : test == 17 || test == 21 || test >= 24 ? EMSGSIZE
+                       : test == 18 || test == 19               ? EINVAL
+                                                                : 0;
+        require(expected ? sent == -1 && errno == expected : sent == (ssize_t)length,
+                "raw header complete send result");
+        memset(bytes, 0xa5, length);
+        enabled = 0;
+        require(setsockopt(fd, IPPROTO_IP, IP_HDRINCL, &enabled, 4) == 0,
+                "raw header accepted mode ownership");
+        if (expected || test == 14)
+            send_control(control_fd, peer, lane, "RH", test, 1);
+        acknowledgement(control_fd, lane, "RH", test, 1, 5000);
+        require(close(fd) == 0, "raw header output close");
+        printf("IPV4_RAW_HEADER_OUTPUT_CASE index=%u test=%u result=%lld error=%d ordinary=%u\n",
+               lane + 1, test, (long long)sent, expected, test == 23);
+    }
+    struct ifreq restore = {0};
+    snprintf(restore.ifr_name, sizeof(restore.ifr_name), "%s", name);
+    restore.ifr_mtu = 1500;
+    require(ioctl(control_fd, SIOCSIFMTU, &restore) == 0, "raw header restore device MTU");
+    send_control(control_fd, peer, lane, "RH", 26, 0);
+    acknowledgement(control_fd, lane, "RH", 26, 0, 5000);
+    free(bytes);
+    require(close(control_fd) == 0, "raw header control close");
+    printf("IPV4_RAW_HEADER_OUTPUT_PASS index=%u cases=26 inherited_cases=1\n", lane + 1);
+}
+
 void ipv4_fragment_checks(unsigned lane) {
     require(lane < 2, "lane bound");
     int fd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
@@ -410,6 +552,8 @@ void ipv4_fragment_checks(unsigned lane) {
     require(close(fd) == 0, "raw socket close");
     printf("IPV4_FRAGMENT_PASS index=%u cases=12 option_cases=6\n", lane + 1);
     output_checks(lane, name, &peer);
+    raw_header_checks(lane, name, &peer);
+    ipv4_raw_header_queue_checks(lane, -1);
 }
 
 void ipv4_fragment_expiry_checks(void) {

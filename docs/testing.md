@@ -1378,7 +1378,7 @@ required on both native policy families.
 The TCP client adds 36 root/ordinary cases for closed-port resets, accepted option
 snapshots and duplicate-FIN replies in retained and compacted TIME-WAIT states. It
 replays the actual original FIN with a recomputed transport checksum, then inspects
-the actual kernel reply. Creation and `SO_PROTOCOL` checks cover all 261 supported
+the actual kernel reply. Creation and `SO_PROTOCOL` checks cover 261 ordinary
 raw protocol numbers. The raw-header client separately exercises protocol 255,
 the `IP_HDRINCL` scalar and fault contract, inherited descriptions, literal header
 fields, NOP options, device limits and probe output. It retains twelve complete
@@ -1399,6 +1399,28 @@ SYN ownership, replayed FIN sequences and literal raw headers, and rejects 182 r
 Several controls repair packet checksums so an incorrect sequence, option value or
 ownership cannot pass merely by carrying a valid checksum. The original evidence
 can be checked again with `python3 scripts/ipv4_options_evidence.py build/ipv4-options`.
+
+The existing Ethernet fragment campaign adds 26 raw-header cases per NIC alongside
+its original twelve input and 45 output cases. Fifteen literal packets cover filled
+fields, preserved RR/source-route/security-label bytes, a different header destination,
+a spoofed source, another version, device-MTU boundaries, generic raw header mode
+and ordinary output through an inherited descriptor. Eleven cases require no packet,
+including empty-option conflicts, invalid lengths, MTU failures and `MSG_PROBE`.
+The independent raw-header reader checks all 91 control packets and the terminal
+exchange, retaining the original five-second acknowledgement limit. It reopens sixteen
+damaged PCAP/log controls per capture, including checksum-repaired literal fields.
+All existing fragment, expiry and PMTU readers remain required. Use
+`scripts/ipv4_raw_headers_capture.py` to reopen this evidence independently.
+The same full runs also hold six real ARP resolutions per NIC while the client
+removes a selected source address, lowers the MTU, removes a route, closes the last
+descriptor or changes header mode and options. An ordinary child sends through an
+inherited descriptor. Each accepted packet must retain its original bytes and route
+through the change and caller-buffer reuse. A fresh send after MTU reduction must
+still fail with `EMSGSIZE`. The independent `scripts/ipv4_raw_header_queue_capture.py`
+reader requires six exact packets, six held neighbors, 38 control frames and the
+terminal reply. It retains the five-second deadlines and reopens sixteen damaged
+packet/log controls per capture. These cases use the existing boots and native
+profiles; fragment expiry and ten-minute PMTU observations remain required.
 To retain fresh damaged controls, run `python3 scripts/ipv4_options_evidence_test.py build/ipv4-options --directory build/ipv4-options-controls`.
 
 The runner writes corresponding source, build inputs, native provider mappings,

@@ -33,6 +33,10 @@ class AcknowledgementFailures(unittest.TestCase):
             data = original.read_bytes()
             (snapshots / name).write_bytes(data)
             fingerprints[name] = hashlib.sha256(data).hexdigest()
+        header = ROOT / 'userspace/tests/net/ipv4/raw_header_queue.h'
+        (snapshots / 'ipv4').mkdir()
+        (snapshots / 'ipv4/raw_header_queue.h').write_bytes(header.read_bytes())
+        fingerprints['ipv4/raw_header_queue.h'] = hashlib.sha256(header.read_bytes()).hexdigest()
         program = DIRECTORY / 'acknowledgement.c'
         program.write_text(r'''#include "source/ipv4_fragments.c"
 #include <signal.h>

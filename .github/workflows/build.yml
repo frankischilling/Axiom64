@@ -283,7 +283,7 @@ jobs:
           python3 scripts/tests/ipv4_fragment_observation_test.py -v 2>&1 | tee build/ipv4-policy/fragment-observation.log
           python3 scripts/tests/ipv4_fragment_diagnostics_test.py --directory build/ipv4-policy/fragment-diagnostics -v 2>&1 | tee build/ipv4-policy/fragment-diagnostics.log
           python3 scripts/tests/ipv4_expiry_damage_test.py -v 2>&1 | tee build/ipv4-policy/expiry-damage.log
-          make test-ipv6-wire test-ipv4-reassembly test-ipv4-fragmentation test-ipv4-path-mtu test-ipv4-paths test-ipv4-multicast test-ipv4-source-filter test-ipv4-source-aggregate test-ipv4-multicast-source-host test-ipv4-source-reports test-ipv4-multicast-source-wire-host test-ipv4-multicast-queries 2>&1 | tee build/ipv4-policy/host.log
+          make test-ipv6-wire test-ipv4-reassembly test-ipv4-fragmentation test-ipv4-path-mtu test-ipv4-paths test-ipv4-options-model test-ipv4-multicast test-ipv4-source-filter test-ipv4-source-aggregate test-ipv4-multicast-source-host test-ipv4-source-reports test-ipv4-multicast-source-wire-host test-ipv4-multicast-queries 2>&1 | tee build/ipv4-policy/host.log
       - name: Replay legal source-report interleavings and reject invented retries
         run: python3 -B scripts/tests/ipv4_multicast_source_overlap_test.py
       - name: Upload IPv4 policy evidence
@@ -1212,6 +1212,16 @@ jobs:
       - name: Compare IPv4 receive controls, faults and description lifetime with Linux
         if: matrix.suite == 'network'
         run: sudo -n make test-ipv4-receive-controls
+      - name: Compare IPv4 option syscalls and local packets with Linux
+        if: matrix.suite == 'network'
+        run: sudo -n make test-ipv4-options
+      - name: Upload IPv4 option syscall and local packet evidence
+        if: always() && matrix.suite == 'network'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-options
+          if-no-files-found: warn
+          path: build/ipv4-options
       - name: Upload complete IPv4 receive-control evidence
         if: always() && matrix.suite == 'network'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1675,6 +1685,9 @@ jobs:
             build/ipv4-*.pcap
             build/ipv4-*-alias-lane*.zip
             build/ipv4-*-expiry-lane*.zip
+            build/ipv4-*-option-fragments-lane*.zip
+            build/ipv4-*-raw-headers-lane*.zip
+            build/ipv4-*-raw-queue-lane*.zip
             build/ipv4-*-pmtu-lane*.zip
             build/ipv4-*-pmtu-lifetime-lane*.zip
             build/ipv4-gateway-*-lane*-damaged-*.zip

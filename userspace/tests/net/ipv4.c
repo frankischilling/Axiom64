@@ -5,6 +5,7 @@
 #include "ipv4_unconfigured.h"
 #include "ipv4_fragments.h"
 #include "ipv4_path_mtu.h"
+#include "ipv4/raw_header_queue.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <net/if.h>
@@ -690,9 +691,23 @@ static void limits(unsigned lane) {
               sendto(fd, bytes, sizeof(bytes), 0, (struct sockaddr*)&destination,
                      sizeof(destination)) == sizeof(bytes),
           "explicit limited broadcast output");
-    check(setsockopt(fd, IPPROTO_IP, IP_HDRINCL, &enabled, sizeof(enabled)) == -1 &&
-              errno == ENOPROTOOPT,
-          "unsupported raw IP header option");
+    int header_mode = -1;
+    socklen_t header_length = sizeof(header_mode);
+    check(getsockopt(fd, IPPROTO_IP, IP_HDRINCL, &header_mode, &header_length) == 0 &&
+              header_length == sizeof(header_mode) && header_mode == 0,
+          "raw ICMP default header mode");
+    header_mode = 1;
+    check(setsockopt(fd, IPPROTO_IP, IP_HDRINCL, &header_mode, sizeof(header_mode)) == 0,
+          "enable raw IP header mode");
+    header_mode = -1;
+    check(getsockopt(fd, IPPROTO_IP, IP_HDRINCL, &header_mode, &header_length) == 0 &&
+              header_mode == 1,
+          "query enabled raw IP header mode");
+    header_mode = 0;
+    check(setsockopt(fd, IPPROTO_IP, IP_HDRINCL, &header_mode, sizeof(header_mode)) == 0 &&
+              getsockopt(fd, IPPROTO_IP, IP_HDRINCL, &header_mode, &header_length) == 0 &&
+              header_mode == 0,
+          "restore ordinary raw packet mode");
     check(listen(fd, 1) == -1 && errno == EOPNOTSUPP, "unsupported raw stream lifecycle");
     check(close(fd) == 0, "IPv4 limits close");
     int control = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_UDP);
@@ -999,6 +1014,18 @@ static void link_change(unsigned lane) {
 
 int main(int argc, char** argv) {
     setbuf(stdout, NULL);
+    if ((argc == 2 || argc == 3) && !strcmp(argv[1], "--raw-header-queue")) {
+        int selected = -1;
+        if (argc == 3) {
+            char* end;
+            long value = strtol(argv[2], &end, 10);
+            check(*argv[2] && !*end && value >= 0 && value < 6, "raw queue case selection");
+            selected = (int)value;
+        }
+        ipv4_raw_header_queue_checks(0, selected);
+        ipv4_raw_header_queue_checks(1, selected);
+        return 0;
+    }
     if (argc == 2 && !strcmp(argv[1], "--gateways")) {
         ipv4_gateway_checks(0);
         ipv4_gateway_checks(1);
@@ -1027,6 +1054,13 @@ int main(int argc, char** argv) {
         ipv4_path_mtu_checks(0);
         ipv4_path_mtu_checks(1);
         ipv4_path_mtu_lifetime_checks();
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--fragment-datagrams")) {
+        // Development diagnostics retain all datagram cases. Expiry and PMTU
+        // acceptance still runs through --fragments and the normal workload.
+        ipv4_fragment_checks(0);
+        ipv4_fragment_checks(1);
         return 0;
     }
     int fd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);

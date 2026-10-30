@@ -16,6 +16,7 @@ struct UdpOutput {
     bool cache_destination = true;
     int traffic_class = -1;
     const Ipv4SendRoute* selected = nullptr;
+    const ip4::Options* options = nullptr;
 };
 
 enum class UdpInput { dropped, unbound, delivered };

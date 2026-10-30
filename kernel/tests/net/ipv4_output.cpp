@@ -24,6 +24,10 @@ int random_read(void*, size_t, bool) {
 
 uint64_t ticks = 100;
 
+uint64_t clock_realtime_ticks() {
+    return ticks;
+}
+
 void* alloc(size_t length) {
     return std::malloc(length);
 }
@@ -72,8 +76,9 @@ void inet_failed(InetSocket*, int, unsigned) {
     assert(false && "output fixture has no socket error recipient");
 }
 
-void inet_deliver(const Ipv4ReceiveMetadata&, const void*, size_t) {
+bool inet_deliver(const Ipv4ReceiveMetadata&, const void*, size_t) {
     assert(false && "ARP fixture must not deliver transport input");
+    return false;
 }
 
 void inet_icmp_error(unsigned, const uint8_t*, int, uint16_t) {
@@ -88,7 +93,7 @@ UdpInput udp_receive(const Ipv4ReceiveMetadata&, bool, const void*, size_t) {
 void tcp_poll() {
 }
 
-void tcp_receive(unsigned, uint32_t, uint32_t, const void*, size_t) {
+void tcp_receive(unsigned, uint32_t, uint32_t, const void*, size_t, const ip4::ReceivedOptions*) {
     assert(false && "ARP fixture must not receive TCP");
 }
 

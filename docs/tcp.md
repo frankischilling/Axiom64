@@ -165,7 +165,17 @@ reuse policies remain part of complete transport acceptance.
 
 Initial sequences use a 32-byte secret obtained only from the ready kernel random source, a domain-separated HMAC-BLAKE2s of the IPv4/port tuple and a monotonic sequence clock. Allocation/output retries do not substitute a predictable fallback. The derivation has independent standard HMAC fixtures. This integration does not establish the full entropy, saved-state, adversarial ISN or SMP acceptance in randomness/TCP sockets.
 
-The shared Internet pool contains at most 256 sockets, with at most 32 unaccepted children per listener and 32 KiB send/receive storage per connection. Each active or passive connection reserves a slot in a separate 1024-record TIME-WAIT table before its handshake. After TCP submits its final packets, a detached endpoint transfers completed state to its reserved record and releases its application buffers and general socket slot. IPv4 owns the final packet copies independently. Resets, failed allocation and failed attempts release unused reservations.
+The shared Internet pool contains at most 256 sockets, with at most 32 unaccepted children per listener and 32 KiB send/receive storage per connection. Each active or passive connection reserves a slot in a separate 1024-record TIME-WAIT table before its handshake. After TCP submits its final packets, a detached endpoint transfers completed state to its reserved record and releases its application buffers and general socket slot. IPv4 owns the final packet copies independently. Resets, failed allocation and failed attempts release unused reservations. Each compact record is bounded to 160 bytes, including an owned IPv4 option value for a pending reply.
+
+IPv4 accepted descriptions capture their return options from the original SYN,
+independently of later listener controls. An input-triggered reset or TIME-WAIT
+reply owns the corresponding option value while output is blocked. The connection
+engine identifies these replies separately from local aborts and ordinary output.
+If the IP return value cannot be formed, cancellation does not consume sequence
+space or report successful transmission. [Packet-option tests](testing.md#ipv4-packet-options)
+exercise accepted snapshots, reset headers and duplicate FINs against retained and
+compacted TIME-WAIT state. Full Ethernet and blocked-output acceptance remains
+required.
 
 The table bounds reservations and completed records together. A full table rejects new TCP state with ENOBUFS, while a listener can leave a SYN unadmitted until capacity returns. A finite connect waiting for listener capacity retains its normal EINPROGRESS timeout result. Completed sequence state is never evicted to admit another connection. UDP and other Internet sockets keep their shared pool available.
 

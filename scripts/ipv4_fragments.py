@@ -3,6 +3,7 @@
 import struct
 import time
 from ipv4_path_mtu import PathMtuPeer
+from ipv4_options.fragment_options import value as option_value, wire_value as option_wire_value
 
 
 def checksum(data):
@@ -22,18 +23,22 @@ class FragmentPeer:
         self.frames = 0
         self.acknowledged = False
         self.output = OutputFragmentPeer(self)
+        from ipv4_options.raw_headers_peer import RawHeaderPeer
+        self.raw_headers = RawHeaderPeer(self)
+        from ipv4_options.raw_header_queue_peer import RawHeaderQueuePeer
+        self.raw_queue = RawHeaderQueuePeer(lane)
         self.expiry = FragmentExpiryPeer(self, native=native)
         self.path_mtu = PathMtuPeer(lane, native=native)
 
     def accepts(self, packet):
-        return (self.path_mtu.accepts(packet) or packet[24:26] in (b'FR', b'FO') or
+        return (self.raw_headers.accepts(packet) or self.path_mtu.accepts(packet) or packet[24:26] in (b'FR', b'FO') or
                 (self.output.waiting is not None and len(packet) >= 20 and packet[9] in (1, 17)))
 
-    def packet(self, payload, identifier, offset=0, more=False):
-        header = bytearray(struct.pack('!BBHHHBBH4s4s', 0x45, 0, 20 + len(payload),
+    def packet(self, payload, identifier, offset=0, more=False, options=b''):
+        header = bytearray(struct.pack('!BBHHHBBH4s4s', 0x45 + len(options) // 4, 0, 20 + len(options) + len(payload),
                                       identifier, offset // 8 | (0x2000 if more else 0),
                                       51, 1, 0, bytes([10, 23, self.lane + 1, 1]),
-                                      bytes([10, 23, self.lane + 1, 2])))
+                                      bytes([10, 23, self.lane + 1, 2])) + options)
         struct.pack_into('!H', header, 10, checksum(bytes(header)))
         return bytes(header) + payload
 
@@ -51,6 +56,8 @@ class FragmentPeer:
 
     def receive(self, packet):
         """Return IP packets only after validating the real guest's exact request."""
+        if self.raw_headers.accepts(packet):
+            return self.raw_headers.receive(packet)
         if self.path_mtu.accepts(packet):
             return self.path_mtu.receive(packet)
         if packet[24:26] != b'FR':
@@ -67,7 +74,7 @@ class FragmentPeer:
                 control[8:] != expected or test != self.completed or phase not in (0, 1)):
             raise ValueError('fragment control bytes or sequence differ')
         identifier = 0x7100 + self.lane * 32 + test * 2
-        if test == 6:
+        if test == 12:
             if phase or self.waiting is not None or self.acknowledged:
                 raise ValueError('fragment final acknowledgement differs')
             self.acknowledged = True
@@ -111,6 +118,25 @@ class FragmentPeer:
                       for at in range(0, len(body), 1472)]
             result.reverse()
             self.completed += 1
+        elif 6 <= test < 12:
+            selected = (35, 35, 36, 36, 21, 35)[test - 6]
+            options = option_value(selected)
+            if test in (6, 8):
+                result = [self.packet(body, identifier, options=options)]
+            else:
+                copied = bytearray(options)
+                at = 0
+                while at < len(copied) and copied[at]:
+                    kind = copied[at]
+                    size = 1 if kind == 1 else copied[at + 1]
+                    if not kind & 128:
+                        copied[at:at + size] = b'\1' * size
+                    at += size
+                result = [self.packet(body[:24], identifier, 0, True, options),
+                          self.packet(body[24:], identifier, 24, False, b'' if test == 11 else bytes(copied))]
+                if test == 10:
+                    result.reverse()
+            self.completed += 1
         else:
             raise ValueError('unknown fragment case')
         self.frames += len(result)
@@ -125,7 +151,15 @@ class OutputFragmentPeer:
              (17, 1, 68, 4096), (1, 1, 1500, 1480), (17, 0, 1500, 1472),
              (1, 1, 1500, 1481), (17, 1, 1500, 1473), (1, 0, 68, 65515),
              (1, 4, 1500, 1481), (17, 4, 1500, 1473), (1, 5, 1500, 65515),
-             (17, 5, 1500, 65507), (1, 4, 1500, 1480), (17, 4, 1500, 1472)]
+             (17, 5, 1500, 65507), (1, 4, 1500, 1480), (17, 4, 1500, 1472),
+             (1, 0, 1500, 65475), (17, 1, 1500, 65467), (1, 0, 68, 512),
+             (17, 1, 68, 512), (1, 2, 1500, 1441), (17, 2, 1500, 1433),
+             (1, 1, 1500, 1440), (17, 1, 1500, 1432), (1, 3, 1500, 1441),
+             (17, 4, 1500, 1433), (1, 5, 1500, 65475), (17, 5, 1500, 65467),
+             (1, 0, 1500, 65476), (17, 0, 1500, 65468), (1, 0, 1500, 4096),
+             (17, 0, 1500, 4096), (1, 1, 1500, 4096), (17, 1, 1500, 4096),
+             (1, 0, 68, 32), (17, 0, 68, 33), (1, 2, 68, 40),
+             (17, 2, 68, 33), (1, 0, 1500, 65475), (17, 0, 1500, 65467)]
 
     def __init__(self, parent):
         self.parent = parent
@@ -144,13 +178,14 @@ class OutputFragmentPeer:
 
     def receive(self, packet):
         lane = self.parent.lane
-        if (len(packet) < 20 or packet[0] != 0x45 or checksum(packet[:20]) or
+        header = (packet[0] & 15) * 4 if packet else 0
+        if (len(packet) < 20 or packet[0] >> 4 != 4 or not 20 <= header <= len(packet) or checksum(packet[:header]) or
                 int.from_bytes(packet[2:4], 'big') != len(packet) or
                 packet[12:20] != bytes([10, 23, lane + 1, 2, 10, 23, lane + 1, 1]) or
                 packet[1] or packet[8] != 64):
             raise ValueError('output IP header, route or checksum differs')
         flags = int.from_bytes(packet[6:8], 'big')
-        if packet[9] == 1 and not (flags & 0x3fff) and packet[24:26] == b'FO':
+        if packet[9] == 1 and header == 20 and not (flags & 0x3fff) and packet[24:26] == b'FO':
             body = packet[20:]
             if (len(body) != 32 or body[:2] != b'\x08\0' or checksum(body) or
                     body[8:] != bytes((i * 17 + lane * 31) & 255 for i in range(8, 32))):
@@ -169,9 +204,9 @@ class OutputFragmentPeer:
                 self.identifier = None
                 return [self.acknowledgement(test, 0)]
             protocol, policy, mtu, length = self.cases[test]
-            oversized = length + (28 if protocol == 17 else 20) > mtu
-            if (phase == 1 and self.waiting == test and policy in (2, 3, 4) and
-                    oversized and not self.payload):
+            total = length + (28 if protocol == 17 else 20) + len(option_value(test))
+            rejected = total > 65535 or (policy in (2, 3, 4) and total > mtu)
+            if phase == 1 and self.waiting == test and rejected and not self.payload:
                 self.waiting = None
                 self.completed += 1
                 return [self.acknowledgement(test, 1)]
@@ -181,15 +216,17 @@ class OutputFragmentPeer:
         test = self.waiting
         protocol, policy, mtu, length = self.cases[test]
         total_payload = length + (8 if protocol == 17 else 0)
-        if ((policy in (2, 3, 4) and total_payload + 20 > mtu) or
+        full_length = total_payload + 20 + len(option_value(test))
+        if (full_length > 65535 or (policy in (2, 3, 4) and full_length > mtu) or
                 packet[9] != protocol or len(packet) > mtu or flags & 0x8000):
             raise ValueError('output violated protocol, DF rejection or MTU')
-        fragment = total_payload + 20 > mtu
+        fragment = full_length > mtu
         expected_df = policy in (1, 2, 3) and not fragment
         if bool(flags & 0x4000) != expected_df:
             raise ValueError('output DF policy differs')
         offset = (flags & 0x1fff) * 8
-        body = packet[20:]
+        option_wire_value(test, lane, offset, packet[20:header])
+        body = packet[header:]
         if offset != len(self.payload) or not body:
             raise ValueError('output offset, ordering or duplicate differs')
         identifier = packet[4:6]

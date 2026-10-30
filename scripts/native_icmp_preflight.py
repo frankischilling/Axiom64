@@ -17,13 +17,14 @@ def require(value, reason):
 
 
 class NativeIcmpPreflight:
-    def __init__(self, directory):
+    def __init__(self, directory, *, global_policy=None):
+        self.global_policy = global_policy
         self.path = directory/'native-icmp-preflight.json'
         self.held = []
         self.lane = None
         self.request = None
         self.passed = False
-        self.evidence = dict(schema=1, passed=False, held=[], releases=[], policy_before=None,
+        self.evidence = dict(schema=2 if global_policy is not None else 1, passed=False, held=[], releases=[], policy_before=None,
                              policy_after=None, request=None, response=None)
         self.save()
 
@@ -31,8 +32,18 @@ class NativeIcmpPreflight:
         self.path.write_text(json.dumps(self.evidence, indent=2)+'\n')
 
     def policy(self, name):
-        values = {key:(Path('/proc/sys/net/ipv4')/key).read_text() for key in POLICY}
+        values, sources = {}, {}
+        for key in POLICY:
+            path = Path('/proc/sys/net/ipv4') / key
+            if not path.exists() and self.global_policy is not None and key in self.global_policy.descriptors:
+                data, sources[key] = self.global_policy.read(key)
+                values[key] = data.decode('ascii')
+            else:
+                values[key] = path.read_text()
         self.evidence[name] = dict(monotonic_ns=time.monotonic_ns(), values=values)
+        if self.global_policy is not None:
+            require(len(sources) == 2, 'both actual inherited global controls')
+            self.evidence[name].update(global_sources=sources, kernel=self.global_policy.kernel)
         self.save()
         require(values == POLICY, 'unchanged default native error-rate parameters')
 

@@ -50,8 +50,11 @@ int net_send(unsigned index, const void*, size_t, const void* sender = nullptr);
 
 // Device polling may change protocol ownership or routes. Revalidate the
 // borrowed frame after polling and before copying it to the device.
+// A nonzero admitted_mtu belongs to a complete packet already accepted by a
+// protocol queue. It preserves that admission across logical MTU changes;
+// device liveness and its physical maximum still apply.
 int net_send_checked(unsigned index, const void*, size_t, int (*validate)(void*), void* context,
-                     const void* sender = nullptr);
+                     const void* sender = nullptr, uint32_t admitted_mtu = 0);
 
 void net_receive(NetAdapter&, const void*, size_t);
 

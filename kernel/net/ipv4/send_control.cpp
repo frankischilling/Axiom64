@@ -16,7 +16,7 @@ int inet_capture_send_control(Task& task, uint64_t pointer, uint64_t length, uin
 
 int inet_prepare_send(InetSocket* socket, InetAddress& address, bool named, uint32_t address_length,
                       size_t payload_length, const uint8_t* bytes, size_t length,
-                      InetSendControl& result) {
+                      InetSendControl& result, bool net_raw) {
     // Protocol dispatch owns automatic binding after generic address/vector and
     // control-buffer copying, before rejecting destination or control values.
     if (socket->type == 2 && !socket->local_port) {
@@ -86,8 +86,13 @@ int inet_prepare_send(InetSocket* socket, InetAddress& address, bool named, uint
                     if (value < (header.type == 2 ? 1 : 0) || value > 255)
                         return -22;
                     (header.type == 2 ? result.ttl : result.tos) = uint8_t(value);
+                } else if (header.type == 7) {
+                    ip4::OptionPolicy policy{net_raw, inet_option_unicast};
+                    if (int error = result.options.assign(
+                            data, min(size_t(40), size_t(header.length - sizeof(Header))), policy))
+                        return error;
                 } else
-                    return header.type == 7 ? -95 : -22;
+                    return -22;
             }
         }
         at += (header.length + 7) & ~size_t(7);
@@ -104,14 +109,17 @@ int inet_prepare_send(InetSocket* socket, InetAddress& address, bool named, uint
     return 0;
 }
 
-size_t inet_send_prefix(const InetSocket* socket) {
-    return socket->type == 3 && socket->protocol == 1 ? 2 : 0;
+size_t inet_send_prefix(const InetSocket* socket, const InetSendControl* control) {
+    bool header_included = control ? control->header_included : inet_header_included(socket);
+    return socket->type == 3 && socket->protocol == 1 && !header_included ? 2 : 0;
 }
 
 int inet_send_admit(InetSocket* socket, InetAddress& address, size_t length,
                     InetSendControl& control) {
     if (length > 65535)
         return -90;
+    if (control.header_included && control.options.assigned())
+        return -22;
     if (int error = inet_error(socket, true))
         return -error;
     if (socket->shutdown & 2)
@@ -127,12 +135,20 @@ int inet_send_admit(InetSocket* socket, InetAddress& address, size_t length,
         control.cache_destination = false;
     }
     size_t transport = socket->type == 2 ? 8 : 0;
-    if (int error = ipv4_send_admit(socket, control.source, __builtin_bswap32(address.address),
-                                    control.index, control.ttl, socket->broadcast,
-                                    length + transport, control.cache_destination, &control.route))
+    if (control.header_included) {
+        if (int error = ipv4_send_header_admit(
+                socket, control.source, __builtin_bswap32(address.address), control.index,
+                socket->broadcast, length, control.cache_destination, &control.route))
+            return error;
+        return control.probe || length <= socket->send_limit ? 0 : -90;
+    }
+    if (int error =
+            ipv4_send_admit(socket, control.source, __builtin_bswap32(address.address),
+                            control.index, control.ttl, socket->broadcast, length + transport,
+                            control.cache_destination, &control.route, &control.options))
         return error;
     // Queue pressure is handled by the retained I/O request after payload
     // import. This phase rejects only a packet that can never fit its limit.
-    return length + transport + 20 > socket->send_limit ? -90 : 0;
+    return length + transport + 20 + control.options.size() > socket->send_limit ? -90 : 0;
 }
 } // namespace ax

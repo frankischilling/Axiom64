@@ -13,6 +13,10 @@
 namespace ax {
 uint64_t ticks = 100;
 
+uint64_t clock_realtime_ticks() {
+    return ticks;
+}
+
 void* alloc(size_t size) {
     return std::malloc(size);
 }

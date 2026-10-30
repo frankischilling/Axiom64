@@ -16,6 +16,7 @@ parser.add_argument("--phase", choices=["write", "verify", "readonly", "error", 
 parser.add_argument("--output-name", help="ISO filename under build/ for an isolated test run")
 parser.add_argument("--output-directory", type=Path, help="directory for the completed ISO")
 parser.add_argument("--initramfs", type=Path, help="explicit initramfs for an isolated fixture")
+parser.add_argument("--kernel", type=Path, help="explicit kernel ELF for an isolated fixture")
 parser.add_argument("--root-device", choices=[f"/dev/vd{letter}" for letter in "abcdefgh"])
 parser.add_argument("--root-readonly", action="store_true")
 parser.add_argument("--root-recovery", action="store_true", help="validate a structurally consistent dirty ext2 root")
@@ -53,6 +54,8 @@ staging = ROOT / "build" / ("iso-" + args.output_name[:-4] if args.output_name e
 for filename in ["axiom64.elf", "rootfs.cpio"]:
     desktop_profile = args.suite not in ["full", "threads"] or (args.suite == "threads" and args.phase in ["cond", "io"])
     source = ROOT / "build" / ("rootfs-desktop.cpio" if filename == "rootfs.cpio" and args.test and desktop_profile else filename)
+    if filename == 'axiom64.elf' and args.kernel:
+        source = args.kernel
     if filename == 'rootfs.cpio' and args.test and args.suite == 'network':
         source = ROOT / 'build/rootfs-network.cpio'
     if filename == 'rootfs.cpio' and args.initramfs:

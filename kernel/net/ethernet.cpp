@@ -102,7 +102,7 @@ int net_send(unsigned index, const void* frame, size_t length, const void* sende
 }
 
 int net_send_checked(unsigned index, const void* frame, size_t length, int (*validate)(void*),
-                     void* context, const void* sender) {
+                     void* context, const void* sender, uint32_t admitted_mtu) {
     auto info = net_info(index);
     if (!info)
         return -19;
@@ -121,7 +121,8 @@ int net_send_checked(unsigned index, const void* frame, size_t length, int (*val
     size_t header = bytes[12] == 0x81 && bytes[13] == 0 ? 18 : ethernet_header;
     if (length < header)
         return -22;
-    if (length > info->mtu + header)
+    uint32_t limit = admitted_mtu ? min(admitted_mtu, info->maximum_mtu) : info->mtu;
+    if (length > limit + header)
         return -90;
     int result = adapter.send(adapter, frame, length);
     if (!result)

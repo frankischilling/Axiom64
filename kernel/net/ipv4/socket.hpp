@@ -4,6 +4,7 @@
 #include "net/ipv4.hpp"
 #include "net/ipv4_wire.hpp"
 #include "net/ipv4/multicast.hpp"
+#include "net/ipv4/options.hpp"
 #include "net/ipv6/destination.hpp"
 #include "net/tcp/address.hpp"
 
@@ -14,6 +15,7 @@ class Connection;
 namespace ax {
 constexpr unsigned inet_socket_count = 256, inet_queue_count = 32;
 constexpr uint32_t inet_queue_bytes = 65536;
+constexpr int inet_protocol_limit = 263; // Linux IPPROTO_MAX includes MPTCP, 262.
 
 struct InetSocket {
     bool used = false, broadcast = false, bound = false, port_locked = false, reuse = false;
@@ -27,7 +29,12 @@ struct InetSocket {
     int error = 0;
     uint8_t ttl = 64, tos = 0;
     Ipv4ReceiveOptions receive_options;
-    uint8_t type = 3, protocol = 1;
+    ip4::Options options;
+    ip4::Options input_options;
+    bool input_options_valid = true;
+    bool header_included = false;
+    uint8_t type = 3;
+    uint16_t protocol = 1;
     uint16_t peer_port = 0, local_port = 0, reported_port = 0;
     unsigned shutdown = 0;
     uint64_t order = 0;
@@ -78,6 +85,8 @@ inline InetSendControl inet_send_defaults(const InetSocket* socket, const InetAd
                            socket->index, multicast ? socket->multicast.ttl : socket->ttl,
                            socket->tos,
                            socket->type == 3 || (!named && destination == socket->peer)};
+    result.options = socket->options;
+    result.header_included = socket->type == 3 && socket->header_included;
     if (multicast) {
         if (!result.index)
             result.index = socket->multicast.output_index;
@@ -88,6 +97,7 @@ inline InetSendControl inet_send_defaults(const InetSocket* socket, const InetAd
 }
 
 InetSocket* inet_allocate(unsigned type);
+bool inet_option_unicast(uint32_t address, void*);
 void inet_dispose(InetSocket*);
 bool inet_port_conflict(InetSocket*, uint32_t local, uint16_t port);
 int inet_bind_port(InetSocket*, uint32_t local, uint16_t port);

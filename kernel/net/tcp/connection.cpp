@@ -28,7 +28,9 @@ void Connection::initialize(uint32_t initial, uint64_t now, uint16_t maximum_seg
     initial_send = send_unacknowledged = send_next = initial;
     send_base = initial + 1;
     local_mss = maximum_segment ? minimum(maximum_segment, uint16_t(1460)) : 1460;
-    path_limit = mss = local_mss;
+    path_limit = local_mss;
+    peer_mss = UINT16_MAX;
+    mss = payload_limit(path_limit);
     opened_at = progress_at = last_send = now;
     persist_at = after(now, persist_interval);
     syn_pending = true;
@@ -42,8 +44,8 @@ void Connection::active(uint32_t initial, uint64_t now, uint16_t maximum_segment
 }
 
 void Connection::negotiate(const Segment& segment) {
-    mss = minimum(minimum(local_mss, path_limit),
-                  segment.maximum_segment ? segment.maximum_segment : fallback_mss);
+    peer_mss = segment.maximum_segment ? segment.maximum_segment : fallback_mss;
+    mss = payload_limit(path_limit);
     congestion = Congestion(mss);
     peer_window = segment.window;
     maximum_peer_window = peer_window;
@@ -156,6 +158,7 @@ void Connection::detach(uint64_t now) {
 void Connection::abort(int error, bool send_reset) {
     candidate = Output::none;
     response_pending = false;
+    response_from_input = time_wait_from_input = false;
     if (send_reset && status != State::closed) {
         response = {};
         response.sequence = send_next;
@@ -195,7 +198,7 @@ bool Connection::owns_pmtu_quote(uint32_t sequence, bool include_idle) const {
 }
 
 bool Connection::reduce_mss(uint32_t sequence, uint16_t maximum_segment) {
-    if (!maximum_segment || maximum_segment >= mss || !owns_pmtu_quote(sequence))
+    if (!maximum_segment || payload_limit(maximum_segment) >= mss || !owns_pmtu_quote(sequence))
         return false;
     return path_mss(maximum_segment, true);
 }
@@ -204,10 +207,11 @@ bool Connection::path_mss(uint16_t maximum_segment, bool retry) {
     if (!maximum_segment || status == State::closed || status == State::time_wait)
         return false;
     path_limit = minimum(path_limit, maximum_segment);
-    if (maximum_segment >= mss)
+    const uint16_t maximum_payload = payload_limit(path_limit);
+    if (maximum_payload >= mss)
         return false;
     candidate = Output::none;
-    mss = maximum_segment;
+    mss = maximum_payload;
     congestion.segment_size(mss);
     if (retry && syn_emitted && !handshake() && send_unacknowledged != send_next) {
         resegment_next = send_unacknowledged;
@@ -218,11 +222,48 @@ bool Connection::path_mss(uint16_t maximum_segment, bool retry) {
     return true;
 }
 
+uint16_t Connection::payload_limit(uint16_t path) const {
+    uint16_t base = minimum(minimum(local_mss, path), peer_mss);
+    return base > ip_option_bytes ? uint16_t(base - ip_option_bytes) : 1;
+}
+
+void Connection::ip_options(uint8_t bytes) {
+    if (ip_option_bytes == bytes)
+        return;
+    ip_option_bytes = bytes;
+    if (!initialized)
+        return;
+    const uint16_t current = payload_limit(path_limit);
+    if (current != mss) {
+        candidate = Output::none;
+        mss = current;
+        congestion.segment_size(mss);
+    }
+}
+
 void Connection::reset_reply(const Segment& segment) {
     response = {};
     response.flags = rst;
     response.sequence = segment.acknowledgment;
     response_pending = true;
+    response_from_input = true;
+    input_reply_revision++;
+}
+
+bool Connection::input_reply() const {
+    return (candidate == Output::response && response_from_input) ||
+           (candidate == Output::acknowledgment && status == State::time_wait &&
+            time_wait_from_input);
+}
+
+void Connection::discard_input_reply() {
+    if (!input_reply())
+        return;
+    if (candidate == Output::response)
+        response_pending = response_from_input = false;
+    else
+        ack_pending = time_wait_from_input = false;
+    candidate = Output::none;
 }
 
 void Connection::challenge(uint64_t now) {
@@ -237,6 +278,7 @@ void Connection::challenge(uint64_t now) {
 
 void Connection::wait(uint64_t now) {
     status = State::time_wait;
+    time_wait_from_input = false;
     output_delayed =
         false; // A previous live-state delay cannot hide the final ACK from compaction.
     resegmenting = false;
@@ -465,8 +507,11 @@ void Connection::input(const Segment& segment, uint64_t now) {
         expiration = record.deadline;
         if (action == TimeWaitAction::remove)
             abort(104);
-        else if (action == TimeWaitAction::acknowledge)
+        else if (action == TimeWaitAction::acknowledge) {
             ack_pending = true;
+            time_wait_from_input = true;
+            input_reply_revision++;
+        }
         return;
     }
     if (!acceptable(segment.sequence, sequence_length(segment), receive_next, window())) {
@@ -676,12 +721,15 @@ void Connection::emitted(uint64_t now) {
     output_delayed = false;
     if (kind == Output::response) {
         response_pending = false;
+        response_from_input = false;
         return;
     }
     if (produced.flags & ack)
         ack_pending = false;
-    if (kind == Output::acknowledgment)
+    if (kind == Output::acknowledgment) {
+        time_wait_from_input = false;
         return;
+    }
     start_delivery(kind, now);
     uint32_t end = produced.sequence + sequence_length(produced);
     bool retransmitted = kind == Output::retransmit || kind == Output::resegment ||

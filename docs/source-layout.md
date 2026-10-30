@@ -318,4 +318,30 @@ compile inputs, native runtime providers and actual boot images.
 The `ipv4_send_wire_*` modules separate physical peer exchanges, record decoding,
 capture checks, source/image binding, negative controls and complete cohort runs.
 
+`kernel/net/ipv4/options.cpp` owns normalized description options, bounded header
+construction, processed input and independent return values through
+`net/ipv4/options.hpp`. `userspace/tests/net/ipv4/options.c` runs the same option
+syscalls and local packet checks under native Linux and in the guest.
+`tcp_options.c` adds actual TCP reset, accepted-snapshot and TIME-WAIT probes;
+both audited clients share each guest image in the option runner.
+`scripts/ipv4_options/` contains native vectors and retained-observation readers.
+Its `native_policy.py` selects one of two complete retained native socket tables
+using fixed ordinary-caller probes; guest expectations use the current permission
+policy. `policy_test.py` checks all reference differences and damaged selectors;
+`ipv4_options_model_test.py`, `ipv4_options_capture.py`,
+`ipv4_options_receive_capture.py` and `ipv4_options_test.py` provide sanitizer
+replay, new native observations and the native/guest cohort.
+`ipv4_options_evidence.py` reopens the complete retained source, programs and actual
+boot images; `ipv4_options_evidence_test.py` retains damaged original TCP observations
+and checks that the independent reader rejects them.
+`userspace/tests/net/ipv4_fragments.c` retains the ordinary Ethernet fragment client,
+including processed option input and option-bearing output. The option vectors and
+independent bidirectional packet reader live in `scripts/ipv4_options/fragment_options.py`
+and `fragment_capture.py`; `ipv4_options_fragment_capture.py` provides the command entry
+point. `native_packet_capture.py` isolates the native fragment reader from packet
+validation and defers serialization of bounded owned packets and clock receipts.
+`native_icmp_policy.py` retains actual Linux 6.6 global policy handles across the
+native fixture's private namespaces; policy and state observers share that owner.
+Both normal IPv4 runners use the reader with the original expiry and PMTU checks.
+
 `scripts/ipv4_native_capture_controls.py` reopens altered native client and collector CPU ownership records. The IPv4 fixture reuses `packet_profile_cpu` from `ipv6_host_native.py` before collector threads start, and records actual client and task affinities for the independent input reader.

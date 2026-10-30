@@ -23,8 +23,9 @@ def clock_pair():
 
 
 class NativeIpv4State:
-    def __init__(self, directory, *, proc=Path('/proc')):
+    def __init__(self, directory, *, proc=Path('/proc'), global_policy=None):
         self.proc = Path(proc)
+        self.global_policy = global_policy
         self.path = Path(directory) / 'native-kernel-state.jsonl'
         self.output = self.path.open('x')
         self.records = 0
@@ -35,8 +36,14 @@ class NativeIpv4State:
                    files={}, read_errors={}, read_only=True, counters_not_atomic=True)
         for name in FILES:
             try:
-                with (self.proc / name).open('rb') as source:
-                    data = source.read(262145)
+                key = name.removeprefix('sys/net/ipv4/')
+                if (self.global_policy is not None and key in self.global_policy.descriptors and
+                        not (self.proc / name).exists()):
+                    data, source = self.global_policy.read(key)
+                    row.setdefault('global_sources', {})[name] = source
+                else:
+                    with (self.proc / name).open('rb') as source:
+                        data = source.read(262145)
                 if len(data) > 262144:
                     raise ValueError('counter file exceeds retained snapshot bound')
                 row['files'][name] = data.decode('ascii')

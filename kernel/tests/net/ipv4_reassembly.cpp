@@ -395,7 +395,59 @@ static void randomized() {
     }
 }
 
+static void processed_options_ownership() {
+    for (bool timestamp : {false, true}) {
+        for (bool reversed : {false, true}) {
+            auto first = fragment(0, 16, true, 17, 28);
+            auto last = fragment(16, 8, false, 17);
+            const uint8_t record[] = {7, 7, 4, 0, 0, 0, 0, 0};
+            const uint8_t time[] = {68, 8, 5, 0, 0, 0, 0, 0};
+            std::memcpy(first.data() + 20, timestamp ? time : record, 8);
+            checksum_header(first);
+            ReceivedOptions processed;
+            assert(!processed.assign(first.data() + 20, 8, 0x0a170101, 0x0a170102, 1000));
+            const auto expected = processed;
+            if (reversed)
+                assert(submit(last).status == FragmentStatus::pending);
+            auto result =
+                reassemble(1, first.data(), first.size(), 100, false, nullptr, &processed);
+            assert(!processed.assign(first.data() + 20, 8, 0x0a170101, 0x0a170103, 9000));
+            std::fill(first.begin(), first.end(), 0xcc);
+            if (!reversed) {
+                assert(result.status == FragmentStatus::pending);
+                result = submit(last, 1, 500);
+            }
+            assert(result.status == FragmentStatus::complete && result.options_processed);
+            assert(result.options.size() == 8 &&
+                   !std::memcmp(result.options.data(), expected.data(), 8));
+            assert(!std::memcmp(result.bytes + 20, expected.data(), 8));
+            assert(result.options.return_valid() == expected.return_valid() &&
+                   result.options.reply().size() == expected.reply().size() &&
+                   !std::memcmp(result.options.reply().data(), expected.reply().data(),
+                                expected.reply().size()));
+            verify(result, 24, 28);
+            clean();
+        }
+    }
+    ReceivedOptions processed;
+    const uint8_t record[] = {7, 7, 4, 0, 0, 0, 0, 0};
+    assert(!processed.assign(record, 8, 0x0a170101, 0x0a170102, 1000));
+    auto first = fragment(0, 16, true);
+    assert(reassemble(1, first.data(), first.size(), 100, false, nullptr, &processed).status ==
+           FragmentStatus::rejected);
+    first = fragment(0, 16, true, 17, 28);
+    std::memcpy(first.data() + 20, record, 8);
+    checksum_header(first);
+    first[10] ^= 1;
+    assert(reassemble(1, first.data(), first.size(), 100, false, nullptr, &processed).status ==
+           FragmentStatus::rejected);
+    clean();
+    puts("IPV4_REASSEMBLY_OPTIONS_PASS first_fragment owned_metadata timestamps "
+         "original_wire_validation");
+}
+
 int main() {
+    processed_options_ownership();
     ordering();
     invalid_overlap();
     malformed();

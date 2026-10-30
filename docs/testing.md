@@ -1347,3 +1347,126 @@ remain required alongside this captured-data regression.
 The Ethernet retirement observer requests three seconds plus the reported monotonic clock resolution to cover coarse-clock quantization. Independent capture readers still require at least three complete seconds; process, syscall and barrier deadlines are unchanged.
 
 Native IPv4 packet clients and both independent collectors share one recorded allowed CPU. The existing packet-profile selector rotates libc profiles across available CPUs before creating collector threads. Readers verify the private parent namespace, actual task and client affinity; three serialized CPU/namespace controls supplement every original receive and send control. The existing IPv4 source-filter CI job also runs both complete send cohorts, with every original scenario and timing bound retained.
+
+## IPv4 packet options
+
+`make test-ipv4-options-model` runs the production option engine with AddressSanitizer
+and UndefinedBehaviorSanitizer. Retained Linux 6.6.87.2 and 7.0.14 observations each
+contain 14,220 setter/query results. The current policy requires `CAP_NET_RAW` for
+valid source routes; syntax errors precede permission errors, and either failure
+preserves the preceding value. The model also retains 214 receive-parser cases. Twenty thousand malformed
+inputs also exercise value preservation and output bounds. Receive comparisons retain
+the original packet bytes and actual timestamp bounds; source-route packets rejected
+by admission policy cannot establish parser results. Accepted completed routes still
+check return-route reversal. This command does not need root or a guest build.
+
+`sudo make test-ipv4-options` runs three C clients in three native linkage profiles
+and four static/dynamic BIOS/UEFI guest profiles. Each socket-client execution checks 42,660 option
+observations, root and ordinary credentials, fault ordering and sixteen actual
+loopback packet exchanges. Those packets exercise processed route/timestamp slots,
+independent return controls, real UTC timestamps and per-message replacement. Native
+executables wait on a pipe while their actual executable mappings and provider bytes
+are retained; guest programs run without this observer. The client reads serialized
+controls directly so a trailing empty return control is checked with every libc.
+Before native execution, two fixed source-route probes on an inherited descriptor
+identify the observed ordinary-caller policy. They select one complete retained
+table; unknown or inconsistent results fail. Guest executions always use the fixed
+current-policy table. The independent reader verifies both table contents against
+the original source archive and rejects damaged policy proofs. All vectors remain
+required on both native policy families.
+
+The TCP client adds 36 root/ordinary cases for closed-port resets, accepted option
+snapshots and duplicate-FIN replies in retained and compacted TIME-WAIT states. It
+replays the actual original FIN with a recomputed transport checksum, then inspects
+the actual kernel reply. Creation and `SO_PROTOCOL` checks cover 261 ordinary
+raw protocol numbers. The raw-header client separately exercises protocol 255,
+the `IP_HDRINCL` scalar and fault contract, inherited descriptions, literal header
+fields, NOP options, device limits and probe output. It retains twelve complete
+received packets across root and ordinary credentials. Raw observations
+retain Linux's original IP checksum after local option processing; the client
+reconstructs the known zero receive slot to check that original checksum. Physical
+Ethernet checksum acceptance remains separate.
+
+All three clients run in each of the four guest images. The runner retains their audited
+ELFs and their compile inputs while sharing the kernel, loader and boot. Native
+execution has nine processes across the three linkage profiles. All clients share
+the existing CI job and four guest boots.
+
+The runner also reopens all four actual ISOs and checks their kernel, complete
+initramfs, all three clients, loader and oracle table. Its independent reader binds the
+complete source archive and native provider mappings, checks original TCP headers,
+SYN ownership, replayed FIN sequences and literal raw headers, and rejects 182 reopened damaged logs.
+Several controls repair packet checksums so an incorrect sequence, option value or
+ownership cannot pass merely by carrying a valid checksum. The original evidence
+can be checked again with `python3 scripts/ipv4_options_evidence.py build/ipv4-options`.
+
+The existing Ethernet fragment campaign adds 26 raw-header cases per NIC alongside
+its original twelve input and 45 output cases. Fifteen literal packets cover filled
+fields, preserved RR/source-route/security-label bytes, a different header destination,
+a spoofed source, another version, device-MTU boundaries, generic raw header mode
+and ordinary output through an inherited descriptor. Eleven cases require no packet,
+including empty-option conflicts, invalid lengths, MTU failures and `MSG_PROBE`.
+The independent raw-header reader checks all 91 control packets and the terminal
+exchange, retaining the original five-second acknowledgement limit. It reopens sixteen
+damaged PCAP/log controls per capture, including checksum-repaired literal fields.
+All existing fragment, expiry and PMTU readers remain required. Use
+`scripts/ipv4_raw_headers_capture.py` to reopen this evidence independently.
+The same full runs also hold six real ARP resolutions per NIC while the client
+removes a selected source address, lowers the MTU, removes a route, closes the last
+descriptor or changes header mode and options. An ordinary child sends through an
+inherited descriptor. Each accepted packet must retain its original bytes and route
+through the change and caller-buffer reuse. A fresh send after MTU reduction must
+still fail with `EMSGSIZE`. The independent `scripts/ipv4_raw_header_queue_capture.py`
+reader requires six exact packets, six held neighbors, 38 control frames and the
+terminal reply. It retains the five-second deadlines and reopens sixteen damaged
+packet/log controls per capture. These cases use the existing boots and native
+profiles; fragment expiry and ten-minute PMTU observations remain required.
+To retain fresh damaged controls, run `python3 scripts/ipv4_options_evidence_test.py build/ipv4-options --directory build/ipv4-options-controls`.
+
+The runner writes corresponding source, build inputs, native provider mappings,
+programs, boot products and complete logs under `build/ipv4-options`. An existing
+directory is refused. `python3 scripts/ipv4_options_capture.py --output build/ipv4-options-native.json.gz` captures a new root/ordinary setter corpus without
+sending packets or overwriting prior observations. The installed fixture records its
+actual kernel; it does not establish equivalence with every Linux kernel.
+`sudo python3 scripts/ipv4_options_receive_capture.py` records a new receive corpus
+inside its own network namespace, enables source-route admission there, and verifies
+that the parent namespace's network settings remain unchanged.
+
+The existing Ethernet fragment client now keeps twelve input and 45 output cases per
+interface. Six input cases add record-route, timestamp, mixed options, reverse arrival
+and differing fragment header lengths. The 24 output additions cover complete 65,535-byte
+datagrams with forty option bytes, minimum-MTU fragmentation, copied and non-copied
+options, exact device limits, oversized rejection and description changes after send.
+Received packet bytes and application clock intervals remain in the log. The independent
+`ipv4_options_fragment_capture.py` reader checks both directions, every reassembled
+payload byte and the original or completed header checksum. It reopens 23 damaged
+packet/log controls, including changes with repaired network and transport checksums.
+
+Native fragment comparisons give each independent reader its own process. Each reader
+retains at most 10,000 complete frames and 16 MiB of packet bytes, then serializes them
+after its receive queue drains. Every frame keeps its actual kernel timestamp and
+the paired clock observations made immediately after `recvmsg`. The original packet
+loss checks, one-second reader-latency guard, one-second reader shutdown and protocol
+deadlines remain required. This avoids making burst capture compete with Python
+packet validation and receipt formatting.
+
+Linux 6.6 keeps the ICMP message-rate and burst controls in the initial network
+namespace. Its native runner opens those actual procfs files read-only before
+creating private namespaces and retains the handles until all children finish.
+Both policy observations and complete state snapshots read the original values;
+missing or invalid handles fail. Independent packet readback checks the distinct
+namespace ownership and unchanged policy, and rejects seven additional damaged
+global-policy receipts. Newer kernels continue reading their private-namespace
+controls directly. `sudo make test-native-icmp-policy` checks actual handle
+inheritance across exec, state completeness and rejected ownership/provider changes.
+
+The ordinary IPv4 guest workload and full native `--fragments` command include these
+cases while retaining real sixty-second fragment expiry and ten-minute PMTU lifetime
+observations. The client option `--fragment-datagrams` provides focused development
+diagnostics for the twelve input and 45 output cases. It does not establish expiry,
+PMTU, complete firmware/device/provider or full-feature acceptance.
+
+The option-specific commands qualify their stated model and loopback scope. Ethernet option headers,
+fragment copy bits, source-route receive policy, broader TCP responses, PMTU quotes and
+blocking/output lifetime cases remain necessary for complete packet-option acceptance.
+The existing receive/send-control and full networking cohorts remain required.

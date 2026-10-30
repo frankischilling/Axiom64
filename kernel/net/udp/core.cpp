@@ -3,6 +3,7 @@
 #include "net/inet.hpp"
 #include "net/ipv4.hpp"
 #include "net/ipv4_wire.hpp"
+#include "net/ipv4/options.hpp"
 
 namespace ax {
 namespace {
@@ -38,14 +39,17 @@ UdpInput udp_receive(const Ipv4ReceiveMetadata& metadata, bool broadcast, const 
 }
 
 int udp_send(InetSocket* owner, const UdpOutput& output, const void* data, size_t length) {
-    if (length > 65535 - 28)
+    if (length > 65535 - 28 - (output.options ? output.options->size() : 0))
         return -90;
     uint32_t source;
     int error = 0;
     if (output.selected)
         source = output.selected->path.source;
     else
-        error = ipv4_source(output.source, output.destination, output.index, source);
+        error = ipv4_source(output.source,
+                            output.options ? output.options->destination(output.destination)
+                                           : output.destination,
+                            output.index, source);
     if (error)
         return error;
     auto bytes = static_cast<uint8_t*>(alloc(length + 8));
@@ -60,7 +64,7 @@ int udp_send(InetSocket* owner, const UdpOutput& output, const void* data, size_
     ip4::put16(bytes + 6, sum ? sum : 65535);
     error = ipv4_send(owner, Ipv4Source::retained(source), output.destination, output.index, 17,
                       output.ttl, output.broadcast, bytes, length + 8, output.cache_destination,
-                      output.traffic_class, output.selected);
+                      output.traffic_class, output.selected, output.options);
     release(bytes);
     return error;
 }

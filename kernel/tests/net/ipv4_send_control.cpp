@@ -99,6 +99,28 @@ void scalar_and_route_controls(InetSocket* sender) {
                 }
                 checked++;
             }
+    const uint8_t alert[] = {148, 4, 0, 0};
+    assert(sender->options.assign(alert, sizeof(alert)) == 0);
+    for (bool raw_capability : {false, true}) {
+        const uint8_t opaque[] = {2, 2};
+        uint8_t bytes[64]{};
+        size_t length = append(bytes, 0, 0, 7, opaque, sizeof(opaque));
+        auto address = target();
+        InetSendControl output;
+        assert(inet_prepare_send(sender, address, true, sizeof(address), 8, bytes, length, output,
+                                 raw_capability) == (raw_capability ? 0 : -22));
+        if (raw_capability)
+            assert(output.options.size() == 4 && output.options.data()[0] == 2);
+        assert(sender->options.size() == sizeof(alert) &&
+               !memcmp(sender->options.data(), alert, sizeof(alert)));
+    }
+    uint8_t clear[16]{};
+    auto cleared_address = target();
+    InetSendControl cleared;
+    assert(inet_prepare_send(sender, cleared_address, true, sizeof(cleared_address), 8, clear,
+                             append(clear, 0, 0, 7, alert, 0), cleared) == 0);
+    assert(cleared.options.size() == 0 && sender->options.size() == sizeof(alert));
+    assert(sender->options.assign(nullptr, 0) == 0);
     for (unsigned row = 0; row < 5; row++) {
         uint8_t bytes[64]{};
         uint32_t info[] = {
@@ -148,6 +170,9 @@ void retained_route(std::vector<std::vector<uint8_t>>& frames) {
     sender->ttl = 63;
     sender->tos = 34;
     InetAddress address{2, __builtin_bswap16(uint16_t(49157)), __builtin_bswap32(peer), {}};
+    const uint8_t record[] = {7, 7, 4, 0, 0, 0, 0, 1};
+    const uint8_t alert[] = {148, 4, 0, 0};
+    assert(sender->options.assign(record, sizeof(record)) == 0);
     uint8_t bytes[64]{};
     int ttl = 37, tos = 184;
     size_t length = append(bytes, 0, 0, 2, &ttl, sizeof(ttl));
@@ -158,7 +183,11 @@ void retained_route(std::vector<std::vector<uint8_t>>& frames) {
                              selected) == 0);
     assert(inet_send_admit(sender, address, sizeof(payload), selected) == 0);
     assert(selected.route.path.index == 1 && selected.route.path.source == first);
-    sender->transmitted = sender->send_limit;
+    assert(selected.options.size() == sizeof(record));
+    assert(sender->options.assign(alert, sizeof(alert)) == 0);
+    sender->transmitted = sender->send_limit - (sizeof(payload) + 28 + sizeof(alert));
+    assert(inet_send_ready(sender, sizeof(payload)) == 0);
+    assert(inet_send_ready(sender, sizeof(payload), &selected) == -11);
     assert(inet_send(sender, address, payload, sizeof(payload), true, &selected) == -11);
     assert(ipv4_route(second_route, true) == 0);
     second_route.metric = 1;
@@ -166,11 +195,14 @@ void retained_route(std::vector<std::vector<uint8_t>>& frames) {
     assert(ipv4_address_remove(1, first, 0xffffff00) == 0);
     sender->ttl = 11;
     sender->tos = 8;
-    inet_reclaim(sender, sender->send_limit);
+    inet_reclaim(sender, sender->transmitted);
     assert(inet_send(sender, address, payload, sizeof(payload), true, &selected) ==
            sizeof(payload));
+    assert(sender->transmitted == sizeof(payload) + 28 + sizeof(record));
+    assert(sender->options.assign(nullptr, 0) == 0);
 
-    auto deliver = [&](unsigned index, uint32_t source, uint8_t hops, uint8_t traffic) {
+    auto deliver = [&](unsigned index, uint32_t source, uint8_t hops, uint8_t traffic,
+                       bool options) {
         size_t began = frames.size();
         ipv4_poll();
         const std::vector<uint8_t>* request = nullptr;
@@ -194,33 +226,42 @@ void retained_route(std::vector<std::vector<uint8_t>>& frames) {
         ipv4_receive(*info, reply.data(), reply.size());
         ipv4_poll();
         bool found = false;
+        size_t header = options ? 28 : 20;
         for (size_t at = began; at < frames.size(); at++) {
             const auto& frame = frames[at];
             if (ip4::get16(frame.data() + 12) != 0x0800 || frame[11] != index || frame[23] != 17 ||
-                ip4::get16(frame.data() + 16) != 36 ||
-                memcmp(frame.data() + 42, payload, sizeof(payload)))
+                ip4::get16(frame.data() + 16) != header + 16 ||
+                memcmp(frame.data() + 14 + header + 8, payload, sizeof(payload)))
                 continue;
             assert(ip4::get32(frame.data() + 26) == source &&
                    ip4::get32(frame.data() + 30) == peer && frame[22] == hops &&
-                   frame[15] == traffic && !ip4::checksum(frame.data() + 14, 20));
+                   frame[15] == traffic && frame[14] == (options ? 0x47 : 0x45) &&
+                   !ip4::checksum(frame.data() + 14, header));
+            if (options) {
+                const auto* option = frame.data() + 34;
+                assert(option[0] == 7 && option[1] == 7 && option[2] == 8 &&
+                       ip4::get32(option + 3) == source && option[7] == 1);
+            }
             found = true;
         }
         assert(found);
+        assert(sender->transmitted == 0);
     };
-    deliver(1, first, 37, 184);
+    deliver(1, first, 37, 184, true);
     InetSendControl later;
     assert(inet_prepare_send(sender, address, true, sizeof(address), sizeof(payload), nullptr, 0,
                              later) == 0);
     assert(inet_send_admit(sender, address, sizeof(payload), later) == 0);
     assert(later.route.path.index == 2 && later.route.path.source == second);
     assert(inet_send(sender, address, payload, sizeof(payload), true, &later) == sizeof(payload));
-    deliver(2, second, 11, 8);
+    deliver(2, second, 11, 8, false);
     assert(ipv4_route(first_route, true) == 0);
     assert(ipv4_route(second_route, true) == 0);
     assert(ipv4_address_remove(1, first + 256, 0xffffff00) == 0);
     inet_dispose(sender);
     std::puts(
-        "IPV4_SEND_RETAINED_ROUTE_PASS pressure route-preference source-removal later-selection");
+        "IPV4_SEND_RETAINED_ROUTE_PASS pressure route-preference source-removal later-selection "
+        "option_snapshot header_charge wire_ihl recorded_source");
 }
 
 void retired_route(std::vector<std::vector<uint8_t>>& frames) {

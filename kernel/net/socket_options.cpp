@@ -20,13 +20,19 @@ bool option_write(Task& task, uint64_t destination, const void* bytes, size_t le
 }
 } // namespace
 
-int socket_integer_result(Task& task, int value, uint32_t capacity, uint64_t value_pointer,
-                          uint64_t length_pointer) {
-    uint32_t copied = min(capacity, uint32_t(sizeof(value)));
+int socket_bytes_result(Task& task, const void* value, uint32_t length, uint32_t capacity,
+                        uint64_t value_pointer, uint64_t length_pointer) {
+    uint32_t copied = min(capacity, length);
     if (!option_write(task, length_pointer, &copied, sizeof(copied)) ||
-        !option_write(task, value_pointer, &value, copied))
+        !option_write(task, value_pointer, value, copied))
         return -14;
     return 0;
+}
+
+int socket_integer_result(Task& task, int value, uint32_t capacity, uint64_t value_pointer,
+                          uint64_t length_pointer) {
+    return socket_bytes_result(task, &value, sizeof(value), capacity, value_pointer,
+                               length_pointer);
 }
 
 int socket_device_option(Task& task, unsigned index, uint64_t value, uint64_t length_pointer) {

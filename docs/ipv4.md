@@ -289,6 +289,27 @@ policy, full raw/UDP/TCP wire and fragment corpora, option-bearing PMTU feedback
 broader TCP reply and blocked-send lifetimes and complete hosted
 qualification remain required. See [testing](testing.md#ipv4-packet-options).
 
+### Routing configuration
+
+`/proc/sys/net/ipv4/conf/{all,default,lo,ethN}/` exposes
+`accept_source_route` and `forwarding`. Both retain signed 32-bit values.
+`ip_forward` aliases `conf/all/forwarding`. Changing that global value also
+changes the default and existing interface forwarding values. Writing the same
+global value preserves independent interface and default overrides. Changing
+the default alone affects newly registered interfaces.
+
+Source-route admission starts disabled globally and enabled in the default
+and interface values. The policy requires both the global and receiving
+interface values to be nonzero. Forwarding starts disabled. A retained procfs
+description belongs to one interface initialization; it cannot attach to a
+replacement configuration. Writes recheck the caller's permissions, and
+forwarding writes also require `CAP_NET_ADMIN`.
+
+The configuration storage and procfs ABI are implemented. IPv4 input still
+rejects received source routes and nonlocal unicast packets. Enabling these
+controls does not yet enable packet routing. Source-route termination,
+forwarding, reverse responses and their Ethernet acceptance remain required.
+
 One output slot owns the complete datagram and a reusable MTU-sized wire buffer. Each poll submits at most eight fragments per slot. Accepted frames advance the payload cursor; `EAGAIN` retains its current position. The original queue deadline and socket charge cover the whole datagram. MTU changes apply to the remaining bytes, and callback cancellation retains borrowed storage until submission returns. A full 65,535-byte packet therefore does not consume one output slot per fragment.
 
 The ICMP handler checks payload length and checksum before answering a local unicast echo request. Echo replies preserve the identifier, sequence, and payload. It does not answer broadcast echo requests or recursively generate errors for ICMP errors. Unknown local unicast protocols can generate a rate-limited protocol-unreachable response quoting the original header and first eight payload bytes. Valid destination-unreachable and parameter-problem quotes can report matching connected raw-socket errors; malformed or unrelated quotes are ignored.

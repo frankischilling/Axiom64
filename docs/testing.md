@@ -1466,6 +1466,30 @@ observations. The client option `--fragment-datagrams` provides focused developm
 diagnostics for the twelve input and 45 output cases. It does not establish expiry,
 PMTU, complete firmware/device/provider or full-feature acceptance.
 
+### IPv4 routing controls
+
+`sudo make test-ipv4-source-controls` compares the same C client in three
+isolated native linkage profiles and four static/dynamic BIOS/UEFI guests.
+Each profile records 157 observations: signed limits, parsing, consumed lengths,
+file offsets, positioned writes, inherited descriptors after dropping
+credentials, global aliases and unchanged-write propagation. All seven
+configuration values are read back after every operation. Native runs use
+private network namespaces and leave the parent's settings unchanged.
+
+The runner freezes the complete public source, compiler inputs, executables,
+actual mapped native providers and guest images. Reopen the retained evidence
+with `PYTHONPATH=scripts python3 -m ipv4_source_route.evidence build/ipv4-source-controls`.
+The reader opens the actual ISO kernel and initramfs, checks executable bytes
+and modes, and compares every syscall record with fixed native observations.
+`PYTHONPATH=scripts python3 -m ipv4_source_route.controls_test build/ipv4-source-controls --output build/ipv4-source-control-reader`
+serializes and reopens 400 damaged logs while preserving the originals.
+
+`make test-ipv4-configuration-model` checks the production configuration and
+proc integer handlers under ASan/UBSan, including default inheritance, signed
+policy values and interface generations. These tests qualify the control
+interface. Source-route packet reception and general forwarding remain
+unfinished and require separate native and guest Ethernet evidence.
+
 The option-specific commands qualify their stated model and loopback scope. Ethernet option headers,
 fragment copy bits, source-route receive policy, broader TCP responses, PMTU quotes and
 blocking/output lifetime cases remain necessary for complete packet-option acceptance.

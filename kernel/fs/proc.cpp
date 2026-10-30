@@ -25,6 +25,7 @@ enum class Kind {
     net,
     ipv4,
     source_limit,
+    ipv4_forward,
     ipv6,
     conf,
     network_scope,
@@ -41,6 +42,7 @@ struct Entry {
     int pid, tgid;
     unsigned network_index = 0, property = 0;
     uint64_t network_generation = 0;
+    bool ipv4_configuration = false;
 };
 
 struct Proc {
@@ -183,7 +185,8 @@ static int validate(Node* node) {
     auto item = entry(node);
     if (item->kind != Kind::network_scope && item->kind != Kind::network_property)
         return 0;
-    uint64_t generation = proc6::scope_generation(item->network_index);
+    uint64_t generation = item->ipv4_configuration ? proc4::scope_generation(item->network_index)
+                                                   : proc6::scope_generation(item->network_index);
     return generation && generation == item->network_generation ? 0 : -2;
 }
 
@@ -281,6 +284,7 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     int selected_pid = context->pid, group = context->tgid;
     unsigned network_index = context->network_index, property = 0;
     uint64_t network_generation = context->network_generation;
+    bool ipv4_configuration = context->ipv4_configuration || context->kind == Kind::ipv4;
     if (context->kind == Kind::root && !strcmp(name, "self"))
         kind = Kind::self;
     else if (context->kind == Kind::root && !strcmp(name, "thread-self"))
@@ -297,17 +301,27 @@ static int lookup(Node* parent, const char* name, Node*& output) {
         kind = Kind::ipv4;
     else if (context->kind == Kind::ipv4 && !strcmp(name, "igmp_max_msf"))
         kind = Kind::source_limit;
-    else if (context->kind == Kind::ipv6 && !strcmp(name, "conf"))
+    else if (context->kind == Kind::ipv4 && !strcmp(name, "ip_forward")) {
+        kind = Kind::ipv4_forward;
+        network_index = 0;
+        property = proc4::forwarding_property;
+    } else if ((context->kind == Kind::ipv6 || context->kind == Kind::ipv4) &&
+               !strcmp(name, "conf"))
         kind = Kind::conf;
     else if (context->kind == Kind::conf) {
-        if (!proc6::scope_index(name, network_index))
+        if (!(ipv4_configuration ? proc4::scope_index(name, network_index)
+                                 : proc6::scope_index(name, network_index)))
             return -2;
-        network_generation = proc6::scope_generation(network_index);
+        network_generation = ipv4_configuration ? proc4::scope_generation(network_index)
+                                                : proc6::scope_generation(network_index);
         kind = Kind::network_scope;
     } else if (context->kind == Kind::network_scope) {
-        while (property < proc6::property_count && strcmp(name, proc6::property_name(property)))
+        unsigned count = ipv4_configuration ? proc4::property_count : proc6::property_count;
+        while (property < count &&
+               strcmp(name, ipv4_configuration ? proc4::property_name(property)
+                                               : proc6::property_name(property)))
             property++;
-        if (property == proc6::property_count)
+        if (property == count)
             return -2;
         kind = Kind::network_property;
     } else if (context->kind == Kind::kernel && !strcmp(name, "random"))
@@ -351,10 +365,13 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     result->network_index = network_index;
     result->property = property;
     result->network_generation = network_generation;
-    if (kind == Kind::network_property || kind == Kind::source_limit) {
-        result->node.mode =
-            regular_file |
-            (kind == Kind::network_property && property == proc6::secret_property ? 0600 : 0644);
+    result->ipv4_configuration = ipv4_configuration;
+    if (kind == Kind::network_property || kind == Kind::source_limit ||
+        kind == Kind::ipv4_forward) {
+        result->node.mode = regular_file | (kind == Kind::network_property && !ipv4_configuration &&
+                                                    property == proc6::secret_property
+                                                ? 0600
+                                                : 0644);
         result->node.links = 1;
     }
     output = &result->node;
@@ -627,6 +644,8 @@ static int64_t control_read(Handle* handle, void* output, size_t length) {
     auto item = entry(handle->node);
     if (item->kind == Kind::source_limit)
         return proc4::source_limit_read(handle->offset, output, length);
+    if (item->ipv4_configuration)
+        return proc4::read(item->network_index, item->property, handle->offset, output, length);
     return proc6::read(item->network_index, item->property, handle->offset, output, length);
 }
 
@@ -636,6 +655,15 @@ static int64_t control_write(Handle* handle, const void* input, size_t length) {
     auto item = entry(handle->node);
     if (item->kind == Kind::source_limit)
         return proc4::source_limit_write(handle->offset, input, length);
+    if (item->ipv4_configuration) {
+        // A transferred description does not retain its opener's sysctl rights.
+        if (control_access(handle->node, 2, false))
+            return -1;
+        if (item->property == proc4::forwarding_property && current &&
+            !(current->credentials.effective & (1ull << unsigned(Capability::net_admin))))
+            return -1;
+        return proc4::write(item->network_index, item->property, handle->offset, input, length);
+    }
     return proc6::write(item->network_index, item->property, handle->offset, input, length);
 }
 
@@ -646,7 +674,10 @@ static int control_truncate(Node*, size_t) {
 static const ControlFileOps* control(Node* node) {
     static const ControlFileOps ops{control_access, control_read, control_write, control_truncate};
     auto kind = entry(node)->kind;
-    return kind == Kind::network_property || kind == Kind::source_limit ? &ops : nullptr;
+    return kind == Kind::network_property || kind == Kind::source_limit ||
+                   kind == Kind::ipv4_forward
+               ? &ops
+               : nullptr;
 }
 
 static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
@@ -708,12 +739,17 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
     } else if (context->kind == Kind::sys || context->kind == Kind::kernel ||
                context->kind == Kind::random || context->kind == Kind::net ||
                context->kind == Kind::ipv6 || context->kind == Kind::ipv4) {
-        if (cookie > (context->kind == Kind::sys || context->kind == Kind::net ? 3u : 2u))
+        unsigned last = context->kind == Kind::ipv4                                ? 4u
+                        : context->kind == Kind::sys || context->kind == Kind::net ? 3u
+                                                                                   : 2u;
+        if (cookie > last)
             return 0;
         const char* child = context->kind == Kind::sys      ? (cookie == 2 ? "kernel" : "net")
                             : context->kind == Kind::kernel ? "random"
                             : context->kind == Kind::net    ? (cookie == 2 ? "ipv6" : "ipv4")
-                            : context->kind == Kind::ipv4   ? "igmp_max_msf"
+                            : context->kind == Kind::ipv4   ? (cookie == 2   ? "igmp_max_msf"
+                                                               : cookie == 3 ? "conf"
+                                                                             : "ip_forward")
                             : context->kind == Kind::ipv6   ? "conf"
                                                             : "boot_id";
         memcpy(name, child, strlen(child) + 1);
@@ -721,16 +757,19 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
     } else if (context->kind == Kind::conf) {
         const char* selected = nullptr;
         for (; cookie - 2 < max_net_devices + 3; cookie++)
-            if ((selected = proc6::scope_name(unsigned(cookie - 2))))
+            if ((selected = context->ipv4_configuration ? proc4::scope_name(unsigned(cookie - 2))
+                                                        : proc6::scope_name(unsigned(cookie - 2))))
                 break;
         if (!selected)
             return 0;
         memcpy(name, selected, strlen(selected) + 1);
         result.next = cookie + 1;
     } else if (context->kind == Kind::network_scope) {
-        if (cookie - 2 >= proc6::property_count)
+        if (cookie - 2 >=
+            (context->ipv4_configuration ? proc4::property_count : proc6::property_count))
             return 0;
-        auto selected = proc6::property_name(unsigned(cookie - 2));
+        auto selected = context->ipv4_configuration ? proc4::property_name(unsigned(cookie - 2))
+                                                    : proc6::property_name(unsigned(cookie - 2));
         memcpy(name, selected, strlen(selected) + 1);
         result.next = cookie + 1;
     } else
@@ -771,7 +810,10 @@ static int truncate(Node*, size_t) {
 
 static int setattr(Node* node, uint32_t, Timestamp, Timestamp, uint32_t, uint32_t) {
     auto kind = entry(node)->kind;
-    return kind == Kind::network_property || kind == Kind::source_limit ? -1 : -30;
+    return kind == Kind::network_property || kind == Kind::source_limit ||
+                   kind == Kind::ipv4_forward
+               ? -1
+               : -30;
 }
 
 static int sync(Mount*, Node*, bool) {

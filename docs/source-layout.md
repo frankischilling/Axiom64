@@ -55,6 +55,12 @@ final-address removal retire route owners without reviving admitted sends.
 the selected route and controls across output waits. The core owns packet queues,
 neighbor resolution and submission to Ethernet drivers.
 
+`kernel/net/ipv4/configuration.cpp` owns global, default and interface routing
+policy values and interface generations. `kernel/fs/proc/ipv4.cpp` exposes the
+integer handlers; the shared procfs layer binds retained descriptions to their
+original interface generation. `scripts/ipv4_source_route/` holds fixed native
+control observations and independent source, executable and image readers.
+
 `userspace/net/config/route_snapshot.cpp` owns raw main-table route preservation,
 shared inventory decoding and restoration without replacement. Configuration
 keeps those records in its ownership intent before an address transition can

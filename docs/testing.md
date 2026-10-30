@@ -1425,6 +1425,16 @@ loss checks, one-second reader-latency guard, one-second reader shutdown and pro
 deadlines remain required. This avoids making burst capture compete with Python
 packet validation and receipt formatting.
 
+Linux 6.6 keeps the ICMP message-rate and burst controls in the initial network
+namespace. Its native runner opens those actual procfs files read-only before
+creating private namespaces and retains the handles until all children finish.
+Both policy observations and complete state snapshots read the original values;
+missing or invalid handles fail. Independent packet readback checks the distinct
+namespace ownership and unchanged policy, and rejects seven additional damaged
+global-policy receipts. Newer kernels continue reading their private-namespace
+controls directly. `sudo make test-native-icmp-policy` checks actual handle
+inheritance across exec, state completeness and rejected ownership/provider changes.
+
 The ordinary IPv4 guest workload and full native `--fragments` command include these
 cases while retaining real sixty-second fragment expiry and ten-minute PMTU lifetime
 observations. The client option `--fragment-datagrams` provides focused development

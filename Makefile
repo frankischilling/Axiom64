@@ -943,8 +943,10 @@ test-ipv4-paths: build/ipv4-paths-host build/ipv4-addresses-host build/ipv4-outp
 build/ipv4-addresses-host: kernel/tests/net/ipv4_addresses.cpp kernel/net/ipv4/addresses.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
-.PHONY: test-ipv4-fragments-native
-test-ipv4-fragments-native:
+.PHONY: test-native-icmp-policy test-ipv4-fragments-native
+test-native-icmp-policy:
+	$(PYTHON) scripts/tests/native_icmp_policy_test.py
+test-ipv4-fragments-native: test-native-icmp-policy
 	$(PYTHON) scripts/ipv4_fragment_native.py
 
 build/native-icmp-budget: scripts/tests/native_icmp_budget.c

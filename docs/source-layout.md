@@ -340,6 +340,8 @@ independent bidirectional packet reader live in `scripts/ipv4_options/fragment_o
 and `fragment_capture.py`; `ipv4_options_fragment_capture.py` provides the command entry
 point. `native_packet_capture.py` isolates the native fragment reader from packet
 validation and defers serialization of bounded owned packets and clock receipts.
+`native_icmp_policy.py` retains actual Linux 6.6 global policy handles across the
+native fixture's private namespaces; policy and state observers share that owner.
 Both normal IPv4 runners use the reader with the original expiry and PMTU checks.
 
 `scripts/ipv4_native_capture_controls.py` reopens altered native client and collector CPU ownership records. The IPv4 fixture reuses `packet_profile_cpu` from `ipv6_host_native.py` before collector threads start, and records actual client and task affinities for the independent input reader.

@@ -3,6 +3,7 @@
 import copy
 import json
 from pathlib import Path
+import re
 import struct
 import zipfile
 from ipv4_expiry_capture import checksum
@@ -23,9 +24,10 @@ def ip(frame):
     return packet[:total]
 
 
-def audit(lanes, proof):
+def audit(lanes, proof, *, expected_schema=None):
     require(set(proof) == {'schema','passed','held','releases','policy_before','policy_after','request','response'} and
-            type(proof['schema']) is int and proof['schema'] == 1 and proof['passed'] is True,
+            type(proof['schema']) is int and proof['schema'] in (1, 2) and
+            (expected_schema is None or proof['schema'] == expected_schema) and proof['passed'] is True,
             'complete successful raw preflight receipt')
     request, response = proof['request'], proof['response']
     lane = request['lane']
@@ -66,6 +68,31 @@ def audit(lanes, proof):
                 'icmp_msgs_per_sec':'1000\n','icmp_msgs_burst':'50\n'}
     for name in ('policy_before','policy_after'):
         require(proof[name]['values'] == expected, 'original default rate policy at '+name)
+        fields = {'monotonic_ns', 'values'}
+        if proof['schema'] == 2:
+            fields |= {'global_sources', 'kernel'}
+        require(set(proof[name]) == fields, 'complete original policy observation fields')
+    if proof['schema'] == 2:
+        global_names = {'icmp_msgs_per_sec', 'icmp_msgs_burst'}
+        namespaces = set()
+        for name in ('policy_before', 'policy_after'):
+            policy = proof[name]
+            require(isinstance(policy['kernel'], str) and policy['kernel'].startswith('6.6.') and
+                    set(policy['global_sources']) == global_names,
+                    'supported complete global policy provenance')
+            for key, source in policy['global_sources'].items():
+                require(set(source) == {'scope', 'path', 'open_namespace', 'read_namespace', 'inode', 'read_only'} and
+                        source['scope'] == 'global' and source['read_only'] is True and
+                        source['path'] == '/proc/sys/net/ipv4/' + key and
+                        type(source['inode']) is int and source['inode'] > 0 and
+                        all(isinstance(source[field], str) and re.fullmatch(r'net:\[\d+\]', source[field])
+                            for field in ('open_namespace', 'read_namespace')) and
+                        source['open_namespace'] != source['read_namespace'],
+                        'original read-only global handle in a distinct private namespace')
+                namespaces.add((source['open_namespace'], source['read_namespace']))
+        require(len(namespaces) == 1 and proof['policy_before']['kernel'] == proof['policy_after']['kernel'] and
+                proof['policy_before']['global_sources'] == proof['policy_after']['global_sources'],
+                'unchanged original global handles and namespace ownership')
     clock = lambda row:row['monotonic_ns']
     require(proof['policy_before']['monotonic_ns'] <= request['begin_ns'] <= clock(first) < clock(last) <=
             response['observed_ns'] <= proof['policy_after']['monotonic_ns'] and
@@ -107,6 +134,21 @@ def damaged_controls(lanes, proof, path):
         'changed-release':lambda data:data['releases'][0].__setitem__('frame_hex','00'+data['releases'][0]['frame_hex'][2:]),
         'wrong-lane':lambda data:data['response'].__setitem__('lane',1-data['request']['lane']),
         'false-pass':lambda data:data.__setitem__('passed',False)}
+    if proof['schema'] == 2:
+        def downgrade(data):
+            data['schema'] = 1
+            for name in ('policy_before', 'policy_after'):
+                data[name].pop('global_sources')
+                data[name].pop('kernel')
+        mutations.update({
+            'global-policy-missing-control':lambda data:data['policy_before']['global_sources'].pop('icmp_msgs_burst'),
+            'global-policy-writable':lambda data:data['policy_before']['global_sources']['icmp_msgs_burst'].__setitem__('read_only',False),
+            'global-policy-reused-namespace':lambda data:data['policy_before']['global_sources']['icmp_msgs_burst'].__setitem__(
+                'open_namespace',data['policy_before']['global_sources']['icmp_msgs_burst']['read_namespace']),
+            'global-policy-inode-change':lambda data:data['policy_after']['global_sources']['icmp_msgs_burst'].__setitem__('inode',0),
+            'global-policy-path':lambda data:data['policy_before']['global_sources']['icmp_msgs_burst'].__setitem__('path','/proc/sys/net/ipv4/icmp_ratelimit'),
+            'global-policy-kernel':lambda data:data['policy_before'].__setitem__('kernel','6.17.0'),
+            'global-policy-downgrade':downgrade})
     verdicts={}
     with zipfile.ZipFile(path,'x',compression=zipfile.ZIP_DEFLATED) as archive:
         for name,change in mutations.items():
@@ -115,12 +157,13 @@ def damaged_controls(lanes, proof, path):
             member=name+'.json'
             archive.writestr(member,json.dumps(altered))
             try:
-                audit(lanes,json.loads(archive.read(member)))
+                audit(lanes,json.loads(archive.read(member)), expected_schema=proof['schema'])
             except (ValueError,KeyError,TypeError,IndexError) as error:
                 verdicts[name]=str(error)
             else:
                 raise ValueError('native ICMP preflight damaged control passed: '+name)
-    require(len(verdicts)==12, 'all serialized damaged preflight receipts reopened and rejected')
+    require(len(verdicts)==(19 if proof['schema'] == 2 else 12),
+            'all serialized damaged preflight receipts reopened and rejected')
     return verdicts
 
 
@@ -138,7 +181,10 @@ def verify_capture(directory, statistics, *, damage_archive=None):
         clocks.append(bind_native_clock(path,selected,statistics[lane]))
         lanes.append(selected)
     proof = json.loads((directory/'native-icmp-preflight.json').read_text())
-    result = audit(lanes,proof)
+    before = json.loads((directory/'preexecution.json').read_text())
+    kernel = before['kernel']['release']
+    require(isinstance(kernel, str) and kernel, 'actual original native kernel identity')
+    result = audit(lanes,proof, expected_schema=2 if kernel.startswith('6.6.') else 1)
     result['clocks'] = clocks
     if damage_archive is not None:
         result['damaged_controls'] = damaged_controls(lanes,proof,damage_archive)

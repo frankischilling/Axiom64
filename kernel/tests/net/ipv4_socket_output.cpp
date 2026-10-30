@@ -24,6 +24,10 @@ int random_read(void*, size_t, bool) {
 
 uint64_t ticks = 100;
 
+uint64_t clock_realtime_ticks() {
+    return ticks;
+}
+
 void* alloc(size_t n) {
     return std::malloc(n);
 }
@@ -65,7 +69,7 @@ void tcp_failed(InetSocket*, int, unsigned) {
 void tcp_poll() {
 }
 
-void tcp_receive(unsigned, uint32_t, uint32_t, const void*, size_t) {
+void tcp_receive(unsigned, uint32_t, uint32_t, const void*, size_t, const ip4::ReceivedOptions*) {
     assert(false);
 }
 
@@ -88,6 +92,49 @@ static int send(NetAdapter&, const void* bytes, size_t length) {
     auto data = static_cast<const uint8_t*>(bytes);
     frames.emplace_back(data, data + length);
     return 0;
+}
+
+static void raw_protocol_delivery() {
+    auto sender = inet_allocate(3);
+    auto observer = inet_allocate(3);
+    auto errors = inet_allocate(3);
+    assert(sender && observer && errors);
+    sender->local = 0x7f000002;
+    sender->protocol = observer->protocol = 253;
+    errors->protocol = 1;
+    InetAddress target{2, 0, __builtin_bswap32(uint32_t(0x7f000001)), {}};
+    const uint8_t payload[] = {1, 2, 3};
+    assert(inet_send(sender, target, payload, sizeof(payload), true) == sizeof(payload));
+    ipv4_poll();
+    const auto* packet = inet_front(observer);
+    assert(packet && packet->length == 20 + sizeof(payload));
+    assert(inet_bytes(packet)[9] == 253 &&
+           !memcmp(inet_bytes(packet) + 20, payload, sizeof(payload)));
+    assert(!inet_front(errors));
+    inet_dispose(observer);
+    ticks += 200;
+    assert(inet_send(sender, target, payload, sizeof(payload), true) == sizeof(payload));
+    ipv4_poll();
+    ipv4_poll();
+    packet = inet_front(errors);
+    assert(packet && inet_bytes(packet)[20] == 3 && inet_bytes(packet)[21] == 2);
+    inet_consume(errors);
+    observer = inet_allocate(3);
+    assert(observer);
+    sender->protocol = observer->protocol = 2;
+    const uint8_t malformed_igmp[8] = {0x11};
+    assert(inet_send(sender, target, malformed_igmp, sizeof(malformed_igmp), true) ==
+           sizeof(malformed_igmp));
+    ipv4_poll();
+    packet = inet_front(observer);
+    assert(packet && packet->length == 28 && inet_bytes(packet)[9] == 2 &&
+           !memcmp(inet_bytes(packet) + 20, malformed_igmp, sizeof(malformed_igmp)));
+    assert(!inet_front(errors));
+    inet_dispose(sender);
+    inet_dispose(observer);
+    inet_dispose(errors);
+    puts("IPV4_RAW_PROTOCOL_PASS unknown_protocol suppression absent_listener "
+         "igmp_before_validation");
 }
 
 static void raw_udp_delivery() {
@@ -314,6 +361,7 @@ int main() {
     assert(ipv4_destination_mtu(raw->destination, true) == 1500);
     assert(ipv4_destination_mtu(raw->destination, true) == 1500);
     raw_udp_delivery();
+    raw_protocol_delivery();
     ipv4_send_control_cases(frames);
     ipv4_shutdown();
     std::puts("IPV4_SOCKET_OUTPUT_PASS retained-zero named-selection wildcard-selection "

@@ -1197,7 +1197,129 @@ static void family_segment_defaults() {
                 cases);
 }
 
+static void option_payload_limits() {
+    unsigned cases = 0;
+    for (uint16_t local : {uint16_t(536), uint16_t(1460)})
+        for (uint16_t offered : {uint16_t(0), uint16_t(256), uint16_t(536), uint16_t(1460)})
+            for (uint8_t initial_options : {uint8_t(4), uint8_t(40)}) {
+                Connection endpoint;
+                endpoint.ip_options(initial_options);
+                endpoint.active(100, 0, local);
+                Segment packet;
+                assert(endpoint.next(0, packet) && packet.flags == syn &&
+                       packet.maximum_segment == local);
+                endpoint.emitted(0);
+                Segment peer;
+                peer.sequence = 800;
+                peer.acknowledgment = 101;
+                peer.flags = syn | ack;
+                peer.window = 32768;
+                peer.maximum_segment = offered;
+                endpoint.input(peer, 10);
+                uint16_t base = std::min(local, offered ? offered : uint16_t(536));
+                assert(endpoint.state() == State::established &&
+                       endpoint.segment_size() == base - initial_options);
+                assert(endpoint.next(10, packet) && packet.flags == ack);
+                endpoint.emitted(10);
+                uint8_t bytes[1460];
+                for (unsigned at = 0; at < sizeof(bytes); at++)
+                    bytes[at] = uint8_t(at * 31);
+                assert(endpoint.write(bytes, base, 20) == base);
+                assert(endpoint.next(20, packet) &&
+                       packet.length == size_t(base - initial_options) && packet.sequence == 101);
+                // Changing the header invalidates an offer that has not entered IP output.
+                endpoint.ip_options(0);
+                assert(endpoint.next_send() == 101 && endpoint.segment_size() == base);
+                assert(endpoint.next(20, packet) && packet.length == base &&
+                       packet.sequence == 101 && !std::memcmp(packet.payload, bytes, base));
+                endpoint.emitted(20);
+                uint32_t end = endpoint.next_send();
+                assert(end == 101u + base);
+                endpoint.ip_options(40);
+                no_output(endpoint, 1019);
+                assert(endpoint.next(1020, packet) && packet.length == size_t(base - 40) &&
+                       packet.sequence == 101 && !std::memcmp(packet.payload, bytes, base - 40));
+                endpoint.emitted(1020);
+                // Removing options restores only the learned path ceiling, and never a clock.
+                uint16_t path = std::min(uint16_t(base - 1), uint16_t(208));
+                assert(endpoint.path_mss(path) && endpoint.segment_size() == path - 40);
+                endpoint.ip_options(0);
+                assert(endpoint.segment_size() == path && endpoint.next_send() == end);
+                no_output(endpoint, 3019);
+                assert(endpoint.next(3020, packet) && packet.length == path &&
+                       packet.sequence == 101 && !std::memcmp(packet.payload, bytes, path));
+                endpoint.emitted(3020);
+                cases++;
+            }
+    std::printf("TCP_IP_OPTIONS_MSS_PASS cases=%u advertised_mss offer_invalidation "
+                "owned_sequence original_rto retained_path_ceiling\n",
+                cases);
+}
+
+static void input_reply_ownership() {
+    Connection opening;
+    opening.active(100, 0);
+    require_output(opening, 0);
+    Segment invalid;
+    invalid.sequence = 800;
+    invalid.acknowledgment = 102;
+    invalid.flags = ack;
+    invalid.window = 32768;
+    uint64_t revision = opening.reply_revision();
+    opening.input(invalid, 5);
+    assert(opening.reply_revision() != revision);
+    Packet reply;
+    assert(output(opening, 5, true, reply, false) && opening.input_reply() &&
+           reply.segment().flags == rst && reply.segment().sequence == 102);
+    opening.output_blocked(5);
+    no_output(opening, 204);
+    assert(output(opening, 205, true, reply, false) && opening.input_reply());
+    opening.discard_input_reply();
+    no_output(opening, 205);
+    no_output(opening, 999);
+    assert(output(opening, 1000, true, reply, false) && !opening.input_reply() &&
+           reply.segment().flags == syn && opening.next_send() == 101);
+    opening.emitted(1000);
+    invalid.acknowledgment++;
+    opening.input(invalid, 1001);
+    assert(output(opening, 1001, true, reply, false) && opening.input_reply());
+    opening.abort(0, true);
+    assert(output(opening, 1001, true, reply, false) && !opening.input_reply() &&
+           reply.segment().flags == rst && reply.segment().sequence == 101);
+    opening.emitted(1001);
+
+    Connection endpoint, peer;
+    establish(endpoint, peer);
+    endpoint.close_write();
+    peer.input(require_output(endpoint, 20).segment(), 21);
+    endpoint.input(require_output(peer, 22, false).segment(), 23);
+    peer.close_write();
+    Packet finish = require_output(peer, 24, false);
+    endpoint.input(finish.segment(), 25);
+    assert(endpoint.state() == State::time_wait);
+    assert(output(endpoint, 25, true, reply, false) && !endpoint.input_reply());
+    endpoint.emitted(25);
+    uint32_t end = endpoint.next_send();
+    revision = endpoint.reply_revision();
+    endpoint.input(finish.segment(), 30);
+    assert(endpoint.reply_revision() != revision);
+    assert(output(endpoint, 30, true, reply, false) && endpoint.input_reply() &&
+           reply.segment().flags == ack);
+    endpoint.output_blocked(30);
+    assert(output(endpoint, 31, true, reply, false) && endpoint.input_reply());
+    endpoint.discard_input_reply();
+    no_output(endpoint, 32);
+    endpoint.input(finish.segment(), 33);
+    assert(output(endpoint, 33, true, reply, false) && endpoint.input_reply());
+    endpoint.emitted(33);
+    no_output(endpoint, 34);
+    assert(endpoint.next_send() == end);
+    puts("TCP_INPUT_REPLY_PASS reset ownership local_abort cancellation original_rto time_wait");
+}
+
 int main() {
+    input_reply_ownership();
+    option_payload_limits();
     family_segment_defaults();
     local_output_retries();
     reconnect_sequences();

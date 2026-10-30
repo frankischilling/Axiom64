@@ -23,6 +23,16 @@ size_t inet_receive_control(Task& task, InetSocket* socket, const InetFrame& fra
     }
     if (socket->receive_options.tos)
         output.append(1, &metadata.tos, sizeof(metadata.tos));
+    if (metadata.options.size()) {
+        if (socket->receive_options.options)
+            output.append(6, metadata.options.data(), metadata.options.size());
+        if (socket->receive_options.return_options) {
+            if (!metadata.options.return_valid())
+                flags |= 8; // MSG_CTRUNC: the return option value cannot be formed.
+            else
+                output.append(7, metadata.options.reply().data(), metadata.options.reply().size());
+        }
+    }
     return output.used;
 }
 } // namespace ax

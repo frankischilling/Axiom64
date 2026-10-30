@@ -1029,6 +1029,13 @@ int main(int argc, char** argv) {
         ipv4_path_mtu_lifetime_checks();
         return 0;
     }
+    if (argc == 2 && !strcmp(argv[1], "--fragment-datagrams")) {
+        // Development diagnostics retain all datagram cases. Expiry and PMTU
+        // acceptance still runs through --fragments and the normal workload.
+        ipv4_fragment_checks(0);
+        ipv4_fragment_checks(1);
+        return 0;
+    }
     int fd = socket(AF_INET, SOCK_RAW | SOCK_CLOEXEC, IPPROTO_ICMP);
     check(fd >= 0, "raw ICMP socket");
     echo(fd, "127.0.0.1", "IPV4_LOOPBACK_PASS");

@@ -28,7 +28,7 @@ def clock_pair():
 
 
 class Capture:
-    def __init__(self, interface, path):
+    def __init__(self, interface, path, *, defer_receipts=False):
         self.clock_start = clock_pair()
         self.socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0)
         # Linux SO_RCVBUFFORCE reserves a per-socket burst budget without
@@ -49,12 +49,22 @@ class Capture:
         self.clocks_path = path.with_suffix('.clocks.jsonl')
         self.clocks = self.clocks_path.open('w')
         self.frame_count = 0
+        self.defer_receipts = defer_receipts
+        self.receipts = []
+        self.receipt_bytes = 0
         self.stopping = threading.Event()
         self.error = None
         self.injection = None
         self.injection_lock = threading.Lock()
         self.thread = threading.Thread(target=self.collect, daemon=True)
         self.thread.start()
+
+    def write_record(self, index, frame, timestamp, observed):
+        self.output.write(struct.pack('<IIII', timestamp // 1000000000,
+                                      timestamp // 1000 % 1000000, len(frame), len(frame)) + frame)
+        self.clocks.write(json.dumps(dict(frame=index,
+            sha256=hashlib.sha256(frame).hexdigest(), kernel_realtime_ns=timestamp,
+            **observed)) + '\n')
 
     def collect(self):
         try:
@@ -74,14 +84,19 @@ class Capture:
                 seconds, nanoseconds = struct.unpack('=qq', stamps[0])
                 check(seconds >= 0 and 0 <= nanoseconds < 1000000000, 'kernel receipt timestamp bounds')
                 timestamp = seconds * 1000000000 + nanoseconds
-                self.output.write(struct.pack('<IIII', timestamp // 1000000000,
-                                              timestamp // 1000 % 1000000, len(frame), len(frame)) + frame)
                 # Both files stay buffered during bursts. The original PCAP
                 # timestamp and frame remain unchanged; each record binds them
                 # to an independently observed monotonic receipt.
-                self.clocks.write(json.dumps(dict(frame=self.frame_count,
-                    sha256=hashlib.sha256(frame).hexdigest(), kernel_realtime_ns=timestamp,
-                    **observed)) + '\n')
+                if self.defer_receipts:
+                    # The isolated IPv4 collector owns a bounded complete
+                    # workload. Keep formatting and file writes off its receive
+                    # path while retaining the actual per-frame clock samples.
+                    self.receipt_bytes += len(frame)
+                    check(self.receipt_bytes <= 16 * 1024 * 1024 and len(self.receipts) < 10000,
+                          'bounded deferred native packet and clock ownership')
+                    self.receipts.append((self.frame_count, frame, timestamp, observed))
+                else:
+                    self.write_record(self.frame_count, frame, timestamp, observed)
                 self.frame_count += 1
                 if self.injection is not None:
                     with self.injection_lock:
@@ -137,6 +152,9 @@ class Capture:
             self.thread.join(timeout=1)
             check(not self.thread.is_alive() and self.error is None,
                   f'independent packet monitor completes: {self.error}')
+            for receipt in self.receipts:
+                self.write_record(*receipt)
+            self.receipts.clear()
             # Linux SOL_PACKET/PACKET_STATISTICS counts kernel receive drops.
             packets, dropped = struct.unpack('II', self.socket.getsockopt(263, 6, 8))
             check(dropped == 0, f'independent packet monitor loses no actual frames: dropped={dropped}')
@@ -147,6 +165,7 @@ class Capture:
                         monotonic_receipts=self.clocks_path.name,
                         monotonic_receipts_sha256=hashlib.sha256(self.clocks_path.read_bytes()).hexdigest(),
                         receipt_frames=self.frame_count, original_packet_times_not_rescaled=True,
+                        receipt_serialization_deferred=self.defer_receipts,
                         clock_start=self.clock_start, clock_stop=clock_stop, clock_end=clock_pair())
         finally:
             self.stopping.set()

@@ -22,6 +22,7 @@ from ipv4_alias_capture import verify_capture as verify_alias_capture
 from ipv4_expiry_capture import verify_capture
 from ipv4_path_mtu_capture import verify_capture as verify_path_mtu
 from ipv4_path_mtu_lifetime_capture import verify_capture as verify_path_lifetime
+from ipv4_options.fragment_capture import verify_capture as verify_option_fragments
 
 
 def checksum(data):
@@ -607,7 +608,10 @@ def run(firmware, transport, timeout, fault=False, *, image=None, gdb_port=1237)
                 'IPV4_LINK_PASS index=1', 'IPV4_LINK_PASS index=2',
                 'IPV4_CACHE_REPLACEMENT_PASS index=1', 'IPV4_CACHE_REPLACEMENT_PASS index=2',
                 'IPV4_ARP_REPLY_PASS index=1', 'IPV4_ARP_REPLY_PASS index=2',
-                'IPV4_FRAGMENT_OUTPUT_PASS index=1 cases=21', 'IPV4_FRAGMENT_OUTPUT_PASS index=2 cases=21',
+                'IPV4_FRAGMENT_PASS index=1 cases=12 option_cases=6',
+                'IPV4_FRAGMENT_PASS index=2 cases=12 option_cases=6',
+                'IPV4_FRAGMENT_OUTPUT_PASS index=1 cases=45 option_cases=24',
+                'IPV4_FRAGMENT_OUTPUT_PASS index=2 cases=45 option_cases=24',
                 'IPV4_PATH_MTU_PASS index=1 cases=18 policies_each=6',
                 'IPV4_PATH_MTU_PASS index=2 cases=18 policies_each=6',
                 'IPV4_PATH_MTU_LIFETIME_PASS index=1', 'IPV4_PATH_MTU_LIFETIME_PASS index=2',
@@ -635,9 +639,9 @@ def run(firmware, transport, timeout, fault=False, *, image=None, gdb_port=1237)
                      peer.cache_ack and peer.cache_arp == 1 and peer.broadcast == 1 and
                      peer.lifetime == 1 and peer.alias_echo == 132 and peer.alias_reply == 1 and
                      sum(peer.alias_arp.values()) == 130 and peer.held_replies == 1 and
-                     peer.reply_ingress == 97 and peer.fragments.completed == 6 and
+                     peer.reply_ingress == 97 and peer.fragments.completed == 12 and
                      peer.fragments.waiting is None and peer.fragments.acknowledged and
-                     peer.fragments.output.completed == 21 and peer.fragments.output.waiting is None and
+                     peer.fragments.output.completed == 45 and peer.fragments.output.waiting is None and
                      peer.fragments.output.acknowledged and peer.fragments.expiry.passed and
                      peer.fragments.path_mtu.passed and peer.fragments.path_mtu.lifetime.passed
                      for peer in peers)
@@ -659,6 +663,15 @@ def run(firmware, transport, timeout, fault=False, *, image=None, gdb_port=1237)
                                                     lane, log, damage_archive=archive))
         except Exception as exception:
             error = f'expiry capture audit: {exception}'
+    option_fragment_audits = []
+    if not fault and passed and returncode == 1 and not timed_out and not error and not missing:
+        try:
+            for lane in range(2):
+                archive = ROOT / 'build' / f'{label}-option-fragments-lane{lane}-{time.monotonic_ns()}.zip'
+                option_fragment_audits.append(verify_option_fragments(ROOT / 'build' / f'{label}-lane{lane}.pcap',
+                    lane, log, damage_archive=archive))
+        except Exception as exception:
+            error = f'option-bearing fragment capture audit: {exception}'
     path_audits = []
     if not fault and passed and returncode == 1 and not timed_out and not error and not missing:
         try:
@@ -712,12 +725,14 @@ def run(firmware, transport, timeout, fault=False, *, image=None, gdb_port=1237)
                   fragment_expiry_capture_audits=expiry_audits,
                   path_mtu=[peer.fragments.path_mtu.report() for peer in peers],
                   path_mtu_capture_audits=path_audits,
+                  option_fragment_capture_audits=option_fragment_audits,
                   path_mtu_lifetime=[peer.fragments.path_mtu.lifetime.report() for peer in peers],
                   path_mtu_lifetime_capture_audits=lifetime_audits,
                   captures=[f'{label}-lane{lane}.pcap' for lane in range(2)],
                   seconds=round(time.monotonic() - started, 2), log=log.name,
                   passed=(returncode == 1 and not timed_out and not error and not missing and passed and
-                          (fault or (len(alias_audits) == 2 and all(a['passed'] for a in alias_audits)))))
+                          (fault or (len(alias_audits) == 2 and all(a['passed'] for a in alias_audits) and
+                                     len(option_fragment_audits) == 2 and all(a['passed'] for a in option_fragment_audits)))))
     print(json.dumps(result), flush=True)
     if not result['passed']:
         print('\n'.join(text.splitlines()[-25:]), flush=True)

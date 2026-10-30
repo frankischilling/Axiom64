@@ -3,7 +3,12 @@
 #include "net/ethernet.hpp"
 
 namespace ax {
+bool ipv4_option_unicast(uint32_t address, void* context);
 struct InetSocket;
+
+namespace ip4 {
+class Options;
+}
 
 // Addresses and masks in this interface are host-order IPv4 integers.
 struct Ipv4Config {
@@ -125,11 +130,11 @@ constexpr int ipv4_output_discarded = 1;
 int ipv4_send(InetSocket*, Ipv4Source source, uint32_t destination, unsigned bound_index,
               uint8_t protocol, uint8_t ttl, bool broadcast, const void*, size_t,
               bool cache_destination = true, int traffic_class = -1,
-              const Ipv4SendRoute* selected = nullptr);
+              const Ipv4SendRoute* selected = nullptr, const ip4::Options* options = nullptr);
 
 int ipv4_send_admit(InetSocket*, Ipv4Source source, uint32_t destination, unsigned bound_index,
                     uint8_t ttl, bool broadcast, size_t length, bool cache_destination,
-                    Ipv4SendRoute* selected = nullptr);
+                    Ipv4SendRoute* selected = nullptr, const ip4::Options* options = nullptr);
 
 // Last socket close detaches error delivery; accepted packets own their bytes.
 void ipv4_detach_owner(InetSocket*);

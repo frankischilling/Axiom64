@@ -302,10 +302,10 @@ static int prepare_packet(Task& task, IoRequest& request) {
             return error;
     } else if (request.handle->inet) {
         request.inet_destination_named = address != 0;
-        int error = inet_prepare_send(request.handle->inet, request.inet_destination,
-                                      request.inet_destination_named, uint32_t(address_length),
-                                      request.packet_length, request.send_control_data,
-                                      control_length, request.inet_output);
+        int error = inet_prepare_send(
+            request.handle->inet, request.inet_destination, request.inet_destination_named,
+            uint32_t(address_length), request.packet_length, request.send_control_data,
+            control_length, request.inet_output, capable(task.credentials, Capability::net_raw));
         if (error)
             return error;
         release(request.send_control_data);
@@ -719,7 +719,8 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
                                 request.packet_length);
         if (request.handle->inet) {
             if (!request.packet_ready) {
-                if (int error = inet_send_ready(request.handle->inet, request.packet_length))
+                if (int error = inet_send_ready(request.handle->inet, request.packet_length,
+                                                &request.inet_output))
                     return error;
                 if (request.packet_length) {
                     request.packet_data = static_cast<uint8_t*>(alloc(request.packet_length));

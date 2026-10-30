@@ -27,6 +27,10 @@ struct DestinationRelease {
 };
 } // namespace
 
+bool inet_option_unicast(uint32_t address, void*) {
+    return ipv4_option_unicast(address, nullptr);
+}
+
 Ipv4Destination* inet_output_destination(InetSocket* socket, uint32_t address, bool lookup_failed) {
     if (!socket || !socket->used || socket->peer != address)
         return nullptr;
@@ -191,6 +195,7 @@ void inet_failed(InetSocket* socket, int error, unsigned failed_index) {
 
 void inet_icmp_error(unsigned index, const uint8_t* quote, int error, uint16_t announced_mtu) {
     uint32_t local = ip4::get32(quote + 12), peer = ip4::get32(quote + 16);
+    size_t header = size_t(quote[0] & 15) * 4;
     InetSocket* best = nullptr;
     unsigned best_score = 0;
     for (auto& socket : inet_sockets) {
@@ -207,8 +212,9 @@ void inet_icmp_error(unsigned index, const uint8_t* quote, int error, uint16_t a
             if (socket.peer && (error != 90 || socket.mtu_policy))
                 inet_failed(&socket, error);
         }
-        if (socket.type != 2 || quote[9] != 17 || socket.local_port != ip4::get16(quote + 20) ||
-            (socket.peer_port && __builtin_bswap16(socket.peer_port) != ip4::get16(quote + 22)))
+        if (socket.type != 2 || quote[9] != 17 || socket.local_port != ip4::get16(quote + header) ||
+            (socket.peer_port &&
+             __builtin_bswap16(socket.peer_port) != ip4::get16(quote + header + 2)))
             continue;
         unsigned score = (socket.peer_port ? 4 : 0) + (socket.index ? 4 : 0);
         if (!best || score > best_score || (score == best_score && socket.order > best->order)) {
@@ -276,28 +282,33 @@ static void enqueue(InetSocket& socket, const Ipv4ReceiveMetadata& metadata, uin
     socket.bytes += length;
 }
 
-void inet_deliver(const Ipv4ReceiveMetadata& metadata, const void* data, size_t length) {
+bool inet_deliver(const Ipv4ReceiveMetadata& metadata, const void* data, size_t length) {
     unsigned index = metadata.index;
     uint32_t source = metadata.source, destination = metadata.destination;
     uint8_t protocol = metadata.protocol;
-    if ((protocol != 1 && protocol != 17) || !data || length < 20)
-        return;
+    if (!data || length < 20)
+        return false;
     auto bytes = static_cast<const uint8_t*>(data);
     size_t header = size_t(bytes[0] & 15) * 4;
     if (header < 20 || header > length || (protocol == 1 && length - header < 8))
-        return;
+        return false;
+    bool delivered = false;
     for (auto& socket : inet_sockets) {
         if (!socket.used || socket.type != 3 || socket.protocol != protocol ||
             (socket.index && socket.index != index) ||
             (socket.local && socket.local != destination) ||
-            (socket.peer && socket.peer != source) ||
-            (ip4::multicast(destination) &&
+            (socket.peer && socket.peer != source) || socket.count == inet_queue_count ||
+            socket.bytes >= socket.receive_limit)
+            continue;
+        delivered = true;
+        if ((ip4::multicast(destination) &&
              !inet_multicast_accepts(&socket, index, destination, source)) ||
             (protocol == 1 && bytes[header] < 32 &&
              (socket.filter & (uint32_t(1) << bytes[header]))))
             continue;
         enqueue(socket, metadata, 0, data, length);
     }
+    return delivered;
 }
 
 bool inet_datagram_deliver(const Ipv4ReceiveMetadata& metadata, uint16_t source_port,
@@ -335,8 +346,8 @@ bool inet_datagram_deliver(const Ipv4ReceiveMetadata& metadata, uint16_t source_
     return matched;
 }
 
-static int send_capacity(const InetSocket* socket, size_t length) {
-    size_t overhead = socket->type == 2 ? 28 : 20;
+static int send_capacity(const InetSocket* socket, size_t length, size_t options) {
+    size_t overhead = (socket->type == 2 ? 28 : 20) + options;
     if (length > 65535 - overhead || length + overhead > socket->send_limit)
         return -90;
     if (length + overhead >
@@ -345,12 +356,13 @@ static int send_capacity(const InetSocket* socket, size_t length) {
     return 0;
 }
 
-int inet_send_ready(InetSocket* socket, size_t length) {
+int inet_send_ready(InetSocket* socket, size_t length, const InetSendControl* control) {
     if (int error = inet_error(socket, true))
         return -error;
     if (socket->shutdown & 2)
         return -32;
-    if (int error = send_capacity(socket, length))
+    if (int error = send_capacity(socket, length,
+                                  control ? control->options.size() : socket->options.size()))
         return error;
     // A full output table retains bytes already imported using socket memory.
     // Only the socket-memory wait defers the user payload copy.
@@ -370,17 +382,18 @@ int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* da
     uint32_t destination = network_address(address.address);
     if (!destination)
         return -89;
-    size_t overhead = socket->type == 2 ? 28 : 20;
-    if (int error = send_capacity(socket, length))
-        return error;
     auto control = selected ? *selected : inet_send_defaults(socket, address, named);
+    size_t overhead = (socket->type == 2 ? 28 : 20) + control.options.size();
+    if (int error = send_capacity(socket, length, control.options.size()))
+        return error;
     Ipv4Source source = control.source;
     unsigned index = control.index;
     bool connected = control.cache_destination && !named && destination == socket->peer;
     if (socket->type == 2 && connected && !control.route.path.index) {
         if (ipv4_destination_current(socket->destination))
             source = Ipv4Source::retained(socket->local);
-        int routed = ipv4_destination(socket->destination, source, destination, index);
+        int routed = ipv4_destination(socket->destination, source,
+                                      control.options.destination(destination), index);
         if (routed)
             return routed == -99 ? -101 : routed;
     }
@@ -400,7 +413,8 @@ int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* da
                          socket->broadcast,
                          connected,
                          control.tos,
-                         control.route.path.index ? &control.route : nullptr};
+                         control.route.path.index ? &control.route : nullptr,
+                         &control.options};
         error = udp_send(socket, output, data, length);
         if (connected && !control.route.path.index && socket->destination.path.index)
             socket->destination.source = socket->local;
@@ -409,7 +423,7 @@ int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* da
     } else
         error = ipv4_send(socket, source, destination, index, socket->protocol, control.ttl,
                           socket->broadcast, data, length, control.cache_destination, control.tos,
-                          control.route.path.index ? &control.route : nullptr);
+                          control.route.path.index ? &control.route : nullptr, &control.options);
     if (!error)
         socket->transmitted += length + overhead;
     return error < 0 ? error : int64_t(length);
@@ -457,16 +471,22 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
         if (b & ~uint64_t(0x8080f))
             return -22;
         const unsigned type = b & 0xf;
+        int protocol = int32_t(c);
+        if (protocol < 0 || protocol >= inet_protocol_limit)
+            return -22;
+        if (!((type == 3 && protocol) || (type == 2 && (protocol == 0 || protocol == 17)) ||
+              (type == 1 && (protocol == 0 || protocol == 6))))
+            return -93;
         if (type == 3 && !capable(task.credentials, Capability::net_raw))
             return -1;
-        if (!((type == 3 && (c == 1 || c == 17)) || (type == 2 && (c == 0 || c == 17)) ||
-              (type == 1 && (c == 0 || c == 6))))
+        // IPPROTO_RAW requires the separate IP_HDRINCL construction contract.
+        if (type == 3 && protocol == 255)
             return -93;
         socket = inet_allocate(type);
         if (!socket)
             return -23;
         if (type == 3)
-            socket->protocol = uint8_t(c);
+            socket->protocol = uint16_t(protocol);
         auto opened = open_handle(nullptr, 2 | ((b & 0x800) ? 04000 : 0));
         if (!opened) {
             inet_close(socket);
@@ -567,9 +587,12 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             uint32_t source = socket->bound && !ip4::multicast(socket->local) ? socket->local : 0;
             if (!source && ip4::multicast(value))
                 source = socket->multicast.output_address;
-            error = ipv4_destination(destination, source, value, index);
+            error =
+                ipv4_destination(destination, source, socket->options.destination(value), index);
             if (error)
                 return error;
+            if (socket->options.strict_route() && destination.gateway)
+                return -101;
             uint32_t selected = destination.path.source;
             destination.source = selected;
             if (socket->type == 2 && !socket->local_port) {
@@ -607,6 +630,21 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
         return address_out(task, address, b, c);
     }
     case 54: {
+        if (b == 0 && c == 4) {
+            int32_t length = int32_t(frame.r8);
+            if (length < 0 || length > int32_t(ip4::Options::capacity))
+                return -22;
+            uint8_t bytes[ip4::Options::capacity]{};
+            if (length && !task.memory->space.copy_in(bytes, d, size_t(length)))
+                return -14;
+            ip4::OptionPolicy policy{capable(task.credentials, Capability::net_raw),
+                                     inet_option_unicast};
+            if (int error = socket->options.assign(bytes, size_t(length), policy))
+                return error;
+            if (inet_stream(socket))
+                tcp_limits(socket);
+            return 0;
+        }
         if (b == 1 && c == 25) { // SO_BINDTODEVICE
             if (frame.r8 > 16)
                 return -22;
@@ -628,7 +666,7 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             socket->index = index;
             return 0;
         }
-        if (b == 0 && (c == 8 || c == 12 || c == 13)) {
+        if (b == 0 && (c == 6 || c == 7 || c == 8 || c == 12 || c == 13)) {
             int32_t length = int32_t(frame.r8);
             if (length < 0)
                 return -22;
@@ -637,7 +675,11 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             if (bytes && !task.memory->space.copy_in(&value, d, bytes))
                 return -14;
             auto& options = socket->receive_options;
-            (c == 8 ? options.packet_info : c == 12 ? options.ttl : options.tos) = value != 0;
+            (c == 6    ? options.options
+             : c == 7  ? options.return_options
+             : c == 8  ? options.packet_info
+             : c == 12 ? options.ttl
+                       : options.tos) = value != 0;
             return 0;
         }
         if (b == 0 && c == 1) { // IP_TOS accepts an integer or a single byte.
@@ -705,9 +747,14 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             return -14;
         if (int32_t(length) < 0)
             return -22;
-        if (b == 0 && (c == 1 || c == 8 || c == 12 || c == 13)) {
+        if (b == 0 && c == 4)
+            return socket_bytes_result(task, socket->options.data(), socket->options.size(), length,
+                                       d, frame.r8);
+        if (b == 0 && (c == 1 || c == 6 || c == 7 || c == 8 || c == 12 || c == 13)) {
             const auto& options = socket->receive_options;
             int selected = c == 1    ? socket->tos
+                           : c == 6  ? options.options
+                           : c == 7  ? options.return_options
                            : c == 8  ? options.packet_info
                            : c == 12 ? options.ttl
                                      : options.tos;

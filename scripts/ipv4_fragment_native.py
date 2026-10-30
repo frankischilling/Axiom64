@@ -21,10 +21,11 @@ from ipv4_expiry_capture import verify_capture
 from ipv4_path_mtu_capture import verify_capture as verify_path_mtu
 from ipv4_path_mtu_lifetime_capture import verify_capture as verify_path_lifetime
 from ipv4_query_model import query_model
-from tcp_fault_native import Capture
+from native_packet_capture import Capture
 from native_ipv4_state import NativeIpv4State
 from native_icmp_preflight import NativeIcmpPreflight
 from native_icmp_preflight_capture import verify_capture as verify_preflight
+from ipv4_options.fragment_capture import verify_capture as verify_option_fragments
 
 
 def digest(path):
@@ -102,8 +103,10 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                'scripts/ipv4_query_model.py', 'userspace/tests/net/ipv4_query.h',
                'scripts/ipv4_path_mtu_lifetime.py', 'scripts/ipv4_path_mtu_lifetime_capture.py',
                'userspace/tests/net/ipv4_fragments.h', 'scripts/ipv4_fragments.py',
+               'scripts/ipv4_options/fragment_options.py',
+               'scripts/ipv4_options/fragment_capture.py', 'scripts/ipv4_options_fragment_capture.py',
                'scripts/ipv4_fragment_native.py', 'scripts/ipv4_expiry_capture.py',
-               'scripts/tcp_fault_native.py', 'scripts/native_ipv4_state.py',
+               'scripts/tcp_fault_native.py', 'scripts/native_packet_capture.py', 'scripts/native_ipv4_state.py',
                'scripts/native_icmp_preflight.py', 'scripts/native_icmp_preflight_capture.py', 'Makefile']
     before = dict(profile=profile, pmtu_only=pmtu_only, lifetime_only=lifetime_only, query_model=model,
                   kernel=platform.uname()._asdict(), command=command,
@@ -278,8 +281,8 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
         markers = markers and all(f'IPV4_PATH_MTU_LIFETIME_PASS index={lane + 1} ' in text
                                   for lane in range(2))
     if not pmtu_only and not lifetime_only:
-        markers = markers and all(f'IPV4_FRAGMENT_PASS index={lane + 1} cases=6\n' in text for lane in range(2))
-        markers = markers and all(f'IPV4_FRAGMENT_OUTPUT_PASS index={lane + 1} cases=21\n' in text
+        markers = markers and all(f'IPV4_FRAGMENT_PASS index={lane + 1} cases=12 option_cases=6\n' in text for lane in range(2))
+        markers = markers and all(f'IPV4_FRAGMENT_OUTPUT_PASS index={lane + 1} cases=45 option_cases=24\n' in text
                                   for lane in range(2))
         markers = markers and all(f'IPV4_FRAGMENT_EXPIRY_PASS index={lane + 1} ' in text for lane in range(2))
     expiry_audits = []
@@ -294,6 +297,15 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                     damage_archive=directory / f'lane{lane}-expiry-damaged.zip'))
         except Exception as exception:
             error = f'expiry capture audit: {exception}'
+    option_fragment_audits = []
+    if not pmtu_only and not lifetime_only and error is None and process is not None and process.returncode == 0 and markers:
+        try:
+            for lane in range(2):
+                option_fragment_audits.append(verify_option_fragments(directory / f'lane{lane}.pcap', lane,
+                    directory / 'client.log', native=True,
+                    damage_archive=directory / f'lane{lane}-option-fragments-damaged.zip'))
+        except Exception as exception:
+            error = f'option-bearing fragment capture audit: {exception}'
     path_audits = []
     if not lifetime_only and error is None and process is not None and process.returncode == 0 and markers:
         try:
@@ -320,6 +332,7 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                   fragment_expiry=[peer.expiry.report() for peer in peers],
                   native_fragment_timeout_seconds=fragment_timeout,
                   fragment_expiry_capture_audits=expiry_audits,
+                  option_fragment_capture_audits=option_fragment_audits,
                   native_icmp_preflight_capture_audit=preflight_audit,
                   path_mtu=[peer.path_mtu.report() for peer in peers],
                   path_mtu_capture_audits=path_audits,
@@ -333,12 +346,13 @@ def child(profile, directory, pmtu_only=False, lifetime_only=False):
                   passed=(error is None and process is not None and process.returncode == 0 and
                           (lifetime_only or all(peer.path_mtu.passed for peer in peers)) and
                           (pmtu_only or all(peer.path_mtu.lifetime.passed for peer in peers)) and
-                          (pmtu_only or lifetime_only or (completed == [6, 6] and all(acknowledged) and output_cases == [21, 21] and
+                          (pmtu_only or lifetime_only or (completed == [12, 12] and all(acknowledged) and output_cases == [45, 45] and
                           all(output_ack) and all(peer.expiry.passed for peer in peers) and
                           preflight.passed and preflight_audit is not None)) and
                           markers and len(statistics) == 2 and
                           len(path_audits) == (0 if lifetime_only else 2) and
                           len(lifetime_audits) == (0 if pmtu_only else 2) and
+                          len(option_fragment_audits) == (0 if pmtu_only or lifetime_only else 2) and
                           len(expiry_audits) == (0 if pmtu_only or lifetime_only else 2)))
     (directory / 'receipt.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result), flush=True)

@@ -883,9 +883,9 @@ test-ipv6-wire: test-ipv6-copy-model test-ipv6-send-model test-ipv6-fragment-obs
 	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-reassembly-host
 	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-host
 	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv6-wire-host
-build/ipv4-reassembly-host: kernel/tests/net/ipv4_reassembly.cpp kernel/net/ipv4/reassembly.cpp kernel/include/net/ipv4/reassembly.hpp kernel/include/net/ipv4_wire.hpp kernel/include/core/base.hpp
+build/ipv4-reassembly-host: kernel/tests/net/ipv4_reassembly.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/options.cpp kernel/include/net/ipv4/reassembly.hpp kernel/include/net/ipv4/options.hpp kernel/include/net/ipv4_wire.hpp kernel/include/core/base.hpp
 	@mkdir -p build
-	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/ipv4_reassembly.cpp kernel/net/ipv4/reassembly.cpp -o $@
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 .PHONY: test-ipv4-reassembly
 test-ipv4-reassembly: build/ipv4-reassembly-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-reassembly-host
@@ -901,14 +901,34 @@ build/ipv4-path-mtu-host: kernel/tests/net/ipv4_path_mtu.cpp kernel/net/ipv4/pat
 .PHONY: test-ipv4-path-mtu
 test-ipv4-path-mtu: build/ipv4-path-mtu-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-path-mtu-host
-build/ipv4-paths-host: kernel/tests/net/ipv4_paths.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(call rwildcard,kernel/include/,*.hpp) $(IPV4_MULTICAST_CORE)
+
+build/ipv4-options-host: kernel/tests/net/ipv4_options.cpp kernel/net/ipv4/options.cpp kernel/include/net/ipv4/options.hpp kernel/include/net/ipv4_wire.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+.PHONY: test-ipv4-options-model test-ipv4-options
+test-ipv4-options-model: build/ipv4-options-host
+	$(PYTHON) scripts/ipv4_options_model_test.py
+build/ipv4-options-native: userspace/tests/net/ipv4/options.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/ipv4-options-static build/ipv4-options-dynamic: userspace/tests/net/ipv4/options.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4/options.c
+build/ipv4-tcp-options-native: userspace/tests/net/ipv4/tcp_options.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/ipv4-tcp-options-static build/ipv4-tcp-options-dynamic: userspace/tests/net/ipv4/tcp_options.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4/tcp_options.c
+test-ipv4-options:
+	$(PYTHON) scripts/ipv4_options_test.py
+
+build/ipv4-paths-host: kernel/tests/net/ipv4_paths.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/options.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(call rwildcard,kernel/include/,*.hpp) $(IPV4_MULTICAST_CORE)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 .PHONY: test-ipv4-paths
-build/ipv4-output-host: kernel/tests/net/ipv4_output.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(call rwildcard,kernel/include/,*.hpp) $(IPV4_MULTICAST_CORE)
+build/ipv4-output-host: kernel/tests/net/ipv4_output.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/options.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(call rwildcard,kernel/include/,*.hpp) $(IPV4_MULTICAST_CORE)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
-build/ipv4-socket-output-host: kernel/tests/net/ipv4_socket_output.cpp kernel/tests/net/ipv4_send_control.cpp kernel/net/ipv4/socket.cpp kernel/net/ipv4/send_control.cpp kernel/net/udp/core.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(call rwildcard,kernel/include/,*.hpp) kernel/net/ipv4/socket.hpp $(IPV4_MULTICAST_CORE)
+build/ipv4-socket-output-host: kernel/tests/net/ipv4_socket_output.cpp kernel/tests/net/ipv4_send_control.cpp kernel/net/ipv4/socket.cpp kernel/net/ipv4/send_control.cpp kernel/net/udp/core.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/options.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(call rwildcard,kernel/include/,*.hpp) kernel/net/ipv4/socket.hpp $(IPV4_MULTICAST_CORE)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 build/ipv4-routes-host: kernel/tests/net/ipv4_routes.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp $(call rwildcard,kernel/include/,*.hpp)
@@ -954,7 +974,7 @@ build/tcp-connection-host: kernel/tests/net/tcp_connection.cpp kernel/net/tcp/co
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/net/tcp_connection.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/wire.cpp -o $@
 .PHONY: test-tcp-connection
-build/tcp-socket-output-host: kernel/tests/net/tcp_socket_output.cpp kernel/tests/net/tcp_ipv6_socket.cpp kernel/tests/net/tcp_ipv6_error.cpp kernel/tests/net/tcp_ipv6_reset.cpp kernel/net/ipv4/socket.cpp kernel/net/udp/core.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) kernel/core/random/primitives.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/icmp.cpp kernel/net/tcp/isn.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/socket.cpp kernel/net/tcp/icmp_ipv6.cpp kernel/net/tcp/wire_ipv6.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/wire.cpp kernel/net/tcp/wire_detail.hpp $(call rwildcard,kernel/include/,*.hpp) kernel/net/ipv4/socket.hpp $(IPV4_MULTICAST_CORE)
+build/tcp-socket-output-host: kernel/tests/net/tcp_socket_output.cpp kernel/tests/net/tcp_ipv6_socket.cpp kernel/tests/net/tcp_ipv6_error.cpp kernel/tests/net/tcp_ipv6_reset.cpp kernel/net/ipv4/socket.cpp kernel/net/udp/core.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/options.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) kernel/core/random/primitives.cpp kernel/net/tcp/connection.cpp kernel/net/tcp/icmp.cpp kernel/net/tcp/isn.cpp kernel/net/tcp/sender.cpp kernel/net/tcp/socket.cpp kernel/net/tcp/icmp_ipv6.cpp kernel/net/tcp/wire_ipv6.cpp kernel/net/tcp/time_wait.cpp kernel/net/tcp/wire.cpp kernel/net/tcp/wire_detail.hpp $(call rwildcard,kernel/include/,*.hpp) kernel/net/ipv4/socket.hpp $(IPV4_MULTICAST_CORE)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 test-tcp-connection: build/tcp-connection-host build/tcp-socket-output-host

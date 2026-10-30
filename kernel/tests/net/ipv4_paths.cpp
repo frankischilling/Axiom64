@@ -13,6 +13,10 @@ int random_read(void*, size_t, bool) {
 
 uint64_t ticks = 100;
 
+uint64_t clock_realtime_ticks() {
+    return ticks;
+}
+
 void* alloc(size_t length) {
     return std::malloc(length);
 }

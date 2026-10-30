@@ -25,7 +25,8 @@ int tcp6_import(Task&, uint64_t pointer, uint32_t length, Inet6Address&, bool co
 int64_t tcp6_syscall(Task&, const Frame&);
 void tcp_close(InetSocket*);
 void tcp_poll();
-void tcp_receive(unsigned index, uint32_t source, uint32_t destination, const void*, size_t);
+void tcp_receive(unsigned index, uint32_t source, uint32_t destination, const void*, size_t,
+                 const ip4::ReceivedOptions* options = nullptr);
 void tcp_icmp_error(unsigned index, const uint8_t*, size_t);
 void tcp6_icmp_error(unsigned index, const ip6::ErrorQuote&);
 // Refresh a trusted current path; true retires an oversized failed copied packet.

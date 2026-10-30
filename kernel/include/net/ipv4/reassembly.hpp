@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include "net/ipv4/options.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -15,9 +16,12 @@ struct Reassembled {
     uint8_t* bytes = nullptr;
     size_t length = 0;
     bool link_broadcast = false;
+    bool options_processed = false;
+    ReceivedOptions options{};
 };
 
-// The callback borrows the original first fragment's header and eight payload bytes.
+// The callback borrows the first fragment's owned, locally processed header and
+// eight payload bytes. Its checksum remains the original received field.
 // Expired state is detached before the callback. Missing first fragments produce no callback.
 using FragmentExpired = void (*)(unsigned index, const uint8_t*, size_t, bool link_broadcast);
 
@@ -25,8 +29,12 @@ using FragmentExpired = void (*)(unsigned index, const uint8_t*, size_t, bool li
 // checks IP header bounds/checksum, fragment geometry and tuple ownership, and copies
 // accepted bytes before returning. Unfragmented input never changes a fragment
 // queue merely because its identification field happens to match.
+// The original wire bytes still supply header validation. Optional processed
+// options are copied with the first fragment before the caller can release them;
+// completion returns that snapshot without advancing its route/timestamp slots.
 Reassembled reassemble(unsigned index, const uint8_t*, size_t, uint64_t now,
-                       bool link_broadcast = false, FragmentExpired = nullptr);
+                       bool link_broadcast = false, FragmentExpired = nullptr,
+                       const ReceivedOptions* = nullptr);
 
 void reassembly_expire(uint64_t now, FragmentExpired = nullptr);
 

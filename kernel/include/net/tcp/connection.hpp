@@ -116,6 +116,20 @@ class Connection {
     // Unquoted path changes preserve the ordinary RTO; a known dropped copy may
     // request immediate repacketization. Neither changes delivery/retry clocks.
     bool path_mss(uint16_t maximum_segment, bool retry = false);
+
+    // IP options reduce outgoing payload while preserving the advertised MSS,
+    // learned path ceiling, owned sequence range and existing delivery clocks.
+    void ip_options(uint8_t bytes);
+
+    // Input-triggered replies retain that input's network metadata. Local
+    // aborts and ordinary output keep the description's current defaults.
+    uint64_t reply_revision() const {
+        return input_reply_revision;
+    }
+
+    bool input_reply() const;
+    void discard_input_reply();
+
     void limits(size_t receive_bytes, size_t send_bytes);
 
     void nodelay(bool enabled) {
@@ -153,17 +167,20 @@ class Connection {
     uint32_t window_sequence = 0, window_ack = 0, pending_fin_sequence = 0;
     uint32_t resegment_next = 0, resegment_end = 0;
     uint16_t peer_window = 0, maximum_peer_window = 0, mss = 536, local_mss = 1460;
-    uint16_t path_limit = 1460;
+    uint16_t path_limit = 1460, peer_mss = UINT16_MAX;
+    uint8_t ip_option_bytes = 0;
     const uint16_t fallback_mss;
     uint16_t acknowledged_history = 0;
     uint32_t timeout_ms = 0, persist_interval = 1000;
     uint64_t opened_at = 0, progress_at = 0, retransmit_at = 0, persist_at = 0;
     uint64_t sample_at = 0, expiration = 0, last_send = 0, challenge_at = 0;
     uint64_t delivery_at = 0, output_retry_at = 0;
+    uint64_t input_reply_revision = 0;
     uint32_t sample_end = 0, timeout_end = 0;
     int failure = 0, soft_error = 0;
     bool initialized = false, syn_pending = false, syn_emitted = false, syn_retransmitted = false;
     bool ack_pending = false, response_pending = false, retransmit_pending = false;
+    bool response_from_input = false, time_wait_from_input = false;
     bool retransmit_active = false, sample_pending = false, repeated_timeout = false;
     bool received_fin = false, pending_fin = false, sent_fin = false;
     bool write_closed = false, read_closed = false, detached = false;
@@ -175,6 +192,7 @@ class Connection {
     bool passive_open = false;
     bool resegmenting = false, resegment_wait = false;
     void initialize(uint32_t, uint64_t, uint16_t);
+    uint16_t payload_limit(uint16_t path) const;
     void negotiate(const Segment&);
     void synchronize(uint64_t);
     void acknowledge(const Segment&, uint64_t);

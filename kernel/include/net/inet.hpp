@@ -3,6 +3,7 @@
 #include "core/base.hpp"
 #include "net/ipv4.hpp"
 #include "net/ipv4/receive.hpp"
+#include "net/ipv4/options.hpp"
 
 namespace ax {
 struct Task;
@@ -23,6 +24,7 @@ struct InetSendControl {
     uint8_t ttl = 64, tos = 0;
     bool cache_destination = false;
     Ipv4SendRoute route{};
+    ip4::Options options{};
 };
 
 struct InetFrame {
@@ -76,7 +78,8 @@ void inet_icmp_error(unsigned index, const uint8_t* quote, int error, uint16_t a
 
 void inet_reclaim(InetSocket*, size_t length);
 
-void inet_deliver(const Ipv4ReceiveMetadata&, const void*, size_t);
+// An eligible raw listener suppresses protocol-unreachable errors.
+bool inet_deliver(const Ipv4ReceiveMetadata&, const void*, size_t);
 
 bool inet_datagram_deliver(const Ipv4ReceiveMetadata&, uint16_t source_port,
                            uint16_t destination_port, bool broadcast, const void*, size_t);
@@ -88,12 +91,12 @@ int inet_capture_send_control(Task&, uint64_t pointer, uint64_t length, uint8_t*
 
 int inet_prepare_send(InetSocket*, InetAddress&, bool named, uint32_t address_length,
                       size_t payload_length, const uint8_t* control, size_t control_length,
-                      InetSendControl&);
+                      InetSendControl&, bool net_raw = false);
 
 size_t inet_send_prefix(const InetSocket*);
 
 int inet_send_admit(InetSocket*, InetAddress&, size_t, InetSendControl&);
-int inet_send_ready(InetSocket*, size_t);
+int inet_send_ready(InetSocket*, size_t, const InetSendControl* = nullptr);
 
 int64_t inet_send(InetSocket*, const InetAddress&, const void*, size_t, bool named = false,
                   const InetSendControl* control = nullptr);

@@ -1,10 +1,10 @@
 # IPv4, ARP, routing, and ping
 
-The IPv4 host path runs over [virtio-net and QEMU e1000](network.md). It supports static addresses, loopback, connected and explicit routes, bounded ARP resolution, fragment reassembly, kernel ICMP echo replies, Linux raw ICMP/UDP sockets, [UDP datagrams](udp.md) and [TCP streams](tcp.md). BusyBox `ifconfig`, route add/delete, and numeric `ping` exercise the guest implementation. [DHCP](network-manager.md) and [DNS with TCP fallback](dns.md) have their own contracts. IPv6, complete cached-route query policy, multicast and complete IPv4 conformance remain required by the [networking roadmap](feature-roadmap.md).
+The IPv4 host path runs over [virtio-net and QEMU e1000](network.md). It supports static addresses, loopback, connected and explicit routes, bounded ARP resolution, fragment reassembly, kernel ICMP echo replies, Linux raw IPv4 sockets, [UDP datagrams](udp.md) and [TCP streams](tcp.md). BusyBox `ifconfig`, route add/delete, and numeric `ping` exercise the guest implementation. [DHCP](network-manager.md) and [DNS with TCP fallback](dns.md) have their own contracts. IPv6, complete cached-route query policy, multicast and complete IPv4 conformance remain required by the [networking roadmap](feature-roadmap.md).
 
 ## Receive metadata
 
-Raw ICMP, raw UDP and UDP descriptions support `IP_PKTINFO`, `IP_RECVTTL` and
+Raw IPv4 and UDP descriptions support `IP_PKTINFO`, `IP_RECVTTL` and
 `IP_RECVTOS`. `recvmsg` returns packet information, an integer TTL and a one-byte
 TOS value in that order. Queued datagrams own their header and destination
 metadata. TTL and TOS remain available when enabled after arrival. Packet
@@ -222,15 +222,89 @@ An independent capture auditor checks the original alias tuples, payloads, hardw
 
 ## IPv4 and ICMP validation
 
-Ordinary Ethernet input requires IPv4 version 4, a 20-byte header, a valid header checksum, a bounded total length, nonzero TTL, supported flag forms, valid source addressing, and a local, accepted broadcast or accepted multicast destination. Ethernet padding is trimmed to the IP total length. Traffic from a NIC cannot impersonate loopback. General IP options and the reserved flag are rejected. IGMP separately validates its header options and accepts Router Alert. Forwarding remains unimplemented. Fragmented input reaches the transport only after complete reassembly.
+Ordinary Ethernet input requires IPv4 version 4, a header between 20 and 60 bytes, a valid header checksum, a bounded total length, nonzero TTL, supported flag forms, valid source addressing, and a local, accepted broadcast or accepted multicast destination. Ethernet padding is trimmed to the IP total length. Traffic from a NIC cannot impersonate loopback. Option input validates lengths and pointers, fills record-route and timestamp slots, and rejects malformed or unconfigured security labels. Received source routes remain rejected while admission and forwarding policy are unfinished. The reserved flag is rejected. IGMP separately validates its header options and accepts Router Alert. Forwarding remains unimplemented. Fragmented input reaches the transport only after complete reassembly.
 
-Ordinary output builds its own 20-byte header, checksum, identifier, TTL, TOS and DF flag. The IP header counts toward the selected path limit. DONT, WANT and OMIT permit local fragmentation; DO, PROBE and INTERFACE reject an oversized datagram with `EMSGSIZE`. PROBE, INTERFACE and OMIT use the device MTU for transmission. Limited and directed broadcasts use the Ethernet broadcast destination and require `SO_BROADCAST`. Multicast and per-message TTL/TOS controls are supported. General IPv4 header options remain unsupported. See [IPv6](ipv6.md) for IPv6 host and socket support.
+Ordinary output builds its own header, checksum, identifier, TTL, TOS and DF flag. `IP_OPTIONS` contributes up to 40 normalized option bytes. The complete IP header counts toward the selected path limit. DONT, WANT and OMIT permit local fragmentation; DO, PROBE and INTERFACE reject an oversized datagram with `EMSGSIZE`. PROBE, INTERFACE and OMIT use the device MTU for transmission. Limited and directed broadcasts use the Ethernet broadcast destination and require `SO_BROADCAST`. Multicast and per-message TTL/TOS controls are supported. See [IPv6](ipv6.md) for IPv6 host and socket support.
+
+### Packet option development
+
+IPv4 descriptions own their `IP_OPTIONS` value. Failed setters preserve the preceding
+value; successful queries return its normalized bytes without changing destination
+state. UDP, TCP and inherited raw descriptions use the caller's current capability
+when setting privileged options. Record-route, timestamp, Router Alert and source-route
+syntax have separate rules. Locally set source routes require `CAP_NET_RAW` after
+the complete option value passes syntax checks. Permission failures return `EPERM`
+and retain the preceding value. Unknown options also require `CAP_NET_RAW`;
+an installed security-label policy is required for CIPSO. No such policy is installed.
+These rules follow the pinned [Linux option implementation](https://github.com/torvalds/linux/blob/e5f0a698b34ed76002dc5cff3804a61c80233a7a/net/ipv4/ip_options.c),
+[current source-route permission policy](https://github.com/gregkh/linux/blob/v7.0.14/net/ipv4/ip_options.c),
+[IPv4](https://www.rfc-editor.org/rfc/rfc791) and
+[host requirements](https://www.rfc-editor.org/rfc/rfc1122).
+
+Send preparation snapshots the description's options. A per-message `IP_RETOPTS`
+value replaces that snapshot without changing the description. Accepted output owns
+its complete header while waiting for neighbors or driver capacity. Variable headers
+count toward UDP/raw limits and TCP payload sizing. Changing TCP options preserves
+owned sequence ranges, learned path limits and existing retransmission deadlines;
+the advertised MSS continues to exclude IP options.
+
+Receive queues retain processed options and an independent return value. `IP_RECVOPTS`
+and `IP_RETOPTS` enable controls after packet information, TTL and TOS. Return options
+place record-route before timestamps, omit unrelated opaque options and Router Alert,
+and can be empty even when the incoming header contains options. A return value that
+cannot be formed sets `MSG_CTRUNC`. ICMP echo and ordinary unreachable replies use
+the prepared return options.
+
+Each physical fragment processes its own options before entering the reassembly
+queue. The first fragment owns its processed options and independent return value
+through completion. Reassembly computes the completed header checksum over those
+already processed bytes; delivery preserves the snapshot without filling another
+record-route or timestamp slot. Unfragmented raw input retains the received checksum
+field after local option processing.
+
+TCP requests capture return options from their original SYN. Later listener changes
+and handshake packets do not replace that value. Reset responses and TIME-WAIT
+acknowledgments use options from their triggering input. A pending response owns its
+option snapshot through output retries; an unformable return value cancels that
+response without claiming transmission. Local aborts continue using description
+defaults. The compact TIME-WAIT record also owns its pending option value.
+
+Development evidence retains complete Linux 6.6 and 7.0.14 setter/query corpora,
+each containing 14,220 observations, plus 214 captured receive cases and sanitizer
+mutation checks. Twenty ordinary source-route results differ between the two
+native policies. Fixed ordinary native probes select one retained table; guest
+expectations always use the current permission policy. Every original vector remains.
+The common client checks three native linkage profiles and four static/dynamic
+BIOS/UEFI guest profiles, each with 42,660 option observations and sixteen
+loopback packet cases. A second client checks 36 TCP cases per profile, including
+SYN-derived accepted snapshots, closed-port resets and both forms of TIME-WAIT.
+Both clients check root and ordinary credentials. The independent reader reopens
+all four boot images, their complete source, actual clients and native providers.
+It checks original TCP packet bytes and rejects 98 damaged observations, including
+checksum-repaired sequence and option changes. These local results do not yet
+establish complete native-provider or Ethernet acceptance. Source-route receive
+policy, full raw/UDP/TCP wire and fragment corpora, option-bearing PMTU feedback,
+broader TCP reply and blocked-send lifetimes and complete hosted
+qualification remain required. See [testing](testing.md#ipv4-packet-options).
 
 One output slot owns the complete datagram and a reusable MTU-sized wire buffer. Each poll submits at most eight fragments per slot. Accepted frames advance the payload cursor; `EAGAIN` retains its current position. The original queue deadline and socket charge cover the whole datagram. MTU changes apply to the remaining bytes, and callback cancellation retains borrowed storage until submission returns. A full 65,535-byte packet therefore does not consume one output slot per fragment.
 
 The ICMP handler checks payload length and checksum before answering a local unicast echo request. Echo replies preserve the identifier, sequence, and payload. It does not answer broadcast echo requests or recursively generate errors for ICMP errors. Unknown local unicast protocols can generate a rate-limited protocol-unreachable response quoting the original header and first eight payload bytes. Valid destination-unreachable and parameter-problem quotes can report matching connected raw-socket errors; malformed or unrelated quotes are ignored.
 
 Raw ICMP listeners receive the complete validated IPv4 datagram before the ICMP handler checks its payload checksum, matching the Linux raw-observer ordering. A raw program can therefore see an invalid ICMP checksum that the kernel handler rejects. Kernel validation and raw observation are tested separately.
+
+Raw descriptions accept Linux protocol numbers 1 through 262, except
+`IPPROTO_RAW` (255), which still requires the unfinished `IP_HDRINCL` contract.
+`SO_PROTOCOL` retains the complete logical number, including values above the
+eight-bit wire field. Creation requires `CAP_NET_RAW`; an inherited raw description
+remains usable by an ordinary process. Raw listeners receive datagrams before
+transport validation, including TCP and IGMP. An eligible listener for an otherwise
+unhandled protocol suppresses protocol-unreachable output.
+
+Local RR/TS processing retains the checksum received in the header. A raw reader
+therefore sees the processed option bytes with the original checksum, as on Linux.
+The header was validated before processing; this observation is separate from
+checking actual Ethernet headers and quoted-error behavior.
 
 ## Path MTU discovery
 
@@ -299,7 +373,7 @@ The native peer waits for the independent collector to record each injected expi
 
 An independent capture auditor checks tuple ownership, packet checksums, original quote bytes, elapsed timing, suppression spacing and reuse barriers. Ten damaged captures per adapter must fail, including both early and late expiry; original captures, native monotonic receipt files and compressed negative fixtures remain available.
 
-Broader UDP/TCP fragment corpora, dynamic guest linkage and the remaining complete IP requirements still need independent acceptance evidence. The current receiver continues to require a 20-byte header; variable-header module tests do not establish IP option support in the receive path.
+Broader UDP/TCP fragment corpora, dynamic guest linkage and the remaining complete IP requirements still need independent acceptance evidence. The receiver accepts validated variable headers; the option-specific fragment and Ethernet cohorts remain required.
 
 <a id="raw-icmp-socket-contract"></a>
 

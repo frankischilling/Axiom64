@@ -23,10 +23,11 @@ struct HeaderOptions {
     uint8_t ttl = 64, tos = 0;
     int16_t hops = -1;
     uint8_t traffic_class = 0;
+    ip4::Options ipv4_options{};
 };
 
 HeaderOptions header_options(const InetSocket& socket) {
-    return {socket.ttl, socket.tos, socket.hops, socket.traffic_class};
+    return {socket.ttl, socket.tos, socket.hops, socket.traffic_class, socket.options};
 }
 
 // Pending requests use the live listener's headers. The final ACK takes
@@ -40,6 +41,8 @@ void inherit_ip_controls(InetSocket& socket, const InetSocket& listener) {
     socket.ttl = listener.ttl;
     socket.tos = listener.tos;
     socket.receive_options = listener.receive_options;
+    // IPv4 packet options belong to the original SYN, independently of these
+    // mutable listener controls and the later handshake packets.
     socket.hops = listener.hops;
     socket.traffic_class = listener.traffic_class;
     socket.multicast.loop = listener.multicast.loop;
@@ -52,10 +55,11 @@ struct TimeWaitRecord {
     uint16_t local_port = 0, peer_port = 0;
     unsigned binding_index = 0;
     uint8_t traffic_class = 0;
+    ip4::Options options;
     bool used = false, pending = false, reuse = false, reserved = false;
 };
 
-static_assert(sizeof(TimeWaitRecord) <= 96);
+static_assert(sizeof(TimeWaitRecord) <= 160);
 TimeWaitRecord time_waits[tcp_time_wait_count];
 
 uint64_t now_ms() {
@@ -252,7 +256,7 @@ int emit(InetSocket* owner, unsigned index, const tcp::Address& local, const tcp
         return -90;
     if (local.is_ipv4())
         return ipv4_send(owner, local.ipv4(), peer.ipv4(), index, 6, options.ttl, false, bytes,
-                         size, true, options.tos);
+                         size, true, options.tos, nullptr, &options.ipv4_options);
     return ipv6_send_owned({owner, owner ? output_complete : nullptr}, local.bytes, peer.bytes,
                            index, 6, options.hops, bytes, size, tcp6_source_policy(owner),
                            options.traffic_class, owner ? &owner->destination6 : nullptr);
@@ -379,6 +383,7 @@ void tcp_limits(InetSocket* socket) {
     socket->stream->limits(socket->receive_limit / 2, socket->send_limit / 2);
     socket->stream->nodelay(socket->nodelay);
     socket->stream->user_timeout(socket->user_timeout);
+    socket->stream->ip_options(socket->wire6 ? 0 : uint8_t(socket->options.size()));
 }
 
 void tcp_close(InetSocket* socket) {
@@ -504,8 +509,10 @@ int connect_to(InetSocket* socket, const tcp::Address& peer, uint16_t port, unsi
         local = tcp::Address::ipv6(destination6.source);
         mtu = destination6.mtu;
     } else {
-        error =
-            ipv4_destination(destination4, socket->bound ? socket->local : 0, peer.ipv4(), index);
+        error = ipv4_destination(destination4, socket->bound ? socket->local : 0,
+                                 socket->options.destination(peer.ipv4()), index);
+        if (!error && socket->options.strict_route() && destination4.gateway)
+            error = -101;
         local = tcp::Address::ipv4(destination4.path.source);
         mtu = destination4.path.mtu;
     }
@@ -842,7 +849,7 @@ bool tcp_option(InetSocket* socket, unsigned option, int& value, bool set, int& 
 }
 
 static void receive(unsigned index, const tcp::Address& source, const tcp::Address& destination,
-                    const tcp::Segment& segment) {
+                    const tcp::Segment& segment, const ip4::ReceivedOptions* received = nullptr) {
     uint64_t now = now_ms();
     expire_time_wait(now);
     for (auto& record : time_waits)
@@ -853,8 +860,11 @@ static void receive(unsigned index, const tcp::Address& source, const tcp::Addre
             auto action = tcp::time_wait_input(record.state, segment, now);
             if (action == tcp::TimeWaitAction::remove)
                 record.used = false;
-            else if (action == tcp::TimeWaitAction::acknowledge)
+            else if (action == tcp::TimeWaitAction::acknowledge &&
+                     (!received || received->return_valid())) {
                 record.pending = true;
+                record.options = received ? received->reply() : ip4::Options{};
+            }
             return;
         }
     InetSocket* listener = nullptr;
@@ -867,7 +877,12 @@ static void receive(unsigned index, const tcp::Address& source, const tcp::Addre
             socket.peer_port == __builtin_bswap16(segment.source)) {
             if (socket.listener && socket.stream->state() == tcp::State::syn_received)
                 inherit_ip_controls(socket, *socket.listener);
+            uint64_t revision = socket.stream->reply_revision();
             socket.stream->input(segment, now);
+            if (revision != socket.stream->reply_revision()) {
+                socket.input_options = received ? received->reply() : ip4::Options{};
+                socket.input_options_valid = !received || received->return_valid();
+            }
             if (socket.listener && !socket.accept_queued && synchronized(&socket)) {
                 auto parent = socket.listener;
                 if (parent->accept_count < inet_queue_count) {
@@ -913,6 +928,9 @@ static void receive(unsigned index, const tcp::Address& source, const tcp::Addre
         child->user_timeout = listener->user_timeout;
         child->user_mss = listener->user_mss;
         child->mtu_policy = listener->mtu_policy;
+        child->options = child->wire6                           ? listener->options
+                         : received && received->return_valid() ? received->reply()
+                                                                : ip4::Options{};
         inherit_ip_controls(*child, *listener);
         uint32_t initial;
         if (sequence(child, initial, now) || make_stream(child, now)) {
@@ -930,7 +948,9 @@ static void receive(unsigned index, const tcp::Address& source, const tcp::Addre
             ipv6_destination_store(child->destination6, path, child->peer6);
             mtu = path.mtu;
         } else {
-            if (ipv4_destination(child->destination, child->local, child->peer, child->index)) {
+            if (ipv4_destination(child->destination, child->local,
+                                 child->options.destination(child->peer), child->index) ||
+                (child->options.strict_route() && child->destination.gateway)) {
                 reclaim(child);
                 return;
             }
@@ -961,14 +981,20 @@ static void receive(unsigned index, const tcp::Address& source, const tcp::Addre
     if (!reply_index && !source.is_ipv4() &&
         (source.bytes.link_local() || destination.bytes.link_local()))
         reply_index = index;
-    emit(nullptr, reply_index, destination, source, reset, {});
+    if (!received || received->return_valid()) {
+        HeaderOptions options;
+        if (received)
+            options.ipv4_options = received->reply();
+        emit(nullptr, reply_index, destination, source, reset, options);
+    }
 }
 
 void tcp_receive(unsigned index, uint32_t source, uint32_t destination, const void* data,
-                 size_t size) {
+                 size_t size, const ip4::ReceivedOptions* options) {
     tcp::Segment segment;
     if (tcp::decode(source, destination, data, size, segment))
-        receive(index, tcp::Address::ipv4(source), tcp::Address::ipv4(destination), segment);
+        receive(index, tcp::Address::ipv4(source), tcp::Address::ipv4(destination), segment,
+                options);
 }
 
 void tcp_receive(unsigned index, const ip6::Address& source, const ip6::Address& destination,
@@ -1003,10 +1029,19 @@ void tcp_poll() {
         tcp::Segment segment;
         bool pending = socket.stream->next(now, segment);
         for (unsigned at = 0; pending && at < 4; at++) {
+            bool input_reply = socket.stream->input_reply();
+            if (input_reply && !socket.input_options_valid) {
+                socket.stream->discard_input_reply();
+                pending = socket.stream->next(now, segment);
+                continue;
+            }
             segment.source = socket.local_port;
             segment.destination = __builtin_bswap16(socket.peer_port);
+            HeaderOptions options = header_options(socket);
+            if (input_reply)
+                options.ipv4_options = socket.input_options;
             int error = emit(&socket, socket.index, socket.stream_local(), socket.stream_peer(),
-                             segment, header_options(socket));
+                             segment, options);
             // A temporary queue, interface or route failure rejects this enqueue.
             // TCP retains its bytes and owns the local retry and delivery deadlines.
             if (error == -11 || error == -12 || error == -105 || error == -100 || error == -101) {
@@ -1045,6 +1080,7 @@ void tcp_poll() {
         segment.flags = tcp::ack;
         HeaderOptions options;
         options.tos = options.traffic_class = record.traffic_class;
+        options.ipv4_options = record.options;
         int error =
             emit(nullptr, record.binding_index, record.local, record.peer, segment, options);
         if (!error || (error != -11 && error != -12 && error != -105))

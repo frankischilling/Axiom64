@@ -14,6 +14,8 @@ struct Queue {
     uint16_t identifier;
     uint8_t protocol, header_length, ecn;
     bool link_broadcast;
+    bool options_processed;
+    ReceivedOptions options;
     uint64_t expires;
     size_t received, highest, final_length, nonfinal_end;
     size_t largest_fragment, largest_df_fragment;
@@ -77,10 +79,12 @@ void reassembly_discard(uint32_t destination) {
 }
 
 Reassembled reassemble(unsigned index, const uint8_t* packet, size_t available, uint64_t now,
-                       bool link_broadcast, FragmentExpired expired) {
+                       bool link_broadcast, FragmentExpired expired,
+                       const ReceivedOptions* options) {
     reassembly_expire(now, expired);
     size_t header = 0, total = 0;
-    if (!index || !header_valid(packet, available, header, total))
+    if (!index || !header_valid(packet, available, header, total) ||
+        (options && options->size() != header - 20))
         return {};
     uint16_t fragment = get16(packet + 6);
     size_t offset = size_t(fragment & 0x1fff) * 8;
@@ -151,6 +155,11 @@ Reassembled reassemble(unsigned index, const uint8_t* packet, size_t available, 
         queue.index = index;
         queue.header_length = header;
         memcpy(queue.header, packet, header);
+        if (options) {
+            queue.options = *options;
+            queue.options_processed = true;
+            memcpy(queue.header + 20, options->data(), options->size());
+        }
     }
     if (more)
         queue.nonfinal_end = max(queue.nonfinal_end, end);
@@ -181,8 +190,9 @@ Reassembled reassemble(unsigned index, const uint8_t* packet, size_t available, 
         bytes[1] |= 3; // Preserve a congestion mark from any accepted fragment.
     put16(bytes + 10, 0);
     put16(bytes + 10, checksum(bytes, queue.header_length));
-    bool broadcast = queue.link_broadcast;
+    Reassembled result{FragmentStatus::complete, bytes,        size, queue.link_broadcast,
+                       queue.options_processed,  queue.options};
     clear(slot);
-    return {FragmentStatus::complete, bytes, size, broadcast};
+    return result;
 }
 } // namespace ax::ip4

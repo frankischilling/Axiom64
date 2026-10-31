@@ -216,7 +216,7 @@ def bundle(inputs):
         for path in ["sources.lock.json", "ports.lock.json", "dependencies.json", "LICENSE", "Makefile", "README.md", ".clang-format", ".gitattributes"]:
             archive.add(ROOT / path, arcname=f"Axiom64/{path}")
         for path in sorted((ROOT / "scripts").rglob("*")):
-            if path.is_file() and (path.suffix in (".py", ".sh", ".c", ".h") or
+            if path.is_file() and (path.suffix in (".py", ".sh", ".c", ".h", ".json") or
                                    path.is_relative_to(ROOT / "scripts" / "tests" / "fixtures")):
                 archive.add(path, arcname=f"Axiom64/{path.relative_to(ROOT).as_posix()}")
         archive.add(ROOT / "build" / "busybox-1.37.0" / ".config", arcname="Axiom64/BusyBox.config")

@@ -67,6 +67,31 @@ void erase(void* memory, size_t length) {
 // Network source policy is outside this identity model. Fail if a test
 // unexpectedly enters that backend instead of supplying production behavior.
 namespace proc4 {
+const char* property_name(unsigned property) {
+    static const char* names[] = {"accept_source_route", "forwarding"};
+    return property < property_count ? names[property] : nullptr;
+}
+
+const char* scope_name(unsigned) {
+    std::abort();
+}
+
+bool scope_index(const char* name, unsigned& index) {
+    return proc6::scope_index(name, index);
+}
+
+uint64_t scope_generation(unsigned index) {
+    return proc6::scope_generation(index);
+}
+
+int64_t read(unsigned index, unsigned property, uint64_t& offset, void* output, size_t length) {
+    return proc6::read(index, property, offset, output, length);
+}
+
+int64_t write(unsigned, unsigned, uint64_t&, const void*, size_t) {
+    std::abort();
+}
+
 int64_t source_limit_read(uint64_t&, void*, size_t) {
     std::abort();
 }
@@ -119,13 +144,15 @@ static ax::Node* child(ax::Node* parent, const char* name) {
     return result;
 }
 
-static void network_lifetimes() {
+static void network_lifetimes(bool ipv4) {
     ax::Mount mount{};
     mount.root = ax::procfs_root(&mount);
     assert(mount.root);
-    auto conf = child(child(child(child(mount.root, "sys"), "net"), "ipv6"), "conf");
+    const char* property = ipv4 ? "forwarding" : "max_addresses";
+    auto conf =
+        child(child(child(child(mount.root, "sys"), "net"), ipv4 ? "ipv4" : "ipv6"), "conf");
     auto scope = child(conf, "eth0");
-    auto old = child(scope, "max_addresses");
+    auto old = child(scope, property);
     ax::retained = old;
     ax::Handle description{};
     description.node = old;
@@ -138,9 +165,10 @@ static void network_lifetimes() {
     assert(ax::procfs_ops.validate(old) == -2);
     assert(ax::procfs_ops.lookup(conf, "eth0", missing) == -2);
     assert(ax::procfs_ops.control(old)->read(&description, &value, 0) == -2);
-    assert(ax::procfs_ops.lookup(scope, "max_addresses", missing) == -2);
+    assert(ax::procfs_ops.lookup(scope, property, missing) == -2);
+    assert(ax::procfs_ops.control(old)->write(&description, "1\n", 2) == -2);
     ax::network_generation = 2;
-    auto replacement = child(child(conf, "eth0"), "max_addresses");
+    auto replacement = child(child(conf, "eth0"), property);
     assert(replacement != old && replacement->inode != old->inode);
     assert(ax::procfs_ops.validate(old) == -2 && !ax::procfs_ops.validate(replacement));
     assert(ax::procfs_ops.control(old)->read(&description, &value, 1) == -2);
@@ -251,6 +279,7 @@ int main() {
     assert(start(bytes) == 12346);
     ax::procfs_ops.destroy(&mount);
     ax::procfs_ops.destroy(&second);
-    network_lifetimes();
+    network_lifetimes(false);
+    network_lifetimes(true);
     std::puts("PROC_IDENTITY_KERNEL_PASS secure_uuid=1 lifetime=1 slot_recycle=1");
 }

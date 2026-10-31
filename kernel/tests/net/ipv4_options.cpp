@@ -175,7 +175,87 @@ static int receive_rules() {
     return 0;
 }
 
+static bool local_hop(uint32_t address) {
+    return address == 0x0a000001 || address == 0x0a010001;
+}
+
+static void received_routes() {
+    using ax::ip4::ReceivedOptions;
+    const uint8_t route[] = {131, 15, 4, 10, 0, 0, 1, 10, 1, 0, 1, 10, 1, 0, 2, 0};
+    ReceivedOptions value;
+    assert(!value.assign(route, sizeof(route), 0x0a000002, 0x0a000001, 12345));
+    assert(value.source_route() && !value.strict_route());
+    uint32_t destination = 0x0a000001, next = 0;
+    assert(value.route(destination, next, local_hop) == 1 && destination == 0x0a010001 &&
+           next == 0x0a010002);
+    assert(!memcmp(value.data(), route, sizeof(route)));
+    auto returned = value.reply();
+    value.forward(0x0a010001);
+    const uint8_t advanced[] = {131, 15, 16, 10, 0, 0, 1, 10, 1, 0, 1, 10, 1, 0, 1, 0};
+    assert(!memcmp(value.data(), advanced, sizeof(advanced)));
+    assert(value.reply().size() == returned.size() &&
+           !memcmp(value.reply().data(), returned.data(), returned.size()));
+    destination = 0x0a000001;
+    assert(!value.route(destination, next, local_hop) && !next && destination == 0x0a000001);
+    const uint8_t exhausted[] = {137, 7, 8, 10, 1, 0, 2, 0};
+    assert(!value.assign(exhausted, sizeof(exhausted), 0x0a000002, 0x0a000001, 12345));
+    assert(value.strict_route() && !value.route(destination, next, local_hop));
+    assert(value.reply().source_route() && value.reply().destination(0x0a000002) == 0x0a010002);
+    const uint8_t partial[] = {131, 7, 5, 10, 1, 0, 2, 0};
+    assert(!value.assign(partial, sizeof(partial), 0x0a000002, 0x0a000001, 12345));
+    assert(value.route(destination, next, local_hop) == -22 && value.parameter() == 22);
+    const uint8_t zero[] = {131, 7, 4, 0, 0, 0, 0, 0};
+    assert(!value.assign(zero, sizeof(zero), 0x0a000002, 0x0a000001, 12345));
+    assert(value.route(destination, next, local_hop) == 1 && next == 0);
+    const uint8_t combined[] = {131, 7,  4, 10, 1, 0, 2, 7, 7, 4, 0, 0, 0, 0,
+                                68,  12, 5, 1,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    assert(!value.assign(combined, sizeof(combined), 0x0a000002, 0x0a000001, 12345));
+    assert(value.route(destination, next, local_hop) == 1 && next == 0x0a010002);
+    auto before = value;
+    value.forward(0x0a010001);
+    assert(value.data()[2] == 8 && value.data()[9] == 8 && value.data()[16] == 13);
+    const uint8_t address[] = {10, 1, 0, 1};
+    assert(!memcmp(value.data() + 3, address, 4) && !memcmp(value.data() + 10, address, 4) &&
+           !memcmp(value.data() + 18, address, 4));
+    assert(!memcmp(value.data() + 22, before.data() + 22, 4));
+    assert(!memcmp(value.reply().data(), before.reply().data(), value.reply().size()));
+    // A copied packet retains the pending local-hop decision.
+    before.forward(0x0a010001);
+    assert(before.data()[2] == 8);
+    // Transit packets do not consume source-route slots without a local hop.
+    assert(!value.assign(combined, sizeof(combined), 0x0a000002, 0x0a000001, 12345));
+    value.forward(0x0a010001);
+    const uint8_t incoming[] = {10, 0, 0, 1};
+    assert(value.data()[2] == 4 && !memcmp(value.data() + 18, incoming, 4));
+}
+
+static void deferred_receive() {
+    const uint8_t record[] = {7, 15, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    Options sent;
+    assert(!sent.assign(record, sizeof(record)));
+    uint8_t first[40]{}, reply[40]{};
+    assert(sent.emit(first, sizeof(first), 0x0a000002, 0x0a010001, 1000) == 16);
+    ax::ip4::ReceivedOptions received;
+    assert(!received.assign(first, 16, 0x0a000001, 0x0a000001, 2000));
+    assert(first[2] == 8 && received.data()[2] == 12);
+    const uint8_t address[] = {10, 0, 0, 1};
+    assert(!memcmp(received.data() + 7, address, 4));
+    assert(received.reply().emit(reply, sizeof(reply), 0x0a000001, 0x0a000001, 2000) == 16);
+    const uint8_t recorded[] = {7, 15, 16, 10, 1, 0, 1, 10, 0, 0, 1, 10, 0, 0, 1, 0};
+    assert(!memcmp(reply, recorded, sizeof(recorded)));
+    const uint8_t time[] = {68, 20, 5, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    assert(!sent.assign(time, sizeof(time)));
+    assert(sent.emit(first, sizeof(first), 0x0a000002, 0x0a010001, 1000) == 20);
+    assert(!received.assign(first, 20, 0x0a000001, 0x0a000001, 2000));
+    assert(first[2] == 13 && received.data()[2] == 21);
+    assert(received.reply().emit(reply, sizeof(reply), 0x0a000001, 0x0a000001, 3000) == 20);
+    const uint8_t timed[] = {68, 20, 21, 1, 10, 1, 0, 1, 0, 0, 3, 232, 10, 0, 0, 1, 0, 0, 7, 208};
+    assert(!memcmp(reply, timed, sizeof(timed)));
+}
+
 int main(int argc, char** argv) {
+    received_routes();
+    deferred_receive();
     source_route_permissions();
     if (argc == 2 && std::string(argv[1]) == "receive")
         return receive_rules();

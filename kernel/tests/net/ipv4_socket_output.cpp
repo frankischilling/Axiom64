@@ -69,7 +69,8 @@ void tcp_failed(InetSocket*, int, unsigned) {
 void tcp_poll() {
 }
 
-void tcp_receive(unsigned, uint32_t, uint32_t, const void*, size_t, const ip4::ReceivedOptions*) {
+void tcp_receive(unsigned, uint32_t, uint32_t, const void*, size_t, const ip4::ReceivedOptions*,
+                 uint8_t) {
     assert(false);
 }
 

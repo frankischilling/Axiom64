@@ -283,9 +283,14 @@ jobs:
           python3 scripts/tests/ipv4_fragment_observation_test.py -v 2>&1 | tee build/ipv4-policy/fragment-observation.log
           python3 scripts/tests/ipv4_fragment_diagnostics_test.py --directory build/ipv4-policy/fragment-diagnostics -v 2>&1 | tee build/ipv4-policy/fragment-diagnostics.log
           python3 scripts/tests/ipv4_expiry_damage_test.py -v 2>&1 | tee build/ipv4-policy/expiry-damage.log
-          make test-ipv6-wire test-ipv4-reassembly test-ipv4-fragmentation test-ipv4-path-mtu test-ipv4-paths test-ipv4-options-model test-ipv4-multicast test-ipv4-source-filter test-ipv4-source-aggregate test-ipv4-multicast-source-host test-ipv4-source-reports test-ipv4-multicast-source-wire-host test-ipv4-multicast-queries 2>&1 | tee build/ipv4-policy/host.log
+          make test-ipv6-wire test-ipv4-reassembly test-ipv4-fragmentation test-ipv4-path-mtu test-ipv4-paths test-ipv4-options-model test-ipv4-multicast test-ipv4-source-filter test-ipv4-source-aggregate test-ipv4-multicast-source-host test-ipv4-source-reports test-ipv4-multicast-source-wire-host test-ipv4-multicast-queries build/ipv4-source-route-host build/ipv4-configuration-host 2>&1 | tee build/ipv4-policy/host.log
       - name: Replay legal source-report interleavings and reject invented retries
         run: python3 -B scripts/tests/ipv4_multicast_source_overlap_test.py
+      - name: Retain both source cohorts and stop orphaned worker descendants
+        run: |
+          python3 -B scripts/tests/ipv4_source_window_test.py -v
+          python3 -B scripts/tests/ipv4_source_artifacts_test.py -v
+          python3 -B scripts/tests/ipv4_kernel_reply_test.py -v
       - name: Upload IPv4 policy evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -479,9 +484,26 @@ jobs:
         run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
       - name: Install build and emulation tools
         run: bash scripts/ci/tools.sh restore
-      - name: Compare all source-filter cases with native Linux and both guest adapters
+      - name: Compare complete source-filter and source-route cohorts with native Linux and both guest adapters
         if: matrix.suite == 'ipv4-source-filters'
-        run: sudo -n env PYTHONPATH=scripts python3 -B -m ipv4_multicast.source_matrix build/ipv4-source-evidence --produce
+        run: sudo -n env PYTHONPATH=scripts python3 -B -m ipv4_source_route.window
+      - name: Upload source-route packets products syscall controls and protected readbacks
+        if: always() && matrix.suite == 'ipv4-source-filters'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-source-routing
+          if-no-files-found: error
+          path: |
+            build/ipv4-source-route-wire
+            build/ipv4-source-route-audit
+            build/ipv4-source-route-window
+      - name: Upload complete IPv4 source-route syscall evidence
+        if: always() && matrix.suite == 'ipv4-source-filters'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-source-controls
+          if-no-files-found: error
+          path: build/ipv4-source-controls
       - name: Reopen complete source-filter evidence under root and an ordinary identity
         if: matrix.suite == 'ipv4-source-filters'
         run: sudo -n env PYTHONPATH=scripts python3 -B -m ipv4_multicast.source_protected --directory build/ipv4-source-evidence --output build/ipv4-source-audit

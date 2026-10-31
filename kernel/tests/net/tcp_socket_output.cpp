@@ -75,14 +75,15 @@ static tcp::Segment decoded(const Packet& packet) {
     return result;
 }
 
-static void answer(InetSocket* socket, tcp::Segment segment, unsigned index = 0) {
+static void answer(InetSocket* socket, tcp::Segment segment, unsigned index = 0,
+                   uint8_t traffic_class = 0) {
     uint8_t bytes[1500];
     segment.source = __builtin_bswap16(socket->peer_port);
     segment.destination = socket->local_port;
     size_t n = tcp::encode(socket->peer, socket->local, segment, bytes, sizeof(bytes));
     assert(n);
     tcp_receive(index ? index : socket->destination.path.index, socket->peer, socket->local, bytes,
-                n);
+                n, nullptr, traffic_class);
 }
 
 static void resolve(NetAdapter& adapter, InetSocket* socket) {
@@ -354,11 +355,13 @@ int main() {
     opening.flags = tcp::syn;
     opening.sequence = 60000;
     opening.window = 65535;
-    answer(&absent, opening, 1);
-    ipv4_poll();
-    auto reset = decoded(frames.back());
-    assert(frames.back().index == 2 && reset.flags == (tcp::rst | tcp::ack) &&
-           reset.acknowledgment == 60001);
+    for (uint8_t ecn = 0; ecn < 4; ecn++) {
+        answer(&absent, opening, 1, 0x28 | ecn);
+        ipv4_poll();
+        auto reset = decoded(frames.back());
+        assert(frames.back().index == 2 && reset.flags == (tcp::rst | tcp::ack) &&
+               reset.acknowledgment == 60001 && frames.back().bytes[15] == 0x28);
+    }
 
     // Keep the existing fatal failure when no alternative route exists or binding forbids it.
     blocked[2] = true;

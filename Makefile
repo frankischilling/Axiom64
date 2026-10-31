@@ -16,6 +16,7 @@ FORMAT_SOURCES = $(foreach pattern,*.cpp *.hpp,$(call rwildcard,kernel/,$(patter
 
 .PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-network test-ipv4 test-udp test-netlink test-netlink-codec test-address-codec test-configuration test-dhcp-codec test-dhcp-modules test-dhcp-transport test-profiles test-resolver test-resolver-native test-clock-codec test-clock test-file-locks test-file-locks-native test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
 all: image
+build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-output-host build/tcp-socket-output-host: kernel/net/ipv4/configuration.cpp
 .PHONY: test-rtc-codec test-clock-wall test-clock-wall-native
 .PHONY: test-random-crypto test-random-crypto-native test-random-crypto-wait test-random-crypto-wait-native
 .PHONY: openssl libxcrypt curl ca-bundle test-password-library-native test-password-library test-random-installed
@@ -907,6 +908,34 @@ test-ipv4-path-mtu: build/ipv4-path-mtu-host
 build/ipv4-options-host: kernel/tests/net/ipv4_options.cpp kernel/net/ipv4/options.cpp kernel/include/net/ipv4/options.hpp kernel/include/net/ipv4_wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+
+build/ipv4-configuration-host: kernel/tests/net/ipv4_configuration.cpp kernel/net/ipv4/configuration.cpp kernel/fs/proc/ipv4.cpp kernel/fs/proc/integer.cpp $(call rwildcard,kernel/include/,*.hpp)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+.PHONY: test-ipv4-configuration-model
+test-ipv4-configuration-model: build/ipv4-configuration-host
+	ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/ipv4-configuration-host
+.PHONY: test-ipv4-source-controls
+test-ipv4-source-controls: test-ipv4-configuration-model
+	$(PYTHON) scripts/ipv4_source_controls_test.py
+.PHONY: test-ipv4-source-route-model test-ipv4-source-route-wire
+test-ipv4-source-route-model: build/ipv4-source-route-host
+	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_source_route.model build/ipv4-source-route-model --produce
+test-ipv4-source-route-wire:
+	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_source_route.matrix build/ipv4-source-route-wire --produce
+build/ipv4-source-controls-native: userspace/tests/net/ipv4/source_route_controls.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/ipv4-source-route-host: kernel/tests/net/ipv4_source_route.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/configuration.cpp kernel/net/ipv4/options.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(IPV4_MULTICAST_CORE) $(call rwildcard,kernel/include/,*.hpp)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
+build/ipv4-source-controls-static build/ipv4-source-controls-dynamic: userspace/tests/net/ipv4/source_route_controls.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4/source_route_controls.c
+build/ipv4-source-wire-native: userspace/tests/net/ipv4/source_route_wire.c userspace/tests/net/ipv4/source_route_apps.h
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/ipv4-source-wire-static build/ipv4-source-wire-dynamic: userspace/tests/net/ipv4/source_route_wire.c userspace/tests/net/ipv4/source_route_apps.h scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4/source_route_wire.c
 .PHONY: test-ipv4-options-model test-ipv4-options
 test-ipv4-options-model: build/ipv4-options-host
 	$(PYTHON) scripts/ipv4_options_model_test.py
@@ -1496,8 +1525,10 @@ MUSL_PROGRAMS += build/ipv4-multicast-source-policy-static build/ipv4-multicast-
 MUSL_PROGRAMS += build/ipv4-multicast-source-capacity-static build/ipv4-multicast-source-capacity-dynamic
 MUSL_PROGRAMS += build/ipv4-raw-udp-static build/ipv4-raw-udp-dynamic
 MUSL_PROGRAMS += build/ipv4-receive-wire-static build/ipv4-receive-wire-dynamic
+MUSL_PROGRAMS += build/ipv4-source-wire-static build/ipv4-source-wire-dynamic
 MUSL_PROGRAMS += build/ipv4-receive-controls-static build/ipv4-receive-controls-dynamic
 MUSL_PROGRAMS += build/ipv4-send-controls-static build/ipv4-send-controls-dynamic
+MUSL_PROGRAMS += build/ipv4-source-controls-static build/ipv4-source-controls-dynamic
 MUSL_PROGRAMS += build/ipv4-send-wire-static build/ipv4-send-wire-dynamic
 $(MUSL_PROGRAMS): $(MUSL_INPUTS) | musl-toolchain
 build/rootfs.cpio build/rootfs-desktop.cpio: $(MUSL_INPUTS)

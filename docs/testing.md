@@ -1540,6 +1540,13 @@ After `sudo -n make test-ipv4-source-controls`, run
 `sudo -n env PYTHONPATH=scripts python3 -B -m ipv4_source_route.protected build/ipv4-source-route-wire --controls build/ipv4-source-controls --output build/ipv4-source-route-audit`.
 This reads actual artifacts as root and an ordinary user and rejects damaged
 source, program, image, loader, firmware, device, matrix and observation records.
+File-only archives may omit an empty static runtime directory; declared GNU
+and dynamic providers still require their exact files. The publication reader
+rejects unlisted providers and directory aliases. Check this boundary with
+`python3 scripts/tests/ipv4_source_artifacts_test.py -v`.
+`python3 scripts/tests/ipv4_kernel_reply_test.py -v` reopens captured Linux and
+guest ICMP replies, checks their kernel header policy, and rejects repaired
+wrong headers while retaining strict application raw-output checks.
 The existing source-filter cohort overlaps routing qualification in the same
 CI job. It retains all cases, timing windows and aggregate requirements.
 Focused local captures qualify the implemented error paths; the complete

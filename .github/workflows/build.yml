@@ -287,7 +287,10 @@ jobs:
       - name: Replay legal source-report interleavings and reject invented retries
         run: python3 -B scripts/tests/ipv4_multicast_source_overlap_test.py
       - name: Retain both source cohorts and stop orphaned worker descendants
-        run: python3 -B scripts/tests/ipv4_source_window_test.py -v
+        run: |
+          python3 -B scripts/tests/ipv4_source_window_test.py -v
+          python3 -B scripts/tests/ipv4_source_artifacts_test.py -v
+          python3 -B scripts/tests/ipv4_kernel_reply_test.py -v
       - name: Upload IPv4 policy evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

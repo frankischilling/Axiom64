@@ -35,8 +35,12 @@ def compilation(case, inputs, profile, client):
 
 def providers(case, runtime, maps, profile, executables, loader):
     providers = runtime['providers']
-    require(bool(providers) == (profile != 'static') and
-            {path.relative_to(case).as_posix() for path in (case / 'runtime').iterdir()} == set(providers),
+    directory = case / 'runtime'
+    require(not directory.is_symlink() and (not directory.exists() or directory.is_dir()),
+            'actual runtime provider directory')
+    # File-only publication omits the empty directory of a static executable.
+    retained = {path.relative_to(case).as_posix() for path in directory.iterdir()} if directory.exists() else set()
+    require(bool(providers) == (profile != 'static') and retained == set(providers),
             'all retained actual runtime providers')
     mapped = {}
     for line in maps.splitlines():

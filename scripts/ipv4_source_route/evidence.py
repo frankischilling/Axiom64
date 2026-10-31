@@ -3,9 +3,9 @@
 import argparse
 import json
 from pathlib import Path
-import struct
 import zipfile
 
+from ipv4_source_route.artifacts import compilation, providers
 from ipv4_source_route.controls import CLIENT, SCRIPT, client_binding, decode, fingerprint, observations, require
 from tcp6.inputs import digest
 from tcp_fixture_inputs import audit_fixture
@@ -31,31 +31,6 @@ def source(directory):
     return inputs
 
 
-def compilation(case, inputs, profile):
-    program = case / 'program'
-    saved = decode((case / 'program.inputs.json').read_text())
-    require(saved['product'] == dict(bytes=program.stat().st_size, sha256=digest(program)) and
-            saved['sources'].get(CLIENT) == inputs[CLIENT] and
-            all(inputs.get(name) == value for name, value in saved['sources'].items()) and
-            [name for name in saved['command'] if name.endswith('.c')] == [CLIENT] and
-            ('-static' in saved['command']) == (profile == 'static'), 'exact client compilation and linkage')
-    elf = program.read_bytes()
-    require(elf[:7] == b'\x7fELF\2\1\1' and struct.unpack_from('<H', elf, 18)[0] == 62,
-            'actual x86-64 executable')
-    begin = struct.unpack_from('<Q', elf, 32)[0]
-    size, count = struct.unpack_from('<HH', elf, 54)
-    require(size == 56 and begin + count * size <= len(elf), 'bounded executable headers')
-    interpreters = []
-    for at in range(begin, begin + count * size, size):
-        if struct.unpack_from('<I', elf, at)[0] == 3:
-            start, length = struct.unpack_from('<Q', elf, at + 8)[0], struct.unpack_from('<Q', elf, at + 32)[0]
-            require(0 < length < 256 and start + length <= len(elf), 'bounded executable interpreter')
-            interpreters.append(elf[start:start + length])
-    require((not interpreters if profile == 'static' else len(interpreters) == 1), 'actual static/dynamic linkage')
-    if profile == 'dynamic':
-        require(interpreters == [b'/lib/ld-musl-x86_64.so.1\0'], 'target musl interpreter')
-
-
 def verify(directory):
     directory = Path(directory)
     inputs = source(directory)
@@ -76,7 +51,7 @@ def verify(directory):
                 'fixed profile identity and observation count')
         require(row['case'] == ('native-' + profile if native else profile), 'bounded exact profile directory')
         case = directory / row['case']
-        compilation(case, inputs, profile)
+        compilation(case, inputs, profile, CLIENT)
         name = 'client' if native else row['firmware']
         text = (case / (name + '.log')).read_text()
         process = decode((case / (name + '-process.json')).read_text())
@@ -96,30 +71,7 @@ def verify(directory):
                     runtime['maps_sha256'] == digest(case / 'runtime-maps.txt'), 'actual private mapped runtime')
             maps = (case / 'runtime-maps.txt').read_text()
             require(command[-1] in maps and runtime['executable'] == command[2], 'actual mapped program and executable')
-            providers = runtime['providers']
-            require(bool(providers) == (profile != 'static') and
-                    {path.relative_to(case).as_posix() for path in (case / 'runtime').iterdir()} == set(providers),
-                    'all retained actual runtime providers')
-            mapped = {}
-            for line in maps.splitlines():
-                fields = line.split(None, 5)
-                if len(fields) == 6 and fields[5].startswith('/') and fields[5] not in command[2:]:
-                    path = Path(fields[5])
-                    if '.so' in path.name or 'ld-linux' in path.name:
-                        mapped[str(path)] = int(fields[4])
-            if profile == 'native':
-                require(set(mapped) == {value['source'] for value in providers.values()} and
-                        all(type(value['inode']) is int and mapped[value['source']] == value['inode']
-                            for value in providers.values()), 'complete actual GNU provider paths and inodes')
-            else:
-                require(not mapped, 'standalone musl has no other mapped providers')
-            for name, value in providers.items():
-                require(Path(name).parts[0] == 'runtime' and len(Path(name).parts) == 2 and
-                        '\\' not in name and digest(case / name) == value['sha256'] and value['source'] in maps,
-                        'actual mapped loader/library bytes')
-            if profile == 'dynamic':
-                require(set(providers) == {'runtime/ld-musl-x86_64.so.1'} and
-                        providers['runtime/ld-musl-x86_64.so.1']['source'] == command[2], 'owned native musl loader')
+            providers(case, runtime, maps, profile, command[2:], command[2])
         else:
             require(command[0] == 'qemu-system-x86_64' and '-cdrom' in command and '-nic' in command and
                     command[command.index('-nic') + 1] == 'none' and

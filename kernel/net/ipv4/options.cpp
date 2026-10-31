@@ -178,6 +178,7 @@ int ReceivedOptions::assign(const uint8_t* data, size_t length, uint32_t source,
                 if (unsigned(option[2]) + 3 > size)
                     return invalid(at + 2);
                 put32(option + option[2] - 1, specific_destination);
+                recorded_address_ = uint8_t(at + option[2] - 1);
                 option[2] += 4;
                 recorded = true;
             }
@@ -203,6 +204,7 @@ int ReceivedOptions::assign(const uint8_t* data, size_t length, uint32_t source,
                     if (mode == 1 || !remote_unicast(get32(option + pointer - 1), policy)) {
                         if (mode == 1) {
                             put32(option + pointer - 1, specific_destination);
+                            timestamp_address_ = uint8_t(at + pointer - 1);
                             addressed = true;
                         }
                         put32(option + pointer + 3, timestamp);
@@ -294,5 +296,39 @@ int ReceivedOptions::assign(const uint8_t* data, size_t length, uint32_t source,
         append(label);
     reply_.size_ = uint8_t((reply_.size_ + 3) & ~3u);
     return 0;
+}
+
+int ReceivedOptions::route(uint32_t& destination, uint32_t& next_hop, bool (*local)(uint32_t)) {
+    pending_route_ = 255;
+    next_hop = 0;
+    if (!source_route())
+        return 0;
+    auto option = bytes_ + route_;
+    for (unsigned cursor = option[2]; cursor <= option[1]; cursor += 4) {
+        if (cursor + 3 > option[1]) {
+            parameter_ = uint8_t(20 + route_ + 2);
+            return -22;
+        }
+        uint32_t address = get32(option + cursor - 1);
+        if (!local(address)) {
+            pending_route_ = uint8_t(cursor);
+            next_hop = address;
+            return 1;
+        }
+        destination = address;
+    }
+    return 0;
+}
+
+void ReceivedOptions::forward(uint32_t egress_source) {
+    if (recorded_address_ != 255)
+        put32(bytes_ + recorded_address_, egress_source);
+    if (pending_route_ != 255) {
+        put32(bytes_ + route_ + pending_route_ - 1, egress_source);
+        bytes_[route_ + 2] = uint8_t(pending_route_ + 4);
+        if (timestamp_address_ != 255)
+            put32(bytes_ + timestamp_address_, egress_source);
+        pending_route_ = 255;
+    }
 }
 } // namespace ax::ip4

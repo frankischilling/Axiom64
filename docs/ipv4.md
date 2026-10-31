@@ -222,7 +222,7 @@ An independent capture auditor checks the original alias tuples, payloads, hardw
 
 ## IPv4 and ICMP validation
 
-Ordinary Ethernet input requires IPv4 version 4, a header between 20 and 60 bytes, a valid header checksum, a bounded total length, nonzero TTL, supported flag forms, valid source addressing, and a local, accepted broadcast or accepted multicast destination. Ethernet padding is trimmed to the IP total length. Traffic from a NIC cannot impersonate loopback. Option input validates lengths and pointers, fills record-route and timestamp slots, and rejects malformed or unconfigured security labels. Received source routes remain rejected while admission and forwarding policy are unfinished. The reserved flag is rejected. IGMP separately validates its header options and accepts Router Alert. Forwarding remains unimplemented. Fragmented input reaches the transport only after complete reassembly.
+Ordinary Ethernet input requires IPv4 version 4, a header between 20 and 60 bytes, a valid header checksum, a bounded total length, nonzero TTL, supported flag forms and valid source addressing. Local, accepted broadcast and accepted multicast traffic reaches the local protocols. Per-interface forwarding policy controls other unicast destinations. Ethernet padding is trimmed to the IP total length. Traffic from a NIC cannot impersonate loopback, including through a source-route hop. Option input validates lengths and pointers, fills record-route and timestamp slots, and rejects malformed or unconfigured security labels. The reserved flag is rejected. IGMP separately validates its header options and accepts Router Alert. Local fragmented input reaches the transport only after complete reassembly; forwarded fragments retain their offsets and copy-option rules.
 
 Ordinary output builds its own header, checksum, identifier, TTL, TOS and DF flag. `IP_OPTIONS` contributes up to 40 normalized option bytes. The complete IP header counts toward the selected path limit. DONT, WANT and OMIT permit local fragmentation; DO, PROBE and INTERFACE reject an oversized datagram with `EMSGSIZE`. PROBE, INTERFACE and OMIT use the device MTU for transmission. Limited and directed broadcasts use the Ethernet broadcast destination and require `SO_BROADCAST`. Multicast and per-message TTL/TOS controls are supported. See [IPv6](ipv6.md) for IPv6 host and socket support.
 
@@ -305,10 +305,36 @@ description belongs to one interface initialization; it cannot attach to a
 replacement configuration. Writes recheck the caller's permissions, and
 forwarding writes also require `CAP_NET_ADMIN`.
 
-The configuration storage and procfs ABI are implemented. IPv4 input still
-rejects received source routes and nonlocal unicast packets. Enabling these
-controls does not yet enable packet routing. Source-route termination,
-forwarding, reverse responses and their Ethernet acceptance remain required.
+Received loose and strict source routes use that admission policy. The route
+walker consumes local hops before deciding between local delivery and forwarding.
+Strict routes require a directly reachable next hop. Forwarding decrements TTL,
+updates the IPv4 checksum and route, record-route and timestamp slots, and
+fragments against the admitted egress MTU when DF permits it. TTL, strict-route
+and MTU failures produce the corresponding ICMP response when the input permits
+an error. Reverse source routes also apply to ICMP replies, UDP return options
+and TCP responses; accepted TCP descriptions own their option snapshots.
+
+Forwarded output owns its bytes and packetization decision while neighbor
+resolution waits. Route, forwarding-policy or logical MTU changes after admission
+retain that decision. Loss of the last egress address and administrative shutdown retire
+queued output; a receive callback cannot free storage still borrowed by a driver
+submission. Physical device limits remain enforced.
+
+Removing the preferred egress address retains admitted forwarded packets while
+another egress address survives. Replacing the egress netmask or broadcast
+address cancels pending neighbor output even when the source address remains;
+native Linux and guest ioctl probes retain both cancellation cases. An unanswered
+neighbor produces an eligible
+ICMP unreachable after the original retry sequence. Deferred errors process
+record-route and timestamp options at failure time before quoting the owned
+datagram. Kernel echo replies record their selected source address. A reversed
+route whose first hop is local suppresses the remote error; local raw listeners
+can observe an error about a failed kernel reply. ICMP errors never trigger
+another ICMP error.
+
+Local native comparisons, sanitizer models and guest Ethernet probes exercise
+these paths. Full firmware, linkage, driver, error-timer and hosted acceptance
+remain required before routing qualification is complete.
 
 One output slot owns the complete datagram and a reusable MTU-sized wire buffer. Each poll submits at most eight fragments per slot. Accepted frames advance the payload cursor; `EAGAIN` retains its current position. The original queue deadline and socket charge cover the whole datagram. MTU changes apply to the remaining bytes, and callback cancellation retains borrowed storage until submission returns. A full 65,535-byte packet therefore does not consume one output slot per fragment.
 

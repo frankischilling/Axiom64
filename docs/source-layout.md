@@ -59,7 +59,17 @@ neighbor resolution and submission to Ethernet drivers.
 policy values and interface generations. `kernel/fs/proc/ipv4.cpp` exposes the
 integer handlers; the shared procfs layer binds retained descriptions to their
 original interface generation. `scripts/ipv4_source_route/` holds fixed native
-control observations and independent source, executable and image readers.
+control and Ethernet observations, raw-record and source-clock decoding, and
+independent source, executable and image readers. `source_route_wire.c` configures
+the actual interfaces and policy and records raw input; `source_route_apps.h`
+exercises UDP return controls and accepted TCP option ownership through the same
+probe. `worker.py` owns a two-adapter capture; `matrix.py` prepares immutable
+images before running bounded workers. `queues.py` checks ARP failures and
+retained output, `model.py` checks sanitized ownership, and `protected.py`
+reopens artifacts and fault controls under root and an ordinary identity.
+Host packet adapters and guest devices carry the traffic being checked.
+`artifacts.py` shares compilation, ELF linkage and mapped-provider checks.
+`native.py` retains actual timer policy, interface state and independent ingress.
 
 `userspace/net/config/route_snapshot.cpp` owns raw main-table route preservation,
 shared inventory decoding and restoration without replacement. Configuration

@@ -918,11 +918,24 @@ test-ipv4-configuration-model: build/ipv4-configuration-host
 .PHONY: test-ipv4-source-controls
 test-ipv4-source-controls: test-ipv4-configuration-model
 	$(PYTHON) scripts/ipv4_source_controls_test.py
+.PHONY: test-ipv4-source-route-model test-ipv4-source-route-wire
+test-ipv4-source-route-model: build/ipv4-source-route-host
+	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_source_route.model build/ipv4-source-route-model --produce
+test-ipv4-source-route-wire:
+	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_source_route.matrix build/ipv4-source-route-wire --produce
 build/ipv4-source-controls-native: userspace/tests/net/ipv4/source_route_controls.c
 	@mkdir -p build
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/ipv4-source-route-host: kernel/tests/net/ipv4_source_route.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/configuration.cpp kernel/net/ipv4/options.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(IPV4_MULTICAST_CORE) $(call rwildcard,kernel/include/,*.hpp)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 build/ipv4-source-controls-static build/ipv4-source-controls-dynamic: userspace/tests/net/ipv4/source_route_controls.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4/source_route_controls.c
+build/ipv4-source-wire-native: userspace/tests/net/ipv4/source_route_wire.c userspace/tests/net/ipv4/source_route_apps.h
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/ipv4-source-wire-static build/ipv4-source-wire-dynamic: userspace/tests/net/ipv4/source_route_wire.c userspace/tests/net/ipv4/source_route_apps.h scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4/source_route_wire.c
 .PHONY: test-ipv4-options-model test-ipv4-options
 test-ipv4-options-model: build/ipv4-options-host
 	$(PYTHON) scripts/ipv4_options_model_test.py
@@ -1512,6 +1525,7 @@ MUSL_PROGRAMS += build/ipv4-multicast-source-policy-static build/ipv4-multicast-
 MUSL_PROGRAMS += build/ipv4-multicast-source-capacity-static build/ipv4-multicast-source-capacity-dynamic
 MUSL_PROGRAMS += build/ipv4-raw-udp-static build/ipv4-raw-udp-dynamic
 MUSL_PROGRAMS += build/ipv4-receive-wire-static build/ipv4-receive-wire-dynamic
+MUSL_PROGRAMS += build/ipv4-source-wire-static build/ipv4-source-wire-dynamic
 MUSL_PROGRAMS += build/ipv4-receive-controls-static build/ipv4-receive-controls-dynamic
 MUSL_PROGRAMS += build/ipv4-send-controls-static build/ipv4-send-controls-dynamic
 MUSL_PROGRAMS += build/ipv4-source-controls-static build/ipv4-source-controls-dynamic

@@ -147,8 +147,8 @@ def audit(rows, lane, log, native=False):
     require(len(relevant_errors) == 1, 'missing eligible ICMP error or forbidden suppression response')
     quote = relevant_errors[0]
     packet = quote['packet']
-    require(quote['frame'][:12] == peer + guest and packet[1] == (0xc0 if native else 0) and
-            packet[8:10] == b'\x40\x01' and packet[6:8] == (b'\0\0' if native else b'\x40\0') and
+    require(quote['frame'][:12] == peer + guest and packet[1] == 0xc0 and
+            packet[8:10] == b'\x40\x01' and packet[6:8] == b'\0\0' and
             packet[20:22] == b'\x0b\x01' and packet[24:28] == b'\0' * 4 and
             not checksum(packet[20:]) and 28 <= len(packet[28:]) <= len(first) and
             packet[28:] == first[:len(packet[28:])], 'ICMP quote/checksum or host policy differs')

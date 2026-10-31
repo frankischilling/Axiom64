@@ -5,10 +5,12 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from ipv4_test import Peer, checksum
+from ipv4_fragments import FragmentPeer
 
 
 class KernelReplyTest(unittest.TestCase):
@@ -72,6 +74,34 @@ class KernelReplyTest(unittest.TestCase):
             with self.subTest(offset=offset):
                 with self.assertRaisesRegex(RuntimeError, 'IPv4 header, route, length, TTL, or checksum differs'):
                     self.peer().packet(self.changed(frame, offset, value))
+
+
+    def expiry(self, native):
+        expiry = FragmentPeer(0, native=native).expiry
+        expiry.start, expiry.duplicate, expiry.stage = 100, 130, 1
+        return expiry
+
+    def test_captured_fragment_timeout_has_the_same_kernel_header_policy(self):
+        frame = bytes.fromhex(self.capture['fragment_timeout']['native_frame'])
+        for native in (False, True):
+            with self.subTest(native=native):
+                expiry = self.expiry(native)
+                self.assertEqual(frame[42:], expiry.first)
+                with patch('ipv4_fragments.time.monotonic', return_value=160):
+                    self.assertEqual(expiry.receive(frame[14:]), [])
+                self.assertEqual(expiry.quote, 160)
+                self.assertEqual(expiry.latest_quote_seconds, 66 if native else 61)
+                self.assertEqual(expiry.context_gap_seconds, 8 if native else 2)
+                self.assertEqual(expiry.quiet_delay_seconds, 69 if native else 63)
+
+    def test_repaired_wrong_fragment_timeout_headers_are_rejected(self):
+        frame = bytes.fromhex(self.capture['fragment_timeout']['native_frame'])
+        for native in (False, True):
+            for offset, value in ((1, bytes(1)), (6, bytes.fromhex('4000'))):
+                with self.subTest(native=native, offset=offset):
+                    with patch('ipv4_fragments.time.monotonic', return_value=160):
+                        with self.assertRaises(ValueError):
+                            self.expiry(native).receive(self.changed(frame, offset, value)[14:])
 
 
 if __name__ == '__main__':

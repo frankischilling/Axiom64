@@ -267,7 +267,7 @@ class FragmentExpiryPeer:
     """Observe real expiry; responses are (IP packet, Ethernet broadcast) pairs."""
     def __init__(self, parent, *, native=False):
         self.parent = parent
-        self.error_tos = 0xc0 if native else 0
+        self.error_tos = 0xc0
         self.latest_quote_seconds = 66 if native else 61
         self.context_gap_seconds = 8 if native else 2
         self.quiet_delay_seconds = 69 if native else 63
@@ -345,7 +345,8 @@ class FragmentExpiryPeer:
         if packet[20:22] == b'\x0b\x01':
             quoted = packet[28:]
             # Linux may quote all of the first fragment, beyond the required eight bytes.
-            if (packet[1] != self.error_tos or packet[24:28] != b'\0' * 4 or
+            if (packet[1] != self.error_tos or packet[6:8] != b'\0\0' or
+                    packet[24:28] != b'\0' * 4 or
                     not 28 <= len(quoted) <= len(self.first) or
                     quoted != self.first[:len(quoted)] or self.stage != 1 or
                     self.quote is not None or self.duplicate is None or

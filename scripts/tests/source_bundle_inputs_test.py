@@ -76,6 +76,45 @@ class SourceBundleInputsTests(unittest.TestCase):
                     self.assertTrue(member.isfile())
                     self.assertEqual((extracted / member.name).read_bytes(), content)
 
+    def test_exported_ipv4_routing_corpora_are_reusable(self):
+        with tempfile.TemporaryDirectory(prefix='axiom64-routing-source-') as temporary:
+            base = Path(temporary)
+            root = base / 'source'
+            root.mkdir()
+            for name in ('sources.lock.json', 'ports.lock.json', 'dependencies.json', 'LICENSE',
+                         'Makefile', 'README.md', '.clang-format', '.gitattributes'):
+                shutil.copyfile(ROOT / name, root / name)
+            for name in ('kernel', 'userspace', 'boot', 'vendor', 'docs'):
+                (root / name).mkdir()
+            for source in (ROOT / 'scripts').rglob('*.py'):
+                target = root / source.relative_to(ROOT)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, target)
+            corpora = tuple('scripts/ipv4_source_route/' + name for name in
+                            ('controls.json', 'packets.json', 'queues.json'))
+            for name in corpora:
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / name, target)
+            configuration = root / 'build/busybox-1.37.0/.config'
+            configuration.parent.mkdir(parents=True)
+            configuration.write_bytes(b'fixture\n')
+            with patch.object(sources, 'ROOT', root), patch.object(sources, 'gnu_reader_kit'), redirect_stdout(io.StringIO()):
+                sources.bundle([])
+            extracted = base / 'exported'
+            with tarfile.open(root / 'build/axiom64-sources.tar') as archive:
+                for name in corpora:
+                    self.assertEqual(archive.extractfile('Axiom64/' + name).read(), (ROOT / name).read_bytes())
+                archive.extractall(extracted, filter='data')
+            project = extracted / 'Axiom64'
+            result = subprocess.run([sys.executable, '-B', '-c',
+                'from ipv4_source_route.corpus import cases; from ipv4_source_route.queues import definitions; '
+                'print(len(cases()), len(definitions()))'], cwd=project, stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                env=dict(os.environ, PYTHONPATH=str(project / 'scripts')), timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertEqual(result.stdout.strip(), b'47 16')
+
     def test_exported_native_icmp_control_builds_from_its_actual_source(self):
         with tempfile.TemporaryDirectory(prefix='axiom64-native-icmp-source-') as name:
             root = Path(name) / 'source'

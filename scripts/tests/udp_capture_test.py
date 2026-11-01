@@ -98,6 +98,27 @@ def damage_cases(rows, lane, fault, companion):
         damage('bad-outgoing-IP-checksum', index, lambda f: f[:24] + bytes([f[24] ^ 1]) + f[25:], 'complete UDP IPv4 header')
         damage('bad-outgoing-UDP-checksum', index, lambda f: f[:40] + bytes([f[40] ^ 1]) + f[41:], 'UDP guest complete segment')
         damage('wrong-output-MAC', index, lambda f: bytes([f[0] ^ 1]) + f[1:], 'UDP guest Ethernet route')
+        damage('kernel-TOS-on-application-output', index, lambda f: repaired(f[:15] + bytes((192,)) + f[16:]),
+               'complete UDP IPv4 header')
+        damage('kernel-DF-on-application-output', index, lambda f: repaired(f[:20] + bytes(2) + f[22:]),
+               'UDP original discovery flags')
+        emitted_errors = [i for i, v in enumerate(rows) if v['frame'][6:12] == guest and
+                          v['frame'][12:14] == b'\x08\x00' and v['frame'][23] == 1]
+        assert len(emitted_errors) == 2
+        for ordinal, error_index in enumerate(emitted_errors):
+            damage('wrong-kernel-error-TOS-' + str(ordinal), error_index,
+                   lambda f: repaired(f[:15] + bytes(1) + f[16:]), 'complete UDP IPv4 header')
+            damage('wrong-kernel-error-DF-' + str(ordinal), error_index,
+                   lambda f: repaired(f[:20] + bytes.fromhex('4000') + f[22:]), 'UDP complete emitted port error')
+
+            def wrong_quote(f):
+                data = bytearray(f)
+                data[-1] ^= 1
+                data[36:38] = bytes(2)
+                data[36:38] = checksum(data[34:]).to_bytes(2, 'big')
+                return repaired(data)
+            damage('wrong-kernel-error-quote-' + str(ordinal), error_index, wrong_quote,
+                   'only exact connected-filter and closed-port ICMP quotes')
         pressure = first(lambda f: f[6:12] == guest and udp_data(f) is not None and udp_data(f).startswith(b'UDP' + bytes([lane]) + bytes(2)))
         resolved = first(lambda f: f[12:14] == b'\x08\x06' and f[20:22] == b'\x00\x02' and (f[28:32] == bytes([10, 23, lane + 1, 3])))
         changed = copy.deepcopy(rows)
@@ -429,7 +450,7 @@ def main():
                 controls.append(dict(control=label, lane=lane, firmware=row['firmware'],
                     transport=row['transport'], fault=row['fault'], reason=reason, archive=archive.name,
                     sha256=hashlib.sha256(archive.read_bytes()).hexdigest()))
-    require(len(controls) == 976 + retirement_controls, 'all complete UDP physical capture corruption cases')
+    require(len(controls) == 1040 + retirement_controls, 'all complete UDP physical capture corruption cases')
     physical_controls = len(controls)
     controls += profile_controls(args.directory, reports, destination)
     controls += input_controls(args.directory, args.input_root, destination)

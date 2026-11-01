@@ -16,7 +16,11 @@ def components(iso, expected):
             source = {'kernel.elf': '/boot/axiom64.elf', 'root.cpio': '/boot/rootfs.cpio',
                       'limine.conf': '/boot/limine/limine.conf'}[name]
             command += ['-extract', source, str(stage / name)]
-        subprocess.run(command, check=True, capture_output=True, timeout=30)
+        try:
+            subprocess.run(command, check=True, capture_output=True, timeout=30)
+        except subprocess.CalledProcessError as error:
+            error.add_note(error.stderr.decode(errors='replace'))
+            raise
         inputs = {name: dict(bytes=(stage / name).stat().st_size,
                             sha256=hashlib.sha256((stage / name).read_bytes()).hexdigest())
                   for name in ('kernel.elf', 'root.cpio', 'limine.conf')}

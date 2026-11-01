@@ -148,12 +148,12 @@ class Peer:
 
     def icmp(self, packet):
         data = packet[20:]
-        if len(data) != 36 or data[:2] != b'\x03\x03' or checksum(data) or data[4:8] != b'\0' * 4:
+        if len(data) < 36 or data[:2] != b'\x03\x03' or checksum(data) or data[4:8] != b'\0' * 4:
             raise RuntimeError('UDP ICMP port-unreachable header or checksum differs')
-        if self.filter_quotes and data[8:] == self.filter_quotes[0][:28] and not self.filter_errors:
+        if self.filter_quotes and data[8:] == self.filter_quotes[0] and not self.filter_errors:
             self.filter_errors += 1
             return
-        if not self.closed_packet or self.closed or data[8:] != self.closed_packet[:28]:
+        if not self.closed_packet or self.closed or data[8:] != self.closed_packet:
             raise RuntimeError('UDP closed-port ICMP or suppressed-input error policy differs')
         self.closed += 1
         self.reply(41000 + self.lane, payload(31, self.lane, 'C', 0))
@@ -220,9 +220,11 @@ class Peer:
         pressure = packet[16:20] == self.pressure_ip
         expected_mac = b'\xff' * 6 if broadcast else self.pressure_mac if pressure else self.mac
         restored_path = packet[28:32] == b'UDR' + bytes([self.lane]) and 'L' in self.controls
-        expected_flags = (b'\0\0' if self.path_locked and not restored_path and
-                          packet[9:10] == b'\x11' and packet[16:20] == self.ip else b'\x40\0')
-        if (len(packet) < 28 or frame[:12] != expected_mac + self.guest or packet[:2] != b'\x45\0' or
+        kernel_error = packet[9:10] == b'\x01'
+        expected_tos = 192 if kernel_error else 0
+        expected_flags = (b'\0\0' if kernel_error or (self.path_locked and not restored_path and
+                          packet[9:10] == b'\x11' and packet[16:20] == self.ip) else b'\x40\0')
+        if (len(packet) < 28 or frame[:12] != expected_mac + self.guest or packet[:2] != bytes((0x45, expected_tos)) or
                 checksum(packet[:20]) or packet[6:8] != expected_flags or packet[8] != 64 or
                 packet[12:16] != self.guest_ip or (not broadcast and not pressure and packet[16:20] != self.ip)):
             raise RuntimeError('UDP guest Ethernet/IPv4 header differs')

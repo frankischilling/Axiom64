@@ -53,6 +53,8 @@ jobs:
           python3 -B scripts/tests/network_window_test.py -v
           python3 -B scripts/tests/ipv6_owner_pair_test.py -v
           python3 -B scripts/tests/ipv4_send_capture_test.py -v
+          python3 -B scripts/tests/udp_kernel_error_test.py -v
+          python3 -B scripts/tests/http_download_image_test.py -v
       - name: Test authenticated Ubuntu index identity and retained download failures
         run: python3 scripts/tests/host_glibc_sources_test.py -v
       - name: Fingerprint crypto recipes and actual host toolchain inputs

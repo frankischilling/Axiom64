@@ -7,6 +7,25 @@ netlink requests and replies, guest monotonic/realtime brackets, executables,
 complete source and actual boot products remain available under the output
 directory. `PYTHONPATH=scripts python3 -B -m ipv4_lifetimes.guest DIRECTORY`
 reopens the images and decodes every original control observation offline.
+Original QEMU paths remain recorded as metadata when artifacts move; the
+reader opens the exported files. `sudo -n make test-ipv4-address-lifetimes-native`
+compares GNU libc and static/dynamic musl in three separate Linux network
+namespaces. These address-control cases use two dummy interfaces and retain
+actual kernel timer configuration, executable mappings and mapped libraries.
+They do not establish Ethernet wire behavior. Clock jumps fail qualification.
+Independent kernel address stamps bracket each native client. They measure
+the relation between Linux's jiffies-based stamp epoch and the unmodified
+monotonic clock. Both anchors must agree within three centiseconds; the
+original realtime/monotonic jump bound and every lifetime interval remain
+unchanged. Guest stamps retain their direct monotonic check.
+
+After a successful guest campaign, run
+`sudo -n env PYTHONPATH=scripts python3 -B -m ipv4_lifetimes.protected DIRECTORY /var/tmp/axiom-ipv4-lifetimes-export`.
+It creates a separate export and reopens it as root and actual UID 65534.
+Each reader checks all profiles, 24 damaged logs per profile and 16 damaged
+artifact bindings. Fault patches retain changed metadata or bounded byte
+deltas; verified disposable scratch copies are removed. Original evidence
+bytes and permissions are preserved.
 This control campaign does not establish retained transport wire behavior or
 full networking acceptance. [IPv4 lifetime development](ipv4.md#finite-address-lifetime-development)
 records the current validation limits.

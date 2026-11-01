@@ -60,8 +60,12 @@ lifetimes, creation/update stamps, expiry cascades and secondary promotion.
 Its explicit centisecond clock also drives deterministic sanitizer checks;
 the IPv4 core supplies the actual clock and retires route and packet owners.
 `userspace/tests/net/ipv4/address_lifetimes.c` issues actual Linux netlink and
-procfs calls. `scripts/ipv4_lifetimes/` retains guest control campaigns and
-decodes their original messages and clock brackets independently.
+procfs calls. `scripts/ipv4_lifetimes/` retains native and guest control
+campaigns and decodes original messages, policy calls and clock brackets.
+`protected.py` exports complete inputs for root and ordinary readers;
+`controls.py` and `artifact_controls.py` retain serialized rejection cases.
+`native_clock.py` retains independent kernel stamp anchors before and after
+each native client without altering observed clocks or lifetime deadlines.
 
 `kernel/net/ipv4/configuration.cpp` owns global, default and interface routing
 policy values and interface generations. `kernel/fs/proc/ipv4.cpp` exposes the

@@ -4,7 +4,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
 import struct
 import subprocess
@@ -70,9 +70,14 @@ def check_boot(text, spec):
 def verify(directory):
     directory = Path(directory).resolve()
     index = decode((directory / 'completed.json').read_text())
-    require(index['schema'] == 1 and type(index['schema']) is int and index['passed'] is True and
+    require(index['schema'] == 2 and type(index['schema']) is int and index['passed'] is True and
             index['profiles'] == specifications() and index['workers'] == 2,
             'complete fixed eight-profile guest control inventory')
+    original = index['original_directory']
+    require(type(original) is str, 'original guest output directory is recorded')
+    original = PurePosixPath(original)
+    require(original.is_absolute() and '..' not in original.parts and
+            str(original) == index['original_directory'], 'canonical original guest output directory')
     source = index['source']
     inputs = decode((directory / 'source/source-inputs.json').read_text())
     require(digest(directory / 'source/source.zip') == source['source_zip_sha256'] and
@@ -83,7 +88,7 @@ def verify(directory):
                 'complete unique public source inventory')
         for filename, expected in inputs.items():
             require(hashlib.sha256(archive.read(filename)).hexdigest() == expected, 'every original retained source byte')
-    for filename in ('reader.py', 'guest.py'):
+    for filename in ('reader.py', 'guest.py', 'controls.py', 'artifact_controls.py', 'protected.py'):
         require(inputs['scripts/ipv4_lifetimes/' + filename] == digest(Path(__file__).with_name(filename)),
                 'same original guest producer and independent reader')
     for linkage in ('static', 'dynamic'):
@@ -123,13 +128,14 @@ def verify(directory):
         case = directory / name(spec)
         receipt = decode((case / 'completed.json').read_text())
         require(receipt['profile'] == spec and receipt['returncode'] == 1 and not receipt['timed_out'] and
-                receipt['log_sha256'] == digest(case / 'serial.log'), 'original successful guest execution')
+                receipt['log_sha256'] == digest(case / 'serial.log') and
+                receipt['command_sha256'] == digest(case / 'command.json'), 'original successful guest execution')
         if spec['firmware'] == 'uefi':
             require(digest(directory / 'OVMF_CODE.fd') == index['firmware']['code'] and
                     digest(directory / 'OVMF_VARS.original.fd') == index['firmware']['variables'],
                     'exact retained UEFI firmware and original variable store')
         require(decode((case / 'command.json').read_text()) ==
-                boot_command(case, spec, directory / spec['linkage'] / 'image.iso'),
+                boot_command(original / name(spec), spec, original / spec['linkage'] / 'image.iso'),
                 'exact actual guest process command and immutable image')
         text = (case / 'serial.log').read_text()
         check_boot(text, spec)
@@ -186,7 +192,8 @@ def produce(directory):
                 process.kill()
                 process.wait()
         receipt = dict(profile=spec, returncode=process.returncode, timed_out=timed_out,
-                       elapsed_ns=time.monotonic_ns() - began, log_sha256=digest(case / 'serial.log'))
+                       elapsed_ns=time.monotonic_ns() - began, log_sha256=digest(case / 'serial.log'),
+                       command_sha256=digest(case / 'command.json'))
         write(case / 'process.json', receipt)
         require(process.returncode == 1 and not timed_out, 'terminal guest control process success')
         check_boot((case / 'serial.log').read_text(), spec)
@@ -198,7 +205,8 @@ def produce(directory):
         list(workers.map(execute, specifications()))
     require(all(digest(ROOT / filename) == expected for filename, expected in inputs.items()),
             'unchanged complete source throughout the guest matrix')
-    write(directory / 'completed.json', dict(schema=1, passed=True, profiles=specifications(), workers=2,
+    write(directory / 'completed.json', dict(schema=2, passed=True, profiles=specifications(), workers=2,
+          original_directory=str(directory),
           source=source, firmware=firmware, kernel_sha256=digest(ROOT / 'build/axiom64.elf')))
     proof = verify(directory)
     write(directory / 'verified.json', proof)

@@ -249,13 +249,25 @@ Copied raw and UDP packets can retain their original source and payload while
 another address survives; later sends and new binds use current assignment.
 
 Sanitizer models cover expiry, renewal, stamp wrap, promotion, route ownership,
-PMTU retirement and copied output. A local BIOS/static control probe on
-virtio-net and e1000 passes independent decoding of its 66 original requests
-and real elapsed observations. A native process passed its syscall assertions,
-but an observed realtime jump prevents timing qualification. Complete native
-linkages, guest firmware/transport/linkage coverage, retained transport wire
-evidence, protected artifact readers, rejection controls and hosted acceptance
-remain required. This development slice does not complete F12 or F13.
+PMTU retirement and copied output. The local control matrix passes eight
+static/dynamic, BIOS/UEFI and modern/legacy PCI profiles on virtio-net and
+e1000. Independent decoding checks all 528 original requests, actual boot
+products, ELF linkage and real elapsed observations. Root and actual UID 65534
+readers reopen a separate export. Each rejects 192 damaged logs and 16 damaged
+source, compiler, image and execution bindings. Original bytes and permissions
+are preserved. GNU libc and dynamic musl pass native clock and stamp checks;
+static musl passes syscall assertions but a 2.104787899-second realtime jump
+prevents accepting the complete native cohort. Earlier rejected traces remain
+retained. Independent kernel anchors measure the native stamp epoch without
+changing any clock, jump bound or lifetime interval.
+
+Four TCP sanitizer cases on both adapters retain copied bytes and sequence
+state while the source is absent, then deliver the exact bytes after address
+restoration. The corresponding two native diagnostic cases retain complete
+software-checksummed captures and stable clocks. They inform the pending
+transport matrix; they do not establish guest wire acceptance. Complete native
+linkage, retained transport wire and hosted acceptance remain required. This
+development slice does not complete F12 or F13.
 
 ## IPv4 and ICMP validation
 

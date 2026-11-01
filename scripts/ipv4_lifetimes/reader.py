@@ -148,7 +148,10 @@ def selected_address(replies, index, address):
     return selected[0] if selected else None
 
 
-def verify(path):
+def verify(path, *, stamp_epoch=(0, 0)):
+    require(type(stamp_epoch) is tuple and len(stamp_epoch) == 2 and
+            all(type(value) is int for value in stamp_epoch) and
+            0 <= stamp_epoch[1] - stamp_epoch[0] <= 3, 'bounded independently observed stamp-clock relation')
     text = Path(path).read_text().replace('\r\n', '\n')
     require('IPV4_LIFETIME_FAIL' not in text and text.splitlines().count(
             'IPV4_LIFETIME_PASS interfaces=2 finite permanent renew cacheinfo cascade promote fresh_bind') == 1,
@@ -217,15 +220,18 @@ def verify(path):
             selected = selected_address(replies, index, addresses[spec['address']])
             key = spec['phase'], spec['address']
             saved[key] = dict(value=selected, request=row, receipt=receipt)
-        observations.append(check_lifetimes(saved, lane))
+        observations.append(check_lifetimes(saved, lane, stamp_epoch))
     require(at == len(records), 'no omitted or surplus original control records')
     check_transport(text)
+    check_policy(text)
     return dict(passed=True, lanes=2, requests=66, observations=observations,
                 clock_offset_range_ns=max(offsets) - min(offsets), real_clock_qualification=True,
+                policy_operations=20,
+                stamp_epoch_range_cs=list(stamp_epoch),
                 ethernet_or_guest_product_acceptance=False)
 
 
-def check_lifetimes(saved, lane):
+def check_lifetimes(saved, lane, stamp_epoch):
     def value(phase, name='first'):
         row = saved[(phase, name)]
         require(row['value'] is not None, 'required address is present')
@@ -238,8 +244,8 @@ def check_lifetimes(saved, lane):
     require(initial['cache'][2] == initial['cache'][3], 'initial creation and update stamps agree')
 
     def stamp_owned(stamp, begin, end):
-        lower = begin['monotonic_before_ns'] // 10_000_000
-        upper = end['monotonic_after_ns'] // 10_000_000
+        lower = begin['monotonic_before_ns'] // 10_000_000 + stamp_epoch[0]
+        upper = end['monotonic_after_ns'] // 10_000_000 + stamp_epoch[1]
         require(((stamp - (lower - 3)) & INFINITE) <= upper - lower + 6,
                 'kernel-owned centisecond stamp is bracketed by actual monotonic observations')
 
@@ -291,6 +297,35 @@ def check_transport(text):
     require(len([line for line in text.splitlines() if line.startswith('IPV4_LIFETIME_SEND')]) == 4 and
             len([line for line in text.splitlines() if line.startswith('IPV4_LIFETIME_BIND')]) == 2,
             'no omitted malformed or surplus transport observations')
+
+
+def check_policy(text):
+    rows = []
+    for line in text.splitlines():
+        if not line.startswith('IPV4_LIFETIME_POLICY'):
+            continue
+        match = re.fullmatch(r'IPV4_LIFETIME_POLICY lane=([01]) phase=([a-z-]+) '
+                             r'scope=(all|eth[01]) write=([01]) value=(-?\d+)', line)
+        require(match is not None, 'complete original policy observation')
+        lane, phase, scope, write, value = match.groups()
+        require(-(1 << 31) <= int(value) < 1 << 31, 'actual signed policy integer')
+        rows.append((int(lane), phase, scope, int(write), int(value)))
+    require(len(rows) == 20, 'every original policy read and write remains present')
+    expected = []
+    for lane in (0, 1):
+        actual = rows[lane * 10:(lane + 1) * 10]
+        interface = 'eth' + str(lane)
+        all_value, device_value = actual[0][-1], actual[1][-1]
+        expected += [(lane, 'setup', 'all', 0, all_value),
+                     (lane, 'setup', interface, 0, device_value),
+                     (lane, 'setup', 'all', 1, 0), (lane, 'setup', interface, 1, 0),
+                     (lane, 'device-promote-create', interface, 1, 1),
+                     (lane, 'device-promoted', interface, 1, 0),
+                     (lane, 'global-promote-create', 'all', 1, 1),
+                     (lane, 'global-promoted', 'all', 1, 0),
+                     (lane, 'cleanup', interface, 1, device_value),
+                     (lane, 'cleanup', 'all', 1, all_value)]
+    require(rows == expected, 'actual promotion scopes, transitions and restored original values')
 
 
 def main():

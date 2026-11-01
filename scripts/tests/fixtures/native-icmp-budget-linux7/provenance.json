@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "run": 41292109461,
+  "head": "359d5101369ba2314c404665a8e36f41f928bff5",
+  "artifact_id": 13078646290,
+  "artifact_url": "https://github.com/frankischilling/Axiom64/actions/runs/41292109461/artifacts/13078646290",
+  "artifact_sha256": "34e19f8aa92b02a8b2fd96ef3158ade3173012b088b31f226fc3199eb20018e5",
+  "kernel": "7.0.0-1017-azure",
+  "original_client_sha256": "51fa555c81e8dd2e34251fa3eb45e21c70cf40c267b91a517ef4e254d6c9c342",
+  "original_source_sha256": {
+    "scripts/tests/native_icmp_budget.c": "6984bbd43850327ce0c718a28cbfcbb2944927a6c106b11b4b4995b26d815b25",
+    "scripts/native_icmp_budget_test.py": "6931d8c2c08bd94291b1f3ba81e8eb433f6055a619157619bd1062637d5db2ad",
+    "Makefile": "9cdd7dae2b2a38262b48104c42de14be96ccf6f69a4044304b75069b65e669ff"
+  },
+  "records": 770,
+  "profiles": 768,
+  "original_producer_passed": false,
+  "results_sha256": "e721b9e031aa255860cd9e646f4e1ea096ceb23746ab2618317b296af936c993",
+  "compressed_sha256": "b890535bf441d601779fdbef0099814d2a17ce009e3944abd72cb793dd70c840",
+  "scope": "Original native reference data; no guest acceptance or successful hosted producer is claimed."
+}

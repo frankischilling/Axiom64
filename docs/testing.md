@@ -783,24 +783,37 @@ the original simultaneous adapter workload, sixty-second reassembly expiry,
 suppression observations and ten-minute PMTU lifetime intact.
 `sudo -n make test-native-icmp-budget` separately retains 256 fresh namespaces
 each for cold simultaneous, staggered and primed simultaneous error pairs.
-Cold global-rate suppression is recorded explicitly; staggered and primed pairs
-must return both original quotes. The staggered second writer waits for the
+Cold simultaneous and staggered pairs retain zero, one or two kernel
+rate-limit decisions. Every input must become an exact quote or an accounted
+kernel suppression; primed pairs must return both original quotes. The
+staggered second writer waits for the
 first complete input syscall, then observes the original one-millisecond gap.
 A missed shared deadline cannot turn this control into a simultaneous pair.
-The reader checks both actual syscall brackets and reopens twelve damaged
-controls, including collapsed and reversed staggering. The same target also
+The reader checks both actual syscall brackets and reopens sixteen damaged
+controls, including collapsed/reversed staggering, invalid counters and false
+cold summaries. The same target also
 runs three production-writer regressions with real pipes and monotonic clocks.
 They delay the first writer by zero, three and twenty milliseconds after the
 start barrier and require both complete payloads plus the original minimum
 gap. These scheduling regressions do not establish ICMP or guest behavior.
 CI retains these native controls in `native-icmp-budget`, alongside the complete
 fragment evidence. These comparisons do not establish guest behavior.
-Qualification with the three original client products reopens six captures and
+Earlier qualification with the three original client products reopens six captures and
 all 298 damaged controls, including the original expiry, PMTU and lifetime
 corruptions. Each profile retains both required expiry quotes with zero global
 suppression. All 768 fresh-namespace controls pass their explicit contracts;
 132 cold simultaneous profiles record suppression, while staggered and primed
 pairs return every quote. Complete current-revision hosted CI remains required.
+
+`python3 -B scripts/tests/native_icmp_budget_capture_test.py -v` replays a
+complete retained Linux 7.0.0-1017-azure cohort. Its trial 192 suppresses both
+staggered inputs despite the complete one-millisecond syscall gap; the kernel
+records both global rate-limit decisions. The compressed fixture preserves
+all 770 original records, including the failed producer summary. That original
+receipt still rejects. Regression tests repair only the outer summary flag to
+exercise packet/counter accounting and reject missing counts, shortened gaps
+and suppressed primed quotes. This changes no guest behavior or observation
+interval. Full new-source native and hosted qualification remain required.
 
 The full native and normal guest clients also retain the actual ten-minute path limit. Both NICs age together, with repeated socket queries and failed DO sends before two complete post-expiry datagrams. Original PCAP timing and native monotonic receipts must prove the unchanged interval. The outer normal-boot limit is 780 seconds to include this additional observation; fault profiles retain their 120-second bound. `--lifetime-only` isolates the complete native PMTU lifetime without claiming the other fragment and policy cases.
 

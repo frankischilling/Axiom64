@@ -781,6 +781,8 @@
         "scripts/native_icmp_preflight_capture.py",
         "scripts/native_icmp_budget_test.py",
         "scripts/tests/native_icmp_budget.c",
+        "scripts/tests/native_icmp_budget_capture_test.py",
+        "scripts/tests/fixtures/native-icmp-budget-linux7",
         "kernel/tests/net/tcp_ipv6_reset.cpp",
         "userspace/tests/net/tcp6/replies.c",
         "scripts/tcp6/replies_peer.py",

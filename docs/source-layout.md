@@ -140,6 +140,9 @@ UDP error setup; `native_icmp_preflight_capture.py` reopens its original packets
 clocks, rate settings and control-release receipt. The native-only C control
 client is `scripts/tests/native_icmp_budget.c`; `native_icmp_budget_test.py`
 retains cold/staggered/primed comparisons and independently checks their bytes.
+`scripts/tests/native_icmp_budget_capture_test.py` replays the complete captured
+Linux counter decisions under `scripts/tests/fixtures/native-icmp-budget-linux7/`.
+Cold suppression remains distinct from the required acknowledged primed pairs.
 These helpers supply no kernel or guest implementation.
 
 `userspace/tests/net/tcp6/replies.c` supplies shared native/guest TCP reply

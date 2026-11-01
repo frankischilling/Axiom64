@@ -7,6 +7,7 @@
 #include "net/ipv4/fragmentation.hpp"
 #include "net/ipv4/path_mtu.hpp"
 #include "net/ipv4/options.hpp"
+#include "net/ipv4/configuration.hpp"
 #include "core/time.hpp"
 #include "net/inet.hpp"
 #include "process/task.hpp"
@@ -50,6 +51,8 @@ struct Output {
     uint32_t header_route_source = 0, header_route_destination = 0;
     uint32_t admitted_mtu = 0;
     bool header_included = false;
+    unsigned ingress = 0;
+    void (*failure)(Output&, int) = nullptr;
 };
 
 struct Selection {
@@ -71,6 +74,11 @@ static uint16_t identifier;
 static bool polling;
 static uint64_t next_icmp_error[max_net_devices + 2];
 
+static void protocol_error(unsigned index, uint32_t source, uint32_t destination,
+                           const uint8_t* bytes, size_t length, uint8_t code = 2, uint8_t type = 3,
+                           const ip4::Options* options = nullptr, uint8_t parameter = 0,
+                           uint16_t mtu = 0, uint32_t selected_source = 0);
+
 static void retire_destinations() {
     if (destination_generation < UINT64_MAX)
         destination_generation++;
@@ -87,6 +95,10 @@ static unsigned prefix_length(uint32_t mask) {
 
 static bool is_loopback(uint32_t address) {
     return (address >> 24) == 127;
+}
+
+static bool source_route_local(uint32_t address) {
+    return !is_loopback(address) && ipv4_local(address);
 }
 
 static bool directed_broadcast(const Ipv4Config& config, uint32_t address) {
@@ -124,15 +136,26 @@ static void clear(Output& item, int error = 0) {
         if (error && (error != 100 || inet_stream(item.owner)))
             inet_failed(item.owner, error, item.index);
     }
+    if (error && item.failure)
+        item.failure(item, error);
     release(item.bytes);
     release(item.fragment_bytes);
     item = {};
 }
 
+static int transmit(Output& item, const void* bytes, size_t length) {
+    if (!item.ingress)
+        return net_send(item.index, bytes, length);
+    auto validate = [](void* context) {
+        return static_cast<Output*>(context)->discard_pending ? -11 : 0;
+    };
+    return net_send_checked(item.index, bytes, length, validate, &item, nullptr, item.admitted_mtu);
+}
+
 static ip4::FragmentPiece submit(Output& item, const NetInfo& info) {
     auto packet = item.bytes + ethernet_header;
     if (ip4::get16(item.bytes + 12) != 0x0800)
-        return {net_send(item.index, item.bytes, item.length), 0, 0, true};
+        return {transmit(item, item.bytes, item.length), 0, 0, true};
     if (item.header_included) {
         auto validate = [](void* context) {
             return static_cast<Output*>(context)->discard_pending ? -11 : 0;
@@ -141,17 +164,20 @@ static ip4::FragmentPiece submit(Output& item, const NetInfo& info) {
                                  item.admitted_mtu),
                 0, 0, true};
     }
+    // Forwarded output already owns its packetization decision before ARP can
+    // wait. Later logical MTU changes preserve it within the physical limit.
+    uint32_t mtu = item.ingress ? min(item.admitted_mtu, info.maximum_mtu) : info.mtu;
     auto limit = item.use_path_mtu ? path_mtu.lookup({item.path_source, ip4::get32(packet + 16),
                                                       item.next_hop, item.index, item.path_owner},
-                                                     info.mtu, ticks)
-                                   : ip4::PathMtu{info.mtu};
+                                                     mtu, ticks)
+                                   : ip4::PathMtu{mtu};
     if (item.want_df && limit.locked && (ip4::get16(packet + 6) & 0x4000)) {
         ip4::put16(packet + 6, ip4::get16(packet + 6) & ~uint16_t(0x4000));
         ip4::put16(packet + 10, 0);
         ip4::put16(packet + 10, ip4::checksum(packet, size_t(packet[0] & 15) * 4));
     }
     if (!item.fragment_offset && item.packet_length <= limit.mtu)
-        return {net_send(item.index, item.bytes, item.length), 0, 0, true};
+        return {transmit(item, item.bytes, item.length), 0, 0, true};
     if (!item.fragmentable)
         return {-90};
     size_t capacity = ethernet_header + limit.mtu;
@@ -165,7 +191,7 @@ static ip4::FragmentPiece submit(Output& item, const NetInfo& info) {
     }
     // WANT permits local fragmentation even though small packets carry DF.
     // The policy was captured when accepted; later socket changes cannot alter it.
-    if (ip4::get16(packet + 6) & 0x4000) {
+    if (!item.ingress && (ip4::get16(packet + 6) & 0x4000)) {
         ip4::put16(packet + 6, ip4::get16(packet + 6) & ~uint16_t(0x4000));
         ip4::put16(packet + 10, 0);
         ip4::put16(packet + 10, ip4::checksum(packet, size_t(packet[0] & 15) * 4));
@@ -179,7 +205,7 @@ static ip4::FragmentPiece submit(Output& item, const NetInfo& info) {
     memcpy(item.fragment_bytes, item.bytes, ethernet_header);
     memset(item.fragment_bytes + ethernet_header + part.length, 0,
            wire_length - ethernet_header - part.length);
-    part.error = net_send(item.index, item.fragment_bytes, wire_length);
+    part.error = transmit(item, item.fragment_bytes, wire_length);
     return part;
 }
 
@@ -443,27 +469,158 @@ static int select(Ipv4Source requested, uint32_t destination, unsigned bound, Se
 }
 
 static void protocol_error(unsigned index, uint32_t source, uint32_t destination,
-                           const uint8_t* bytes, size_t length, uint8_t code = 2, uint8_t type = 3,
-                           const ip4::Options* options = nullptr, uint8_t parameter = 0) {
+                           const uint8_t* bytes, size_t length, uint8_t code, uint8_t type,
+                           const ip4::Options* options, uint8_t parameter, uint16_t mtu,
+                           uint32_t selected_source) {
     if (ticks < next_icmp_error[index])
         return;
+    auto config = ipv4_config(index);
+    if (!config)
+        return;
     size_t header = size_t(bytes[0] & 15) * 4;
+    if (ip4::get16(bytes + 6) & 0x1fff)
+        return;
     // Never answer an ICMP error with another error, including a fragmented one.
     if (bytes[9] == 1 && length > header &&
         (bytes[header] == 3 || bytes[header] == 4 || bytes[header] == 5 || bytes[header] == 11 ||
          bytes[header] == 12))
         return;
-    // IPv4 header plus the first eight original payload bytes, bounded by RX length.
-    uint8_t error[76]{};
+    // Include the original datagram while keeping the complete response within
+    // 576 bytes, including any reversed options in its outer IPv4 header.
+    uint8_t error[556]{};
     error[0] = type;
     error[1] = code;
     error[4] = parameter;
-    size_t quoted = min(length, header + 8);
+    if (type == 3 && code == 4)
+        ip4::put16(error + 6, mtu);
+    size_t quoted = min(length, size_t(548) - (options ? options->size() : 0));
     memcpy(error + 8, bytes, quoted);
     ip4::put16(error + 2, ip4::checksum(error, 8 + quoted));
-    if (!ipv4_send(nullptr, destination, source, index, 1, 64, false, error, 8 + quoted, true, -1,
-                   nullptr, options))
+    uint32_t reply_source = selected_source           ? selected_source
+                            : ipv4_local(destination) ? destination
+                                                      : config->address;
+    unsigned bound = options && options->source_route() ? 0 : index;
+    if (!ipv4_send(nullptr, reply_source, source, bound, 1, 64, false, error, 8 + quoted, true,
+                   (bytes[1] & 0x1e) | 0xc0, nullptr, options))
         next_icmp_error[index] = ticks + 100;
+}
+
+static bool failure_options(Output& item, uint32_t specific_destination, ip4::Options& result) {
+    auto packet = item.bytes + ethernet_header;
+    size_t header = size_t(packet[0] & 15) * 4;
+    uint32_t source = ip4::get32(packet + 12);
+    ip4::ReceivedOptions received;
+    uint32_t timestamp = uint32_t(clock_realtime_ticks() % 8640000) * 10;
+    if (received.assign(packet + 20, header - 20, source, specific_destination, timestamp,
+                        {false, ipv4_option_unicast}) ||
+        !received.return_valid())
+        return false;
+    // The error quotes the processed options with the original emitted checksum.
+    // Only this output owns the packet, including while ARP holds it.
+    if (received.size())
+        memcpy(packet + 20, received.data(), received.size());
+    result = received.reply();
+    // Deferred errors see the route after forwarding. A local first hop in
+    // that reversed route cannot return an error to the remote sender.
+    return !result.source_route() || !ipv4_local(result.destination(source));
+}
+
+static void icmp_failed(Output& item, int error) {
+    if (error != 90 && error != 113)
+        return;
+    auto packet = item.bytes + ethernet_header;
+    uint32_t source = ip4::get32(packet + 12);
+    unsigned index = is_loopback(source) ? ipv4_loopback : 0;
+    for (unsigned n = 0; auto address = addresses.at(n); n++)
+        if (address->config.address == source) {
+            index = address->index;
+            break;
+        }
+    if (!index)
+        return;
+    ip4::Options options;
+    if (!failure_options(item, source, options))
+        return;
+    auto info = net_info(item.index);
+    protocol_error(index, source, ip4::get32(packet + 16), packet, item.packet_length,
+                   error == 90 ? 4 : 1, 3, &options, 0,
+                   error == 90 && info ? uint16_t(min(info->mtu, info->maximum_mtu)) : 0, source);
+}
+
+static void forward_failed(Output& item, int error) {
+    if (error != 90 && error != 113)
+        return;
+    auto packet = item.bytes + ethernet_header;
+    auto config = ipv4_config(item.ingress);
+    if (!config)
+        return;
+    uint32_t destination = ip4::get32(packet + 16);
+    uint32_t source = ipv4_local(destination) ? destination : config->address;
+    ip4::Options options;
+    if (!failure_options(item, source, options))
+        return;
+    auto info = net_info(item.index);
+    protocol_error(item.ingress, ip4::get32(packet + 12), ip4::get32(packet + 16), packet,
+                   item.packet_length, error == 90 ? 4 : 1, 3, &options, 0,
+                   error == 90 && info ? uint16_t(min(info->mtu, info->maximum_mtu)) : 0);
+}
+
+static void forward(unsigned ingress, const uint8_t* packet, size_t length, uint32_t destination,
+                    ip4::ReceivedOptions& options, bool source_hop) {
+    if (!ip4::configuration_forwarding(ingress) || !ip4::unicast(destination) ||
+        is_loopback(destination))
+        return;
+    Selection route;
+    int error = select({}, destination, 0, route);
+    const auto* reply = options.return_valid() ? &options.reply() : nullptr;
+    uint32_t source = ip4::get32(packet + 12), original_destination = ip4::get32(packet + 16);
+    if (error || route.local || route.broadcast) {
+        if (!source_hop && error == -101)
+            protocol_error(ingress, source, original_destination, packet, length, 0, 3, reply);
+        return;
+    }
+    if (packet[8] <= 1) {
+        protocol_error(ingress, source, original_destination, packet, length, 0, 11, reply);
+        return;
+    }
+    if (options.strict_route() && route.next_hop != destination) {
+        protocol_error(ingress, source, original_destination, packet, length, 5, 3, reply);
+        return;
+    }
+    const auto info = net_info(route.index);
+    if (length > info->mtu && (ip4::get16(packet + 6) & 0x4000)) {
+        protocol_error(ingress, source, original_destination, packet, length, 4, 3, reply, 0,
+                       uint16_t(info->mtu));
+        return;
+    }
+    auto slot = vacant_output();
+    if (!slot || !prepare_neighbor(route.index, route.next_hop))
+        return;
+    size_t total = max(size_t(60), ethernet_header + length);
+    auto bytes = static_cast<uint8_t*>(alloc(total));
+    if (!bytes)
+        return;
+    memset(bytes, 0, total);
+    memcpy(bytes + 6, info->mac, 6);
+    ip4::put16(bytes + 12, 0x0800);
+    auto ip = bytes + ethernet_header;
+    memcpy(ip, packet, length);
+    options.forward(route.path_source ? route.path_source : route.source);
+    if (options.size())
+        memcpy(ip + 20, options.data(), options.size());
+    ip[8]--;
+    ip4::put32(ip + 16, destination);
+    ip4::put16(ip + 10, 0);
+    ip4::put16(ip + 10, ip4::checksum(ip, size_t(ip[0] & 15) * 4));
+    *slot = {nullptr, bytes, total, route.index, route.next_hop, ticks + retry_interval * 4};
+    slot->packet_length = length;
+    slot->fragmentable = true;
+    slot->use_path_mtu = false;
+    slot->path_owner = route.path_owner;
+    slot->path_source = route.path_source ? route.path_source : route.source;
+    slot->admitted_mtu = info->mtu;
+    slot->ingress = ingress;
+    slot->failure = forward_failed;
 }
 
 static void reassembly_timeout(unsigned index, const uint8_t* bytes, size_t length,
@@ -520,12 +677,14 @@ static void input(unsigned index, const uint8_t* bytes, size_t length, bool link
     bool multicast = ip4::multicast(destination) &&
                      (bytes[9] == 2 ? ipv4_multicast_member(index, destination)
                                     : ipv4_multicast_source_allowed(index, destination, source));
-    if (!config || !ip4::unicast(source) || (!local && !broadcast && !multicast) ||
+    if (!config || !ip4::unicast(source) ||
+        (!local && !broadcast && !multicast &&
+         (!ip4::unicast(destination) || link_broadcast || !ip4::configuration_forwarding(index))) ||
         (index != ipv4_loopback &&
          (is_loopback(source) || is_loopback(destination) || directed_broadcast(index, source))))
         return;
     uint32_t specific = destination;
-    if (broadcast || multicast) {
+    if (!local || broadcast || multicast) {
         Selection reverse;
         if (!select({}, source, 0, reverse))
             specific = reverse.source;
@@ -570,13 +729,48 @@ static void input(unsigned index, const uint8_t* bytes, size_t length, bool link
                                    metadata.options.parameter());
                 return;
             }
-            // Source-route receive admission is not installed yet. The parser
-            // retains its independent syntax and return value for routing work.
-            if (metadata.options.source_route())
-                return;
+            if (metadata.options.source_route()) {
+                if (broadcast || multicast || link_broadcast ||
+                    !ip4::configuration_source_route(index))
+                    return;
+                if (!local && metadata.options.strict_route()) {
+                    protocol_error(index, source, destination, bytes, length, 0, 12, nullptr, 16);
+                    return;
+                }
+                if (local) {
+                    uint32_t next_hop;
+                    int action = metadata.options.route(
+                        destination, next_hop,
+                        index == ipv4_loopback ? ipv4_local : source_route_local);
+                    if (action < 0) {
+                        protocol_error(index, source, destination, bytes, length, 0, 12, nullptr,
+                                       metadata.options.parameter());
+                        return;
+                    }
+                    ip4::put32(owned.data + 16, destination);
+                    metadata.destination = metadata.specific_destination = destination;
+                    if (action) {
+                        forward(index, bytes, length, next_hop, metadata.options, true);
+                        return;
+                    }
+                    if ((ip4::get16(bytes + 6) & 0x3fff) &&
+                        destination != ip4::get32(wire_bytes + 16)) {
+                        // Reassembly keys and its retained first header belong
+                        // to the final local hop. Unfragmented raw input keeps
+                        // the received checksum after option/destination edits.
+                        ip4::put16(owned.data + 10, 0);
+                        ip4::put16(owned.data + 10, ip4::checksum(owned.data, header));
+                        wire_bytes = owned.data;
+                    }
+                }
+            }
         }
         if (metadata.options.return_valid())
             reply_options = &metadata.options.reply();
+    }
+    if (!local && !broadcast && !multicast) {
+        forward(index, bytes, length, destination, metadata.options, false);
+        return;
     }
     auto assembled = looped ? ip4::Reassembled{ip4::FragmentStatus::whole}
                             : ip4::reassemble(index, wire_bytes, length, ticks, link_broadcast,
@@ -606,7 +800,7 @@ static void input(unsigned index, const uint8_t* bytes, size_t length, bool link
     if (bytes[9] == 6) {
         if (local && !broadcast && !link_broadcast)
             tcp_receive(index, source, destination, bytes + header, length - header,
-                        &metadata.options);
+                        &metadata.options, bytes[1]);
         return;
     }
     if (bytes[9] != 1) {
@@ -634,8 +828,9 @@ static void input(unsigned index, const uint8_t* bytes, size_t length, bool link
     ip4::put16(reply + 2, 0);
     ip4::put16(reply + 2, ip4::checksum(reply, payload_length));
     if (metadata.options.return_valid())
-        ipv4_send(nullptr, destination, source, index, 1, 64, false, reply, payload_length, true,
-                  -1, nullptr, reply_options);
+        ipv4_send(nullptr, destination, source,
+                  reply_options && reply_options->source_route() ? 0 : index, 1, 64, false, reply,
+                  payload_length, true, bytes[1], nullptr, reply_options);
     release(reply);
 }
 } // namespace
@@ -723,9 +918,9 @@ static int addresses_changed(const ip4::AddressBook& before, unsigned index) {
             break;
         }
     }
-    bool literal_address_survives = false;
+    bool surviving_address = false;
     for (unsigned n = 0; auto old = before.at(n); n++)
-        literal_address_survives |= old->index == index && assigned(index, old->config.address);
+        surviving_address |= old->index == index && assigned(index, old->config.address);
     bool retained = false;
     for (unsigned n = 0; auto old = before.at(n); n++) {
         if (old->index != index)
@@ -747,15 +942,15 @@ static int addresses_changed(const ip4::AddressBook& before, unsigned index) {
         for (auto& item : output) {
             if (!item.bytes || item.index != index)
                 continue;
-            // An accepted literal packet owns its source bytes and neighbor
-            // selection. Removing one address does not revoke it while another
-            // address from the device remains. Last-address/device loss still
-            // follows the ordinary cancellation path.
-            if (item.header_included && !item.local && literal_address_survives)
+            // Admitted literal and forwarded packets retain their bytes and
+            // neighbor selection while an address from this device survives.
+            // Last-address/device loss still cancels the queued packet.
+            if ((item.header_included || item.ingress) && !item.local && surviving_address)
                 continue;
             bool ip = item.local || ip4::get16(item.bytes + 12) == 0x0800;
             bool owned =
-                ip ? (item.header_included
+                ip ? (item.ingress ? item.path_source
+                      : item.header_included
                           ? item.header_route_source
                           : ip4::get32(item.bytes + ethernet_header + 12)) == old->config.address ||
                          (item.local &&
@@ -1114,6 +1309,7 @@ int ipv4_send(InetSocket* owner, Ipv4Source source, uint32_t destination, unsign
     if (length > 65535 - header)
         return -90;
     bool multicast = ip4::multicast(target);
+    bool kernel_icmp = !owner && protocol == 1;
     bool fragmentable = inet_fragmentation_allowed(owner);
     bool use_path_mtu = inet_use_path_mtu(owner);
     auto slot = vacant_output();
@@ -1132,15 +1328,16 @@ int ipv4_send(InetSocket* owner, Ipv4Source source, uint32_t destination, unsign
     ip[1] = traffic_class < 0 ? inet_traffic_class(owner) : uint8_t(traffic_class);
     ip4::put16(ip + 2, header + length);
     ip4::put16(ip + 4, ++identifier);
-    ip4::put16(ip + 6, inet_dont_fragment(owner, limit.locked) ? 0x4000 : 0);
+    ip4::put16(ip + 6, !kernel_icmp && inet_dont_fragment(owner, limit.locked) ? 0x4000 : 0);
     ip[8] = ttl;
     ip[9] = protocol;
     ip4::put32(ip + 12, route.source);
     ip4::put32(ip + 16, target);
     if (options && options->size()) {
         uint32_t timestamp = uint32_t(clock_realtime_ticks() % 8640000) * 10;
-        int error = options->emit(ip + 20, header - 20, destination,
-                                  route.path_source ? route.path_source : route.source, timestamp);
+        uint32_t record_source =
+            kernel_icmp || !route.path_source ? route.source : route.path_source;
+        int error = options->emit(ip + 20, header - 20, destination, record_source, timestamp);
         if (error < 0) {
             release(bytes);
             return error;
@@ -1171,10 +1368,13 @@ int ipv4_send(InetSocket* owner, Ipv4Source source, uint32_t destination, unsign
     slot->multicast_loop = multicast && inet_multicast_loop(owner);
     slot->fragmentable = fragmentable;
     slot->use_path_mtu = use_path_mtu;
-    slot->want_df = fragmentable && inet_dont_fragment(owner);
+    slot->want_df = !kernel_icmp && fragmentable && inet_dont_fragment(owner);
     slot->path_owner = route.path_owner;
     slot->path_source = route.path_source;
     slot->packet_length = header + length;
+    if (kernel_icmp) {
+        slot->failure = icmp_failed;
+    }
     return 0;
 }
 
@@ -1398,8 +1598,9 @@ void ipv4_poll() {
         for (const auto& item : output)
             if (item.bytes && !item.local && !item.ethernet_ready && item.index == neighbor.index &&
                 item.next_hop == neighbor.address && item.expires > ticks) {
-                source = item.header_included ? item.header_route_source
-                                              : ip4::get32(item.bytes + ethernet_header + 12);
+                source = item.ingress           ? item.path_source
+                         : item.header_included ? item.header_route_source
+                                                : ip4::get32(item.bytes + ethernet_header + 12);
                 break;
             }
         if (!source)

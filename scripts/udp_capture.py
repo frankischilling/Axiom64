@@ -106,15 +106,16 @@ def audit_capture(path, lane, fault=False, *, route_retirement=False):
         require(ether == b'\x08\x00' and len(frame) >= 34, 'only original UDP fixture IPv4 frames after bootstrap')
         ip = frame[14:]
         total = int.from_bytes(ip[2:4], 'big')
-        require(ip[0] == 69 and ip[1] == 0 and (20 <= total <= len(ip)) and (not any(ip[total:])) and (checksum(ip[:20]) == 0), 'complete UDP IPv4 header, checksum and padding')
-        ip = ip[:total]
         out = frame[6:12] == guest
+        expected_tos = 192 if out and ip[9] == 1 else 0
+        require(ip[0] == 69 and ip[1] == expected_tos and (20 <= total <= len(ip)) and (not any(ip[total:])) and (checksum(ip[:20]) == 0), 'complete UDP IPv4 header, checksum and padding')
+        ip = ip[:total]
         if out:
             require(ip[12:16] == local and ip[8] == 64 and (ip[16:20] in (remote, pressure_ip, broadcast)), 'UDP guest IPv4 source, destination and TTL')
             mac = peer if ip[16:20] == remote else pressure_mac if ip[16:20] == pressure_ip else b'\xff' * 6
             require(frame[:12] == mac + guest, 'UDP guest Ethernet route')
             if ip[9] == 1:
-                require(len(ip) == 56 and ip[6:8] == b'@\x00' and (ip[20:22] == b'\x03\x03') and (ip[24:28] == bytes(4)) and (checksum(ip[20:]) == 0), 'UDP complete emitted port error')
+                require(len(ip) == 87 and ip[6:8] == bytes(2) and (ip[20:22] == b'\x03\x03') and (ip[24:28] == bytes(4)) and (checksum(ip[20:]) == 0), 'UDP complete emitted port error')
                 errors.append((ip[28:], number))
                 continue
             require(ip[9] == 17 and len(ip) >= 28, 'UDP guest protocol and header')
@@ -251,7 +252,7 @@ def audit_capture(path, lane, fault=False, *, route_retirement=False):
         receive(_payload(31, lane, 'P', 33), trigger='P32')
         for phase in 'LR':
             receive(_payload(31, lane, phase), trigger=phase)
-        require([value for value, _ in errors] == [filtered[:28], closed[:28]], 'only exact connected-filter and closed-port ICMP quotes; suppressed inputs stay silent')
+        require([value for value, _ in errors] == [filtered, closed], 'only exact connected-filter and closed-port ICMP quotes; suppressed inputs stay silent')
         filter_sources = [v['number'] for v in incoming if v['ip'] == filtered]
         closed_sources = [v['number'] for v in incoming if v['ip'] == closed]
         require(len(filter_sources) == len(closed_sources) == 1, 'exact original filtered and closed-port inputs exist')

@@ -5,6 +5,9 @@ import hashlib
 import json
 import os
 import subprocess
+import re
+import shlex
+import sys
 import tempfile
 import unittest
 
@@ -149,6 +152,98 @@ class PackageRestore(unittest.TestCase):
         result, calls = self.run_helper(mode='prepare', UPDATE_STATUS='42')
         self.assertEqual(result.returncode, 42)
         self.assertFalse(any(row[0] == 'apt-get' and 'install' in row for row in calls))
+
+
+class LocalArchiveInstall(unittest.TestCase):
+    def test_complete_bundle_installs_without_repository_refresh(self):
+        if os.geteuid() != 0:
+            result = subprocess.run(['sudo', '-n', sys.executable, str(Path(__file__).resolve()),
+                                     'LocalArchiveInstall.test_complete_bundle_installs_without_repository_refresh'],
+                                    capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return
+        host_status = Path('/var/lib/dpkg/status')
+        before = hashlib.sha256(host_status.read_bytes()).hexdigest()
+        try:
+            with tempfile.TemporaryDirectory(prefix='axiom64 apt local-') as temporary:
+                work = Path(temporary)
+                work.chmod(0o755)
+                sandbox = work / 'root'
+                database = sandbox / 'var/lib/dpkg'
+                database.mkdir(parents=True)
+                (database / 'status').write_bytes(b'')
+                self.assertTrue(sandbox.resolve().is_relative_to(work.resolve()))
+                bundle = work / 'build/ci-packages'
+                bundle.mkdir(parents=True)
+                tools = shlex.split(re.search(r'^tools=\((.*?)\)', HELPER.read_text(), re.M | re.S)[1])
+                originals = {}
+                for tool in tools:
+                    package = work / 'packages' / tool
+                    (package / 'DEBIAN').mkdir(parents=True)
+                    (package / 'DEBIAN/control').write_text(
+                        'Package: ' + tool + '\nVersion: 1.0\nArchitecture: all\nMaintainer: Axiom64\n'
+                        'Description: Isolated CI archive acquisition fixture\n')
+                    installed = package / 'usr/share/axiom64'
+                    installed.mkdir(parents=True)
+                    (installed / tool).write_bytes(('owned ' + tool + ' bytes\n').encode())
+                    archive = bundle / (tool + '_1.0_all.deb')
+                    subprocess.run(['dpkg-deb', '--build', '--root-owner-group', str(package), str(archive)],
+                                   check=True, capture_output=True)
+                    originals[archive.name] = hashlib.sha256(archive.read_bytes()).hexdigest()
+                (bundle / 'SHA256SUMS').write_text(''.join(
+                    fingerprint + '  build/ci-packages/' + name + '\n' for name, fingerprint in originals.items()))
+                state = work / 'apt'
+                (state / 'parts').mkdir(parents=True)
+                (state / 'lists/partial').mkdir(parents=True)
+                (state / 'archives/partial').mkdir(parents=True)
+                (state / 'main.conf').write_text('')
+                (state / 'sources.list').write_text('')
+                config = state / 'apt.conf'
+                values = {'Dir::Etc::main': state / 'main.conf', 'Dir::Etc::parts': state / 'parts',
+                          'Dir::Etc::sourcelist': state / 'sources.list', 'Dir::Etc::sourceparts': state / 'parts',
+                          'Dir::State::status': database / 'status', 'Dir::State::lists': state / 'lists',
+                          'Dir::Cache::archives': state / 'archives', 'Dir::Cache::pkgcache': state / 'pkgcache',
+                          'Dir::Cache::srcpkgcache': state / 'srcpkgcache', 'Dir::Log': state}
+                config.write_text(''.join(name + ' "' + str(value) + '";\n' for name, value in values.items()) +
+                                  'DPkg::Options:: "--root=' + str(sandbox) + '";\n')
+                binaries = work / 'bin'
+                binaries.mkdir()
+                wrapper = """#!/usr/bin/env python3
+import json,os,pathlib,subprocess,sys
+name=pathlib.Path(sys.argv[0]).name
+args=sys.argv[1:]
+with open(os.environ['TOOL_CALLS'],'a') as output:output.write(json.dumps([name,*args])+'\\n')
+if name=='sudo':
+ assert args[0]=='-n'
+ sys.exit(subprocess.call(args[1:]))
+if name=='apt-get':os.execv('/usr/bin/apt-get',['apt-get',*args])
+if name=='dpkg-query':os.execv('/usr/bin/dpkg-query',['dpkg-query','--admindir='+os.environ['FIXTURE_DPKG'],*args])
+if name=='lsb_release':print('Fixture' if '-is' in args else 'noble')
+"""
+                for name in ('sudo', 'apt-get', 'dpkg-query', 'lsb_release'):
+                    executable = binaries / name
+                    executable.write_text(wrapper)
+                    executable.chmod(0o755)
+                calls = work / 'calls.jsonl'
+                environment = dict(os.environ, PATH=str(binaries) + os.pathsep + os.environ['PATH'],
+                                   APT_CONFIG=str(config), RUNNER_TEMP=str(work / 'runner'),
+                                   FIXTURE_DPKG=str(database), TOOL_CALLS=str(calls))
+                result = subprocess.run(['bash', str(HELPER), 'restore'], cwd=work,
+                                        env=environment, capture_output=True, text=True, timeout=45)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                observed = [json.loads(line) for line in calls.read_text().splitlines()]
+                apt = [row for row in observed if row[0] == 'apt-get']
+                self.assertEqual(len(apt), 1)
+                self.assertIn('--no-download', apt[0])
+                self.assertIn('Dir::Cache::archives=' + str(bundle), apt[0])
+                self.assertFalse(any(row[0] == 'lsb_release' for row in observed))
+                for tool in tools:
+                    self.assertEqual((sandbox / 'usr/share/axiom64' / tool).read_bytes(),
+                                     ('owned ' + tool + ' bytes\n').encode())
+                self.assertEqual({name: hashlib.sha256((bundle / name).read_bytes()).hexdigest()
+                                  for name in originals}, originals)
+        finally:
+            self.assertEqual(hashlib.sha256(host_status.read_bytes()).hexdigest(), before)
 
 
 if __name__ == '__main__':

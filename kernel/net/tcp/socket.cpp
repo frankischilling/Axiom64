@@ -849,7 +849,8 @@ bool tcp_option(InetSocket* socket, unsigned option, int& value, bool set, int& 
 }
 
 static void receive(unsigned index, const tcp::Address& source, const tcp::Address& destination,
-                    const tcp::Segment& segment, const ip4::ReceivedOptions* received = nullptr) {
+                    const tcp::Segment& segment, const ip4::ReceivedOptions* received = nullptr,
+                    uint8_t traffic_class = 0) {
     uint64_t now = now_ms();
     expire_time_wait(now);
     for (auto& record : time_waits)
@@ -983,6 +984,7 @@ static void receive(unsigned index, const tcp::Address& source, const tcp::Addre
         reply_index = index;
     if (!received || received->return_valid()) {
         HeaderOptions options;
+        options.tos = traffic_class & 0xfc;
         if (received)
             options.ipv4_options = received->reply();
         emit(nullptr, reply_index, destination, source, reset, options);
@@ -990,11 +992,11 @@ static void receive(unsigned index, const tcp::Address& source, const tcp::Addre
 }
 
 void tcp_receive(unsigned index, uint32_t source, uint32_t destination, const void* data,
-                 size_t size, const ip4::ReceivedOptions* options) {
+                 size_t size, const ip4::ReceivedOptions* options, uint8_t traffic_class) {
     tcp::Segment segment;
     if (tcp::decode(source, destination, data, size, segment))
         receive(index, tcp::Address::ipv4(source), tcp::Address::ipv4(destination), segment,
-                options);
+                options, traffic_class);
 }
 
 void tcp_receive(unsigned index, const ip6::Address& source, const ip6::Address& destination,

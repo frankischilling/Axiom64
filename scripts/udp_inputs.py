@@ -16,7 +16,8 @@ SOURCES = ('Makefile', 'dependencies.json', 'ports.lock.json', 'sources.lock.jso
            'scripts/network_fault.py', 'scripts/qmp.py', 'scripts/udp_test.py',
            'scripts/udp_peer.py', 'scripts/udp_matrix.py', 'scripts/udp_capture.py',
            'scripts/udp_inputs.py', 'scripts/tests/udp_capture_test.py',
-           'scripts/tests/udp_capture_fixture_test.py', 'scripts/tests/fixtures/udp-wire/manifest.json')
+           'scripts/tests/udp_capture_fixture_test.py', 'scripts/tests/fixtures/udp-wire/manifest.json',
+           'scripts/tests/udp_kernel_error_test.py', 'scripts/tests/fixtures/udp-kernel-error.json')
 PRODUCTS = ('image.iso', 'kernel.elf', 'client.elf', 'client.inputs.json', 'client.c',
             'net-test.sh', 'init', 'busybox', 'musl-manifest.json', 'musl-COPYRIGHT',
             'libc.a', 'compiler.specs')

@@ -371,9 +371,11 @@ class Peer:
             lifetime = packet[24:26] == b'LR'
             target = b'\xff' * 4 if broadcast else self.ip[:3] + b'\x03' if pressure else self.ip if errors or reply or unreachable or lifetime else (
                 self.targets[self.echo] if self.echo < len(self.targets) else None)
-            if (frame[:6] != (b'\xff' * 6 if broadcast else self.mac) or packet[0] != 0x45 or packet[1] != 0 or
+            expected_tos = 0xc0 if unreachable else 0
+            expected_flags = b'\0\0' if reply or unreachable else b'\x40\0'
+            if (frame[:6] != (b'\xff' * 6 if broadcast else self.mac) or packet[0] != 0x45 or packet[1] != expected_tos or
                     length != len(packet) or checksum(packet[:20]) or packet[8] != 64 or
-                    packet[9] != 1 or packet[6:8] != b'\x40\0' or packet[16:20] != target):
+                    packet[9] != 1 or packet[6:8] != expected_flags or packet[16:20] != target):
                 raise RuntimeError('IPv4 header, route, length, TTL, or checksum differs')
             payload = packet[20:]
             if unreachable:

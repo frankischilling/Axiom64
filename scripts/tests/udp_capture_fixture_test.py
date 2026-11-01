@@ -31,7 +31,8 @@ class ActualUDP(unittest.TestCase):
                 self.assertEqual((len(data), hashlib.sha256(data).hexdigest()),
                                  (value['bytes'], value['sha256']))
             for lane in range(2):
-                result = audit_capture(folder / f'lane{lane}.pcap', lane, case['fault'])
+                result = audit_capture(folder / f'lane{lane}.pcap', lane, case['fault'],
+                                       route_retirement=case.get('route_retirement', False))
                 self.assertTrue(result['passed'])
                 self.assertEqual(result['outgoing_datagrams'], (0 if lane == 0 else 1) if case['fault'] else 103)
                 self.assertEqual(result['incoming_frames'], (0 if lane == 0 else 1) if case['fault'] else 97)
@@ -57,17 +58,17 @@ class ActualUDP(unittest.TestCase):
                             candidate = temporary / 'candidate.pcap'
                             candidate.write_bytes(data)
                             with self.assertRaises(ValueError) as rejection:
-                                audit_capture(candidate, lane, fault)
+                                audit_capture(candidate, lane, fault, route_retirement=not fault)
                             reason = str(rejection.exception)
                             if expected is not None:
                                 self.assertIn(expected, reason)
                             name = ('fault' if fault else 'normal') + f'-lane{lane}-' + label
-                            value = dict(lane=lane, fault=fault, expected=reason,
+                            value = dict(lane=lane, fault=fault, route_retirement=not fault, expected=reason,
                                          sha256=hashlib.sha256(data).hexdigest())
                             saved.writestr(name + '/capture.pcap', data)
                             saved.writestr(name + '/case.json', json.dumps(value) + '\n')
                             controls.append(name)
-            self.assertEqual(len(controls), 244)
+            self.assertEqual(len(controls), 260)
             fresh = temporary / 'fresh'
             with zipfile.ZipFile(archive) as saved:
                 self.assertIsNone(saved.testzip())
@@ -78,7 +79,8 @@ class ActualUDP(unittest.TestCase):
                 candidate = folder / 'capture.pcap'
                 self.assertEqual(hashlib.sha256(candidate.read_bytes()).hexdigest(), value['sha256'])
                 with self.assertRaises(ValueError) as rejection:
-                    audit_capture(candidate, value['lane'], value['fault'])
+                    audit_capture(candidate, value['lane'], value['fault'],
+                                  route_retirement=value['route_retirement'])
                 self.assertEqual(str(rejection.exception), value['expected'])
         self.assertTrue(all(hashlib.sha256(Path(name).read_bytes()).hexdigest() == value
                             for name, value in originals.items()))

@@ -101,7 +101,7 @@ def image(directory, archive, disk_root=False):
     with (directory / 'build.log').open('wb') as log:
         subprocess.run(command, cwd=ROOT, check=True, stdout=log, stderr=subprocess.STDOUT)
     iso = directory / 'image.iso'
-    shutil.copyfile(ROOT / 'build' / name, iso)
+    shutil.move(ROOT / 'build' / name, iso)
     shutil.copyfile(ROOT / 'build/axiom64.elf', directory / 'kernel.elf')
     (directory / 'inputs.json').write_text(json.dumps(dict(command=command,
         image=fingerprint(iso), kernel=fingerprint(directory / 'kernel.elf'),

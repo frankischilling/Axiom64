@@ -11,6 +11,10 @@
 
 #include "net/ipv6/icmp.hpp"
 
+static const uint8_t payload[8] = {8, 0, 0xf7, 0xff, 0, 0, 0, 0};
+static uint32_t expected_error_source, expected_error_peer;
+static unsigned local_errors;
+
 namespace ax {
 void tcp6_icmp_error(unsigned, const ip6::ErrorQuote&) {
 }
@@ -76,8 +80,20 @@ void inet_failed(InetSocket*, int, unsigned) {
     assert(false && "output fixture has no socket error recipient");
 }
 
-bool inet_deliver(const Ipv4ReceiveMetadata&, const void*, size_t) {
-    assert(false && "ARP fixture must not deliver transport input");
+bool inet_deliver(const Ipv4ReceiveMetadata& metadata, const void* bytes, size_t length) {
+    assert(expected_error_source && metadata.index == 2 && metadata.protocol == 1 &&
+           metadata.source == expected_error_source &&
+           metadata.destination == expected_error_source);
+    auto ip = static_cast<const uint8_t*>(bytes);
+    assert(length == 56 && ip[0] == 0x45 && ip[1] == 0xc0 && ip[8] == 64 &&
+           !ip4::checksum(ip, 20) && !ip4::checksum(ip + 20, length - 20));
+    assert(ip[20] == 3 && ip[21] == 1);
+    auto quoted = ip + 28;
+    assert(quoted[0] == 0x45 && ip4::get16(quoted + 2) == 28 && quoted[8] == 64 && quoted[9] == 1 &&
+           ip4::get32(quoted + 12) == expected_error_source &&
+           ip4::get32(quoted + 16) == expected_error_peer && !ip4::checksum(quoted, 20) &&
+           !memcmp(quoted + 20, payload, sizeof(payload)));
+    local_errors++;
     return false;
 }
 
@@ -93,7 +109,8 @@ UdpInput udp_receive(const Ipv4ReceiveMetadata&, bool, const void*, size_t) {
 void tcp_poll() {
 }
 
-void tcp_receive(unsigned, uint32_t, uint32_t, const void*, size_t, const ip4::ReceivedOptions*) {
+void tcp_receive(unsigned, uint32_t, uint32_t, const void*, size_t, const ip4::ReceivedOptions*,
+                 uint8_t) {
     assert(false && "ARP fixture must not receive TCP");
 }
 
@@ -114,7 +131,6 @@ struct Captured {
 
 static std::vector<Captured> captured;
 static const uint8_t peer_mac[6] = {2, 0x55, 0x4e, 0x43, 0, 1};
-static const uint8_t payload[8] = {8, 0, 0xf7, 0xff, 0, 0, 0, 0};
 
 static void poll(NetAdapter&) {
 }
@@ -212,13 +228,18 @@ static void pending_reply_ownership(uint32_t source) {
     datagram(before + 1, peer + 1, source);
 
     // A matching reply after output expiry cannot prime a later accepted packet.
+    unsigned errors_before = local_errors;
     before = captured.size();
     queue(peer + 2);
     ipv4_poll();
     request(before, peer + 2, source);
+    expected_error_source = source;
+    expected_error_peer = peer + 2;
     ticks += 400;
     receive(1, arp(1, peer + 2, source));
     ipv4_poll();
+    assert(local_errors == errors_before + (source != 0));
+    expected_error_source = expected_error_peer = 0;
     assert(captured.size() == before + 1);
     queue(peer + 2);
     receive(1, arp(1, peer + 2, source));

@@ -2,10 +2,10 @@
 BdsDxe: starting Boot0001 "UEFI QEMU DVD-ROM QM00003 " from PciRoot(0x0)/Pci(0x1,0x1)/Ata(Secondary,Master,0x0)
 [01;01H[01;01HAxiom64 x86-64
 Firmware: UEFI
-Memory: 1984 MiB available, isolated four-level paging
+Memory: 1980 MiB available, isolated four-level paging
 CPU: GDT, TSS, IDT, SYSCALL and PIT initialized
 Clock: HPET 64-bit counter, 100 Hz accounting
-Clock: RTC UTC seconds=1792902666
+Clock: RTC UTC seconds=1793496588
 RANDOM_SOURCE rdseed=1 trust_cpu=1
 PCI: 7 functions discovered
 RANDOM_READY source=rdseed bits=256
@@ -48,6 +48,7 @@ UDP_UNREACHABLE_PASS index=1
 UDP_LINK_DOWN index=1
 UDP_LINK_UP index=1
 UDP_ADMIN_DOWN index=1 flags=1002
+UDP_ADMIN_ROUTE index=1 before=552 after=1500
 UDP_LINK_PASS index=1
 UDP_WIRE_PASS index=1
 UDP_ZERO_CHECKSUM_PASS index=2
@@ -62,6 +63,7 @@ UDP_UNREACHABLE_PASS index=2
 UDP_LINK_DOWN index=2
 UDP_LINK_UP index=2
 UDP_ADMIN_DOWN index=2 flags=1002
+UDP_ADMIN_ROUTE index=2 before=552 after=1500
 UDP_LINK_PASS index=2
 UDP_WIRE_PASS index=2
 UDP_TESTS_PASS

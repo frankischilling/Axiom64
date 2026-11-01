@@ -1,0 +1,466 @@
+{
+  "schema": 1,
+  "references": {
+    "alias": {
+      "kernel_release": "6.6.87.2-microsoft-standard-WSL2",
+      "program_sha256": "ba9fefbcd24e457436a7e66e1358e310b330abc898329d1016bd7da7f477dcd4",
+      "client_source_sha256": "f04ce8cae2f5352cc2d57fb39eab44adbba6c5faa54693c734ed849f0a681764",
+      "source_zip_sha256": "e89ec0f92d2ec7146b324fd597f5599e695ac6c76462d5fb80b6822f7f4146a6"
+    },
+    "unanswered": {
+      "kernel_release": "6.6.87.2-microsoft-standard-WSL2",
+      "program_sha256": "ba9fefbcd24e457436a7e66e1358e310b330abc898329d1016bd7da7f477dcd4",
+      "client_source_sha256": "f04ce8cae2f5352cc2d57fb39eab44adbba6c5faa54693c734ed849f0a681764",
+      "source_zip_sha256": "42b8a4d52347d30c8aa7886c9fe19c21fc7b8dea3232793dc19dbfeb2242dd02"
+    },
+    "delayed": {
+      "kernel_release": "6.6.87.2-microsoft-standard-WSL2",
+      "program_sha256": "8f7aac5d7098c43fd8c443f2ca772fc874589704d7e5d14bd03266544d38871a",
+      "client_source_sha256": "f2dde0c20b54f881fda2af3aba835c3df90e6aa952a36ea3c76a44b9e2e44af5",
+      "source_zip_sha256": "a1e8b5cd3169c138cd368e05806addff00d86991563d585a79100e05a935b224"
+    },
+    "address-change": {
+      "kernel_release": "6.6.87.2-microsoft-standard-WSL2",
+      "program_sha256": "c20a182a994b87996334661584536e57672c6ee5f784f09612ac603da4d0072d",
+      "client_source_sha256": "13c9e66d7c1c6732da5bfa6a3d74688e221ccc41e94cd3f500fa929d90a212d2",
+      "source_zip_sha256": "63e19aca83b31d8a53d83e77a383718dd862bd2470a7d72f3a2c7fcc06840fde",
+      "native_config_sha256": "bf98e8db30bd02405822e0b45e91266747c6fb30875c27fa98006b2ba3f85e59",
+      "description": "Actual mask and broadcast ioctl replacement cancels a pending source-routed packet while the queried source address remains assigned."
+    }
+  },
+  "cases": [
+    {
+      "name": "held-egress-alias-survives",
+      "input": "02000000000102000000010108004728003474260000400166670a0000020a0000018307040a0100020008004b9874260001000102030405060708090a0b0c0d0e0f",
+      "transmitted": [
+        "02000000000102000000010108004728003474260000400166670a0000020a0000018307040a0100020008004b9874260001000102030405060708090a0b0c0d0e0f"
+      ],
+      "policy": {},
+      "kind": "held",
+      "case": 0,
+      "action": "queue",
+      "clocked": false,
+      "raw_inputs": null,
+      "timed": false,
+      "suppress_arp": false,
+      "prepare_alias": true,
+      "complete_route": false,
+      "observation_seconds": 5,
+      "reference": "alias",
+      "mutation": "egress-address",
+      "arp_request": "ffffffffffff020000000002080600010800060400010200000000020a0100010000000000000a010002",
+      "expected": {
+        "output": [
+          {
+            "index": 1,
+            "ethernet": "0200000001020200000000020800",
+            "ip": "47280034742600003f0164650a0000020a0100028307080a0100010008004b9874260001000102030405060708090a0b0c0d0e0f"
+          }
+        ],
+        "raw": []
+      }
+    },
+    {
+      "name": "arp-failure-pending-loose",
+      "input": "02000000000102000000010108004728003474050000400166880a0000020a0000018307040a0100020008004bb974050001000102030405060708090a0b0c0d0e0f",
+      "transmitted": [
+        "02000000000102000000010108004728003474050000400166880a0000020a0000018307040a0100020008004bb974050001000102030405060708090a0b0c0d0e0f"
+      ],
+      "policy": {},
+      "kind": "packet",
+      "case": 1,
+      "action": "queue",
+      "clocked": false,
+      "raw_inputs": null,
+      "timed": false,
+      "suppress_arp": true,
+      "prepare_alias": false,
+      "complete_route": false,
+      "observation_seconds": 5,
+      "reference": "unanswered",
+      "expected": {
+        "output": [],
+        "raw": []
+      }
+    },
+    {
+      "name": "arp-failure-pending-strict",
+      "input": "02000000000102000000010108004728003474060000400160870a0000020a0000018907040a0100020008004bb874060001000102030405060708090a0b0c0d0e0f",
+      "transmitted": [
+        "02000000000102000000010108004728003474060000400160870a0000020a0000018907040a0100020008004bb874060001000102030405060708090a0b0c0d0e0f"
+      ],
+      "policy": {},
+      "kind": "packet",
+      "case": 2,
+      "action": "queue",
+      "clocked": false,
+      "raw_inputs": null,
+      "timed": false,
+      "suppress_arp": true,
+      "prepare_alias": false,
+      "complete_route": false,
+      "observation_seconds": 5,
+      "reference": "unanswered",
+      "expected": {
+        "output": [],
+        "raw": []
+      }
+    },
+    {
+      "name": "arp-failure-ordinary-transit",
+      "input": "02000000000102000000010108004528002c7411000040fdf1970a0000020a01000208004ead71110001000102030405060708090a0b0c0d0e0f",
+      "transmitted": [
+        "02000000000102000000010108004528002c7411000040fdf1970a0000020a01000208004ead71110001000102030405060708090a0b0c0d0e0f"
+      ],
+      "policy": {
+        "protocol": 253
+      },
+      "kind": "packet",
+      "case": 3,
+      "action": "queue",
+      "clocked": false,
+      "raw_inputs": null,
+      "timed": false,
+      "suppress_arp": true,
+      "prepare_alias": false,
+      "complete_route": false,
+      "observation_seconds": 5,
+      "reference": "unanswered",
+      "expected": {
+        "output": [
+          {
+            "index": 0,
+            "ethernet": "0200000001010200000000010800",
+            "ip": "45c8004800000000400100000a0000010a00000203010000000000004528002c741100003ffdf2970a0000020a01000208004ead71110001000102030405060708090a0b0c0d0e0f"
+          }
+        ],
+        "raw": []
+      }
+    },
+    {
+      "name": "arp-failure-complete-loose",
+      "input": "020000000001020000000101080047280034740200004001628b0a0000020a0000018307080a0100020008004bbc74020001000102030405060708090a0b0c0d0e0f",
+      "transmitted": [
+        "020000000001020000000101080047280034740200004001628b0a0000020a0000018307080a0100020008004bbc74020001000102030405060708090a0b0c0d0e0f"
+      ],
+      "policy": {},
+      "kind": "packet",
+      "case": 4,
+      "action": "queue",
+      "clocked": false,
+      "raw_inputs": null,
+      "timed": false,
+      "suppress_arp": true,
+      "prepare_alias": false,
+      "complete_route": true,
+      "observation_seconds": 5,
+      "reference": "unanswered",
+      "expected": {
+        "output": [],
+        "raw": [
+          "47280034740200004001628b0a0000020a0000018307080a0100020008004bbc74020001000102030405060708090a0b0c0d0e0f",
+          "45c8005000000000400100000a0000010a00000103010000000000004728003400000000400100000a0000010a0100028307040a00000200000053bc74020001000102030405060708090a0b0c0d0e0f"
+        ]
+      }
+    },
+    {
+      "name": "arp-failure-loose-transit",
+      "input": "020000000001020000000101080047280034740a0000400167810a0000020a0100028307040a0000020008004bb4740a0001000102030405060708090a0b0c0d0e0f",
+      "transmitted": [
+        "020000000001020000000101080047280034740a0000400167810a0000020a0100028307040a0000020008004bb4740a0001000102030405060708090a0b0c0d0e0f"
+      ],
+      "policy": {},
+      "kind": "packet",
+      "case": 5,
+      "action": "queue",
+      "clocked": false,
+      "raw_inputs": null,
+      "timed": false,
+      "suppress_arp": true,
+      "prepare_alias": false,
+      "complete_route": false,
+      "observation_seconds": 5,
+      "reference": "unanswered",
+      "expected": {
+        "output": [
+          {
+            "index": 0,
+            "ethernet": "0200000001010200000000010800",
+            "ip": "45c8005000000000400100000a0000010a000002030100000000000047280034740a00003f0168810a0000020a0100028307040a0000020008004bb4740a0001000102030405060708090a0b0c0d0e0f"
+          }
+        ],
+        "raw": []
+      }
+    },
+    {
+      "name": "arp-failure-record-route-loose-transit",
+      "input": "02000000000102000000010108004b2800447905000040014f6b0a0000020a0100028307040a000002070f040000000000000000000000000000080046b979050001000102030405060708090a0b0c0d0e0f",
+      "transmitted": [
+        "02000000000102000000010108004b2800447905000040014f6b0a0000020a0100028307040a000002070f040000000000000000000000000000080046b979050001000102030405060708090a0b0c0d0e0f"
+      ],
+      "policy": {},
+      "kind": "packet",
+      "case": 6,
+      "action": "queue",
+      "clocked": false,
+      "raw_inputs": null,
+      "timed": false,
+      "suppress_arp": true,
+      "prepare_alias": false,
+      "complete_route": false,
+      "observation_seconds": 5,
+      "reference": "unanswered",
+      "expected": {
+        "output": [
+          {
+            "index": 0,
+            "ethernet": "0200000001010200000000010800",
+            "ip": "49c8007000000000400100000a0000010a000002070f100a0100010a0000010a0000010003010000000000004b280044790500003f0146650a0000020a0100028307040a000002070f0c0a0100010a000001000000000000080046b979050001000102030405060708090a0b0c0d0e0f"
+          }
+        ],
+        "raw": []
+      }
+    },
+    {
+      "name": "arp-failure-record-route-complete-loose",
+      "input": "02000000000102000000010108004b2800447906000040014a6c0a0000020a0000018307080a010002070f040000000000000000000000000000080046b879060001000102030405060708090a0b0c0d0e0f",
+      "transmitted": [
+        "02000000000102000000010108004b2800447906000040014a6c0a0000020a0000018307080a010002070f040000000000000000000000000000080046b879060001000102030405060708090a0b0c0d0e0f"
+      ],
+      "policy": {},
+      "kind": "packet",
+      "case": 7,
+      "action": "queue",
+      "clocked": false,
+      "raw_inputs": null,
+      "timed": false,
+      "suppress_arp": true,
+      "prepare_alias": false,
+      "complete_route": true,
+      "observation_seconds": 5,
+      "reference": "unanswered",
+      "expected": {
+        "output": [],
+        "raw": [
+          "4b2800447906000040014a6c0a0000020a0000018307080a010002070f080a00000100000000000000000000080046b879060001000102030405060708090a0b0c0d0e0f",
+          "49c8007000000000400100000a0000010a000001070f100a0000010a0000010a0000010003010000000000004b28004400000000400100000a0000010a010002070f100a0000010a0000010a0000018307040a000002000000004eb879060001000102030405060708090a0b0c0d0e0f"
+        ]
+      }
+    },
+    {
+      "name": "arp-failure-timestamp-loose-transit",
+      "input": "02000000000102000000010108004b2800447a00000040014d320a0000020a0100028307040a0000024410050000000000000000000000000000080045be7a000001000102030405060708090a0b0c0d0e0f",
+      "transmitted": [
+        "02000000000102000000010108004b2800447a00000040014d320a0000020a0100028307040a0000024410050000000000000000000000000000080045be7a000001000102030405060708090a0b0c0d0e0f"
+      ],
+      "policy": {},
+      "kind": "packet",
+      "case": 8,
+      "action": "queue",
+      "clocked": false,
+      "raw_inputs": null,
+      "timed": true,
+      "suppress_arp": true,
+      "prepare_alias": false,
+      "complete_route": false,
+      "observation_seconds": 5,
+      "reference": "delayed",
+      "expected": {
+        "output": [
+          {
+            "index": 0,
+            "ethernet": "0200000001010200000000010800",
+            "ip": "49c8007000000000400100000a0000010a0000024410110000000000000000000000000003010000000000004b2800447a0000003f0100000a0000020a0100028307040a00000244100d0000000000000000000000000000080045be7a000001000102030405060708090a0b0c0d0e0f"
+          }
+        ],
+        "raw": []
+      }
+    },
+    {
+      "name": "arp-failure-timestamp-complete-loose",
+      "input": "02000000000102000000010108004b2800447a010000400148330a0000020a0000018307080a0100024410050000000000000000000000000000080045bd7a010001000102030405060708090a0b0c0d0e0f",
+      "transmitted": [
+        "02000000000102000000010108004b2800447a010000400148330a0000020a0000018307080a0100024410050000000000000000000000000000080045bd7a010001000102030405060708090a0b0c0d0e0f"
+      ],
+      "policy": {},
+      "kind": "packet",
+      "case": 9,
+      "action": "queue",
+      "clocked": false,
+      "raw_inputs": null,
+      "timed": true,
+      "suppress_arp": true,
+      "prepare_alias": false,
+      "complete_route": true,
+      "observation_seconds": 5,
+      "reference": "delayed",
+      "expected": {
+        "output": [],
+        "raw": [
+          "4b2800447a010000400100000a0000020a0000018307080a0100024410090000000000000000000000000000080045bd7a010001000102030405060708090a0b0c0d0e0f",
+          "49c8007000000000400100000a0000010a0000014410111000000000000000000000000003010000000000004b28004400000000400100000a0000010a010002441011000000000000000000000000008307040a0000020000004dbd7a010001000102030405060708090a0b0c0d0e0f"
+        ]
+      }
+    },
+    {
+      "name": "arp-failure-address-timestamp-loose-transit",
+      "input": "02000000000102000000010108004e2800507a02000040013d240a0000020a0100028307040a000002441c050100000000000000000000000000000000000000000000000000080045bc7a020001000102030405060708090a0b0c0d0e0f",
+      "transmitted": [
+        "02000000000102000000010108004e2800507a02000040013d240a0000020a0100028307040a000002441c050100000000000000000000000000000000000000000000000000080045bc7a020001000102030405060708090a0b0c0d0e0f"
+      ],
+      "policy": {},
+      "kind": "packet",
+      "case": 10,
+      "action": "queue",
+      "clocked": false,
+      "raw_inputs": null,
+      "timed": true,
+      "suppress_arp": true,
+      "prepare_alias": false,
+      "complete_route": false,
+      "observation_seconds": 5,
+      "reference": "delayed",
+      "expected": {
+        "output": [
+          {
+            "index": 0,
+            "ethernet": "0200000001010200000000010800",
+            "ip": "4cc8008800000000400100000a0000010a000002441c1d010a000001000000000a000001000000000a0000010000000003010000000000004e2800507a0200003f0100000a0000020a0100028307040a000002441c15010a000001000000000a00000100000000000000000000000000080045bc7a020001000102030405060708090a0b0c0d0e0f"
+          }
+        ],
+        "raw": []
+      }
+    },
+    {
+      "name": "arp-failure-address-timestamp-complete-loose",
+      "input": "02000000000102000000010108004e2800507a030000400138250a0000020a0000018307080a010002441c050100000000000000000000000000000000000000000000000000080045bb7a030001000102030405060708090a0b0c0d0e0f",
+      "transmitted": [
+        "02000000000102000000010108004e2800507a030000400138250a0000020a0000018307080a010002441c050100000000000000000000000000000000000000000000000000080045bb7a030001000102030405060708090a0b0c0d0e0f"
+      ],
+      "policy": {},
+      "kind": "packet",
+      "case": 11,
+      "action": "queue",
+      "clocked": false,
+      "raw_inputs": null,
+      "timed": true,
+      "suppress_arp": true,
+      "prepare_alias": false,
+      "complete_route": true,
+      "observation_seconds": 5,
+      "reference": "delayed",
+      "expected": {
+        "output": [],
+        "raw": [
+          "4e2800507a030000400100000a0000020a0000018307080a010002441c0d010a000001000000000000000000000000000000000000000000080045bb7a030001000102030405060708090a0b0c0d0e0f",
+          "4cc8008800000000400100000a0000010a000001441c1d110a000001000000000a000001000000000a0000010000000003010000000000004e28005000000000400100000a0000010a010002441c1d010a000001000000000a000001000000000a000001000000008307040a0000020000004dbb7a030001000102030405060708090a0b0c0d0e0f"
+        ]
+      }
+    },
+    {
+      "name": "arp-failure-record-overflow-loose-transit",
+      "input": "02000000000102000000010108004e2800507a04000040010a4b0a0000020a0100028307040a0000020707040000000044140501000000000000000000000000000000000000080045ba7a040001000102030405060708090a0b0c0d0e0f",
+      "transmitted": [
+        "02000000000102000000010108004e2800507a04000040010a4b0a0000020a0100028307040a0000020707040000000044140501000000000000000000000000000000000000080045ba7a040001000102030405060708090a0b0c0d0e0f"
+      ],
+      "policy": {},
+      "kind": "packet",
+      "case": 12,
+      "action": "queue",
+      "clocked": false,
+      "raw_inputs": null,
+      "timed": true,
+      "suppress_arp": true,
+      "prepare_alias": false,
+      "complete_route": false,
+      "observation_seconds": 5,
+      "reference": "delayed",
+      "expected": {
+        "output": [
+          {
+            "index": 0,
+            "ethernet": "0200000001010200000000010800",
+            "ip": "4cc8008800000000400100000a0000010a0000020707080a010001441415010a000001000000000a000001000000000003010000000000004e2800507a0400003f0100000a0000020a0100028307040a0000020707080a010001441415010a000001000000000a000001000000000000080045ba7a040001000102030405060708090a0b0c0d0e0f"
+          }
+        ],
+        "raw": []
+      }
+    },
+    {
+      "name": "arp-failure-record-overflow-complete-loose",
+      "input": "02000000000102000000010108004e2800507a0500004001054c0a0000020a0000018307080a0100020707040000000044140501000000000000000000000000000000000000080045b97a050001000102030405060708090a0b0c0d0e0f",
+      "transmitted": [
+        "02000000000102000000010108004e2800507a0500004001054c0a0000020a0000018307080a0100020707040000000044140501000000000000000000000000000000000000080045b97a050001000102030405060708090a0b0c0d0e0f"
+      ],
+      "policy": {},
+      "kind": "packet",
+      "case": 13,
+      "action": "queue",
+      "clocked": false,
+      "raw_inputs": null,
+      "timed": true,
+      "suppress_arp": true,
+      "prepare_alias": false,
+      "complete_route": true,
+      "observation_seconds": 5,
+      "reference": "delayed",
+      "expected": {
+        "output": [],
+        "raw": [
+          "4e2800507a050000400100000a0000020a0000018307080a0100020707080a00000144140d010a0000010000000000000000000000000000080045b97a050001000102030405060708090a0b0c0d0e0f",
+          "4cc8008800000000400100000a0000010a0000010707080a000001441415210a000001000000000a000001000000000003010000000000004e28005000000000400100000a0000010a0100020707080a000001441415110a000001000000000a000001000000008307040a000002000000004db97a050001000102030405060708090a0b0c0d0e0f"
+        ]
+      }
+    },
+    {
+      "name": "held-egress-mask",
+      "input": "0200000000010200000001010800472800347b00000040015f8d0a0000020a0000018307040a01000200080044be7b000001000102030405060708090a0b0c0d0e0f",
+      "transmitted": [
+        "0200000000010200000001010800472800347b00000040015f8d0a0000020a0000018307040a01000200080044be7b000001000102030405060708090a0b0c0d0e0f"
+      ],
+      "policy": {},
+      "kind": "held",
+      "mutation": "egress-mask",
+      "arp_request": "ffffffffffff020000000002080600010800060400010200000000020a0100010000000000000a010002",
+      "case": 14,
+      "action": "queue",
+      "clocked": false,
+      "raw_inputs": null,
+      "timed": false,
+      "suppress_arp": false,
+      "prepare_alias": false,
+      "complete_route": false,
+      "observation_seconds": 5,
+      "reference": "address-change",
+      "expected": {
+        "output": [],
+        "raw": []
+      }
+    },
+    {
+      "name": "held-egress-broadcast",
+      "input": "0200000000010200000001010800472800347b01000040015f8c0a0000020a0000018307040a01000200080044bd7b010001000102030405060708090a0b0c0d0e0f",
+      "transmitted": [
+        "0200000000010200000001010800472800347b01000040015f8c0a0000020a0000018307040a01000200080044bd7b010001000102030405060708090a0b0c0d0e0f"
+      ],
+      "policy": {},
+      "kind": "held",
+      "mutation": "egress-broadcast",
+      "arp_request": "ffffffffffff020000000002080600010800060400010200000000020a0100010000000000000a010002",
+      "case": 15,
+      "action": "queue",
+      "clocked": false,
+      "raw_inputs": null,
+      "timed": false,
+      "suppress_arp": false,
+      "prepare_alias": false,
+      "complete_route": false,
+      "observation_seconds": 5,
+      "reference": "address-change",
+      "expected": {
+        "output": [],
+        "raw": []
+      }
+    }
+  ]
+}

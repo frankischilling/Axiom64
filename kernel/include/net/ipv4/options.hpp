@@ -86,6 +86,19 @@ class ReceivedOptions {
         return route_ != 255;
     }
 
+    bool strict_route() const {
+        return source_route() && bytes_[route_] == 137;
+    }
+
+    // Walk only locally addressed hops. A remote hop stays unconsumed until
+    // forwarding owns an egress route. Return 1 for that hop, 0 when exhausted,
+    // or -EINVAL with parameter() identifying an incomplete address slot.
+    int route(uint32_t& destination, uint32_t& next_hop, bool (*local)(uint32_t));
+
+    // Rewrite the slot selected by route(), plus recorded egress addresses.
+    // Receive timestamps and already visited source-route slots stay unchanged.
+    void forward(uint32_t egress_source);
+
     bool return_valid() const {
         return return_valid_;
     }
@@ -97,6 +110,7 @@ class ReceivedOptions {
   private:
     uint8_t bytes_[40]{};
     uint8_t size_ = 0, parameter_ = 0, route_ = 255;
+    uint8_t pending_route_ = 255, recorded_address_ = 255, timestamp_address_ = 255;
     bool return_valid_ = true;
     Options reply_{};
 };

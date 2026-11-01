@@ -4,23 +4,30 @@
       "fault": false,
       "files": {
         "lane0.pcap": {
-          "bytes": 27690,
-          "sha256": "eaca2d6710bb0263a40260acdd1a5be6a8751a71744b7733501cbfd258024aef"
+          "bytes": 27904,
+          "sha256": "4ad4008fbaeaa716ffc5721e5b365485e10a2029b171f02e0dedfd4bb2d38a11"
         },
         "lane1.pcap": {
-          "bytes": 27690,
-          "sha256": "c9b9c0fbae1f4c2cff221e3bd90f62e48defc40bf3a84f198ba078b3194c04df"
+          "bytes": 27904,
+          "sha256": "79afa26693b8363e0815716f421d4a019c5e17da265e9db0b57194e61c82012c"
         },
         "serial.log": {
-          "bytes": 2476,
-          "sha256": "572228bea427ab1be44466062bff4f49b22f93f2c42564c46df0447ba032ef10"
+          "bytes": 2570,
+          "sha256": "01f1c7cd48d004538f2fe99be5ac78078237829a81fdf6d98a4e35ac0a9896ea"
         }
       },
-      "source_commit": "c6348f606b68ff7c305d800855992b955196e2d8",
-      "actual_kernel_sha256": "0f1670c7e39b7d9855d383b4ab6400a23e45ae7803ce6a0c830fd7a0c6a3c681",
-      "actual_client_sha256": "eea951e5ef7797fd611050c51b85a3721392074ed3060894e48840e814d7fccd",
+      "source_commit": "5ee92712e504627f1e99d74d206a3e961b65088f",
+      "actual_kernel_sha256": "9ece82b72e43835a0a23b53ae33d0c3677f542c886cdf762576289305cb1638f",
+      "actual_client_sha256": "5c73f1ec98abb79378b2ae53aecd3ae2cb8965dec595b7b91b05e3d73feb9596",
       "original_producer_passed": true,
-      "full_matrix_acceptance": false
+      "full_matrix_acceptance": false,
+      "route_retirement": true,
+      "producer": "actual retained guest image; corrected host peer; UEFI modern profile",
+      "consumer_sources": {
+        "scripts/udp_peer.py": "686e13d92fa4069102d47838b6c28517746f96e9c0629fb0ee83cc61ffd04ab1",
+        "scripts/udp_capture.py": "e57028f4afdbab73faf5c9ae9647231ca65fe30d776916c579b92229cba39433",
+        "scripts/udp_test.py": "9337dba6b6a16834988b782dff358928e8f3d81a4e7ee075b4d4555a50dc1602"
+      }
     },
     {
       "fault": true,
@@ -45,5 +52,5 @@
       "full_matrix_acceptance": false
     }
   ],
-  "source_epoch": "original complete UDP captures; reader-only regression fixtures"
+  "source_epoch": "actual normal and fault captures; each case retains its source and product identities"
 }

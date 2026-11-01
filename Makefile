@@ -936,6 +936,14 @@ test-ipv4-address-lifetimes-guest:
 	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_lifetimes.guest build/ipv4-address-lifetimes-guest --produce
 test-ipv4-address-lifetimes-native:
 	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_lifetimes.native build/ipv4-address-lifetimes-native --produce
+build/ipv4-lifetime-wire-native: userspace/tests/net/ipv4/address_lifetime_wire.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	@mkdir -p build
+	$(PYTHON) scripts/compile_uapi_client.py --compiler '$(CC)' --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $<
+build/ipv4-lifetime-wire-static build/ipv4-lifetime-wire-dynamic: userspace/tests/net/ipv4/address_lifetime_wire.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4/address_lifetime_wire.c
+.PHONY: test-ipv4-address-lifetimes-wire
+test-ipv4-address-lifetimes-wire:
+	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_lifetimes.wire_matrix build/ipv4-address-lifetimes-wire --produce
 build/ipv4-source-route-host: kernel/tests/net/ipv4_source_route.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/configuration.cpp kernel/net/ipv4/options.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(IPV4_MULTICAST_CORE) $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@

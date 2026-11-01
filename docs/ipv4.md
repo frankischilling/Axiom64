@@ -264,10 +264,24 @@ changing any clock, jump bound or lifetime interval.
 Four TCP sanitizer cases on both adapters retain copied bytes and sequence
 state while the source is absent, then deliver the exact bytes after address
 restoration. The corresponding two native diagnostic cases retain complete
-software-checksummed captures and stable clocks. They inform the pending
-transport matrix; they do not establish guest wire acceptance. Complete native
-linkage, retained transport wire and hosted acceptance remain required. This
-development slice does not complete F12 or F13.
+software-checksummed captures and stable clocks. A separate 24-case transport
+probe now covers UDP, raw IP and TCP with no survivor, an independent prefix,
+secondary cascade and promotion. An initial three-native/eight-guest campaign
+completed every client assertion. Eight guest protocol replays and the
+dynamic-musl native replay pass, each rejecting 32 damaged observations.
+Clock discontinuities and two missing final native tap receipts reject the
+complete campaign.
+
+The revised capture drains final receipts and observes actual address
+withdrawal after the original minimum wait. Linux's
+[address lifetime worker](https://github.com/gregkh/linux/blob/b5a1dc3ad4822c6edfb53429e9a3759c9b0ac2be/net/ipv4/devinet.c)
+uses delayed work; a one-second lifetime does not provide a synchronous
+withdrawal barrier. A subsequent native/guest pair passes all 24 protocol
+cases and rejects 37 damaged observations per profile. Every native packet
+reaches its independent tap with zero drops. Unmodified clock checks still
+reject both captures. Complete current-source native/linkage/firmware/transport,
+protected wire exports, artifact rejection controls and hosted acceptance
+remain required. This development slice does not complete F12 or F13.
 
 ## IPv4 and ICMP validation
 

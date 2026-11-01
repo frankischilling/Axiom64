@@ -67,6 +67,13 @@ campaigns and decodes original messages, policy calls and clock brackets.
 `native_clock.py` retains independent kernel stamp anchors before and after
 each native client without altering observed clocks or lifetime deadlines.
 
+`userspace/tests/net/ipv4/address_lifetime_wire.c` exercises actual UDP, raw-IP
+and TCP transport ownership across finite expiry and restoration.
+`wire_worker.py` owns native namespaces, QEMU processes and original captures;
+`wire_log.py` and `wire_trace.py` independently decode control, receive and
+packet records. `wire_matrix.py` retains three native and eight guest profiles
+with two shared images. `wire_controls.py` serializes damaged observations.
+
 `kernel/net/ipv4/configuration.cpp` owns global, default and interface routing
 policy values and interface generations. `kernel/fs/proc/ipv4.cpp` exposes the
 integer handlers; the shared procfs layer binds retained descriptions to their

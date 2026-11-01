@@ -30,6 +30,34 @@ This control campaign does not establish retained transport wire behavior or
 full networking acceptance. [IPv4 lifetime development](ipv4.md#finite-address-lifetime-development)
 records the current validation limits.
 
+`sudo -n make test-ipv4-address-lifetimes-wire` captures a separate 24-case
+UDP, raw-IP and TCP campaign under three native linkages and eight guest
+profiles. Every profile uses both adapters. Two workers share two immutable
+guest images and common firmware. Cases distinguish final-address loss,
+an independent surviving prefix, secondary cascade and secondary promotion.
+The peer holds datagram neighbor resolution through expiry; TCP sends copied
+bytes while its source is absent and must recover their exact contents after
+restoration. Physical guards bracket every case.
+
+The client waits at least 1.5 seconds after assigning a one-second lifetime,
+then records each address query until actual withdrawal, bounded at 2.5
+seconds. Linux performs withdrawal in delayed work. The full two-second TCP
+absence and 500 ms datagram observations follow that actual transition.
+The capture drains queued receipts after process exit, preserving the final
+independent native tap record. Native interfaces require complete software
+checksums and zero packet loss. No clock or lifetime is adjusted.
+
+`PYTHONPATH=scripts python3 -B -m ipv4_lifetimes.wire_evidence DIRECTORY`
+reopens the source, actual executable and providers or boot image, original
+control acknowledgements, inventories, receive bytes, Ethernet frames and
+single-byte barrier receipts. It reconstructs TCP bytes across segment and
+read boundaries. `python3 -B -m ipv4_lifetimes.wire_controls DIRECTORY --output OUTPUT`
+with `PYTHONPATH=scripts` serializes 37 protocol faults and four clock faults.
+Its explicit `--protocol-only` development diagnostic does not qualify clocks
+or artifacts. Local native/guest protocol checks pass; observed clock jumps
+reject timing qualification. The complete current-source matrix, protected
+wire exports, damaged-artifact checks and hosted workflow remain required.
+
 `python3 scripts/tests/account_rotation_disk_test.py -v` checks bounded host-memory device staging, disk fallback, exact copyback after success or guest failure, and retention when the evidence destination rejects copying. Rotation's small device files use this staging while the NBD backend retains its independent cache, flush and fault semantics. The original guest deadlines and native filesystem checks remain required. [VM timing](ci-vm-timing.md) records the focused host-storage comparison and remaining complete-run gates.
 
 Disposable NBD startup retains `backend-startup.json` beside each backend log.

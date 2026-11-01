@@ -59,7 +59,9 @@ case "${1:-}" in
     packages=(./"$bundle"/*.deb)
     if ((${#packages[@]})); then
       sha256sum --check "$bundle/SHA256SUMS"
-      if apt_get install -y --no-install-recommends --no-download "${packages[@]}" &&
+      # With downloads disabled, APT installs local archives from its cache path.
+      if apt_get -o "Dir::Cache::archives=$PWD/$bundle" \
+        install -y --no-install-recommends --no-download "${packages[@]}" &&
         dpkg-query -W -f='${db:Status-Status}\n' "${tools[@]}" |
           awk '$0 != "installed" {missing = 1} END {exit missing}'; then
         exit 0

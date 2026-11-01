@@ -50,7 +50,7 @@ jobs:
           python3 -B scripts/tests/tcp6_isolation_prelude_test.py -v
           python3 -B scripts/tests/tcp6_source_handshake_test.py -v
           python3 -B scripts/tests/native_icmp_budget_capture_test.py -v
-          python3 -B scripts/tests/ipv4_lifetime_paths_test.py -v
+          sudo -n python3 -B scripts/tests/ipv4_lifetime_paths_test.py -v
           python3 -B scripts/tests/manager_link_startup_test.py -v
           python3 -B scripts/tests/network_window_test.py -v
           python3 -B scripts/tests/ipv6_owner_pair_test.py -v

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import platform
 import selectors
+import signal
 import shutil
 import socket
 import struct
@@ -324,6 +325,9 @@ def main():
     parser.add_argument('--parent-namespace', type=int)
     parser.add_argument('--shared', type=Path)
     args = parser.parse_args()
+    def interrupted(signum, frame):
+        raise KeyboardInterrupt('lifetime wire capture interrupted')
+    signal.signal(signal.SIGTERM, interrupted)
     print(json.dumps(run(args.directory, args.mode, args.profile, args.firmware, args.transport,
                          args.parent_namespace, args.shared)), flush=True)
 

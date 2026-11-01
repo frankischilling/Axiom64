@@ -45,7 +45,7 @@ def ipv4(frame):
     length = int.from_bytes(packet[2:4], 'big')
     header = (packet[0] & 15) * 4
     require(packet[0] >> 4 == 4 and 20 <= header <= 60 and header <= length <= len(packet) and
-            checksum(packet[:header]) == 0 and not int.from_bytes(packet[6:8], 'big') & 0x3fff,
+            checksum(packet[:header]) == 0 and packet[8] > 0 and not int.from_bytes(packet[6:8], 'big') & 0xbfff,
             'complete unfragmented IPv4 packet and header checksum')
     packet = packet[:length]
     source, destination = struct.unpack_from('!II', packet, 12)

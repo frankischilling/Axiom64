@@ -52,11 +52,49 @@ reopens the source, actual executable and providers or boot image, original
 control acknowledgements, inventories, receive bytes, Ethernet frames and
 single-byte barrier receipts. It reconstructs TCP bytes across segment and
 read boundaries. `python3 -B -m ipv4_lifetimes.wire_controls DIRECTORY --output OUTPUT`
-with `PYTHONPATH=scripts` serializes 37 protocol faults and four clock faults.
+with `PYTHONPATH=scripts` serializes 39 protocol faults and four clock faults.
 Its explicit `--protocol-only` development diagnostic does not qualify clocks
 or artifacts. Local native/guest protocol checks pass; observed clock jumps
 reject timing qualification. The complete current-source matrix, protected
 wire exports, damaged-artifact checks and hosted workflow remain required.
+
+`sudo -n make test-ipv4-address-lifetimes` runs the complete address-control,
+wire and protected-reader cohort. CI runs it inside the existing IPv4
+source-filter job, retaining that job's deadline and every existing suite.
+All three native and eight guest address-control profiles must pass alongside
+the eleven wire profiles. Independent producers still finish when another
+producer fails. Original captures and failed process logs remain available.
+
+The final export reopens all 22 profiles as root and actual UID 65534, with
+no supplementary groups for the ordinary reader. It checks 473 protocol/clock
+faults, 264 address-control faults and 51 artifact faults per identity.
+Native control faults use the independently measured stamp epoch. The
+35 wire artifact faults repair outer hashes to exercise inner source,
+compiler, executable, provider, namespace, kernel, image, firmware, device,
+process and alias checks. Compiler records must match the pinned UAPI package,
+complete shared header inventory and exact include/target arguments.
+Each published fault is reopened and rejected again.
+
+For a previously captured complete cohort, invoke
+`ipv4_lifetimes.wire_protected WIRE_DIRECTORY EXPORT_DIRECTORY --native-controls NATIVE_DIRECTORY --guest-controls GUEST_DIRECTORY`
+with `sudo -n env PYTHONPATH=scripts python3 -B -m`. The export directory must
+be a fresh `/var/tmp/axiom-ipv4-lifetime-wire-*` directory. The CI coordinator
+retains it under `build/ipv4-address-lifetimes-audit/wire` for publication.
+Reopen that directory with `PYTHONPATH=scripts python3 -B -m ipv4_lifetimes.wire_protected DIRECTORY`.
+
+Producer and reader source archives remain separate. Reader-only updates
+may replay retained captures; runtime and build inputs must remain identical.
+The explicit `--inspect-rejected` diagnostic retains failed clock results
+while checking artifact readability. It cannot satisfy the normal protected
+qualification gate. The new publication path remains under qualification;
+local clock failures and full current-revision hosted acceptance remain open.
+
+The latest local matrix completes all 264 transport cases across eleven
+profiles. Artifact and protocol readers pass; every profile still fails its
+original clock check. Root and UID 65534 each reopen that diagnostic export,
+reject 429 protocol faults and 35 artifact faults, and repeat the readback
+after relocation. Those results establish portable artifact inspection;
+the normal qualification gate rejects the export.
 
 `python3 scripts/tests/account_rotation_disk_test.py -v` checks bounded host-memory device staging, disk fallback, exact copyback after success or guest failure, and retention when the evidence destination rejects copying. Rotation's small device files use this staging while the NBD backend retains its independent cache, flush and fault semantics. The original guest deadlines and native filesystem checks remain required. [VM timing](ci-vm-timing.md) records the focused host-storage comparison and remaining complete-run gates.
 

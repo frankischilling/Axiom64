@@ -129,10 +129,10 @@ def corrupt(original, name):
     return '\n'.join(lines) + '\n'
 
 
-def run(log, directory):
+def run(log, directory, stamp_epoch=(0, 0)):
     log, directory = Path(log), Path(directory)
     before = digest(log)
-    accepted = verify(log)
+    accepted = verify(log, stamp_epoch=stamp_epoch)
     directory.mkdir(exist_ok=False)
     lines = log.read_text().replace('\r\n', '\n').splitlines()
     rows = []
@@ -140,7 +140,7 @@ def run(log, directory):
         path = directory / (name + '.log')
         path.write_text(corrupt(lines, name))
         try:
-            verify(path)
+            verify(path, stamp_epoch=stamp_epoch)
         except ValueError as error:
             rows.append(dict(name=name, rejected=True, reason=str(error), sha256=digest(path)))
         else:
@@ -150,6 +150,26 @@ def run(log, directory):
                   original_unchanged=True, count=len(NAMES))
     write(directory / 'completed.json', result)
     return result
+
+
+def reopen(log, directory, stamp_epoch=(0, 0)):
+    log, directory = Path(log), Path(directory)
+    verify(log, stamp_epoch=stamp_epoch)
+    saved = decode((directory / 'completed.json').read_text())
+    require(saved['passed'] is True and saved['original_sha256'] == digest(log) and saved['count'] == len(NAMES) and
+            [row['name'] for row in saved['controls']] == list(NAMES), 'complete original serialized address-control inventory')
+    lines = log.read_text().replace('\r\n', '\n').splitlines()
+    for row in saved['controls']:
+        path = directory / (row['name'] + '.log')
+        require(row['rejected'] is True and digest(path) == row['sha256'] and path.read_text() == corrupt(lines, row['name']),
+                'every original named serialized address-control mutation')
+        try:
+            verify(path, stamp_epoch=stamp_epoch)
+        except ValueError:
+            pass
+        else:
+            raise ValueError('published address-control fault no longer rejects: ' + row['name'])
+    return dict(passed=True, count=len(NAMES))
 
 
 def main():

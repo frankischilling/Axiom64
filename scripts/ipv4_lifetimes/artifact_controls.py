@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import tempfile
 
 from ipv4_lifetimes import controls, guest
 from ipv4_lifetimes.reader import decode, require
@@ -153,6 +154,22 @@ def run(directory, destination):
     result = dict(passed=True, count=len(NAMES), controls=rows, scratch_removed=True, originals_unchanged=True)
     write(destination / 'completed.json', result)
     return result
+
+
+def reopen(directory, destination):
+    directory, destination = Path(directory), Path(destination)
+    saved = decode((destination / 'completed.json').read_text())
+    require(saved['passed'] is True and saved['count'] == len(NAMES) and
+            [row['name'] for row in saved['controls']] == list(NAMES), 'complete original guest artifact-fault inventory')
+    with tempfile.TemporaryDirectory(prefix='axiom-ipv4-control-artifacts-') as temporary:
+        replay = Path(temporary) / 'reopened'
+        result = run(directory, replay)
+        for row in saved['controls']:
+            path = destination / (row['name'] + '.json')
+            require(row['rejected'] is True and digest(path) == row['patch_sha256'] and
+                    decode(path.read_text()) == decode((replay / path.name).read_text()),
+                    'every published guest artifact fault matches the named original mutation')
+    return dict(passed=True, count=result['count'])
 
 
 def main():

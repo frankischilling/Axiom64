@@ -4,9 +4,12 @@ import argparse
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
+import re
+import shlex
 import zipfile
 
 from disk_root import archive_entries
+from fetch import ROOT
 from ipv4_lifetimes.reader import decode, require
 from ipv4_lifetimes.wire_packets import definitions
 from ipv4_lifetimes.wire_trace import clocks, protocol
@@ -15,14 +18,24 @@ from ipv4_source_route.artifacts import compilation, providers
 from ipv4_source_route.native import configuration
 from tcp6.inputs import digest
 
-BOUND = ('wire_packets.py', 'wire_peer.py', 'wire_worker.py', 'wire_log.py', 'wire_trace.py', 'wire_evidence.py')
+BOUND = ('wire_packets.py', 'wire_peer.py', 'wire_worker.py')
+CLOCK_ERRORS = ('unchanged 100ms source clock-jump bound', 'unchanged 100ms observer clock-jump bound')
 
 
 def json_lines(path):
     return [decode(line) for line in path.read_text().splitlines()]
 
 
+def ordinary_tree(directory):
+    require(not directory.is_symlink() and directory.is_dir(), 'ordinary retained artifact root')
+    paths = list(directory.rglob('*'))
+    require(all(not path.is_symlink() and (path.is_file() or path.is_dir()) for path in paths),
+            'only retained ordinary artifact files and directories')
+    return paths
+
+
 def source(directory, expected):
+    ordinary_tree(directory / 'source')
     inputs = decode((directory / 'source/source-inputs.json').read_text())
     require(digest(directory / 'source/source.zip') == expected['source_zip_sha256'] and
             digest(directory / 'source/source-inputs.json') == expected['source_inputs_sha256'], 'exact retained source archive and inventory')
@@ -36,7 +49,8 @@ def source(directory, expected):
                     hashlib.sha256(archive.read(name)).hexdigest() == value, 'every exact retained public source byte')
     for name in BOUND:
         require(inputs['scripts/ipv4_lifetimes/' + name] == digest(Path(__file__).with_name(name)),
-                'same original wire producers and independent readers')
+                'same original packet definitions, peer and capture producer')
+    require(inputs[CLIENT] == digest(ROOT / CLIENT), 'same exact original transport client source')
     return inputs
 
 
@@ -115,8 +129,46 @@ def native(directory, captured, wire, ingress):
                     'every actual packet retained with zero capture drops on every native tap')
 
 
-def verify(directory):
+def compiler_inputs(directory, inputs, captured):
+    saved = decode((directory / 'program.inputs.json').read_text())
+    require(inputs['ports.lock.json'] == digest(ROOT / 'ports.lock.json'), 'same pinned target-header package inventory')
+    package, = (value for value in decode((ROOT / 'ports.lock.json').read_text())['packages'] if value['name'] == 'linux-headers')
+    require(saved['uapi']['package'] == package and type(saved['uapi']['products']) is dict and saved['uapi']['products'],
+            'exact pinned target-UAPI package and nonempty header provenance')
+    for name, value in saved['uapi']['products'].items():
+        path = PurePosixPath(name)
+        require(not path.is_absolute() and '..' not in path.parts and name.startswith('usr/include/') and
+                '\\' not in name and type(value) is str and re.fullmatch('[0-9a-f]{64}', value), 'canonical complete target-header record')
+    compiler = shlex.split(saved['compiler'])
+    require(compiler and re.fullmatch(r'(cc|gcc|clang)(-\d+)?', PurePosixPath(compiler[0]).name), 'selected C compiler without injected include options')
+    profile = captured['profile']
+    if profile == 'native':
+        require(len(compiler) == 1, 'native compiler prefix contains no hidden include arguments')
+    else:
+        require(len(compiler) == 2 and compiler[0] == 'gcc' and compiler[1].startswith('-specs='), 'pinned musl compiler prefix')
+        specs = PurePosixPath(compiler[1][len('-specs='):])
+        require(specs.is_absolute() and '..' not in specs.parts and specs.parts[-4:] == ('build', 'musl', 'build', 'compiler.specs'),
+                'actual selected musl compiler specifications')
+    command = saved['command']
+    require(len(command) > len(compiler) + 2 and command[:len(compiler)] == compiler and command[len(compiler)] == '-isystem',
+            'explicit target UAPI precedes all source flags')
+    headers = PurePosixPath(command[len(compiler) + 1])
+    require(headers.is_absolute() and '..' not in headers.parts and headers.parts[-3:] == (package['sha256'], 'usr', 'include'),
+            'actual checksum-pinned target-header directory')
+    flags = ['-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror', *(['-static'] if profile == 'static' else []),
+             CLIENT, '-o', 'build/ipv4-lifetime-wire-' + profile]
+    require(command == [*compiler, '-isystem', str(headers), *flags], 'exact compiler target, linkage and include isolation')
+    if captured['shared_directory'] is not None:
+        for linkage in ('static', 'dynamic'):
+            base = directory.parent / linkage
+            ordinary_tree(base)
+            common = decode((base / 'compiler-inputs.json').read_text())
+            require(common['uapi'] == saved['uapi'], 'native and both guest builds use identical complete target-header records')
+
+
+def read_artifacts(directory):
     directory = Path(directory).resolve()
+    ordinary_tree(directory)
     captured = decode((directory / 'captured.json').read_text())
     require(captured['protocol_passed'] is True and captured['final_wire_acceptance'] is False and
             captured['mode'] in ('native', 'guest') and captured['profile'] in ('native', 'static', 'dynamic') and
@@ -127,14 +179,14 @@ def verify(directory):
     shared = PurePosixPath(captured['shared_directory']) if captured['shared_directory'] is not None else None
     require(shared is None or shared == original.parent, 'one original parent owns shared source and images')
     actual = {}
-    for path in directory.rglob('*'):
-        require(not path.is_symlink() and (path.is_file() or path.is_dir()), 'only retained ordinary artifact files and directories')
+    for path in ordinary_tree(directory):
         if path.is_file() and path != directory / 'captured.json':
             actual[path.relative_to(directory).as_posix()] = digest(path)
     require(actual == captured['artifacts'] and digest(directory / 'client.log') == captured['client_log_sha256'] and
             digest(directory / 'command.json') == captured['command_sha256'], 'every exact original captured artifact byte')
     inputs = source(directory if shared is None else directory.parent, captured['source'])
     compilation(directory, inputs, captured['profile'], CLIENT)
+    compiler_inputs(directory, inputs, captured)
     process = decode((directory / 'process.json').read_text())
     expected_status = 0 if captured['mode'] == 'native' else 1
     require(process['status'] == 'completed' and type(process['returncode']) is int and
@@ -147,14 +199,29 @@ def verify(directory):
         native(directory, captured, wire, ingress)
     else:
         guest(directory, captured, original, shared)
-    proof = protocol(text, wire, ingress, events, commands, captured['mode'] == 'native')
-    clocks(text, wire, ingress, events, commands)
+    return dict(captured=captured, text=text, wire=wire, ingress=ingress, events=events, commands=commands)
+
+
+def observations(value):
+    captured = value['captured']
+    proof = protocol(*[value[key] for key in ('text', 'wire', 'ingress', 'events', 'commands')], captured['mode'] == 'native')
     require(captured['cases'] == [dict(case=number, transport=row['transport'], survival=row['survival'],
                 retained_datagrams=int(row['retained']) if row['transport'] != 2 else 0, guard_tags=[1, 3])
                 for number, row in enumerate(definitions())],
             'declared case summary matches the independently reopened packets')
     return dict(passed=True, mode=captured['mode'], profile=captured['profile'], firmware=captured['firmware'],
                 transport=captured['transport'], observations=proof, full_matrix_acceptance=False)
+
+
+def clock_qualification(value):
+    clocks(*[value[key] for key in ('text', 'wire', 'ingress', 'events', 'commands')])
+
+
+def verify(directory):
+    value = read_artifacts(directory)
+    proof = observations(value)
+    clock_qualification(value)
+    return proof
 
 
 def main():

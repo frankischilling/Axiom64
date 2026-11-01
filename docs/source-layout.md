@@ -73,6 +73,11 @@ and TCP transport ownership across finite expiry and restoration.
 `wire_log.py` and `wire_trace.py` independently decode control, receive and
 packet records. `wire_matrix.py` retains three native and eight guest profiles
 with two shared images. `wire_controls.py` serializes damaged observations.
+`wire_artifact_controls.py` reopens bounded source, executable, image and
+process faults in a disposable copy. `wire_protected.py` freezes independent
+reader source and reopens wire and address-control exports as actual root
+and ordinary identities. `cohort.py` owns CI command lifetime, cancellation,
+failure retention and publication into the existing artifact groups.
 
 `kernel/net/ipv4/configuration.cpp` owns global, default and interface routing
 policy values and interface generations. `kernel/fs/proc/ipv4.cpp` exposes the

@@ -283,6 +283,15 @@ reject both captures. Complete current-source native/linkage/firmware/transport,
 protected wire exports, artifact rejection controls and hosted acceptance
 remain required. This development slice does not complete F12 or F13.
 
+The qualification workflow now includes both control and transport evidence
+in the existing IPv4 CI job. Its protected export checks all 22 profiles,
+separate producer/reader source, original native stamp anchors and serialized
+protocol and artifact faults under root and an ordinary identity. Readers
+reject reserved IPv4 flags and zero TTL even when the checksum is repaired,
+following the [IPv4 header requirements](https://www.rfc-editor.org/rfc/rfc791.html).
+The publication gate remains pending complete current-source validation and
+hosted execution; earlier clock failures remain rejected.
+
 ## IPv4 and ICMP validation
 
 Ordinary Ethernet input requires IPv4 version 4, a header between 20 and 60 bytes, a valid header checksum, a bounded total length, nonzero TTL, supported flag forms and valid source addressing. Local, accepted broadcast and accepted multicast traffic reaches the local protocols. Per-interface forwarding policy controls other unicast destinations. Ethernet padding is trimmed to the IP total length. Traffic from a NIC cannot impersonate loopback, including through a source-route hop. Option input validates lengths and pointers, fills record-route and timestamp slots, and rejects malformed or unconfigured security labels. The reserved flag is rejected. IGMP separately validates its header options and accepts Router Alert. Local fragmented input reaches the transport only after complete reassembly; forwarded fragments retain their offsets and copy-option rules.

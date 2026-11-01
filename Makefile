@@ -944,6 +944,9 @@ build/ipv4-lifetime-wire-static build/ipv4-lifetime-wire-dynamic: userspace/test
 .PHONY: test-ipv4-address-lifetimes-wire
 test-ipv4-address-lifetimes-wire:
 	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_lifetimes.wire_matrix build/ipv4-address-lifetimes-wire --produce
+.PHONY: test-ipv4-address-lifetimes
+test-ipv4-address-lifetimes:
+	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_lifetimes.cohort build/ipv4-address-lifetimes-cohort --produce
 build/ipv4-source-route-host: kernel/tests/net/ipv4_source_route.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/configuration.cpp kernel/net/ipv4/options.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(IPV4_MULTICAST_CORE) $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
@@ -1544,6 +1547,7 @@ MUSL_PROGRAMS += build/ipv4-multicast-source-capacity-static build/ipv4-multicas
 MUSL_PROGRAMS += build/ipv4-raw-udp-static build/ipv4-raw-udp-dynamic
 MUSL_PROGRAMS += build/ipv4-receive-wire-static build/ipv4-receive-wire-dynamic
 MUSL_PROGRAMS += build/ipv4-source-wire-static build/ipv4-source-wire-dynamic
+MUSL_PROGRAMS += build/ipv4-address-lifetimes-static build/ipv4-address-lifetimes-dynamic build/ipv4-lifetime-wire-static build/ipv4-lifetime-wire-dynamic
 MUSL_PROGRAMS += build/ipv4-receive-controls-static build/ipv4-receive-controls-dynamic
 MUSL_PROGRAMS += build/ipv4-send-controls-static build/ipv4-send-controls-dynamic
 MUSL_PROGRAMS += build/ipv4-source-controls-static build/ipv4-source-controls-dynamic

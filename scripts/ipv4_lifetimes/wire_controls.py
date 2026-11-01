@@ -21,7 +21,7 @@ NAMES = ('missing-control', 'wrong-control-sequence', 'wrong-control-error', 'wr
          'repaired-wrong-tcp-ack', 'early-tcp-output', 'wrong-adapter', 'damaged-arp-reply',
          'early-held-arp-reply', 'shortened-held-observation', 'wrong-command-byte', 'missing-command',
          'missing-event-receipt', 'boolean-event', 'extra-event-field', 'noncanonical-wire-bytes',
-         'missing-withdrawal', 'late-withdrawal')
+         'missing-withdrawal', 'late-withdrawal', 'repaired-reserved-ip-flag', 'repaired-zero-ip-ttl')
 CLOCK_NAMES = ('source-clock-jump', 'observer-clock-jump', 'backward-source-clock', 'backward-observer-clock')
 
 
@@ -151,6 +151,9 @@ def mutation(value, name):
         value['wire'].sort(key=lambda row: row['monotonic_ns'])
     elif name == 'wrong-adapter':
         frame(value, datagram, lambda raw: None)['index'] = 1
+    elif name in ('repaired-reserved-ip-flag', 'repaired-zero-ip-ttl'):
+        frame(value, datagram, lambda raw: raw.__setitem__(20, raw[20] | 128) if name.endswith('flag')
+              else raw.__setitem__(22, 0), True)
     elif name == 'damaged-arp-reply':
         row = next(row for row in value['wire'] if row['direction'] == 'input' and row['frame'][24:28] == '0806')
         raw = bytearray.fromhex(row['frame']); raw[29] ^= 1; row['frame'] = raw.hex()
@@ -218,6 +221,35 @@ def run(directory, destination, protocol_only=False):
     proof = dict(passed=True, count=len(results), controls=results, protocol_only=protocol_only, full_wire_acceptance=False)
     write(destination / 'completed.json', proof)
     return proof
+
+
+def reopen(directory, destination):
+    directory, destination = Path(directory).resolve(), Path(destination).resolve()
+    saved = decode((destination / 'completed.json').read_text())
+    original = inputs(directory)
+    check(original)
+    require(saved['passed'] is True and type(saved['protocol_only']) is bool, 'original serialized wire control result')
+    if not saved['protocol_only']:
+        verify(directory)
+        check(original, True)
+    names = NAMES + (() if saved['protocol_only'] else CLOCK_NAMES)
+    require(saved['count'] == len(names) and [row['name'] for row in saved['controls']] == list(names),
+            'complete exact serialized wire fault inventory')
+    for row in saved['controls']:
+        name = row['name']
+        path = destination / (name + '.json')
+        require(row['rejected'] is True and digest(path) == row['sha256'], 'every original serialized wire fault byte')
+        value = decode(path.read_text())
+        expected = copy.deepcopy(original)
+        mutation(expected, name)
+        require(value == expected, 'serialized wire fault is the named mutation of the actual original capture')
+        try:
+            check(value, name in CLOCK_NAMES)
+        except ValueError:
+            pass
+        else:
+            raise ValueError('published wire fault no longer rejects: ' + name)
+    return dict(passed=True, count=len(names), protocol_only=saved['protocol_only'])
 
 
 def main():

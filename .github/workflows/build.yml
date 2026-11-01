@@ -50,6 +50,7 @@ jobs:
           python3 -B scripts/tests/tcp6_isolation_prelude_test.py -v
           python3 -B scripts/tests/tcp6_source_handshake_test.py -v
           python3 -B scripts/tests/native_icmp_budget_capture_test.py -v
+          python3 -B scripts/tests/ipv4_lifetime_paths_test.py -v
           python3 -B scripts/tests/manager_link_startup_test.py -v
           python3 -B scripts/tests/network_window_test.py -v
           python3 -B scripts/tests/ipv6_owner_pair_test.py -v
@@ -507,7 +508,7 @@ jobs:
             build/ipv4-address-lifetimes-wire
             build/ipv4-address-lifetimes-audit
             build/ipv4-address-lifetimes-cohort
-            build/ipv4-address-lifetimes-native
+            build/ipv4-address-lifetimes-native-controls
             build/ipv4-address-lifetimes-guest
       - name: Upload complete IPv4 source-route syscall evidence
         if: always() && matrix.suite == 'ipv4-source-filters'

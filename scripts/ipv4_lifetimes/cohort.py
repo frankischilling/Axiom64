@@ -17,7 +17,7 @@ from ipv4_lifetimes.wire_evidence import source
 from ipv4_lifetimes import wire_protected
 from tcp6.inputs import digest, freeze, write
 
-CONTROL_NATIVE = 'ipv4-address-lifetimes-native'
+CONTROL_NATIVE = 'ipv4-address-lifetimes-native-controls'
 CONTROL_GUEST = 'ipv4-address-lifetimes-guest'
 WIRE = 'ipv4-address-lifetimes-wire'
 AUDIT = 'ipv4-address-lifetimes-audit'

@@ -64,6 +64,8 @@ source-filter job, retaining that job's deadline and every existing suite.
 All three native and eight guest address-control profiles must pass alongside
 the eleven wire profiles. Independent producers still finish when another
 producer fails. Original captures and failed process logs remain available.
+Native control captures use `build/ipv4-address-lifetimes-native-controls`,
+separate from the prebuilt native executable.
 
 The final export reopens all 22 profiles as root and actual UID 65534, with
 no supplementary groups for the ordinary reader. It checks 473 protocol/clock

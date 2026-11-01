@@ -218,7 +218,44 @@ An independent capture auditor checks the original alias tuples, payloads, hardw
 
 `sudo -n python3 scripts/ipv4_alias_native.py` runs the real client under three native libc/linkage profiles in separate network namespaces. Each uses two TAP links and retains original captures, monotonic receipts, executable and pinned target-UAPI build records. The regular guest IPv4 matrix runs the same alias client through both guest adapters. Four wire cases per adapter cover a bound secondary source, a different-prefix source, continued output after primary deletion, and restored primary output. The peer also requires guest-generated ARP and ICMP echo replies to aliases before releasing the final barrier. Local UDP checks compare every payload byte, and ioctl/netlink cases check labels, enumeration, duplicate addresses, omitted broadcast, local-only deletion and replacement collisions.
 
-`make test-ipv4-paths` checks the production address inventory and route ownership with sanitizers, including capacity, invalid mutations and shared alias MTUs. `python3 scripts/tests/ipv4_aliases_test.py` rejects thirteen damaged wire controls, including a recomputed checksum with an oversized declared length. Current-revision guest results, independent alias capture auditing, broader address/cache lifecycle equivalence and complete F12 acceptance remain required. Loopback retains its fixed configuration; dynamic lifetimes, address notifications and configurable secondary promotion remain planned.
+`make test-ipv4-paths` checks the production address inventory and route ownership with sanitizers, including capacity, invalid mutations and shared alias MTUs. `python3 scripts/tests/ipv4_aliases_test.py` rejects thirteen damaged wire controls, including a recomputed checksum with an oversized declared length. Current-revision guest results, independent alias capture auditing, broader address/cache lifecycle equivalence and complete F12 acceptance remain required. Loopback retains its fixed configuration; address notifications remain planned.
+
+### Finite address lifetime development
+
+IPv4 netlink addresses accept preferred and valid lifetimes in seconds through
+`IFA_CACHEINFO`. Zero valid lifetime and preferred lifetime greater than valid
+return `EINVAL`; a short cache record returns `ERANGE`. Extended cache records
+are accepted. The kernel owns creation and update stamps in centiseconds and
+ignores supplied stamp values. Dumps report remaining lifetimes and
+permanent, deprecated and secondary flags. An infinite valid IPv4 lifetime
+reports both lifetimes as infinite, including an immediately deprecated
+permanent address. Finite preferred expiry marks an address deprecated; valid
+expiry removes it.
+
+Replacing an existing address requires `NLM_F_REPLACE` without `NLM_F_EXCL`.
+It refreshes lifetimes and the update stamp while retaining the original
+creation stamp, label and broadcast. An absent address can be inserted without
+`NLM_F_CREATE`, following Linux's compatibility behavior. Omitting cache
+information selects permanent lifetimes. Explicit broadcast values, including
+zero, are retained when an address is created.
+
+`/proc/sys/net/ipv4/conf/{all,default,lo,ethN}/promote_secondaries` uses integer
+values. New interfaces inherit `default`; either a nonzero `all` or interface
+value enables promotion. The default is zero: removing or expiring a primary
+also removes its same-prefix secondaries. Promotion retains the first
+secondary's lifetime stamps and rebuilds its automatic prefix route. Other
+prefixes survive. Removing the final address withdraws the device's routes.
+Copied raw and UDP packets can retain their original source and payload while
+another address survives; later sends and new binds use current assignment.
+
+Sanitizer models cover expiry, renewal, stamp wrap, promotion, route ownership,
+PMTU retirement and copied output. A local BIOS/static control probe on
+virtio-net and e1000 passes independent decoding of its 66 original requests
+and real elapsed observations. A native process passed its syscall assertions,
+but an observed realtime jump prevents timing qualification. Complete native
+linkages, guest firmware/transport/linkage coverage, retained transport wire
+evidence, protected artifact readers, rejection controls and hosted acceptance
+remain required. This development slice does not complete F12 or F13.
 
 ## IPv4 and ICMP validation
 

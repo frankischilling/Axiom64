@@ -55,6 +55,14 @@ final-address removal retire route owners without reviving admitted sends.
 the selected route and controls across output waits. The core owns packet queues,
 neighbor resolution and submission to Ethernet drivers.
 
+`kernel/net/ipv4/addresses.cpp` owns address labels, finite preferred/valid
+lifetimes, creation/update stamps, expiry cascades and secondary promotion.
+Its explicit centisecond clock also drives deterministic sanitizer checks;
+the IPv4 core supplies the actual clock and retires route and packet owners.
+`userspace/tests/net/ipv4/address_lifetimes.c` issues actual Linux netlink and
+procfs calls. `scripts/ipv4_lifetimes/` retains guest control campaigns and
+decodes their original messages and clock brackets independently.
+
 `kernel/net/ipv4/configuration.cpp` owns global, default and interface routing
 policy values and interface generations. `kernel/fs/proc/ipv4.cpp` exposes the
 integer handlers; the shared procfs layer binds retained descriptions to their

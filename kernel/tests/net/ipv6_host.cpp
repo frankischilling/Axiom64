@@ -113,7 +113,11 @@ const Ipv4Address* ipv4_address(unsigned) {
     return nullptr;
 }
 
-int ipv4_address_add(unsigned, const char*, const Ipv4Config&) {
+Ipv4AddressCacheInfo ipv4_address_cache(const Ipv4Address&) {
+    return {};
+}
+
+int ipv4_address_add(unsigned, const char*, const Ipv4Config&, Ipv4AddressLifetimes, bool) {
     return -95;
 }
 
@@ -437,7 +441,8 @@ static void inventories_and_bounds() {
             input[16] = family;
             size_t capacity = routing_capacity(request, input);
             assert(capacity == (type == 26 ? family ? netlink_ipv6_route_reply : netlink_max_reply
-                                           : netlink_family_reply));
+                                : family   ? netlink_family_reply
+                                           : netlink_address_reply));
             std::vector<uint8_t> output(capacity + 16, 0xa7);
             size_t length = routing_reply(input, 91, false, output.data(), true, true);
             assert(length <= capacity && length >= 20);

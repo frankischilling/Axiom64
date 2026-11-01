@@ -1,5 +1,16 @@
 # Guest tests and CI
 
+`make test-ipv4-address-lifetimes-guest` runs the finite IPv4 address-control
+client on both Ethernet adapters in eight static/dynamic, BIOS/UEFI and
+modern/legacy PCI profiles. Two workers share immutable images. Original
+netlink requests and replies, guest monotonic/realtime brackets, executables,
+complete source and actual boot products remain available under the output
+directory. `PYTHONPATH=scripts python3 -B -m ipv4_lifetimes.guest DIRECTORY`
+reopens the images and decodes every original control observation offline.
+This control campaign does not establish retained transport wire behavior or
+full networking acceptance. [IPv4 lifetime development](ipv4.md#finite-address-lifetime-development)
+records the current validation limits.
+
 `python3 scripts/tests/account_rotation_disk_test.py -v` checks bounded host-memory device staging, disk fallback, exact copyback after success or guest failure, and retention when the evidence destination rejects copying. Rotation's small device files use this staging while the NBD backend retains its independent cache, flush and fault semantics. The original guest deadlines and native filesystem checks remain required. [VM timing](ci-vm-timing.md) records the focused host-storage comparison and remaining complete-run gates.
 
 Disposable NBD startup retains `backend-startup.json` beside each backend log.

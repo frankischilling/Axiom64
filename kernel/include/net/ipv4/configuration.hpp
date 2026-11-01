@@ -4,7 +4,7 @@
 
 namespace ax::ip4 {
 constexpr unsigned configuration_all = 0, configuration_default = UINT32_MAX;
-enum class ConfigurationKey : uint8_t { accept_source_route, forwarding };
+enum class ConfigurationKey : uint8_t { accept_source_route, forwarding, promote_secondaries };
 
 int configuration_read(unsigned index, ConfigurationKey, int32_t&);
 int configuration_write(unsigned index, ConfigurationKey, int32_t);
@@ -16,4 +16,5 @@ void configuration_reset();
 
 bool configuration_source_route(unsigned index);
 bool configuration_forwarding(unsigned index);
+bool configuration_promote_secondaries(unsigned index);
 } // namespace ax::ip4

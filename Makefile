@@ -221,7 +221,7 @@ test-credentials:
 	$(PYTHON) scripts/credentials_test.py
 RANDOM_CORE = kernel/core/random/primitives.cpp kernel/core/random/engine.cpp
 .PHONY: test-netlink-inventory test-netlink-inventory-native test-netlink-inventory-codec
-build/netlink-inventory-codec: kernel/tests/net/inventory.cpp kernel/net/netlink/inventory.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp kernel/tests/net/ipv6_disabled.cpp kernel/net/ipv6/wire.cpp
+build/netlink-inventory-codec: kernel/tests/net/inventory.cpp kernel/net/netlink/inventory.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp kernel/net/ipv6/wire.cpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 test-netlink-inventory-codec: build/netlink-inventory-codec
@@ -926,6 +926,14 @@ test-ipv4-source-route-wire:
 build/ipv4-source-controls-native: userspace/tests/net/ipv4/source_route_controls.c
 	@mkdir -p build
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/ipv4-address-lifetimes-native: userspace/tests/net/ipv4/address_lifetimes.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+build/ipv4-address-lifetimes-static build/ipv4-address-lifetimes-dynamic: userspace/tests/net/ipv4/address_lifetimes.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
+	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4/address_lifetimes.c
+.PHONY: test-ipv4-address-lifetimes-guest
+test-ipv4-address-lifetimes-guest:
+	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_lifetimes.guest build/ipv4-address-lifetimes-guest --produce
 build/ipv4-source-route-host: kernel/tests/net/ipv4_source_route.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/configuration.cpp kernel/net/ipv4/options.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(IPV4_MULTICAST_CORE) $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
@@ -970,7 +978,7 @@ build/ipv4-socket-output-host: kernel/tests/net/ipv4_socket_output.cpp kernel/te
 build/ipv4-routes-host: kernel/tests/net/ipv4_routes.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
-build/ipv4-socket-output-host: kernel/tests/net/ipv4_raw_header_queue.cpp
+build/ipv4-socket-output-host: kernel/tests/net/ipv4_raw_header_queue.cpp kernel/tests/net/ipv4_address_lifecycle.cpp
 
 test-ipv4-paths: build/ipv4-paths-host build/ipv4-addresses-host build/ipv4-output-host build/ipv4-socket-output-host build/ipv4-routes-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-paths-host

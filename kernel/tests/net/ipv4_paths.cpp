@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "net/ipv4.hpp"
+#include "net/ipv4/configuration.hpp"
 #include "net/inet.hpp"
 #include "net/ipv6/configuration.hpp"
 #include <cassert>
@@ -354,6 +355,95 @@ static void link_lifecycle() {
     assert(mtu(2, second) == 1500);
 }
 
+static void clear_addresses(unsigned index) {
+    for (unsigned n = 0; auto entry = ipv4_address(n);) {
+        if (entry->index != index) {
+            n++;
+            continue;
+        }
+        assert(!ipv4_address_remove(index, entry->config.address, entry->config.mask));
+        n = 0;
+    }
+}
+
+static void finite_address_paths() {
+    constexpr uint32_t first = 0xc6120802, alias = first + 1, other = 0xc6120902, peer = 0xcb0071f0,
+                       same_prefix_peer = 0xc61208fe;
+    clear_addresses(1);
+    ticks += 100;
+    uint64_t created = ticks;
+    assert(!ipv4_address_add(1, "eth0", {first, 0xffffff00, 0}, {1, 3}));
+    assert(!ipv4_address_add(1, "eth0:alias", {alias, 0xffffff00, 0}));
+    assert(!ipv4_address_add(1, "eth0:other", {other, 0xffffff00, 0}));
+    Ipv4Route explicit_route{peer, UINT32_MAX, 0, 1, 10};
+    assert(!ipv4_route(explicit_route, false));
+    Ipv4Destination held;
+    assert(!ipv4_destination(held, first, peer, 1));
+    ticks += 100;
+    assert(ipv4_local(first));
+    auto entry = ipv4_address(0);
+    for (unsigned n = 1; entry && entry->config.address != first; n++)
+        entry = ipv4_address(n);
+    assert(entry && entry->flags == 0x20 && ipv4_destination_current(held));
+    auto cache = ipv4_address_cache(*entry);
+    assert(!cache.preferred && cache.valid == 2 && cache.created == created);
+    assert(!ipv4_address_add(1, "ignored", entry->config, {2, 4}, true));
+    assert(ipv4_destination_current(held));
+    ticks += 399;
+    assert(ipv4_local(first) && ipv4_local(alias));
+    ticks++;
+    assert(!ipv4_local(first) && !ipv4_local(alias) && ipv4_local(other));
+    assert(!ipv4_destination_current(held));
+    Ipv4Path path;
+    assert(ipv4_path(first, peer, 1, path) == -99);
+    assert(!ipv4_path(0, peer, 1, path) && path.source == other);
+    Ipv4Route routes[65];
+    size_t count = ipv4_routes(routes, 65);
+    bool retained = false;
+    for (size_t n = 0; n < count; n++)
+        retained |=
+            routes[n].destination == peer && routes[n].mask == UINT32_MAX && routes[n].index == 1;
+    assert(retained);
+    assert(!ipv4_address_remove(1, other, 0xffffff00));
+    count = ipv4_routes(routes, 65);
+    for (size_t n = 0; n < count; n++)
+        assert(routes[n].index != 1);
+
+    for (unsigned global = 0; global < 2; global++) {
+        auto scope = global ? ip4::configuration_all : 1;
+        assert(!ip4::configuration_write(scope, ip4::ConfigurationKey::promote_secondaries, 1));
+        created = ticks;
+        assert(!ipv4_address_add(1, "eth0", {first, 0xffffff00, 0}, {1, 2}));
+        assert(!ipv4_address_add(1, "eth0:alias", {alias, 0xffffff00, 0}));
+        assert(!ipv4_destination(held, 0, same_prefix_peer, 1) && held.path.source == first);
+        assert(ipv4_learn_pmtu(first, same_prefix_peer, 1, 700, 1128) == 700);
+        ticks += 200;
+        assert(!ipv4_local(first) && ipv4_local(alias));
+        assert(!ipv4_destination_current(held));
+        assert(!ipv4_path(0, same_prefix_peer, 1, path) && path.source == alias &&
+               path.mtu == 1500);
+        for (unsigned n = 0; auto current = ipv4_address(n); n++)
+            if (current->config.address == alias) {
+                assert(!current->secondary && current->flags == 0x80);
+                cache = ipv4_address_cache(*current);
+                assert(cache.created == created && cache.updated == created);
+            }
+        count = ipv4_routes(routes, 65);
+        unsigned automatic = 0;
+        for (size_t n = 0; n < count; n++)
+            if (routes[n].index == 1) {
+                assert(routes[n].destination == (first & 0xffffff00) &&
+                       routes[n].preferred_source == alias && routes[n].protocol == 2);
+                automatic++;
+            }
+        assert(automatic == 1);
+        clear_addresses(1);
+        assert(!ip4::configuration_write(scope, ip4::ConfigurationKey::promote_secondaries, 0));
+    }
+    puts("IPV4_FINITE_PATHS_PASS deprecation renewal cascade promotion route_retirement pmtu "
+         "source_selection");
+}
+
 int main() {
     assert(!ip6::configuration_write(ip6::configuration_all, ip6::ConfigurationKey::generation_mode,
                                      1));
@@ -378,6 +468,7 @@ int main() {
     address_aliases();
     retained_destinations();
     link_lifecycle();
+    finite_address_paths();
     ipv4_shutdown();
     std::puts("IPV4_PATHS_PASS route-ownership restoration sharing pressure links expiry");
 }

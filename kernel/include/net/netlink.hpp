@@ -20,7 +20,8 @@ struct NetlinkHeader {
 
 static_assert(sizeof(NetlinkAddress) == 12 && sizeof(NetlinkHeader) == 16);
 constexpr size_t netlink_max_request = 4096, netlink_family_reply = 4176,
-                 netlink_ipv6_route_reply = 6144, netlink_max_reply = 12288;
+                 netlink_address_reply = 4412, netlink_ipv6_route_reply = 6144,
+                 netlink_max_reply = 12288;
 
 struct NetlinkFrame {
     NetlinkAddress source;

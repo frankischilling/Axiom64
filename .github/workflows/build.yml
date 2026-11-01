@@ -491,7 +491,9 @@ jobs:
         run: bash scripts/ci/tools.sh restore
       - name: Compare complete source-filter and source-route cohorts with native Linux and both guest adapters
         if: matrix.suite == 'ipv4-source-filters'
-        run: sudo -n env PYTHONPATH=scripts python3 -B -m ipv4_source_route.window
+        run: |
+          python3 -B scripts/tests/ipv4_source_guard_test.py -v
+          sudo -n env PYTHONPATH=scripts python3 -B -m ipv4_source_route.window
       - name: Compare finite IPv4 address controls and transport lifetime ownership
         if: matrix.suite == 'ipv4-source-filters'
         run: sudo -n make test-ipv4-address-lifetimes

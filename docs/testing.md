@@ -1666,6 +1666,17 @@ guest ICMP replies, checks their kernel header policy, and rejects repaired
 wrong headers while retaining strict application raw-output checks.
 The existing source-filter cohort overlaps routing qualification in the same
 CI job. It retains all cases, timing windows and aggregate requirements.
+For queued local errors, an armed packet socket records the actual third ARP
+transmission with `SIOCGSTAMPNS`. The client proves its raw queue empty after
+the full 980 ms quiet interval, then retains that proof while the serial
+acknowledgment arrives. Readers bind all three source ARP timestamps to their
+original frames and independent host receipts, check unchanged clock bounds,
+and require the empty proof before error consumption. The command still waits
+through the host quiet interval and retains its one-second response bound.
+`python3 -B scripts/tests/ipv4_source_guard_test.py -v` exercises delayed
+acknowledgment and rejects early readiness, prior consumption, short quiet
+intervals, missing proof and duplicate acknowledgment. Serialized controls also
+reject shortened or missing source proofs and damaged ARP or guard clocks.
 Focused local captures qualify the implemented error paths; the complete
 current matrix and hosted workflow must pass before integration.
 

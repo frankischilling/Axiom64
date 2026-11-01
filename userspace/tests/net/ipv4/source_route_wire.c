@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <net/if.h>
+#include <netpacket/packet.h>
 #include <net/route.h>
 #include <poll.h>
 #include <stdarg.h>
@@ -12,6 +13,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#ifdef __GLIBC__
+#include <linux/sockios.h>
+#endif
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/utsname.h>
@@ -28,6 +32,9 @@ static unsigned raw_seen, sample_mask;
 static int raw_drained;
 static uint64_t empty_before_ns, guard_deadline_ns;
 static int guard_completed;
+static int guard_acknowledged, arp_fd = -1;
+static unsigned arp_seen;
+static uint64_t guard_after_ns;
 static unsigned char packet[65536];
 
 static void require(int condition, const char* operation) {
@@ -196,6 +203,10 @@ static void begin(unsigned id, int maximum, int all_source, int link_source, int
             "ordered-case");
     require(application_fd == -1 && accepted_fd == -1, "previous-application-closed");
     current_case = id;
+    if (arp_fd >= 0) {
+        require(close(arp_fd) == 0, "close-previous-arp-observer");
+        arp_fd = -1;
+    }
     if (alias_active)
         alias_address(0);
     unsigned char byte;
@@ -226,6 +237,9 @@ static void begin(unsigned id, int maximum, int all_source, int link_source, int
     raw_drained = 0;
     empty_before_ns = guard_deadline_ns = 0;
     guard_completed = 0;
+    guard_acknowledged = 0;
+    arp_seen = 0;
+    guard_after_ns = 0;
     clock_record("before");
     emit("IPV4_SOURCE_WIRE_READY case=%u\n", id);
 }
@@ -296,19 +310,119 @@ static void observe(unsigned id) {
     emit("IPV4_SOURCE_WIRE_OBSERVED case=%u packets=%u\n", id, raw_seen);
 }
 
+static void watch_arp(unsigned id) {
+    require(id == current_case && started == observed + 1 && arp_fd == -1 && !arp_seen,
+            "one-active-arp-observer");
+    arp_fd = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, htons(3));
+    struct sockaddr_ll binding = {0};
+    binding.sll_family = AF_PACKET;
+    binding.sll_protocol = htons(3);
+    binding.sll_ifindex = if_nametoindex("eth1");
+    struct timespec stamp;
+    require(arp_fd >= 0 && binding.sll_ifindex > 0 &&
+                bind(arp_fd, (struct sockaddr*)&binding, sizeof(binding)) == 0 &&
+                ioctl(arp_fd, SIOCGSTAMPNS, &stamp) == -1 && errno == ENOENT,
+            "armed-source-arp-arrival-timestamps");
+    emit("IPV4_SOURCE_ARP_WATCH case=%u\n", id);
+}
+
+static void drain_arp(void) {
+    unsigned char frame[2048];
+    for (;;) {
+        struct sockaddr_ll origin = {0};
+        socklen_t length = sizeof(origin);
+        ssize_t size = recvfrom(arp_fd, frame, sizeof(frame), MSG_DONTWAIT | MSG_TRUNC,
+                                (struct sockaddr*)&origin, &length);
+        if (size < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            return;
+        require(size >= 14 && size <= (ssize_t)sizeof(frame) && length == sizeof(origin),
+                "complete-source-ethernet-observation");
+        if (size < 42 || origin.sll_pkttype != PACKET_OUTGOING ||
+            memcmp(frame + 12, "\x08\x06\x00\x01\x08\x00\x06\x04\x00\x01", 10) ||
+            memcmp(frame + 38, "\x0a\x01\x00\x02", 4))
+            continue;
+        struct timespec stamp, before, realtime, after;
+        require(ioctl(arp_fd, SIOCGSTAMPNS, &stamp) == 0 && stamp.tv_sec >= 0 &&
+                    stamp.tv_nsec >= 0 && stamp.tv_nsec < 1000000000 &&
+                    clock_gettime(CLOCK_MONOTONIC, &before) == 0 &&
+                    clock_gettime(CLOCK_REALTIME, &realtime) == 0 &&
+                    clock_gettime(CLOCK_MONOTONIC, &after) == 0,
+                "actual-source-arp-arrival-clock");
+        uint64_t arrival = (uint64_t)stamp.tv_sec * 1000000000 + stamp.tv_nsec;
+        uint64_t real = (uint64_t)realtime.tv_sec * 1000000000 + realtime.tv_nsec;
+        uint64_t first = (uint64_t)before.tv_sec * 1000000000 + before.tv_nsec;
+        uint64_t last = (uint64_t)after.tv_sec * 1000000000 + after.tv_nsec;
+        require(arp_seen < 3 && arrival <= real && real - arrival <= 1000000000 && first <= last &&
+                    last - first <= 1000000000 && real - arrival <= first,
+                "bounded-source-arp-arrival-sample");
+        char bytes[85];
+        for (unsigned n = 0; n < 42; n++) {
+            bytes[2 * n] = "0123456789abcdef"[frame[n] >> 4];
+            bytes[2 * n + 1] = "0123456789abcdef"[frame[n] & 15];
+        }
+        bytes[84] = 0;
+        emit("IPV4_SOURCE_ARP case=%u packet=%u stamp_ns=%llu realtime_ns=%llu "
+             "monotonic_before_ns=%llu monotonic_after_ns=%llu frame=%s\n",
+             current_case, arp_seen, (unsigned long long)arrival, (unsigned long long)real,
+             (unsigned long long)first, (unsigned long long)last, bytes);
+        arp_seen++;
+        // Use the upper end of the arrival's monotonic bracket so a delayed
+        // observer still waits through the entire quiet interval.
+        if (arp_seen == 3)
+            guard_after_ns = last - (real - arrival) + 980000000;
+    }
+}
+
+static void prove_empty_guard(void) {
+    struct timespec before, realtime, after;
+    struct pollfd descriptor = {raw_fd, POLLIN, 0};
+    require(clock_gettime(CLOCK_MONOTONIC, &before) == 0 &&
+                clock_gettime(CLOCK_REALTIME, &realtime) == 0,
+            "actual-empty-guard-clock");
+    uint64_t first = (uint64_t)before.tv_sec * 1000000000 + before.tv_nsec;
+    require(started == observed + 1 && guard_deadline_ns && !guard_completed && arp_seen == 3 &&
+                guard_after_ns && first >= guard_after_ns && raw_seen == 1 &&
+                poll(&descriptor, 1, 0) == 0 && !descriptor.revents &&
+                clock_gettime(CLOCK_MONOTONIC, &after) == 0,
+            "raw-error-guard-empty");
+    guard_completed = 1;
+    emit("IPV4_SOURCE_GUARD case=%u packets=%u revents=%d\n", current_case, raw_seen,
+         descriptor.revents);
+    emit("IPV4_SOURCE_GUARD_CLOCK case=%u phase=empty realtime_ns=%llu monotonic_before_ns=%llu "
+         "monotonic_after_ns=%llu\n",
+         current_case,
+         (unsigned long long)((uint64_t)realtime.tv_sec * 1000000000 + realtime.tv_nsec),
+         (unsigned long long)first,
+         (unsigned long long)((uint64_t)after.tv_sec * 1000000000 + after.tv_nsec));
+}
+
+static void acknowledge_guard(void) {
+    require(started == observed + 1 && guard_deadline_ns && guard_completed && !guard_acknowledged,
+            "retained-source-empty-guard");
+    guard_deadline_ns = 0;
+    guard_acknowledged = 1;
+    emit("IPV4_SOURCE_GUARD_ACK case=%u\n", current_case);
+}
+
 static char* read_command(char* line, size_t capacity) {
     size_t used = 0;
     for (;;) {
-        struct pollfd descriptors[2] = {{STDIN_FILENO, POLLIN, 0}, {raw_fd, POLLIN, 0}};
+        struct pollfd descriptors[3] = {
+            {STDIN_FILENO, POLLIN, 0}, {raw_fd, POLLIN, 0}, {arp_fd, POLLIN, 0}};
         struct timespec before;
         require(clock_gettime(CLOCK_MONOTONIC, &before) == 0, "actual-poll-source-clock");
         uint64_t now = (uint64_t)before.tv_sec * 1000000000 + before.tv_nsec;
         require(!guard_deadline_ns || now <= guard_deadline_ns, "raw-error-guard-arm-timeout");
-        int ready = poll(descriptors, 2, guard_deadline_ns ? 0 : 10);
+        int ready = poll(descriptors, 3, guard_deadline_ns ? 0 : 10);
         if (ready < 0 && errno == EINTR)
             continue;
         require(ready >= 0 && !(descriptors[1].revents & (POLLERR | POLLHUP | POLLNVAL)),
                 "command-and-raw-poll");
+        require(!(descriptors[2].revents & (POLLERR | POLLHUP | POLLNVAL)), "source-arp-poll");
+        if (descriptors[2].revents & POLLIN)
+            drain_arp();
+        if (guard_deadline_ns && !guard_completed && guard_after_ns && now >= guard_after_ns)
+            prove_empty_guard();
         if (descriptors[1].revents & POLLIN)
             drain_raw(current_case, 1);
         else
@@ -413,26 +527,21 @@ int main(int argc, char** argv) {
                     "one-active-source-synchronization");
             source_clock("IPV4_SOURCE_SYNC", "input");
             synchronized_clock = 1;
+        } else if (sscanf(line, "arp-watch %u %c", &id, &extra) == 1) {
+            watch_arp(id);
         } else if (sscanf(line, "guard-arm %u %c", &id, &extra) == 1) {
             struct timespec now;
             require(id == current_case && started == observed + 1 && !guard_deadline_ns &&
-                        !guard_completed && raw_seen == 1 &&
+                        !guard_completed && raw_seen == 1 && arp_seen == 3 &&
                         clock_gettime(CLOCK_MONOTONIC, &now) == 0,
                     "raw-error-guard-arm");
             guard_deadline_ns = (uint64_t)now.tv_sec * 1000000000 + now.tv_nsec + 2000000000;
             emit("IPV4_SOURCE_GUARD_ARM case=%u\n", id);
         } else if (!strcmp(line, "!")) {
-            id = current_case;
-            struct pollfd descriptor = {raw_fd, POLLIN, 0};
             // Command receipt follows the host timer boundary. Neither prior
             // consumption nor a queued error can establish an empty guard.
-            require(started == observed + 1 && guard_deadline_ns && !guard_completed &&
-                        raw_seen == 1 && poll(&descriptor, 1, 0) == 0 && !descriptor.revents,
-                    "raw-error-guard-empty");
-            guard_deadline_ns = 0;
-            guard_completed = 1;
-            emit("IPV4_SOURCE_GUARD case=%u packets=%u revents=%d\n", id, raw_seen,
-                 descriptor.revents);
+            // Require the autonomous proof before acknowledging that command.
+            acknowledge_guard();
         } else if (sscanf(line, "sample %u %31s %c", &id, action, &extra) == 2) {
             require(id == current_case && started == observed + 1 &&
                         ((!strcmp(action, "early") && !sample_mask) ||
@@ -456,6 +565,7 @@ int main(int argc, char** argv) {
             require(application_fd == -1 && accepted_fd == -1,
                     "all-application-descriptions-closed");
             require(close(raw_fd) == 0 && close(control_fd) == 0, "close-descriptions");
+            require(arp_fd < 0 || close(arp_fd) == 0, "close-source-arp-observer");
             emit("IPV4_SOURCE_WIRE_PASS cases=%lu\n", total);
             return 0;
         }

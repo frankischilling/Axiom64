@@ -137,6 +137,79 @@ void tcp_ipv6_socket_tests();
 void tcp_ipv6_error_tests(ax::NetAdapter&);
 void tcp_ipv6_reset_tests(ax::NetAdapter (&adapters)[2]);
 
+static void finite_address_recovery(NetAdapter (&adapters)[2]) {
+    for (unsigned index = 1; index <= 2; index++) {
+        const auto name = adapters[index - 1].info.name;
+        const uint32_t local = 0xc6124602 + (index - 1) * 0x1000, peer = local - 1,
+                       survivor = local + 256;
+        for (unsigned keep = 0; keep < 2; keep++) {
+            ipv4_shutdown();
+            for (unsigned n = 0; auto address = ipv4_address(n);) {
+                if (address->index != index) {
+                    n++;
+                    continue;
+                }
+                assert(!ipv4_address_remove(index, address->config.address, address->config.mask));
+                n = 0;
+            }
+            assert(!ipv4_address_add(index, name, {local, 0xffffff00, 0}, {0, 1}));
+            if (keep)
+                assert(!ipv4_address_add(index, name, {survivor, 0xffffff00, 0}));
+            assert(!ipv4_route({peer, UINT32_MAX, 0, index, 10}, false));
+            auto socket = connect(adapters[index - 1], peer, index);
+            assert(socket->local == local);
+            ticks += 100;
+            assert(!ipv4_local(local));
+            uint8_t bytes[64];
+            for (unsigned at = 0; at < sizeof(bytes); at++)
+                bytes[at] = uint8_t(at * 17 + 11);
+            const std::vector<uint8_t> expected(bytes, bytes + sizeof(bytes));
+            auto sequence = socket->stream->next_send();
+            auto first_frame = frames.size();
+            assert(tcp_write(socket, bytes, sizeof(bytes)) == sizeof(bytes));
+            memset(bytes, 0xcc, sizeof(bytes));
+            for (unsigned step = 0; step < 10; step++) {
+                ticks += 20;
+                tcp_poll();
+                ipv4_poll();
+                assert(socket->stream->state() == tcp::State::established &&
+                       socket->stream->queued() == expected.size() &&
+                       socket->stream->next_send() == sequence && !tcp_so_error(socket, false));
+            }
+            for (size_t at = first_frame; at < frames.size(); at++) {
+                const auto& packet = frames[at];
+                const auto& frame = packet.bytes;
+                if (packet.index == index && frame.size() >= 54 &&
+                    ip4::get16(frame.data() + 12) == 0x0800 && frame[23] == 6)
+                    assert(ip4::get32(frame.data() + 26) != local ||
+                           ip4::get32(frame.data() + 30) != peer);
+            }
+            assert(!ipv4_address_add(index, name, {local, 0xffffff00, 0}));
+            ticks += 20;
+            tcp_poll();
+            ipv4_poll();
+            if (ip4::get16(frames.back().bytes.data() + 12) == 0x0806)
+                resolve(adapters[index - 1], socket);
+            auto sent = decoded(frames.back());
+            assert(frames.back().index == index && sent.sequence == sequence &&
+                   sent.length == expected.size() &&
+                   !memcmp(sent.payload, expected.data(), expected.size()));
+            tcp::Segment acknowledgement;
+            acknowledgement.flags = tcp::ack;
+            acknowledgement.window = 65535;
+            acknowledgement.sequence = socket->stream->next_receive();
+            acknowledgement.acknowledgment = sent.sequence + uint32_t(sent.length);
+            answer(socket, acknowledgement);
+            assert(!socket->stream->queued() && socket->stream->state() == tcp::State::established);
+            assert(!tcp_connect(socket, {}));
+            inet_close(socket);
+        }
+    }
+    puts("TCP_FINITE_ADDRESS_PASS adapters=2 cases=4 source_expiry unchanged_sequence "
+         "retained_bytes "
+         "no_obsolete_output address_restoration exact_delivery");
+}
+
 int main() {
     assert(!ip6::configuration_write(ip6::configuration_all, ip6::ConfigurationKey::generation_mode,
                                      1));
@@ -412,6 +485,7 @@ int main() {
     tcp_ipv6_socket_tests();
     tcp_ipv6_error_tests(adapters[0]);
     tcp_ipv6_reset_tests(adapters);
+    finite_address_recovery(adapters);
     puts("TCP_SOCKET_ROUTE_OUTPUT_PASS connected host companion exact_retry reroute pmtu "
          "failed_copy time_wait tuple_binding reset fatal_failure driver_error");
 }

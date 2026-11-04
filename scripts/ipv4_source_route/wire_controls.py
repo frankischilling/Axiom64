@@ -234,6 +234,32 @@ def controls(native, guest, output, *, applications=False, queues=False):
             changed_results[number]['error_guard']['responded_ns'] -= 200000000
             rejected_documents('early-empty-guard', {'results.json': changed_results},
                                'causal empty guard follows the third ARP retransmission timer')
+            guard_clock = re.compile(rf'^(IPV4_SOURCE_GUARD_CLOCK case={number} phase=empty realtime_ns=)(\d+) '
+                                     r'monotonic_before_ns=(\d+) monotonic_after_ns=(\d+)$', re.M)
+            require(guard_clock.search(text), 'actual autonomous empty guard clock for controls')
+            def early_guard(match):
+                return (match[1] + str(int(match[2]) - 200000000) + ' monotonic_before_ns=' +
+                        str(int(match[3]) - 200000000) + ' monotonic_after_ns=' + str(int(match[4]) - 200000000))
+            rejected_documents('short-source-quiet', {'client.log': guard_clock.sub(early_guard, text)},
+                               'autonomous empty raw guard preserves the full third ARP quiet interval')
+            rejected_documents('missing-source-quiet', {'client.log': guard_clock.sub('', text)},
+                               'complete source ARP and autonomous empty guard evidence')
+            rejected_documents('source-guard-clock-jump', {'client.log': guard_clock.sub(
+                lambda match: match[1] + str(int(match[2]) + 1000000000) + ' monotonic_before_ns=' +
+                match[3] + ' monotonic_after_ns=' + match[4], text)},
+                'source ARP and guard clocks retain the original realtime monotonic precision')
+            arp_pattern = re.compile(rf'^(IPV4_SOURCE_ARP case={number} packet=2 stamp_ns=)(\d+)', re.M)
+            require(arp_pattern.search(text), 'actual source third ARP arrival timestamp for controls')
+            rejected_documents('source-arp-stamp-early', {'client.log': arp_pattern.sub(
+                lambda match: match[1] + str(int(match[2]) - 200000000), text)}, 'actual source ARP retry timing')
+            arp_frame = re.compile(rf'^(IPV4_SOURCE_ARP case={number} packet=2 [^\n]* frame=)([0-9a-f]{{84}})$', re.M)
+            require(arp_frame.search(text), 'actual source third ARP frame for controls')
+            rejected_documents('source-arp-frame-mismatch', {'client.log': arp_frame.sub(
+                lambda match: match[1] + match[2][:56] + '0b' + match[2][58:], text)},
+                'every source ARP timestamp belongs to its exact independently captured frame')
+            ack_pattern = re.compile(rf'^IPV4_SOURCE_GUARD_ACK case={number}$', re.M)
+            rejected_documents('missing-guard-acknowledgment', {'client.log': ack_pattern.sub('', text)},
+                               'complete source ARP and autonomous empty guard evidence')
             rejected('manual-local-error', 'client.log', pattern.sub(lambda match: match[0].replace('mode=poll', 'mode=command'), text))
         require(original == {name: digest(directory / name) for name in original}, 'original complete evidence unchanged')
     proof = dict(passed=True, serialized_reopened_controls=len(receipts), original_evidence_unchanged=True, results=receipts)

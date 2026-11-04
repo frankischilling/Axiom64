@@ -3,7 +3,7 @@
 #include "core/base.hpp"
 
 namespace ax::proc4 {
-constexpr unsigned property_count = 2, forwarding_property = 1;
+constexpr unsigned property_count = 3, forwarding_property = 1;
 const char* property_name(unsigned);
 const char* scope_name(unsigned cookie);
 bool scope_index(const char*, unsigned&);

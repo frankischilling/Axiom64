@@ -22,9 +22,9 @@ struct Attribute {
 
 static_assert(sizeof(LinkHeader) == 16 && sizeof(AddressHeader) == 8);
 static_assert((max_net_devices + 1) * 128 + 20 <= netlink_family_reply);
-static_assert((ipv4_address_capacity + 1) * 76 + 20 <= netlink_family_reply);
-static_assert((ipv4_address_capacity + 1) * 76 + (ipv6_address_capacity + 1) * 72 + 20 <=
-              netlink_family_reply);
+static_assert((ipv4_address_capacity + 1) * 96 + 20 <= netlink_family_reply);
+static_assert((ipv4_address_capacity + 1) * 96 + (ipv6_address_capacity + 1) * 72 + 20 <=
+              netlink_address_reply);
 
 class Writer {
   public:
@@ -32,7 +32,7 @@ class Writer {
     }
 
     bool append(const void* data, size_t length) {
-        if (length > netlink_family_reply - size)
+        if (length > netlink_address_reply - size)
             return false;
         memcpy(bytes + size, data, length);
         size += length;
@@ -111,7 +111,8 @@ bool address(Writer& output, const NetlinkHeader& request, uint32_t port, const 
     const auto& value = entry.config;
     size_t start = output.size;
     NetlinkHeader message{0, 20, 2, request.sequence, port};
-    uint32_t flags = 0x80 | (entry.secondary ? 1 : 0);
+    uint32_t flags = entry.flags | (entry.secondary ? 1 : 0);
+    const auto lifetime = ipv4_address_cache(entry);
     AddressHeader header{2, uint8_t(prefix(value.mask)), uint8_t(flags),
                          uint8_t(loopback ? 254 : 0), info.index};
     uint32_t local = __builtin_bswap32(value.address),
@@ -120,7 +121,7 @@ bool address(Writer& output, const NetlinkHeader& request, uint32_t port, const 
         !output.attribute(1, &local, 4) || !output.attribute(2, &local, 4) ||
         !output.attribute(3, entry.label, strlen(entry.label) + 1) ||
         (!loopback && value.broadcast && !output.attribute(4, &broadcast, 4)) ||
-        !output.attribute(8, &flags, 4))
+        !output.attribute(8, &flags, 4) || !output.attribute(6, &lifetime, sizeof(lifetime)))
         return false;
     output.finish(start, message);
     return true;

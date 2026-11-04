@@ -151,6 +151,9 @@ size_t dump(const NetlinkHeader& request, uint32_t port, const Ipv4Route& filter
 size_t routing_capacity(const NetlinkHeader& request, const void* data) {
     if (!routing_dump(request.type))
         return aligned(request.length) + 20;
+    if (request.type == 22 && (!data || (request.length > sizeof(request) &&
+                                         !static_cast<const uint8_t*>(data)[sizeof(request)])))
+        return netlink_address_reply;
     if (request.type == 26) {
         if (!data || (request.length > sizeof(request) &&
                       !static_cast<const uint8_t*>(data)[sizeof(request)]))

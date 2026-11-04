@@ -125,9 +125,45 @@ def receive_clocks(text, rows):
 
 def guard_records(text, rows):
     armed, guarded = {}, {}
+    watched, arps, sampled, acknowledged = {}, {}, {}, {}
     lines = text.replace('\r\n', '\n').splitlines()
     for position, line in enumerate(lines):
-        if line.startswith('IPV4_SOURCE_GUARD_ARM '):
+        if line.startswith('IPV4_SOURCE_ARP_WATCH '):
+            match = re.fullmatch(r'IPV4_SOURCE_ARP_WATCH case=(\d+)', line)
+            require(match and int(match[1]) < len(rows), 'complete known source ARP watch')
+            case = int(match[1])
+            require(case not in watched, 'one source ARP watch per local error')
+            watched[case] = position
+        elif line.startswith('IPV4_SOURCE_ARP '):
+            match = re.fullmatch(r'IPV4_SOURCE_ARP case=(\d+) packet=(\d+) stamp_ns=(\d+) realtime_ns=(\d+) '
+                                 r'monotonic_before_ns=(\d+) monotonic_after_ns=(\d+) frame=([0-9a-f]{84})', line)
+            require(match and int(match[1]) < len(rows), 'complete actual source ARP timestamp')
+            case, packet = int(match[1]), int(match[2])
+            values = arps.setdefault(case, [])
+            require(case in watched and packet == len(values) < 3, 'ordered exact source ARP frames')
+            stamp, real, before, after = map(int, match.groups()[2:6])
+            require(0 <= stamp <= real < 1 << 63 and real - stamp <= CLOCK_BOUND_NS and
+                    real - stamp <= before <= after < 1 << 63 and after - before <= CLOCK_BOUND_NS,
+                    'actual source ARP arrival bracket within original observer bound')
+            values.append(dict(position=position, stamp=stamp, realtime_ns=real,
+                               monotonic_before_ns=before, monotonic_after_ns=after, frame=match[7]))
+        elif line.startswith('IPV4_SOURCE_GUARD_CLOCK '):
+            match = re.fullmatch(r'IPV4_SOURCE_GUARD_CLOCK case=(\d+) phase=empty realtime_ns=(\d+) '
+                                 r'monotonic_before_ns=(\d+) monotonic_after_ns=(\d+)', line)
+            require(match and int(match[1]) < len(rows), 'complete source empty guard clock')
+            case = int(match[1])
+            real, before, after = map(int, match.groups()[1:])
+            require(case not in sampled and 0 <= real < 1 << 63 and 0 <= before <= after < 1 << 63 and
+                    after - before <= CLOCK_BOUND_NS, 'unique bounded source empty guard clock')
+            sampled[case] = dict(position=position, realtime_ns=real,
+                                 monotonic_before_ns=before, monotonic_after_ns=after)
+        elif line.startswith('IPV4_SOURCE_GUARD_ACK '):
+            match = re.fullmatch(r'IPV4_SOURCE_GUARD_ACK case=(\d+)', line)
+            require(match and int(match[1]) < len(rows), 'complete actual guard acknowledgment')
+            case = int(match[1])
+            require(case not in acknowledged, 'one guard acknowledgment per local error')
+            acknowledged[case] = position
+        elif line.startswith('IPV4_SOURCE_GUARD_ARM '):
             match = re.fullmatch(r'IPV4_SOURCE_GUARD_ARM case=(\d+)', line)
             require(match and int(match[1]) < len(rows), 'complete known raw guard arm')
             case = int(match[1])
@@ -142,13 +178,44 @@ def guard_records(text, rows):
             guarded[case] = position
     expected = {row['case'] for row in rows if row['suppress_arp'] and row['complete_route']}
     require(set(armed) == set(guarded) == expected, 'complete armed empty guards for every local error')
+    require(set(watched) == set(arps) == set(sampled) == set(acknowledged) == expected,
+            'complete source ARP and autonomous empty guard evidence')
     for case in expected:
         original = [n for n, line in enumerate(lines) if line.startswith(f'IPV4_SOURCE_RAW_CLOCK case={case} packet=0 ')]
         error = [n for n, line in enumerate(lines) if line.startswith(f'IPV4_SOURCE_RAW_CLOCK case={case} packet=1 ')]
         require(len(original) == len(error) == 1, 'complete original and error raw clocks around the guard')
         require(original[0] < armed[case] < guarded[case] < error[0],
                 'actual raw input then arm then empty guard then local error observation')
-    return guarded
+        require(len(arps[case]) == 3 and watched[case] < arps[case][0]['position'] <
+                arps[case][1]['position'] < arps[case][2]['position'] < armed[case] and
+                guarded[case] < sampled[case]['position'] < error[0] and
+                sampled[case]['position'] < acknowledged[case],
+                'actual source ARP transmissions then autonomous proof then command acknowledgment')
+    return {case: dict(arps=arps[case], clock=sampled[case]) for case in expected}
+
+
+def source_guard(proof, sync, requested, responded, retries, error, timer_bounds):
+    arps, guard = proof['arps'], proof['clock']
+    samples = [*arps, guard]
+    for sample in samples:
+        require(sample['realtime_ns'] - sample['monotonic_after_ns'] <=
+                sync['realtime_ns'] - sync['monotonic_before_ns'] + PRECISION_NS and
+                sync['realtime_ns'] - sync['monotonic_after_ns'] <=
+                sample['realtime_ns'] - sample['monotonic_before_ns'] + PRECISION_NS,
+                'source ARP and guard clocks retain the original realtime monotonic precision')
+    intervals = [(row['monotonic_before_ns'] - (row['realtime_ns'] - row['stamp']),
+                  row['monotonic_after_ns'] - (row['realtime_ns'] - row['stamp'])) for row in arps]
+    for (before, after), receipt in zip(intervals, retries):
+        lower = requested + before - sync['monotonic_after_ns'] - PRECISION_NS
+        upper = responded + after - sync['monotonic_before_ns'] + PRECISION_NS
+        require(lower <= receipt <= upper + CLOCK_BOUND_NS,
+                'actual source ARP timestamp matches the independent physical receipt')
+    require(all(timer_bounds[0] <= right['stamp'] - left['stamp'] <= timer_bounds[1]
+                for left, right in zip(arps, arps[1:])), 'actual source ARP retry timing')
+    require(guard['monotonic_before_ns'] - intervals[2][1] >= timer_bounds[0] and
+            guard['monotonic_after_ns'] - intervals[2][0] <= timer_bounds[1] and
+            guard['monotonic_after_ns'] <= error['monotonic_before_ns'],
+            'autonomous empty raw guard preserves the full third ARP quiet interval before error')
 
 
 def guard_commands(directory, rows):
@@ -392,14 +459,19 @@ def observations(text, wire, results, native, *, timer_bounds=None, guard_comman
                 error_receipts.append(observed_raw)
         guard = result['error_guard']
         if number in guards:
+            physical_arps = [value['frame'][:84] for value in selected if value['direction'] == 'output' and
+                             value['index'] == 1 and value['frame'][24:28] == '0806' and
+                             router(bytes.fromhex(value['frame']), 1)]
+            require([value['frame'] for value in guards[number]['arps']] == physical_arps,
+                    'every source ARP timestamp belongs to its exact independently captured frame')
+            source_guard(guards[number], sync, requested, responded, retries, raw_clocks[number][1], timer_bounds)
             require(type(guard) is dict and set(guard) == {'arm_requested_ns', 'arm_responded_ns', 'requested_ns', 'responded_ns'},
                     'complete actual host empty guard requests')
             arm_request, arm_response, guard_request, guard_response = (integer(guard[key]) for key in
                 ('arm_requested_ns', 'arm_responded_ns', 'requested_ns', 'responded_ns'))
             require(retries[2] <= arm_request <= arm_response <= guard_request <= guard_response <= ended and
                     arm_response - arm_request <= CLOCK_BOUND_NS and guard_response - guard_request <= CLOCK_BOUND_NS and
-                    guard_request - retries[2] >= timer_bounds[0] and
-                    guard_request <= result['raw_receipts'][1]['monotonic_ns'],
+                    guard_request - retries[2] >= timer_bounds[0],
                     'causal empty guard follows the third ARP retransmission timer within original observer bounds')
             require(guard_request <= integer(guard_commands[number]) <= guard_response,
                     'actual single-byte guard command belongs to its recorded host request')

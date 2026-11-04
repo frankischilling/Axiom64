@@ -16,6 +16,8 @@
 #include "net/tcp/socket.hpp"
 
 namespace ax {
+static void refresh_addresses();
+
 namespace {
 constexpr unsigned neighbor_count = 128, output_count = 32;
 constexpr uint64_t neighbor_lifetime = 30000, retry_interval = 100;
@@ -72,6 +74,8 @@ static ip4::PathMtuCache path_mtu;
 static uint64_t destination_generation = 1;
 static uint16_t identifier;
 static bool polling;
+static bool aging_addresses, address_clock_valid;
+static uint64_t address_clock;
 static uint64_t next_icmp_error[max_net_devices + 2];
 
 static void protocol_error(unsigned index, uint32_t source, uint32_t destination,
@@ -345,6 +349,7 @@ static uint32_t preferred_source(unsigned index, uint32_t destination) {
 }
 
 static int select(Ipv4Source requested, uint32_t destination, unsigned bound, Selection& result) {
+    refresh_addresses();
     uint32_t source = requested.address;
     bool multicast = ip4::multicast(destination);
     if (destination && !ip4::unicast(destination) && !multicast && destination != UINT32_MAX)
@@ -845,6 +850,7 @@ bool ipv4_option_unicast(uint32_t address, void*) {
 }
 
 const Ipv4Config* ipv4_config(unsigned index) {
+    refresh_addresses();
     if (index == ipv4_loopback)
         return &loopback;
     if (!net_info(index))
@@ -855,6 +861,7 @@ const Ipv4Config* ipv4_config(unsigned index) {
 }
 
 const Ipv4Address* ipv4_address(unsigned position) {
+    refresh_addresses();
     if (auto entry = addresses.at(position))
         return entry;
     if (position && !addresses.at(position - 1))
@@ -863,7 +870,14 @@ const Ipv4Address* ipv4_address(unsigned position) {
     return &lo;
 }
 
+Ipv4AddressCacheInfo ipv4_address_cache(const Ipv4Address& entry) {
+    if (entry.index == ipv4_loopback)
+        return {};
+    return addresses.cache(entry, ticks);
+}
+
 const Ipv4Config* ipv4_label(unsigned index, const char* label, uint32_t hint) {
+    refresh_addresses();
     if (index == ipv4_loopback)
         return !strcmp(label, "lo") ? &loopback : nullptr;
     auto entry = addresses.label(index, label, hint);
@@ -896,10 +910,17 @@ static uint16_t active_interfaces() {
     return active;
 }
 
-static int addresses_changed(const ip4::AddressBook& before, unsigned index) {
-    if (int error = routes.synchronize(addresses, active_interfaces())) {
-        addresses = before;
-        return error;
+static int addresses_changed(const ip4::AddressBook& before, unsigned index, bool rollback = true) {
+    int error = routes.synchronize(addresses, active_interfaces());
+    if (error) {
+        if (rollback) {
+            addresses = before;
+            return error;
+        }
+        // Timer retirement cannot revive an expired address if route lifetime
+        // identifiers are exhausted. Retire that device's stale routes instead.
+        routes.withdraw(index);
+        path_mtu.discard(index);
     }
     if (before.preferred(index) && !addresses.preferred(index)) {
         routes.withdraw(index);
@@ -942,10 +963,10 @@ static int addresses_changed(const ip4::AddressBook& before, unsigned index) {
         for (auto& item : output) {
             if (!item.bytes || item.index != index)
                 continue;
-            // Admitted literal and forwarded packets retain their bytes and
+            // Admitted packets retain their bytes and
             // neighbor selection while an address from this device survives.
             // Last-address/device loss still cancels the queued packet.
-            if ((item.header_included || item.ingress) && !item.local && surviving_address)
+            if (!item.local && surviving_address)
                 continue;
             bool ip = item.local || ip4::get16(item.bytes + 12) == 0x0800;
             bool owned =
@@ -966,14 +987,39 @@ static int addresses_changed(const ip4::AddressBook& before, unsigned index) {
         for (auto& neighbor : neighbors)
             if (neighbor.index == index)
                 neighbor = {};
-    return 0;
+    return error;
+}
+
+static void refresh_addresses() {
+    if (aging_addresses || (address_clock_valid && address_clock == ticks))
+        return;
+    address_clock = ticks;
+    address_clock_valid = true;
+    uint16_t promotion = 0;
+    for (unsigned index = 1; index <= max_net_devices; index++)
+        if (ip4::configuration_promote_secondaries(index))
+            promotion |= 1u << (index - 1);
+    auto before = addresses;
+    uint16_t changed = addresses.expire(ticks, promotion);
+    if (!changed)
+        return;
+    aging_addresses = true;
+    for (unsigned index = 1; index <= max_net_devices; index++)
+        if (changed & (1u << (index - 1)))
+            addresses_changed(before, index, false);
+    aging_addresses = false;
 }
 
 int ipv4_configure_label(unsigned index, const char* label, const Ipv4Config& config) {
     if (int error = address_label(index, label))
         return error;
+    const auto captured = config;
+    char name[16]{};
+    memcpy(name, label, strlen(label) + 1);
+    refresh_addresses();
     auto before = addresses;
-    int error = addresses.set(index, label, config);
+    int error =
+        addresses.set(index, name, captured, ticks, ip4::configuration_promote_secondaries(index));
     int changed = addresses_changed(before, index);
     return changed ? changed : error;
 }
@@ -990,19 +1036,33 @@ int ipv4_configure(unsigned index, const Ipv4Config& config) {
                                     : -19;
 }
 
-int ipv4_address_add(unsigned index, const char* label, const Ipv4Config& config) {
+int ipv4_address_add(unsigned index, const char* label, const Ipv4Config& config,
+                     Ipv4AddressLifetimes lifetime, bool replace) {
     if (!net_info(index))
         return -19;
+    if (!label || !*label)
+        return -22;
+    unsigned length = 0;
+    while (length < 16 && label[length])
+        length++;
+    if (length == 16)
+        return -22;
+    const auto captured = config;
+    char name[16]{};
+    memcpy(name, label, length + 1);
+    refresh_addresses();
     auto before = addresses;
-    int error = addresses.add(index, label, config);
+    int error = addresses.add(index, name, captured, ticks, lifetime, replace);
     return error ? error : addresses_changed(before, index);
 }
 
 int ipv4_address_remove(unsigned index, uint32_t address, uint32_t mask) {
     if (!net_info(index))
         return -19;
+    refresh_addresses();
     auto before = addresses;
-    int error = addresses.remove(index, address, mask);
+    int error =
+        addresses.remove(index, address, mask, ip4::configuration_promote_secondaries(index));
     return error ? error : addresses_changed(before, index);
 }
 
@@ -1035,6 +1095,7 @@ int ipv4_administrative_changed(unsigned index) {
 }
 
 static int change_route(const Ipv4Route& input, bool remove, bool control, bool exclusive) {
+    refresh_addresses();
     auto value = input;
     if (!ip4::mask_valid(value.mask) || (value.destination & value.mask) != value.destination)
         return -22;
@@ -1090,6 +1151,7 @@ int ipv4_route_control(const Ipv4Route& value, bool remove, bool exclusive) {
 }
 
 size_t ipv4_routes(Ipv4Route* output, size_t capacity) {
+    refresh_addresses();
     size_t count = 0;
     auto append = [&](const ip4::RouteTable::Entry& entry) {
         if (count < capacity) {
@@ -1116,6 +1178,7 @@ size_t ipv4_routes(Ipv4Route* output, size_t capacity) {
 }
 
 bool ipv4_local(uint32_t address) {
+    refresh_addresses();
     if (is_loopback(address))
         return true;
     for (unsigned n = 0; auto entry = addresses.at(n); n++)
@@ -1179,6 +1242,7 @@ int ipv4_destination(Ipv4Destination& retained, Ipv4Source source, uint32_t dest
 }
 
 bool ipv4_destination_current(const Ipv4Destination& retained) {
+    refresh_addresses();
     return retained.path.index && retained.generation == destination_generation &&
            destination_generation != UINT64_MAX && (!retained.expires || ticks < retained.expires);
 }
@@ -1551,6 +1615,7 @@ void ipv4_discard_oversized(InetSocket* owner, uint16_t mtu) {
 }
 
 void ipv4_receive(const NetInfo& info, const void* data, size_t length) {
+    refresh_addresses();
     const auto frame = static_cast<const uint8_t*>(data);
     if (!info.administrative || !info.live || length < ethernet_header)
         return;
@@ -1578,6 +1643,7 @@ void ipv4_poll() {
     if (polling)
         return;
     polling = true;
+    refresh_addresses();
     ipv4_multicast_poll();
     ip4::reassembly_expire(ticks, reassembly_timeout);
     for (auto& neighbor : neighbors) {
@@ -1685,6 +1751,7 @@ void ipv4_poll() {
 }
 
 void ipv4_shutdown() {
+    address_clock_valid = false;
     ip4::reassembly_discard();
     path_mtu.discard();
     retire_destinations();

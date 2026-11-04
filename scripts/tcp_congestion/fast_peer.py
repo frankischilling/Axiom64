@@ -27,33 +27,33 @@ class Flow(WindowFlow):
             check(self.prefix >= 2920, 'fast-recovery fixture observes a real opening burst')
             self.snapshot()
             self.acked = 1460
-            self.stage, self.stage_at = 'growth', now
+            self.begin_observation('growth')
             self.send()
         elif self.stage == 'growth' and elapsed >= .1:
             self.snapshot()
-            self.stage, self.stage_at = 'fast', now
+            self.begin_observation('fast')
             for ordinal in range(1, 4):
                 self.send()
                 self.peer.frames[-1]['duplicate_ack'] = ordinal
         elif self.stage == 'fast' and self.fast_retries and elapsed >= .05:
             self.snapshot()
-            self.stage, self.stage_at = 'extra', now
+            self.begin_observation('extra')
             self.send()
             self.peer.frames[-1]['duplicate_ack'] = 4
         elif self.stage == 'extra' and elapsed >= .05:
             self.snapshot()
             self.acked = self.prefix
-            self.stage, self.stage_at = 'recovery', now
+            self.begin_observation('recovery')
             self.send()
         elif self.stage == 'recovery' and elapsed >= .1:
             self.snapshot()
             self.acked, self.window = self.prefix, 1024
-            self.stage, self.stage_at = 'receiver', now
+            self.begin_observation('receiver')
             self.send()
         elif self.stage == 'receiver' and elapsed >= .35:
             self.snapshot()
             self.acked, self.window = self.prefix, 65535
-            self.stage, self.stage_at = 'complete', now
+            self.begin_observation('complete')
             self.send()
 
     def result(self):

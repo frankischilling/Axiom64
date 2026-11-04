@@ -86,6 +86,7 @@ using namespace ax;
 void ipv4_send_control_cases(std::vector<std::vector<uint8_t>>&);
 void ipv4_raw_header_cases(NetAdapter&, std::vector<std::vector<uint8_t>>&);
 void ipv4_raw_header_queue_cases(NetAdapter&, std::vector<std::vector<uint8_t>>&);
+void ipv4_address_lifecycle_cases(NetAdapter&, std::vector<std::vector<uint8_t>>&);
 static std::vector<std::vector<uint8_t>> frames;
 
 static void poll(NetAdapter&) {
@@ -368,6 +369,7 @@ int main() {
     ipv4_send_control_cases(frames);
     ipv4_raw_header_cases(adapters[0], frames);
     ipv4_raw_header_queue_cases(adapters[0], frames);
+    ipv4_address_lifecycle_cases(adapters[0], frames);
     ipv4_shutdown();
     std::puts("IPV4_SOCKET_OUTPUT_PASS retained-zero named-selection wildcard-selection "
               "ICMP-refresh ARP-ownership removed-source");

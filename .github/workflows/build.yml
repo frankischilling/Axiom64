@@ -49,6 +49,9 @@ jobs:
         run: |
           python3 -B scripts/tests/tcp6_isolation_prelude_test.py -v
           python3 -B scripts/tests/tcp6_source_handshake_test.py -v
+          python3 -B scripts/tests/native_icmp_budget_capture_test.py -v
+          sudo -n python3 -B scripts/tests/ipv4_lifetime_paths_test.py -v
+          python3 -B scripts/tests/ipv4_lifetime_arp_test.py -v
           python3 -B scripts/tests/manager_link_startup_test.py -v
           python3 -B scripts/tests/network_window_test.py -v
           python3 -B scripts/tests/ipv6_owner_pair_test.py -v
@@ -210,6 +213,7 @@ jobs:
           python3 scripts/build_libcap.py --provider all
           make -j2 build/tcp-native build/tcp-static build/tcp-dynamic
           make -j2 build/tcp-fault-native build/tcp-fault-static build/tcp-fault-dynamic
+          make -j2 build/ipv4-address-lifetimes-native build/ipv4-address-lifetimes-static build/ipv4-address-lifetimes-dynamic build/ipv4-lifetime-wire-native build/ipv4-lifetime-wire-static build/ipv4-lifetime-wire-dynamic
           make -j2 build/tcp6-fault-native build/tcp6-fault-static build/tcp6-fault-dynamic
           make -j2 build/tcp6-scoped-native build/tcp6-scoped-static build/tcp6-scoped-dynamic
           make -j2 build/tcp6-replies-native build/tcp6-replies-static build/tcp6-replies-dynamic
@@ -326,7 +330,9 @@ jobs:
             build/gnu-utmp-reader
             build/crypto-cache
       - name: Test paired network workspace isolation and failure evidence
-        run: python3 scripts/tests/paired_network_test.py
+        run: |
+          python3 scripts/tests/fixture_storage_test.py -v
+          python3 scripts/tests/paired_network_test.py
       - name: Test PCI removal preserves interrupted guest reads
         run: |
           python3 scripts/manager_link_peer_test.py
@@ -488,7 +494,12 @@ jobs:
         run: bash scripts/ci/tools.sh restore
       - name: Compare complete source-filter and source-route cohorts with native Linux and both guest adapters
         if: matrix.suite == 'ipv4-source-filters'
-        run: sudo -n env PYTHONPATH=scripts python3 -B -m ipv4_source_route.window
+        run: |
+          python3 -B scripts/tests/ipv4_source_guard_test.py -v
+          sudo -n env PYTHONPATH=scripts python3 -B -m ipv4_source_route.window
+      - name: Compare finite IPv4 address controls and transport lifetime ownership
+        if: matrix.suite == 'ipv4-source-filters'
+        run: sudo -n make test-ipv4-address-lifetimes
       - name: Upload source-route packets products syscall controls and protected readbacks
         if: always() && matrix.suite == 'ipv4-source-filters'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -499,6 +510,11 @@ jobs:
             build/ipv4-source-route-wire
             build/ipv4-source-route-audit
             build/ipv4-source-route-window
+            build/ipv4-address-lifetimes-wire
+            build/ipv4-address-lifetimes-audit
+            build/ipv4-address-lifetimes-cohort
+            build/ipv4-address-lifetimes-native-controls
+            build/ipv4-address-lifetimes-guest
       - name: Upload complete IPv4 source-route syscall evidence
         if: always() && matrix.suite == 'ipv4-source-filters'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -921,6 +937,7 @@ jobs:
       - name: Verify captured congestion and receive-window ownership across the complete matrix
         if: matrix.suite == 'tcp-fault-loss'
         run: |
+          python3 scripts/tests/tcp_congestion_gate_test.py -v
           sudo -n make test-tcp-window-native
           make test-tcp-window
           sudo -n make test-tcp-fast-native

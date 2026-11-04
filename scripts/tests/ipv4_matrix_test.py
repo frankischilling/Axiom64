@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import ipv4_matrix
@@ -101,8 +102,32 @@ class MatrixTest(unittest.TestCase):
         self.assertEqual(len(paths), 4)
         for path in paths:
             stat = Path('/proc') / path.read_text() / 'stat'
-            if stat.exists():
-                self.assertIn(stat.read_text().rsplit(')', 1)[1].split()[0], ('Z', 'X'))
+            self.assert_descendant_exited(stat)
+
+    def assert_descendant_exited(self, stat):
+        try:
+            state = stat.read_text().rsplit(')', 1)[1].split()[0]
+        except FileNotFoundError:
+            return
+        self.assertIn(state, ('Z', 'X'))
+
+    def test_reaped_descendant_during_state_read_is_exited(self):
+        stat = Mock()
+        stat.exists.return_value = True
+        stat.read_text.side_effect = FileNotFoundError('/proc/retired-child/stat')
+        self.assert_descendant_exited(stat)
+
+    def test_live_descendant_is_still_rejected(self):
+        stat = Mock()
+        stat.read_text.return_value = '123 (child (worker)) S 1 2 3'
+        with self.assertRaises(AssertionError):
+            self.assert_descendant_exited(stat)
+
+    def test_unreadable_descendant_state_is_not_accepted(self):
+        stat = Mock()
+        stat.read_text.side_effect = PermissionError('/proc/owned-child/stat')
+        with self.assertRaises(PermissionError):
+            self.assert_descendant_exited(stat)
 
 
 if __name__ == '__main__':

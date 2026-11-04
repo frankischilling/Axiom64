@@ -130,6 +130,33 @@ def streams(spec, output, inputs, absence, restore):
     require(set(echoed) == {4, 5}, 'both complete original stream echoes')
 
 
+def owned_arp(row, cases, native):
+    frame, lane = bytes.fromhex(row['frame']), row['index']
+    arp_reply(lane, frame)
+    source = 0xc6124002 + lane * 0x1000
+    target = int.from_bytes(frame[38:42], 'big')
+    actual = int.from_bytes(frame[28:32], 'big')
+    owned = actual == source
+    if native and not owned:
+        # Linux may announce a surviving local address when a queued neighbour
+        # probe outlives its original source. Payload source checks stay exact.
+        for case in cases:
+            spec = case['spec']
+            if (spec['lane'] != lane or spec['survival'] not in (1, 3) or
+                    actual != source + (256 if spec['survival'] == 1 else 1) or
+                    target not in (spec['peer'], spec['guard'])):
+                continue
+            phases = {event['phase']: event for event in case['events']}
+            if (phases['lifetime-start']['monotonic_ns'] + 1_000_000_000 - PRECISION_NS <=
+                    row['monotonic_ns'] <= phases['end']['monotonic_ns']):
+                owned = True
+                break
+    require(owned and
+            target in [((source & 0xffffff00) | value) for value in (*range(16, 28), 254)] and
+            frame[:6] in (bytes.fromhex('ffffffffffff'), hardware(lane, True)),
+            'owned original ARP source, target and physical destination')
+
+
 def protocol(text, wire, ingress, events, commands, native):
     cases = client_log(text)
     original = [value for kind, value in records(text) if kind == 'EVENT']
@@ -172,13 +199,7 @@ def protocol(text, wire, ingress, events, commands, native):
         else:
             require(frame[12:14] == b'\x08\x06', 'known complete Ethernet protocol')
             if row['direction'] == 'output':
-                arp_reply(lane, frame)
-                source = 0xc6124002 + lane * 0x1000
-                target = int.from_bytes(frame[38:42], 'big')
-                require(int.from_bytes(frame[28:32], 'big') == source and
-                        target in [((source & 0xffffff00) | value) for value in (*range(16, 28), 254)] and
-                        frame[:6] in (bytes.fromhex('ffffffffffff'), hardware(lane, True)),
-                        'owned original ARP source, target and physical destination')
+                owned_arp(row, cases, native)
                 arp_requests.append((lane, frame))
             else:
                 require(any(index == lane and frame == arp_reply(lane, request) for index, request in arp_requests),

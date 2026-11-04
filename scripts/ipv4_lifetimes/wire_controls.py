@@ -21,7 +21,8 @@ NAMES = ('missing-control', 'wrong-control-sequence', 'wrong-control-error', 'wr
          'repaired-wrong-tcp-ack', 'early-tcp-output', 'wrong-adapter', 'damaged-arp-reply',
          'early-held-arp-reply', 'shortened-held-observation', 'wrong-command-byte', 'missing-command',
          'missing-event-receipt', 'boolean-event', 'extra-event-field', 'noncanonical-wire-bytes',
-         'missing-withdrawal', 'late-withdrawal', 'repaired-reserved-ip-flag', 'repaired-zero-ip-ttl')
+         'missing-withdrawal', 'late-withdrawal', 'repaired-reserved-ip-flag', 'repaired-zero-ip-ttl',
+         'unowned-arp-source', 'unowned-arp-target', 'unowned-arp-destination', 'wrong-arp-sender')
 CLOCK_NAMES = ('source-clock-jump', 'observer-clock-jump', 'backward-source-clock', 'backward-observer-clock')
 
 
@@ -157,6 +158,17 @@ def mutation(value, name):
     elif name == 'damaged-arp-reply':
         row = next(row for row in value['wire'] if row['direction'] == 'input' and row['frame'][24:28] == '0806')
         raw = bytearray.fromhex(row['frame']); raw[29] ^= 1; row['frame'] = raw.hex()
+    elif name in ('unowned-arp-source', 'unowned-arp-target', 'unowned-arp-destination', 'wrong-arp-sender'):
+        row = next(row for row in value['wire'] if row['direction'] == 'output' and
+                   row['packet_type'] != 4 and row['frame'][24:28] == '0806')
+        raw = bytearray.fromhex(row['frame'])
+        if name == 'unowned-arp-source':
+            raw[28:32] = bytes.fromhex('c6124103')
+        elif name == 'unowned-arp-target':
+            raw[38:42] = bytes.fromhex('c61240c8')
+        else:
+            raw[0 if name == 'unowned-arp-destination' else 22] ^= 2
+        row['frame'] = raw.hex()
     elif name in ('early-held-arp-reply', 'shortened-held-observation'):
         row = next(row for row in value['wire'] if row['direction'] == 'input' and row['frame'][24:28] == '0806' and
                    bytes.fromhex(row['frame'])[28:32] == bytes.fromhex('c6124010'))

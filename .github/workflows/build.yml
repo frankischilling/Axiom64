@@ -329,7 +329,9 @@ jobs:
             build/gnu-utmp-reader
             build/crypto-cache
       - name: Test paired network workspace isolation and failure evidence
-        run: python3 scripts/tests/paired_network_test.py
+        run: |
+          python3 scripts/tests/fixture_storage_test.py -v
+          python3 scripts/tests/paired_network_test.py
       - name: Test PCI removal preserves interrupted guest reads
         run: |
           python3 scripts/manager_link_peer_test.py

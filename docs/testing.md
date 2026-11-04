@@ -1709,3 +1709,13 @@ The option-specific commands qualify their stated model and loopback scope. Ethe
 fragment copy bits, source-route receive policy, broader TCP responses, PMTU quotes and
 blocking/output lifetime cases remain necessary for complete packet-option acceptance.
 The existing receive/send-control and full networking cohorts remain required.
+
+
+Normal-init fixtures copy raw disks sparsely and verify every copied byte before
+booting. Each guest writes its own disk; the seed remains independent. Once the
+prepared fixture retains verified disk and ISO copies, the controller removes
+the matching build aliases before starting the guest matrix. The original
+firmware, transport, root and recovery scenarios and observation deadlines remain
+required. `python3 scripts/tests/fixture_storage_test.py -v` exercises sparse
+allocation, independent writes, preserved existing destinations, rejected partial
+copies and changed retention witnesses.

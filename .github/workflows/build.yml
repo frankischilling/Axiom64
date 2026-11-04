@@ -934,6 +934,7 @@ jobs:
       - name: Verify captured congestion and receive-window ownership across the complete matrix
         if: matrix.suite == 'tcp-fault-loss'
         run: |
+          python3 scripts/tests/tcp_congestion_gate_test.py -v
           sudo -n make test-tcp-window-native
           make test-tcp-window
           sudo -n make test-tcp-fast-native

@@ -504,6 +504,14 @@ existing profile count, healthy-adapter renewal and teardown checks remain.
 
 Normal desktop acceptance drives private administrator creation and login through the installed console, then checks the ordinary session before sending the X11 command. The console driver waits for Bash to return its prompt before sending the next command. Its `printf` acknowledgements contain no complete marker in their input echo. Interleaved console output therefore cannot turn echoed command text into a completion acknowledgement. The host ends the boot only after the window manager, mapped terminal, keyboard acknowledgement, input injection and captured screenshot have all completed. Disk-root shutdown uses authenticated sudo. `python3 scripts/tests/desktop_console_test.py` replays premature acknowledgements, missing readiness, failed identity and actual generated shell output; `python3 scripts/tests/normal_login_test.py` checks split prompts, private elevation input and command return ordering. The BIOS/UEFI boots still exercise the real X11 probe and keyboard/mouse paths.
 
+`python3 scripts/tests/tcp_congestion_gate_test.py -v` checks congestion timers
+against complete backend ACK writes. Native Ethernet sends and framed guest
+streams start each ACK-gated interval only after the queued bytes have been
+written. Blocked and partial writes keep the timer pending. The original
+100 ms opening/recovery waits, 50 ms duplicate-ACK stages and 350 ms small-window
+observation remain required. Saved peer timestamps and independent captures
+still reject a shortened interval.
+
 | Test | Evidence |
 | --- | --- |
 | Static and dynamic musl ABI | Files, hard links and unlink lifetime, directories, isolation, fork/exec/wait, mappings, pipes, descriptors |

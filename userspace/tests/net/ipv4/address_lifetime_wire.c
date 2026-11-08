@@ -336,6 +336,7 @@ static void exercise(void) {
     event("withdrawn", 0);
     require(assigned(other) == (survival == 1 || survival == 3),
             "actual cascade or surviving address");
+    command('B');
     int fresh = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
     struct sockaddr_in source = endpoint(local, 0);
     errno = 0;

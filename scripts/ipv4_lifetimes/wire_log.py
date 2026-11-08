@@ -152,7 +152,7 @@ def verify(text):
         expected += [('lifetime-start', 1)]
         if spec['transport'] != 2:
             expected += [('queued', 64)]
-        expected += [('withdrawn', 0), ('fresh-bind', -99), ('expired', 64 if spec['transport'] == 2 else -101)]
+        expected += [('withdrawn', 0), ('command', 66), ('fresh-bind', -99), ('expired', 64 if spec['transport'] == 2 else -101)]
         if spec['transport'] == 2:
             expected += [('absence-end', 0)]
         expected += [('command', 82), ('restored', 0)]

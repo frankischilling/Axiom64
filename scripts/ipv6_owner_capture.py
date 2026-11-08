@@ -339,7 +339,14 @@ def inspect(path,lane,text,group,native=False,statistics=None,native_kernel_rele
                 first=one(case,9);ready=one(case,10)
                 require(first['target']==ready['target'] and first['target']!=automatic['target'] and
                         first['target']!=prefixes[case][:8]+identifier,'stable retry has a fresh non-EUI64 identity')
-                exact(first,{1:0x8c0,3:0x8c2,4:0x840}[case],6 if case==4 else inf,10 if case==4 else inf)
+                if case==4:
+                    elapsed=first['guest_ns']-replaced['guest_ns']
+                    require(first['flags']==0x840 and elapsed>=0 and 0<first['preferred']<=6 and
+                            first['valid']==first['preferred']+4 and
+                            max(0,6-(elapsed+20000000)//1000000000)<=first['preferred']<=
+                            6-max(0,elapsed-20000000)//1000000000,
+                            'first finite retry query ages from the captured six/ten replacement')
+                else:exact(first,{1:0x8c0,3:0x8c2}[case],inf,inf)
                 require(ready['flags']=={1:0x880,3:0x882,4:0x800}[case], 'actual retry becomes ready with preserved raw flags')
                 retry=[probe for probe in case_probes if probe['target']==first['target']]
                 if case==3:
@@ -361,8 +368,10 @@ def inspect(path,lane,text,group,native=False,statistics=None,native_kernel_rele
                 for value in [ready,active_owners[0],remaining[0]]:
                     if case==4:
                         elapsed=value['guest_ns']-first['guest_ns']
+                        inherited=first['preferred']
                         require(value['flags']==0x800 and 0<value['preferred']<=6 and value['valid']==value['preferred']+4 and
-                                max(0,6-(elapsed+999999999)//1000000000-1)<=value['preferred']<=min(6,6-elapsed//1000000000+1),
+                                max(0,inherited-(elapsed+999999999)//1000000000-1)<=value['preferred']<=
+                                min(inherited,inherited-elapsed//1000000000+1),
                                 'finite retry preserves raw six/ten cache and ages against actual observations')
                     else:exact(value,0x882 if case==3 else 0x880,inf,inf)
             require(not values(case,5),'last explicit removal leaves no global address')

@@ -282,8 +282,17 @@ class Peer(RouterPeer):
                     'one actual first and ready retry observation')
             expected = ({1:0x8c0,3:0x8c2,4:0x840}.get(case,0x8c0) if kind == FIRST else
                         {1:0x880,3:0x882,4:0x800}.get(case,0x880))
-            require(flags == expected and (preferred,valid) == ((6,10) if case == 4 else (INFINITY,INFINITY))
-                    if kind == FIRST else flags == expected,
+            lifetime_ok = (preferred,valid) == (INFINITY,INFINITY)
+            if kind == FIRST and case == 4:
+                original = self.inventories[case,2][0]
+                elapsed = stamp - original['guest_ns']
+                # Cache readback counts whole seconds. The first query can
+                # arrive after a second of normal aging; it is not creation.
+                # Allow two 10-ms source ticks only at a second boundary.
+                lifetime_ok = (elapsed >= 0 and 0 < preferred <= 6 and valid == preferred + 4 and
+                    max(0,6-(elapsed+20000000)//1000000000) <= preferred <=
+                    6-max(0,elapsed-20000000)//1000000000)
+            require(flags == expected and (kind != FIRST or lifetime_ok),
                     'actual retry retains raw flags and first inherited lifetimes')
             self.samples[key] = value
         elif kind == DELETE:

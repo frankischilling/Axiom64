@@ -1613,9 +1613,15 @@ client as root and UID 65534; its additional groups require per-message
 credentials, descriptor transfer, distinct close-on-exec descriptors on peek,
 shared file offsets and queued-reference cleanup.
 
+`--ordinary-data` clears supplementary groups and sets real, effective and saved
+UID/GID values to 65534 before running the six data groups. Static and dynamic
+BIOS/UEFI guests run both root and ordinary selections, retaining their actual
+identity records, executable/UAPI inputs and complete boot images. The kernel
+is reused only after its complete source inputs match the verified data kernel.
+
 The full native client is the target contract for continued implementation;
 the guest data selection does not qualify ancillary data or complete AF_UNIX.
 Named datagram endpoints, per-message credentials, SCM_RIGHTS and collection
-of descriptor cycles remain unfinished. Broader interruption, retained
-multi-process pressure and ordinary-user guest matrices also remain required. The data path rejects send ancillary
+of descriptor cycles remain unfinished. Broader interruption and retained
+multi-process lifetime coverage also remain required. The data path rejects send ancillary
 buffers deliberately while those ownership rules are being implemented.

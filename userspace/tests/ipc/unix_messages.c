@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -469,6 +470,14 @@ static void fault_consumption(void) {
 }
 
 int main(int argc, char** argv) {
+    int ordinary = argc == 2 && !strcmp(argv[1], "--ordinary-data");
+    CHECK(argc == 1 || (argc == 2 && (!strcmp(argv[1], "--data-only") || ordinary)));
+    if (ordinary) {
+        CHECK(!geteuid() && !setgroups(0, NULL));
+        CHECK(!setresgid(65534, 65534, 65534) && !setresuid(65534, 65534, 65534));
+        CHECK(getuid() == 65534 && geteuid() == 65534 && getgid() == 65534 && getegid() == 65534 &&
+              !getgroups(0, NULL));
+    }
     printf("UNIX_MESSAGES_IDENTITY pid=%ld uid=%u euid=%u gid=%u egid=%u groups=%d\n",
            (long)getpid(), getuid(), geteuid(), getgid(), getegid(), getgroups(0, NULL));
     boundaries();
@@ -476,7 +485,6 @@ int main(int argc, char** argv) {
     buffer_ownership();
     shutdown_contract();
     retained_resize();
-    CHECK(argc == 1 || (argc == 2 && !strcmp(argv[1], "--data-only")));
     if (argc == 2) {
         fault_consumption();
         puts("UNIX_MESSAGES_DATA_PASS groups=6");

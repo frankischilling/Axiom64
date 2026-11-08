@@ -1352,6 +1352,13 @@ guards, unrelated poll guards and absent or duplicated queue sites. The existing
 physical removal, copied bytes, owner reclamation, surviving stream and clock
 checks remain required.
 
+`python3 scripts/tests/tcp_device_resume_test.py` checks the real controller's
+debugger/monitor handoff in a separate QEMU counter VM. A forced scheduling
+boundary requires the debugger's next observation to remain stopped; a competing
+QMP resume must fail the same counter check. Both cases are retained under
+`build/tcp-device/resume-control/`. The complete device-loss cohort and its
+unchanged capture reader remain required.
+
 ## IPv4 receive-control comparison
 
 `sudo make test-ipv4-receive-controls` runs the same C client in three isolated
@@ -1736,7 +1743,6 @@ fragment copy bits, source-route receive policy, broader TCP responses, PMTU quo
 blocking/output lifetime cases remain necessary for complete packet-option acceptance.
 The existing receive/send-control and full networking cohorts remain required.
 
-
 Normal-init fixtures copy raw disks sparsely and verify every copied byte before
 booting. Each guest writes its own disk; the seed remains independent. Once the
 prepared fixture retains verified disk and ISO copies, the controller removes
@@ -1770,3 +1776,181 @@ the original partial native capture and rejects wrong flags, unrelated or expire
 caches and cache values inconsistent with the observed interval. That partial
 capture is a regression input, not a complete ownership qualification. Existing
 packet mutation controls and all full native/guest matrices remain required.
+
+## Unix datagram records
+
+Run `make test-unix-datagram-policy` for the actual kernel record owner under
+AddressSanitizer and UndefinedBehaviorSanitizer. The tests cover copied bytes,
+empty records, bounded pressure, allocation refusal, repeated reuse and
+reentrant cleanup. Sender budgets retain each queued payload and its bookkeeping
+charge independently of the socket slot. Buffer changes preserve existing
+records, and final receive/close returns their charges even after sender reuse.
+The default send limit is 212,992 bytes; setters clamp requests to 212,992,
+double them and apply the measured 4,608-byte send or 2,304-byte receive
+minimum. Writable readiness uses remaining sender allowance. Receive buffer
+getters/setters retain their value without imposing an unrelated receive cap
+on Unix socketpairs. Tests compare pressure and recovery without assuming
+that different kernels allocate the same number of tiny records.
+
+`userspace/tests/ipc/unix_messages.c` compares datagram boundaries, 13,007-byte
+vector copies, zero-length readiness, peek/truncation, unnamed source output,
+queued delivery after peer close and consuming versus peek copy faults.
+`--data-only` selects six data/lifecycle groups, adding buffer pressure,
+resize, sender close/reuse and all shutdown directions. Shutdown tests keep
+queued records, verify poll flags, distinguish blocking EOF from nonblocking
+EAGAIN, require empty recvmsg output headers, and reject spurious SIGPIPE. Local static and dynamic guest clients
+pass on BIOS and UEFI with their actual kernel, executable, installed UAPI,
+initramfs and image inputs retained. A forked sender fills its allowance and
+reports readiness through a nonblocking pipe. The parent observes its sleeping
+state before shrinking the send buffer. The admitted 10,000-byte message keeps
+its original size limit, waits for current pressure to clear and arrives intact;
+a fresh send uses the smaller limit and returns EMSGSIZE. The same regression
+fails on the preceding guest kernel. Native Linux passes the full eleven-group
+client as root and UID 65534; its additional groups require per-message
+credentials, descriptor transfer, distinct close-on-exec descriptors on peek,
+shared file offsets and queued-reference cleanup.
+
+`--ordinary-data` clears supplementary groups and sets real, effective and saved
+UID/GID values to 65534 before running the six data groups. Static and dynamic
+BIOS/UEFI guests run both root and ordinary selections, retaining their actual
+identity records, executable/UAPI inputs and complete boot images. The kernel
+is reused only after its complete source inputs match the verified data kernel.
+
+The full eleven-group client now runs on the guest as root and, with
+`--ordinary`, UID 65534. Datagram credentials and descriptor ownership have
+dedicated comparisons below. The data-only selection remains available for
+fault isolation. Stream ancillary data, broader multi-process lifetime coverage
+and complete AF_UNIX qualification remain required.
+
+`make test-unix-names-native` compares abstract and filesystem datagram binding,
+family-only automatic binding and exact address output. Abstract names preserve
+embedded and trailing zero bytes. A full 108-byte pathname gains its terminating
+byte on output. Partial outputs return the complete required size without
+writing past capacity; zero capacity ignores the unused address pointer.
+Filesystem nodes remain until unlinked, while abstract bindings retire on close.
+
+The six-group name client also binds a socketpair sender, queues named and
+empty records, closes it and reuses its slot. Receivers retain the original
+source name through peeks, truncated address output and source-copy faults.
+An initially unbound sender can bind after enqueue; its queued records then
+report that name, including after sender close.
+Peek faults preserve a record; consuming faults retire it after copying payload.
+Native root and UID 65534 runs cover these cases. Local static/dynamic BIOS/UEFI
+guests run both the six data groups and six name groups as root and UID 65534,
+with cleared supplementary groups and retained executable/UAPI and boot inputs.
+Their disposable RAM-root fixture makes `/tmp` writable before ordinary tests.
+
+The production sanitizer model checks address normalization, bounded output,
+shared binding owners, allocation refusal, sender close/reuse and
+reentrant cleanup. Prepared messages retain their own sender charge before
+queue insertion; insertion transfers the record without copying payload again.
+The binding owner starts unbound and publishes its name once. Records retain
+that owner independently of socket reuse.
+
+`userspace/tests/ipc/unix_routing.c` adds five native/guest groups for named
+scalar/vector destinations, connected defaults and explicit overrides, receive
+filtering, reconnect/disconnect queue loss and consumed SO_ERROR, multiple
+clients, peer close/reuse, filesystem permissions and socket inode aliases.
+One-way receivers admit eleven records at the default ten-record backlog
+threshold. Poll combines sender allowance with the connected receiver backlog;
+self and mutual peers use sender allowance without that backlog restriction.
+
+`userspace/tests/ipc/unix_routing_wait.c` adds seven groups. A forked sender
+reports entry through a pipe; its parent observes an actual sleeping process
+before changing shared user input, reconnecting the sending description,
+replacing a filesystem receiver, shutting down or closing the receiver, or
+freeing sender allowance. Queued sends retain copied payload and destination
+bytes. Filesystem replacement uses the captured pathname after the old endpoint
+dies. A permission check resumed after sender-budget pressure uses the caller's
+credentials, including an ordinary child while its root parent drains records.
+Own SHUT_WR terminates a send waiting for allowance without consuming old data.
+Receiver SHUT_RD preserves queued records and rejects the held send with EPIPE;
+the test releases queue space before requiring completion, since native Linux
+need not wake that peer-queue waiter on shutdown alone.
+
+Native routing comparisons require an isolated network namespace with
+`net.unix.max_dgram_qlen=10`; never change the host namespace's setting.
+Local guest validation runs all four clients as root and UID 65534 with both
+musl linkages on BIOS and UEFI: 32 actual program executions. The fresh kernel,
+complete frozen sources, client/UAPI inputs, initramfs, images and logs are
+retained. These local results do not establish current hosted CI acceptance.
+Datagram `SO_PASSCRED` now retains a per-message sender identity independently
+of the connection's `SO_PEERCRED`. The five-group
+`userspace/tests/ipc/unix_credentials.c` client checks queued and departed
+senders, real user/group IDs, explicit self claims, rejected unprivileged
+claims, malformed control headers, repeated peeks, partial option values and
+control-buffer capacities from zero through 33 bytes. Negative option lengths
+return `EINVAL`. Enabling receipt of credentials after an uncaptured send
+returns the anonymous identity, with PID zero and UID/GID 65534.
+
+Automatic capture occurs at target lookup before waiting for a full receive
+queue. Waking that waiter preserves the captured identity. A fresh lookup after
+a named receiver dies can capture an identity for the replacement target.
+Linux 6.6 and Linux 7 differ in when this capture occurs; the local Linux 7
+reference VM and Axiom64 agree on all four receiver/sender toggle cases under
+root and ordinary identities. The Linux release and each actual invocation
+belong in comparison evidence.
+
+Local validation runs both musl providers and both linkages on BIOS and UEFI,
+with root and UID 65534. It retains all 80 executions of the five data, name,
+routing and credential clients, plus sixteen blocked-send credential controls,
+with compiler/UAPI inputs, images, original logs and a fresh kernel build.
+The Linux buffer controls require known 212992-byte send/receive maxima;
+the Linux 7 reference VM records its original 4194304-byte maxima before
+setting the comparison policy. Establish that policy in a disposable VM or
+genuinely namespaced settings.
+
+`userspace/tests/ipc/unix_rights.c` adds seven descriptor groups. SCM_RIGHTS
+captures up to 253 file descriptions once, including repeated references;
+malformed later controls roll the capture back. Receiver descriptor limits and
+short ancillary buffers release discarded references. Peeks install distinct
+descriptors and retain the queued owners. MSG_CMSG_CLOEXEC controls each new
+descriptor's table flag. Payload/control faults follow the measured Linux copy
+order, including installed descriptors surviving a subsequent header fault.
+
+Inflight limits count queued references by the real user. The strict limit
+comparison, peek accounting and reclamation are checked with an ordinary child
+at RLIMIT_NOFILE 16. Shared-table clone tests observe an actually sleeping sender,
+replace its original descriptor number and corrupt shared control/payload bytes,
+then verify the captured description and bytes after success, peer closure,
+signal or timeout. Unqueued pending sends remain collection roots.
+
+Cycle tests preserve a live alias before releasing self and two-socket cycles.
+They close a fresh Unix pair to request native collection, then require terminal
+pipe EOF. Chain construction keeps only a few descriptor numbers open: root
+releases 240 endpoints, while ordinary execution covers 128 queued references at
+a soft limit of 128. Native Linux 6.6 and the Linux 7 VM pass the same seven groups
+under root, internal credential drop and already-ordinary launch modes. Native
+queue comparisons use a fresh network namespace with its ten-record default;
+they never rewrite the host namespace's setting.
+
+`userspace/tests/ipc/unix_stream.c` checks stream credentials and descriptor
+boundaries, distinct peeks, partial reads, plain-read discard, sender identity
+changes, empty sends, truncated ancillary output, late credential capture,
+repeated queued close and payload/control/header faults. A payload copy fault
+preserves the queued stream bytes and descriptions. A consuming control fault
+discards descriptions; a later control-header fault preserves already installed
+descriptors. `sudo python3 scripts/unix_stream_native.py` compares root,
+credential-drop and already-ordinary Linux callers with the same C client.
+The native runner executes a byte-checked public copy in its own temporary
+directory, so private checkout ancestors do not prevent ordinary execution.
+
+Guarded two-page transfers check scalar and vector sends, peeks, scalar reads
+and message receives. A fault in a later page leaves the entire affected byte
+interval and its descriptions uncommitted. Receive faults may expose a copied
+userspace prefix; earlier complete intervals still count as progress. A later
+successful receive obtains the original bytes and retained descriptions.
+
+`make test-unix-datagrams` runs all seven public clients as root and UID 65534 with
+both musl providers, both linkages and BIOS/UEFI: 112 actual client executions.
+Keep its evidence directory on a case-sensitive filesystem so every pinned SDK
+header retains its original name and bytes. On a Windows-mounted checkout, use
+`python3 scripts/unix_datagram_test.py --directory /var/tmp/axiom-unix-guest`.
+CI creates guest evidence outside the private checkout, runs its exported reader
+under both identities, and retains the complete corpus in one compressed archive.
+`make test-unix-datagrams-proof` independently reopens retained source copies,
+all 977 SDK headers, client ELF types/interpreters, compilation records, images,
+initramfs contents and original serial logs. The production ownership sanitizer
+model is `make test-unix-rights-policy`. These local comparisons do not establish
+current hosted acceptance. Broader stream options, interruption, shutdown and
+complete Unix socket lifetime qualification remain required.

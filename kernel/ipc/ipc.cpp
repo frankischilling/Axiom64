@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ipc/ipc.hpp"
+#include "socket_registry.hpp"
 #include "fs/descriptor.hpp"
 #include "io/socket_timeout.hpp"
 #include "net/tcp/socket.hpp"
@@ -9,7 +10,7 @@
 #include "net/netlink.hpp"
 
 namespace ax {
-static Socket sockets[256];
+Socket sockets[256];
 static Epoll* epolls[64];
 
 bool socket_node_busy(Node* node) {
@@ -27,6 +28,9 @@ bool socket_mount_busy(Mount* mount) {
 }
 
 static Socket* allocate_socket(unsigned type = 1) {
+    static uint64_t next_generation = 1;
+    if (next_generation == UINT64_MAX)
+        return nullptr;
     for (auto& socket : sockets)
         if (!socket.used) {
             socket = {};
@@ -34,12 +38,17 @@ static Socket* allocate_socket(unsigned type = 1) {
             socket.credentials = {current->process->pid, current->credentials.user.effective,
                                   current->credentials.group.effective};
             socket.type = type;
-            socket.capacity = type == 1 ? 65536 : 0;
-            socket.bytes = type == 1 ? (uint8_t*)alloc(socket.capacity) : nullptr;
-            if (type == 1 && !socket.bytes) {
+            if (type == 2 && !(socket.datagram_send = UnixSendBudget::create())) {
                 socket.used = false;
                 return nullptr;
             }
+            if (type == 2 && !(socket.datagram_name = UnixAddressName::create({}))) {
+                socket.datagram_send->close();
+                socket.datagram_send = nullptr;
+                socket.used = false;
+                return nullptr;
+            }
+            socket.generation = next_generation++;
             return &socket;
         }
     return nullptr;
@@ -48,7 +57,14 @@ static Socket* allocate_socket(unsigned type = 1) {
 void socket_close(Socket* s) {
     if (!s || !s->used)
         return;
-    if (s->peer) {
+    if (s->type == 2) {
+        for (auto& other : sockets)
+            if (&other != s && other.used && other.type == 2 && other.peer == s &&
+                other.peer_generation == s->generation) {
+                other.peer = nullptr;
+                other.peer_closed = true;
+            }
+    } else if (s->peer) {
         s->peer->peer = nullptr;
         s->peer->peer_closed = true;
     }
@@ -59,22 +75,48 @@ void socket_close(Socket* s) {
         queued->pending = false;
         socket_close(queued);
     }
-    release(s->bytes);
-    s->bytes = nullptr;
+    s->stream.clear();
+    s->datagrams.clear();
+    if (s->datagram_name)
+        s->datagram_name->drop();
+    s->datagram_name = nullptr;
+    if (s->datagram_peer_name)
+        s->datagram_peer_name->drop();
+    s->datagram_peer_name = nullptr;
+    if (s->datagram_send)
+        s->datagram_send->close();
+    s->datagram_send = nullptr;
+    s->description = nullptr;
     s->used = false;
 }
 
 bool socket_ready(Socket* s, bool write) {
+    if (s->type == 2)
+        return write ? socket_datagram_writable(*s) : s->read_closed || s->datagrams.readable();
     if (s->listener)
         return !write && s->queue_size;
     if (write)
         return !s->peer || s->write_closed || s->peer->read_closed ||
-               s->peer->size < s->peer->capacity;
-    return s->size || s->peer_closed || s->read_closed || !s->connected ||
+               s->peer->stream.size() < UnixStreamQueue::capacity;
+    return s->stream.size() || s->peer_closed || s->read_closed || !s->connected ||
            (s->peer && s->peer->write_closed);
 }
 
 int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_offset) {
+    if (s->type == 2) {
+        if (!len)
+            return 0;
+        const uint8_t* bytes;
+        size_t length;
+        if (!s->datagrams.front(bytes, length))
+            return s->read_closed ? 0 : -11;
+        len = min(len, length);
+        if (len)
+            memcpy(data, bytes, len);
+        if (!peek)
+            s->datagrams.consume();
+        return len;
+    }
     if (s->type != 1)
         return -95;
     if (s->listener || !s->connected)
@@ -82,20 +124,52 @@ int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_of
     if (!len || s->read_closed)
         return 0;
     size_t offset = peek ? peek_offset : 0;
-    if (offset >= s->size)
+    if (offset >= s->stream.size())
         return s->peer_closed || !s->peer || s->peer->write_closed ? 0 : -11;
-    len = min(len, s->size - offset);
-    auto output = (uint8_t*)data;
-    for (size_t i = 0; i < len; i++)
-        output[i] = s->bytes[(s->head + offset + i) % s->capacity];
-    if (!peek) {
-        s->head = (s->head + len) % s->capacity;
-        s->size -= len;
+    size_t copied = 0;
+    auto record = s->stream.front();
+    while (record && offset >= record->size()) {
+        offset -= record->size();
+        record = record->next();
     }
-    return len;
+    while (record && copied < len) {
+        size_t count = min(len - copied, record->size() - offset);
+        memcpy(static_cast<uint8_t*>(data) + copied, record->data() + offset, count);
+        bool boundary = record->rights();
+        auto next = record->next();
+        if (!peek) {
+            UnixRights* rights = nullptr;
+            s->stream.consume(count, rights);
+            if (rights)
+                rights->drop();
+        }
+        copied += count;
+        if (boundary)
+            break;
+        record = next;
+        offset = 0;
+    }
+    return copied;
 }
 
-int64_t socket_write(Socket* s, const void* data, size_t len) {
+int64_t socket_write(Socket* s, const void* data, size_t len, uint32_t datagram_entry_limit) {
+    if (s->type == 2) {
+        if (s->pass_credentials)
+            if (int error = socket_datagram_autobind(*s))
+                return error;
+        int error;
+        auto record = UnixDatagramRecord::create(*s->datagram_send, len, error,
+                                                 datagram_entry_limit, s->datagram_name);
+        if (!record)
+            return error;
+        if (len)
+            memcpy(record->data(), data, len);
+        UnixDatagramTarget target;
+        int64_t result = socket_datagram_write(*current, s, record, nullptr, target);
+        if (result < 0)
+            record->drop();
+        return result;
+    }
     if (s->type != 1)
         return -95;
     if (!s->connected)
@@ -105,13 +179,18 @@ int64_t socket_write(Socket* s, const void* data, size_t len) {
     if (!len)
         return 0;
     auto peer = s->peer;
-    if (peer->size == peer->capacity)
+    if (peer->stream.size() == UnixStreamQueue::capacity)
         return -11;
-    len = min(len, peer->capacity - peer->size);
-    auto input = (const uint8_t*)data;
-    for (size_t i = 0; i < len; i++)
-        peer->bytes[(peer->head + peer->size + i) % peer->capacity] = input[i];
-    peer->size += len;
+    len = min(len, UnixStreamQueue::capacity - peer->stream.size());
+    auto record = UnixStreamRecord::create(len);
+    if (!record)
+        return -12;
+    memcpy(record->data(), data, len);
+    UnixMessageCredentials identity;
+    if (s->pass_credentials || peer->pass_credentials)
+        identity.capture(*current);
+    UnixRights* rights = nullptr;
+    peer->stream.accept(record, len, identity, rights, peer);
     return len;
 }
 
@@ -138,7 +217,8 @@ static int install_socket(Task& task, Socket* socket, int flags = 0, int reserve
         close_handle(h);
         if (!socket->pending)
             socket_close(socket);
-    }
+    } else
+        socket->description = h;
     return fd;
 }
 
@@ -168,6 +248,8 @@ static int address(uint64_t pointer, size_t length, UnixAddress& result, size_t&
 }
 
 int socket_output_address(Task& task, Socket* s, uint64_t pointer, uint64_t length_pointer) {
+    if (s->type == 2)
+        return socket_datagram_output_name(task, s->datagram_name, pointer, length_pointer);
     if (!pointer && !length_pointer)
         return 0;
     uint32_t size;
@@ -203,6 +285,7 @@ int64_t socket_accept(Task& task, Handle* h, uint64_t address, uint64_t length, 
     if (fd < 0)
         return fd;
     accepted->pending = false;
+    accepted->accepting = nullptr;
     s->queue_head = (s->queue_head + 1) % 32;
     s->queue_size--;
     return fd;
@@ -250,9 +333,17 @@ uint32_t readiness(Handle* h) {
     }
     if (h->pipe && !h->writer && !h->pipe->writers)
         events |= 16;
-    if (h->socket && !h->socket->listener &&
+    if (h->socket && h->socket->type == 1 && !h->socket->listener &&
         (h->socket->peer_closed || (h->socket->peer && h->socket->peer->write_closed)))
         events |= 16 | 0x2000;
+    if (h->socket && h->socket->type == 2) {
+        if (h->socket->datagram_error)
+            events |= 8;
+        if (h->socket->read_closed)
+            events |= 0x2000;
+        if (h->socket->read_closed && h->socket->write_closed)
+            events |= 16;
+    }
     return events;
 }
 
@@ -384,7 +475,11 @@ int64_t ipc_syscall(Frame* f) {
          (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50 || f->rax == 51 ||
           f->rax == 52 || f->rax == 54 || f->rax == 55)))
         return netlink_syscall(*current, *f);
-    if (s && s->type != 1 && (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50))
+    if (s && s->type == 2 && f->rax == 49)
+        return socket_datagram_bind(*current, *s, b, c);
+    if (s && s->type == 2 && f->rax == 42)
+        return socket_datagram_connect(*current, *s, b, uint32_t(c));
+    if (s && s->type != 1 && (f->rax == 42 || f->rax == 49 || f->rax == 50))
         return -95;
     if ((f->rax == 41 && a == 2) ||
         (h && h->inet &&
@@ -408,7 +503,7 @@ int64_t ipc_syscall(Frame* f) {
         if (((b & 0xf) != 1 && (b & 0xf) != 2) || (b & ~uint64_t(0x8080f)) || c)
             return -93;
         // libc also uses unbound Unix datagram descriptors for interface ioctls.
-        // Datagram data/lifecycle operations remain explicitly unsupported.
+        // Named datagram endpoints remain separate from socketpair data queues.
         s = allocate_socket(b & 0xf);
         return s ? install_socket(*current, s,
                                   ((b & 0x800) ? 04000 : 0) | ((b & 0x80000) ? 02000000 : 0))
@@ -491,6 +586,8 @@ int64_t ipc_syscall(Frame* f) {
                                     current->credentials.group.effective};
         s->peer_credentials = listener->credentials;
         server->pending = true;
+        server->accepting = listener;
+        server->pass_credentials = listener->pass_credentials;
         server->peer = s;
         server->local_length = listener->local_length;
         server->bound_node = listener->bound_node;
@@ -518,15 +615,20 @@ int64_t ipc_syscall(Frame* f) {
     case 52:
         if (!s)
             return -88;
+        if (s->type == 2) {
+            if (!s->connected)
+                return -107;
+            return socket_datagram_output_name(*current, s->datagram_peer_name, b, c);
+        }
         if (!s->connected || !s->peer)
             return -107;
         return socket_output_address(*current, s->peer, b, c);
     case 53: {
-        if (a != 1 || (b & 0xf) != 1 || c)
+        if (a != 1 || ((b & 0xf) != 1 && (b & 0xf) != 2) || c || (b & ~uint64_t(0x8080f)))
             return -95;
         if (!current->memory->space.valid(d, 8, true))
             return -14;
-        auto left = allocate_socket(), right = allocate_socket();
+        auto left = allocate_socket(b & 0xf), right = allocate_socket(b & 0xf);
         if (!left || !right) {
             socket_close(left);
             socket_close(right);
@@ -534,6 +636,14 @@ int64_t ipc_syscall(Frame* f) {
         }
         left->peer = right;
         right->peer = left;
+        left->peer_generation = right->generation;
+        right->peer_generation = left->generation;
+        if (left->type == 2) {
+            left->datagram_peer_name = right->datagram_name;
+            right->datagram_peer_name = left->datagram_name;
+            left->datagram_peer_name->retain();
+            right->datagram_peer_name->retain();
+        }
         left->connected = right->connected = true;
         left->peer_credentials = right->credentials;
         right->peer_credentials = left->credentials;
@@ -557,6 +667,27 @@ int64_t ipc_syscall(Frame* f) {
             return -88;
         if (b != 1)
             return -92;
+        if (c == 16) {
+            if (int32_t(f->r8) < int32_t(sizeof(int)))
+                return -22;
+            int value;
+            if (!current->memory->space.copy_in(&value, d, sizeof(value)))
+                return -14;
+            s->pass_credentials = value != 0;
+            return 0;
+        }
+        if (s->type == 2 && (c == 7 || c == 8)) {
+            if (f->r8 < sizeof(uint32_t))
+                return -22;
+            uint32_t value;
+            if (!current->memory->space.copy_in(&value, d, sizeof(value)))
+                return -14;
+            if (c == 7)
+                s->datagram_send->resize(value);
+            else
+                s->datagram_receive = unix_buffer_size(value, false);
+            return 0;
+        }
         if (c == 2 || c == 9 || c == 7 || c == 8)
             return current->memory->space.valid(d, f->r8) ? 0 : -14;
         return -92;
@@ -565,6 +696,19 @@ int64_t ipc_syscall(Frame* f) {
             return -88;
         if (b != 1)
             return -92;
+        if (c == 16) {
+            uint32_t length;
+            if (!current->memory->space.copy_in(&length, f->r8, 4))
+                return -14;
+            if (int32_t(length) < 0)
+                return -22;
+            length = min(length, uint32_t(sizeof(int)));
+            int value = s->pass_credentials;
+            if (!current->memory->space.copy_out(d, &value, length) ||
+                !current->memory->space.copy_out(f->r8, &length, 4))
+                return -14;
+            return 0;
+        }
         if (c == 17) {
             uint32_t length;
             if (!current->memory->space.copy_in(&length, f->r8, 4))
@@ -575,12 +719,21 @@ int64_t ipc_syscall(Frame* f) {
                 return -14;
             return 0;
         }
-        int value = c == 3 ? s->type : c == 4 ? 0 : c == 7 || c == 8 ? int(s->capacity) : -1;
+        int value = c == 3             ? s->type
+                    : c == 4           ? 0
+                    : c == 7 || c == 8 ? int(UnixStreamQueue::capacity)
+                                       : -1;
+        if (s->type == 2 && (c == 7 || c == 8))
+            value = c == 7 ? s->datagram_send->size() : s->datagram_receive;
         if (value < 0)
             return -92;
         uint32_t len;
         if (!current->memory->space.copy_in(&len, f->r8, 4))
             return -14;
+        if (s->type == 2 && c == 4) {
+            value = s->datagram_error;
+            s->datagram_error = 0;
+        }
         uint32_t actual = 4;
         if (!current->memory->space.copy_out(d, &value, min(len, actual)) ||
             !current->memory->space.copy_out(f->r8, &actual, 4))

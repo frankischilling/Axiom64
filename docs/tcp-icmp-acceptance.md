@@ -31,6 +31,7 @@ guest `SO_ERROR` user copy preserves the pending value.
 make test-tcp-icmp
 make test-tcp-icmp-timestamps
 sudo -n python3 scripts/tests/tcp_icmp_error_order_test.py
+sudo -n python3 scripts/tests/tcp_icmp_port_ownership_test.py -v
 sudo -n make test-tcp-icmp-native
 make test-tcp-icmp-sockets
 python3 scripts/tcp_icmp_capture.py
@@ -46,6 +47,15 @@ The actual socket fixture runs 57 cases on each of virtio-net and e1000, followe
 128 alternating descriptor reuses with the same client/peer tuples and fresh SYN
 sequences. Every later generation receives the actual preceding SYN's stale quote
 before its own failure. The client first observes silence, then its owned error.
+
+The client owns its two fixed reclamation ports before any automatic active
+source selection. It releases those reservations immediately before the reuse
+phase. This keeps an earlier active flow or its TIME_WAIT state from taking a
+later test's port. The native port controls use fresh network namespaces and a
+four-port allocation range to exercise fresh, live and TIME_WAIT owners through
+the actual fixture's bind helper. The ordinary full matrix retains every case,
+tuple, silence observation and reuse cycle.
+
 Four unrelated active/accepted streams and two listeners remain live throughout.
 Each stream completes 67 exact request/reply checkpoints during the socket cases,
 cross-device errors and reclamation phases; the peer's receive sequence wraps.

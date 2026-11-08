@@ -470,7 +470,9 @@ static void fault_consumption(void) {
 }
 
 int main(int argc, char** argv) {
-    int ordinary = argc == 2 && !strcmp(argv[1], "--ordinary-data");
+    int ordinary =
+        argc == 2 && (!strcmp(argv[1], "--ordinary-data") || !strcmp(argv[1], "--ordinary"));
+    int data_only = argc == 2 && strcmp(argv[1], "--ordinary");
     CHECK(argc == 1 || (argc == 2 && (!strcmp(argv[1], "--data-only") || ordinary)));
     if (ordinary) {
         CHECK(!geteuid() && !setgroups(0, NULL));
@@ -485,7 +487,7 @@ int main(int argc, char** argv) {
     buffer_ownership();
     shutdown_contract();
     retained_resize();
-    if (argc == 2) {
+    if (data_only) {
         fault_consumption();
         puts("UNIX_MESSAGES_DATA_PASS groups=6");
         return 0;

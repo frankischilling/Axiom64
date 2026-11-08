@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ipc/unix_credentials.hpp"
+#include "ipc/unix_control.hpp"
+#include "ipc/unix_rights.hpp"
 #include "process/task.hpp"
 
 namespace ax {
@@ -50,7 +52,10 @@ bool output(Task& task, uint64_t pointer, const void* data, size_t length) {
 }
 } // namespace
 
-int UnixMessageCredentials::read(Task& task, uint64_t pointer, size_t length) {
+int unix_read_control(Task& task, uint64_t pointer, size_t length,
+                      UnixMessageCredentials& credentials, UnixRights*& rights) {
+    if (rights)
+        panic("repeated Unix control capture");
     if (!length)
         return 0;
     if (length > 0x7fffffff)
@@ -58,8 +63,11 @@ int UnixMessageCredentials::read(Task& task, uint64_t pointer, size_t length) {
 
     struct Copy {
         uint8_t* bytes;
+        UnixRights* rights = nullptr;
 
         ~Copy() {
+            if (rights)
+                rights->drop();
             release(bytes);
         }
     } copy{static_cast<uint8_t*>(alloc(length))};
@@ -68,6 +76,7 @@ int UnixMessageCredentials::read(Task& task, uint64_t pointer, size_t length) {
         return -12;
     if (!task.memory->space.copy_in(copy.bytes, pointer, length))
         return -14;
+    auto candidate = credentials;
     size_t offset = 0;
     while (length - offset >= sizeof(Header)) {
         Header header;
@@ -76,8 +85,21 @@ int UnixMessageCredentials::read(Task& task, uint64_t pointer, size_t length) {
             return -22;
         if (header.level == 1) {
             if (header.type == 1) {
-                if (header.length >= sizeof(Header) + sizeof(int32_t))
-                    return -95;
+                size_t count = (header.length - sizeof(Header)) / sizeof(int32_t);
+                if (count > UnixRights::maximum - (copy.rights ? copy.rights->size() : 0))
+                    return -22;
+                if (count && !copy.rights) {
+                    copy.rights = UnixRights::create(task.credentials.user.real);
+                    if (!copy.rights)
+                        return -12;
+                }
+                for (size_t index = 0; index < count; index++) {
+                    int32_t fd;
+                    memcpy(&fd, copy.bytes + offset + sizeof(Header) + index * 4, 4);
+                    if (fd < 0 || unsigned(fd) >= max_fds || !task.files->entries[fd].handle)
+                        return -9;
+                    copy.rights->append(task.files->entries[fd].handle);
+                }
             } else if (header.type == 2) {
                 if (header.length != sizeof(Header) + sizeof(MessageIdentity))
                     return -22;
@@ -85,10 +107,10 @@ int UnixMessageCredentials::read(Task& task, uint64_t pointer, size_t length) {
                 memcpy(&value, copy.bytes + offset + sizeof(Header), sizeof(value));
                 if (int error = authorize(task, value))
                     return error;
-                pid = value.pid;
-                uid = value.uid;
-                gid = value.gid;
-                captured = true;
+                candidate.pid = value.pid;
+                candidate.uid = value.uid;
+                candidate.gid = value.gid;
+                candidate.captured = true;
             } else
                 return -22;
         }
@@ -97,7 +119,25 @@ int UnixMessageCredentials::read(Task& task, uint64_t pointer, size_t length) {
             break;
         offset += aligned;
     }
+    credentials = candidate;
+    rights = copy.rights;
+    copy.rights = nullptr;
     return 0;
+}
+
+size_t unix_write_control(Task& task, const UnixMessageCredentials* credentials,
+                          const UnixRights* rights, bool pass_credentials, uint64_t pointer,
+                          size_t capacity, bool cloexec, uint32_t& flags) {
+    if (!pointer) {
+        if (pass_credentials || rights)
+            flags |= 8;
+        return 0;
+    }
+    size_t used =
+        pass_credentials && credentials ? credentials->write(task, pointer, capacity, flags) : 0;
+    if (rights)
+        used += rights->write(task, pointer + used, capacity - used, cloexec, flags);
+    return used;
 }
 
 void UnixMessageCredentials::capture(const Task& task) {

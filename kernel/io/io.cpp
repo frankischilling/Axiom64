@@ -7,6 +7,7 @@
 #include "fs/record_lock.hpp"
 #include "fs/descriptor.hpp"
 #include "ipc/ipc.hpp"
+#include "ipc/unix_control.hpp"
 #include "process/signals.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
@@ -59,6 +60,7 @@ struct IoRequest {
     uint32_t unix_send_limit;
     UnixDatagramRecord* unix_record;
     UnixMessageCredentials unix_credentials;
+    UnixRights* unix_rights;
     UnixAddressValue unix_name;
     UnixDatagramTarget unix_target;
     bool unix_named;
@@ -82,6 +84,8 @@ static void destroy(IoRequest* request) {
     release(request->send_control_data);
     if (request->unix_record)
         request->unix_record->drop();
+    if (request->unix_rights)
+        request->unix_rights->drop();
     close_handle(request->handle);
     release(request);
 }
@@ -179,8 +183,8 @@ static int prepare_unix_datagram(Task& task, IoRequest& request) {
         if (!task.memory->space.copy_in(&message, f.rsi, sizeof(message)))
             return -14;
         if (request.write)
-            if (int error =
-                    request.unix_credentials.read(task, message.control, message.control_length))
+            if (int error = unix_read_control(task, message.control, message.control_length,
+                                              request.unix_credentials, request.unix_rights))
                 return error;
         if (request.write && message.name && message.name_length) {
             if (int error = socket_datagram_address(task, message.name, message.name_length,
@@ -808,6 +812,16 @@ static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
             if (!request.unix_record)
                 return error;
             request.unix_record->credentials() = request.unix_credentials;
+            if (request.unix_rights) {
+                const auto& credentials = task.credentials;
+                int error =
+                    request.unix_rights->admission(task.process->limits.soft(Resource::open_files),
+                                                   capable(credentials, Capability::sys_resource) ||
+                                                       capable(credentials, Capability::sys_admin));
+                if (error)
+                    return error;
+                request.unix_record->take_rights(request.unix_rights);
+            }
             if (int copied = copy_packet(task, request, 0, request.packet_length,
                                          request.unix_record->data()))
                 return copied;
@@ -858,10 +872,12 @@ static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
     }
     if (f.rax == 47) {
         uint64_t control_length = 0;
-        uint32_t flags = copied < length ? 0x20 : 0;
-        if (present && socket->pass_credentials)
-            control_length = socket->datagrams.credentials()->write(
-                task, request.control_pointer, request.control_capacity, flags);
+        uint32_t flags = (request.flags & 0x40000000) | (copied < length ? 0x20 : 0);
+        if (present)
+            control_length = unix_write_control(
+                task, socket->datagrams.credentials(), socket->datagrams.rights(),
+                socket->pass_credentials, request.control_pointer, request.control_capacity,
+                request.flags & 0x40000000, flags);
         if (!task.memory->space.copy_out(f.rsi + offsetof(Message, name_length), &address_length,
                                          4) ||
             !task.memory->space.copy_out(f.rsi + offsetof(Message, control_length), &control_length,

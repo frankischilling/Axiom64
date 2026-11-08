@@ -11,6 +11,14 @@ ax::UnixDatagramQueue* releasing;
 } // namespace
 
 namespace ax {
+void retain(Handle*) {
+    abort();
+}
+
+void close_handle(Handle*) {
+    abort();
+}
+
 [[noreturn]] void panic(const char*) {
     abort();
 }

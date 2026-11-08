@@ -48,12 +48,27 @@ build/unix-names-native: userspace/tests/ipc/unix_names.c
 test-unix-names-native: build/unix-names-native
 	./build/unix-names-native
 
-build/unix-datagram-policy: kernel/tests/ipc/unix_datagram.cpp kernel/ipc/unix_datagram.cpp kernel/ipc/unix_address.cpp kernel/include/ipc/unix_datagram.hpp kernel/include/ipc/unix_address.hpp kernel/include/ipc/unix_credentials.hpp
+build/unix-datagram-policy: kernel/tests/ipc/unix_datagram.cpp kernel/ipc/unix_datagram.cpp kernel/ipc/unix_address.cpp kernel/ipc/unix_rights/ownership.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 
 test-unix-datagram-policy: build/unix-datagram-policy
 	ASAN_OPTIONS=detect_leaks=1 ./build/unix-datagram-policy
+
+.PHONY: test-unix-rights-policy
+build/unix-rights-policy: kernel/tests/ipc/unix_rights.cpp kernel/ipc/unix_rights/ownership.cpp kernel/ipc/unix_rights/collect.cpp kernel/ipc/unix_datagram.cpp kernel/ipc/unix_address.cpp kernel/ipc/ipc.cpp $(call rwildcard,kernel/include/,*.hpp)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
+
+test-unix-rights-policy: build/unix-rights-policy
+	ASAN_OPTIONS=detect_leaks=1 ./build/unix-rights-policy
+
+.PHONY: test-unix-datagrams test-unix-datagrams-proof
+test-unix-datagrams:
+	$(PYTHON) scripts/unix_datagram_test.py
+
+test-unix-datagrams-proof:
+	$(PYTHON) scripts/unix_datagram_proof.py build/unix-datagram-guest
 
 test-resource-limits:
 	$(PYTHON) scripts/resource_limits_test.py

@@ -326,7 +326,7 @@ Unix stream sockets support X11, [AF_PACKET raw sockets](network.md) exchange Et
 
 The [first controlled NIC loss subset](tcp-loss.md) exercises actual active/passive handshakes, data and FIN retransmissions, initial elapsed retry timing, exact bidirectional payloads and wrapped peer sequence space. Independent native/guest captures and damaged-evidence rejection supplement the existing ordinary interoperability tests; complete controlled-wire acceptance remains required for TCP reliability.
 
-Local [Unix datagram checks](testing.md#unix-datagram-records) cover owned records, named routing and sender credentials. Both musl providers run static/dynamic BIOS/UEFI clients as root and UID 65534, with retained compiler, image and kernel inputs. Blocked-send credential capture follows the measured Linux 7 behavior. Descriptor transfer, stream credentials, cycle collection and current hosted qualification remain required.
+Local [Unix datagram checks](testing.md#unix-datagram-records) cover owned records, named routing and sender credentials. Both musl providers run static/dynamic BIOS/UEFI clients as root and UID 65534, with retained compiler, image and kernel inputs. Blocked-send credential capture follows the measured Linux 7 behavior. Datagram SCM_RIGHTS now owns retained file descriptions, receiver descriptor installation, inflight limits and cycle collection. Seven descriptor groups include shared-table replacement while blocked, failure cleanup and rooted chain release. The six public clients pass 96 local executions across the full provider/linkage/firmware matrix. Stream ancillary data, broader lifetime coverage and current hosted qualification remain required.
 
 Required work:
 

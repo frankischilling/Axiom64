@@ -1809,12 +1809,11 @@ BIOS/UEFI guests run both root and ordinary selections, retaining their actual
 identity records, executable/UAPI inputs and complete boot images. The kernel
 is reused only after its complete source inputs match the verified data kernel.
 
-The full native client is the target contract for continued implementation;
-the guest data selection does not qualify ancillary data or complete AF_UNIX.
-SCM_RIGHTS, stream credentials and collection of descriptor cycles remain
-unfinished. Broader interruption and retained multi-process lifetime coverage
-also remain required. Datagram credentials have a dedicated comparison below;
-unsupported ancillary controls continue to fail deliberately.
+The full eleven-group client now runs on the guest as root and, with
+`--ordinary`, UID 65534. Datagram credentials and descriptor ownership have
+dedicated comparisons below. The data-only selection remains available for
+fault isolation. Stream ancillary data, broader multi-process lifetime coverage
+and complete AF_UNIX qualification remain required.
 
 `make test-unix-names-native` compares abstract and filesystem datagram binding,
 family-only automatic binding and exact address output. Abstract names preserve
@@ -1894,6 +1893,35 @@ the Linux 7 reference VM records its original 4194304-byte maxima before
 setting the comparison policy. Establish that policy in a disposable VM or
 genuinely namespaced settings.
 
-Descriptor transfer, stream credentials and cycle collection remain required
-for complete Unix socket support. These local comparisons do not establish
-current hosted acceptance.
+`userspace/tests/ipc/unix_rights.c` adds seven descriptor groups. SCM_RIGHTS
+captures up to 253 file descriptions once, including repeated references;
+malformed later controls roll the capture back. Receiver descriptor limits and
+short ancillary buffers release discarded references. Peeks install distinct
+descriptors and retain the queued owners. MSG_CMSG_CLOEXEC controls each new
+descriptor's table flag. Payload/control faults follow the measured Linux copy
+order, including installed descriptors surviving a subsequent header fault.
+
+Inflight limits count queued references by the real user. The strict limit
+comparison, peek accounting and reclamation are checked with an ordinary child
+at RLIMIT_NOFILE 16. Shared-table clone tests observe an actually sleeping sender,
+replace its original descriptor number and corrupt shared control/payload bytes,
+then verify the captured description and bytes after success, peer closure,
+signal or timeout. Unqueued pending sends remain collection roots.
+
+Cycle tests preserve a live alias before releasing self and two-socket cycles.
+They close a fresh Unix pair to request native collection, then require terminal
+pipe EOF. Chain construction keeps only a few descriptor numbers open: root
+releases 240 endpoints, while ordinary execution covers 128 queued references at
+a soft limit of 128. Native Linux 6.6 and the Linux 7 VM pass the same seven groups
+under root, internal credential drop and already-ordinary launch modes. Native
+queue comparisons use a fresh network namespace with its ten-record default;
+they never rewrite the host namespace's setting.
+
+`make test-unix-datagrams` runs all six public clients as root and UID 65534 with
+both musl providers, both linkages and BIOS/UEFI: 96 actual client executions.
+`make test-unix-datagrams-proof` independently reopens retained source copies,
+all 977 SDK headers, client ELF types/interpreters, compilation records, images,
+initramfs contents and original serial logs. The production ownership sanitizer
+model is `make test-unix-rights-policy`. These local comparisons do not establish
+current hosted acceptance. Stream ancillary data and complete Unix socket
+lifetime qualification remain required.

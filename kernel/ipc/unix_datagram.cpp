@@ -70,15 +70,21 @@ void UnixDatagramRecord::drop() {
     auto budget = owner;
     auto name = source;
     budget->charged -= record_charge + length;
+    auto rights = message_rights;
+    message_rights = nullptr;
+    if (rights)
+        rights->drop();
     if (name)
         name->drop();
     budget->drop();
     release(this);
 }
 
-void UnixDatagramQueue::accept(UnixDatagramRecord* record) {
+void UnixDatagramQueue::accept(UnixDatagramRecord* record, Socket* receiver) {
     if (!record || record->queued || record->next)
         panic("invalid Unix datagram transfer");
+    if (record->message_rights)
+        record->message_rights->enqueue(receiver);
     record->queued = true;
     if (last)
         last->next = record;
@@ -114,6 +120,10 @@ const UnixAddressName* UnixDatagramQueue::source_name() const {
 
 const UnixMessageCredentials* UnixDatagramQueue::credentials() const {
     return first ? &first->message_credentials : nullptr;
+}
+
+const UnixRights* UnixDatagramQueue::rights() const {
+    return first ? first->message_rights : nullptr;
 }
 
 void UnixDatagramQueue::consume() {

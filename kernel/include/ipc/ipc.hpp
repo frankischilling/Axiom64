@@ -29,6 +29,7 @@ struct Socket {
     uint32_t datagram_receive = 212992;
     int datagram_error = 0;
     bool pass_credentials = false;
+    Handle* description = nullptr;
 };
 
 struct UnixDatagramTarget {

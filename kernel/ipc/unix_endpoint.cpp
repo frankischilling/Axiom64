@@ -255,7 +255,7 @@ int64_t socket_datagram_write(Task& task, Socket* sender, UnixDatagramRecord* re
         if (receiver_full(*receiver, *sender))
             return -11;
         size_t length = record->size();
-        receiver->datagrams.accept(record);
+        receiver->datagrams.accept(record, receiver);
         return length;
     }
 }

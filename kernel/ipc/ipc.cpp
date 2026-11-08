@@ -93,6 +93,7 @@ void socket_close(Socket* s) {
         s->datagram_send->close();
     s->datagram_send = nullptr;
     s->bytes = nullptr;
+    s->description = nullptr;
     s->used = false;
 }
 
@@ -203,7 +204,8 @@ static int install_socket(Task& task, Socket* socket, int flags = 0, int reserve
         close_handle(h);
         if (!socket->pending)
             socket_close(socket);
-    }
+    } else
+        socket->description = h;
     return fd;
 }
 

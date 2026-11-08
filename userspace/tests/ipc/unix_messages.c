@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +11,7 @@
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/un.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
@@ -191,6 +193,119 @@ static void data_vectors(void) {
          "retained_after_peer_close");
 }
 
+static int buffer_size(int fd, int option) {
+    int value = 0;
+    socklen_t size = sizeof(value);
+    CHECK(!getsockopt(fd, SOL_SOCKET, option, &value, &size) && size == sizeof(value));
+    return value;
+}
+
+static void buffer_ownership(void) {
+    int sockets[2];
+    pair(sockets);
+    int requests[] = {-1, 0, 1, 1024, 4096, 65536, 2147483647};
+    int send_values[] = {425984, 4608, 4608, 4608, 8192, 131072, 425984};
+    int receive_values[] = {425984, 2304, 2304, 2304, 8192, 131072, 425984};
+    for (unsigned index = 0; index < sizeof(requests) / sizeof(requests[0]); ++index) {
+        CHECK(!setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF, &requests[index], sizeof(int)));
+        CHECK(!setsockopt(sockets[0], SOL_SOCKET, SO_RCVBUF, &requests[index], sizeof(int)));
+        CHECK(buffer_size(sockets[0], SO_SNDBUF) == send_values[index]);
+        CHECK(buffer_size(sockets[0], SO_RCVBUF) == receive_values[index]);
+    }
+    int amount = 4096;
+    CHECK(!setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF, &amount, sizeof(amount)));
+    amount = 0;
+    CHECK(!setsockopt(sockets[1], SOL_SOCKET, SO_RCVBUF, &amount, sizeof(amount)));
+    unsigned char payload[4096], received[4096];
+    memset(payload, 0x37, sizeof(payload));
+    unsigned count = 0;
+    while (send(sockets[0], payload, sizeof(payload), 0) == sizeof(payload))
+        CHECK(++count < 4096);
+    CHECK(errno == EAGAIN && count);
+    struct pollfd writable = {.fd = sockets[0], .events = POLLOUT};
+    CHECK(!poll(&writable, 1, 0) && !writable.revents);
+    CHECK(!setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF, &amount, sizeof(amount)));
+    CHECK(buffer_size(sockets[0], SO_SNDBUF) == 4608);
+    CHECK(send(sockets[0], payload, sizeof(payload), 0) == -1 && errno == EAGAIN);
+    amount = 65536;
+    CHECK(!setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF, &amount, sizeof(amount)));
+    CHECK(send(sockets[0], payload, sizeof(payload), 0) == sizeof(payload));
+    for (unsigned index = 0; index <= count; ++index)
+        CHECK(recv(sockets[1], received, sizeof(received), 0) == sizeof(received) &&
+              !memcmp(payload, received, sizeof(payload)));
+    CHECK(poll(&writable, 1, 0) == 1 && writable.revents == POLLOUT);
+    CHECK(send(sockets[0], payload, sizeof(payload), 0) == sizeof(payload));
+    CHECK(!close(sockets[0]));
+    int reused[2];
+    pair(reused);
+    CHECK(send(reused[0], "new", 3, 0) == 3 &&
+          recv(reused[1], received, sizeof(received), 0) == 3 && !memcmp(received, "new", 3));
+    CHECK(recv(sockets[1], received, sizeof(received), 0) == sizeof(received) &&
+          !memcmp(payload, received, sizeof(payload)));
+    CHECK(!close(sockets[1]));
+    finish(reused);
+    puts("UNIX_MESSAGES_BUFFERS_PASS setters clamping sender_pressure resize readiness "
+         "queued_sender_close reuse");
+}
+
+static volatile sig_atomic_t pipe_signals;
+
+static void pipe_signal(int number) {
+    (void)number;
+    ++pipe_signals;
+}
+
+static void shutdown_contract(void) {
+    struct sigaction action = {.sa_handler = pipe_signal}, previous;
+    CHECK(!sigemptyset(&action.sa_mask) && !sigaction(SIGPIPE, &action, &previous));
+    for (int nonblocking = 0; nonblocking != 2; ++nonblocking) {
+        for (int how = SHUT_RD; how <= SHUT_RDWR; ++how) {
+            int sockets[2];
+            pair(sockets);
+            if (!nonblocking)
+                CHECK(!fcntl(sockets[1], F_SETFL, fcntl(sockets[1], F_GETFL) & ~O_NONBLOCK));
+            struct timeval timeout = {.tv_usec = 200000};
+            CHECK(!setsockopt(sockets[1], SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)));
+            CHECK(send(sockets[0], "Q", 1, 0) == 1 && !shutdown(sockets[1], how));
+            struct pollfd events[2] = {{.fd = sockets[0], .events = POLLIN | POLLOUT | POLLRDHUP},
+                                       {.fd = sockets[1], .events = POLLIN | POLLOUT | POLLRDHUP}};
+            CHECK(poll(events, 2, 0) == 2 && events[0].revents == POLLOUT &&
+                  events[1].revents == (POLLIN | POLLOUT | (how != SHUT_WR ? POLLRDHUP : 0) |
+                                        (how == SHUT_RDWR ? POLLHUP : 0)));
+            char byte;
+            CHECK(recv(sockets[1], &byte, 1, MSG_PEEK) == 1 && byte == 'Q');
+            CHECK(recv(sockets[1], &byte, 1, 0) == 1 && byte == 'Q');
+            errno = 0;
+            ssize_t empty = recv(sockets[1], &byte, 1, 0);
+            CHECK((!nonblocking && how != SHUT_WR) ? empty == 0 : empty == -1 && errno == EAGAIN);
+            if (!nonblocking && how != SHUT_WR) {
+                struct sockaddr_un source;
+                unsigned char control[64];
+                struct iovec vector = {&byte, 1};
+                struct msghdr message = {.msg_name = &source,
+                                         .msg_namelen = sizeof(source),
+                                         .msg_iov = &vector,
+                                         .msg_iovlen = 1,
+                                         .msg_control = control,
+                                         .msg_controllen = sizeof(control),
+                                         .msg_flags = -1};
+                CHECK(!recvmsg(sockets[1], &message, 0) && !message.msg_namelen &&
+                      !message.msg_controllen && !message.msg_flags);
+            }
+            pipe_signals = 0;
+            ssize_t sent = send(sockets[0], "P", 1, 0);
+            CHECK(how == SHUT_WR ? sent == 1 : sent == -1 && errno == EPIPE);
+            sent = send(sockets[1], "O", 1, 0);
+            CHECK(how == SHUT_RD ? sent == 1 : sent == -1 && errno == EPIPE);
+            CHECK(!pipe_signals);
+            finish(sockets);
+        }
+    }
+    CHECK(!sigaction(SIGPIPE, &previous, NULL));
+    puts("UNIX_MESSAGES_SHUTDOWN_PASS queued_data asymmetric_shutdown blocking_eof "
+         "nonblocking_eagain poll no_sigpipe");
+}
+
 static void peek_rights(void) {
     int sockets[2], fd = document();
     pair(sockets);
@@ -285,10 +400,12 @@ int main(int argc, char** argv) {
            (long)getpid(), getuid(), geteuid(), getgid(), getegid(), getgroups(0, NULL));
     boundaries();
     data_vectors();
+    buffer_ownership();
+    shutdown_contract();
     CHECK(argc == 1 || (argc == 2 && !strcmp(argv[1], "--data-only")));
     if (argc == 2) {
         fault_consumption();
-        puts("UNIX_MESSAGES_DATA_PASS groups=3");
+        puts("UNIX_MESSAGES_DATA_PASS groups=5");
         return 0;
     }
     credentials();
@@ -297,5 +414,5 @@ int main(int argc, char** argv) {
     discarded_rights(1);
     unread_close();
     fault_consumption();
-    puts("UNIX_MESSAGES_PASS groups=8");
+    puts("UNIX_MESSAGES_PASS groups=10");
 }

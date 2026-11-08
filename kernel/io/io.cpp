@@ -768,8 +768,8 @@ static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
     const auto& f = request.call;
     if (request.write) {
         if (!request.packet_ready) {
-            if (request.packet_length > UnixDatagramQueue::byte_limit - 32)
-                return -90;
+            if (int error = socket->datagram_send->admission(request.packet_length))
+                return error;
             if (request.packet_length) {
                 request.packet_data = static_cast<uint8_t*>(alloc(request.packet_length));
                 if (!request.packet_data)
@@ -783,12 +783,13 @@ static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
     }
     if (!request.socket && !request.packet_length)
         return 0;
-    const uint8_t* bytes;
-    size_t length;
-    if (!socket->datagrams.front(bytes, length))
-        return socket->read_closed ? 0 : -11;
+    const uint8_t* bytes = nullptr;
+    size_t length = 0;
+    bool present = socket->datagrams.front(bytes, length);
+    if (!present && !(socket->read_closed && request.stream_blocking))
+        return -11;
     auto finish = [&](int64_t result) {
-        if (!(request.flags & 2))
+        if (present && !(request.flags & 2))
             socket->datagrams.consume();
         return result;
     };

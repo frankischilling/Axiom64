@@ -3,22 +3,45 @@
 #include "core/base.hpp"
 
 namespace ax {
+// Queued records retain this charge owner independently of the socket slot.
+// A closed sender can be reused while its original messages remain queued.
+class UnixSendBudget {
+    unsigned references = 1;
+    size_t charged = 0;
+    uint32_t limit = 212992;
+    void drop();
+    friend class UnixDatagramQueue;
+
+  public:
+    static UnixSendBudget* create();
+    void close();
+    int admission(size_t length) const;
+    void resize(uint32_t requested);
+
+    uint32_t size() const {
+        return limit;
+    }
+
+    bool writable() const {
+        return charged <= limit / 4;
+    }
+};
+
+uint32_t unix_buffer_size(uint32_t requested, bool sending);
+
 // One record owns its copied bytes, including an empty datagram. A front view
 // remains valid until consume/clear; callers serialize queue access.
 class UnixDatagramQueue {
     struct Record {
         Record* next;
         size_t length;
+        UnixSendBudget* owner;
     };
 
     Record *first = nullptr, *last = nullptr;
-    size_t records = 0, charged = 0;
 
   public:
-    static constexpr size_t byte_limit = 212992, record_limit = 128;
-
-    int admission(size_t length) const;
-    int64_t append(const void*, size_t);
+    int64_t append(UnixSendBudget&, const void*, size_t);
     bool front(const uint8_t*& bytes, size_t& length) const;
     void consume();
     void clear();

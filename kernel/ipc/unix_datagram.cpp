@@ -2,21 +2,54 @@
 #include "ipc/unix_datagram.hpp"
 
 namespace ax {
-int UnixDatagramQueue::admission(size_t length) const {
-    if (length > byte_limit - 32)
+namespace {
+// Charge record bookkeeping and allocator overhead as well as payload bytes.
+constexpr size_t record_charge = 64;
+} // namespace
+
+uint32_t unix_buffer_size(uint32_t requested, bool sending) {
+    return max(min(requested, uint32_t(212992)) * 2, uint32_t(sending ? 4608 : 2304));
+}
+
+UnixSendBudget* UnixSendBudget::create() {
+    auto budget = static_cast<UnixSendBudget*>(alloc(sizeof(UnixSendBudget)));
+    if (budget)
+        *budget = {};
+    return budget;
+}
+
+void UnixSendBudget::drop() {
+    if (!--references) {
+        if (charged)
+            panic("released charged Unix sender");
+        release(this);
+    }
+}
+
+void UnixSendBudget::close() {
+    drop();
+}
+
+int UnixSendBudget::admission(size_t length) const {
+    if (length > limit - 32)
         return -90;
-    if (records == record_limit || length + sizeof(Record) > byte_limit - charged)
+    if (charged >= limit)
         return -11;
     return 0;
 }
 
-int64_t UnixDatagramQueue::append(const void* bytes, size_t length) {
-    if (int error = admission(length))
+void UnixSendBudget::resize(uint32_t requested) {
+    limit = unix_buffer_size(requested, true);
+}
+
+int64_t UnixDatagramQueue::append(UnixSendBudget& owner, const void* bytes, size_t length) {
+    static_assert(sizeof(Record) <= record_charge);
+    if (int error = owner.admission(length))
         return error;
     auto record = static_cast<Record*>(alloc(sizeof(Record) + length));
     if (!record)
         return -12;
-    *record = {nullptr, length};
+    *record = {nullptr, length, &owner};
     if (length)
         memcpy(record + 1, bytes, length);
     if (last)
@@ -24,8 +57,8 @@ int64_t UnixDatagramQueue::append(const void* bytes, size_t length) {
     else
         first = record;
     last = record;
-    records++;
-    charged += sizeof(Record) + length;
+    owner.references++;
+    owner.charged += record_charge + length;
     return length;
 }
 
@@ -44,8 +77,9 @@ void UnixDatagramQueue::consume() {
     first = record->next;
     if (!first)
         last = nullptr;
-    records--;
-    charged -= sizeof(Record) + record->length;
+    auto owner = record->owner;
+    owner->charged -= record_charge + record->length;
+    owner->drop();
     release(record);
 }
 

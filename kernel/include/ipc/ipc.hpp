@@ -22,6 +22,8 @@ struct Socket {
     size_t head, size, capacity;
     PeerCredentials credentials{}, peer_credentials{};
     UnixDatagramQueue datagrams{};
+    UnixSendBudget* datagram_send = nullptr;
+    uint32_t datagram_receive = 212992;
 };
 
 struct [[gnu::packed]] EpollEvent {

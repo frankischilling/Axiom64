@@ -1585,24 +1585,32 @@ The existing receive/send-control and full networking cohorts remain required.
 Run `make test-unix-datagram-policy` for the actual kernel record owner under
 AddressSanitizer and UndefinedBehaviorSanitizer. The tests cover copied bytes,
 empty records, bounded pressure, allocation refusal, repeated reuse and
-reentrant cleanup. The current queue bounds 128 records and 212,992 charged
-bytes. These kernel resource bounds do not establish Linux sender-buffer
-accounting equivalence.
+reentrant cleanup. Sender budgets retain each queued payload and its bookkeeping
+charge independently of the socket slot. Buffer changes preserve existing
+records, and final receive/close returns their charges even after sender reuse.
+The default send limit is 212,992 bytes; setters clamp requests to 212,992,
+double them and apply the measured 4,608-byte send or 2,304-byte receive
+minimum. Writable readiness uses remaining sender allowance. Receive buffer
+getters/setters retain their value without imposing an unrelated receive cap
+on Unix socketpairs. Tests compare pressure and recovery without assuming
+that different kernels allocate the same number of tiny records.
 
 `userspace/tests/ipc/unix_messages.c` compares datagram boundaries, 13,007-byte
 vector copies, zero-length readiness, peek/truncation, unnamed source output,
 queued delivery after peer close and consuming versus peek copy faults.
-`--data-only` selects these three groups. Local static and dynamic guest clients
+`--data-only` selects five data/lifecycle groups, adding buffer pressure,
+resize, sender close/reuse and all shutdown directions. Shutdown tests keep
+queued records, verify poll flags, distinguish blocking EOF from nonblocking
+EAGAIN, require empty recvmsg output headers, and reject spurious SIGPIPE. Local static and dynamic guest clients
 pass on BIOS and UEFI with their actual kernel, executable, installed UAPI,
-initramfs and image inputs retained. Native Linux passes the full eight-group
+initramfs and image inputs retained. Native Linux passes the full ten-group
 client as root and UID 65534; its additional groups require per-message
 credentials, descriptor transfer, distinct close-on-exec descriptors on peek,
 shared file offsets and queued-reference cleanup.
 
 The full native client is the target contract for continued implementation;
 the guest data selection does not qualify ancillary data or complete AF_UNIX.
-Named datagram endpoints, datagram shutdown, sender-owned buffer accounting,
-mutable buffer options, per-message credentials, SCM_RIGHTS and collection of
-descriptor cycles remain unfinished. Buffer setters still use the legacy
-socket stub and do not resize this queue. The data path rejects send ancillary
+Named datagram endpoints, per-message credentials, SCM_RIGHTS and collection
+of descriptor cycles remain unfinished. Broader interruption, retained
+multi-process pressure and ordinary-user guest matrices also remain required. The data path rejects send ancillary
 buffers deliberately while those ownership rules are being implemented.

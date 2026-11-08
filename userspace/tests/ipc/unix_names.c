@@ -180,6 +180,23 @@ static void source_lifetime(void) {
          "source_fault_consume empty_record");
 }
 
+static void late_source(void) {
+    int pair[2];
+    CHECK(!socketpair(AF_UNIX, SOCK_DGRAM | SOCK_NONBLOCK, 0, pair));
+    CHECK(send(pair[0], "late", 4, 0) == 4);
+    struct sockaddr_un source;
+    socklen_t length = abstract(&source, 'l');
+    CHECK(!bind(pair[0], (struct sockaddr*)&source, length));
+    CHECK(!close(pair[0]));
+    char data[8];
+    struct sockaddr_un actual;
+    socklen_t late_length = sizeof(actual);
+    CHECK(recvfrom(pair[1], data, sizeof(data), 0, (struct sockaddr*)&actual, &late_length) == 4);
+    CHECK(late_length == length && !memcmp(&actual, &source, length) && !memcmp(data, "late", 4));
+    CHECK(!close(pair[1]));
+    puts("UNIX_NAMES_LATE_SOURCE_PASS binding_after_enqueue retained_after_close");
+}
+
 static void invalid_addresses(void) {
     int fd = endpoint();
     unsigned char address[111] = {AF_UNIX, 0};
@@ -214,5 +231,6 @@ int main(int argc, char** argv) {
     filesystem_bindings();
     source_lifetime();
     invalid_addresses();
-    puts("UNIX_NAMES_PASS groups=5");
+    late_source();
+    puts("UNIX_NAMES_PASS groups=6");
 }

@@ -374,7 +374,8 @@ int link_node(const Path& from, const Path& to, bool follow) {
         return -17;
     if (error != -2)
         return error;
-    if ((target->mode & 0170000) != regular_file && (target->mode & 0170000) != symlink)
+    if ((target->mode & 0170000) != regular_file && (target->mode & 0170000) != symlink &&
+        (target->mode & 0170000) != 0140000)
         return -95;
     return parent->mount->ops->link(target, parent, name);
 }

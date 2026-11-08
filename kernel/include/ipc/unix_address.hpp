@@ -23,14 +23,15 @@ struct UnixAddressValue {
 // destination reject its zero path length. Failure leaves the output unchanged.
 int unix_address_decode(const void*, size_t, UnixAddressValue&);
 
-// Source names outlive their binding socket while queued records retain them.
-// Names are immutable; the owner never retains a socket or filesystem node.
+// Queued records retain the sender's binding owner even before its first bind.
+// One name may be published, then remains immutable. No socket/node is retained.
 class UnixAddressName {
     unsigned references = 1;
     UnixAddressValue value;
 
   public:
     static UnixAddressName* create(const UnixAddressValue&);
+    int bind(const UnixAddressValue&);
     void retain();
     void drop();
 

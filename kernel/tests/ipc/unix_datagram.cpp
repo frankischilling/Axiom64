@@ -48,7 +48,9 @@ static void addresses() {
     assert(ax::unix_address_decode(input, 10, value) == -22 && value.same(original));
     input[0] = 1;
     assert(!ax::unix_address_decode(input, 2, value) && !value.length);
-    assert(!ax::UnixAddressName::create(value));
+    auto unbound = ax::UnixAddressName::create(value);
+    assert(unbound && !unbound->address().length);
+    unbound->drop();
     input[2] = 0;
     input[3] = 'a';
     input[4] = 0;
@@ -77,6 +79,17 @@ static void addresses() {
     input[2] = 0;
     assert(!ax::unix_address_decode(input, 110, value) && value.length == 108 && value.abstract());
     assert(value.output(full, sizeof(full)) == 110);
+    unbound = ax::UnixAddressName::create({});
+    auto late_budget = ax::UnixSendBudget::create();
+    ax::UnixDatagramQueue late_queue;
+    assert(unbound && late_budget && late_queue.append(*late_budget, "L", 1, 0, unbound) == 1);
+    assert(!late_queue.source_name());
+    assert(!unbound->bind(value) && unbound->bind(value) == -22);
+    assert(late_queue.source_name()->address().same(value));
+    unbound->drop();
+    late_budget->close();
+    late_queue.clear();
+    assert(!allocations);
     auto malformed = value;
     malformed.length = UINT16_MAX;
     assert(!malformed.valid() && !malformed.same(value) && !ax::UnixAddressName::create(malformed));

@@ -58,6 +58,9 @@ struct IoRequest {
     size_t packet_length;
     uint32_t unix_send_limit;
     UnixDatagramRecord* unix_record;
+    UnixAddressValue unix_name;
+    UnixDatagramTarget unix_target;
+    bool unix_named;
     uint64_t address_pointer, address_length_pointer;
     uint64_t control_pointer, control_capacity;
     uint32_t address_capacity;
@@ -167,8 +170,6 @@ static int prepare_unix_datagram(Task& task, IoRequest& request) {
     unsigned allowed = request.write ? 0x4040 : 2 | 0x20 | 0x40 | 0x100 | 0x40000000;
     if (request.flags & ~allowed)
         return -95;
-    if (f.rax == 44 && f.r8)
-        return -95;
     if (f.rax == 19 || f.rax == 20) {
         if (int error = import_vectors(task, request, f.rsi, f.rdx))
             return error;
@@ -176,8 +177,14 @@ static int prepare_unix_datagram(Task& task, IoRequest& request) {
         Message message;
         if (!task.memory->space.copy_in(&message, f.rsi, sizeof(message)))
             return -14;
-        if (request.write && (message.name || message.control_length))
+        if (request.write && message.control_length)
             return -95;
+        if (request.write && message.name && message.name_length) {
+            if (int error = socket_datagram_address(task, message.name, message.name_length,
+                                                    request.unix_name))
+                return error;
+            request.unix_named = true;
+        }
         if (!request.write) {
             request.address_pointer = message.name;
             request.address_capacity = message.name_length;
@@ -196,6 +203,11 @@ static int prepare_unix_datagram(Task& task, IoRequest& request) {
         if (vector.base >= user_limit || vector.length > user_limit - vector.base)
             return -14;
         request.packet_length += vector.length;
+    }
+    if (f.rax == 44 && f.r8 && uint32_t(f.r9)) {
+        if (int error = socket_datagram_address(task, f.r8, uint32_t(f.r9), request.unix_name))
+            return error;
+        request.unix_named = true;
     }
     if (f.rax == 45 && f.r8) {
         request.address_pointer = f.r8;
@@ -777,6 +789,12 @@ static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
     const auto& f = request.call;
     if (request.write) {
         if (!request.unix_record) {
+            if (int error = socket->datagram_error) {
+                socket->datagram_error = 0;
+                return -error;
+            }
+            if (socket->write_closed)
+                return -32;
             int error;
             request.unix_record =
                 UnixDatagramRecord::create(*socket->datagram_send, request.packet_length, error,
@@ -787,7 +805,9 @@ static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
                                          request.unix_record->data()))
                 return copied;
         }
-        int64_t result = socket_datagram_write(socket, request.unix_record);
+        int64_t result = socket_datagram_write(task, socket, request.unix_record,
+                                               request.unix_named ? &request.unix_name : nullptr,
+                                               request.unix_target);
         if (result >= 0)
             request.unix_record = nullptr;
         return result;
@@ -797,6 +817,11 @@ static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
     const uint8_t* bytes = nullptr;
     size_t length = 0;
     bool present = socket->datagrams.front(bytes, length);
+    if (!present && socket->datagram_error) {
+        int error = socket->datagram_error;
+        socket->datagram_error = 0;
+        return -error;
+    }
     if (!present && !(socket->read_closed && request.stream_blocking))
         return -11;
     auto finish = [&](int64_t result) {
@@ -1330,8 +1355,11 @@ bool io_resume(Task& task) {
     // An unavailable handle cannot make progress or access an expired wait's buffers.
     int64_t result = would_block;
     if (request->locking || request->handle->packet || request->handle->inet ||
-        request->handle->netlink || handle_ready(request->handle, request->write) ||
-        (request->handle->flags & 04000))
+        request->handle->netlink ||
+        (request->handle->socket && request->handle->socket->type == 2 &&
+         (request->unix_record || request->handle->socket->write_closed ||
+          request->handle->socket->datagram_error)) ||
+        handle_ready(request->handle, request->write) || (request->handle->flags & 04000))
         result = attempt(task, *request);
     if (result == would_block) {
         if (!timeout_expired(*request))

@@ -1786,8 +1786,8 @@ is reused only after its complete source inputs match the verified data kernel.
 
 The full native client is the target contract for continued implementation;
 the guest data selection does not qualify ancillary data or complete AF_UNIX.
-Named destination routing, connection policy, per-message credentials, SCM_RIGHTS and collection
-of descriptor cycles remain unfinished. Broader interruption and retained
+Per-message credentials, SCM_RIGHTS and collection of descriptor cycles remain
+unfinished. Broader interruption and retained
 multi-process lifetime coverage also remain required. The data path rejects send ancillary
 buffers deliberately while those ownership rules are being implemented.
 
@@ -1798,19 +1798,50 @@ byte on output. Partial outputs return the complete required size without
 writing past capacity; zero capacity ignores the unused address pointer.
 Filesystem nodes remain until unlinked, while abstract bindings retire on close.
 
-The five-group name client also binds a socketpair sender, queues named and
+The six-group name client also binds a socketpair sender, queues named and
 empty records, closes it and reuses its slot. Receivers retain the original
 source name through peeks, truncated address output and source-copy faults.
+An initially unbound sender can bind after enqueue; its queued records then
+report that name, including after sender close.
 Peek faults preserve a record; consuming faults retire it after copying payload.
 Native root and UID 65534 runs cover these cases. Local static/dynamic BIOS/UEFI
-guests run both the six data groups and five name groups as root and UID 65534,
+guests run both the six data groups and six name groups as root and UID 65534,
 with cleared supplementary groups and retained executable/UAPI and boot inputs.
 Their disposable RAM-root fixture makes `/tmp` writable before ordinary tests.
 
 The production sanitizer model checks address normalization, bounded output,
-immutable shared source names, allocation refusal, sender close/reuse and
+shared binding owners, allocation refusal, sender close/reuse and
 reentrant cleanup. Prepared messages retain their own sender charge before
 queue insertion; insertion transfers the record without copying payload again.
-These checks cover bindings, queries and socketpair source names. Named
-destination routing and connection policy, per-message credentials, descriptor
-transfer and cycle collection remain required for complete Unix socket support.
+The binding owner starts unbound and publishes its name once. Records retain
+that owner independently of socket reuse.
+
+`userspace/tests/ipc/unix_routing.c` adds five native/guest groups for named
+scalar/vector destinations, connected defaults and explicit overrides, receive
+filtering, reconnect/disconnect queue loss and consumed SO_ERROR, multiple
+clients, peer close/reuse, filesystem permissions and socket inode aliases.
+One-way receivers admit eleven records at the default ten-record backlog
+threshold. Poll combines sender allowance with the connected receiver backlog;
+self and mutual peers use sender allowance without that backlog restriction.
+
+`userspace/tests/ipc/unix_routing_wait.c` adds seven groups. A forked sender
+reports entry through a pipe; its parent observes an actual sleeping process
+before changing shared user input, reconnecting the sending description,
+replacing a filesystem receiver, shutting down or closing the receiver, or
+freeing sender allowance. Queued sends retain copied payload and destination
+bytes. Filesystem replacement uses the captured pathname after the old endpoint
+dies. A permission check resumed after sender-budget pressure uses the caller's
+credentials, including an ordinary child while its root parent drains records.
+Own SHUT_WR terminates a send waiting for allowance without consuming old data.
+Receiver SHUT_RD preserves queued records and rejects the held send with EPIPE;
+the test releases queue space before requiring completion, since native Linux
+need not wake that peer-queue waiter on shutdown alone.
+
+Native routing comparisons require an isolated network namespace with
+`net.unix.max_dgram_qlen=10`; never change the host namespace's setting.
+Local guest validation runs all four clients as root and UID 65534 with both
+musl linkages on BIOS and UEFI: 32 actual program executions. The fresh kernel,
+complete frozen sources, client/UAPI inputs, initramfs, images and logs are
+retained. These local results do not establish current hosted CI acceptance.
+Per-message credentials, descriptor transfer and cycle collection remain
+required for complete Unix socket support.

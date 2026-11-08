@@ -37,6 +37,10 @@ test-account-secret-native:
 
 .PHONY: test-unix-datagram-policy
 .PHONY: test-unix-names-native
+build/unix-routing-native: userspace/tests/ipc/unix_routing.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+
 build/unix-names-native: userspace/tests/ipc/unix_names.c
 	@mkdir -p build
 	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@

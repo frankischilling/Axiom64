@@ -12,6 +12,7 @@ struct PeerCredentials {
 struct Socket {
     bool used, listener, pending, connected, read_closed, write_closed, peer_closed;
     uint16_t type;
+    uint64_t generation, peer_generation;
     uint8_t local[108];
     size_t local_length;
     Node* bound_node;
@@ -23,8 +24,15 @@ struct Socket {
     PeerCredentials credentials{}, peer_credentials{};
     UnixDatagramQueue datagrams{};
     UnixAddressName* datagram_name = nullptr;
+    UnixAddressName* datagram_peer_name = nullptr;
     UnixSendBudget* datagram_send = nullptr;
     uint32_t datagram_receive = 212992;
+    int datagram_error = 0;
+};
+
+struct UnixDatagramTarget {
+    Socket* socket = nullptr;
+    uint64_t generation = 0;
 };
 
 struct [[gnu::packed]] EpollEvent {
@@ -59,7 +67,13 @@ int64_t socket_read(Socket*, void*, size_t, bool peek = false, size_t peek_offse
 
 int64_t socket_write(Socket*, const void*, size_t, uint32_t datagram_entry_limit = 0);
 // Success transfers the prepared record to the receiver; errors retain it.
-int64_t socket_datagram_write(Socket*, UnixDatagramRecord*);
+int64_t socket_datagram_write(Task&, Socket*, UnixDatagramRecord*, const UnixAddressValue*,
+                              UnixDatagramTarget&);
+int socket_datagram_address(Task&, uint64_t pointer, uint32_t length, UnixAddressValue&);
+int socket_datagram_bind(Task&, Socket&, uint64_t pointer, size_t length);
+int socket_datagram_connect(Task&, Socket&, uint64_t pointer, uint32_t length);
+int socket_datagram_output_name(Task&, const UnixAddressName*, uint64_t, uint64_t);
+bool socket_datagram_writable(const Socket&);
 
 int64_t socket_accept(Task&, Handle*, uint64_t address, uint64_t length, unsigned flags,
                       int reserved_fd);

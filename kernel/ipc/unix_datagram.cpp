@@ -109,7 +109,7 @@ bool UnixDatagramQueue::front(const uint8_t*& bytes, size_t& length) const {
 }
 
 const UnixAddressName* UnixDatagramQueue::source_name() const {
-    return first ? first->source : nullptr;
+    return first && first->source && first->source->address().length ? first->source : nullptr;
 }
 
 void UnixDatagramQueue::consume() {

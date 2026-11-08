@@ -56,7 +56,7 @@ int unix_address_decode(const void* data, size_t length, UnixAddressValue& resul
 }
 
 UnixAddressName* UnixAddressName::create(const UnixAddressValue& value) {
-    if (!value.length || !value.valid())
+    if (!value.valid())
         return nullptr;
     auto name = static_cast<UnixAddressName*>(alloc(sizeof(UnixAddressName)));
     if (name) {
@@ -64,6 +64,13 @@ UnixAddressName* UnixAddressName::create(const UnixAddressValue& value) {
         name->value = value;
     }
     return name;
+}
+
+int UnixAddressName::bind(const UnixAddressValue& address) {
+    if (value.length || !address.length || !address.valid())
+        return -22;
+    value = address;
+    return 0;
 }
 
 void UnixAddressName::retain() {

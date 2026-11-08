@@ -201,6 +201,57 @@ static void refusal_and_maximum() {
     empty();
 }
 
+static void stream_interval() {
+    auto receiver = endpoint();
+    receiver->socket->type = 1;
+    auto file = description();
+    auto record = ax::UnixStreamRecord::create(3);
+    assert(record);
+    memcpy(record->data(), "ABC", 3);
+    auto list = rights(33, file);
+    receiver->socket->stream.accept(record, 3, {}, list, receiver->socket);
+    assert(!list && receiver->socket->stream.size() == 3 && record->rights());
+    ax::close_handle(file);
+    ax::UnixRights* received = nullptr;
+    receiver->socket->stream.consume(1, received);
+    assert(received && !receiver->socket->stream.front()->rights());
+    assert(receiver->socket->stream.size() == 2 && record->size() == 2);
+    assert(!memcmp(record->data(), "BC", 2) && file->references == 1);
+    received->drop();
+    assert(!file->references);
+    receiver->socket->stream.clear();
+    assert(!receiver->socket->stream.front() && !receiver->socket->stream.size());
+    ax::close_handle(receiver);
+    empty();
+}
+
+static void pending_listener() {
+    auto listener = endpoint();
+    listener->socket->type = 1;
+    auto file = description();
+    ax::Socket* pending = nullptr;
+    for (auto& socket : ax::sockets)
+        if (!socket.used) {
+            pending = &socket;
+            break;
+        }
+    assert(pending);
+    *pending = {};
+    pending->used = pending->pending = true;
+    pending->type = 1;
+    pending->accepting = listener->socket;
+    listener->socket->queue[0] = pending;
+    listener->socket->queue_size = 1;
+    auto record = ax::UnixStreamRecord::create(1);
+    auto list = rights(34, listener, file);
+    pending->stream.accept(record, 1, {}, list, pending);
+    ax::close_handle(file);
+    ax::unix_collect_rights();
+    assert(file->references == 1 && pending->stream.size() == 1);
+    ax::close_handle(listener);
+    empty();
+}
+
 int main() {
     retained();
     self_cycle();
@@ -209,6 +260,8 @@ int main() {
     pending_root();
     user_pressure();
     refusal_and_maximum();
+    stream_interval();
+    pending_listener();
     puts("UNIX_RIGHTS_POLICY_PASS retained_descriptions self_cycles rooted_rings pending_roots "
-         "user_pressure allocation_refusal maximum_capture");
+         "user_pressure allocation_refusal maximum_capture stream_intervals pending_listener");
 }

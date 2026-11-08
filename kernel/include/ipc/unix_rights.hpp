@@ -26,6 +26,7 @@ class UnixRights {
     void append(Handle*);
     int admission(uint64_t limit, bool privileged) const;
     void enqueue(Socket*);
+    void dequeue();
     void drop();
     size_t write(Task&, uint64_t pointer, size_t capacity, bool cloexec, uint32_t& flags) const;
 

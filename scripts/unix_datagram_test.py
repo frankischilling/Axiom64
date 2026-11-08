@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 from account_store_guest import fixture
@@ -45,6 +46,11 @@ def main():
     args = parser.parse_args()
     directory = args.directory.resolve()
     directory.mkdir(parents=True, exist_ok=False)
+    with tempfile.TemporaryDirectory(prefix='case-probe-', dir=directory) as temporary:
+        probe = Path(temporary)
+        (probe / 'a').write_bytes(b'lowercase')
+        if (probe / 'A').exists():
+            raise ValueError('Unix evidence requires a case-sensitive directory; use a Linux filesystem')
     source = snapshot(directory)
     os.chdir(ROOT)
     with (directory / 'kernel-build.log').open('xb') as log:
@@ -117,7 +123,8 @@ def main():
         raise ValueError('Unix sources changed during guest validation')
     from unix_datagram_proof import verify
     verify(directory)
-    print('UNIX_DATAGRAM_GUEST_MATRIX_PASS profiles=8 executions=96', flush=True)
+    print(f'UNIX_DATAGRAM_GUEST_MATRIX_PASS profiles=8 executions={len(rows) * len(CLIENTS) * 2}',
+          flush=True)
 
 
 if __name__ == '__main__':

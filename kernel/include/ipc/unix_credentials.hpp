@@ -17,6 +17,7 @@ class UnixMessageCredentials {
 
   public:
     void capture(const Task&);
+    bool operator==(const UnixMessageCredentials&) const = default;
     size_t write(Task&, uint64_t pointer, size_t capacity, uint32_t& flags) const;
 };
 } // namespace ax

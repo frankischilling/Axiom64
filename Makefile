@@ -56,7 +56,7 @@ test-unix-datagram-policy: build/unix-datagram-policy
 	ASAN_OPTIONS=detect_leaks=1 ./build/unix-datagram-policy
 
 .PHONY: test-unix-rights-policy
-build/unix-rights-policy: kernel/tests/ipc/unix_rights.cpp kernel/ipc/unix_rights/ownership.cpp kernel/ipc/unix_rights/collect.cpp kernel/ipc/unix_datagram.cpp kernel/ipc/unix_address.cpp kernel/ipc/ipc.cpp $(call rwildcard,kernel/include/,*.hpp)
+build/unix-rights-policy: kernel/tests/ipc/unix_rights.cpp kernel/ipc/unix_rights/ownership.cpp kernel/ipc/unix_rights/collect.cpp kernel/ipc/unix_stream.cpp kernel/ipc/unix_datagram.cpp kernel/ipc/unix_address.cpp kernel/ipc/ipc.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 

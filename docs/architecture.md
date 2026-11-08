@@ -63,3 +63,12 @@ This is a development OS with a tested compatibility surface. Unsupported syscal
 - 10 ms timer resolution with HPET or fixed-frequency TSC elapsed accounting. Axiom64 samples a checked UTC RTC calendar at boot; synchronization, clock setting and complete Linux clock-ID semantics remain required. See [clock selection and limits](time.md).
 
 The harness tests the guest's own kernel paths. It does not substitute host syscalls for guest operations.
+
+Unix streams retain byte intervals with sender identity and optional file
+descriptions. Reads stop at the applicable credential or description boundary;
+peeks install independent descriptor numbers while preserving queued ownership.
+Consuming the first byte transfers or discards the associated descriptions and
+retains any remaining bytes. The shared queued-description collector includes
+streams and not-yet-accepted connections. Local native and guest checks cover
+these operations; complete stream option, interruption and shutdown acceptance
+remains required.

@@ -102,7 +102,8 @@ def verify(directory):
                 raise ValueError('guest did not execute the recorded client linkage')
     if len(kernels) != 1:
         raise ValueError('Unix guest profiles did not use one kernel')
-    return dict(passed=True, profiles=8, public_client_executions=96, full_unix_acceptance=False)
+    return dict(passed=True, profiles=8, public_client_executions=len(rows) * len(CLIENTS) * 2,
+                full_unix_acceptance=False)
 
 
 if __name__ == '__main__':

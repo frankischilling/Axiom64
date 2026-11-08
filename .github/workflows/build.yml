@@ -1097,6 +1097,14 @@ jobs:
       - name: Test pthread lifecycle, futexes, and blocked I/O
         if: matrix.suite == 'boot'
         run: make test-threads
+      - name: Compare Unix ancillary ownership and reopen actual guest products
+        if: matrix.suite == 'boot'
+        run: |
+          make test-unix-rights-policy test-unix-datagram-policy
+          sudo -n python3 -B scripts/unix_stream_native.py
+          python3 -B scripts/unix_datagram_test.py
+          python3 -B scripts/unix_datagram_proof.py build/unix-datagram-guest
+          sudo -n -u nobody python3 -B scripts/unix_datagram_proof.py build/unix-datagram-guest
       - name: Compare retained I/O and socket timeouts with native Linux
         if: matrix.suite == 'boot'
         run: sudo -n make test-thread-io-native
@@ -1720,6 +1728,8 @@ jobs:
           name: axiom64-evidence-${{ matrix.suite }}
           path: |
             build/*.log
+            build/unix-datagram-guest/**
+            build/unix-stream-native/**
             build/udp-wire/**
             build/ipv4-multicast-evidence/**
             build/ipv4-multicast-audit/**

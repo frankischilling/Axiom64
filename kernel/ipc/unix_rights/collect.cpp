@@ -38,7 +38,7 @@ void unix_collect_rights() {
     for (auto entry = UnixRights::all; entry; entry = entry->next) {
         if (!entry->receiver)
             continue;
-        auto& owner = vertex(entry->receiver->description);
+        auto& owner = vertex(entry->receiver->rights_owner());
         entry->collect_next = owner.outgoing;
         owner.outgoing = entry;
         for (unsigned index = 0; index < entry->count; index++)
@@ -72,8 +72,13 @@ void unix_collect_rights() {
         }
     // Pin every doomed endpoint before releasing any edge. Close callbacks can
     // clear other queues; the original socket slots must remain valid throughout.
-    for (unsigned index = 0; index < pinned; index++)
-        pins[index]->socket->datagrams.clear();
+    for (unsigned index = 0; index < pinned; index++) {
+        auto socket = pins[index]->socket;
+        socket->datagrams.clear();
+        socket->stream.clear();
+        for (size_t child = 0; child < socket->queue_size; child++)
+            socket->queue[(socket->queue_head + child) % 32]->stream.clear();
+    }
     for (unsigned index = 0; index < pinned; index++)
         close_handle(pins[index]);
     collecting = false;

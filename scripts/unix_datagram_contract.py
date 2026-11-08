@@ -3,7 +3,8 @@
 import re
 
 CLIENTS = {'unix_messages': 11, 'unix_names': 6, 'unix_routing': 5,
-           'unix_routing_wait': 7, 'unix_credentials': 5, 'unix_rights': 7}
+           'unix_routing_wait': 7, 'unix_credentials': 5, 'unix_rights': 7,
+           'unix_stream': 9}
 
 
 def boot_body():

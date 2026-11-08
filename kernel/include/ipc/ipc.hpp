@@ -2,6 +2,7 @@
 #pragma once
 #include "process/task.hpp"
 #include "ipc/unix_datagram.hpp"
+#include "ipc/unix_stream.hpp"
 
 namespace ax {
 struct PeerCredentials {
@@ -19,8 +20,7 @@ struct Socket {
     Socket* peer;
     Socket* queue[32];
     size_t queue_head, queue_size, backlog;
-    uint8_t* bytes;
-    size_t head, size, capacity;
+    UnixStreamQueue stream{};
     PeerCredentials credentials{}, peer_credentials{};
     UnixDatagramQueue datagrams{};
     UnixAddressName* datagram_name = nullptr;
@@ -30,6 +30,11 @@ struct Socket {
     int datagram_error = 0;
     bool pass_credentials = false;
     Handle* description = nullptr;
+    Socket* accepting = nullptr;
+
+    Handle* rights_owner() const {
+        return description ? description : accepting ? accepting->description : nullptr;
+    }
 };
 
 struct UnixDatagramTarget {

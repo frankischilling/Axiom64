@@ -1917,11 +1917,23 @@ under root, internal credential drop and already-ordinary launch modes. Native
 queue comparisons use a fresh network namespace with its ten-record default;
 they never rewrite the host namespace's setting.
 
-`make test-unix-datagrams` runs all six public clients as root and UID 65534 with
-both musl providers, both linkages and BIOS/UEFI: 96 actual client executions.
+`userspace/tests/ipc/unix_stream.c` checks stream credentials and descriptor
+boundaries, distinct peeks, partial reads, plain-read discard, sender identity
+changes, empty sends, truncated ancillary output, late credential capture,
+repeated queued close and payload/control/header faults. A payload copy fault
+preserves the queued stream bytes and descriptions. A consuming control fault
+discards descriptions; a later control-header fault preserves already installed
+descriptors. `sudo python3 scripts/unix_stream_native.py` compares root,
+credential-drop and already-ordinary Linux callers with the same C client.
+
+`make test-unix-datagrams` runs all seven public clients as root and UID 65534 with
+both musl providers, both linkages and BIOS/UEFI: 112 actual client executions.
+Keep its evidence directory on a case-sensitive filesystem so every pinned SDK
+header retains its original name and bytes. On a Windows-mounted checkout, use
+`python3 scripts/unix_datagram_test.py --directory /var/tmp/axiom-unix-guest`.
 `make test-unix-datagrams-proof` independently reopens retained source copies,
 all 977 SDK headers, client ELF types/interpreters, compilation records, images,
 initramfs contents and original serial logs. The production ownership sanitizer
 model is `make test-unix-rights-policy`. These local comparisons do not establish
-current hosted acceptance. Stream ancillary data and complete Unix socket
-lifetime qualification remain required.
+current hosted acceptance. Broader stream options, interruption, shutdown and
+complete Unix socket lifetime qualification remain required.

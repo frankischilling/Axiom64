@@ -521,6 +521,8 @@ static int prepare(Task& task, IoRequest& request) {
     if (request.socket) {
         request.flags = f.rax == 46 || f.rax == 47 ? f.rdx : f.r10;
         unsigned allowed = 2 | 0x40 | 0x4000;
+        if (request.handle->socket && !request.write)
+            allowed |= 0x40000000;
         if (inet_stream(request.handle->inet))
             allowed |= 0x100;
         if (request.flags & ~allowed)
@@ -536,8 +538,17 @@ static int prepare(Task& task, IoRequest& request) {
             return -14;
         if (message.name && !(f.rax == 47 && inet_stream(request.handle->inet)))
             return -95;
-        if (message.control_length && f.rax == 46)
-            return -95;
+        if (message.control_length && f.rax == 46) {
+            if (!request.handle->socket)
+                return -95;
+            if (int error = unix_read_control(task, message.control, message.control_length,
+                                              request.unix_credentials, request.unix_rights))
+                return error;
+        }
+        if (f.rax == 47) {
+            request.control_pointer = message.control;
+            request.control_capacity = message.control_length;
+        }
         return import_vectors(task, request, message.iov, message.iov_count);
     }
     request.single = {f.rsi, min(f.rdx, uint64_t(0x7ffff000))};
@@ -681,9 +692,9 @@ static int64_t local_stream_attempt(Task& task, IoRequest& request) {
                      : handle->pipe->readers ? 0
                                              : -32;
             if (!result) {
-                size_t capacity = handle->socket
-                                      ? handle->socket->peer->capacity - handle->socket->peer->size
-                                      : sizeof(Pipe::bytes) - handle->pipe->size;
+                size_t capacity =
+                    handle->socket ? UnixStreamQueue::capacity - handle->socket->peer->stream.size()
+                                   : sizeof(Pipe::bytes) - handle->pipe->size;
                 // Small pipe writes wait for the entire request to fit.
                 if (!capacity ||
                     (handle->pipe && !done && remaining <= sizeof(buffer) && capacity < remaining))
@@ -721,6 +732,142 @@ static int64_t local_stream_attempt(Task& task, IoRequest& request) {
         if (size_t(result) < count)
             break;
     }
+    return done;
+}
+
+static int64_t unix_stream_attempt(Task& task, IoRequest& request) {
+    auto socket = request.handle->socket;
+    const auto& call = request.call;
+    size_t remaining = 0;
+    for (size_t index = 0; index < request.count; index++) {
+        const auto& vector = request.vectors[index];
+        if (vector.length &&
+            (vector.base >= user_limit || vector.length > user_limit - vector.base))
+            return -14;
+        remaining += vector.length;
+    }
+    VectorCursor cursor{request};
+    size_t done = 0;
+    if (request.write) {
+        if (!remaining && !request.socket)
+            return 0;
+        int error = int(socket_write(socket, nullptr, 0));
+        if (error) {
+            if (error == -32 && !(request.flags & 0x4000))
+                queue_signal(&task, 13, task.process->pid);
+            return error;
+        }
+        if (!remaining)
+            return 0;
+        auto receiver = socket->peer;
+        size_t length = min(remaining, UnixStreamQueue::capacity - receiver->stream.size());
+        if (!length)
+            return -11;
+        auto record = UnixStreamRecord::create(length);
+        if (!record)
+            return -12;
+        if (request.unix_rights) {
+            error = request.unix_rights->admission(
+                task.process->limits.soft(Resource::open_files),
+                capable(task.credentials, Capability::sys_resource) ||
+                    capable(task.credentials, Capability::sys_admin));
+            if (error) {
+                record->drop();
+                return error;
+            }
+        }
+        auto identity = request.unix_credentials;
+        if (socket->pass_credentials || receiver->pass_credentials)
+            identity.capture(task);
+        while (done < length) {
+            size_t count = min(size_t(4096), length - done);
+            if (!cursor.copy(task, record->data() + done, count))
+                break;
+            done += count;
+        }
+        if (!done) {
+            record->drop();
+            return -14;
+        }
+        receiver->stream.accept(record, done, identity, request.unix_rights, receiver);
+        return done;
+    }
+
+    struct Received {
+        UnixRights* owned = nullptr;
+        const UnixRights* view = nullptr;
+
+        ~Received() {
+            if (owned)
+                owned->drop();
+        }
+    } received;
+
+    UnixMessageCredentials identity;
+    bool identified = false, peek = request.flags & 2;
+    if (socket->listener || !socket->connected)
+        return -107;
+    auto record = remaining ? socket->stream.front() : nullptr;
+    while (record) {
+        if (socket->pass_credentials && identified && !(identity == record->credentials()))
+            break;
+        if (!identified) {
+            identity = record->credentials();
+            identified = true;
+        }
+        bool boundary = record->rights();
+        auto next = record->next();
+        size_t length = min(remaining, record->size()), offset = 0;
+        while (offset < length) {
+            size_t count = min(size_t(4096), length - offset);
+            if (!cursor.copy(task, const_cast<uint8_t*>(record->data()) + (peek ? offset : 0),
+                             count)) {
+                if (!done)
+                    return -14;
+                goto output;
+            }
+            if (peek)
+                received.view = record->rights();
+            else {
+                UnixRights* rights = nullptr;
+                socket->stream.consume(count, rights);
+                if (rights) {
+                    received.owned = rights;
+                    received.view = rights;
+                }
+                record = socket->stream.front();
+            }
+            offset += count;
+            remaining -= count;
+            done += count;
+        }
+        // Linux peeks also inspect later intervals after filling the byte
+        // buffer. A later descriptor list can be returned without another byte.
+        if (peek && boundary)
+            received.view = record->rights();
+        if (boundary || (!peek && !remaining))
+            break;
+        record = peek ? next : socket->stream.front();
+    }
+    if (!done && remaining && !socket->read_closed && socket->peer && !socket->peer->write_closed)
+        return -11;
+output:
+    if (call.rax == 47) {
+        uint32_t flags = request.flags & 0x40000000;
+        uint64_t used =
+            identified
+                ? unix_write_control(task, &identity, received.view, socket->pass_credentials,
+                                     request.control_pointer, request.control_capacity,
+                                     request.flags & 0x40000000, flags)
+                : 0;
+        if (!task.memory->space.copy_out(call.rsi + offsetof(Message, control_length), &used, 8) ||
+            !task.memory->space.copy_out(call.rsi + offsetof(Message, flags), &flags, 4))
+            return -14;
+    }
+    if (call.rax == 45 && call.r8)
+        if (int error =
+                socket_output_address(task, socket->peer ? socket->peer : socket, call.r8, call.r9))
+            return error;
     return done;
 }
 
@@ -1219,6 +1366,10 @@ static int64_t attempt(Task& task, IoRequest& request) {
                                                  request.reserved_fd)
                                     : socket_accept(task, h, f.rsi, f.rdx, f.rax == 288 ? f.r10 : 0,
                                                     request.reserved_fd);
+    if (h->socket && h->socket->type == 1) {
+        int64_t result = unix_stream_attempt(task, request);
+        return result == -11 && request.stream_blocking ? would_block : result;
+    }
     size_t done = 0;
     int64_t result = 0;
     uint64_t old_offset = h->offset;
@@ -1356,9 +1507,8 @@ int64_t io_syscall(Task& task, const Frame& frame) {
     if (!error) {
         request->inet_generation = tcp_generation(h->inet);
         // Linux captures O_NONBLOCK for this call; an alias cannot alter a retained cursor.
-        request->stream_blocking =
-            (inet_stream(h->inet) || h->event || (h->socket && h->socket->type == 2)) &&
-            !(h->flags & 04000) && !(request->flags & 0x40);
+        request->stream_blocking = (inet_stream(h->inet) || h->event || h->socket) &&
+                                   !(h->flags & 04000) && !(request->flags & 0x40);
         capture_timeout(*request);
     }
     int64_t result = error ? error : attempt(task, *request);

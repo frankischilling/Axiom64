@@ -38,12 +38,6 @@ static Socket* allocate_socket(unsigned type = 1) {
             socket.credentials = {current->process->pid, current->credentials.user.effective,
                                   current->credentials.group.effective};
             socket.type = type;
-            socket.capacity = type == 1 ? 65536 : 0;
-            socket.bytes = type == 1 ? (uint8_t*)alloc(socket.capacity) : nullptr;
-            if (type == 1 && !socket.bytes) {
-                socket.used = false;
-                return nullptr;
-            }
             if (type == 2 && !(socket.datagram_send = UnixSendBudget::create())) {
                 socket.used = false;
                 return nullptr;
@@ -81,7 +75,7 @@ void socket_close(Socket* s) {
         queued->pending = false;
         socket_close(queued);
     }
-    release(s->bytes);
+    s->stream.clear();
     s->datagrams.clear();
     if (s->datagram_name)
         s->datagram_name->drop();
@@ -92,7 +86,6 @@ void socket_close(Socket* s) {
     if (s->datagram_send)
         s->datagram_send->close();
     s->datagram_send = nullptr;
-    s->bytes = nullptr;
     s->description = nullptr;
     s->used = false;
 }
@@ -104,8 +97,8 @@ bool socket_ready(Socket* s, bool write) {
         return !write && s->queue_size;
     if (write)
         return !s->peer || s->write_closed || s->peer->read_closed ||
-               s->peer->size < s->peer->capacity;
-    return s->size || s->peer_closed || s->read_closed || !s->connected ||
+               s->peer->stream.size() < UnixStreamQueue::capacity;
+    return s->stream.size() || s->peer_closed || s->read_closed || !s->connected ||
            (s->peer && s->peer->write_closed);
 }
 
@@ -131,17 +124,32 @@ int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_of
     if (!len || s->read_closed)
         return 0;
     size_t offset = peek ? peek_offset : 0;
-    if (offset >= s->size)
+    if (offset >= s->stream.size())
         return s->peer_closed || !s->peer || s->peer->write_closed ? 0 : -11;
-    len = min(len, s->size - offset);
-    auto output = (uint8_t*)data;
-    for (size_t i = 0; i < len; i++)
-        output[i] = s->bytes[(s->head + offset + i) % s->capacity];
-    if (!peek) {
-        s->head = (s->head + len) % s->capacity;
-        s->size -= len;
+    size_t copied = 0;
+    auto record = s->stream.front();
+    while (record && offset >= record->size()) {
+        offset -= record->size();
+        record = record->next();
     }
-    return len;
+    while (record && copied < len) {
+        size_t count = min(len - copied, record->size() - offset);
+        memcpy(static_cast<uint8_t*>(data) + copied, record->data() + offset, count);
+        bool boundary = record->rights();
+        auto next = record->next();
+        if (!peek) {
+            UnixRights* rights = nullptr;
+            s->stream.consume(count, rights);
+            if (rights)
+                rights->drop();
+        }
+        copied += count;
+        if (boundary)
+            break;
+        record = next;
+        offset = 0;
+    }
+    return copied;
 }
 
 int64_t socket_write(Socket* s, const void* data, size_t len, uint32_t datagram_entry_limit) {
@@ -171,13 +179,18 @@ int64_t socket_write(Socket* s, const void* data, size_t len, uint32_t datagram_
     if (!len)
         return 0;
     auto peer = s->peer;
-    if (peer->size == peer->capacity)
+    if (peer->stream.size() == UnixStreamQueue::capacity)
         return -11;
-    len = min(len, peer->capacity - peer->size);
-    auto input = (const uint8_t*)data;
-    for (size_t i = 0; i < len; i++)
-        peer->bytes[(peer->head + peer->size + i) % peer->capacity] = input[i];
-    peer->size += len;
+    len = min(len, UnixStreamQueue::capacity - peer->stream.size());
+    auto record = UnixStreamRecord::create(len);
+    if (!record)
+        return -12;
+    memcpy(record->data(), data, len);
+    UnixMessageCredentials identity;
+    if (s->pass_credentials || peer->pass_credentials)
+        identity.capture(*current);
+    UnixRights* rights = nullptr;
+    peer->stream.accept(record, len, identity, rights, peer);
     return len;
 }
 
@@ -272,6 +285,7 @@ int64_t socket_accept(Task& task, Handle* h, uint64_t address, uint64_t length, 
     if (fd < 0)
         return fd;
     accepted->pending = false;
+    accepted->accepting = nullptr;
     s->queue_head = (s->queue_head + 1) % 32;
     s->queue_size--;
     return fd;
@@ -572,6 +586,8 @@ int64_t ipc_syscall(Frame* f) {
                                     current->credentials.group.effective};
         s->peer_credentials = listener->credentials;
         server->pending = true;
+        server->accepting = listener;
+        server->pass_credentials = listener->pass_credentials;
         server->peer = s;
         server->local_length = listener->local_length;
         server->bound_node = listener->bound_node;
@@ -651,7 +667,7 @@ int64_t ipc_syscall(Frame* f) {
             return -88;
         if (b != 1)
             return -92;
-        if (s->type == 2 && c == 16) {
+        if (c == 16) {
             if (int32_t(f->r8) < int32_t(sizeof(int)))
                 return -22;
             int value;
@@ -680,7 +696,7 @@ int64_t ipc_syscall(Frame* f) {
             return -88;
         if (b != 1)
             return -92;
-        if (s->type == 2 && c == 16) {
+        if (c == 16) {
             uint32_t length;
             if (!current->memory->space.copy_in(&length, f->r8, 4))
                 return -14;
@@ -703,7 +719,10 @@ int64_t ipc_syscall(Frame* f) {
                 return -14;
             return 0;
         }
-        int value = c == 3 ? s->type : c == 4 ? 0 : c == 7 || c == 8 ? int(s->capacity) : -1;
+        int value = c == 3             ? s->type
+                    : c == 4           ? 0
+                    : c == 7 || c == 8 ? int(UnixStreamQueue::capacity)
+                                       : -1;
         if (s->type == 2 && (c == 7 || c == 8))
             value = c == 7 ? s->datagram_send->size() : s->datagram_receive;
         if (value < 0)

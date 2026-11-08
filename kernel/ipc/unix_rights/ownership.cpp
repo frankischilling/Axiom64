@@ -52,17 +52,21 @@ void UnixRights::drop() {
         all = next;
     if (next)
         next->previous = previous;
-    if (receiver) {
-        if (queued_sockets < sockets)
-            panic("invalid Unix queued reference count");
-        queued_sockets -= sockets;
-        receiver = nullptr;
-    }
+    dequeue();
     // Unlink before closing descriptions: closing one can retire another queue.
     unsigned retained = count;
     count = 0;
     for (unsigned index = 0; index < retained; index++)
         close_handle(files[index]);
     release(this);
+}
+
+void UnixRights::dequeue() {
+    if (receiver) {
+        if (queued_sockets < sockets)
+            panic("invalid Unix queued reference count");
+        queued_sockets -= sockets;
+        receiver = nullptr;
+    }
 }
 } // namespace ax

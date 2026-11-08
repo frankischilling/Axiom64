@@ -142,6 +142,25 @@ static void permanent_and_wrapped_stamps() {
     assert(book.cache(*book.at(0), 30000).updated == before.cache(*before.at(0), 30000).updated);
 }
 
+static void zero_epoch_creation_survives_renewal() {
+    ip4::AddressBook book;
+    const auto value = config(0x0a170102);
+    assert(!book.add(1, "eth0", value, 0, {1, 3}));
+    auto cached = book.cache(*book.label(1, "eth0"), 0);
+    assert(cached.created == 0 && cached.updated == 0);
+    assert(!book.add(1, "eth0", value, 50, {2, 5}, true));
+    cached = book.cache(*book.label(1, "eth0"), 50);
+    assert(cached.created == 0 && cached.updated == 50 && cached.preferred == 2 &&
+           cached.valid == 5);
+    assert(!book.add(1, "eth0", value, 100, {}, true));
+    cached = book.cache(*book.label(1, "eth0"), 100);
+    assert(cached.created == 0 && cached.updated == 100 && cached.valid == UINT32_MAX);
+    assert(!book.remove(1, value.address, value.mask));
+    assert(!book.add(1, "eth0", value, 150));
+    cached = book.cache(*book.label(1, "eth0"), 150);
+    assert(cached.created == 150 && cached.updated == 150);
+}
+
 static ip4::AddressBook expiring_primary() {
     ip4::AddressBook book;
     assert(!book.add(1, "eth0", config(0x0a170102), 100, {1, 2}));
@@ -195,6 +214,7 @@ int main() {
     repeated_labels_and_capacity();
     finite_deadlines_and_renewal();
     permanent_and_wrapped_stamps();
+    zero_epoch_creation_survives_renewal();
     expiry_cascade_and_promotion();
     borrowed_insertion_values();
     std::puts("IPV4_ADDRESSES_PASS labels lifetimes replacement invalid-inputs capacity isolation");

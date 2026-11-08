@@ -238,6 +238,8 @@ creation stamp, label and broadcast. An absent address can be inserted without
 `NLM_F_CREATE`, following Linux's compatibility behavior. Omitting cache
 information selects permanent lifetimes. Explicit broadcast values, including
 zero, are retained when an address is created.
+Creation at the monotonic clock's zero epoch also survives renewal. Deleting
+and recreating an address records a new creation stamp.
 
 `/proc/sys/net/ipv4/conf/{all,default,lo,ethN}/promote_secondaries` uses integer
 values. New interfaces inherit `default`; either a nonzero `all` or interface

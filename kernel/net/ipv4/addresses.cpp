@@ -63,8 +63,6 @@ const Ipv4Address* AddressBook::preferred(unsigned index, uint32_t destination) 
 void AddressBook::renew(Slot& slot, Ipv4AddressLifetimes lifetime, uint64_t now) {
     slot.lifetime = lifetime;
     slot.updated = now;
-    if (!slot.created)
-        slot.created = now;
     slot.value.flags = (slot.value.flags & ~uint32_t(0xa0)) |
                        (lifetime.valid == UINT32_MAX ? 0x80 : 0) | (lifetime.preferred ? 0 : 0x20);
 }
@@ -106,6 +104,7 @@ int AddressBook::add(unsigned index, const char* name, const Ipv4Config& value, 
         entries[n] = entries[n - 1];
     auto& slot = entries[position];
     slot = {};
+    slot.created = now;
     auto& entry = slot.value;
     entry.index = index;
     entry.config = captured;

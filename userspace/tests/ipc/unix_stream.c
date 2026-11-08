@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -313,6 +314,102 @@ static void fault_copies(void) {
          "header_fault_keeps_installed_fd");
 }
 
+static void page_send_fault(void) {
+    size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    char* data = mmap(NULL, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(data != MAP_FAILED && !mprotect(data + page, page, PROT_NONE));
+    memset(data, 'S', page);
+    for (unsigned rights = 0; rights < 2; rights++) {
+        int f[2], p[2];
+        pair(f);
+        pipes(p);
+        union control control = {0};
+        struct iovec vectors[] = {{data, page}, {data + page, page}};
+        struct msghdr message = {.msg_iov = vectors,
+                                 .msg_iovlen = 2,
+                                 .msg_control = control.bytes,
+                                 .msg_controllen = CMSG_SPACE(sizeof(int))};
+        struct cmsghdr* c = CMSG_FIRSTHDR(&message);
+        c->cmsg_level = SOL_SOCKET;
+        c->cmsg_type = SCM_RIGHTS;
+        c->cmsg_len = CMSG_LEN(sizeof(int));
+        memcpy(CMSG_DATA(c), &p[1], sizeof(int));
+        CHECK((rights ? sendmsg(f[0], &message, 0) : write(f[0], data, 2 * page)) == -1 &&
+              errno == EFAULT);
+        int available = -1;
+        CHECK(!ioctl(f[1], FIONREAD, &available) && !available);
+        CHECK(!close(p[1]));
+        eof(p[0]);
+        CHECK(!close(p[0]) && !close(f[0]) && !close(f[1]));
+    }
+    CHECK(!munmap(data, 2 * page));
+    puts("UNIX_STREAM_PAGE_SEND_PASS scalar vector no_partial_interval no_retained_rights");
+}
+
+static void page_receive_fault(void) {
+    size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    char* data = mmap(NULL, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    char* output = mmap(NULL, 3 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(data != MAP_FAILED && output != MAP_FAILED);
+    memset(data, 'R', 2 * page);
+    for (unsigned prior = 0; prior < 3; prior++) {
+        CHECK(!mprotect(output, 3 * page, PROT_READ | PROT_WRITE));
+        size_t prefix = prior == 2 ? page : 0;
+        memset(output, 'x', prefix + page);
+        CHECK(!mprotect(output + prefix + page, page, PROT_NONE));
+        int f[2], p[2];
+        pair(f);
+        pipes(p);
+        if (prefix)
+            CHECK(write(f[0], data, prefix) == (ssize_t)prefix);
+        union control control = {0};
+        struct iovec vector = {data, 2 * page};
+        struct msghdr message = {.msg_iov = &vector,
+                                 .msg_iovlen = 1,
+                                 .msg_control = control.bytes,
+                                 .msg_controllen = CMSG_SPACE(sizeof(int))};
+        struct cmsghdr* c = CMSG_FIRSTHDR(&message);
+        c->cmsg_level = SOL_SOCKET;
+        c->cmsg_type = SCM_RIGHTS;
+        c->cmsg_len = CMSG_LEN(sizeof(int));
+        memcpy(CMSG_DATA(c), &p[1], sizeof(int));
+        CHECK(sendmsg(f[0], &message, 0) == (ssize_t)(2 * page) && !close(p[1]));
+        vector.iov_base = output;
+        vector.iov_len = prefix + 2 * page;
+        message.msg_controllen = sizeof(control);
+        // Peeking exposes the copied prefix but consumes no interval or rights.
+        ssize_t result = recvmsg(f[1], &message, MSG_PEEK | MSG_CMSG_CLOEXEC);
+        CHECK(prefix ? result == (ssize_t)prefix : result == -1 && errno == EFAULT);
+        int available = -1;
+        CHECK(!ioctl(f[1], FIONREAD, &available) && available == (int)(prefix + 2 * page));
+        alive(p[0]);
+        memset(output, 'x', prefix + page);
+        message.msg_controllen = sizeof(control);
+        result =
+            prior == 1 ? read(f[1], output, 2 * page) : recvmsg(f[1], &message, MSG_CMSG_CLOEXEC);
+        CHECK(prefix ? result == (ssize_t)prefix : result == -1 && errno == EFAULT);
+        CHECK(!ioctl(f[1], FIONREAD, &available) && available == (int)(2 * page));
+        CHECK(!memcmp(data, output, page) && !memcmp(data, output + prefix, page));
+        alive(p[0]);
+        CHECK(!mprotect(output, 3 * page, PROT_READ | PROT_WRITE));
+        vector.iov_base = output;
+        vector.iov_len = 2 * page;
+        message.msg_controllen = sizeof(control);
+        CHECK(recvmsg(f[1], &message, MSG_CMSG_CLOEXEC) == (ssize_t)(2 * page));
+        CHECK(!memcmp(data, output, 2 * page));
+        c = CMSG_FIRSTHDR(&message);
+        CHECK(c && c->cmsg_type == SCM_RIGHTS && !CMSG_NXTHDR(&message, c));
+        int received;
+        memcpy(&received, CMSG_DATA(c), sizeof(received));
+        CHECK(fcntl(received, F_GETFD) == FD_CLOEXEC && !close(received));
+        eof(p[0]);
+        CHECK(!close(p[0]) && !close(f[0]) && !close(f[1]));
+    }
+    CHECK(!munmap(data, 2 * page) && !munmap(output, 3 * page));
+    puts("UNIX_STREAM_PAGE_RECV_PASS peek scalar message copied_prefix interval_retained "
+         "earlier_intervals_commit rights_retained");
+}
+
 int main(int argc, char** argv) {
     CHECK(argc == 1 || (argc == 2 && !strcmp(argv[1], "--ordinary")));
     if (argc == 2) {
@@ -330,5 +427,7 @@ int main(int argc, char** argv) {
     late_credentials();
     queued_close();
     fault_copies();
-    puts("UNIX_STREAM_PASS groups=9");
+    page_send_fault();
+    page_receive_fault();
+    puts("UNIX_STREAM_PASS groups=11");
 }

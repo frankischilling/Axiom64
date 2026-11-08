@@ -779,18 +779,14 @@ static int64_t unix_stream_attempt(Task& task, IoRequest& request) {
         auto identity = request.unix_credentials;
         if (socket->pass_credentials || receiver->pass_credentials)
             identity.capture(task);
-        while (done < length) {
-            size_t count = min(size_t(4096), length - done);
-            if (!cursor.copy(task, record->data() + done, count))
-                break;
-            done += count;
-        }
-        if (!done) {
+        // Publish one admitted interval only after its complete payload copy.
+        // A later page fault must not enqueue an earlier page or its rights.
+        if (!cursor.copy(task, record->data(), length)) {
             record->drop();
             return -14;
         }
-        receiver->stream.accept(record, done, identity, request.unix_rights, receiver);
-        return done;
+        receiver->stream.accept(record, length, identity, request.unix_rights, receiver);
+        return length;
     }
 
     struct Received {
@@ -817,11 +813,11 @@ static int64_t unix_stream_attempt(Task& task, IoRequest& request) {
         }
         bool boundary = record->rights();
         auto next = record->next();
-        size_t length = min(remaining, record->size()), offset = 0;
-        while (offset < length) {
-            size_t count = min(size_t(4096), length - offset);
-            if (!cursor.copy(task, const_cast<uint8_t*>(record->data()) + (peek ? offset : 0),
-                             count)) {
+        size_t length = min(remaining, record->size());
+        if (length) {
+            // Copy faults can expose a userspace prefix, but commit no part of
+            // this interval. Earlier complete intervals keep their progress.
+            if (!cursor.copy(task, const_cast<uint8_t*>(record->data()), length)) {
                 if (!done)
                     return -14;
                 goto output;
@@ -830,16 +826,15 @@ static int64_t unix_stream_attempt(Task& task, IoRequest& request) {
                 received.view = record->rights();
             else {
                 UnixRights* rights = nullptr;
-                socket->stream.consume(count, rights);
+                socket->stream.consume(length, rights);
                 if (rights) {
                     received.owned = rights;
                     received.view = rights;
                 }
                 record = socket->stream.front();
             }
-            offset += count;
-            remaining -= count;
-            done += count;
+            remaining -= length;
+            done += length;
         }
         // Linux peeks also inspect later intervals after filling the byte
         // buffer. A later descriptor list can be returned without another byte.

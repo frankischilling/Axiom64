@@ -17,6 +17,7 @@ class Peer:
         self.datagrams = {}
         self.connections = {}
         self.window = None
+        self.tcp_absence_end = False
         self.results = []
 
     def event(self, value):
@@ -28,6 +29,7 @@ class Peer:
             require(all(value[key] == spec[key] for key in ('case', 'lane', 'transport', 'survival', 'source', 'peer', 'guard')),
                     'client uses fixed independent wire-case inputs')
             self.active = dict(spec, phase='starting')
+            self.tcp_absence_end = False
             self.guards[number] = []
             self.datagrams[number] = []
             self.command(b'S', number)
@@ -42,10 +44,11 @@ class Peer:
                     self.window = time.monotonic_ns() + 500_000_000
                 else:
                     require(value['status'] == 64, 'TCP accepted copied bytes while its source is absent')
+                    self.window = time.monotonic_ns() + 2_000_000_000
             elif phase == 'absence-end':
-                require(spec['transport'] == 2 and spec['phase'] == 'absent', 'complete actual TCP absence interval')
-                spec['phase'] = 'restoring'
-                self.command(b'R', spec['case'])
+                require(spec['transport'] == 2 and spec['phase'] == 'absent' and not self.tcp_absence_end,
+                        'complete actual TCP absence interval')
+                self.tcp_absence_end = True
             elif phase == 'restored':
                 spec['phase'] = 'restored'
             elif phase == 'end':
@@ -63,8 +66,12 @@ class Peer:
     def poll(self):
         if self.window is not None and time.monotonic_ns() >= self.window:
             spec = self.active
-            require(spec is not None and spec['transport'] != 2 and spec['phase'] == 'absent', 'owned datagram observation window')
-            require(len(self.datagrams[spec['case']]) == int(spec['retained']), 'actual held output after expiry and ARP reply')
+            require(spec is not None and spec['phase'] == 'absent', 'owned transport observation window')
+            if spec['transport'] == 2:
+                if not self.tcp_absence_end:
+                    return
+            else:
+                require(len(self.datagrams[spec['case']]) == int(spec['retained']), 'actual held output after expiry and ARP reply')
             self.window = None
             spec['phase'] = 'restoring'
             self.command(b'R', spec['case'])

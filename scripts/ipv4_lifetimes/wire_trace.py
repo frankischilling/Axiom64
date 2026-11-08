@@ -232,7 +232,7 @@ def protocol(text, wire, ingress, events, commands, native):
             require(by_phase[last]['receipt_monotonic_ns'] - by_phase[first]['receipt_monotonic_ns'] >= minimum - PRECISION_NS,
                     'physical lifetime interval retains the source timer precision')
         if spec['transport'] == 2:
-            require(by_phase['absence-end']['receipt_monotonic_ns'] - by_phase['expired']['receipt_monotonic_ns'] >=
+            require(restore['before_ns'] - by_phase['expired']['receipt_monotonic_ns'] >=
                     2_000_000_000 - PRECISION_NS and by_phase['absence-end']['receipt_monotonic_ns'] <= restore['before_ns'],
                     'full physical TCP absence before restoration request')
         outputs, inputs = [], []

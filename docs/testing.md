@@ -1745,3 +1745,21 @@ firmware, transport, root and recovery scenarios and observation deadlines remai
 required. `python3 scripts/tests/fixture_storage_test.py -v` exercises sparse
 allocation, independent writes, preserved existing destinations, rejected partial
 copies and changed retention witnesses.
+
+Finite IPv4 TCP lifetime tests keep the client's original two-second absence
+interval. The peer also waits two full monotonic seconds after receiving the
+expiry marker before sending restoration permission, and waits for the client's
+end marker. Delayed output can extend this hold. Independent readers require
+both the client interval and the physical interval before the restoration write.
+`python3 scripts/tests/ipv4_lifetime_observation_test.py -v` replays the measured
+65.977-ms expiry-marker lag and checks both barriers.
+
+IPv6 ownership comparisons age the finite retry's six/ten-second cache against
+the original replacement observation. Whole-second readback allows two 10-ms
+source ticks at a boundary; raw flags, the four-second lifetime difference and
+subsequent aging remain checked. The first query may report five/nine after a
+second has elapsed. `python3 scripts/tests/ipv6_owner_retry_test.py -v` replays
+the original partial native capture and rejects wrong flags, unrelated or expired
+caches and cache values inconsistent with the observed interval. That partial
+capture is a regression input, not a complete ownership qualification. Existing
+packet mutation controls and all full native/guest matrices remain required.

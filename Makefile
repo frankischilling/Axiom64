@@ -35,6 +35,14 @@ test-account-secret-native:
 .PHONY: test-exec-arguments test-exec-arguments-native test-exec-arguments-policy
 .PHONY: test-process-limits-policy test-resource-limits test-resource-limits-native test-resource-limits-storage
 
+.PHONY: test-unix-datagram-policy
+build/unix-datagram-policy: kernel/tests/ipc/unix_datagram.cpp kernel/ipc/unix_datagram.cpp kernel/include/ipc/unix_datagram.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/ipc/unix_datagram.cpp kernel/ipc/unix_datagram.cpp -o $@
+
+test-unix-datagram-policy: build/unix-datagram-policy
+	ASAN_OPTIONS=detect_leaks=1 ./build/unix-datagram-policy
+
 test-resource-limits:
 	$(PYTHON) scripts/resource_limits_test.py
 

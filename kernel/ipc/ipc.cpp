@@ -34,7 +34,7 @@ static Socket* allocate_socket(unsigned type = 1) {
             socket.credentials = {current->process->pid, current->credentials.user.effective,
                                   current->credentials.group.effective};
             socket.type = type;
-            socket.capacity = type == 1 ? 65536 : 0;
+            socket.capacity = type == 1 ? 65536 : UnixDatagramQueue::byte_limit;
             socket.bytes = type == 1 ? (uint8_t*)alloc(socket.capacity) : nullptr;
             if (type == 1 && !socket.bytes) {
                 socket.used = false;
@@ -60,11 +60,16 @@ void socket_close(Socket* s) {
         socket_close(queued);
     }
     release(s->bytes);
+    s->datagrams.clear();
     s->bytes = nullptr;
     s->used = false;
 }
 
 bool socket_ready(Socket* s, bool write) {
+    if (s->type == 2)
+        return write ? s->write_closed || !s->peer || s->peer->read_closed ||
+                           !s->peer->datagrams.admission(1)
+                     : s->read_closed || s->datagrams.readable();
     if (s->listener)
         return !write && s->queue_size;
     if (write)
@@ -75,6 +80,20 @@ bool socket_ready(Socket* s, bool write) {
 }
 
 int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_offset) {
+    if (s->type == 2) {
+        if (!len)
+            return 0;
+        const uint8_t* bytes;
+        size_t length;
+        if (!s->datagrams.front(bytes, length))
+            return s->read_closed ? 0 : -11;
+        len = min(len, length);
+        if (len)
+            memcpy(data, bytes, len);
+        if (!peek)
+            s->datagrams.consume();
+        return len;
+    }
     if (s->type != 1)
         return -95;
     if (s->listener || !s->connected)
@@ -96,6 +115,20 @@ int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_of
 }
 
 int64_t socket_write(Socket* s, const void* data, size_t len) {
+    if (s->type == 2) {
+        if (s->write_closed)
+            return -32;
+        if (s->peer_closed) {
+            s->peer_closed = false;
+            s->connected = false;
+            return -111;
+        }
+        if (!s->connected || !s->peer)
+            return -107;
+        if (s->peer->read_closed)
+            return -32;
+        return s->peer->datagrams.append(data, len);
+    }
     if (s->type != 1)
         return -95;
     if (!s->connected)
@@ -250,7 +283,7 @@ uint32_t readiness(Handle* h) {
     }
     if (h->pipe && !h->writer && !h->pipe->writers)
         events |= 16;
-    if (h->socket && !h->socket->listener &&
+    if (h->socket && h->socket->type == 1 && !h->socket->listener &&
         (h->socket->peer_closed || (h->socket->peer && h->socket->peer->write_closed)))
         events |= 16 | 0x2000;
     return events;
@@ -408,7 +441,7 @@ int64_t ipc_syscall(Frame* f) {
         if (((b & 0xf) != 1 && (b & 0xf) != 2) || (b & ~uint64_t(0x8080f)) || c)
             return -93;
         // libc also uses unbound Unix datagram descriptors for interface ioctls.
-        // Datagram data/lifecycle operations remain explicitly unsupported.
+        // Named datagram endpoints remain separate from socketpair data queues.
         s = allocate_socket(b & 0xf);
         return s ? install_socket(*current, s,
                                   ((b & 0x800) ? 04000 : 0) | ((b & 0x80000) ? 02000000 : 0))
@@ -522,11 +555,11 @@ int64_t ipc_syscall(Frame* f) {
             return -107;
         return socket_output_address(*current, s->peer, b, c);
     case 53: {
-        if (a != 1 || (b & 0xf) != 1 || c)
+        if (a != 1 || ((b & 0xf) != 1 && (b & 0xf) != 2) || c || (b & ~uint64_t(0x8080f)))
             return -95;
         if (!current->memory->space.valid(d, 8, true))
             return -14;
-        auto left = allocate_socket(), right = allocate_socket();
+        auto left = allocate_socket(b & 0xf), right = allocate_socket(b & 0xf);
         if (!left || !right) {
             socket_close(left);
             socket_close(right);

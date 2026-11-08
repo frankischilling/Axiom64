@@ -154,6 +154,54 @@ static int copy_packet(Task& task, IoRequest& request, size_t begin, size_t leng
     return 0;
 }
 
+static int prepare_unix_datagram(Task& task, IoRequest& request) {
+    const auto& f = request.call;
+    if (request.accept)
+        return -95;
+    if (request.positioned)
+        return -29;
+    unsigned allowed = request.write ? 0x4040 : 2 | 0x20 | 0x40 | 0x100 | 0x40000000;
+    if (request.flags & ~allowed)
+        return -95;
+    if (f.rax == 44 && f.r8)
+        return -95;
+    if (f.rax == 19 || f.rax == 20) {
+        if (int error = import_vectors(task, request, f.rsi, f.rdx))
+            return error;
+    } else if (f.rax == 46 || f.rax == 47) {
+        Message message;
+        if (!task.memory->space.copy_in(&message, f.rsi, sizeof(message)))
+            return -14;
+        if (request.write && (message.name || message.control_length))
+            return -95;
+        if (!request.write) {
+            request.address_pointer = message.name;
+            request.address_capacity = message.name_length;
+            request.control_pointer = message.control;
+            request.control_capacity = message.control_length;
+        }
+        if (int error = import_vectors(task, request, message.iov, message.iov_count))
+            return error;
+    } else {
+        request.single = {f.rsi, min(f.rdx, uint64_t(0x7ffff000))};
+        request.vectors = &request.single;
+        request.count = 1;
+    }
+    for (size_t index = 0; index < request.count; index++) {
+        const auto& vector = request.vectors[index];
+        if (vector.base >= user_limit || vector.length > user_limit - vector.base)
+            return -14;
+        request.packet_length += vector.length;
+    }
+    if (f.rax == 45 && f.r8) {
+        request.address_pointer = f.r8;
+        request.address_length_pointer = f.r9;
+        if (!task.memory->space.copy_in(&request.address_capacity, f.r9, 4))
+            return -14;
+    }
+    return 0;
+}
+
 static int prepare_packet(Task& task, IoRequest& request) {
     const auto& f = request.call;
     if (request.handle->inet && !inet_payload(request.handle->inet))
@@ -405,8 +453,6 @@ static int prepare(Task& task, IoRequest& request) {
         }
         return 0;
     }
-    if (request.handle->socket && request.handle->socket->type != 1)
-        return -95;
     request.write = f.rax == 1 || f.rax == 18 || f.rax == 20 || f.rax == 44 || f.rax == 46;
     request.socket = f.rax == 44 || f.rax == 45 || f.rax == 46 || f.rax == 47;
     request.accept = f.rax == 43 || f.rax == 288;
@@ -419,6 +465,8 @@ static int prepare(Task& task, IoRequest& request) {
         return -9;
     if (request.socket)
         request.flags = f.rax == 46 || f.rax == 47 ? f.rdx : f.r10;
+    if (request.handle->socket && request.handle->socket->type == 2)
+        return prepare_unix_datagram(task, request);
     if (request.handle->packet || (request.handle->inet && !inet_stream(request.handle->inet)) ||
         request.handle->inet6 || request.handle->netlink)
         return prepare_packet(task, request);
@@ -713,6 +761,63 @@ static bool copy_packet_output(Task& task, uint64_t destination, const void* dat
         length -= count;
     }
     return true;
+}
+
+static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
+    auto socket = request.handle->socket;
+    const auto& f = request.call;
+    if (request.write) {
+        if (!request.packet_ready) {
+            if (request.packet_length > UnixDatagramQueue::byte_limit - 32)
+                return -90;
+            if (request.packet_length) {
+                request.packet_data = static_cast<uint8_t*>(alloc(request.packet_length));
+                if (!request.packet_data)
+                    return -12;
+                if (int error = copy_packet(task, request, 0, request.packet_length))
+                    return error;
+            }
+            request.packet_ready = true;
+        }
+        return socket_write(socket, request.packet_data, request.packet_length);
+    }
+    if (!request.socket && !request.packet_length)
+        return 0;
+    const uint8_t* bytes;
+    size_t length;
+    if (!socket->datagrams.front(bytes, length))
+        return socket->read_closed ? 0 : -11;
+    auto finish = [&](int64_t result) {
+        if (!(request.flags & 2))
+            socket->datagrams.consume();
+        return result;
+    };
+    size_t copied = 0;
+    for (size_t index = 0; index < request.count && copied < length; index++) {
+        const auto& vector = request.vectors[index];
+        size_t count = min(size_t(vector.length), length - copied);
+        if (count && !copy_packet_output(task, vector.base, bytes + copied, count))
+            return finish(-14);
+        copied += count;
+    }
+    if (request.address_pointer) {
+        uint32_t size = 0;
+        if (request.address_length_pointer &&
+            !task.memory->space.copy_out(request.address_length_pointer, &size, 4))
+            return finish(-14);
+    }
+    if (f.rax == 47) {
+        uint64_t control_length = 0;
+        uint32_t flags = copied < length ? 0x20 : 0;
+        uint32_t address_length = 0;
+        if (!task.memory->space.copy_out(f.rsi + offsetof(Message, name_length), &address_length,
+                                         4) ||
+            !task.memory->space.copy_out(f.rsi + offsetof(Message, control_length), &control_length,
+                                         8) ||
+            !task.memory->space.copy_out(f.rsi + offsetof(Message, flags), &flags, 4))
+            return finish(-14);
+    }
+    return finish(request.flags & 0x20 ? int64_t(length) : int64_t(copied));
 }
 
 static int64_t packet_attempt(Task& task, IoRequest& request) {
@@ -1031,6 +1136,10 @@ static int64_t attempt(Task& task, IoRequest& request) {
         int result = file_lock_try(h, uint32_t(f.rsi));
         return result == -11 && !(f.rsi & 4) ? would_block : result;
     }
+    if (h->socket && h->socket->type == 2) {
+        int64_t result = unix_datagram_attempt(task, request);
+        return result == -11 && request.stream_blocking ? would_block : result;
+    }
     if (h->packet || (h->inet && !inet_stream(h->inet)) || h->inet6 || h->netlink) {
         int64_t result = packet_attempt(task, request);
         if (result == -11 && !(h->flags & 04000) && !(request.flags & 0x40))
@@ -1180,7 +1289,8 @@ int64_t io_syscall(Task& task, const Frame& frame) {
         request->inet_generation = tcp_generation(h->inet);
         // Linux captures O_NONBLOCK for this call; an alias cannot alter a retained cursor.
         request->stream_blocking =
-            (inet_stream(h->inet) || h->event) && !(h->flags & 04000) && !(request->flags & 0x40);
+            (inet_stream(h->inet) || h->event || (h->socket && h->socket->type == 2)) &&
+            !(h->flags & 04000) && !(request->flags & 0x40);
         capture_timeout(*request);
     }
     int64_t result = error ? error : attempt(task, *request);

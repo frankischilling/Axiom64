@@ -1579,3 +1579,30 @@ The option-specific commands qualify their stated model and loopback scope. Ethe
 fragment copy bits, source-route receive policy, broader TCP responses, PMTU quotes and
 blocking/output lifetime cases remain necessary for complete packet-option acceptance.
 The existing receive/send-control and full networking cohorts remain required.
+
+## Unix datagram records
+
+Run `make test-unix-datagram-policy` for the actual kernel record owner under
+AddressSanitizer and UndefinedBehaviorSanitizer. The tests cover copied bytes,
+empty records, bounded pressure, allocation refusal, repeated reuse and
+reentrant cleanup. The current queue bounds 128 records and 212,992 charged
+bytes. These kernel resource bounds do not establish Linux sender-buffer
+accounting equivalence.
+
+`userspace/tests/ipc/unix_messages.c` compares datagram boundaries, 13,007-byte
+vector copies, zero-length readiness, peek/truncation, unnamed source output,
+queued delivery after peer close and consuming versus peek copy faults.
+`--data-only` selects these three groups. Local static and dynamic guest clients
+pass on BIOS and UEFI with their actual kernel, executable, installed UAPI,
+initramfs and image inputs retained. Native Linux passes the full eight-group
+client as root and UID 65534; its additional groups require per-message
+credentials, descriptor transfer, distinct close-on-exec descriptors on peek,
+shared file offsets and queued-reference cleanup.
+
+The full native client is the target contract for continued implementation;
+the guest data selection does not qualify ancillary data or complete AF_UNIX.
+Named datagram endpoints, datagram shutdown, sender-owned buffer accounting,
+mutable buffer options, per-message credentials, SCM_RIGHTS and collection of
+descriptor cycles remain unfinished. Buffer setters still use the legacy
+socket stub and do not resize this queue. The data path rejects send ancillary
+buffers deliberately while those ownership rules are being implemented.

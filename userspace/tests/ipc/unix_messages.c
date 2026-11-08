@@ -10,6 +10,7 @@
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -161,6 +162,35 @@ static void credentials(void) {
          "cloexec");
 }
 
+static void data_vectors(void) {
+    int sockets[2];
+    pair(sockets);
+    unsigned char input[13007], output[13007];
+    for (unsigned index = 0; index < sizeof(input); ++index)
+        input[index] = (unsigned char)(index * 71 + 5);
+    struct iovec send_vectors[] = {{input, 7001}, {NULL, 0}, {input + 7001, 6006}};
+    CHECK(writev(sockets[0], send_vectors, 3) == sizeof(input));
+    memset(input, 0, sizeof(input));
+    struct iovec receive_vectors[] = {{output, 17}, {output + 17, 10000}, {output + 10017, 2990}};
+    CHECK(readv(sockets[1], receive_vectors, 3) == sizeof(output));
+    for (unsigned index = 0; index < sizeof(output); ++index)
+        CHECK(output[index] == (unsigned char)(index * 71 + 5));
+    CHECK(send(sockets[0], "queued", 6, 0) == 6);
+    CHECK(!close(sockets[0]));
+    struct sockaddr_un source;
+    memset(&source, 0xaa, sizeof(source));
+    socklen_t length = sizeof(source);
+    CHECK(recvfrom(sockets[1], output, sizeof(output), 0, (struct sockaddr*)&source, &length) ==
+              6 &&
+          length == 0 && (unsigned char)source.sun_path[0] == 0xaa && !memcmp(output, "queued", 6));
+    CHECK(recv(sockets[1], output, sizeof(output), 0) == -1 && errno == EAGAIN);
+    struct pollfd event = {.fd = sockets[1], .events = POLLIN | POLLRDHUP};
+    CHECK(!poll(&event, 1, 0) && !event.revents);
+    CHECK(!close(sockets[1]));
+    puts("UNIX_MESSAGES_VECTORS_PASS atomic_large_record copied_vectors unnamed_source "
+         "retained_after_peer_close");
+}
+
 static void peek_rights(void) {
     int sockets[2], fd = document();
     pair(sockets);
@@ -238,6 +268,7 @@ static void fault_consumption(void) {
     CHECK(page > 0);
     void* inaccessible = mmap(NULL, page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     CHECK(inaccessible != MAP_FAILED);
+    CHECK(recv(sockets[1], inaccessible, 5, MSG_PEEK) == -1 && errno == EFAULT);
     CHECK(recv(sockets[1], inaccessible, 5, 0) == -1 && errno == EFAULT);
     char bytes[8];
     errno = 0;
@@ -249,15 +280,22 @@ static void fault_consumption(void) {
     puts("UNIX_MESSAGES_FAULT_CONSUMPTION_PASS inaccessible_payload consumes_record");
 }
 
-int main(void) {
+int main(int argc, char** argv) {
     printf("UNIX_MESSAGES_IDENTITY pid=%ld uid=%u euid=%u gid=%u egid=%u groups=%d\n",
            (long)getpid(), getuid(), geteuid(), getgid(), getegid(), getgroups(0, NULL));
     boundaries();
+    data_vectors();
+    CHECK(argc == 1 || (argc == 2 && !strcmp(argv[1], "--data-only")));
+    if (argc == 2) {
+        fault_consumption();
+        puts("UNIX_MESSAGES_DATA_PASS groups=3");
+        return 0;
+    }
     credentials();
     peek_rights();
     discarded_rights(0);
     discarded_rights(1);
     unread_close();
     fault_consumption();
-    puts("UNIX_MESSAGES_PASS groups=7");
+    puts("UNIX_MESSAGES_PASS groups=8");
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "process/task.hpp"
+#include "ipc/unix_datagram.hpp"
 
 namespace ax {
 struct PeerCredentials {
@@ -20,6 +21,7 @@ struct Socket {
     uint8_t* bytes;
     size_t head, size, capacity;
     PeerCredentials credentials{}, peer_credentials{};
+    UnixDatagramQueue datagrams{};
 };
 
 struct [[gnu::packed]] EpollEvent {

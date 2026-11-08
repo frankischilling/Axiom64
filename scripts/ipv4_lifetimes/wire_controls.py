@@ -23,7 +23,7 @@ NAMES = ('missing-control', 'wrong-control-sequence', 'wrong-control-error', 'wr
          'missing-event-receipt', 'boolean-event', 'extra-event-field', 'noncanonical-wire-bytes',
          'missing-withdrawal', 'late-withdrawal', 'repaired-reserved-ip-flag', 'repaired-zero-ip-ttl',
          'unowned-arp-source', 'unowned-arp-target', 'unowned-arp-destination', 'wrong-arp-sender',
-         'premature-zero-arp')
+         'premature-zero-arp', 'early-primary-permission', 'wrong-primary-byte', 'missing-primary-command')
 CLOCK_NAMES = ('source-clock-jump', 'observer-clock-jump', 'backward-source-clock', 'backward-observer-clock')
 
 
@@ -180,12 +180,22 @@ def mutation(value, name):
         row = next(row for row in value['wire'] if row['direction'] == 'input' and row['frame'][24:28] == '0806' and
                    bytes.fromhex(row['frame'])[28:32] == bytes.fromhex('c6124010'))
         expired = next(row['receipt_monotonic_ns'] for row in value['events'] if row['case'] == 0 and row['phase'] == 'expired')
-        row['monotonic_ns'] = expired - 1 if name.startswith('early-') else value['commands'][1]['before_ns'] - 400_000_000
+        row['monotonic_ns'] = expired - 1 if name.startswith('early-') else value['commands'][2]['before_ns'] - 400_000_000
         value['wire'].sort(key=lambda row: row['monotonic_ns'])
     elif name == 'wrong-command-byte':
         value['commands'][0]['bytes'] = '0a'
     elif name == 'missing-command':
         del value['commands'][0]
+    elif name == 'early-primary-permission':
+        start = next(row['receipt_monotonic_ns'] for row in value['events'] if row['case'] == 0 and row['phase'] == 'lifetime-start')
+        command = value['commands'][1]
+        width = command['after_ns'] - command['before_ns']
+        command['before_ns'] = start + 1_400_000_000
+        command['after_ns'] = command['before_ns'] + width
+    elif name == 'wrong-primary-byte':
+        value['commands'][1]['bytes'] = '0a'
+    elif name == 'missing-primary-command':
+        del value['commands'][1]
     elif name == 'missing-event-receipt':
         del value['events'][0]
     elif name == 'boolean-event':

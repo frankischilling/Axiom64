@@ -1745,6 +1745,31 @@ required. `python3 scripts/tests/fixture_storage_test.py -v` exercises sparse
 allocation, independent writes, preserved existing destinations, rejected partial
 copies and changed retention witnesses.
 
+Finite IPv4 TCP lifetime tests keep the client's original two-second absence
+interval. The peer also waits two full monotonic seconds after receiving the
+expiry marker before sending restoration permission, and waits for the client's
+end marker. Delayed output can extend this hold. Independent readers require
+both the client interval and the physical interval before the restoration write.
+`python3 scripts/tests/ipv4_lifetime_observation_test.py -v` replays the measured
+65.977-ms expiry-marker lag and checks both barriers.
+Every transport case also waits for a fresh-bind permission byte after actual
+primary withdrawal and 1.5 observer seconds from the lifetime-start marker.
+The client's original 1.5-second wait and 2.5-second withdrawal bound remain
+required. This adds a third byte to each case's S/B/R exchange: 72 independently
+recorded writes across 24 cases. The reader checks each byte and its client
+receipt, and rejects early, wrong or missing primary permission. A regression
+replays a native 34.788-ms start-marker lag without changing the capture clocks.
+
+IPv6 ownership comparisons age the finite retry's six/ten-second cache against
+the original replacement observation. Whole-second readback allows two 10-ms
+source ticks at a boundary; raw flags, the four-second lifetime difference and
+subsequent aging remain checked. The first query may report five/nine after a
+second has elapsed. `python3 scripts/tests/ipv6_owner_retry_test.py -v` replays
+the original partial native capture and rejects wrong flags, unrelated or expired
+caches and cache values inconsistent with the observed interval. That partial
+capture is a regression input, not a complete ownership qualification. Existing
+packet mutation controls and all full native/guest matrices remain required.
+
 ## Unix datagram records
 
 Run `make test-unix-datagram-policy` for the actual kernel record owner under
@@ -1786,10 +1811,10 @@ is reused only after its complete source inputs match the verified data kernel.
 
 The full native client is the target contract for continued implementation;
 the guest data selection does not qualify ancillary data or complete AF_UNIX.
-Per-message credentials, SCM_RIGHTS and collection of descriptor cycles remain
-unfinished. Broader interruption and retained
-multi-process lifetime coverage also remain required. The data path rejects send ancillary
-buffers deliberately while those ownership rules are being implemented.
+SCM_RIGHTS, stream credentials and collection of descriptor cycles remain
+unfinished. Broader interruption and retained multi-process lifetime coverage
+also remain required. Datagram credentials have a dedicated comparison below;
+unsupported ancillary controls continue to fail deliberately.
 
 `make test-unix-names-native` compares abstract and filesystem datagram binding,
 family-only automatic binding and exact address output. Abstract names preserve

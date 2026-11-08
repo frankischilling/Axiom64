@@ -52,9 +52,11 @@ jobs:
           python3 -B scripts/tests/native_icmp_budget_capture_test.py -v
           sudo -n python3 -B scripts/tests/ipv4_lifetime_paths_test.py -v
           python3 -B scripts/tests/ipv4_lifetime_arp_test.py -v
+          python3 -B scripts/tests/ipv4_lifetime_observation_test.py -v
           python3 -B scripts/tests/manager_link_startup_test.py -v
           python3 -B scripts/tests/network_window_test.py -v
           python3 -B scripts/tests/ipv6_owner_pair_test.py -v
+          python3 -B scripts/tests/ipv6_owner_retry_test.py -v
           python3 -B scripts/tests/ipv4_send_capture_test.py -v
           python3 -B scripts/tests/udp_kernel_error_test.py -v
           python3 -B scripts/tests/http_download_image_test.py -v

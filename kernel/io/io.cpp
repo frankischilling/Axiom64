@@ -57,6 +57,7 @@ struct IoRequest {
     bool packet_ready;
     size_t packet_length;
     uint32_t unix_send_limit;
+    UnixDatagramRecord* unix_record;
     uint64_t address_pointer, address_length_pointer;
     uint64_t control_pointer, control_capacity;
     uint32_t address_capacity;
@@ -75,6 +76,8 @@ static void destroy(IoRequest* request) {
         release(request->vectors);
     release(request->packet_data);
     release(request->send_control_data);
+    if (request->unix_record)
+        request->unix_record->drop();
     close_handle(request->handle);
     release(request);
 }
@@ -773,21 +776,21 @@ static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
     auto socket = request.handle->socket;
     const auto& f = request.call;
     if (request.write) {
-        if (!request.packet_ready) {
-            if (int error = socket->datagram_send->admission(request.packet_length,
-                                                             request.unix_send_limit))
+        if (!request.unix_record) {
+            int error;
+            request.unix_record =
+                UnixDatagramRecord::create(*socket->datagram_send, request.packet_length, error,
+                                           request.unix_send_limit, socket->datagram_name);
+            if (!request.unix_record)
                 return error;
-            if (request.packet_length) {
-                request.packet_data = static_cast<uint8_t*>(alloc(request.packet_length));
-                if (!request.packet_data)
-                    return -12;
-                if (int error = copy_packet(task, request, 0, request.packet_length))
-                    return error;
-            }
-            request.packet_ready = true;
+            if (int copied = copy_packet(task, request, 0, request.packet_length,
+                                         request.unix_record->data()))
+                return copied;
         }
-        return socket_write(socket, request.packet_data, request.packet_length,
-                            request.unix_send_limit);
+        int64_t result = socket_datagram_write(socket, request.unix_record);
+        if (result >= 0)
+            request.unix_record = nullptr;
+        return result;
     }
     if (!request.socket && !request.packet_length)
         return 0;
@@ -809,16 +812,21 @@ static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
             return finish(-14);
         copied += count;
     }
+    uint32_t address_length = 0;
     if (request.address_pointer) {
-        uint32_t size = 0;
+        uint8_t address[111];
+        if (auto source = socket->datagrams.source_name())
+            address_length = source->address().output(address, sizeof(address));
+        if (address_length && !copy_packet_output(task, request.address_pointer, address,
+                                                  min(request.address_capacity, address_length)))
+            return finish(-14);
         if (request.address_length_pointer &&
-            !task.memory->space.copy_out(request.address_length_pointer, &size, 4))
+            !task.memory->space.copy_out(request.address_length_pointer, &address_length, 4))
             return finish(-14);
     }
     if (f.rax == 47) {
         uint64_t control_length = 0;
         uint32_t flags = copied < length ? 0x20 : 0;
-        uint32_t address_length = 0;
         if (!task.memory->space.copy_out(f.rsi + offsetof(Message, name_length), &address_length,
                                          4) ||
             !task.memory->space.copy_out(f.rsi + offsetof(Message, control_length), &control_length,

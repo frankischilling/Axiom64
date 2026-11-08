@@ -36,9 +36,17 @@ test-account-secret-native:
 .PHONY: test-process-limits-policy test-resource-limits test-resource-limits-native test-resource-limits-storage
 
 .PHONY: test-unix-datagram-policy
-build/unix-datagram-policy: kernel/tests/ipc/unix_datagram.cpp kernel/ipc/unix_datagram.cpp kernel/include/ipc/unix_datagram.hpp
+.PHONY: test-unix-names-native
+build/unix-names-native: userspace/tests/ipc/unix_names.c
 	@mkdir -p build
-	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/ipc/unix_datagram.cpp kernel/ipc/unix_datagram.cpp -o $@
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+
+test-unix-names-native: build/unix-names-native
+	./build/unix-names-native
+
+build/unix-datagram-policy: kernel/tests/ipc/unix_datagram.cpp kernel/ipc/unix_datagram.cpp kernel/ipc/unix_address.cpp kernel/include/ipc/unix_datagram.hpp kernel/include/ipc/unix_address.hpp
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 
 test-unix-datagram-policy: build/unix-datagram-policy
 	ASAN_OPTIONS=detect_leaks=1 ./build/unix-datagram-policy

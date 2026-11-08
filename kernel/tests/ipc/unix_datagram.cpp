@@ -35,7 +35,124 @@ void release(void* pointer) {
 }
 } // namespace ax
 
+static void addresses() {
+    uint8_t input[111]{1, 0, '/', 't', 'm', 'p', '/', 'x', 0, 'q'};
+    ax::UnixAddressValue value;
+    assert(!ax::unix_address_decode(input, 10, value));
+    assert(value.length == 7 && !value.abstract());
+    assert(!memcmp(value.path, "/tmp/x", 7));
+    auto original = value;
+    assert(ax::unix_address_decode(input, 1, value) == -22 && value.same(original));
+    assert(ax::unix_address_decode(input, 111, value) == -22 && value.same(original));
+    input[0] = 2;
+    assert(ax::unix_address_decode(input, 10, value) == -22 && value.same(original));
+    input[0] = 1;
+    assert(!ax::unix_address_decode(input, 2, value) && !value.length);
+    assert(!ax::UnixAddressName::create(value));
+    input[2] = 0;
+    input[3] = 'a';
+    input[4] = 0;
+    input[5] = 'b';
+    input[6] = 0;
+    assert(!ax::unix_address_decode(input, 7, value));
+    assert(value.abstract() && value.length == 5 && !memcmp(value.path, input + 2, 5));
+    auto shorter = value;
+    shorter.length--;
+    assert(!value.same(shorter));
+    for (size_t size = 0; size <= 111; size++) {
+        uint8_t output[112];
+        memset(output, 0xa5, sizeof(output));
+        assert(value.output(output, size) == 7);
+        assert(!memcmp(output, input, ax::min(size, size_t(7))));
+        for (size_t n = ax::min(size, size_t(7)); n < sizeof(output); n++)
+            assert(output[n] == 0xa5);
+    }
+    memset(input + 2, 'x', 108);
+    assert(!ax::unix_address_decode(input, 110, value) && value.length == 109);
+    assert(!value.abstract() && !value.path[108]);
+    assert(value.output(nullptr, 0) == 111);
+    uint8_t full[111];
+    assert(value.output(full, sizeof(full)) == sizeof(full) && !full[110]);
+    assert(!memcmp(input, full, 110));
+    input[2] = 0;
+    assert(!ax::unix_address_decode(input, 110, value) && value.length == 108 && value.abstract());
+    assert(value.output(full, sizeof(full)) == 110);
+    auto malformed = value;
+    malformed.length = UINT16_MAX;
+    assert(!malformed.valid() && !malformed.same(value) && !ax::UnixAddressName::create(malformed));
+    memset(full, 0xa5, sizeof(full));
+    assert(!malformed.output(full, sizeof(full)) && full[0] == 0xa5);
+    malformed = original;
+    malformed.path[1] = 0;
+    assert(!malformed.valid() && !ax::UnixAddressName::create(malformed));
+    refuse = true;
+    assert(!ax::UnixAddressName::create(value) && !allocations);
+    refuse = false;
+    ax::UnixDatagramQueue queue;
+    auto budget = ax::UnixSendBudget::create();
+    auto name = ax::UnixAddressName::create(value);
+    assert(budget && name && allocations == 2);
+    refuse = true;
+    assert(queue.append(*budget, "X", 1, 0, name) == -12);
+    assert(!queue.source_name() && allocations == 2);
+    refuse = false;
+    assert(queue.append(*budget, "X", 1, 0, name) == 1);
+    assert(queue.append(*budget, nullptr, 0, 0, name) == 0);
+    name->drop();
+    budget->close();
+    assert(allocations == 4 && queue.source_name()->address().same(value));
+    // A different binding can reuse the sender slot without changing old names.
+    auto other = value;
+    other.path[1] ^= 1;
+    auto replacement = ax::UnixAddressName::create(other);
+    assert(replacement && !queue.source_name()->address().same(replacement->address()));
+    replacement->drop();
+    queue.consume();
+    assert(allocations == 3 && queue.source_name()->address().same(value));
+    releasing = &queue;
+    reenter = true;
+    queue.consume();
+    assert(!allocations && !queue.source_name() && !reenter);
+    for (unsigned round = 0; round < 2000; round++) {
+        budget = ax::UnixSendBudget::create();
+        name = ax::UnixAddressName::create(value);
+        assert(budget && name && queue.append(*budget, "Y", 1, 0, name) == 1);
+        name->drop();
+        budget->close();
+        queue.clear();
+        assert(!allocations);
+    }
+    budget = ax::UnixSendBudget::create();
+    budget->resize(0);
+    int error = 123;
+    refuse = true;
+    assert(!ax::UnixDatagramRecord::create(*budget, 1, error) && error == -12);
+    refuse = false;
+    assert(!ax::UnixDatagramRecord::create(*budget, SIZE_MAX, error) && error == -90);
+    auto prepared = ax::UnixDatagramRecord::create(*budget, 4576, error);
+    assert(prepared && !error && !queue.count() && !queue.readable() && !budget->writable());
+    assert(budget->admission(1) == -11);
+    for (size_t n = 0; n < prepared->size(); n++)
+        prepared->data()[n] = uint8_t(n);
+    queue.accept(prepared);
+    assert(queue.count() == 1 && queue.available() == 4576);
+    const uint8_t* payload;
+    size_t length;
+    assert(queue.front(payload, length) && length == 4576);
+    for (size_t n = 0; n < length; n++)
+        assert(payload[n] == uint8_t(n));
+    queue.consume();
+    assert(!queue.count() && budget->writable() && !budget->admission(1));
+    prepared = ax::UnixDatagramRecord::create(*budget, 4576, error);
+    assert(prepared && !error && !budget->writable());
+    budget->close();
+    assert(allocations == 2);
+    prepared->drop();
+    assert(!allocations && !queue.count());
+}
+
 int main() {
+    addresses();
     ax::UnixDatagramQueue queue;
     auto budget = ax::UnixSendBudget::create();
     assert(budget && allocations == 1 && budget->size() == 212992 && budget->writable());
@@ -142,5 +259,5 @@ int main() {
     refuse = false;
     puts(
         "UNIX_DATAGRAM_POLICY_PASS copied_records zero_records sender_pressure allocation_rollback "
-        "reentrant_release reuse resize sender_close");
+        "reentrant_release reuse resize sender_close source_names address_codec");
 }

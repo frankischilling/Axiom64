@@ -42,33 +42,74 @@ void UnixSendBudget::resize(uint32_t requested) {
     limit = unix_buffer_size(requested, true);
 }
 
-int64_t UnixDatagramQueue::append(UnixSendBudget& owner, const void* bytes, size_t length,
-                                  uint32_t entry_limit) {
-    static_assert(sizeof(Record) <= record_charge);
-    if (int error = owner.admission(length, entry_limit))
-        return error;
-    auto record = static_cast<Record*>(alloc(sizeof(Record) + length));
-    if (!record)
-        return -12;
-    *record = {nullptr, length, &owner};
-    if (length)
-        memcpy(record + 1, bytes, length);
+UnixDatagramRecord* UnixDatagramRecord::create(UnixSendBudget& owner, size_t length, int& error,
+                                               uint32_t entry_limit, UnixAddressName* source) {
+    static_assert(sizeof(UnixDatagramRecord) <= record_charge);
+    error = owner.admission(length, entry_limit);
+    if (error)
+        return nullptr;
+    auto record = static_cast<UnixDatagramRecord*>(alloc(sizeof(UnixDatagramRecord) + length));
+    if (!record) {
+        error = -12;
+        return nullptr;
+    }
+    *record = {};
+    record->length = length;
+    record->owner = &owner;
+    record->source = source;
+    if (source)
+        source->retain();
+    owner.references++;
+    owner.charged += record_charge + length;
+    return record;
+}
+
+void UnixDatagramRecord::drop() {
+    if (queued)
+        panic("released queued Unix datagram");
+    auto budget = owner;
+    auto name = source;
+    budget->charged -= record_charge + length;
+    if (name)
+        name->drop();
+    budget->drop();
+    release(this);
+}
+
+void UnixDatagramQueue::accept(UnixDatagramRecord* record) {
+    if (!record || record->queued || record->next)
+        panic("invalid Unix datagram transfer");
+    record->queued = true;
     if (last)
         last->next = record;
     else
         first = record;
     last = record;
-    owner.references++;
-    owner.charged += record_charge + length;
+    records++;
+}
+
+int64_t UnixDatagramQueue::append(UnixSendBudget& owner, const void* bytes, size_t length,
+                                  uint32_t entry_limit, UnixAddressName* source) {
+    int error;
+    auto record = UnixDatagramRecord::create(owner, length, error, entry_limit, source);
+    if (!record)
+        return error;
+    if (length)
+        memcpy(record->data(), bytes, length);
+    accept(record);
     return length;
 }
 
 bool UnixDatagramQueue::front(const uint8_t*& bytes, size_t& length) const {
     if (!first)
         return false;
-    bytes = reinterpret_cast<const uint8_t*>(first + 1);
+    bytes = first->data();
     length = first->length;
     return true;
+}
+
+const UnixAddressName* UnixDatagramQueue::source_name() const {
+    return first ? first->source : nullptr;
 }
 
 void UnixDatagramQueue::consume() {
@@ -78,10 +119,10 @@ void UnixDatagramQueue::consume() {
     first = record->next;
     if (!first)
         last = nullptr;
-    auto owner = record->owner;
-    owner->charged -= record_charge + record->length;
-    owner->drop();
-    release(record);
+    records--;
+    record->next = nullptr;
+    record->queued = false;
+    record->drop();
 }
 
 void UnixDatagramQueue::clear() {

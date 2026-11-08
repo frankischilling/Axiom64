@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "core/base.hpp"
+#include "ipc/unix_address.hpp"
 
 namespace ax {
 // Queued records retain this charge owner independently of the socket slot.
@@ -11,6 +12,7 @@ class UnixSendBudget {
     uint32_t limit = 212992;
     void drop();
     friend class UnixDatagramQueue;
+    friend class UnixDatagramRecord;
 
   public:
     static UnixSendBudget* create();
@@ -30,20 +32,41 @@ class UnixSendBudget {
 
 uint32_t unix_buffer_size(uint32_t requested, bool sending);
 
-// One record owns its copied bytes, including an empty datagram. A front view
-// remains valid until consume/clear; callers serialize queue access.
-class UnixDatagramQueue {
-    struct Record {
-        Record* next;
-        size_t length;
-        UnixSendBudget* owner;
-    };
-
-    Record *first = nullptr, *last = nullptr;
+// A prepared send owns its sender charge even while waiting for a named peer's
+// receive queue. Queue insertion transfers ownership without allocation/copying.
+class UnixDatagramRecord {
+    UnixDatagramRecord* next = nullptr;
+    size_t length = 0;
+    UnixSendBudget* owner = nullptr;
+    UnixAddressName* source = nullptr;
+    bool queued = false;
+    friend class UnixDatagramQueue;
 
   public:
-    int64_t append(UnixSendBudget&, const void*, size_t, uint32_t entry_limit = 0);
+    static UnixDatagramRecord* create(UnixSendBudget&, size_t, int& error, uint32_t entry_limit = 0,
+                                      UnixAddressName* source = nullptr);
+    void drop();
+
+    uint8_t* data() {
+        return reinterpret_cast<uint8_t*>(this + 1);
+    }
+
+    size_t size() const {
+        return length;
+    }
+};
+
+// A front view remains valid until consume/clear; callers serialize access.
+class UnixDatagramQueue {
+    UnixDatagramRecord *first = nullptr, *last = nullptr;
+    size_t records = 0;
+
+  public:
+    int64_t append(UnixSendBudget&, const void*, size_t, uint32_t entry_limit = 0,
+                   UnixAddressName* source = nullptr);
+    void accept(UnixDatagramRecord*);
     bool front(const uint8_t*& bytes, size_t& length) const;
+    const UnixAddressName* source_name() const;
     void consume();
     void clear();
 
@@ -53,6 +76,10 @@ class UnixDatagramQueue {
 
     size_t available() const {
         return first ? first->length : 0;
+    }
+
+    size_t count() const {
+        return records;
     }
 };
 } // namespace ax

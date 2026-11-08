@@ -1786,7 +1786,31 @@ is reused only after its complete source inputs match the verified data kernel.
 
 The full native client is the target contract for continued implementation;
 the guest data selection does not qualify ancillary data or complete AF_UNIX.
-Named datagram endpoints, per-message credentials, SCM_RIGHTS and collection
+Named destination routing, connection policy, per-message credentials, SCM_RIGHTS and collection
 of descriptor cycles remain unfinished. Broader interruption and retained
 multi-process lifetime coverage also remain required. The data path rejects send ancillary
 buffers deliberately while those ownership rules are being implemented.
+
+`make test-unix-names-native` compares abstract and filesystem datagram binding,
+family-only automatic binding and exact address output. Abstract names preserve
+embedded and trailing zero bytes. A full 108-byte pathname gains its terminating
+byte on output. Partial outputs return the complete required size without
+writing past capacity; zero capacity ignores the unused address pointer.
+Filesystem nodes remain until unlinked, while abstract bindings retire on close.
+
+The five-group name client also binds a socketpair sender, queues named and
+empty records, closes it and reuses its slot. Receivers retain the original
+source name through peeks, truncated address output and source-copy faults.
+Peek faults preserve a record; consuming faults retire it after copying payload.
+Native root and UID 65534 runs cover these cases. Local static/dynamic BIOS/UEFI
+guests run both the six data groups and five name groups as root and UID 65534,
+with cleared supplementary groups and retained executable/UAPI and boot inputs.
+Their disposable RAM-root fixture makes `/tmp` writable before ordinary tests.
+
+The production sanitizer model checks address normalization, bounded output,
+immutable shared source names, allocation refusal, sender close/reuse and
+reentrant cleanup. Prepared messages retain their own sender charge before
+queue insertion; insertion transfers the record without copying payload again.
+These checks cover bindings, queries and socketpair source names. Named
+destination routing and connection policy, per-message credentials, descriptor
+transfer and cycle collection remain required for complete Unix socket support.

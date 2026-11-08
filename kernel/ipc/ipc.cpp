@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ipc/ipc.hpp"
+#include "core/random.hpp"
 #include "fs/descriptor.hpp"
 #include "io/socket_timeout.hpp"
 #include "net/tcp/socket.hpp"
@@ -65,6 +66,9 @@ void socket_close(Socket* s) {
     }
     release(s->bytes);
     s->datagrams.clear();
+    if (s->datagram_name)
+        s->datagram_name->drop();
+    s->datagram_name = nullptr;
     if (s->datagram_send)
         s->datagram_send->close();
     s->datagram_send = nullptr;
@@ -119,19 +123,31 @@ int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_of
     return len;
 }
 
+static int datagram_output_error(Socket* s) {
+    if (s->write_closed)
+        return -32;
+    if (s->peer_closed) {
+        s->peer_closed = false;
+        s->connected = false;
+        return -111;
+    }
+    if (!s->connected || !s->peer)
+        return -107;
+    return s->peer->read_closed ? -32 : 0;
+}
+
+int64_t socket_datagram_write(Socket* s, UnixDatagramRecord* record) {
+    if (int error = datagram_output_error(s))
+        return error;
+    size_t size = record->size();
+    s->peer->datagrams.accept(record);
+    return size;
+}
+
 int64_t socket_write(Socket* s, const void* data, size_t len, uint32_t datagram_entry_limit) {
     if (s->type == 2) {
-        if (s->write_closed)
-            return -32;
-        if (s->peer_closed) {
-            s->peer_closed = false;
-            s->connected = false;
-            return -111;
-        }
-        if (!s->connected || !s->peer)
-            return -107;
-        if (s->peer->read_closed)
-            return -32;
+        if (int error = datagram_output_error(s))
+            return error;
         return s->peer->datagrams.append(*s->datagram_send, data, len, datagram_entry_limit);
     }
     if (s->type != 1)
@@ -205,7 +221,82 @@ static int address(uint64_t pointer, size_t length, UnixAddress& result, size_t&
     return 0;
 }
 
+static bool datagram_name_used(const UnixAddressValue& value) {
+    for (const auto& socket : sockets)
+        if (socket.used && socket.type == 2 && socket.datagram_name &&
+            socket.datagram_name->address().same(value))
+            return true;
+    return false;
+}
+
+static int datagram_bind(Task& task, Socket& socket, uint64_t pointer, size_t length) {
+    if (socket.datagram_name)
+        return -22;
+    if (length < 2 || length > 110)
+        return -22;
+    uint8_t input[110];
+    if (!task.memory->space.copy_in(input, pointer, length))
+        return -14;
+    UnixAddressValue value;
+    if (int error = unix_address_decode(input, length, value))
+        return error;
+    if (!value.length) {
+        static bool initialized;
+        static uint32_t next;
+        if (!initialized) {
+            if (int error = random_read(&next, sizeof(next), true))
+                return error;
+            initialized = true;
+        }
+        value.length = 6;
+        constexpr char hex[] = "0123456789abcdef";
+        unsigned attempts = 0;
+        do {
+            uint32_t candidate = next++;
+            for (unsigned n = 0; n < 5; n++)
+                value.path[n + 1] = hex[(candidate >> ((4 - n) * 4)) & 15];
+        } while (datagram_name_used(value) && ++attempts <= 256);
+        if (datagram_name_used(value))
+            return -98;
+    } else if (value.abstract() && datagram_name_used(value))
+        return -98;
+    auto name = UnixAddressName::create(value);
+    if (!name)
+        return -12;
+    if (!value.abstract()) {
+        Path path;
+        path.base = task.fs->cwd_node;
+        memcpy(path.text, value.path, value.length);
+        if (lookup(path, false)) {
+            name->drop();
+            return -98;
+        }
+        int error = create_node(path, 0140000 | (0777 & ~task.fs->umask), socket.bound_node);
+        if (error) {
+            name->drop();
+            return error;
+        }
+    }
+    socket.datagram_name = name;
+    return 0;
+}
+
 int socket_output_address(Task& task, Socket* s, uint64_t pointer, uint64_t length_pointer) {
+    if (s->type == 2) {
+        uint32_t capacity;
+        if (!task.memory->space.copy_in(&capacity, length_pointer, 4))
+            return -14;
+        if (int32_t(capacity) < 0)
+            return -22;
+        uint8_t bytes[111];
+        uint32_t actual = s->datagram_name
+                              ? s->datagram_name->address().output(bytes, sizeof(bytes))
+                              : UnixAddressValue{}.output(bytes, sizeof(bytes));
+        if ((capacity && !task.memory->space.copy_out(pointer, bytes, min(capacity, actual))) ||
+            !task.memory->space.copy_out(length_pointer, &actual, 4))
+            return -14;
+        return 0;
+    }
     if (!pointer && !length_pointer)
         return 0;
     uint32_t size;
@@ -428,6 +519,8 @@ int64_t ipc_syscall(Frame* f) {
          (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50 || f->rax == 51 ||
           f->rax == 52 || f->rax == 54 || f->rax == 55)))
         return netlink_syscall(*current, *f);
+    if (s && s->type == 2 && f->rax == 49)
+        return datagram_bind(*current, *s, b, c);
     if (s && s->type != 1 && (f->rax == 42 || f->rax == 49 || f->rax == 50))
         return -95;
     if ((f->rax == 41 && a == 2) ||

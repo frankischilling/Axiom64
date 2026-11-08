@@ -18,6 +18,8 @@ class Peer:
         self.connections = {}
         self.window = None
         self.tcp_absence_end = False
+        self.primary_started = self.primary_withdrawn = False
+        self.primary_deadline = None
         self.results = []
 
     def event(self, value):
@@ -30,12 +32,21 @@ class Peer:
                     'client uses fixed independent wire-case inputs')
             self.active = dict(spec, phase='starting')
             self.tcp_absence_end = False
+            self.primary_started = self.primary_withdrawn = False
+            self.primary_deadline = None
             self.guards[number] = []
             self.datagrams[number] = []
             self.command(b'S', number)
         elif self.active is not None and value['case'] == self.active['case']:
             spec = self.active
-            if phase == 'expired':
+            if phase == 'lifetime-start':
+                require(not self.primary_started, 'one original primary lifetime start')
+                self.primary_started = True
+                self.primary_deadline = time.monotonic_ns() + 1_500_000_000
+            elif phase == 'withdrawn':
+                require(self.primary_started and not self.primary_withdrawn, 'one actual primary withdrawal')
+                self.primary_withdrawn = True
+            elif phase == 'expired':
                 spec['phase'] = 'absent'
                 if spec['transport'] != 2:
                     require(value['status'] == -101 and spec['case'] in self.pending,
@@ -64,6 +75,9 @@ class Peer:
                 self.active = None
 
     def poll(self):
+        if self.primary_deadline is not None and self.primary_withdrawn and time.monotonic_ns() >= self.primary_deadline:
+            self.primary_deadline = None
+            self.command(b'B', self.active['case'])
         if self.window is not None and time.monotonic_ns() >= self.window:
             spec = self.active
             require(spec is not None and spec['phase'] == 'absent', 'owned transport observation window')

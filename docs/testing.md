@@ -1753,6 +1753,13 @@ end marker. Delayed output can extend this hold. Independent readers require
 both the client interval and the physical interval before the restoration write.
 `python3 scripts/tests/ipv4_lifetime_observation_test.py -v` replays the measured
 65.977-ms expiry-marker lag and checks both barriers.
+Every transport case also waits for a fresh-bind permission byte after actual
+primary withdrawal and 1.5 observer seconds from the lifetime-start marker.
+The client's original 1.5-second wait and 2.5-second withdrawal bound remain
+required. This adds a third byte to each case's S/B/R exchange: 72 independently
+recorded writes across 24 cases. The reader checks each byte and its client
+receipt, and rejects early, wrong or missing primary permission. A regression
+replays a native 34.788-ms start-marker lag without changing the capture clocks.
 
 IPv6 ownership comparisons age the finite retry's six/ten-second cache against
 the original replacement observation. Whole-second readback allows two 10-ms

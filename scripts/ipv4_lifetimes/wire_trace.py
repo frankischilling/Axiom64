@@ -175,7 +175,7 @@ def protocol(text, wire, ingress, events, commands, native):
             'ordered actual event receipt clocks')
     require([{key: value for key, value in row.items() if not key.startswith('receipt_')} for row in events] == original,
             'every original client event has its independent observer receipt')
-    require(len(commands) == 48, 'all original single-byte S/R barriers')
+    require(len(commands) == 72, 'all single-byte S/B/R barriers')
     require(all(a['after_ns'] <= b['before_ns'] for a, b in zip(commands, commands[1:])), 'ordered actual control-byte writes')
     for values in (wire, ingress):
         require(all(a['monotonic_ns'] <= b['monotonic_ns'] for a, b in zip(values, values[1:])), 'ordered physical packet receipts')
@@ -218,9 +218,10 @@ def protocol(text, wire, ingress, events, commands, native):
         spec = case['spec']
         selected = [row for row in events if row['case'] == number and row['phase'] not in ('policy-read', 'policy-write')]
         by_phase = {row['phase']: row for row in selected}
-        start, restore = commands[number * 2:number * 2 + 2]
+        start, primary, restore = commands[number * 3:number * 3 + 3]
         source_commands = [row for row in selected if row['phase'] == 'command']
-        for command, byte, source in zip((start, restore), ('53', '52'), source_commands):
+        require(len(source_commands) == 3, 'all actual client S/B/R receipts')
+        for command, byte, source in zip((start, primary, restore), ('53', '42', '52'), source_commands):
             require(set(command) == {'case', 'bytes', 'before_ns', 'after_ns', 'realtime_ns'} and
                     command['case'] == number and command['bytes'] == byte and
                     integer(command['before_ns']) <= integer(command['after_ns']) <= source['receipt_monotonic_ns'] and
@@ -228,6 +229,11 @@ def protocol(text, wire, ingress, events, commands, native):
                     'original control byte and prompt independent source receipt')
         require(by_phase['begin']['receipt_monotonic_ns'] <= start['before_ns'] < restore['before_ns'] <=
                 by_phase['restored']['receipt_monotonic_ns'], 'actual case start and restoration causality')
+        require(primary['before_ns'] - by_phase['lifetime-start']['receipt_monotonic_ns'] >=
+                1_500_000_000 - PRECISION_NS and
+                by_phase['withdrawn']['receipt_monotonic_ns'] <= primary['before_ns'] <=
+                source_commands[1]['receipt_monotonic_ns'] <= by_phase['fresh-bind']['receipt_monotonic_ns'],
+                'full physical primary lifetime and actual withdrawal before fresh-bind permission')
         for first, last, minimum in (('lifetime-start', 'fresh-bind', 1_500_000_000),):
             require(by_phase[last]['receipt_monotonic_ns'] - by_phase[first]['receipt_monotonic_ns'] >= minimum - PRECISION_NS,
                     'physical lifetime interval retains the source timer precision')

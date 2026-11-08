@@ -10,6 +10,41 @@ from ipv4_lifetimes.wire_peer import Peer
 
 
 class LifetimeObservation(unittest.TestCase):
+    def test_delayed_primary_marker_gets_the_full_physical_lifetime_window(self):
+        commands = []
+        now = 100_000_000_000
+        peer = Peer(lambda *args: None, lambda data, case: commands.append((data, case, now)))
+        peer.event(dict(peer.specs[0], phase='begin'))
+        commands.clear()
+        with patch('ipv4_lifetimes.wire_peer.time.monotonic_ns', side_effect=lambda: now):
+            peer.event(dict(case=0, phase='lifetime-start'))
+            # The original native control waited 1.500 seconds, but the
+            # start marker arrived 34.788 ms late and fresh-bind 2.517 ms late.
+            now += 1_467_879_015
+            peer.event(dict(case=0, phase='withdrawn'))
+            peer.poll()
+            self.assertEqual(commands, [])
+            now = 101_500_000_000
+            peer.poll()
+            self.assertEqual(commands, [(b'B', 0, now)])
+            peer.poll()
+            self.assertEqual(len(commands), 1)
+
+    def test_observer_wait_does_not_replace_actual_primary_withdrawal(self):
+        commands = []
+        now = 100_000_000_000
+        peer = Peer(lambda *args: None, lambda *args: commands.append(args))
+        peer.event(dict(peer.specs[0], phase='begin'))
+        commands.clear()
+        with patch('ipv4_lifetimes.wire_peer.time.monotonic_ns', side_effect=lambda: now):
+            peer.event(dict(case=0, phase='lifetime-start'))
+            now += 1_600_000_000
+            peer.poll()
+            self.assertEqual(commands, [])
+            peer.event(dict(case=0, phase='withdrawn'))
+            peer.poll()
+            self.assertEqual(commands, [(b'B', 0)])
+
     def test_delayed_expiry_receipt_still_gets_two_physical_seconds(self):
         commands = []
         now = 100_000_000_000

@@ -1352,6 +1352,13 @@ guards, unrelated poll guards and absent or duplicated queue sites. The existing
 physical removal, copied bytes, owner reclamation, surviving stream and clock
 checks remain required.
 
+`python3 scripts/tests/tcp_device_resume_test.py` checks the real controller's
+debugger/monitor handoff in a separate QEMU counter VM. A forced scheduling
+boundary requires the debugger's next observation to remain stopped; a competing
+QMP resume must fail the same counter check. Both cases are retained under
+`build/tcp-device/resume-control/`. The complete device-loss cohort and its
+unchanged capture reader remain required.
+
 ## IPv4 receive-control comparison
 
 `sudo make test-ipv4-receive-controls` runs the same C client in three isolated

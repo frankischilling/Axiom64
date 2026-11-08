@@ -50,6 +50,14 @@ checksums and zero packet loss. No clock or lifetime is adjusted.
 Native ARP retries may announce the independently recorded surviving address
 after the original source lifetime ends. The reader binds that address to the
 same adapter, peer or guard, survivor policy and original case interval.
+When Linux emits a zero-source retry during expiry, it must follow an owned
+request for the same datagram neighbour, with identical bytes except for the
+sender IP. It is accepted only after the original lifetime and before that
+case ends. Unanchored requests, guest zero sources and changed payload sources
+remain rejected. Linux's `arp_solicit()` can pass zero from
+[`inet_select_addr()`](https://github.com/torvalds/linux/blob/v7.0/net/ipv4/devinet.c#L1272-L1337)
+when no eligible primary address is selected; this does not renew the test's
+address or neighbour lifetime.
 Guest ARP sources and all IPv4 payload sources retain their exact checks.
 `python3 -B scripts/tests/ipv4_lifetime_arp_test.py` replays the original native
 request and rejects unowned addresses, hardware, targets and case intervals.
@@ -62,7 +70,7 @@ reopens the source, actual executable and providers or boot image, original
 control acknowledgements, inventories, receive bytes, Ethernet frames and
 single-byte barrier receipts. It reconstructs TCP bytes across segment and
 read boundaries. `python3 -B -m ipv4_lifetimes.wire_controls DIRECTORY --output OUTPUT`
-with `PYTHONPATH=scripts` serializes 43 protocol faults and four clock faults.
+with `PYTHONPATH=scripts` serializes 44 protocol faults and four clock faults.
 Its explicit `--protocol-only` development diagnostic does not qualify clocks
 or artifacts. Local native/guest protocol checks pass; observed clock jumps
 reject timing qualification. The complete current-source matrix, protected
@@ -78,7 +86,7 @@ Native control captures use `build/ipv4-address-lifetimes-native-controls`,
 separate from the prebuilt native executable.
 
 The final export reopens all 22 profiles as root and actual UID 65534, with
-no supplementary groups for the ordinary reader. It checks 517 protocol/clock
+no supplementary groups for the ordinary reader. It checks 528 protocol/clock
 faults, 264 address-control faults and 51 artifact faults per identity.
 Native control faults use the independently measured stamp epoch. The
 35 wire artifact faults repair outer hashes to exercise inner source,

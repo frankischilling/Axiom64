@@ -130,7 +130,7 @@ def streams(spec, output, inputs, absence, restore):
     require(set(echoed) == {4, 5}, 'both complete original stream echoes')
 
 
-def owned_arp(row, cases, native):
+def owned_arp(row, cases, native, requests=()):
     frame, lane = bytes.fromhex(row['frame']), row['index']
     arp_reply(lane, frame)
     source = 0xc6124002 + lane * 0x1000
@@ -139,16 +139,24 @@ def owned_arp(row, cases, native):
     owned = actual == source
     if native and not owned:
         # Linux may announce a surviving local address when a queued neighbour
-        # probe outlives its original source. Payload source checks stay exact.
+        # probe outlives its source, or zero when none is selectable. A zero
+        # retry must retain an earlier owned request. Payload sources stay exact.
         for case in cases:
             spec = case['spec']
-            if (spec['lane'] != lane or spec['survival'] not in (1, 3) or
-                    actual != source + (256 if spec['survival'] == 1 else 1) or
-                    target not in (spec['peer'], spec['guard'])):
+            if spec['lane'] != lane or target not in (spec['peer'], spec['guard']):
                 continue
             phases = {event['phase']: event for event in case['events']}
-            if (phases['lifetime-start']['monotonic_ns'] + 1_000_000_000 - PRECISION_NS <=
+            if not (phases['lifetime-start']['monotonic_ns'] + 1_000_000_000 - PRECISION_NS <=
                     row['monotonic_ns'] <= phases['end']['monotonic_ns']):
+                continue
+            survivor = (spec['survival'] in (1, 3) and
+                        actual == source + (256 if spec['survival'] == 1 else 1))
+            original = (frame[:28] + source.to_bytes(4, 'big') + frame[32:]).hex()
+            retry = (actual == 0 and spec['transport'] != 2 and target == spec['peer'] and
+                     any(request['index'] == lane and request['frame'] == original and
+                         phases['lifetime-start']['monotonic_ns'] <= request['monotonic_ns'] < row['monotonic_ns']
+                         for request in requests))
+            if survivor or retry:
                 owned = True
                 break
     require(owned and
@@ -199,10 +207,11 @@ def protocol(text, wire, ingress, events, commands, native):
         else:
             require(frame[12:14] == b'\x08\x06', 'known complete Ethernet protocol')
             if row['direction'] == 'output':
-                owned_arp(row, cases, native)
-                arp_requests.append((lane, frame))
+                owned_arp(row, cases, native, arp_requests)
+                arp_requests.append(row)
             else:
-                require(any(index == lane and frame == arp_reply(lane, request) for index, request in arp_requests),
+                require(any(request['index'] == lane and frame == arp_reply(lane, bytes.fromhex(request['frame']))
+                            for request in arp_requests),
                         'every injected ARP reply owns a preceding actual request')
     consumed = set()
     for number, case in enumerate(cases):

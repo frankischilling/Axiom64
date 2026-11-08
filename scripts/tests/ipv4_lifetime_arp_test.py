@@ -77,5 +77,48 @@ class LifetimeArp(unittest.TestCase):
                 owned_arp(dict(self.row, frame=frame.hex()), [self.case], True)
 
 
+class LifetimeZeroArp(unittest.TestCase):
+    def setUp(self):
+        # Actual native dynamic case 7: original request and zero-source retry.
+        self.original = dict(index=0, monotonic_ns=2277602825194,
+            frame='ffffffffffff02000000000108060001080006040001020000000001c6124002000000000000c6124017')
+        self.retry = dict(index=0, monotonic_ns=2278620271539,
+            frame='ffffffffffff0200000000010806000108000604000102000000000100000000000000000000c6124017')
+        self.case = dict(spec=definitions()[7], events=[
+            dict(phase='lifetime-start', monotonic_ns=2277599608608),
+            dict(phase='end', monotonic_ns=2279613328821)])
+
+    def test_actual_native_zero_source_retry_retains_original_request_ownership(self):
+        owned_arp(self.retry, [self.case], True, [self.original])
+
+    def test_zero_source_is_not_a_guest_source(self):
+        with self.assertRaises(ValueError):
+            owned_arp(self.retry, [self.case], False, [self.original])
+
+    def test_zero_source_requires_an_original_owned_request(self):
+        for originals in ([], [dict(self.original, index=1)], [self.retry],
+                          [dict(self.original, monotonic_ns=self.retry['monotonic_ns'] + 1)]):
+            with self.subTest(originals=originals), self.assertRaises(ValueError):
+                owned_arp(self.retry, [self.case], True, originals)
+
+    def test_zero_source_requires_expiry_and_the_same_case_interval(self):
+        for tick in (2277599608608, 2279613328822):
+            with self.subTest(tick=tick), self.assertRaises(ValueError):
+                owned_arp(dict(self.retry, monotonic_ns=tick), [self.case], True, [self.original])
+
+    def test_zero_source_cannot_substitute_for_a_guard_or_stream(self):
+        for change in (dict(transport=2), dict(peer=self.case['spec']['peer'] + 1)):
+            case = dict(self.case, spec=dict(self.case['spec'], **change))
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                owned_arp(self.retry, [case], True, [self.original])
+
+    def test_zero_source_requires_the_same_request_bytes(self):
+        for at in (0, 6, 22, 28, 32, 38):
+            frame = bytearray.fromhex(self.original['frame'])
+            frame[at] ^= 1
+            with self.subTest(at=at), self.assertRaises(ValueError):
+                owned_arp(self.retry, [self.case], True, [dict(self.original, frame=frame.hex())])
+
+
 if __name__ == '__main__':
     unittest.main()

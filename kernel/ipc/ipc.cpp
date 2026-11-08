@@ -119,7 +119,7 @@ int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_of
     return len;
 }
 
-int64_t socket_write(Socket* s, const void* data, size_t len) {
+int64_t socket_write(Socket* s, const void* data, size_t len, uint32_t datagram_entry_limit) {
     if (s->type == 2) {
         if (s->write_closed)
             return -32;
@@ -132,7 +132,7 @@ int64_t socket_write(Socket* s, const void* data, size_t len) {
             return -107;
         if (s->peer->read_closed)
             return -32;
-        return s->peer->datagrams.append(*s->datagram_send, data, len);
+        return s->peer->datagrams.append(*s->datagram_send, data, len, datagram_entry_limit);
     }
     if (s->type != 1)
         return -95;

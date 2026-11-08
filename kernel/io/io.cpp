@@ -56,6 +56,7 @@ struct IoRequest {
     uint8_t* packet_data;
     bool packet_ready;
     size_t packet_length;
+    uint32_t unix_send_limit;
     uint64_t address_pointer, address_length_pointer;
     uint64_t control_pointer, control_capacity;
     uint32_t address_capacity;
@@ -198,6 +199,11 @@ static int prepare_unix_datagram(Task& task, IoRequest& request) {
         request.address_length_pointer = f.r9;
         if (!task.memory->space.copy_in(&request.address_capacity, f.r9, 4))
             return -14;
+    }
+    if (request.write) {
+        request.unix_send_limit = request.handle->socket->datagram_send->size();
+        if (request.packet_length > request.unix_send_limit - 32)
+            return -90;
     }
     return 0;
 }
@@ -768,7 +774,8 @@ static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
     const auto& f = request.call;
     if (request.write) {
         if (!request.packet_ready) {
-            if (int error = socket->datagram_send->admission(request.packet_length))
+            if (int error = socket->datagram_send->admission(request.packet_length,
+                                                             request.unix_send_limit))
                 return error;
             if (request.packet_length) {
                 request.packet_data = static_cast<uint8_t*>(alloc(request.packet_length));
@@ -779,7 +786,8 @@ static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
             }
             request.packet_ready = true;
         }
-        return socket_write(socket, request.packet_data, request.packet_length);
+        return socket_write(socket, request.packet_data, request.packet_length,
+                            request.unix_send_limit);
     }
     if (!request.socket && !request.packet_length)
         return 0;

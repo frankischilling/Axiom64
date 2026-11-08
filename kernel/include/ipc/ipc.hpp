@@ -56,7 +56,7 @@ bool socket_ready(Socket*, bool);
 
 int64_t socket_read(Socket*, void*, size_t, bool peek = false, size_t peek_offset = 0);
 
-int64_t socket_write(Socket*, const void*, size_t);
+int64_t socket_write(Socket*, const void*, size_t, uint32_t datagram_entry_limit = 0);
 
 int64_t socket_accept(Task&, Handle*, uint64_t address, uint64_t length, unsigned flags,
                       int reserved_fd);

@@ -30,8 +30,8 @@ void UnixSendBudget::close() {
     drop();
 }
 
-int UnixSendBudget::admission(size_t length) const {
-    if (length > limit - 32)
+int UnixSendBudget::admission(size_t length, uint32_t entry_limit) const {
+    if (length > (entry_limit ? entry_limit : limit) - 32)
         return -90;
     if (charged >= limit)
         return -11;
@@ -42,9 +42,10 @@ void UnixSendBudget::resize(uint32_t requested) {
     limit = unix_buffer_size(requested, true);
 }
 
-int64_t UnixDatagramQueue::append(UnixSendBudget& owner, const void* bytes, size_t length) {
+int64_t UnixDatagramQueue::append(UnixSendBudget& owner, const void* bytes, size_t length,
+                                  uint32_t entry_limit) {
     static_assert(sizeof(Record) <= record_charge);
-    if (int error = owner.admission(length))
+    if (int error = owner.admission(length, entry_limit))
         return error;
     auto record = static_cast<Record*>(alloc(sizeof(Record) + length));
     if (!record)

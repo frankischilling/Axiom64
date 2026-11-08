@@ -15,6 +15,7 @@
 #include <sys/un.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #define CHECK(value)                                                                               \
@@ -375,6 +376,78 @@ static void unread_close(void) {
     puts("UNIX_MESSAGES_UNREAD_CLOSE_PASS queued_reference_released");
 }
 
+static void retained_resize(void) {
+    int sockets[2], ready[2], result[2];
+    pair(sockets);
+    CHECK(!pipe2(ready, O_NONBLOCK | O_CLOEXEC));
+    CHECK(!pipe2(result, O_NONBLOCK | O_CLOEXEC));
+    int size = 32768;
+    CHECK(!setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)));
+    char fill[4000], payload[10000], received[10000];
+    memset(fill, 'F', sizeof(fill));
+    memset(payload, 'P', sizeof(payload));
+    unsigned queued = 0;
+    while (send(sockets[0], fill, sizeof(fill), MSG_DONTWAIT) == sizeof(fill))
+        CHECK(++queued < 10000);
+    CHECK(errno == EAGAIN && queued);
+    CHECK(!fcntl(sockets[0], F_SETFL, 0));
+    struct timeval timeout = {.tv_sec = 5};
+    CHECK(!setsockopt(sockets[0], SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)));
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        CHECK(!close(ready[0]) && !close(result[0]) && !close(sockets[1]));
+        CHECK(write(ready[1], "R", 1) == 1);
+        ssize_t sent = send(sockets[0], payload, sizeof(payload), 0);
+        CHECK(write(result[1], &sent, sizeof(sent)) == sizeof(sent));
+        _exit(sent == sizeof(payload) ? 0 : 1);
+    }
+    CHECK(!close(ready[1]) && !close(result[1]));
+    readable(ready[0]);
+    char byte;
+    CHECK(read(ready[0], &byte, 1) == 1 && byte == 'R');
+    // The child has no other blocking operation after its nonblocking ready write.
+    // Observe the actual sleep before resizing, rather than guessing a delay.
+    char path[64], status[2048];
+    CHECK(snprintf(path, sizeof(path), "/proc/%ld/stat", (long)child) > 0);
+    struct timespec began, now;
+    CHECK(!clock_gettime(CLOCK_MONOTONIC, &began));
+    for (;;) {
+        int fd = open(path, O_RDONLY | O_CLOEXEC);
+        CHECK(fd >= 0);
+        ssize_t count = read(fd, status, sizeof(status) - 1);
+        CHECK(count > 0 && !close(fd));
+        status[count] = 0;
+        char* state = strrchr(status, ')');
+        CHECK(state && state[1] == ' ' && state[2] != 'Z');
+        if (state[2] == 'S')
+            break;
+        CHECK(!clock_gettime(CLOCK_MONOTONIC, &now) && now.tv_sec - began.tv_sec < 3);
+        usleep(1000);
+    }
+    struct pollfd pending = {.fd = result[0], .events = POLLIN};
+    CHECK(!poll(&pending, 1, 0));
+    size = 0;
+    CHECK(!setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)));
+    for (unsigned n = 0; n < queued; n++)
+        CHECK(recv(sockets[1], received, sizeof(received), 0) == sizeof(fill) &&
+              !memcmp(received, fill, sizeof(fill)));
+    readable(result[0]);
+    ssize_t sent;
+    CHECK(read(result[0], &sent, sizeof(sent)) == sizeof(sent) && sent == sizeof(payload));
+    readable(sockets[1]);
+    CHECK(recv(sockets[1], received, sizeof(received), 0) == sizeof(payload) &&
+          !memcmp(received, payload, sizeof(payload)));
+    CHECK(send(sockets[0], payload, sizeof(payload), 0) == -1 && errno == EMSGSIZE);
+    int exit_status;
+    CHECK(waitpid(child, &exit_status, 0) == child && WIFEXITED(exit_status) &&
+          !WEXITSTATUS(exit_status));
+    CHECK(!close(ready[0]) && !close(result[0]));
+    finish(sockets);
+    puts("UNIX_MESSAGES_RETAINED_RESIZE_PASS sleeping_sender original_size new_send_limit "
+         "exact_bytes");
+}
+
 static void fault_consumption(void) {
     int sockets[2];
     pair(sockets);
@@ -402,10 +475,11 @@ int main(int argc, char** argv) {
     data_vectors();
     buffer_ownership();
     shutdown_contract();
+    retained_resize();
     CHECK(argc == 1 || (argc == 2 && !strcmp(argv[1], "--data-only")));
     if (argc == 2) {
         fault_consumption();
-        puts("UNIX_MESSAGES_DATA_PASS groups=5");
+        puts("UNIX_MESSAGES_DATA_PASS groups=6");
         return 0;
     }
     credentials();
@@ -414,5 +488,5 @@ int main(int argc, char** argv) {
     discarded_rights(1);
     unread_close();
     fault_consumption();
-    puts("UNIX_MESSAGES_PASS groups=10");
+    puts("UNIX_MESSAGES_PASS groups=11");
 }

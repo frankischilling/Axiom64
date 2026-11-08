@@ -108,6 +108,22 @@ int main() {
     queue.clear();
     budget->close();
     assert(!allocations);
+    budget = ax::UnixSendBudget::create();
+    budget->resize(32768);
+    auto entry_limit = budget->size();
+    while (!budget->admission(7001))
+        assert(queue.append(*budget, input, 7001) == 7001);
+    assert(budget->admission(10000, entry_limit) == -11);
+    budget->resize(0);
+    assert(budget->admission(10000, entry_limit) == -11);
+    queue.clear();
+    assert(budget->admission(10000) == -90 && !budget->admission(10000, entry_limit));
+    assert(queue.append(*budget, input, 10000, entry_limit) == 10000);
+    assert(queue.front(bytes, length) && length == 10000);
+    queue.clear();
+    assert(queue.append(*budget, input, 10000) == -90);
+    budget->close();
+    assert(!allocations);
     // The sender's socket slot may close before any of its queued data.
     budget = ax::UnixSendBudget::create();
     auto second = ax::UnixSendBudget::create();

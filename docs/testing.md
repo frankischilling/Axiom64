@@ -1598,12 +1598,17 @@ that different kernels allocate the same number of tiny records.
 `userspace/tests/ipc/unix_messages.c` compares datagram boundaries, 13,007-byte
 vector copies, zero-length readiness, peek/truncation, unnamed source output,
 queued delivery after peer close and consuming versus peek copy faults.
-`--data-only` selects five data/lifecycle groups, adding buffer pressure,
+`--data-only` selects six data/lifecycle groups, adding buffer pressure,
 resize, sender close/reuse and all shutdown directions. Shutdown tests keep
 queued records, verify poll flags, distinguish blocking EOF from nonblocking
 EAGAIN, require empty recvmsg output headers, and reject spurious SIGPIPE. Local static and dynamic guest clients
 pass on BIOS and UEFI with their actual kernel, executable, installed UAPI,
-initramfs and image inputs retained. Native Linux passes the full ten-group
+initramfs and image inputs retained. A forked sender fills its allowance and
+reports readiness through a nonblocking pipe. The parent observes its sleeping
+state before shrinking the send buffer. The admitted 10,000-byte message keeps
+its original size limit, waits for current pressure to clear and arrives intact;
+a fresh send uses the smaller limit and returns EMSGSIZE. The same regression
+fails on the preceding guest kernel. Native Linux passes the full eleven-group
 client as root and UID 65534; its additional groups require per-message
 credentials, descriptor transfer, distinct close-on-exec descriptors on peek,
 shared file offsets and queued-reference cleanup.

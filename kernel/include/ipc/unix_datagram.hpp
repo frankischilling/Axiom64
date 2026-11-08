@@ -15,7 +15,8 @@ class UnixSendBudget {
   public:
     static UnixSendBudget* create();
     void close();
-    int admission(size_t length) const;
+    // Retained sends keep their entry size limit while waiting on current pressure.
+    int admission(size_t length, uint32_t entry_limit = 0) const;
     void resize(uint32_t requested);
 
     uint32_t size() const {
@@ -41,7 +42,7 @@ class UnixDatagramQueue {
     Record *first = nullptr, *last = nullptr;
 
   public:
-    int64_t append(UnixSendBudget&, const void*, size_t);
+    int64_t append(UnixSendBudget&, const void*, size_t, uint32_t entry_limit = 0);
     bool front(const uint8_t*& bytes, size_t& length) const;
     void consume();
     void clear();

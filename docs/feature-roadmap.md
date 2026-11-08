@@ -326,6 +326,8 @@ Unix stream sockets support X11, [AF_PACKET raw sockets](network.md) exchange Et
 
 The [first controlled NIC loss subset](tcp-loss.md) exercises actual active/passive handshakes, data and FIN retransmissions, initial elapsed retry timing, exact bidirectional payloads and wrapped peer sequence space. Independent native/guest captures and damaged-evidence rejection supplement the existing ordinary interoperability tests; complete controlled-wire acceptance remains required for TCP reliability.
 
+Local [Unix datagram checks](testing.md#unix-datagram-records) cover owned records, named routing and sender credentials. Both musl providers run static/dynamic BIOS/UEFI clients as root and UID 65534, with retained compiler, image and kernel inputs. Blocked-send credential capture follows the measured Linux 7 behavior. Descriptor transfer, stream credentials, cycle collection and current hosted qualification remain required.
+
 Required work:
 
 - AF_INET/AF_INET6 TCP/UDP socket lifecycle, options, and errors.

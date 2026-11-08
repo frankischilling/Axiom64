@@ -300,6 +300,9 @@ def run(mode, profile, phase, stage, image=None, firmware='bios', transport_kind
                 (stage/'native-state.json').write_text(json.dumps(native_states,indent=2))
             source_request_ns=source_response_ns=None
             if phase=='queues':
+                if row['suppress_arp'] and row['complete_route']:
+                    command_line(f'arp-watch {current}')
+                    complete_line(f'IPV4_SOURCE_ARP_WATCH case={current}')
                 source_request_ns=time.monotonic_ns()
                 command_line(f'sync {current}')
                 complete_line(f'IPV4_SOURCE_SYNC case={current} phase=input ')
@@ -380,7 +383,7 @@ def run(mode, profile, phase, stage, image=None, firmware='bios', transport_kind
                     if error_guard["requested_ns"] is None and time.monotonic_ns()>=retry_receipts[2]+980000000:
                         error_guard["requested_ns"]=time.monotonic_ns()
                         command_line(f"guard {current}")
-                        complete_line(f"IPV4_SOURCE_GUARD case={current} ")
+                        complete_line(f"IPV4_SOURCE_GUARD_ACK case={current}")
                         error_guard["responded_ns"]=time.monotonic_ns()
                         require(error_guard["responded_ns"]-error_guard["requested_ns"]<=CLOCK_BOUND_NS,
                             "original one-second empty guard response bound")

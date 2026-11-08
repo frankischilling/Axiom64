@@ -134,6 +134,26 @@ def fixture(linkage, wire='loss'):
     return image
 
 
+def flush_peer(peer, channel, raw=False):
+    """Complete queued backend writes before starting a peer's observation."""
+    if raw:
+        while peer.outgoing:
+            frame = peer.outgoing.pop(0)
+            check(channel.send(frame) == len(frame), 'complete independent Ethernet packet send')
+    else:
+        while peer.outgoing:
+            frame = peer.outgoing.pop(0)
+            peer.output.extend(struct.pack('!I', len(frame)) + frame)
+        if peer.output:
+            try:
+                count = channel.send(peer.output)
+                del peer.output[:count]
+            except BlockingIOError:
+                pass
+    if not peer.outgoing and not peer.output and hasattr(peer, 'output_drained'):
+        peer.output_drained()
+
+
 def exercise(process, peers, servers, timeout, log, raw=False):
     for peer in peers:
         if hasattr(peer, 'bind_peers'):
@@ -212,20 +232,7 @@ def exercise(process, peers, servers, timeout, log, raw=False):
                     continue
                 if hasattr(peer, 'tick'):
                     peer.tick()
-                if raw:
-                    while peer.outgoing:
-                        frame = peer.outgoing.pop(0)
-                        check(channel.send(frame) == len(frame), 'complete independent Ethernet packet send')
-                else:
-                    while peer.outgoing:
-                        frame = peer.outgoing.pop(0)
-                        peer.output.extend(struct.pack('!I', len(frame)) + frame)
-                    if peer.output:
-                        try:
-                            count = channel.send(peer.output)
-                            del peer.output[:count]
-                        except BlockingIOError:
-                            pass
+                flush_peer(peer, channel, raw)
             if raw and native_status is not None and all(flow.done for peer in peers for flow in peer.flows):
                 break
             if process.poll() is not None and not selector.get_map().get(process.stdout.fileno()):

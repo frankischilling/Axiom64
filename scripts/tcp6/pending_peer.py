@@ -19,7 +19,7 @@ class Flow:
         self.address=peer.address[:-1]+bytes([3 if companion else 2])
         self.origin=0x55770000+peer.lane*0x1000+round_*0x100+companion*16
         self.remote_next=plus(self.origin);self.guest_next=None;self.guest_origin=None
-        self.handshakes=[];self.established=False;self.data=False;self.fin=False;self.done=False;self.done_ns=None
+        self.handshakes=[];self.released=False;self.established=False;self.data=False;self.fin=False;self.done=False;self.done_ns=None
 
     def send(self,flags=ACK,data=b'',sequence=None):
         options=b'\x02\x04\x02\x18' if flags&SYN else b''
@@ -32,6 +32,11 @@ class Flow:
             struct.pack('!I3xB',len(segment),6)+segment))
         self.peer.send(self.peer.envelope(self.peer.ip,self.address,segment,6))
 
+    def release_handshake(self):
+        self.released=True
+        if self.passive:self.established=True;self.send()
+        else:self.send(SYN|ACK,sequence=self.origin)
+
     def receive(self,value):
         check(not self.done and value['source_ip']==self.address and value['target_ip']==self.peer.ip,
             'complete pending/fresh source tuple')
@@ -43,6 +48,8 @@ class Flow:
                 'same pending source handshake sequence')
             self.handshakes.append(time.monotonic_ns())
             if self.companion:self.send(SYN|ACK,sequence=self.origin)
+            elif self.released and (not self.established or self.passive and not self.data):
+                self.release_handshake()
             self.peer.complete_if_ready();return
         check(self.guest_next is not None and value['ack']==self.remote_next,
             'exact pending source stream acknowledgment')
@@ -85,8 +92,7 @@ class Peer(EthernetPeer):
             step==5 and main.done and companion.done)
         if not ready:return
         if step==4:
-            if main.passive:main.established=True;main.send()
-            else:main.send(SYN|ACK,sequence=main.origin)
+            main.release_handshake()
         self.answer(frame);self.waiting=None
 
     def tick(self):pass

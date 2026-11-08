@@ -7,11 +7,13 @@
 namespace ax::proc4 {
 namespace {
 constexpr ip4::ConfigurationKey keys[] = {ip4::ConfigurationKey::accept_source_route,
-                                          ip4::ConfigurationKey::forwarding};
+                                          ip4::ConfigurationKey::forwarding,
+                                          ip4::ConfigurationKey::promote_secondaries};
 }
 
 const char* property_name(unsigned property) {
-    static constexpr const char* names[] = {"accept_source_route", "forwarding"};
+    static constexpr const char* names[] = {"accept_source_route", "forwarding",
+                                            "promote_secondaries"};
     return property < property_count ? names[property] : nullptr;
 }
 

@@ -12,6 +12,33 @@ from tcp_fault_peer import ACK,FIN,SYN
 MARKER='TCP6_PENDING_SOURCE_PASS lanes=2 rounds_each=4 flows_each=8'
 def add(value,delta=1):return (value+delta)&0xffffffff
 
+def recovery(flow,syn,replies,data,client,server,passive):
+    require(replies,'an original released handshake reply')
+    value=replies[0]['value']
+    require((value['flags'],value['seq'],value['ack'],value['data'])==
+        (ACK if passive else SYN|ACK,server if passive else add(server,-1),client,b''),
+        'exact initial released handshake sequence and acknowledgment')
+    cutoff=data['index']
+    if not passive:
+        completion=[x for x in flow if x['outgoing'] and replies[0]['index']<x['index']<cutoff and
+            x['value']['flags']==ACK and not x['value']['data'] and
+            (x['value']['seq'],x['value']['ack'])==(client,server)]
+        require(completion,'actual final handshake ACK before application data')
+        cutoff=completion[0]['index']
+    require(all(x['index']<cutoff for x in replies),
+        'pending handshake recovery precedes application data and completion')
+    retries=[x for x in syn if replies[0]['index']<x['index']<cutoff]
+    require(len(retries)==len(replies)-1,'each restored handshake reply follows one owned retry')
+    original=replies[0]['row']['frame'];previous=replies[0]['index']
+    for request,response in zip(retries,replies[1:]):
+        require(previous<request['index']<response['index']<cutoff,
+            'each restored handshake reply follows one owned retry')
+        require(response['row']['frame']==original,'identical released handshake reply on every recovery')
+        previous=response['index']
+    received=[x for x in flow if not x['outgoing'] and replies[0]['index']<=x['index']<data['index']]
+    require(received==replies,'every pending handshake input is an owned retry reply')
+    return len(retries)
+
 def verify(path,lane,log,native=False,statistics=None):
     require(log.splitlines().count(MARKER)==1,'one actual pending source program completion')
     phases=[tuple(map(int,row)) for row in re.findall(
@@ -68,14 +95,18 @@ def verify(path,lane,log,native=False,statistics=None):
         echo=[x for x in flow if not x['outgoing'] and x['value']['data']]
         fin=[x for x in flow if x['outgoing'] and x['value']['flags']&FIN]
         peerfin=[x for x in flow if not x['outgoing'] and x['value']['flags']&FIN]
-        require(len(handshake)==len(data)==len(echo)==len(fin)==len(peerfin)==1 and
-            (len(syn)==1 if c else len(syn)>=2),
+        require(len(data)==len(echo)==len(fin)==len(peerfin)==1 and
+            (len(handshake)==1 if passive else len(handshake)>=1) and
+            (len(syn)>=1 if c else len(syn)>=2),
             'complete actual pending/retry or fresh handshake, data, echo and FINs')
         origin=syn[0]['value']['seq'];client=add(origin);server=add(handshake[0]['value']['seq'])
         require(all(x['value']['seq']==origin and not x['value']['data'] and
             x['value']['ack']==(server if passive else 0) for x in syn),'same original SYN sequence on every actual retry')
         require(handshake[0]['value']['ack']==(0 if passive else client),
             'exact actual handshake peer acknowledgment')
+        replies=([x for x in flow if not x['outgoing'] and x['value']['flags']==ACK and
+            not x['value']['data']] if passive else handshake)
+        recovered=recovery(flow,syn,replies,data[0],client,server,passive)
         expected=bytes((lane*53+r*31+c*17+n*7)&255 for n in range(16))
         require(data[0]['value']['data']==echo[0]['value']['data']==expected and
             data[0]['value']['seq']==client and data[0]['value']['ack']==server and
@@ -91,15 +122,19 @@ def verify(path,lane,log,native=False,statistics=None):
         require(syn[-1]['index']<data[0]['index']<echo[0]['index']<fin[0]['index']<peerfin[0]['index']<final[0]['index']<barriers[base+5,0],
             'actual full stream closes before final release barrier')
         retry_lower=None
+        last_withdrawn=syn[-1]
         if not c:
             companion=streams[r,True]
             companion_final=companion[-1]['index']
-            require(companion_final<syn[-1]['index']<barriers[base+3,1]<barriers[base+4,0],
+            withdrawn=[x for x in syn if x['index']<barriers[base+4,0]]
+            require(len(withdrawn)>=2,'original pending and withdrawn-source natural retry remain present')
+            last_withdrawn=withdrawn[-1]
+            require(companion_final<last_withdrawn['index']<barriers[base+3,1]<barriers[base+4,0],
                 'real fresh companion proves usable route before actual withdrawn-source retry')
             require(all(x['outgoing'] for x in flow if barriers[base+2,1]<x['index']<barriers[base+4,0]),
                 'no TCP input delivered to pending source while its local route is absent')
-            release=[x for x in flow if not x['outgoing'] and x['index']>syn[-1]['index']][0]
-            require(barriers[base+4,0]<release['index']<barriers[base+4,1],
+            release=[x for x in flow if not x['outgoing'] and x['index']>last_withdrawn['index']][0]
+            require(barriers[base+4,0]<release['index']<barriers[base+4,1] and release==replies[0],
                 'pending handshake input follows explicit source restoration')
             if not r:
                 require(companion_final<barriers[base+2,0]<barriers[base+2,1]<syn[0]['index'],
@@ -107,12 +142,12 @@ def verify(path,lane,log,native=False,statistics=None):
             else:
                 require(barriers[base+1,1]<syn[0]['index']<barriers[base+2,1]<companion[0]['index'],
                     'active or passive first SYN precedes withdrawal and fresh source connection')
-            first,last=syn[0]['row'],syn[1]['row']
+            first,last=withdrawn[0]['row'],withdrawn[1]['row']
             retry_lower=(last['arrival_lower_ns']-first['arrival_upper_ns']) if native else last['ns']-first['ns']
             require(retry_lower>=850000000,'original natural handshake retry exceeds established 850ms wire lower bound')
         observations.append(dict(round=r,companion=c,passive=passive,handshake_count=len(syn),
-            first_handshake=syn[0]['index'],last_handshake=syn[-1]['index'],final_ack=final[0]['index'],
-            retry_lower_ns=retry_lower))
+            first_handshake=syn[0]['index'],last_handshake=last_withdrawn['index'],final_ack=final[0]['index'],
+            retry_lower_ns=retry_lower,recovery_replies=recovered))
     return dict(passed=True,global_pending_source_withdrawal=True,full_source_route_device_expiry_acceptance=False,
         lane=lane,actual_flows=8,actual_pending_handshakes=4,actual_output_blocks=8,
         observations=observations,clock=clock,sha256=hashlib.sha256(path.read_bytes()).hexdigest())

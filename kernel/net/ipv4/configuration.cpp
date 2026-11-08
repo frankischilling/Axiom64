@@ -4,7 +4,7 @@
 namespace ax::ip4 {
 namespace {
 struct Values {
-    int32_t accept_source_route = 1, forwarding = 0;
+    int32_t accept_source_route = 1, forwarding = 0, promote_secondaries = 0;
 };
 
 struct Configuration {
@@ -40,6 +40,8 @@ int32_t* field(Values& state, ConfigurationKey key) {
         return &state.accept_source_route;
     case ConfigurationKey::forwarding:
         return &state.forwarding;
+    case ConfigurationKey::promote_secondaries:
+        return &state.promote_secondaries;
     }
     return nullptr;
 }
@@ -102,5 +104,10 @@ bool configuration_source_route(unsigned index) {
 bool configuration_forwarding(unsigned index) {
     auto state = select(index);
     return state && state->values.forwarding;
+}
+
+bool configuration_promote_secondaries(unsigned index) {
+    auto state = select(index);
+    return state && (all.promote_secondaries || state->values.promote_secondaries);
 }
 } // namespace ax::ip4

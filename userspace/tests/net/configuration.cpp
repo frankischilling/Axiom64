@@ -136,9 +136,16 @@ static void message_contract(bool native) {
           "independent address-message socket");
     for (unsigned lane = 0; lane < 2; lane++) {
         Message create(lane, false);
+        create.attribute(IFA_FLAGS, IFA_F_PERMANENT);
         exchange(fd, create, 0);
         verify_address(lane, address(lane), 0xffffff80);
         exchange(fd, create, EEXIST);
+        Message replace(lane, false);
+        replace.header.nlmsg_flags &= ~NLM_F_EXCL;
+        replace.header.nlmsg_flags |= NLM_F_REPLACE;
+        replace.attribute(IFA_FLAGS, IFA_F_PERMANENT);
+        exchange(fd, replace, 0);
+        verify_address(lane, address(lane), 0xffffff80);
         Message remove(lane, true);
         remove.body.ifa_prefixlen = 24;
         uint32_t broadcast = htonl(address(lane, 255));
@@ -181,14 +188,14 @@ static void message_contract(bool native) {
                     invalid.attribute(IFA_LOCAL, htonl(address(lane)));
                     break;
                 case 5:
-                    invalid.attribute(IFA_FLAGS, 128);
+                    invalid.attribute(IFA_FLAGS, IFA_F_TENTATIVE);
                     expected = EOPNOTSUPP;
                     break;
                 case 6:
                     invalid.bytes[39] ^= 1;
                     break;
                 case 7:
-                    invalid.header.nlmsg_flags |= NLM_F_REPLACE;
+                    invalid.header.nlmsg_flags |= NLM_F_APPEND;
                     expected = EOPNOTSUPP;
                     break;
                 case 8:

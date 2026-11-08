@@ -36,6 +36,7 @@ static int32_t value(unsigned index, ConfigurationKey key) {
 int main() {
     constexpr auto source = ConfigurationKey::accept_source_route;
     constexpr auto forward = ConfigurationKey::forwarding;
+    constexpr auto promote = ConfigurationKey::promote_secondaries;
     assert(!value(configuration_all, source) && value(configuration_default, source) == 1);
     assert(!configuration_source_route(ipv4_loopback) && !configuration_forwarding(ipv4_loopback));
     assert(!configuration_generation(1) && !configuration_generation(10));
@@ -55,6 +56,14 @@ int main() {
     assert(!configuration_write(configuration_all, source, 1));
     assert(configuration_source_route(1));
     assert(!configuration_write(1, source, 0) && !configuration_source_route(1));
+    assert(!value(configuration_all, promote) && !value(1, promote));
+    assert(!configuration_promote_secondaries(1));
+    assert(!configuration_write(1, promote, 1) && configuration_promote_secondaries(1));
+    assert(!configuration_write(configuration_all, promote, 1));
+    assert(!configuration_write(1, promote, 0) && configuration_promote_secondaries(1));
+    assert(!configuration_write(configuration_all, promote, 0));
+    assert(!configuration_promote_secondaries(1));
+    assert(!configuration_write(configuration_default, promote, -1));
     assert(!configuration_write(configuration_default, source, INT32_MIN));
     assert(!value(1, source));
     assert(!configuration_write(configuration_all, forward, INT32_MAX));
@@ -70,12 +79,14 @@ int main() {
     assert(configuration_generation(1) == generation);
     configuration_registered(1);
     assert(configuration_generation(1) > generation && value(1, source) == INT32_MIN);
+    assert(value(1, promote) == -1 && configuration_promote_secondaries(1));
     unsigned index;
     assert(proc4::scope_index("eth0", index) && index == 1);
     assert(!proc4::scope_index("eth1", index));
     assert(!strcmp(proc4::scope_name(3), "eth0") && !proc4::scope_name(4));
     assert(!proc4::scope_name(UINT32_MAX));
-    assert(!proc4::property_name(2));
+    assert(!strcmp(proc4::property_name(2), "promote_secondaries"));
+    assert(!proc4::property_name(3));
     uint64_t offset = 0;
     const char text[] = "1 trailing\n";
     assert(proc4::write(1, 0, offset, text, sizeof(text) - 1) == 2 && offset == 2);
@@ -88,9 +99,21 @@ int main() {
     offset = 0;
     assert(proc4::read(1, 0, offset, output, sizeof(output)) == 2 && !strcmp(output, "8\n"));
     assert(!proc4::read(1, 0, offset, output, sizeof(output)));
+    offset = 0;
+    assert(proc4::write(1, 2, offset, "0\n", 2) == 2 && !value(1, promote));
+    assert(!configuration_promote_secondaries(1));
+    offset = 0;
+    memset(output, 0, sizeof(output));
+    assert(proc4::read(1, 2, offset, output, sizeof(output)) == 2 && !strcmp(output, "0\n"));
+    offset = 0;
+    assert(proc4::write(configuration_all, 2, offset, "1\n", 2) == 2 &&
+           configuration_promote_secondaries(1));
+    offset = 0;
+    assert(proc4::write(1, 3, offset, "1\n", 2) == -22 && !offset);
     generation = configuration_generation(1);
     configuration_reset();
     assert(configuration_generation(1) > generation);
     assert(!value(configuration_all, source) && value(1, source) == 1 && !value(1, forward));
+    assert(!value(1, promote) && !configuration_promote_secondaries(1));
     puts("IPV4_CONFIGURATION_MODEL_PASS");
 }

@@ -218,7 +218,81 @@ An independent capture auditor checks the original alias tuples, payloads, hardw
 
 `sudo -n python3 scripts/ipv4_alias_native.py` runs the real client under three native libc/linkage profiles in separate network namespaces. Each uses two TAP links and retains original captures, monotonic receipts, executable and pinned target-UAPI build records. The regular guest IPv4 matrix runs the same alias client through both guest adapters. Four wire cases per adapter cover a bound secondary source, a different-prefix source, continued output after primary deletion, and restored primary output. The peer also requires guest-generated ARP and ICMP echo replies to aliases before releasing the final barrier. Local UDP checks compare every payload byte, and ioctl/netlink cases check labels, enumeration, duplicate addresses, omitted broadcast, local-only deletion and replacement collisions.
 
-`make test-ipv4-paths` checks the production address inventory and route ownership with sanitizers, including capacity, invalid mutations and shared alias MTUs. `python3 scripts/tests/ipv4_aliases_test.py` rejects thirteen damaged wire controls, including a recomputed checksum with an oversized declared length. Current-revision guest results, independent alias capture auditing, broader address/cache lifecycle equivalence and complete F12 acceptance remain required. Loopback retains its fixed configuration; dynamic lifetimes, address notifications and configurable secondary promotion remain planned.
+`make test-ipv4-paths` checks the production address inventory and route ownership with sanitizers, including capacity, invalid mutations and shared alias MTUs. `python3 scripts/tests/ipv4_aliases_test.py` rejects thirteen damaged wire controls, including a recomputed checksum with an oversized declared length. Current-revision guest results, independent alias capture auditing, broader address/cache lifecycle equivalence and complete F12 acceptance remain required. Loopback retains its fixed configuration; address notifications remain planned.
+
+### Finite address lifetime development
+
+IPv4 netlink addresses accept preferred and valid lifetimes in seconds through
+`IFA_CACHEINFO`. Zero valid lifetime and preferred lifetime greater than valid
+return `EINVAL`; a short cache record returns `ERANGE`. Extended cache records
+are accepted. The kernel owns creation and update stamps in centiseconds and
+ignores supplied stamp values. Dumps report remaining lifetimes and
+permanent, deprecated and secondary flags. An infinite valid IPv4 lifetime
+reports both lifetimes as infinite, including an immediately deprecated
+permanent address. Finite preferred expiry marks an address deprecated; valid
+expiry removes it.
+
+Replacing an existing address requires `NLM_F_REPLACE` without `NLM_F_EXCL`.
+It refreshes lifetimes and the update stamp while retaining the original
+creation stamp, label and broadcast. An absent address can be inserted without
+`NLM_F_CREATE`, following Linux's compatibility behavior. Omitting cache
+information selects permanent lifetimes. Explicit broadcast values, including
+zero, are retained when an address is created.
+Creation at the monotonic clock's zero epoch also survives renewal. Deleting
+and recreating an address records a new creation stamp.
+
+`/proc/sys/net/ipv4/conf/{all,default,lo,ethN}/promote_secondaries` uses integer
+values. New interfaces inherit `default`; either a nonzero `all` or interface
+value enables promotion. The default is zero: removing or expiring a primary
+also removes its same-prefix secondaries. Promotion retains the first
+secondary's lifetime stamps and rebuilds its automatic prefix route. Other
+prefixes survive. Removing the final address withdraws the device's routes.
+Copied raw and UDP packets can retain their original source and payload while
+another address survives; later sends and new binds use current assignment.
+
+Sanitizer models cover expiry, renewal, stamp wrap, promotion, route ownership,
+PMTU retirement and copied output. The local control matrix passes eight
+static/dynamic, BIOS/UEFI and modern/legacy PCI profiles on virtio-net and
+e1000. Independent decoding checks all 528 original requests, actual boot
+products, ELF linkage and real elapsed observations. Root and actual UID 65534
+readers reopen a separate export. Each rejects 192 damaged logs and 16 damaged
+source, compiler, image and execution bindings. Original bytes and permissions
+are preserved. GNU libc and dynamic musl pass native clock and stamp checks;
+static musl passes syscall assertions but a 2.104787899-second realtime jump
+prevents accepting the complete native cohort. Earlier rejected traces remain
+retained. Independent kernel anchors measure the native stamp epoch without
+changing any clock, jump bound or lifetime interval.
+
+Four TCP sanitizer cases on both adapters retain copied bytes and sequence
+state while the source is absent, then deliver the exact bytes after address
+restoration. The corresponding two native diagnostic cases retain complete
+software-checksummed captures and stable clocks. A separate 24-case transport
+probe now covers UDP, raw IP and TCP with no survivor, an independent prefix,
+secondary cascade and promotion. An initial three-native/eight-guest campaign
+completed every client assertion. Eight guest protocol replays and the
+dynamic-musl native replay pass, each rejecting 32 damaged observations.
+Clock discontinuities and two missing final native tap receipts reject the
+complete campaign.
+
+The revised capture drains final receipts and observes actual address
+withdrawal after the original minimum wait. Linux's
+[address lifetime worker](https://github.com/gregkh/linux/blob/b5a1dc3ad4822c6edfb53429e9a3759c9b0ac2be/net/ipv4/devinet.c)
+uses delayed work; a one-second lifetime does not provide a synchronous
+withdrawal barrier. A subsequent native/guest pair passes all 24 protocol
+cases and rejects 37 damaged observations per profile. Every native packet
+reaches its independent tap with zero drops. Unmodified clock checks still
+reject both captures. Complete current-source native/linkage/firmware/transport,
+protected wire exports, artifact rejection controls and hosted acceptance
+remain required. This development slice does not complete F12 or F13.
+
+The qualification workflow now includes both control and transport evidence
+in the existing IPv4 CI job. Its protected export checks all 22 profiles,
+separate producer/reader source, original native stamp anchors and serialized
+protocol and artifact faults under root and an ordinary identity. Readers
+reject reserved IPv4 flags and zero TTL even when the checksum is repaired,
+following the [IPv4 header requirements](https://www.rfc-editor.org/rfc/rfc791.html).
+The publication gate remains pending complete current-source validation and
+hosted execution; earlier clock failures remain rejected.
 
 ## IPv4 and ICMP validation
 

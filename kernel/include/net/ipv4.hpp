@@ -17,11 +17,22 @@ struct Ipv4Config {
 
 constexpr unsigned ipv4_address_capacity = 32;
 
+struct Ipv4AddressLifetimes {
+    uint32_t preferred = UINT32_MAX, valid = UINT32_MAX;
+};
+
+struct Ipv4AddressCacheInfo {
+    uint32_t preferred = UINT32_MAX, valid = UINT32_MAX, created = 0, updated = 0;
+};
+
+static_assert(sizeof(Ipv4AddressLifetimes) == 8 && sizeof(Ipv4AddressCacheInfo) == 16);
+
 struct Ipv4Address {
     Ipv4Config config;
     unsigned index = 0;
     char label[16]{};
     bool secondary = false;
+    uint32_t flags = 0x80;
 };
 
 struct Ipv4Route {
@@ -39,13 +50,16 @@ const Ipv4Config* ipv4_config(unsigned index);
 // Serialized callers may borrow entries until the next address mutation.
 const Ipv4Address* ipv4_address(unsigned position);
 
+Ipv4AddressCacheInfo ipv4_address_cache(const Ipv4Address&);
+
 const Ipv4Config* ipv4_label(unsigned index, const char* label, uint32_t hint = 0);
 
 int ipv4_configure(unsigned index, const Ipv4Config&);
 
 int ipv4_configure_label(unsigned index, const char* label, const Ipv4Config&);
 
-int ipv4_address_add(unsigned index, const char* label, const Ipv4Config&);
+int ipv4_address_add(unsigned index, const char* label, const Ipv4Config&,
+                     Ipv4AddressLifetimes = {}, bool replace = false);
 
 int ipv4_address_remove(unsigned index, uint32_t address, uint32_t mask);
 

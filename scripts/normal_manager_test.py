@@ -20,7 +20,7 @@ from qmp import Qmp
 from qemu_acceleration import Acceleration
 from normal_login import ConsoleLogin, install_observer
 from build_accounts import digest
-from fixture_archive import archive_fixture
+from fixture_archive import archive_fixture, sparse_copy_fixture, retire_duplicate_fixture
 
 SCENARIOS = {'no-nic': (0, 0), 'no-server': (2, 0), 'missing': (2, 2), 'healthy': (2, 3)}
 PHASES = ('desktop-before', 'initial', 'kill', 'revalidating', 'recovered', 'desktop-after', 'stop')
@@ -157,7 +157,7 @@ def fixture():
     archive = directory / 'root.cpio'
     write_archive(archive, entries)
     disk = build('full', source=archive)
-    shutil.copyfile(disk, directory / 'seed.raw')
+    seed_copy = sparse_copy_fixture(disk, directory / 'seed.raw')
     disk = directory / 'seed.raw'
     images = {}
     for root in ('ram', 'ext2'):
@@ -179,6 +179,10 @@ def fixture():
                        'scripts/manager_peer.py', 'scripts/dhcp_peer.py', 'scripts/normal_dns_peer.py',
                        'scripts/normal_ipv6_peer.py',
                        'userspace/tests/net/init-supervision.cpp', 'userspace/tests/net/normal-dns.c')})
+    inputs['seed_copy'] = seed_copy
+    inputs['retired_duplicate_aliases'] = [
+        retire_duplicate_fixture(ROOT / 'build/root-disk.raw', disk),
+        *[retire_duplicate_fixture(ROOT / 'build' / path.name, path) for path in images.values()]]
     (directory / 'inputs.json').write_text(json.dumps(inputs, indent=2) + '\n')
     return disk, images, directory, inputs
 
@@ -246,7 +250,7 @@ def run(scenario, firmware, transport, root, disk_seed, images, timeout, directo
     mode = 'disable-legacy=on' if transport == 'modern' else 'disable-modern=on'
     if root == 'ext2':
         disk = directory / (label + '.raw')
-        shutil.copyfile(disk_seed, disk)
+        sparse_copy_fixture(disk_seed, disk)
         command += ['-drive', f'if=none,id=root,format=raw,cache=writeback,file={disk}',
                     '-device', f'virtio-blk-pci,drive=root,{mode},rerror=report,werror=report,addr=6']
     for lane, peer in enumerate(peers):

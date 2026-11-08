@@ -19,6 +19,8 @@ class Flow:
         self.prefix = self.highest = self.acked = self.reply_sent = 0
         self.window = 65535
         self.stage, self.stage_at = 'opening', None
+        self.awaiting_ack_write = False
+        self.ack_frame = None
         self.retries, self.measurements = [], []
         self.fin_received = self.fin_sent = self.done = False
 
@@ -34,6 +36,12 @@ class Flow:
         ip[10:12] = checksum(ip).to_bytes(2, 'big')
         self.peer.send(self.peer.guest + self.peer.mac + b'\x08\x00' + ip + body)
         self.peer.frames[-1].update(stage=self.stage, owned_ack=self.acked, window=self.window)
+        if self.awaiting_ack_write:
+            self.ack_frame = self.peer.frames[-1]
+
+    def begin_observation(self, stage):
+        self.stage, self.stage_at = stage, None
+        self.awaiting_ack_write = True
 
     def snapshot(self):
         self.measurements.append(dict(stage=self.stage, monotonic_ns=time.monotonic_ns(),
@@ -59,7 +67,7 @@ class Flow:
                   'window probe retains exact application bytes')
             repeated = all(self.present[position:position + len(data)])
             record.update(stage=self.stage, offset=position, retransmitted=repeated)
-            if self.stage_at is None:
+            if self.stage_at is None and not self.awaiting_ack_write:
                 self.stage_at = time.monotonic()
             self.received[position:position + len(data)] = data
             self.present[position:position + len(data)] = b'\1' * len(data)
@@ -94,7 +102,7 @@ class Flow:
             check(self.prefix >= 2920, 'actual initial burst supplies the window probe')
             self.snapshot()
             self.acked = 1460
-            self.stage, self.stage_at = 'growth', now
+            self.begin_observation('growth')
             self.send()
         elif self.stage == 'growth' and elapsed >= .1:
             self.snapshot()
@@ -102,17 +110,17 @@ class Flow:
         elif self.stage == 'loss' and len(self.retries) == 2:
             self.snapshot()
             self.acked = self.prefix
-            self.stage, self.stage_at = 'recovery', now
+            self.begin_observation('recovery')
             self.send()
         elif self.stage == 'recovery' and elapsed >= .1:
             self.snapshot()
             self.acked, self.window = self.prefix, 1024
-            self.stage, self.stage_at = 'receiver', now
+            self.begin_observation('receiver')
             self.send()
         elif self.stage == 'receiver' and elapsed >= .35:
             self.snapshot()
             self.acked, self.window = self.prefix, 65535
-            self.stage, self.stage_at = 'complete', now
+            self.begin_observation('complete')
             self.send()
 
     def result(self):
@@ -129,3 +137,13 @@ class Peer(EthernetPeer):
 
     def tick(self):
         self.flows[0].pump()
+
+    def output_drained(self):
+        flow = self.flows[0]
+        if flow.awaiting_ack_write:
+            check(not self.outgoing and not self.output and flow.ack_frame is not None,
+                  'congestion ACK reaches the backend before its observation starts')
+            completed = time.monotonic_ns()
+            flow.ack_frame['backend_write_completed_monotonic_ns'] = completed
+            flow.stage_at = completed / 1_000_000_000
+            flow.awaiting_ack_write = False

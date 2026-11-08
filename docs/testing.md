@@ -392,6 +392,14 @@ source restoration, then checks the exact echo, FINs and final descriptor releas
 The original one-second transport timer and all existing harness bounds remain;
 the independent wire lower bound is the established 850 ms allowance for guest ticks.
 
+After restoration, the peer repeats its original SYN-ACK or final ACK for a
+matching pending handshake retry. The reader requires an identical reply after
+each owned retry, while retaining the original withdrawal and restoration
+barriers. `python3 scripts/tests/tcp6_pending_retry_test.py -v` checks captured
+recovery from a lost SYN-ACK and final ACK, and rejects orphaned, changed or late
+replies. Its packet fixture checks offline semantics; live comparisons retain
+their native clock qualification and complete workload.
+
 `python3 scripts/tests/tcp6_pending_source_evidence_test.py` requires all 22
 captures, both actual images, 176 flows and 88 pending handshakes, with matching
 complete sources and native/guest programs. It rejects 870 serialized controls

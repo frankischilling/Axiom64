@@ -880,6 +880,7 @@ jobs:
         run: |
           sudo -n python3 scripts/tests/tcp6_observation_test.py
           sudo -n python3 scripts/tests/tcp6_native_cleanup_test.py
+          python3 scripts/tests/tcp6_pending_retry_test.py -v
           sudo -n make test-tcp6-wire-native
           make test-tcp6-wire
       - name: Compare IPv6 TCP path-MTU ownership with native and guest sockets

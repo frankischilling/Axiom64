@@ -55,6 +55,30 @@ final-address removal retire route owners without reviving admitted sends.
 the selected route and controls across output waits. The core owns packet queues,
 neighbor resolution and submission to Ethernet drivers.
 
+`kernel/net/ipv4/addresses.cpp` owns address labels, finite preferred/valid
+lifetimes, creation/update stamps, expiry cascades and secondary promotion.
+Its explicit centisecond clock also drives deterministic sanitizer checks;
+the IPv4 core supplies the actual clock and retires route and packet owners.
+`userspace/tests/net/ipv4/address_lifetimes.c` issues actual Linux netlink and
+procfs calls. `scripts/ipv4_lifetimes/` retains native and guest control
+campaigns and decodes original messages, policy calls and clock brackets.
+`protected.py` exports complete inputs for root and ordinary readers;
+`controls.py` and `artifact_controls.py` retain serialized rejection cases.
+`native_clock.py` retains independent kernel stamp anchors before and after
+each native client without altering observed clocks or lifetime deadlines.
+
+`userspace/tests/net/ipv4/address_lifetime_wire.c` exercises actual UDP, raw-IP
+and TCP transport ownership across finite expiry and restoration.
+`wire_worker.py` owns native namespaces, QEMU processes and original captures;
+`wire_log.py` and `wire_trace.py` independently decode control, receive and
+packet records. `wire_matrix.py` retains three native and eight guest profiles
+with two shared images. `wire_controls.py` serializes damaged observations.
+`wire_artifact_controls.py` reopens bounded source, executable, image and
+process faults in a disposable copy. `wire_protected.py` freezes independent
+reader source and reopens wire and address-control exports as actual root
+and ordinary identities. `cohort.py` owns CI command lifetime, cancellation,
+failure retention and publication into the existing artifact groups.
+
 `kernel/net/ipv4/configuration.cpp` owns global, default and interface routing
 policy values and interface generations. `kernel/fs/proc/ipv4.cpp` exposes the
 integer handlers; the shared procfs layer binds retained descriptions to their
@@ -116,6 +140,9 @@ UDP error setup; `native_icmp_preflight_capture.py` reopens its original packets
 clocks, rate settings and control-release receipt. The native-only C control
 client is `scripts/tests/native_icmp_budget.c`; `native_icmp_budget_test.py`
 retains cold/staggered/primed comparisons and independently checks their bytes.
+`scripts/tests/native_icmp_budget_capture_test.py` replays the complete captured
+Linux counter decisions under `scripts/tests/fixtures/native-icmp-budget-linux7/`.
+Cold suppression remains distinct from the required acknowledged primed pairs.
 These helpers supply no kernel or guest implementation.
 
 `userspace/tests/net/tcp6/replies.c` supplies shared native/guest TCP reply

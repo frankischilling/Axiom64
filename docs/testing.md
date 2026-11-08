@@ -1,5 +1,121 @@
 # Guest tests and CI
 
+`make test-ipv4-address-lifetimes-guest` runs the finite IPv4 address-control
+client on both Ethernet adapters in eight static/dynamic, BIOS/UEFI and
+modern/legacy PCI profiles. Two workers share immutable images. Original
+netlink requests and replies, guest monotonic/realtime brackets, executables,
+complete source and actual boot products remain available under the output
+directory. `PYTHONPATH=scripts python3 -B -m ipv4_lifetimes.guest DIRECTORY`
+reopens the images and decodes every original control observation offline.
+Original QEMU paths remain recorded as metadata when artifacts move; the
+reader opens the exported files. `sudo -n make test-ipv4-address-lifetimes-native`
+compares GNU libc and static/dynamic musl in three separate Linux network
+namespaces. These address-control cases use two dummy interfaces and retain
+actual kernel timer configuration, executable mappings and mapped libraries.
+They do not establish Ethernet wire behavior. Clock jumps fail qualification.
+Independent kernel address stamps bracket each native client. They measure
+the relation between Linux's jiffies-based stamp epoch and the unmodified
+monotonic clock. Both anchors must agree within three centiseconds; the
+original realtime/monotonic jump bound and every lifetime interval remain
+unchanged. Guest stamps retain their direct monotonic check.
+
+After a successful guest campaign, run
+`sudo -n env PYTHONPATH=scripts python3 -B -m ipv4_lifetimes.protected DIRECTORY /var/tmp/axiom-ipv4-lifetimes-export`.
+It creates a separate export and reopens it as root and actual UID 65534.
+Each reader checks all profiles, 24 damaged logs per profile and 16 damaged
+artifact bindings. Fault patches retain changed metadata or bounded byte
+deltas; verified disposable scratch copies are removed. Original evidence
+bytes and permissions are preserved.
+This control campaign does not establish retained transport wire behavior or
+full networking acceptance. [IPv4 lifetime development](ipv4.md#finite-address-lifetime-development)
+records the current validation limits.
+
+`sudo -n make test-ipv4-address-lifetimes-wire` captures a separate 24-case
+UDP, raw-IP and TCP campaign under three native linkages and eight guest
+profiles. Every profile uses both adapters. Two workers share two immutable
+guest images and common firmware. Cases distinguish final-address loss,
+an independent surviving prefix, secondary cascade and secondary promotion.
+The peer holds datagram neighbor resolution through expiry; TCP sends copied
+bytes while its source is absent and must recover their exact contents after
+restoration. Physical guards bracket every case.
+
+The client waits at least 1.5 seconds after assigning a one-second lifetime,
+then records each address query until actual withdrawal, bounded at 2.5
+seconds. Linux performs withdrawal in delayed work. The full two-second TCP
+absence and 500 ms datagram observations follow that actual transition.
+The capture drains queued receipts after process exit, preserving the final
+independent native tap record. Native interfaces require complete software
+checksums and zero packet loss. No clock or lifetime is adjusted.
+
+Native ARP retries may announce the independently recorded surviving address
+after the original source lifetime ends. The reader binds that address to the
+same adapter, peer or guard, survivor policy and original case interval.
+When Linux emits a zero-source retry during expiry, it must follow an owned
+request for the same datagram neighbour, with identical bytes except for the
+sender IP. It is accepted only after the original lifetime and before that
+case ends. Unanchored requests, guest zero sources and changed payload sources
+remain rejected. Linux's `arp_solicit()` can pass zero from
+[`inet_select_addr()`](https://github.com/torvalds/linux/blob/v7.0/net/ipv4/devinet.c#L1272-L1337)
+when no eligible primary address is selected; this does not renew the test's
+address or neighbour lifetime.
+Guest ARP sources and all IPv4 payload sources retain their exact checks.
+`python3 -B scripts/tests/ipv4_lifetime_arp_test.py` replays the original native
+request and rejects unowned addresses, hardware, targets and case intervals.
+The IPv4 worker cleanup check reads each descendant's process state directly;
+a process reaped before that read is already gone. Live descendants and
+unreadable state still fail the check.
+
+`PYTHONPATH=scripts python3 -B -m ipv4_lifetimes.wire_evidence DIRECTORY`
+reopens the source, actual executable and providers or boot image, original
+control acknowledgements, inventories, receive bytes, Ethernet frames and
+single-byte barrier receipts. It reconstructs TCP bytes across segment and
+read boundaries. `python3 -B -m ipv4_lifetimes.wire_controls DIRECTORY --output OUTPUT`
+with `PYTHONPATH=scripts` serializes 44 protocol faults and four clock faults.
+Its explicit `--protocol-only` development diagnostic does not qualify clocks
+or artifacts. Local native/guest protocol checks pass; observed clock jumps
+reject timing qualification. The complete current-source matrix, protected
+wire exports, damaged-artifact checks and hosted workflow remain required.
+
+`sudo -n make test-ipv4-address-lifetimes` runs the complete address-control,
+wire and protected-reader cohort. CI runs it inside the existing IPv4
+source-filter job, retaining that job's deadline and every existing suite.
+All three native and eight guest address-control profiles must pass alongside
+the eleven wire profiles. Independent producers still finish when another
+producer fails. Original captures and failed process logs remain available.
+Native control captures use `build/ipv4-address-lifetimes-native-controls`,
+separate from the prebuilt native executable.
+
+The final export reopens all 22 profiles as root and actual UID 65534, with
+no supplementary groups for the ordinary reader. It checks 528 protocol/clock
+faults, 264 address-control faults and 51 artifact faults per identity.
+Native control faults use the independently measured stamp epoch. The
+35 wire artifact faults repair outer hashes to exercise inner source,
+compiler, executable, provider, namespace, kernel, image, firmware, device,
+process and alias checks. Compiler records must match the pinned UAPI package,
+complete shared header inventory and exact include/target arguments.
+Each published fault is reopened and rejected again.
+
+For a previously captured complete cohort, invoke
+`ipv4_lifetimes.wire_protected WIRE_DIRECTORY EXPORT_DIRECTORY --native-controls NATIVE_DIRECTORY --guest-controls GUEST_DIRECTORY`
+with `sudo -n env PYTHONPATH=scripts python3 -B -m`. The export directory must
+be a fresh `/var/tmp/axiom-ipv4-lifetime-wire-*` directory. The CI coordinator
+retains it under `build/ipv4-address-lifetimes-audit/wire` for publication.
+Reopen that directory with `PYTHONPATH=scripts python3 -B -m ipv4_lifetimes.wire_protected DIRECTORY`.
+
+Producer and reader source archives remain separate. Reader-only updates
+may replay retained captures; runtime and build inputs must remain identical.
+The explicit `--inspect-rejected` diagnostic retains failed clock results
+while checking artifact readability. It cannot satisfy the normal protected
+qualification gate. The new publication path remains under qualification;
+local clock failures and full current-revision hosted acceptance remain open.
+
+The latest local matrix completes all 264 transport cases across eleven
+profiles. Artifact and protocol readers pass; every profile still fails its
+original clock check. Root and UID 65534 each reopen that diagnostic export,
+reject 429 protocol faults and 35 artifact faults, and repeat the readback
+after relocation. Those results establish portable artifact inspection;
+the normal qualification gate rejects the export.
+
 `python3 scripts/tests/account_rotation_disk_test.py -v` checks bounded host-memory device staging, disk fallback, exact copyback after success or guest failure, and retention when the evidence destination rejects copying. Rotation's small device files use this staging while the NBD backend retains its independent cache, flush and fault semantics. The original guest deadlines and native filesystem checks remain required. [VM timing](ci-vm-timing.md) records the focused host-storage comparison and remaining complete-run gates.
 
 Disposable NBD startup retains `backend-startup.json` beside each backend log.
@@ -276,6 +392,14 @@ source restoration, then checks the exact echo, FINs and final descriptor releas
 The original one-second transport timer and all existing harness bounds remain;
 the independent wire lower bound is the established 850 ms allowance for guest ticks.
 
+After restoration, the peer repeats its original SYN-ACK or final ACK for a
+matching pending handshake retry. The reader requires an identical reply after
+each owned retry, while retaining the original withdrawal and restoration
+barriers. `python3 scripts/tests/tcp6_pending_retry_test.py -v` checks captured
+recovery from a lost SYN-ACK and final ACK, and rejects orphaned, changed or late
+replies. Its packet fixture checks offline semantics; live comparisons retain
+their native clock qualification and complete workload.
+
 `python3 scripts/tests/tcp6_pending_source_evidence_test.py` requires all 22
 captures, both actual images, 176 flows and 88 pending handshakes, with matching
 complete sources and native/guest programs. It rejects 870 serialized controls
@@ -405,6 +529,14 @@ existing profile count, healthy-adapter renewal and teardown checks remain.
 
 
 Normal desktop acceptance drives private administrator creation and login through the installed console, then checks the ordinary session before sending the X11 command. The console driver waits for Bash to return its prompt before sending the next command. Its `printf` acknowledgements contain no complete marker in their input echo. Interleaved console output therefore cannot turn echoed command text into a completion acknowledgement. The host ends the boot only after the window manager, mapped terminal, keyboard acknowledgement, input injection and captured screenshot have all completed. Disk-root shutdown uses authenticated sudo. `python3 scripts/tests/desktop_console_test.py` replays premature acknowledgements, missing readiness, failed identity and actual generated shell output; `python3 scripts/tests/normal_login_test.py` checks split prompts, private elevation input and command return ordering. The BIOS/UEFI boots still exercise the real X11 probe and keyboard/mouse paths.
+
+`python3 scripts/tests/tcp_congestion_gate_test.py -v` checks congestion timers
+against complete backend ACK writes. Native Ethernet sends and framed guest
+streams start each ACK-gated interval only after the queued bytes have been
+written. Blocked and partial writes keep the timer pending. The original
+100 ms opening/recovery waits, 50 ms duplicate-ACK stages and 350 ms small-window
+observation remain required. Saved peer timestamps and independent captures
+still reject a shortened interval.
 
 | Test | Evidence |
 | --- | --- |
@@ -687,24 +819,37 @@ the original simultaneous adapter workload, sixty-second reassembly expiry,
 suppression observations and ten-minute PMTU lifetime intact.
 `sudo -n make test-native-icmp-budget` separately retains 256 fresh namespaces
 each for cold simultaneous, staggered and primed simultaneous error pairs.
-Cold global-rate suppression is recorded explicitly; staggered and primed pairs
-must return both original quotes. The staggered second writer waits for the
+Cold simultaneous and staggered pairs retain zero, one or two kernel
+rate-limit decisions. Every input must become an exact quote or an accounted
+kernel suppression; primed pairs must return both original quotes. The
+staggered second writer waits for the
 first complete input syscall, then observes the original one-millisecond gap.
 A missed shared deadline cannot turn this control into a simultaneous pair.
-The reader checks both actual syscall brackets and reopens twelve damaged
-controls, including collapsed and reversed staggering. The same target also
+The reader checks both actual syscall brackets and reopens sixteen damaged
+controls, including collapsed/reversed staggering, invalid counters and false
+cold summaries. The same target also
 runs three production-writer regressions with real pipes and monotonic clocks.
 They delay the first writer by zero, three and twenty milliseconds after the
 start barrier and require both complete payloads plus the original minimum
 gap. These scheduling regressions do not establish ICMP or guest behavior.
 CI retains these native controls in `native-icmp-budget`, alongside the complete
 fragment evidence. These comparisons do not establish guest behavior.
-Qualification with the three original client products reopens six captures and
+Earlier qualification with the three original client products reopens six captures and
 all 298 damaged controls, including the original expiry, PMTU and lifetime
 corruptions. Each profile retains both required expiry quotes with zero global
 suppression. All 768 fresh-namespace controls pass their explicit contracts;
 132 cold simultaneous profiles record suppression, while staggered and primed
 pairs return every quote. Complete current-revision hosted CI remains required.
+
+`python3 -B scripts/tests/native_icmp_budget_capture_test.py -v` replays a
+complete retained Linux 7.0.0-1017-azure cohort. Its trial 192 suppresses both
+staggered inputs despite the complete one-millisecond syscall gap; the kernel
+records both global rate-limit decisions. The compressed fixture preserves
+all 770 original records, including the failed producer summary. That original
+receipt still rejects. Regression tests repair only the outer summary flag to
+exercise packet/counter accounting and reject missing counts, shortened gaps
+and suppressed primed quotes. This changes no guest behavior or observation
+interval. Full new-source native and hosted qualification remain required.
 
 The full native and normal guest clients also retain the actual ten-minute path limit. Both NICs age together, with repeated socket queries and failed DO sends before two complete post-expiry datagrams. Original PCAP timing and native monotonic receipts must prove the unchanged interval. The outer normal-boot limit is 780 seconds to include this additional observation; fault profiles retain their 120-second bound. `--lifetime-only` isolates the complete native PMTU lifetime without claiming the other fragment and policy cases.
 
@@ -722,7 +867,7 @@ Authenticated boot and service fixtures retain their inputs, added identity clie
 
 Run `make test-netlink-codec` and `make test-netlink` for the [route-control checks](netlink.md#verification). Build `build/netlink-native` and run `sudo python3 scripts/netlink_native.py` for the common Linux comparison in an isolated network namespace. Guest evidence lives in `build/netlink-wire/`: the actual boot image, source and executable hashes, logs, per-adapter packet captures, and firmware/adapter observations. The guest fixture disables IPv6 before its IPv4-only client starts, so automatic IPv6 address probes cannot enter the strict ARP/IPv4 peer. `python3 scripts/tests/netlink_peer_test.py` replays a captured DAD frame and requires the peer to reject it. Native logs and results use `build/netlink-*` and record the running kernel version.
 
-Run `make test-address-codec` and `make test-configuration` for the [complete address and ownership/recovery checks](network-configuration.md#verification). Build `build/configuration-native` and run `sudo python3 scripts/configuration_native.py` for common Linux address messages in a private network namespace. Native checks exclude Axiom64-specific journal recovery and quotas. Guest/native evidence uses `build/configuration-*`.
+Run `make test-address-codec` and `make test-configuration` for the [complete address and ownership/recovery checks](network-configuration.md#verification). Build `build/configuration-native` and run `sudo python3 scripts/configuration_native.py` for common Linux address messages in a private network namespace. Native checks exclude Axiom64-specific journal recovery and quotas. Both clients install, replace and remove addresses with the supported `IFA_F_PERMANENT` extended attribute. Guest checks also reject unsupported `IFA_F_TENTATIVE` in that attribute and `NLM_F_APPEND` requests without publishing an address. Guest/native evidence uses `build/configuration-*`.
 
 Run `make test-dhcp-codec` for host codec/state/profile sanitizers, `make test-dhcp-modules` for their 12 guest cases, and `make test-dhcp-transport` for four real-wire cases. Evidence uses `build/dhcp-*`; the [configuration documentation](network-configuration.md) describes exact counts and remaining normal-service/reboot/fault coverage. These module fixtures do not run the normal startup daemon.
 
@@ -1555,6 +1700,17 @@ guest ICMP replies, checks their kernel header policy, and rejects repaired
 wrong headers while retaining strict application raw-output checks.
 The existing source-filter cohort overlaps routing qualification in the same
 CI job. It retains all cases, timing windows and aggregate requirements.
+For queued local errors, an armed packet socket records the actual third ARP
+transmission with `SIOCGSTAMPNS`. The client proves its raw queue empty after
+the full 980 ms quiet interval, then retains that proof while the serial
+acknowledgment arrives. Readers bind all three source ARP timestamps to their
+original frames and independent host receipts, check unchanged clock bounds,
+and require the empty proof before error consumption. The command still waits
+through the host quiet interval and retains its one-second response bound.
+`python3 -B scripts/tests/ipv4_source_guard_test.py -v` exercises delayed
+acknowledgment and rejects early readiness, prior consumption, short quiet
+intervals, missing proof and duplicate acknowledgment. Serialized controls also
+reject shortened or missing source proofs and damaged ARP or guard clocks.
 Focused local captures qualify the implemented error paths; the complete
 current matrix and hosted workflow must pass before integration.
 
@@ -1579,3 +1735,13 @@ The option-specific commands qualify their stated model and loopback scope. Ethe
 fragment copy bits, source-route receive policy, broader TCP responses, PMTU quotes and
 blocking/output lifetime cases remain necessary for complete packet-option acceptance.
 The existing receive/send-control and full networking cohorts remain required.
+
+
+Normal-init fixtures copy raw disks sparsely and verify every copied byte before
+booting. Each guest writes its own disk; the seed remains independent. Once the
+prepared fixture retains verified disk and ISO copies, the controller removes
+the matching build aliases before starting the guest matrix. The original
+firmware, transport, root and recovery scenarios and observation deadlines remain
+required. `python3 scripts/tests/fixture_storage_test.py -v` exercises sparse
+allocation, independent writes, preserved existing destinations, rejected partial
+copies and changed retention witnesses.

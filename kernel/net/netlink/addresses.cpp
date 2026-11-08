@@ -28,17 +28,16 @@ int netlink_address_change(const void* data, const NetlinkHeader& message) {
     memcpy(&address, input + sizeof(message), sizeof(address));
     if (address.family == 10)
         return netlink_ipv6_address_change(data, message);
-    if (message.flags & 0x100)
-        return -95;
     if (address.family != 2)
         return -97;
     if (address.prefix > 32)
         return -22;
-    if (address.scope || (address.flags & ~uint8_t(0x81)))
+    if (address.scope || (address.flags & ~uint8_t(0xa1)))
         return -95;
     if (!address.index || address.index > max_net_devices || !net_info(address.index))
         return -19;
     Ipv4Config desired;
+    Ipv4AddressLifetimes lifetime;
     char label[16];
     memcpy(label, net_info(address.index)->name, sizeof(label));
     desired.mask = address.prefix ? UINT32_MAX << (32 - address.prefix) : 0;
@@ -51,7 +50,8 @@ int netlink_address_change(const void* data, const NetlinkHeader& message) {
         memcpy(&field, input + at, sizeof(field));
         if (field.length < 4 || field.length > message.length - at)
             return -22;
-        if (field.type != 1 && field.type != 2 && field.type != 3 && field.type != 4)
+        if (field.type != 1 && field.type != 2 && field.type != 3 && field.type != 4 &&
+            field.type != 6 && field.type != 8)
             return -95;
         if (seen & (1u << field.type))
             return -22;
@@ -65,6 +65,19 @@ int netlink_address_change(const void* data, const NetlinkHeader& message) {
                     return -22;
             memset(label, 0, sizeof(label));
             memcpy(label, input + at + 4, length);
+        } else if (field.type == 6) {
+            if (field.length < 20)
+                return -34;
+            memcpy(&lifetime, input + at + 4, sizeof(lifetime));
+            if (message.type == 20 && (!lifetime.valid || lifetime.preferred > lifetime.valid))
+                return -22;
+        } else if (field.type == 8) {
+            if (field.length != 8)
+                return -22;
+            uint32_t flags;
+            memcpy(&flags, input + at + 4, sizeof(flags));
+            if (flags & ~uint32_t(0xa1))
+                return -95;
         } else {
             if (field.length != 8)
                 return -22;
@@ -90,15 +103,11 @@ int netlink_address_change(const void* data, const NetlinkHeader& message) {
     if (message.type == 20 && bits >= 2 && (!host || host == bits))
         return -22;
     desired.address = local;
-    uint32_t broadcast = bits < 2 ? 0 : local | bits;
-    if (message.type == 20 && (seen & (1u << 4)) && desired.broadcast != broadcast)
-        return -22;
     if (!(seen & (1u << 4)))
         desired.broadcast = 0;
     if (message.type == 20) {
-        if ((message.flags & 0x600) != 0x600)
-            return -95;
-        return ipv4_address_add(address.index, label, desired);
+        return ipv4_address_add(address.index, label, desired, lifetime,
+                                (message.flags & 0x100) && !(message.flags & 0x200));
     }
     for (unsigned n = 0; auto current = ipv4_address(n); n++)
         if (current->index == address.index && current->config.address == local &&

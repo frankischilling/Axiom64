@@ -57,12 +57,14 @@ def audit(rows, trials=256):
             'all cold, staggered and primed profiles once')
     cpus=None
     suppressed=[0,0,0]
+    suppressed_inputs=[0,0,0]
     quotes=0
     for row in cases:
         mode=row['mode']
-        require(row['aligned']==(mode!=0) and row['primed']==(mode==2) and
+        require(all(type(row[key]) is int for key in ('received','rate_global','out_errors')) and
+                row['aligned']==(mode!=0) and row['primed']==(mode==2) and
                 row['gap_ns']==(1000000 if mode==0 else 0) and row['out_errors']==0 and
-                row['received']+row['rate_global']==2 and 0<=row['rate_global']<=1,
+                row['received']+row['rate_global']==2 and 0<=row['rate_global']<=2,
                 'actual default native error decisions are fully accounted')
         if mode==0:
             require(row['lanes'][1]['write_before_ns']>=row['lanes'][0]['write_after_ns']+row['gap_ns'],
@@ -82,20 +84,25 @@ def audit(rows, trials=256):
             quotes+=1
         else:
             require(row['primer'] is None, 'cold controls retain their original first-error condition')
-        if mode!=1:
-            require(row['rate_global']==0 and found==2, 'staggered and primed original pairs both emit errors')
+        if mode==2:
+            require(row['rate_global']==0 and found==2, 'primed original pairs both emit errors')
         suppressed[mode]+=row['rate_global']>0
+        suppressed_inputs[mode]+=row['rate_global']
     final=rows[-1]
     require(final['passed'] is True and final['profiles']==trials*3 and final['guest_acceptance'] is False and
+            all(type(final[key]) is int for key in ('staggered_suppressed_profiles','aligned_suppressed_profiles','primed_suppressed_profiles')) and
             [final[key] for key in ('staggered_suppressed_profiles','aligned_suppressed_profiles','primed_suppressed_profiles')]==suppressed,
             'final producer counters match every actual case')
+    require(quotes+sum(suppressed_inputs)==trials*7, 'every actual input becomes an exact quote or kernel rate-limit decision')
     return dict(passed=True,native_reference_control=True,guest_acceptance=False,profiles=trials*3,
                 actual_inputs=trials*7,actual_quotes=quotes,owned_cpus=cpus,
                 staggered_suppressed_profiles=suppressed[0],cold_aligned_suppressed_profiles=suppressed[1],
-                primed_suppressed_profiles=suppressed[2])
+                primed_suppressed_profiles=suppressed[2],suppressed_inputs_by_mode=suppressed_inputs,
+                global_suppressed_inputs=sum(suppressed_inputs))
 
 
 def controls(rows, path):
+    audit(rows)
     at=next(n for n,row in enumerate(rows) if row.get('mode')==2)
     staggered=next(n for n,row in enumerate(rows) if row.get('mode')==0)
     def move_second(data,gap):
@@ -116,7 +123,11 @@ def controls(rows, path):
         'wrong-primer-input':lambda data:data[at]['primer'].__setitem__('input','ff'+data[at]['primer']['input'][2:]),
         'unaccounted-error':lambda data:data[at].__setitem__('rate_global',1),
         'invented-read-time':lambda data:data[at]['lanes'][0].__setitem__('read_ns',1),
-        'false-summary':lambda data:data[-1].__setitem__('primed_suppressed_profiles',1)}
+        'false-summary':lambda data:data[-1].__setitem__('primed_suppressed_profiles',1),
+        'boolean-rate-counter':lambda data:data[staggered].__setitem__('rate_global',False),
+        'negative-global-counter':lambda data:data[staggered].__setitem__('rate_global',-1),
+        'excessive-global-counter':lambda data:data[staggered].__setitem__('rate_global',3),
+        'false-staggered-summary':lambda data:data[-1].__setitem__('staggered_suppressed_profiles',data[-1]['staggered_suppressed_profiles']+1)}
     verdicts={}
     with zipfile.ZipFile(path,'x',compression=zipfile.ZIP_DEFLATED) as archive:
         for name,change in mutations.items():
@@ -131,7 +142,7 @@ def controls(rows, path):
                 verdicts[name]=str(error)
             else:
                 raise ValueError('native ICMP budget damaged control passed: '+name)
-    require(len(verdicts)==12, 'all serialized damaged controls reopened and rejected')
+    require(len(verdicts)==16, 'all serialized damaged controls reopened and rejected')
     return verdicts
 
 

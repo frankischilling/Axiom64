@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 #include "net/netlink.hpp"
 
 using namespace ax;
@@ -90,6 +91,17 @@ static size_t evaluate(const uint8_t* packet, bool capped, uint8_t* saved) {
 }
 
 int main() {
+    uint8_t inventory[24]{};
+    NetlinkHeader query{24, 22, 0x301, 1, 0};
+    memcpy(inventory, &query, sizeof(query));
+    check(routing_capacity(query) == netlink_address_reply &&
+              routing_capacity(query, inventory) == netlink_address_reply,
+          "unknown and combined address inventories reserve both complete families");
+    for (unsigned family : {2u, 10u}) {
+        inventory[16] = uint8_t(family);
+        check(routing_capacity(query, inventory) == netlink_family_reply,
+              "single-family address inventories retain their reservation");
+    }
     const uint16_t mutation_types[] = {20, 21, 24, 25};
     for (uint16_t type : mutation_types) {
         NetlinkHeader request{16, type, 5, 17, 0};

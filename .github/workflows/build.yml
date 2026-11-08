@@ -49,6 +49,7 @@ jobs:
         run: |
           python3 -B scripts/tests/tcp6_isolation_prelude_test.py -v
           python3 -B scripts/tests/tcp6_source_handshake_test.py -v
+          sudo -n python3 -B scripts/tests/tcp_icmp_port_ownership_test.py -v
           python3 -B scripts/tests/native_icmp_budget_capture_test.py -v
           sudo -n python3 -B scripts/tests/ipv4_lifetime_paths_test.py -v
           python3 -B scripts/tests/ipv4_lifetime_arp_test.py -v
@@ -1102,9 +1103,21 @@ jobs:
         run: |
           make test-unix-rights-policy test-unix-datagram-policy
           sudo -n python3 -B scripts/unix_stream_native.py
-          python3 -B scripts/unix_datagram_test.py
-          python3 -B scripts/unix_datagram_proof.py build/unix-datagram-guest
-          sudo -n -u nobody python3 -B scripts/unix_datagram_proof.py build/unix-datagram-guest
+          umask 022
+          evidence_parent=$(mktemp -d /var/tmp/axiom64-unix-evidence.XXXXXXXX)
+          chmod 0755 "$evidence_parent"
+          archive_unix_evidence() {
+            tar -C "$evidence_parent" -czf build/unix-datagram-guest.tar.gz .
+            case "$evidence_parent" in
+              /var/tmp/axiom64-unix-evidence.*) rm -r -- "$evidence_parent" ;;
+              *) return 1 ;;
+            esac
+          }
+          trap archive_unix_evidence EXIT
+          evidence="$evidence_parent/guest"
+          python3 -B scripts/unix_datagram_test.py --directory "$evidence"
+          python3 -B "$evidence/inputs/scripts/unix_datagram_proof.py" "$evidence"
+          sudo -n -u nobody python3 -B "$evidence/inputs/scripts/unix_datagram_proof.py" "$evidence"
       - name: Compare retained I/O and socket timeouts with native Linux
         if: matrix.suite == 'boot'
         run: sudo -n make test-thread-io-native
@@ -1728,7 +1741,7 @@ jobs:
           name: axiom64-evidence-${{ matrix.suite }}
           path: |
             build/*.log
-            build/unix-datagram-guest/**
+            build/unix-datagram-guest.tar.gz
             build/unix-stream-native/**
             build/udp-wire/**
             build/ipv4-multicast-evidence/**

@@ -14,6 +14,8 @@ KERNEL_SOURCES = $(filter-out kernel/tests/%,$(call rwildcard,kernel/,*.cpp))
 KERNEL_OBJECTS = $(patsubst kernel/%.cpp,build/kernel/%.o,$(KERNEL_SOURCES)) build/kernel/arch/x86_64/entry.o
 FORMAT_SOURCES = $(foreach pattern,*.cpp *.hpp,$(call rwildcard,kernel/,$(pattern))) $(foreach pattern,*.c *.h *.cpp *.hpp,$(call rwildcard,userspace/,$(pattern))) scripts/tests/native_icmp_budget.c scripts/tests/native_icmp_stagger_regression.c scripts/tests/native_source_guard_regression.c scripts/tests/native_ipv6_barrier.c scripts/tests/clock_wall_boundary_shim.c
 
+FORMAT_SOURCES += scripts/tests/tcp_icmp_port_ownership.c
+
 .PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-network test-ipv4 test-udp test-netlink test-netlink-codec test-address-codec test-configuration test-dhcp-codec test-dhcp-modules test-dhcp-transport test-profiles test-resolver test-resolver-native test-clock-codec test-clock test-file-locks test-file-locks-native test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
 all: image
 build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-output-host build/tcp-socket-output-host: kernel/net/ipv4/configuration.cpp

@@ -24,7 +24,8 @@ def snapshot(directory):
     names = {'Makefile', 'dependencies.json', 'sources.lock.json', 'ports.lock.json',
              'boot/limine.conf', 'vendor/limine.h'}
     for folder, extensions in [('kernel', ('.cpp', '.hpp', '.asm', '.ld')),
-                               ('scripts', ('.py', '.sh')), ('userspace/init', ('.c', '.h'))]:
+                               ('scripts', ('.py', '.sh', '.c', '.h', '.json')),
+                               ('userspace/init', ('.c', '.h'))]:
         names.update(path.relative_to(ROOT).as_posix() for path in (ROOT / folder).rglob('*')
                      if path.is_file() and path.suffix in extensions)
     names.update('userspace/tests/ipc/' + name + '.c' for name in CLIENTS)

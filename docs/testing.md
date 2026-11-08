@@ -1925,12 +1925,22 @@ preserves the queued stream bytes and descriptions. A consuming control fault
 discards descriptions; a later control-header fault preserves already installed
 descriptors. `sudo python3 scripts/unix_stream_native.py` compares root,
 credential-drop and already-ordinary Linux callers with the same C client.
+The native runner executes a byte-checked public copy in its own temporary
+directory, so private checkout ancestors do not prevent ordinary execution.
+
+Guarded two-page transfers check scalar and vector sends, peeks, scalar reads
+and message receives. A fault in a later page leaves the entire affected byte
+interval and its descriptions uncommitted. Receive faults may expose a copied
+userspace prefix; earlier complete intervals still count as progress. A later
+successful receive obtains the original bytes and retained descriptions.
 
 `make test-unix-datagrams` runs all seven public clients as root and UID 65534 with
 both musl providers, both linkages and BIOS/UEFI: 112 actual client executions.
 Keep its evidence directory on a case-sensitive filesystem so every pinned SDK
 header retains its original name and bytes. On a Windows-mounted checkout, use
 `python3 scripts/unix_datagram_test.py --directory /var/tmp/axiom-unix-guest`.
+CI creates guest evidence outside the private checkout, runs its exported reader
+under both identities, and retains the complete corpus in one compressed archive.
 `make test-unix-datagrams-proof` independently reopens retained source copies,
 all 977 SDK headers, client ELF types/interpreters, compilation records, images,
 initramfs contents and original serial logs. The production ownership sanitizer

@@ -58,6 +58,7 @@ struct IoRequest {
     size_t packet_length;
     uint32_t unix_send_limit;
     UnixDatagramRecord* unix_record;
+    UnixMessageCredentials unix_credentials;
     UnixAddressValue unix_name;
     UnixDatagramTarget unix_target;
     bool unix_named;
@@ -177,8 +178,10 @@ static int prepare_unix_datagram(Task& task, IoRequest& request) {
         Message message;
         if (!task.memory->space.copy_in(&message, f.rsi, sizeof(message)))
             return -14;
-        if (request.write && message.control_length)
-            return -95;
+        if (request.write)
+            if (int error =
+                    request.unix_credentials.read(task, message.control, message.control_length))
+                return error;
         if (request.write && message.name && message.name_length) {
             if (int error = socket_datagram_address(task, message.name, message.name_length,
                                                     request.unix_name))
@@ -216,6 +219,9 @@ static int prepare_unix_datagram(Task& task, IoRequest& request) {
             return -14;
     }
     if (request.write) {
+        if (request.handle->socket->pass_credentials)
+            if (int error = socket_datagram_autobind(*request.handle->socket))
+                return error;
         request.unix_send_limit = request.handle->socket->datagram_send->size();
         if (request.packet_length > request.unix_send_limit - 32)
             return -90;
@@ -801,6 +807,7 @@ static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
                                            request.unix_send_limit, socket->datagram_name);
             if (!request.unix_record)
                 return error;
+            request.unix_record->credentials() = request.unix_credentials;
             if (int copied = copy_packet(task, request, 0, request.packet_length,
                                          request.unix_record->data()))
                 return copied;
@@ -852,6 +859,9 @@ static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
     if (f.rax == 47) {
         uint64_t control_length = 0;
         uint32_t flags = copied < length ? 0x20 : 0;
+        if (present && socket->pass_credentials)
+            control_length = socket->datagrams.credentials()->write(
+                task, request.control_pointer, request.control_capacity, flags);
         if (!task.memory->space.copy_out(f.rsi + offsetof(Message, name_length), &address_length,
                                          4) ||
             !task.memory->space.copy_out(f.rsi + offsetof(Message, control_length), &control_length,

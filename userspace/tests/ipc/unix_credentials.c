@@ -83,6 +83,11 @@ static void options(void) {
     }
     int value = 1;
     CHECK(setsockopt(sockets[0], SOL_SOCKET, SO_PASSCRED, &value, 3) == -1 && errno == EINVAL);
+    CHECK(setsockopt(sockets[0], SOL_SOCKET, SO_PASSCRED, &value, (socklen_t)-1) == -1 &&
+          errno == EINVAL);
+    socklen_t negative = (socklen_t)-1;
+    CHECK(getsockopt(sockets[0], SOL_SOCKET, SO_PASSCRED, &value, &negative) == -1 &&
+          errno == EINVAL && negative == (socklen_t)-1);
     enable(sockets[0], 0);
     finish(sockets);
     puts("UNIX_CREDENTIALS_OPTIONS_PASS default boolean partial_get short_set");

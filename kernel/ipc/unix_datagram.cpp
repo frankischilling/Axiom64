@@ -112,6 +112,10 @@ const UnixAddressName* UnixDatagramQueue::source_name() const {
     return first && first->source && first->source->address().length ? first->source : nullptr;
 }
 
+const UnixMessageCredentials* UnixDatagramQueue::credentials() const {
+    return first ? &first->message_credentials : nullptr;
+}
+
 void UnixDatagramQueue::consume() {
     if (!first)
         return;

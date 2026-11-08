@@ -1843,5 +1843,32 @@ Local guest validation runs all four clients as root and UID 65534 with both
 musl linkages on BIOS and UEFI: 32 actual program executions. The fresh kernel,
 complete frozen sources, client/UAPI inputs, initramfs, images and logs are
 retained. These local results do not establish current hosted CI acceptance.
-Per-message credentials, descriptor transfer and cycle collection remain
-required for complete Unix socket support.
+Datagram `SO_PASSCRED` now retains a per-message sender identity independently
+of the connection's `SO_PEERCRED`. The five-group
+`userspace/tests/ipc/unix_credentials.c` client checks queued and departed
+senders, real user/group IDs, explicit self claims, rejected unprivileged
+claims, malformed control headers, repeated peeks, partial option values and
+control-buffer capacities from zero through 33 bytes. Negative option lengths
+return `EINVAL`. Enabling receipt of credentials after an uncaptured send
+returns the anonymous identity, with PID zero and UID/GID 65534.
+
+Automatic capture occurs at target lookup before waiting for a full receive
+queue. Waking that waiter preserves the captured identity. A fresh lookup after
+a named receiver dies can capture an identity for the replacement target.
+Linux 6.6 and Linux 7 differ in when this capture occurs; the local Linux 7
+reference VM and Axiom64 agree on all four receiver/sender toggle cases under
+root and ordinary identities. The Linux release and each actual invocation
+belong in comparison evidence.
+
+Local validation runs both musl providers and both linkages on BIOS and UEFI,
+with root and UID 65534. It retains all 80 executions of the five data, name,
+routing and credential clients, plus sixteen blocked-send credential controls,
+with compiler/UAPI inputs, images, original logs and a fresh kernel build.
+The Linux buffer controls require known 212992-byte send/receive maxima;
+the Linux 7 reference VM records its original 4194304-byte maxima before
+setting the comparison policy. Establish that policy in a disposable VM or
+genuinely namespaced settings.
+
+Descriptor transfer, stream credentials and cycle collection remain required
+for complete Unix socket support. These local comparisons do not establish
+current hosted acceptance.

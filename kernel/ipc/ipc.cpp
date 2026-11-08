@@ -145,6 +145,9 @@ int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_of
 
 int64_t socket_write(Socket* s, const void* data, size_t len, uint32_t datagram_entry_limit) {
     if (s->type == 2) {
+        if (s->pass_credentials)
+            if (int error = socket_datagram_autobind(*s))
+                return error;
         int error;
         auto record = UnixDatagramRecord::create(*s->datagram_send, len, error,
                                                  datagram_entry_limit, s->datagram_name);
@@ -646,6 +649,15 @@ int64_t ipc_syscall(Frame* f) {
             return -88;
         if (b != 1)
             return -92;
+        if (s->type == 2 && c == 16) {
+            if (int32_t(f->r8) < int32_t(sizeof(int)))
+                return -22;
+            int value;
+            if (!current->memory->space.copy_in(&value, d, sizeof(value)))
+                return -14;
+            s->pass_credentials = value != 0;
+            return 0;
+        }
         if (s->type == 2 && (c == 7 || c == 8)) {
             if (f->r8 < sizeof(uint32_t))
                 return -22;
@@ -666,6 +678,19 @@ int64_t ipc_syscall(Frame* f) {
             return -88;
         if (b != 1)
             return -92;
+        if (s->type == 2 && c == 16) {
+            uint32_t length;
+            if (!current->memory->space.copy_in(&length, f->r8, 4))
+                return -14;
+            if (int32_t(length) < 0)
+                return -22;
+            length = min(length, uint32_t(sizeof(int)));
+            int value = s->pass_credentials;
+            if (!current->memory->space.copy_out(d, &value, length) ||
+                !current->memory->space.copy_out(f->r8, &length, 4))
+                return -14;
+            return 0;
+        }
         if (c == 17) {
             uint32_t length;
             if (!current->memory->space.copy_in(&length, f->r8, 4))

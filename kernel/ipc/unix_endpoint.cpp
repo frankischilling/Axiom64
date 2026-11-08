@@ -11,6 +11,30 @@ static bool datagram_name_used(const UnixAddressValue& value) {
     return false;
 }
 
+int socket_datagram_autobind(Socket& socket) {
+    if (socket.datagram_name->address().length)
+        return 0;
+    static bool initialized;
+    static uint32_t next;
+    if (!initialized) {
+        if (int error = random_read(&next, sizeof(next), true))
+            return error;
+        initialized = true;
+    }
+    UnixAddressValue value;
+    value.length = 6;
+    constexpr char hex[] = "0123456789abcdef";
+    unsigned attempts = 0;
+    do {
+        uint32_t candidate = next++;
+        for (unsigned n = 0; n < 5; n++)
+            value.path[n + 1] = hex[(candidate >> ((4 - n) * 4)) & 15];
+    } while (datagram_name_used(value) && ++attempts <= 256);
+    if (datagram_name_used(value))
+        return -98;
+    return socket.datagram_name->bind(value);
+}
+
 int socket_datagram_bind(Task& task, Socket& socket, uint64_t pointer, size_t length) {
     length = uint32_t(length);
     if (length < 2 || length > 128)
@@ -23,25 +47,9 @@ int socket_datagram_bind(Task& task, Socket& socket, uint64_t pointer, size_t le
         return error;
     if (socket.datagram_name->address().length)
         return -22;
-    if (!value.length) {
-        static bool initialized;
-        static uint32_t next;
-        if (!initialized) {
-            if (int error = random_read(&next, sizeof(next), true))
-                return error;
-            initialized = true;
-        }
-        value.length = 6;
-        constexpr char hex[] = "0123456789abcdef";
-        unsigned attempts = 0;
-        do {
-            uint32_t candidate = next++;
-            for (unsigned n = 0; n < 5; n++)
-                value.path[n + 1] = hex[(candidate >> ((4 - n) * 4)) & 15];
-        } while (datagram_name_used(value) && ++attempts <= 256);
-        if (datagram_name_used(value))
-            return -98;
-    } else if (value.abstract() && datagram_name_used(value))
+    if (!value.length)
+        return socket_datagram_autobind(socket);
+    if (value.abstract() && datagram_name_used(value))
         return -98;
     if (!value.abstract()) {
         Path path;
@@ -206,6 +214,7 @@ int64_t socket_datagram_write(Task& task, Socket* sender, UnixDatagramRecord* re
     if (sender->write_closed)
         return -32;
     for (;;) {
+        bool resolved = false;
         if (!target.socket) {
             if (named) {
                 int error;
@@ -222,6 +231,7 @@ int64_t socket_datagram_write(Task& task, Socket* sender, UnixDatagramRecord* re
                     return -107;
                 target = {sender->peer, sender->peer_generation};
             }
+            resolved = true;
         }
         if (!live(target)) {
             if (sender->connected && sender->peer_generation == target.generation) {
@@ -238,6 +248,10 @@ int64_t socket_datagram_write(Task& task, Socket* sender, UnixDatagramRecord* re
             return -1;
         if (receiver->read_closed)
             return -32;
+        // Capture once for this lookup, before waiting for the receive queue.
+        // A dead named receiver can trigger a fresh lookup; a mere wake cannot.
+        if (resolved && (sender->pass_credentials || receiver->pass_credentials))
+            record->credentials().capture(task);
         if (receiver_full(*receiver, *sender))
             return -11;
         size_t length = record->size();

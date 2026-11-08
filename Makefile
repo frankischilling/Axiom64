@@ -48,7 +48,7 @@ build/unix-names-native: userspace/tests/ipc/unix_names.c
 test-unix-names-native: build/unix-names-native
 	./build/unix-names-native
 
-build/unix-datagram-policy: kernel/tests/ipc/unix_datagram.cpp kernel/ipc/unix_datagram.cpp kernel/ipc/unix_address.cpp kernel/include/ipc/unix_datagram.hpp kernel/include/ipc/unix_address.hpp
+build/unix-datagram-policy: kernel/tests/ipc/unix_datagram.cpp kernel/ipc/unix_datagram.cpp kernel/ipc/unix_address.cpp kernel/include/ipc/unix_datagram.hpp kernel/include/ipc/unix_address.hpp kernel/include/ipc/unix_credentials.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 

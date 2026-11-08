@@ -2,6 +2,7 @@
 #pragma once
 #include "core/base.hpp"
 #include "ipc/unix_address.hpp"
+#include "ipc/unix_credentials.hpp"
 
 namespace ax {
 // Queued records retain this charge owner independently of the socket slot.
@@ -40,6 +41,7 @@ class UnixDatagramRecord {
     UnixSendBudget* owner = nullptr;
     UnixAddressName* source = nullptr;
     bool queued = false;
+    UnixMessageCredentials message_credentials{};
     friend class UnixDatagramQueue;
 
   public:
@@ -54,6 +56,10 @@ class UnixDatagramRecord {
     size_t size() const {
         return length;
     }
+
+    UnixMessageCredentials& credentials() {
+        return message_credentials;
+    }
 };
 
 // A front view remains valid until consume/clear; callers serialize access.
@@ -67,6 +73,7 @@ class UnixDatagramQueue {
     void accept(UnixDatagramRecord*);
     bool front(const uint8_t*& bytes, size_t& length) const;
     const UnixAddressName* source_name() const;
+    const UnixMessageCredentials* credentials() const;
     void consume();
     void clear();
 

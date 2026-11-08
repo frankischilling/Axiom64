@@ -28,6 +28,7 @@ struct Socket {
     UnixSendBudget* datagram_send = nullptr;
     uint32_t datagram_receive = 212992;
     int datagram_error = 0;
+    bool pass_credentials = false;
 };
 
 struct UnixDatagramTarget {
@@ -71,6 +72,7 @@ int64_t socket_datagram_write(Task&, Socket*, UnixDatagramRecord*, const UnixAdd
                               UnixDatagramTarget&);
 int socket_datagram_address(Task&, uint64_t pointer, uint32_t length, UnixAddressValue&);
 int socket_datagram_bind(Task&, Socket&, uint64_t pointer, size_t length);
+int socket_datagram_autobind(Socket&);
 int socket_datagram_connect(Task&, Socket&, uint64_t pointer, uint32_t length);
 int socket_datagram_output_name(Task&, const UnixAddressName*, uint64_t, uint64_t);
 bool socket_datagram_writable(const Socket&);

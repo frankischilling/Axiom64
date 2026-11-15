@@ -41,6 +41,8 @@ jobs:
             downloads/cacert-*.pem
             downloads/ports
             downloads/sources
+      - name: Verify locked userspace packages before dependency builds
+        run: python3 scripts/ports.py fetch
       - name: Test crypto cache input invalidation and complete product retention
         run: python3 scripts/tests/crypto_cache_test.py -v
       - name: Verify concurrent cold downloads and interrupted transfer ownership

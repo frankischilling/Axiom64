@@ -1,7 +1,7 @@
 # Local musl patches
 
 The source lock pins Ubuntu musl 1.2.4-2 for build-time programs and Alpine musl
-1.2.5-r12 for the installed runtime and native development libraries. The original
+1.2.5-r13 for the installed runtime and native development libraries. The original
 archives, distribution recipes and patches remain pinned and bundled. Local
 patches apply afterward, in `sources.lock.json` order, with checked SHA-256 hashes
 and no patch fuzz.

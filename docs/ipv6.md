@@ -589,7 +589,13 @@ Source admission also follows the measured pre-bound behavior and the
 The finite-source comparison exercises the same pending cases through automatic
 address retirement. Fresh binds succeed before the configured lifetime ends and
 then reject the source. An independent peer host route survives the address's
-prefix update; route dumps and actual companion traffic establish that route
+prefix update. After restoring an address, the client observes its exact local
+input route before releasing incoming handshake packets. A successful address
+acknowledgment can precede that route's installation on Linux, even with NODAD.
+The namespace regression exercises 3,000 actual add/remove cycles through the
+client's helper and checks that removed local routes remain absent. The original
+finite lifetimes, socket bounds and packet acceptance checks remain unchanged.
+Route dumps and actual companion traffic establish the surviving peer route's
 ownership separately. TCP retries retain the original tuple before restoration,
 echo and close. This follows measured native behavior and the
 [v6.17 address-lifetime path](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/addrconf.c).

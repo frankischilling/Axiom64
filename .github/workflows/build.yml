@@ -920,6 +920,7 @@ jobs:
           sudo -n make test-tcp6-pending-source-native
           make test-tcp6-pending-source
           python3 scripts/tests/tcp6_pending_source_evidence_test.py
+          sudo -n python3 scripts/tests/tcp6_source_restore_test.py
           sudo -n make test-tcp6-source-expiry-native
           make test-tcp6-source-expiry
           python3 scripts/tests/tcp6_source_expiry_evidence_test.py

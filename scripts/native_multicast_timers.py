@@ -7,7 +7,12 @@ from pathlib import Path
 import platform
 import time
 
-from native_ipv6_timers import SUPPORTED_KERNELS, configuration
+from native_ipv6_timers import SUPPORTED_KERNELS as IPV6_KERNELS, configuration
+
+# The AWS release has measured source-filter records and both signed Ubuntu
+# builds retain the same x86-64 HZ=1000 IGMP timer contract. Its actual config
+# must still be collected unchanged around every native capture.
+SUPPORTED_KERNELS = (*IPV6_KERNELS, '7.0.0-1014-aws')
 
 CONFIG = 'native-multicast-config.txt'
 AFTER_CONFIG = 'native-multicast-config-after.txt'

@@ -22,6 +22,7 @@ class Controller:
         self.stages = []
         self.bound_host = None
         self.clock_checked = False
+        self.clock_offset = None
 
     def command(self, stage, approve=False):
         check(self.pending is None, 'one outstanding serial observation')
@@ -32,11 +33,25 @@ class Controller:
     def line(self, line):
         if line.startswith('MANAGER_PROTOCOL_READY '):
             self.ready = True
-        match = re.fullmatch(r'MANAGER_PROTOCOL_FRAME index=(\d+) length=(\d+) hash=([0-9a-f]{16}) packet_type=(\d+) monotonic_ms=(\d+)', line)
+        match = re.fullmatch(r'MANAGER_PROTOCOL_FRAME index=(\d+) length=(\d+) hash=([0-9a-f]{16}) packet_type=(\d+) monotonic_ms=(\d+) packet_ns=(\d+) monotonic_before_ns=(\d+) realtime_ns=(\d+) monotonic_after_ns=(\d+)', line)
         if match:
-            index, length, digest, packet_type, milliseconds = match.groups()
+            index, length, digest, packet_type, milliseconds, *clocks = match.groups()
             check(int(index) in (1, 2), 'observer reports an actual Ethernet adapter')
-            self.peers[int(index) - 1].receipt(int(length), digest, int(milliseconds), int(packet_type))
+            clock = dict(zip(('packet_ns', 'monotonic_before_ns', 'realtime_ns',
+                              'monotonic_after_ns'), map(int, clocks)))
+            before, real, after = (clock[key] for key in ('monotonic_before_ns', 'realtime_ns',
+                                                         'monotonic_after_ns'))
+            check(0 < before <= after and 0 < clock['packet_ns'] <= real,
+                  'original packet timestamp precedes its bracketed dequeue clocks')
+            offset = (real - after, real - before)
+            if self.clock_offset is not None:
+                offset = (max(offset[0], self.clock_offset[0]), min(offset[1], self.clock_offset[1]))
+            check(offset[0] <= offset[1], 'stable actual guest realtime-to-monotonic offset')
+            self.clock_offset = offset
+            self.peers[int(index) - 1].receipt(int(length), digest, int(milliseconds),
+                                              int(packet_type), clock)
+        elif line.startswith('MANAGER_PROTOCOL_FRAME '):
+            check(False, 'complete original packet timestamp and reference clocks')
         match = re.fullmatch(r'MANAGER_PROTOCOL_PASS stage=(\S+) affected=(\d+) monotonic_ms=(\d+)', line)
         if not match:
             return
@@ -67,7 +82,9 @@ class Controller:
             else:
                 origin = next(record for record in target.received if record.get('kind') == 4)
                 minimum = 10000
-            check(int(milliseconds) - origin['guest_ms'] >= minimum,
+            fresh = next(record for record in target.received if record.get('kind') == 1 and
+                         record['sequence'] > origin['sequence'])
+            check(fresh['packet_ns'] - origin['packet_ns'] >= minimum * 1_000_000,
                   'actual guest expiry/DECLINE backoff has elapsed before fresh acquisition')
             self.clock_checked = True
         if approve:
@@ -239,6 +256,9 @@ def run(linkage, scenario, affected, firmware, transport, timeout, image):
     counts = [peer.counts() for peer in peers]
     if error is None and returncode == 1 and not missing:
         try:
+            check(controller.clock_offset is not None and
+                  all('packet_ns' in record for peer in peers for record in peer.received + peer.sent),
+                  'every actual frame retains its original packet admission timestamp')
             counts = [peer.verify() for peer in peers]
         except Exception as exception:
             error = str(exception)

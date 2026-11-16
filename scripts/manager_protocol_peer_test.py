@@ -67,6 +67,40 @@ class ProtocolPackets(unittest.TestCase):
         self.peer = ProtocolPeer(0, 'options', 0)
         self.transaction = bytes.fromhex('12345678')
 
+    def test_backoff_uses_admission_times_even_when_dequeue_is_late(self):
+        # Constructed reader controls: the actual guest run supplies the
+        # original timestamp through its armed packet description.
+        for delta, passed in ((10_000_000_000, True), (9_990_000_000, False)):
+            with self.subTest(delta=delta):
+                peers = [ProtocolPeer(lane, 'conflict-probe', 0) for lane in (0, 1)]
+                peers[0].received = [
+                    dict(kind=4, sequence=1, packet_ns=100_000_000_000, guest_ms=12_160),
+                    dict(kind=1, sequence=2, packet_ns=100_000_000_000+delta, guest_ms=22_140)]
+                controller = Controller(type('Serial', (), {'stdin': io.BytesIO()})(), peers, 0)
+                controller.pending = ('clock', False)
+                line = 'MANAGER_PROTOCOL_PASS stage=clock affected=0 monotonic_ms=99999'
+                if passed:
+                    controller.line(line)
+                    self.assertTrue(controller.clock_checked)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, 'backoff has elapsed'):
+                        controller.line(line)
+
+    def test_packet_clock_reference_and_missing_timestamp_reject(self):
+        peers = [ProtocolPeer(lane, 'conflict-probe', 0) for lane in (0, 1)]
+        controller = Controller(type('Serial', (), {'stdin': io.BytesIO()})(), peers, 0)
+        prefix = 'MANAGER_PROTOCOL_FRAME index=1 length=342 hash=0123456789abcdef packet_type=4 monotonic_ms=100'
+        controller.line(prefix + ' packet_ns=1000 monotonic_before_ns=100 realtime_ns=1100 monotonic_after_ns=100')
+        self.assertEqual(controller.clock_offset, (1000, 1000))
+        for suffix, reason in [
+            ('', 'complete original packet timestamp'),
+            (' packet_ns=1200 monotonic_before_ns=100 realtime_ns=1100 monotonic_after_ns=100', 'precedes'),
+            (' packet_ns=1000 monotonic_before_ns=101 realtime_ns=1100 monotonic_after_ns=100', 'precedes'),
+            (' packet_ns=1000 monotonic_before_ns=100 realtime_ns=1200 monotonic_after_ns=100', 'stable actual')]:
+            with self.subTest(reason=reason):
+                with self.assertRaisesRegex(RuntimeError, reason):
+                    controller.line(prefix + suffix)
+
     def test_request_list_rejects_the_previous_complete_but_wrong_order(self):
         client_packet(request(self.peer, self.transaction), self.peer.guest)
         old = request(self.peer, self.transaction, parameters=(1, 3, 6, 15, 51, 58, 59, 119, 121))

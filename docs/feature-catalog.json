@@ -1126,7 +1126,7 @@
       "title": "IPC and event notification",
       "milestone": "M2",
       "state": "partial",
-      "current": "Pipes, Unix streams, polling, epoll, select, and SysV shared memory have guest tests.",
+      "current": "Pipes, Unix streams, polling, epoll, select and SysV shared memory have guest tests. Nine shared Unix clients, including stream shutdown and retained send/MSG_WAITALL receive checks, pass 144 local executions across both musl providers, linkages, firmware types and caller identities. Frozen readers verify sources, SDK headers, programs, images and logs. Full hosted qualification and remaining IPC lifetime, notification and queue/semaphore acceptance remain required.",
       "scope": [
         "Complete pipe/FIFO, poll/select/epoll, descriptor-generation, and close semantics",
         "System V semaphores, message queues, and shared-memory permissions/lifetime",
@@ -1146,7 +1146,11 @@
       "evidence": [
         "kernel/ipc/ipc.cpp",
         "kernel/ipc/shared_memory.cpp",
-        "userspace/tests/ipc/ipc.c"
+        "userspace/tests/ipc/ipc.c",
+        "kernel/io/io.cpp",
+        "userspace/tests/ipc/unix_shutdown.c",
+        "userspace/tests/ipc/unix_stream_wait.c",
+        "scripts/unix_datagram_proof.py"
       ],
       "branch": "feature/f15-ipc-and-event-notification",
       "issue": "https://github.com/frankischilling/Axiom64/issues/15"

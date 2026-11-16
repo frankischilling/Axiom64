@@ -4,7 +4,7 @@ import re
 
 CLIENTS = {'unix_messages': 11, 'unix_names': 6, 'unix_routing': 5,
            'unix_routing_wait': 7, 'unix_credentials': 5, 'unix_rights': 7,
-           'unix_stream': 11, 'unix_shutdown': 4, 'unix_stream_wait': 1}
+           'unix_stream': 11, 'unix_shutdown': 4, 'unix_stream_wait': 2}
 
 SHUTDOWN_MARKERS = (
     'UNIX_SHUTDOWN_LISTENER_PASS cases=24 names=abstract,path duplicate repeated pending exchange',
@@ -13,7 +13,8 @@ SHUTDOWN_MARKERS = (
     'UNIX_SHUTDOWN_WAIT_PASS cases=22 blocked=22 reads sends accepts poll epoll_edge select aliases retained_bytes')
 
 STREAM_WAIT_MARKERS = (
-    'UNIX_STREAM_WAIT_SEND_PASS cases=24 scalar vector message replacement captured_flags deadline signal restart peer_shutdown sigpipe exact_bytes rights_once',)
+    'UNIX_STREAM_WAIT_SEND_PASS cases=24 scalar vector message replacement captured_flags deadline signal restart peer_shutdown sigpipe exact_bytes rights_once',
+    'UNIX_STREAM_WAIT_RECEIVE_PASS cases=22 waitall peek nonblock credentials rights boundary replacement vectors signal restart deadline fault prefix')
 
 
 def boot_body():

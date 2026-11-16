@@ -2006,6 +2006,16 @@ none. Peer read-shutdown preserves previously queued bytes. The blocked call
 returns its prefix or `EPIPE` without `SIGPIPE`; a fresh write raises `SIGPIPE`.
 This follows the separate queue-allocation and fresh-error paths in
 [Linux Unix stream send](https://github.com/torvalds/linux/blob/v7.0/net/unix/af_unix.c#L2238-L2373).
+Another 22 cases cover `MSG_WAITALL` scalar and message receives, including peer
+half-close and final close, signals, deadlines and a fault in a later page.
+Partial waits retain the original description, vectors and byte cursor.
+Peeks return available bytes immediately; nonblocking calls also keep their
+short result. Different writer credentials and transferred descriptions end the
+receive at their boundary. Already copied bytes survive a later fault, while the
+faulting interval stays queued. Message control output is checked at completion:
+EOF and timeout retain the first writer identity; interrupted partial receives
+omit it, matching the Linux signal exit path. Received descriptions retain
+close-on-exec and are installed only once.
 `sudo python3 scripts/unix_stream_native.py --client unix_stream_wait` compares
 the same client under all three controlled native identities.
 

@@ -42,6 +42,19 @@ jobs:
           cp -a /usr/include/linux /usr/include/asm-generic /usr/include/x86_64-linux-gnu/asm build/diagnostic-uapi/
           musl-gcc -isystem build/diagnostic-uapi -Iuserspace/tests/net -std=c11 -O2 -g -Wall -Wextra -Werror -DIPV6_ERROR_CONTROLS_INTEGRATED userspace/tests/net/ipv6_errors.c userspace/tests/net/ipv6_error_controls.c userspace/tests/net/ipv6_error_metadata.c userspace/tests/net/ipv6_receive_extensions.c -o build/diagnostic-rebuilt
           musl-gcc -isystem build/diagnostic-uapi -Iuserspace/tests/net -std=c11 -O2 -g -Wall -Wextra -Werror scripts/ipv6_error_metadata_minimum.c userspace/tests/net/ipv6_error_metadata.c -o build/diagnostic-minimum
+          python3 - <<'PY'
+          from pathlib import Path
+          original = Path('userspace/tests/net/ipv6_errors.c').read_text()
+          local_begin = original.index('    check(!ipv6_receive_extensions_local()', original.index('int main('))
+          local_end = original.index('    if (argc == 2', local_begin)
+          Path('build/diagnostic-wire.c').write_text(original[:local_begin] + original[local_end:])
+          wire = '    for (unsigned lane = 0; lane < 2; lane++)\n        wire(lane);\n'
+          assert original.count(wire) == 1
+          Path('build/diagnostic-local.c').write_text(original.replace(wire, '', 1))
+          PY
+          for variant in wire local; do
+            musl-gcc -isystem build/diagnostic-uapi -Iuserspace/tests/net -std=c11 -O2 -g -Wall -Wextra -Werror -Wno-unused-function -DIPV6_ERROR_CONTROLS_INTEGRATED build/diagnostic-$variant.c userspace/tests/net/ipv6_error_controls.c userspace/tests/net/ipv6_error_metadata.c userspace/tests/net/ipv6_receive_extensions.c -o build/diagnostic-$variant
+          done
           sha256sum build/diagnostic-rebuilt build/diagnostic-minimum
       - name: Run fixed diagnosis plan with original client bytes
         run: sudo -n python3 -B scripts/ipv6_error_send_diagnostic.py --retained build/retained --output build/send-diagnostic
@@ -55,4 +68,8 @@ jobs:
             build/send-diagnostic/
             build/diagnostic-rebuilt
             build/diagnostic-minimum
+            build/diagnostic-wire
+            build/diagnostic-local
+            build/diagnostic-wire.c
+            build/diagnostic-local.c
             build/diagnostic-uapi/

@@ -167,7 +167,7 @@ def main():
     parser.add_argument('--label')
     parser.add_argument('--parent-namespace', type=int)
     parser.add_argument('--trace', action='store_true')
-    parser.add_argument('--client', choices=('original', 'rebuilt', 'minimum', 'wire', 'local'), default='original')
+    parser.add_argument('--client', choices=('original', 'rebuilt', 'minimum', 'wire', 'local', 'wire0', 'wire1', 'delayed'), default='original')
     args = parser.parse_args()
     args.retained, args.output = args.retained.resolve(), args.output.resolve()
     if args.child:
@@ -175,9 +175,9 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     for profile in PROFILES:
         inputs(args.retained, profile)
-    plans = [dict(label='rebuilt', profiles=['dynamic'] * 4, trace=False, client='rebuilt'),
-             dict(label='wire', profiles=['dynamic'] * 4, trace=False, client='wire'),
-             dict(label='local', profiles=['dynamic'] * 4, trace=False, client='local')]
+    plans = [dict(label='wire0', profiles=['dynamic'] * 4, trace=False, client='wire0'),
+             dict(label='wire1', profiles=['dynamic'] * 4, trace=False, client='wire1'),
+             dict(label='delayed', profiles=['dynamic'] * 4, trace=False, client='delayed')]
     write(args.output / 'plan.json', dict(plans=plans, stop_on_pass=False,
         original_packet_clocks_and_deadlines=True, acceptance=False))
     results = []

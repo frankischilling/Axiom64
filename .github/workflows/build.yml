@@ -51,8 +51,16 @@ jobs:
           wire = '    for (unsigned lane = 0; lane < 2; lane++)\n        wire(lane);\n'
           assert original.count(wire) == 1
           Path('build/diagnostic-local.c').write_text(original.replace(wire, '', 1))
+          reduced = Path('build/diagnostic-wire.c').read_text()
+          for lane in (0, 1):
+              Path(f'build/diagnostic-wire{lane}.c').write_text(reduced.replace(wire, f'    wire({lane});\n', 1))
+          minimum = Path('scripts/ipv6_error_metadata_minimum.c').read_text()
+          marker = '    check(!ipv6_error_metadata_wire'
+          assert minimum.count(marker) == 1
+          delayed = minimum.replace(marker, '    struct timespec interval = {38, 0};\n    check(!nanosleep(&interval, NULL), "diagnostic elapsed-time control");\n' + marker, 1)
+          Path('build/diagnostic-delayed.c').write_text(delayed)
           PY
-          for variant in wire local; do
+          for variant in wire local wire0 wire1 delayed; do
             musl-gcc -isystem build/diagnostic-uapi -Iuserspace/tests/net -std=c11 -O2 -g -Wall -Wextra -Werror -Wno-unused-function -DIPV6_ERROR_CONTROLS_INTEGRATED build/diagnostic-$variant.c userspace/tests/net/ipv6_error_controls.c userspace/tests/net/ipv6_error_metadata.c userspace/tests/net/ipv6_receive_extensions.c -o build/diagnostic-$variant
           done
           sha256sum build/diagnostic-rebuilt build/diagnostic-minimum
@@ -72,4 +80,10 @@ jobs:
             build/diagnostic-local
             build/diagnostic-wire.c
             build/diagnostic-local.c
+            build/diagnostic-wire0
+            build/diagnostic-wire1
+            build/diagnostic-delayed
+            build/diagnostic-wire0.c
+            build/diagnostic-wire1.c
+            build/diagnostic-delayed.c
             build/diagnostic-uapi/

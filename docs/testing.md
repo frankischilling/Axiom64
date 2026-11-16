@@ -702,6 +702,16 @@ DAD completion observations between one and 2.1 seconds. They bind each adapter'
 logical BEGIN captured on the companion. Firmware IPv6 traffic before that
 boundary stays in the original capture; the same traffic after BEGIN is rejected.
 
+Native device setup raises both veth endpoints while IPv6 remains disabled,
+then requires both bridge ports to report forwarding before launching the client.
+The two-second setup check saves original link dumps and fails before execution
+if forwarding remains unavailable or IPv6 was enabled early. This prevents the
+first companion packet from racing a delayed bridge carrier notification.
+`sudo -n make test-native-bridge-ready` exercises real isolated links, delayed
+carrier restoration, a persistent outage and premature IPv6 activation.
+The C clients, DAD deadlines, ten-second control limit and packet clocks are
+unchanged. Startup receipts remain beside each native case's captures.
+
 The original kernel fails the administrative case by retaining `IFF_RUNNING`
 while down. Its image and packets remain unchanged. The corrected kernel passes
 all 36 clients. The first new reader rejected 18 completed UEFI executions because
@@ -726,7 +736,7 @@ windows remain unchanged. CI runs the complete guest cohort in the existing
 IPv6-expiry job and retains its actual inputs, images, serial logs and captures in
 the `ipv6-device-wire` artifact. Native comparisons remain in the configuration
 job and its `ipv6-configuration` artifact. Both jobs retain their seventy-five-minute
-limits, and the complete workflow retains all 210 jobs and required aggregates.
+limits, and the complete workflow retains all 180 jobs and required aggregates.
 
 The pending client queries actual owners before each selected conflict. Its
 companion acknowledges only after the matching advertisement is recorded on the

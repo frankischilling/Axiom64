@@ -26,6 +26,7 @@ from tcp_fault_native import Capture
 from tcp_fault_test import exercise
 from tcp_fixture_inputs import audit_fixture, digest
 from native_ipv6_timers import begin as timer_begin, finish as timer_finish
+from native_bridge_ready import prepare as prepare_native_bridge
 
 SOURCE = 'userspace/tests/net/ipv6_device_lifecycle.c'
 PENDING_SOURCE = 'userspace/tests/net/ipv6_device_pending.c'
@@ -179,6 +180,10 @@ def native_child(args):
         channels.append(channel)
         captures.append(Capture(f'bridge{lane}', args.directory / f'lane{lane}.pcap'))
     (args.directory / 'offloads.json').write_text(json.dumps(offloads, indent=2) + '\n')
+    # Bridge carrier notification can follow the client's first raw send.
+    # Complete the Ethernet setup while IPv6 is still disabled, before the
+    # client starts its original DAD and companion-control observations.
+    prepare_native_bridge(args.directory)
     program = args.program.resolve()
     command = [str(program), '--action', args.action]
     if args.state != 'ready':

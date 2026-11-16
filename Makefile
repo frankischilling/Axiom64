@@ -800,6 +800,10 @@ test-ipv6-ownership:
 test-ipv6-ownership-native:
 	$(PYTHON) scripts/ipv6_owner_test.py --native --group all --directory build/ipv6-owner-native
 
+.PHONY: test-native-bridge-ready
+test-native-bridge-ready:
+	$(PYTHON) scripts/tests/native_bridge_ready_test.py
+
 .PHONY: test-ipv6-device test-ipv6-device-native
 
 test-ipv6-device:

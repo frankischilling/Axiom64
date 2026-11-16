@@ -1244,7 +1244,7 @@ jobs:
           path: build/ipv6-device-wire
       - name: Compare IPv6 device DAD states with three isolated native Linux linkages
         if: matrix.suite == 'configuration'
-        run: sudo -n make test-ipv6-device-native
+        run: sudo -n make test-native-bridge-ready test-ipv6-device-native
       - name: Verify link inventories across administrative and invalid-MTU transitions
         if: matrix.suite == 'configuration'
         run: make test-ipv6-device-inventory
@@ -1270,6 +1270,7 @@ jobs:
             build/ipv6-router-native
             build/ipv6-router-native-worker.json
             build/native-address-worker-tests
+            build/native-bridge-ready-tests
             build/ipv6-dad-wire
             build/ipv6-dad-native
             build/ipv6-owner-wire

@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Key completed crypto products by their source and actual Linux build inputs."""
 import argparse
+from functools import lru_cache
 import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
+import re
 import shutil
 import subprocess
 import time
@@ -29,18 +31,34 @@ def cache_paths():
             'static/stage', 'dynamic/stage',
             'static/build/include/openssl/configuration.h',
             'dynamic/build/include/openssl/configuration.h'))
+        base = 'build/curl/' + provider + '/*/'
+        paths.extend(base + name for name in (
+            'manifest.json', 'COPYING', 'README', 'INSTALL.md', 'release-signature.log',
+            'static-build.log', 'dynamic-build.log', 'source',
+            'static/stage', 'dynamic/stage', 'static/metadata-original', 'dynamic/metadata-original',
+            'static/build/lib/curl_config.h', 'dynamic/build/lib/curl_config.h',
+            'static/build/config.log', 'dynamic/build/config.log'))
     return paths
 
 
+@lru_cache(maxsize=8)
+def coverage_pattern(paths):
+    alternatives = []
+    for pattern in paths:
+        parts = PurePosixPath(pattern).parts
+        if any(any(character in part for character in '*?[') and part != '*' for part in parts):
+            raise RuntimeError('unsupported crypto cache path pattern: ' + pattern)
+        alternatives.append('/'.join('[^/]+' if part == '*' else re.escape(part) for part in parts))
+    return re.compile('(?:' + '|'.join(alternatives) + ')(?:/|$)')
+
+
 def covered(relative, paths):
-    path = PurePosixPath(relative)
-    return any(candidate.match(pattern) for pattern in paths
-               for candidate in (path, *path.parents) if str(candidate) != '.')
+    return coverage_pattern(tuple(paths)).match(PurePosixPath(relative).as_posix()) is not None
 
 
 def source_inputs(root):
     names = ['dependencies.json', 'ports.lock.json', 'sources.lock.json',
-             'scripts/build_openssl.py', 'scripts/build_musl.py',
+             'scripts/build_openssl.py', 'scripts/build_musl.py', 'scripts/build_curl.py',
              'scripts/linux_uapi.py', 'scripts/fetch.py', 'scripts/ports.py',
              'scripts/sources.py', 'scripts/ci/crypto_cache.py']
     lock = json.loads((root / 'sources.lock.json').read_text())
@@ -103,32 +121,45 @@ def check_products(root):
     """Reject an incomplete cache declaration before its successful-job save."""
     paths = cache_paths()
     manifests = {}
-    for dependency, providers in (('musl', PROVIDERS[:2]), ('openssl', PROVIDERS)):
+
+    def check_tree(directory, files, links, label):
+        if directory.is_symlink() or not directory.resolve().is_relative_to(root.resolve()):
+            raise RuntimeError('crypto ' + label + ' directory escapes cache root')
+        for values, symbolic in ((files, False), (links, True)):
+            for name, expected in values.items():
+                relative = PurePosixPath(name)
+                path = directory / name
+                if (relative.is_absolute() or '..' in relative.parts or '\\' in name or
+                        not path.resolve().is_relative_to(directory.resolve()) or
+                        not covered(path.relative_to(root).as_posix(), paths)):
+                    raise RuntimeError('crypto ' + label + ' omitted from cache paths: ' + name)
+                if symbolic:
+                    if not path.is_symlink() or os.readlink(path) != expected:
+                        raise RuntimeError('crypto cache ' + label + ' link changed: ' + name)
+                elif path.is_symlink() or digest(path) != expected:
+                    raise RuntimeError('crypto cache ' + label + ' changed: ' + name)
+
+    for dependency, providers in (('musl', PROVIDERS[:2]), ('openssl', PROVIDERS), ('curl', PROVIDERS)):
         for provider in providers:
             candidates = list((root / 'build' / dependency / provider).glob('*/manifest.json'))
             if len(candidates) != 1:
                 raise RuntimeError(f'expected one completed {dependency}/{provider} manifest')
             manifest, = candidates
+            if not manifest.resolve().is_relative_to(root.resolve()):
+                raise RuntimeError('crypto manifest escapes cache root: ' + str(manifest))
             saved = json.loads(manifest.read_text())
             if saved['identity'] != manifest.parent.name or saved['provider'] != provider:
                 raise RuntimeError('crypto manifest identity differs: ' + str(manifest))
-            for name, expected in saved['products'].items():
-                product = manifest.parent / name
-                relative = product.relative_to(root).as_posix()
-                if '..' in PurePosixPath(name).parts or not covered(relative, paths):
-                    raise RuntimeError('crypto product omitted from cache paths: ' + relative)
-                if product.is_symlink() or digest(product) != expected:
-                    raise RuntimeError('crypto cache product changed: ' + relative)
-            for name, expected in saved.get('symlinks', {}).items():
-                link = manifest.parent / name
-                relative = link.relative_to(root).as_posix()
-                if '..' in PurePosixPath(name).parts or not covered(relative, paths):
-                    raise RuntimeError('crypto link omitted from cache paths: ' + relative)
-                if not link.is_symlink() or os.readlink(link) != expected:
-                    raise RuntimeError('crypto cache link changed: ' + relative)
+            check_tree(manifest.parent, saved['products'], saved.get('symlinks', {}), 'product')
+            sources, source_links = {}, {}
+            if dependency == 'curl':
+                sources, source_links = saved.get('source_inputs', {}), saved.get('source_symlinks', {})
+                if not sources:
+                    raise RuntimeError('expected retained curl source inventory: ' + str(manifest))
+                check_tree(manifest.parent / 'source', sources, source_links, 'source')
             manifests[manifest.relative_to(root).as_posix()] = dict(
                 sha256=digest(manifest), products=len(saved['products']),
-                symlinks=len(saved.get('symlinks', {})))
+                symlinks=len(saved.get('symlinks', {})), sources=len(sources), source_symlinks=len(source_links))
     return manifests
 
 

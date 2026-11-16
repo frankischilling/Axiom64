@@ -14,6 +14,8 @@ KERNEL_SOURCES = $(filter-out kernel/tests/%,$(call rwildcard,kernel/,*.cpp))
 KERNEL_OBJECTS = $(patsubst kernel/%.cpp,build/kernel/%.o,$(KERNEL_SOURCES)) build/kernel/arch/x86_64/entry.o
 FORMAT_SOURCES = $(foreach pattern,*.cpp *.hpp,$(call rwildcard,kernel/,$(pattern))) $(foreach pattern,*.c *.h *.cpp *.hpp,$(call rwildcard,userspace/,$(pattern))) scripts/tests/native_icmp_budget.c scripts/tests/native_icmp_stagger_regression.c scripts/tests/native_source_guard_regression.c scripts/tests/native_ipv6_barrier.c scripts/tests/clock_wall_boundary_shim.c
 
+FORMAT_SOURCES += scripts/tests/tcp_icmp_port_ownership.c
+
 .PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-network test-ipv4 test-udp test-netlink test-netlink-codec test-address-codec test-configuration test-dhcp-codec test-dhcp-modules test-dhcp-transport test-profiles test-resolver test-resolver-native test-clock-codec test-clock test-file-locks test-file-locks-native test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
 all: image
 build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-output-host build/tcp-socket-output-host: kernel/net/ipv4/configuration.cpp
@@ -34,6 +36,41 @@ test-account-secret-native:
 .PHONY: test-waitid test-waitid-native test-proc-identity test-proc-identity-native test-proc-identity-policy test-record-lock-lifecycle test-record-lock-lifecycle-native
 .PHONY: test-exec-arguments test-exec-arguments-native test-exec-arguments-policy
 .PHONY: test-process-limits-policy test-resource-limits test-resource-limits-native test-resource-limits-storage
+
+.PHONY: test-unix-datagram-policy
+.PHONY: test-unix-names-native
+build/unix-routing-native: userspace/tests/ipc/unix_routing.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+
+build/unix-names-native: userspace/tests/ipc/unix_names.c
+	@mkdir -p build
+	$(CC) -std=c11 -O2 -g -Wall -Wextra -Werror $< -o $@
+
+test-unix-names-native: build/unix-names-native
+	./build/unix-names-native
+
+build/unix-datagram-policy: kernel/tests/ipc/unix_datagram.cpp kernel/ipc/unix_datagram.cpp kernel/ipc/unix_address.cpp kernel/ipc/unix_rights/ownership.cpp $(call rwildcard,kernel/include/,*.hpp)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+
+test-unix-datagram-policy: build/unix-datagram-policy
+	ASAN_OPTIONS=detect_leaks=1 ./build/unix-datagram-policy
+
+.PHONY: test-unix-rights-policy
+build/unix-rights-policy: kernel/tests/ipc/unix_rights.cpp kernel/ipc/unix_rights/ownership.cpp kernel/ipc/unix_rights/collect.cpp kernel/ipc/unix_stream.cpp kernel/ipc/unix_datagram.cpp kernel/ipc/unix_address.cpp kernel/ipc/ipc.cpp $(call rwildcard,kernel/include/,*.hpp)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
+
+test-unix-rights-policy: build/unix-rights-policy
+	ASAN_OPTIONS=detect_leaks=1 ./build/unix-rights-policy
+
+.PHONY: test-unix-datagrams test-unix-datagrams-proof
+test-unix-datagrams:
+	$(PYTHON) scripts/unix_datagram_test.py
+
+test-unix-datagrams-proof:
+	$(PYTHON) scripts/unix_datagram_proof.py build/unix-datagram-guest
 
 test-resource-limits:
 	$(PYTHON) scripts/resource_limits_test.py

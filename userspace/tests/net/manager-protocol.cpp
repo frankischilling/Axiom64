@@ -3,7 +3,11 @@
 #include <arpa/inet.h>
 #include <linux/if_ether.h>
 #include <linux/if_packet.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
+#if !defined(SIOCGSTAMPNS)
+#include <linux/sockios.h>
+#endif
 
 namespace {
 constexpr char manual_resolver[] = "nameserver 192.0.2.53\nsearch operator.example\n";
@@ -66,10 +70,24 @@ void capture_frames(const int capture[2]) {
             check(count >= 14 && count <= 1518 && size == sizeof(source) &&
                       source.sll_ifindex == int(lane + 1),
                   "actual driver-delivered observer frame");
+            timespec stamp{}, before{}, realtime{}, after{};
+            check(ioctl(capture[lane], SIOCGSTAMPNS, &stamp) == 0 && stamp.tv_sec >= 0 &&
+                      stamp.tv_nsec >= 0 && stamp.tv_nsec < 1000000000 &&
+                      clock_gettime(CLOCK_MONOTONIC, &before) == 0 &&
+                      clock_gettime(CLOCK_REALTIME, &realtime) == 0 &&
+                      clock_gettime(CLOCK_MONOTONIC, &after) == 0,
+                  "original packet timestamp and bracketed reference clocks");
+            auto nanoseconds = [](const timespec& value) {
+                return uint64_t(value.tv_sec) * 1000000000 + uint64_t(value.tv_nsec);
+            };
             printf("MANAGER_PROTOCOL_FRAME index=%u length=%ld hash=%016llx packet_type=%u "
-                   "monotonic_ms=%llu\n",
+                   "monotonic_ms=%llu packet_ns=%llu monotonic_before_ns=%llu "
+                   "realtime_ns=%llu monotonic_after_ns=%llu\n",
                    lane + 1, long(count), (unsigned long long)fingerprint(packet, size_t(count)),
-                   unsigned(source.sll_pkttype), (unsigned long long)milliseconds());
+                   unsigned(source.sll_pkttype), (unsigned long long)milliseconds(),
+                   (unsigned long long)nanoseconds(stamp), (unsigned long long)nanoseconds(before),
+                   (unsigned long long)nanoseconds(realtime),
+                   (unsigned long long)nanoseconds(after));
         }
     }
 }
@@ -205,6 +223,9 @@ int main(int argc, char** argv) {
         local.sll_protocol = htons(ETH_P_ALL);
         check(bind(capture[lane], reinterpret_cast<sockaddr*>(&local), sizeof(local)) == 0,
               "bind observer to actual Ethernet index");
+        timespec stamp{};
+        check(ioctl(capture[lane], SIOCGSTAMPNS, &stamp) == -1 && errno == ENOENT,
+              "arm packet admission timestamps before manager startup");
     }
     int flags = fcntl(0, F_GETFL);
     check(flags >= 0 && fcntl(0, F_SETFL, flags | O_NONBLOCK) == 0,

@@ -92,11 +92,12 @@ class LifetimeConfigurationObservations(unittest.TestCase):
         self.assertTrue(configuration.lifetime_reference().endswith('-linux7.json'))
         self.assertTrue(configuration.lifetime_reference('6.17.0-1022-azure').endswith('-linux617.json'))
         self.assertTrue(configuration.lifetime_reference('7.0.0-1017-azure').endswith('-linux7.json'))
+        self.assertTrue(configuration.lifetime_reference('7.0.0-1014-aws').endswith('-linux7-aws.json'))
         with self.assertRaisesRegex(ValueError, 'audited Linux release'):
             configuration.lifetime_reference('7.0.0-unknown')
 
     def test_actual_retirement_defaults_and_retained_descriptions(self):
-        for label in ('linux617', 'linux7'):
+        for label in ('linux617', 'linux7', 'linux7-aws'):
             reference = 'scripts/tests/fixtures/ipv6-configuration-lifetime-' + label + '.json'
             fixture = json.loads((ROOT / reference).read_text())
             text = '\n'.join([*fixture['observations'], fixture['complete_marker']]) + '\n'

@@ -109,14 +109,14 @@ class ProtocolPeer(Peer):
         super().send(frame)
         return record
 
-    def receipt(self, length, digest, milliseconds, packet_type):
+    def receipt(self, length, digest, milliseconds, packet_type, clock=None):
         rows = self.received if packet_type == 4 else self.sent
         for record in rows:
             if 'guest_ms' not in record and record['hash'] == digest and record['length'] == length:
-                record.update(delivered=True, guest_ms=milliseconds)
+                record.update(delivered=True, guest_ms=milliseconds, **(clock or {}))
                 return
         self.unmatched.append(dict(length=length, hash=digest, guest_ms=milliseconds,
-                                   packet_type=packet_type))
+                                   packet_type=packet_type, **(clock or {})))
 
     def reply(self, kind, transaction, changed=False, variant=None, server=None, unicast=False,
               ciaddr=None):
@@ -235,7 +235,9 @@ class ProtocolPeer(Peer):
         for observation in self.unmatched:
             if observation['packet_type'] == 4 and observation['hash'] == record['hash'] and \
                     observation['length'] == record['length']:
-                record.update(delivered=True, guest_ms=observation['guest_ms'])
+                record.update(delivered=True, **{key:value for key,value in observation.items()
+                              if key in ('guest_ms', 'packet_ns', 'monotonic_before_ns',
+                                         'realtime_ns', 'monotonic_after_ns')})
                 self.unmatched.remove(observation)
                 break
         if frame[12:14] == b'\x08\x06':

@@ -60,6 +60,20 @@ remaining copies for the old TCP owner. The healthy FIN must follow both checks.
 This avoids depending on an optimized cleanup frame's return address or assuming
 the slot stays vacant while other copies drain.
 
+The debugger owns guest execution after the held send returns. The monitor's
+hardware-removal resume is deferred to that debugger continuation. Sending a
+second QMP `cont` can release a later breakpoint while its fields are being
+read, producing a torn observation. The controller therefore only ends the
+deferral after the debugger releases its hold.
+
+`python3 scripts/tests/tcp_device_resume_test.py` exercises this handoff through
+the actual controller, QMP and GDB with a separate counter VM. It forces the
+host release to follow a new debugger stop and requires the counter to remain
+unchanged throughout the observation. A second run deliberately sends the
+competing QMP resume and must detect counter progress. The scripts, logs and
+results remain under `build/tcp-device/resume-control/`. This synchronization
+regression does not replace any device-loss profile or packet observation.
+
 Four immutable boot images are prepared before at most two guests run
 concurrently. Input manifests precede execution and bind the actual sources,
 clients, runtime libraries, kernel, init and images. The auditor opens all four

@@ -80,7 +80,7 @@ class NativeMulticastTimers(unittest.TestCase):
 
     def test_collector_records_the_actual_supported_kernel_configuration(self):
         body=b'CONFIG_64BIT=y\nCONFIG_HZ=1000\n'
-        for kernel in ('6.17.0-1022-azure','7.0.0-1017-azure'):
+        for kernel in ('6.17.0-1022-azure','7.0.0-1017-azure','7.0.0-1014-aws'):
             with self.subTest(kernel=kernel), patch('native_multicast_timers.platform.release',return_value=kernel), \
                  patch('native_multicast_timers.read_configuration',return_value=body):
                 started=begin(self.case);policy=finish(self.case,started)

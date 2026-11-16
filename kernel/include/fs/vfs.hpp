@@ -3,6 +3,7 @@
 #include "core/base.hpp"
 
 namespace ax {
+constexpr unsigned max_handles = 1024;
 enum class Device;
 struct Pty;
 struct Socket;

@@ -8,6 +8,60 @@
 #include <netinet/tcp.h>
 #include <signal.h>
 
+static int local_route_ready(unsigned lane, unsigned host) {
+    int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+    check(fd >= 0, "restored source route control socket");
+
+    struct {
+        struct nlmsghdr header;
+        struct rtmsg route;
+    } request = {0};
+
+    request.header =
+        (struct nlmsghdr){sizeof(request), RTM_GETROUTE, NLM_F_REQUEST | NLM_F_DUMP, 92, 0};
+    request.route.rtm_family = AF_INET6;
+    request.route.rtm_table = RT_TABLE_LOCAL;
+    struct sockaddr_nl kernel = {.nl_family = AF_NETLINK};
+    check(sendto(fd, &request, sizeof(request), 0, (struct sockaddr*)&kernel, sizeof(kernel)) ==
+              sizeof(request),
+          "restored source local route dump");
+    struct in6_addr expected = address(lane, host, 0, 0).sin6_addr;
+    int found = 0;
+    for (;;) {
+        unsigned char bytes[8192];
+        int remaining = recv(fd, bytes, sizeof(bytes), 0);
+        check(remaining > 0, "restored source route response");
+        for (struct nlmsghdr* item = (struct nlmsghdr*)bytes; NLMSG_OK(item, remaining);
+             item = NLMSG_NEXT(item, remaining)) {
+            if (item->nlmsg_type == NLMSG_DONE) {
+                check(!close(fd), "restored source route control release");
+                return found;
+            }
+            check(item->nlmsg_type == RTM_NEWROUTE &&
+                      item->nlmsg_len >= NLMSG_LENGTH(sizeof(struct rtmsg)),
+                  "restored source route row");
+            struct rtmsg* route = NLMSG_DATA(item);
+            if (route->rtm_family != AF_INET6 || route->rtm_dst_len != 128 ||
+                route->rtm_type != RTN_LOCAL)
+                continue;
+            int length = RTM_PAYLOAD(item), destination = 0, interface = 0;
+            for (struct rtattr* field = RTM_RTA(route); RTA_OK(field, length);
+                 field = RTA_NEXT(field, length)) {
+                if (field->rta_type == RTA_DST && RTA_PAYLOAD(field) == sizeof(expected))
+                    destination = !memcmp(RTA_DATA(field), &expected, sizeof(expected));
+                if (field->rta_type == RTA_OIF && RTA_PAYLOAD(field) == sizeof(uint32_t)) {
+                    uint32_t index;
+                    memcpy(&index, RTA_DATA(field), sizeof(index));
+                    interface = index == indices[lane];
+                }
+            }
+            check(!length, "complete restored source route attributes");
+            found |= destination && interface;
+        }
+        check(!remaining, "complete restored source route messages");
+    }
+}
+
 static void mutation(unsigned lane, unsigned host, int add) {
     int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
     check(fd >= 0, "pending source control socket");
@@ -37,6 +91,16 @@ static void mutation(unsigned lane, unsigned host, int add) {
           "pending source mutation acknowledgement");
     memcpy(&result, NLMSG_DATA((struct nlmsghdr*)response), sizeof(result));
     check(!result.error && !close(fd), "pending source mutation succeeds");
+    if (add) {
+        // Linux can acknowledge NODAD before its address worker installs the
+        // local input route. Release peer input only after that route exists.
+        uint64_t began = now();
+        while (!local_route_ready(lane, host)) {
+            check(now() - began < 1000000000ULL, "restored source local route becomes ready");
+            struct timespec pause = {0, 100000};
+            check(!nanosleep(&pause, 0), "restored source route observation poll");
+        }
+    }
 }
 
 static int stream(unsigned lane) {

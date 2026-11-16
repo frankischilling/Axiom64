@@ -339,9 +339,10 @@ int main(void) {
     // Linux 7 publishes the true name length before attempting the address
     // copy. The guest retains the measured Linux 6.17 copy-order contract.
     native_name_length_first =
-        !strcmp(identity.sysname, "Linux") && !strcmp(identity.release, "7.0.0-1017-azure");
+        !strcmp(identity.sysname, "Linux") && (!strcmp(identity.release, "7.0.0-1017-azure") ||
+                                               !strcmp(identity.release, "7.0.0-1014-aws"));
     if (native_name_length_first)
-        printf("TCP6_ABI_NATIVE_NAME_COPY kernel=7.0.0-1017-azure length_first=1\n");
+        printf("TCP6_ABI_NATIVE_NAME_COPY kernel=%s length_first=1\n", identity.release);
     if (native_packet_precheck)
         printf("TCP6_ABI_NATIVE_PRECHECK kernel=6.6.87.2-microsoft-standard-WSL2 "
                "family=17 short_cases=6 errno=97\n");

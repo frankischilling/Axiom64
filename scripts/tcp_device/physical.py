@@ -44,8 +44,9 @@ class Monitor(Qmp):
         return result
 
     def resume(self):
+        # GDB's continue releases the held send. A second QMP cont can resume
+        # the guest during its next breakpoint and tear the copy observation.
         self.defer_cont = False
-        self.command('cont')
 
 
 class Controller:

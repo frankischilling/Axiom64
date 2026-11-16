@@ -118,7 +118,7 @@ announces retained interests. The all-hosts group is implicit and sends no
 membership reports.
 
 The ASM query reader retains a 1.01-second guest ceiling. Native comparisons on
-Linux 6.17.0-1022-azure and 7.0.0-1017-azure can use a separate recorded timer
+Linux 6.17.0-1022-azure, 7.0.0-1017-azure and 7.0.0-1014-aws can use a separate recorded timer
 contract. The actual x86-64 CONFIG_HZ=1000 configuration must be unchanged before
 and after both complete capture intervals. For the captured one-second query,
 Linux adds two jiffies to its random delay before timer-wheel bucket rounding.
@@ -128,6 +128,11 @@ allowance gives a 1.075-second native ceiling. This follows the
 [timer-wheel](https://github.com/torvalds/linux/blob/v7.0/kernel/time/timer.c)
 calculations. Missing native proof retains the original ceiling; invalid proof
 fails validation. Packet timestamps and the six native clock gates are unchanged.
+The AWS reference's three actual linkages retain the measured native EXCLUDE
+query behavior. Both signed Ubuntu kernel builds have independently checked
+HZ=1000 configurations. Earlier AWS captures without configuration observations
+remain unqualified where their query interval exceeds the original ceiling;
+the configuration proof must come from the new execution itself.
 
 The ASM cohort requires three native Linux libc/linkage profiles and eight
 static/dynamic BIOS/UEFI modern/legacy guest profiles on both adapters. Normal

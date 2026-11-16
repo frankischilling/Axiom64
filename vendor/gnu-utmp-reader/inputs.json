@@ -10,7 +10,7 @@
       "architecture": "amd64",
       "source": "glibc",
       "name": "libc6-dev_2.39-0ubuntu8.9_amd64.deb",
-      "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/glibc/libc6-dev_2.39-0ubuntu8.9_amd64.deb",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261108T000000Z/pool/main/g/glibc/libc6-dev_2.39-0ubuntu8.9_amd64.deb",
       "bytes": 2125612,
       "sha256": "e13d5fcc1b2a86f75bca8e0026a8e39f24fe97ca86e92be79991f8697eb1306f"
     },
@@ -20,7 +20,7 @@
       "architecture": "amd64",
       "source": "gcc-13",
       "name": "libgcc-13-dev_13.3.0-6ubuntu2~24.04.1_amd64.deb",
-      "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gcc-13/libgcc-13-dev_13.3.0-6ubuntu2~24.04.1_amd64.deb",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261108T000000Z/pool/main/g/gcc-13/libgcc-13-dev_13.3.0-6ubuntu2~24.04.1_amd64.deb",
       "bytes": 2680642,
       "sha256": "cd689db2691edaa10f37329307292796bb599e722e0505c79e14caaa1fe9a93a"
     }
@@ -32,25 +32,25 @@
       "files": [
         {
           "name": "glibc_2.39-0ubuntu8.9.dsc",
-          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/glibc/glibc_2.39-0ubuntu8.9.dsc",
+          "url": "https://snapshot.ubuntu.com/ubuntu/20261108T000000Z/pool/main/g/glibc/glibc_2.39-0ubuntu8.9.dsc",
           "sha256": "1b73a89e0910eb3e5920cde639ac7eb606256d8ee809688ff9b5912b67002711",
           "bytes": 9387
         },
         {
           "name": "glibc_2.39.orig.tar.xz",
-          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/glibc/glibc_2.39.orig.tar.xz",
+          "url": "https://snapshot.ubuntu.com/ubuntu/20261108T000000Z/pool/main/g/glibc/glibc_2.39.orig.tar.xz",
           "sha256": "f77bd47cf8170c57365ae7bf86696c118adb3b120d3259c64c502d3dc1e2d926",
           "bytes": 18520988
         },
         {
           "name": "glibc_2.39.orig.tar.xz.asc",
-          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/glibc/glibc_2.39.orig.tar.xz.asc",
+          "url": "https://snapshot.ubuntu.com/ubuntu/20261108T000000Z/pool/main/g/glibc/glibc_2.39.orig.tar.xz.asc",
           "sha256": "2cce427ef7933c17379f5514e4f0ccf8dffae5bf8c72f0f7e0bf8b8401f34be5",
           "bytes": 833
         },
         {
           "name": "glibc_2.39-0ubuntu8.9.debian.tar.xz",
-          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/glibc/glibc_2.39-0ubuntu8.9.debian.tar.xz",
+          "url": "https://snapshot.ubuntu.com/ubuntu/20261108T000000Z/pool/main/g/glibc/glibc_2.39-0ubuntu8.9.debian.tar.xz",
           "sha256": "d6114f2302896a3c8612453e1bf1d0e61603e3029ba4a7c246fbb1ab4c48d2b0",
           "bytes": 491440
         }
@@ -62,19 +62,19 @@
       "files": [
         {
           "name": "gcc-13_13.3.0-6ubuntu2~24.04.1.dsc",
-          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gcc-13/gcc-13_13.3.0-6ubuntu2~24.04.1.dsc",
+          "url": "https://snapshot.ubuntu.com/ubuntu/20261108T000000Z/pool/main/g/gcc-13/gcc-13_13.3.0-6ubuntu2~24.04.1.dsc",
           "bytes": 39540,
           "sha256": "86b4012c312ac13e3e092877719a62a5b5dbab082ae7e9680780a25c6a13ddc6"
         },
         {
           "name": "gcc-13_13.3.0.orig.tar.gz",
-          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gcc-13/gcc-13_13.3.0.orig.tar.gz",
+          "url": "https://snapshot.ubuntu.com/ubuntu/20261108T000000Z/pool/main/g/gcc-13/gcc-13_13.3.0.orig.tar.gz",
           "bytes": 92761021,
           "sha256": "3b85d91bf38d1b858d9d01134f4046b3359731968ed4e6e912d29717a35d1a46"
         },
         {
           "name": "gcc-13_13.3.0-6ubuntu2~24.04.1.debian.tar.xz",
-          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gcc-13/gcc-13_13.3.0-6ubuntu2~24.04.1.debian.tar.xz",
+          "url": "https://snapshot.ubuntu.com/ubuntu/20261108T000000Z/pool/main/g/gcc-13/gcc-13_13.3.0-6ubuntu2~24.04.1.debian.tar.xz",
           "bytes": 646156,
           "sha256": "5523658f272ad6d15a83b6e26d178fbd5cb7709ec7ce2ca52b0c843e19c228e3"
         }

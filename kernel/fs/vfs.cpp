@@ -6,6 +6,7 @@
 #include "fs/proc.hpp"
 #include "drivers/platform/devices.hpp"
 #include "ipc/ipc.hpp"
+#include "ipc/unix_rights.hpp"
 #include "ipc/eventfd.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
@@ -26,7 +27,7 @@ Timestamp node_now() {
 Node nodes[16384];
 size_t node_count;
 Node* root_node;
-static Handle handles[1024];
+static Handle handles[max_handles];
 static uint64_t next_generation = 1;
 
 bool normalize(const char* cwd, const char* path, char* result, size_t cap) {
@@ -374,7 +375,8 @@ int link_node(const Path& from, const Path& to, bool follow) {
         return -17;
     if (error != -2)
         return error;
-    if ((target->mode & 0170000) != regular_file && (target->mode & 0170000) != symlink)
+    if ((target->mode & 0170000) != regular_file && (target->mode & 0170000) != symlink &&
+        (target->mode & 0170000) != 0140000)
         return -95;
     return parent->mount->ops->link(target, parent, name);
 }
@@ -918,7 +920,20 @@ void retain(Handle* h) {
 }
 
 void close_handle(Handle* h) {
-    if (!h || !h->references || --h->references)
+    if (!h || !h->references)
+        return;
+    static unsigned closing;
+
+    struct CloseScope {
+        unsigned& depth;
+
+        ~CloseScope() {
+            if (!--depth)
+                unix_collect_rights();
+        }
+    } scope{++closing};
+
+    if (--h->references)
         return;
     file_lock_release(h);
     record_lock_release(*h);

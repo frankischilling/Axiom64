@@ -16,7 +16,8 @@ EXPECTED = ((5, (FIRST,)), (5, (FIRST + 1,)), (6, (FIRST,)),
             (4, (FIRST + 2,)), (6, (FIRST + 3,)), (5, (FIRST + 2,)), (3, ()))
 OPTIONS = (39, 39, 40, 41, 38, 37, 36)
 MARKER = 'IPV4_SOURCE_WIRE_PASS stages=7 lanes=2 operations=14'
-NATIVE_EXCLUDE_KERNELS = {'6.6.87.2-microsoft-standard-WSL2', '6.17.0-1022-azure', '7.0.0-1017-azure'}
+NATIVE_EXCLUDE_KERNELS = {'6.6.87.2-microsoft-standard-WSL2', '6.17.0-1022-azure',
+                          '7.0.0-1017-azure', '7.0.0-1014-aws'}
 
 
 def contract(scenario, native, release):

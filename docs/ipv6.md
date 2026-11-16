@@ -26,7 +26,7 @@ The local configuration implementation exposes `/proc/sys/net/ipv6/conf/{all,def
 
 An interface MTU below 1280 retires its IPv6 configuration and removes its proc scope, following the [Linux interface notifier](https://github.com/torvalds/linux/blob/v7.0/net/ipv6/addrconf.c#L3448-L3470). Existing control descriptions and retained directory lookups return `ENOENT`, including scalar zero-length reads and `fstat`. Restoring a valid MTU creates a new configuration from the current defaults; an initialized default secret is copied and selects stable generation. Old descriptions remain retired after the new scope appears. Administrative shutdown and carrier loss preserve the existing configuration. These lifetimes are checked separately from address and route ownership.
 
-`make test-ipv6-configuration-lifetime` compares 564 observations per execution: both interfaces, administrative and MTU changes, fresh paths, retained descriptions, inode replacement, invalid writes and copied defaults. All twelve local guest profiles match the Linux 7 reference, with two independently reopened images and 96 archived damaged logs. The same actual C executables complete all three native linkages on each of Linux 6.17 and Linux 7. Eight malformed `disable_ipv6` writes differ between those measured kernels; each native comparison uses its exact recorded release, and an unaudited release fails deliberately. The guest retains the Linux 7 error contract. These configuration-I/O results do not qualify DAD packet clocks or the remaining device-lifecycle wire cases.
+`make test-ipv6-configuration-lifetime` compares 564 observations per execution: both interfaces, administrative and MTU changes, fresh paths, retained descriptions, inode replacement, invalid writes and copied defaults. All twelve local guest profiles match the Linux 7 reference, with two independently reopened images and 96 archived damaged logs. The same actual C executables complete all three native linkages on each of Linux 6.17 and Linux 7. Eight malformed `disable_ipv6` writes differ between those measured kernels; each native comparison uses its exact recorded release, and an unaudited release fails deliberately. The additional `7.0.0-1014-aws` reference records all three unchanged executables on both signed Ubuntu noble and resolute kernel builds, with identical Linux 7 observations. The guest retains the Linux 7 error contract. These configuration-I/O results do not qualify DAD packet clocks or the remaining device-lifecycle wire cases.
 
 The current kernel also passes all 36 earlier proc/link/socket guests, twelve router guests, twelve DAD guests and 48 ownership guests. Independent readers reopen their eighteen images and 144 original captures, reject 168 changed configuration logs, 936 DAD corruptions and 2,616 ownership corruptions, and preserve every original packet/clock gate. The new lifetime cohort brings the total to 120 guest profiles and twenty test images. Complete current-revision hosted acceptance remains required.
 
@@ -589,7 +589,13 @@ Source admission also follows the measured pre-bound behavior and the
 The finite-source comparison exercises the same pending cases through automatic
 address retirement. Fresh binds succeed before the configured lifetime ends and
 then reject the source. An independent peer host route survives the address's
-prefix update; route dumps and actual companion traffic establish that route
+prefix update. After restoring an address, the client observes its exact local
+input route before releasing incoming handshake packets. A successful address
+acknowledgment can precede that route's installation on Linux, even with NODAD.
+The namespace regression exercises 3,000 actual add/remove cycles through the
+client's helper and checks that removed local routes remain absent. The original
+finite lifetimes, socket bounds and packet acceptance checks remain unchanged.
+Route dumps and actual companion traffic establish the surviving peer route's
 ownership separately. TCP retries retain the original tuple before restoration,
 echo and close. This follows measured native behavior and the
 [v6.17 address-lifetime path](https://github.com/torvalds/linux/blob/v6.17/net/ipv6/addrconf.c).

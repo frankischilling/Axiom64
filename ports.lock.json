@@ -27,15 +27,15 @@
     },
     {
       "name": "brotli-libs",
-      "version": "1.1.0-r2",
+      "version": "1.1.1-r0",
       "repository": "main",
-      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/brotli-libs-1.1.0-r2.apk",
-      "archive": "brotli-libs-1.1.0-r2.apk",
-      "sha256": "a693524543421b3a90f163ccb48d5ad0f5fd773b5c3b640acc461eace2cb01b6",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/brotli-libs-1.1.1-r0.apk",
+      "archive": "brotli-libs-1.1.1-r0.apk",
+      "sha256": "9e52618457762f65bf273f42d71db8084633a1e9d938ff2611015ba20d44a8cf",
       "license": "MIT",
       "upstream": "https://github.com/google/brotli",
       "origin": "brotli",
-      "source_commit": "9c7716c2221405ce7810ba3eaaa1f62d2e646c20"
+      "source_commit": "0b8db0af6fbe8b8bc7e50e5f64b2f88bc0d6aa16"
     },
     {
       "name": "busybox",
@@ -315,15 +315,15 @@
     },
     {
       "name": "libexpat",
-      "version": "2.8.5-r0",
+      "version": "2.10.0-r0",
       "repository": "main",
-      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libexpat-2.8.5-r0.apk",
-      "archive": "libexpat-2.8.5-r0.apk",
-      "sha256": "771c18e6f7891a503a4664cfc09a3c4fb35a9b2fd2d4a643caf7206b792f5444",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libexpat-2.10.0-r0.apk",
+      "archive": "libexpat-2.10.0-r0.apk",
+      "sha256": "8ff83a897b5393832edbd2a7500c37bab685a17d7821925d95460f01747dbac2",
       "license": "MIT",
       "upstream": "https://libexpat.github.io/",
       "origin": "expat",
-      "source_commit": "4ffd5cf4f348fb2b9c0200fc2a815d5e3904e8e2"
+      "source_commit": "e7473064be733caf6876525ecc41181e5137f399"
     },
     {
       "name": "libffi",
@@ -827,27 +827,27 @@
     },
     {
       "name": "musl",
-      "version": "1.2.5-r12",
+      "version": "1.2.5-r13",
       "repository": "main",
-      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/musl-1.2.5-r12.apk",
-      "archive": "musl-1.2.5-r12.apk",
-      "sha256": "4990a5e0ba312e478f94cfe431a70efef1538004eb361c8ae424516848be45bb",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/musl-1.2.5-r13.apk",
+      "archive": "musl-1.2.5-r13.apk",
+      "sha256": "359890bc7c4dc5fee7a85192de60a471c987e4664767288578beca60a44db2c8",
       "license": "MIT",
       "upstream": "https://musl.libc.org/",
       "origin": "musl",
-      "source_commit": "1546f29a1fd233db15464ce000b6247ed71b31e7"
+      "source_commit": "ddaf59b84bc6983a37d6e24d2210c2c4791642bb"
     },
     {
       "name": "musl-dev",
-      "version": "1.2.5-r12",
+      "version": "1.2.5-r13",
       "repository": "main",
-      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/musl-dev-1.2.5-r12.apk",
-      "archive": "musl-dev-1.2.5-r12.apk",
-      "sha256": "1c2068d910cfdbbcb4eb107a5a478f8b48edf3a6311953c8fa5180c5190efab3",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/musl-dev-1.2.5-r13.apk",
+      "archive": "musl-dev-1.2.5-r13.apk",
+      "sha256": "2ca496dd68c0b340b50cf9940bc2f3312eac8b56ec2d3284a621be6f0c09ffb1",
       "license": "MIT",
       "upstream": "https://musl.libc.org/",
       "origin": "musl",
-      "source_commit": "1546f29a1fd233db15464ce000b6247ed71b31e7"
+      "source_commit": "ddaf59b84bc6983a37d6e24d2210c2c4791642bb"
     },
     {
       "name": "ncurses-terminfo-base",

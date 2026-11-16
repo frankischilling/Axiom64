@@ -15,7 +15,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/fs/` | VFS, RAM filesystems, procfs process identity and IPv6 configuration controls, xattrs and advisory file locks; ext2 storage and EA codec have their own subfolder |
 | `kernel/security/` | Task credential transitions and bounded file capability decoding |
 | `kernel/io/` | Retained blocking I/O requests and captured vector bounds shared with IPv6 error receives |
-| `kernel/ipc/` | Sockets, event counters, readiness, shared memory |
+| `kernel/ipc/` | Sockets, Unix endpoint lookup and connection policy, owned datagram and stream records, binding names, per-message credentials, retained descriptor transfers and bounded cycle collection, event counters, readiness, shared memory |
 | `kernel/net/` | Ethernet interfaces, interface/route ioctls, and Linux raw packet sockets |
 | `kernel/net/ipv4/` | IPv4 routes/output, bounded reassembly, shared path-MTU limits and fragment emission, ARP cache/timers, ICMP, and Internet socket descriptions |
 | `kernel/net/ipv6/` | IPv6 wire and quoted-error validation, bounded reassembly, source-fragment encoding, owned output queues, route-owned path-MTU limits, scoped address/route ownership, DAD, neighbor state, copied extended-error queues and raw/UDP socket ownership; `router.cpp` owns solicitation schedules, learned routers/prefixes, per-link advertised parameters and SLAAC lifetimes, including first-PIO refresh, stable conflict regeneration and owned exhausted-prefix cleanup; `output.cpp` snapshots inherited hop limits after route selection; nested `socket/` owns Linux controls and error-receive copying |

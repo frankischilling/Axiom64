@@ -28,7 +28,8 @@ DEVICE_MODE = False
 
 def lifetime_reference(release=None):
     # The measured kernels differ only in malformed disable_ipv6 writes.
-    labels = {'6.17.0-1022-azure': 'linux617', '7.0.0-1017-azure': 'linux7'}
+    labels = {'6.17.0-1022-azure': 'linux617', '7.0.0-1017-azure': 'linux7',
+              '7.0.0-1014-aws': 'linux7-aws'}
     if release is not None and release not in labels:
         raise ValueError('configuration lifetime comparison needs an audited Linux release')
     label = labels[release] if release is not None else 'linux7'

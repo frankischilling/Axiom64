@@ -84,7 +84,7 @@ def child(directory, profile, parent_namespace, suite='loss'):
         command('sysctl', '-qw', f'{key}={value}')
         settings[key] = command('sysctl', '-n', key)
         check(settings[key] == str(value), 'actual native namespace setting')
-    taps, captures, statistics, interfaces = [], [], [], []
+    taps, captures, statistics, interfaces, finalization = [], [], [], [], []
     peers = [config['peer'](lane, minimum_fin_ms=180, native=True) for lane in range(2)]
     products = json.loads((directory / 'products.json').read_text())
     check(all(digest(directory / name) == fingerprint for name, fingerprint in products.items()),
@@ -117,18 +117,37 @@ def child(directory, profile, parent_namespace, suite='loss'):
             start_monotonic_ns=began))
         with (directory / 'client.log').open('xb') as log:
             text, results, error, returncode = exercise(process, peers, taps, 150, log, raw=True)
-        process.wait(timeout=2)
+        # An exercise failure leaves the client waiting for the rejected peer.
+        # Stop its group below instead of replacing that failure with a timeout.
+        if not error:
+            process.wait(timeout=2)
     except Exception as failure:
-        error = f'{type(failure).__name__}: {failure}'
+        error = error or f'{type(failure).__name__}: {failure}'
     finally:
         if process is not None and process.poll() is None:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
-        for capture in captures:
             try:
-                statistics.append(capture.close())
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+        for lane, capture in enumerate(captures):
+            row = dict(lane=lane, statistics=None, error=None, failure=None)
+            try:
+                row['statistics'] = capture.close()
+                statistics.append(row['statistics'])
             except Exception as failure:
-                error = error or f'capture: {failure}'
+                row['error'] = f'{type(failure).__name__}: {failure}'
+                error = error or f'capture lane {lane}: {row["error"]}'
+            failed = getattr(capture, 'failure', None)
+            if failed is not None:
+                name = f'lane{lane}-capture-failure.json'
+                try:
+                    write(directory / name, failed)
+                    row['failure'] = dict(path=name, sha256=digest(directory / name))
+                except Exception as failure:
+                    row['failure'] = dict(path=name, error=f'{type(failure).__name__}: {failure}')
+                    error = error or f'capture lane {lane} failure record: {row["failure"]["error"]}'
+            finalization.append(row)
         for tap in taps:
             tap.close()
     write(directory / 'peers.json', [dict(lane=peer.lane, frames=peer.frames) for peer in peers])
@@ -144,9 +163,10 @@ def child(directory, profile, parent_namespace, suite='loss'):
               all(digest(directory / name) == fingerprint for name, fingerprint in products.items()))
     receipt = dict(passed=passed, profile=profile, native=True, suite=suite, error=error, returncode=returncode,
         results=[{key: value for key, value in row.items() if key != 'frames'} for row in results],
-        capture_statistics=statistics, start_monotonic_ns=began, end_monotonic_ns=time.monotonic_ns(),
+        capture_statistics=statistics, capture_finalization=finalization,
+        start_monotonic_ns=began, end_monotonic_ns=time.monotonic_ns(),
         independent_capture_audited=len(audits) == 2, capture_audits=audits)
     write(directory / 'receipt.json', receipt)
     print(json.dumps({key: value for key, value in receipt.items()
-                      if key not in ('results', 'capture_statistics', 'capture_audits')}), flush=True)
+                      if key not in ('results', 'capture_statistics', 'capture_finalization', 'capture_audits')}), flush=True)
     return 0 if passed else 1

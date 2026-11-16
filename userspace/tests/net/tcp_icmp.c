@@ -505,9 +505,21 @@ completed:
     case_complete(lane, ordinal, began);
 }
 
+static int cycle_ports[2] = {-1, -1};
+
+static struct sockaddr_in cycle_local(unsigned lane) {
+    return (struct sockaddr_in){.sin_family = AF_INET,
+                                .sin_port = htons(41000 + lane),
+                                .sin_addr.s_addr = htonl(0x0a170102 + (lane << 8))};
+}
+
 static void passive_start(void) {
-    // Reserve fixed passive ports before any active connection can select one.
+    // Reserve fixed passive and reclamation ports before active source selection.
     for (unsigned lane = 0; lane < 2; lane++) {
+        struct sockaddr_in local = cycle_local(lane);
+        cycle_ports[lane] = socket(AF_INET, SOCK_STREAM, 0);
+        CHECK(cycle_ports[lane] >= 0 &&
+              bind(cycle_ports[lane], (struct sockaddr*)&local, sizeof(local)) == 0);
         for (unsigned ordinal = 0; ordinal < ICMP_CASES; ordinal++) {
             if (icmp_cases[ordinal].mode != ICMP_PASSIVE_KEEP &&
                 icmp_cases[ordinal].mode != ICMP_PASSIVE_DROP)
@@ -540,21 +552,32 @@ static void passive_case(unsigned lane, unsigned ordinal) {
     case_complete(lane, ordinal, began);
 }
 
+static void cycle_ports_release(void) {
+    for (unsigned lane = 0; lane < 2; lane++) {
+        CHECK(cycle_ports[lane] >= 0 && close(cycle_ports[lane]) == 0);
+        cycle_ports[lane] = -1;
+    }
+}
+
+static int cycle_socket(unsigned lane, int baseline) {
+    int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    struct sockaddr_in local = cycle_local(lane);
+    CHECK(fd == baseline && bind(fd, (struct sockaddr*)&local, sizeof(local)) == 0);
+    return fd;
+}
+
 static void cycles(void) {
+    cycle_ports_release();
     int baseline = open("/dev/null", O_RDONLY);
     CHECK(baseline >= 0 && close(baseline) == 0);
     for (unsigned cycle = 0; cycle < ICMP_CYCLES; cycle++) {
         uint64_t began = milliseconds();
         unsigned lane = cycle & 1;
-        int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+        int fd = cycle_socket(lane, baseline);
         struct sockaddr_in address = {.sin_family = AF_INET,
                                       .sin_port = htons(49000 + lane * 1000),
                                       .sin_addr.s_addr = htonl(0x0a170101 + (lane << 8))};
-        struct sockaddr_in local = {.sin_family = AF_INET,
-                                    .sin_port = htons(41000 + lane),
-                                    .sin_addr.s_addr = htonl(0x0a170102 + (lane << 8))};
-        CHECK(fd == baseline && bind(fd, (struct sockaddr*)&local, sizeof(local)) == 0 &&
-              connect(fd, (struct sockaddr*)&address, sizeof(address)) == -1 &&
+        CHECK(connect(fd, (struct sockaddr*)&address, sizeof(address)) == -1 &&
               errno == EINPROGRESS);
         struct pollfd pending = {.fd = fd, .events = POLLOUT};
         CHECK(poll(&pending, 1, 75) == 0 && error(fd) == 0);
@@ -607,4 +630,5 @@ int main(int argc, char** argv) {
     companions_stop();
     capture_stop();
     printf("TCP_ICMP_PASS cases=%zu nics=2 cycles=%u\n", ICMP_CASES, ICMP_CYCLES);
+    return 0;
 }

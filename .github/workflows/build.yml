@@ -41,6 +41,8 @@ jobs:
             downloads/cacert-*.pem
             downloads/ports
             downloads/sources
+      - name: Verify locked userspace packages before dependency builds
+        run: python3 scripts/ports.py fetch
       - name: Test crypto cache input invalidation and complete product retention
         run: python3 scripts/tests/crypto_cache_test.py -v
       - name: Verify concurrent cold downloads and interrupted transfer ownership
@@ -49,6 +51,7 @@ jobs:
         run: |
           python3 -B scripts/tests/tcp6_isolation_prelude_test.py -v
           python3 -B scripts/tests/tcp6_source_handshake_test.py -v
+          sudo -n python3 -B scripts/tests/tcp_icmp_port_ownership_test.py -v
           python3 -B scripts/tests/native_icmp_budget_capture_test.py -v
           sudo -n python3 -B scripts/tests/ipv4_lifetime_paths_test.py -v
           python3 -B scripts/tests/ipv4_lifetime_arp_test.py -v
@@ -540,6 +543,7 @@ jobs:
         if: matrix.suite == 'downloads-native'
         run: |
           sudo -n python3 scripts/http_download_test.py --native --output build/http-downloads
+          sudo -n python3 scripts/tests/http_host_network_test.py --directory build/http-downloads/host-network-controls
           sudo -n python3 scripts/http_download_failure_native_test.py --output build/http-downloads/normal-native
           sudo -n python3 scripts/http_download_wget_native_test.py --output build/http-downloads/native-wget
       - name: Download real HTTP and authenticated HTTPS fixtures on both guest adapters
@@ -919,6 +923,7 @@ jobs:
           sudo -n make test-tcp6-pending-source-native
           make test-tcp6-pending-source
           python3 scripts/tests/tcp6_pending_source_evidence_test.py
+          sudo -n python3 scripts/tests/tcp6_source_restore_test.py
           sudo -n make test-tcp6-source-expiry-native
           make test-tcp6-source-expiry
           python3 scripts/tests/tcp6_source_expiry_evidence_test.py
@@ -1062,6 +1067,7 @@ jobs:
         if: matrix.suite == 'tcp-fault-icmp'
         run: |
           mkdir -p build/tcp-device
+          python3 -B scripts/tests/tcp_device_resume_test.py
           sudo -n python3 scripts/tests/tcp_device_pending_site_test.py
           sudo -n python3 scripts/tests/tcp_device_observation_test.py
           sudo -n python3 scripts/tests/tcp_device_native_cleanup_test.py
@@ -1097,6 +1103,26 @@ jobs:
       - name: Test pthread lifecycle, futexes, and blocked I/O
         if: matrix.suite == 'boot'
         run: make test-threads
+      - name: Compare Unix ancillary ownership and reopen actual guest products
+        if: matrix.suite == 'boot'
+        run: |
+          make test-unix-rights-policy test-unix-datagram-policy
+          sudo -n python3 -B scripts/unix_stream_native.py
+          umask 022
+          evidence_parent=$(mktemp -d /var/tmp/axiom64-unix-evidence.XXXXXXXX)
+          chmod 0755 "$evidence_parent"
+          archive_unix_evidence() {
+            tar -C "$evidence_parent" -czf build/unix-datagram-guest.tar.gz .
+            case "$evidence_parent" in
+              /var/tmp/axiom64-unix-evidence.*) rm -r -- "$evidence_parent" ;;
+              *) return 1 ;;
+            esac
+          }
+          trap archive_unix_evidence EXIT
+          evidence="$evidence_parent/guest"
+          python3 -B scripts/unix_datagram_test.py --directory "$evidence"
+          python3 -B "$evidence/inputs/scripts/unix_datagram_proof.py" "$evidence"
+          sudo -n -u nobody python3 -B "$evidence/inputs/scripts/unix_datagram_proof.py" "$evidence"
       - name: Compare retained I/O and socket timeouts with native Linux
         if: matrix.suite == 'boot'
         run: sudo -n make test-thread-io-native
@@ -1720,6 +1746,8 @@ jobs:
           name: axiom64-evidence-${{ matrix.suite }}
           path: |
             build/*.log
+            build/unix-datagram-guest.tar.gz
+            build/unix-stream-native/**
             build/udp-wire/**
             build/ipv4-multicast-evidence/**
             build/ipv4-multicast-audit/**

@@ -559,7 +559,9 @@ static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
         return 0;
     }
     if (request == 0x541b && (h->socket || h->pipe)) {
-        int size = h->socket ? h->socket->size : h->pipe->size;
+        int size = h->socket ? h->socket->type == 2 ? h->socket->datagrams.available()
+                                                    : h->socket->stream.size()
+                             : h->pipe->size;
         return copy_result(arg, &size, 4);
     }
     if (request == 0x541b && h->packet) {

@@ -1971,8 +1971,17 @@ interval and its descriptions uncommitted. Receive faults may expose a copied
 userspace prefix; earlier complete intervals still count as progress. A later
 successful receive obtains the original bytes and retained descriptions.
 
-`make test-unix-datagrams` runs all seven public clients as root and UID 65534 with
-both musl providers, both linkages and BIOS/UEFI: 112 actual client executions.
+The shutdown client checks 24 listener cases across abstract/pathname bindings,
+pending connections, duplicated descriptions and repeated shutdown calls.
+Read shutdown rejects fresh connections with `ECONNREFUSED`; write shutdown
+leaves admission open. Previously queued children retain bidirectional data
+exchange after acceptance. This follows the
+[Linux listener admission check](https://github.com/torvalds/linux/blob/v6.17/net/unix/af_unix.c#L1621-L1624).
+`sudo python3 scripts/unix_stream_native.py --client unix_shutdown` runs the
+same client as root, with a credential drop, and as an already ordinary caller.
+
+`make test-unix-datagrams` runs all eight public clients as root and UID 65534 with
+both musl providers, both linkages and BIOS/UEFI: 128 actual client executions.
 Keep its evidence directory on a case-sensitive filesystem so every pinned SDK
 header retains its original name and bytes. On a Windows-mounted checkout, use
 `python3 scripts/unix_datagram_test.py --directory /var/tmp/axiom-unix-guest`.
@@ -1982,5 +1991,5 @@ under both identities, and retains the complete corpus in one compressed archive
 all 977 SDK headers, client ELF types/interpreters, compilation records, images,
 initramfs contents and original serial logs. The production ownership sanitizer
 model is `make test-unix-rights-policy`. These local comparisons do not establish
-current hosted acceptance. Broader stream options, interruption, shutdown and
-complete Unix socket lifetime qualification remain required.
+current hosted acceptance. Broader stream options, interruption, remaining
+shutdown contracts and complete Unix socket lifetime qualification remain required.

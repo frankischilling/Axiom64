@@ -574,7 +574,7 @@ int64_t ipc_syscall(Frame* f) {
                 (addr.path[0] ? other.bound_node == target
                               : other.local_length == len && !memcmp(other.local, addr.path, len)))
                 listener = &other;
-        if (!listener)
+        if (!listener || listener->read_closed)
             return -111;
         if (listener->queue_size >= listener->backlog)
             return -11;

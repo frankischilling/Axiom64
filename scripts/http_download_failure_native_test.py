@@ -23,6 +23,7 @@ from dns_peer import question,response
 from http_download.audit import fingerprint
 from http_download.native import command as ordinary
 from http_download.native_process import run
+from http_download.host_network import capture as network_capture, verify as network_verify
 from http_download.peer import Peer,PAYLOAD_SHA256
 from http_download_test import snapshot
 
@@ -48,15 +49,19 @@ if not args.child:
     (out / 'providers.json').write_text(json.dumps(configuration,indent=2)+'\n')
     source_inputs = snapshot(out)
     host = {name:fingerprint(Path(name)) for name in ('/etc/resolv.conf','/etc/passwd','/etc/group')}
-    network = subprocess.check_output(['ip','-json','address','show'])
+    network = network_capture()
+    (out / 'host-network-before.json').write_text(json.dumps(network,indent=2)+'\n')
     argv = ['unshare','--net','--mount','--propagation','private','--',sys.executable,__file__,'--output',str(out),'--child']
     try:
         process = run(argv,out / 'namespace.log',None,120)
         (out / 'namespace-process.json').write_text(json.dumps(process,indent=2)+'\n')
         assert not process['timed_out'] and process['returncode'] == 0,process
     finally:
+        current_network = network_capture()
+        (out / 'host-network-after.json').write_text(json.dumps(current_network,indent=2)+'\n')
         assert host == {name:fingerprint(Path(name)) for name in host}
-        assert network == subprocess.check_output(['ip','-json','address','show'])
+        network_audit = network_verify(network,current_network)
+        (out / 'host-network-audit.json').write_text(json.dumps(network_audit,indent=2)+'\n')
     assert source_inputs == {name:fingerprint(ROOT / name) for name in source_inputs}
     receipt = dict(passed=True,profiles=6,cases=30,source_inputs_unchanged=True,host_files_and_interfaces_unchanged=True,
         namespace_command=argv,host_inputs=host,guest_acceptance=False)

@@ -543,6 +543,7 @@ jobs:
         if: matrix.suite == 'downloads-native'
         run: |
           sudo -n python3 scripts/http_download_test.py --native --output build/http-downloads
+          sudo -n python3 scripts/tests/http_host_network_test.py --directory build/http-downloads/host-network-controls
           sudo -n python3 scripts/http_download_failure_native_test.py --output build/http-downloads/normal-native
           sudo -n python3 scripts/http_download_wget_native_test.py --output build/http-downloads/native-wget
       - name: Download real HTTP and authenticated HTTPS fixtures on both guest adapters

@@ -61,6 +61,8 @@ def inputs(retained, profile):
 
 def child(args):
     before, command = inputs(args.retained, args.profile)
+    if args.client != 'original':
+        command[-1] = str(ROOT / 'build' / ('diagnostic-' + args.client))
     directory = args.output / args.label
     directory.mkdir(parents=True, exist_ok=False)
     namespace = Path('/proc/self/ns/net').stat().st_ino
@@ -78,7 +80,8 @@ def child(args):
         network_namespace=namespace, parent_network_namespace=args.parent_namespace,
         original_source_sha256=before['source_sha256'], command=command,
         original_product_sha256=before['product_sha256'], settings=before['settings'],
-        error_destination=reservation, traced=args.trace, acceptance=False))
+        error_destination=reservation, traced=args.trace, client=args.client,
+        actual_command_sha256={name: sha(Path(name)) for name in command}, acceptance=False))
     if args.trace:
         command = ['strace', '-f', '-qq', '-s', '160', '-ttt', '-T', '-o',
             str(directory / 'syscalls.log'), '-e',
@@ -126,21 +129,27 @@ def child(args):
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
+        # The transient TAP links disappear when their last fd closes. Preserve
+        # real namespace state while those links and their routes still exist.
+        for label, arguments in (('addresses', ['address', 'show']), ('routes', ['-6', 'route', 'show', 'table', 'all']),
+                                 ('neighbors', ['-6', 'neigh', 'show'])):
+            result = subprocess.run(['ip', '-j', *arguments], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            (directory / (label + '.json')).write_bytes(result.stdout)
         for capture in captures:
             statistics.append(capture.close())
         selector.close()
         for tap in taps:
             os.close(tap)
     text = (directory / 'client.log').read_text() if (directory / 'client.log').exists() else ''
-    for label, arguments in (('addresses', ['address', 'show']), ('routes', ['-6', 'route', 'show', 'table', 'all']),
-                             ('neighbors', ['-6', 'neigh', 'show'])):
-        result = subprocess.run(['ip', '-j', *arguments], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        (directory / (label + '.json')).write_bytes(result.stdout)
     result = dict(profile=args.profile, label=args.label, returncode=process.returncode if process else None,
         observer_error=error, seconds=time.monotonic() - began, peers=[peer.result() for peer in peers],
         capture_statistics=statistics, observed_target_failure='actual original error input errno=22' in text,
         original_client_completed=process is not None and process.returncode == 0 and
             'IPV6_ERRORS_PASS adapters=2' in text and all(peer.passed for peer in peers),
+        minimum_client_completed=process is not None and process.returncode == 0 and
+            'IPV6_ERRORS_METADATA_ONLY_COMPLETE' in text and
+            all(peer.metadata.passed and peer.extensions.passed for peer in peers),
+        client=args.client,
         original_source_products_unchanged=inputs(args.retained, args.profile)[0] == before,
         diagnostic_only=True, acceptance=False)
     write(directory / 'receipt.json', result)
@@ -158,6 +167,7 @@ def main():
     parser.add_argument('--label')
     parser.add_argument('--parent-namespace', type=int)
     parser.add_argument('--trace', action='store_true')
+    parser.add_argument('--client', choices=('original', 'rebuilt', 'minimum'), default='original')
     args = parser.parse_args()
     args.retained, args.output = args.retained.resolve(), args.output.resolve()
     if args.child:
@@ -165,9 +175,9 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     for profile in PROFILES:
         inputs(args.retained, profile)
-    plans = [dict(label='original', profiles=list(PROFILES), trace=False),
-             dict(label='contended', profiles=['dynamic'] * 4, trace=False),
-             dict(label='traced', profiles=['dynamic'] * 4, trace=True)]
+    plans = [dict(label='original', profiles=['dynamic'] * 4, trace=False, client='original'),
+             dict(label='rebuilt', profiles=['dynamic'] * 4, trace=False, client='rebuilt'),
+             dict(label='minimum', profiles=['dynamic'] * 4, trace=False, client='minimum')]
     write(args.output / 'plan.json', dict(plans=plans, stop_on_pass=False,
         original_packet_clocks_and_deadlines=True, acceptance=False))
     results = []
@@ -179,6 +189,7 @@ def main():
             command = ['unshare', '--net', sys.executable, '-B', str(Path(__file__).resolve()),
                 '--child', '--retained', str(args.retained), '--output', str(args.output),
                 '--profile', profile, '--label', label, '--parent-namespace', str(parent)]
+            command.extend(['--client', plan['client']])
             if plan['trace']:
                 command.append('--trace')
             with (args.output / (label + '.log')).open('xb') as stream:

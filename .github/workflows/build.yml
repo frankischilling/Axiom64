@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install syscall observer
-        run: sudo apt-get update && sudo apt-get install -y strace
+        run: sudo apt-get update && sudo apt-get install -y strace musl-tools
       - name: Retrieve original required-run artifact
         env:
           GH_TOKEN: ${{ github.token }}
@@ -36,6 +36,13 @@ jobs:
                           path.parent.mkdir(parents=True, exist_ok=True)
                           path.write_bytes(archive.read(member))
           PY
+      - name: Build paired full and metadata-only diagnostic clients
+        run: |
+          mkdir -p build/diagnostic-uapi
+          cp -a /usr/include/linux /usr/include/asm-generic /usr/include/x86_64-linux-gnu/asm build/diagnostic-uapi/
+          musl-gcc -isystem build/diagnostic-uapi -Iuserspace/tests/net -std=c11 -O2 -g -Wall -Wextra -Werror -DIPV6_ERROR_CONTROLS_INTEGRATED userspace/tests/net/ipv6_errors.c userspace/tests/net/ipv6_error_controls.c userspace/tests/net/ipv6_error_metadata.c userspace/tests/net/ipv6_receive_extensions.c -o build/diagnostic-rebuilt
+          musl-gcc -isystem build/diagnostic-uapi -Iuserspace/tests/net -std=c11 -O2 -g -Wall -Wextra -Werror scripts/ipv6_error_metadata_minimum.c userspace/tests/net/ipv6_error_metadata.c -o build/diagnostic-minimum
+          sha256sum build/diagnostic-rebuilt build/diagnostic-minimum
       - name: Run fixed diagnosis plan with original client bytes
         run: sudo -n python3 -B scripts/ipv6_error_send_diagnostic.py --retained build/retained --output build/send-diagnostic
       - name: Retain every diagnostic outcome
@@ -44,4 +51,8 @@ jobs:
         with:
           name: ipv6-send-diagnostic
           if-no-files-found: error
-          path: build/send-diagnostic/
+          path: |
+            build/send-diagnostic/
+            build/diagnostic-rebuilt
+            build/diagnostic-minimum
+            build/diagnostic-uapi/

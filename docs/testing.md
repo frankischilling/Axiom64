@@ -986,7 +986,12 @@ order. Axiom64 TCP copies each accessible address prefix before returning a page
 fault, then publishes the length only after the address copy succeeds. The
 four-byte length store remains atomic. Native comparisons retain this measured
 Linux 6.17 contract and separately identify the observed Linux 7.0.0-1017-azure
-length-before-address contract. All three libc profiles pass the same 216 cases
+and 7.0.0-1014-aws length-before-address contracts. Both signed Ubuntu AWS builds
+reproduce the original length-side-effect failure with the preceding client;
+all three corrected linkages pass every 216 cases on both kernels. The retained
+AWS reference records actual source, program, kernel, initramfs and serial hashes.
+The selector admits only those exact measured releases and records the actual
+kernel name; guest copy order remains unchanged. All three libc profiles pass the same 216 cases
 on isolated Linux 6.6, 6.17 and 7.0 kernels. Both preceding Axiom64 linkage
 controls fail the partial-page regression. The evidence reader also rejects
 missing name-copy observations, changed case counts and forged native ordering

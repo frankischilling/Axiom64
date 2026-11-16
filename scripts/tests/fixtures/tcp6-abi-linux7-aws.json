@@ -1,0 +1,40 @@
+{
+  "reference_kernel": "7.0.0-1014-aws",
+  "kernel_package_provenance": "scripts/tests/fixtures/ipv6-configuration-lifetime-linux7-aws.json",
+  "environment": "Original signed Ubuntu noble and resolute AWS kernels booted in disposable isolated Linux VMs",
+  "source_sha256": "21781741c379bd090be42cfa8e7a4a3249d2c945b188de1e222ab5fbe56de55e",
+  "baseline_source_sha256": "94b28b9f1af5c3486d3bc5041aaa22d225c26000abd1679c8d7af63cb34f8bdc",
+  "baseline_program_sha256": "bc18c1e32cf096d51d9c0e7947c5c04727a4a65d2a81ede758cfa13e1cd87371",
+  "baseline_failure": "TCP6_ABI_FAIL operation=getsockname length detail=1 errno=14",
+  "original_cases": 200,
+  "name_copy_cases": 16,
+  "cases_each": 216,
+  "actual_programs": {
+    "static": "adeae2ae98bd2d69140cfb0820006c97a4669c88964b8efdef5f87cde9d37c89",
+    "dynamic": "b14c643f489fe9bc5cc7f8dcad35f74e7cb88ab83c0c2652afd07689a7e8ef4a",
+    "native": "142b0c4a86512b95655f90b12cfbd159eb27360ba582b6736733022f6be9c8c2"
+  },
+  "reference_variants": [
+    {
+      "series": "noble",
+      "kernel_sha256": "a6a897d3b8c177c8736e8bce85b6b9cd8e3275f94107221ee93820fcd5388384",
+      "initramfs_sha256": "a4ce82d84638853924d80445c4d27ad009d6fb2b057cf6fd0ab27a656652eade",
+      "serial_sha256": "462e3058b5e334ce2b1b18a51afde71fa4318da1cf1c5031887f4a93bd8c35c1",
+      "abi_profiles": 3,
+      "abi_cases_each": 216,
+      "baseline_original_failure_reproduced": true
+    },
+    {
+      "series": "resolute",
+      "kernel_sha256": "14bd3972ee7924c98e17a9040eadd3b0c7683b42e22a574d0328a920fa4732bc",
+      "initramfs_sha256": "232ae50954f583a26c8f908caaceb4273a05f0e6934272ad0abb344face8c0c3",
+      "serial_sha256": "1dcc137e135d57ae5c0a081a481045be30ee287a90ddb1b4fbeffd7285cdc9f3",
+      "abi_profiles": 3,
+      "abi_cases_each": 216,
+      "baseline_original_failure_reproduced": true
+    }
+  ],
+  "native_marker": "TCP6_ABI_NATIVE_NAME_COPY kernel=7.0.0-1014-aws length_first=1",
+  "guest_length_first": false,
+  "axiom_guest_acceptance": false
+}

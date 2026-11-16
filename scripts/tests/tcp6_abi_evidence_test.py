@@ -17,8 +17,10 @@ def changed_prevalidation(body):
 
 
 def changed_name_order(body):
-    marker = NAME_COPY.encode() + b'\n'
-    return body.replace(marker, b'') if marker in body else marker + body
+    lines = body.splitlines(keepends=True)
+    prefix = b'TCP6_ABI_NATIVE_NAME_COPY'
+    return (b''.join(line for line in lines if not line.startswith(prefix))
+            if any(line.startswith(prefix) for line in lines) else NAME_COPY.encode() + b'\n' + body)
 
 
 def missing_name_copy(body):

@@ -63,7 +63,7 @@ struct IoRequest {
     UnixRights* unix_rights;
     UnixAddressValue unix_name;
     UnixDatagramTarget unix_target;
-    bool unix_named;
+    bool unix_named, unix_write_waited;
     uint64_t address_pointer, address_length_pointer;
     uint64_t control_pointer, control_capacity;
     uint32_t address_capacity;
@@ -746,14 +746,19 @@ static int64_t unix_stream_attempt(Task& task, IoRequest& request) {
             return -14;
         remaining += vector.length;
     }
-    VectorCursor cursor{request};
+    if (request.write)
+        remaining -= request.progress;
+    VectorCursor cursor{request, request.cursor, request.cursor_offset};
     size_t done = 0;
     if (request.write) {
         if (!remaining && !request.socket)
             return 0;
         int error = int(socket_write(socket, nullptr, 0));
         if (error) {
-            if (error == -32 && !(request.flags & 0x4000))
+            // Linux's queue-space wait returns EPIPE without entering the
+            // fresh-send SIGPIPE path. An accepted prefix also suppresses it.
+            if (error == -32 && !request.progress && !request.unix_write_waited &&
+                !(request.flags & 0x4000))
                 queue_signal(&task, 13, task.process->pid);
             return error;
         }
@@ -786,6 +791,13 @@ static int64_t unix_stream_attempt(Task& task, IoRequest& request) {
             return -14;
         }
         receiver->stream.accept(record, length, identity, request.unix_rights, receiver);
+        while (cursor.index < request.count &&
+               cursor.offset == request.vectors[cursor.index].length) {
+            cursor.index++;
+            cursor.offset = 0;
+        }
+        request.cursor = cursor.index;
+        request.cursor_offset = cursor.offset;
         return length;
     }
 
@@ -1362,8 +1374,20 @@ static int64_t attempt(Task& task, IoRequest& request) {
                                     : socket_accept(task, h, f.rsi, f.rdx, f.rax == 288 ? f.r10 : 0,
                                                     request.reserved_fd);
     if (h->socket && h->socket->type == 1) {
-        int64_t result = unix_stream_attempt(task, request);
-        return result == -11 && request.stream_blocking ? would_block : result;
+        for (;;) {
+            int64_t result = unix_stream_attempt(task, request);
+            if (result == -11 && request.stream_blocking) {
+                request.unix_write_waited |= request.write;
+                return would_block;
+            }
+            if (result < 0)
+                return request.progress ? int64_t(request.progress) : result;
+            if (!request.write)
+                return result;
+            request.progress += size_t(result);
+            if (!result || !request.stream_blocking || request.cursor == request.count)
+                return request.progress;
+        }
     }
     size_t done = 0;
     int64_t result = 0;

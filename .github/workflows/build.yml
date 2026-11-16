@@ -1109,6 +1109,7 @@ jobs:
           make test-unix-rights-policy test-unix-datagram-policy
           sudo -n python3 -B scripts/unix_stream_native.py
           sudo -n python3 -B scripts/unix_stream_native.py --client unix_shutdown
+          sudo -n python3 -B scripts/unix_stream_native.py --client unix_stream_wait
           umask 022
           evidence_parent=$(mktemp -d /var/tmp/axiom64-unix-evidence.XXXXXXXX)
           chmod 0755 "$evidence_parent"
@@ -1750,6 +1751,7 @@ jobs:
             build/unix-datagram-guest.tar.gz
             build/unix-stream-native/**
             build/unix-shutdown-native/**
+            build/unix-stream-wait-native/**
             build/udp-wire/**
             build/ipv4-multicast-evidence/**
             build/ipv4-multicast-audit/**

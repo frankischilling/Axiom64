@@ -14,12 +14,12 @@ import time
 from compile_uapi_client import audit_compile
 from fetch import ROOT
 from tcp_fixture_inputs import digest
-from unix_datagram_contract import CLIENTS, SHUTDOWN_MARKERS
+from unix_datagram_contract import CLIENTS, SHUTDOWN_MARKERS, STREAM_WAIT_MARKERS
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--client', choices=('unix_stream', 'unix_shutdown'), default='unix_stream')
+    parser.add_argument('--client', choices=('unix_stream', 'unix_shutdown', 'unix_stream_wait'), default='unix_stream')
     parser.add_argument('--directory', type=Path)
     args = parser.parse_args()
     if os.geteuid():
@@ -28,6 +28,8 @@ def main():
     directory.mkdir(parents=True, exist_ok=False)
     program = directory / args.client
     prefix = args.client.upper()
+    markers = (SHUTDOWN_MARKERS if args.client == 'unix_shutdown' else
+               STREAM_WAIT_MARKERS if args.client == 'unix_stream_wait' else ())
     command = [sys.executable, '-B', 'scripts/compile_uapi_client.py', '--compiler', 'gcc',
                '--output', str(program), '--', '-std=c11', '-O2', '-g', '-Wall', '-Wextra',
                '-Werror', 'userspace/tests/ipc/' + args.client + '.c']
@@ -58,8 +60,7 @@ def main():
             expected = f'{prefix}_IDENTITY uid={uid} euid={uid} gid={uid} egid={uid} groups=0'
             if (process.returncode or lines.count(expected) != 1 or
                     lines.count(f'{prefix}_PASS groups={CLIENTS[args.client]}') != 1 or
-                    (args.client == 'unix_shutdown' and
-                     any(lines.count(marker) != 1 for marker in SHUTDOWN_MARKERS)) or
+                    any(lines.count(marker) != 1 for marker in markers) or
                     any('_FAIL' in line for line in lines)):
                 raise ValueError('native ' + args.client + ' comparison failed: ' + name + '\n' + '\n'.join(lines))
             rows.append(dict(mode=name, uid=uid, command=[str(executable), *arguments],

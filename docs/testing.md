@@ -1996,8 +1996,21 @@ therefore checks 112 cases under each identity.
 `sudo python3 scripts/unix_stream_native.py --client unix_shutdown` runs the
 same client as root, with a credential drop, and as an already ordinary caller.
 
-`make test-unix-datagrams` runs all eight public clients as root and UID 65534 with
-both musl providers, both linkages and BIOS/UEFI: 128 actual client executions.
+The stream-wait client checks 24 retained sends through `write`, `writev`, `send`
+and `sendmsg`. A blocked 1 MiB send must continue beyond the bounded queue while
+retaining its original description and imported vectors after descriptor
+replacement, vector changes and an alias setting nonblocking mode. Finite
+deadlines and caught signals return exactly the accepted prefix, including with
+`SA_RESTART`. Queued rights transfer only once; rejected pending rights transfer
+none. Peer read-shutdown preserves previously queued bytes. The blocked call
+returns its prefix or `EPIPE` without `SIGPIPE`; a fresh write raises `SIGPIPE`.
+This follows the separate queue-allocation and fresh-error paths in
+[Linux Unix stream send](https://github.com/torvalds/linux/blob/v7.0/net/unix/af_unix.c#L2238-L2373).
+`sudo python3 scripts/unix_stream_native.py --client unix_stream_wait` compares
+the same client under all three controlled native identities.
+
+`make test-unix-datagrams` runs all nine public clients as root and UID 65534 with
+both musl providers, both linkages and BIOS/UEFI: 144 actual client executions.
 Keep its evidence directory on a case-sensitive filesystem so every pinned SDK
 header retains its original name and bytes. On a Windows-mounted checkout, use
 `python3 scripts/unix_datagram_test.py --directory /var/tmp/axiom-unix-guest`.

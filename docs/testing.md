@@ -603,9 +603,11 @@ The native path-descriptor cancellation checks distinguish live children, unreap
 
 The host captures `build/desktop-bios.png` and `desktop-uefi.png` after input succeeds. Logs are `build/boot-bios.log` and `boot-uefi.log`; results are in `build/boot-results.json`.
 
-Before dependency builds, CI downloads missing locked userspace packages and verifies every package checksum. Unavailable or altered packages fail at this stage, before compilation and image assembly.
+Before dependency builds, CI verifies essential boot archives, downloads missing locked userspace packages and checks every package checksum. Unavailable or altered inputs fail at this stage, before compilation and image assembly.
 
 CI can reuse completed musl, OpenSSL and curl products across revisions with identical dependency locks, recipes, local patches and host build inputs. The cache key includes actual compiler/tool bytes, native linker inputs and C headers. It also binds the workspace path used by compiler specifications. Cache hits still run the maintained builders, complete product hash checks and damaged-input controls. The cache retains staged tools, libraries, notices, manifests, logs and generated configuration headers. Curl also retains its complete verified source tree, original installed metadata and configuration logs because its cached builder rechecks those inputs. Missing provider manifests, changed products or sources, and paths outside the declared cache fail validation. OpenSSL source and intermediate object trees remain excluded. Input fingerprints, product counts and cache-hit evidence accompany the account-policy artifact under `crypto-cache/`. Complete cold and warm workflow timings are needed before claiming an overall CI improvement.
+
+CI saves validated provider products immediately after the completeness check, before subsequent builds and source packaging. A failed validation prevents cache publication. Full workflow and runtime checks still determine acceptance.
 
 Read these reports together: `inputs.json` records the exact key and build inputs, `cache-hit.txt` records whether the cache action found that key, and `products.json` records the completed manifests and verified product counts. An empty or `false` cache-hit value means a miss; `true` alone does not prove that restored products passed verification. Compare successful complete workflows with matching build inputs, including queue time and the unchanged guest jobs. Documentation changes can reuse the key because they do not change a dependency recipe or product.
 

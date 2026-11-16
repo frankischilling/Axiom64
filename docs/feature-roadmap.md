@@ -1,5 +1,7 @@
 # Feature roadmap
 
+The [project goals and release requirements](project-goals.md) define the required everyday workloads and VM-first acceptance criteria. Feature areas remain open until their complete requirements are met.
+
 Axiom64 targets a modular monolith kernel in C++ and Assembly with services and applications in Ring 3. Linux is the only userspace ABI target. Linux x86-64 is supported in part; Linux i386 remains planned. The 2026-10-09 scope decision excludes non-Linux executable personalities while retaining the required OS features and application catalog.
 
 The next implementation order is persistent storage, threads, then networking. Start with virtio block and writable ext2; add ext4 later. Provide POSIX pthreads and futexes before SMP. The first usable network release must acquire a DHCP lease, resolve DNS, exchange TCP/UDP traffic, answer ping, and download a file. Static network configuration must also work. Default DHCP configures every connected Ethernet adapter, with saved static settings taking precedence for each interface.

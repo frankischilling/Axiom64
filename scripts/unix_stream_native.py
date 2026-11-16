@@ -14,7 +14,7 @@ import time
 from compile_uapi_client import audit_compile
 from fetch import ROOT
 from tcp_fixture_inputs import digest
-from unix_datagram_contract import CLIENTS
+from unix_datagram_contract import CLIENTS, SHUTDOWN_MARKERS
 
 
 def main():
@@ -58,6 +58,8 @@ def main():
             expected = f'{prefix}_IDENTITY uid={uid} euid={uid} gid={uid} egid={uid} groups=0'
             if (process.returncode or lines.count(expected) != 1 or
                     lines.count(f'{prefix}_PASS groups={CLIENTS[args.client]}') != 1 or
+                    (args.client == 'unix_shutdown' and
+                     any(lines.count(marker) != 1 for marker in SHUTDOWN_MARKERS)) or
                     any('_FAIL' in line for line in lines)):
                 raise ValueError('native ' + args.client + ' comparison failed: ' + name + '\n' + '\n'.join(lines))
             rows.append(dict(mode=name, uid=uid, command=[str(executable), *arguments],

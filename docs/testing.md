@@ -1975,8 +1975,18 @@ The shutdown client checks 24 listener cases across abstract/pathname bindings,
 pending connections, duplicated descriptions and repeated shutdown calls.
 Read shutdown rejects fresh connections with `ECONNREFUSED`; write shutdown
 leaves admission open. Previously queued children retain bidirectional data
-exchange after acceptance. This follows the
+exchange after acceptance. An empty read-shut listener returns `EAGAIN` to a
+nonblocking accept and `EINVAL` to a blocking accept. This follows the
 [Linux listener admission check](https://github.com/torvalds/linux/blob/v6.17/net/unix/af_unix.c#L1621-L1624).
+Another 48 cases cover connected pairs with queued data, reciprocal shutdown
+and live aliases. Peeks preserve queued bytes; scalar, vector and message reads
+drain them before EOF. Closed write directions reject `MSG_NOSIGNAL` sends with
+`EPIPE`. Eighteen fresh or bound endpoint cases check shutdown before connection.
+All 90 cases compare exact poll, level-triggered epoll and select readiness.
+Read shutdown reports `POLLRDHUP`; `POLLHUP` requires both directions closed or
+an unconnected stream. Listener write shutdown stays silent. Hangup alone does
+not make a select write set ready. These distinctions follow
+[Linux Unix polling and shutdown](https://github.com/torvalds/linux/blob/v7.0/net/unix/af_unix.c#L3006-L3049).
 `sudo python3 scripts/unix_stream_native.py --client unix_shutdown` runs the
 same client as root, with a credential drop, and as an already ordinary caller.
 

@@ -447,6 +447,13 @@ readers reject seven reopened CPU, namespace and process-record changes per
 profile. The stock Linux kernel keeps its SMP configuration. Other TCP suites
 retain their existing scheduling policy. Packet ordering, original timestamps,
 zero-drop checks, fifty-millisecond arrival bounds and all deadlines remain.
+Failed native observations retain the first peer or client error through process
+cleanup. Capture finalization records each interface separately, including any
+rejected frame, its original kernel timestamp and the failed monotonic bracket.
+`sudo -n python3 scripts/tests/tcp6_native_cleanup_test.py` checks raised and
+returned peer failures with real clients, then delays an actual packet receipt
+beyond fifty milliseconds. That observation must remain rejected, with its
+failure evidence retained and the client and TAP owners stopped.
 Source capture retains exact Git inputs in a checkout and bounded public source
 roots in the exported CI tree. Builds, downloads, private files and Python caches
 remain outside that snapshot; private or external link targets reject.

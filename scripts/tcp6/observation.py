@@ -19,9 +19,12 @@ from tcp6.capture import require
 class Capture(OriginalCapture):
     def collect(self):
         empty = None
+        frame, ancillary, flags, observed = None, (), None, None
+        self.failure = None
         try:
             self.socket.setblocking(False)
             while True:
+                frame, ancillary, flags, observed = None, (), None, None
                 began = time.monotonic_ns()
                 try:
                     frame, ancillary, flags, _ = self.socket.recvmsg(
@@ -55,6 +58,11 @@ class Capture(OriginalCapture):
                             waiting['monotonic_ns'] = observed['receipt_monotonic_after_ns']
                             waiting['ready'].set()
         except Exception as failure:
+            self.failure = dict(error=f'{type(failure).__name__}: {failure}',
+                captured_frames=self.frame_count, arrival_lower_ns=empty,
+                frame=frame.hex() if frame is not None else None, flags=flags,
+                receipt=observed, ancillary=[dict(level=level, kind=kind, data=value.hex())
+                                             for level, kind, value in ancillary])
             self.error = failure
 
 

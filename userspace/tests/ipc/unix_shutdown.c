@@ -4,7 +4,9 @@
 #include <fcntl.h>
 #include <grp.h>
 #include <poll.h>
+#include <signal.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,15 +15,26 @@
 #include <sys/select.h>
 #include <sys/un.h>
 #include <sys/uio.h>
+#include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
+
+static pid_t waiting_child;
+
+static void fail(int line, const char* expression) {
+    int error = errno;
+    if (waiting_child > 0) {
+        kill(waiting_child, SIGKILL);
+        waitpid(waiting_child, NULL, 0);
+    }
+    fprintf(stderr, "UNIX_SHUTDOWN_FAIL line=%d expression=%s errno=%d\n", line, expression, error);
+    exit(1);
+}
 
 #define CHECK(value)                                                                               \
     do {                                                                                           \
-        if (!(value)) {                                                                            \
-            fprintf(stderr, "UNIX_SHUTDOWN_FAIL line=%d expression=%s errno=%d\n", __LINE__,       \
-                    #value, errno);                                                                \
-            exit(1);                                                                               \
-        }                                                                                          \
+        if (!(value))                                                                              \
+            fail(__LINE__, #value);                                                                \
     } while (0)
 
 static void readiness(int fd, unsigned expected) {
@@ -253,6 +266,165 @@ static void unconnected(void) {
          "select");
 }
 
+static uint64_t monotonic_ns(void) {
+    struct timespec now;
+    CHECK(!clock_gettime(CLOCK_MONOTONIC, &now));
+    return (uint64_t)now.tv_sec * 1000000000 + (uint64_t)now.tv_nsec;
+}
+
+static void sleeping(pid_t child) {
+    char path[64], text[2048];
+    CHECK(snprintf(path, sizeof(path), "/proc/%ld/stat", (long)child) > 0);
+    uint64_t began = monotonic_ns();
+    for (;;) {
+        int fd = open(path, O_RDONLY | O_CLOEXEC);
+        CHECK(fd >= 0);
+        ssize_t count = read(fd, text, sizeof(text) - 1);
+        CHECK(count > 0 && !close(fd));
+        text[count] = 0;
+        char* state = strrchr(text, ')');
+        CHECK(state && state[1] == ' ' && state[2] != 'Z');
+        if (state[2] == 'S')
+            return;
+        CHECK(monotonic_ns() - began < 2000000000);
+        CHECK(!usleep(1000));
+    }
+}
+
+enum wait_kind { WAIT_READ, WAIT_SEND, WAIT_ACCEPT, WAIT_POLL, WAIT_EDGE, WAIT_SELECT };
+
+struct wait_result {
+    ssize_t result;
+    int error;
+    unsigned events;
+    unsigned char byte;
+};
+
+static void waits(void) {
+    unsigned cases = 0;
+    for (int kind = WAIT_READ; kind <= WAIT_SELECT; kind++) {
+        for (int peer = 0; peer < (kind == WAIT_ACCEPT ? 1 : 2); peer++) {
+            for (int duplicate = 0; duplicate < 2; duplicate++) {
+                int sockets[2] = {-1, -1}, ready[2], result[2];
+                if (kind == WAIT_ACCEPT) {
+                    sockets[0] = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+                    CHECK(sockets[0] >= 0);
+                    struct sockaddr_un address = {.sun_family = AF_UNIX};
+                    int length = snprintf(address.sun_path + 1, sizeof(address.sun_path) - 1,
+                                          "ax-shutdown-wait-%ld-%u", (long)getpid(), cases);
+                    CHECK(length > 0 && length < (int)sizeof(address.sun_path) - 1);
+                    CHECK(!bind(sockets[0], (struct sockaddr*)&address,
+                                offsetof(struct sockaddr_un, sun_path) + 1 + length));
+                    CHECK(!listen(sockets[0], 2));
+                } else {
+                    CHECK(!socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets));
+                }
+                size_t queued = 0;
+                unsigned char bytes[4096];
+                memset(bytes, 0x5a, sizeof(bytes));
+                if (kind == WAIT_SEND) {
+                    int flags = fcntl(sockets[0], F_GETFL);
+                    CHECK(flags >= 0 && !fcntl(sockets[0], F_SETFL, flags | O_NONBLOCK));
+                    for (;;) {
+                        ssize_t count = send(sockets[0], bytes, sizeof(bytes), MSG_NOSIGNAL);
+                        if (count == -1) {
+                            CHECK(errno == EAGAIN);
+                            break;
+                        }
+                        CHECK(count > 0 && queued < 16 * 1024 * 1024);
+                        queued += (size_t)count;
+                    }
+                    CHECK(queued && !fcntl(sockets[0], F_SETFL, flags));
+                }
+                int actor = sockets[peer];
+                int alias = duplicate ? fcntl(actor, F_DUPFD_CLOEXEC, 0) : -1;
+                CHECK(!duplicate || alias >= 0);
+                CHECK(!pipe2(ready, O_CLOEXEC) && !pipe2(result, O_CLOEXEC));
+                pid_t child = fork();
+                CHECK(child >= 0);
+                if (!child) {
+                    CHECK(!close(ready[0]) && !close(result[0]));
+                    struct wait_result observed = {.byte = 0x5a};
+                    int epoll = -1;
+                    if (kind == WAIT_EDGE) {
+                        epoll = epoll_create1(EPOLL_CLOEXEC);
+                        struct epoll_event event = {.events = EPOLLIN | EPOLLRDHUP | EPOLLET,
+                                                    .data = {.u64 = 0xabc123}};
+                        CHECK(epoll >= 0 && !epoll_ctl(epoll, EPOLL_CTL_ADD, sockets[0], &event));
+                        CHECK(!epoll_wait(epoll, &event, 1, 0));
+                    }
+                    CHECK(write(ready[1], "r", 1) == 1);
+                    errno = 0;
+                    if (kind == WAIT_READ)
+                        observed.result = recv(sockets[0], &observed.byte, 1, 0);
+                    else if (kind == WAIT_SEND)
+                        observed.result = send(sockets[0], "!", 1, MSG_NOSIGNAL);
+                    else if (kind == WAIT_ACCEPT)
+                        observed.result = accept4(sockets[0], NULL, NULL, SOCK_CLOEXEC);
+                    else if (kind == WAIT_POLL) {
+                        struct pollfd descriptor = {.fd = sockets[0], .events = POLLIN | POLLRDHUP};
+                        observed.result = poll(&descriptor, 1, -1);
+                        observed.events = (unsigned short)descriptor.revents;
+                    } else if (kind == WAIT_EDGE) {
+                        struct epoll_event event = {0};
+                        observed.result = epoll_wait(epoll, &event, 1, -1);
+                        CHECK(observed.result != 1 || event.data.u64 == 0xabc123);
+                        observed.events = event.events;
+                    } else {
+                        fd_set readers;
+                        FD_ZERO(&readers);
+                        FD_SET(sockets[0], &readers);
+                        observed.result = select(sockets[0] + 1, &readers, NULL, NULL, NULL);
+                        observed.events = FD_ISSET(sockets[0], &readers) ? POLLIN : 0;
+                    }
+                    observed.error = errno;
+                    CHECK(write(result[1], &observed, sizeof(observed)) == sizeof(observed));
+                    _exit(0);
+                }
+                waiting_child = child;
+                CHECK(!close(ready[1]) && !close(result[1]));
+                char token;
+                CHECK(read(ready[0], &token, 1) == 1 && token == 'r');
+                sleeping(child);
+                int how =
+                    kind == WAIT_SEND ? (peer ? SHUT_RD : SHUT_WR) : (peer ? SHUT_WR : SHUT_RD);
+                CHECK(!shutdown(duplicate ? alias : actor, how));
+                struct pollfd completed = {.fd = result[0], .events = POLLIN};
+                CHECK(poll(&completed, 1, 3000) == 1 && (completed.revents & POLLIN));
+                struct wait_result observed;
+                CHECK(read(result[0], &observed, sizeof(observed)) == sizeof(observed));
+                int status;
+                pid_t reaped = waitpid(child, &status, 0);
+                waiting_child = 0;
+                CHECK(reaped == child && WIFEXITED(status) && !WEXITSTATUS(status));
+                int error = kind == WAIT_SEND ? EPIPE : kind == WAIT_ACCEPT ? EINVAL : 0;
+                ssize_t expected = kind == WAIT_READ ? 0 : error ? -1 : 1;
+                unsigned events = kind == WAIT_SELECT ? POLLIN
+                                  : kind >= WAIT_POLL ? POLLIN | POLLRDHUP
+                                                      : 0;
+                CHECK(observed.result == expected && observed.error == error &&
+                      observed.events == events && observed.byte == 0x5a);
+                while (queued) {
+                    size_t wanted = queued < sizeof(bytes) ? queued : sizeof(bytes);
+                    ssize_t count = recv(sockets[1], bytes, wanted, 0);
+                    CHECK(count > 0 && (size_t)count <= wanted);
+                    for (ssize_t index = 0; index < count; index++)
+                        CHECK(bytes[index] == 0x5a);
+                    queued -= (size_t)count;
+                }
+                CHECK(!close(ready[0]) && !close(result[0]));
+                CHECK(!duplicate || !close(alias));
+                CHECK(!close(sockets[0]));
+                CHECK(sockets[1] < 0 || !close(sockets[1]));
+                cases++;
+            }
+        }
+    }
+    CHECK(cases == 22);
+    puts("UNIX_SHUTDOWN_WAIT_PASS cases=22 blocked=22 reads sends accepts poll epoll_edge select "
+         "aliases retained_bytes");
+}
+
 int main(int argc, char** argv) {
     CHECK(argc == 1 || (argc == 2 && !strcmp(argv[1], "--ordinary")));
     if (argc == 2) {
@@ -264,6 +436,7 @@ int main(int argc, char** argv) {
     listeners();
     connected();
     unconnected();
-    puts("UNIX_SHUTDOWN_PASS groups=3");
+    waits();
+    puts("UNIX_SHUTDOWN_PASS groups=4");
     return 0;
 }

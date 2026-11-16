@@ -1982,11 +1982,17 @@ Another 48 cases cover connected pairs with queued data, reciprocal shutdown
 and live aliases. Peeks preserve queued bytes; scalar, vector and message reads
 drain them before EOF. Closed write directions reject `MSG_NOSIGNAL` sends with
 `EPIPE`. Eighteen fresh or bound endpoint cases check shutdown before connection.
-All 90 cases compare exact poll, level-triggered epoll and select readiness.
+These 90 cases compare exact poll, level-triggered epoll and select readiness.
 Read shutdown reports `POLLRDHUP`; `POLLHUP` requires both directions closed or
 an unconnected stream. Listener write shutdown stays silent. Hangup alone does
 not make a select write set ready. These distinctions follow
 [Linux Unix polling and shutdown](https://github.com/torvalds/linux/blob/v7.0/net/unix/af_unix.c#L3006-L3049).
+Another 22 cases observe a child sleeping in a receive, full-queue send, accept,
+poll, edge-triggered epoll or select call before shutting down the original or
+duplicated description. Local and peer shutdown must wake the appropriate
+waiter with exact EOF, `EPIPE`, `EINVAL` or readiness results. Every byte accepted
+before a blocked send remains available to the receiver. The complete client
+therefore checks 112 cases under each identity.
 `sudo python3 scripts/unix_stream_native.py --client unix_shutdown` runs the
 same client as root, with a credential drop, and as an already ordinary caller.
 

@@ -4,12 +4,13 @@ import re
 
 CLIENTS = {'unix_messages': 11, 'unix_names': 6, 'unix_routing': 5,
            'unix_routing_wait': 7, 'unix_credentials': 5, 'unix_rights': 7,
-           'unix_stream': 11, 'unix_shutdown': 3}
+           'unix_stream': 11, 'unix_shutdown': 4}
 
 SHUTDOWN_MARKERS = (
     'UNIX_SHUTDOWN_LISTENER_PASS cases=24 names=abstract,path duplicate repeated pending exchange',
     'UNIX_SHUTDOWN_CONNECTED_PASS cases=48 queued peek scalar vector message aliases poll epoll select reciprocal no_signal',
-    'UNIX_SHUTDOWN_UNCONNECTED_PASS cases=18 names=unbound,abstract,path aliases poll epoll select')
+    'UNIX_SHUTDOWN_UNCONNECTED_PASS cases=18 names=unbound,abstract,path aliases poll epoll select',
+    'UNIX_SHUTDOWN_WAIT_PASS cases=22 blocked=22 reads sends accepts poll epoll_edge select aliases retained_bytes')
 
 
 def boot_body():

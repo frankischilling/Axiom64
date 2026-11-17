@@ -2,6 +2,7 @@
 """Bounded diagnosis with retained binaries; never a merge-acceptance producer."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 import fcntl
 import hashlib
 import json
@@ -20,6 +21,7 @@ from fetch import ROOT
 from ipv6_errors_peer import Peer
 from ipv6_host_native import reserve_error_destination
 from tcp_fault_native import Capture
+from native_neighbor_capacity import ipv6_neighbor_capacity
 
 PROFILES = ('native', 'static', 'dynamic')
 PROGRAMS = {
@@ -53,7 +55,7 @@ def neighbor_state():
             result['files'][name] = dict(error=str(error))
     for label, command in (
             ('tables', ['ip', '-j', '-s', 'ntable', 'show']),
-            ('neighbors', ['ip', '-j', '-s', '-6', 'neighbor', 'show']),
+            ('neighbors', ['ip', '-j', '-s', '-6', 'neighbor', 'show', 'nud', 'all']),
             ('kernel_log', ['dmesg', '--color=never'])):
         try:
             observed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -210,8 +212,14 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     for profile in PROFILES:
         inputs(args.retained, profile)
-    plans = [dict(label='full-wire', profiles=['dynamic'] * 4, trace=False, client='wire'),
-             dict(label='original-cohort', profiles=list(PROFILES), trace=False, client='original')]
+    plans = [dict(label='baseline-wire', profiles=['dynamic'] * 4, trace=False,
+                  client='wire', capacity=False),
+             dict(label='reserved-wire', profiles=['dynamic'] * 4, trace=False,
+                  client='wire', capacity=True),
+             dict(label='restored-wire', profiles=['dynamic'] * 4, trace=False,
+                  client='wire', capacity=False),
+             dict(label='reserved-original', profiles=list(PROFILES), trace=False,
+                  client='original', capacity=True)]
     write(args.output / 'plan.json', dict(plans=plans, stop_on_pass=False,
         original_packet_clocks_and_deadlines=True, acceptance=False))
     results = []
@@ -232,8 +240,14 @@ def main():
             receipt = args.output / label / 'receipt.json'
             return dict(label=label, harness_returncode=process.returncode,
                 receipt=json.loads(receipt.read_text()) if receipt.exists() else None)
-        with ThreadPoolExecutor(max_workers=len(plan['profiles'])) as pool:
-            results.extend(pool.map(run, enumerate(plan['profiles'])))
+        capacity = (ipv6_neighbor_capacity(args.output / (plan['label'] + '-capacity'),
+                                          len(plan['profiles']))
+                    if plan['capacity'] else nullcontext())
+        with capacity:
+            write(args.output / (plan['label'] + '-neighbor-admitted.json'), neighbor_state())
+            with ThreadPoolExecutor(max_workers=len(plan['profiles'])) as pool:
+                results.extend(pool.map(run, enumerate(plan['profiles'])))
+            write(args.output / (plan['label'] + '-neighbor-finished.json'), neighbor_state())
         write(args.output / (plan['label'] + '-neighbor-after.json'), neighbor_state())
     write(args.output / 'receipt.json', dict(executions=results, diagnostic_only=True,
         original_required_run=43831112405, original_required_head='319f9697de8070997a051a8b6e72363b0112bfa5',

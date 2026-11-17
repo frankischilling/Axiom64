@@ -64,6 +64,11 @@ jobs:
             musl-gcc -isystem build/diagnostic-uapi -Iuserspace/tests/net -std=c11 -O2 -g -Wall -Wextra -Werror -Wno-unused-function -DIPV6_ERROR_CONTROLS_INTEGRATED build/diagnostic-$variant.c userspace/tests/net/ipv6_error_controls.c userspace/tests/net/ipv6_error_metadata.c userspace/tests/net/ipv6_receive_extensions.c -o build/diagnostic-$variant
           done
           sha256sum build/diagnostic-rebuilt build/diagnostic-minimum
+      - name: Check shared neighbor reservation ownership and restoration
+        run: |
+          cp scripts/native_neighbor_capacity.py build/diagnostic-native-neighbor-capacity.py
+          cp scripts/tests/native_neighbor_capacity_test.py build/diagnostic-native-neighbor-capacity-test.py
+          sudo -n python3 -B scripts/tests/native_neighbor_capacity_test.py 2>&1 | tee build/diagnostic-native-neighbor-capacity-test.log
       - name: Run fixed diagnosis plan with original client bytes
         run: sudo -n python3 -B scripts/ipv6_error_send_diagnostic.py --retained build/retained --output build/send-diagnostic
       - name: Retain every diagnostic outcome
@@ -86,4 +91,7 @@ jobs:
             build/diagnostic-wire0.c
             build/diagnostic-wire1.c
             build/diagnostic-delayed.c
+            build/diagnostic-native-neighbor-capacity.py
+            build/diagnostic-native-neighbor-capacity-test.py
+            build/diagnostic-native-neighbor-capacity-test.log
             build/diagnostic-uapi/

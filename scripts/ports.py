@@ -5,31 +5,56 @@ import fcntl
 import hashlib
 import io
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import tarfile
 import urllib.request
-from fetch import ROOT
+from fetch import ROOT, verify_archive
 
 BASE = "https://dl-cdn.alpinelinux.org/alpine/v3.22"
 LOCKFILE = ROOT / "ports.lock.json"
 TOOLCHAIN = ["gcc", "g++", "binutils", "musl-dev", "linux-headers", "make"]
 
 
-def download(url, destination):
+def download(url, destination, *, expected_sha256=None):
     destination.parent.mkdir(parents=True, exist_ok=True)
     # Parallel libc/client builds can request the same uncached archive. Keep
     # its existence check, partial file and publication under one owned lock.
     with destination.with_suffix(destination.suffix + ".lock").open("a") as guard:
         fcntl.flock(guard, fcntl.LOCK_EX)
-        if not destination.exists():
+        if destination.exists():
+            if expected_sha256 is not None:
+                verify_archive(destination, expected_sha256)
+        else:
             request = urllib.request.Request(url, headers={"User-Agent": "Axiom64-build"})
             with urllib.request.urlopen(request, timeout=60) as response:
                 temporary = destination.with_suffix(destination.suffix + ".part")
                 with temporary.open("wb") as output:
                     while chunk := response.read(1024 * 1024):
                         output.write(chunk)
+                if expected_sha256 is not None:
+                    verify_archive(temporary, expected_sha256)
                 temporary.replace(destination)
     return destination
+
+
+def locked_package(package):
+    """Use the exact locked bytes, including a declared preserved package."""
+    url = package["url"]
+    if "vendored_archive" in package:
+        name = package["vendored_archive"]
+        if not isinstance(name, str) or "\\" in name:
+            raise RuntimeError("invalid vendored package path")
+        relative = PurePosixPath(name)
+        if (relative.is_absolute() or ".." in relative.parts or
+                len(relative.parts) < 3 or relative.parts[:2] != ("vendor", "ports")):
+            raise RuntimeError("vendored package must stay under vendor/ports")
+        source = ROOT.joinpath(*relative.parts)
+        if source.resolve(strict=True) != source.absolute() or not source.is_file():
+            raise RuntimeError("vendored package must be a regular file without aliases")
+        verify_archive(source, package["sha256"])
+        url = source.as_uri()
+    return download(url, ROOT / "downloads" / "ports" / package["archive"],
+                    expected_sha256=package["sha256"])
 
 
 def resolve(names):
@@ -75,10 +100,7 @@ def resolve(names):
 def packages():
     lock = json.loads(LOCKFILE.read_text())
     for package in lock["packages"]:
-        archive = download(package["url"], ROOT / "downloads" / "ports" / package["archive"])
-        if hashlib.sha256(archive.read_bytes()).hexdigest() != package["sha256"]:
-            raise RuntimeError(f"{package['archive']}: SHA-256 mismatch")
-        yield package, archive
+        yield package, locked_package(package)
 
 
 if __name__ == "__main__":

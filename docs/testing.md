@@ -1030,8 +1030,11 @@ boot separately and do not substitute for Axiom64 guest execution.
 downloader through an owned local HTTP server. Simultaneous cold callers share
 one complete publication, while distinct destinations still download in
 parallel. A failed transfer leaves the destination unpublished, preserves its
-partial bytes and releases ownership for the next request. Existing pinned
-checksum and signature validation remains in each caller.
+partial bytes and releases ownership for the next request. Locked-package checks
+cover a declared local archive with an unavailable HTTP origin, cold and warm
+cache verification, corrupt source and response bytes, and rejected missing,
+escaping or redirected local inputs. Hash failures reject publication. Existing
+source checksum and signature validation remains in the other callers.
 
 `make test-tcp6-isolation` and `sudo -n make test-tcp6-isolation-native` check
 two simultaneously open equal link-local tuples, both binding policies,

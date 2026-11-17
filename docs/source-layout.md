@@ -154,7 +154,10 @@ images and complete linkage/firmware/transport matrices for this cohort.
 `scripts/ports.py` serializes each archive's cold download and publication with
 its own file lock. Distinct archives remain concurrent. The real local-HTTP
 regression under `scripts/tests/ports_download_test.py` covers colliding writers,
-parallel independent destinations and interrupted transfer recovery.
+parallel independent destinations and interrupted transfer recovery. Locked APK
+consumers share `locked_package`, which verifies cache and publication bytes.
+Explicitly preserved APKs and their upstream notices live in `vendor/ports`;
+their paths and unchanged hashes are recorded in `ports.lock.json`.
 
 `kernel/net/socket_options.cpp` and `kernel/include/net/socket_options.hpp` own
 device-name queries shared by IPv4/TCP and IPv6 raw/UDP descriptions. The single

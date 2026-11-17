@@ -38,6 +38,39 @@ def write(path, value):
     path.write_text(json.dumps(value, indent=2) + '\n')
 
 
+def neighbor_state():
+    """Read shared table capacity and namespace entries without changing policy."""
+    result = dict(observed_ns=time.time_ns(), monotonic_ns=time.monotonic_ns(),
+                  network_namespace=Path('/proc/self/ns/net').stat().st_ino,
+                  kernel=platform.uname()._asdict(), files={}, commands={})
+    paths = ['/proc/net/stat/ndisc_cache']
+    paths.extend('/proc/sys/net/ipv6/neigh/default/' + name
+                 for name in ('gc_thresh1', 'gc_thresh2', 'gc_thresh3', 'gc_interval'))
+    for name in paths:
+        try:
+            result['files'][name] = dict(text=Path(name).read_text())
+        except OSError as error:
+            result['files'][name] = dict(error=str(error))
+    for label, command in (
+            ('tables', ['ip', '-j', '-s', 'ntable', 'show']),
+            ('neighbors', ['ip', '-j', '-s', '-6', 'neighbor', 'show']),
+            ('kernel_log', ['dmesg', '--color=never'])):
+        try:
+            observed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                      text=True, timeout=5)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            result['commands'][label] = dict(command=command, error=str(error))
+            continue
+        output = observed.stdout
+        if label == 'kernel_log':
+            output = '\n'.join(line for line in output.splitlines()
+                               if any(word in line.lower()
+                                      for word in ('neigh', 'ndisc', 'table overflow')))
+        result['commands'][label] = dict(command=command, returncode=observed.returncode,
+                                         stdout=output, stderr=observed.stderr)
+    return result
+
+
 def inputs(retained, profile):
     directory = retained / 'ipv6-errors-native-wire' / profile
     before = json.loads((directory / 'preexecution.json').read_text())
@@ -103,6 +136,7 @@ def child(args):
             selector.register(tap, selectors.EVENT_READ, lane)
             captures.append(Capture(name, directory / f'lane{lane}.pcap'))
             peers[lane].observe_input = captures[-1].watch
+        write(directory / 'neighbor-before-client.json', neighbor_state())
         with (directory / 'client.log').open('xb') as stream:
             environment = {key: value for key, value in os.environ.items()
                            if key in ('PATH', 'LANG', 'LC_ALL')}
@@ -131,6 +165,7 @@ def child(args):
                 process.wait()
         # The transient TAP links disappear when their last fd closes. Preserve
         # real namespace state while those links and their routes still exist.
+        write(directory / 'neighbor-after-client.json', neighbor_state())
         for label, arguments in (('addresses', ['address', 'show']), ('routes', ['-6', 'route', 'show', 'table', 'all']),
                                  ('neighbors', ['-6', 'neigh', 'show'])):
             result = subprocess.run(['ip', '-j', *arguments], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -175,14 +210,14 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     for profile in PROFILES:
         inputs(args.retained, profile)
-    plans = [dict(label='wire0', profiles=['dynamic'] * 4, trace=False, client='wire0'),
-             dict(label='wire1', profiles=['dynamic'] * 4, trace=False, client='wire1'),
-             dict(label='delayed', profiles=['dynamic'] * 4, trace=False, client='delayed')]
+    plans = [dict(label='full-wire', profiles=['dynamic'] * 4, trace=False, client='wire'),
+             dict(label='original-cohort', profiles=list(PROFILES), trace=False, client='original')]
     write(args.output / 'plan.json', dict(plans=plans, stop_on_pass=False,
         original_packet_clocks_and_deadlines=True, acceptance=False))
     results = []
     parent = Path('/proc/self/ns/net').stat().st_ino
     for plan in plans:
+        write(args.output / (plan['label'] + '-neighbor-before.json'), neighbor_state())
         def run(item):
             number, profile = item
             label = plan['label'] + '-' + str(number) + '-' + profile
@@ -199,6 +234,7 @@ def main():
                 receipt=json.loads(receipt.read_text()) if receipt.exists() else None)
         with ThreadPoolExecutor(max_workers=len(plan['profiles'])) as pool:
             results.extend(pool.map(run, enumerate(plan['profiles'])))
+        write(args.output / (plan['label'] + '-neighbor-after.json'), neighbor_state())
     write(args.output / 'receipt.json', dict(executions=results, diagnostic_only=True,
         original_required_run=43831112405, original_required_head='319f9697de8070997a051a8b6e72363b0112bfa5',
         original_host_failure_resolved=False, acceptance=False))

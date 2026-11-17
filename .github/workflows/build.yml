@@ -1431,6 +1431,7 @@ jobs:
             build/axiom64-ipv6-pmtu-*.iso
             build/ipv6-errors-wire
             build/ipv6-errors-native-wire
+            build/native-neighbor-capacity-tests
             build/ipv6-errors-static.inputs.json
             build/ipv6-errors-dynamic.inputs.json
             build/axiom64-ipv6-errors-*.iso

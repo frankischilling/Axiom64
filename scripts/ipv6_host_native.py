@@ -2,6 +2,7 @@
 """Compare the actual IPv6 control client on isolated native Ethernet links."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 import fcntl
 import hashlib
 import json
@@ -137,7 +138,8 @@ def child(profile, directory, suite='host', parent_namespace=None):
                      'scripts/ipv4_expiry_capture.py', 'scripts/ipv6_controls_capture.py'):
             sources[name] = digest(ROOT / name)
     if suite == 'errors':
-        for name in ('Makefile', 'userspace/tests/net/ipv6_error_controls.c',
+        for name in ('Makefile', 'scripts/native_neighbor_capacity.py',
+                     'userspace/tests/net/ipv6_error_controls.c',
                      'userspace/tests/net/ipv6_error_metadata.c',
                      'userspace/tests/net/ipv6_error_record.h',
                      'scripts/ipv6_extension_execution.py',
@@ -382,8 +384,13 @@ def main():
                                  '--child', profile, '--suite', args.suite, '--output-directory', str(directory),
                                  '--parent-network-namespace', str(Path('/proc/self/ns/net').stat().st_ino)], cwd=ROOT)
         return dict(profile=profile, returncode=result.returncode)
-    with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        results = list(pool.map(run, profiles))
+    capacity = nullcontext()
+    if args.suite == 'errors':
+        from native_neighbor_capacity import ipv6_neighbor_capacity
+        capacity = ipv6_neighbor_capacity(args.output_directory, len(profiles))
+    with capacity:
+        with ThreadPoolExecutor(max_workers=args.workers) as pool:
+            results = list(pool.map(run, profiles))
     (args.output_directory / 'receipt.json').write_text(json.dumps(results, indent=2) + '\n')
     return 0 if all(not row['returncode'] for row in results) else 1
 

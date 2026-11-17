@@ -11,6 +11,6 @@ void io_discard(Task&);
 // A finite socket timeout or completed stream bytes prevent automatic restart.
 bool io_restartable(const Task&);
 
-// Read before discarding a retained request; interruption preserves completed bytes.
-int64_t io_interrupted_result(const Task&);
+// Finalize completed bytes and receive metadata before discarding the request.
+int64_t io_interrupted_result(Task&);
 } // namespace ax

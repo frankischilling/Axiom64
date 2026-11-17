@@ -603,9 +603,11 @@ The native path-descriptor cancellation checks distinguish live children, unreap
 
 The host captures `build/desktop-bios.png` and `desktop-uefi.png` after input succeeds. Logs are `build/boot-bios.log` and `boot-uefi.log`; results are in `build/boot-results.json`.
 
-Before dependency builds, CI downloads missing locked userspace packages and verifies every package checksum. Unavailable or altered packages fail at this stage, before compilation and image assembly.
+Before dependency builds, CI verifies essential boot archives, downloads missing locked userspace packages and checks every package checksum. Unavailable or altered inputs fail at this stage, before compilation and image assembly.
 
-CI can reuse completed musl and OpenSSL products across revisions with identical dependency locks, recipes, local patches and host build inputs. The cache key includes actual compiler/tool bytes, native linker inputs and C headers. It also binds the workspace path used by compiler specifications. Cache hits still run the maintained builders, complete product hash checks and damaged-input controls. The cache retains staged tools, libraries, notices, manifests, logs and generated configuration headers; it excludes OpenSSL source and intermediate object trees. Input fingerprints, product counts and cache-hit evidence accompany the account-policy artifact under `crypto-cache/`. Complete cold and warm workflow timings are needed before claiming an overall CI improvement.
+CI can reuse completed musl, OpenSSL and curl products across revisions with identical dependency locks, recipes, local patches and host build inputs. The cache key includes actual compiler/tool bytes, native linker inputs and C headers. It also binds the workspace path used by compiler specifications. Cache hits still run the maintained builders, complete product hash checks and damaged-input controls. The cache retains staged tools, libraries, notices, manifests, logs and generated configuration headers. Curl also retains its complete verified source tree, original installed metadata and configuration logs because its cached builder rechecks those inputs. Missing provider manifests, changed products or sources, and paths outside the declared cache fail validation. OpenSSL source and intermediate object trees remain excluded. Input fingerprints, product counts and cache-hit evidence accompany the account-policy artifact under `crypto-cache/`. Complete cold and warm workflow timings are needed before claiming an overall CI improvement.
+
+CI saves validated provider products immediately after the completeness check, before subsequent builds and source packaging. A failed validation prevents cache publication. Full workflow and runtime checks still determine acceptance.
 
 Read these reports together: `inputs.json` records the exact key and build inputs, `cache-hit.txt` records whether the cache action found that key, and `products.json` records the completed manifests and verified product counts. An empty or `false` cache-hit value means a miss; `true` alone does not prove that restored products passed verification. Compare successful complete workflows with matching build inputs, including queue time and the unchanged guest jobs. Documentation changes can reuse the key because they do not change a dependency recipe or product.
 
@@ -700,6 +702,16 @@ DAD completion observations between one and 2.1 seconds. They bind each adapter'
 logical BEGIN captured on the companion. Firmware IPv6 traffic before that
 boundary stays in the original capture; the same traffic after BEGIN is rejected.
 
+Native device setup raises both veth endpoints while IPv6 remains disabled,
+then requires both bridge ports to report forwarding before launching the client.
+The two-second setup check saves original link dumps and fails before execution
+if forwarding remains unavailable or IPv6 was enabled early. This prevents the
+first companion packet from racing a delayed bridge carrier notification.
+`sudo -n make test-native-bridge-ready` exercises real isolated links, delayed
+carrier restoration, a persistent outage and premature IPv6 activation.
+The C clients, DAD deadlines, ten-second control limit and packet clocks are
+unchanged. Startup receipts remain beside each native case's captures.
+
 The original kernel fails the administrative case by retaining `IFF_RUNNING`
 while down. Its image and packets remain unchanged. The corrected kernel passes
 all 36 clients. The first new reader rejected 18 completed UEFI executions because
@@ -724,7 +736,7 @@ windows remain unchanged. CI runs the complete guest cohort in the existing
 IPv6-expiry job and retains its actual inputs, images, serial logs and captures in
 the `ipv6-device-wire` artifact. Native comparisons remain in the configuration
 job and its `ipv6-configuration` artifact. Both jobs retain their seventy-five-minute
-limits, and the complete workflow retains all 210 jobs and required aggregates.
+limits, and the complete workflow retains all 180 jobs and required aggregates.
 
 The pending client queries actual owners before each selected conflict. Its
 companion acknowledges only after the matching advertisement is recorded on the
@@ -816,6 +828,10 @@ The same error client retains the plain phase and adds 160 outer-extension Ether
 `sudo -n make test-ipv6-errors-contract` also compares 272 local receive-extension observations in all eleven full clients against a source-bound actual complete Linux 7 fixture. It rejects and replays 264 damaged logs, alongside the existing 472-row/112-negative error contract. Sixteen new length-output boundary observations reproduce twelve pre-fix differences and match after correction. Native fixtures verify their separate network namespace before setting SRH on owned interfaces and loopback. Original failed references with disabled SRH remain retained and excluded. Hosted acceptance and broader IPv6 requirements remain separate gates.
 
 The native error fixture reserves UDP destination port 59999 from automatic source-port allocation inside each private network namespace. Otherwise a client can select that same source port, receive its own datagram and produce no ICMP error. Existing reservations remain intact, and explicit binds to the destination still work for the normal-data lifetime case. Each preexecution record retains the original and applied reservation and ephemeral range. `sudo -n make test-ipv6-error-destination` checks actual allocation and error delivery with only two ephemeral ports, existing reservations and parent-namespace rejection. The complete native error target includes these checks. Client cases, all three linkages, ICMP rate settings, readiness deadlines and guest coverage retain their existing behavior.
+
+The parent error-queue runner also reserves capacity in Linux's shared IPv6 neighbor table before launching its private namespaces. Each linkage visits 280 distinct unicast destinations, with additional entries for multicast neighbor discovery. The parent allows 1,024 entries per selected linkage plus the observed table occupancy, raising only `gc_thresh3` when needed. Soft collection thresholds, collection intervals, neighbor lifetimes, packet observations and client deadlines retain their original values. All three linkages still run concurrently.
+
+`scripts/native_neighbor_capacity.py` owns this bounded reservation in the initial network namespace under a root-owned lock. It records the original, applied, final and restored settings and raw table counters in `neighbor-capacity.json`, alongside the native cohort. It restores the original hard limit when the cohort finishes or fails, provided the owned limit remains unchanged and restoration preserves threshold ordering. An external ownership conflict fails the run and preserves the observed settings. `sudo -n make test-native-neighbor-capacity` checks counter parsing, lock ownership, namespace rejection, adequate existing capacity and restoration after failures through isolated file fixtures. The complete native error target includes these controls and retains their source in the normal source publication.
 
 `make test-ipv6-copy-model` checks the independent native source-address probe, both supported store orders, wrong-model rejection and altered evidence. Native ordinary/error cohorts run that probe before collecting their Ethernet workloads and retain its raw output, actual source/product copies and kernel binding. The local and wire readers validate every native model-specific field before comparing common results and the unchanged Linux 7 guest expectations. Protected address/length effects stay explicit; they are not omitted from comparison. Historical captures without this probe require an explicitly supplied, documented native copy order for offline auditing. Existing clock and zero-drop requirements remain mandatory.
 
@@ -1971,8 +1987,56 @@ interval and its descriptions uncommitted. Receive faults may expose a copied
 userspace prefix; earlier complete intervals still count as progress. A later
 successful receive obtains the original bytes and retained descriptions.
 
-`make test-unix-datagrams` runs all seven public clients as root and UID 65534 with
-both musl providers, both linkages and BIOS/UEFI: 112 actual client executions.
+The shutdown client checks 24 listener cases across abstract/pathname bindings,
+pending connections, duplicated descriptions and repeated shutdown calls.
+Read shutdown rejects fresh connections with `ECONNREFUSED`; write shutdown
+leaves admission open. Previously queued children retain bidirectional data
+exchange after acceptance. An empty read-shut listener returns `EAGAIN` to a
+nonblocking accept and `EINVAL` to a blocking accept. This follows the
+[Linux listener admission check](https://github.com/torvalds/linux/blob/v6.17/net/unix/af_unix.c#L1621-L1624).
+Another 48 cases cover connected pairs with queued data, reciprocal shutdown
+and live aliases. Peeks preserve queued bytes; scalar, vector and message reads
+drain them before EOF. Closed write directions reject `MSG_NOSIGNAL` sends with
+`EPIPE`. Eighteen fresh or bound endpoint cases check shutdown before connection.
+These 90 cases compare exact poll, level-triggered epoll and select readiness.
+Read shutdown reports `POLLRDHUP`; `POLLHUP` requires both directions closed or
+an unconnected stream. Listener write shutdown stays silent. Hangup alone does
+not make a select write set ready. These distinctions follow
+[Linux Unix polling and shutdown](https://github.com/torvalds/linux/blob/v7.0/net/unix/af_unix.c#L3006-L3049).
+Another 22 cases observe a child sleeping in a receive, full-queue send, accept,
+poll, edge-triggered epoll or select call before shutting down the original or
+duplicated description. Local and peer shutdown must wake the appropriate
+waiter with exact EOF, `EPIPE`, `EINVAL` or readiness results. Every byte accepted
+before a blocked send remains available to the receiver. The complete client
+therefore checks 112 cases under each identity.
+`sudo python3 scripts/unix_stream_native.py --client unix_shutdown` runs the
+same client as root, with a credential drop, and as an already ordinary caller.
+
+The stream-wait client checks 24 retained sends through `write`, `writev`, `send`
+and `sendmsg`. A blocked 1 MiB send must continue beyond the bounded queue while
+retaining its original description and imported vectors after descriptor
+replacement, vector changes and an alias setting nonblocking mode. Finite
+deadlines and caught signals return exactly the accepted prefix, including with
+`SA_RESTART`. Queued rights transfer only once; rejected pending rights transfer
+none. Peer read-shutdown preserves previously queued bytes. The blocked call
+returns its prefix or `EPIPE` without `SIGPIPE`; a fresh write raises `SIGPIPE`.
+This follows the separate queue-allocation and fresh-error paths in
+[Linux Unix stream send](https://github.com/torvalds/linux/blob/v7.0/net/unix/af_unix.c#L2238-L2373).
+Another 22 cases cover `MSG_WAITALL` scalar and message receives, including peer
+half-close and final close, signals, deadlines and a fault in a later page.
+Partial waits retain the original description, vectors and byte cursor.
+Peeks return available bytes immediately; nonblocking calls also keep their
+short result. Different writer credentials and transferred descriptions end the
+receive at their boundary. Already copied bytes survive a later fault, while the
+faulting interval stays queued. Message control output is checked at completion:
+EOF and timeout retain the first writer identity; interrupted partial receives
+omit it, matching the Linux signal exit path. Received descriptions retain
+close-on-exec and are installed only once.
+`sudo python3 scripts/unix_stream_native.py --client unix_stream_wait` compares
+the same client under all three controlled native identities.
+
+`make test-unix-datagrams` runs all nine public clients as root and UID 65534 with
+both musl providers, both linkages and BIOS/UEFI: 144 actual client executions.
 Keep its evidence directory on a case-sensitive filesystem so every pinned SDK
 header retains its original name and bytes. On a Windows-mounted checkout, use
 `python3 scripts/unix_datagram_test.py --directory /var/tmp/axiom-unix-guest`.
@@ -1982,5 +2046,5 @@ under both identities, and retains the complete corpus in one compressed archive
 all 977 SDK headers, client ELF types/interpreters, compilation records, images,
 initramfs contents and original serial logs. The production ownership sanitizer
 model is `make test-unix-rights-policy`. These local comparisons do not establish
-current hosted acceptance. Broader stream options, interruption, shutdown and
-complete Unix socket lifetime qualification remain required.
+current hosted acceptance. Broader stream options, interruption, remaining
+shutdown contracts and complete Unix socket lifetime qualification remain required.

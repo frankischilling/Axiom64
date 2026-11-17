@@ -4,7 +4,17 @@ import re
 
 CLIENTS = {'unix_messages': 11, 'unix_names': 6, 'unix_routing': 5,
            'unix_routing_wait': 7, 'unix_credentials': 5, 'unix_rights': 7,
-           'unix_stream': 11}
+           'unix_stream': 11, 'unix_shutdown': 4, 'unix_stream_wait': 2}
+
+SHUTDOWN_MARKERS = (
+    'UNIX_SHUTDOWN_LISTENER_PASS cases=24 names=abstract,path duplicate repeated pending exchange',
+    'UNIX_SHUTDOWN_CONNECTED_PASS cases=48 queued peek scalar vector message aliases poll epoll select reciprocal no_signal',
+    'UNIX_SHUTDOWN_UNCONNECTED_PASS cases=18 names=unbound,abstract,path aliases poll epoll select',
+    'UNIX_SHUTDOWN_WAIT_PASS cases=22 blocked=22 reads sends accepts poll epoll_edge select aliases retained_bytes')
+
+STREAM_WAIT_MARKERS = (
+    'UNIX_STREAM_WAIT_SEND_PASS cases=24 scalar vector message replacement captured_flags deadline signal restart peer_shutdown sigpipe exact_bytes rights_once',
+    'UNIX_STREAM_WAIT_RECEIVE_PASS cases=22 waitall peek nonblock credentials rights boundary replacement vectors signal restart deadline fault prefix')
 
 
 def boot_body():
@@ -39,4 +49,7 @@ def check_log(text, firmware, returncode):
         prefix = f'UNIX_RIGHTS_CHAIN_PASS endpoints={endpoints} limit=128 '
         if sum(line.startswith(prefix) for line in lines) != 1:
             raise ValueError('missing privileged or limit-bounded ordinary chain release')
+    for marker in SHUTDOWN_MARKERS + STREAM_WAIT_MARKERS:
+        if lines.count(marker) != 2:
+            raise ValueError('missing or repeated shutdown case inventory: ' + marker)
     return invocations

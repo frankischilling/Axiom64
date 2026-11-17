@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Exercise cache invalidation and archive retention without building OpenSSL."""
+"""Exercise cache invalidation and complete library/source retention without rebuilding."""
 import copy
 import importlib.util
 import io
@@ -22,7 +22,7 @@ class CryptoCacheTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix='crypto-cache-')
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        for name in cache.source_inputs(ROOT):
+        for name in set(cache.source_inputs(ROOT)) | {'scripts/build_curl.py'}:
             target = self.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, target)
@@ -37,7 +37,7 @@ class CryptoCacheTest(unittest.TestCase):
         before = self.key()
         patch = json.loads((self.root / 'sources.lock.json').read_text())['musl_local_patches'][0]['path']
         for name in ('dependencies.json', 'ports.lock.json', 'sources.lock.json',
-                     'scripts/build_openssl.py', 'scripts/build_musl.py',
+                     'scripts/build_openssl.py', 'scripts/build_musl.py', 'scripts/build_curl.py',
                      'scripts/linux_uapi.py', patch):
             with self.subTest(name=name):
                 path = self.root / name
@@ -64,7 +64,7 @@ class CryptoCacheTest(unittest.TestCase):
 
     def completed_products(self):
         for dependency, providers in (('musl', ('build', 'runtime')),
-                                      ('openssl', cache.PROVIDERS)):
+                                      ('openssl', cache.PROVIDERS), ('curl', cache.PROVIDERS)):
             for provider in providers:
                 directory = self.root / 'build' / dependency / provider / ('a' * 64)
                 names = ['sysroot/usr/lib/libc.a'] if dependency == 'musl' else [
@@ -72,27 +72,45 @@ class CryptoCacheTest(unittest.TestCase):
                     'static/stage/usr/bin/openssl', 'dynamic/stage/usr/lib/libcrypto.so.3',
                     'static/build/include/openssl/configuration.h',
                     'dynamic/build/include/openssl/configuration.h']
+                if dependency == 'curl':
+                    names = ['COPYING', 'README', 'INSTALL.md', 'release-signature.log',
+                             'static/stage/usr/bin/curl', 'dynamic/stage/usr/lib/libcurl.so.4.8.0',
+                             'static/metadata-original/usr/bin/curl-config',
+                             'dynamic/metadata-original/usr/lib/pkgconfig/libcurl.pc',
+                             'static/build/lib/curl_config.h', 'dynamic/build/lib/curl_config.h',
+                             'static/build/config.log', 'dynamic/build/config.log']
                 products = {}
                 for name in names:
                     product = directory / name
                     product.parent.mkdir(parents=True, exist_ok=True)
                     product.write_bytes((provider + '/' + name).encode())
-                    if name.endswith('/bin/openssl'):
+                    if name.endswith(('/bin/openssl', '/bin/curl')):
                         product.chmod(0o755)
                     products[name] = cache.digest(product)
                 links = {}
-                if dependency == 'openssl':
-                    name = 'dynamic/stage/usr/lib/libcrypto.so'
-                    (directory / name).symlink_to('libcrypto.so.3')
-                    links[name] = 'libcrypto.so.3'
+                if dependency in ('openssl', 'curl'):
+                    name = 'dynamic/stage/usr/lib/' + ('libcrypto.so' if dependency == 'openssl' else 'libcurl.so')
+                    target = 'libcrypto.so.3' if dependency == 'openssl' else 'libcurl.so.4.8.0'
+                    (directory / name).symlink_to(target)
+                    links[name] = target
                     # This real intermediate must never enter the reusable cache.
                     (directory / 'static/build/unused.o').write_bytes(b'intermediate object')
-                (directory / 'manifest.json').write_text(json.dumps(dict(
-                    identity=directory.name, provider=provider, products=products, symlinks=links)))
+                sources, source_links = {}, {}
+                if dependency == 'curl':
+                    for name in ('curl-release/configure', 'curl-release/COPYING', 'curl-release/src/tool_main.c'):
+                        source = directory / 'source' / name
+                        source.parent.mkdir(parents=True, exist_ok=True)
+                        source.write_bytes(('actual source/' + name).encode())
+                        sources[name] = cache.digest(source)
+                    (directory / 'source/curl-release/LICENSE').symlink_to('COPYING')
+                    source_links['curl-release/LICENSE'] = 'COPYING'
+                (directory / 'manifest.json').write_text(json.dumps(dict(identity=directory.name,
+                    provider=provider, products=products, symlinks=links, source_inputs=sources, source_symlinks=source_links)))
 
     def test_declared_paths_round_trip_all_products_and_links(self):
         self.completed_products()
         original = cache.check_products(self.root)
+        self.assertEqual(len(original), 8)
         modes = {path.relative_to(self.root).as_posix(): path.stat().st_mode & 0o777
                  for path in self.root.rglob('*') if path.is_file() and not path.is_symlink()
                  and cache.covered(path.relative_to(self.root).as_posix(), cache.cache_paths())}
@@ -152,6 +170,66 @@ class CryptoCacheTest(unittest.TestCase):
         manifest.write_text(json.dumps(data))
         with self.assertRaisesRegex(RuntimeError, 'manifest identity differs'):
             cache.check_products(self.root)
+
+    def test_missing_curl_provider_is_not_a_complete_cache(self):
+        self.completed_products()
+        (self.root / 'build/curl/native' / ('a' * 64) / 'manifest.json').unlink()
+        with self.assertRaisesRegex(RuntimeError, 'expected one completed curl/native'):
+            cache.check_products(self.root)
+
+    def test_changed_curl_source_and_source_link_are_rejected(self):
+        self.completed_products()
+        directory = self.root / 'build/curl/runtime' / ('a' * 64)
+        path = directory / 'source/curl-release/src/tool_main.c'
+        original = path.read_bytes()
+        path.write_bytes(b'changed source')
+        with self.assertRaisesRegex(RuntimeError, 'source changed'):
+            cache.check_products(self.root)
+        path.write_bytes(original)
+        path = directory / 'source/curl-release/LICENSE'
+        path.unlink()
+        path.symlink_to('configure')
+        with self.assertRaisesRegex(RuntimeError, 'source link changed'):
+            cache.check_products(self.root)
+
+    def test_missing_source_inventory_is_rejected(self):
+        self.completed_products()
+        path = self.root / 'build/curl/build' / ('a' * 64) / 'manifest.json'
+        saved = json.loads(path.read_text())
+        saved['source_inputs'] = {}
+        path.write_text(json.dumps(saved))
+        with self.assertRaisesRegex(RuntimeError, 'expected retained curl source inventory'):
+            cache.check_products(self.root)
+
+    def test_source_inventory_cannot_escape_its_retained_root(self):
+        self.completed_products()
+        directory = self.root / 'build/curl/build' / ('a' * 64)
+        outside = directory / 'outside-source.c'
+        outside.write_bytes(b'not a retained source member')
+        path = directory / 'manifest.json'
+        saved = json.loads(path.read_text())
+        saved['source_inputs']['../outside-source.c'] = cache.digest(outside)
+        path.write_text(json.dumps(saved))
+        with self.assertRaisesRegex(RuntimeError, 'source omitted from cache paths'):
+            cache.check_products(self.root)
+
+    def test_source_directory_cannot_redirect_outside_the_cache(self):
+        self.completed_products()
+        external = tempfile.TemporaryDirectory(prefix='crypto-cache-external-')
+        self.addCleanup(external.cleanup)
+        source = self.root / 'build/curl/build' / ('a' * 64) / 'source'
+        destination = Path(external.name) / 'source'
+        shutil.move(source, destination)
+        source.symlink_to(destination, target_is_directory=True)
+        with self.assertRaisesRegex(RuntimeError, 'source directory escapes cache root'):
+            cache.check_products(self.root)
+
+    def test_cache_paths_are_anchored_and_have_one_component_wildcards(self):
+        paths = cache.cache_paths()
+        self.assertTrue(cache.covered('build/openssl/native/id/static/stage/usr/lib/libcrypto.a', paths))
+        self.assertFalse(cache.covered('unrelated/build/openssl/native/id/static/stage/usr/lib/libcrypto.a', paths))
+        self.assertFalse(cache.covered('build/openssl/native/id/static/staged/libcrypto.a', paths))
+        self.assertFalse(cache.covered('build/openssl/native/static/stage/usr/lib/libcrypto.a', paths))
 
 
 if __name__ == '__main__':

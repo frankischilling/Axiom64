@@ -63,7 +63,7 @@ struct IoRequest {
     UnixRights* unix_rights;
     UnixAddressValue unix_name;
     UnixDatagramTarget unix_target;
-    bool unix_named;
+    bool unix_named, unix_write_waited, unix_read_identified;
     uint64_t address_pointer, address_length_pointer;
     uint64_t control_pointer, control_capacity;
     uint32_t address_capacity;
@@ -100,8 +100,43 @@ bool io_restartable(const Task& task) {
     return !task.io || (!task.io->timed && !task.io->progress);
 }
 
-int64_t io_interrupted_result(const Task& task) {
-    return task.io && task.io->progress ? int64_t(task.io->progress) : -4;
+static bool unix_waitall(const IoRequest& request) {
+    return request.handle->socket && request.handle->socket->type == 1 && !request.write &&
+           request.socket && (request.flags & 0x100) && !(request.flags & 2);
+}
+
+static int64_t unix_receive_output(Task& task, const IoRequest& request,
+                                   const UnixMessageCredentials* identity, const UnixRights* rights,
+                                   int64_t result) {
+    const auto& call = request.call;
+    auto socket = request.handle->socket;
+    if (call.rax == 47) {
+        uint32_t flags = request.flags & 0x40000000;
+        uint64_t used = identity || rights
+                            ? unix_write_control(task, identity, rights, socket->pass_credentials,
+                                                 request.control_pointer, request.control_capacity,
+                                                 request.flags & 0x40000000, flags)
+                            : 0;
+        if (!task.memory->space.copy_out(call.rsi + offsetof(Message, control_length), &used, 8) ||
+            !task.memory->space.copy_out(call.rsi + offsetof(Message, flags), &flags, 4))
+            return -14;
+    }
+    if (call.rax == 45 && call.r8)
+        if (int error =
+                socket_output_address(task, socket->peer ? socket->peer : socket, call.r8, call.r9))
+            return error;
+    return result;
+}
+
+int64_t io_interrupted_result(Task& task) {
+    auto request = task.io;
+    if (!request || !request->progress)
+        return -4;
+    // Linux releases its partial receive cookie on signal exit without emitting
+    // credentials. The recvmsg header still reports the actual empty control.
+    return unix_waitall(*request)
+               ? unix_receive_output(task, *request, nullptr, nullptr, request->progress)
+               : int64_t(request->progress);
 }
 
 static void capture_timeout(IoRequest& request) {
@@ -123,10 +158,16 @@ static bool timeout_expired(const IoRequest& request) {
     return ticks >= request.deadline;
 }
 
-static int64_t timeout_result(const IoRequest& request) {
-    return request.progress  ? int64_t(request.progress)
-           : request.connect ? request.connect_error
-                             : -11;
+static int64_t timeout_result(Task& task, const IoRequest& request) {
+    int64_t result = request.progress  ? int64_t(request.progress)
+                     : request.connect ? request.connect_error
+                                       : -11;
+    return result >= 0 && unix_waitall(request)
+               ? unix_receive_output(task, request,
+                                     request.unix_read_identified ? &request.unix_credentials
+                                                                  : nullptr,
+                                     nullptr, result)
+               : result;
 }
 
 static int import_vectors(Task& task, IoRequest& request, uint64_t pointer, size_t count) {
@@ -522,7 +563,7 @@ static int prepare(Task& task, IoRequest& request) {
         request.flags = f.rax == 46 || f.rax == 47 ? f.rdx : f.r10;
         unsigned allowed = 2 | 0x40 | 0x4000;
         if (request.handle->socket && !request.write)
-            allowed |= 0x40000000;
+            allowed |= 0x100 | 0x40000000;
         if (inet_stream(request.handle->inet))
             allowed |= 0x100;
         if (request.flags & ~allowed)
@@ -737,7 +778,7 @@ static int64_t local_stream_attempt(Task& task, IoRequest& request) {
 
 static int64_t unix_stream_attempt(Task& task, IoRequest& request) {
     auto socket = request.handle->socket;
-    const auto& call = request.call;
+    bool waitall = unix_waitall(request);
     size_t remaining = 0;
     for (size_t index = 0; index < request.count; index++) {
         const auto& vector = request.vectors[index];
@@ -746,14 +787,19 @@ static int64_t unix_stream_attempt(Task& task, IoRequest& request) {
             return -14;
         remaining += vector.length;
     }
-    VectorCursor cursor{request};
+    if (request.write || waitall)
+        remaining -= request.progress;
+    VectorCursor cursor{request, request.cursor, request.cursor_offset};
     size_t done = 0;
     if (request.write) {
         if (!remaining && !request.socket)
             return 0;
         int error = int(socket_write(socket, nullptr, 0));
         if (error) {
-            if (error == -32 && !(request.flags & 0x4000))
+            // Linux's queue-space wait returns EPIPE without entering the
+            // fresh-send SIGPIPE path. An accepted prefix also suppresses it.
+            if (error == -32 && !request.progress && !request.unix_write_waited &&
+                !(request.flags & 0x4000))
                 queue_signal(&task, 13, task.process->pid);
             return error;
         }
@@ -786,6 +832,13 @@ static int64_t unix_stream_attempt(Task& task, IoRequest& request) {
             return -14;
         }
         receiver->stream.accept(record, length, identity, request.unix_rights, receiver);
+        while (cursor.index < request.count &&
+               cursor.offset == request.vectors[cursor.index].length) {
+            cursor.index++;
+            cursor.offset = 0;
+        }
+        request.cursor = cursor.index;
+        request.cursor_offset = cursor.offset;
         return length;
     }
 
@@ -799,15 +852,19 @@ static int64_t unix_stream_attempt(Task& task, IoRequest& request) {
         }
     } received;
 
-    UnixMessageCredentials identity;
-    bool identified = false, peek = request.flags & 2;
+    UnixMessageCredentials identity = waitall ? request.unix_credentials : UnixMessageCredentials{};
+    bool identified = waitall && request.unix_read_identified, peek = request.flags & 2;
+    bool stopped = false;
     if (socket->listener || !socket->connected)
         return -107;
     auto record = remaining ? socket->stream.front() : nullptr;
     while (record) {
-        if (socket->pass_credentials && identified && !(identity == record->credentials()))
+        if ((waitall || socket->pass_credentials) && identified &&
+            !(identity == record->credentials())) {
+            stopped = true;
             break;
-        if (!identified) {
+        }
+        if (!identified && (!waitall || socket->pass_credentials)) {
             identity = record->credentials();
             identified = true;
         }
@@ -818,7 +875,7 @@ static int64_t unix_stream_attempt(Task& task, IoRequest& request) {
             // Copy faults can expose a userspace prefix, but commit no part of
             // this interval. Earlier complete intervals keep their progress.
             if (!cursor.copy(task, const_cast<uint8_t*>(record->data()), length)) {
-                if (!done)
+                if (!done && !request.progress)
                     return -14;
                 goto output;
             }
@@ -835,35 +892,30 @@ static int64_t unix_stream_attempt(Task& task, IoRequest& request) {
             }
             remaining -= length;
             done += length;
+            if (waitall) {
+                request.progress += length;
+                request.cursor = cursor.index;
+                request.cursor_offset = cursor.offset;
+                request.unix_credentials = identity;
+                request.unix_read_identified = identified;
+            }
         }
         // Linux peeks also inspect later intervals after filling the byte
         // buffer. A later descriptor list can be returned without another byte.
         if (peek && boundary)
             received.view = record->rights();
-        if (boundary || (!peek && !remaining))
+        if (boundary || (!peek && !remaining)) {
+            stopped = boundary;
             break;
+        }
         record = peek ? next : socket->stream.front();
     }
-    if (!done && remaining && !socket->read_closed && socket->peer && !socket->peer->write_closed)
+    if (((!done && !request.progress) || (waitall && request.stream_blocking && !stopped)) &&
+        remaining && !socket->read_closed && socket->peer && !socket->peer->write_closed)
         return -11;
 output:
-    if (call.rax == 47) {
-        uint32_t flags = request.flags & 0x40000000;
-        uint64_t used =
-            identified
-                ? unix_write_control(task, &identity, received.view, socket->pass_credentials,
-                                     request.control_pointer, request.control_capacity,
-                                     request.flags & 0x40000000, flags)
-                : 0;
-        if (!task.memory->space.copy_out(call.rsi + offsetof(Message, control_length), &used, 8) ||
-            !task.memory->space.copy_out(call.rsi + offsetof(Message, flags), &flags, 4))
-            return -14;
-    }
-    if (call.rax == 45 && call.r8)
-        if (int error =
-                socket_output_address(task, socket->peer ? socket->peer : socket, call.r8, call.r9))
-            return error;
-    return done;
+    return unix_receive_output(task, request, identified ? &identity : nullptr, received.view,
+                               waitall ? request.progress : done);
 }
 
 static int64_t transfer(Task& task, IoRequest& request, const Iovec& vector, size_t peek_offset) {
@@ -1362,8 +1414,20 @@ static int64_t attempt(Task& task, IoRequest& request) {
                                     : socket_accept(task, h, f.rsi, f.rdx, f.rax == 288 ? f.r10 : 0,
                                                     request.reserved_fd);
     if (h->socket && h->socket->type == 1) {
-        int64_t result = unix_stream_attempt(task, request);
-        return result == -11 && request.stream_blocking ? would_block : result;
+        for (;;) {
+            int64_t result = unix_stream_attempt(task, request);
+            if (result == -11 && request.stream_blocking) {
+                request.unix_write_waited |= request.write;
+                return would_block;
+            }
+            if (!request.write)
+                return result;
+            if (result < 0)
+                return request.progress ? int64_t(request.progress) : result;
+            request.progress += size_t(result);
+            if (!result || !request.stream_blocking || request.cursor == request.count)
+                return request.progress;
+        }
     }
     size_t done = 0;
     int64_t result = 0;
@@ -1508,7 +1572,7 @@ int64_t io_syscall(Task& task, const Frame& frame) {
     }
     int64_t result = error ? error : attempt(task, *request);
     if (result == would_block && timeout_expired(*request))
-        result = timeout_result(*request);
+        result = timeout_result(task, *request);
     if (result == would_block) {
         task.io = request;
         task.state = State::blocked;
@@ -1535,7 +1599,7 @@ bool io_resume(Task& task) {
     if (result == would_block) {
         if (!timeout_expired(*request))
             return false;
-        result = timeout_result(*request);
+        result = timeout_result(task, *request);
     }
     // Commit the result before signal delivery; handlers have their own syscall state.
     task.frame.rip += 2;

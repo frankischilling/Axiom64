@@ -94,11 +94,11 @@ bool socket_ready(Socket* s, bool write) {
     if (s->type == 2)
         return write ? socket_datagram_writable(*s) : s->read_closed || s->datagrams.readable();
     if (s->listener)
-        return !write && s->queue_size;
+        return !write && (s->queue_size || s->read_closed);
     if (write)
         return !s->peer || s->write_closed || s->peer->read_closed ||
                s->peer->stream.size() < UnixStreamQueue::capacity;
-    return s->stream.size() || s->peer_closed || s->read_closed || !s->connected ||
+    return s->stream.size() || s->peer_closed || s->read_closed ||
            (s->peer && s->peer->write_closed);
 }
 
@@ -271,7 +271,7 @@ int64_t socket_accept(Task& task, Handle* h, uint64_t address, uint64_t length, 
     if (!s->listener)
         return -22;
     if (!s->queue_size)
-        return (h->flags & 04000) ? -11 : would_block;
+        return (h->flags & 04000) ? -11 : s->read_closed ? -22 : would_block;
     auto accepted = s->queue[s->queue_head];
     if (address) {
         int error = socket_output_address(task, accepted->peer ? accepted->peer : accepted, address,
@@ -333,9 +333,17 @@ uint32_t readiness(Handle* h) {
     }
     if (h->pipe && !h->writer && !h->pipe->writers)
         events |= 16;
-    if (h->socket && h->socket->type == 1 && !h->socket->listener &&
-        (h->socket->peer_closed || (h->socket->peer && h->socket->peer->write_closed)))
-        events |= 16 | 0x2000;
+    if (h->socket && h->socket->type == 1) {
+        auto socket = h->socket;
+        bool read_closed = socket->read_closed || socket->peer_closed ||
+                           (socket->peer && socket->peer->write_closed);
+        bool write_closed = socket->write_closed || socket->peer_closed ||
+                            (socket->peer && socket->peer->read_closed);
+        if (read_closed)
+            events |= 0x2000;
+        if ((read_closed && write_closed) || (!socket->connected && !socket->listener))
+            events |= 16;
+    }
     if (h->socket && h->socket->type == 2) {
         if (h->socket->datagram_error)
             events |= 8;
@@ -414,7 +422,7 @@ int select_events(Task& task, const Frame& frame, bool copy) {
                 auto h = unsigned(fd) < max_fds ? task.files->entries[fd].handle : nullptr;
                 if (!h)
                     return -9;
-                uint32_t wanted = set == 0 ? 1 | 8 | 16 : set == 1 ? 4 | 8 | 16 : 2;
+                uint32_t wanted = set == 0 ? 1 | 8 | 16 : set == 1 ? 4 | 8 : 2;
                 if (readiness(h) & wanted) {
                     output[set][fd / 64] |= bit;
                     ready++;
@@ -574,7 +582,7 @@ int64_t ipc_syscall(Frame* f) {
                 (addr.path[0] ? other.bound_node == target
                               : other.local_length == len && !memcmp(other.local, addr.path, len)))
                 listener = &other;
-        if (!listener)
+        if (!listener || listener->read_closed)
             return -111;
         if (listener->queue_size >= listener->backlog)
             return -11;

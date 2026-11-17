@@ -800,6 +800,10 @@ test-ipv6-ownership:
 test-ipv6-ownership-native:
 	$(PYTHON) scripts/ipv6_owner_test.py --native --group all --directory build/ipv6-owner-native
 
+.PHONY: test-native-bridge-ready
+test-native-bridge-ready:
+	$(PYTHON) scripts/tests/native_bridge_ready_test.py
+
 .PHONY: test-ipv6-device test-ipv6-device-native
 
 test-ipv6-device:
@@ -847,8 +851,11 @@ test-ipv6-error-record:
 	$(PYTHON) scripts/tests/ipv6_error_record_test.py -v
 test-ipv6-errors:
 	$(PYTHON) scripts/ipv6_host_test.py --suite errors --workers 4
-test-ipv6-errors-native: test-ipv6-error-destination test-native-ipv6-capture-order
+test-ipv6-errors-native: test-ipv6-error-destination test-native-ipv6-capture-order test-native-neighbor-capacity
 	$(PYTHON) scripts/ipv6_host_native.py --suite errors --workers 3
+.PHONY: test-native-neighbor-capacity
+test-native-neighbor-capacity:
+	$(PYTHON) scripts/tests/native_neighbor_capacity_test.py
 .PHONY: test-ipv6-error-destination
 test-ipv6-error-destination:
 	$(PYTHON) scripts/tests/ipv6_error_destination_test.py -v

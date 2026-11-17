@@ -9,11 +9,11 @@ Axiom64 retains the open file description selected by an I/O syscall while that 
 | `read`, `write`, `readv`, `writev` | Existing regular files, pipes, Unix stream sockets, event counters, and character/block devices |
 | `pread64`, `pwrite64` | Existing seekable files and block devices; preserve the shared file offset; pipes, sockets, and character devices return `ESPIPE` |
 | `recvfrom`, `sendto` | Connected Unix streams, including receive-address output; a send destination is unsupported |
-| `recvmsg`, `sendmsg` | Nameless Unix stream messages with copied iovec metadata; ancillary sending is unsupported and receive control length is zero |
+| `recvmsg`, `sendmsg` | Nameless Unix stream messages with copied iovec metadata, sender credentials and transferred file descriptions |
 | `accept`, `accept4` | Existing Unix listeners, optional address output, and accepted-descriptor nonblocking/close-on-exec flags |
 | `flock` | [Local advisory file locks](file-locks.md), retaining the original description during an uninterrupted blocking attempt |
 
-Socket transfers support `MSG_DONTWAIT`, receive `MSG_PEEK`, and send `MSG_NOSIGNAL`. Peeking advances across the captured vectors without consuming bytes. Unsupported transfer flags, `MSG_WAITALL`, named Unix messages, and ancillary sending return `EOPNOTSUPP`. Socket receive/send deadlines are supported as described below. Poll/select/epoll have separate wait state and are not affected by these socket options.
+Unix stream transfers support `MSG_DONTWAIT`, receive `MSG_PEEK` and `MSG_WAITALL`, send `MSG_NOSIGNAL` and receive `MSG_CMSG_CLOEXEC`. Peeking advances across the captured vectors without consuming bytes. Receive-message source-name buffers remain unsupported. Other unsupported transfer flags return `EOPNOTSUPP`. Socket receive/send deadlines are supported as described below. Poll/select/epoll have separate wait state and are not affected by these socket options.
 
 IPv6 raw/UDP [extended error receives](ipv6.md#extended-error-queues) use `MSG_ERRQUEUE` through the same selected description. They return immediately, own their dequeued record during user copies and keep normal receive data independent. They do not create a retained blocking receive attempt.
 
@@ -24,6 +24,20 @@ IPv6 raw/UDP [extended error receives](ipv6.md#extended-error-queues) use `MSG_E
 Mapping checks apply to bytes transferred. A large valid span can return a short read or EOF without mappings for its unused tail. Regular-file copies return the completed page prefix on a later fault. Pipe and Unix stream reads keep a faulting chunk queued; bytes already copied to the destination remain visible. Writes to `/dev/null` and `/dev/zero` discard bytes without reading payload pages. Address-span validation still applies.
 
 Empty Unix stream sends check connection and shutdown state. A broken peer returns `EPIPE` and delivers `SIGPIPE` unless `MSG_NOSIGNAL` suppresses it. An empty `writev` retains its zero-byte shortcut.
+
+Blocking Unix writes retain their cursor and accepted byte count across queue-space waits. Each admitted interval owns its copied bytes; a copy fault commits none of the affected interval. Credentials and rights follow the [stream message contract](testing.md); transferred rights attach only to the first admitted interval. Signals, finite deadlines and peer shutdown return an accepted prefix without replaying it. A queue-space wait interrupted by shutdown returns `EPIPE` without `SIGPIPE` when no bytes were accepted. A fresh broken write retains its normal signal behavior. These distinctions follow [Linux Unix stream send](https://github.com/torvalds/linux/blob/v7.0/net/unix/af_unix.c#L2238-L2373).
+
+## Retained Unix receives
+
+Unix `MSG_WAITALL` receives keep the original description, imported vectors,
+byte cursor and first observed writer identity while waiting for more bytes.
+EOF, finite expiry, a caught signal or a later copy fault returns the completed
+prefix. Rights and changes of writer credentials end the receive at their
+boundary. Peeks and initially nonblocking calls keep their available short
+result. Message metadata is finalized when the call ends; Linux signal exits
+omit credentials from a partial receive, while EOF and expiry retain them.
+These rules follow [Linux Unix receive](https://github.com/torvalds/linux/blob/v7.0/net/unix/af_unix.c#L2731-L2933)
+and the shared native/guest stream-wait client.
 
 ## Event counters
 
@@ -49,15 +63,15 @@ Each supported socket I/O attempt captures one absolute monotonic deadline after
 
 [Packet sockets](network.md#linux-socket-contract), [IPv4 raw sockets](ipv4.md#raw-icmp-socket-contract), [UDP](udp.md), and [netlink route sockets](netlink.md#socket-ownership-and-bounds) also use retained requests. Their linked contracts describe datagram boundaries, supported named addresses, copy-fault behavior, and queue limits.
 
-`kernel/io/io.cpp` owns request import, transfer, completion, and release behind four functions in `kernel/include/io/io.hpp`:
+`kernel/io/io.cpp` owns request import, transfer, completion, and release through `kernel/include/io/io.hpp`:
 
 | Function | Contract |
 | --- | --- |
 | `io_syscall(Task&, const Frame&)` | Select and retain a handle, capture arguments and vector metadata, and attempt the operation. Complete immediately or save one request in the task and return `would_block`. |
 | `io_resume(Task&)` | Check the retained handle and attempt a waiting operation. Return false while waiting. On completion, commit the syscall result and instruction pointer in the task's saved frame, release the request, and make the task runnable. |
 | `io_discard(Task&)` | Clear and release a saved request without changing its return frame. Signal and task lifecycle code decide the resulting frame and state. Calling it without a request is harmless. |
-| `io_restartable(const Task&)` | Report whether a saved operation permits automatic signal restart; a captured finite socket deadline or transferred TCP stream prefix prevents it. Inspect this before discarding the request. |
-| `io_interrupted_result(const Task&)` | Capture a transferred TCP stream prefix or EINTR before releasing the interrupted request. |
+| `io_restartable(const Task&)` | Report whether a saved operation permits automatic signal restart; a captured finite socket deadline or transferred stream prefix prevents it. Inspect this before discarding the request. |
+| `io_interrupted_result(Task&)` | Finalize transferred bytes and receive metadata, or return EINTR, before releasing the interrupted request. |
 
 The scheduler completes an operation through its retained handle rather than resolving the descriptor again. Copies use the owner's address space through the physical mapping, so completion needs no user address-space switch or kernel stack continuation. The result is committed before signal delivery; a handler cannot consume a deferred result belonging to another syscall.
 

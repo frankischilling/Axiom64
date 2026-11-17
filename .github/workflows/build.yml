@@ -41,6 +41,10 @@ jobs:
             downloads/cacert-*.pem
             downloads/ports
             downloads/sources
+      - name: Test pinned dependency mirror fallback and cache integrity
+        run: python3 -B scripts/tests/fetch_test.py -v
+      - name: Verify essential boot sources before dependency builds
+        run: python3 scripts/fetch.py limine busybox
       - name: Verify locked userspace packages before dependency builds
         run: python3 scripts/ports.py fetch
       - name: Test crypto cache input invalidation and complete product retention
@@ -70,7 +74,7 @@ jobs:
         run: python3 scripts/ci/crypto_cache.py --report build/crypto-cache/inputs.json >> "$GITHUB_OUTPUT"
       - name: Cache completed crypto libraries and staged tools
         id: crypto_cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           key: ${{ steps.crypto_cache_inputs.outputs.key }}
           path: ${{ steps.crypto_cache_inputs.outputs.paths }}
@@ -167,6 +171,12 @@ jobs:
         run: |
           python3 scripts/ci/crypto_cache.py --check --report build/crypto-cache/products.json
           printf '%s\n' '${{ steps.crypto_cache.outputs.cache-hit }}' > build/crypto-cache/cache-hit.txt
+      - name: Save verified providers before later build stages
+        if: steps.crypto_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          key: ${{ steps.crypto_cache_inputs.outputs.key }}
+          path: ${{ steps.crypto_cache_inputs.outputs.paths }}
       - name: Build maintained password providers and account programs
         run: |
           python3 scripts/build_libxcrypt.py --provider all
@@ -1108,6 +1118,8 @@ jobs:
         run: |
           make test-unix-rights-policy test-unix-datagram-policy
           sudo -n python3 -B scripts/unix_stream_native.py
+          sudo -n python3 -B scripts/unix_stream_native.py --client unix_shutdown
+          sudo -n python3 -B scripts/unix_stream_native.py --client unix_stream_wait
           umask 022
           evidence_parent=$(mktemp -d /var/tmp/axiom64-unix-evidence.XXXXXXXX)
           chmod 0755 "$evidence_parent"
@@ -1232,7 +1244,7 @@ jobs:
           path: build/ipv6-device-wire
       - name: Compare IPv6 device DAD states with three isolated native Linux linkages
         if: matrix.suite == 'configuration'
-        run: sudo -n make test-ipv6-device-native
+        run: sudo -n make test-native-bridge-ready test-ipv6-device-native
       - name: Verify link inventories across administrative and invalid-MTU transitions
         if: matrix.suite == 'configuration'
         run: make test-ipv6-device-inventory
@@ -1258,6 +1270,7 @@ jobs:
             build/ipv6-router-native
             build/ipv6-router-native-worker.json
             build/native-address-worker-tests
+            build/native-bridge-ready-tests
             build/ipv6-dad-wire
             build/ipv6-dad-native
             build/ipv6-owner-wire
@@ -1418,6 +1431,7 @@ jobs:
             build/axiom64-ipv6-pmtu-*.iso
             build/ipv6-errors-wire
             build/ipv6-errors-native-wire
+            build/native-neighbor-capacity-tests
             build/ipv6-errors-static.inputs.json
             build/ipv6-errors-dynamic.inputs.json
             build/axiom64-ipv6-errors-*.iso
@@ -1748,6 +1762,8 @@ jobs:
             build/*.log
             build/unix-datagram-guest.tar.gz
             build/unix-stream-native/**
+            build/unix-shutdown-native/**
+            build/unix-stream-wait-native/**
             build/udp-wire/**
             build/ipv4-multicast-evidence/**
             build/ipv4-multicast-audit/**

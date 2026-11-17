@@ -345,8 +345,11 @@ static void partial_and_errors(void) {
         CHECK(fcntl(endpoints[0], F_SETFL, flags) == 0);
         if (socket) {
             CHECK(recv(endpoints[0], bytes, 1, MSG_DONTWAIT) == -1 && errno == EAGAIN);
+            CHECK(recv(endpoints[0], bytes, 1, MSG_WAITALL | MSG_DONTWAIT) == -1 &&
+                  errno == EAGAIN);
+            CHECK(write(endpoints[1], "W", 1) == 1);
+            CHECK(recv(endpoints[0], bytes, 1, MSG_WAITALL) == 1 && bytes[0] == 'W');
             if (guest) {
-                CHECK(recv(endpoints[0], bytes, 1, MSG_WAITALL) == -1 && errno == EOPNOTSUPP);
                 struct sockaddr address = {.sa_family = AF_UNIX};
                 struct msghdr named = {.msg_name = &address,
                                        .msg_namelen = sizeof(address),

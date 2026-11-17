@@ -12,6 +12,8 @@ make run
 
 The first build downloads verified archives, builds BusyBox, assembles the root filesystem, and produces `build/axiom64.iso`. Allow several gigabytes of free disk space. Host Linux provides the build tools and QEMU emulator; the guest runs Axiom64's kernel.
 
+BusyBox downloads can use the mirrors listed in `dependencies.json` when upstream is unavailable. Every source must supply the same pinned bytes; a hash mismatch stops the build. CI verifies essential boot sources and locked package inputs before compiling providers.
+
 `make run` boots through BIOS with a graphical QEMU window and an authenticated serial console. First boot asks you to create an administrator and enter its password privately, then requires login. Later boots use the same account and require its password again. The administrator starts Bash with UID/GID 1000 and explicit `sudo` membership; root's password login is locked. Enter passwords in the guest. The [account documentation](accounts.md) describes the current commands and policy.
 
 The VM keeps its ext2 root in `.local/vm/root.ext2`. The launch helper creates that disk once, preserves it across builds and restarts, and prevents two instances from opening the same state directory. It rejects incomplete or damaged creation metadata instead of recreating accounts. Keep this directory to retain your accounts and files. Existing disks retain their installed userspace; to evaluate newly packaged userspace, select a new directory with `python3 scripts/vm.py --state-directory .local/vm-next`. In-guest upgrades remain future work.

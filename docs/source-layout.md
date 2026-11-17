@@ -388,3 +388,5 @@ native fixture's private namespaces; policy and state observers share that owner
 Both normal IPv4 runners use the reader with the original expiry and PMTU checks.
 
 `scripts/ipv4_native_capture_controls.py` reopens altered native client and collector CPU ownership records. The IPv4 fixture reuses `packet_profile_cpu` from `ipv6_host_native.py` before collector threads start, and records actual client and task affinities for the independent input reader.
+
+`scripts/native_neighbor_capacity.py` owns the native IPv6 error cohort's temporary shared neighbor-table capacity. The parent runner acquires its lock and records the existing table before starting namespace workers, then restores the hard limit after those workers finish. Its file-based regression controls live in `scripts/tests/native_neighbor_capacity_test.py`; actual clients and packet observations remain in the existing IPv6 error runners and readers.

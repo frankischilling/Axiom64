@@ -1081,6 +1081,7 @@
       "repository": "main",
       "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/zlib-1.3.2-r1.apk",
       "archive": "zlib-1.3.2-r1.apk",
+      "vendored_archive": "vendor/ports/zlib-1.3.2-r1.apk",
       "sha256": "af24e502645e2b392cae833856d776691ac21655362e5db69d7b89f147f76216",
       "license": "Zlib",
       "upstream": "https://zlib.net/",

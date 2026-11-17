@@ -9,7 +9,7 @@ import tarfile
 import tempfile
 
 from fetch import ROOT
-from ports import download
+from ports import locked_package
 
 
 def digest(path):
@@ -20,9 +20,7 @@ def digest(path):
 def headers():
     packages = json.loads((ROOT / 'ports.lock.json').read_text())['packages']
     package, = (item for item in packages if item['name'] == 'linux-headers')
-    archive = download(package['url'], ROOT / 'downloads/ports' / package['archive'])
-    if digest(archive) != package['sha256']:
-        raise RuntimeError('Linux UAPI archive checksum differs')
+    archive = locked_package(package)
     output = ROOT / 'build/linux-uapi'
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='case-probe-', dir=output) as temporary:

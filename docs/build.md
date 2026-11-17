@@ -44,5 +44,9 @@ On the host, `make test-thread-io` runs the focused BIOS/UEFI [blocking I/O test
 Concurrent builds share one download owner per archive. Its lock covers the
 cold-cache check, partial transfer and atomic publication, while unrelated
 archives still download in parallel. An interrupted transfer leaves its final
-path unpublished and retains partial bytes. Existing checksum and signature
-checks remain mandatory before any fetched source or package is used.
+path unpublished and retains partial bytes. Locked packages verify cached and
+new bytes under that lock before publication. A declared `vendored_archive`
+selects the original checked package from `vendor/ports`; its source must be
+present and match the lock even when the download cache is warm. Missing,
+changed or redirected local inputs fail verification. Existing source checksum
+and signature checks remain mandatory before use.

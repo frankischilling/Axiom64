@@ -12,6 +12,9 @@ scripts/tests/fixtures/ipv6-router-bios-modern.pcap binary
 vendor/musl/patches/*.patch -text -whitespace
 # Preserve pinned verification inputs and complete upstream license bytes.
 vendor/gnu-utmp-reader/* -text -whitespace
+
+# Keep preserved upstream package archives byte-identical to their locked hashes.
+vendor/ports/*.apk -text
 scripts/tests/fixtures/normal-init-default-ipv6-lane0.pcap binary
 scripts/tests/fixtures/normal-init-default-ipv6-lane1.pcap binary
 scripts/tests/fixtures/ipv6-dad-*.log -text -whitespace

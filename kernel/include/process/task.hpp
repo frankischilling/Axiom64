@@ -31,10 +31,7 @@ struct Descriptor {
     bool reserved = false;
 };
 
-struct SharedAttachment {
-    int id;
-    uint64_t base, length;
-};
+struct SharedMemoryMapping;
 
 struct MemoryContext {
     unsigned references = 1;
@@ -42,7 +39,7 @@ struct MemoryContext {
     AddressSpace space;
     uint64_t brk_base = 0, brk_end = 0;
     uint64_t initial_data_size = 0;
-    SharedAttachment shared[64]{};
+    SharedMemoryMapping* shared = nullptr;
 };
 
 struct FileTable {

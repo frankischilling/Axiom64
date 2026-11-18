@@ -102,9 +102,4 @@ void epoll_signal_notify(const SignalHandlers&);
 
 void epoll_close(Epoll*);
 
-int64_t shared_memory_syscall(Frame*);
-
-void shared_memory_fork(Task*, const Task*);
-
-void shared_memory_release(Task*);
 } // namespace ax

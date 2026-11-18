@@ -8,6 +8,7 @@
 #include "process/waitid.hpp"
 #include "ipc/system_v_semaphores.hpp"
 #include "ipc/system_v_message_queues.hpp"
+#include "ipc/shared_memory.hpp"
 #include "fs/descriptor.hpp"
 #include "fs/inotify.hpp"
 #include "drivers/platform/devices.hpp"
@@ -42,7 +43,7 @@ static void release_memory(Task* t) {
     if (!memory)
         return;
     if (memory->references == 1) {
-        shared_memory_release(t);
+        shared_memory_release(*t);
         if (memory->space.root && read_cr3() == memory->space.root)
             activate_kernel_memory();
         memory->space.destroy();
@@ -203,7 +204,8 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         child->memory = current->memory;
         child->memory->references++;
     } else {
-        if (!child->memory->space.clone_from(current->memory->space)) {
+        if (!child->memory->space.clone_from(current->memory->space) ||
+            !shared_memory_fork(*child, *current)) {
             release_resources(child);
             release(child->process);
             child->process = nullptr;
@@ -214,7 +216,6 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         child->memory->brk_end = current->memory->brk_end;
         child->memory->initial_data_size = current->memory->initial_data_size;
         child->memory->dumpable = current->memory->dumpable;
-        shared_memory_fork(child, current);
     }
     if (flags & clone_files) {
         release_files(child->files);

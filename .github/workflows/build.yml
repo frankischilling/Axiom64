@@ -1149,13 +1149,15 @@ jobs:
         run: |
           sudo -n make test-signalfd-native
           make test-signalfd
-      - name: Compare System V semaphore and message queue behavior
+      - name: Compare System V semaphore, message queue, and shared-memory behavior
         if: matrix.suite == 'boot'
         run: |
           sudo -n make test-system-v-semaphores-native
           make test-system-v-semaphores
           sudo -n make test-system-v-message-queues-native
           make test-system-v-message-queues
+          sudo -n make test-system-v-shared-memory-native
+          make test-system-v-shared-memory
       - name: Test virtio queue sizes and offered features
         if: matrix.suite == 'boot'
         run: make test-virtio
@@ -1793,6 +1795,8 @@ jobs:
             build/system-v-semaphores-guest/**
             build/system-v-message-queues-native/**
             build/system-v-message-queues-guest/**
+            build/system-v-shared-memory-native/**
+            build/system-v-shared-memory-guest/**
             build/unix-stream-native/**
             build/unix-shutdown-native/**
             build/unix-stream-wait-native/**

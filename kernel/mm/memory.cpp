@@ -211,6 +211,38 @@ uint64_t AddressSpace::mapped_size(uint64_t start, uint64_t length) const {
     return root && length ? mapped_length(root, 4, 0, start, start + length) : 0;
 }
 
+static uint64_t first_mapping(uint64_t table, unsigned level, uint64_t base, uint64_t start,
+                              uint64_t end) {
+    const auto entries = static_cast<const uint64_t*>(physical(table));
+    uint64_t span = 1ull << (12 + (level - 1) * 9);
+    unsigned last = (end - 1 - base) / span;
+    for (unsigned slot = (start - base) / span; slot <= last; ++slot) {
+        if (!(entries[slot] & page_mask))
+            continue;
+        uint64_t address = base + slot * span;
+        uint64_t first = max(start, address);
+        if (level == 1 || (entries[slot] & 128))
+            return first;
+        first = first_mapping(entries[slot] & page_mask, level - 1, address, first,
+                              min(end, address + span));
+        if (first != user_limit)
+            return first;
+    }
+    return user_limit;
+}
+
+uint64_t AddressSpace::find_unmapped(size_t length) const {
+    if (!root || !length)
+        return 0;
+    for (uint64_t start = next_map; start < user_limit && length <= user_limit - start;) {
+        uint64_t occupied = first_mapping(root, 4, 0, start, start + length);
+        if (occupied == user_limit)
+            return start;
+        start = occupied + page_size;
+    }
+    return 0;
+}
+
 uint64_t AddressSpace::private_writable_size(uint64_t start, uint64_t length,
                                              bool make_writable) const {
     if (start > user_limit || length > user_limit - start)
@@ -245,20 +277,24 @@ bool AddressSpace::map(uint64_t va, size_t len, int prot, bool private_mapping) 
     return true;
 }
 
-bool AddressSpace::map_physical(uint64_t va, uint64_t pa, size_t len, int prot, bool external) {
-    if (va % page_size || pa % page_size || va < page_size || va >= user_limit ||
-        len > user_limit - va)
+bool AddressSpace::prepare_mapping(uint64_t va, size_t len) {
+    if (va % page_size || va < page_size || va >= user_limit || len > user_limit - va)
         return false;
-    for (uint64_t offset = 0; offset < align_up(len); offset += page_size) {
-        auto e = entry(va + offset, true);
-        if (!e)
+    for (uint64_t offset = 0; offset < len; offset += page_size)
+        if (!entry(va + offset, true))
             return false;
-        if (*e & page_mask) {
-            if (!(*e & 0x200))
-                page_free(*e & page_mask);
-        }
+    return true;
+}
+
+bool AddressSpace::map_physical(uint64_t va, uint64_t pa, size_t len, int prot, bool external) {
+    if (pa % page_size || !prepare_mapping(va, len))
+        return false;
+    for (uint64_t offset = 0; offset < len; offset += page_size) {
+        auto e = entry(va + offset);
         if (!external)
             page_retain(pa + offset);
+        if ((*e & page_mask) && !(*e & 0x200))
+            page_free(*e & page_mask);
         *e = (pa + offset) | permissions(prot) | (external ? 0x200 : 0x400);
     }
     if (read_cr3() == root)

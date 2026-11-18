@@ -120,6 +120,26 @@ IPC scope with fixed defaults of 32,000 queues, 8,192 bytes per message, and
 16,384 bytes of capacity on a new queue. IPC namespaces and Linux IPC sysctls
 remain unimplemented.
 
+## System V shared memory
+
+`shmat` maps a segment into the caller's address space. Separate mappings and
+forked processes share the same backing pages. Read-only attachments cannot
+gain write access through `mprotect`. `SHM_REMAP` can replace an existing
+range, and `shmdt` removes only the surviving fragments of the selected
+attachment. Anonymous or file mappings added in the gaps stay mapped.
+
+`IPC_RMID` releases the key immediately. A marked segment remains accessible
+by ID until its last mapping goes away through unmap, detach, exec, or exit.
+`shmctl` reports wall-clock timestamps, mapping counts, owners, and usage.
+`SHM_LOCK` accounts for the caller's locked-memory limit. Axiom64 keeps segment
+pages resident and supports up to 4,096 segments of up to 64 MiB each,
+subject to available memory. Huge pages and IPC namespaces remain unimplemented.
+
+`make test-system-v-shared-memory` checks mappings, fork and exec, removal,
+permissions, and executable attachments as root and UID 65534 on BIOS and
+UEFI with both musl providers and linkages. The matching Linux comparison runs
+with `sudo make test-system-v-shared-memory-native`.
+
 ## Remaining work
 
 The limit is one CPU, 64 task slots, and 128 descriptors per file table. FPU switching uses FXSAVE/FXRSTOR for x87/SSE state, without extended XSAVE state. Caught signals currently return `EINTR` from futex waits even with `SA_RESTART`.

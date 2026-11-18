@@ -4,6 +4,7 @@
 #include "ipc/ipc.hpp"
 #include "ipc/system_v_semaphores.hpp"
 #include "ipc/system_v_message_queues.hpp"
+#include "ipc/shared_memory.hpp"
 #include "process/signals.hpp"
 #include "process/task.hpp"
 #include "process/cpu.hpp"
@@ -301,7 +302,9 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
         if (addr % page_size || addr < page_size || addr >= user_limit || len > user_limit - addr)
             return -22;
     } else {
-        addr = current->memory->space.next_map;
+        addr = current->memory->space.find_unmapped(len);
+        if (!addr)
+            return -12;
     }
     if (addr >= user_limit || len > user_limit - addr)
         return -12;
@@ -336,9 +339,13 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
             current->memory->space.next_map = addr + len + page_size;
         return addr;
     };
+    auto replace = [&]() -> int {
+        return flags & 0x10 ? shared_memory_unmap(*current, addr, len) : 0;
+    };
     if (framebuffer) {
-        if (flags & 0x10)
-            current->memory->space.unmap(addr, len);
+        int error = replace();
+        if (error)
+            return error;
         int64_t result = framebuffer_map(current->memory->space, addr, len, prot, off);
         if (result >= 0 && private_mapping)
             for (uint64_t page = addr; page < addr + len; page += page_size)
@@ -350,8 +357,9 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
         int error = node_map_shared(h->node, off, len, prot & 2, backing);
         if (error)
             return error;
-        if (flags & 0x10)
-            current->memory->space.unmap(addr, len);
+        error = replace();
+        if (error)
+            return error;
         if (!current->memory->space.map_physical(addr, backing, len, prot))
             return -12;
         if ((h->flags & 3) != 2 || node_readonly(h->node))
@@ -363,8 +371,9 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
                 *current->memory->space.entry(page) |= page_no_execute;
         return complete();
     }
-    if (flags & 0x10)
-        current->memory->space.unmap(addr, len);
+    int error = replace();
+    if (error)
+        return error;
     if (!current->memory->space.map(addr, len, 3, private_mapping))
         return -12;
     if (stack_mapping)
@@ -796,36 +805,40 @@ static int64_t dispatch(Frame* f) {
         if (a < user_limit && b <= user_limit - a &&
             !memory_protection_allowed(*current, a, align_up(b), int(c)))
             return -12;
-        return current->memory->space.protect(a, align_up(b), c) ? 0 : -12;
+        if (a >= user_limit || b > user_limit - a)
+            return -12;
+        return shared_memory_protect(*current, a, align_up(b), c);
     }
-    case 11:
+    case 11: {
         if (a % page_size || !b || a >= user_limit || b > user_limit - a)
             return -22;
-        current->memory->space.unmap(a, align_up(b));
+        int error = shared_memory_unmap(*current, a, align_up(b));
+        if (error)
+            return error;
         inotify_reap_inodes();
         return 0;
-    case 12:
+    }
+    case 12: {
         if (!a)
             return current->memory->brk_end;
         if (a < current->memory->brk_base || a > current->memory->brk_base + 128 * 1024 * 1024)
             return current->memory->brk_end;
         if (!heap_change_allowed(*current, a))
             return current->memory->brk_end;
-        if (align_up(a) > align_up(current->memory->brk_end) &&
-            (!memory_growth_allowed(*current, align_up(current->memory->brk_end),
-                                    align_up(a) - align_up(current->memory->brk_end)) ||
-             !data_growth_allowed(*current, align_up(current->memory->brk_end),
-                                  align_up(a) - align_up(current->memory->brk_end))))
+        uint64_t old_end = align_up(current->memory->brk_end), new_end = align_up(a);
+        if (new_end > old_end) {
+            size_t length = new_end - old_end;
+            auto& space = current->memory->space;
+            if (space.mapped_size(old_end, length) ||
+                !memory_growth_allowed(*current, old_end, length) ||
+                !data_growth_allowed(*current, old_end, length) || !space.map(old_end, length, 3))
+                return current->memory->brk_end;
+        }
+        if (new_end < old_end && shared_memory_unmap(*current, new_end, old_end - new_end))
             return current->memory->brk_end;
-        if (a > current->memory->brk_end &&
-            !current->memory->space.map(align_up(current->memory->brk_end),
-                                        align_up(a) - align_up(current->memory->brk_end), 3))
-            return current->memory->brk_end;
-        if (a < current->memory->brk_end)
-            current->memory->space.unmap(align_up(a),
-                                         align_up(current->memory->brk_end) - align_up(a));
         current->memory->brk_end = a;
         return a;
+    }
     case 13:
         if (a < 1 || a > 64 || a == 9 || a == 19 || d != 8)
             return -22;

@@ -28,7 +28,8 @@ The kernel enforces the following capability checks at implemented interfaces:
 | Tracing permission override | `CAP_SYS_PTRACE`; tracing operations themselves remain unimplemented |
 | Packet/raw IPv4 sockets, reserved UDP ports | `CAP_NET_RAW` / `CAP_NET_BIND_SERVICE` |
 | Address/route/link mutation through ioctl or route netlink | `CAP_NET_ADMIN` |
-| System V shared-memory permission override/control | `CAP_IPC_OWNER` / `CAP_SYS_ADMIN` |
+| System V IPC permission override / owner control | `CAP_IPC_OWNER` / `CAP_SYS_ADMIN` |
+| System V shared-memory lock owner and limit override | `CAP_IPC_LOCK` |
 | Mount/remount/unmount, chroot, reboot | `CAP_SYS_ADMIN`, `CAP_SYS_CHROOT`, `CAP_SYS_BOOT` respectively |
 | File capability administration; other security/trusted attributes | `CAP_SETFCAP`; `CAP_SYS_ADMIN` respectively |
 
@@ -50,7 +51,7 @@ Chroot changes the task's filesystem root without changing its current directory
 
 Signals check real/effective sender identities against real/saved target identities, with the same-session `SIGCONT` exception and same-thread-group behavior. Delivered `siginfo` records the sender's real UID. Process-group changes apply Linux parent/session/exec restrictions. Ptrace denies disallowed identity, dumpability and capability combinations before returning `ENOSYS` for the remaining unimplemented request.
 
-Unix pathname connection requires write permission on the socket inode. `SO_PEERCRED` reports the captured effective UID/GID and process ID from connection/listen or socketpair creation; subsequent identity changes do not rewrite the peer record. System V shared memory records owner and creator IDs, checks attachment/stat/control access and retains owner metadata through `IPC_SET`. The wider IPC flag and executable-mapping coverage remains in [F15](feature-roadmap.md#f15-ipc-and-event-notification).
+Unix pathname connection requires write permission on the socket inode. `SO_PEERCRED` reports the captured effective UID/GID and process ID from connection/listen or socketpair creation; subsequent identity changes do not rewrite the peer record. System V shared memory checks owner and creator permissions, including group access. `IPC_SET` can change the owner and mode while preserving the creator. `SHM_EXEC` requires execute permission, and a read-only attachment cannot become writable. [Shared-memory tests](threads.md#system-v-shared-memory)
 
 ## Verification
 

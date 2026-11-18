@@ -141,10 +141,14 @@ struct AddressSpace {
 
     uint64_t mapped_size(uint64_t start = 0, uint64_t length = user_limit) const;
 
+    uint64_t find_unmapped(size_t length) const;
+
     uint64_t private_writable_size(uint64_t start = 0, uint64_t length = user_limit,
                                    bool make_writable = false) const;
 
     bool map(uint64_t va, size_t len, int prot, bool private_mapping = true);
+
+    bool prepare_mapping(uint64_t va, size_t len);
 
     bool map_physical(uint64_t va, uint64_t pa, size_t len, int prot, bool external = false);
 

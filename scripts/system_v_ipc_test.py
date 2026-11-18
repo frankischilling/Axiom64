@@ -23,6 +23,8 @@ WORKLOADS = {
     'message-queues': ('SYSV_MSG', ('identity', 'selection', 'capacity-faults',
                                   'direct-delivery', 'blocked-senders',
                                   'interruption-removal', 'permissions', 'exec')),
+    'shared-memory': ('SYSV_SHM', ('metadata', 'fragments', 'remapping',
+                                 'process-lifecycle', 'locking', 'permissions')),
 }
 
 
@@ -93,6 +95,8 @@ def guest(directory, workload, client):
         if binary_linkage(program) != linkage:
             raise RuntimeError('guest IPC executable linkage differs')
         boot = f'/bin/{program.name}\n/bin/{program.name} --ordinary'
+        if workload == 'shared-memory':
+            boot = '/bin/busybox chmod 1777 /tmp\n' + boot
         image = fixture(case, provider, linkage, program_builder=lambda *args: (program, inputs),
                         filename=program.name, command=boot,
                         extra_products={f'source/{client.name}': client,

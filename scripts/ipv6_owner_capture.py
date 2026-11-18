@@ -336,6 +336,14 @@ def inspect(path,lane,text,group,native=False,statistics=None,native_kernel_rele
                 exact(automatic,0x940,30,60)
                 exact(replaced,{1:0x8c0,3:0x8c2,4:0x840}[case],6 if case==4 else inf,10 if case==4 else inf)
                 require(selected[0]['target']==automatic['target'],'the actual replaced owner receives the conflict')
+                if case == 3:
+                    gate = summaries[case, 1]
+                    ack = replies[requests.index(gate)]
+                    initial = [probe['row']['index'] for probe in case_probes
+                               if probe['target'] == automatic['target']]
+                    require(len(initial) == 1 and ra['index'] < initial[0] <
+                            ack['index'] < replaced['row']['index'],
+                            'first actual global DAD probe precedes ACK and NODAD takeover')
                 first=one(case,9);ready=one(case,10)
                 require(first['target']==ready['target'] and first['target']!=automatic['target'] and
                         first['target']!=prefixes[case][:8]+identifier,'stable retry has a fresh non-EUI64 identity')

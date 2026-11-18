@@ -64,7 +64,7 @@ class Peer(RouterPeer):
                              bytes([self.lane, phase, 1]) + bytes(39))
         self.complete.append(phase)
 
-    def conflict(self):
+    def finish_probe_wait(self):
         if self.pending is None:
             return
         value = self.pending
@@ -73,12 +73,13 @@ class Peer(RouterPeer):
         packets = self.probes.get(value['case'], {}).get(target, [])
         if not packets:
             return
-        require(len(packets) == 1 and key not in self.conflicts,
-                'one actual selected DAD probe precedes each ownership conflict')
-        body = b'\x88\0\0\0' + struct.pack('!I', 0x20000000) + target + b'\x02\x01' + self.mac
-        # Conflict must reach the adapter before the ACK starts the client's wait.
-        self.outgoing.append(self.frame(self.router, ipaddress.IPv6Address('ff02::1').packed, body))
-        self.conflicts[key] = dict(target=target, observed_ns=time.monotonic_ns())
+        require(len(packets) == 1, 'one actual selected DAD probe precedes its acknowledgment')
+        if value['kind'] == CONFLICT:
+            require(key not in self.conflicts, 'one conflict per ownership trial')
+            body = b'\x88\0\0\0' + struct.pack('!I', 0x20000000) + target + b'\x02\x01' + self.mac
+            # The ACK starts the client's observation after the injected conflict.
+            self.outgoing.append(self.frame(self.router, ipaddress.IPv6Address('ff02::1').packed, body))
+            self.conflicts[key] = dict(target=target, observed_ns=time.monotonic_ns())
         self.ack(value['phase'])
         self.pending = None
 
@@ -244,7 +245,10 @@ class Peer(RouterPeer):
             self.inventories.setdefault((case,stage), []).append(value)
         elif kind == SUMMARY:
             require(case == self.case and valid == 0, 'complete actual ownership inventory summary')
-            self.inventory(case,stage,self.inventories.get((case,stage),[]),flags,preferred)
+            owners = self.inventories.get((case, stage), [])
+            self.inventory(case, stage, owners, flags, preferred)
+            if case == 3 and stage == 1:
+                self.pending = dict(value, target=owners[0]['target'])
             if case >= 10:
                 self.capacity_summaries[case,stage] = time.monotonic_ns()
                 if stage == 5:
@@ -339,8 +343,8 @@ class Peer(RouterPeer):
         else:
             raise ValueError('unknown ownership control operation')
         self.controls.append(value)
-        if kind == CONFLICT:
-            self.conflict()
+        if self.pending is not None:
+            self.finish_probe_wait()
         else:
             self.ack(phase)
 
@@ -385,7 +389,7 @@ class Peer(RouterPeer):
             require(self.pio_replayed, 'a fresh PIO is required before another global DAD probe')
         require(len(probes)<maximum, 'no unrequested DAD retransmission')
         probes.append(dict(observed_ns=time.monotonic_ns(), frame=frame.hex()))
-        self.conflict()
+        self.finish_probe_wait()
 
     def tick(self):
         pass

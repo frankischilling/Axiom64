@@ -23,11 +23,6 @@ excludes=(
   --exclude='./downloads/sources' --exclude='./build/axiom64-sources.tar'
   --exclude='./build/axiom64.iso' --exclude='./build/iso*'
   --exclude='./build/busybox-*' --exclude='./build/uapi'
-  --exclude='./build/openssl/source'
-  --exclude='./build/openssl/*/*/*/build/test'
-  --exclude='./build/openssl/*/*/*/build/fuzz'
-  --exclude='./build/openssl/*/*/*/build/*.o'
-  --exclude='./build/openssl/*/*/*/build/*.a'
 )
 extra_inputs=()
 if [[ "$1" == rotation ]]; then
@@ -53,6 +48,24 @@ PY
   mapfile -t paths <<< "$profile_paths"
   excludes+=("--exclude=${paths[0]}" "--exclude=${paths[1]}")
   extra_inputs+=("${paths[2]}")
+else
+  # Isolated download tests recheck these two pinned CA inputs with the
+  # restored bundle. Share the verified bytes from the build.
+  extra_inputs+=(downloads/sources/ca-bundle/certdata.txt
+                 downloads/sources/ca-bundle/MPL-2.0.txt)
+  for input in "${extra_inputs[@]}"; do
+    if [[ ! -f "$input" ]]; then
+      echo "Missing prepared input: $input" >&2
+      exit 1
+    fi
+  done
+  # Use the same completed outputs for cold builds and cache restores. Leave
+  # the workspace intact for the build's own evidence and failure diagnostics.
+  crypto_excludes=$(mktemp "$output/axiom64-crypto-excludes.XXXXXXXX")
+  trap 'rm -f -- "$crypto_excludes"' EXIT
+  script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+  python3 -B "$script_dir/crypto_input_excludes.py" > "$crypto_excludes"
+  excludes+=(--anchored --no-wildcards --exclude-from="$crypto_excludes")
 fi
 # Keep source/output times and modes, including the prepared BusyBox inputs.
 tar -cf "$archive" "${excludes[@]}" . \

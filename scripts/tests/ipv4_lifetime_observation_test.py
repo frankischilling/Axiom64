@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Keep the physical TCP absence window complete after delayed client output."""
+"""Check the original client and peer lifetime observation windows."""
 from pathlib import Path
 import sys
 import unittest
@@ -7,6 +7,31 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ipv4_lifetimes.wire_peer import Peer
+from ipv4_lifetimes.reader import DEPRECATED, native_promotion_sample
+
+
+class NativePromotionObservation(unittest.TestCase):
+    def test_expired_primary_then_observed_absence(self):
+        # The failing Linux dump retained IFA_F_DEPRECATED with both lifetimes zero.
+        expired = dict(flags=DEPRECATED, cache=(0, 0, 0x3065f, 0x3065f))
+        native_promotion_sample(expired, 40_000, 1_500_060_000, 1_500_090_000, None)
+        native_promotion_sample(None, 40_000, 1_550_090_000, 1_550_100_000, 1_500_090_000)
+
+    def test_live_primary_is_not_pending_removal(self):
+        for value in (dict(flags=DEPRECATED, cache=(0, 1)), dict(flags=0, cache=(0, 0))):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, 'only an expired native primary'):
+                    native_promotion_sample(value, 0, 1_500_000_000, 1_500_010_000, None)
+
+    def test_early_and_late_absence_does_not_qualify(self):
+        for query, receipt, previous, message in (
+            (1_499_999_999, 1_500_010_000, None, 'original sample'),
+            (2_499_980_000, 2_500_000_001, None, 'bounded withdrawal'),
+            (1_550_089_999, 1_550_100_000, 1_500_090_000, 'actual polling intervals'),
+        ):
+            with self.subTest(query=query):
+                with self.assertRaisesRegex(ValueError, message):
+                    native_promotion_sample(None, 0, query, receipt, previous)
 
 
 class LifetimeObservation(unittest.TestCase):

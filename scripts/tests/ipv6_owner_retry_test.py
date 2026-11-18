@@ -16,15 +16,26 @@ FIXTURE = Path(__file__).parent / 'fixtures/ipv6-owner-native-retry-aged-lane0.p
 class FiniteOwnerRetry(unittest.TestCase):
     def replay(self, mutate=None):
         peer = Peer(0, 'global', native=True)
+        # This historical capture predates the case 3 probe barrier. Replay
+        # just the finite takeover case with consecutive control phases.
+        peer.cases = (4,)
+        in_case = False
         found = False
         for row in raw_records(FIXTURE):
             frame = row['frame']
             if frame[6:12] != peer.guest:
                 continue
-            selected = frame[12:14] == b'\x88\xc3' and frame[20:22] == bytes([9, 4])
-            if selected and mutate:
+            control = frame[12:14] == b'\x88\xc3'
+            if control and frame[20:22] == bytes([1, 4]):
+                in_case = True
+            if not in_case and not (control and frame[20:22] == bytes([0, 0])):
+                continue
+            selected = control and frame[20:22] == bytes([9, 4])
+            if control:
                 frame = bytearray(frame)
-                mutate(frame)
+                frame[19] = len(peer.controls)
+                if selected and mutate:
+                    mutate(frame)
                 frame = bytes(frame)
             with patch('ipv6_owner_peer.time.monotonic_ns', return_value=row['stamp'] * 1000):
                 peer.receive(frame)

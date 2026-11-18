@@ -18,7 +18,7 @@
 #include "process/signals.hpp"
 #include "process/futex.hpp"
 #include "io/io.hpp"
-#include "io/poll.hpp"
+#include "io/descriptor_wait.hpp"
 #include "net/ethernet.hpp"
 #include "core/time.hpp"
 #include "core/random.hpp"
@@ -66,13 +66,21 @@ static void release_files(FileTable* table) {
     }
 }
 
+static void copy_descriptors(FileTable& table, const FileTable& source) {
+    for (unsigned i = 0; i < max_fds; ++i) {
+        auto desc = source.entries[i];
+        if (desc.handle) {
+            table.entries[i] = desc;
+            table.expand(i);
+            retain(desc.handle);
+        }
+    }
+}
+
 static FileTable* copy_files(const FileTable* source) {
     auto table = make_resource<FileTable>();
     if (table)
-        for (unsigned i = 0; i < max_fds; i++) {
-            table->entries[i] = source->entries[i].handle ? source->entries[i] : Descriptor{};
-            retain(table->entries[i].handle);
-        }
+        copy_descriptors(*table, *source);
     return table;
 }
 
@@ -81,7 +89,7 @@ static void release_resources(Task* t) {
     posix_queue_discard(*t);
     discard_fifo_open(*t);
     epoll_discard_wait(*t);
-    poll_discard(*t);
+    descriptor_wait_discard(*t);
     semaphore_exit(*t);
     t->pending_signals.discard(UINT64_MAX);
     credential_release(t->credentials);
@@ -228,12 +236,9 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         release_files(child->files);
         child->files = current->files;
         child->files->references++;
-    } else
-        for (unsigned i = 0; i < max_fds; i++) {
-            child->files->entries[i] =
-                current->files->entries[i].handle ? current->files->entries[i] : Descriptor{};
-            retain(child->files->entries[i].handle);
-        }
+    } else {
+        copy_descriptors(*child->files, *current->files);
+    }
     if (flags & clone_fs) {
         release(child->fs);
         child->fs = current->fs;
@@ -396,7 +401,7 @@ static bool awaken(Task& t) {
         return t.state == State::runnable;
     if (t.wait == Wait::signal_queue && signal_wait_resume(t))
         return true;
-    if (resume_fifo_open(t) || epoll_resume_wait(t) || poll_resume(t) ||
+    if (resume_fifo_open(t) || epoll_resume_wait(t) || descriptor_wait_resume(t) ||
         io_resume_signal_descriptor(t))
         return true;
     if (signal_wakes(t)) {
@@ -429,9 +434,6 @@ static bool awaken(Task& t) {
     case Wait::sleep:
         ready = ticks >= t.deadline;
         break;
-    case Wait::select:
-        ready = (t.deadline && ticks >= t.deadline) || select_events(t, t.frame, false) != 0;
-        break;
     case Wait::vfork:
         ready = true;
         for (auto& c : tasks)
@@ -452,7 +454,7 @@ static bool awaken(Task& t) {
     case Wait::message_queue:
     case Wait::fifo_open:
     case Wait::epoll_wait:
-    case Wait::poll:
+    case Wait::descriptor:
         return false;
     case Wait::posix_queue:
         return posix_queue_expire(t);

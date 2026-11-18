@@ -121,6 +121,25 @@ with both musl providers and linkages on BIOS and UEFI, with additional
 read-only ext2 boots. `sudo make test-poll-waits-native` runs the same cases
 on Linux.
 
+## Select and pselect waits
+
+`select` and `pselect` retain the input fd sets across a blocked wait.
+Each ready bit counts separately across read, write, and exceptional
+conditions. The calls read and write whole bitmap words up to the smaller
+of `nfds` and the descriptor table's current capacity. Requesting a closed
+descriptor within that range returns `EBADF`. A caught signal
+ends the wait without replacing the caller's fd sets.
+
+`select` and raw `pselect6` write back the remaining relative timeout.
+The libc `pselect` wrapper preserves the original timespec. The temporary
+mask applies during the wait, with the original mask restored on return.
+On a process stop, both waits write back the time left and restart with
+that interval on continue. The wait's resolution is 10 ms.
+
+`make test-select-waits` checks both caller identities and both musl
+providers and linkages on BIOS and UEFI, with read-only ext2 coverage.
+`sudo make test-select-waits-native` compares the same cases on Linux.
+
 ## Epoll descriptor lifetime
 
 Epoll accepts descriptors with a poll operation, including pipes, sockets,

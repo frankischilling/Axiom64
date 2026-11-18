@@ -756,39 +756,6 @@ void epoll_close(Epoll* poll) {
     release(poll);
 }
 
-int select_events(Task& task, const Frame& frame, bool copy) {
-    int count = int(frame.rdi);
-    if (count < 0 || count > 1024)
-        return -22;
-    uint64_t input[3][16]{}, output[3][16]{};
-    uint64_t pointers[] = {frame.rsi, frame.rdx, frame.r10};
-    size_t bytes = ((count + 63) / 64) * 8;
-    for (unsigned set = 0; set < 3; set++)
-        if (pointers[set] && bytes && !task.memory->space.copy_in(input[set], pointers[set], bytes))
-            return -14;
-    int ready = 0;
-    for (int fd = 0; fd < count; fd++) {
-        uint64_t bit = 1ull << (fd % 64);
-        for (unsigned set = 0; set < 3; set++)
-            if (input[set][fd / 64] & bit) {
-                auto h = unsigned(fd) < max_fds ? task.files->entries[fd].handle : nullptr;
-                if (!h)
-                    return -9;
-                uint32_t wanted = set == 0 ? 1 | 8 | 16 : set == 1 ? 4 | 8 : 2;
-                if (readiness(h, &task) & wanted) {
-                    output[set][fd / 64] |= bit;
-                    ready++;
-                }
-            }
-    }
-    if (copy)
-        for (unsigned set = 0; set < 3; set++)
-            if (pointers[set] && bytes &&
-                !task.memory->space.copy_out(pointers[set], output[set], bytes))
-                return -14;
-    return ready;
-}
-
 int64_t ipc_syscall(Frame* f) {
     auto a = f->rdi, b = f->rsi, c = f->rdx, d = f->r10;
     auto h = handle(a);

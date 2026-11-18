@@ -12,6 +12,7 @@ int reserve_fd(Task& task, int start, bool cloexec) {
     uint64_t limit = task.process->limits.soft(Resource::open_files);
     for (unsigned index = start; index < max_fds && index < limit; index++)
         if (!table.entries[index].handle && !table.entries[index].reserved) {
+            table.expand(index);
             table.entries[index] = {nullptr, cloexec, true};
             return index;
         }

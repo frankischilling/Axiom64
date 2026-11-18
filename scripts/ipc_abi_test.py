@@ -36,6 +36,9 @@ WORKLOADS = {
     'poll-waits': ('POLL_WAITS', ('arguments-and-masks', 'revents-copy', 'raw-and-libc-deadlines',
                                  'temporary-signal-mask', 'retained-poll', 'retained-ppoll',
                                  'stopped-poll', 'stopped-ppoll')),
+    'select-waits': ('SELECT_WAITS', ('argument-order', 'bitmap-capacity', 'readiness-masks',
+                                     'deadlines', 'temporary-signal-mask', 'retained-select',
+                                     'retained-pselect', 'stopped-select', 'stopped-pselect')),
     'epoll-nested': ('EPOLL_NESTED', ('readiness-and-aliases', 'depth-and-cycles',
                                      'shared-descendant', 'timer-and-signal', 'round-robin')),
     'epoll-lifetime': ('EPOLL_LIFETIME', ('descriptor-admission', 'pollable-controls-and-devices',
@@ -85,6 +88,21 @@ def execute(command, log, expected_exit, uids, workload, firmware=None, root='ra
             if requested != 31000001 or not requested <= elapsed < 2000000000:
                 raise RuntimeError(f'incorrect poll deadline in {log}')
             observations.append(dict(uid=uid, request_ns=requested, elapsed_ns=elapsed))
+        observed['deadline_observations'] = observations
+    if workload == 'select-waits':
+        deadlines = [re.fullmatch(r'SELECT_WAITS_DEADLINE (select|pselect) request_ns=(\d+) elapsed_ns=(\d+)',
+                                  line) for line in lines if line.startswith('SELECT_WAITS_DEADLINE ')]
+        observations = []
+        expected_deadlines = [(uid, call, requested) for uid in uids
+                              for call, requested in (('select', 31001000), ('pselect', 31000001))]
+        if len(deadlines) != len(expected_deadlines) or any(match is None for match in deadlines):
+            raise RuntimeError(f'missing or invalid select deadline observations in {log}')
+        for (uid, call, requested), match in zip(expected_deadlines, deadlines):
+            observed_call, request_ns, elapsed_ns = match.groups()
+            elapsed = int(elapsed_ns)
+            if observed_call != call or int(request_ns) != requested or not requested <= elapsed < 2000000000:
+                raise RuntimeError(f'incorrect select deadline in {log}')
+            observations.append(dict(uid=uid, call=call, request_ns=requested, elapsed_ns=elapsed))
         observed['deadline_observations'] = observations
     if workload == 'epoll-lifetime':
         seek = 'espipe' if '--legacy-seek' in command else 'noop'
@@ -325,7 +343,8 @@ def guest(directory, workload, client):
                              image_sha256=digest(image), **row))
             print(f'{prefix}_GUEST_PASS {provider}/{linkage}/{firmware}', flush=True)
         if (provider, linkage) == ('build', 'static') and (
-                workload.startswith('posix-') or workload in ('named-pipes', 'poll-waits', 'epoll-lifetime', 'epoll-nested')):
+                workload.startswith('posix-') or workload in ('named-pipes', 'poll-waits', 'select-waits',
+                                                          'epoll-lifetime', 'epoll-nested')):
             image, disk = ext2_fixture(case, kernel, payload, script, workload)
             fingerprint = disk_digest(disk)
             for firmware in ('bios', 'uefi'):

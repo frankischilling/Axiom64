@@ -15,7 +15,7 @@
 #include "process/futex.hpp"
 #include "process/waitid.hpp"
 #include "io/io.hpp"
-#include "io/poll.hpp"
+#include "io/descriptor_wait.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
 #include "net/inet6.hpp"
@@ -48,10 +48,6 @@ static_assert(sizeof(LinuxStat) == 144);
 
 struct Timespec {
     int64_t sec, nsec;
-};
-
-struct Timeval {
-    int64_t sec, usec;
 };
 
 static Handle* fd_handle(int fd, bool path_allowed = false) {
@@ -424,12 +420,15 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
 }
 
 static int64_t dup_fd(int old, int target, int flags = 0) {
-    Handle* h = fd_handle(old, true);
-    if (!h)
-        return -9;
     if (target < 0 || unsigned(target) >= max_fds)
         return -9;
-    if (target != old && uint64_t(target) >= current->process->limits.soft(Resource::open_files))
+    if (target != old) {
+        if (uint64_t(target) >= current->process->limits.soft(Resource::open_files))
+            return -9;
+        current->files->expand(target);
+    }
+    Handle* h = fd_handle(old, true);
+    if (!h)
         return -9;
     if (current->files->entries[target].reserved)
         return -16;
@@ -764,8 +763,10 @@ static int64_t dispatch(Frame* f) {
     case 6:
         return stat_path(-100, a, b, false);
     case 7:
+    case 23:
+    case 270:
     case 271:
-        return poll_syscall(*current, *f);
+        return descriptor_wait_syscall(*current, *f);
     case 8: {
         auto h = fd_handle(a);
         if (!h)
@@ -898,70 +899,6 @@ static int64_t dispatch(Frame* f) {
     }
     case 22:
         return create_pipe(a, 0);
-    case 23:
-    case 270: {
-        bool pselect = f->rax == 270;
-        auto restore_mask = [] {
-            if (current->suspend_mask) {
-                current->signal_mask = current->suspend_saved_mask;
-                current->suspend_mask = false;
-            }
-        };
-        if (pselect && f->r9 && !current->suspend_mask) {
-            uint64_t arguments[2], mask;
-            if (!current->memory->space.copy_in(arguments, f->r9, sizeof(arguments)))
-                return -14;
-            if (arguments[0]) {
-                if (arguments[1] != 8)
-                    return -22;
-                if (!current->memory->space.copy_in(&mask, arguments[0], sizeof(mask)))
-                    return -14;
-                current->suspend_saved_mask = current->signal_mask;
-                current->suspend_mask = true;
-                current->signal_mask = mask & ~((1ull << 8) | (1ull << 18));
-            }
-        }
-        int ready = select_events(*current, *f, false);
-        if (ready < 0) {
-            restore_mask();
-            current->deadline = 0;
-            return ready;
-        }
-        int64_t timeout[2]{};
-        uint64_t delay = 0;
-        if (e) {
-            if (!current->memory->space.copy_in(timeout, e, sizeof(timeout))) {
-                restore_mask();
-                current->deadline = 0;
-                return -14;
-            }
-            int64_t scale = pselect ? 1000000000 : 1000000;
-            if (timeout[0] < 0 || timeout[0] > INT64_MAX / 100 || timeout[1] < 0 ||
-                timeout[1] >= scale) {
-                restore_mask();
-                current->deadline = 0;
-                return -22;
-            }
-            delay = uint64_t(timeout[0]) * 100 + (timeout[1] + scale / 100 - 1) / (scale / 100);
-        }
-        if (ready || (e && !delay) || (current->deadline && ticks >= current->deadline)) {
-            ready = select_events(*current, *f, true);
-            if (e && !pselect) {
-                uint64_t left = current->deadline
-                                    ? current->deadline > ticks ? current->deadline - ticks : 0
-                                    : delay;
-                Timeval remaining{int64_t(left / 100), int64_t(left % 100) * 10000};
-                if (copy_result(e, &remaining, sizeof(remaining)))
-                    ready = -14;
-            }
-            current->deadline = 0;
-            restore_mask();
-            return ready;
-        }
-        if (e && !current->deadline)
-            current->deadline = ticks + delay;
-        return block(Wait::select);
-    }
     case 24:
         return 0;
     case 26:

@@ -368,6 +368,8 @@ Acceptance evidence:
 Pipes, Unix streams, polling, epoll, select, and SysV shared memory have guest tests.
 [Poll and ppoll](io.md#poll-and-ppoll-waits) retain descriptor inputs across
 blocked waits. Ppoll also supports temporary signal masks and timespec deadlines.
+[Select and pselect](io.md#select-and-pselect-waits) retain fd sets and write
+back the remaining interval through the raw syscalls.
 [Named pipes](io.md#named-pipes) support filesystem names, blocking opens, descriptor
 readiness, signal interruption, and persistent ext2 inodes.
 [Epoll lifetime tests](io.md#epoll-descriptor-lifetime) check duplicate and reused

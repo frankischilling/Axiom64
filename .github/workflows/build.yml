@@ -1158,11 +1158,13 @@ jobs:
           make test-system-v-message-queues
           sudo -n make test-system-v-shared-memory-native
           make test-system-v-shared-memory
-      - name: Compare poll and epoll descriptor and signal waits
+      - name: Compare poll, select, and epoll descriptor and signal waits
         if: matrix.suite == 'boot'
         run: |
           sudo -n make test-poll-waits-native
           make test-poll-waits
+          sudo -n make test-select-waits-native
+          make test-select-waits
           sudo -n make test-epoll-lifetime-native
           make test-epoll-lifetime
           sudo -n make test-epoll-nested-native
@@ -1830,6 +1832,8 @@ jobs:
             build/named-pipes-guest/**
             build/poll-waits-native/**
             build/poll-waits-guest/**
+            build/select-waits-native/**
+            build/select-waits-guest/**
             build/epoll-lifetime-native/**
             build/epoll-lifetime-guest/**
             build/epoll-nested-native/**

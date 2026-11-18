@@ -14,8 +14,7 @@ enum class Wait {
     write,
     child,
     sleep,
-    poll,
-    select,
+    descriptor,
     vfork,
     signal,
     signal_queue,
@@ -48,7 +47,14 @@ struct MemoryContext {
 
 struct FileTable {
     unsigned references = 1;
+    // select copies a bitmap only as far as the expanded descriptor table.
+    unsigned capacity = 64;
     Descriptor entries[max_fds]{};
+
+    void expand(unsigned fd) {
+        if (fd >= capacity)
+            capacity = max_fds;
+    }
 };
 
 struct FsContext {
@@ -66,7 +72,7 @@ struct SignalHandlers {
 };
 struct Task;
 struct IoRequest;
-struct PollRequest;
+struct DescriptorWait;
 
 struct Process {
     ProcessLimits limits{max_fds};
@@ -134,7 +140,7 @@ struct Task {
     int vfork_parent;
     FutexWait futex;
     IoRequest* io;
-    PollRequest* poll_request;
+    DescriptorWait* descriptor_wait;
     SemaphoreRequest* semaphore_request;
     SemaphoreUndo* semaphore_undo;
     MessageQueueRequest* message_queue_request;

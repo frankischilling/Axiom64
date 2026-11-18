@@ -48,6 +48,10 @@ class ActualOwnershipCapture(unittest.TestCase):
                 common=tuple(label for label in COMMON if group!='capacity' or label not in ('early-retry','late-retry'))
                 self.assertEqual([row['control'] for row in result],list(common+extra))
                 self.assertTrue(all(row['rejection'] for row in result))
+                if group=='global':
+                    delayed=next(row for row in result if row['control']=='probe-after-nodad-ack')
+                    self.assertEqual(delayed['rejection'],
+                        'first actual global DAD probe precedes ACK and NODAD takeover')
                 if group=='capacity':
                     delayed=next(row for row in result if row['control']=='late-limit-ack')
                     self.assertEqual(delayed['rejection'],

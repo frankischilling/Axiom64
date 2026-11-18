@@ -349,17 +349,16 @@ static void partial_and_errors(void) {
                   errno == EAGAIN);
             CHECK(write(endpoints[1], "W", 1) == 1);
             CHECK(recv(endpoints[0], bytes, 1, MSG_WAITALL) == 1 && bytes[0] == 'W');
-            if (guest) {
-                struct sockaddr address = {.sa_family = AF_UNIX};
-                struct msghdr named = {.msg_name = &address,
-                                       .msg_namelen = sizeof(address),
-                                       .msg_iov = vectors,
-                                       .msg_iovlen = 2};
-                CHECK(recvmsg(endpoints[0], &named, 0) == -1 && errno == EOPNOTSUPP);
-            }
+            struct sockaddr address = {.sa_family = AF_UNSPEC};
+            struct msghdr message = {.msg_name = &address,
+                                     .msg_namelen = sizeof(address),
+                                     .msg_iov = vectors,
+                                     .msg_iovlen = 2};
+            CHECK(recvmsg(endpoints[0], &message, MSG_DONTWAIT) == -1 && errno == EAGAIN);
+            CHECK(message.msg_namelen == sizeof(address) && address.sa_family == AF_UNSPEC);
             CHECK(write(endpoints[1], "right", 5) == 5);
-            struct msghdr message = {.msg_iov = vectors, .msg_iovlen = 2};
-            CHECK(recvmsg(endpoints[0], &message, MSG_PEEK) == 5 && !memcmp(bytes, "right", 5));
+            CHECK(recvmsg(endpoints[0], &message, MSG_PEEK) == 5 && !memcmp(bytes, "right", 5) &&
+                  message.msg_namelen == 0 && address.sa_family == AF_UNSPEC);
             CHECK(recv(endpoints[0], bytes, 5, 0) == 5 && !memcmp(bytes, "right", 5));
         } else {
             CHECK(pread(endpoints[0], bytes, 1, 0) == -1 && errno == ESPIPE);

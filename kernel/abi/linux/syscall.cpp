@@ -3,6 +3,7 @@
 #include "drivers/block/block.hpp"
 #include "ipc/ipc.hpp"
 #include "ipc/system_v_semaphores.hpp"
+#include "ipc/system_v_message_queues.hpp"
 #include "process/signals.hpp"
 #include "process/task.hpp"
 #include "process/cpu.hpp"
@@ -963,6 +964,11 @@ static int64_t dispatch(Frame* f) {
     case 66:
     case 220:
         return semaphore_syscall(f);
+    case 68:
+    case 69:
+    case 70:
+    case 71:
+        return message_queue_syscall(f);
     case 32: {
         auto h = fd_handle(a, true);
         if (!h)

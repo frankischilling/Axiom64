@@ -21,7 +21,8 @@ enum class Wait {
     futex,
     file_lock,
     random,
-    semaphore
+    semaphore,
+    message_queue
 };
 
 struct Descriptor {
@@ -89,6 +90,7 @@ struct FutexWait {
 
 struct SemaphoreRequest;
 struct SemaphoreUndo;
+struct MessageQueueRequest;
 
 struct Task {
     State state;
@@ -124,6 +126,7 @@ struct Task {
     IoRequest* io;
     SemaphoreRequest* semaphore_request;
     SemaphoreUndo* semaphore_undo;
+    MessageQueueRequest* message_queue_request;
     alignas(16) uint8_t fpu[512];
 };
 

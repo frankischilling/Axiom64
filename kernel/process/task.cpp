@@ -7,6 +7,7 @@
 #include "fs/record_lock.hpp"
 #include "process/waitid.hpp"
 #include "ipc/system_v_semaphores.hpp"
+#include "ipc/system_v_message_queues.hpp"
 #include "fs/descriptor.hpp"
 #include "fs/inotify.hpp"
 #include "drivers/platform/devices.hpp"
@@ -72,6 +73,7 @@ static FileTable* copy_files(const FileTable* source) {
 }
 
 static void release_resources(Task* t) {
+    message_queue_discard(*t);
     semaphore_exit(*t);
     t->pending_signals.discard(UINT64_MAX);
     credential_release(t->credentials);
@@ -437,6 +439,8 @@ static bool awaken(Task& t) {
         break;
     case Wait::semaphore:
         return semaphore_timeout(t);
+    case Wait::message_queue:
+        return false;
     default:
         ready = true;
         break;

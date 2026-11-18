@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ipc/system_v_semaphores.hpp"
+#include "ipc/system_v_permissions.hpp"
 #include "core/time.hpp"
 
 namespace ax {
@@ -16,20 +17,12 @@ struct Operation {
 
 static_assert(sizeof(Operation) == 6);
 
-struct Permission {
-    int32_t key;
-    uint32_t uid, gid, creator_uid, creator_gid, mode;
-    uint16_t sequence, pad;
-    uint32_t alignment;
-    uint64_t reserved[2];
-};
-
 struct Status {
-    Permission permission;
+    SystemVPermission permission;
     uint64_t operated, operated_high, changed, changed_high, members, reserved[2];
 };
 
-static_assert(sizeof(Permission) == 48 && sizeof(Status) == 104);
+static_assert(sizeof(Status) == 104);
 
 struct Member {
     int value, pid;
@@ -91,20 +84,6 @@ Set* find(int id) {
     if (id < 0 || slot >= max_sets || id != id_for(slot))
         return nullptr;
     return sets[slot];
-}
-
-bool access(const Permission& p, const Credentials& creds, unsigned requested) {
-    unsigned mode = p.mode;
-    if (creds.user.effective == p.uid || creds.user.effective == p.creator_uid)
-        mode >>= 6;
-    else if (credential_group(creds, p.gid) || credential_group(creds, p.creator_gid))
-        mode >>= 3;
-    return !(requested & ~mode & 7) || capable(creds, Capability::ipc_owner);
-}
-
-bool controls(const Permission& p, const Credentials& creds) {
-    return creds.user.effective == p.uid || creds.user.effective == p.creator_uid ||
-           capable(creds, Capability::sys_admin);
 }
 
 SemaphoreUndo* undo_group(Task& task) {
@@ -238,7 +217,7 @@ int create(int key, int count, unsigned flags) {
             return -17;
         if (unsigned(count) > set->status.members)
             return -22;
-        if (!access(set->status.permission, current->credentials, flags | flags >> 3 | flags >> 6))
+        if (!set->status.permission.allows(current->credentials, flags | flags >> 3 | flags >> 6))
             return -13;
         return id_for(slot);
     }
@@ -311,7 +290,7 @@ int operate(int id, uint64_t pointer, unsigned count, uint64_t timeout) {
                 permissions = 2;
             undo |= bool(ops[i].flags & undo_flag);
         }
-        if (!access(set->status.permission, current->credentials, permissions))
+        if (!set->status.permission.allows(current->credentials, permissions))
             return -13;
         if (undo && !(request->undo = undo_for(*current, *set)))
             return -12;
@@ -361,7 +340,7 @@ int control(int id, int number, int command, uint64_t argument) {
     auto& status = set->status;
     const auto& credentials = current->credentials;
     if (command == 0 || command == 1) {
-        if (!controls(status.permission, credentials))
+        if (!status.permission.controls(credentials))
             return -1;
         if (command == 0) {
             unsigned slot = unsigned(id) & 32767;
@@ -386,14 +365,14 @@ int control(int id, int number, int command, uint64_t argument) {
         return 0;
     }
     if (command == 2 || by_slot) {
-        if (command != 20 && !access(status.permission, credentials, 4))
+        if (command != 20 && !status.permission.allows(credentials, 4))
             return -13;
         return memory.copy_out(argument, &status, sizeof(status)) ? (by_slot ? id_for(id) : 0)
                                                                   : -14;
     }
     if (command < 11 || command > 17)
         return -22;
-    if (!access(status.permission, credentials, command >= 16 ? 2 : 4))
+    if (!status.permission.allows(credentials, command >= 16 ? 2 : 4))
         return -13;
     if (command == 13 || command == 17) {
         const size_t bytes = status.members * sizeof(uint16_t);

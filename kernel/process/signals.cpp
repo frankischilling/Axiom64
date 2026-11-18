@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "process/signals.hpp"
 #include "ipc/system_v_semaphores.hpp"
+#include "ipc/system_v_message_queues.hpp"
 #include "process/futex.hpp"
 #include "io/io.hpp"
 #include "ipc/ipc.hpp"
@@ -154,6 +155,8 @@ void signal_interrupt(Task& task) {
             futex_discard(task);
         if (task.wait == Wait::semaphore)
             semaphore_discard(task);
+        if (task.wait == Wait::message_queue)
+            message_queue_discard(task);
         if (task.wait == Wait::sleep && task.frame.rsi && task.deadline > ticks) {
             uint64_t remaining = task.deadline - ticks,
                      time[] = {remaining / 100, (remaining % 100) * 10000000};
@@ -197,6 +200,7 @@ struct SignalFrame {
 static_assert(sizeof(Context) == 256 && sizeof(Ucontext) == 304 && sizeof(SignalFrame) == 440);
 
 bool signal_deliver(Task& task) {
+    message_queue_resume(task);
     SignalData data;
     while (int signal = take_pending_signal(task, ~task.signal_mask, data)) {
         auto action = task.handlers->signal_actions[signal - 1];

@@ -23,11 +23,18 @@ build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-o
 .PHONY: test-timerfd test-timerfd-native
 .PHONY: test-signalfd test-signalfd-native
 .PHONY: test-system-v-semaphores test-system-v-semaphores-native
+.PHONY: test-system-v-message-queues test-system-v-message-queues-native
 test-system-v-semaphores:
-	$(PYTHON) -B scripts/system_v_semaphores_test.py --directory build/system-v-semaphores-guest
+	$(PYTHON) -B scripts/system_v_ipc_test.py semaphores --directory build/system-v-semaphores-guest
 
 test-system-v-semaphores-native:
-	$(PYTHON) -B scripts/system_v_semaphores_test.py --native --directory build/system-v-semaphores-native
+	$(PYTHON) -B scripts/system_v_ipc_test.py semaphores --native --directory build/system-v-semaphores-native
+
+test-system-v-message-queues:
+	$(PYTHON) -B scripts/system_v_ipc_test.py message-queues --directory build/system-v-message-queues-guest
+
+test-system-v-message-queues-native:
+	$(PYTHON) -B scripts/system_v_ipc_test.py message-queues --native --directory build/system-v-message-queues-native
 
 test-signalfd:
 	$(PYTHON) -B scripts/timerfd_test.py --descriptor signalfd --directory build/signalfd-guest

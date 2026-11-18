@@ -99,6 +99,27 @@ and UEFI as root and UID 65534. `sudo make test-system-v-semaphores-native`
 runs the matching Linux workload in isolated IPC namespaces. Both retain logs
 and compiler inputs with the tested executable.
 
+## System V message queues
+
+`msgget`, `msgsnd`, `msgrcv`, and `msgctl` support private and keyed queues
+on x86-64. Receivers can select the first message, an exact or excluded type,
+the lowest type up to a limit, or a queue position for a nondestructive
+`MSG_COPY`. `MSG_NOERROR` truncates a destructive read. `E2BIG` leaves the
+message queued, and a user-buffer fault after a destructive read consumes it.
+
+Queues retain messages across process exit and exec until a receiver takes them
+or an owner removes the queue. A blocked sender keeps the imported payload while
+waiting for capacity. A caught signal returns `EINTR`, and queue removal returns
+`EIDRM` to sleeping callers. Owner, creator and group permissions govern access,
+and `msgctl` reports ownership, limits, usage and send/receive metadata.
+
+`make test-system-v-message-queues` exercises both musl providers and linkages
+on BIOS and UEFI as root and UID 65534. `sudo make test-system-v-message-queues-native`
+runs the same workload in isolated Linux IPC namespaces. Axiom64 uses one global
+IPC scope with fixed defaults of 32,000 queues, 8,192 bytes per message, and
+16,384 bytes of capacity on a new queue. IPC namespaces and Linux IPC sysctls
+remain unimplemented.
+
 ## Remaining work
 
 The limit is one CPU, 64 task slots, and 128 descriptors per file table. FPU switching uses FXSAVE/FXRSTOR for x87/SSE state, without extended XSAVE state. Caught signals currently return `EINTR` from futex waits even with `SA_RESTART`.

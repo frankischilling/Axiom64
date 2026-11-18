@@ -374,6 +374,8 @@ Axiom64 also implements [inotify for files and directories](testing.md#filesyste
 on RAM and ext2 mounts.
 [System V semaphore tests](threads.md#system-v-semaphores) cover atomic vectors,
 timed waits, permissions, set removal, and cross-process undo.
+[System V message queue tests](threads.md#system-v-message-queues) cover
+type selection, blocking sends and receives, removal, and permissions.
 
 Required work:
 

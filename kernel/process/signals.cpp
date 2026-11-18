@@ -143,16 +143,19 @@ void signal_interrupt(Task& task) {
         task.state = State::runnable;
         return; // Default delivery chooses group stop or termination.
     }
-    bool restart =
-        (flags & 0x10000000) && io_restartable(task) &&
-        (task.wait == Wait::read || task.wait == Wait::write || task.wait == Wait::child ||
-         task.wait == Wait::file_lock || task.wait == Wait::random);
-    // A caught signal ends this attempt. SA_RESTART re-enters with a fresh fd lookup.
+    bool futex = task.wait == Wait::futex;
+    bool restartable =
+        futex ? !task.futex.deadline
+              : io_restartable(task) && (task.wait == Wait::read || task.wait == Wait::write ||
+                                         task.wait == Wait::child || task.wait == Wait::file_lock ||
+                                         task.wait == Wait::random);
+    bool restart = (flags & 0x10000000) && restartable;
+    // A caught signal ends this attempt. A restarted call imports its inputs again.
     int64_t interrupted_result = io_interrupted_result(task);
     io_discard(task);
-    if (task.handlers->signal_actions[signal - 1][0] > 1 && !restart) {
-        if (task.wait == Wait::futex)
-            futex_discard(task);
+    if (futex)
+        futex_discard(task);
+    if (!restart) {
         if (task.wait == Wait::semaphore)
             semaphore_discard(task);
         if (task.wait == Wait::message_queue)

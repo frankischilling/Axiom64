@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <grp.h>
 #include <limits.h>
+#include <linux/futex.h>
 #include <semaphore.h>
 #include <signal.h>
 #include <stdio.h>
@@ -11,6 +12,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -81,6 +83,54 @@ static void handle(int signal) {
     (void)signal;
 }
 
+static volatile sig_atomic_t signal_writer;
+
+static void acknowledge(int signal) {
+    (void)signal;
+    if (write(signal_writer, "s", 1) != 1)
+        _exit(3);
+}
+
+static void restart_contract(unsigned* word, int timed) {
+    int acknowledgment[2];
+    check(!pipe(acknowledgment), "restart signal barrier");
+    pid_t child = fork();
+    check(child >= 0, "fork restart waiter");
+    if (!child) {
+        check(!close(acknowledgment[0]), "close restart barrier reader");
+        signal_writer = acknowledgment[1];
+        struct sigaction action = {.sa_handler = acknowledge, .sa_flags = SA_RESTART};
+        check(!sigemptyset(&action.sa_mask) && !sigaction(SIGUSR1, &action, NULL),
+              "install restarting signal handler");
+        if (timed) {
+            const struct timespec timeout = {.tv_sec = 2};
+            fails(syscall(SYS_futex, word, FUTEX_WAIT, 0, &timeout, NULL, 0), EINTR);
+        } else {
+            check(!syscall(SYS_futex, word, FUTEX_WAIT, 0, NULL, NULL, 0),
+                  "SA_RESTART retries the untimed futex wait");
+        }
+        _exit(0);
+    }
+    check(!close(acknowledgment[1]), "close restart barrier writer");
+    wait_sleeping(child);
+    char token;
+    check(!kill(child, SIGUSR1) && read(acknowledgment[0], &token, 1) == 1 &&
+              !close(acknowledgment[0]),
+          "actual waiter ran its restart handler");
+    if (!timed) {
+        int woken = 0;
+        for (unsigned attempt = 0; attempt < 200 && !woken; ++attempt) {
+            woken = syscall(SYS_futex, word, FUTEX_WAKE, 1, NULL, NULL, 0);
+            check(woken >= 0, "wake restarted futex");
+            if (!woken)
+                check(!nanosleep(&(struct timespec){.tv_nsec = 5000000}, NULL),
+                      "wait for futex requeue");
+        }
+        check(woken == 1, "restart requeued the original wait");
+    }
+    check(!wait_code(child), "waiter obeyed timed or untimed restart rule");
+}
+
 static void unnamed(void) {
     sem_t local;
     check(!sem_init(&local, 0, 1) && !sem_trywait(&local), "process-private semaphore");
@@ -115,6 +165,10 @@ static void unnamed(void) {
     wait_sleeping(child);
     check(!kill(child, SIGUSR1) && !wait_code(child), "interrupt waiting child");
     check(!sem_post(shared) && !sem_trywait(shared), "interrupted wait consumes no post");
+    // Use a separate futex word so libc cannot mask the raw signal result.
+    unsigned* word = (void*)(shared + 1);
+    restart_contract(word, 0);
+    restart_contract(word, 1);
     check(!sem_destroy(shared) && !munmap(shared, 4096), "release process-shared semaphore");
 }
 

@@ -149,7 +149,7 @@ and protect other owners' names from removal. Programs use the libc
 existing mappings remain usable. Process-shared unnamed semaphores use
 shared mappings and futexes.
 
-`make test-posix-semaphores` checks expiration, signals, fork and exec,
+`make test-posix-semaphores` checks expiration, signal restart, fork and exec,
 exclusive creation, and name permissions. It runs as root and UID 65534
 with both musl providers and linkages on BIOS and UEFI RAM boots. It also
 runs the build-provider static client from a read-only ext2 root on both
@@ -158,6 +158,6 @@ workload on Linux with a private `/dev/shm` mount.
 
 ## Remaining work
 
-The limit is one CPU, 64 task slots, and 128 descriptors per file table. FPU switching uses FXSAVE/FXRSTOR for x87/SSE state, without extended XSAVE state. Caught signals currently return `EINTR` from futex waits even with `SA_RESTART`.
+The limit is one CPU, 64 task slots, and 128 descriptors per file table. FPU switching uses FXSAVE/FXRSTOR for x87/SSE state, without extended XSAVE state. An untimed futex wait honors `SA_RESTART`. A caught signal interrupts a timed futex wait with `EINTR`.
 
 Robust owner-death lists, priority inheritance, `FUTEX_WAKE_OP`, newer wait-vector operations, cancellation coverage, rwlocks/barriers, complete process-shared POSIX synchronization, thread-targeted timers, full fork/exec/signal semantics, and complete resource limits remain unfinished. Working musl and C++ tests do not establish complete POSIX threading or Linux compatibility. [SMP](feature-roadmap.md#f07-smp-scheduling-and-kernel-synchronization) follows the tested single-CPU interface.

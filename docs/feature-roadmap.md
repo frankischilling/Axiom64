@@ -370,6 +370,8 @@ Pipes, Unix streams, polling, epoll, select, and SysV shared memory have guest t
 readiness, signal interruption, and persistent ext2 inodes.
 [Epoll lifetime tests](io.md#epoll-descriptor-lifetime) check duplicate and reused
 descriptors, inherited watches, and waits that survive descriptor replacement.
+`epoll_pwait2` supports relative timespec deadlines and temporary signal masks
+through the same wait path.
 [Nested epoll](io.md#nested-epoll) supports polling epoll descriptors, propagates
 wakeups through nested watches, and rotates through the ready set in small batches.
 [Timer descriptors](io.md#timer-descriptors) let event loops wait for expiration

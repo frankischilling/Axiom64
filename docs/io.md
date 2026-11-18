@@ -113,14 +113,19 @@ last reference to its file description closes.
 
 A blocked wait holds the epoll instance it entered. Closing or replacing
 its descriptor in another thread leaves that wait on the original instance.
-`epoll_pwait` applies the temporary signal mask during the wait and restores
-the previous mask afterward. If copying a batch faults after some events,
-the wait returns the events it copied and leaves the remaining events ready.
+`epoll_pwait` and `epoll_pwait2` apply a temporary signal mask during the wait
+and restore the previous mask afterward. `epoll_pwait2` takes a relative
+`timespec` in seconds and nanoseconds. A null pointer waits indefinitely and a
+zero interval checks immediately. Positive intervals round up to the scheduler's
+10 ms clock, and the kernel leaves the caller's timespec untouched.
+If copying a batch faults after some events, the wait returns the events it
+copied and leaves the remaining events ready.
 
 `make test-epoll-lifetime` checks duplicate and reused descriptors, fork
 and exec, descriptors in queued `SCM_RIGHTS` messages, blocked waits, signal
-masks, and event copy faults. It runs both caller identities and both musl
-providers and linkages on BIOS and UEFI, with additional read-only ext2 boots.
+masks, relative deadline rounding, and event copy faults. It runs both caller
+identities and both musl providers and linkages on BIOS and UEFI, with
+additional read-only ext2 boots.
 `sudo make test-epoll-lifetime-native` runs the Linux comparison.
 
 ## Nested epoll

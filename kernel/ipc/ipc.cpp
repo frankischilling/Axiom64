@@ -428,6 +428,68 @@ static void epoll_restore_mask(Task& task) {
     task.suspend_mask = false;
 }
 
+static int64_t epoll_wait(Task& task, Handle* handle, const Frame& frame) {
+    const bool uses_timespec = frame.rax == 441;
+    const int32_t milliseconds = int32_t(frame.r10);
+    const bool finite = uses_timespec ? frame.r10 != 0 : milliseconds >= 0;
+    uint64_t delay = 0;
+    if (finite) {
+        if (uses_timespec) {
+            struct Timeout {
+                int64_t seconds, nanoseconds;
+            } timeout;
+
+            if (!task.memory->space.copy_in(&timeout, frame.r10, sizeof(timeout)))
+                return -14;
+            if (timeout.seconds < 0 || timeout.nanoseconds < 0 || timeout.nanoseconds >= 1000000000)
+                return -22;
+            // The scheduler measures waits in 10 ms units. Round a fraction up
+            // and keep enormous relative timeouts from wrapping to a short wait.
+            uint64_t fraction = (uint64_t(timeout.nanoseconds) + 9999999) / 10000000;
+            uint64_t seconds = uint64_t(timeout.seconds);
+            delay = seconds > (UINT64_MAX - fraction) / 100 ? UINT64_MAX : seconds * 100 + fraction;
+        } else {
+            delay = (uint64_t(milliseconds) + 9) / 10;
+        }
+    }
+
+    bool temporary_mask = frame.rax != 232 && frame.r8;
+    uint64_t mask = 0;
+    if (temporary_mask) {
+        if (frame.r9 != sizeof(mask))
+            return -22;
+        if (!task.memory->space.copy_in(&mask, frame.r8, sizeof(mask)))
+            return -14;
+    }
+    if (!handle)
+        return -9;
+    unsigned maximum = uint32_t(frame.rdx);
+    if (!maximum || maximum > INT32_MAX / sizeof(EpollEvent))
+        return -22;
+    uint64_t events = frame.rsi;
+    if (events >= user_limit || uint64_t(maximum) * sizeof(EpollEvent) > user_limit - events)
+        return -14;
+    if (!handle->epoll)
+        return -22;
+
+    if (temporary_mask) {
+        task.suspend_saved_mask = task.signal_mask;
+        task.suspend_mask = true;
+        task.signal_mask = mask & ~unmaskable_signals;
+    }
+    int ready = epoll_events(task, handle->epoll, events, maximum);
+    if (ready || (finite && !delay)) {
+        epoll_restore_mask(task);
+        return ready;
+    }
+    retain(handle);
+    task.epoll_wait_handle = handle;
+    task.deadline = finite ? ticks + min(delay, UINT64_MAX - ticks) : 0;
+    task.state = State::blocked;
+    task.wait = Wait::epoll_wait;
+    return would_block;
+}
+
 void epoll_discard_wait(Task& task) {
     auto handle = task.epoll_wait_handle;
     if (!handle)
@@ -984,38 +1046,9 @@ int64_t ipc_syscall(Frame* f) {
         return 0;
     }
     case 232:
-    case 281: {
-        if (!h)
-            return -9;
-        unsigned maximum = uint32_t(c);
-        if (!h->epoll || !maximum || maximum > 0x7fffffffu / sizeof(EpollEvent))
-            return -22;
-        if (b >= user_limit || uint64_t(maximum) * sizeof(EpollEvent) > user_limit - b)
-            return -14;
-        auto& task = *current;
-        if (f->rax == 281 && f->r8) {
-            uint64_t mask;
-            if (f->r9 != sizeof(mask))
-                return -22;
-            if (!task.memory->space.copy_in(&mask, f->r8, sizeof(mask)))
-                return -14;
-            task.suspend_saved_mask = task.signal_mask;
-            task.suspend_mask = true;
-            task.signal_mask = mask & ~unmaskable_signals;
-        }
-        int timeout = int32_t(d);
-        int n = epoll_events(task, h->epoll, b, maximum);
-        if (n || !timeout) {
-            epoll_restore_mask(task);
-            return n;
-        }
-        retain(h);
-        task.epoll_wait_handle = h;
-        task.deadline = timeout > 0 ? ticks + (uint64_t(timeout) + 9) / 10 : 0;
-        task.state = State::blocked;
-        task.wait = Wait::epoll_wait;
-        return would_block;
-    }
+    case 281:
+    case 441:
+        return epoll_wait(*current, h, *f);
     default:
         return -38;
     }

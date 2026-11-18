@@ -3,9 +3,11 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <inttypes.h>
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,6 +16,7 @@
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #define CHECK(condition)                                                                           \
@@ -28,6 +31,11 @@
 static void watch(int epoll, int fd, unsigned token) {
     struct epoll_event event = {.events = EPOLLIN | EPOLLET, .data.u32 = token};
     CHECK(epoll_ctl(epoll, EPOLL_CTL_ADD, fd, &event) == 0);
+}
+
+static long wait2(int epoll, struct epoll_event* events, int maximum,
+                  const struct timespec* timeout, const sigset_t* mask, size_t size) {
+    return syscall(SYS_epoll_pwait2, epoll, events, maximum, timeout, mask, size);
 }
 
 static void expect_event(int epoll, unsigned token) {
@@ -173,6 +181,8 @@ static void queued_right(void) {
 
 struct blocked_wait {
     int epoll, control;
+    int pwait2;
+    const struct timespec* timeout;
     int result;
     struct epoll_event event;
 };
@@ -180,19 +190,27 @@ struct blocked_wait {
 static void* blocked_waiter(void* arg) {
     struct blocked_wait* request = arg;
     CHECK(write(request->control, "B", 1) == 1);
-    request->result = epoll_wait(request->epoll, &request->event, 1, 3000);
+    if (request->pwait2)
+        request->result = wait2(request->epoll, &request->event, 1, request->timeout, NULL, 0);
+    else
+        request->result = epoll_wait(request->epoll, &request->event, 1, 3000);
     CHECK(write(request->control, "C", 1) == 1);
     return NULL;
 }
 
-static void waiting_instance(void) {
+static void waiting_instance(int pwait2, const struct timespec* timeout) {
     int original[2], next[2], control[2];
     CHECK(pipe(original) == 0 && pipe(next) == 0 && pipe(control) == 0);
     int epoll = epoll_create1(0), replacement = epoll_create1(0);
     CHECK(epoll >= 0 && replacement >= 0);
     watch(epoll, original[0], 61);
     watch(replacement, next[0], 62);
-    struct blocked_wait request = {.epoll = epoll, .control = control[1]};
+    struct blocked_wait request = {
+        .epoll = epoll,
+        .control = control[1],
+        .pwait2 = pwait2,
+        .timeout = timeout,
+    };
     pthread_t waiter;
     CHECK(pthread_create(&waiter, NULL, blocked_waiter, &request) == 0);
     expect_byte(control[0], 'B');
@@ -212,7 +230,12 @@ static void waiting_instance(void) {
     CHECK(close(next[0]) == 0 && close(next[1]) == 0);
     CHECK(close(control[0]) == 0 && close(control[1]) == 0);
     CHECK(close(epoll) == 0 && close(replacement) == 0);
-    puts("EPOLL_LIFETIME_CASE blocked-instance-reuse");
+    if (!pwait2)
+        puts("EPOLL_LIFETIME_CASE blocked-instance-reuse");
+    else if (timeout)
+        puts("EPOLL_LIFETIME_CASE pwait2-saturating-timeout");
+    else
+        puts("EPOLL_LIFETIME_CASE pwait2-infinite-wait");
 }
 
 static volatile sig_atomic_t handled;
@@ -238,6 +261,15 @@ static void signals_and_timeout(void) {
     CHECK(pthread_sigmask(SIG_SETMASK, NULL, &actual) == 0 && sigismember(&actual, SIGUSR1) == 1);
     CHECK(syscall(SYS_epoll_pwait, epoll, &event, 1, 0, &temporary, 7) == -1 && errno == EINVAL);
     CHECK(syscall(SYS_epoll_pwait, epoll, &event, 1, 0, (void*)1, 8) == -1 && errno == EFAULT);
+
+    handled = 0;
+    struct timespec timeout = {.tv_sec = 1, .tv_nsec = 12345};
+    CHECK(pthread_kill(pthread_self(), SIGUSR1) == 0 && handled == 0);
+    CHECK(wait2(epoll, &event, 1, &timeout, &temporary, 8) == -1 && errno == EINTR);
+    CHECK(handled == SIGUSR1 && pthread_sigmask(SIG_SETMASK, NULL, &actual) == 0);
+    CHECK(sigismember(&actual, SIGUSR1) == 1 && timeout.tv_sec == 1 && timeout.tv_nsec == 12345);
+    puts("EPOLL_LIFETIME_CASE pwait2-signal-mask");
+
     CHECK(pthread_sigmask(SIG_SETMASK, &original, NULL) == 0 &&
           sigaction(SIGUSR1, &saved, NULL) == 0);
 
@@ -260,6 +292,74 @@ static void signals_and_timeout(void) {
     expect_child(child);
     CHECK(close(control[0]) == 0 && close(epoll) == 0);
     puts("EPOLL_LIFETIME_CASE signal-mask-and-stop");
+}
+
+static void pwait2_arguments(void) {
+    int epoll = epoll_create1(EPOLL_CLOEXEC), path = open("/", O_PATH | O_CLOEXEC);
+    int tube[2];
+    CHECK(epoll >= 0 && path >= 0 && pipe2(tube, O_NONBLOCK) == 0);
+    struct epoll_event event;
+    struct timespec zero = {0};
+    sigset_t mask;
+    CHECK(sigemptyset(&mask) == 0);
+    CHECK(wait2(epoll, &event, 1, &zero, NULL, 99) == 0);
+    CHECK(wait2(epoll, &event, 0, &zero, NULL, 0) == -1 && errno == EINVAL);
+    CHECK(wait2(epoll, &event, -1, &zero, NULL, 0) == -1 && errno == EINVAL);
+    CHECK(wait2(-1, &event, 1, &zero, NULL, 0) == -1 && errno == EBADF);
+    CHECK(wait2(path, &event, 1, &zero, NULL, 0) == -1 && errno == EBADF);
+    CHECK(wait2(tube[0], &event, 1, &zero, NULL, 0) == -1 && errno == EINVAL);
+    CHECK(wait2(epoll, (void*)UINTPTR_MAX, 1, &zero, NULL, 0) == -1 && errno == EFAULT);
+    CHECK(epoll_wait(tube[0], (void*)UINTPTR_MAX, 1, 0) == -1 && errno == EFAULT);
+    CHECK(syscall(SYS_epoll_pwait, -1, &event, 1, 0, &mask, 7) == -1 && errno == EINVAL);
+    for (size_t size = 7; size < 10; size += 2)
+        CHECK(wait2(-1, &event, 1, &zero, &mask, size) == -1 && errno == EINVAL);
+    CHECK(wait2(-1, &event, 1, &zero, (void*)1, 8) == -1 && errno == EFAULT);
+
+    const struct timespec invalid[] = {{-1, 0}, {0, -1}, {0, 1000000000}};
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++)
+        CHECK(wait2(-1, &event, 1, &invalid[i], (void*)1, 8) == -1 && errno == EINVAL);
+    CHECK(wait2(-1, &event, 1, (void*)1, &mask, 7) == -1 && errno == EFAULT);
+
+    watch(epoll, tube[0], 71);
+    CHECK(write(tube[1], "P", 1) == 1);
+    CHECK(wait2(epoll, (void*)1, 1, &zero, NULL, 0) == -1 && errno == EFAULT);
+    CHECK(wait2(epoll, &event, 1, &zero, &mask, 8) == 1);
+    CHECK(event.events == EPOLLIN && event.data.u32 == 71);
+    expect_byte(tube[0], 'P');
+    CHECK(close(path) == 0 && close(tube[0]) == 0 && close(tube[1]) == 0 && close(epoll) == 0);
+    puts("EPOLL_LIFETIME_CASE pwait2-arguments-and-copy");
+}
+
+static int64_t monotonic_ns(void) {
+    struct timespec time;
+    CHECK(clock_gettime(CLOCK_MONOTONIC, &time) == 0);
+    return time.tv_sec * INT64_C(1000000000) + time.tv_nsec;
+}
+
+static void pwait2_deadline(void) {
+    long page = sysconf(_SC_PAGESIZE);
+    CHECK(page > 0);
+    struct timespec* timeout =
+        mmap(NULL, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(timeout != MAP_FAILED);
+    int epoll = epoll_create1(0);
+    CHECK(epoll >= 0);
+    struct epoll_event event;
+    const long durations[] = {1, 31000001};
+    for (size_t i = 0; i < sizeof(durations) / sizeof(durations[0]); i++) {
+        CHECK(mprotect(timeout, page, PROT_READ | PROT_WRITE) == 0);
+        *timeout = (struct timespec){.tv_nsec = durations[i]};
+        CHECK(mprotect(timeout, page, PROT_READ) == 0);
+        int64_t start = monotonic_ns();
+        CHECK(wait2(epoll, &event, 1, timeout, NULL, 0) == 0);
+        int64_t elapsed = monotonic_ns() - start;
+        CHECK(elapsed >= durations[i] && elapsed < INT64_C(2000000000));
+        CHECK(timeout->tv_sec == 0 && timeout->tv_nsec == durations[i]);
+        printf("EPOLL_LIFETIME_DEADLINE requested_ns=%ld elapsed_ns=%" PRId64 "\n", durations[i],
+               elapsed);
+    }
+    CHECK(munmap(timeout, page) == 0 && close(epoll) == 0);
+    puts("EPOLL_LIFETIME_CASE pwait2-read-only-deadline");
 }
 
 static void reclaim_and_copy_fault(void) {
@@ -316,8 +416,14 @@ int main(int argc, char** argv) {
     descriptor_keys();
     exec_alias(argv[0]);
     queued_right();
-    waiting_instance();
+    waiting_instance(0, NULL);
+    pwait2_arguments();
+    waiting_instance(1, NULL);
+    // An unchecked conversion of these seconds into 10 ms units wraps to zero.
+    const struct timespec huge = {.tv_sec = INT64_C(1) << 62, .tv_nsec = 1};
+    waiting_instance(1, &huge);
     signals_and_timeout();
+    pwait2_deadline();
     reclaim_and_copy_fault();
     printf("EPOLL_LIFETIME_PASS uid=%lu\n", (unsigned long)getuid());
     return 0;

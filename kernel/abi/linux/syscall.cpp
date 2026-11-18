@@ -1077,6 +1077,7 @@ static int64_t dispatch(Frame* f) {
     case 233:
     case 281:
     case 291:
+    case 441:
         return ipc_syscall(f);
     case 56:
         return clone_task(f, a, b, c, d, e);

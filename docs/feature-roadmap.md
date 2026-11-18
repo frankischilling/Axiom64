@@ -366,8 +366,43 @@ Acceptance evidence:
 ### F15. IPC and event notification
 
 Pipes, Unix streams, polling, epoll, select, and SysV shared memory have guest tests.
+[Poll and ppoll](io.md#poll-and-ppoll-waits) retain descriptor inputs across
+blocked waits. Ppoll also supports temporary signal masks and timespec deadlines.
+[Select and pselect](io.md#select-and-pselect-waits) retain fd sets and write
+back the remaining interval through the raw syscalls.
+[Blocked descriptor waits](io.md#descriptor-lifetime-during-poll-and-select)
+retain wakeup registrations across close and number reuse.
+[Named pipes](io.md#named-pipes) support filesystem names, blocking opens, descriptor
+readiness, signal interruption, and persistent ext2 inodes.
+[Epoll lifetime tests](io.md#epoll-descriptor-lifetime) check duplicate and reused
+descriptors, inherited watches, waits that survive descriptor replacement,
+and file-type admission with the Linux errno and poll-mask behavior.
+`epoll_pwait2` supports relative timespec deadlines and temporary signal masks
+through the same wait path.
+[Exclusive epoll](io.md#exclusive-epoll-wakeups) limits wakeups across competing
+instances while continuing to notify ordinary watches.
+[Nested epoll](io.md#nested-epoll) supports polling epoll descriptors, propagates
+wakeups through nested watches, and rotates through the ready set in small batches.
 [Timer descriptors](io.md#timer-descriptors) let event loops wait for expiration
 counts alongside other readable descriptors.
+[Signal descriptors](io.md#signal-descriptors) deliver blocked signals through
+read and readiness operations.
+Axiom64 also implements [inotify for files and directories](testing.md#filesystem-notifications)
+on RAM and ext2 mounts.
+[System V semaphore tests](threads.md#system-v-semaphores) cover atomic vectors,
+timed waits, permissions, set removal, and cross-process undo.
+[System V message queue tests](threads.md#system-v-message-queues) cover
+type selection, blocking sends and receives, removal, and permissions.
+[System V shared-memory tests](threads.md#system-v-shared-memory) cover
+fragmented attachments, fixed replacements, fork and exec, removal, and permissions.
+[POSIX semaphore tests](threads.md#posix-semaphores) cover named and unnamed
+semaphores, concurrent creation, timeouts, permissions, and unlink lifetime.
+[POSIX message queue tests](threads.md#posix-message-queues) cover
+priorities, blocking calls, descriptor readiness, notifications, and open
+descriptions that survive unlink.
+[POSIX asynchronous I/O tests](threads.md#posix-asynchronous-io) exercise
+positioned file I/O, list completion, notifications, cancellation, and
+descriptor reuse through the guest's musl worker threads.
 
 Required work:
 

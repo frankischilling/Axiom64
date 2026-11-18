@@ -883,6 +883,8 @@ static void pressure(int control, unsigned lane) {
               "reuse original UDP sender descriptor");
         replacement = fd;
     }
+    check(epoll_ctl(epoll, EPOLL_CTL_MOD, replacement, &event) == -1 && errno == ENOENT,
+          "reused descriptor cannot modify the original UDP watch");
     memset(sender.bytes, 0xa5, sizeof(sender.bytes));
     memset(sender.poison, 0xa5, sizeof(sender.poison));
     sender.destination = address(9999, 0x0a170104 + (lane << 8));
@@ -896,14 +898,26 @@ static void pressure(int control, unsigned lane) {
     fflush(stdout);
     check(pthread_join(thread, NULL) == 0 && sender.result == sizeof(sender.bytes),
           "UDP retained send description, original destination port and bytes");
-    check(epoll_wait(epoll, &event, 1, 2000) == 1 && event.data.u64 == 2 &&
-              (event.events & EPOLLOUT) && epoll_wait(epoll, &event, 1, 0) == 0,
-          "UDP capacity wakes retained observer and excludes reused descriptor");
+    unsigned registrations = 0;
+    for (unsigned n = 0; n < 2; ++n) {
+        check(epoll_wait(epoll, &event, 1, 2000) == 1 &&
+                  (event.data.u64 == 1 || event.data.u64 == 2) && (event.events & EPOLLOUT),
+              "UDP capacity wakes each original registration");
+        registrations |= 1u << event.data.u64;
+    }
+    check(registrations == 6 && epoll_wait(epoll, &event, 1, 0) == 0,
+          "UDP delivers distinct registrations while an alias owns the original socket");
     struct sockaddr_in local = address(45000 + lane, 0x0a170102 + (lane << 8));
     check(bind(replacement, (struct sockaddr*)&local, sizeof(local)) == -1 && errno == EADDRINUSE &&
               close(observer) == 0 &&
               bind(replacement, (struct sockaddr*)&local, sizeof(local)) == 0,
           "UDP pending sender port remains until final owner closes");
+    event = (struct epoll_event){.events = EPOLLOUT | EPOLLET, .data.u64 = 3};
+    check(epoll_ctl(epoll, EPOLL_CTL_ADD, replacement, &event) == 0 &&
+              epoll_wait(epoll, &event, 1, 2000) == 1 && event.data.u64 == 3 &&
+              (event.events & EPOLLOUT) && epoll_wait(epoll, &event, 1, 0) == 0,
+          "replacement UDP socket wakes only after its own registration");
+    printf("UDP_EPOLL_ALIAS_PASS index=%u\n", lane + 1);
     empty(replacement);
     close(replacement);
     close(epoll);

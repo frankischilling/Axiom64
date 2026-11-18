@@ -6,6 +6,7 @@ namespace ax {
 int64_t io_syscall(Task&, const Frame&);
 
 bool io_resume(Task&);
+bool io_resume_signal_descriptor(Task&);
 
 void io_discard(Task&);
 // A finite socket timeout or completed stream bytes prevent automatic restart.

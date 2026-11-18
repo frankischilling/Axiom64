@@ -2,6 +2,10 @@
 #include "drivers/platform/devices.hpp"
 #include "drivers/block/block.hpp"
 #include "ipc/ipc.hpp"
+#include "ipc/system_v_semaphores.hpp"
+#include "ipc/system_v_message_queues.hpp"
+#include "ipc/posix_message_queues.hpp"
+#include "ipc/shared_memory.hpp"
 #include "process/signals.hpp"
 #include "process/task.hpp"
 #include "process/cpu.hpp"
@@ -11,6 +15,7 @@
 #include "process/futex.hpp"
 #include "process/waitid.hpp"
 #include "io/io.hpp"
+#include "io/descriptor_wait.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
 #include "net/inet6.hpp"
@@ -22,10 +27,13 @@
 #include "abi/linux/resource.hpp"
 #include "abi/linux/eventfd.hpp"
 #include "abi/linux/timerfd.hpp"
+#include "abi/linux/signalfd.hpp"
 #include "abi/linux/xattr.hpp"
 #include "fs/record_lock.hpp"
 #include "fs/proc.hpp"
 #include "fs/descriptor.hpp"
+#include "fs/pipe.hpp"
+#include "fs/inotify.hpp"
 
 namespace ax {
 struct LinuxStat {
@@ -40,15 +48,6 @@ static_assert(sizeof(LinuxStat) == 144);
 
 struct Timespec {
     int64_t sec, nsec;
-};
-
-struct Timeval {
-    int64_t sec, usec;
-};
-
-struct Pollfd {
-    int32_t fd;
-    int16_t events, revents;
 };
 
 static Handle* fd_handle(int fd, bool path_allowed = false) {
@@ -73,11 +72,11 @@ static bool path_at(int fd, uint64_t user, Path& path) {
             path.base = current->fs->cwd_node;
         else {
             auto h = fd_handle(fd, true);
-            if (!h || !h->node) {
+            if (!h) {
                 path.error = -9;
                 return false;
             }
-            if ((h->node->mode & 0170000) != directory) {
+            if (!h->node || (h->node->mode & 0170000) != directory) {
                 path.error = -20;
                 return false;
             }
@@ -86,6 +85,50 @@ static bool path_at(int fd, uint64_t user, Path& path) {
     }
     path.error = 0;
     return true;
+}
+
+static int64_t inotify_call(const Frame& frame) {
+    if (frame.rax == 253 || frame.rax == 294) {
+        uint32_t flags = frame.rax == 294 ? uint32_t(frame.rdi) : 0;
+        if (flags & ~(04000u | 02000000u))
+            return -22;
+        int fd = reserve_fd(*current, 0, flags & 02000000);
+        if (fd < 0)
+            return fd;
+        int error;
+        auto handle = open_inotify(current->credentials.user.effective, flags & 04000, error);
+        if (!handle) {
+            discard_reserved_fd(*current->files, fd);
+            return error;
+        }
+        install_reserved_fd(*current->files, fd, handle);
+        return fd;
+    }
+    uint32_t mask = frame.rdx;
+    constexpr uint32_t valid = inotify_events | inotify_flags | inotify_unmount |
+                               inotify_queue_overflow | inotify_watch_ignored;
+    if (frame.rax == 254 && (!mask || (mask & ~valid)))
+        return -22;
+    auto handle = fd_handle(frame.rdi);
+    if (!handle)
+        return -9;
+    if (!handle->inotify)
+        return -22;
+    if (frame.rax == 255)
+        return inotify_remove_watch(*handle->inotify, int32_t(frame.rsi));
+    if ((mask & inotify_mask_add) && (mask & inotify_mask_create))
+        return -22;
+    Path path;
+    if (!path_at(-100, frame.rsi, path))
+        return path.error;
+    Node* node = nullptr;
+    int error = resolve_path(path, node, !(mask & inotify_dont_follow));
+    if (error)
+        return error;
+    if ((mask & inotify_onlydir) && (node->mode & 0170000) != directory)
+        return -20;
+    error = node_access(node, 4);
+    return error ? error : inotify_add_watch(*handle->inotify, node, mask);
 }
 
 static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode) {
@@ -112,6 +155,7 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
         return -40;
     if ((n->mode & 0170000) == directory && (flags & 3))
         return -21;
+    Node* dentry = n;
     n = file_node(n);
     if (int error = node_validate(n))
         return error;
@@ -139,12 +183,22 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
         if (error)
             return error;
     }
+    if (!path_only && (n->mode & 0170000) == fifo)
+        return open_fifo(*current, n, dentry, flags);
     Handle* h = open_handle(n, flags, &error);
     if (!h)
         return error;
     int fd = allocate_fd(current, h, 0, flags & 02000000);
-    if (fd < 0)
+    if (fd < 0) {
         close_handle(h);
+    } else {
+        h->opened_dentry = dentry;
+        if (!path_only) {
+            inotify_dentry(dentry, inotify_open);
+            if ((flags & 01000) && (n->mode & 0170000) == regular_file)
+                inotify_dentry(dentry, inotify_modify);
+        }
+    }
     return fd;
 }
 
@@ -157,7 +211,10 @@ static int path_node_at(int fd, uint64_t user, uint64_t flags, Node*& node, bool
             return -14;
         if (!path.text[0]) {
             auto handle = fd_handle(fd, true);
-            node = fd == -100 ? current->fs->cwd_node : handle ? handle->node : nullptr;
+            node = fd == -100              ? current->fs->cwd_node
+                   : !handle               ? nullptr
+                   : handle->opened_dentry ? handle->opened_dentry
+                                           : handle->node;
             return node ? 0 : -9;
         }
     }
@@ -213,6 +270,23 @@ static int64_t stat_node(Node* n, uint64_t dst) {
     return copy_result(dst, &s, sizeof(s));
 }
 
+static int64_t stat_descriptor(Handle* handle, uint64_t dst) {
+    if (!handle)
+        return -9;
+    LinuxStat stat{};
+    if (handle->epoll || handle->event || handle->timer || handle->signal_descriptor ||
+        handle->inotify)
+        stat.mode = 0600;
+    else if (handle->socket || handle->packet || handle->inet || handle->inet6 || handle->netlink)
+        stat.mode = 0140777;
+    else if (handle->pipe && !handle->node)
+        stat.mode = 0010600;
+    else
+        return stat_node(handle->node, dst);
+    stat.nlink = 1;
+    return copy_result(dst, &stat, sizeof(stat));
+}
+
 static int64_t stat_path(int dirfd, uint64_t path, uint64_t dst, bool follow) {
     Path name;
     if (!path_at(dirfd, path, name))
@@ -241,7 +315,9 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
         if (addr % page_size || addr < page_size || addr >= user_limit || len > user_limit - addr)
             return -22;
     } else {
-        addr = current->memory->space.next_map;
+        addr = current->memory->space.find_unmapped(len);
+        if (!addr)
+            return -12;
     }
     if (addr >= user_limit || len > user_limit - addr)
         return -12;
@@ -255,6 +331,8 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
         if (!framebuffer && (!h->node || (h->node->mode & 0170000) != regular_file))
             return -19;
         if (!framebuffer && h->node->mount->ops == &procfs_ops)
+            return -19;
+        if (!framebuffer && h->node->mount->ops == &posix_queue_filesystem())
             return -19;
         if (!framebuffer && (h->flags & 3) == 1)
             return -13;
@@ -276,9 +354,13 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
             current->memory->space.next_map = addr + len + page_size;
         return addr;
     };
+    auto replace = [&]() -> int {
+        return flags & 0x10 ? shared_memory_unmap(*current, addr, len) : 0;
+    };
     if (framebuffer) {
-        if (flags & 0x10)
-            current->memory->space.unmap(addr, len);
+        int error = replace();
+        if (error)
+            return error;
         int64_t result = framebuffer_map(current->memory->space, addr, len, prot, off);
         if (result >= 0 && private_mapping)
             for (uint64_t page = addr; page < addr + len; page += page_size)
@@ -290,8 +372,9 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
         int error = node_map_shared(h->node, off, len, prot & 2, backing);
         if (error)
             return error;
-        if (flags & 0x10)
-            current->memory->space.unmap(addr, len);
+        error = replace();
+        if (error)
+            return error;
         if (!current->memory->space.map_physical(addr, backing, len, prot))
             return -12;
         if ((h->flags & 3) != 2 || node_readonly(h->node))
@@ -303,8 +386,9 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
                 *current->memory->space.entry(page) |= page_no_execute;
         return complete();
     }
-    if (flags & 0x10)
-        current->memory->space.unmap(addr, len);
+    int error = replace();
+    if (error)
+        return error;
     if (!current->memory->space.map(addr, len, 3, private_mapping))
         return -12;
     if (stack_mapping)
@@ -336,12 +420,15 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
 }
 
 static int64_t dup_fd(int old, int target, int flags = 0) {
-    Handle* h = fd_handle(old, true);
-    if (!h)
-        return -9;
     if (target < 0 || unsigned(target) >= max_fds)
         return -9;
-    if (target != old && uint64_t(target) >= current->process->limits.soft(Resource::open_files))
+    if (target != old) {
+        if (uint64_t(target) >= current->process->limits.soft(Resource::open_files))
+            return -9;
+        current->files->expand(target);
+    }
+    Handle* h = fd_handle(old, true);
+    if (!h)
         return -9;
     if (current->files->entries[target].reserved)
         return -16;
@@ -351,6 +438,38 @@ static int64_t dup_fd(int old, int target, int flags = 0) {
         current->files->entries[target] = {h, bool(flags & 02000000)};
     }
     return target;
+}
+
+static int64_t make_special_node(int dirfd, uint64_t address, uint32_t mode) {
+    uint32_t type = mode & 0170000;
+    switch (type) {
+    case 0:
+        type = regular_file;
+        break;
+    case regular_file:
+    case fifo:
+        break;
+    case directory:
+        return -1;
+    case character:
+    case block_device:
+    case 0140000:
+        return -95;
+    default:
+        return -22;
+    }
+    Path path;
+    if (!path_at(dirfd, address, path))
+        return path.error;
+    Node* node = nullptr;
+    size_t length = strlen(path.text);
+    if (length && path.text[length - 1] == '/') {
+        while (length > 1 && path.text[length - 1] == '/')
+            path.text[--length] = 0;
+        int error = resolve_path(path, node, false);
+        return error ? error : -17;
+    }
+    return create_node(path, type | ((mode & 07777) & ~current->fs->umask), node);
 }
 
 static int64_t create_pipe(uint64_t dst, int flags) {
@@ -561,6 +680,10 @@ static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
     }
     if (h->timer)
         return timerfd_ioctl(*h->timer, request, arg);
+    if (request == 0x541b && h->inotify) {
+        int size = inotify_queue(*h->inotify).bytes();
+        return copy_result(arg, &size, sizeof(size));
+    }
     if (request == 0x541b && (h->socket || h->pipe)) {
         int size = h->socket ? h->socket->type == 2 ? h->socket->datagrams.available()
                                                     : h->socket->stream.size()
@@ -592,38 +715,6 @@ static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
         ((h->node->mode & 0170000) != character && (h->node->mode & 0170000) != block_device))
         return -25;
     return device_ioctl(h, request, arg);
-}
-
-static int64_t poll_call(uint64_t pointer, size_t count, int timeout) {
-    if (count > max_fds)
-        return -22;
-    int ready = 0;
-    for (size_t i = 0; i < count; i++) {
-        Pollfd p;
-        if (!current->memory->space.copy_in(&p, pointer + i * sizeof(p), sizeof(p)))
-            return -14;
-        p.revents = 0;
-        auto h = fd_handle(p.fd);
-        if (p.fd >= 0 && !h)
-            p.revents = 32;
-        else if (h)
-            p.revents = readiness(h) & (p.events | 8 | 16);
-        if (p.revents)
-            ready++;
-        if (copy_result(pointer + i * sizeof(p), &p, sizeof(p)))
-            return -14;
-    }
-    if (ready || timeout == 0) {
-        current->deadline = 0;
-        return ready;
-    }
-    if (current->deadline && ticks >= current->deadline) {
-        current->deadline = 0;
-        return 0;
-    }
-    if (timeout > 0 && !current->deadline)
-        current->deadline = ticks + (timeout + 9) / 10;
-    return block(Wait::poll);
 }
 
 static int64_t dispatch(Frame* f) {
@@ -667,35 +758,21 @@ static int64_t dispatch(Frame* f) {
     }
     case 4:
         return stat_path(-100, a, b, true);
-    case 5: {
-        auto h = fd_handle(a, true);
-        if (!h)
-            return -9;
-        if (h->event || h->timer) {
-            LinuxStat s{};
-            s.mode = 0600;
-            s.nlink = 1;
-            return copy_result(b, &s, sizeof(s));
-        }
-        if (h->pipe || h->socket || h->packet || h->inet || h->inet6 || h->netlink || h->epoll) {
-            LinuxStat s{};
-            s.mode =
-                h->socket || h->packet || h->inet || h->inet6 || h->netlink ? 0140777 : 0010600;
-            s.nlink = 1;
-            return copy_result(b, &s, sizeof(s));
-        }
-        return stat_node(h->node, b);
-    }
+    case 5:
+        return stat_descriptor(fd_handle(a, true), b);
     case 6:
         return stat_path(-100, a, b, false);
     case 7:
-        return poll_call(a, b, c);
+    case 23:
+    case 270:
+    case 271:
+        return descriptor_wait_syscall(*current, *f);
     case 8: {
         auto h = fd_handle(a);
         if (!h)
             return -9;
-        if (h->event || h->timer)
-            return c <= 4 ? 0 : -22;
+        if (h->epoll || h->event || h->timer || h->signal_descriptor || h->inotify)
+            return uint32_t(c) <= 4 ? 0 : -22;
         if (h->pipe || !h->node || (h->node->mode & 0170000) == character)
             return -29;
         int64_t base = c == 0   ? 0
@@ -732,42 +809,52 @@ static int64_t dispatch(Frame* f) {
         if (a < user_limit && b <= user_limit - a &&
             !memory_protection_allowed(*current, a, align_up(b), int(c)))
             return -12;
-        return current->memory->space.protect(a, align_up(b), c) ? 0 : -12;
+        if (a >= user_limit || b > user_limit - a)
+            return -12;
+        return shared_memory_protect(*current, a, align_up(b), c);
     }
-    case 11:
+    case 11: {
         if (a % page_size || !b || a >= user_limit || b > user_limit - a)
             return -22;
-        current->memory->space.unmap(a, align_up(b));
+        int error = shared_memory_unmap(*current, a, align_up(b));
+        if (error)
+            return error;
+        inotify_reap_inodes();
         return 0;
-    case 12:
+    }
+    case 12: {
         if (!a)
             return current->memory->brk_end;
         if (a < current->memory->brk_base || a > current->memory->brk_base + 128 * 1024 * 1024)
             return current->memory->brk_end;
         if (!heap_change_allowed(*current, a))
             return current->memory->brk_end;
-        if (align_up(a) > align_up(current->memory->brk_end) &&
-            (!memory_growth_allowed(*current, align_up(current->memory->brk_end),
-                                    align_up(a) - align_up(current->memory->brk_end)) ||
-             !data_growth_allowed(*current, align_up(current->memory->brk_end),
-                                  align_up(a) - align_up(current->memory->brk_end))))
+        uint64_t old_end = align_up(current->memory->brk_end), new_end = align_up(a);
+        if (new_end > old_end) {
+            size_t length = new_end - old_end;
+            auto& space = current->memory->space;
+            if (space.mapped_size(old_end, length) ||
+                !memory_growth_allowed(*current, old_end, length) ||
+                !data_growth_allowed(*current, old_end, length) || !space.map(old_end, length, 3))
+                return current->memory->brk_end;
+        }
+        if (new_end < old_end && shared_memory_unmap(*current, new_end, old_end - new_end))
             return current->memory->brk_end;
-        if (a > current->memory->brk_end &&
-            !current->memory->space.map(align_up(current->memory->brk_end),
-                                        align_up(a) - align_up(current->memory->brk_end), 3))
-            return current->memory->brk_end;
-        if (a < current->memory->brk_end)
-            current->memory->space.unmap(align_up(a),
-                                         align_up(current->memory->brk_end) - align_up(a));
         current->memory->brk_end = a;
         return a;
+    }
     case 13:
         if (a < 1 || a > 64 || a == 9 || a == 19 || d != 8)
             return -22;
         if (c && copy_result(c, current->handlers->signal_actions[a - 1], 32))
             return -14;
-        if (b && !current->memory->space.copy_in(current->handlers->signal_actions[a - 1], b, 32))
-            return -14;
+        if (b) {
+            uint64_t action[4];
+            if (!current->memory->space.copy_in(action, b, sizeof(action)))
+                return -14;
+            memcpy(current->handlers->signal_actions[a - 1], action, sizeof(action));
+            signal_discard_ignored(*current, int(a));
+        }
         return 0;
     case 14: {
         if (d != 8)
@@ -800,80 +887,18 @@ static int64_t dispatch(Frame* f) {
     case 62:
     case 127:
     case 128:
+    case 129:
     case 130:
     case 131:
     case 200:
     case 234:
+    case 297:
         return signal_syscall(f);
     case 21: {
         return access_file(-100, a, b, 0);
     }
     case 22:
         return create_pipe(a, 0);
-    case 23:
-    case 270: {
-        bool pselect = f->rax == 270;
-        auto restore_mask = [] {
-            if (current->suspend_mask) {
-                current->signal_mask = current->suspend_saved_mask;
-                current->suspend_mask = false;
-            }
-        };
-        if (pselect && f->r9 && !current->suspend_mask) {
-            uint64_t arguments[2], mask;
-            if (!current->memory->space.copy_in(arguments, f->r9, sizeof(arguments)))
-                return -14;
-            if (arguments[0]) {
-                if (arguments[1] != 8)
-                    return -22;
-                if (!current->memory->space.copy_in(&mask, arguments[0], sizeof(mask)))
-                    return -14;
-                current->suspend_saved_mask = current->signal_mask;
-                current->suspend_mask = true;
-                current->signal_mask = mask & ~((1ull << 8) | (1ull << 18));
-            }
-        }
-        int ready = select_events(*current, *f, false);
-        if (ready < 0) {
-            restore_mask();
-            current->deadline = 0;
-            return ready;
-        }
-        int64_t timeout[2]{};
-        uint64_t delay = 0;
-        if (e) {
-            if (!current->memory->space.copy_in(timeout, e, sizeof(timeout))) {
-                restore_mask();
-                current->deadline = 0;
-                return -14;
-            }
-            int64_t scale = pselect ? 1000000000 : 1000000;
-            if (timeout[0] < 0 || timeout[0] > INT64_MAX / 100 || timeout[1] < 0 ||
-                timeout[1] >= scale) {
-                restore_mask();
-                current->deadline = 0;
-                return -22;
-            }
-            delay = uint64_t(timeout[0]) * 100 + (timeout[1] + scale / 100 - 1) / (scale / 100);
-        }
-        if (ready || (e && !delay) || (current->deadline && ticks >= current->deadline)) {
-            ready = select_events(*current, *f, true);
-            if (e && !pselect) {
-                uint64_t left = current->deadline
-                                    ? current->deadline > ticks ? current->deadline - ticks : 0
-                                    : delay;
-                Timeval remaining{int64_t(left / 100), int64_t(left % 100) * 10000};
-                if (copy_result(e, &remaining, sizeof(remaining)))
-                    ready = -14;
-            }
-            current->deadline = 0;
-            restore_mask();
-            return ready;
-        }
-        if (e && !current->deadline)
-            current->deadline = ticks + delay;
-        return block(Wait::poll);
-    }
     case 24:
         return 0;
     case 26:
@@ -887,6 +912,23 @@ static int64_t dispatch(Frame* f) {
     case 31:
     case 67:
         return shared_memory_syscall(f);
+    case 64:
+    case 65:
+    case 66:
+    case 220:
+        return semaphore_syscall(f);
+    case 68:
+    case 69:
+    case 70:
+    case 71:
+        return message_queue_syscall(f);
+    case 240:
+    case 241:
+    case 242:
+    case 243:
+    case 244:
+    case 245:
+        return posix_queue_syscall(f);
     case 32: {
         auto h = fd_handle(a, true);
         if (!h)
@@ -936,6 +978,7 @@ static int64_t dispatch(Frame* f) {
     case 233:
     case 281:
     case 291:
+    case 441:
         return ipc_syscall(f);
     case 56:
         return clone_task(f, a, b, c, d, e);
@@ -997,7 +1040,7 @@ static int64_t dispatch(Frame* f) {
         auto h = fd_handle(a);
         if (!h)
             return -9;
-        return node_sync(h->node, f->rax == 75);
+        return h->pipe ? -22 : node_sync(h->node, f->rax == 75);
     }
     case 76: {
         Path path;
@@ -1011,7 +1054,10 @@ static int64_t dispatch(Frame* f) {
             return error;
         if ((n->mode & 0170000) == block_device)
             return -22;
-        return node_truncate(n, b);
+        error = node_truncate(n, b);
+        if (!error)
+            inotify_dentry(n, inotify_modify);
+        return error;
     }
     case 77: {
         auto h = fd_handle(a);
@@ -1019,7 +1065,10 @@ static int64_t dispatch(Frame* f) {
             return -9;
         if (!h->node || (h->flags & 3) == 0 || (h->node->mode & 0170000) == block_device)
             return -22;
-        return node_truncate(h->node, b);
+        int error = node_truncate(h->node, b);
+        if (!error)
+            inotify_dentry(h->opened_dentry, inotify_modify);
+        return error;
     }
     case 79: {
         node_path(current->fs->cwd_node, current->fs->cwd, sizeof(current->fs->cwd));
@@ -1043,6 +1092,7 @@ static int64_t dispatch(Frame* f) {
         if ((error = node_access(n, 1)))
             return error;
         current->fs->cwd_node = n;
+        inotify_reap_inodes();
         node_path(n, current->fs->cwd, sizeof(current->fs->cwd));
         return 0;
     }
@@ -1056,6 +1106,7 @@ static int64_t dispatch(Frame* f) {
         if (error)
             return error;
         current->fs->cwd_node = h->node;
+        inotify_reap_inodes();
         node_path(h->node, current->fs->cwd, sizeof(current->fs->cwd));
         return 0;
     }
@@ -1130,7 +1181,6 @@ static int64_t dispatch(Frame* f) {
         int error = resolve_path(path, node);
         if (error)
             return error;
-        node = file_node(node);
         uint32_t mode = f->rax == 90 ? b : c;
         return node_chmod(node, mode);
     }
@@ -1140,7 +1190,7 @@ static int64_t dispatch(Frame* f) {
             return -9;
         if (!h->node)
             return -22;
-        auto node = h->node;
+        auto node = h->opened_dentry ? h->opened_dentry : h->node;
         return node_chmod(node, b);
     }
     case 95: {
@@ -1153,7 +1203,7 @@ static int64_t dispatch(Frame* f) {
     case 94: {
         if (f->rax == 93) {
             auto h = fd_handle(a);
-            return !h ? -9 : node_chown(h->node, b, c);
+            return !h ? -9 : node_chown(h->opened_dentry ? h->opened_dentry : h->node, b, c);
         }
         Path path;
         if (!path_at(-100, a, path))
@@ -1308,8 +1358,12 @@ static int64_t dispatch(Frame* f) {
         uint64_t cpu = 1;
         return copy_result(c, &cpu, 8) ? -14 : 8;
     }
-    case 217:
-        return getdents(a, b, c);
+    case 217: {
+        int64_t result = getdents(a, b, c);
+        if (result >= 0)
+            inotify_dentry(fd_handle(a)->opened_dentry, inotify_access);
+        return result;
+    }
     case 218:
         current->tid_address = a;
         return current->pid;
@@ -1380,10 +1434,24 @@ static int64_t dispatch(Frame* f) {
         int64_t result = wait_information(*current, unsigned(a), selected, c, unsigned(d), e);
         return result == would_block ? block(Wait::child, -1, selected) : result;
     }
+    case 133:
+        return make_special_node(-100, a, b);
     case 257:
         return open_file(a, b, c, d);
-    case 262:
+    case 259:
+        return make_special_node(a, b, c);
+    case 262: {
+        constexpr uint32_t empty_path = 0x1000;
+        if (d & empty_path) {
+            char first = 0;
+            if (b && !current->memory->space.copy_in(&first, b, sizeof(first)))
+                return -14;
+            if (!first)
+                return int32_t(a) == -100 ? stat_node(current->fs->cwd_node, c)
+                                          : stat_descriptor(fd_handle(a, true), c);
+        }
         return stat_path(a, b, c, !(d & 0x100));
+    }
     case 269:
     case 439: {
         return access_file(a, b, c, f->rax == 439 ? d : 0);
@@ -1400,6 +1468,7 @@ static int64_t dispatch(Frame* f) {
         if ((error = node_access(node, 1)))
             return error;
         current->fs->root_node = node;
+        inotify_reap_inodes();
         return 0;
     }
     case 273:
@@ -1419,18 +1488,19 @@ static int64_t dispatch(Frame* f) {
             auto h = fd_handle(a);
             if (!h || !h->node)
                 return -9;
-            node = h->node;
+            node = h->opened_dentry ? h->opened_dentry : h->node;
         }
+        auto dentry = node;
         node = file_node(node);
         Timestamp update[] = {node->atime, node->mtime};
         Timespec input[2];
         if (c && !current->memory->space.copy_in(input, c, sizeof(input)))
             return -14;
-        bool changed = false;
+        unsigned changed = 0;
         for (unsigned i = 0; i < 2; i++) {
             if (c && input[i].nsec == 1073741822)
                 continue;
-            changed = true;
+            changed |= 1u << i;
             if (!c || input[i].nsec == 1073741823)
                 update[i] = node_now();
             else {
@@ -1448,8 +1518,14 @@ static int64_t dispatch(Frame* f) {
             if (error)
                 return error;
         }
-        return changed ? node_setattr(node, node->mode, update[0], update[1]) : 0;
+        uint32_t events = changed == 3   ? inotify_attrib
+                          : changed == 1 ? inotify_access
+                                         : inotify_modify;
+        return changed ? node_setattr(dentry, node->mode, update[0], update[1], events) : 0;
     }
+    case 282:
+    case 289:
+        return signalfd_syscall(*f);
     case 283:
     case 286:
     case 287:
@@ -1463,6 +1539,11 @@ static int64_t dispatch(Frame* f) {
         return dup_fd(a, b, c);
     case 293:
         return create_pipe(a, b);
+    case 253:
+    case 254:
+    case 255:
+    case 294:
+        return inotify_call(*f);
     case 318: {
         unsigned flags = c;
         if ((flags & ~7u) || (flags & 6u) == 6u)

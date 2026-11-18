@@ -6,12 +6,19 @@
 #include "mm/stack.hpp"
 #include "fs/record_lock.hpp"
 #include "process/waitid.hpp"
+#include "ipc/system_v_semaphores.hpp"
+#include "ipc/system_v_message_queues.hpp"
+#include "ipc/posix_message_queues.hpp"
+#include "ipc/shared_memory.hpp"
 #include "fs/descriptor.hpp"
+#include "fs/pipe.hpp"
+#include "fs/inotify.hpp"
 #include "drivers/platform/devices.hpp"
 #include "ipc/ipc.hpp"
 #include "process/signals.hpp"
 #include "process/futex.hpp"
 #include "io/io.hpp"
+#include "io/descriptor_wait.hpp"
 #include "net/ethernet.hpp"
 #include "core/time.hpp"
 #include "core/random.hpp"
@@ -39,10 +46,11 @@ static void release_memory(Task* t) {
     if (!memory)
         return;
     if (memory->references == 1) {
-        shared_memory_release(t);
+        shared_memory_release(*t);
         if (memory->space.root && read_cr3() == memory->space.root)
             activate_kernel_memory();
         memory->space.destroy();
+        inotify_reap_inodes();
     }
     if (!--memory->references)
         release(memory);
@@ -58,17 +66,32 @@ static void release_files(FileTable* table) {
     }
 }
 
+static void copy_descriptors(FileTable& table, const FileTable& source) {
+    for (unsigned i = 0; i < max_fds; ++i) {
+        auto desc = source.entries[i];
+        if (desc.handle) {
+            table.entries[i] = desc;
+            table.expand(i);
+            retain(desc.handle);
+        }
+    }
+}
+
 static FileTable* copy_files(const FileTable* source) {
     auto table = make_resource<FileTable>();
     if (table)
-        for (unsigned i = 0; i < max_fds; i++) {
-            table->entries[i] = source->entries[i].handle ? source->entries[i] : Descriptor{};
-            retain(table->entries[i].handle);
-        }
+        copy_descriptors(*table, *source);
     return table;
 }
 
 static void release_resources(Task* t) {
+    message_queue_discard(*t);
+    posix_queue_discard(*t);
+    discard_fifo_open(*t);
+    epoll_discard_wait(*t);
+    descriptor_wait_discard(*t);
+    semaphore_exit(*t);
+    t->pending_signals.discard(UINT64_MAX);
     credential_release(t->credentials);
     io_discard(*t);
     futex_discard(*t);
@@ -78,6 +101,7 @@ static void release_resources(Task* t) {
     if (t->fs && !--t->fs->references)
         release(t->fs);
     t->fs = nullptr;
+    inotify_reap_inodes();
     if (t->handlers && !--t->handlers->references)
         release(t->handlers);
     t->handlers = nullptr;
@@ -182,13 +206,21 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
     Task* child = new_task();
     if (!child)
         return -11;
+    if ((flags & clone_sysvsem) && !semaphore_share_undo(*child, *current)) {
+        release_resources(child);
+        release(child->process);
+        child->process = nullptr;
+        child->state = State::empty;
+        return -12;
+    }
     credential_inherit(child->credentials, current->credentials);
     if (vm) {
         release_memory(child);
         child->memory = current->memory;
         child->memory->references++;
     } else {
-        if (!child->memory->space.clone_from(current->memory->space)) {
+        if (!child->memory->space.clone_from(current->memory->space) ||
+            !shared_memory_fork(*child, *current)) {
             release_resources(child);
             release(child->process);
             child->process = nullptr;
@@ -199,18 +231,14 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         child->memory->brk_end = current->memory->brk_end;
         child->memory->initial_data_size = current->memory->initial_data_size;
         child->memory->dumpable = current->memory->dumpable;
-        shared_memory_fork(child, current);
     }
     if (flags & clone_files) {
         release_files(child->files);
         child->files = current->files;
         child->files->references++;
-    } else
-        for (unsigned i = 0; i < max_fds; i++) {
-            child->files->entries[i] =
-                current->files->entries[i].handle ? current->files->entries[i] : Descriptor{};
-            retain(child->files->entries[i].handle);
-        }
+    } else {
+        copy_descriptors(*child->files, *current->files);
+    }
     if (flags & clone_fs) {
         release(child->fs);
         child->fs = current->fs;
@@ -288,7 +316,8 @@ static void finish_process(Task* last) {
             queue_process_signal(parent.process, 17, process->pid,
                                  (process->exit_status & 127) ? 2 : 1,
                                  (process->exit_status & 127) ? process->exit_status & 127
-                                                              : process->exit_status >> 8);
+                                                              : process->exit_status >> 8,
+                                 0, process);
     if (process->pid == 1) {
         if (test_mode)
             poweroff((process->exit_status & 127) ? 128 + (process->exit_status & 127)
@@ -337,8 +366,11 @@ void exit_thread(Task* t, int status) {
     release_resources(t);
     if (process->leader == t || process->live_threads == 1)
         process->exit_status = status;
-    if (!--process->live_threads)
+    if (!--process->live_threads) {
+        posix_queue_process_exit(*process);
+        process->pending_signals.discard(UINT64_MAX);
         finish_process(t);
+    }
     if (process->leader != t) {
         t->state = State::empty;
         t->process = nullptr;
@@ -368,6 +400,9 @@ static bool awaken(Task& t) {
     if (t.state != State::blocked)
         return t.state == State::runnable;
     if (t.wait == Wait::signal_queue && signal_wait_resume(t))
+        return true;
+    if (resume_fifo_open(t) || epoll_resume_wait(t) || descriptor_wait_resume(t) ||
+        io_resume_signal_descriptor(t))
         return true;
     if (signal_wakes(t)) {
         signal_interrupt(t);
@@ -399,9 +434,6 @@ static bool awaken(Task& t) {
     case Wait::sleep:
         ready = ticks >= t.deadline;
         break;
-    case Wait::poll:
-        ready = poll_task_ready(t);
-        break;
     case Wait::vfork:
         ready = true;
         for (auto& c : tasks)
@@ -417,6 +449,15 @@ static bool awaken(Task& t) {
     case Wait::futex:
         ready = futex_ready(t);
         break;
+    case Wait::semaphore:
+        return semaphore_timeout(t);
+    case Wait::message_queue:
+    case Wait::fifo_open:
+    case Wait::epoll_wait:
+    case Wait::descriptor:
+        return false;
+    case Wait::posix_queue:
+        return posix_queue_expire(t);
     default:
         ready = true;
         break;
@@ -722,6 +763,7 @@ int exec_task(Task* t, const ExecArguments& arguments) {
     if (handlers) {
         *handlers = *t->handlers;
         handlers->references = 1;
+        handlers->descriptor_wait_queue = 0;
     }
     auto process = t->process;
     for (auto& member : tasks)
@@ -764,6 +806,7 @@ int exec_task(Task* t, const ExecArguments& arguments) {
         t->parent_death_signal = 0;
     t->credentials = credentials;
     process->executed = true;
+    ++process->exec_generation;
     if (files) {
         release_files(t->files);
         t->files = files;

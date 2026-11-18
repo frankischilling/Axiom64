@@ -18,6 +18,7 @@ enum class Capability : unsigned {
     net_bind_service = 10,
     net_admin = 12,
     net_raw = 13,
+    ipc_lock = 14,
     ipc_owner = 15,
     sys_ptrace = 19,
     sys_admin = 21,

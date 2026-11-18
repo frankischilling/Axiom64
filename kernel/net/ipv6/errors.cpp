@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "socket.hpp"
+#include "io/descriptor_wait.hpp"
 #include "net/ipv6/host.hpp"
 #include "net/ipv6/icmp.hpp"
 #include "net/tcp/socket.hpp"
@@ -71,8 +72,10 @@ void inet6_icmp_error(unsigned index, const ip6::Packet& packet, const uint8_t* 
             if (quote.type == 2)
                 learn(socket.index, &socket);
             enqueue(socket);
-            if (socket.receive_errors || (quote.type == 2 ? socket.pmtu_mode == 2 : quote.hard))
+            if (socket.receive_errors || (quote.type == 2 ? socket.pmtu_mode == 2 : quote.hard)) {
                 socket.error = quote.error;
+                descriptor_wait_notify(&socket, 8);
+            }
         }
     }
     if (!udp)
@@ -85,7 +88,9 @@ void inet6_icmp_error(unsigned index, const ip6::Packet& packet, const uint8_t* 
         hard = udp->pmtu_mode != 0;
     }
     enqueue(*udp);
-    if (udp->receive_errors || (hard && udp->connected))
+    if (udp->receive_errors || (hard && udp->connected)) {
         udp->error = quote.error;
+        descriptor_wait_notify(udp, 8);
+    }
 }
 } // namespace ax

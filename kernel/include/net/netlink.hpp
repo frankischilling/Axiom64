@@ -63,6 +63,8 @@ const NetlinkFrame* netlink_front(NetlinkSocket*);
 void netlink_consume(NetlinkSocket*);
 
 size_t netlink_available(NetlinkSocket*);
+int netlink_reserve_delivery(NetlinkSocket*, size_t, NetlinkFrame*&);
+void netlink_publish_delivery(NetlinkSocket*, NetlinkFrame*);
 
 int netlink_target(const NetlinkAddress&);
 

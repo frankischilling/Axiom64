@@ -5,4 +5,5 @@
 namespace ax {
 extern const FilesystemOps procfs_ops;
 Node* procfs_root(Mount*);
+bool procfs_has_poll(const Node&);
 } // namespace ax

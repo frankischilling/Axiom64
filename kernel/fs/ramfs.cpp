@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/vfs.hpp"
+#include "fs/inotify.hpp"
 #include "fs/xattr.hpp"
 #include "process/task.hpp"
 
@@ -113,6 +114,7 @@ void ramfs_reclaim_device(Node* node) {
     if (*slot != node)
         return;
     *slot = node->next_sibling;
+    inotify_retire_inode(node);
     xattr_store_destroy(node->xattrs);
     *node = {};
 }

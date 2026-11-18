@@ -82,6 +82,184 @@ Durations round up to the kernel's 10 ms clock units, following the jiffy conver
 
 Each supported socket I/O attempt captures one absolute monotonic deadline after importing its arguments. Changing the option through an alias does not change a waiting attempt's deadline. The first attempt can still return ready data or an immediate error. An expired wait without progress returns `EAGAIN` and releases its retained request exactly once. It does not access a buffer unmapped during an unavailable socket wait; a readable wake-up still checks the buffer and returns `EFAULT` for an invalid destination. A transferred prefix returns its byte count; it is never replayed after expiry. Nonblocking descriptions and `MSG_DONTWAIT` retain their immediate behavior. Read/readv/recv/recvmsg and accept use the receive deadline; write/writev/send/sendmsg use the send deadline. [TCP](tcp.md) also retains connect requests, uses the send deadline and returns `EINPROGRESS` on connect expiry. Full TCP interruption/deadline and retained-call acceptance remains in [TCP reliability](tcp.md).
 
+## Signal descriptors
+
+`signalfd` and `signalfd4` let event loops receive blocked signals through a file
+descriptor. Redirecting the descriptor's mask through an alias updates the
+shared open description. A read uses the caller's pending signals, so forked
+processes can use an inherited descriptor without draining their parent's queue.
+Poll and select check the caller's queue. Epoll follows the signal notification
+context that registered the descriptor.
+
+Reads return complete 128-byte records. One `readv` can split a record across
+vectors or drain several records. A fault consumes the signal for that record.
+The read reports any complete records copied before the fault. A caught signal
+can interrupt a blocking read or restart it through the normal signal path.
+
+Standard signals coalesce. `sigqueue` and thread-directed queued sends preserve
+real-time payloads and order for repeated instances of the same signal.
+`signalfd`, `sigtimedwait` and signal handlers consume the same pending records.
+Pending signal records share a 4,096-entry kernel pool. The receiver's
+`RLIMIT_SIGPENDING` limits charged records by real UID. Real-time sends that
+require a queue record return `EAGAIN` when admission fails.
+
+## Poll and ppoll waits
+
+`poll` and `ppoll` keep the supplied descriptor numbers and event masks while
+a wait is blocked. Completion writes only the `revents` fields. Both calls
+look up the retained numbers in the caller's descriptor table when checking
+readiness. Ready descriptors take precedence over a pending signal.
+
+`ppoll` accepts an optional relative timespec and a temporary signal mask.
+The raw syscall writes back the remaining interval. The libc wrapper
+preserves the original timespec. The kernel measures waits in 10 ms ticks.
+On a process stop and continue, `poll` reimports the descriptor list and keeps
+its original deadline. `ppoll` restarts with the remaining relative interval.
+
+`make test-poll-waits` checks these behaviors for root and ordinary callers
+with both musl providers and linkages on BIOS and UEFI, with additional
+read-only ext2 boots. `sudo make test-poll-waits-native` runs the same cases
+on Linux.
+
+## Select and pselect waits
+
+`select` and `pselect` retain the input fd sets across a blocked wait.
+Each ready bit counts separately across read, write, and exceptional
+conditions. The calls read and write whole bitmap words up to the smaller
+of `nfds` and the descriptor table's current capacity. Requesting a closed
+descriptor within that range returns `EBADF`. A caught signal
+ends the wait without replacing the caller's fd sets.
+
+`select` and raw `pselect6` write back the remaining relative timeout.
+The libc `pselect` wrapper preserves the original timespec. The temporary
+mask applies during the wait, with the original mask restored on return.
+On a process stop, both waits write back the time left and restart with
+that interval on continue. The wait's resolution is 10 ms.
+
+`make test-select-waits` checks both caller identities and both musl
+providers and linkages on BIOS and UEFI, with read-only ext2 coverage.
+`sudo make test-select-waits-native` compares the same cases on Linux.
+
+## Descriptor lifetime during poll and select
+
+A blocked poll or select wait holds references to the pollable file
+descriptions it registered. Closing or reusing the descriptor number
+in another thread leaves the registration in place. A wakeup from the
+original description prompts the wait to check the current descriptor
+table. For example, a pipe reader held by a wait still permits a write
+from the peer after another thread closes its descriptor. On wakeup,
+`poll` reports `POLLNVAL` if the number is now closed, or reports
+readiness for the description that currently occupies the number.
+
+Unix stream sockets notify waits when data is queued and when a full
+receive queue gains space. This preserves the wakeup even if another
+thread consumes the data or fills the queue before the waiter runs.
+Stream sockets also report the normal read and write bits and peer
+write shutdown through `POLLRDHUP`.
+
+Unix datagrams notify readers after a whole record is queued, including
+zero-length records. Datagram writers get wakeups when their send budget
+becomes writable or a full connected peer queue is read. A peek can wake
+the waiter while the queue stays full. The send budget stays with queued records when the original socket closes
+and cannot wake a replacement socket in the same slot.
+
+These references are released when the attempt ends, including on
+timeout, interruption, and task exit. `make test-descriptor-wait-lifetime`
+checks all four wait syscalls on pipes and Unix stream sockets, with
+BIOS, UEFI, and read-only ext2 fixtures. Use
+`sudo make test-descriptor-wait-lifetime-native` for the Linux comparison.
+
+IPv4 and IPv6 UDP sockets notify waiters when a packet enters their
+receive queue or a socket error is recorded. A waiter can observe the
+notification even if another thread reads the packet or clears the
+error before it runs. The wakeup belongs to the socket that generated
+it. `make test-udp-waits` exercises loopback packets, including
+zero-length packets, and connection-refused errors across all four
+wait calls. `sudo make test-udp-waits-native` runs the Linux comparison.
+
+## Epoll descriptor lifetime
+
+Epoll accepts descriptors with a poll operation, including pipes, sockets,
+event descriptors, message queues, terminals, and selected proc controls.
+Registering a regular RAM or ext2 file, a directory, or a device such as
+`/dev/null` returns `EPERM`. Those descriptors still report the default
+read and write readiness flags through `poll`. `O_PATH` descriptors return
+`EBADF` from epoll registration.
+
+An epoll descriptor reports anonymous-inode mode through `fstat` and
+`fstatat` with `AT_EMPTY_PATH`. Reads and writes return `EINVAL`, and
+positioned I/O returns `ESPIPE`. As on current Linux, `lseek` returns zero
+without changing the position.
+
+An epoll watch is keyed by the registered descriptor number and its open
+file description. If another descriptor still holds that description,
+closing the registered number leaves the watch in place. A new file that
+reuses the number can have its own watch. The old watch goes away when the
+last reference to its file description closes.
+
+A blocked wait holds the epoll instance it entered. Closing or replacing
+its descriptor in another thread leaves that wait on the original instance.
+`epoll_pwait` and `epoll_pwait2` apply a temporary signal mask during the wait
+and restore the previous mask afterward. `epoll_pwait2` takes a relative
+`timespec` in seconds and nanoseconds. A null pointer waits indefinitely and a
+zero interval checks immediately. Positive intervals round up to the scheduler's
+10 ms clock, and the kernel leaves the caller's timespec untouched.
+If copying a batch faults after some events, the wait returns the events it
+copied and leaves the remaining events ready.
+
+`make test-epoll-lifetime` checks duplicate and reused descriptors, fork
+and exec, descriptors in queued `SCM_RIGHTS` messages, blocked waits, signal
+masks, relative deadline rounding, and event copy faults. It runs both caller
+identities and both musl providers and linkages on BIOS and UEFI, with
+additional read-only ext2 boots.
+`sudo make test-epoll-lifetime-native` runs the Linux comparison.
+
+## Exclusive epoll wakeups
+
+`EPOLLEXCLUSIVE` applies when adding a watch. Delete and add the watch again
+to change it. The flag accepts `EPOLLIN`, `EPOLLOUT`, `EPOLLERR`, `EPOLLHUP`,
+`EPOLLET`, and `EPOLLWAKEUP` as companion bits. Axiom64 has no system suspend
+integration for `EPOLLWAKEUP`.
+
+Ordinary watches still receive the event. Exclusive watches queue it in
+registration order until one reaches a blocked epoll waiter. A watch on an
+instance that is only being polled can queue the event while the notification
+continues to a blocked waiter. The lifetime tests cover pipe readers, eventfd
+writers, signal descriptors, and a Unix listener whose backlog is already
+readable when another connection arrives.
+
+## Nested epoll
+
+Poll, select, and an outer epoll instance report an epoll descriptor as
+readable when it has an event to deliver. A watch can span up to four links
+between epoll instances. Adding a cycle or a fifth link returns `ELOOP`.
+An `EPOLLEXCLUSIVE` watch on an epoll descriptor returns `EINVAL`.
+Successive waits that return only part of the ready set rotate through it.
+
+`make test-epoll-nested` checks readiness, descriptor aliases, nesting limits,
+timer and signal wakeups, and rotation through ready events in the same guest
+profiles as the lifetime tests. `sudo make test-epoll-nested-native` checks the
+same behavior on Linux. The native comparison records the depth policy and
+accounts for the tested Linux 5.15 WSL kernel accepting deeper empty chains.
+
+## Named pipes
+
+`mkfifo` and `mkfifoat` create a FIFO with the caller's ownership and umask.
+The kernel pairs blocking opens for reading and writing. A nonblocking
+reader can open an empty FIFO without a writer. A nonblocking writer needs
+a reader or gets `ENXIO`. Opening with `O_RDWR` supplies both ends.
+
+Each open of the same inode uses the same pipe, including opens through hard
+links. Unlinking a name leaves open descriptions usable. Recreating the name
+creates a separate FIFO. On ext2 the inode persists across reboot. Data in
+the pipe lives in memory and is discarded when the last description closes.
+
+`make test-named-pipes` checks two caller identities and both musl providers,
+linkages, and firmware types. It also verifies the same FIFO and hard link
+after rebooting a writable ext2 root. `sudo make test-named-pipes-native`
+runs the main workload on Linux. The `mknod` entry points currently create
+regular files and FIFOs.
+
 ## Timer descriptors
 
 `timerfd_create`, `timerfd_settime` and `timerfd_gettime` provide Linux x86-64

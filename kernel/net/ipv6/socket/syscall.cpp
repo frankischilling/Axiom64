@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "../socket.hpp"
+#include "io/descriptor_wait.hpp"
 #include "process/task.hpp"
 #include "net/tcp/socket.hpp"
 #include "net/socket_options.hpp"
@@ -174,6 +175,7 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
         if (b > 2)
             return -22;
         socket->shutdown |= b == 0 ? 1 : b == 1 ? 2 : 3;
+        descriptor_wait_notify(socket, 0);
         return socket->connected ? 0 : -107;
     case 51:
     case 52: {

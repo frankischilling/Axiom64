@@ -8,9 +8,19 @@ namespace {
 size_t allocations;
 bool refuse, reenter;
 ax::UnixDatagramQueue* releasing;
+const ax::UnixSendBudget* watched_budget;
+unsigned writable_events;
 } // namespace
 
 namespace ax {
+void descriptor_wait_notify(const void* source, uint32_t events) {
+    if (watched_budget) {
+        assert(source == watched_budget && events == (4 | 0x100 | 0x200));
+        assert(watched_budget->writable());
+        writable_events++;
+    }
+}
+
 void retain(Handle*) {
     abort();
 }
@@ -172,8 +182,34 @@ static void addresses() {
     assert(!allocations && !queue.count());
 }
 
+static void budget_notifications() {
+    ax::UnixDatagramQueue queue;
+    auto budget = ax::UnixSendBudget::create();
+    assert(budget);
+    budget->resize(0);
+    char payload[4000]{};
+    assert(queue.append(*budget, payload, sizeof(payload)) == sizeof(payload));
+    assert(!budget->writable());
+    watched_budget = budget;
+    assert(!writable_events);
+    budget->resize(16000);
+    assert(writable_events == 1);
+    budget->resize(16000);
+    budget->resize(0);
+    assert(writable_events == 1 && !budget->writable());
+    budget->close();
+    auto replacement = ax::UnixSendBudget::create();
+    assert(replacement && replacement != budget);
+    queue.consume();
+    assert(writable_events == 2);
+    watched_budget = nullptr;
+    replacement->close();
+    assert(!allocations);
+}
+
 int main() {
     addresses();
+    budget_notifications();
     ax::UnixDatagramQueue queue;
     auto budget = ax::UnixSendBudget::create();
     assert(budget && allocations == 1 && budget->size() == 212992 && budget->writable());

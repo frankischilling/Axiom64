@@ -22,6 +22,13 @@ build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-o
 .PHONY: test-rtc-codec test-clock-wall test-clock-wall-native
 .PHONY: test-timerfd test-timerfd-native
 .PHONY: test-signalfd test-signalfd-native
+.PHONY: test-system-v-semaphores test-system-v-semaphores-native
+test-system-v-semaphores:
+	$(PYTHON) -B scripts/system_v_semaphores_test.py --directory build/system-v-semaphores-guest
+
+test-system-v-semaphores-native:
+	$(PYTHON) -B scripts/system_v_semaphores_test.py --native --directory build/system-v-semaphores-native
+
 test-signalfd:
 	$(PYTHON) -B scripts/timerfd_test.py --descriptor signalfd --directory build/signalfd-guest
 

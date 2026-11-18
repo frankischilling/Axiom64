@@ -6,6 +6,7 @@
 #include "mm/stack.hpp"
 #include "fs/record_lock.hpp"
 #include "process/waitid.hpp"
+#include "ipc/system_v_semaphores.hpp"
 #include "fs/descriptor.hpp"
 #include "fs/inotify.hpp"
 #include "drivers/platform/devices.hpp"
@@ -71,6 +72,7 @@ static FileTable* copy_files(const FileTable* source) {
 }
 
 static void release_resources(Task* t) {
+    semaphore_exit(*t);
     t->pending_signals.discard(UINT64_MAX);
     credential_release(t->credentials);
     io_discard(*t);
@@ -186,6 +188,13 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
     Task* child = new_task();
     if (!child)
         return -11;
+    if ((flags & clone_sysvsem) && !semaphore_share_undo(*child, *current)) {
+        release_resources(child);
+        release(child->process);
+        child->process = nullptr;
+        child->state = State::empty;
+        return -12;
+    }
     credential_inherit(child->credentials, current->credentials);
     if (vm) {
         release_memory(child);
@@ -426,6 +435,8 @@ static bool awaken(Task& t) {
     case Wait::futex:
         ready = futex_ready(t);
         break;
+    case Wait::semaphore:
+        return semaphore_timeout(t);
     default:
         ready = true;
         break;

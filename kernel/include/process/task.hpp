@@ -20,7 +20,8 @@ enum class Wait {
     signal_queue,
     futex,
     file_lock,
-    random
+    random,
+    semaphore
 };
 
 struct Descriptor {
@@ -86,6 +87,9 @@ struct FutexWait {
     bool queued = false;
 };
 
+struct SemaphoreRequest;
+struct SemaphoreUndo;
+
 struct Task {
     State state;
     int pid; // Kernel TID; process->pid is the userspace thread-group ID.
@@ -118,6 +122,8 @@ struct Task {
     int vfork_parent;
     FutexWait futex;
     IoRequest* io;
+    SemaphoreRequest* semaphore_request;
+    SemaphoreUndo* semaphore_undo;
     alignas(16) uint8_t fpu[512];
 };
 

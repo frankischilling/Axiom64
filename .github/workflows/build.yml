@@ -1149,6 +1149,11 @@ jobs:
         run: |
           sudo -n make test-signalfd-native
           make test-signalfd
+      - name: Compare System V semaphore operations and verify guest wait and undo behavior
+        if: matrix.suite == 'boot'
+        run: |
+          sudo -n make test-system-v-semaphores-native
+          make test-system-v-semaphores
       - name: Test virtio queue sizes and offered features
         if: matrix.suite == 'boot'
         run: make test-virtio
@@ -1782,6 +1787,8 @@ jobs:
             build/timerfd-guest/**
             build/signalfd-native/**
             build/signalfd-guest/**
+            build/system-v-semaphores-native/**
+            build/system-v-semaphores-guest/**
             build/unix-stream-native/**
             build/unix-shutdown-native/**
             build/unix-stream-wait-native/**

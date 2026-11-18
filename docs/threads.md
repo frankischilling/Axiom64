@@ -46,7 +46,8 @@ The x86-64 `clone` syscall accepts these flags:
 | `CLONE_PARENT_SETTID`, `CLONE_CHILD_SETTID` | Write the new TID to validated parent/child pointers |
 | `CLONE_CHILD_CLEARTID` | Register the child pointer for exit/exec clearing and wakeup |
 | `CLONE_VFORK` | Suspend the caller; requires shared memory and a separate process |
-| `CLONE_SYSVSEM`, `CLONE_DETACHED` | Accepted for musl; SysV semaphore undo is not implemented and detached is ignored |
+| `CLONE_SYSVSEM` | Share the System V semaphore undo list. The last owner to exit applies the adjustments. |
+| `CLONE_DETACHED` | Accepted and ignored for Linux compatibility |
 
 Separate process children require `SIGCHLD`. Shared-memory creation requires a child stack except for vfork. Invalid supported combinations return `EINVAL`; invalid stack/TID pointers return `EFAULT`. Unsupported flags, other process exit signals, and `clone3` return `ENOSYS`. This interface does not implement every Linux clone mode.
 
@@ -84,8 +85,22 @@ Lifecycle tests exercise blocked group teardown, a surviving worker after leader
 
 Evidence is saved in `build/threads-all-{bios,uefi}.log` and `build/threads-all-results.json`. The condition-only profile writes `threads-cond-*` evidence and the I/O profile writes `threads-io-*`. Host execution of a test program is a contract comparison and does not replace guest evidence.
 
+## System V semaphores
+
+`semget`, `semctl`, `semop`, and `semtimedop` support keyed and private sets.
+An operation vector changes the set atomically. Blocked calls keep their original
+vector, and a timeout or caught signal ends the wait without applying its operations.
+Removing a set wakes its waiters with `EIDRM`. A regular fork starts with an empty
+undo list. `CLONE_SYSVSEM` shares the caller's list, and `SETVAL` and `SETALL`
+clear pending adjustments for the affected members.
+
+`make test-system-v-semaphores` checks both musl providers and linkages on BIOS
+and UEFI as root and UID 65534. `sudo make test-system-v-semaphores-native`
+runs the matching Linux workload in isolated IPC namespaces. Both retain logs
+and compiler inputs with the tested executable.
+
 ## Remaining work
 
 The limit is one CPU, 64 task slots, and 128 descriptors per file table. FPU switching uses FXSAVE/FXRSTOR for x87/SSE state, without extended XSAVE state. Caught signals currently return `EINTR` from futex waits even with `SA_RESTART`.
 
-Robust owner-death lists, priority inheritance, `FUTEX_WAKE_OP`, newer wait-vector operations, cancellation coverage, rwlocks/barriers, complete process-shared POSIX synchronization, thread-targeted timers, and full fork/exec/signal semantics remain unfinished. SysV semaphore undo and complete resource limits are also pending. Working musl and C++ tests do not establish complete POSIX threading or Linux compatibility. [SMP](feature-roadmap.md#f07-smp-scheduling-and-kernel-synchronization) follows the tested single-CPU interface.
+Robust owner-death lists, priority inheritance, `FUTEX_WAKE_OP`, newer wait-vector operations, cancellation coverage, rwlocks/barriers, complete process-shared POSIX synchronization, thread-targeted timers, full fork/exec/signal semantics, and complete resource limits remain unfinished. Working musl and C++ tests do not establish complete POSIX threading or Linux compatibility. [SMP](feature-roadmap.md#f07-smp-scheduling-and-kernel-synchronization) follows the tested single-CPU interface.

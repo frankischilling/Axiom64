@@ -23,13 +23,13 @@ GROUPS = ('creation', 'expiration', 'read-contract', 'edge-readiness', 'lifetime
 SIGNAL_GROUPS = ('creation', 'read', 'readiness', 'interruption', 'lifetime', 'queued')
 
 
-def compile_client(directory, compiler, flags, descriptor):
+def compile_client(directory, compiler, flags, descriptor, *, libraries=()):
     program = directory / f'{descriptor}-test'
     source = f'userspace/tests/ipc/{descriptor}.c'
     with (directory / 'compile.log').open('xb') as output:
         subprocess.run([sys.executable, '-B', 'scripts/compile_uapi_client.py', '--compiler',
                         shlex.join(compiler), '--output', str(program), '--', '-std=c11', '-O2',
-                        '-g', '-Wall', '-Wextra', '-Werror', '-pthread', *flags, source],
+                        '-g', '-Wall', '-Wextra', '-Werror', '-pthread', *flags, source, *libraries],
                        cwd=ROOT, stdout=output, stderr=subprocess.STDOUT, check=True)
     return program, audit_compile(program, ROOT)
 

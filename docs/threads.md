@@ -176,6 +176,26 @@ root under both firmware types. `sudo make test-posix-message-queues-native`
 runs the same client in a private Linux IPC namespace. IPC namespace
 creation and runtime queue sysctls remain unimplemented.
 
+## POSIX asynchronous I/O
+
+Both musl providers run POSIX AIO in userspace. Their worker threads use
+Axiom64's file and pipe operations, futexes, and queued signals. Programs link
+with `-pthread -lrt` and use the standard `<aio.h>` interface.
+
+`make test-posix-aio` covers positioned reads and writes, both `aio_fsync`
+modes, errors on read-only descriptors, and `LIO_WAIT` and `LIO_NOWAIT` lists.
+It checks signal payloads for single requests and thread callbacks for
+individual requests and lists. A pending pipe read demonstrates timeout, interruption and
+cancellation with notification. A separate test closes and reuses the same
+descriptor number while checking that the old operation cannot take data
+from the replacement pipe.
+
+The workload runs as root and UID 65534 with both musl providers and both
+linkages on BIOS and UEFI. Read-only ext2 boots also read the test executable
+with AIO. Writable tests use volatile `/dev/shm`. `sudo make test-posix-aio-native`
+compares the same workload with Linux glibc, where an in-flight operation
+that cannot be cancelled must still finish on its original file description.
+
 ## Remaining work
 
 The limit is one CPU, 64 task slots, and 128 descriptors per file table. FPU switching uses FXSAVE/FXRSTOR for x87/SSE state, without extended XSAVE state. An untimed futex wait honors `SA_RESTART`. A caught signal interrupts a timed futex wait with `EINTR`.

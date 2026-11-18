@@ -383,6 +383,9 @@ semaphores, concurrent creation, timeouts, permissions, and unlink lifetime.
 [POSIX message queue tests](threads.md#posix-message-queues) cover
 priorities, blocking calls, descriptor readiness, notifications, and open
 descriptions that survive unlink.
+[POSIX asynchronous I/O tests](threads.md#posix-asynchronous-io) exercise
+positioned file I/O, list completion, notifications, cancellation, and
+descriptor reuse through the guest's musl worker threads.
 
 Required work:
 

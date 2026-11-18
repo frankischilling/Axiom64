@@ -1158,13 +1158,15 @@ jobs:
           make test-system-v-message-queues
           sudo -n make test-system-v-shared-memory-native
           make test-system-v-shared-memory
-      - name: Compare POSIX semaphore and message queue behavior
+      - name: Compare POSIX semaphores, message queues, and asynchronous I/O
         if: matrix.suite == 'boot'
         run: |
           sudo -n make test-posix-semaphores-native
           make test-posix-semaphores
           sudo -n make test-posix-message-queues-native
           make test-posix-message-queues
+          sudo -n make test-posix-aio-native
+          make test-posix-aio
       - name: Test virtio queue sizes and offered features
         if: matrix.suite == 'boot'
         run: make test-virtio
@@ -1808,6 +1810,8 @@ jobs:
             build/posix-semaphores-guest/**
             build/posix-message-queues-native/**
             build/posix-message-queues-guest/**
+            build/posix-aio-native/**
+            build/posix-aio-guest/**
             build/unix-stream-native/**
             build/unix-shutdown-native/**
             build/unix-stream-wait-native/**

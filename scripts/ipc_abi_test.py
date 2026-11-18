@@ -31,6 +31,8 @@ WORKLOADS = {
                                       'permissions')),
     'posix-message-queues': ('POSIX_MQ', ('priority-names', 'blocking', 'notifications',
                                            'permissions-limits')),
+    'posix-aio': ('POSIX_AIO', ('positioned-sync-errors', 'signal', 'lists-thread',
+                                'timeout-interrupt-cancel', 'descriptor-reuse')),
 }
 
 
@@ -49,12 +51,32 @@ def execute(command, log, expected_exit, uids, workload, firmware=None, root='ra
         f'Firmware: {firmware.upper()}', 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0']
     if root == 'ext2':
         markers.append('VFS_ROOT_PASS filesystem=ext2 device=/dev/vda readonly=1')
+    observed = {}
+    if workload == 'posix-aio':
+        outcomes = [line.removeprefix('POSIX_AIO_OUTCOME ') for line in lines
+                    if line.startswith('POSIX_AIO_OUTCOME ')]
+        kinds = ('cancel', 'close') * len(uids)
+        if len(outcomes) != len(kinds) or any(
+                outcome not in (f'{kind}=cancelled', f'{kind}=completed')
+                for outcome, kind in zip(outcomes, kinds)):
+            raise RuntimeError(f'missing or invalid POSIX AIO cancellation observations in {log}')
+        if firmware is not None and outcomes != ['cancel=cancelled', 'close=cancelled'] * len(uids):
+            raise RuntimeError(f'guest musl did not cancel the blocked requests in {log}')
+        observed['cancellation_outcomes'] = [dict(uid=uid, cancel=outcomes[2 * index].split('=')[1],
+                                                 close=outcomes[2 * index + 1].split('=')[1])
+                                             for index, uid in enumerate(uids)]
     if (child.returncode != expected_exit or receipts != expected or
             any(lines.count(marker) != 1 for marker in markers) or
             any(marker in line for marker in (f'{prefix}_FAIL', 'PANIC:', 'FAULT pid=')
                 for line in lines)):
         raise RuntimeError(f'{workload} workload failed in {log}')
-    return dict(returncode=child.returncode, uids=uids, log_sha256=digest(log))
+    return dict(returncode=child.returncode, uids=uids, log_sha256=digest(log), **observed)
+
+
+def compile_workload(case, compiler, linkage, workload):
+    flags = ['-static'] if linkage == 'static' else []
+    libraries = ('-lrt',) if workload == 'posix-aio' else ()
+    return compile_client(case, compiler, flags, workload, libraries=libraries)
 
 
 def native(directory, workload):
@@ -63,8 +85,7 @@ def native(directory, workload):
     for linkage in ('static', 'dynamic'):
         case = directory / linkage
         case.mkdir()
-        program, inputs = compile_client(case, ['gcc'], ['-static'] if linkage == 'static' else [],
-                                         workload)
+        program, inputs = compile_workload(case, ['gcc'], linkage, workload)
         headers = subprocess.check_output(['readelf', '-lW', str(program)], text=True)
         if ('INTERP' in headers) != (linkage == 'dynamic'):
             raise RuntimeError('native IPC executable linkage differs')
@@ -157,9 +178,7 @@ def guest(directory, workload, client):
     for provider, linkage in product(('build', 'runtime'), ('static', 'dynamic')):
         case = directory / f'{provider}-{linkage}'
         case.mkdir()
-        program, inputs = compile_client(case, compiler_args(provider),
-                                         ['-static'] if linkage == 'static' else [],
-                                         workload)
+        program, inputs = compile_workload(case, compiler_args(provider), linkage, workload)
         if binary_linkage(program) != linkage:
             raise RuntimeError('guest IPC executable linkage differs')
         boot = f'/bin/{program.name}\n/bin/{program.name} --ordinary'

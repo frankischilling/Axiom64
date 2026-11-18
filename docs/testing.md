@@ -655,6 +655,14 @@ Run `make test-threads` for the dedicated static/dynamic musl, futex, lifecycle,
 
 Run `make test-thread-io` for the focused [blocking I/O suite](io.md#verification-and-limits). The full and complete thread suites also require its static/dynamic tests.
 
+Run `make test-timerfd` to check [timer descriptors](io.md#timer-descriptors)
+across both musl providers, static and dynamic linkage, and BIOS and UEFI.
+Each boot runs the same client as root and as UID 65534. The test retains the
+compiled inputs, boot images, and serial logs. `sudo make test-timerfd-native`
+compares native Linux as root, after a credential drop, and as an ordinary
+caller. The native logs record the seek and split-read behavior of the host
+kernel. The guest always requires the Linux 7-style vectored read contract.
+
 Run `make test-virtqueue` and `make test-virtio` for the [shared virtio queue and transport checks](virtio.md#verification). The host simulation exercises production queue logic with sanitizers; actual guest runs cover register access, negotiated geometry, disk payloads, and persistence.
 
 Run `make test-disk-root` for the [root and data-volume persistence/rejection matrix](disk-root.md#verification). Full and normal desktop boot tests accept `--disk-root --transport modern` or `legacy`; they build a matching root fixture, copy it for each firmware boot, require the selected ext2 root, perform clean shutdown, and run host fsck.

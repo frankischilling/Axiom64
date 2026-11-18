@@ -21,6 +21,7 @@
 #include "abi/linux/credentials.hpp"
 #include "abi/linux/resource.hpp"
 #include "abi/linux/eventfd.hpp"
+#include "abi/linux/timerfd.hpp"
 #include "abi/linux/xattr.hpp"
 #include "fs/record_lock.hpp"
 #include "fs/proc.hpp"
@@ -558,6 +559,8 @@ static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
         current->files->entries[fd].cloexec = request == 0x5451;
         return 0;
     }
+    if (h->timer)
+        return timerfd_ioctl(*h->timer, request, arg);
     if (request == 0x541b && (h->socket || h->pipe)) {
         int size = h->socket ? h->socket->type == 2 ? h->socket->datagrams.available()
                                                     : h->socket->stream.size()
@@ -668,7 +671,7 @@ static int64_t dispatch(Frame* f) {
         auto h = fd_handle(a, true);
         if (!h)
             return -9;
-        if (h->event) {
+        if (h->event || h->timer) {
             LinuxStat s{};
             s.mode = 0600;
             s.nlink = 1;
@@ -691,7 +694,7 @@ static int64_t dispatch(Frame* f) {
         auto h = fd_handle(a);
         if (!h)
             return -9;
-        if (h->event)
+        if (h->event || h->timer)
             return c <= 4 ? 0 : -22;
         if (h->pipe || !h->node || (h->node->mode & 0170000) == character)
             return -29;
@@ -1447,6 +1450,10 @@ static int64_t dispatch(Frame* f) {
         }
         return changed ? node_setattr(node, node->mode, update[0], update[1]) : 0;
     }
+    case 283:
+    case 286:
+    case 287:
+        return timerfd_syscall(*f);
     case 284:
     case 290:
         return eventfd_syscall(*f);

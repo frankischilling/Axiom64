@@ -13,6 +13,7 @@ struct Inet6Socket;
 struct NetlinkSocket;
 struct Epoll;
 struct Eventfd;
+struct Timerfd;
 struct Mount;
 struct Handle;
 struct Xattr;
@@ -156,6 +157,7 @@ struct Handle {
     NetlinkSocket* netlink = nullptr;
     Epoll* epoll = nullptr;
     Eventfd* event = nullptr;
+    Timerfd* timer = nullptr;
     uint64_t generation = 0;
     uint8_t file_lock = 0;
     void* filesystem_data = nullptr;

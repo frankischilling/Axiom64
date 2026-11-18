@@ -20,6 +20,13 @@ FORMAT_SOURCES += scripts/tests/tcp_icmp_port_ownership.c
 all: image
 build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-output-host build/tcp-socket-output-host: kernel/net/ipv4/configuration.cpp
 .PHONY: test-rtc-codec test-clock-wall test-clock-wall-native
+.PHONY: test-timerfd test-timerfd-native
+test-timerfd:
+	$(PYTHON) -B scripts/timerfd_test.py --directory build/timerfd-guest
+
+test-timerfd-native:
+	$(PYTHON) -B scripts/timerfd_test.py --native --directory build/timerfd-native
+
 .PHONY: test-random-crypto test-random-crypto-native test-random-crypto-wait test-random-crypto-wait-native
 .PHONY: openssl libxcrypt curl ca-bundle test-password-library-native test-password-library test-random-installed
 .PHONY: test-pty-security test-pty-security-native

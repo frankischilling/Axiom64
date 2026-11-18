@@ -573,8 +573,8 @@ static int prepare(Task& task, IoRequest& request) {
         return 0;
     }
     if (request.positioned) {
-        if (request.handle->pipe || request.handle->event || request.handle->socket ||
-            inet_stream(request.handle->inet) ||
+        if (request.handle->pipe || request.handle->event || request.handle->timer ||
+            request.handle->socket || inet_stream(request.handle->inet) ||
             (request.handle->node && (request.handle->node->mode & 0170000) == character))
             return -29;
         if (int64_t(f.r10) < 0)
@@ -1314,7 +1314,10 @@ static int64_t stream_attempt(Task& task, IoRequest& request) {
     return request.progress;
 }
 
-static int64_t eventfd_attempt(Task& task, IoRequest& request) {
+static int64_t counter_attempt(Task& task, IoRequest& request) {
+    bool timer = request.handle->timer != nullptr;
+    if (timer && request.write)
+        return -22;
     size_t total = 0;
     for (size_t i = 0; i < request.count; i++) {
         const auto& vector = request.vectors[i];
@@ -1332,7 +1335,7 @@ static int64_t eventfd_attempt(Task& task, IoRequest& request) {
         int64_t result = read_handle(request.handle, &value, sizeof(value));
         if (result < 0)
             return result == -11 && request.stream_blocking ? would_block : result;
-        // Linux consumes the counter before copying, including a late readv fault.
+        // Both counters are consumed before copying. Timerfd returns any copied prefix.
         size_t copied = 0;
         for (size_t i = 0; i < request.count && copied < sizeof(value); i++) {
             const auto& vector = request.vectors[i];
@@ -1343,7 +1346,7 @@ static int64_t eventfd_attempt(Task& task, IoRequest& request) {
                 size_t count = min(length - offset, size_t(page_size - address % page_size));
                 if (!task.memory->space.copy_out(
                         address, reinterpret_cast<uint8_t*>(&value) + copied, count))
-                    return -14;
+                    return timer && copied ? int64_t(copied) : -14;
                 copied += count;
                 offset += count;
             }
@@ -1396,8 +1399,8 @@ static int64_t attempt(Task& task, IoRequest& request) {
             queue_signal(&task, 13, task.process->pid);
         return -error;
     }
-    if (h->event && !request.locking)
-        return eventfd_attempt(task, request);
+    if ((h->event || h->timer) && !request.locking)
+        return counter_attempt(task, request);
     if (request.connect) {
         net_poll();
         if (!request.started) {
@@ -1604,7 +1607,7 @@ int64_t io_syscall(Task& task, const Frame& frame) {
     if (!error) {
         request->inet_generation = tcp_generation(h->inet);
         // Linux captures O_NONBLOCK for this call; an alias cannot alter a retained cursor.
-        request->stream_blocking = (inet_stream(h->inet) || h->event || h->socket) &&
+        request->stream_blocking = (inet_stream(h->inet) || h->event || h->timer || h->socket) &&
                                    !(h->flags & 04000) && !(request->flags & 0x40);
         capture_timeout(*request);
     }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ipc/ipc.hpp"
+#include "ipc/timerfd.hpp"
 #include "socket_registry.hpp"
 #include "fs/descriptor.hpp"
 #include "io/socket_timeout.hpp"
@@ -316,6 +317,16 @@ uint32_t readiness(Handle* h) {
     return events;
 }
 
+static void epoll_timer_event(EpollItem& item, uint32_t ready) {
+    if (auto timer = item.handle->timer) {
+        uint64_t notification = timerfd_notification(*timer);
+        if (notification != item.timer_notification) {
+            item.pending |= ready & 1;
+            item.timer_notification = notification;
+        }
+    }
+}
+
 static int epoll_events(Task& task, Epoll* poll, uint64_t output, unsigned count, bool copy) {
     unsigned ready = 0;
     for (auto& item : poll->items) {
@@ -324,6 +335,7 @@ static int epoll_events(Task& task, Epoll* poll, uint64_t output, unsigned count
             item.handle->generation != item.generation)
             continue;
         uint32_t ready_now = readiness(item.handle) & (item.event.events | 8 | 16);
+        epoll_timer_event(item, ready_now);
         // A queued edge can become stale before this waiter gets to consume it.
         item.pending &= ready_now;
         uint32_t mask = (item.event.events & (1u << 31)) ? item.pending : ready_now;
@@ -351,7 +363,10 @@ void epoll_notify(Handle* source, uint32_t events) {
                 if (item.used && item.enabled && item.handle->references &&
                     item.handle->generation == item.generation) {
                     uint32_t ready = readiness(item.handle) & (item.event.events | 8 | 16);
-                    item.pending |= ready & ~item.last_ready;
+                    if (item.handle->timer)
+                        epoll_timer_event(item, ready);
+                    else
+                        item.pending |= ready & ~item.last_ready;
                     if (item.handle == source)
                         item.pending |= ready & events;
                     item.last_ready = ready;
@@ -748,7 +763,7 @@ int64_t ipc_syscall(Frame* f) {
                 }
         if (!item)
             return -28;
-        *item = {target, target->generation, int(c), event, true, true, 0, 0};
+        *item = {target, target->generation, int(c), event, true, true, 0, 0, 0};
         epoll_notify();
         return 0;
     }

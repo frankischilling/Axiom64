@@ -8,6 +8,7 @@
 #include "ipc/ipc.hpp"
 #include "ipc/unix_rights.hpp"
 #include "ipc/eventfd.hpp"
+#include "ipc/timerfd.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
 #include "net/inet6.hpp"
@@ -957,6 +958,10 @@ void close_handle(Handle* h) {
         close_eventfd(h->event);
         h->event = nullptr;
     }
+    if (h->timer) {
+        close_timerfd(h->timer);
+        h->timer = nullptr;
+    }
     if (h->pipe) {
         auto p = h->pipe;
         if (h->writer)
@@ -989,6 +994,8 @@ bool handle_ready(Handle* h, bool write) {
         return true;
     if (h->event)
         return eventfd_ready(h->event, write);
+    if (h->timer)
+        return !write && timerfd_ready(*h->timer);
     if (h->pipe)
         return write ? h->pipe->size < sizeof(Pipe::bytes) || !h->pipe->readers
                      : h->pipe->size || !h->pipe->writers;
@@ -1029,6 +1036,8 @@ int64_t read_handle(Handle* h, void* buf, size_t len) {
             epoll_notify(h, 4);
         return result;
     }
+    if (h->timer)
+        return timerfd_read(*h->timer, buf, len);
     if (!len)
         return h->node && h->node->device == Device::random ? device_read(h, buf, 0) : 0;
     if (h->socket)
@@ -1096,6 +1105,8 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
             epoll_notify(h, 1);
         return result;
     }
+    if (h->timer)
+        return -22;
     if (!len)
         return 0;
     if (h->socket)

@@ -1053,7 +1053,7 @@ bool handle_ready(Handle* h, bool write, const Task* task) {
     if (h->netlink)
         return netlink_ready(h->netlink, write);
     if (h->epoll)
-        return true;
+        return !write && (readiness(h, task) & 1);
     if (h->event)
         return eventfd_ready(h->event, write);
     if (h->timer)

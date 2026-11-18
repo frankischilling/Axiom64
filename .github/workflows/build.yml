@@ -1163,6 +1163,8 @@ jobs:
         run: |
           sudo -n make test-epoll-lifetime-native
           make test-epoll-lifetime
+          sudo -n make test-epoll-nested-native
+          make test-epoll-nested
       - name: Compare named pipe behavior across processes and ext2 boots
         if: matrix.suite == 'boot'
         run: |
@@ -1826,6 +1828,8 @@ jobs:
             build/named-pipes-guest/**
             build/epoll-lifetime-native/**
             build/epoll-lifetime-guest/**
+            build/epoll-nested-native/**
+            build/epoll-nested-guest/**
             build/unix-stream-native/**
             build/unix-shutdown-native/**
             build/unix-stream-wait-native/**

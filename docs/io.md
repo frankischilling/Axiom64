@@ -123,6 +123,20 @@ masks, and event copy faults. It runs both caller identities and both musl
 providers and linkages on BIOS and UEFI, with additional read-only ext2 boots.
 `sudo make test-epoll-lifetime-native` runs the Linux comparison.
 
+## Nested epoll
+
+Poll, select, and an outer epoll instance report an epoll descriptor as
+readable when it has an event to deliver. A watch can span up to four links
+between epoll instances. Adding a cycle or a fifth link returns `ELOOP`.
+An `EPOLLEXCLUSIVE` watch on an epoll descriptor returns `EINVAL`.
+Successive waits that return only part of the ready set rotate through it.
+
+`make test-epoll-nested` checks readiness, descriptor aliases, nesting limits,
+timer and signal wakeups, and rotation through ready events in the same guest
+profiles as the lifetime tests. `sudo make test-epoll-nested-native` checks the
+same behavior on Linux. The native comparison records the depth policy and
+accounts for the tested Linux 5.15 WSL kernel accepting deeper empty chains.
+
 ## Named pipes
 
 `mkfifo` and `mkfifoat` create a FIFO with the caller's ownership and umask.

@@ -256,12 +256,18 @@ int64_t socket_accept(Task& task, Handle* h, uint64_t address, uint64_t length, 
     return fd;
 }
 
+static bool epoll_readable(Epoll&, const Task*);
+static void epoll_refresh(Epoll&, Handle*, uint32_t, uint64_t&);
+static constexpr uint32_t epoll_read_mask = 1 | 0x40; // POLLIN | POLLRDNORM
+
 uint32_t readiness(Handle* h, const Task* task) {
     if (!h)
         return 32;
     // select uses the default mask for a path description; poll rejects it.
     if (h->flags & 010000000)
         return 1 | 4;
+    if (h->epoll)
+        return epoll_readable(*h->epoll, task) ? epoll_read_mask : 0;
     uint32_t events = 0;
     if (auto pipe = h->pipe) {
         unsigned mode = h->flags & 3;
@@ -334,42 +340,81 @@ uint32_t readiness(Handle* h, const Task* task) {
     return events;
 }
 
-static void epoll_timer_event(EpollItem& item, uint32_t ready) {
-    if (auto timer = item.handle->timer) {
-        uint64_t notification = timerfd_notification(*timer);
-        if (notification != item.timer_notification) {
-            item.pending |= ready & 1;
-            item.timer_notification = notification;
-        }
+static bool epoll_item_live(const EpollItem& item) {
+    return item.used && item.handle->references && item.handle->generation == item.generation;
+}
+
+struct EpollScan {
+    const Task* task;
+    uint64_t scanned = 0;
+    uint64_t readable = 0;
+};
+
+static bool epoll_readable(Epoll&, EpollScan&);
+
+static uint32_t epoll_item_events(EpollItem& item, EpollScan& scan) {
+    if (!item.enabled || !epoll_item_live(item))
+        return 0;
+    auto child = item.handle->epoll;
+    bool requires_notification =
+        child || item.signal_wait_queue || (item.event.events & (1u << 31));
+    if (requires_notification && !item.pending)
+        return 0;
+    uint32_t ready;
+    if (child)
+        ready = epoll_readable(*child, scan) ? epoll_read_mask : 0;
+    else
+        ready = readiness(item.handle, scan.task);
+    ready &= item.event.events | 8 | 16;
+    item.pending &= ready;
+    // A signal watch is notified through the registering task's signal handlers.
+    if (item.signal_wait_queue)
+        return item.pending;
+    if (requires_notification && !item.pending)
+        return 0;
+    return ready;
+}
+
+static bool epoll_readable(Epoll& epoll, EpollScan& scan) {
+    const uint64_t bit = 1ull << epoll.index;
+    if (!(scan.scanned & bit)) {
+        scan.scanned |= bit;
+        for (auto& item : epoll.items)
+            if (epoll_item_events(item, scan)) {
+                scan.readable |= bit;
+                break;
+            }
     }
+    return scan.readable & bit;
+}
+
+static bool epoll_readable(Epoll& epoll, const Task* task) {
+    uint64_t visited = 0;
+    epoll_refresh(epoll, nullptr, 0, visited);
+    EpollScan scan{task};
+    return epoll_readable(epoll, scan);
 }
 
 static int epoll_events(Task& task, Epoll* poll, uint64_t output, unsigned count) {
-    unsigned ready = 0;
-    for (auto& item : poll->items) {
-        if (!item.used || !item.enabled || !item.handle->references ||
-            item.handle->generation != item.generation)
-            continue;
+    uint64_t visited = 0;
+    epoll_refresh(*poll, nullptr, 0, visited);
+    unsigned ready = 0, start = poll->cursor;
+    EpollScan scan{&task};
+    for (unsigned offset = 0; offset < max_fds; offset++) {
+        unsigned index = (start + offset) % max_fds;
+        auto& item = poll->items[index];
         // The fd is part of the registration key. Delivery follows the live description.
-        uint32_t ready_now = readiness(item.handle, &task) & (item.event.events | 8 | 16);
-        epoll_timer_event(item, ready_now);
-        // A queued edge can become stale before this waiter gets to consume it.
-        item.pending &= ready_now;
-        // A signal descriptor waits on the registering task's signal handlers.
-        // A ready signal in a different process does not queue an epoll event.
-        bool edge_triggered = item.event.events & (1u << 31);
-        uint32_t mask = item.signal_wait_queue            ? item.pending
-                        : edge_triggered && !item.pending ? 0
-                                                          : ready_now;
+        uint32_t mask = epoll_item_events(item, scan);
         if (!mask)
             continue;
         EpollEvent event{mask, item.event.data};
         if (!task.memory->space.copy_out(output + ready * sizeof(event), &event, sizeof(event)))
             return ready ? int(ready) : -14;
-        if (edge_triggered)
+        if (item.event.events & (1u << 31))
             item.pending = 0;
         if (item.event.events & (1u << 30))
             item.enabled = false;
+        poll->cursor = (index + 1) % max_fds;
         if (++ready == count)
             break;
     }
@@ -419,34 +464,113 @@ void epoll_stop_wait(Task& task) {
     epoll_discard_wait(task);
 }
 
+static void epoll_refresh(Epoll& epoll, Handle* source, uint32_t events, uint64_t& visited) {
+    uint64_t bit = 1ull << epoll.index;
+    if (visited & bit)
+        return;
+    visited |= bit;
+    bool notified = false;
+    for (auto& item : epoll.items) {
+        if (!item.enabled || item.signal_wait_queue || !epoll_item_live(item))
+            continue;
+        uint32_t pending = 0;
+        auto target = item.handle;
+        if (auto child = target->epoll) {
+            epoll_refresh(*child, source, events, visited);
+            if (item.observed_notification != child->notification) {
+                item.observed_notification = child->notification;
+                // Nested wakeups are keyed to POLLIN, even when a poll
+                // samples both POLLIN and POLLRDNORM.
+                pending = item.event.events & 1;
+            }
+        } else {
+            uint32_t ready = readiness(target, nullptr) & (item.event.events | 8 | 16);
+            if (auto timer = target->timer) {
+                auto notification = timerfd_notification(*timer);
+                if (notification != item.observed_notification) {
+                    item.observed_notification = notification;
+                    pending = ready & 1;
+                }
+            } else
+                pending = ready & ~item.last_ready;
+            if (target == source || (source && source->pipe && target->pipe == source->pipe))
+                pending |= ready & events;
+            item.last_ready = ready;
+        }
+        item.pending |= pending;
+        notified |= pending != 0;
+    }
+    if (notified)
+        ++epoll.notification;
+}
+
 void epoll_notify(Handle* source, uint32_t events) {
+    uint64_t visited = 0;
     for (auto poll : epolls)
         if (poll)
-            for (auto& item : poll->items)
-                if (item.used && item.enabled && !item.signal_wait_queue &&
-                    item.handle->references && item.handle->generation == item.generation) {
-                    uint32_t ready = readiness(item.handle, nullptr) & (item.event.events | 8 | 16);
-                    if (item.handle->timer)
-                        epoll_timer_event(item, ready);
-                    else
-                        item.pending |= ready & ~item.last_ready;
-                    if (item.handle == source ||
-                        (source && source->pipe && item.handle->pipe == source->pipe))
-                        item.pending |= ready & events;
-                    item.last_ready = ready;
-                }
+            epoll_refresh(*poll, source, events, visited);
 }
 
 void epoll_signal_notify(const SignalHandlers& handlers) {
     if (!handlers.descriptor_wait_queue)
         return;
+    for (auto poll : epolls) {
+        if (!poll)
+            continue;
+        bool notified = false;
+        for (auto& item : poll->items)
+            if (item.enabled && item.signal_wait_queue == handlers.descriptor_wait_queue &&
+                epoll_item_live(item)) {
+                uint32_t pending = item.event.events & 1;
+                item.pending |= pending;
+                notified |= pending != 0;
+            }
+        if (notified)
+            ++poll->notification;
+    }
+}
+
+static constexpr unsigned epoll_max_links = 4;
+
+// The installed graph is acyclic. Compute the longest path from a vertex and
+// reject any descendant that would close a cycle through the proposed parent.
+static unsigned epoll_depth(const uint64_t* graph, unsigned node, unsigned forbidden,
+                            uint8_t (&depth)[64]) {
+    if (node == forbidden)
+        return epoll_max_links + 1;
+    if (depth[node] != UINT8_MAX)
+        return depth[node];
+    unsigned longest = 0;
+    for (auto children = graph[node]; children; children &= children - 1) {
+        unsigned next = __builtin_ctzll(children);
+        unsigned child = epoll_depth(graph, next, forbidden, depth);
+        if (child >= epoll_max_links) {
+            longest = epoll_max_links + 1;
+            break;
+        }
+        if (child + 1 > longest)
+            longest = child + 1;
+    }
+    depth[node] = longest;
+    return longest;
+}
+
+static bool epoll_can_nest(const Epoll& parent, const Epoll& child) {
+    uint64_t children[64]{}, parents[64]{};
     for (auto poll : epolls)
         if (poll)
             for (auto& item : poll->items)
-                if (item.used && item.enabled &&
-                    item.signal_wait_queue == handlers.descriptor_wait_queue &&
-                    item.handle->references && item.handle->generation == item.generation)
-                    item.pending |= item.event.events & 1;
+                if (epoll_item_live(item) && item.handle->epoll) {
+                    unsigned index = item.handle->epoll->index;
+                    children[poll->index] |= 1ull << index;
+                    parents[index] |= 1ull << poll->index;
+                }
+    uint8_t down[64], up[64];
+    memset(down, UINT8_MAX, sizeof(down));
+    memset(up, UINT8_MAX, sizeof(up));
+    unsigned descendants = epoll_depth(children, child.index, parent.index, down);
+    unsigned ancestors = epoll_depth(parents, parent.index, child.index, up);
+    return ancestors + 1 + descendants <= epoll_max_links;
 }
 
 void epoll_close(Epoll* poll) {
@@ -783,6 +907,7 @@ int64_t ipc_syscall(Frame* f) {
         bool registered = false;
         for (auto& entry : epolls)
             if (!entry) {
+                poll->index = unsigned(&entry - epolls);
                 entry = poll;
                 registered = true;
                 break;
@@ -828,25 +953,33 @@ int64_t ipc_syscall(Frame* f) {
         EpollEvent event;
         if (!current->memory->space.copy_in(&event, d, sizeof(event)))
             return -14;
+        if (target->epoll && (event.events & (1u << 28)))
+            return -22;
+        if (b == 1 && target->epoll && !epoll_can_nest(*h->epoll, *target->epoll))
+            return -40;
         if (!item)
             for (auto& candidate : h->epoll->items)
-                if (!candidate.used || !candidate.handle->references ||
-                    candidate.handle->generation != candidate.generation) {
+                if (!epoll_item_live(candidate)) {
                     item = &candidate;
                     break;
                 }
         if (!item)
             return -28;
         uint64_t wait_queue = 0;
-        uint32_t pending = 0;
         if (target->signal_descriptor) {
             auto& handler_queue = current->handlers->descriptor_wait_queue;
             if (b == 1 && !handler_queue)
                 handler_queue = next_signal_wait_queue++;
             wait_queue = b == 1 ? handler_queue : item->signal_wait_queue;
-            pending = readiness(target, current) & event.events & 1;
         }
-        *item = {target, target->generation, int(c), event, true, true, 0, pending, 0, wait_queue};
+        uint32_t ready = readiness(target, current) & (event.events | 8 | 16);
+        uint64_t notification = target->epoll   ? target->epoll->notification
+                                : target->timer ? timerfd_notification(*target->timer)
+                                                : 0;
+        *item = {target, target->generation, int(c),    event, true, true, ready,
+                 ready,  notification,       wait_queue};
+        if (ready)
+            ++h->epoll->notification;
         epoll_notify();
         return 0;
     }

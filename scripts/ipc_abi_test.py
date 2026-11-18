@@ -33,6 +33,8 @@ WORKLOADS = {
                                       'permissions')),
     'posix-message-queues': ('POSIX_MQ', ('priority-names', 'blocking', 'notifications',
                                            'permissions-limits')),
+    'epoll-nested': ('EPOLL_NESTED', ('readiness-and-aliases', 'depth-and-cycles',
+                                     'shared-descendant', 'timer-and-signal', 'round-robin')),
     'epoll-lifetime': ('EPOLL_LIFETIME', ('retained-alias', 'same-number-different-descriptions',
                                          'fork-and-final-close', 'exec-cloexec-alias',
                                          'rights-in-flight', 'blocked-instance-reuse',
@@ -116,9 +118,15 @@ def native(directory, workload):
                 namespace = ['unshare', '--ipc', '--mount', '--', '/bin/sh', '-ec',
                              'mount -t mqueue mqueue /dev/mqueue; exec "$@"',
                              'axiom-posix-message-queues']
+            legacy_depth = (workload == 'epoll-nested' and
+                            os.uname().release == '5.15.153.1-microsoft-standard-WSL2')
             for uid, flags in ((0, []), (65534, ['--ordinary'])):
+                if legacy_depth:
+                    flags = ['--legacy-depth', *flags]
                 row = execute([*namespace, str(executable), *flags],
                               case / f'{uid}.log', 0, [uid], workload)
+                if workload == 'epoll-nested':
+                    row['depth_policy'] = 'legacy-empty-chain' if legacy_depth else 'four-links'
                 rows.append(dict(linkage=linkage, kernel=os.uname().release,
                                  program_sha256=program_hash, **row))
                 print(f'{prefix}_NATIVE_PASS {linkage} uid={uid}', flush=True)
@@ -279,7 +287,7 @@ def guest(directory, workload, client):
                              image_sha256=digest(image), **row))
             print(f'{prefix}_GUEST_PASS {provider}/{linkage}/{firmware}', flush=True)
         if (provider, linkage) == ('build', 'static') and (
-                workload.startswith('posix-') or workload in ('named-pipes', 'epoll-lifetime')):
+                workload.startswith('posix-') or workload in ('named-pipes', 'epoll-lifetime', 'epoll-nested')):
             image, disk = ext2_fixture(case, kernel, payload, script, workload)
             fingerprint = disk_digest(disk)
             for firmware in ('bios', 'uefi'):

@@ -55,11 +55,13 @@ struct EpollItem {
     EpollEvent event;
     bool used, enabled;
     uint32_t last_ready, pending;
-    uint64_t timer_notification;
+    uint64_t observed_notification;
     uint64_t signal_wait_queue;
 };
 
 struct Epoll {
+    unsigned index, cursor;
+    uint64_t notification;
     EpollItem items[max_fds];
 };
 

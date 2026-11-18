@@ -85,7 +85,7 @@ def bootstrap(destination):
             output.write(bytes(-output.tell() % 4))
 
 
-def build(profile='full', verify_reproducible=False, source=None):
+def build(profile='full', verify_reproducible=False, source=None, destination=None):
     source = source or ROOT / 'build' / ('rootfs.cpio' if profile == 'full' else 'rootfs-desktop.cpio')
     entries = archive_entries(source)
     for name in ['dev', 'proc', 'run', 'sys', 'tmp']:
@@ -95,7 +95,8 @@ def build(profile='full', verify_reproducible=False, source=None):
     length = sum(len(data) for mode, data in entries.values() if stat.S_ISREG(mode))
     unit = 64 * 1024 * 1024
     capacity = max(256 * 1024 * 1024, ((length * 2 + unit + unit - 1) // unit) * unit)
-    destination = ROOT / 'build' / ('root-disk.raw' if profile == 'full' else 'root-disk-desktop.raw')
+    if destination is None:
+        destination = ROOT / 'build' / ('root-disk.raw' if profile == 'full' else 'root-disk-desktop.raw')
     environment = dict(os.environ, E2FSPROGS_FAKE_TIME='1700000000')
     def populate_image(destination):
         with tempfile.TemporaryDirectory(prefix='axiom64-disk-root-') as temporary:

@@ -140,6 +140,22 @@ permissions, and executable attachments as root and UID 65534 on BIOS and
 UEFI with both musl providers and linkages. The matching Linux comparison runs
 with `sudo make test-system-v-shared-memory-native`.
 
+## POSIX semaphores
+
+The kernel mounts a volatile, root-owned `/dev/shm` on both RAM and ext2
+roots. Its sticky permissions let ordinary users create named semaphores
+and protect other owners' names from removal. Programs use the libc
+`sem_open` and `sem_unlink` interfaces. Unlinking removes the name while
+existing mappings remain usable. Process-shared unnamed semaphores use
+shared mappings and futexes.
+
+`make test-posix-semaphores` checks expiration, signals, fork and exec,
+exclusive creation, and name permissions. It runs as root and UID 65534
+with both musl providers and linkages on BIOS and UEFI RAM boots. It also
+runs the build-provider static client from a read-only ext2 root on both
+firmware types. `sudo make test-posix-semaphores-native` compares the same
+workload on Linux with a private `/dev/shm` mount.
+
 ## Remaining work
 
 The limit is one CPU, 64 task slots, and 128 descriptors per file table. FPU switching uses FXSAVE/FXRSTOR for x87/SSE state, without extended XSAVE state. Caught signals currently return `EINTR` from futex waits even with `SA_RESTART`.

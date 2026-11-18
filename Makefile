@@ -25,23 +25,30 @@ build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-o
 .PHONY: test-system-v-semaphores test-system-v-semaphores-native
 .PHONY: test-system-v-message-queues test-system-v-message-queues-native
 .PHONY: test-system-v-shared-memory test-system-v-shared-memory-native
+.PHONY: test-posix-semaphores test-posix-semaphores-native
 test-system-v-semaphores:
-	$(PYTHON) -B scripts/system_v_ipc_test.py semaphores --directory build/system-v-semaphores-guest
+	$(PYTHON) -B scripts/ipc_abi_test.py sysv-semaphores --directory build/system-v-semaphores-guest
 
 test-system-v-semaphores-native:
-	$(PYTHON) -B scripts/system_v_ipc_test.py semaphores --native --directory build/system-v-semaphores-native
+	$(PYTHON) -B scripts/ipc_abi_test.py sysv-semaphores --native --directory build/system-v-semaphores-native
 
 test-system-v-message-queues:
-	$(PYTHON) -B scripts/system_v_ipc_test.py message-queues --directory build/system-v-message-queues-guest
+	$(PYTHON) -B scripts/ipc_abi_test.py sysv-message-queues --directory build/system-v-message-queues-guest
 
 test-system-v-message-queues-native:
-	$(PYTHON) -B scripts/system_v_ipc_test.py message-queues --native --directory build/system-v-message-queues-native
+	$(PYTHON) -B scripts/ipc_abi_test.py sysv-message-queues --native --directory build/system-v-message-queues-native
 
 test-system-v-shared-memory:
-	$(PYTHON) -B scripts/system_v_ipc_test.py shared-memory --directory build/system-v-shared-memory-guest
+	$(PYTHON) -B scripts/ipc_abi_test.py sysv-shared-memory --directory build/system-v-shared-memory-guest
 
 test-system-v-shared-memory-native:
-	$(PYTHON) -B scripts/system_v_ipc_test.py shared-memory --native --directory build/system-v-shared-memory-native
+	$(PYTHON) -B scripts/ipc_abi_test.py sysv-shared-memory --native --directory build/system-v-shared-memory-native
+
+test-posix-semaphores:
+	$(PYTHON) -B scripts/ipc_abi_test.py posix-semaphores --directory build/posix-semaphores-guest
+
+test-posix-semaphores-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py posix-semaphores --native --directory build/posix-semaphores-native
 
 test-signalfd:
 	$(PYTHON) -B scripts/timerfd_test.py --descriptor signalfd --directory build/signalfd-guest

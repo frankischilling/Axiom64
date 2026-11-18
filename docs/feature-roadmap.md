@@ -378,6 +378,8 @@ timed waits, permissions, set removal, and cross-process undo.
 type selection, blocking sends and receives, removal, and permissions.
 [System V shared-memory tests](threads.md#system-v-shared-memory) cover
 fragmented attachments, fixed replacements, fork and exec, removal, and permissions.
+[POSIX semaphore tests](threads.md#posix-semaphores) cover named and unnamed
+semaphores, concurrent creation, timeouts, permissions, and unlink lifetime.
 
 Required work:
 

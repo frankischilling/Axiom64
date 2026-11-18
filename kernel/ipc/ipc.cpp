@@ -22,6 +22,11 @@ static EpollItem* exclusive_first;
 static EpollItem* exclusive_last;
 static uint64_t next_signal_wait_queue = 1;
 
+static constexpr uint32_t read_events = 1 | 0x40;   // POLLIN | POLLRDNORM
+static constexpr uint32_t write_events = 4 | 0x100; // POLLOUT | POLLWRNORM
+static constexpr uint32_t stream_peer_close = read_events | write_events | 16 | 0x2000;
+static void epoll_notify_source(const void*, uint32_t);
+
 bool socket_node_busy(Node* node) {
     for (auto& socket : sockets)
         if (socket.used && file_node(socket.bound_node) == node)
@@ -74,9 +79,10 @@ void socket_close(Socket* s) {
                 other.peer = nullptr;
                 other.peer_closed = true;
             }
-    } else if (s->peer) {
-        s->peer->peer = nullptr;
-        s->peer->peer_closed = true;
+    } else if (auto peer = s->peer) {
+        peer->peer = nullptr;
+        peer->peer_closed = true;
+        descriptor_wait_notify(peer, stream_peer_close);
     }
     while (s->queue_size) {
         Socket* queued = s->queue[s->queue_head];
@@ -110,6 +116,20 @@ bool socket_ready(Socket* s, bool write) {
                s->peer->stream.size() < UnixStreamQueue::capacity;
     return s->stream.size() || s->peer_closed || s->read_closed ||
            (s->peer && s->peer->write_closed);
+}
+
+void Socket::publish_stream(UnixStreamRecord* record, size_t length,
+                            const UnixMessageCredentials& credentials, UnixRights*& rights,
+                            UnixAddressName* sender) {
+    stream.accept(record, length, credentials, rights, this, sender);
+    epoll_notify_source(this, read_events);
+}
+
+void Socket::consume_stream(size_t length, UnixRights*& rights) {
+    bool full = stream.size() == UnixStreamQueue::capacity;
+    stream.consume(length, rights);
+    if (full && peer)
+        epoll_notify_source(peer, write_events);
 }
 
 int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_offset) {
@@ -149,7 +169,7 @@ int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_of
         auto next = record->next();
         if (!peek) {
             UnixRights* rights = nullptr;
-            s->stream.consume(count, rights);
+            s->consume_stream(count, rights);
             if (rights)
                 rights->drop();
         }
@@ -200,7 +220,7 @@ int64_t socket_write(Socket* s, const void* data, size_t len, uint32_t datagram_
     if (s->pass_credentials || peer->pass_credentials)
         identity.capture(*current);
     UnixRights* rights = nullptr;
-    peer->stream.accept(record, len, identity, rights, peer, s->local_name);
+    peer->publish_stream(record, len, identity, rights, s->local_name);
     return len;
 }
 
@@ -264,8 +284,7 @@ int64_t socket_accept(Task& task, Handle* h, uint64_t address, uint64_t length, 
 static bool epoll_readable(Epoll&, const Task*);
 static void epoll_refresh(Epoll&, const void*, uint32_t, uint64_t&);
 static void epoll_notify_exclusive(const void*, uint32_t, uint64_t signal_wait_queue = 0);
-static constexpr uint32_t epoll_read_mask = 1 | 0x40; // POLLIN | POLLRDNORM
-static constexpr uint32_t default_poll_mask = epoll_read_mask | 4 | 0x100;
+static constexpr uint32_t default_poll_mask = read_events | write_events;
 static constexpr uint32_t epoll_exclusive = 1u << 28;
 static constexpr uint32_t epoll_exclusive_events =
     epoll_exclusive | (1u << 29) | (1u << 31) | 1 | 4 | 8 | 16;
@@ -277,7 +296,7 @@ uint32_t readiness(Handle* h, const Task* task) {
     if ((h->flags & 010000000) || !handle_has_poll(*h))
         return default_poll_mask;
     if (h->epoll)
-        return epoll_readable(*h->epoll, task) ? epoll_read_mask : 0;
+        return epoll_readable(*h->epoll, task) ? read_events : 0;
     if (h->node && h->node->mount->ops == &procfs_ops)
         return default_poll_mask;
     uint32_t events = 0;
@@ -332,6 +351,10 @@ uint32_t readiness(Handle* h, const Task* task) {
     }
     if (h->socket && h->socket->type == 1) {
         auto socket = h->socket;
+        if (events & 1)
+            events |= read_events;
+        if (events & 4)
+            events |= write_events;
         bool read_closed = socket->read_closed || socket->peer_closed ||
                            (socket->peer && socket->peer->write_closed);
         bool write_closed = socket->write_closed || socket->peer_closed ||
@@ -399,7 +422,7 @@ static uint32_t epoll_item_events(EpollItem& item, EpollScan& scan) {
         return 0;
     uint32_t ready;
     if (child)
-        ready = epoll_readable(*child, scan) ? epoll_read_mask : 0;
+        ready = epoll_readable(*child, scan) ? read_events : 0;
     else
         ready = readiness(item.handle, scan.task);
     ready &= item.event.events | 8 | 16;
@@ -880,7 +903,7 @@ int64_t ipc_syscall(Frame* f) {
         s->connected = true;
         listener->queue[(listener->queue_head + listener->queue_size) % 32] = server;
         listener->queue_size++;
-        epoll_notify_source(listener, 1);
+        epoll_notify_source(listener, read_events);
         return 0;
     }
     case 48:
@@ -892,6 +915,11 @@ int64_t ipc_syscall(Frame* f) {
             s->read_closed = true;
         if (b == 1 || b == 2)
             s->write_closed = true;
+        if (s->type == 1) {
+            epoll_notify_source(s, readiness(h, current));
+            if (auto peer = s->peer; peer && peer->description)
+                epoll_notify_source(peer, readiness(peer->description, current));
+        }
         return 0;
     case 51:
         if (!s)

@@ -151,6 +151,12 @@ from the peer after another thread closes its descriptor. On wakeup,
 `poll` reports `POLLNVAL` if the number is now closed, or reports
 readiness for the description that currently occupies the number.
 
+Unix stream sockets notify waits when data is queued and when a full
+receive queue gains space. This preserves the wakeup even if another
+thread consumes the data or fills the queue before the waiter runs.
+Stream sockets also report the normal read and write bits and peer
+write shutdown through `POLLRDHUP`.
+
 These references are released when the attempt ends, including on
 timeout, interruption, and task exit. `make test-descriptor-wait-lifetime`
 checks all four wait syscalls on pipes and Unix stream sockets, with

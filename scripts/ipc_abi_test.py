@@ -39,7 +39,8 @@ WORKLOADS = {
     'descriptor-wait-lifetime': ('WAIT_LIFETIME', tuple(
         f'{call}-{scenario}' for call in ('poll', 'ppoll', 'select', 'pselect')
         for scenario in ('pipe-close', 'pipe-reuse', 'socket-close', 'interrupt', 'timeout',
-                         'task-exit'))),
+                         'task-exit', 'socket-read-pulse', 'socket-write-pulse')) +
+                         ('socket-poll-masks',)),
     'select-waits': ('SELECT_WAITS', ('argument-order', 'bitmap-capacity', 'readiness-masks',
                                      'deadlines', 'temporary-signal-mask', 'retained-select',
                                      'retained-pselect', 'stopped-select', 'stopped-pselect')),

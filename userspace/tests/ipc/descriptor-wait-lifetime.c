@@ -12,6 +12,7 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
+#include <sys/uio.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -34,6 +35,7 @@ static const char* const names[] = {"poll", "ppoll", "select", "pselect"};
 struct wait_case {
     enum wait_call call;
     int watched, sync;
+    short events;
     int result, error, ready;
     int64_t elapsed;
 };
@@ -46,12 +48,15 @@ static int64_t now(void) {
 
 static void* worker(void* argument) {
     struct wait_case* test = argument;
-    struct pollfd descriptor = {.fd = test->watched, .events = POLLIN, .revents = -1};
+    short events = test->events ? test->events : POLLIN;
+    struct pollfd descriptor = {.fd = test->watched, .events = events, .revents = -1};
     struct timespec nano = {0, 500000000};
     struct timeval micro = {0, 500000};
-    fd_set readable;
-    FD_ZERO(&readable);
-    FD_SET(test->watched, &readable);
+    fd_set active;
+    FD_ZERO(&active);
+    FD_SET(test->watched, &active);
+    fd_set* input = events & POLLOUT ? NULL : &active;
+    fd_set* output = events & POLLOUT ? &active : NULL;
     CHECK(write(test->sync, "R", 1) == 1);
     int64_t start = now();
     switch (test->call) {
@@ -62,16 +67,16 @@ static void* worker(void* argument) {
         test->result = syscall(SYS_ppoll, &descriptor, 1, &nano, NULL, 0);
         break;
     case WAIT_SELECT:
-        test->result = syscall(SYS_select, test->watched + 1, &readable, NULL, NULL, &micro);
+        test->result = syscall(SYS_select, test->watched + 1, input, output, NULL, &micro);
         break;
     case WAIT_PSELECT:
-        test->result = syscall(SYS_pselect6, test->watched + 1, &readable, NULL, NULL, &nano, NULL);
+        test->result = syscall(SYS_pselect6, test->watched + 1, input, output, NULL, &nano, NULL);
         break;
     }
     test->error = test->result < 0 ? errno : 0;
     test->elapsed = now() - start;
     test->ready =
-        test->call < WAIT_SELECT ? descriptor.revents : !!FD_ISSET(test->watched, &readable);
+        test->call < WAIT_SELECT ? descriptor.revents : !!FD_ISSET(test->watched, &active);
     CHECK(write(test->sync, "D", 1) == 1);
     return NULL;
 }
@@ -143,6 +148,116 @@ static void watch_description(enum wait_call call, int use_socket, int reuse, en
     printf("WAIT_LIFETIME_CASE %s-%s\n", names[call], scenario);
 }
 
+static void stream_read_pulse(enum wait_call call, int sender, int receiver) {
+    char sent = 'O', received = 0;
+    struct iovec input = {.iov_base = &sent, .iov_len = 1};
+    struct iovec output = {.iov_base = &received, .iov_len = 1};
+    struct msghdr send_header = {.msg_iov = &input, .msg_iovlen = 1};
+    struct msghdr recv_header = {.msg_iov = &output, .msg_iovlen = 1};
+    switch (call) {
+    case WAIT_POLL:
+        CHECK(write(sender, &sent, 1) == 1 && read(receiver, &received, 1) == 1);
+        break;
+    case WAIT_PPOLL:
+        CHECK(writev(sender, &input, 1) == 1 && readv(receiver, &output, 1) == 1);
+        break;
+    case WAIT_SELECT:
+        CHECK(sendmsg(sender, &send_header, 0) == 1 && recvmsg(receiver, &recv_header, 0) == 1);
+        break;
+    case WAIT_PSELECT:
+        CHECK(send(sender, &sent, 1, 0) == 1 && recv(receiver, &received, 1, 0) == 1);
+        break;
+    }
+    CHECK(received == sent);
+}
+
+static void fill_stream(int fd) {
+    static const char bytes[4096] = {0};
+    for (int attempt = 0; attempt < 1024; ++attempt) {
+        ssize_t sent = send(fd, bytes, sizeof(bytes), MSG_DONTWAIT);
+        if (sent < 0) {
+            CHECK(errno == EAGAIN);
+            return;
+        }
+        CHECK(sent > 0);
+    }
+    CHECK(0);
+}
+
+static void drain_stream(int fd) {
+    char bytes[4096];
+    for (int attempt = 0; attempt < 1024; ++attempt) {
+        ssize_t read = recv(fd, bytes, sizeof(bytes), MSG_DONTWAIT);
+        if (read < 0) {
+            CHECK(errno == EAGAIN);
+            return;
+        }
+        CHECK(read > 0);
+    }
+    CHECK(0);
+}
+
+static void transient_stream(enum wait_call call, int writable) {
+    int stream[2], control[2], replacement[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, stream) == 0);
+    CHECK(pipe(control) == 0 && pipe(replacement) == 0);
+    short events = writable ? POLLOUT | POLLWRNORM : POLLIN | POLLRDNORM;
+    struct pollfd original = {.fd = stream[0], .events = events};
+    if (writable)
+        fill_stream(stream[0]);
+    else
+        CHECK(write(replacement[1], "N", 1) == 1);
+    CHECK(poll(&original, 1, 0) == 0);
+    int alias = dup(stream[0]);
+    CHECK(alias >= 0);
+    struct wait_case test = {
+        .call = call, .watched = stream[0], .sync = control[1], .events = events};
+    pthread_t thread;
+    CHECK(pthread_create(&thread, NULL, worker, &test) == 0);
+    one_byte(control[0], 'R');
+    struct pollfd ack = {.fd = control[0], .events = POLLIN};
+    CHECK(poll(&ack, 1, 65) == 0);
+    CHECK(dup2(replacement[writable], stream[0]) == stream[0]);
+    CHECK(poll(&ack, 1, 65) == 0);
+
+    if (writable) {
+        char peek;
+        CHECK(recv(stream[1], &peek, 1, MSG_PEEK) == 1);
+        CHECK(poll(&ack, 1, 65) == 0);
+        drain_stream(stream[1]);
+        fill_stream(alias);
+    } else {
+        stream_read_pulse(call, stream[1], alias);
+    }
+    // Both original directions are again unready. Only their wakeup can
+    // reveal the replacement before the worker's 500 ms deadline.
+    CHECK(poll(&ack, 1, 120) == 1);
+    one_byte(control[0], 'D');
+    CHECK(pthread_join(thread, NULL) == 0);
+    CHECK(test.result == 1 && test.error == 0 && test.ready == (call >= WAIT_SELECT ? 1 : events));
+    if (!writable)
+        one_byte(stream[0], 'N');
+    CHECK(close(alias) == 0 && close(stream[0]) == 0 && close(stream[1]) == 0);
+    CHECK(close(control[0]) == 0 && close(control[1]) == 0);
+    CHECK(close(replacement[0]) == 0 && close(replacement[1]) == 0);
+    printf("WAIT_LIFETIME_CASE %s-%s\n", names[call],
+           writable ? "socket-write-pulse" : "socket-read-pulse");
+}
+
+static void socket_poll_masks(void) {
+    int pair[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, pair) == 0);
+    struct pollfd selected = {.fd = pair[0], .events = POLLRDNORM | POLLWRNORM | POLLRDHUP};
+    CHECK(poll(&selected, 1, 0) == 1 && selected.revents == POLLWRNORM);
+    CHECK(write(pair[1], "W", 1) == 1);
+    CHECK(poll(&selected, 1, 0) == 1 && selected.revents == (POLLRDNORM | POLLWRNORM));
+    one_byte(pair[0], 'W');
+    CHECK(shutdown(pair[1], SHUT_WR) == 0);
+    CHECK(poll(&selected, 1, 0) == 1 && selected.revents == (POLLRDNORM | POLLWRNORM | POLLRDHUP));
+    CHECK(close(pair[0]) == 0 && close(pair[1]) == 0);
+    puts("WAIT_LIFETIME_CASE socket-poll-masks");
+}
+
 static void task_exit(enum wait_call call) {
     int watched[2], control[2];
     CHECK(pipe(watched) == 0 && pipe(control) == 0);
@@ -184,7 +299,10 @@ int main(int argc, char** argv) {
         watch_description(call, 0, 1, SIGNAL);
         watch_description(call, 0, 1, TIMEOUT);
         task_exit(call);
+        transient_stream(call, 0);
+        transient_stream(call, 1);
     }
+    socket_poll_masks();
     printf("WAIT_LIFETIME_PASS uid=%lu\n", (unsigned long)getuid());
     return 0;
 }

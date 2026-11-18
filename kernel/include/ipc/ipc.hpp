@@ -33,6 +33,10 @@ struct Socket {
     Handle* description = nullptr;
     Socket* accepting = nullptr;
 
+    void publish_stream(UnixStreamRecord*, size_t, const UnixMessageCredentials&, UnixRights*&,
+                        UnixAddressName* sender);
+    void consume_stream(size_t, UnixRights*&);
+
     Handle* rights_owner() const {
         return description ? description : accepting ? accepting->description : nullptr;
     }

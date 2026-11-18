@@ -866,8 +866,7 @@ static int64_t unix_stream_attempt(Task& task, IoRequest& request) {
             record->drop();
             return -14;
         }
-        receiver->stream.accept(record, length, identity, request.unix_rights, receiver,
-                                socket->local_name);
+        receiver->publish_stream(record, length, identity, request.unix_rights, socket->local_name);
         while (cursor.index < request.count &&
                cursor.offset == request.vectors[cursor.index].length) {
             cursor.index++;
@@ -928,7 +927,7 @@ static int64_t unix_stream_attempt(Task& task, IoRequest& request) {
                 received.view = record->rights();
             else {
                 UnixRights* rights = nullptr;
-                socket->stream.consume(length, rights);
+                socket->consume_stream(length, rights);
                 if (rights) {
                     received.owned = rights;
                     received.view = rights;

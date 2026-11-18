@@ -37,6 +37,9 @@ void release(void* pointer) {
     free(pointer);
 }
 
+void descriptor_wait_notify(const void*, uint32_t) {
+}
+
 void retain(Handle* handle) {
     assert(handle && handle->references);
     handle->references++;

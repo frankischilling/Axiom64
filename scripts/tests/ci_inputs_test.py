@@ -11,6 +11,10 @@ import unittest
 
 HELPER = Path(__file__).resolve().parents[2] / 'scripts/ci/inputs.sh'
 BUSYBOX = 'build/busybox-1.37.0/'
+CA_INPUTS = {
+    'downloads/sources/ca-bundle/certdata.txt': b'pinned Mozilla certificate data',
+    'downloads/sources/ca-bundle/MPL-2.0.txt': b'pinned CA source license',
+}
 CRYPTO_PRODUCTS = {
     'build/curl/build/id/static/stage/usr/bin/curl': b'completed curl',
     'build/curl/build/id/static/build/lib/curl_config.h': b'curl configuration header',
@@ -51,6 +55,7 @@ class InputArchives(unittest.TestCase):
             'build/musl/runtime/id/manifest.json': b'{}\n',
             'build/musl/runtime/id/libc.so': b'prepared libc',
             'downloads/package.tar.gz': b'locked download',
+            **CA_INPUTS,
             **CRYPTO_PRODUCTS,
             'build/rootfs.cpio': b'complete root',
             'build/rootfs-desktop.cpio': b'desktop root',
@@ -65,6 +70,7 @@ class InputArchives(unittest.TestCase):
             '.local/answers.md': b'private decisions',
             'scripts/__pycache__/check.pyc': b'bytecode cache',
             'downloads/sources/project/source.c': b'expanded download',
+            'downloads/sources/ca-bundle/cache.tmp': b'unrelated CA workspace file',
             'build/axiom64-sources.tar': b'already exported sources',
             'build/axiom64.iso': b'already exported image',
             'build/iso-staging/root.cpio': b'duplicate staging',
@@ -115,7 +121,7 @@ class InputArchives(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
         full_members, full = self.read('full')
         rotation_members, rotation = self.read('rotation')
-        removed = {*CRYPTO_PRODUCTS,
+        removed = {*CA_INPUTS, *CRYPTO_PRODUCTS,
                    'build/rootfs.cpio', 'build/rootfs-desktop.cpio', *self.rotation_excluded}
         self.assertEqual(set(full) - set(rotation), removed)
         self.assertFalse(set(rotation) - set(full))
@@ -130,6 +136,22 @@ class InputArchives(unittest.TestCase):
             self.assertIn(name, rotation)
         self.assertEqual(rotation_members['build/musl/runtime/id/loader'].linkname, 'libc.so')
         self.assertEqual(full_members['build/musl/runtime/id/loader'].linkname, 'libc.so')
+
+    def test_full_requires_and_retains_the_pinned_ca_source_and_license(self):
+        self.assertEqual(self.run_helper('full').returncode, 0)
+        members, files = self.read('full')
+        for name, content in CA_INPUTS.items():
+            self.assertEqual(files[name], content)
+            self.assertEqual(members[name].mode, 0o751)
+            self.assertEqual(members[name].mtime, 1577836800)
+        self.assertNotIn('downloads/sources/ca-bundle/cache.tmp', members)
+        (self.output / 'ci-inputs.tar.gz').unlink()
+        missing = next(iter(CA_INPUTS))
+        (self.workspace / missing).unlink()
+        result = self.run_helper('full')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(missing, result.stderr)
+        self.assertFalse(list(self.output.iterdir()))
 
     def test_rotation_omits_completed_controls_and_unrelated_downloads(self):
         self.assertEqual(self.run_helper('rotation').returncode, 0)
@@ -204,7 +226,7 @@ class InputArchives(unittest.TestCase):
             'build/ext2-xattr-codec-extra/result.json', *self.rotation_excluded,
             'build/axiom64.elf', 'build/init', 'build/musl/runtime/id/manifest.json',
             'build/musl/runtime/id/libc.so', 'downloads/package.tar.gz',
-            *CRYPTO_PRODUCTS,
+            *CA_INPUTS, *CRYPTO_PRODUCTS,
             'build/rootfs.cpio', 'build/rootfs-desktop.cpio',
             'build/curl-extra/result.json', 'build/openssl-check/result.json',
             *(BUSYBOX + name for name in ('busybox', '.config', 'LICENSE', '.axiom64-toolchain'))}

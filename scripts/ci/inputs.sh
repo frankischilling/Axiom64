@@ -49,6 +49,16 @@ PY
   excludes+=("--exclude=${paths[0]}" "--exclude=${paths[1]}")
   extra_inputs+=("${paths[2]}")
 else
+  # Isolated download tests recheck these two pinned CA inputs with the
+  # restored bundle. Share the verified bytes from the build.
+  extra_inputs+=(downloads/sources/ca-bundle/certdata.txt
+                 downloads/sources/ca-bundle/MPL-2.0.txt)
+  for input in "${extra_inputs[@]}"; do
+    if [[ ! -f "$input" ]]; then
+      echo "Missing prepared input: $input" >&2
+      exit 1
+    fi
+  done
   # Use the same completed outputs for cold builds and cache restores. Leave
   # the workspace intact for the build's own evidence and failure diagnostics.
   crypto_excludes=$(mktemp "$output/axiom64-crypto-excludes.XXXXXXXX")

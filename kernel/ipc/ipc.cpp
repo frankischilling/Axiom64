@@ -42,8 +42,9 @@ static Socket* allocate_socket(unsigned type = 1) {
                 socket.used = false;
                 return nullptr;
             }
-            if (type == 2 && !(socket.datagram_name = UnixAddressName::create({}))) {
-                socket.datagram_send->close();
+            if (!(socket.local_name = UnixAddressName::create({}))) {
+                if (socket.datagram_send)
+                    socket.datagram_send->close();
                 socket.datagram_send = nullptr;
                 socket.used = false;
                 return nullptr;
@@ -77,12 +78,12 @@ void socket_close(Socket* s) {
     }
     s->stream.clear();
     s->datagrams.clear();
-    if (s->datagram_name)
-        s->datagram_name->drop();
-    s->datagram_name = nullptr;
-    if (s->datagram_peer_name)
-        s->datagram_peer_name->drop();
-    s->datagram_peer_name = nullptr;
+    if (s->local_name)
+        s->local_name->drop();
+    s->local_name = nullptr;
+    if (s->peer_name)
+        s->peer_name->drop();
+    s->peer_name = nullptr;
     if (s->datagram_send)
         s->datagram_send->close();
     s->datagram_send = nullptr;
@@ -155,11 +156,11 @@ int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_of
 int64_t socket_write(Socket* s, const void* data, size_t len, uint32_t datagram_entry_limit) {
     if (s->type == 2) {
         if (s->pass_credentials)
-            if (int error = socket_datagram_autobind(*s))
+            if (int error = socket_unix_autobind(*s))
                 return error;
         int error;
         auto record = UnixDatagramRecord::create(*s->datagram_send, len, error,
-                                                 datagram_entry_limit, s->datagram_name);
+                                                 datagram_entry_limit, s->local_name);
         if (!record)
             return error;
         if (len)
@@ -190,7 +191,7 @@ int64_t socket_write(Socket* s, const void* data, size_t len, uint32_t datagram_
     if (s->pass_credentials || peer->pass_credentials)
         identity.capture(*current);
     UnixRights* rights = nullptr;
-    peer->stream.accept(record, len, identity, rights, peer);
+    peer->stream.accept(record, len, identity, rights, peer, s->local_name);
     return len;
 }
 
@@ -222,47 +223,8 @@ static int install_socket(Task& task, Socket* socket, int flags = 0, int reserve
     return fd;
 }
 
-struct UnixAddress {
-    uint16_t family;
-    uint8_t path[108];
-};
-
-static int address(uint64_t pointer, size_t length, UnixAddress& result, size_t& path_length) {
-    if (length < 2 || length > sizeof(result))
-        return -22;
-    result = {};
-    if (!current->memory->space.copy_in(&result, pointer, length))
-        return -14;
-    if (result.family != 1)
-        return -97;
-    path_length = length - 2;
-    if (!path_length)
-        return -22;
-    if (result.path[0]) {
-        if (path_length == 108 && result.path[107])
-            return -36;
-        result.path[min(path_length, size_t(107))] = 0;
-        path_length = strlen((const char*)result.path) + 1;
-    }
-    return 0;
-}
-
 int socket_output_address(Task& task, Socket* s, uint64_t pointer, uint64_t length_pointer) {
-    if (s->type == 2)
-        return socket_datagram_output_name(task, s->datagram_name, pointer, length_pointer);
-    if (!pointer && !length_pointer)
-        return 0;
-    uint32_t size;
-    if (!task.memory->space.copy_in(&size, length_pointer, 4))
-        return -14;
-    UnixAddress address{};
-    address.family = 1;
-    memcpy(address.path, s->local, s->local_length);
-    uint32_t actual = 2 + s->local_length;
-    if (!task.memory->space.copy_out(pointer, &address, min(size, actual)) ||
-        !task.memory->space.copy_out(length_pointer, &actual, 4))
-        return -14;
-    return 0;
+    return socket_unix_output_name(task, s->local_name, pointer, length_pointer);
 }
 
 int64_t socket_accept(Task& task, Handle* h, uint64_t address, uint64_t length, unsigned flags,
@@ -273,21 +235,20 @@ int64_t socket_accept(Task& task, Handle* h, uint64_t address, uint64_t length, 
     if (!s->queue_size)
         return (h->flags & 04000) ? -11 : s->read_closed ? -22 : would_block;
     auto accepted = s->queue[s->queue_head];
-    if (address) {
-        int error = socket_output_address(task, accepted->peer ? accepted->peer : accepted, address,
-                                          length);
-        if (error)
-            return error;
-    }
-    int fd = install_socket(task, accepted,
+    int fd = address ? socket_unix_output_name(task, accepted->peer_name, address, length) : 0;
+    if (!fd) {
+        fd = install_socket(task, accepted,
                             ((flags & 0x800) ? 04000 : 0) | ((flags & 0x80000) ? 02000000 : 0),
                             reserved);
-    if (fd < 0)
-        return fd;
+        if (fd < 0)
+            return fd;
+    }
     accepted->pending = false;
     accepted->accepting = nullptr;
     s->queue_head = (s->queue_head + 1) % 32;
     s->queue_size--;
+    if (fd < 0)
+        socket_close(accepted);
     return fd;
 }
 
@@ -483,8 +444,8 @@ int64_t ipc_syscall(Frame* f) {
          (f->rax == 42 || f->rax == 48 || f->rax == 49 || f->rax == 50 || f->rax == 51 ||
           f->rax == 52 || f->rax == 54 || f->rax == 55)))
         return netlink_syscall(*current, *f);
-    if (s && s->type == 2 && f->rax == 49)
-        return socket_datagram_bind(*current, *s, b, c);
+    if (s && (s->type == 1 || s->type == 2) && f->rax == 49)
+        return socket_unix_bind(*current, *s, b, c);
     if (s && s->type == 2 && f->rax == 42)
         return socket_datagram_connect(*current, *s, b, uint32_t(c));
     if (s && s->type != 1 && (f->rax == 42 || f->rax == 49 || f->rax == 50))
@@ -517,38 +478,12 @@ int64_t ipc_syscall(Frame* f) {
                                   ((b & 0x800) ? 04000 : 0) | ((b & 0x80000) ? 02000000 : 0))
                  : -12;
     }
-    case 49: {
-        if (!s)
-            return -88;
-        if (s->local_length)
-            return -22;
-        UnixAddress addr;
-        size_t len;
-        int error = address(b, c, addr, len);
-        if (error)
-            return error;
-        for (auto& other : sockets)
-            if (!addr.path[0] && other.used && other.local_length == len &&
-                !memcmp(other.local, addr.path, len))
-                return -98;
-        if (addr.path[0]) {
-            Path path;
-            path.base = current->fs->cwd_node;
-            memcpy(path.text, addr.path, len);
-            if (lookup(path, false))
-                return -98;
-            error = create_node(path, 0140000 | (0777 & ~current->fs->umask), s->bound_node);
-            if (error)
-                return error;
-        }
-        memcpy(s->local, addr.path, len);
-        s->local_length = len;
-        return 0;
-    }
+    case 49:
+        return -88;
     case 50:
         if (!s)
             return -88;
-        if (!s->local_length || s->connected)
+        if (!s->local_name->address().length || s->connected)
             return -22;
         s->listener = true;
         s->credentials = {current->process->pid, current->credentials.user.effective,
@@ -560,27 +495,30 @@ int64_t ipc_syscall(Frame* f) {
             return -88;
         if (s->connected)
             return -106;
-        UnixAddress addr;
-        size_t len;
-        int error = address(b, c, addr, len);
+        UnixAddressValue addr;
+        int error = socket_unix_address(*current, b, uint32_t(c), addr);
         if (error)
             return error;
+        if (s->pass_credentials)
+            if ((error = socket_unix_autobind(*s)))
+                return error;
         Socket* listener = nullptr;
         Node* target = nullptr;
-        if (addr.path[0]) {
+        if (!addr.abstract()) {
             Path path;
             path.base = current->fs->cwd_node;
-            memcpy(path.text, addr.path, len);
+            memcpy(path.text, addr.path, addr.length);
             error = resolve_path(path, target);
             if (error)
                 return error;
             if ((error = node_access(target, 2)))
                 return error;
+            target = file_node(target);
         }
         for (auto& other : sockets)
-            if (other.used && other.listener &&
-                (addr.path[0] ? other.bound_node == target
-                              : other.local_length == len && !memcmp(other.local, addr.path, len)))
+            if (other.used && other.type == 1 && other.listener &&
+                (!addr.abstract() ? file_node(other.bound_node) == target
+                                  : other.local_name->address().same(addr)))
                 listener = &other;
         if (!listener || listener->read_closed)
             return -111;
@@ -597,10 +535,18 @@ int64_t ipc_syscall(Frame* f) {
         server->accepting = listener;
         server->pass_credentials = listener->pass_credentials;
         server->peer = s;
-        server->local_length = listener->local_length;
+        server->peer_generation = s->generation;
+        // The accepted socket keeps the pathname's mount busy after listener close.
         server->bound_node = listener->bound_node;
-        memcpy(server->local, listener->local, listener->local_length);
+        server->local_name->drop();
+        server->local_name = listener->local_name;
+        server->local_name->retain();
+        server->peer_name = s->local_name;
+        server->peer_name->retain();
         s->peer = server;
+        s->peer_generation = server->generation;
+        s->peer_name = server->local_name;
+        s->peer_name->retain();
         s->connected = true;
         listener->queue[(listener->queue_head + listener->queue_size) % 32] = server;
         listener->queue_size++;
@@ -623,14 +569,9 @@ int64_t ipc_syscall(Frame* f) {
     case 52:
         if (!s)
             return -88;
-        if (s->type == 2) {
-            if (!s->connected)
-                return -107;
-            return socket_datagram_output_name(*current, s->datagram_peer_name, b, c);
-        }
-        if (!s->connected || !s->peer)
+        if (!s->connected)
             return -107;
-        return socket_output_address(*current, s->peer, b, c);
+        return socket_unix_output_name(*current, s->peer_name, b, c);
     case 53: {
         if (a != 1 || ((b & 0xf) != 1 && (b & 0xf) != 2) || c || (b & ~uint64_t(0x8080f)))
             return -95;
@@ -646,12 +587,10 @@ int64_t ipc_syscall(Frame* f) {
         right->peer = left;
         left->peer_generation = right->generation;
         right->peer_generation = left->generation;
-        if (left->type == 2) {
-            left->datagram_peer_name = right->datagram_name;
-            right->datagram_peer_name = left->datagram_name;
-            left->datagram_peer_name->retain();
-            right->datagram_peer_name->retain();
-        }
+        left->peer_name = right->local_name;
+        right->peer_name = left->local_name;
+        left->peer_name->retain();
+        right->peer_name->retain();
         left->connected = right->connected = true;
         left->peer_credentials = right->credentials;
         right->peer_credentials = left->credentials;

@@ -75,8 +75,8 @@ static ax::Handle* endpoint() {
             socket.used = true;
             socket.type = 2;
             socket.datagram_send = ax::UnixSendBudget::create();
-            socket.datagram_name = ax::UnixAddressName::create({});
-            assert(socket.datagram_send && socket.datagram_name);
+            socket.local_name = ax::UnixAddressName::create({});
+            assert(socket.datagram_send && socket.local_name);
             auto handle = description();
             handle->socket = &socket;
             socket.description = handle;
@@ -209,7 +209,7 @@ static void stream_interval() {
     assert(record);
     memcpy(record->data(), "ABC", 3);
     auto list = rights(33, file);
-    receiver->socket->stream.accept(record, 3, {}, list, receiver->socket);
+    receiver->socket->stream.accept(record, 3, {}, list, receiver->socket, nullptr);
     assert(!list && receiver->socket->stream.size() == 3 && record->rights());
     ax::close_handle(file);
     ax::UnixRights* received = nullptr;
@@ -244,7 +244,7 @@ static void pending_listener() {
     listener->socket->queue_size = 1;
     auto record = ax::UnixStreamRecord::create(1);
     auto list = rights(34, listener, file);
-    pending->stream.accept(record, 1, {}, list, pending);
+    pending->stream.accept(record, 1, {}, list, pending, nullptr);
     ax::close_handle(file);
     ax::unix_collect_rights();
     assert(file->references == 1 && pending->stream.size() == 1);

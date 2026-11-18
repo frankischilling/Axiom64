@@ -2058,8 +2058,19 @@ close-on-exec and are installed only once.
 `sudo python3 scripts/unix_stream_native.py --client unix_stream_wait` compares
 the same client under all three controlled native identities.
 
-`make test-unix-datagrams` runs all nine public clients as root and UID 65534 with
-both musl providers, both linkages and BIOS/UEFI: 144 actual client executions.
+The stream-name client checks bind error ordering on file, pipe and missing
+descriptors. It also checks filesystem and abstract names, autobind, address
+queries after peer close and listener rebind, address-output faults during
+accept, and subsequent connections to the listener. Its 28 receive cases
+cover payload and name faults, truncation, late bind, descriptor reuse and
+peeking. Four zero-byte cases verify descriptor delivery, truncation, peeking
+and source-name faults without consuming payload bytes.
+`sudo python3 scripts/unix_stream_native.py --client unix_stream_names` runs the
+same test under all three native identities. A separate `getsockname` check
+identifies the native kernel's address-copy ordering before the receive cases.
+
+`make test-unix-datagrams` runs ten public clients as root and UID 65534 across
+both musl providers, both linkages and BIOS/UEFI, for 160 client executions.
 Keep its evidence directory on a case-sensitive filesystem so every pinned SDK
 header retains its original name and bytes. On a Windows-mounted checkout, use
 `python3 scripts/unix_datagram_test.py --directory /var/tmp/axiom-unix-guest`.

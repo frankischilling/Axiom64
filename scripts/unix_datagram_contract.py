@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The public Unix datagram clients and their complete guest result contract."""
+"""The public Unix socket clients and their complete guest result contract."""
 import re
 
 CLIENTS = {'unix_messages': 11, 'unix_names': 6, 'unix_routing': 5,
            'unix_routing_wait': 7, 'unix_credentials': 5, 'unix_rights': 7,
-           'unix_stream': 11, 'unix_shutdown': 4, 'unix_stream_wait': 2}
+           'unix_stream': 11, 'unix_shutdown': 4, 'unix_stream_wait': 2, 'unix_stream_names': 4}
 
 SHUTDOWN_MARKERS = (
     'UNIX_SHUTDOWN_LISTENER_PASS cases=24 names=abstract,path duplicate repeated pending exchange',
@@ -15,6 +15,19 @@ SHUTDOWN_MARKERS = (
 STREAM_WAIT_MARKERS = (
     'UNIX_STREAM_WAIT_SEND_PASS cases=24 scalar vector message replacement captured_flags deadline signal restart peer_shutdown sigpipe exact_bytes rights_once',
     'UNIX_STREAM_WAIT_RECEIVE_PASS cases=22 waitall peek nonblock credentials rights boundary replacement vectors signal restart deadline fault prefix')
+
+STREAM_NAMES_MARKERS = (
+    'UNIX_STREAM_NAMES_BIND_PASS descriptors=5 successful=2',
+    'UNIX_STREAM_NAMES_QUERY_PASS cases=4 filesystem abstract autobind accept_fault',
+    'UNIX_STREAM_NAMES_RECEIVE_PASS cases=28 named unbound late_bind close reuse peek zero negative_capacity source_fault payload_fault',
+    'UNIX_STREAM_NAMES_RIGHTS_PASS cases=4 delivered discarded peek source_fault')
+
+
+def check_stream_name_cases(text, executions):
+    cases = re.findall(r'^UNIX_STREAM_NAMES_CASE form=(\d+) case=(\d+) ', text, re.M)
+    expected = [(str(form), str(case)) for form in range(2) for case in range(14)]
+    if cases != expected * executions:
+        raise ValueError('incomplete or repeated Unix stream receive-name cases')
 
 
 def boot_body():
@@ -49,7 +62,8 @@ def check_log(text, firmware, returncode):
         prefix = f'UNIX_RIGHTS_CHAIN_PASS endpoints={endpoints} limit=128 '
         if sum(line.startswith(prefix) for line in lines) != 1:
             raise ValueError('missing privileged or limit-bounded ordinary chain release')
-    for marker in SHUTDOWN_MARKERS + STREAM_WAIT_MARKERS:
+    for marker in SHUTDOWN_MARKERS + STREAM_WAIT_MARKERS + STREAM_NAMES_MARKERS:
         if lines.count(marker) != 2:
-            raise ValueError('missing or repeated shutdown case inventory: ' + marker)
+            raise ValueError('missing or repeated Unix stream case inventory: ' + marker)
+    check_stream_name_cases(text, 2)
     return invocations

@@ -3,16 +3,16 @@
 #include "core/random.hpp"
 
 namespace ax {
-static bool datagram_name_used(const UnixAddressValue& value) {
+static bool local_name_used(const UnixAddressValue& value, unsigned type) {
     for (const auto& socket : sockets)
-        if (socket.used && socket.type == 2 && socket.datagram_name &&
-            socket.datagram_name->address().same(value))
+        if (socket.used && socket.type == type && socket.name_registered && socket.local_name &&
+            socket.local_name->address().same(value))
             return true;
     return false;
 }
 
-int socket_datagram_autobind(Socket& socket) {
-    if (socket.datagram_name->address().length)
+int socket_unix_autobind(Socket& socket) {
+    if (socket.local_name->address().length)
         return 0;
     static bool initialized;
     static uint32_t next;
@@ -29,13 +29,16 @@ int socket_datagram_autobind(Socket& socket) {
         uint32_t candidate = next++;
         for (unsigned n = 0; n < 5; n++)
             value.path[n + 1] = hex[(candidate >> ((4 - n) * 4)) & 15];
-    } while (datagram_name_used(value) && ++attempts <= 256);
-    if (datagram_name_used(value))
+    } while (local_name_used(value, socket.type) && ++attempts <= 256);
+    if (local_name_used(value, socket.type))
         return -98;
-    return socket.datagram_name->bind(value);
+    int error = socket.local_name->bind(value);
+    if (!error)
+        socket.name_registered = true;
+    return error;
 }
 
-int socket_datagram_bind(Task& task, Socket& socket, uint64_t pointer, size_t length) {
+int socket_unix_bind(Task& task, Socket& socket, uint64_t pointer, size_t length) {
     length = uint32_t(length);
     if (length < 2 || length > 128)
         return -22;
@@ -45,29 +48,33 @@ int socket_datagram_bind(Task& task, Socket& socket, uint64_t pointer, size_t le
     UnixAddressValue value;
     if (int error = unix_address_decode(input, length, value))
         return error;
-    if (socket.datagram_name->address().length)
-        return -22;
     if (!value.length)
-        return socket_datagram_autobind(socket);
-    if (value.abstract() && datagram_name_used(value))
-        return -98;
-    if (!value.abstract()) {
+        return socket_unix_autobind(socket);
+    bool already_bound = socket.local_name->address().length;
+    if (value.abstract()) {
+        if (already_bound)
+            return -22;
+        if (local_name_used(value, socket.type))
+            return -98;
+    } else {
         Path path;
         path.base = task.fs->cwd_node;
         memcpy(path.text, value.path, value.length);
-        if (lookup(path, false)) {
+        if (lookup(path, false))
             return -98;
-        }
+        if (already_bound)
+            return -22;
         int error = create_node(path, 0140000 | (0777 & ~task.fs->umask), socket.bound_node);
-        if (error) {
-            return error;
-        }
+        if (error)
+            return error == -17 ? -98 : error;
     }
-    return socket.datagram_name->bind(value);
+    int error = socket.local_name->bind(value);
+    if (!error)
+        socket.name_registered = true;
+    return error;
 }
 
-int socket_datagram_address(Task& task, uint64_t pointer, uint32_t length,
-                            UnixAddressValue& address) {
+int socket_unix_address(Task& task, uint64_t pointer, uint32_t length, UnixAddressValue& address) {
     if (length < 2 || length > 128)
         return -22;
     uint8_t bytes[128];
@@ -134,11 +141,11 @@ Socket* lookup_peer(Task& task, const UnixAddressValue& name, int& error) {
         }
     }
     for (auto& candidate : sockets) {
-        if (!candidate.used)
+        if (!candidate.used || !candidate.name_registered)
             continue;
         bool found = node ? candidate.bound_node && file_node(candidate.bound_node) == node
-                          : candidate.type == 2 && candidate.datagram_name &&
-                                candidate.datagram_name->address().same(name);
+                          : candidate.type == 2 && candidate.local_name &&
+                                candidate.local_name->address().same(name);
         if (!found)
             continue;
         if (candidate.type != 2) {
@@ -155,14 +162,14 @@ Socket* lookup_peer(Task& task, const UnixAddressValue& name, int& error) {
 void replace_peer(Socket& socket, Socket* peer) {
     UnixDatagramTarget old{socket.peer, socket.peer_generation};
     bool had_peer = socket.connected;
-    auto old_name = socket.datagram_peer_name;
+    auto old_name = socket.peer_name;
     socket.peer = peer;
     socket.peer_generation = peer ? peer->generation : 0;
     socket.connected = peer;
     socket.peer_closed = false;
-    socket.datagram_peer_name = peer ? peer->datagram_name : nullptr;
-    if (socket.datagram_peer_name)
-        socket.datagram_peer_name->retain();
+    socket.peer_name = peer ? peer->local_name : nullptr;
+    if (socket.peer_name)
+        socket.peer_name->retain();
     if (old_name)
         old_name->drop();
     if (had_peer && (old.socket != peer || !live(old))) {
@@ -260,8 +267,8 @@ int64_t socket_datagram_write(Task& task, Socket* sender, UnixDatagramRecord* re
     }
 }
 
-int socket_datagram_output_name(Task& task, const UnixAddressName* name, uint64_t pointer,
-                                uint64_t length_pointer) {
+int socket_unix_output_name(Task& task, const UnixAddressName* name, uint64_t pointer,
+                            uint64_t length_pointer) {
     uint32_t capacity;
     if (!task.memory->space.copy_in(&capacity, length_pointer, 4))
         return -14;
@@ -270,8 +277,8 @@ int socket_datagram_output_name(Task& task, const UnixAddressName* name, uint64_
     uint8_t bytes[111];
     uint32_t actual = name ? name->address().output(bytes, sizeof(bytes))
                            : UnixAddressValue{}.output(bytes, sizeof(bytes));
-    if ((capacity && !task.memory->space.copy_out(pointer, bytes, min(capacity, actual))) ||
-        !task.memory->space.copy_out(length_pointer, &actual, 4))
+    if (!task.memory->space.copy_out(length_pointer, &actual, 4) ||
+        (capacity && !task.memory->space.copy_out(pointer, bytes, min(capacity, actual))))
         return -14;
     return 0;
 }

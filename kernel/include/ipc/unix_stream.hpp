@@ -3,6 +3,7 @@
 #include "core/base.hpp"
 #include "ipc/unix_credentials.hpp"
 #include "ipc/unix_rights.hpp"
+#include "ipc/unix_address.hpp"
 
 namespace ax {
 struct Socket;
@@ -14,6 +15,7 @@ class UnixStreamRecord {
     size_t length = 0, consumed = 0;
     UnixMessageCredentials identity{};
     UnixRights* files = nullptr;
+    UnixAddressName* sender_name = nullptr;
     friend class UnixStreamQueue;
 
   public:
@@ -40,6 +42,10 @@ class UnixStreamRecord {
         return files;
     }
 
+    const UnixAddressName* source_name() const {
+        return sender_name;
+    }
+
     const UnixStreamRecord* next() const {
         return following;
     }
@@ -61,7 +67,9 @@ class UnixStreamQueue {
     }
 
     void accept(UnixStreamRecord*, size_t length, const UnixMessageCredentials&, UnixRights*&,
-                Socket* receiver);
+                Socket* receiver, UnixAddressName* source);
+    // Ancillary input can transfer descriptions without consuming a payload byte.
+    void take_rights(UnixRights*&);
     // Transfers, rather than destroys, the first consumed description list.
     // The caller must release that list after ancillary output or discard.
     void consume(size_t count, UnixRights*&);

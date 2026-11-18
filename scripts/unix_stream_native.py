@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Compare stream ancillary and shutdown clients under three actual Linux caller identities."""
+"""Compare Unix stream clients under three actual Linux caller identities."""
 import argparse
 import json
 import os
@@ -14,12 +14,20 @@ import time
 from compile_uapi_client import audit_compile
 from fetch import ROOT
 from tcp_fixture_inputs import digest
-from unix_datagram_contract import CLIENTS, SHUTDOWN_MARKERS, STREAM_WAIT_MARKERS
+from unix_datagram_contract import (CLIENTS, SHUTDOWN_MARKERS, STREAM_NAMES_MARKERS,
+                                    STREAM_WAIT_MARKERS, check_stream_name_cases)
+
+STREAM_CLIENTS = {
+    'unix_stream': (),
+    'unix_shutdown': SHUTDOWN_MARKERS,
+    'unix_stream_wait': STREAM_WAIT_MARKERS,
+    'unix_stream_names': STREAM_NAMES_MARKERS,
+}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--client', choices=('unix_stream', 'unix_shutdown', 'unix_stream_wait'), default='unix_stream')
+    parser.add_argument('--client', choices=tuple(STREAM_CLIENTS), default='unix_stream')
     parser.add_argument('--directory', type=Path)
     args = parser.parse_args()
     if os.geteuid():
@@ -28,8 +36,7 @@ def main():
     directory.mkdir(parents=True, exist_ok=False)
     program = directory / args.client
     prefix = args.client.upper()
-    markers = (SHUTDOWN_MARKERS if args.client == 'unix_shutdown' else
-               STREAM_WAIT_MARKERS if args.client == 'unix_stream_wait' else ())
+    markers = STREAM_CLIENTS[args.client]
     command = [sys.executable, '-B', 'scripts/compile_uapi_client.py', '--compiler', 'gcc',
                '--output', str(program), '--', '-std=c11', '-O2', '-g', '-Wall', '-Wextra',
                '-Werror', 'userspace/tests/ipc/' + args.client + '.c']
@@ -56,13 +63,16 @@ def main():
                                      stderr=subprocess.STDOUT, timeout=30, **identity)
             log = directory / (name + '.log')
             log.write_bytes(process.stdout)
-            lines = process.stdout.decode().splitlines()
+            text = process.stdout.decode()
+            lines = text.splitlines()
             expected = f'{prefix}_IDENTITY uid={uid} euid={uid} gid={uid} egid={uid} groups=0'
             if (process.returncode or lines.count(expected) != 1 or
                     lines.count(f'{prefix}_PASS groups={CLIENTS[args.client]}') != 1 or
                     any(lines.count(marker) != 1 for marker in markers) or
                     any('_FAIL' in line for line in lines)):
                 raise ValueError('native ' + args.client + ' comparison failed: ' + name + '\n' + '\n'.join(lines))
+            if args.client == 'unix_stream_names':
+                check_stream_name_cases(text, 1)
             rows.append(dict(mode=name, uid=uid, command=[str(executable), *arguments],
                              returncode=process.returncode, elapsed_ns=time.monotonic_ns() - start,
                              log_sha256=digest(log)))

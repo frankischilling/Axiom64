@@ -266,7 +266,9 @@ static void wire_exchange(unsigned lane, unsigned stage, unsigned kind, int fd, 
     if (stage == 2 && kind < 2)
         wire_barrier(lane, kind, barrier_fd);
     struct pollfd ready = {.fd = fd, .events = POLLIN};
-    int polled = sent < 0 ? -1 : poll(&ready, 1, 300);
+    // Allow one default one-second neighbor retransmission on the first send.
+    int timeout_ms = stage == 0 && kind == 0 ? 1150 : 300;
+    int polled = sent < 0 ? -1 : poll(&ready, 1, timeout_ms);
     unsigned char reply[32] = {0};
     errno = 0;
     int received = recv(fd, reply, sizeof(reply), MSG_DONTWAIT), receive_error = errno;

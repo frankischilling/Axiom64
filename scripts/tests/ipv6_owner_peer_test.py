@@ -76,6 +76,29 @@ class OwnershipPeer(unittest.TestCase):
         peer.receive(probe)
         self.assertEqual([frame[12:14] for frame in peer.outgoing],[b'\x86\xdd',b'\x88\xc3'])
 
+    def test_nodad_summary_waits_for_probe_without_injecting_conflict(self):
+        guest=bytes.fromhex('525400123410')
+        rows=[row for row in qemu_records(FIXTURE) if row['frame'][6:12]==guest]
+        frames=[row['frame'] for row in rows]
+        owner=next(frame for frame in frames if frame[12:14]==b'\x88\xc3' and frame[20:23]==bytes([2,3,1]))
+        summary=next(i for i,frame in enumerate(frames) if frame[12:14]==b'\x88\xc3' and
+                     frame[20:23]==bytes([3,3,1]))
+        probe=next(frame for frame in frames if frame[12:14]==b'\x86\xdd' and frame[20]==58 and
+                   frame[54]==135 and frame[62:78]==owner[36:52])
+        peer=Peer(0,'global')
+        for row in rows[:summary]:
+            if row['frame']!=probe:
+                with patch('ipv6_owner_peer.time.monotonic_ns',return_value=row['stamp']*1000):
+                    peer.receive(row['frame'])
+                peer.outgoing.clear()
+        peer.receive(frames[summary])
+        self.assertEqual(peer.outgoing,[])
+        self.assertIsNotNone(peer.pending)
+        peer.receive(probe)
+        self.assertEqual([frame[12:14] for frame in peer.outgoing],[b'\x88\xc3'])
+        self.assertEqual(peer.outgoing[0][19:21],bytes([frames[summary][19],1]))
+        self.assertNotIn((3,0),peer.conflicts)
+
     def test_wrong_raw_flags_and_duplicate_control_are_rejected(self):
         peer,request,_=self.prepared()
         changed=bytearray(request);struct.pack_into('!I',changed,24,0x940)

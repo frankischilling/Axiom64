@@ -47,7 +47,7 @@ def worker(directory, profile, parent_namespace):
     shutil.copy2(program, directory / 'program')
     write(directory / 'program.inputs.json', compiled)
     interpreter = loader('build').resolve() if profile == 'dynamic' else None
-    command = ([str(interpreter)] if interpreter else []) + [str(program), 'eth0', 'eth1']
+    command = ([str(interpreter)] if interpreter else []) + [str(program), '--native', 'eth0', 'eth1']
     write(directory / 'command.json', command)
     (directory / 'runtime').mkdir()
     began = time.monotonic_ns()
@@ -104,7 +104,7 @@ def worker(directory, profile, parent_namespace):
     write(directory / 'process.json', receipt)
     require(process.returncode == 0 and not timed_out, 'native client syscall assertions pass')
     epoch = native_clock.verify(directory / 'kernel-clock.json', directory / 'client.log')
-    receipt['observations'] = read(directory / 'client.log', stamp_epoch=epoch)
+    receipt['observations'] = read(directory / 'client.log', stamp_epoch=epoch, native=True)
     require(platform.release() == kernel, 'native kernel remains unchanged')
     write(directory / 'completed.json', receipt)
     return receipt
@@ -144,21 +144,22 @@ def verify(directory):
         kernels.add((receipt['kernel'], hz, receipt['kernel_config_sha256']))
         compilation(case, inputs, profile, CLIENT)
         command = decode((case / 'command.json').read_text())
-        require(type(command) is list and len(command) == (4 if profile == 'dynamic' else 3) and
-                command[-2:] == ['eth0', 'eth1'] and Path(command[-3]).name == 'ipv4-address-lifetimes-' + profile,
+        require(type(command) is list and len(command) == (5 if profile == 'dynamic' else 4) and
+                command[-3:] == ['--native', 'eth0', 'eth1'] and Path(command[-4]).name == 'ipv4-address-lifetimes-' + profile,
                 'actual native command selects both fixture interfaces')
         runtime = decode((case / 'runtime.json').read_text())
         require(type(runtime['client_pid']) is int and runtime['client_pid'] > 0 and runtime['affinity'],
                 'actual observed client process and CPU affinity')
         selected_loader = command[0] if profile == 'dynamic' else None
         providers(case, runtime, (case / 'maps.txt').read_text(), profile,
-                  set(command[:-2]), selected_loader)
+                  set(command[:-3]), selected_loader)
         epoch = native_clock.verify(case / 'kernel-clock.json', case / 'client.log')
-        proof = read(case / 'client.log', stamp_epoch=epoch)
+        proof = read(case / 'client.log', stamp_epoch=epoch, native=True)
         require(proof == receipt['observations'], 'exact independent native lifetime observations')
         proofs.append(dict(profile=profile, observations=proof))
     require(len(kernels) == 1, 'one actual native kernel and timer policy throughout the cohort')
-    return dict(passed=True, profiles=3, interfaces_per_profile=2, requests=198,
+    return dict(passed=True, profiles=3, interfaces_per_profile=2,
+                requests=sum(row['observations']['requests'] for row in proofs),
                 kernel=next(iter(kernels))[0], observations=proofs, wire_or_guest_or_hosted_acceptance=False)
 
 

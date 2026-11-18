@@ -76,21 +76,15 @@ static struct pending_control control_send(unsigned lane, unsigned kind, unsigne
     return pending;
 }
 
-static void control_wait(const struct pending_control* pending) {
+static int control_received(const struct pending_control* pending) {
     unsigned lane = pending->lane;
     const unsigned char* frame = pending->frame;
-    uint64_t began = pending->stamp;
-    for (;;) {
-        unsigned char reply[1600];
-        struct pollfd item = {.fd = packets[lane], .events = POLLIN};
-        check(poll(&item, 1, 100) >= 0, "ownership control readiness");
-        ssize_t size = recv(packets[lane], reply, sizeof(reply), MSG_DONTWAIT);
-        if (size == 60 && !memcmp(reply, macs[lane], 6) && !memcmp(reply + 6, frame, 6) &&
-            !memcmp(reply + 12, frame + 12, 8) && reply[20] == 1 &&
-            !memcmp(reply + 21, (unsigned char[39]){0}, 39))
-            break;
-        check(now() - began < 10000000000ULL, "finite ownership control");
-    }
+    unsigned char reply[1600];
+    ssize_t received = recv(packets[lane], reply, sizeof(reply), MSG_DONTWAIT);
+    if (received != 60 || memcmp(reply, macs[lane], 6) || memcmp(reply + 6, frame, 6) ||
+        memcmp(reply + 12, frame + 12, 8) || reply[20] != 1 ||
+        memcmp(reply + 21, (unsigned char[39]){0}, 39))
+        return 0;
     uint32_t fields[3];
     memcpy(fields, frame + 24, sizeof(fields));
     static const char digits[] = "0123456789abcdef";
@@ -108,6 +102,17 @@ static void control_wait(const struct pending_control* pending) {
                  ntohl(fields[1]), ntohl(fields[2]), target, (unsigned long long)pending->stamp);
     check(size > 0 && (size_t)size < sizeof(line) && write(STDOUT_FILENO, line, size) == size,
           "complete ownership query record");
+    return 1;
+}
+
+static void control_wait(const struct pending_control* pending) {
+    struct pollfd item = {.fd = packets[pending->lane], .events = POLLIN};
+    for (;;) {
+        check(poll(&item, 1, 100) >= 0, "ownership control readiness");
+        if (control_received(pending))
+            return;
+        check(now() - pending->stamp < 10000000000ULL, "finite ownership control");
+    }
 }
 
 static void control(unsigned lane, unsigned kind, unsigned scenario, unsigned stage,
@@ -206,7 +211,8 @@ static int matches(const struct address_record* value, unsigned lane, unsigned s
     return !memcmp(value->address.s6_addr, prefix.s6_addr, 8);
 }
 
-static void report(unsigned lane, unsigned scenario, unsigned stage, int link) {
+static struct pending_control report_send(unsigned lane, unsigned scenario, unsigned stage,
+                                          int link) {
     struct inventory inventory;
     uint64_t began = now();
     int waited = 0;
@@ -251,7 +257,12 @@ static void report(unsigned lane, unsigned scenario, unsigned stage, int link) {
     }
     struct address_record summary = {
         .flags = count, .preferred = routes(&inventory, prefix, 64), .address = prefix};
-    control(lane, SUMMARY, scenario, stage, &summary);
+    return control_send(lane, SUMMARY, scenario, stage, &summary);
+}
+
+static void report(unsigned lane, unsigned scenario, unsigned stage, int link) {
+    struct pending_control pending = report_send(lane, scenario, stage, link);
+    control_wait(&pending);
 }
 
 static void reports(unsigned scenario, unsigned stage, int link) {
@@ -341,71 +352,121 @@ static void remove_owner(unsigned lane, unsigned scenario, unsigned stage, struc
     control(lane, DELETE, scenario, stage, &observed);
 }
 
-static void recovery(unsigned scenario, int link, const struct address_record old[2]) {
-    uint64_t began = now();
-    unsigned first = 0, ready = 0;
-    while (now() - began < 4100000000ULL) {
-        for (unsigned lane = 0; lane < 2; lane++) {
-            struct inventory inventory = snapshot(lane);
-            for (unsigned at = 0; at < inventory.address_count; at++) {
-                const struct address_record* value = inventory.addresses + at;
-                if (!matches(value, lane, scenario, link) || (value->flags & IFA_F_DADFAILED) ||
-                    !memcmp(&value->address, &old[lane].address, 16))
-                    continue;
-                // Mode changes also add an EUI-64 owner; observe the stable retry separately.
-                struct in6_addr eui = prefix_address(lane, scenario, 1);
-                if (link) {
-                    memset(eui.s6_addr, 0, 8);
-                    eui.s6_addr[0] = 0xfe;
-                    eui.s6_addr[1] = 0x80;
-                }
-                if (!memcmp(&value->address, &eui, 16))
-                    continue;
-                if (!(first & (1U << lane))) {
-                    control(lane, FIRST, scenario, 0, value);
-                    first |= 1U << lane;
-                }
-                if (!(value->flags & IFA_F_TENTATIVE) && !(ready & (1U << lane))) {
-                    control(lane, READY, scenario, 0, value);
-                    ready |= 1U << lane;
-                }
-            }
+struct retry_observation {
+    int first;
+    int ready;
+};
+
+static void observe_retry(unsigned lane, unsigned scenario, int link, struct in6_addr old,
+                          struct retry_observation* observed) {
+    struct inventory inventory = snapshot(lane);
+    // Mode changes also add an EUI-64 owner; observe the stable retry separately.
+    struct in6_addr eui = prefix_address(lane, scenario, 1);
+    if (link) {
+        memset(eui.s6_addr, 0, 8);
+        eui.s6_addr[0] = 0xfe;
+        eui.s6_addr[1] = 0x80;
+    }
+    for (unsigned at = 0; at < inventory.address_count; at++) {
+        const struct address_record* value = inventory.addresses + at;
+        if (!matches(value, lane, scenario, link) || (value->flags & IFA_F_DADFAILED) ||
+            !memcmp(&value->address, &old, 16) || !memcmp(&value->address, &eui, 16))
+            continue;
+        if (!observed->first) {
+            control(lane, FIRST, scenario, 0, value);
+            observed->first = 1;
         }
+        if (!(value->flags & IFA_F_TENTATIVE) && !observed->ready) {
+            control(lane, READY, scenario, 0, value);
+            observed->ready = 1;
+        }
+    }
+}
+
+static void recovery(unsigned scenario, int link, const struct address_record old[2],
+                     struct retry_observation observed[2]) {
+    uint64_t began = now();
+    while (now() - began < 4100000000ULL) {
+        for (unsigned lane = 0; lane < 2; lane++)
+            observe_retry(lane, scenario, link, old[lane].address, observed + lane);
         pause_poll();
     }
-    check(first == 3 && ready == 3, "both actual stable retries become ready");
+    check(observed[0].ready && observed[1].ready, "both actual stable retries become ready");
+}
+
+static void takeover(unsigned lane, unsigned scenario, struct in6_addr owner) {
+    check(!mutate(lane, owner, 0, NLM_F_CREATE | NLM_F_REPLACE,
+                  scenario == 2 || scenario == 3 ? IFA_F_NODAD : 0, scenario == 4 ? 6 : UINT32_MAX,
+                  scenario == 4 ? 10 : UINT32_MAX),
+          "manual takeover of actual generated owner");
+}
+
+static void nodad_takeovers(const struct address_record original[2],
+                            struct retry_observation observed[2]) {
+    struct pending_control initial[2];
+    struct pollfd items[2];
+    for (unsigned lane = 0; lane < 2; ++lane) {
+        initial[lane] = report_send(lane, 3, 1, 0);
+        items[lane] = (struct pollfd){.fd = packets[lane], .events = POLLIN};
+    }
+    // Each ACK follows its adapter's first actual DAD probe. Apply NODAD and
+    // inject that adapter's conflict without waiting for the other probe.
+    unsigned outstanding = 2;
+    while (outstanding) {
+        check(poll(items, 2, 20) >= 0, "initial DAD probe acknowledgment readiness");
+        for (unsigned lane = 0; lane < 2; ++lane) {
+            if (items[lane].fd < 0) {
+                observe_retry(lane, 3, 0, original[lane].address, observed + lane);
+                continue;
+            }
+            if (!(items[lane].revents & POLLIN) || !control_received(&initial[lane])) {
+                check(now() - initial[lane].stamp < 10000000000ULL,
+                      "finite initial DAD probe acknowledgment");
+                continue;
+            }
+            items[lane].fd = -1;
+            --outstanding;
+            takeover(lane, 3, original[lane].address);
+            report(lane, 3, 2, 0);
+            struct address_record conflict = exact(lane, original[lane].address);
+            control(lane, CONFLICT, 3, 0, &conflict);
+        }
+    }
 }
 
 static void global_cases(unsigned last) {
     for (unsigned scenario = 1; scenario <= last; scenario++) {
+        struct retry_observation observed[2] = {0};
         reset(scenario, scenario == 2 ? 0 : 2);
         struct address_record links[2], original[2];
         wait_pair(scenario, 1, 0, links);
         reports(scenario, 0, 1);
         wait_pair(scenario, 0, scenario != 2, original);
-        reports(scenario, 1, 0);
-        for (unsigned lane = 0; lane < 2; lane++) {
-            check(!mutate(lane, original[lane].address, 0, NLM_F_CREATE | NLM_F_REPLACE,
-                          scenario == 2 || scenario == 3 ? IFA_F_NODAD : 0,
-                          scenario == 4 ? 6 : UINT32_MAX, scenario == 4 ? 10 : UINT32_MAX),
-                  "manual takeover of actual generated owner");
+        if (scenario == 3) {
+            nodad_takeovers(original, observed);
+        } else {
+            reports(scenario, 1, 0);
+            for (unsigned lane = 0; lane < 2; lane++)
+                takeover(lane, scenario, original[lane].address);
+            reports(scenario, 2, 0);
         }
-        reports(scenario, 2, 0);
         if (scenario == 2) {
             for (unsigned lane = 0; lane < 2; lane++)
                 remove_owner(lane, scenario, 0, original[lane].address);
             reports(scenario, 5, 0);
         } else {
-            struct address_record conflicts[2];
-            for (unsigned lane = 0; lane < 2; lane++) {
-                if (rotate_secrets)
-                    secret_change(lane, scenario);
-                conflicts[lane] = exact(lane, original[lane].address);
+            if (scenario != 3) {
+                struct address_record conflicts[2];
+                for (unsigned lane = 0; lane < 2; lane++) {
+                    if (rotate_secrets)
+                        secret_change(lane, scenario);
+                    conflicts[lane] = exact(lane, original[lane].address);
+                }
+                // Publish both fresh caches before either initial DAD delay can
+                // age the other interface's finite takeover metadata.
+                control_pair(CONFLICT, scenario, 0, conflicts);
             }
-            // Publish both fresh caches before either initial DAD delay can
-            // age the other interface's finite takeover metadata.
-            control_pair(CONFLICT, scenario, 0, conflicts);
-            recovery(scenario, 0, original);
+            recovery(scenario, 0, original, observed);
             reports(scenario, 3, 0);
             struct address_record replacement[2];
             wait_pair(scenario, 0, 0, replacement);
@@ -475,9 +536,10 @@ static void lifecycle_cases(unsigned first, unsigned last) {
             }
             lifecycle_conflict(scenario, trial, link, values, previous);
         }
-        if (scenario == 5 || scenario == 6)
-            recovery(scenario, 1, originals);
-        else {
+        if (scenario == 5 || scenario == 6) {
+            struct retry_observation observed[2] = {0};
+            recovery(scenario, 1, originals, observed);
+        } else {
             uint64_t began = now();
             while (now() - began < 4100000000ULL)
                 pause_poll();

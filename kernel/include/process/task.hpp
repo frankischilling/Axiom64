@@ -15,6 +15,7 @@ enum class Wait {
     child,
     sleep,
     poll,
+    select,
     vfork,
     signal,
     signal_queue,
@@ -65,6 +66,7 @@ struct SignalHandlers {
 };
 struct Task;
 struct IoRequest;
+struct PollRequest;
 
 struct Process {
     ProcessLimits limits{max_fds};
@@ -132,6 +134,7 @@ struct Task {
     int vfork_parent;
     FutexWait futex;
     IoRequest* io;
+    PollRequest* poll_request;
     SemaphoreRequest* semaphore_request;
     SemaphoreUndo* semaphore_undo;
     MessageQueueRequest* message_queue_request;

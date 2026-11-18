@@ -103,6 +103,24 @@ Pending signal records share a 4,096-entry kernel pool. The receiver's
 `RLIMIT_SIGPENDING` limits charged records by real UID. Real-time sends that
 require a queue record return `EAGAIN` when admission fails.
 
+## Poll and ppoll waits
+
+`poll` and `ppoll` keep the supplied descriptor numbers and event masks while
+a wait is blocked. Completion writes only the `revents` fields. Both calls
+look up the retained numbers in the caller's descriptor table when checking
+readiness. Ready descriptors take precedence over a pending signal.
+
+`ppoll` accepts an optional relative timespec and a temporary signal mask.
+The raw syscall writes back the remaining interval. The libc wrapper
+preserves the original timespec. The kernel measures waits in 10 ms ticks.
+On a process stop and continue, `poll` reimports the descriptor list and keeps
+its original deadline. `ppoll` restarts with the remaining relative interval.
+
+`make test-poll-waits` checks these behaviors for root and ordinary callers
+with both musl providers and linkages on BIOS and UEFI, with additional
+read-only ext2 boots. `sudo make test-poll-waits-native` runs the same cases
+on Linux.
+
 ## Epoll descriptor lifetime
 
 Epoll accepts descriptors with a poll operation, including pipes, sockets,

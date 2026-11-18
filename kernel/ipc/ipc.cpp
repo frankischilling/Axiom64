@@ -789,32 +789,6 @@ int select_events(Task& task, const Frame& frame, bool copy) {
     return ready;
 }
 
-bool poll_task_ready(Task& task) {
-    if (task.deadline && ticks >= task.deadline)
-        return true;
-    if (task.frame.rax == 23 || task.frame.rax == 270)
-        return select_events(task, task.frame, false) != 0;
-
-    struct Pollfd {
-        int32_t fd;
-        int16_t events, revents;
-    };
-
-    for (size_t i = 0; i < task.frame.rsi && i < max_fds; i++) {
-        Pollfd p;
-        if (!task.memory->space.copy_in(&p, task.frame.rdi + i * sizeof(p), sizeof(p)))
-            return true;
-        if (p.fd < 0)
-            continue;
-        auto h = unsigned(p.fd) < max_fds ? task.files->entries[p.fd].handle : nullptr;
-        if (h && (h->flags & 010000000))
-            return true;
-        if (readiness(h, &task) & (p.events | 8 | 16 | 32))
-            return true;
-    }
-    return false;
-}
-
 int64_t ipc_syscall(Frame* f) {
     auto a = f->rdi, b = f->rsi, c = f->rdx, d = f->r10;
     auto h = handle(a);

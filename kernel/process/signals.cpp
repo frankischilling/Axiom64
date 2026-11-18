@@ -6,6 +6,7 @@
 #include "ipc/posix_message_queues.hpp"
 #include "process/futex.hpp"
 #include "io/io.hpp"
+#include "io/poll.hpp"
 #include "ipc/ipc.hpp"
 
 namespace ax {
@@ -153,6 +154,8 @@ void signal_interrupt(Task& task) {
         task.state = State::runnable;
         return; // Default delivery chooses group stop or termination.
     }
+    if (poll_interrupt(task))
+        return;
     bool futex = task.wait == Wait::futex;
     bool restartable =
         futex ? !task.futex.deadline
@@ -247,6 +250,7 @@ bool signal_deliver(Task& task) {
                             member.wait = Wait::none;
                         }
                         epoll_stop_wait(member);
+                        poll_stop(member);
                         member.state = State::stopped;
                     }
                 task.process->stop_signal = signal;

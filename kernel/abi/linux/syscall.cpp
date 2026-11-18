@@ -15,6 +15,7 @@
 #include "process/futex.hpp"
 #include "process/waitid.hpp"
 #include "io/io.hpp"
+#include "io/poll.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
 #include "net/inet6.hpp"
@@ -51,11 +52,6 @@ struct Timespec {
 
 struct Timeval {
     int64_t sec, usec;
-};
-
-struct Pollfd {
-    int32_t fd;
-    int16_t events, revents;
 };
 
 static Handle* fd_handle(int fd, bool path_allowed = false) {
@@ -722,38 +718,6 @@ static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
     return device_ioctl(h, request, arg);
 }
 
-static int64_t poll_call(uint64_t pointer, size_t count, int timeout) {
-    if (count > max_fds)
-        return -22;
-    int ready = 0;
-    for (size_t i = 0; i < count; i++) {
-        Pollfd p;
-        if (!current->memory->space.copy_in(&p, pointer + i * sizeof(p), sizeof(p)))
-            return -14;
-        p.revents = 0;
-        auto h = fd_handle(p.fd);
-        if (p.fd >= 0 && !h)
-            p.revents = 32;
-        else if (h)
-            p.revents = readiness(h, current) & (p.events | 8 | 16);
-        if (p.revents)
-            ready++;
-        if (copy_result(pointer + i * sizeof(p), &p, sizeof(p)))
-            return -14;
-    }
-    if (ready || timeout == 0) {
-        current->deadline = 0;
-        return ready;
-    }
-    if (current->deadline && ticks >= current->deadline) {
-        current->deadline = 0;
-        return 0;
-    }
-    if (timeout > 0 && !current->deadline)
-        current->deadline = ticks + (timeout + 9) / 10;
-    return block(Wait::poll);
-}
-
 static int64_t dispatch(Frame* f) {
     uint64_t a = f->rdi, b = f->rsi, c = f->rdx, d = f->r10, e = f->r8, g = f->r9;
     switch (f->rax) {
@@ -800,7 +764,8 @@ static int64_t dispatch(Frame* f) {
     case 6:
         return stat_path(-100, a, b, false);
     case 7:
-        return poll_call(a, b, c);
+    case 271:
+        return poll_syscall(*current, *f);
     case 8: {
         auto h = fd_handle(a);
         if (!h)
@@ -995,7 +960,7 @@ static int64_t dispatch(Frame* f) {
         }
         if (e && !current->deadline)
             current->deadline = ticks + delay;
-        return block(Wait::poll);
+        return block(Wait::select);
     }
     case 24:
         return 0;

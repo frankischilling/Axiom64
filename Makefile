@@ -29,6 +29,7 @@ build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-o
 .PHONY: test-posix-message-queues test-posix-message-queues-native
 .PHONY: test-posix-aio test-posix-aio-native
 .PHONY: test-named-pipes test-named-pipes-native
+.PHONY: test-poll-waits test-poll-waits-native
 .PHONY: test-epoll-lifetime test-epoll-lifetime-native
 .PHONY: test-epoll-nested test-epoll-nested-native
 test-system-v-semaphores:
@@ -72,6 +73,12 @@ test-named-pipes:
 
 test-named-pipes-native:
 	$(PYTHON) -B scripts/ipc_abi_test.py named-pipes --native --directory build/named-pipes-native
+
+test-poll-waits:
+	$(PYTHON) -B scripts/ipc_abi_test.py poll-waits --directory build/poll-waits-guest
+
+test-poll-waits-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py poll-waits --native --directory build/poll-waits-native
 
 test-epoll-lifetime:
 	$(PYTHON) -B scripts/ipc_abi_test.py epoll-lifetime --directory build/epoll-lifetime-guest

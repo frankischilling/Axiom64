@@ -33,6 +33,9 @@ WORKLOADS = {
                                       'permissions')),
     'posix-message-queues': ('POSIX_MQ', ('priority-names', 'blocking', 'notifications',
                                            'permissions-limits')),
+    'poll-waits': ('POLL_WAITS', ('arguments-and-masks', 'revents-copy', 'raw-and-libc-deadlines',
+                                 'temporary-signal-mask', 'retained-poll', 'retained-ppoll',
+                                 'stopped-poll', 'stopped-ppoll')),
     'epoll-nested': ('EPOLL_NESTED', ('readiness-and-aliases', 'depth-and-cycles',
                                      'shared-descendant', 'timer-and-signal', 'round-robin')),
     'epoll-lifetime': ('EPOLL_LIFETIME', ('descriptor-admission', 'pollable-controls-and-devices',
@@ -71,6 +74,18 @@ def execute(command, log, expected_exit, uids, workload, firmware=None, root='ra
     if root == 'ext2':
         markers.append('VFS_ROOT_PASS filesystem=ext2 device=/dev/vda readonly=1')
     observed = {}
+    if workload == 'poll-waits':
+        deadlines = [re.fullmatch(r'POLL_WAITS_DEADLINE request_ns=(\d+) elapsed_ns=(\d+)', line)
+                     for line in lines if line.startswith('POLL_WAITS_DEADLINE ')]
+        if len(deadlines) != len(uids) or any(match is None for match in deadlines):
+            raise RuntimeError(f'missing or invalid poll deadline observations in {log}')
+        observations = []
+        for uid, match in zip(uids, deadlines):
+            requested, elapsed = map(int, match.groups())
+            if requested != 31000001 or not requested <= elapsed < 2000000000:
+                raise RuntimeError(f'incorrect poll deadline in {log}')
+            observations.append(dict(uid=uid, request_ns=requested, elapsed_ns=elapsed))
+        observed['deadline_observations'] = observations
     if workload == 'epoll-lifetime':
         seek = 'espipe' if '--legacy-seek' in command else 'noop'
         if [line for line in lines if line.startswith('EPOLL_LIFETIME_SEEK ')] != [
@@ -310,7 +325,7 @@ def guest(directory, workload, client):
                              image_sha256=digest(image), **row))
             print(f'{prefix}_GUEST_PASS {provider}/{linkage}/{firmware}', flush=True)
         if (provider, linkage) == ('build', 'static') and (
-                workload.startswith('posix-') or workload in ('named-pipes', 'epoll-lifetime', 'epoll-nested')):
+                workload.startswith('posix-') or workload in ('named-pipes', 'poll-waits', 'epoll-lifetime', 'epoll-nested')):
             image, disk = ext2_fixture(case, kernel, payload, script, workload)
             fingerprint = disk_digest(disk)
             for firmware in ('bios', 'uefi'):

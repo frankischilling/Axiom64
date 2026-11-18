@@ -88,9 +88,9 @@ def working_disk(retained, *, prefer_memory=False):
     if not stat.S_ISREG(original.st_mode) or original.st_nlink != 1:
         raise ValueError('the retained fixture must be a single-link regular file')
     parent = Path('/tmp')
-    # The NBD backend owns its separate volatile cache and flush model. A small
-    # host-memory device file avoids unrelated physical-host sync latency while
-    # retaining the same actual guest writes across emulator/backend termination.
+    # Memory backing avoids physical-host sync latency for small device files.
+    # QEMU and the NBD backend still handle the guest's writes and flushes, and
+    # the final device bytes are checkpointed to disk before publication.
     if prefer_memory and original.st_size <= 32 * 1024 * 1024:
         memory = Path('/dev/shm')
         try:
@@ -957,12 +957,14 @@ def storage_campaign(args, rows):
                             disk = directory / 'disk.raw'
                             shutil.copyfile(base, disk)
                             before_hash = digest(disk)
-                            with working_disk(disk) as device_disk:
+                            with working_disk(disk, prefer_memory=phase == 'full') as device_disk:
+                                memory_backed = device_disk.parent.parent == Path('/dev/shm')
                                 run, log = execute(qemu_command(images[phase], directory, firmware, transport,
                                                                disk=device_disk, readonly=phase == 'readonly'),
                                                    directory / 'guest.log', expected=1)
                             run['actual_device_disk_sha256'] = digest(disk)
                             run['temporary_linux_device_disk'] = True
+                            run['memory_backed_device_disk'] = memory_backed
                             run.update(provider=provider, linkage=linkage, firmware=firmware,
                                        transport=transport, phase=phase)
                             rows.append(run)

@@ -2,32 +2,45 @@
 #include "process/signals.hpp"
 #include "process/futex.hpp"
 #include "io/io.hpp"
+#include "ipc/ipc.hpp"
 
 namespace ax {
 static bool default_ignore(int signal) {
     return signal == 17 || signal == 18 || signal == 23 || signal == 28;
 }
 
+void signal_discard_ignored(Task& task, int number) {
+    auto handler = task.handlers->signal_actions[number - 1][0];
+    if (handler != 1 && (handler || !default_ignore(number)))
+        return;
+    uint64_t mask = 1ull << (number - 1);
+    task.process->pending_signals.discard(mask);
+    for (auto& member : tasks)
+        if (member.state != State::empty && member.state != State::zombie &&
+            member.process == task.process)
+            member.pending_signals.discard(mask);
+}
+
 static void notify_parent(Process* process, int code, int status) {
     for (auto& parent : tasks)
         if (parent.state != State::empty && parent.process->leader == &parent &&
             parent.process->pid == process->parent)
-            queue_process_signal(parent.process, 17, process->pid, code, status);
+            queue_process_signal(parent.process, 17, process->pid, code, status, 0, process);
 }
 
 static void control_signal(Process* process, int signal) {
     constexpr uint64_t stops = (1ull << 18) | (1ull << 19) | (1ull << 20) | (1ull << 21);
     bool resumed = false;
     if (signal == 18)
-        process->pending_signals &= ~stops;
+        process->pending_signals.discard(stops);
     if (signal >= 19 && signal <= 22)
-        process->pending_signals &= ~(1ull << 17);
+        process->pending_signals.discard((1ull << 17));
     for (auto& task : tasks)
         if (task.state != State::empty && task.state != State::zombie && task.process == process) {
             if (signal == 18)
-                task.pending_signals &= ~stops;
+                task.pending_signals.discard(stops);
             if (signal >= 19 && signal <= 22)
-                task.pending_signals &= ~(1ull << 17);
+                task.pending_signals.discard((1ull << 17));
             if ((signal == 18 || signal == 9) && task.state == State::stopped) {
                 task.state = task.wait == Wait::none ? State::runnable : State::blocked;
                 resumed = true;
@@ -55,55 +68,60 @@ static uint32_t sender_uid(int sender) {
     return 0;
 }
 
-void queue_signal(Task* task, int signal, int sender, int code, int status, uint64_t address) {
-    if (signal < 1 || signal > 64 || task->state == State::empty || task->state == State::zombie)
-        return;
-    control_signal(task->process, signal);
-    if (task->handlers->signal_actions[signal - 1][0] == 1 && signal != 9 && signal != 19 &&
-        !(task->signal_mask & (1ull << (signal - 1))))
-        return;
-    uint64_t bit = 1ull << (signal - 1);
-    if (signal < 32 && (task->pending_signals & bit))
-        return;
-    task->pending_signals |= bit;
-    task->signal_data[signal - 1] = {sender, code, status, address, sender_uid(sender)};
+static int post_signal(Task& task, PendingSignals& queue, int signal, const SignalData& data) {
+    control_signal(task.process, signal);
+    if (task.handlers->signal_actions[signal - 1][0] == 1 && signal != 9 && signal != 19 &&
+        !(task.signal_mask & (1ull << (signal - 1))))
+        return 0;
+    if (signal < 32 && (queue.mask() & (1ull << (signal - 1))))
+        return 0;
+    int error = queue.push(signal, data, task.credentials.user.real,
+                           task.process->limits.soft(Resource::pending_signals));
+    if (!error)
+        epoll_signal_notify(*task.handlers);
+    return error;
 }
 
-void queue_process_signal(Process* process, int signal, int sender, int code, int status,
-                          uint64_t address) {
-    if (!process->live_threads || signal < 1 || signal > 64)
-        return;
-    control_signal(process, signal);
+int queue_signal(Task* task, int signal, int sender, int code, int status, uint64_t address) {
+    if (signal < 1 || signal > 64 || task->state == State::empty || task->state == State::zombie)
+        return 0;
+    return post_signal(*task, task->pending_signals, signal,
+                       {sender, code, status, address, sender_uid(sender)});
+}
+
+static int post_process_signal(Process* process, int signal, const SignalData& data) {
     for (auto& task : tasks)
-        if (task.state != State::empty && task.state != State::zombie && task.process == process) {
-            if (task.handlers->signal_actions[signal - 1][0] == 1 && signal != 9 && signal != 19 &&
-                !(task.signal_mask & (1ull << (signal - 1))))
-                return;
-            uint64_t bit = 1ull << (signal - 1);
-            if (signal < 32 && (process->pending_signals & bit))
-                return;
-            process->pending_signals |= bit;
-            process->signal_data[signal - 1] = {sender, code, status, address, sender_uid(sender)};
-            return;
-        }
+        if (task.state != State::empty && task.state != State::zombie && task.process == process)
+            return post_signal(task, process->pending_signals, signal, data);
+    return 0;
+}
+
+int queue_process_signal(Process* process, int signal, int sender, int code, int status,
+                         uint64_t address, const Process* child) {
+    if (!process->live_threads || signal < 1 || signal > 64)
+        return 0;
+    SignalData data{sender, code, status, address, sender_uid(sender)};
+    if (child) {
+        data.child_user_ticks = child->cpu_user_ticks;
+        data.child_system_ticks = child->cpu_system_ticks;
+    }
+    return post_process_signal(process, signal, data);
 }
 
 static int actionable(const Task& task) {
-    uint64_t pending = (task.pending_signals | task.process->pending_signals) & ~task.signal_mask;
-    for (int s = 1; s <= 64; s++)
-        if (pending & (1ull << (s - 1))) {
-            auto handler = task.handlers->signal_actions[s - 1][0];
-            if (handler == 1 || (!handler && default_ignore(s)))
-                continue;
-            return s;
-        }
+    uint64_t mask = ~task.signal_mask;
+    for (int number = next_pending_signal(task, mask); number;
+         number = next_pending_signal(task, mask)) {
+        auto handler = task.handlers->signal_actions[number - 1][0];
+        if (handler != 1 && (handler || !default_ignore(number)))
+            return number;
+        mask &= ~(1ull << (number - 1));
+    }
     return 0;
 }
 
 bool signal_wakes(const Task& task) {
-    return (task.wait != Wait::vfork ||
-            ((task.pending_signals | task.process->pending_signals) & (1ull << 8))) &&
-           actionable(task);
+    return (task.wait != Wait::vfork || signal_pending_for(task, 1ull << 8)) && actionable(task);
 }
 
 void signal_interrupt(Task& task) {
@@ -176,123 +194,107 @@ struct SignalFrame {
 static_assert(sizeof(Context) == 256 && sizeof(Ucontext) == 304 && sizeof(SignalFrame) == 440);
 
 bool signal_deliver(Task& task) {
-    uint64_t pending = (task.pending_signals | task.process->pending_signals) & ~task.signal_mask;
-    for (int signal = 1; signal <= 64; signal++)
-        if (pending & (1ull << (signal - 1))) {
-            if (task.pending_signals & (1ull << (signal - 1)))
-                task.pending_signals &= ~(1ull << (signal - 1));
-            else {
-                task.process->pending_signals &= ~(1ull << (signal - 1));
-                task.signal_data[signal - 1] = task.process->signal_data[signal - 1];
-            }
-            auto action = task.handlers->signal_actions[signal - 1];
-            uint64_t handler = action[0], flags = action[1];
-            if (handler == 1 || (!handler && default_ignore(signal)))
-                continue;
-            if (!handler || signal == 9 || signal == 19) {
-                if (signal == 19 || signal == 20 || signal == 21 || signal == 22) {
-                    task.process->stopped = true;
-                    for (auto& member : tasks)
-                        if (member.state != State::empty && member.state != State::zombie &&
-                            member.process == task.process) {
-                            if (member.io) {
-                                if (!io_restartable(member)) {
-                                    member.frame.rip += 2;
-                                    member.frame.rax = uint64_t(io_interrupted_result(member));
-                                }
-                                io_discard(member);
-                                member.wait = Wait::none;
+    SignalData data;
+    while (int signal = take_pending_signal(task, ~task.signal_mask, data)) {
+        auto action = task.handlers->signal_actions[signal - 1];
+        uint64_t handler = action[0], flags = action[1];
+        if (handler == 1 || (!handler && default_ignore(signal)))
+            continue;
+        if (!handler || signal == 9 || signal == 19) {
+            if (signal == 19 || signal == 20 || signal == 21 || signal == 22) {
+                task.process->stopped = true;
+                for (auto& member : tasks)
+                    if (member.state != State::empty && member.state != State::zombie &&
+                        member.process == task.process) {
+                        if (member.io) {
+                            if (!io_restartable(member)) {
+                                member.frame.rip += 2;
+                                member.frame.rax = uint64_t(io_interrupted_result(member));
                             }
-                            member.state = State::stopped;
+                            io_discard(member);
+                            member.wait = Wait::none;
                         }
-                    task.process->stop_signal = signal;
-                    task.process->stop_reported = false;
-                    notify_parent(task.process, 5, signal);
-                } else
-                    exit_task(&task, signal);
-                return false;
-            }
-            auto& f = task.frame;
-            bool on_alt = task.altstack_size && f.rsp >= task.altstack_base &&
-                          f.rsp - task.altstack_base < task.altstack_size;
-            uint64_t top = ((flags & 0x08000000) && task.altstack_size && !on_alt)
-                               ? task.altstack_base + task.altstack_size
-                               : f.rsp;
-            if (top < 128 + sizeof(SignalFrame) + 512 + 32) {
-                exit_task(&task, 11);
-                return false;
-            }
-            uint64_t frame = ((top - 128 - sizeof(SignalFrame) - 512 - 32) & ~15ull) - 8;
-            uint64_t fp = (frame + sizeof(SignalFrame) + 15) & ~15ull;
-            SignalFrame saved{};
-            saved.restorer = action[2] ? action[2] : signal_trampoline;
-            saved.uc.flags = 6;
-            saved.uc.mask = task.suspend_mask ? task.suspend_saved_mask : task.signal_mask;
-            task.suspend_mask = false;
-            saved.uc.stack = {task.altstack_base,
-                              on_alt               ? 1
-                              : task.altstack_size ? 0
-                                                   : 2,
-                              0, task.altstack_size};
-            saved.uc.context = {f.r8,
-                                f.r9,
-                                f.r10,
-                                f.r11,
-                                f.r12,
-                                f.r13,
-                                f.r14,
-                                f.r15,
-                                f.rdi,
-                                f.rsi,
-                                f.rbp,
-                                f.rbx,
-                                f.rdx,
-                                f.rax,
-                                f.rcx,
-                                f.rsp,
-                                f.rip,
-                                f.rflags,
-                                0x23,
-                                0,
-                                0,
-                                0x1b,
-                                f.error,
-                                f.vector,
-                                task.signal_mask,
-                                task.signal_data[signal - 1].address,
-                                fp,
-                                {}};
-            int32_t signum = signal;
-            memcpy(saved.info, &signum, 4);
-            memcpy(saved.info + 8, &task.signal_data[signal - 1].code, 4);
-            if (signal == 11 || signal == 7 || signal == 4 || signal == 8)
-                memcpy(saved.info + 16, &task.signal_data[signal - 1].address, 8);
-            else {
-                memcpy(saved.info + 16, &task.signal_data[signal - 1].sender, 4);
-                memcpy(saved.info + 20, &task.signal_data[signal - 1].uid, 4);
-                memcpy(saved.info + 24, &task.signal_data[signal - 1].status, 4);
-            }
-            if (!task.memory->space.copy_out(frame, &saved, sizeof(saved)) ||
-                !task.memory->space.copy_out(fp, task.fpu, 512) ||
-                !task.memory->space.valid(handler, 1)) {
-                exit_task(&task, 11);
-                return false;
-            }
-            f.rip = handler;
-            f.rsp = frame;
-            f.rdi = signal;
-            f.rsi = frame + offsetof(SignalFrame, info);
-            f.rdx = frame + offsetof(SignalFrame, uc);
-            f.rax = 0;
-            f.rflags &= ~uint64_t(0x10500);
-            task.signal_mask |= action[3];
-            if (!(flags & 0x40000000))
-                task.signal_mask |= 1ull << (signal - 1);
-            task.signal_mask &= ~((1ull << 8) | (1ull << 18));
-            if (flags & 0x80000000)
-                memset(action, 0, 32);
-            break;
+                        member.state = State::stopped;
+                    }
+                task.process->stop_signal = signal;
+                task.process->stop_reported = false;
+                notify_parent(task.process, 5, signal);
+            } else
+                exit_task(&task, signal);
+            return false;
         }
+        auto& f = task.frame;
+        bool on_alt = task.altstack_size && f.rsp >= task.altstack_base &&
+                      f.rsp - task.altstack_base < task.altstack_size;
+        uint64_t top = ((flags & 0x08000000) && task.altstack_size && !on_alt)
+                           ? task.altstack_base + task.altstack_size
+                           : f.rsp;
+        if (top < 128 + sizeof(SignalFrame) + 512 + 32) {
+            exit_task(&task, 11);
+            return false;
+        }
+        uint64_t frame = ((top - 128 - sizeof(SignalFrame) - 512 - 32) & ~15ull) - 8;
+        uint64_t fp = (frame + sizeof(SignalFrame) + 15) & ~15ull;
+        SignalFrame saved{};
+        saved.restorer = action[2] ? action[2] : signal_trampoline;
+        saved.uc.flags = 6;
+        saved.uc.mask = task.suspend_mask ? task.suspend_saved_mask : task.signal_mask;
+        task.suspend_mask = false;
+        saved.uc.stack = {task.altstack_base,
+                          on_alt               ? 1
+                          : task.altstack_size ? 0
+                                               : 2,
+                          0, task.altstack_size};
+        saved.uc.context = {f.r8,
+                            f.r9,
+                            f.r10,
+                            f.r11,
+                            f.r12,
+                            f.r13,
+                            f.r14,
+                            f.r15,
+                            f.rdi,
+                            f.rsi,
+                            f.rbp,
+                            f.rbx,
+                            f.rdx,
+                            f.rax,
+                            f.rcx,
+                            f.rsp,
+                            f.rip,
+                            f.rflags,
+                            0x23,
+                            0,
+                            0,
+                            0x1b,
+                            f.error,
+                            f.vector,
+                            task.signal_mask,
+                            data.address,
+                            fp,
+                            {}};
+        format_signal_info(saved.info, signal, data);
+        if (!task.memory->space.copy_out(frame, &saved, sizeof(saved)) ||
+            !task.memory->space.copy_out(fp, task.fpu, 512) ||
+            !task.memory->space.valid(handler, 1)) {
+            exit_task(&task, 11);
+            return false;
+        }
+        f.rip = handler;
+        f.rsp = frame;
+        f.rdi = signal;
+        f.rsi = frame + offsetof(SignalFrame, info);
+        f.rdx = frame + offsetof(SignalFrame, uc);
+        f.rax = 0;
+        f.rflags &= ~uint64_t(0x10500);
+        task.signal_mask |= action[3];
+        if (!(flags & 0x40000000))
+            task.signal_mask |= 1ull << (signal - 1);
+        task.signal_mask &= ~((1ull << 8) | (1ull << 18));
+        if (flags & 0x80000000)
+            memset(action, 0, 32);
+        break;
+    }
     return task.state == State::runnable;
 }
 
@@ -335,10 +337,55 @@ static int64_t restore_signal(Frame* f) {
     return 0;
 }
 
+static int queue_from_user(const Frame& frame) {
+    bool thread = frame.rax == 297;
+    int group = int(frame.rdi);
+    int target = thread ? int(frame.rsi) : group;
+    int signal = thread ? int(frame.rdx) : int(frame.rsi);
+    uint64_t pointer = thread ? frame.r10 : frame.rdx;
+    uint8_t bytes[48];
+    if (!current->memory->space.copy_in(bytes, pointer, sizeof(bytes)))
+        return -14;
+    if (thread && (group <= 0 || target <= 0))
+        return -22;
+    SignalData data;
+    memcpy(&data.error, bytes + 4, 4);
+    memcpy(&data.code, bytes + 8, 4);
+    if ((data.code >= 0 || data.code == -6) && target != current->pid)
+        return -1;
+    if (signal < 0 || signal > 64)
+        return -22;
+    memcpy(&data.sender, bytes + 16, 4);
+    memcpy(&data.uid, bytes + 20, 4);
+    memcpy(&data.value, bytes + 24, 8);
+    if (data.code > 0) {
+        memcpy(&data.address, bytes + 16, 8);
+        memcpy(&data.status, bytes + 24, 4);
+        memcpy(&data.child_user_ticks, bytes + 32, 8);
+        memcpy(&data.child_system_ticks, bytes + 40, 8);
+    }
+    for (auto& task : tasks) {
+        if (task.state == State::empty || task.pid != target ||
+            (thread && (task.state == State::zombie || task.process->pid != group)))
+            continue;
+        if (task.process != current->process &&
+            !credential_signal(current->credentials, task.credentials,
+                               task.process->sid == current->process->sid, signal))
+            return -1;
+        if (!signal)
+            return 0;
+        return thread ? post_signal(task, task.pending_signals, signal, data)
+                      : post_process_signal(task.process, signal, data);
+    }
+    return -3;
+}
+
 int64_t signal_syscall(Frame* f) {
     uint64_t a = f->rdi, b = f->rsi, c = f->rdx;
     if (f->rax == 15)
         return restore_signal(f);
+    if (f->rax == 129 || f->rax == 297)
+        return queue_from_user(*f);
     if (f->rax == 128)
         return signal_wait_enter(f);
     if (f->rax == 34 || f->rax == 130) {
@@ -428,7 +475,9 @@ int64_t signal_syscall(Frame* f) {
     if (f->rax == 127) {
         if (b != 8)
             return -22;
-        uint64_t pending = current->pending_signals | current->process->pending_signals;
+        uint64_t pending =
+            (current->pending_signals.mask() | current->process->pending_signals.mask()) &
+            current->signal_mask;
         return current->memory->space.copy_out(a, &pending, 8) ? 0 : -14;
     }
     int signal = f->rax == 234 ? int(c) : int(b);
@@ -452,7 +501,7 @@ int64_t signal_syscall(Frame* f) {
             permitted = true;
             if (signal) {
                 if (f->rax == 234 || f->rax == 200)
-                    queue_signal(&task, signal, current->process->pid, f->rax == 234 ? -6 : 0);
+                    return queue_signal(&task, signal, current->process->pid, -6);
                 else
                     queue_process_signal(task.process, signal, current->process->pid);
             }

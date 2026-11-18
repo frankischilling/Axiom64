@@ -3,6 +3,7 @@
 #include "fs/vfs.hpp"
 #include "security/credentials.hpp"
 #include "process/limits.hpp"
+#include "process/pending_signals.hpp"
 
 namespace ax {
 constexpr unsigned max_tasks = 64, max_fds = 128;
@@ -33,12 +34,6 @@ struct SharedAttachment {
     uint64_t base, length;
 };
 
-struct SignalData {
-    int sender, code, status;
-    uint64_t address;
-    uint32_t uid = 0;
-};
-
 struct MemoryContext {
     unsigned references = 1;
     bool dumpable = true;
@@ -63,6 +58,7 @@ struct FsContext {
 
 struct SignalHandlers {
     unsigned references = 1;
+    uint64_t descriptor_wait_queue = 0;
     uint64_t signal_actions[64][4]{};
 };
 struct Task;
@@ -79,8 +75,8 @@ struct Process {
     char executable[1024]{};
     uint64_t start_ticks = 0;
     uint64_t cpu_user_ticks = 0, cpu_system_ticks = 0;
-    uint64_t alarm_deadline = 0, alarm_interval = 0, pending_signals = 0;
-    SignalData signal_data[64]{};
+    uint64_t alarm_deadline = 0, alarm_interval = 0;
+    PendingSignals pending_signals;
 };
 
 struct FutexWait {
@@ -112,8 +108,8 @@ struct Task {
     SignalHandlers* handlers;
     Credentials credentials;
     uint64_t fs_base, tid_address, signal_mask;
-    uint64_t pending_signals, altstack_base, altstack_size;
-    SignalData signal_data[64];
+    uint64_t altstack_base, altstack_size;
+    PendingSignals pending_signals;
     uint64_t suspend_saved_mask;
     bool suspend_mask;
     Wait wait;

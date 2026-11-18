@@ -13,6 +13,7 @@
 namespace ax {
 Socket sockets[256];
 static Epoll* epolls[64];
+static uint64_t next_signal_wait_queue = 1;
 
 bool socket_node_busy(Node* node) {
     for (auto& socket : sockets)
@@ -253,16 +254,16 @@ int64_t socket_accept(Task& task, Handle* h, uint64_t address, uint64_t length, 
     return fd;
 }
 
-uint32_t readiness(Handle* h) {
+uint32_t readiness(Handle* h, const Task* task) {
     if (!h)
         return 32;
     // select uses the default mask for a path description; poll rejects it.
     if (h->flags & 010000000)
         return 1 | 4;
     uint32_t events = 0;
-    if (handle_ready(h, false))
+    if (handle_ready(h, false, task))
         events |= 1;
-    if (handle_ready(h, true))
+    if (handle_ready(h, true, task))
         events |= 4;
     if (h->packet) {
         auto info = net_info(packet_interface(h->packet));
@@ -330,15 +331,20 @@ static void epoll_timer_event(EpollItem& item, uint32_t ready) {
 static int epoll_events(Task& task, Epoll* poll, uint64_t output, unsigned count, bool copy) {
     unsigned ready = 0;
     for (auto& item : poll->items) {
-        if (!item.used || !item.enabled || item.fd < 0 || unsigned(item.fd) >= max_fds ||
-            task.files->entries[item.fd].handle != item.handle ||
+        if (!item.used || !item.enabled || !item.handle->references ||
             item.handle->generation != item.generation)
             continue;
-        uint32_t ready_now = readiness(item.handle) & (item.event.events | 8 | 16);
+        if (!item.signal_wait_queue && (item.fd < 0 || unsigned(item.fd) >= max_fds ||
+                                        task.files->entries[item.fd].handle != item.handle))
+            continue;
+        uint32_t ready_now = readiness(item.handle, &task) & (item.event.events | 8 | 16);
         epoll_timer_event(item, ready_now);
         // A queued edge can become stale before this waiter gets to consume it.
         item.pending &= ready_now;
-        uint32_t mask = (item.event.events & (1u << 31)) ? item.pending : ready_now;
+        // A signal descriptor waits on the registering task's signal handlers.
+        // A ready signal in a different process does not queue an epoll event.
+        uint32_t mask =
+            item.signal_wait_queue || (item.event.events & (1u << 31)) ? item.pending : ready_now;
         if (!mask)
             continue;
         if (copy) {
@@ -360,9 +366,9 @@ void epoll_notify(Handle* source, uint32_t events) {
     for (auto poll : epolls)
         if (poll)
             for (auto& item : poll->items)
-                if (item.used && item.enabled && item.handle->references &&
-                    item.handle->generation == item.generation) {
-                    uint32_t ready = readiness(item.handle) & (item.event.events | 8 | 16);
+                if (item.used && item.enabled && !item.signal_wait_queue &&
+                    item.handle->references && item.handle->generation == item.generation) {
+                    uint32_t ready = readiness(item.handle, nullptr) & (item.event.events | 8 | 16);
                     if (item.handle->timer)
                         epoll_timer_event(item, ready);
                     else
@@ -371,6 +377,18 @@ void epoll_notify(Handle* source, uint32_t events) {
                         item.pending |= ready & events;
                     item.last_ready = ready;
                 }
+}
+
+void epoll_signal_notify(const SignalHandlers& handlers) {
+    if (!handlers.descriptor_wait_queue)
+        return;
+    for (auto poll : epolls)
+        if (poll)
+            for (auto& item : poll->items)
+                if (item.used && item.enabled &&
+                    item.signal_wait_queue == handlers.descriptor_wait_queue &&
+                    item.handle->references && item.handle->generation == item.generation)
+                    item.pending |= item.event.events & 1;
 }
 
 void epoll_close(Epoll* poll) {
@@ -399,7 +417,7 @@ int select_events(Task& task, const Frame& frame, bool copy) {
                 if (!h)
                     return -9;
                 uint32_t wanted = set == 0 ? 1 | 8 | 16 : set == 1 ? 4 | 8 : 2;
-                if (readiness(h) & wanted) {
+                if (readiness(h, &task) & wanted) {
                     output[set][fd / 64] |= bit;
                     ready++;
                 }
@@ -438,7 +456,7 @@ bool poll_task_ready(Task& task) {
         auto h = unsigned(p.fd) < max_fds ? task.files->entries[p.fd].handle : nullptr;
         if (h && (h->flags & 010000000))
             return true;
-        if (readiness(h) & (p.events | 8 | 16 | 32))
+        if (readiness(h, &task) & (p.events | 8 | 16 | 32))
             return true;
     }
     return false;
@@ -757,13 +775,23 @@ int64_t ipc_syscall(Frame* f) {
             return -14;
         if (!item)
             for (auto& candidate : h->epoll->items)
-                if (!candidate.used) {
+                if (!candidate.used || !candidate.handle->references ||
+                    candidate.handle->generation != candidate.generation) {
                     item = &candidate;
                     break;
                 }
         if (!item)
             return -28;
-        *item = {target, target->generation, int(c), event, true, true, 0, 0, 0};
+        uint64_t wait_queue = 0;
+        uint32_t pending = 0;
+        if (target->signal_descriptor) {
+            auto& handler_queue = current->handlers->descriptor_wait_queue;
+            if (b == 1 && !handler_queue)
+                handler_queue = next_signal_wait_queue++;
+            wait_queue = b == 1 ? handler_queue : item->signal_wait_queue;
+            pending = readiness(target, current) & event.events & 1;
+        }
+        *item = {target, target->generation, int(c), event, true, true, 0, pending, 0, wait_queue};
         epoll_notify();
         return 0;
     }

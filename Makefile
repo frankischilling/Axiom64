@@ -21,6 +21,13 @@ all: image
 build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-output-host build/tcp-socket-output-host: kernel/net/ipv4/configuration.cpp
 .PHONY: test-rtc-codec test-clock-wall test-clock-wall-native
 .PHONY: test-timerfd test-timerfd-native
+.PHONY: test-signalfd test-signalfd-native
+test-signalfd:
+	$(PYTHON) -B scripts/timerfd_test.py --descriptor signalfd --directory build/signalfd-guest
+
+test-signalfd-native:
+	$(PYTHON) -B scripts/timerfd_test.py --descriptor signalfd --native --directory build/signalfd-native
+
 test-timerfd:
 	$(PYTHON) -B scripts/timerfd_test.py --directory build/timerfd-guest
 

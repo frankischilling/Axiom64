@@ -7,6 +7,7 @@
 #include "fs/record_lock.hpp"
 #include "fs/descriptor.hpp"
 #include "ipc/ipc.hpp"
+#include "ipc/signal_descriptor.hpp"
 #include "ipc/unix_control.hpp"
 #include "process/signals.hpp"
 #include "net/packet.hpp"
@@ -574,7 +575,8 @@ static int prepare(Task& task, IoRequest& request) {
     }
     if (request.positioned) {
         if (request.handle->pipe || request.handle->event || request.handle->timer ||
-            request.handle->socket || inet_stream(request.handle->inet) ||
+            request.handle->signal_descriptor || request.handle->socket ||
+            inet_stream(request.handle->inet) ||
             (request.handle->node && (request.handle->node->mode & 0170000) == character))
             return -29;
         if (int64_t(f.r10) < 0)
@@ -1384,6 +1386,49 @@ static int64_t counter_attempt(Task& task, IoRequest& request) {
     return request.progress;
 }
 
+static int64_t signal_descriptor_attempt(Task& task, IoRequest& request) {
+    if (request.write)
+        return -22;
+    size_t capacity = 0;
+    for (size_t index = 0; index < request.count; index++) {
+        const auto& vector = request.vectors[index];
+        if (vector.base > user_limit || vector.length > user_limit - vector.base)
+            return -14;
+        capacity += vector.length;
+    }
+    if (!capacity && request.call.rax == 19)
+        return 0;
+    if (capacity < sizeof(SignalDescriptorRecord))
+        return -22;
+
+    size_t complete = 0;
+    size_t index = 0;
+    size_t offset = 0;
+    while (capacity - complete >= sizeof(SignalDescriptorRecord)) {
+        SignalDescriptorRecord record;
+        if (!signal_descriptor_take(*request.handle->signal_descriptor, task, record))
+            break;
+        const auto bytes = reinterpret_cast<const uint8_t*>(&record);
+        size_t copied = 0;
+        while (copied < sizeof(record)) {
+            const auto& vector = request.vectors[index];
+            size_t count = min(size_t(vector.length) - offset, sizeof(record) - copied);
+            if (!copy_packet_output(task, vector.base + offset, bytes + copied, count))
+                return complete ? int64_t(complete) : -14;
+            copied += count;
+            offset += count;
+            if (offset == vector.length) {
+                index++;
+                offset = 0;
+            }
+        }
+        complete += sizeof(record);
+    }
+    if (complete)
+        return complete;
+    return request.stream_blocking ? would_block : -11;
+}
+
 static int64_t attempt(Task& task, IoRequest& request) {
     auto h = request.handle;
     const auto& f = request.call;
@@ -1401,6 +1446,8 @@ static int64_t attempt(Task& task, IoRequest& request) {
     }
     if ((h->event || h->timer) && !request.locking)
         return counter_attempt(task, request);
+    if (h->signal_descriptor && !request.locking)
+        return signal_descriptor_attempt(task, request);
     if (request.connect) {
         net_poll();
         if (!request.started) {
@@ -1534,7 +1581,7 @@ static int64_t attempt(Task& task, IoRequest& request) {
             vector.length = min(vector.length, uint64_t(budget - done));
         if (!vector.length)
             continue;
-        if (done && !handle_ready(h, request.write))
+        if (done && !handle_ready(h, request.write, &task))
             break;
         int64_t n = transfer(task, request, vector, done);
         if (n < 0) {
@@ -1607,8 +1654,9 @@ int64_t io_syscall(Task& task, const Frame& frame) {
     if (!error) {
         request->inet_generation = tcp_generation(h->inet);
         // Linux captures O_NONBLOCK for this call; an alias cannot alter a retained cursor.
-        request->stream_blocking = (inet_stream(h->inet) || h->event || h->timer || h->socket) &&
-                                   !(h->flags & 04000) && !(request->flags & 0x40);
+        request->stream_blocking =
+            (inet_stream(h->inet) || h->event || h->timer || h->socket || h->signal_descriptor) &&
+            !(h->flags & 04000) && !(request->flags & 0x40);
         capture_timeout(*request);
     }
     int64_t result = error ? error : attempt(task, *request);
@@ -1635,7 +1683,7 @@ bool io_resume(Task& task) {
         (request->handle->socket && request->handle->socket->type == 2 &&
          (request->unix_record || request->handle->socket->write_closed ||
           request->handle->socket->datagram_error)) ||
-        handle_ready(request->handle, request->write) || (request->handle->flags & 04000))
+        handle_ready(request->handle, request->write, &task) || (request->handle->flags & 04000))
         result = attempt(task, *request);
     if (result == would_block) {
         if (!timeout_expired(*request))
@@ -1650,5 +1698,10 @@ bool io_resume(Task& task) {
     io_discard(task);
     epoll_notify();
     return true;
+}
+
+bool io_resume_signal_descriptor(Task& task) {
+    return task.wait == Wait::read && task.io && task.io->handle->signal_descriptor &&
+           handle_ready(task.io->handle, false, &task) && io_resume(task);
 }
 } // namespace ax

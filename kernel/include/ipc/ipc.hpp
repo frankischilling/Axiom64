@@ -56,6 +56,7 @@ struct EpollItem {
     bool used, enabled;
     uint32_t last_ready, pending;
     uint64_t timer_notification;
+    uint64_t signal_wait_queue;
 };
 
 struct Epoll {
@@ -90,13 +91,14 @@ int64_t socket_accept(Task&, Handle*, uint64_t address, uint64_t length, unsigne
 
 int socket_output_address(Task&, Socket*, uint64_t address, uint64_t length);
 
-uint32_t readiness(Handle*);
+uint32_t readiness(Handle*, const Task*);
 
 bool poll_task_ready(Task&);
 
 int select_events(Task&, const Frame&, bool copy);
 
 void epoll_notify(Handle* source = nullptr, uint32_t events = 0);
+void epoll_signal_notify(const SignalHandlers&);
 
 void epoll_close(Epoll*);
 

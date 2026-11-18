@@ -4,11 +4,12 @@
 
 namespace ax {
 constexpr uint64_t signal_trampoline = 0x7fffffffe000;
+constexpr uint64_t unmaskable_signals = (1ull << 8) | (1ull << 18);
 
-void queue_signal(Task*, int, int sender = 0, int code = 0, int status = 0, uint64_t address = 0);
+int queue_signal(Task*, int, int sender = 0, int code = 0, int status = 0, uint64_t address = 0);
 
-void queue_process_signal(Process*, int, int sender = 0, int code = 0, int status = 0,
-                          uint64_t address = 0);
+int queue_process_signal(Process*, int, int sender = 0, int code = 0, int status = 0,
+                         uint64_t address = 0, const Process* child = nullptr);
 
 bool signal_wakes(const Task&);
 
@@ -18,9 +19,15 @@ bool signal_deliver(Task&);
 
 void signal_tick();
 
+void signal_discard_ignored(Task&, int number);
+
 int64_t signal_syscall(Frame*);
 
 int64_t signal_wait_enter(Frame*);
 
 bool signal_wait_resume(Task&);
+bool signal_pending_for(const Task&, uint64_t mask);
+int next_pending_signal(const Task&, uint64_t mask);
+int take_pending_signal(Task&, uint64_t mask, SignalData&);
+void format_signal_info(uint8_t (&bytes)[128], int number, const SignalData&);
 } // namespace ax

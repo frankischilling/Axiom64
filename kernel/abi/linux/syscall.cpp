@@ -22,6 +22,7 @@
 #include "abi/linux/resource.hpp"
 #include "abi/linux/eventfd.hpp"
 #include "abi/linux/timerfd.hpp"
+#include "abi/linux/signalfd.hpp"
 #include "abi/linux/xattr.hpp"
 #include "fs/record_lock.hpp"
 #include "fs/proc.hpp"
@@ -607,7 +608,7 @@ static int64_t poll_call(uint64_t pointer, size_t count, int timeout) {
         if (p.fd >= 0 && !h)
             p.revents = 32;
         else if (h)
-            p.revents = readiness(h) & (p.events | 8 | 16);
+            p.revents = readiness(h, current) & (p.events | 8 | 16);
         if (p.revents)
             ready++;
         if (copy_result(pointer + i * sizeof(p), &p, sizeof(p)))
@@ -671,7 +672,7 @@ static int64_t dispatch(Frame* f) {
         auto h = fd_handle(a, true);
         if (!h)
             return -9;
-        if (h->event || h->timer) {
+        if (h->event || h->timer || h->signal_descriptor) {
             LinuxStat s{};
             s.mode = 0600;
             s.nlink = 1;
@@ -694,7 +695,7 @@ static int64_t dispatch(Frame* f) {
         auto h = fd_handle(a);
         if (!h)
             return -9;
-        if (h->event || h->timer)
+        if (h->event || h->timer || h->signal_descriptor)
             return c <= 4 ? 0 : -22;
         if (h->pipe || !h->node || (h->node->mode & 0170000) == character)
             return -29;
@@ -766,8 +767,13 @@ static int64_t dispatch(Frame* f) {
             return -22;
         if (c && copy_result(c, current->handlers->signal_actions[a - 1], 32))
             return -14;
-        if (b && !current->memory->space.copy_in(current->handlers->signal_actions[a - 1], b, 32))
-            return -14;
+        if (b) {
+            uint64_t action[4];
+            if (!current->memory->space.copy_in(action, b, sizeof(action)))
+                return -14;
+            memcpy(current->handlers->signal_actions[a - 1], action, sizeof(action));
+            signal_discard_ignored(*current, int(a));
+        }
         return 0;
     case 14: {
         if (d != 8)
@@ -800,10 +806,12 @@ static int64_t dispatch(Frame* f) {
     case 62:
     case 127:
     case 128:
+    case 129:
     case 130:
     case 131:
     case 200:
     case 234:
+    case 297:
         return signal_syscall(f);
     case 21: {
         return access_file(-100, a, b, 0);
@@ -1450,6 +1458,9 @@ static int64_t dispatch(Frame* f) {
         }
         return changed ? node_setattr(node, node->mode, update[0], update[1]) : 0;
     }
+    case 282:
+    case 289:
+        return signalfd_syscall(*f);
     case 283:
     case 286:
     case 287:

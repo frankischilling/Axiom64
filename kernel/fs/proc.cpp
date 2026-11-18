@@ -426,8 +426,8 @@ static int status(Node* node, Snapshot& snapshot) {
         }
     text.character('\n');
     text.field("Threads", owner->process->live_threads ? owner->process->live_threads : 1);
-    text.bits("SigPnd", owner->pending_signals);
-    text.bits("ShdPnd", owner->process->pending_signals);
+    text.bits("SigPnd", owner->pending_signals.mask());
+    text.bits("ShdPnd", owner->process->pending_signals.mask());
     text.bits("SigBlk", owner->signal_mask);
     text.bits("CapInh", owner->credentials.inheritable);
     text.bits("CapPrm", owner->credentials.permitted);
@@ -494,7 +494,7 @@ static int stat(Node* node, Snapshot& snapshot) {
                                                       : owner->start_ticks;
             break;
         case 31:
-            value = owner->pending_signals & 0x7fffffff;
+            value = owner->pending_signals.mask() & 0x7fffffff;
             break;
         case 32:
             value = owner->signal_mask & 0x7fffffff;

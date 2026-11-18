@@ -9,6 +9,7 @@
 #include "ipc/unix_rights.hpp"
 #include "ipc/eventfd.hpp"
 #include "ipc/timerfd.hpp"
+#include "ipc/signal_descriptor.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
 #include "net/inet6.hpp"
@@ -962,6 +963,10 @@ void close_handle(Handle* h) {
         close_timerfd(h->timer);
         h->timer = nullptr;
     }
+    if (h->signal_descriptor) {
+        release(h->signal_descriptor);
+        h->signal_descriptor = nullptr;
+    }
     if (h->pipe) {
         auto p = h->pipe;
         if (h->writer)
@@ -977,7 +982,7 @@ void close_handle(Handle* h) {
     node_retire_xattrs(retired_node);
 }
 
-bool handle_ready(Handle* h, bool write) {
+bool handle_ready(Handle* h, bool write, const Task* task) {
     if (!h)
         return true;
     if (h->socket)
@@ -996,6 +1001,8 @@ bool handle_ready(Handle* h, bool write) {
         return eventfd_ready(h->event, write);
     if (h->timer)
         return !write && timerfd_ready(*h->timer);
+    if (h->signal_descriptor)
+        return !write && task && signal_descriptor_ready(*h->signal_descriptor, *task);
     if (h->pipe)
         return write ? h->pipe->size < sizeof(Pipe::bytes) || !h->pipe->readers
                      : h->pipe->size || !h->pipe->writers;

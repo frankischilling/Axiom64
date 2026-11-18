@@ -69,6 +69,7 @@ static FileTable* copy_files(const FileTable* source) {
 }
 
 static void release_resources(Task* t) {
+    t->pending_signals.discard(UINT64_MAX);
     credential_release(t->credentials);
     io_discard(*t);
     futex_discard(*t);
@@ -288,7 +289,8 @@ static void finish_process(Task* last) {
             queue_process_signal(parent.process, 17, process->pid,
                                  (process->exit_status & 127) ? 2 : 1,
                                  (process->exit_status & 127) ? process->exit_status & 127
-                                                              : process->exit_status >> 8);
+                                                              : process->exit_status >> 8,
+                                 0, process);
     if (process->pid == 1) {
         if (test_mode)
             poweroff((process->exit_status & 127) ? 128 + (process->exit_status & 127)
@@ -337,8 +339,10 @@ void exit_thread(Task* t, int status) {
     release_resources(t);
     if (process->leader == t || process->live_threads == 1)
         process->exit_status = status;
-    if (!--process->live_threads)
+    if (!--process->live_threads) {
+        process->pending_signals.discard(UINT64_MAX);
         finish_process(t);
+    }
     if (process->leader != t) {
         t->state = State::empty;
         t->process = nullptr;
@@ -368,6 +372,8 @@ static bool awaken(Task& t) {
     if (t.state != State::blocked)
         return t.state == State::runnable;
     if (t.wait == Wait::signal_queue && signal_wait_resume(t))
+        return true;
+    if (io_resume_signal_descriptor(t))
         return true;
     if (signal_wakes(t)) {
         signal_interrupt(t);
@@ -722,6 +728,7 @@ int exec_task(Task* t, const ExecArguments& arguments) {
     if (handlers) {
         *handlers = *t->handlers;
         handlers->references = 1;
+        handlers->descriptor_wait_queue = 0;
     }
     auto process = t->process;
     for (auto& member : tasks)

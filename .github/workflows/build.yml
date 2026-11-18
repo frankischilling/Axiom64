@@ -1144,6 +1144,11 @@ jobs:
         run: |
           sudo -n make test-timerfd-native
           make test-timerfd
+      - name: Compare Linux signal descriptors and test queued signal delivery
+        if: matrix.suite == 'boot'
+        run: |
+          sudo -n make test-signalfd-native
+          make test-signalfd
       - name: Test virtio queue sizes and offered features
         if: matrix.suite == 'boot'
         run: make test-virtio
@@ -1769,6 +1774,8 @@ jobs:
             build/unix-datagram-guest.tar.gz
             build/timerfd-native/**
             build/timerfd-guest/**
+            build/signalfd-native/**
+            build/signalfd-guest/**
             build/unix-stream-native/**
             build/unix-shutdown-native/**
             build/unix-stream-wait-native/**

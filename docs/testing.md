@@ -655,6 +655,14 @@ Run `make test-threads` for the dedicated static/dynamic musl, futex, lifecycle,
 
 Run `make test-thread-io` for the focused [blocking I/O suite](io.md#verification-and-limits). The full and complete thread suites also require its static/dynamic tests.
 
+Run `make test-signalfd` to check [signal descriptors](io.md#signal-descriptors).
+The guest matrix uses both musl providers, static and dynamic binaries, and
+BIOS and UEFI. Each boot tests root and an ordinary user. The client checks
+record layout, copy faults, epoll, interrupted reads, descriptor lifetime,
+ordered queued payloads, and queue admission. `sudo make test-signalfd-native`
+runs the client on Linux for comparison. The boot CI job retains binaries,
+source bindings, images, and logs for both suites.
+
 Run `make test-timerfd` to check [timer descriptors](io.md#timer-descriptors)
 across both musl providers, static and dynamic linkage, and BIOS and UEFI.
 Each boot runs the same client as root and as UID 65534. The test retains the

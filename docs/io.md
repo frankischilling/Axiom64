@@ -82,6 +82,27 @@ Durations round up to the kernel's 10 ms clock units, following the jiffy conver
 
 Each supported socket I/O attempt captures one absolute monotonic deadline after importing its arguments. Changing the option through an alias does not change a waiting attempt's deadline. The first attempt can still return ready data or an immediate error. An expired wait without progress returns `EAGAIN` and releases its retained request exactly once. It does not access a buffer unmapped during an unavailable socket wait; a readable wake-up still checks the buffer and returns `EFAULT` for an invalid destination. A transferred prefix returns its byte count; it is never replayed after expiry. Nonblocking descriptions and `MSG_DONTWAIT` retain their immediate behavior. Read/readv/recv/recvmsg and accept use the receive deadline; write/writev/send/sendmsg use the send deadline. [TCP](tcp.md) also retains connect requests, uses the send deadline and returns `EINPROGRESS` on connect expiry. Full TCP interruption/deadline and retained-call acceptance remains in [TCP reliability](tcp.md).
 
+## Signal descriptors
+
+`signalfd` and `signalfd4` let event loops receive blocked signals through a file
+descriptor. Redirecting the descriptor's mask through an alias updates the
+shared open description. A read uses the caller's pending signals, so forked
+processes can use an inherited descriptor without draining their parent's queue.
+Poll and select check the caller's queue. Epoll follows the signal notification
+context that registered the descriptor.
+
+Reads return complete 128-byte records. One `readv` can split a record across
+vectors or drain several records. A fault consumes the signal for that record.
+The read reports any complete records copied before the fault. A caught signal
+can interrupt a blocking read or restart it through the normal signal path.
+
+Standard signals coalesce. `sigqueue` and thread-directed queued sends preserve
+real-time payloads and order for repeated instances of the same signal.
+`signalfd`, `sigtimedwait` and signal handlers consume the same pending records.
+Pending signal records share a 4,096-entry kernel pool. The receiver's
+`RLIMIT_SIGPENDING` limits charged records by real UID. Real-time sends that
+require a queue record return `EAGAIN` when admission fails.
+
 ## Timer descriptors
 
 `timerfd_create`, `timerfd_settime` and `timerfd_gettime` provide Linux x86-64

@@ -14,6 +14,8 @@ struct NetlinkSocket;
 struct Epoll;
 struct Eventfd;
 struct Timerfd;
+struct SignalDescriptor;
+struct Task;
 struct Mount;
 struct Handle;
 struct Xattr;
@@ -158,6 +160,7 @@ struct Handle {
     Epoll* epoll = nullptr;
     Eventfd* event = nullptr;
     Timerfd* timer = nullptr;
+    SignalDescriptor* signal_descriptor = nullptr;
     uint64_t generation = 0;
     uint8_t file_lock = 0;
     void* filesystem_data = nullptr;
@@ -250,7 +253,7 @@ int write_handle_limit(Handle*, size_t&);
 
 int64_t write_handle(Handle*, const void*, size_t);
 
-bool handle_ready(Handle*, bool write);
+bool handle_ready(Handle*, bool write, const Task*);
 
 void node_path(Node*, char*, size_t);
 } // namespace ax

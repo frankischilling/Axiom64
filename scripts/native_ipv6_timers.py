@@ -10,7 +10,7 @@ import re
 import time
 
 KERNEL = '6.17.0-1022-azure'
-SUPPORTED_KERNELS = (KERNEL, '7.0.0-1017-azure')
+SUPPORTED_KERNELS = (KERNEL, '7.0.0-1017-azure', '7.0.0-1014-aws')
 CONFIG = 'native-timer-config.txt'
 VALUES = 'native-timer-values.json'
 EXPECTED = {'/proc/sys/net/ipv6/idgen_delay': '1\n'}

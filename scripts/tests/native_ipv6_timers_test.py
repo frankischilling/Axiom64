@@ -164,6 +164,25 @@ class NativeTimerPolicy(unittest.TestCase):
         self.assertEqual(evidence['after']['values'],values)
 
 
+class AWSNativeTimerCollector(unittest.TestCase):
+    def test_records_policy_for_the_audited_aws_release(self):
+        kernel = '7.0.0-1014-aws'
+        with tempfile.TemporaryDirectory(prefix='axiom64-aws-timer-policy-') as temporary:
+            directory = Path(temporary)
+            config = directory / ('config-' + kernel)
+            config.write_text('CONFIG_64BIT=y\nCONFIG_HZ=1000\n')
+            with patch('native_ipv6_timers.platform.release', return_value=kernel), \
+                 patch('native_ipv6_timers.Path',
+                       side_effect=lambda name: config if name.startswith('/boot/') else Path(name)), \
+                 patch('native_ipv6_timers.sample', side_effect=(
+                     dict(begin_ns=100, end_ns=200, values=EXPECTED),
+                     dict(begin_ns=400, end_ns=500, values=EXPECTED))):
+                policy = finish(directory, begin(directory))
+            self.assertEqual(policy['kernel'], kernel)
+            self.assertEqual(policy['upper_us'], 3212000)
+            self.assertEqual((directory / CONFIG).read_bytes(), config.read_bytes())
+
+
 class Linux7NativeTimerPolicy(NativeTimerPolicy):
     fixture=FIXTURE.parent/'ipv6-device-linux7-timers'
     kernel='7.0.0-1017-azure'

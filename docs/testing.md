@@ -756,8 +756,8 @@ Readers require exact owner sets and connected-prefix counts without imposing
 address dump order. Probing and retrying use the actual probe-to-ready interval
 of one to 2.1 seconds. Regenerating during carrier loss has no replacement wire
 probe, so its first ready observation must follow the actual conflict by two to
-3.1 seconds in Axiom64. A native Linux 6.17.0-1022-azure or 7.0.0-1017-azure comparison may use a
-3.212-second ceiling only with the actual kernel configuration and timer values
+3.1 seconds in Axiom64. The native Linux 6.17.0-1022-azure, 7.0.0-1017-azure and
+7.0.0-1014-aws comparisons may use a 3.212-second ceiling only with the actual kernel configuration and timer values
 recorded before and after the C workload. CONFIG_HZ must be 1000; generation and
 router-solicitation delays must remain one second, neighbor retransmission must
 remain 1000 milliseconds, and DAD/nonce settings must retain their defaults.

@@ -7,14 +7,18 @@
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <sys/mman.h>
+#include <sys/signalfd.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -362,6 +366,182 @@ static void pwait2_deadline(void) {
     puts("EPOLL_LIFETIME_CASE pwait2-read-only-deadline");
 }
 
+static void exclusive_registration(void) {
+    int epoll = epoll_create1(EPOLL_CLOEXEC), tube[2];
+    CHECK(epoll >= 0 && pipe2(tube, O_NONBLOCK) == 0);
+    const unsigned incompatible[] = {EPOLLONESHOT, EPOLLPRI, EPOLLRDNORM};
+    struct epoll_event event = {.data.u32 = 81};
+    for (size_t i = 0; i < sizeof(incompatible) / sizeof(incompatible[0]); i++) {
+        event.events = EPOLLIN | EPOLLEXCLUSIVE | incompatible[i];
+        CHECK(epoll_ctl(epoll, EPOLL_CTL_ADD, tube[0], &event) == -1 && errno == EINVAL);
+    }
+    event.events = EPOLLIN | EPOLLEXCLUSIVE;
+    CHECK(epoll_ctl(epoll, EPOLL_CTL_MOD, tube[0], &event) == -1 && errno == EINVAL);
+    CHECK(epoll_ctl(epoll, EPOLL_CTL_ADD, tube[0], &event) == 0);
+    CHECK(epoll_ctl(epoll, EPOLL_CTL_ADD, tube[0], &event) == -1 && errno == EEXIST);
+    event.events = EPOLLIN;
+    event.data.u32 = 82;
+    CHECK(epoll_ctl(epoll, EPOLL_CTL_MOD, tube[0], &event) == -1 && errno == EINVAL);
+    CHECK(write(tube[1], "E", 1) == 1);
+    expect_event(epoll, 81);
+    expect_event(epoll, 81);
+    CHECK(epoll_ctl(epoll, EPOLL_CTL_DEL, tube[0], NULL) == 0);
+    CHECK(epoll_ctl(epoll, EPOLL_CTL_ADD, tube[0], &event) == 0);
+    event.events |= EPOLLEXCLUSIVE;
+    CHECK(epoll_ctl(epoll, EPOLL_CTL_MOD, tube[0], &event) == -1 && errno == EINVAL);
+    expect_event(epoll, 82);
+    expect_byte(tube[0], 'E');
+    CHECK(close(tube[0]) == 0 && close(tube[1]) == 0 && close(epoll) == 0);
+    puts("EPOLL_LIFETIME_CASE exclusive-registration");
+}
+
+struct exclusive_waiter {
+    int epoll, control;
+    int result;
+    struct epoll_event event;
+};
+
+static void* wait_exclusively(void* arg) {
+    struct exclusive_waiter* waiter = arg;
+    CHECK(write(waiter->control, "B", 1) == 1);
+    waiter->result = epoll_wait(waiter->epoll, &waiter->event, 1, 500);
+    CHECK(write(waiter->control, "D", 1) == 1);
+    return NULL;
+}
+
+static void exclusive_delivery(int target, uint32_t interest, int initially_readable,
+                               void (*trigger)(int), int argument) {
+    int epolls[4], control[2];
+    CHECK(pipe(control) == 0);
+    // The order of instance creation differs from the order of watch registration.
+    for (int i = 3; i >= 0; i--) {
+        epolls[i] = epoll_create1(EPOLL_CLOEXEC);
+        CHECK(epolls[i] >= 0);
+    }
+    for (unsigned i = 0; i < 4; i++) {
+        struct epoll_event event = {
+            .events = interest | (i < 3 ? EPOLLEXCLUSIVE : 0),
+            .data.u32 = 90 + i,
+        };
+        CHECK(epoll_ctl(epolls[i], EPOLL_CTL_ADD, target, &event) == 0);
+        if (initially_readable)
+            expect_event(epolls[i], 90 + i);
+    }
+    int outer = epoll_create1(EPOLL_CLOEXEC);
+    CHECK(outer >= 0);
+    watch(outer, epolls[0], 94);
+
+    struct exclusive_waiter waiters[3] = {0};
+    pthread_t threads[3];
+    for (unsigned i = 0; i < 3; i++) {
+        waiters[i].epoll = epolls[i + 1];
+        waiters[i].control = control[1];
+        CHECK(pthread_create(&threads[i], NULL, wait_exclusively, &waiters[i]) == 0);
+    }
+    for (unsigned i = 0; i < 3; i++)
+        expect_byte(control[0], 'B');
+    struct pollfd observer = {.fd = control[0], .events = POLLIN};
+    CHECK(poll(&observer, 1, 60) == 0);
+    trigger(argument);
+    // A direct exclusive waiter and the ordinary waiter receive the same event.
+    for (unsigned i = 0; i < 2; i++) {
+        CHECK(poll(&observer, 1, 1200) == 1 && observer.revents == POLLIN);
+        expect_byte(control[0], 'D');
+    }
+    CHECK(poll(&observer, 1, 60) == 0);
+    for (unsigned i = 0; i < 3; i++)
+        CHECK(pthread_join(threads[i], NULL) == 0);
+    uint32_t ready = interest & (EPOLLIN | EPOLLOUT);
+    CHECK(waiters[0].result == 1 && waiters[0].event.data.u32 == 91 &&
+          waiters[0].event.events == ready);
+    CHECK(waiters[1].result == 0);
+    CHECK(waiters[2].result == 1 && waiters[2].event.data.u32 == 93 &&
+          waiters[2].event.events == ready);
+    struct epoll_event event;
+    CHECK(epoll_wait(epolls[2], &event, 1, 0) == 0);
+    expect_event(outer, 94);
+    CHECK(epoll_wait(epolls[0], &event, 1, 0) == 1);
+    CHECK(event.data.u32 == 90 && event.events == ready);
+
+    CHECK(close(outer) == 0 && close(control[0]) == 0 && close(control[1]) == 0);
+    for (unsigned i = 0; i < 4; i++)
+        CHECK(close(epolls[i]) == 0);
+}
+
+static void wake_exclusive_pipe(int writer) {
+    CHECK(write(writer, "W", 1) == 1);
+}
+
+static void wake_exclusive_eventfd(int fd) {
+    uint64_t value;
+    CHECK(read(fd, &value, sizeof(value)) == sizeof(value) && value == UINT64_MAX - 1);
+}
+
+static void wake_exclusive_signalfd(int pid) {
+    CHECK(kill(pid, SIGUSR1) == 0);
+}
+
+static socklen_t exclusive_address(struct sockaddr_un* address) {
+    *address = (struct sockaddr_un){.sun_family = AF_UNIX};
+    int size = snprintf(address->sun_path + 1, sizeof(address->sun_path) - 1, "epoll-exclusive-%ld",
+                        (long)getpid());
+    CHECK(size > 0 && (size_t)size < sizeof(address->sun_path) - 1);
+    return offsetof(struct sockaddr_un, sun_path) + 1 + size;
+}
+
+static void wake_exclusive_listener(int client) {
+    struct sockaddr_un address;
+    socklen_t size = exclusive_address(&address);
+    CHECK(connect(client, (struct sockaddr*)&address, size) == 0);
+}
+
+static void exclusive_wakeups(void) {
+    int tube[2];
+    CHECK(pipe2(tube, O_NONBLOCK) == 0);
+    exclusive_delivery(tube[0], EPOLLIN, 0, wake_exclusive_pipe, tube[1]);
+    expect_byte(tube[0], 'W');
+    CHECK(close(tube[0]) == 0 && close(tube[1]) == 0);
+    puts("EPOLL_LIFETIME_CASE exclusive-pipe-readers");
+
+    int fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    uint64_t full = UINT64_MAX - 1;
+    CHECK(fd >= 0 && write(fd, &full, sizeof(full)) == sizeof(full));
+    exclusive_delivery(fd, EPOLLOUT, 0, wake_exclusive_eventfd, fd);
+    CHECK(close(fd) == 0);
+    puts("EPOLL_LIFETIME_CASE exclusive-eventfd-writers");
+
+    sigset_t signals, original;
+    CHECK(sigemptyset(&signals) == 0 && sigaddset(&signals, SIGUSR1) == 0);
+    CHECK(pthread_sigmask(SIG_BLOCK, &signals, &original) == 0);
+    fd = signalfd(-1, &signals, SFD_NONBLOCK | SFD_CLOEXEC);
+    CHECK(fd >= 0);
+    exclusive_delivery(fd, EPOLLIN, 0, wake_exclusive_signalfd, getpid());
+    struct signalfd_siginfo info;
+    CHECK(read(fd, &info, sizeof(info)) == sizeof(info) && info.ssi_signo == SIGUSR1);
+    CHECK(close(fd) == 0 && pthread_sigmask(SIG_SETMASK, &original, NULL) == 0);
+    puts("EPOLL_LIFETIME_CASE exclusive-signalfd");
+
+    int server = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    int clients[2];
+    struct sockaddr_un address;
+    socklen_t size = exclusive_address(&address);
+    CHECK(server >= 0 && bind(server, (struct sockaddr*)&address, size) == 0);
+    CHECK(listen(server, 2) == 0);
+    clients[0] = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    clients[1] = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    CHECK(clients[0] >= 0 && clients[1] >= 0);
+    wake_exclusive_listener(clients[0]);
+    exclusive_delivery(server, EPOLLIN | EPOLLET, 1, wake_exclusive_listener, clients[1]);
+    for (unsigned i = 0; i < 2; i++) {
+        int accepted = accept4(server, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+        CHECK(accepted >= 0 && write(clients[i], "A", 1) == 1);
+        expect_byte(accepted, 'A');
+        CHECK(close(accepted) == 0 && close(clients[i]) == 0);
+    }
+    CHECK(close(server) == 0);
+    puts("EPOLL_LIFETIME_CASE exclusive-listener-backlog");
+}
+
 static void reclaim_and_copy_fault(void) {
     int epoll = epoll_create1(EPOLL_CLOEXEC);
     CHECK(epoll >= 0);
@@ -424,6 +604,8 @@ int main(int argc, char** argv) {
     waiting_instance(1, &huge);
     signals_and_timeout();
     pwait2_deadline();
+    exclusive_registration();
+    exclusive_wakeups();
     reclaim_and_copy_fault();
     printf("EPOLL_LIFETIME_PASS uid=%lu\n", (unsigned long)getuid());
     return 0;

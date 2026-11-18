@@ -128,6 +128,20 @@ identities and both musl providers and linkages on BIOS and UEFI, with
 additional read-only ext2 boots.
 `sudo make test-epoll-lifetime-native` runs the Linux comparison.
 
+## Exclusive epoll wakeups
+
+`EPOLLEXCLUSIVE` applies when adding a watch. Delete and add the watch again
+to change it. The flag accepts `EPOLLIN`, `EPOLLOUT`, `EPOLLERR`, `EPOLLHUP`,
+`EPOLLET`, and `EPOLLWAKEUP` as companion bits. Axiom64 has no system suspend
+integration for `EPOLLWAKEUP`.
+
+Ordinary watches still receive the event. Exclusive watches queue it in
+registration order until one reaches a blocked epoll waiter. A watch on an
+instance that is only being polled can queue the event while the notification
+continues to a blocked waiter. The lifetime tests cover pipe readers, eventfd
+writers, signal descriptors, and a Unix listener whose backlog is already
+readable when another connection arrives.
+
 ## Nested epoll
 
 Poll, select, and an outer epoll instance report an epoll descriptor as

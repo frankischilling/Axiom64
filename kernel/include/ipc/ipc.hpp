@@ -48,6 +48,8 @@ struct [[gnu::packed]] EpollEvent {
     uint64_t data;
 };
 
+struct Epoll;
+
 struct EpollItem {
     Handle* handle;
     uint64_t generation;
@@ -57,6 +59,9 @@ struct EpollItem {
     uint32_t last_ready, pending;
     uint64_t observed_notification;
     uint64_t signal_wait_queue;
+    Epoll* exclusive_owner = nullptr;
+    EpollItem* exclusive_prev = nullptr;
+    EpollItem* exclusive_next = nullptr;
 };
 
 struct Epoll {

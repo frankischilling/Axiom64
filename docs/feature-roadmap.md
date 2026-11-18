@@ -372,6 +372,8 @@ readiness, signal interruption, and persistent ext2 inodes.
 descriptors, inherited watches, and waits that survive descriptor replacement.
 `epoll_pwait2` supports relative timespec deadlines and temporary signal masks
 through the same wait path.
+[Exclusive epoll](io.md#exclusive-epoll-wakeups) limits wakeups across competing
+instances while continuing to notify ordinary watches.
 [Nested epoll](io.md#nested-epoll) supports polling epoll descriptors, propagates
 wakeups through nested watches, and rotates through the ready set in small batches.
 [Timer descriptors](io.md#timer-descriptors) let event loops wait for expiration

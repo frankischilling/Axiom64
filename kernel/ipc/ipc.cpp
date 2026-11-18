@@ -14,7 +14,10 @@
 
 namespace ax {
 Socket sockets[256];
-static Epoll* epolls[64];
+static constexpr unsigned max_epolls = 64;
+static Epoll* epolls[max_epolls];
+static EpollItem* exclusive_first;
+static EpollItem* exclusive_last;
 static uint64_t next_signal_wait_queue = 1;
 
 bool socket_node_busy(Node* node) {
@@ -257,8 +260,12 @@ int64_t socket_accept(Task& task, Handle* h, uint64_t address, uint64_t length, 
 }
 
 static bool epoll_readable(Epoll&, const Task*);
-static void epoll_refresh(Epoll&, Handle*, uint32_t, uint64_t&);
+static void epoll_refresh(Epoll&, const void*, uint32_t, uint64_t&);
+static void epoll_notify_exclusive(const void*, uint32_t, uint64_t signal_wait_queue = 0);
 static constexpr uint32_t epoll_read_mask = 1 | 0x40; // POLLIN | POLLRDNORM
+static constexpr uint32_t epoll_exclusive = 1u << 28;
+static constexpr uint32_t epoll_exclusive_events =
+    epoll_exclusive | (1u << 29) | (1u << 31) | 1 | 4 | 8 | 16;
 
 uint32_t readiness(Handle* h, const Task* task) {
     if (!h)
@@ -344,6 +351,31 @@ static bool epoll_item_live(const EpollItem& item) {
     return item.used && item.handle->references && item.handle->generation == item.generation;
 }
 
+static void epoll_append_exclusive(Epoll& epoll, EpollItem& item) {
+    item.exclusive_owner = &epoll;
+    item.exclusive_prev = exclusive_last;
+    if (exclusive_last)
+        exclusive_last->exclusive_next = &item;
+    else
+        exclusive_first = &item;
+    exclusive_last = &item;
+}
+
+static void epoll_unlink_exclusive(EpollItem& item) {
+    if (!item.exclusive_owner)
+        return;
+    if (auto previous = item.exclusive_prev)
+        previous->exclusive_next = item.exclusive_next;
+    else
+        exclusive_first = item.exclusive_next;
+    if (auto next = item.exclusive_next)
+        next->exclusive_prev = item.exclusive_prev;
+    else
+        exclusive_last = item.exclusive_prev;
+    item.exclusive_owner = nullptr;
+    item.exclusive_prev = item.exclusive_next = nullptr;
+}
+
 struct EpollScan {
     const Task* task;
     uint64_t scanned = 0;
@@ -357,7 +389,7 @@ static uint32_t epoll_item_events(EpollItem& item, EpollScan& scan) {
         return 0;
     auto child = item.handle->epoll;
     bool requires_notification =
-        child || item.signal_wait_queue || (item.event.events & (1u << 31));
+        child || item.signal_wait_queue || (item.event.events & (epoll_exclusive | (1u << 31)));
     if (requires_notification && !item.pending)
         return 0;
     uint32_t ready;
@@ -390,6 +422,7 @@ static bool epoll_readable(Epoll& epoll, EpollScan& scan) {
 
 static bool epoll_readable(Epoll& epoll, const Task* task) {
     uint64_t visited = 0;
+    epoll_notify_exclusive(nullptr, 0);
     epoll_refresh(epoll, nullptr, 0, visited);
     EpollScan scan{task};
     return epoll_readable(epoll, scan);
@@ -397,6 +430,7 @@ static bool epoll_readable(Epoll& epoll, const Task* task) {
 
 static int epoll_events(Task& task, Epoll* poll, uint64_t output, unsigned count) {
     uint64_t visited = 0;
+    epoll_notify_exclusive(nullptr, 0);
     epoll_refresh(*poll, nullptr, 0, visited);
     unsigned ready = 0, start = poll->cursor;
     EpollScan scan{&task};
@@ -526,14 +560,94 @@ void epoll_stop_wait(Task& task) {
     epoll_discard_wait(task);
 }
 
-static void epoll_refresh(Epoll& epoll, Handle* source, uint32_t events, uint64_t& visited) {
+static const void* epoll_origin(const Handle& handle) {
+    if (handle.pipe)
+        return handle.pipe;
+    if (handle.socket)
+        return handle.socket;
+    return &handle;
+}
+
+static uint32_t epoll_leaf_notification(EpollItem& item, const void* source, uint32_t events) {
+    auto target = item.handle;
+    uint32_t ready = readiness(target, nullptr) & (item.event.events | 8 | 16);
+    uint32_t pending = 0;
+    if (auto timer = target->timer) {
+        auto notification = timerfd_notification(*timer);
+        if (notification != item.observed_notification) {
+            item.observed_notification = notification;
+            pending = ready & 1;
+        }
+    } else
+        pending = ready & ~item.last_ready;
+    if (source && epoll_origin(*target) == source)
+        pending |= ready & events;
+    item.last_ready = ready;
+    return pending;
+}
+
+static void epoll_notify_exclusive(const void* source, uint32_t events,
+                                   uint64_t signal_wait_queue) {
+    if (!exclusive_first)
+        return;
+    unsigned waiting[max_epolls]{};
+    for (auto& task : tasks)
+        if (task.state == State::blocked && task.wait == Wait::epoll_wait)
+            ++waiting[task.epoll_wait_handle->epoll->index];
+
+    // Each claim spends one direct waiter. Read and write wakeups can occur on
+    // the same pipe, and signalfd descriptions can share a signal wait queue.
+    struct Claim {
+        const void* source;
+        uint32_t events;
+    } claims[max_tasks];
+
+    unsigned count = 0;
+    for (auto item = exclusive_first; item;) {
+        auto& watch = *item;
+        item = watch.exclusive_next;
+        if (!epoll_item_live(watch)) {
+            epoll_unlink_exclusive(watch);
+            continue;
+        }
+        if (watch.signal_wait_queue != signal_wait_queue)
+            continue;
+        uint32_t pending = signal_wait_queue ? watch.event.events & 1
+                                             : epoll_leaf_notification(watch, source, events);
+        if (!pending)
+            continue;
+        // All signalfd watches in this pass use the same signal wait queue.
+        const void* key = signal_wait_queue ? nullptr : epoll_origin(*watch.handle);
+        unsigned claim = 0;
+        while (claim < count && claims[claim].source != key)
+            ++claim;
+        if (claim < count)
+            pending &= ~claims[claim].events;
+        if (!pending)
+            continue;
+
+        auto& epoll = *watch.exclusive_owner;
+        watch.pending |= pending;
+        ++epoll.notification;
+        if (waiting[epoll.index]) {
+            --waiting[epoll.index];
+            if (claim == count)
+                claims[count++] = {key, pending};
+            else
+                claims[claim].events |= pending;
+        }
+    }
+}
+
+static void epoll_refresh(Epoll& epoll, const void* source, uint32_t events, uint64_t& visited) {
     uint64_t bit = 1ull << epoll.index;
     if (visited & bit)
         return;
     visited |= bit;
     bool notified = false;
     for (auto& item : epoll.items) {
-        if (!item.enabled || item.signal_wait_queue || !epoll_item_live(item))
+        if (!item.enabled || item.exclusive_owner || item.signal_wait_queue ||
+            !epoll_item_live(item))
             continue;
         uint32_t pending = 0;
         auto target = item.handle;
@@ -545,20 +659,8 @@ static void epoll_refresh(Epoll& epoll, Handle* source, uint32_t events, uint64_
                 // samples both POLLIN and POLLRDNORM.
                 pending = item.event.events & 1;
             }
-        } else {
-            uint32_t ready = readiness(target, nullptr) & (item.event.events | 8 | 16);
-            if (auto timer = target->timer) {
-                auto notification = timerfd_notification(*timer);
-                if (notification != item.observed_notification) {
-                    item.observed_notification = notification;
-                    pending = ready & 1;
-                }
-            } else
-                pending = ready & ~item.last_ready;
-            if (target == source || (source && source->pipe && target->pipe == source->pipe))
-                pending |= ready & events;
-            item.last_ready = ready;
-        }
+        } else
+            pending = epoll_leaf_notification(item, source, events);
         item.pending |= pending;
         notified |= pending != 0;
     }
@@ -566,23 +668,29 @@ static void epoll_refresh(Epoll& epoll, Handle* source, uint32_t events, uint64_
         ++epoll.notification;
 }
 
-void epoll_notify(Handle* source, uint32_t events) {
+static void epoll_notify_source(const void* source, uint32_t events) {
+    epoll_notify_exclusive(source, events);
     uint64_t visited = 0;
     for (auto poll : epolls)
         if (poll)
             epoll_refresh(*poll, source, events, visited);
 }
 
+void epoll_notify(Handle* source, uint32_t events) {
+    epoll_notify_source(source ? epoll_origin(*source) : nullptr, events);
+}
+
 void epoll_signal_notify(const SignalHandlers& handlers) {
     if (!handlers.descriptor_wait_queue)
         return;
+    epoll_notify_exclusive(nullptr, 0, handlers.descriptor_wait_queue);
     for (auto poll : epolls) {
         if (!poll)
             continue;
         bool notified = false;
         for (auto& item : poll->items)
-            if (item.enabled && item.signal_wait_queue == handlers.descriptor_wait_queue &&
-                epoll_item_live(item)) {
+            if (item.enabled && !item.exclusive_owner &&
+                item.signal_wait_queue == handlers.descriptor_wait_queue && epoll_item_live(item)) {
                 uint32_t pending = item.event.events & 1;
                 item.pending |= pending;
                 notified |= pending != 0;
@@ -636,6 +744,8 @@ static bool epoll_can_nest(const Epoll& parent, const Epoll& child) {
 }
 
 void epoll_close(Epoll* poll) {
+    for (auto& item : poll->items)
+        epoll_unlink_exclusive(item);
     for (auto& entry : epolls)
         if (entry == poll)
             entry = nullptr;
@@ -822,6 +932,7 @@ int64_t ipc_syscall(Frame* f) {
         s->connected = true;
         listener->queue[(listener->queue_head + listener->queue_size) % 32] = server;
         listener->queue_size++;
+        epoll_notify_source(listener, 1);
         return 0;
     }
     case 48:
@@ -990,10 +1101,16 @@ int64_t ipc_syscall(Frame* f) {
         return n;
     }
     case 233: {
+        EpollEvent event{};
+        if ((b == 1 || b == 3) && !current->memory->space.copy_in(&event, d, sizeof(event)))
+            return -14;
         auto target = handle(c);
         if (!h || !target)
             return -9;
         if (!h->epoll || target == h)
+            return -22;
+        if ((event.events & epoll_exclusive) &&
+            (b != 1 || target->epoll || (event.events & ~epoll_exclusive_events)))
             return -22;
         EpollItem* item = nullptr;
         for (auto& existing : h->epoll->items)
@@ -1003,6 +1120,7 @@ int64_t ipc_syscall(Frame* f) {
         if (b == 2) {
             if (!item)
                 return -2;
+            epoll_unlink_exclusive(*item);
             item->used = false;
             return 0;
         }
@@ -1010,12 +1128,9 @@ int64_t ipc_syscall(Frame* f) {
             return -17;
         if (b == 3 && !item)
             return -2;
-        if (b != 1 && b != 3)
+        if (b == 3 && item->exclusive_owner)
             return -22;
-        EpollEvent event;
-        if (!current->memory->space.copy_in(&event, d, sizeof(event)))
-            return -14;
-        if (target->epoll && (event.events & (1u << 28)))
+        if (b != 1 && b != 3)
             return -22;
         if (b == 1 && target->epoll && !epoll_can_nest(*h->epoll, *target->epoll))
             return -40;
@@ -1038,8 +1153,11 @@ int64_t ipc_syscall(Frame* f) {
         uint64_t notification = target->epoll   ? target->epoll->notification
                                 : target->timer ? timerfd_notification(*target->timer)
                                                 : 0;
+        epoll_unlink_exclusive(*item);
         *item = {target, target->generation, int(c),    event, true, true, ready,
                  ready,  notification,       wait_queue};
+        if (event.events & epoll_exclusive)
+            epoll_append_exclusive(*h->epoll, *item);
         if (ready)
             ++h->epoll->notification;
         epoll_notify();

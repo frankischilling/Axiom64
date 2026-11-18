@@ -58,6 +58,7 @@ jobs:
           sudo -n python3 -B scripts/tests/tcp_icmp_port_ownership_test.py -v
           python3 -B scripts/tests/native_icmp_budget_capture_test.py -v
           sudo -n python3 -B scripts/tests/ipv4_lifetime_paths_test.py -v
+          sudo -n python3 -B scripts/tests/ipv4_lifetime_capture_binding_test.py
           python3 -B scripts/tests/ipv4_lifetime_arp_test.py -v
           python3 -B scripts/tests/ipv4_lifetime_observation_test.py -v
           python3 -B scripts/tests/manager_link_startup_test.py -v

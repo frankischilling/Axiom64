@@ -15,7 +15,8 @@ from ipv6_router_capture import checksum, qemu_records
 COMMON = ('missing-ack','duplicate-query','wrong-adapter','wrong-nonce-option','bad-checksum','wrong-hop-limit',
           'conflict-after-ack','missing-probe','extra-probe','short-quiet-window','early-retry','late-retry',
           'backward-guest-clock','opposite-prefix-policy','truncated-capture','missing-serial-query','missing-completion')
-GLOBAL = ('wrong-first-flags','wrong-cloned-cache','wrong-failed-flags','wrong-deleted-identity','orphan-permanent-prefix','wrong-pio-cache')
+GLOBAL = ('wrong-first-flags','wrong-cloned-cache','wrong-failed-flags','wrong-deleted-identity',
+          'orphan-permanent-prefix','wrong-pio-cache','probe-after-nodad-ack')
 LIFECYCLE = ('ordinary-recreation-nodad','ordinary-recreation-cache-before-flag','invented-deprecation-wait',
              'nodad-recreation-tentative','missing-permanent-owner','wrong-exhausted-count','invented-nodad-probe')
 SECRET = ('missing-secret-readback','duplicate-secret-readback','wrong-secret-value',
@@ -117,6 +118,16 @@ def controls(path,lane,text,group,archive=None):
             elif label=='wrong-pio-cache':
                 def change(f):struct.pack_into('!I',f,82,61);recalculate(f)
                 edit(packet(134,1),change)
+            elif label=='probe-after-nodad-ack':
+                target=rows[select(2,3,1)]['frame'][36:52]
+                phase=rows[select(3,3,1)]['frame'][19]
+                probe=next(row for row in changed if row['frame'][12:14]==b'\x86\xdd' and
+                           row['frame'][20]==58 and row['frame'][54]==135 and row['frame'][62:78]==target)
+                changed.remove(probe)
+                reply=next(i for i,row in enumerate(changed) if row['frame'][12:14]==b'\x88\xc3' and
+                           row['frame'][:6]==guest and row['frame'][19:21]==bytes([phase,1]))
+                probe['stamp']=changed[reply]['stamp']
+                changed.insert(reply+1,probe)
             elif label=='ordinary-recreation-nodad':edit(select(2,8,4),lambda f:struct.pack_into('!I',f,24,2),True)
             elif label=='ordinary-recreation-cache-before-flag':edit(select(2,8,5),lambda f:struct.pack_into('!III',f,24,0,0,6),True)
             elif label=='invented-deprecation-wait':

@@ -1,11 +1,147 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/** @file Pipe page queues, capacity ownership, and FIFO rendezvous. */
 #include "fs/pipe.hpp"
 #include "io/descriptor_wait.hpp"
 #include "fs/descriptor.hpp"
 #include "fs/inotify.hpp"
+#include "ipc/ipc.hpp"
 #include "process/task.hpp"
 
 namespace ax {
+static constexpr unsigned default_pipe_pages = 16;
+static constexpr unsigned pipe_user_pages_soft = 16384;
+static constexpr uint32_t unprivileged_pipe_bytes = 1024 * 1024;
+static Pipe* live_pipes;
+
+static unsigned reserved_pages(uint32_t owner) {
+    unsigned total = 0;
+    for (auto pipe = live_pipes; pipe; pipe = pipe->next)
+        if (pipe->owner == owner)
+            total += pipe->capacity;
+    return total;
+}
+
+static bool pipe_quota_applies(const Credentials& credentials) {
+    return !capable(credentials, Capability::sys_resource) &&
+           !capable(credentials, Capability::sys_admin);
+}
+
+Pipe* create_pipe_buffer(const Credentials& credentials) {
+    auto pipe = static_cast<Pipe*>(alloc(sizeof(Pipe)));
+    if (!pipe)
+        return nullptr;
+    *pipe = {};
+    pipe->owner = credentials.user.real;
+    pipe->capacity = default_pipe_pages;
+    if (pipe_quota_applies(credentials) &&
+        reserved_pages(pipe->owner) + default_pipe_pages > pipe_user_pages_soft)
+        pipe->capacity = 2;
+    pipe->slots = static_cast<PipeSlot*>(alloc(pipe->capacity * sizeof(PipeSlot)));
+    if (!pipe->slots) {
+        release(pipe);
+        return nullptr;
+    }
+    pipe->next = live_pipes;
+    live_pipes = pipe;
+    return pipe;
+}
+
+void destroy_pipe_buffer(Pipe& pipe) {
+    auto link = &live_pipes;
+    while (*link != &pipe)
+        link = &(*link)->next;
+    *link = pipe.next;
+    for (unsigned i = 0; i < pipe.occupied; ++i)
+        page_free(pipe.slot(i).page);
+    release(pipe.slots);
+    release(&pipe);
+}
+
+int64_t pipe_fcntl(Handle& handle, unsigned command, uint32_t size,
+                   const Credentials& credentials) {
+    auto pipe = handle.pipe;
+    if (!pipe)
+        return -9;
+    if (command == 1032) // F_GETPIPE_SZ
+        return pipe->capacity * page_size;
+    if (size > (1u << 31))
+        return -22;
+    unsigned capacity = 1;
+    while (capacity * page_size < size)
+        capacity *= 2;
+    if (capacity > pipe->capacity) {
+        if (capacity * page_size > unprivileged_pipe_bytes &&
+            !capable(credentials, Capability::sys_resource))
+            return -1;
+        if (pipe_quota_applies(credentials) &&
+            reserved_pages(pipe->owner) - pipe->capacity + capacity > pipe_user_pages_soft)
+            return -1;
+    }
+    if (capacity < pipe->occupied)
+        return -16;
+    if (capacity != pipe->capacity) {
+        auto slots = static_cast<PipeSlot*>(alloc(capacity * sizeof(PipeSlot)));
+        if (!slots)
+            return -12;
+        for (unsigned i = 0; i < pipe->occupied; ++i)
+            slots[i] = pipe->slot(i);
+        release(pipe->slots);
+        pipe->slots = slots;
+        pipe->capacity = capacity;
+        pipe->first = 0;
+    }
+    epoll_notify(&handle, 4 | 0x100);
+    return capacity * page_size;
+}
+
+int64_t pipe_write(Handle& handle, const void* data, size_t count, bool merge_tail) {
+    auto& pipe = *handle.pipe;
+    if (!merge_tail) {
+        uint64_t page = page_alloc();
+        if (!page)
+            return -12;
+        pipe.slot(pipe.occupied++) = {page, 0, 0};
+    }
+    auto& slot = pipe.slot(pipe.occupied - 1);
+    memcpy(static_cast<uint8_t*>(physical(slot.page)) + slot.end, data, count);
+    slot.end += count;
+    pipe.size += count;
+    epoll_notify(&handle, 1 | 0x40);
+    return count;
+}
+
+int64_t pipe_read(Pipe* pipe, void* buffer, size_t length, bool peek) {
+    if (!length)
+        return 0;
+    if (!pipe->size)
+        return pipe->writers ? -11 : 0;
+    size_t count = min(length, pipe->size);
+    auto bytes = static_cast<uint8_t*>(buffer);
+    bool was_full = pipe->full();
+    unsigned removed = 0;
+    for (size_t copied = 0; copied < count;) {
+        auto& slot = pipe->slot(removed);
+        size_t part = min(count - copied, size_t(slot.end - slot.begin));
+        memcpy(bytes + copied, static_cast<const uint8_t*>(physical(slot.page)) + slot.begin, part);
+        copied += part;
+        if (part == size_t(slot.end - slot.begin)) {
+            if (!peek)
+                page_free(slot.page);
+            ++removed;
+        } else if (!peek) {
+            slot.begin += part;
+        }
+    }
+    if (!peek) {
+        pipe->size -= count;
+        pipe->first = (pipe->first + removed) & (pipe->capacity - 1);
+        pipe->occupied -= removed;
+        if (was_full && removed)
+            descriptor_wait_notify(pipe, 4 | 0x100);
+    }
+    return count;
+}
+
 void attach_pipe(Handle& handle, Pipe& pipe) {
     handle.pipe = &pipe;
     unsigned mode = handle.flags & 3;
@@ -34,7 +170,7 @@ void detach_pipe(Handle& handle) {
     }
     if (handle.node)
         handle.node->named_pipe = nullptr;
-    release(pipe);
+    destroy_pipe_buffer(*pipe);
 }
 
 static int install(Task& task, int fd, Handle* handle) {
@@ -61,13 +197,12 @@ int64_t open_fifo(Task& task, Node* inode, Node* dentry, uint32_t flags) {
         return error;
     }
     if (!pipe) {
-        pipe = static_cast<Pipe*>(alloc(sizeof(Pipe)));
+        pipe = create_pipe_buffer(task.credentials);
         if (!pipe) {
             close_handle(handle);
             discard_reserved_fd(*task.files, fd);
             return -12;
         }
-        memset(pipe, 0, sizeof(Pipe));
         inode->named_pipe = pipe;
     }
     handle->opened_dentry = dentry;

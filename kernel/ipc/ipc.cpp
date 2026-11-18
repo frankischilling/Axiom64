@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/** @file Unix socket operations and epoll readiness delivery. */
 #include "ipc/ipc.hpp"
 #include "io/descriptor_wait.hpp"
 #include "fs/inotify.hpp"
+#include "fs/pipe.hpp"
 #include "fs/proc.hpp"
 #include "ipc/timerfd.hpp"
 #include "process/signals.hpp"
@@ -313,7 +315,7 @@ uint32_t readiness(Handle* h, const Task* task) {
                 events |= 16; // POLLHUP
         }
         if (mode != 0) {
-            if (pipe->size < sizeof(pipe->bytes))
+            if (!pipe->full())
                 events |= 4 | 0x100; // POLLOUT | POLLWRNORM
             if (!pipe->readers)
                 events |= 8; // POLLERR

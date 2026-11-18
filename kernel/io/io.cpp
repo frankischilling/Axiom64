@@ -8,6 +8,7 @@
 #include "fs/record_lock.hpp"
 #include "fs/descriptor.hpp"
 #include "fs/inotify.hpp"
+#include "fs/pipe.hpp"
 #include "ipc/ipc.hpp"
 #include "ipc/signal_descriptor.hpp"
 #include "ipc/unix_control.hpp"
@@ -761,24 +762,28 @@ static int64_t pipe_write_attempt(Task& task, IoRequest& request) {
 
     auto pipe = request.handle->pipe;
     VectorCursor cursor{request, request.cursor, request.cursor_offset};
-    uint8_t buffer[4096]; // Linux PIPE_BUF
+    uint8_t buffer[page_size]; // Linux PIPE_BUF
     while (request.progress < total) {
         if (!pipe->readers) {
             queue_signal(&task, 13, task.process->pid);
             return request.progress ? int64_t(request.progress) : -32;
         }
-        size_t capacity = sizeof(pipe->bytes) - pipe->size;
-        if (!capacity || (total <= sizeof(buffer) && capacity < total)) {
+        size_t remainder = total % page_size;
+        bool merge_tail = !request.started && remainder && remainder <= pipe->tail_space();
+        // Only the leading remainder can merge into a previously queued page.
+        request.started = true;
+        if (pipe->full() && !merge_tail) {
             if (!(request.handle->flags & 04000))
                 return would_block;
             return request.progress ? int64_t(request.progress) : -11;
         }
-        size_t count = min(total - request.progress, min(capacity, sizeof(buffer)));
+        size_t count = merge_tail ? remainder : min(total - request.progress, sizeof(buffer));
         if (!cursor.copy(task, buffer, count))
             return request.progress ? int64_t(request.progress) : -14;
         // The current single CPU cannot change the pipe while copying input.
-        if (write_handle(request.handle, buffer, count) != int64_t(count))
-            panic("pipe write changed during copy");
+        int64_t result = pipe_write(*request.handle, buffer, count, merge_tail);
+        if (result < 0)
+            return request.progress ? int64_t(request.progress) : result;
         request.progress += count;
         request.cursor = cursor.index;
         request.cursor_offset = cursor.offset;
@@ -815,6 +820,9 @@ static int64_t local_stream_attempt(Task& task, IoRequest& request) {
                 result = socket_write(handle->socket, buffer, count);
             }
         } else {
+            // Commit a completed pipe slot before touching the next user span.
+            if (handle->pipe && handle->pipe->size)
+                count = min(count, handle->pipe->head_bytes());
             result = handle->socket
                          ? socket_read(handle->socket, buffer, count, true, peek ? done : 0)
                          : pipe_read(handle->pipe, buffer, count, true);

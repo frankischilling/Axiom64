@@ -13,6 +13,7 @@
 #include <sys/epoll.h>
 #include <sys/inotify.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
@@ -130,6 +131,112 @@ static void atomic_nonblocking_write(void) {
     CHECK(writev(fds[1], vectors, 2) == (ssize_t)sizeof(block));
     read_exact(fds[0], block, sizeof(block));
     CHECK(close(fds[1]) == 0 && close(fds[0]) == 0);
+}
+
+static void capacity_and_readiness(int at) {
+    int fds[2];
+    if (at < 0) {
+        CHECK(pipe2(fds, O_NONBLOCK) == 0);
+    } else {
+        fds[0] = openat(at, "queue", O_RDONLY | O_NONBLOCK);
+        fds[1] = openat(at, "queue", O_WRONLY | O_NONBLOCK);
+        CHECK(fds[0] >= 0 && fds[1] >= 0);
+    }
+    int original = fcntl(fds[0], F_GETPIPE_SZ);
+    CHECK(original >= 4096 && fcntl(fds[1], F_GETPIPE_SZ) == original);
+    CHECK(fcntl(fds[1], F_SETPIPE_SZ, 5000) == 8192 && fcntl(fds[0], F_GETPIPE_SZ) == 8192);
+    CHECK(fcntl(fds[1], F_SETPIPE_SZ, -1) == -1 && errno == EINVAL);
+    if (geteuid())
+        CHECK(fcntl(fds[0], F_SETPIPE_SZ, 1024 * 1024 + 1) == -1 && errno == EPERM);
+    int devnull = open("/dev/null", O_RDONLY);
+    CHECK(devnull >= 0 && fcntl(devnull, F_GETPIPE_SZ) == -1 && errno == EBADF);
+    CHECK(fcntl(devnull, F_SETPIPE_SZ, 4096) == -1 && errno == EBADF && close(devnull) == 0);
+
+    char first[4096], second[4096], received[4096];
+    memset(first, 'A', sizeof(first));
+    memset(second, 'B', sizeof(second));
+    CHECK(write(fds[1], first, sizeof(first)) == (ssize_t)sizeof(first));
+    CHECK(write(fds[1], second, sizeof(second)) == (ssize_t)sizeof(second));
+    int epoll = epoll_create1(EPOLL_CLOEXEC);
+    struct epoll_event event = {.events = EPOLLOUT | EPOLLET, .data.u64 = 12};
+    struct pollfd writer = {.fd = fds[1], .events = POLLOUT};
+    CHECK(epoll >= 0 && epoll_ctl(epoll, EPOLL_CTL_ADD, fds[1], &event) == 0);
+    CHECK(read(fds[0], received, 1) == 1 && received[0] == 'A');
+    CHECK(write(fds[1], "X", 1) == -1 && errno == EAGAIN);
+    CHECK(poll(&writer, 1, 0) == 0 && epoll_wait(epoll, &event, 1, 0) == 0);
+    CHECK(fcntl(fds[0], F_SETPIPE_SZ, 4096) == -1 && errno == EBUSY);
+    CHECK(fcntl(fds[0], F_GETPIPE_SZ) == 8192);
+    read_exact(fds[0], received, sizeof(first) - 1);
+    CHECK(memcmp(received, first, sizeof(first) - 1) == 0);
+    CHECK(poll(&writer, 1, 0) == 1 && writer.revents == POLLOUT);
+    CHECK(epoll_wait(epoll, &event, 1, 0) == 1 && event.events == EPOLLOUT && event.data.u64 == 12);
+    CHECK(write(fds[1], "C", 1) == 1 && poll(&writer, 1, 0) == 0);
+    // POLLOUT follows free page slots. An actual write can still merge into the tail.
+    CHECK(write(fds[1], "D", 1) == 1 && epoll_wait(epoll, &event, 1, 0) == 0);
+    CHECK(fcntl(fds[0], F_SETPIPE_SZ, 9000) == 16384);
+    CHECK(epoll_wait(epoll, &event, 1, 0) == 1 && event.events == EPOLLOUT && event.data.u64 == 12);
+    int available = 0;
+    CHECK(ioctl(fds[0], FIONREAD, &available) == 0 && available == 4098);
+    read_exact(fds[0], received, sizeof(second));
+    CHECK(memcmp(received, second, sizeof(second)) == 0);
+    CHECK(fcntl(fds[1], F_SETPIPE_SZ, 0) == 4096 && fcntl(fds[0], F_GETPIPE_SZ) == 4096);
+    CHECK(poll(&writer, 1, 0) == 0);
+    CHECK(read(fds[0], received, 2) == 2 && memcmp(received, "CD", 2) == 0);
+    CHECK(close(epoll) == 0 && close(fds[1]) == 0 && close(fds[0]) == 0);
+}
+
+static void resize_wakes_writer(void) {
+    int fds[2], status[2];
+    CHECK(pipe(fds) == 0 && pipe(status) == 0);
+    CHECK(fcntl(fds[0], F_SETPIPE_SZ, 4096) == 4096);
+    char page[4096];
+    memset(page, 'R', sizeof(page));
+    CHECK(write(fds[1], page, sizeof(page)) == (ssize_t)sizeof(page));
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        CHECK(close(fds[0]) == 0 && close(status[0]) == 0);
+        CHECK(write(status[1], "B", 1) == 1 && write(fds[1], "W", 1) == 1);
+        CHECK(write(status[1], "D", 1) == 1);
+        _exit(0);
+    }
+    CHECK(close(fds[1]) == 0 && close(status[1]) == 0);
+    char marker;
+    CHECK(read(status[0], &marker, 1) == 1 && marker == 'B');
+    struct pollfd waiting = {.fd = status[0], .events = POLLIN};
+    CHECK(poll(&waiting, 1, 40) == 0);
+    CHECK(fcntl(fds[0], F_SETPIPE_SZ, 8192) == 8192);
+    CHECK(read(status[0], &marker, 1) == 1 && marker == 'D');
+    int exited;
+    CHECK(waitpid(child, &exited, 0) == child && WIFEXITED(exited) && WEXITSTATUS(exited) == 0);
+    read_exact(fds[0], page, sizeof(page));
+    for (size_t i = 0; i < sizeof(page); ++i)
+        CHECK(page[i] == 'R');
+    CHECK(read(fds[0], &marker, 1) == 1 && marker == 'W');
+    CHECK(read(fds[0], &marker, 1) == 0 && close(fds[0]) == 0 && close(status[0]) == 0);
+}
+
+static void read_fault_after_head_slot(void) {
+    int fds[2];
+    CHECK(pipe(fds) == 0 && fcntl(fds[1], F_SETPIPE_SZ, 8192) == 8192);
+    char page[4096];
+    memset(page, 'X', sizeof(page));
+    CHECK(write(fds[1], page, sizeof(page)) == (ssize_t)sizeof(page));
+    memset(page, 'Y', sizeof(page));
+    CHECK(write(fds[1], page, sizeof(page)) == (ssize_t)sizeof(page));
+    read_exact(fds[0], page, sizeof(page) - 1);
+
+    void* guard = mmap(NULL, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(guard != MAP_FAILED);
+    char head;
+    struct iovec vectors[] = {{&head, 1}, {guard, 4096}};
+    CHECK(readv(fds[0], vectors, 2) == 1 && head == 'X');
+    int queued = 0;
+    CHECK(ioctl(fds[0], FIONREAD, &queued) == 0 && queued == (int)sizeof(page));
+    read_exact(fds[0], page, sizeof(page));
+    for (size_t i = 0; i < sizeof(page); ++i)
+        CHECK(page[i] == 'Y');
+    CHECK(munmap(guard, 4096) == 0 && close(fds[0]) == 0 && close(fds[1]) == 0);
 }
 
 struct pipe_writer {
@@ -459,6 +566,11 @@ int main(int argc, char** argv) {
     CHECK(unlinkat(at, "restricted", 0) == 0);
     puts("NAMED_PIPE_CASE create");
     readiness(at);
+    capacity_and_readiness(-1);
+    capacity_and_readiness(at);
+    resize_wakes_writer();
+    read_fault_after_head_slot();
+    puts("NAMED_PIPE_CASE capacity-and-readiness");
     atomic_nonblocking_write();
     puts("NAMED_PIPE_CASE atomic-writev");
     retained_vector_write(-1);

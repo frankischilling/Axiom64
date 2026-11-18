@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/** @file Linux x86-64 system call dispatch and ABI adapters. */
 #include "drivers/platform/devices.hpp"
 #include "drivers/block/block.hpp"
 #include "ipc/ipc.hpp"
@@ -477,7 +478,7 @@ static int64_t create_pipe(uint64_t dst, int flags) {
         return -22;
     if (!current->memory->space.valid(dst, 8, true))
         return -14;
-    auto pipe = (Pipe*)alloc(sizeof(Pipe));
+    auto pipe = create_pipe_buffer(current->credentials);
     if (!pipe)
         return -12;
     auto reader = pipe_handle(pipe, false);
@@ -488,7 +489,7 @@ static int64_t create_pipe(uint64_t dst, int flags) {
         if (writer)
             close_handle(writer);
         if (!reader && !writer)
-            release(pipe);
+            destroy_pipe_buffer(*pipe);
         return -23;
     }
     reader->flags |= flags;
@@ -1029,6 +1030,8 @@ static int64_t dispatch(Frame* f) {
             return h->flags & ~uint32_t(02000000);
         if (h->flags & 010000000)
             return -9;
+        if (b == 1031 || b == 1032)
+            return pipe_fcntl(*h, b, c, current->credentials);
         if (b == 4) {
             h->flags = (h->flags & ~uint32_t(06000)) | (c & 06000);
             return 0;

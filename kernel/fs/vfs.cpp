@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/** @file Virtual filesystem routing, path resolution, and open descriptions. */
 #include "fs/vfs.hpp"
 #include "io/descriptor_wait.hpp"
 #include "fs/pipe.hpp"
@@ -1081,33 +1082,13 @@ bool handle_ready(Handle* h, bool write, const Task* task) {
     if (h->inotify)
         return !write && inotify_queue(*h->inotify).bytes();
     if (h->pipe)
-        return write ? h->pipe->size < sizeof(Pipe::bytes) || !h->pipe->readers
-                     : h->pipe->size || !h->pipe->writers;
+        return write ? !h->pipe->full() || !h->pipe->readers : h->pipe->size || !h->pipe->writers;
     if (h->node && h->node->mount->ops == &posix_queue_filesystem() &&
         (h->node->mode & 0170000) == regular_file)
         return posix_queue_ready(h->node, write);
     if (!h->node || (h->node->mode & 0170000) != character)
         return true;
     return device_ready(h, write);
-}
-
-int64_t pipe_read(Pipe* pipe, void* buffer, size_t length, bool peek) {
-    if (!length)
-        return 0;
-    if (!pipe->size)
-        return pipe->writers ? -11 : 0;
-    length = min(length, pipe->size);
-    auto bytes = static_cast<uint8_t*>(buffer);
-    for (size_t n = 0; n < length; n++)
-        bytes[n] = pipe->bytes[(pipe->head + n) % sizeof(pipe->bytes)];
-    if (!peek) {
-        bool was_full = pipe->size == sizeof(pipe->bytes);
-        pipe->head = (pipe->head + length) % sizeof(pipe->bytes);
-        pipe->size -= length;
-        if (was_full && length)
-            descriptor_wait_notify(pipe, 4 | 0x100);
-    }
-    return length;
 }
 
 int64_t read_handle(Handle* h, void* buf, size_t len) {
@@ -1209,20 +1190,6 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
         return inet6_send(h->inet6, inet6_peer(h->inet6), buf, len);
     if (h->netlink)
         return netlink_send(h->netlink, current->process->pid, buf, len);
-    auto data = (const uint8_t*)buf;
-    if (h->pipe) {
-        auto p = h->pipe;
-        if (!p->readers)
-            return -32;
-        if (p->size == sizeof(p->bytes))
-            return -11;
-        size_t n = min(len, sizeof(p->bytes) - p->size);
-        for (size_t i = 0; i < n; i++)
-            p->bytes[(p->head + p->size + i) % sizeof(p->bytes)] = data[i];
-        p->size += n;
-        epoll_notify(h, 1 | 0x40);
-        return n;
-    }
     auto n = h->node;
     if (!n)
         return -9;

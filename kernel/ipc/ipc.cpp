@@ -551,6 +551,8 @@ int64_t ipc_syscall(Frame* f) {
         server->pass_credentials = listener->pass_credentials;
         server->peer = s;
         server->peer_generation = s->generation;
+        // The accepted socket keeps the pathname's mount busy after listener close.
+        server->bound_node = listener->bound_node;
         server->local_name->drop();
         server->local_name = listener->local_name;
         server->local_name->retain();

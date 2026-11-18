@@ -262,6 +262,22 @@ uint32_t readiness(Handle* h, const Task* task) {
     if (h->flags & 010000000)
         return 1 | 4;
     uint32_t events = 0;
+    if (auto pipe = h->pipe) {
+        unsigned mode = h->flags & 3;
+        if (mode != 1) {
+            if (pipe->size)
+                events |= 1 | 0x40; // POLLIN | POLLRDNORM
+            if (!pipe->writers && h->pipe_hangup_generation != pipe->writer_generation)
+                events |= 16; // POLLHUP
+        }
+        if (mode != 0) {
+            if (pipe->size < sizeof(pipe->bytes))
+                events |= 4 | 0x100; // POLLOUT | POLLWRNORM
+            if (!pipe->readers)
+                events |= 8; // POLLERR
+        }
+        return events;
+    }
     if (handle_ready(h, false, task))
         events |= h->inotify ? inotify_read_events : 1;
     if (handle_ready(h, true, task))
@@ -295,8 +311,6 @@ uint32_t readiness(Handle* h, const Task* task) {
         if (shutdown == 3)
             events |= 16;
     }
-    if (h->pipe && !h->writer && !h->pipe->writers)
-        events |= 16;
     if (h->socket && h->socket->type == 1) {
         auto socket = h->socket;
         bool read_closed = socket->read_closed || socket->peer_closed ||
@@ -344,8 +358,10 @@ static int epoll_events(Task& task, Epoll* poll, uint64_t output, unsigned count
         item.pending &= ready_now;
         // A signal descriptor waits on the registering task's signal handlers.
         // A ready signal in a different process does not queue an epoll event.
-        uint32_t mask =
-            item.signal_wait_queue || (item.event.events & (1u << 31)) ? item.pending : ready_now;
+        bool edge_triggered = item.event.events & (1u << 31);
+        uint32_t mask = item.signal_wait_queue            ? item.pending
+                        : edge_triggered && !item.pending ? 0
+                                                          : ready_now;
         if (!mask)
             continue;
         if (copy) {
@@ -374,7 +390,8 @@ void epoll_notify(Handle* source, uint32_t events) {
                         epoll_timer_event(item, ready);
                     else
                         item.pending |= ready & ~item.last_ready;
-                    if (item.handle == source)
+                    if (item.handle == source ||
+                        (source && source->pipe && item.handle->pipe == source->pipe))
                         item.pending |= ready & events;
                     item.last_ready = ready;
                 }

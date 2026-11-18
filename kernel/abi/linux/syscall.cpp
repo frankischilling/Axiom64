@@ -31,6 +31,7 @@
 #include "fs/record_lock.hpp"
 #include "fs/proc.hpp"
 #include "fs/descriptor.hpp"
+#include "fs/pipe.hpp"
 #include "fs/inotify.hpp"
 
 namespace ax {
@@ -190,6 +191,8 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
         if (error)
             return error;
     }
+    if (!path_only && (n->mode & 0170000) == fifo)
+        return open_fifo(*current, n, dentry, flags);
     Handle* h = open_handle(n, flags, &error);
     if (!h)
         return error;
@@ -423,6 +426,38 @@ static int64_t dup_fd(int old, int target, int flags = 0) {
         current->files->entries[target] = {h, bool(flags & 02000000)};
     }
     return target;
+}
+
+static int64_t make_special_node(int dirfd, uint64_t address, uint32_t mode) {
+    uint32_t type = mode & 0170000;
+    switch (type) {
+    case 0:
+        type = regular_file;
+        break;
+    case regular_file:
+    case fifo:
+        break;
+    case directory:
+        return -1;
+    case character:
+    case block_device:
+    case 0140000:
+        return -95;
+    default:
+        return -22;
+    }
+    Path path;
+    if (!path_at(dirfd, address, path))
+        return path.error;
+    Node* node = nullptr;
+    size_t length = strlen(path.text);
+    if (length && path.text[length - 1] == '/') {
+        while (length > 1 && path.text[length - 1] == '/')
+            path.text[--length] = 0;
+        int error = resolve_path(path, node, false);
+        return error ? error : -17;
+    }
+    return create_node(path, type | ((mode & 07777) & ~current->fs->umask), node);
 }
 
 static int64_t create_pipe(uint64_t dst, int flags) {
@@ -753,7 +788,8 @@ static int64_t dispatch(Frame* f) {
             s.nlink = 1;
             return copy_result(b, &s, sizeof(s));
         }
-        if (h->pipe || h->socket || h->packet || h->inet || h->inet6 || h->netlink || h->epoll) {
+        if ((h->pipe && !h->node) || h->socket || h->packet || h->inet || h->inet6 || h->netlink ||
+            h->epoll) {
             LinuxStat s{};
             s.mode =
                 h->socket || h->packet || h->inet || h->inet6 || h->netlink ? 0140777 : 0010600;
@@ -1102,7 +1138,7 @@ static int64_t dispatch(Frame* f) {
         auto h = fd_handle(a);
         if (!h)
             return -9;
-        return node_sync(h->node, f->rax == 75);
+        return h->pipe ? -22 : node_sync(h->node, f->rax == 75);
     }
     case 76: {
         Path path;
@@ -1496,8 +1532,12 @@ static int64_t dispatch(Frame* f) {
         int64_t result = wait_information(*current, unsigned(a), selected, c, unsigned(d), e);
         return result == would_block ? block(Wait::child, -1, selected) : result;
     }
+    case 133:
+        return make_special_node(-100, a, b);
     case 257:
         return open_file(a, b, c, d);
+    case 259:
+        return make_special_node(a, b, c);
     case 262:
         return stat_path(a, b, c, !(d & 0x100));
     case 269:

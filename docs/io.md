@@ -103,6 +103,24 @@ Pending signal records share a 4,096-entry kernel pool. The receiver's
 `RLIMIT_SIGPENDING` limits charged records by real UID. Real-time sends that
 require a queue record return `EAGAIN` when admission fails.
 
+## Named pipes
+
+`mkfifo` and `mkfifoat` create a FIFO with the caller's ownership and umask.
+The kernel pairs blocking opens for reading and writing. A nonblocking
+reader can open an empty FIFO without a writer. A nonblocking writer needs
+a reader or gets `ENXIO`. Opening with `O_RDWR` supplies both ends.
+
+Each open of the same inode uses the same pipe, including opens through hard
+links. Unlinking a name leaves open descriptions usable. Recreating the name
+creates a separate FIFO. On ext2 the inode persists across reboot. Data in
+the pipe lives in memory and is discarded when the last description closes.
+
+`make test-named-pipes` checks two caller identities and both musl providers,
+linkages, and firmware types. It also verifies the same FIFO and hard link
+after rebooting a writable ext2 root. `sudo make test-named-pipes-native`
+runs the main workload on Linux. The `mknod` entry points currently create
+regular files and FIFOs.
+
 ## Timer descriptors
 
 `timerfd_create`, `timerfd_settime` and `timerfd_gettime` provide Linux x86-64

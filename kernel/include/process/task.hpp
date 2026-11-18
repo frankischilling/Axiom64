@@ -23,7 +23,8 @@ enum class Wait {
     random,
     semaphore,
     message_queue,
-    posix_queue
+    posix_queue,
+    fifo_open
 };
 
 struct Descriptor {
@@ -92,6 +93,12 @@ struct SemaphoreUndo;
 struct MessageQueueRequest;
 struct PosixQueueRequest;
 
+struct FifoOpen {
+    Handle* handle;
+    int fd;
+    uint64_t peer_generation;
+};
+
 struct Task {
     State state;
     int pid; // Kernel TID; process->pid is the userspace thread-group ID.
@@ -128,6 +135,7 @@ struct Task {
     SemaphoreUndo* semaphore_undo;
     MessageQueueRequest* message_queue_request;
     PosixQueueRequest* posix_queue_request;
+    FifoOpen fifo_open;
     alignas(16) uint8_t fpu[512];
 };
 

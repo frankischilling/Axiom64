@@ -11,6 +11,7 @@
 #include "ipc/posix_message_queues.hpp"
 #include "ipc/shared_memory.hpp"
 #include "fs/descriptor.hpp"
+#include "fs/pipe.hpp"
 #include "fs/inotify.hpp"
 #include "drivers/platform/devices.hpp"
 #include "ipc/ipc.hpp"
@@ -77,6 +78,7 @@ static FileTable* copy_files(const FileTable* source) {
 static void release_resources(Task* t) {
     message_queue_discard(*t);
     posix_queue_discard(*t);
+    discard_fifo_open(*t);
     semaphore_exit(*t);
     t->pending_signals.discard(UINT64_MAX);
     credential_release(t->credentials);
@@ -391,7 +393,7 @@ static bool awaken(Task& t) {
         return t.state == State::runnable;
     if (t.wait == Wait::signal_queue && signal_wait_resume(t))
         return true;
-    if (io_resume_signal_descriptor(t))
+    if (resume_fifo_open(t) || io_resume_signal_descriptor(t))
         return true;
     if (signal_wakes(t)) {
         signal_interrupt(t);
@@ -444,6 +446,7 @@ static bool awaken(Task& t) {
     case Wait::semaphore:
         return semaphore_timeout(t);
     case Wait::message_queue:
+    case Wait::fifo_open:
         return false;
     case Wait::posix_queue:
         return posix_queue_expire(t);

@@ -6,14 +6,16 @@ import hashlib
 from itertools import product
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 
+from account_normal_test import write_cpio
 from account_store_guest import fixture
 from build_musl import compiler_args
-from disk_root import build as build_disk_root
+from disk_root import archive_entries, build as build_disk_root
 from fetch import ROOT
 from tcp_fixture_inputs import audit_fixture, digest
 from timerfd_test import compile_client
@@ -31,6 +33,8 @@ WORKLOADS = {
                                       'permissions')),
     'posix-message-queues': ('POSIX_MQ', ('priority-names', 'blocking', 'notifications',
                                            'permissions-limits')),
+    'named-pipes': ('NAMED_PIPE', ('create', 'readiness', 'rendezvous', 'transient-peer',
+                                       'interruption-cancellation', 'inode-aliases', 'unlink-recreate')),
     'posix-aio': ('POSIX_AIO', ('positioned-sync-errors', 'signal', 'lists-thread',
                                 'timeout-interrupt-cancel', 'descriptor-reuse')),
 }
@@ -122,11 +126,12 @@ def disk_digest(path):
         return hashlib.file_digest(source, 'sha256').hexdigest()
 
 
-def ext2_fixture(case, kernel, products, script, workload):
+def ext2_fixture(case, kernel, products, script, workload, *, readonly=True):
     disk = build_disk_root(source=case / 'root.cpio', destination=case / 'ext2.raw')
     name = f'{workload}-ext2.iso'
+    flags = ['--root-readonly'] if readonly else []
     subprocess.run(['python3', '-B', 'scripts/image.py', '--test', '--suite', 'network',
-                    '--root-device', '/dev/vda', '--root-readonly', '--output-name', name,
+                    '--root-device', '/dev/vda', *flags, '--output-name', name,
                     '--output-directory', str(case)], cwd=ROOT, stdout=subprocess.DEVNULL,
                    check=True)
     image = case / name
@@ -150,22 +155,86 @@ def ext2_fixture(case, kernel, products, script, workload):
     return image, disk
 
 
-def boot_guest(case, workload, image, firmware, disk=None):
-    root = 'ext2' if disk else 'ramfs'
+def guest_command(case, image, firmware, disk=None, *, writable=False):
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '256M',
                '-nic', 'none', '-cdrom', str(image), '-display', 'none', '-serial',
                'stdio', '-monitor', 'none', '-no-reboot', '-device',
                'isa-debug-exit,iobase=0xf4,iosize=0x04']
     if disk:
-        command += ['-drive', f'if=none,id=root,file={disk},format=raw,snapshot=on',
+        options = 'cache=writethrough' if writable else 'snapshot=on'
+        command += ['-drive', f'if=none,id=root,file={disk},format=raw,{options}',
                     '-device', 'virtio-blk-pci,drive=root']
     if firmware == 'uefi':
         store = case / ('ext2-OVMF_VARS.fd' if disk else 'OVMF_VARS.fd')
         shutil.copyfile('/usr/share/OVMF/OVMF_VARS_4M.fd', store)
         command += ['-drive', 'if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd',
                     '-drive', f'if=pflash,format=raw,file={store}']
+    return command
+
+
+def boot_guest(case, workload, image, firmware, disk=None):
+    root = 'ext2' if disk else 'ramfs'
+    command = guest_command(case, image, firmware, disk)
     log = case / (f'ext2-{firmware}.log' if disk else f'{firmware}.log')
     return execute(command, log, 1, [0, 65534], workload, firmware, root)
+
+
+def named_pipe_storage(base, case, kernel, program, payload):
+    base.mkdir()
+    script = f'''#!/bin/sh
+set -e
+if test -p /source/axiom-fifo-retained; then
+    /bin/{program.name} --storage-reopen
+else
+    /bin/{program.name} --storage-create
+fi
+echo AXIOM64_TESTS_PASS
+'''.encode()
+    entries = archive_entries(case / 'root.cpio')
+    entries['etc/net-test.sh'] = (0o100755, script)
+    write_cpio(base / 'root.cpio', entries)
+    image, disk = ext2_fixture(base, kernel, payload, script, 'named-pipes-storage', readonly=False)
+    original_digest = disk_digest(disk)
+    rows = []
+    inode = None
+    for firmware, phase in (('bios', 'create'), ('uefi', 'reopen')):
+        command = guest_command(base, image, firmware, disk, writable=True)
+        log = base / f'{firmware}.log'
+        with log.open('xb') as output:
+            child = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=output,
+                                   stderr=subprocess.STDOUT, timeout=90)
+        text = log.read_text()
+        observed = re.findall(r'^NAMED_PIPE_STORAGE_PASS phase=(create|reopen) inode=([0-9]+)$',
+                              text, re.MULTILINE)
+        markers = [f'Firmware: {firmware.upper()}', 'VFS_ROOT_PASS filesystem=ext2 device=/dev/vda readonly=0',
+                   'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0']
+        if (child.returncode != 1 or len(observed) != 1 or observed[0][0] != phase or
+                any(text.splitlines().count(marker) != 1 for marker in markers) or
+                any(failure in text for failure in ('NAMED_PIPE_FAIL', 'PANIC:', 'FAULT pid='))):
+            raise RuntimeError(f'ext2 FIFO {phase} failed in {log}')
+        observed_inode = int(observed[0][1])
+        if inode is not None and inode != observed_inode:
+            raise RuntimeError('reboot changed the persisted FIFO inode')
+        inode = observed_inode
+        for name in ('axiom-fifo-retained', 'axiom-fifo-alias'):
+            record = subprocess.check_output(['debugfs', '-R', f'stat /source/{name}', str(disk)],
+                                             text=True, stderr=subprocess.DEVNULL)
+            (base / f'{firmware}-{name}.txt').write_text(record)
+            if (not re.search(rf'Inode:\s+{inode}\s+Type:\s+FIFO\b.*Mode:\s+0640', record, re.IGNORECASE) or
+                    not re.search(r'^Links:\s+2\s+Blockcount:\s+0\b', record, re.MULTILINE)):
+                raise RuntimeError(f'{name} does not reference the persisted FIFO')
+        file_check = base / f'{firmware}-e2fsck.log'
+        with file_check.open('xb') as output:
+            subprocess.run(['e2fsck', '-fn', str(disk)], stdout=output,
+                           stderr=subprocess.STDOUT, check=True)
+        rows.append(dict(firmware=firmware, phase=phase, inode=inode, log_sha256=digest(log),
+                         disk_sha256=disk_digest(disk), command=command))
+        print(f'NAMED_PIPE_STORAGE_PASS {firmware}/{phase}', flush=True)
+    if rows[0]['disk_sha256'] == original_digest:
+        raise RuntimeError('guest FIFO creation left no persistent change')
+    (base / 'results.json').write_text(json.dumps(dict(kernel_sha256=kernel,
+        image_sha256=digest(image), client_sha256=digest(program), initial_disk_sha256=original_digest,
+        boots=rows), indent=2) + '\n')
 
 
 def guest(directory, workload, client):
@@ -184,6 +253,11 @@ def guest(directory, workload, client):
         boot = f'/bin/{program.name}\n/bin/{program.name} --ordinary'
         if workload == 'sysv-shared-memory':
             boot = '/bin/busybox chmod 1777 /tmp\n' + boot
+        elif workload == 'named-pipes':
+            applet = '/dev/shm/axiom-fifo-applet'
+            boot = (f'/bin/busybox mkfifo -m 0640 {applet}\n'
+                    f'test -p {applet}\n'
+                    f'/bin/busybox rm {applet}\n' + boot)
         image = fixture(case, provider, linkage, program_builder=lambda *args: (program, inputs),
                         filename=program.name, command=boot,
                         extra_products={f'source/{client.name}': client,
@@ -200,7 +274,8 @@ def guest(directory, workload, client):
                              root='ramfs', kernel_sha256=kernel, program_sha256=digest(program),
                              image_sha256=digest(image), **row))
             print(f'{prefix}_GUEST_PASS {provider}/{linkage}/{firmware}', flush=True)
-        if workload.startswith('posix-') and (provider, linkage) == ('build', 'static'):
+        if (provider, linkage) == ('build', 'static') and (
+                workload.startswith('posix-') or workload == 'named-pipes'):
             image, disk = ext2_fixture(case, kernel, payload, script, workload)
             fingerprint = disk_digest(disk)
             for firmware in ('bios', 'uefi'):
@@ -211,6 +286,8 @@ def guest(directory, workload, client):
                 print(f'{prefix}_GUEST_PASS ext2/{firmware}', flush=True)
             if disk_digest(disk) != fingerprint:
                 raise RuntimeError('read-only ext2 fixture changed during boot')
+            if workload == 'named-pipes':
+                named_pipe_storage(directory / 'storage', case, kernel, program, payload)
     return rows
 
 

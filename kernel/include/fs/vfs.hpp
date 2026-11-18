@@ -19,6 +19,7 @@ struct Task;
 struct Inotify;
 struct Mount;
 struct Handle;
+struct Pipe;
 struct Xattr;
 struct XattrName;
 
@@ -30,7 +31,7 @@ struct Timestamp {
 Timestamp node_now();
 
 constexpr uint32_t regular_file = 0100000, directory = 0040000, symlink = 0120000,
-                   character = 0020000, block_device = 0060000;
+                   character = 0020000, block_device = 0060000, fifo = 0010000;
 
 struct Node {
     uint64_t inode;
@@ -55,6 +56,7 @@ struct Node {
     Xattr* xattrs = nullptr;
     unsigned lock_readers;
     Handle* lock_writer;
+    Pipe* named_pipe = nullptr;
 };
 
 // Relative paths retain their directory identity even when a mount covers it.
@@ -138,6 +140,7 @@ struct Pipe {
     uint8_t bytes[16384];
     size_t head, size;
     unsigned readers, writers;
+    uint64_t reader_generation, writer_generation;
 };
 
 struct SocketTimeout {
@@ -168,6 +171,7 @@ struct Handle {
     uint8_t file_lock = 0;
     void* filesystem_data = nullptr;
     SocketTimeout receive_timeout{}, send_timeout{};
+    uint64_t pipe_hangup_generation = 0;
 };
 
 extern Node* root_node;

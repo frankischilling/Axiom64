@@ -366,6 +366,8 @@ Acceptance evidence:
 ### F15. IPC and event notification
 
 Pipes, Unix streams, polling, epoll, select, and SysV shared memory have guest tests.
+[Named pipes](io.md#named-pipes) support filesystem names, blocking opens, descriptor
+readiness, signal interruption, and persistent ext2 inodes.
 [Timer descriptors](io.md#timer-descriptors) let event loops wait for expiration
 counts alongside other readable descriptors.
 [Signal descriptors](io.md#signal-descriptors) deliver blocked signals through

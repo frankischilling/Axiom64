@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/vfs.hpp"
+#include "fs/pipe.hpp"
 #include "ipc/posix_message_queues.hpp"
 #include "fs/xattr.hpp"
 #include "fs/file_lock.hpp"
@@ -384,7 +385,7 @@ int link_node(const Path& from, const Path& to, bool follow) {
     if (error != -2)
         return error;
     if ((target->mode & 0170000) != regular_file && (target->mode & 0170000) != symlink &&
-        (target->mode & 0170000) != 0140000)
+        (target->mode & 0170000) != 0140000 && (target->mode & 0170000) != fifo)
         return -95;
     error = parent->mount->ops->link(target, parent, name);
     if (!error) {
@@ -962,14 +963,8 @@ Handle* open_handle(Node* n, uint32_t flags, int* error) {
 
 Handle* pipe_handle(Pipe* p, bool writer) {
     Handle* h = open_handle(nullptr, writer ? 1 : 0);
-    if (h) {
-        h->pipe = p;
-        h->writer = writer;
-        if (writer)
-            p->writers++;
-        else
-            p->readers++;
-    }
+    if (h)
+        attach_pipe(*h, *p);
     return h;
 }
 
@@ -1034,15 +1029,8 @@ void close_handle(Handle* h) {
         close_inotify(h->inotify);
         h->inotify = nullptr;
     }
-    if (h->pipe) {
-        auto p = h->pipe;
-        if (h->writer)
-            p->writers--;
-        else
-            p->readers--;
-        if (!p->readers && !p->writers)
-            release(p);
-    }
+    if (h->pipe)
+        detach_pipe(*h);
     auto retired_node = h->node;
     h->node = nullptr;
     h->opened_dentry = nullptr;
@@ -1211,6 +1199,7 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
         for (size_t i = 0; i < n; i++)
             p->bytes[(p->head + p->size + i) % sizeof(p->bytes)] = data[i];
         p->size += n;
+        epoll_notify(h, 1 | 0x40);
         return n;
     }
     auto n = h->node;

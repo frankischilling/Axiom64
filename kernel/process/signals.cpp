@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "process/signals.hpp"
+#include "fs/pipe.hpp"
 #include "ipc/system_v_semaphores.hpp"
 #include "ipc/system_v_message_queues.hpp"
 #include "ipc/posix_message_queues.hpp"
@@ -158,7 +159,9 @@ void signal_interrupt(Task& task) {
               : io_restartable(task) && (task.wait == Wait::read || task.wait == Wait::write ||
                                          task.wait == Wait::child || task.wait == Wait::file_lock ||
                                          task.wait == Wait::random);
-    bool restart = (flags & 0x10000000) && (restartable || task.wait == Wait::posix_queue);
+    bool fifo_open = task.wait == Wait::fifo_open;
+    bool restart =
+        (flags & 0x10000000) && (restartable || task.wait == Wait::posix_queue || fifo_open);
     // A caught signal ends this attempt. A restarted call imports its inputs again.
     int64_t interrupted_result = io_interrupted_result(task);
     io_discard(task);
@@ -166,6 +169,8 @@ void signal_interrupt(Task& task) {
         futex_discard(task);
     if (task.wait == Wait::posix_queue)
         posix_queue_discard(task);
+    if (fifo_open)
+        discard_fifo_open(task);
     if (!restart) {
         if (task.wait == Wait::semaphore)
             semaphore_discard(task);
@@ -234,6 +239,10 @@ bool signal_deliver(Task& task) {
                                 member.frame.rax = uint64_t(io_interrupted_result(member));
                             }
                             io_discard(member);
+                            member.wait = Wait::none;
+                        }
+                        if (member.fifo_open.handle && !resume_fifo_open(member)) {
+                            discard_fifo_open(member);
                             member.wait = Wait::none;
                         }
                         member.state = State::stopped;

@@ -79,6 +79,7 @@ static void release_resources(Task* t) {
     message_queue_discard(*t);
     posix_queue_discard(*t);
     discard_fifo_open(*t);
+    epoll_discard_wait(*t);
     semaphore_exit(*t);
     t->pending_signals.discard(UINT64_MAX);
     credential_release(t->credentials);
@@ -393,7 +394,7 @@ static bool awaken(Task& t) {
         return t.state == State::runnable;
     if (t.wait == Wait::signal_queue && signal_wait_resume(t))
         return true;
-    if (resume_fifo_open(t) || io_resume_signal_descriptor(t))
+    if (resume_fifo_open(t) || epoll_resume_wait(t) || io_resume_signal_descriptor(t))
         return true;
     if (signal_wakes(t)) {
         signal_interrupt(t);
@@ -447,6 +448,7 @@ static bool awaken(Task& t) {
         return semaphore_timeout(t);
     case Wait::message_queue:
     case Wait::fifo_open:
+    case Wait::epoll_wait:
         return false;
     case Wait::posix_queue:
         return posix_queue_expire(t);

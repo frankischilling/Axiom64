@@ -1158,6 +1158,11 @@ jobs:
           make test-system-v-message-queues
           sudo -n make test-system-v-shared-memory-native
           make test-system-v-shared-memory
+      - name: Compare epoll descriptor lifetime and interrupted waits
+        if: matrix.suite == 'boot'
+        run: |
+          sudo -n make test-epoll-lifetime-native
+          make test-epoll-lifetime
       - name: Compare named pipe behavior across processes and ext2 boots
         if: matrix.suite == 'boot'
         run: |
@@ -1819,6 +1824,8 @@ jobs:
             build/posix-aio-guest/**
             build/named-pipes-native/**
             build/named-pipes-guest/**
+            build/epoll-lifetime-native/**
+            build/epoll-lifetime-guest/**
             build/unix-stream-native/**
             build/unix-shutdown-native/**
             build/unix-stream-wait-native/**

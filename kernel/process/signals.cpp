@@ -165,6 +165,7 @@ void signal_interrupt(Task& task) {
     // A caught signal ends this attempt. A restarted call imports its inputs again.
     int64_t interrupted_result = io_interrupted_result(task);
     io_discard(task);
+    epoll_discard_wait(task);
     if (futex)
         futex_discard(task);
     if (task.wait == Wait::posix_queue)
@@ -245,6 +246,7 @@ bool signal_deliver(Task& task) {
                             discard_fifo_open(member);
                             member.wait = Wait::none;
                         }
+                        epoll_stop_wait(member);
                         member.state = State::stopped;
                     }
                 task.process->stop_signal = signal;

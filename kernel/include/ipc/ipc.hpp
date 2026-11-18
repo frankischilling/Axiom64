@@ -101,5 +101,8 @@ void epoll_notify(Handle* source = nullptr, uint32_t events = 0);
 void epoll_signal_notify(const SignalHandlers&);
 
 void epoll_close(Epoll*);
+bool epoll_resume_wait(Task&);
+void epoll_discard_wait(Task&);
+void epoll_stop_wait(Task&);
 
 } // namespace ax

@@ -2,6 +2,7 @@
 #include "ipc/ipc.hpp"
 #include "fs/inotify.hpp"
 #include "ipc/timerfd.hpp"
+#include "process/signals.hpp"
 #include "socket_registry.hpp"
 #include "fs/descriptor.hpp"
 #include "io/socket_timeout.hpp"
@@ -343,15 +344,13 @@ static void epoll_timer_event(EpollItem& item, uint32_t ready) {
     }
 }
 
-static int epoll_events(Task& task, Epoll* poll, uint64_t output, unsigned count, bool copy) {
+static int epoll_events(Task& task, Epoll* poll, uint64_t output, unsigned count) {
     unsigned ready = 0;
     for (auto& item : poll->items) {
         if (!item.used || !item.enabled || !item.handle->references ||
             item.handle->generation != item.generation)
             continue;
-        if (!item.signal_wait_queue && (item.fd < 0 || unsigned(item.fd) >= max_fds ||
-                                        task.files->entries[item.fd].handle != item.handle))
-            continue;
+        // The fd is part of the registration key. Delivery follows the live description.
         uint32_t ready_now = readiness(item.handle, &task) & (item.event.events | 8 | 16);
         epoll_timer_event(item, ready_now);
         // A queued edge can become stale before this waiter gets to consume it.
@@ -364,19 +363,60 @@ static int epoll_events(Task& task, Epoll* poll, uint64_t output, unsigned count
                                                           : ready_now;
         if (!mask)
             continue;
-        if (copy) {
-            EpollEvent event{mask, item.event.data};
-            if (!task.memory->space.copy_out(output + ready * sizeof(event), &event, sizeof(event)))
-                return -14;
-            if (item.event.events & (1u << 31))
-                item.pending = 0;
-            if (item.event.events & (1u << 30))
-                item.enabled = false;
-        }
+        EpollEvent event{mask, item.event.data};
+        if (!task.memory->space.copy_out(output + ready * sizeof(event), &event, sizeof(event)))
+            return ready ? int(ready) : -14;
+        if (edge_triggered)
+            item.pending = 0;
+        if (item.event.events & (1u << 30))
+            item.enabled = false;
         if (++ready == count)
             break;
     }
     return ready;
+}
+
+static void epoll_restore_mask(Task& task) {
+    if (!task.suspend_mask)
+        return;
+    task.signal_mask = task.suspend_saved_mask;
+    task.suspend_mask = false;
+}
+
+void epoll_discard_wait(Task& task) {
+    auto handle = task.epoll_wait_handle;
+    if (!handle)
+        return;
+    task.epoll_wait_handle = nullptr;
+    close_handle(handle);
+}
+
+bool epoll_resume_wait(Task& task) {
+    if (task.wait != Wait::epoll_wait)
+        return false;
+    auto handle = task.epoll_wait_handle;
+    int result = epoll_events(task, handle->epoll, task.frame.rsi, unsigned(task.frame.rdx));
+    if (!result && (!task.deadline || ticks < task.deadline))
+        return false;
+    task.frame.rax = result;
+    task.frame.rip += 2;
+    task.deadline = 0;
+    task.wait = Wait::none;
+    task.state = State::runnable;
+    epoll_restore_mask(task);
+    epoll_discard_wait(task);
+    return true;
+}
+
+void epoll_stop_wait(Task& task) {
+    if (task.wait != Wait::epoll_wait || epoll_resume_wait(task))
+        return;
+    task.frame.rax = uint64_t(-4);
+    task.frame.rip += 2;
+    task.deadline = 0;
+    task.wait = Wait::none;
+    epoll_restore_mask(task);
+    epoll_discard_wait(task);
 }
 
 void epoll_notify(Handle* source, uint32_t events) {
@@ -454,11 +494,6 @@ bool poll_task_ready(Task& task) {
         return true;
     if (task.frame.rax == 23 || task.frame.rax == 270)
         return select_events(task, task.frame, false) != 0;
-    if (task.frame.rax == 232 || task.frame.rax == 281) {
-        int fd = task.frame.rdi;
-        auto h = fd >= 0 && unsigned(fd) < max_fds ? task.files->entries[fd].handle : nullptr;
-        return !h || !h->epoll || epoll_events(task, h->epoll, 0, max_fds, false) != 0;
-    }
 
     struct Pollfd {
         int32_t fd;
@@ -768,11 +803,11 @@ int64_t ipc_syscall(Frame* f) {
         return n;
     }
     case 233: {
-        if (!h || !h->epoll)
-            return -9;
         auto target = handle(c);
-        if (!target || target == h)
+        if (!h || !target)
             return -9;
+        if (!h->epoll || target == h)
+            return -22;
         EpollItem* item = nullptr;
         for (auto& existing : h->epoll->items)
             if (existing.used && existing.fd == int(c) && existing.handle == target &&
@@ -817,25 +852,35 @@ int64_t ipc_syscall(Frame* f) {
     }
     case 232:
     case 281: {
-        if (!h || !h->epoll)
+        if (!h)
             return -9;
-        if (int32_t(c) <= 0 || uint32_t(c) > 0x7fffffffu / sizeof(EpollEvent))
+        unsigned maximum = uint32_t(c);
+        if (!h->epoll || !maximum || maximum > 0x7fffffffu / sizeof(EpollEvent))
             return -22;
-        if (b >= user_limit || uint64_t(uint32_t(c)) * sizeof(EpollEvent) > user_limit - b)
+        if (b >= user_limit || uint64_t(maximum) * sizeof(EpollEvent) > user_limit - b)
             return -14;
-        int n = epoll_events(*current, h->epoll, b, c, true);
-        if (n || int(d) == 0) {
-            current->deadline = 0;
+        auto& task = *current;
+        if (f->rax == 281 && f->r8) {
+            uint64_t mask;
+            if (f->r9 != sizeof(mask))
+                return -22;
+            if (!task.memory->space.copy_in(&mask, f->r8, sizeof(mask)))
+                return -14;
+            task.suspend_saved_mask = task.signal_mask;
+            task.suspend_mask = true;
+            task.signal_mask = mask & ~unmaskable_signals;
+        }
+        int timeout = int32_t(d);
+        int n = epoll_events(task, h->epoll, b, maximum);
+        if (n || !timeout) {
+            epoll_restore_mask(task);
             return n;
         }
-        if (current->deadline && ticks >= current->deadline) {
-            current->deadline = 0;
-            return 0;
-        }
-        if (int(d) > 0 && !current->deadline)
-            current->deadline = ticks + (d + 9) / 10;
-        current->state = State::blocked;
-        current->wait = Wait::poll;
+        retain(h);
+        task.epoll_wait_handle = h;
+        task.deadline = timeout > 0 ? ticks + (uint64_t(timeout) + 9) / 10 : 0;
+        task.state = State::blocked;
+        task.wait = Wait::epoll_wait;
         return would_block;
     }
     default:

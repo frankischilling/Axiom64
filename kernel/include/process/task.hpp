@@ -24,7 +24,8 @@ enum class Wait {
     semaphore,
     message_queue,
     posix_queue,
-    fifo_open
+    fifo_open,
+    epoll_wait
 };
 
 struct Descriptor {
@@ -136,6 +137,7 @@ struct Task {
     MessageQueueRequest* message_queue_request;
     PosixQueueRequest* posix_queue_request;
     FifoOpen fifo_open;
+    Handle* epoll_wait_handle;
     alignas(16) uint8_t fpu[512];
 };
 

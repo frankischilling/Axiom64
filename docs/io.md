@@ -103,6 +103,26 @@ Pending signal records share a 4,096-entry kernel pool. The receiver's
 `RLIMIT_SIGPENDING` limits charged records by real UID. Real-time sends that
 require a queue record return `EAGAIN` when admission fails.
 
+## Epoll descriptor lifetime
+
+An epoll watch is keyed by the registered descriptor number and its open
+file description. If another descriptor still holds that description,
+closing the registered number leaves the watch in place. A new file that
+reuses the number can have its own watch. The old watch goes away when the
+last reference to its file description closes.
+
+A blocked wait holds the epoll instance it entered. Closing or replacing
+its descriptor in another thread leaves that wait on the original instance.
+`epoll_pwait` applies the temporary signal mask during the wait and restores
+the previous mask afterward. If copying a batch faults after some events,
+the wait returns the events it copied and leaves the remaining events ready.
+
+`make test-epoll-lifetime` checks duplicate and reused descriptors, fork
+and exec, descriptors in queued `SCM_RIGHTS` messages, blocked waits, signal
+masks, and event copy faults. It runs both caller identities and both musl
+providers and linkages on BIOS and UEFI, with additional read-only ext2 boots.
+`sudo make test-epoll-lifetime-native` runs the Linux comparison.
+
 ## Named pipes
 
 `mkfifo` and `mkfifoat` create a FIFO with the caller's ownership and umask.

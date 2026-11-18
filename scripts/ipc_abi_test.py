@@ -33,6 +33,10 @@ WORKLOADS = {
                                       'permissions')),
     'posix-message-queues': ('POSIX_MQ', ('priority-names', 'blocking', 'notifications',
                                            'permissions-limits')),
+    'epoll-lifetime': ('EPOLL_LIFETIME', ('retained-alias', 'same-number-different-descriptions',
+                                         'fork-and-final-close', 'exec-cloexec-alias',
+                                         'rights-in-flight', 'blocked-instance-reuse',
+                                         'signal-mask-and-stop', 'reuse-and-copy-fault')),
     'named-pipes': ('NAMED_PIPE', ('create', 'readiness', 'rendezvous', 'transient-peer',
                                        'interruption-cancellation', 'inode-aliases', 'unlink-recreate')),
     'posix-aio': ('POSIX_AIO', ('positioned-sync-errors', 'signal', 'lists-thread',
@@ -275,7 +279,7 @@ def guest(directory, workload, client):
                              image_sha256=digest(image), **row))
             print(f'{prefix}_GUEST_PASS {provider}/{linkage}/{firmware}', flush=True)
         if (provider, linkage) == ('build', 'static') and (
-                workload.startswith('posix-') or workload == 'named-pipes'):
+                workload.startswith('posix-') or workload in ('named-pipes', 'epoll-lifetime')):
             image, disk = ext2_fixture(case, kernel, payload, script, workload)
             fingerprint = disk_digest(disk)
             for firmware in ('bios', 'uefi'):

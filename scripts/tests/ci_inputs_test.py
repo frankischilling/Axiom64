@@ -11,6 +11,15 @@ import unittest
 
 HELPER = Path(__file__).resolve().parents[2] / 'scripts/ci/inputs.sh'
 BUSYBOX = 'build/busybox-1.37.0/'
+CRYPTO_PRODUCTS = {
+    'build/curl/build/id/static/stage/usr/bin/curl': b'completed curl',
+    'build/curl/build/id/static/build/lib/curl_config.h': b'curl configuration header',
+    'build/curl/build/id/static/build/config.log': b'curl configuration log',
+    'build/curl/build/id/static/metadata-original/usr/lib/libcurl.pc': b'original metadata',
+    'build/curl/build/id/source/configure': b'curl source used to verify reuse',
+    'build/openssl/runtime/id/dynamic/stage/usr/bin/openssl': b'completed OpenSSL',
+    'build/openssl/runtime/id/dynamic/build/include/openssl/configuration.h': b'OpenSSL configuration',
+}
 
 
 class InputArchives(unittest.TestCase):
@@ -42,8 +51,7 @@ class InputArchives(unittest.TestCase):
             'build/musl/runtime/id/manifest.json': b'{}\n',
             'build/musl/runtime/id/libc.so': b'prepared libc',
             'downloads/package.tar.gz': b'locked download',
-            'build/curl/build/id/stage/curl': b'unrelated curl build',
-            'build/openssl/runtime/id/stage/ssl': b'unrelated openssl build',
+            **CRYPTO_PRODUCTS,
             'build/rootfs.cpio': b'complete root',
             'build/rootfs-desktop.cpio': b'desktop root',
             'build/curl-extra/result.json': b'keep prefix collision',
@@ -66,6 +74,10 @@ class InputArchives(unittest.TestCase):
             'build/openssl/build/id/static/build/fuzz/program': b'unused upstream fuzz',
             'build/openssl/build/id/static/build/unit.o': b'unused upstream object',
             'build/openssl/build/id/static/build/unit.a': b'unused upstream archive',
+            'build/curl/build/id/compiler.sh': b'generated compiler wrapper',
+            'build/curl/build/id/static/build/lib/unit.o': b'unused curl object',
+            'build/curl/build/id/static/build/lib/temporary[1]': b'literal generated name',
+            'build/curl/build/id/static/build/tool/curl': b'unstaged curl binary',
         }
         self.rotation_excluded = {
             'build/gnu-reader-controls/moved-kit/libc.a': b'completed reader control',
@@ -103,7 +115,7 @@ class InputArchives(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
         full_members, full = self.read('full')
         rotation_members, rotation = self.read('rotation')
-        removed = {'build/curl/build/id/stage/curl', 'build/openssl/runtime/id/stage/ssl',
+        removed = {*CRYPTO_PRODUCTS,
                    'build/rootfs.cpio', 'build/rootfs-desktop.cpio', *self.rotation_excluded}
         self.assertEqual(set(full) - set(rotation), removed)
         self.assertFalse(set(rotation) - set(full))
@@ -152,6 +164,37 @@ class InputArchives(unittest.TestCase):
         self.assertIn('linux-headers-locked.apk', result.stderr)
         self.assertFalse((self.output / 'ci-rotation-inputs.tar.gz').exists())
 
+    def test_full_retains_verified_crypto_and_leaves_intermediates_in_workspace(self):
+        link = 'build/curl/build/id/static/stage/usr/bin/curl-alias'
+        (self.workspace / link).symlink_to('curl')
+        removed = 'build/curl/build/id/static/build/lib/temporary[1]'
+        self.assertEqual(self.run_helper('full').returncode, 0)
+        members, files = self.read('full')
+        for name, content in CRYPTO_PRODUCTS.items():
+            self.assertEqual(files[name], content)
+            self.assertEqual(members[name].mode, 0o751)
+            self.assertEqual(members[name].mtime, 1577836800)
+        self.assertEqual(members[link].linkname, 'curl')
+        self.assertNotIn(removed, members)
+        self.assertEqual((self.workspace / removed).read_bytes(), self.files[removed])
+
+    def test_full_materializes_crypto_hard_link_when_intermediate_is_omitted(self):
+        intermediate = 'build/curl/build/id/static/build/lib/unit.o'
+        product = 'build/curl/build/id/static/stage/usr/bin/retained'
+        os.link(self.workspace / intermediate, self.workspace / product)
+        self.assertEqual(self.run_helper('full').returncode, 0)
+        members, files = self.read('full')
+        self.assertNotIn(intermediate, members)
+        self.assertEqual(files[product], self.files[intermediate])
+
+    def test_full_rejects_line_break_in_crypto_exclusion(self):
+        invalid = self.workspace / 'build/curl/build/id/unlisted\nentry'
+        invalid.touch()
+        result = self.run_helper('full')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('line break in generated crypto path', result.stderr)
+        self.assertFalse(list(self.output.iterdir()))
+
     def test_common_privacy_and_cache_exclusions(self):
         excluded = set(self.files) - {
             'dependencies.json', 'ports.lock.json', 'userspace/source.c', 'scripts/check.py', 'docs/build.md',
@@ -161,7 +204,7 @@ class InputArchives(unittest.TestCase):
             'build/ext2-xattr-codec-extra/result.json', *self.rotation_excluded,
             'build/axiom64.elf', 'build/init', 'build/musl/runtime/id/manifest.json',
             'build/musl/runtime/id/libc.so', 'downloads/package.tar.gz',
-            'build/curl/build/id/stage/curl', 'build/openssl/runtime/id/stage/ssl',
+            *CRYPTO_PRODUCTS,
             'build/rootfs.cpio', 'build/rootfs-desktop.cpio',
             'build/curl-extra/result.json', 'build/openssl-check/result.json',
             *(BUSYBOX + name for name in ('busybox', '.config', 'LICENSE', '.axiom64-toolchain'))}

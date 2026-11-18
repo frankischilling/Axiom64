@@ -609,6 +609,12 @@ CI can reuse completed musl, OpenSSL and curl products across revisions with ide
 
 CI saves validated provider products immediately after the completeness check, before subsequent builds and source packaging. A failed validation prevents cache publication. Full workflow and runtime checks still determine acceptance.
 
+The full test input bundle uses that same OpenSSL and curl output list after
+both cold builds and cache restores. It carries complete provider outputs and
+their verification inputs. Build intermediates stay in the producer workspace.
+The packer keeps the original file modes, timestamps and links. The storage
+rotation bundle keeps its separate input profile.
+
 Read these reports together: `inputs.json` records the exact key and build inputs, `cache-hit.txt` records whether the cache action found that key, and `products.json` records the completed manifests and verified product counts. An empty or `false` cache-hit value means a miss; `true` alone does not prove that restored products passed verification. Compare successful complete workflows with matching build inputs, including queue time and the unchanged guest jobs. Documentation changes can reuse the key because they do not change a dependency recipe or product.
 
 Artifact downloads use a pinned Node 24 action and reject digest mismatches before restored inputs reach tests. Native file-capability comparisons obtain Ubuntu source indices through the content hash in a signature-verified Release. This avoids combining an older Release with a newly published mutable index. Capture retains rejected index bytes and their expected/actual hashes under `archive-authentication/`; a failed transfer never becomes a completed index cache entry. Verified public indices use mode `0644`, so ordinary CI readers and uploaders can read files produced by root. Twelve HTTP regression cases cover publication identity, truncated responses, missing indices, damaged cached bytes and evidence-reader access. If a publishing mirror returns 404 for its hash path, one canonical-index request may supply the same bytes; its complete length and SHA-256 must still match the already signature-verified Release. Both request statuses remain recorded. A changed canonical index, other HTTP errors and damaged cached data remain failures. When run as root, the access case drops to an unprivileged UID to read the actual cached and copied files. The extracted-source checks run these cases too.

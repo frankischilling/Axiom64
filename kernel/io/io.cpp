@@ -63,13 +63,15 @@ struct IoRequest {
     UnixRights* unix_rights;
     UnixAddressValue unix_name;
     UnixDatagramTarget unix_target;
-    bool unix_named, unix_write_waited, unix_read_identified;
+    bool unix_named, unix_write_waited, unix_read_identified, unix_source_captured;
     uint64_t address_pointer, address_length_pointer;
     uint64_t control_pointer, control_capacity;
     uint32_t address_capacity;
     uint64_t event_value;
     bool event_value_ready;
 };
+
+static bool copy_packet_output(Task&, uint64_t, const void*, size_t);
 
 static void destroy(IoRequest* request) {
     if (!request)
@@ -117,14 +119,33 @@ static int64_t unix_receive_output(Task& task, const IoRequest& request,
                                                  request.control_pointer, request.control_capacity,
                                                  request.flags & 0x40000000, flags)
                             : 0;
-        if (!task.memory->space.copy_out(call.rsi + offsetof(Message, control_length), &used, 8) ||
-            !task.memory->space.copy_out(call.rsi + offsetof(Message, flags), &flags, 4))
+        if (request.address_pointer) {
+            uint8_t bytes[111];
+            uint32_t length =
+                request.unix_name.length ? request.unix_name.output(bytes, sizeof(bytes)) : 0;
+            if (!task.memory->space.copy_out(call.rsi + offsetof(Message, name_length), &length,
+                                             4) ||
+                !copy_packet_output(task, request.address_pointer, bytes,
+                                    min(request.address_capacity, length)))
+                return -14;
+        }
+        if (!task.memory->space.copy_out(call.rsi + offsetof(Message, flags), &flags, 4) ||
+            !task.memory->space.copy_out(call.rsi + offsetof(Message, control_length), &used, 8))
             return -14;
     }
-    if (call.rax == 45 && call.r8)
-        if (int error =
-                socket_output_address(task, socket->peer ? socket->peer : socket, call.r8, call.r9))
-            return error;
+    if (call.rax == 45 && call.r8) {
+        uint32_t capacity;
+        if (!task.memory->space.copy_in(&capacity, call.r9, 4))
+            return -14;
+        if (int32_t(capacity) < 0)
+            return -22;
+        uint8_t bytes[111];
+        uint32_t length =
+            request.unix_name.length ? request.unix_name.output(bytes, sizeof(bytes)) : 0;
+        if (!task.memory->space.copy_out(call.r9, &length, 4) ||
+            !copy_packet_output(task, call.r8, bytes, min(capacity, length)))
+            return -14;
+    }
     return result;
 }
 
@@ -228,8 +249,8 @@ static int prepare_unix_datagram(Task& task, IoRequest& request) {
                                               request.unix_credentials, request.unix_rights))
                 return error;
         if (request.write && message.name && message.name_length) {
-            if (int error = socket_datagram_address(task, message.name, message.name_length,
-                                                    request.unix_name))
+            if (int error =
+                    socket_unix_address(task, message.name, message.name_length, request.unix_name))
                 return error;
             request.unix_named = true;
         }
@@ -253,7 +274,7 @@ static int prepare_unix_datagram(Task& task, IoRequest& request) {
         request.packet_length += vector.length;
     }
     if (f.rax == 44 && f.r8 && uint32_t(f.r9)) {
-        if (int error = socket_datagram_address(task, f.r8, uint32_t(f.r9), request.unix_name))
+        if (int error = socket_unix_address(task, f.r8, uint32_t(f.r9), request.unix_name))
             return error;
         request.unix_named = true;
     }
@@ -265,7 +286,7 @@ static int prepare_unix_datagram(Task& task, IoRequest& request) {
     }
     if (request.write) {
         if (request.handle->socket->pass_credentials)
-            if (int error = socket_datagram_autobind(*request.handle->socket))
+            if (int error = socket_unix_autobind(*request.handle->socket))
                 return error;
         request.unix_send_limit = request.handle->socket->datagram_send->size();
         if (request.packet_length > request.unix_send_limit - 32)
@@ -577,7 +598,8 @@ static int prepare(Task& task, IoRequest& request) {
         Message message;
         if (!task.memory->space.copy_in(&message, f.rsi, sizeof(message)))
             return -14;
-        if (message.name && !(f.rax == 47 && inet_stream(request.handle->inet)))
+        if (message.name &&
+            !(f.rax == 47 && (request.handle->socket || inet_stream(request.handle->inet))))
             return -95;
         if (message.control_length && f.rax == 46) {
             if (!request.handle->socket)
@@ -587,6 +609,12 @@ static int prepare(Task& task, IoRequest& request) {
                 return error;
         }
         if (f.rax == 47) {
+            if (request.handle->socket) {
+                if (message.name && int32_t(message.name_length) < 0)
+                    return -22;
+                request.address_pointer = message.name;
+                request.address_capacity = min(message.name_length, uint32_t(128));
+            }
             request.control_pointer = message.control;
             request.control_capacity = message.control_length;
         }
@@ -831,7 +859,8 @@ static int64_t unix_stream_attempt(Task& task, IoRequest& request) {
             record->drop();
             return -14;
         }
-        receiver->stream.accept(record, length, identity, request.unix_rights, receiver);
+        receiver->stream.accept(record, length, identity, request.unix_rights, receiver,
+                                socket->local_name);
         while (cursor.index < request.count &&
                cursor.offset == request.vectors[cursor.index].length) {
             cursor.index++;
@@ -857,8 +886,13 @@ static int64_t unix_stream_attempt(Task& task, IoRequest& request) {
     bool stopped = false;
     if (socket->listener || !socket->connected)
         return -107;
-    auto record = remaining ? socket->stream.front() : nullptr;
+    auto record = remaining || request.socket ? socket->stream.front() : nullptr;
     while (record) {
+        if (!request.unix_source_captured) {
+            request.unix_source_captured = true;
+            if (auto name = record->source_name())
+                request.unix_name = name->address();
+        }
         if ((waitall || socket->pass_credentials) && identified &&
             !(identity == record->credentials())) {
             stopped = true;
@@ -871,6 +905,10 @@ static int64_t unix_stream_attempt(Task& task, IoRequest& request) {
         bool boundary = record->rights();
         auto next = record->next();
         size_t length = min(remaining, record->size());
+        if (!length && !peek && boundary) {
+            socket->stream.take_rights(received.owned);
+            received.view = received.owned;
+        }
         if (length) {
             // Copy faults can expose a userspace prefix, but commit no part of
             // this interval. Earlier complete intervals keep their progress.
@@ -1002,7 +1040,7 @@ static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
             int error;
             request.unix_record =
                 UnixDatagramRecord::create(*socket->datagram_send, request.packet_length, error,
-                                           request.unix_send_limit, socket->datagram_name);
+                                           request.unix_send_limit, socket->local_name);
             if (!request.unix_record)
                 return error;
             request.unix_record->credentials() = request.unix_credentials;

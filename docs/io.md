@@ -9,11 +9,11 @@ Axiom64 retains the open file description selected by an I/O syscall while that 
 | `read`, `write`, `readv`, `writev` | Existing regular files, pipes, Unix stream sockets, event counters, and character/block devices |
 | `pread64`, `pwrite64` | Existing seekable files and block devices; preserve the shared file offset; pipes, sockets, and character devices return `ESPIPE` |
 | `recvfrom`, `sendto` | Connected Unix streams, including receive-address output; a send destination is unsupported |
-| `recvmsg`, `sendmsg` | Nameless Unix stream messages with copied iovec metadata, sender credentials and transferred file descriptions |
+| `recvmsg`, `sendmsg` | Unix stream messages with copied iovec metadata, receive source names, sender credentials and transferred file descriptions |
 | `accept`, `accept4` | Existing Unix listeners, optional address output, and accepted-descriptor nonblocking/close-on-exec flags |
 | `flock` | [Local advisory file locks](file-locks.md), retaining the original description during an uninterrupted blocking attempt |
 
-Unix stream transfers support `MSG_DONTWAIT`, receive `MSG_PEEK` and `MSG_WAITALL`, send `MSG_NOSIGNAL` and receive `MSG_CMSG_CLOEXEC`. Peeking advances across the captured vectors without consuming bytes. Receive-message source-name buffers remain unsupported. Other unsupported transfer flags return `EOPNOTSUPP`. Socket receive/send deadlines are supported as described below. Poll/select/epoll have separate wait state and are not affected by these socket options.
+Unix stream transfers support `MSG_DONTWAIT`, receive `MSG_PEEK` and `MSG_WAITALL`, send `MSG_NOSIGNAL` and receive `MSG_CMSG_CLOEXEC`. Peeking advances across the captured vectors without consuming bytes. Unsupported transfer flags return `EOPNOTSUPP`. Socket receive/send deadlines are supported as described below. Poll/select/epoll have separate wait state and are not affected by these socket options.
 
 IPv6 raw/UDP [extended error receives](ipv6.md#extended-error-queues) use `MSG_ERRQUEUE` through the same selected description. They return immediately, own their dequeued record during user copies and keep normal receive data independent. They do not create a retained blocking receive attempt.
 
@@ -26,6 +26,29 @@ Mapping checks apply to bytes transferred. A large valid span can return a short
 Empty Unix stream sends check connection and shutdown state. A broken peer returns `EPIPE` and delivers `SIGPIPE` unless `MSG_NOSIGNAL` suppresses it. An empty `writev` retains its zero-byte shortcut.
 
 Blocking Unix writes retain their cursor and accepted byte count across queue-space waits. Each admitted interval owns its copied bytes; a copy fault commits none of the affected interval. Credentials and rights follow the [stream message contract](testing.md); transferred rights attach only to the first admitted interval. Signals, finite deadlines and peer shutdown return an accepted prefix without replaying it. A queue-space wait interrupted by shutdown returns `EPIPE` without `SIGPIPE` when no bytes were accepted. A fresh broken write retains its normal signal behavior. These distinctions follow [Linux Unix stream send](https://github.com/torvalds/linux/blob/v7.0/net/unix/af_unix.c#L2238-L2373).
+
+## Unix stream names
+
+Filesystem and abstract bindings are available to `getsockname`,
+`getpeername` and the address result from `accept` or `accept4`. Family-only
+binds request an abstract autobind. A connecting stream with `SO_PASSCRED`
+also autobinds. Accepted streams retain their local name when a listener
+closes, and peer queries retain the peer name when its descriptor closes.
+An address-output fault during accept closes the dequeued connection and
+releases the reserved descriptor.
+
+`recvmsg` and `recvfrom` report the sender associated with the first stream
+interval examined. If that sender binds after enqueue, the queued interval
+sees the binding. After close or descriptor reuse, the interval still refers
+to the original sender. The returned length describes the full name, even
+when the caller supplies a shorter buffer. Axiom64 writes this length before
+copying the address bytes, matching [Linux 7.0](https://github.com/torvalds/linux/blob/v7.0/net/socket.c#L263-L300).
+
+A zero-byte `recvmsg` can transfer rights from its first interval while leaving
+the payload queued. `MSG_PEEK` leaves the original rights queued as well.
+Without control space a consuming receive discards the rights and reports
+`MSG_CTRUNC`. If copying the source name faults, rights already installed by
+the receive remain in the caller's descriptor table.
 
 ## Retained Unix receives
 

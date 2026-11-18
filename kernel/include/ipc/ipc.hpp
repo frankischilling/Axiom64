@@ -14,8 +14,6 @@ struct Socket {
     bool used, listener, pending, connected, read_closed, write_closed, peer_closed;
     uint16_t type;
     uint64_t generation, peer_generation;
-    uint8_t local[108];
-    size_t local_length;
     Node* bound_node;
     Socket* peer;
     Socket* queue[32];
@@ -23,8 +21,11 @@ struct Socket {
     UnixStreamQueue stream{};
     PeerCredentials credentials{}, peer_credentials{};
     UnixDatagramQueue datagrams{};
-    UnixAddressName* datagram_name = nullptr;
-    UnixAddressName* datagram_peer_name = nullptr;
+    // Bindings outlive their endpoint while peer queries or queued bytes own them.
+    UnixAddressName* local_name = nullptr;
+    UnixAddressName* peer_name = nullptr;
+    // Accepted children retain a local name without reserving its namespace entry.
+    bool name_registered = false;
     UnixSendBudget* datagram_send = nullptr;
     uint32_t datagram_receive = 212992;
     int datagram_error = 0;
@@ -76,11 +77,11 @@ int64_t socket_write(Socket*, const void*, size_t, uint32_t datagram_entry_limit
 // Success transfers the prepared record to the receiver; errors retain it.
 int64_t socket_datagram_write(Task&, Socket*, UnixDatagramRecord*, const UnixAddressValue*,
                               UnixDatagramTarget&);
-int socket_datagram_address(Task&, uint64_t pointer, uint32_t length, UnixAddressValue&);
-int socket_datagram_bind(Task&, Socket&, uint64_t pointer, size_t length);
-int socket_datagram_autobind(Socket&);
+int socket_unix_address(Task&, uint64_t pointer, uint32_t length, UnixAddressValue&);
+int socket_unix_bind(Task&, Socket&, uint64_t pointer, size_t length);
+int socket_unix_autobind(Socket&);
 int socket_datagram_connect(Task&, Socket&, uint64_t pointer, uint32_t length);
-int socket_datagram_output_name(Task&, const UnixAddressName*, uint64_t, uint64_t);
+int socket_unix_output_name(Task&, const UnixAddressName*, uint64_t, uint64_t);
 bool socket_datagram_writable(const Socket&);
 
 int64_t socket_accept(Task&, Handle*, uint64_t address, uint64_t length, unsigned flags,

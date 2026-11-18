@@ -18,16 +18,21 @@ void UnixStreamRecord::drop() {
     files = nullptr;
     if (rights)
         rights->drop();
+    if (sender_name)
+        sender_name->drop();
     release(this);
 }
 
 void UnixStreamQueue::accept(UnixStreamRecord* record, size_t length,
                              const UnixMessageCredentials& credentials, UnixRights*& rights,
-                             Socket* receiver) {
+                             Socket* receiver, UnixAddressName* source) {
     if (!record || !length || record->length || record->following || length > capacity - bytes)
         panic("invalid Unix stream interval transfer");
     record->length = length;
     record->identity = credentials;
+    record->sender_name = source;
+    if (source)
+        source->retain();
     record->files = rights;
     rights = nullptr;
     if (record->files)
@@ -40,14 +45,20 @@ void UnixStreamQueue::accept(UnixStreamRecord* record, size_t length,
     bytes += length;
 }
 
+void UnixStreamQueue::take_rights(UnixRights*& rights) {
+    if (!first || rights)
+        panic("invalid Unix stream description transfer");
+    rights = first->files;
+    first->files = nullptr;
+    if (rights)
+        rights->dequeue();
+}
+
 void UnixStreamQueue::consume(size_t count, UnixRights*& rights) {
     if (!first || !count || count > first->size() || rights)
         panic("invalid Unix stream interval consume");
     auto record = first;
-    rights = record->files;
-    record->files = nullptr;
-    if (rights)
-        rights->dequeue();
+    take_rights(rights);
     record->consumed += count;
     bytes -= count;
     if (!record->size()) {

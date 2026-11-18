@@ -260,6 +260,7 @@ int write_handle_limit(Handle*, size_t&);
 
 int64_t write_handle(Handle*, const void*, size_t);
 
+bool handle_has_poll(const Handle&);
 bool handle_ready(Handle*, bool write, const Task*);
 
 void node_path(Node*, char*, size_t);

@@ -369,7 +369,8 @@ Pipes, Unix streams, polling, epoll, select, and SysV shared memory have guest t
 [Named pipes](io.md#named-pipes) support filesystem names, blocking opens, descriptor
 readiness, signal interruption, and persistent ext2 inodes.
 [Epoll lifetime tests](io.md#epoll-descriptor-lifetime) check duplicate and reused
-descriptors, inherited watches, and waits that survive descriptor replacement.
+descriptors, inherited watches, waits that survive descriptor replacement,
+and file-type admission with the Linux errno and poll-mask behavior.
 `epoll_pwait2` supports relative timespec deadlines and temporary signal masks
 through the same wait path.
 [Exclusive epoll](io.md#exclusive-epoll-wakeups) limits wakeups across competing

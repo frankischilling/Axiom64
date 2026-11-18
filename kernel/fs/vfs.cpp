@@ -1039,6 +1039,23 @@ void close_handle(Handle* h) {
     posix_queue_reap(retired_node);
 }
 
+bool handle_has_poll(const Handle& handle) {
+    if (handle.pipe || handle.socket || handle.packet || handle.inet || handle.inet6 ||
+        handle.netlink || handle.epoll || handle.event || handle.timer ||
+        handle.signal_descriptor || handle.inotify)
+        return true;
+    auto node = handle.node;
+    if (!node)
+        return false;
+    if ((node->mode & 0170000) == character)
+        return device_has_poll(handle);
+    if ((node->mode & 0170000) != regular_file)
+        return false;
+    auto filesystem = node->mount->ops;
+    return filesystem == &posix_queue_filesystem() ||
+           (filesystem == &procfs_ops && procfs_has_poll(*node));
+}
+
 bool handle_ready(Handle* h, bool write, const Task* task) {
     if (!h)
         return true;

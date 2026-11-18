@@ -105,6 +105,18 @@ require a queue record return `EAGAIN` when admission fails.
 
 ## Epoll descriptor lifetime
 
+Epoll accepts descriptors with a poll operation, including pipes, sockets,
+event descriptors, message queues, terminals, and selected proc controls.
+Registering a regular RAM or ext2 file, a directory, or a device such as
+`/dev/null` returns `EPERM`. Those descriptors still report the default
+read and write readiness flags through `poll`. `O_PATH` descriptors return
+`EBADF` from epoll registration.
+
+An epoll descriptor reports anonymous-inode mode through `fstat` and
+`fstatat` with `AT_EMPTY_PATH`. Reads and writes return `EINVAL`, and
+positioned I/O returns `ESPIPE`. As on current Linux, `lseek` returns zero
+without changing the position.
+
 An epoll watch is keyed by the registered descriptor number and its open
 file description. If another descriptor still holds that description,
 closing the registered number leaves the watch in place. A new file that

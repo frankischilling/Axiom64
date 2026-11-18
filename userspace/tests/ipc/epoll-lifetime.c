@@ -15,10 +15,13 @@
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/signalfd.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/un.h>
+#include <sys/uio.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -56,6 +59,113 @@ static void expect_byte(int fd, char byte) {
 static void expect_child(pid_t child) {
     int status;
     CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+
+static void check_poll_mask(int fd, short requested, short expected) {
+    struct pollfd test = {.fd = fd, .events = requested};
+    CHECK(poll(&test, 1, 0) == 1 && test.revents == expected);
+}
+
+static void descriptor_admission(const char* program) {
+    int epoll = epoll_create1(EPOLL_CLOEXEC);
+    CHECK(epoll >= 0);
+    const short normal = POLLIN | POLLOUT | POLLRDNORM | POLLWRNORM;
+    const uint32_t events = EPOLLIN | EPOLLOUT | EPOLLRDNORM | EPOLLWRNORM;
+    struct epoll_event event = {.events = events, .data.u32 = 17};
+    const char* defaults[] = {
+        program, "/", "/dev/null", "/dev/zero", "/dev/urandom", "/proc/self/status"};
+    for (size_t i = 0; i < sizeof(defaults) / sizeof(defaults[0]); i++) {
+        int fd = open(defaults[i], O_RDONLY | O_CLOEXEC);
+        CHECK(fd >= 0);
+        CHECK(epoll_ctl(epoll, EPOLL_CTL_ADD, fd, &event) == -1 && errno == EPERM);
+        CHECK(epoll_ctl(epoll, EPOLL_CTL_MOD, fd, &event) == -1 && errno == EPERM);
+        CHECK(epoll_ctl(epoll, EPOLL_CTL_DEL, fd, NULL) == -1 && errno == EPERM);
+        CHECK(epoll_ctl(fd, EPOLL_CTL_ADD, fd, &event) == -1 && errno == EPERM);
+        CHECK(epoll_ctl(-1, EPOLL_CTL_ADD, fd, &event) == -1 && errno == EBADF);
+        CHECK(epoll_ctl(-1, EPOLL_CTL_ADD, fd, (void*)1) == -1 && errno == EFAULT);
+        check_poll_mask(fd, normal, normal);
+        CHECK(close(fd) == 0);
+    }
+
+    int path = open("/", O_PATH | O_CLOEXEC);
+    CHECK(path >= 0);
+    CHECK(epoll_ctl(epoll, EPOLL_CTL_ADD, path, &event) == -1 && errno == EBADF);
+    check_poll_mask(path, normal, POLLNVAL);
+    CHECK(close(path) == 0);
+    CHECK(epoll_wait(epoll, &event, 1, 0) == 0);
+    puts("EPOLL_LIFETIME_CASE descriptor-admission");
+
+    int control = open("/proc/sys/kernel/random/boot_id", O_RDONLY | O_CLOEXEC);
+    CHECK(control >= 0 && epoll_ctl(epoll, EPOLL_CTL_ADD, control, &event) == 0);
+    CHECK(epoll_wait(epoll, &event, 1, 0) == 1 && event.events == events && event.data.u32 == 17);
+    CHECK(close(control) == 0);
+    int random = open("/dev/random", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    event.events = EPOLLIN;
+    CHECK(random >= 0 && epoll_ctl(epoll, EPOLL_CTL_ADD, random, &event) == 0);
+    CHECK(epoll_ctl(epoll, EPOLL_CTL_DEL, random, NULL) == 0 && close(random) == 0);
+    int terminal = open("/dev/ptmx", O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
+    event.events = EPOLLOUT;
+    CHECK(terminal >= 0 && epoll_ctl(epoll, EPOLL_CTL_ADD, terminal, &event) == 0);
+    CHECK(epoll_wait(epoll, &event, 1, 0) == 1 && event.events == EPOLLOUT && event.data.u32 == 17);
+    CHECK(close(terminal) == 0 && close(epoll) == 0);
+    puts("EPOLL_LIFETIME_CASE pollable-controls-and-devices");
+}
+
+static void epoll_descriptor_io(int legacy_seek) {
+    const uint64_t high = UINT64_C(1) << 32;
+    CHECK(syscall(SYS_epoll_create, -1) == -1 && errno == EINVAL);
+    CHECK(syscall(SYS_epoll_create, high) == -1 && errno == EINVAL);
+    CHECK(epoll_create1(O_NONBLOCK) == -1 && errno == EINVAL);
+    int legacy = syscall(SYS_epoll_create, high | 1);
+    CHECK(legacy >= 0 && fcntl(legacy, F_GETFD) == 0 && close(legacy) == 0);
+    int epoll = syscall(SYS_epoll_create1, high | EPOLL_CLOEXEC);
+    CHECK(epoll >= 0 && fcntl(epoll, F_GETFD) == FD_CLOEXEC);
+    CHECK((fcntl(epoll, F_GETFL) & O_ACCMODE) == O_RDWR);
+
+    struct rlimit original;
+    CHECK(getrlimit(RLIMIT_NOFILE, &original) == 0);
+    struct rlimit exhausted = {.rlim_cur = 0, .rlim_max = original.rlim_max};
+    CHECK(setrlimit(RLIMIT_NOFILE, &exhausted) == 0);
+    CHECK(epoll_create1(0) == -1 && errno == EMFILE);
+    CHECK(setrlimit(RLIMIT_NOFILE, &original) == 0);
+    int tube[2];
+    CHECK(pipe(tube) == 0);
+    struct epoll_event event = {.events = EPOLLIN, .data.u32 = 19};
+    CHECK(syscall(SYS_epoll_ctl, epoll, high | EPOLL_CTL_ADD, tube[0], &event) == 0);
+    CHECK(write(tube[1], "I", 1) == 1);
+    expect_event(epoll, 19);
+    CHECK(close(tube[0]) == 0 && close(tube[1]) == 0);
+    puts("EPOLL_LIFETIME_CASE epoll-creation-and-resource-limit");
+
+    struct stat status;
+    CHECK(fstat(epoll, &status) == 0 && status.st_mode == 0600 && status.st_nlink == 1);
+    CHECK(fstatat(epoll, "", &status, AT_EMPTY_PATH) == 0 && status.st_mode == 0600 &&
+          status.st_nlink == 1);
+    CHECK(fstatat(epoll, "", &status, 0) == -1 && errno == ENOENT);
+    CHECK(fstatat(epoll, "dummy", &status, 0) == -1 && errno == ENOTDIR);
+    char byte = 0;
+    struct iovec vector = {.iov_base = &byte, .iov_len = 1};
+    CHECK(read(epoll, &byte, 1) == -1 && errno == EINVAL);
+    CHECK(read(epoll, &byte, 0) == -1 && errno == EINVAL);
+    CHECK(write(epoll, &byte, 1) == -1 && errno == EINVAL);
+    CHECK(write(epoll, &byte, 0) == -1 && errno == EINVAL);
+    CHECK(readv(epoll, &vector, 1) == -1 && errno == EINVAL);
+    CHECK(writev(epoll, &vector, 1) == -1 && errno == EINVAL);
+    CHECK(pread(epoll, &byte, 1, 0) == -1 && errno == ESPIPE);
+    CHECK(pwrite(epoll, &byte, 1, 0) == -1 && errno == ESPIPE);
+    CHECK(pread(epoll, &byte, 1, -1) == -1 && errno == EINVAL);
+    if (legacy_seek) {
+        CHECK(lseek(epoll, 12, SEEK_SET) == -1 && errno == ESPIPE);
+        puts("EPOLL_LIFETIME_SEEK espipe");
+    } else {
+        CHECK(lseek(epoll, 12, SEEK_SET) == 0);
+        CHECK(lseek(epoll, 0, SEEK_CUR) == 0);
+        puts("EPOLL_LIFETIME_SEEK noop");
+    }
+    CHECK(lseek(epoll, 0, 5) == -1 && errno == EINVAL);
+    CHECK(fsync(epoll) == -1 && errno == EINVAL);
+    CHECK(close(epoll) == 0);
+    puts("EPOLL_LIFETIME_CASE epoll-anonymous-descriptor");
 }
 
 static void descriptor_keys(void) {
@@ -589,10 +699,17 @@ int main(int argc, char** argv) {
         expect_byte(reader, 'E');
         return 0;
     }
-    if (argc == 2 && strcmp(argv[1], "--ordinary") == 0)
-        CHECK(setgroups(0, NULL) == 0 && setgid(65534) == 0 && setuid(65534) == 0);
-    else
-        CHECK(argc == 1);
+    int legacy_seek = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--ordinary") == 0) {
+            CHECK(setgroups(0, NULL) == 0 && setgid(65534) == 0 && setuid(65534) == 0);
+        } else {
+            CHECK(strcmp(argv[i], "--legacy-seek") == 0);
+            legacy_seek = 1;
+        }
+    }
+    descriptor_admission(argv[0]);
+    epoll_descriptor_io(legacy_seek);
     descriptor_keys();
     exec_alias(argv[0]);
     queued_right();

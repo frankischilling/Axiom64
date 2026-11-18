@@ -80,11 +80,11 @@ static bool path_at(int fd, uint64_t user, Path& path) {
             path.base = current->fs->cwd_node;
         else {
             auto h = fd_handle(fd, true);
-            if (!h || !h->node) {
+            if (!h) {
                 path.error = -9;
                 return false;
             }
-            if ((h->node->mode & 0170000) != directory) {
+            if (!h->node || (h->node->mode & 0170000) != directory) {
                 path.error = -20;
                 return false;
             }
@@ -276,6 +276,23 @@ static int64_t stat_node(Node* n, uint64_t dst) {
     if ((n->mode & 0170000) == block_device)
         s.size = s.blocks = 0;
     return copy_result(dst, &s, sizeof(s));
+}
+
+static int64_t stat_descriptor(Handle* handle, uint64_t dst) {
+    if (!handle)
+        return -9;
+    LinuxStat stat{};
+    if (handle->epoll || handle->event || handle->timer || handle->signal_descriptor ||
+        handle->inotify)
+        stat.mode = 0600;
+    else if (handle->socket || handle->packet || handle->inet || handle->inet6 || handle->netlink)
+        stat.mode = 0140777;
+    else if (handle->pipe && !handle->node)
+        stat.mode = 0010600;
+    else
+        return stat_node(handle->node, dst);
+    stat.nlink = 1;
+    return copy_result(dst, &stat, sizeof(stat));
 }
 
 static int64_t stat_path(int dirfd, uint64_t path, uint64_t dst, bool follow) {
@@ -778,26 +795,8 @@ static int64_t dispatch(Frame* f) {
     }
     case 4:
         return stat_path(-100, a, b, true);
-    case 5: {
-        auto h = fd_handle(a, true);
-        if (!h)
-            return -9;
-        if (h->event || h->timer || h->signal_descriptor || h->inotify) {
-            LinuxStat s{};
-            s.mode = 0600;
-            s.nlink = 1;
-            return copy_result(b, &s, sizeof(s));
-        }
-        if ((h->pipe && !h->node) || h->socket || h->packet || h->inet || h->inet6 || h->netlink ||
-            h->epoll) {
-            LinuxStat s{};
-            s.mode =
-                h->socket || h->packet || h->inet || h->inet6 || h->netlink ? 0140777 : 0010600;
-            s.nlink = 1;
-            return copy_result(b, &s, sizeof(s));
-        }
-        return stat_node(h->node, b);
-    }
+    case 5:
+        return stat_descriptor(fd_handle(a, true), b);
     case 6:
         return stat_path(-100, a, b, false);
     case 7:
@@ -806,8 +805,8 @@ static int64_t dispatch(Frame* f) {
         auto h = fd_handle(a);
         if (!h)
             return -9;
-        if (h->event || h->timer || h->signal_descriptor || h->inotify)
-            return c <= 4 ? 0 : -22;
+        if (h->epoll || h->event || h->timer || h->signal_descriptor || h->inotify)
+            return uint32_t(c) <= 4 ? 0 : -22;
         if (h->pipe || !h->node || (h->node->mode & 0170000) == character)
             return -29;
         int64_t base = c == 0   ? 0
@@ -1539,8 +1538,18 @@ static int64_t dispatch(Frame* f) {
         return open_file(a, b, c, d);
     case 259:
         return make_special_node(a, b, c);
-    case 262:
+    case 262: {
+        constexpr uint32_t empty_path = 0x1000;
+        if (d & empty_path) {
+            char first = 0;
+            if (b && !current->memory->space.copy_in(&first, b, sizeof(first)))
+                return -14;
+            if (!first)
+                return int32_t(a) == -100 ? stat_node(current->fs->cwd_node, c)
+                                          : stat_descriptor(fd_handle(a, true), c);
+        }
         return stat_path(a, b, c, !(d & 0x100));
+    }
     case 269:
     case 439: {
         return access_file(a, b, c, f->rax == 439 ? d : 0);

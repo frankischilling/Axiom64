@@ -560,6 +560,8 @@ static int prepare(Task& task, IoRequest& request) {
     if (!request.socket && !request.accept &&
         ((request.handle->flags & 3) == (request.write ? 0u : 1u)))
         return -9;
+    if (request.handle->epoll)
+        return request.positioned && int64_t(f.r10) >= 0 ? -29 : -22;
     if (request.socket)
         request.flags = f.rax == 46 || f.rax == 47 ? f.rdx : f.r10;
     if (request.handle->socket && request.handle->socket->type == 2)

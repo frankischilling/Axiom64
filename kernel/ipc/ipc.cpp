@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ipc/ipc.hpp"
 #include "fs/inotify.hpp"
+#include "fs/proc.hpp"
 #include "ipc/timerfd.hpp"
 #include "process/signals.hpp"
 #include "socket_registry.hpp"
@@ -263,6 +264,7 @@ static bool epoll_readable(Epoll&, const Task*);
 static void epoll_refresh(Epoll&, const void*, uint32_t, uint64_t&);
 static void epoll_notify_exclusive(const void*, uint32_t, uint64_t signal_wait_queue = 0);
 static constexpr uint32_t epoll_read_mask = 1 | 0x40; // POLLIN | POLLRDNORM
+static constexpr uint32_t default_poll_mask = epoll_read_mask | 4 | 0x100;
 static constexpr uint32_t epoll_exclusive = 1u << 28;
 static constexpr uint32_t epoll_exclusive_events =
     epoll_exclusive | (1u << 29) | (1u << 31) | 1 | 4 | 8 | 16;
@@ -271,10 +273,12 @@ uint32_t readiness(Handle* h, const Task* task) {
     if (!h)
         return 32;
     // select uses the default mask for a path description; poll rejects it.
-    if (h->flags & 010000000)
-        return 1 | 4;
+    if ((h->flags & 010000000) || !handle_has_poll(*h))
+        return default_poll_mask;
     if (h->epoll)
         return epoll_readable(*h->epoll, task) ? epoll_read_mask : 0;
+    if (h->node && h->node->mount->ops == &procfs_ops)
+        return default_poll_mask;
     uint32_t events = 0;
     if (auto pipe = h->pipe) {
         unsigned mode = h->flags & 3;
@@ -1072,11 +1076,18 @@ int64_t ipc_syscall(Frame* f) {
     }
     case 213:
     case 291: {
-        if ((f->rax == 213 && !a) || (f->rax == 291 && (a & ~uint64_t(02000000))))
+        uint32_t flags = f->rax == 291 ? uint32_t(a) : 0;
+        if ((f->rax == 213 && int32_t(a) <= 0) || (flags & ~02000000u))
             return -22;
-        auto poll = (Epoll*)alloc(sizeof(Epoll));
-        if (!poll)
+        int number = reserve_fd(*current, 0, flags & 02000000);
+        if (number < 0)
+            return number;
+        auto poll = static_cast<Epoll*>(alloc(sizeof(Epoll)));
+        if (!poll) {
+            discard_reserved_fd(*current->files, number);
             return -12;
+        }
+        *poll = {};
         bool registered = false;
         for (auto& entry : epolls)
             if (!entry) {
@@ -1087,52 +1098,56 @@ int64_t ipc_syscall(Frame* f) {
             }
         if (!registered) {
             release(poll);
+            discard_reserved_fd(*current->files, number);
             return -23;
         }
         auto fd = open_handle(nullptr, 2);
         if (!fd) {
             epoll_close(poll);
+            discard_reserved_fd(*current->files, number);
             return -23;
         }
         fd->epoll = poll;
-        int n = allocate_fd(current, fd, 0, f->rax == 291 && (a & 02000000));
-        if (n < 0)
-            close_handle(fd);
-        return n;
+        install_reserved_fd(*current->files, number, fd);
+        return number;
     }
     case 233: {
+        uint32_t operation = uint32_t(b);
         EpollEvent event{};
-        if ((b == 1 || b == 3) && !current->memory->space.copy_in(&event, d, sizeof(event)))
+        if ((operation == 1 || operation == 3) &&
+            !current->memory->space.copy_in(&event, d, sizeof(event)))
             return -14;
         auto target = handle(c);
         if (!h || !target)
             return -9;
+        if (!handle_has_poll(*target))
+            return -1;
         if (!h->epoll || target == h)
             return -22;
         if ((event.events & epoll_exclusive) &&
-            (b != 1 || target->epoll || (event.events & ~epoll_exclusive_events)))
+            (operation != 1 || target->epoll || (event.events & ~epoll_exclusive_events)))
             return -22;
         EpollItem* item = nullptr;
         for (auto& existing : h->epoll->items)
             if (existing.used && existing.fd == int(c) && existing.handle == target &&
                 existing.generation == target->generation)
                 item = &existing;
-        if (b == 2) {
+        if (operation == 2) {
             if (!item)
                 return -2;
             epoll_unlink_exclusive(*item);
             item->used = false;
             return 0;
         }
-        if (b == 1 && item)
+        if (operation == 1 && item)
             return -17;
-        if (b == 3 && !item)
+        if (operation == 3 && !item)
             return -2;
-        if (b == 3 && item->exclusive_owner)
+        if (operation == 3 && item->exclusive_owner)
             return -22;
-        if (b != 1 && b != 3)
+        if (operation != 1 && operation != 3)
             return -22;
-        if (b == 1 && target->epoll && !epoll_can_nest(*h->epoll, *target->epoll))
+        if (operation == 1 && target->epoll && !epoll_can_nest(*h->epoll, *target->epoll))
             return -40;
         if (!item)
             for (auto& candidate : h->epoll->items)
@@ -1145,9 +1160,9 @@ int64_t ipc_syscall(Frame* f) {
         uint64_t wait_queue = 0;
         if (target->signal_descriptor) {
             auto& handler_queue = current->handlers->descriptor_wait_queue;
-            if (b == 1 && !handler_queue)
+            if (operation == 1 && !handler_queue)
                 handler_queue = next_signal_wait_queue++;
-            wait_queue = b == 1 ? handler_queue : item->signal_wait_queue;
+            wait_queue = operation == 1 ? handler_queue : item->signal_wait_queue;
         }
         uint32_t ready = readiness(target, current) & (event.events | 8 | 16);
         uint64_t notification = target->epoll   ? target->epoll->notification

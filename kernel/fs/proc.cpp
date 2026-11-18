@@ -867,6 +867,12 @@ const FilesystemOps procfs_ops = {lookup,
                                   control,
                                   validate};
 
+bool procfs_has_poll(const Node& node) {
+    auto kind = static_cast<const Entry*>(node.filesystem_data)->kind;
+    return kind == Kind::boot_id || kind == Kind::source_limit || kind == Kind::ipv4_forward ||
+           kind == Kind::network_property;
+}
+
 Node* procfs_root(Mount* mount) {
     auto state = static_cast<Proc*>(alloc(sizeof(Proc)));
     if (!state)

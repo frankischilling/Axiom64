@@ -35,7 +35,9 @@ WORKLOADS = {
                                            'permissions-limits')),
     'epoll-nested': ('EPOLL_NESTED', ('readiness-and-aliases', 'depth-and-cycles',
                                      'shared-descendant', 'timer-and-signal', 'round-robin')),
-    'epoll-lifetime': ('EPOLL_LIFETIME', ('retained-alias', 'same-number-different-descriptions',
+    'epoll-lifetime': ('EPOLL_LIFETIME', ('descriptor-admission', 'pollable-controls-and-devices',
+                                         'epoll-creation-and-resource-limit', 'epoll-anonymous-descriptor',
+                                         'retained-alias', 'same-number-different-descriptions',
                                          'fork-and-final-close', 'exec-cloexec-alias',
                                          'rights-in-flight', 'blocked-instance-reuse',
                                          'pwait2-arguments-and-copy',
@@ -69,6 +71,12 @@ def execute(command, log, expected_exit, uids, workload, firmware=None, root='ra
     if root == 'ext2':
         markers.append('VFS_ROOT_PASS filesystem=ext2 device=/dev/vda readonly=1')
     observed = {}
+    if workload == 'epoll-lifetime':
+        seek = 'espipe' if '--legacy-seek' in command else 'noop'
+        if [line for line in lines if line.startswith('EPOLL_LIFETIME_SEEK ')] != [
+                f'EPOLL_LIFETIME_SEEK {seek}'] * len(uids):
+            raise RuntimeError(f'wrong epoll seek behavior in {log}')
+        observed['seek_contract'] = seek
     if workload == 'posix-aio':
         outcomes = [line.removeprefix('POSIX_AIO_OUTCOME ') for line in lines
                     if line.startswith('POSIX_AIO_OUTCOME ')]
@@ -127,9 +135,17 @@ def native(directory, workload):
                              'axiom-posix-message-queues']
             legacy_depth = (workload == 'epoll-nested' and
                             os.uname().release == '5.15.153.1-microsoft-standard-WSL2')
+            legacy_seek = False
+            if workload == 'epoll-lifetime':
+                version = re.match(r'(\d+)\.(\d+)', os.uname().release)
+                if not version:
+                    raise RuntimeError('cannot determine native Linux epoll seek ABI')
+                legacy_seek = tuple(map(int, version.groups())) < (6, 0)
             for uid, flags in ((0, []), (65534, ['--ordinary'])):
                 if legacy_depth:
                     flags = ['--legacy-depth', *flags]
+                if legacy_seek:
+                    flags = ['--legacy-seek', *flags]
                 row = execute([*namespace, str(executable), *flags],
                               case / f'{uid}.log', 0, [uid], workload)
                 if workload == 'epoll-nested':

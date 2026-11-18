@@ -446,6 +446,23 @@ void device_close(Handle* h) {
     }
 }
 
+bool device_has_poll(const Handle& handle) {
+    if (handle.pty)
+        return true;
+    switch (handle.node->device) {
+    case Device::serial:
+    case Device::tty:
+    case Device::vt:
+    case Device::keyboard:
+    case Device::mouse:
+        return true;
+    case Device::random:
+        return handle.node->device_id == 8;
+    default:
+        return false;
+    }
+}
+
 bool device_ready(Handle* h, bool write) {
     if (h->pty) {
         auto p = h->pty;

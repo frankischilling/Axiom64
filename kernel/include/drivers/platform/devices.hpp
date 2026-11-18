@@ -50,6 +50,7 @@ int device_open(Handle*);
 
 void device_close(Handle*);
 
+bool device_has_poll(const Handle&);
 bool device_ready(Handle*, bool);
 
 bool device_ignores_buffer(Handle*, bool write);

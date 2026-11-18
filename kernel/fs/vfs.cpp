@@ -8,6 +8,7 @@
 #include "ipc/ipc.hpp"
 #include "ipc/unix_rights.hpp"
 #include "ipc/eventfd.hpp"
+#include "fs/inotify.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
 #include "net/inet6.hpp"
@@ -330,7 +331,11 @@ int create_node(const Path& path, uint32_t mode, Node*& node, const char* target
         return -21;
     if ((parent->mode & 02000) && (mode & 0170000) == directory)
         mode |= 02000;
-    return parent->mount->ops->create(parent, name, mode, target, node);
+    error = parent->mount->ops->create(parent, name, mode, target, node);
+    if (!error)
+        inotify_name(parent, inotify_create | ((mode & 0170000) == directory ? inotify_isdir : 0),
+                     name);
+    return error;
 }
 
 Node* make_node(const char* text, uint32_t mode) {
@@ -378,7 +383,18 @@ int link_node(const Path& from, const Path& to, bool follow) {
     if ((target->mode & 0170000) != regular_file && (target->mode & 0170000) != symlink &&
         (target->mode & 0170000) != 0140000)
         return -95;
-    return parent->mount->ops->link(target, parent, name);
+    error = parent->mount->ops->link(target, parent, name);
+    if (!error) {
+        inotify_inode(target, inotify_attrib);
+        inotify_name(parent, inotify_create, name);
+    }
+    return error;
+}
+
+static void report_unlinked(Node* node, bool dir) {
+    if (!dir)
+        inotify_inode(node, inotify_attrib);
+    inotify_retire_inode(node);
 }
 
 static bool mount_root(Node* node) {
@@ -432,7 +448,12 @@ int remove_node(const Path& path, bool dir) {
             return error;
     } else if ((node->mode & 0170000) == directory)
         return -21;
-    return node->mount->ops->remove(node);
+    error = node->mount->ops->remove(node);
+    if (!error) {
+        report_unlinked(node, dir);
+        inotify_name(node->parent, inotify_delete | (dir ? inotify_isdir : 0), node->name);
+    }
+    return error;
 }
 
 int rename_node(const Path& from, const Path& to, bool no_replace) {
@@ -486,7 +507,22 @@ int rename_node(const Path& from, const Path& to, bool no_replace) {
         if (other_dir && (error = empty_directory(replaced)))
             return error;
     }
-    return node->mount->ops->rename(node, parent, name, replaced);
+    Node* old_parent = node->parent;
+    char old_name[sizeof(Node::name)];
+    memcpy(old_name, node->name, strlen(node->name) + 1);
+    error = node->mount->ops->rename(node, parent, name, replaced);
+    if (!error) {
+        uint32_t cookie = inotify_move_cookie();
+        uint32_t type = dir ? inotify_isdir : 0;
+        inotify_name(old_parent, inotify_moved_from | type, old_name, cookie);
+        inotify_name(parent, inotify_moved_to | type, name, cookie);
+        if (replaced)
+            inotify_inode(replaced, inotify_attrib | type);
+        inotify_inode(node, inotify_move_self);
+        if (replaced)
+            inotify_retire_inode(replaced);
+    }
+    return error;
 }
 
 int node_truncate(Node* node, uint64_t size) {
@@ -524,14 +560,19 @@ bool node_resize(Node* node, size_t size) {
     return node_truncate(node, size) == 0;
 }
 
-int node_setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime) {
+int node_setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime, uint32_t event_mask) {
+    auto dentry = node;
     node = file_node(node);
     if (node_readonly(node))
         return -30;
-    return node->mount->ops->setattr(node, mode, atime, mtime, node->uid, node->gid);
+    int error = node->mount->ops->setattr(node, mode, atime, mtime, node->uid, node->gid);
+    if (!error)
+        inotify_dentry(dentry, event_mask ? event_mask : inotify_attrib);
+    return error;
 }
 
 int node_chmod(Node* node, uint32_t mode) {
+    auto dentry = node;
     node = file_node(node);
     if (current && current->credentials.user.filesystem != node->uid &&
         !capable(current->credentials, Capability::fowner))
@@ -540,10 +581,11 @@ int node_chmod(Node* node, uint32_t mode) {
     if (current && !credential_group(current->credentials, node->gid) &&
         !capable(current->credentials, Capability::fsetid))
         mode &= ~02000;
-    return node_setattr(node, (node->mode & 0170000) | mode, node->atime, node->mtime);
+    return node_setattr(dentry, (node->mode & 0170000) | mode, node->atime, node->mtime);
 }
 
 int node_chown(Node* node, uint32_t uid, uint32_t gid) {
+    auto dentry = node;
     node = file_node(node);
     if (!node)
         return -22;
@@ -565,7 +607,10 @@ int node_chown(Node* node, uint32_t uid, uint32_t gid) {
         if (mode & 010)
             mode &= ~02000;
     }
-    return node->mount->ops->setattr(node, mode, node->atime, node->mtime, uid, gid);
+    int error = node->mount->ops->setattr(node, mode, node->atime, node->mtime, uid, gid);
+    if (!error)
+        inotify_dentry(dentry, inotify_attrib);
+    return error;
 }
 
 int64_t node_read(Node* node, uint64_t offset, void* buffer, size_t length) {
@@ -644,7 +689,7 @@ bool node_referenced(Node* node) {
         if (handle.references && references(handle.node))
             return true;
     for (auto& task : tasks)
-        if (task.state != State::empty && task.state != State::zombie &&
+        if (task.state != State::empty && task.state != State::zombie && task.fs &&
             (references(task.fs->cwd_node) || references(task.fs->root_node)))
             return true;
     return socket_node_busy(node) ||
@@ -805,6 +850,8 @@ int unmount(const Path& path, uint64_t flags) {
         if (error)
             return error;
     }
+    inotify_reap_inodes();
+    inotify_retire_mount(*mount);
     mount->active = false;
     mount->ops->destroy(mount);
     *mount = {};
@@ -935,14 +982,20 @@ void close_handle(Handle* h) {
 
     if (--h->references)
         return;
+    if (!(h->flags & 010000000))
+        inotify_dentry(h->opened_dentry,
+                       (h->flags & 3) ? inotify_close_write : inotify_close_nowrite);
+    inotify_retire_inode(h->node);
     file_lock_release(h);
     record_lock_release(*h);
     if (h->node && h->node->mount->ops->close_description)
         h->node->mount->ops->close_description(h);
     if (!(h->flags & 010000000))
         device_close(h);
-    if (h->socket)
+    if (h->socket) {
         socket_close(h->socket);
+        inotify_reap_inodes();
+    }
     if (h->packet)
         packet_close(h->packet);
     if (h->inet)
@@ -957,6 +1010,10 @@ void close_handle(Handle* h) {
         close_eventfd(h->event);
         h->event = nullptr;
     }
+    if (h->inotify) {
+        close_inotify(h->inotify);
+        h->inotify = nullptr;
+    }
     if (h->pipe) {
         auto p = h->pipe;
         if (h->writer)
@@ -968,6 +1025,7 @@ void close_handle(Handle* h) {
     }
     auto retired_node = h->node;
     h->node = nullptr;
+    h->opened_dentry = nullptr;
     h->pipe = nullptr;
     node_retire_xattrs(retired_node);
 }
@@ -989,6 +1047,8 @@ bool handle_ready(Handle* h, bool write) {
         return true;
     if (h->event)
         return eventfd_ready(h->event, write);
+    if (h->inotify)
+        return !write && inotify_queue(*h->inotify).bytes();
     if (h->pipe)
         return write ? h->pipe->size < sizeof(Pipe::bytes) || !h->pipe->readers
                      : h->pipe->size || !h->pipe->writers;

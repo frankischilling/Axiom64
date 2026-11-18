@@ -366,6 +366,8 @@ Acceptance evidence:
 ### F15. IPC and event notification
 
 Pipes, Unix streams, polling, epoll, select, and SysV shared memory have guest tests.
+Axiom64 also implements [inotify for files and directories](testing.md#filesystem-notifications)
+on RAM and ext2 mounts.
 
 Required work:
 

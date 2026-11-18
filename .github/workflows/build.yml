@@ -1641,6 +1641,12 @@ jobs:
           python3 scripts/tests/path_descriptor_storage_test.py
           sudo -n python3 scripts/path_descriptor_test.py --native --directory build/path-descriptors-native --fixtures /tmp/axiom64-ci-path-descriptors
           sudo -n python3 scripts/path_descriptor_test.py --directory build/path-descriptors-guest
+      - name: Compare Linux inotify and test guest RAM and ext2 event lifetimes
+        if: matrix.suite == 'configuration'
+        run: |
+          make test-inotify-queue
+          sudo -n make test-inotify-native
+          make test-inotify
 
       - name: Test virtio disks and reboot persistence
         if: matrix.suite == 'storage'
@@ -1858,7 +1864,9 @@ jobs:
           name: axiom64-path-descriptors-evidence
           if-no-files-found: error
           compression-level: 1
-          path: build/path-descriptors-*/**
+          path: |
+            build/path-descriptors-*/**
+            build/inotify-*/**
       - name: Upload complete account source, process, filesystem and graphical evidence
         if: always() && startsWith(matrix.suite, 'accounts-')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

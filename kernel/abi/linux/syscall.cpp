@@ -25,6 +25,7 @@
 #include "fs/record_lock.hpp"
 #include "fs/proc.hpp"
 #include "fs/descriptor.hpp"
+#include "fs/inotify.hpp"
 
 namespace ax {
 struct LinuxStat {
@@ -87,6 +88,50 @@ static bool path_at(int fd, uint64_t user, Path& path) {
     return true;
 }
 
+static int64_t inotify_call(const Frame& frame) {
+    if (frame.rax == 253 || frame.rax == 294) {
+        uint32_t flags = frame.rax == 294 ? uint32_t(frame.rdi) : 0;
+        if (flags & ~(04000u | 02000000u))
+            return -22;
+        int fd = reserve_fd(*current, 0, flags & 02000000);
+        if (fd < 0)
+            return fd;
+        int error;
+        auto handle = open_inotify(current->credentials.user.effective, flags & 04000, error);
+        if (!handle) {
+            discard_reserved_fd(*current->files, fd);
+            return error;
+        }
+        install_reserved_fd(*current->files, fd, handle);
+        return fd;
+    }
+    uint32_t mask = frame.rdx;
+    constexpr uint32_t valid = inotify_events | inotify_flags | inotify_unmount |
+                               inotify_queue_overflow | inotify_watch_ignored;
+    if (frame.rax == 254 && (!mask || (mask & ~valid)))
+        return -22;
+    auto handle = fd_handle(frame.rdi);
+    if (!handle)
+        return -9;
+    if (!handle->inotify)
+        return -22;
+    if (frame.rax == 255)
+        return inotify_remove_watch(*handle->inotify, int32_t(frame.rsi));
+    if ((mask & inotify_mask_add) && (mask & inotify_mask_create))
+        return -22;
+    Path path;
+    if (!path_at(-100, frame.rsi, path))
+        return path.error;
+    Node* node = nullptr;
+    int error = resolve_path(path, node, !(mask & inotify_dont_follow));
+    if (error)
+        return error;
+    if ((mask & inotify_onlydir) && (node->mode & 0170000) != directory)
+        return -20;
+    error = node_access(node, 4);
+    return error ? error : inotify_add_watch(*handle->inotify, node, mask);
+}
+
 static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode) {
     bool path_only = flags & 010000000;
     if (path_only)
@@ -111,6 +156,7 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
         return -40;
     if ((n->mode & 0170000) == directory && (flags & 3))
         return -21;
+    Node* dentry = n;
     n = file_node(n);
     if (int error = node_validate(n))
         return error;
@@ -142,8 +188,16 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
     if (!h)
         return error;
     int fd = allocate_fd(current, h, 0, flags & 02000000);
-    if (fd < 0)
+    if (fd < 0) {
         close_handle(h);
+    } else {
+        h->opened_dentry = dentry;
+        if (!path_only) {
+            inotify_dentry(dentry, inotify_open);
+            if ((flags & 01000) && (n->mode & 0170000) == regular_file)
+                inotify_dentry(dentry, inotify_modify);
+        }
+    }
     return fd;
 }
 
@@ -156,7 +210,10 @@ static int path_node_at(int fd, uint64_t user, uint64_t flags, Node*& node, bool
             return -14;
         if (!path.text[0]) {
             auto handle = fd_handle(fd, true);
-            node = fd == -100 ? current->fs->cwd_node : handle ? handle->node : nullptr;
+            node = fd == -100              ? current->fs->cwd_node
+                   : !handle               ? nullptr
+                   : handle->opened_dentry ? handle->opened_dentry
+                                           : handle->node;
             return node ? 0 : -9;
         }
     }
@@ -558,6 +615,10 @@ static int64_t ioctl_call(int fd, uint64_t request, uint64_t arg) {
         current->files->entries[fd].cloexec = request == 0x5451;
         return 0;
     }
+    if (request == 0x541b && h->inotify) {
+        int size = inotify_queue(*h->inotify).bytes();
+        return copy_result(arg, &size, sizeof(size));
+    }
     if (request == 0x541b && (h->socket || h->pipe)) {
         int size = h->socket ? h->socket->type == 2 ? h->socket->datagrams.available()
                                                     : h->socket->stream.size()
@@ -668,7 +729,7 @@ static int64_t dispatch(Frame* f) {
         auto h = fd_handle(a, true);
         if (!h)
             return -9;
-        if (h->event) {
+        if (h->event || h->inotify) {
             LinuxStat s{};
             s.mode = 0600;
             s.nlink = 1;
@@ -691,7 +752,7 @@ static int64_t dispatch(Frame* f) {
         auto h = fd_handle(a);
         if (!h)
             return -9;
-        if (h->event)
+        if (h->event || h->inotify)
             return c <= 4 ? 0 : -22;
         if (h->pipe || !h->node || (h->node->mode & 0170000) == character)
             return -29;
@@ -735,6 +796,7 @@ static int64_t dispatch(Frame* f) {
         if (a % page_size || !b || a >= user_limit || b > user_limit - a)
             return -22;
         current->memory->space.unmap(a, align_up(b));
+        inotify_reap_inodes();
         return 0;
     case 12:
         if (!a)
@@ -1008,7 +1070,10 @@ static int64_t dispatch(Frame* f) {
             return error;
         if ((n->mode & 0170000) == block_device)
             return -22;
-        return node_truncate(n, b);
+        error = node_truncate(n, b);
+        if (!error)
+            inotify_dentry(n, inotify_modify);
+        return error;
     }
     case 77: {
         auto h = fd_handle(a);
@@ -1016,7 +1081,10 @@ static int64_t dispatch(Frame* f) {
             return -9;
         if (!h->node || (h->flags & 3) == 0 || (h->node->mode & 0170000) == block_device)
             return -22;
-        return node_truncate(h->node, b);
+        int error = node_truncate(h->node, b);
+        if (!error)
+            inotify_dentry(h->opened_dentry, inotify_modify);
+        return error;
     }
     case 79: {
         node_path(current->fs->cwd_node, current->fs->cwd, sizeof(current->fs->cwd));
@@ -1040,6 +1108,7 @@ static int64_t dispatch(Frame* f) {
         if ((error = node_access(n, 1)))
             return error;
         current->fs->cwd_node = n;
+        inotify_reap_inodes();
         node_path(n, current->fs->cwd, sizeof(current->fs->cwd));
         return 0;
     }
@@ -1053,6 +1122,7 @@ static int64_t dispatch(Frame* f) {
         if (error)
             return error;
         current->fs->cwd_node = h->node;
+        inotify_reap_inodes();
         node_path(h->node, current->fs->cwd, sizeof(current->fs->cwd));
         return 0;
     }
@@ -1127,7 +1197,6 @@ static int64_t dispatch(Frame* f) {
         int error = resolve_path(path, node);
         if (error)
             return error;
-        node = file_node(node);
         uint32_t mode = f->rax == 90 ? b : c;
         return node_chmod(node, mode);
     }
@@ -1137,7 +1206,7 @@ static int64_t dispatch(Frame* f) {
             return -9;
         if (!h->node)
             return -22;
-        auto node = h->node;
+        auto node = h->opened_dentry ? h->opened_dentry : h->node;
         return node_chmod(node, b);
     }
     case 95: {
@@ -1150,7 +1219,7 @@ static int64_t dispatch(Frame* f) {
     case 94: {
         if (f->rax == 93) {
             auto h = fd_handle(a);
-            return !h ? -9 : node_chown(h->node, b, c);
+            return !h ? -9 : node_chown(h->opened_dentry ? h->opened_dentry : h->node, b, c);
         }
         Path path;
         if (!path_at(-100, a, path))
@@ -1305,8 +1374,12 @@ static int64_t dispatch(Frame* f) {
         uint64_t cpu = 1;
         return copy_result(c, &cpu, 8) ? -14 : 8;
     }
-    case 217:
-        return getdents(a, b, c);
+    case 217: {
+        int64_t result = getdents(a, b, c);
+        if (result >= 0)
+            inotify_dentry(fd_handle(a)->opened_dentry, inotify_access);
+        return result;
+    }
     case 218:
         current->tid_address = a;
         return current->pid;
@@ -1397,6 +1470,7 @@ static int64_t dispatch(Frame* f) {
         if ((error = node_access(node, 1)))
             return error;
         current->fs->root_node = node;
+        inotify_reap_inodes();
         return 0;
     }
     case 273:
@@ -1416,18 +1490,19 @@ static int64_t dispatch(Frame* f) {
             auto h = fd_handle(a);
             if (!h || !h->node)
                 return -9;
-            node = h->node;
+            node = h->opened_dentry ? h->opened_dentry : h->node;
         }
+        auto dentry = node;
         node = file_node(node);
         Timestamp update[] = {node->atime, node->mtime};
         Timespec input[2];
         if (c && !current->memory->space.copy_in(input, c, sizeof(input)))
             return -14;
-        bool changed = false;
+        unsigned changed = 0;
         for (unsigned i = 0; i < 2; i++) {
             if (c && input[i].nsec == 1073741822)
                 continue;
-            changed = true;
+            changed |= 1u << i;
             if (!c || input[i].nsec == 1073741823)
                 update[i] = node_now();
             else {
@@ -1445,7 +1520,10 @@ static int64_t dispatch(Frame* f) {
             if (error)
                 return error;
         }
-        return changed ? node_setattr(node, node->mode, update[0], update[1]) : 0;
+        uint32_t events = changed == 3   ? inotify_attrib
+                          : changed == 1 ? inotify_access
+                                         : inotify_modify;
+        return changed ? node_setattr(dentry, node->mode, update[0], update[1], events) : 0;
     }
     case 284:
     case 290:
@@ -1456,6 +1534,11 @@ static int64_t dispatch(Frame* f) {
         return dup_fd(a, b, c);
     case 293:
         return create_pipe(a, b);
+    case 253:
+    case 254:
+    case 255:
+    case 294:
+        return inotify_call(*f);
     case 318: {
         unsigned flags = c;
         if ((flags & ~7u) || (flags & 6u) == 6u)

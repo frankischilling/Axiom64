@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/xattr.hpp"
+#include "fs/inotify.hpp"
 #include "fs/vfs.hpp"
 #include "process/task.hpp"
 #include "security/file_capabilities.hpp"
@@ -71,6 +72,7 @@ int node_setxattr(Node* node, const char* key, const void* value, size_t size, u
         return -22;
     if (size > xattr_value_max)
         return -7;
+    auto dentry = node;
     node = file_node(node);
     if (node && node_readonly(node))
         return -30;
@@ -86,10 +88,15 @@ int node_setxattr(Node* node, const char* key, const void* value, size_t size, u
         error = permission(node, name, true);
     if (!error && size && file_caps(name) && capabilities.root_id == UINT32_MAX)
         error = -22;
-    return error ? error : node->mount->ops->setxattr(node, name, value, size, flags);
+    if (!error)
+        error = node->mount->ops->setxattr(node, name, value, size, flags);
+    if (!error)
+        inotify_dentry(dentry, inotify_attrib);
+    return error;
 }
 
 int node_removexattr(Node* node, const char* key) {
+    auto dentry = node;
     node = file_node(node);
     if (node && node_readonly(node))
         return -30;
@@ -99,7 +106,11 @@ int node_removexattr(Node* node, const char* key) {
     int error = xattr_name(key, name);
     if (!error)
         error = permission(node, name, true);
-    return error ? error : node->mount->ops->removexattr(node, name);
+    if (!error)
+        error = node->mount->ops->removexattr(node, name);
+    if (!error)
+        inotify_dentry(dentry, inotify_attrib);
+    return error;
 }
 
 int node_drop_file_capabilities(Node* node) {

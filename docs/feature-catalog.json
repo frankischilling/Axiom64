@@ -1126,7 +1126,7 @@
       "title": "IPC and event notification",
       "milestone": "M2",
       "state": "partial",
-      "current": "Pipes, Unix streams, polling, epoll, select and SysV shared memory have guest tests. Nine shared Unix clients, including stream shutdown and retained send/MSG_WAITALL receive checks, pass 144 local executions across both musl providers, linkages, firmware types and caller identities. Frozen readers verify sources, SDK headers, programs, images and logs. Full hosted qualification and remaining IPC lifetime, notification and queue/semaphore acceptance remain required.",
+      "current": "Pipes, Unix streams, polling, epoll, select and SysV shared memory have guest tests. Nine shared Unix clients, including stream shutdown and retained send/MSG_WAITALL receive checks, pass 144 local executions across both musl providers, linkages, firmware types and caller identities. Frozen readers verify sources, SDK headers, programs, images and logs. Inotify provides inode and directory watches on RAM and ext2. The native and guest suites check event order, readiness, description ownership, faults and unmount. Full hosted qualification and remaining IPC lifetime, notification and queue/semaphore acceptance remain required.",
       "scope": [
         "Complete pipe/FIFO, poll/select/epoll, descriptor-generation, and close semantics",
         "System V semaphores, message queues, and shared-memory permissions/lifetime",
@@ -1150,7 +1150,9 @@
         "kernel/io/io.cpp",
         "userspace/tests/ipc/unix_shutdown.c",
         "userspace/tests/ipc/unix_stream_wait.c",
-        "scripts/unix_datagram_proof.py"
+        "scripts/unix_datagram_proof.py",
+        "kernel/fs/inotify.cpp",
+        "scripts/inotify_test.py"
       ],
       "branch": "feature/f15-ipc-and-event-notification",
       "issue": "https://github.com/frankischilling/Axiom64/issues/15"

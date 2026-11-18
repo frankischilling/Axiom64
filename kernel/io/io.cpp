@@ -1083,6 +1083,8 @@ static int64_t unix_datagram_attempt(Task& task, IoRequest& request) {
     }
     if (!present && !(socket->read_closed && request.stream_blocking))
         return -11;
+    if (present)
+        socket_datagram_receive_wakeup(*socket);
     auto finish = [&](int64_t result) {
         if (present && !(request.flags & 2))
             socket->datagrams.consume();

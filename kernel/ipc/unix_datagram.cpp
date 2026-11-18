@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ipc/unix_datagram.hpp"
+#include "io/descriptor_wait.hpp"
 
 namespace ax {
 namespace {
@@ -39,7 +40,10 @@ int UnixSendBudget::admission(size_t length, uint32_t entry_limit) const {
 }
 
 void UnixSendBudget::resize(uint32_t requested) {
+    bool was_writable = writable();
     limit = unix_buffer_size(requested, true);
+    if (!was_writable && writable())
+        descriptor_wait_notify(this, 4 | 0x100 | 0x200);
 }
 
 UnixDatagramRecord* UnixDatagramRecord::create(UnixSendBudget& owner, size_t length, int& error,
@@ -69,7 +73,10 @@ void UnixDatagramRecord::drop() {
         panic("released queued Unix datagram");
     auto budget = owner;
     auto name = source;
+    bool was_writable = budget->writable();
     budget->charged -= record_charge + length;
+    if (!was_writable && budget->writable())
+        descriptor_wait_notify(budget, 4 | 0x100 | 0x200);
     auto rights = message_rights;
     message_rights = nullptr;
     if (rights)

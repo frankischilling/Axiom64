@@ -157,6 +157,12 @@ thread consumes the data or fills the queue before the waiter runs.
 Stream sockets also report the normal read and write bits and peer
 write shutdown through `POLLRDHUP`.
 
+Unix datagrams notify readers after a whole record is queued, including
+zero-length records. Datagram writers get wakeups when their send budget
+becomes writable or a full connected peer queue is read. A peek can wake
+the waiter while the queue stays full. The send budget stays with queued records when the original socket closes
+and cannot wake a replacement socket in the same slot.
+
 These references are released when the attempt ends, including on
 timeout, interruption, and task exit. `make test-descriptor-wait-lifetime`
 checks all four wait syscalls on pipes and Unix stream sockets, with

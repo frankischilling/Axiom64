@@ -225,7 +225,9 @@ void descriptor_wait_notify(const void* source, uint32_t events) {
             continue;
         for (unsigned i = 0; i < wait->watch_count; ++i) {
             auto& watch = wait->watches[i];
-            if (readiness_source(*watch.handle) != source)
+            auto socket = watch.handle->socket;
+            bool send_budget = socket && socket->datagram_send == source;
+            if (readiness_source(*watch.handle) != source && !send_budget)
                 continue;
             uint32_t interested = watch.events;
             if (watch.handle->pipe) {

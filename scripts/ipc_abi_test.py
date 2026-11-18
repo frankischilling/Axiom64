@@ -39,7 +39,10 @@ WORKLOADS = {
     'descriptor-wait-lifetime': ('WAIT_LIFETIME', tuple(
         f'{call}-{scenario}' for call in ('poll', 'ppoll', 'select', 'pselect')
         for scenario in ('pipe-close', 'pipe-reuse', 'socket-close', 'interrupt', 'timeout',
-                         'task-exit', 'socket-read-pulse', 'socket-write-pulse')) +
+                         'task-exit', 'socket-read-pulse', 'socket-write-pulse',
+                         'datagram-read-pulse', 'datagram-write-pulse',
+                         'named-datagram-read-pulse', 'named-datagram-write-pulse',
+                         'named-datagram-peek-pulse')) +
                          ('socket-poll-masks',)),
     'select-waits': ('SELECT_WAITS', ('argument-order', 'bitmap-capacity', 'readiness-masks',
                                      'deadlines', 'temporary-signal-mask', 'retained-select',
@@ -82,6 +85,17 @@ def execute(command, log, expected_exit, uids, workload, firmware=None, root='ra
     if root == 'ext2':
         markers.append('VFS_ROOT_PASS filesystem=ext2 device=/dev/vda readonly=1')
     observed = {}
+    if workload == 'descriptor-wait-lifetime':
+        peeks = [re.fullmatch(r'WAIT_LIFETIME_PEEK call=(\w+) early=([01])', line)
+                 for line in lines if line.startswith('WAIT_LIFETIME_PEEK ')]
+        calls = ('poll', 'ppoll', 'select', 'pselect') * len(uids)
+        if (any(match is None for match in peeks) or
+                [match[1] for match in peeks] != list(calls)):
+            raise RuntimeError(f'incomplete named datagram peek observations in {log}')
+        early = [int(match[2]) for match in peeks]
+        if firmware is not None and any(value != 1 for value in early):
+            raise RuntimeError(f'guest lost a named datagram peek wakeup in {log}')
+        observed['named_datagram_peek_early'] = early
     if workload == 'poll-waits':
         deadlines = [re.fullmatch(r'POLL_WAITS_DEADLINE request_ns=(\d+) elapsed_ns=(\d+)', line)
                      for line in lines if line.startswith('POLL_WAITS_DEADLINE ')]

@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +14,7 @@
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -29,6 +31,8 @@
 enum wait_call { WAIT_POLL, WAIT_PPOLL, WAIT_SELECT, WAIT_PSELECT };
 
 enum exit_path { EVENT, SIGNAL, TIMEOUT };
+
+enum socket_form { STREAM, DATAGRAM, NAMED_DATAGRAM };
 
 static const char* const names[] = {"poll", "ppoll", "select", "pselect"};
 
@@ -148,7 +152,7 @@ static void watch_description(enum wait_call call, int use_socket, int reuse, en
     printf("WAIT_LIFETIME_CASE %s-%s\n", names[call], scenario);
 }
 
-static void stream_read_pulse(enum wait_call call, int sender, int receiver) {
+static void socket_read_pulse(enum wait_call call, int sender, int receiver) {
     char sent = 'O', received = 0;
     struct iovec input = {.iov_base = &sent, .iov_len = 1};
     struct iovec output = {.iov_base = &received, .iov_len = 1};
@@ -171,10 +175,10 @@ static void stream_read_pulse(enum wait_call call, int sender, int receiver) {
     CHECK(received == sent);
 }
 
-static void fill_stream(int fd) {
+static void fill_socket(int fd, int named) {
     static const char bytes[4096] = {0};
     for (int attempt = 0; attempt < 1024; ++attempt) {
-        ssize_t sent = send(fd, bytes, sizeof(bytes), MSG_DONTWAIT);
+        ssize_t sent = send(fd, bytes, named ? 1 : sizeof(bytes), MSG_DONTWAIT);
         if (sent < 0) {
             CHECK(errno == EAGAIN);
             return;
@@ -184,7 +188,7 @@ static void fill_stream(int fd) {
     CHECK(0);
 }
 
-static void drain_stream(int fd) {
+static void drain_socket(int fd) {
     char bytes[4096];
     for (int attempt = 0; attempt < 1024; ++attempt) {
         ssize_t read = recv(fd, bytes, sizeof(bytes), MSG_DONTWAIT);
@@ -197,51 +201,86 @@ static void drain_stream(int fd) {
     CHECK(0);
 }
 
-static void transient_stream(enum wait_call call, int writable) {
-    int stream[2], control[2], replacement[2];
-    CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, stream) == 0);
+static void transient_socket(enum wait_call call, enum socket_form form, int writable,
+                             int peek_wake) {
+    int endpoints[2], control[2], replacement[2];
+    struct sockaddr_un address = {.sun_family = AF_UNIX};
+    socklen_t address_length = 0;
+    if (form == NAMED_DATAGRAM) {
+        endpoints[0] = socket(AF_UNIX, SOCK_DGRAM, 0);
+        endpoints[1] = socket(AF_UNIX, SOCK_DGRAM, 0);
+        CHECK(endpoints[0] >= 0 && endpoints[1] >= 0);
+        int length = snprintf(address.sun_path + 1, sizeof(address.sun_path) - 1,
+                              "axiom-wait-dgram-%ld", (long)getpid());
+        CHECK(length > 0 && (size_t)length < sizeof(address.sun_path) - 1);
+        address_length = offsetof(struct sockaddr_un, sun_path) + length + 1;
+        CHECK(bind(endpoints[writable], (void*)&address, address_length) == 0);
+        if (writable)
+            CHECK(connect(endpoints[0], (void*)&address, address_length) == 0);
+    } else {
+        CHECK(socketpair(AF_UNIX, form == STREAM ? SOCK_STREAM : SOCK_DGRAM, 0, endpoints) == 0);
+    }
     CHECK(pipe(control) == 0 && pipe(replacement) == 0);
     short events = writable ? POLLOUT | POLLWRNORM : POLLIN | POLLRDNORM;
-    struct pollfd original = {.fd = stream[0], .events = events};
+    struct pollfd original = {.fd = endpoints[0], .events = events};
     if (writable)
-        fill_stream(stream[0]);
+        fill_socket(endpoints[0], form == NAMED_DATAGRAM);
     else
         CHECK(write(replacement[1], "N", 1) == 1);
     CHECK(poll(&original, 1, 0) == 0);
-    int alias = dup(stream[0]);
+    int alias = dup(endpoints[0]);
     CHECK(alias >= 0);
     struct wait_case test = {
-        .call = call, .watched = stream[0], .sync = control[1], .events = events};
+        .call = call, .watched = endpoints[0], .sync = control[1], .events = events};
     pthread_t thread;
     CHECK(pthread_create(&thread, NULL, worker, &test) == 0);
     one_byte(control[0], 'R');
     struct pollfd ack = {.fd = control[0], .events = POLLIN};
     CHECK(poll(&ack, 1, 65) == 0);
-    CHECK(dup2(replacement[writable], stream[0]) == stream[0]);
+    CHECK(dup2(replacement[writable], endpoints[0]) == endpoints[0]);
     CHECK(poll(&ack, 1, 65) == 0);
 
     if (writable) {
-        char peek;
-        CHECK(recv(stream[1], &peek, 1, MSG_PEEK) == 1);
-        CHECK(poll(&ack, 1, 65) == 0);
-        drain_stream(stream[1]);
-        fill_stream(alias);
+        if (form != NAMED_DATAGRAM || peek_wake) {
+            char peek;
+            CHECK(recv(endpoints[1], &peek, 1, MSG_PEEK) == 1);
+            if (!peek_wake)
+                CHECK(poll(&ack, 1, 65) == 0);
+        }
+        if (!peek_wake) {
+            drain_socket(endpoints[1]);
+            fill_socket(alias, form == NAMED_DATAGRAM);
+        }
+        original.fd = alias;
+        CHECK(poll(&original, 1, 0) == 0);
+    } else if (form == NAMED_DATAGRAM) {
+        char unused;
+        CHECK(sendto(endpoints[1], "", 0, 0, (void*)&address, address_length) == 0);
+        CHECK(recv(alias, &unused, 1, 0) == 0);
     } else {
-        stream_read_pulse(call, stream[1], alias);
+        socket_read_pulse(call, endpoints[1], alias);
     }
-    // Both original directions are again unready. Only their wakeup can
-    // reveal the replacement before the worker's 500 ms deadline.
-    CHECK(poll(&ack, 1, 120) == 1);
+    // Both original directions are unready again. An early result comes
+    // from a wakeup from the original socket before the 500 ms deadline.
+    int early = poll(&ack, 1, 120);
+    if (peek_wake) {
+        CHECK(early == 0 || early == 1);
+        printf("WAIT_LIFETIME_PEEK call=%s early=%d\n", names[call], early);
+        CHECK(poll(&ack, 1, 1000) == 1);
+    } else {
+        CHECK(early == 1);
+    }
     one_byte(control[0], 'D');
     CHECK(pthread_join(thread, NULL) == 0);
     CHECK(test.result == 1 && test.error == 0 && test.ready == (call >= WAIT_SELECT ? 1 : events));
     if (!writable)
-        one_byte(stream[0], 'N');
-    CHECK(close(alias) == 0 && close(stream[0]) == 0 && close(stream[1]) == 0);
+        one_byte(endpoints[0], 'N');
+    CHECK(close(alias) == 0 && close(endpoints[0]) == 0 && close(endpoints[1]) == 0);
     CHECK(close(control[0]) == 0 && close(control[1]) == 0);
     CHECK(close(replacement[0]) == 0 && close(replacement[1]) == 0);
-    printf("WAIT_LIFETIME_CASE %s-%s\n", names[call],
-           writable ? "socket-write-pulse" : "socket-read-pulse");
+    const char* name = form == STREAM ? "socket" : form == DATAGRAM ? "datagram" : "named-datagram";
+    const char* event = peek_wake ? "peek" : writable ? "write" : "read";
+    printf("WAIT_LIFETIME_CASE %s-%s-%s-pulse\n", names[call], name, event);
 }
 
 static void socket_poll_masks(void) {
@@ -299,8 +338,11 @@ int main(int argc, char** argv) {
         watch_description(call, 0, 1, SIGNAL);
         watch_description(call, 0, 1, TIMEOUT);
         task_exit(call);
-        transient_stream(call, 0);
-        transient_stream(call, 1);
+        for (enum socket_form form = STREAM; form <= NAMED_DATAGRAM; ++form) {
+            transient_socket(call, form, 0, 0);
+            transient_socket(call, form, 1, 0);
+        }
+        transient_socket(call, NAMED_DATAGRAM, 1, 1);
     }
     socket_poll_masks();
     printf("WAIT_LIFETIME_PASS uid=%lu\n", (unsigned long)getuid());

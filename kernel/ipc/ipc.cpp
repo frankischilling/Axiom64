@@ -22,9 +22,10 @@ static EpollItem* exclusive_first;
 static EpollItem* exclusive_last;
 static uint64_t next_signal_wait_queue = 1;
 
-static constexpr uint32_t read_events = 1 | 0x40;   // POLLIN | POLLRDNORM
-static constexpr uint32_t write_events = 4 | 0x100; // POLLOUT | POLLWRNORM
-static constexpr uint32_t stream_peer_close = read_events | write_events | 16 | 0x2000;
+static constexpr uint32_t read_events = 1 | 0x40;                     // POLLIN | POLLRDNORM
+static constexpr uint32_t write_events = 4 | 0x100;                   // POLLOUT | POLLWRNORM
+static constexpr uint32_t socket_write_events = write_events | 0x200; // Also POLLWRBAND.
+static constexpr uint32_t stream_peer_close = read_events | socket_write_events | 16 | 0x2000;
 static void epoll_notify_source(const void*, uint32_t);
 
 bool socket_node_busy(Node* node) {
@@ -78,6 +79,8 @@ void socket_close(Socket* s) {
                 other.peer_generation == s->generation) {
                 other.peer = nullptr;
                 other.peer_closed = true;
+                if (other.datagram_send->writable())
+                    descriptor_wait_notify(&other, socket_write_events);
             }
     } else if (auto peer = s->peer) {
         peer->peer = nullptr;
@@ -129,7 +132,7 @@ void Socket::consume_stream(size_t length, UnixRights*& rights) {
     bool full = stream.size() == UnixStreamQueue::capacity;
     stream.consume(length, rights);
     if (full && peer)
-        epoll_notify_source(peer, write_events);
+        epoll_notify_source(peer, socket_write_events);
 }
 
 int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_offset) {
@@ -140,6 +143,7 @@ int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_of
         size_t length;
         if (!s->datagrams.front(bytes, length))
             return s->read_closed ? 0 : -11;
+        socket_datagram_receive_wakeup(*s);
         len = min(len, length);
         if (len)
             memcpy(data, bytes, len);
@@ -354,7 +358,7 @@ uint32_t readiness(Handle* h, const Task* task) {
         if (events & 1)
             events |= read_events;
         if (events & 4)
-            events |= write_events;
+            events |= socket_write_events;
         bool read_closed = socket->read_closed || socket->peer_closed ||
                            (socket->peer && socket->peer->write_closed);
         bool write_closed = socket->write_closed || socket->peer_closed ||
@@ -365,6 +369,10 @@ uint32_t readiness(Handle* h, const Task* task) {
             events |= 16;
     }
     if (h->socket && h->socket->type == 2) {
+        if (events & 1)
+            events |= read_events;
+        if (events & 4)
+            events |= socket_write_events;
         if (h->socket->datagram_error)
             events |= 8;
         if (h->socket->read_closed)
@@ -915,11 +923,10 @@ int64_t ipc_syscall(Frame* f) {
             s->read_closed = true;
         if (b == 1 || b == 2)
             s->write_closed = true;
-        if (s->type == 1) {
-            epoll_notify_source(s, readiness(h, current));
+        epoll_notify_source(s, readiness(h, current));
+        if (s->type == 1)
             if (auto peer = s->peer; peer && peer->description)
                 epoll_notify_source(peer, readiness(peer->description, current));
-        }
         return 0;
     case 51:
         if (!s)

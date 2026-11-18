@@ -96,6 +96,7 @@ int socket_unix_autobind(Socket&);
 int socket_datagram_connect(Task&, Socket&, uint64_t pointer, uint32_t length);
 int socket_unix_output_name(Task&, const UnixAddressName*, uint64_t, uint64_t);
 bool socket_datagram_writable(const Socket&);
+void socket_datagram_receive_wakeup(const Socket&);
 
 int64_t socket_accept(Task&, Handle*, uint64_t address, uint64_t length, unsigned flags,
                       int reserved_fd);

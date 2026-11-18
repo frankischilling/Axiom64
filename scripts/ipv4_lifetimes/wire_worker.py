@@ -61,6 +61,22 @@ def offload(interface):
     return dict(before=before, after=after)
 
 
+def capture_socket(name):
+    # A raw socket registered for ETH_P_ALL at creation sees every device
+    # until bind. Bind the protocol and the device in the same operation.
+    channel = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0)
+    try:
+        channel.setsockopt(263, 8, 1)
+        channel.setsockopt(socket.SOL_SOCKET, 35, 1)
+        channel.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
+        channel.bind((name, 3))
+        channel.setblocking(False)
+        return channel
+    except BaseException:
+        channel.close()
+        raise
+
+
 def run(directory, mode, profile, firmware='bios', transport='modern', parent_namespace=None, shared=None):
     require(mode in ('native', 'guest') and profile in ('native', 'static', 'dynamic') and
             (mode == 'native' or profile != 'native') and firmware in ('bios', 'uefi') and
@@ -99,12 +115,7 @@ def run(directory, mode, profile, firmware='bios', transport='modern', parent_na
                 configurations[name] = offload(name)
             Path('/proc/sys/net/ipv6/conf', peer, 'disable_ipv6').write_text('1\n')
             for name, collection, role in ((peer, channels, 'network'), (interface, monitors, 'ingress')):
-                channel = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
-                channel.setsockopt(263, 8, 1)
-                channel.setsockopt(socket.SOL_SOCKET, 35, 1)
-                channel.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
-                channel.bind((name, 0))
-                channel.setblocking(False)
+                channel = capture_socket(name)
                 collection[lane] = channel
                 selector.register(channel, selectors.EVENT_READ, (role, lane))
         write(directory / 'offloads.json', configurations)
@@ -242,6 +253,8 @@ def run(directory, mode, profile, firmware='bios', transport='modern', parent_na
                         consume(data)
                 elif mode == 'native':
                     data, ancillary, flags, address = key.fileobj.recvmsg(65535, 512)
+                    require(address[0] == f'{"eth" if role == "ingress" else "peer"}{lane}',
+                            'actual packet socket observation belongs to the bound interface')
                     receipt(lane, data, 'ingress' if role == 'ingress' else 'output', address[2], ancillary, flags)
                     require(not flags, 'complete untruncated native packet and auxiliary controls')
                     if role == 'network' and address[2] != 4 and not complete:

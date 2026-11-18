@@ -48,8 +48,11 @@ then records each address query until actual withdrawal, bounded at 2.5
 seconds. Linux performs withdrawal in delayed work. The full two-second TCP
 absence and 500 ms datagram observations follow that actual transition.
 The capture drains queued receipts after process exit, preserving the final
-independent native tap record. Native interfaces require complete software
-checksums and zero packet loss. No clock or lifetime is adjusted.
+independent native tap record. Native packet sockets begin receiving only
+when their protocol and adapter are bound together. Each received frame
+must name the adapter assigned to that socket. Native interfaces require
+complete software checksums and zero packet loss. No clock or lifetime is
+adjusted.
 
 Native ARP retries may announce the independently recorded surviving address
 after the original source lifetime ends. The reader binds that address to the

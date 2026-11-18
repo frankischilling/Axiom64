@@ -373,7 +373,8 @@ back the remaining interval through the raw syscalls.
 [Blocked descriptor waits](io.md#descriptor-lifetime-during-poll-and-select)
 retain wakeup registrations across close and number reuse.
 [Named pipes](io.md#named-pipes) support filesystem names, blocking opens, descriptor
-readiness, signal interruption, and persistent ext2 inodes.
+readiness, signal interruption, and persistent ext2 inodes. Large blocking pipe and
+FIFO writes retain progress and their original descriptor across waits.
 [Epoll lifetime tests](io.md#epoll-descriptor-lifetime) check duplicate and reused
 descriptors, inherited watches, waits that survive descriptor replacement,
 and file-type admission with the Linux errno and poll-mask behavior.

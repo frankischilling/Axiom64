@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/** @file Compares pipe and FIFO I/O, peer lifetime, and ext2 FIFO persistence. */
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
@@ -10,9 +11,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/inotify.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -71,6 +74,169 @@ static void readiness(int at) {
     CHECK(sigaction(SIGPIPE, &saved, NULL) == 0);
     CHECK(close(writer) == 0 && close(epoll) == 0);
     puts("NAMED_PIPE_CASE readiness");
+}
+
+static void read_exact(int fd, char* data, size_t size) {
+    while (size) {
+        ssize_t count = read(fd, data, size);
+        CHECK(count > 0);
+        data += count;
+        size -= (size_t)count;
+    }
+}
+
+static size_t pipe_capacity(int reader, int writer) {
+    char block[4096] = {0};
+    CHECK(fcntl(writer, F_SETFL, O_NONBLOCK) == 0);
+    size_t capacity = 0;
+    while (write(writer, block, sizeof(block)) == (ssize_t)sizeof(block)) {
+        capacity += sizeof(block);
+        CHECK(capacity <= 1024 * 1024);
+    }
+    CHECK(errno == EAGAIN && capacity >= sizeof(block));
+    for (size_t offset = 0; offset < capacity; offset += sizeof(block))
+        read_exact(reader, block, sizeof(block));
+    CHECK(fcntl(writer, F_SETFL, 0) == 0);
+    return capacity;
+}
+
+static void wait_for_full(int reader, size_t capacity) {
+    int available;
+    do {
+        CHECK(ioctl(reader, FIONREAD, &available) == 0);
+        if ((size_t)available < capacity)
+            usleep(1000);
+    } while ((size_t)available < capacity);
+    CHECK((size_t)available == capacity);
+}
+
+static void atomic_nonblocking_write(void) {
+    int fds[2];
+    CHECK(pipe(fds) == 0);
+    size_t capacity = pipe_capacity(fds[0], fds[1]);
+    char block[4096] = {0};
+    for (size_t offset = 0; offset < capacity; offset += sizeof(block))
+        CHECK(write(fds[1], block, sizeof(block)) == (ssize_t)sizeof(block));
+    read_exact(fds[0], block, sizeof(block));
+    CHECK(write(fds[1], "X", 1) == 1 && fcntl(fds[1], F_SETFL, O_NONBLOCK) == 0);
+    struct iovec vectors[] = {{block, 2048}, {block + 2048, 2048}};
+    CHECK(writev(fds[1], vectors, 2) == -1 && errno == EAGAIN);
+    int queued = 0;
+    CHECK(ioctl(fds[0], FIONREAD, &queued) == 0 && queued == (int)(capacity - sizeof(block) + 1));
+    for (size_t offset = sizeof(block); offset < capacity; offset += sizeof(block))
+        read_exact(fds[0], block, sizeof(block));
+    char marker;
+    CHECK(read(fds[0], &marker, 1) == 1 && marker == 'X');
+    CHECK(writev(fds[1], vectors, 2) == (ssize_t)sizeof(block));
+    read_exact(fds[0], block, sizeof(block));
+    CHECK(close(fds[1]) == 0 && close(fds[0]) == 0);
+}
+
+struct pipe_writer {
+    int fd;
+    struct iovec vectors[3];
+    ssize_t result;
+};
+
+static void* write_vectors(void* arg) {
+    struct pipe_writer* writer = arg;
+    writer->result = writev(writer->fd, writer->vectors, 3);
+    return NULL;
+}
+
+static void open_pair(int at, int pipe_fds[2]) {
+    if (at < 0) {
+        CHECK(pipe(pipe_fds) == 0);
+    } else {
+        pipe_fds[0] = openat(at, "queue", O_RDONLY | O_NONBLOCK);
+        pipe_fds[1] = openat(at, "queue", O_WRONLY);
+        CHECK(pipe_fds[0] >= 0 && pipe_fds[1] >= 0 && fcntl(pipe_fds[0], F_SETFL, 0) == 0);
+    }
+}
+
+static void retained_vector_write(int at) {
+    int pipe_fds[2];
+    open_pair(at, pipe_fds);
+    size_t capacity = pipe_capacity(pipe_fds[0], pipe_fds[1]);
+    size_t total = 2 * capacity + 4096;
+    char* data = malloc(total);
+    char* received = malloc(total);
+    CHECK(data && received);
+    for (size_t n = 0; n < total; n++)
+        data[n] = (char)(n / 4096 + n * 31);
+    struct pipe_writer writer = {
+        .fd = pipe_fds[1],
+        .vectors = {{data, 37}, {NULL, 0}, {data + 37, total - 37}},
+    };
+    int replacement[2];
+    CHECK(pipe2(replacement, O_NONBLOCK) == 0);
+    pthread_t thread;
+    CHECK(pthread_create(&thread, NULL, write_vectors, &writer) == 0);
+    wait_for_full(pipe_fds[0], capacity);
+    // The original descriptor and vectors must remain selected across the wait.
+    writer.vectors[2] = (struct iovec){NULL, 1};
+    CHECK(dup2(replacement[1], pipe_fds[1]) == pipe_fds[1]);
+    read_exact(pipe_fds[0], received, total);
+    CHECK(pthread_join(thread, NULL) == 0 && writer.result == (ssize_t)total);
+    CHECK(memcmp(data, received, total) == 0);
+    CHECK(read(pipe_fds[0], received, 1) == 0);
+    CHECK(read(replacement[0], received, 1) == -1 && errno == EAGAIN);
+    CHECK(close(pipe_fds[0]) == 0 && close(pipe_fds[1]) == 0);
+    CHECK(close(replacement[0]) == 0 && close(replacement[1]) == 0);
+    free(received);
+    free(data);
+}
+
+static volatile sig_atomic_t write_signal;
+
+static void note_write_signal(int signal_number) {
+    write_signal = signal_number;
+}
+
+static void interrupted_partial_write(int signal_number, int at, const char* fifo_path) {
+    int fds[2];
+    open_pair(at, fds);
+    size_t capacity = pipe_capacity(fds[0], fds[1]);
+    int observer = -1, watch = -1;
+    if (fifo_path) {
+        observer = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+        CHECK(observer >= 0 && (watch = inotify_add_watch(observer, fifo_path, IN_MODIFY)) >= 0);
+    }
+    char* data = malloc(2 * capacity);
+    CHECK(data);
+    memset(data, 'W', 2 * capacity);
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        CHECK(close(fds[0]) == 0);
+        struct sigaction action = {.sa_handler = note_write_signal, .sa_flags = SA_RESTART};
+        CHECK(sigemptyset(&action.sa_mask) == 0 && sigaction(signal_number, &action, NULL) == 0);
+        CHECK(write(fds[1], data, 2 * capacity) == (ssize_t)capacity);
+        CHECK(write_signal == signal_number);
+        _exit(0);
+    }
+    CHECK(close(fds[1]) == 0);
+    wait_for_full(fds[0], capacity);
+    if (signal_number == SIGPIPE)
+        CHECK(close(fds[0]) == 0);
+    else
+        CHECK(kill(child, signal_number) == 0);
+    int status;
+    CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    if (observer >= 0) {
+        struct inotify_event event;
+        CHECK(read(observer, &event, sizeof(event)) == (ssize_t)sizeof(event));
+        CHECK(event.wd == watch && event.mask == IN_MODIFY && event.len == 0);
+        CHECK(read(observer, &event, sizeof(event)) == -1 && errno == EAGAIN &&
+              close(observer) == 0);
+    }
+    if (signal_number != SIGPIPE) {
+        read_exact(fds[0], data, capacity);
+        for (size_t n = 0; n < capacity; n++)
+            CHECK(data[n] == 'W');
+        CHECK(read(fds[0], data, 1) == 0 && close(fds[0]) == 0);
+    }
+    free(data);
 }
 
 static void rendezvous(int at) {
@@ -293,6 +459,17 @@ int main(int argc, char** argv) {
     CHECK(unlinkat(at, "restricted", 0) == 0);
     puts("NAMED_PIPE_CASE create");
     readiness(at);
+    atomic_nonblocking_write();
+    puts("NAMED_PIPE_CASE atomic-writev");
+    retained_vector_write(-1);
+    retained_vector_write(at);
+    puts("NAMED_PIPE_CASE retained-writes");
+    char fifo_path[sizeof(path) + sizeof("/queue")];
+    int length = snprintf(fifo_path, sizeof(fifo_path), "%s/queue", path);
+    CHECK(length > 0 && (size_t)length < sizeof(fifo_path));
+    interrupted_partial_write(SIGUSR1, at, fifo_path);
+    interrupted_partial_write(SIGPIPE, -1, NULL);
+    puts("NAMED_PIPE_CASE partial-writes");
     rendezvous(at);
     peer_open_and_close(at, 0);
     peer_open_and_close(at, 1);

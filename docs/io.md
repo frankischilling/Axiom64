@@ -254,8 +254,17 @@ links. Unlinking a name leaves open descriptions usable. Recreating the name
 creates a separate FIFO. On ext2 the inode persists across reboot. Data in
 the pipe lives in memory and is discarded when the last description closes.
 
-`make test-named-pipes` checks two caller identities and both musl providers,
-linkages, and firmware types. It also verifies the same FIFO and hard link
+Blocking writes to pipes and FIFOs keep the original open description and
+vector positions while waiting for room. A signal or a disappearing reader
+returns the bytes already copied. Closing the last reader also sends
+`SIGPIPE`. A partial write to a FIFO still generates an inotify modify
+event. A `writev` of at most 4096 bytes waits until the whole request
+fits or returns `EAGAIN` without queuing a prefix in nonblocking mode.
+
+`make test-named-pipes` checks descriptor replacement during a large write,
+signal interruption, reader close, and atomic nonblocking writes. It runs
+with two caller identities and both musl providers, linkages, and firmware
+types. It also verifies the same FIFO and hard link
 after rebooting a writable ext2 root. `sudo make test-named-pipes-native`
 runs the main workload on Linux. The `mknod` entry points currently create
 regular files and FIFOs.
@@ -337,4 +346,4 @@ Socket timeout checks cover all ten supported operation forms, option validation
 
 Evidence is in `build/threads-io-{bios,uefi}.log` and `build/threads-io-results.json`. The complete thread and full ABI suites also require both linkage markers. Host results do not replace guest evidence.
 
-The implementation permits one saved I/O request per task, at most 1024 vectors, and at most `0x7ffff000` bytes per operation. Transfers use 4096-byte kernel buffers. It runs on one CPU with interrupts masked in syscalls. SMP synchronization, complete pipe atomicity and terminal behavior, full TCP/connect interruption/deadline acceptance, broader message/socket features, cancellation and complete Linux conformance remain planned.
+The implementation permits one saved I/O request per task, at most 1024 vectors, and at most `0x7ffff000` bytes per operation. Transfers use 4096-byte kernel buffers. It runs on one CPU with interrupts masked in syscalls. SMP synchronization, Linux pipe page-slot and capacity controls, terminal behavior, full TCP/connect interruption and deadline acceptance, broader message and socket features, and complete Linux conformance remain planned.

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/** @file Linux I/O dispatch, retained requests, and userspace transfers. */
 #include "io/io.hpp"
 #include "io/vectors.hpp"
 #include "core/time.hpp"
@@ -155,6 +156,8 @@ int64_t io_interrupted_result(Task& task) {
     auto request = task.io;
     if (!request || !request->progress)
         return -4;
+    if (request->handle->pipe && request->write)
+        inotify_dentry(request->handle->opened_dentry, inotify_modify);
     // Linux releases its partial receive cookie on signal exit without emitting
     // credentials. The recvmsg header still reports the actual empty control.
     return unix_waitall(*request)
@@ -746,6 +749,43 @@ static int64_t control_attempt(Task& task, IoRequest& request, const ControlFile
     return result;
 }
 
+static int64_t pipe_write_attempt(Task& task, IoRequest& request) {
+    size_t total = 0;
+    for (size_t n = 0; n < request.count; n++) {
+        const auto& vector = request.vectors[n];
+        if (vector.length &&
+            (vector.base >= user_limit || vector.length > user_limit - vector.base))
+            return -14;
+        total += vector.length;
+    }
+
+    auto pipe = request.handle->pipe;
+    VectorCursor cursor{request, request.cursor, request.cursor_offset};
+    uint8_t buffer[4096]; // Linux PIPE_BUF
+    while (request.progress < total) {
+        if (!pipe->readers) {
+            queue_signal(&task, 13, task.process->pid);
+            return request.progress ? int64_t(request.progress) : -32;
+        }
+        size_t capacity = sizeof(pipe->bytes) - pipe->size;
+        if (!capacity || (total <= sizeof(buffer) && capacity < total)) {
+            if (!(request.handle->flags & 04000))
+                return would_block;
+            return request.progress ? int64_t(request.progress) : -11;
+        }
+        size_t count = min(total - request.progress, min(capacity, sizeof(buffer)));
+        if (!cursor.copy(task, buffer, count))
+            return request.progress ? int64_t(request.progress) : -14;
+        // The current single CPU cannot change the pipe while copying input.
+        if (write_handle(request.handle, buffer, count) != int64_t(count))
+            panic("pipe write changed during copy");
+        request.progress += count;
+        request.cursor = cursor.index;
+        request.cursor_offset = cursor.offset;
+    }
+    return request.progress;
+}
+
 static int64_t local_stream_attempt(Task& task, IoRequest& request) {
     auto handle = request.handle;
     size_t remaining = 0;
@@ -764,22 +804,15 @@ static int64_t local_stream_attempt(Task& task, IoRequest& request) {
         size_t count = min(remaining, sizeof(buffer));
         int64_t result;
         if (request.write) {
-            result = handle->socket          ? socket_write(handle->socket, nullptr, 0)
-                     : handle->pipe->readers ? 0
-                                             : -32;
+            result = socket_write(handle->socket, nullptr, 0);
             if (!result) {
-                size_t capacity =
-                    handle->socket ? UnixStreamQueue::capacity - handle->socket->peer->stream.size()
-                                   : sizeof(Pipe::bytes) - handle->pipe->size;
-                // Small pipe writes wait for the entire request to fit.
-                if (!capacity ||
-                    (handle->pipe && !done && remaining <= sizeof(buffer) && capacity < remaining))
+                size_t capacity = UnixStreamQueue::capacity - handle->socket->peer->stream.size();
+                if (!capacity)
                     return done ? int64_t(done) : -11;
                 count = min(count, capacity);
                 if (!cursor.copy(task, buffer, count))
                     return done ? int64_t(done) : -14;
-                result = handle->socket ? socket_write(handle->socket, buffer, count)
-                                        : write_handle(handle, buffer, count);
+                result = socket_write(handle->socket, buffer, count);
             }
         } else {
             result = handle->socket
@@ -1556,6 +1589,8 @@ static int64_t attempt(Task& task, IoRequest& request) {
                                                  request.reserved_fd)
                                     : socket_accept(task, h, f.rsi, f.rdx, f.rax == 288 ? f.r10 : 0,
                                                     request.reserved_fd);
+    if (h->pipe && request.write)
+        return pipe_write_attempt(task, request);
     if (h->socket && h->socket->type == 1) {
         for (;;) {
             int64_t result = unix_stream_attempt(task, request);

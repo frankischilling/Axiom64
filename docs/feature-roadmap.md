@@ -368,6 +368,10 @@ Acceptance evidence:
 Pipes, Unix streams, polling, epoll, select, and SysV shared memory have guest tests.
 [Timer descriptors](io.md#timer-descriptors) let event loops wait for expiration
 counts alongside other readable descriptors.
+[Signal descriptors](io.md#signal-descriptors) deliver blocked signals through
+read and readiness operations.
+Axiom64 also implements [inotify for files and directories](testing.md#filesystem-notifications)
+on RAM and ext2 mounts.
 
 Required work:
 

@@ -6,6 +6,7 @@
 #include "fs/file_lock.hpp"
 #include "fs/record_lock.hpp"
 #include "fs/descriptor.hpp"
+#include "fs/inotify.hpp"
 #include "ipc/ipc.hpp"
 #include "ipc/signal_descriptor.hpp"
 #include "ipc/unix_control.hpp"
@@ -575,8 +576,8 @@ static int prepare(Task& task, IoRequest& request) {
     }
     if (request.positioned) {
         if (request.handle->pipe || request.handle->event || request.handle->timer ||
-            request.handle->signal_descriptor || request.handle->socket ||
-            inet_stream(request.handle->inet) ||
+            request.handle->signal_descriptor || request.handle->inotify ||
+            request.handle->socket || inet_stream(request.handle->inet) ||
             (request.handle->node && (request.handle->node->mode & 0170000) == character))
             return -29;
         if (int64_t(f.r10) < 0)
@@ -1429,6 +1430,53 @@ static int64_t signal_descriptor_attempt(Task& task, IoRequest& request) {
     return request.stream_blocking ? would_block : -11;
 }
 
+static int64_t inotify_read(Task& task, InotifyQueue& queue, const Iovec& vector) {
+    auto address = vector.base;
+    auto capacity = vector.length;
+    if (address >= user_limit || capacity > user_limit - address)
+        return -14;
+    size_t done = 0;
+    while (auto event = queue.front()) {
+        size_t length = event->size();
+        if (length > capacity - done)
+            return done ? int64_t(done) : -22;
+        auto input = reinterpret_cast<const uint8_t*>(event);
+        uint64_t target = address + done;
+        size_t offset = 0;
+        while (offset < length) {
+            size_t chunk = min(length - offset, size_t(page_size - (target + offset) % page_size));
+            if (!task.memory->space.copy_out(target + offset, input + offset, chunk))
+                break;
+            offset += chunk;
+        }
+        // Copy faults consume the selected record and return EFAULT for this scalar read.
+        queue.pop();
+        if (offset != length)
+            return -14;
+        done += length;
+    }
+    return done ? int64_t(done) : -11;
+}
+
+static int64_t inotify_attempt(Task& task, IoRequest& request) {
+    auto& queue = inotify_queue(*request.handle->inotify);
+    while (request.cursor < request.count) {
+        const auto& vector = request.vectors[request.cursor];
+        if (vector.length || request.call.rax == 0) {
+            int64_t result = inotify_read(task, queue, vector);
+            if (result == -11 && request.stream_blocking)
+                return would_block;
+            if (result < 0)
+                return request.progress ? int64_t(request.progress) : result;
+            request.progress += size_t(result);
+            if (size_t(result) < vector.length)
+                break;
+        }
+        ++request.cursor;
+    }
+    return request.progress;
+}
+
 static int64_t attempt(Task& task, IoRequest& request) {
     auto h = request.handle;
     const auto& f = request.call;
@@ -1448,6 +1496,8 @@ static int64_t attempt(Task& task, IoRequest& request) {
         return counter_attempt(task, request);
     if (h->signal_descriptor && !request.locking)
         return signal_descriptor_attempt(task, request);
+    if (h->inotify && !request.locking)
+        return inotify_attempt(task, request);
     if (request.connect) {
         net_poll();
         if (!request.started) {
@@ -1654,9 +1704,9 @@ int64_t io_syscall(Task& task, const Frame& frame) {
     if (!error) {
         request->inet_generation = tcp_generation(h->inet);
         // Linux captures O_NONBLOCK for this call; an alias cannot alter a retained cursor.
-        request->stream_blocking =
-            (inet_stream(h->inet) || h->event || h->timer || h->socket || h->signal_descriptor) &&
-            !(h->flags & 04000) && !(request->flags & 0x40);
+        request->stream_blocking = (inet_stream(h->inet) || h->event || h->timer || h->socket ||
+                                    h->signal_descriptor || h->inotify) &&
+                                   !(h->flags & 04000) && !(request->flags & 0x40);
         capture_timeout(*request);
     }
     int64_t result = error ? error : attempt(task, *request);
@@ -1667,8 +1717,11 @@ int64_t io_syscall(Task& task, const Frame& frame) {
         task.state = State::blocked;
         task.wait = request->locking ? Wait::file_lock : request->write ? Wait::write : Wait::read;
         task.wait_fd = fd;
-    } else
+    } else {
+        if (result > 0 && !request->locking)
+            inotify_dentry(h->opened_dentry, request->write ? inotify_modify : inotify_access);
         destroy(request);
+    }
     return result;
 }
 
@@ -1690,6 +1743,9 @@ bool io_resume(Task& task) {
             return false;
         result = timeout_result(task, *request);
     }
+    if (result > 0 && !request->locking)
+        inotify_dentry(request->handle->opened_dentry,
+                       request->write ? inotify_modify : inotify_access);
     // Commit the result before signal delivery; handlers have their own syscall state.
     task.frame.rip += 2;
     task.frame.rax = result;

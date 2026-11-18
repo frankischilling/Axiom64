@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ipc/ipc.hpp"
+#include "fs/inotify.hpp"
 #include "ipc/timerfd.hpp"
 #include "socket_registry.hpp"
 #include "fs/descriptor.hpp"
@@ -262,7 +263,7 @@ uint32_t readiness(Handle* h, const Task* task) {
         return 1 | 4;
     uint32_t events = 0;
     if (handle_ready(h, false, task))
-        events |= 1;
+        events |= h->inotify ? inotify_read_events : 1;
     if (handle_ready(h, true, task))
         events |= 4;
     if (h->packet) {

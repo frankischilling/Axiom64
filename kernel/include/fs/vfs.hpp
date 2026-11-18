@@ -16,6 +16,7 @@ struct Eventfd;
 struct Timerfd;
 struct SignalDescriptor;
 struct Task;
+struct Inotify;
 struct Mount;
 struct Handle;
 struct Xattr;
@@ -161,6 +162,8 @@ struct Handle {
     Eventfd* event = nullptr;
     Timerfd* timer = nullptr;
     SignalDescriptor* signal_descriptor = nullptr;
+    Inotify* inotify = nullptr;
+    Node* opened_dentry = nullptr;
     uint64_t generation = 0;
     uint8_t file_lock = 0;
     void* filesystem_data = nullptr;
@@ -210,7 +213,7 @@ bool node_resize(Node*, size_t);
 
 int node_truncate(Node*, uint64_t);
 
-int node_setattr(Node*, uint32_t, Timestamp, Timestamp);
+int node_setattr(Node*, uint32_t, Timestamp, Timestamp, uint32_t event_mask = 0);
 int node_access(Node*, unsigned mask, bool real = false);
 
 const ControlFileOps* node_control(Node*);

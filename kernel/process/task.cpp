@@ -7,6 +7,7 @@
 #include "fs/record_lock.hpp"
 #include "process/waitid.hpp"
 #include "fs/descriptor.hpp"
+#include "fs/inotify.hpp"
 #include "drivers/platform/devices.hpp"
 #include "ipc/ipc.hpp"
 #include "process/signals.hpp"
@@ -43,6 +44,7 @@ static void release_memory(Task* t) {
         if (memory->space.root && read_cr3() == memory->space.root)
             activate_kernel_memory();
         memory->space.destroy();
+        inotify_reap_inodes();
     }
     if (!--memory->references)
         release(memory);
@@ -79,6 +81,7 @@ static void release_resources(Task* t) {
     if (t->fs && !--t->fs->references)
         release(t->fs);
     t->fs = nullptr;
+    inotify_reap_inodes();
     if (t->handlers && !--t->handlers->references)
         release(t->handlers);
     t->handlers = nullptr;

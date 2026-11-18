@@ -8,6 +8,7 @@
 #include "process/waitid.hpp"
 #include "ipc/system_v_semaphores.hpp"
 #include "ipc/system_v_message_queues.hpp"
+#include "ipc/posix_message_queues.hpp"
 #include "ipc/shared_memory.hpp"
 #include "fs/descriptor.hpp"
 #include "fs/inotify.hpp"
@@ -75,6 +76,7 @@ static FileTable* copy_files(const FileTable* source) {
 
 static void release_resources(Task* t) {
     message_queue_discard(*t);
+    posix_queue_discard(*t);
     semaphore_exit(*t);
     t->pending_signals.discard(UINT64_MAX);
     credential_release(t->credentials);
@@ -355,6 +357,7 @@ void exit_thread(Task* t, int status) {
     if (process->leader == t || process->live_threads == 1)
         process->exit_status = status;
     if (!--process->live_threads) {
+        posix_queue_process_exit(*process);
         process->pending_signals.discard(UINT64_MAX);
         finish_process(t);
     }
@@ -442,6 +445,8 @@ static bool awaken(Task& t) {
         return semaphore_timeout(t);
     case Wait::message_queue:
         return false;
+    case Wait::posix_queue:
+        return posix_queue_expire(t);
     default:
         ready = true;
         break;
@@ -790,6 +795,7 @@ int exec_task(Task* t, const ExecArguments& arguments) {
         t->parent_death_signal = 0;
     t->credentials = credentials;
     process->executed = true;
+    ++process->exec_generation;
     if (files) {
         release_files(t->files);
         t->files = files;

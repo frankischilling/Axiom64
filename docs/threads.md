@@ -156,6 +156,26 @@ runs the build-provider static client from a read-only ext2 root on both
 firmware types. `sudo make test-posix-semaphores-native` compares the same
 workload on Linux with a private `/dev/shm` mount.
 
+## POSIX message queues
+
+POSIX message queues use ordinary file descriptors and appear under
+`/dev/mqueue`. Messages arrive from highest to lowest priority, in send
+order within each priority. Unlinking removes the name while open
+descriptions and waiting calls keep the queue alive.
+
+`mq_timedsend` and `mq_timedreceive` use absolute realtime deadlines.
+`O_NONBLOCK` belongs to the open description, so descriptor aliases share it.
+Poll and epoll report queued messages and available capacity. Queue limits
+include the creator's `RLIMIT_MSGQUEUE` budget. One-shot notification
+supports signals with sender information and libc thread callbacks over
+netlink.
+
+`make test-posix-message-queues` exercises both caller identities with both
+musl providers and linkages on BIOS and UEFI. It also boots a read-only ext2
+root under both firmware types. `sudo make test-posix-message-queues-native`
+runs the same client in a private Linux IPC namespace. IPC namespace
+creation and runtime queue sysctls remain unimplemented.
+
 ## Remaining work
 
 The limit is one CPU, 64 task slots, and 128 descriptors per file table. FPU switching uses FXSAVE/FXRSTOR for x87/SSE state, without extended XSAVE state. An untimed futex wait honors `SA_RESTART`. A caught signal interrupts a timed futex wait with `EINTR`.

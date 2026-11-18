@@ -2,6 +2,7 @@
 #include "process/signals.hpp"
 #include "ipc/system_v_semaphores.hpp"
 #include "ipc/system_v_message_queues.hpp"
+#include "ipc/posix_message_queues.hpp"
 #include "process/futex.hpp"
 #include "io/io.hpp"
 #include "ipc/ipc.hpp"
@@ -110,6 +111,14 @@ int queue_process_signal(Process* process, int signal, int sender, int code, int
     return post_process_signal(process, signal, data);
 }
 
+int queue_message_signal(Process* process, int signal, const Task& sender, uint64_t value) {
+    if (!process->live_threads || signal < 1 || signal > 64)
+        return 0;
+    SignalData data{sender.process->pid, -3, 0, 0, sender.credentials.user.real};
+    data.value = value;
+    return post_process_signal(process, signal, data);
+}
+
 static int actionable(const Task& task) {
     uint64_t mask = ~task.signal_mask;
     for (int number = next_pending_signal(task, mask); number;
@@ -149,12 +158,14 @@ void signal_interrupt(Task& task) {
               : io_restartable(task) && (task.wait == Wait::read || task.wait == Wait::write ||
                                          task.wait == Wait::child || task.wait == Wait::file_lock ||
                                          task.wait == Wait::random);
-    bool restart = (flags & 0x10000000) && restartable;
+    bool restart = (flags & 0x10000000) && (restartable || task.wait == Wait::posix_queue);
     // A caught signal ends this attempt. A restarted call imports its inputs again.
     int64_t interrupted_result = io_interrupted_result(task);
     io_discard(task);
     if (futex)
         futex_discard(task);
+    if (task.wait == Wait::posix_queue)
+        posix_queue_discard(task);
     if (!restart) {
         if (task.wait == Wait::semaphore)
             semaphore_discard(task);
@@ -204,6 +215,7 @@ static_assert(sizeof(Context) == 256 && sizeof(Ucontext) == 304 && sizeof(Signal
 
 bool signal_deliver(Task& task) {
     message_queue_resume(task);
+    posix_queue_resume(task);
     SignalData data;
     while (int signal = take_pending_signal(task, ~task.signal_mask, data)) {
         auto action = task.handlers->signal_actions[signal - 1];

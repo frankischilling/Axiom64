@@ -55,8 +55,7 @@ static void volatile_mount(const char* name) {
         failure(name, error);
 }
 
-static void shared_memory_mount() {
-    const char* name = "/dev/shm";
+static void ipc_mount(const char* name, const char* type) {
     Path destination = path(name);
     Node* point = nullptr;
     int error = resolve_path(destination, point, false);
@@ -67,7 +66,7 @@ static void shared_memory_mount() {
     if ((point->mode & 0170000) != directory)
         failure(name, -20);
     constexpr unsigned nosuid = 2, nodev = 4;
-    error = mount_filesystem(destination, path(""), "ramfs", nosuid | nodev);
+    error = mount_filesystem(destination, path(""), type, nosuid | nodev);
     if (error)
         failure(name, error);
     lookup(name)->mode = directory | 01777;
@@ -85,7 +84,8 @@ void boot_root_init(const char* command) {
         if (filesystem || policy)
             failure("configuration", -22);
         volatile_mount("/proc");
-        shared_memory_mount();
+        ipc_mount("/dev/shm", "ramfs");
+        ipc_mount("/dev/mqueue", "mqueue");
         return;
     }
     if (strlen(root) != 8 || memcmp(root, "/dev/vd", 7) || root[7] < 'a' || root[7] > 'h')
@@ -106,7 +106,8 @@ void boot_root_init(const char* command) {
     const char* volatile_paths[] = {"/dev", "/proc", "/sys", "/tmp", "/run"};
     for (auto name : volatile_paths)
         volatile_mount(name);
-    shared_memory_mount();
+    ipc_mount("/dev/shm", "ramfs");
+    ipc_mount("/dev/mqueue", "mqueue");
     // /tmp is private scratch space even when ordinary root files are persistent.
     auto temporary = lookup("/tmp");
     temporary->mode = directory | 01777;

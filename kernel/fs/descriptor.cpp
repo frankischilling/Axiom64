@@ -2,6 +2,7 @@
 #include "fs/descriptor.hpp"
 #include "process/task.hpp"
 #include "fs/record_lock.hpp"
+#include "ipc/posix_message_queues.hpp"
 
 namespace ax {
 int reserve_fd(Task& task, int start, bool cloexec) {
@@ -42,6 +43,7 @@ void close_descriptor(FileTable& table, int fd) {
         return;
     auto handle = table.entries[fd].handle;
     if (handle) {
+        posix_queue_descriptor_closed(handle);
         if (!(handle->flags & 010000000))
             record_lock_close(table, handle->node);
         close_handle(handle);

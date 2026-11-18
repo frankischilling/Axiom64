@@ -4,6 +4,7 @@
 #include "ipc/ipc.hpp"
 #include "ipc/system_v_semaphores.hpp"
 #include "ipc/system_v_message_queues.hpp"
+#include "ipc/posix_message_queues.hpp"
 #include "ipc/shared_memory.hpp"
 #include "process/signals.hpp"
 #include "process/task.hpp"
@@ -318,6 +319,8 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
         if (!framebuffer && (!h->node || (h->node->mode & 0170000) != regular_file))
             return -19;
         if (!framebuffer && h->node->mount->ops == &procfs_ops)
+            return -19;
+        if (!framebuffer && h->node->mount->ops == &posix_queue_filesystem())
             return -19;
         if (!framebuffer && (h->flags & 3) == 1)
             return -13;
@@ -982,6 +985,13 @@ static int64_t dispatch(Frame* f) {
     case 70:
     case 71:
         return message_queue_syscall(f);
+    case 240:
+    case 241:
+    case 242:
+    case 243:
+    case 244:
+    case 245:
+        return posix_queue_syscall(f);
     case 32: {
         auto h = fd_handle(a, true);
         if (!h)

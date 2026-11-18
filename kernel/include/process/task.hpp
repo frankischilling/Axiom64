@@ -22,7 +22,8 @@ enum class Wait {
     file_lock,
     random,
     semaphore,
-    message_queue
+    message_queue,
+    posix_queue
 };
 
 struct Descriptor {
@@ -71,6 +72,7 @@ struct Process {
     Pty* controlling_pty = nullptr;
     bool controlling_console = false, stop_reported = false, continued = false, stopped = false;
     bool executed = false;
+    uint64_t exec_generation = 0;
     char executable[1024]{};
     uint64_t start_ticks = 0;
     uint64_t cpu_user_ticks = 0, cpu_system_ticks = 0;
@@ -88,6 +90,7 @@ struct FutexWait {
 struct SemaphoreRequest;
 struct SemaphoreUndo;
 struct MessageQueueRequest;
+struct PosixQueueRequest;
 
 struct Task {
     State state;
@@ -124,6 +127,7 @@ struct Task {
     SemaphoreRequest* semaphore_request;
     SemaphoreUndo* semaphore_undo;
     MessageQueueRequest* message_queue_request;
+    PosixQueueRequest* posix_queue_request;
     alignas(16) uint8_t fpu[512];
 };
 

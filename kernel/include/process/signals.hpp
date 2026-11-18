@@ -10,6 +10,7 @@ int queue_signal(Task*, int, int sender = 0, int code = 0, int status = 0, uint6
 
 int queue_process_signal(Process*, int, int sender = 0, int code = 0, int status = 0,
                          uint64_t address = 0, const Process* child = nullptr);
+int queue_message_signal(Process*, int, const Task& sender, uint64_t value);
 
 bool signal_wakes(const Task&);
 

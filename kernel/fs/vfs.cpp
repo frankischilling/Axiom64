@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/vfs.hpp"
+#include "ipc/posix_message_queues.hpp"
 #include "fs/xattr.hpp"
 #include "fs/file_lock.hpp"
 #include "fs/record_lock.hpp"
@@ -453,6 +454,7 @@ int remove_node(const Path& path, bool dir) {
     error = node->mount->ops->remove(node);
     if (!error) {
         report_unlinked(node, dir);
+        posix_queue_reap(node);
         inotify_name(node->parent, inotify_delete | (dir ? inotify_isdir : 0), node->name);
     }
     return error;
@@ -755,7 +757,10 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
         mount->noexec = flags & 8;
         return 0;
     }
-    bool ram = type && !strcmp(type, "ramfs"), disk = type && !strcmp(type, "ext2");
+    bool queues = type && !strcmp(type, "mqueue");
+    if (queues && posix_queue_mounted())
+        return -16;
+    bool ram = queues || (type && !strcmp(type, "ramfs")), disk = type && !strcmp(type, "ext2");
     bool proc = type && !strcmp(type, "proc");
     if (!ram && !disk && !proc)
         return -19;
@@ -776,7 +781,8 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
                      nullptr,
                      point,
                      point->mount,
-                     ram    ? &ramfs_ops
+                     queues ? &posix_queue_filesystem()
+                     : ram  ? &ramfs_ops
                      : proc ? &procfs_ops
                             : &ext2_ops,
                      nullptr,
@@ -799,6 +805,8 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
             mount.nosuid = proc || (flags & 2);
             mount.nodev = proc || (flags & 4);
             mount.noexec = proc || (flags & 8);
+            if (queues)
+                posix_queue_mount(mount.root);
             return 0;
         }
     return -28;
@@ -839,6 +847,8 @@ int unmount(const Path& path, uint64_t flags) {
     if (!mount_root(node) || !node->mount->point)
         return -22;
     auto mount = node->mount;
+    if (mount->ops == &posix_queue_filesystem())
+        return -16;
     for (auto& child : mounts)
         if (child.active && child.parent == mount)
             return -16;
@@ -1038,6 +1048,7 @@ void close_handle(Handle* h) {
     h->opened_dentry = nullptr;
     h->pipe = nullptr;
     node_retire_xattrs(retired_node);
+    posix_queue_reap(retired_node);
 }
 
 bool handle_ready(Handle* h, bool write, const Task* task) {
@@ -1066,6 +1077,9 @@ bool handle_ready(Handle* h, bool write, const Task* task) {
     if (h->pipe)
         return write ? h->pipe->size < sizeof(Pipe::bytes) || !h->pipe->readers
                      : h->pipe->size || !h->pipe->writers;
+    if (h->node && h->node->mount->ops == &posix_queue_filesystem() &&
+        (h->node->mode & 0170000) == regular_file)
+        return posix_queue_ready(h->node, write);
     if (!h->node || (h->node->mode & 0170000) != character)
         return true;
     return device_ready(h, write);
@@ -1140,7 +1154,7 @@ int write_handle_limit(Handle* h, size_t& length) {
         return -9;
     if (node_readonly(node))
         return -30;
-    if (node_control(node))
+    if (node_control(node) || node->mount->ops == &posix_queue_filesystem())
         return 0;
     if (!current)
         return 0;

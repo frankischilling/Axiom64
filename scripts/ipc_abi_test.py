@@ -29,6 +29,8 @@ WORKLOADS = {
                                  'process-lifecycle', 'locking', 'permissions')),
     'posix-semaphores': ('POSIX_SEM', ('unnamed', 'named-lifetime', 'concurrent-create',
                                       'permissions')),
+    'posix-message-queues': ('POSIX_MQ', ('priority-names', 'blocking', 'notifications',
+                                           'permissions-limits')),
 }
 
 
@@ -81,6 +83,10 @@ def native(directory, workload):
                 namespace = ['unshare', '--ipc', '--mount', '--', '/bin/sh', '-ec',
                              'mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /dev/shm; exec "$@"',
                              'axiom-posix-semaphores']
+            elif workload == 'posix-message-queues':
+                namespace = ['unshare', '--ipc', '--mount', '--', '/bin/sh', '-ec',
+                             'mount -t mqueue mqueue /dev/mqueue; exec "$@"',
+                             'axiom-posix-message-queues']
             for uid, flags in ((0, []), (65534, ['--ordinary'])):
                 row = execute([*namespace, str(executable), *flags],
                               case / f'{uid}.log', 0, [uid], workload)
@@ -95,9 +101,9 @@ def disk_digest(path):
         return hashlib.file_digest(source, 'sha256').hexdigest()
 
 
-def ext2_fixture(case, kernel, products, script):
+def ext2_fixture(case, kernel, products, script, workload):
     disk = build_disk_root(source=case / 'root.cpio', destination=case / 'ext2.raw')
-    name = 'posix-semaphores-ext2.iso'
+    name = f'{workload}-ext2.iso'
     subprocess.run(['python3', '-B', 'scripts/image.py', '--test', '--suite', 'network',
                     '--root-device', '/dev/vda', '--root-readonly', '--output-name', name,
                     '--output-directory', str(case)], cwd=ROOT, stdout=subprocess.DEVNULL,
@@ -175,8 +181,8 @@ def guest(directory, workload, client):
                              root='ramfs', kernel_sha256=kernel, program_sha256=digest(program),
                              image_sha256=digest(image), **row))
             print(f'{prefix}_GUEST_PASS {provider}/{linkage}/{firmware}', flush=True)
-        if (workload, provider, linkage) == ('posix-semaphores', 'build', 'static'):
-            image, disk = ext2_fixture(case, kernel, payload, script)
+        if workload.startswith('posix-') and (provider, linkage) == ('build', 'static'):
+            image, disk = ext2_fixture(case, kernel, payload, script, workload)
             fingerprint = disk_digest(disk)
             for firmware in ('bios', 'uefi'):
                 row = boot_guest(case, workload, image, firmware, disk)

@@ -16,6 +16,7 @@ size_t aligned(size_t size) {
 struct NetlinkSocket {
     bool used = false, connected = false, capped = false, strict = false;
     unsigned type = 3, head = 0, count = 0;
+    unsigned deliveries = 0;
     uint32_t port = 0;
     size_t bytes = 0;
     NetlinkFrame* queue[queue_count]{};
@@ -93,8 +94,27 @@ size_t netlink_available(NetlinkSocket* socket) {
 }
 
 bool netlink_ready(NetlinkSocket* socket, bool write) {
-    return write ? socket->count < queue_count && socket->bytes + 36 <= queue_bytes
+    return write ? socket->count + socket->deliveries < queue_count &&
+                       socket->bytes + 36 <= queue_bytes
                  : socket->count != 0;
+}
+
+int netlink_reserve_delivery(NetlinkSocket* socket, size_t length, NetlinkFrame*& frame) {
+    if (socket->count + socket->deliveries >= queue_count || length > queue_bytes - socket->bytes)
+        return -11;
+    frame = static_cast<NetlinkFrame*>(alloc(sizeof(NetlinkFrame) + length));
+    if (!frame)
+        return -12;
+    frame->source = {};
+    frame->length = frame->reserved = length;
+    ++socket->deliveries;
+    socket->bytes += length;
+    return 0;
+}
+
+void netlink_publish_delivery(NetlinkSocket* socket, NetlinkFrame* frame) {
+    --socket->deliveries;
+    socket->queue[(socket->head + socket->count++) % queue_count] = frame;
 }
 
 int64_t netlink_read(NetlinkSocket* socket, void* output, size_t length) {
@@ -138,7 +158,8 @@ int64_t netlink_send(NetlinkSocket* socket, unsigned process, const void* data, 
     }
     if (total > queue_bytes)
         return -90;
-    if (count > queue_count - socket->count || total > queue_bytes - socket->bytes)
+    if (count > queue_count - socket->count - socket->deliveries ||
+        total > queue_bytes - socket->bytes)
         return -11;
     int error = socket->port ? 0 : bind_port(socket, 0, process);
     if (error)

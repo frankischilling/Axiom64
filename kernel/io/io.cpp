@@ -306,6 +306,8 @@ static int prepare_packet(Task& task, IoRequest& request) {
     if (request.positioned)
         return -29;
     unsigned allowed = request.write ? 0x4040 : 2 | 0x20 | 0x40;
+    if (!request.write && request.handle->netlink)
+        allowed |= 0x4100; // Netlink datagrams ignore MSG_WAITALL and MSG_NOSIGNAL.
     if (request.write && request.handle->inet && inet_header_included(request.handle->inet))
         allowed |= 0x8010; // Header-included output accepts MSG_MORE and MSG_PROBE.
     if (request.flags & ~allowed)

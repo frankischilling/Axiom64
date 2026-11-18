@@ -26,6 +26,7 @@ build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-o
 .PHONY: test-system-v-message-queues test-system-v-message-queues-native
 .PHONY: test-system-v-shared-memory test-system-v-shared-memory-native
 .PHONY: test-posix-semaphores test-posix-semaphores-native
+.PHONY: test-posix-message-queues test-posix-message-queues-native
 test-system-v-semaphores:
 	$(PYTHON) -B scripts/ipc_abi_test.py sysv-semaphores --directory build/system-v-semaphores-guest
 
@@ -49,6 +50,12 @@ test-posix-semaphores:
 
 test-posix-semaphores-native:
 	$(PYTHON) -B scripts/ipc_abi_test.py posix-semaphores --native --directory build/posix-semaphores-native
+
+test-posix-message-queues:
+	$(PYTHON) -B scripts/ipc_abi_test.py posix-message-queues --directory build/posix-message-queues-guest
+
+test-posix-message-queues-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py posix-message-queues --native --directory build/posix-message-queues-native
 
 test-signalfd:
 	$(PYTHON) -B scripts/timerfd_test.py --descriptor signalfd --directory build/signalfd-guest

@@ -380,6 +380,9 @@ type selection, blocking sends and receives, removal, and permissions.
 fragmented attachments, fixed replacements, fork and exec, removal, and permissions.
 [POSIX semaphore tests](threads.md#posix-semaphores) cover named and unnamed
 semaphores, concurrent creation, timeouts, permissions, and unlink lifetime.
+[POSIX message queue tests](threads.md#posix-message-queues) cover
+priorities, blocking calls, descriptor readiness, notifications, and open
+descriptions that survive unlink.
 
 Required work:
 

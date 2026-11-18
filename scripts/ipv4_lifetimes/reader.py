@@ -148,7 +148,19 @@ def selected_address(replies, index, address):
     return selected[0] if selected else None
 
 
-def verify(path, *, stamp_epoch=(0, 0)):
+def native_promotion_sample(selected, begin, query, receipt, previous_receipt):
+    deadline = begin + 2_500_000_000
+    require(query - begin >= 1_500_000_000 and receipt <= deadline,
+            'native promotion records retain the original sample and bounded withdrawal')
+    if previous_receipt is not None:
+        require(query >= min(previous_receipt + 50_000_000, deadline),
+                'native pending removal observations use actual polling intervals')
+    if selected is not None:
+        require(selected['flags'] == DEPRECATED and selected['cache'][:2] == (0, 0),
+                'only an expired native primary may remain before its removal')
+
+
+def verify(path, *, stamp_epoch=(0, 0), native=False):
     require(type(stamp_epoch) is tuple and len(stamp_epoch) == 2 and
             all(type(value) is int for value in stamp_epoch) and
             0 <= stamp_epoch[1] - stamp_epoch[0] <= 3, 'bounded independently observed stamp-clock relation')
@@ -186,19 +198,22 @@ def verify(path, *, stamp_epoch=(0, 0)):
             'native or guest realtime and monotonic observations have no clock jump')
     specs = specifications()
     at = 0
+    sequence = 0
     observations = []
     for lane in (0, 1):
         index = None
         saved = {}
         first = 0xc6122002 + lane * 0x1000
         addresses = dict(first=first, alias=first + 1, permanent=first + 256, deprecated=first + 512)
-        for number, spec in enumerate(specs):
+        number = 0
+        while number < len(specs):
+            spec = specs[number]
             require(at < len(records), 'every required request remains present')
             row = records[at]
             require((row['lane'], row['phase'], row['direction']) == (lane, spec['phase'], 'request') and
                     len(row['messages']) == 1, 'fixed original request order')
             message = row['messages'][0]
-            sequence = lane * len(specs) + number + 1
+            sequence += 1
             require(message['sequence'] == sequence, 'original consecutive request identity')
             index = request(message, spec, lane, index)
             at += 1
@@ -216,15 +231,28 @@ def verify(path, *, stamp_epoch=(0, 0)):
                         replies[0]['body'][4:20] == bytes.fromhex(row['bytes'])[:16],
                         'actual mutation result and exact echoed original header')
                 saved.setdefault((spec['phase'], 'request'), row)
+                if native and spec['phase'] in ('device-promote-create', 'global-promote-create'):
+                    saved.setdefault((spec['phase'], 'ack'), receipt)
+                number += 1
                 continue
             selected = selected_address(replies, index, addresses[spec['address']])
             key = spec['phase'], spec['address']
+            if native and key in (('device-promoted', 'first'), ('global-promoted', 'first')):
+                scope = spec['phase'].split('-', 1)[0]
+                begin = saved[(scope + '-promote-create', 'ack')]['monotonic_after_ns']
+                received = receipt['monotonic_after_ns']
+                native_promotion_sample(selected, begin, row['monotonic_before_ns'], received,
+                                        saved.get((spec['phase'], 'pending')))
+                if selected is not None:
+                    saved[(spec['phase'], 'pending')] = received
+                    continue
             saved[key] = dict(value=selected, request=row, receipt=receipt)
+            number += 1
         observations.append(check_lifetimes(saved, lane, stamp_epoch))
     require(at == len(records), 'no omitted or surplus original control records')
     check_transport(text)
     check_policy(text)
-    return dict(passed=True, lanes=2, requests=66, observations=observations,
+    return dict(passed=True, lanes=2, requests=sequence, observations=observations,
                 clock_offset_range_ns=max(offsets) - min(offsets), real_clock_qualification=True,
                 policy_operations=20,
                 stamp_epoch_range_cs=list(stamp_epoch),

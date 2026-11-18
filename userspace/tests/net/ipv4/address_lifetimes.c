@@ -310,7 +310,7 @@ static void check_expired_send(int fd, uint32_t peer, int raw) {
     check(!close(fd), "close retained transport");
 }
 
-static void exercise(const char* interface) {
+static void exercise(const char* interface, int native) {
     unsigned index = if_nametoindex(interface);
     phase = "setup";
     check(index, "actual interface index");
@@ -397,7 +397,21 @@ static void exercise(const char* interface) {
               "secondary flag");
         phase = global ? "global-promoted" : "device-promoted";
         wait_until(began + 1500000000);
-        check(!inventory(index, first).present, "expired promoted primary absent");
+        uint64_t expiry_deadline = began + 2500000000;
+        struct address_state primary;
+        while ((primary = inventory(index, first)).present) {
+            // Linux can return the expired entry while its deferrable
+            // address worker is still waiting to remove it.
+            check(native && primary.flags == IFA_F_DEPRECATED && !primary.cache.ifa_valid &&
+                      !primary.cache.ifa_prefered,
+                  "expired promoted primary absent or pending removal on Linux");
+            uint64_t current = clock_ns(CLOCK_MONOTONIC);
+            check(current < expiry_deadline, "bounded actual primary expiry");
+            uint64_t next = current + 50000000;
+            wait_until(next < expiry_deadline ? next : expiry_deadline);
+        }
+        check(!native || clock_ns(CLOCK_MONOTONIC) <= expiry_deadline,
+              "bounded actual primary withdrawal");
         struct address_state promoted = inventory(index, alias);
         check(promoted.present && promoted.flags == IFA_F_PERMANENT &&
                   promoted.cache.cstamp == secondary.cache.cstamp &&
@@ -416,9 +430,10 @@ static void exercise(const char* interface) {
 
 int main(int argc, char** argv) {
     phase = "arguments";
-    check(argc == 3, "two explicitly selected interfaces");
+    int native = argc == 4 && !strcmp(argv[1], "--native");
+    check(argc == 3 || native, "two explicitly selected interfaces");
     for (lane = 0; lane < 2; lane++)
-        exercise(argv[lane + 1]);
+        exercise(argv[lane + 1 + native], native);
     puts("IPV4_LIFETIME_PASS interfaces=2 finite permanent renew cacheinfo cascade promote "
          "fresh_bind");
     return 0;

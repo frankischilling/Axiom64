@@ -18,6 +18,10 @@ the relation between Linux's jiffies-based stamp epoch and the unmodified
 monotonic clock. Both anchors must agree within three centiseconds; the
 original realtime/monotonic jump bound and every lifetime interval remain
 unchanged. Guest stamps retain their direct monotonic check.
+The native promotion check keeps its first query at 1.5 seconds. If Linux
+still reports the primary as deprecated with zero valid lifetime, the client
+records each new query until the actual removal, within the existing
+2.5-second withdrawal bound used by the wire client.
 
 After a successful guest campaign, run
 `sudo -n env PYTHONPATH=scripts python3 -B -m ipv4_lifetimes.protected DIRECTORY /var/tmp/axiom-ipv4-lifetimes-export`.

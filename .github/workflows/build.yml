@@ -1140,6 +1140,11 @@ jobs:
       - name: Compare retained I/O and socket timeouts with native Linux
         if: matrix.suite == 'boot'
         run: sudo -n make test-thread-io-native
+      - name: Compare Linux timer descriptors and test guest event loops
+        if: matrix.suite == 'boot'
+        run: |
+          sudo -n make test-timerfd-native
+          make test-timerfd
       - name: Test virtio queue sizes and offered features
         if: matrix.suite == 'boot'
         run: make test-virtio
@@ -1763,6 +1768,8 @@ jobs:
           path: |
             build/*.log
             build/unix-datagram-guest.tar.gz
+            build/timerfd-native/**
+            build/timerfd-guest/**
             build/unix-stream-native/**
             build/unix-shutdown-native/**
             build/unix-stream-wait-native/**

@@ -82,6 +82,28 @@ Durations round up to the kernel's 10 ms clock units, following the jiffy conver
 
 Each supported socket I/O attempt captures one absolute monotonic deadline after importing its arguments. Changing the option through an alias does not change a waiting attempt's deadline. The first attempt can still return ready data or an immediate error. An expired wait without progress returns `EAGAIN` and releases its retained request exactly once. It does not access a buffer unmapped during an unavailable socket wait; a readable wake-up still checks the buffer and returns `EFAULT` for an invalid destination. A transferred prefix returns its byte count; it is never replayed after expiry. Nonblocking descriptions and `MSG_DONTWAIT` retain their immediate behavior. Read/readv/recv/recvmsg and accept use the receive deadline; write/writev/send/sendmsg use the send deadline. [TCP](tcp.md) also retains connect requests, uses the send deadline and returns `EINPROGRESS` on connect expiry. Full TCP interruption/deadline and retained-call acceptance remains in [TCP reliability](tcp.md).
 
+## Timer descriptors
+
+`timerfd_create`, `timerfd_settime` and `timerfd_gettime` provide Linux x86-64
+timer descriptors for `CLOCK_MONOTONIC`, `CLOCK_BOOTTIME` and `CLOCK_REALTIME`.
+Timers accept relative or absolute deadlines and one-shot or periodic
+settings. `CLOCK_BOOTTIME` follows monotonic time while the guest has no
+suspend state. Absolute realtime timers use the RTC-derived clock. Relative
+timers use elapsed time. Wake-alarm clock creation returns `EPERM` on the
+current platform. The wall clock has a fixed offset, so realtime clock steps
+cannot cancel an armed timer on this platform.
+Timers use the kernel clock's 10 ms resolution.
+
+Reads return one 64-bit expiration count and consume it before copying, even
+when a later user page faults. A partial copy returns the number of bytes
+copied. `readv` can distribute the count across buffers. A drained timer is
+unreadable until its next expiration. Periodic timers compute missed periods
+when a reader or time query rearms them, so short periods do not increase
+kernel interrupt frequency. `TFD_IOC_SET_TICKS` restores a pending count.
+`poll`, `select`, and epoll report read readiness. A blocked read retains the
+open file description if another thread closes or replaces the descriptor.
+These behaviors follow the [Linux timerfd interface](https://github.com/torvalds/linux/blob/v7.0/fs/timerfd.c).
+
 ## Kernel interface
 
 [Packet sockets](network.md#linux-socket-contract), [IPv4 raw sockets](ipv4.md#raw-icmp-socket-contract), [UDP](udp.md), and [netlink route sockets](netlink.md#socket-ownership-and-bounds) also use retained requests. Their linked contracts describe datagram boundaries, supported named addresses, copy-fault behavior, and queue limits.

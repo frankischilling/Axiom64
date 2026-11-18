@@ -366,6 +366,8 @@ Acceptance evidence:
 ### F15. IPC and event notification
 
 Pipes, Unix streams, polling, epoll, select, and SysV shared memory have guest tests.
+[Timer descriptors](io.md#timer-descriptors) let event loops wait for expiration
+counts alongside other readable descriptors.
 
 Required work:
 

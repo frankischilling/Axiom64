@@ -55,6 +55,7 @@ struct EpollItem {
     EpollEvent event;
     bool used, enabled;
     uint32_t last_ready, pending;
+    uint64_t timer_notification;
 };
 
 struct Epoll {

@@ -57,8 +57,7 @@ def stream(rows, origin, expected):
 
 
 def period(rows, lane, role, kind, native):
-    require(rows and all(milliseconds(b) >= milliseconds(a) for a, b in zip(rows, rows[1:])),
-            'lifetime clock records preserve actual packet order')
+    require(rows, 'lifetime capture contains the selected flow')
     expected_local = (44010 if role else 46000) + lane + kind * 20
     require(all(row['local_port'] == expected_local for row in rows),
             'each lifetime case retains its exclusive local endpoint')
@@ -85,6 +84,9 @@ def period(rows, lane, role, kind, native):
     opened = next((index for index, row in enumerate(body) if not row['outgoing'] and row['window']), None)
     require((opened is not None) == (kind == 3), 'only responsive lifetime control reopens')
     stopped = body[:opened] if opened is not None else body
+    timed = rows[:synchronized + opened + 1] if native and opened is not None else rows
+    require(all(milliseconds(b) >= milliseconds(a) for a, b in itertools.pairwise(timed)),
+            'lifetime clock records preserve actual packet order')
     attempts = []
     expected = pattern(lane, role, kind)
     for index, row in enumerate(stopped):
@@ -147,6 +149,14 @@ def period(rows, lane, role, kind, native):
         recovery = body[opened:]
         outgoing = [row for row in recovery if row['outgoing']]
         incoming = [row for row in recovery if not row['outgoing']]
+        # Linux stamps ingress and egress at different points. During the
+        # bidirectional transfer their timestamps can cross in packet socket
+        # delivery order. Keep that order and check each direction's clock.
+        if native:
+            require(all(milliseconds(row) >= milliseconds(reopening) for row in recovery) and
+                    all(milliseconds(b) >= milliseconds(a) for direction in (outgoing, incoming)
+                        for a, b in itertools.pairwise(direction)),
+                    'native recovery packet clocks follow reopening in each direction')
         require(not any(row['flags'] & 4 for row in recovery), 'no reset substitutes for exact lifetime recovery')
         output['hashes'] = dict(sent=stream(outgoing, origin, expected),
                                 received=stream(incoming, remote, bytes(value ^ 0xa5 for value in expected)))

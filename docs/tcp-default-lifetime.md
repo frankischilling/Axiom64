@@ -87,6 +87,11 @@ and paired anchors before capture startup and after completion. All pairs must
 support one constant realtime-to-monotonic offset. Applying that offset to kernel
 packet times preserves their intervals through delayed or batched reads. Guest
 captures retain their virtual packet clock. No packet timestamp is rewritten.
+Linux can timestamp incoming and outgoing recovery packets before they reach
+the packet socket in a different order. The reader requires ordered timestamps
+through the window reopening and within each direction after it. Every recovery
+packet must follow the reopening, and its original capture and peer evidence
+must still agree.
 
 `make test-tcp-lifetime` covers BIOS/UEFI, modern/legacy virtio and both musl linkages,
 with e1000 alongside virtio-net. Fixture construction is sequential; at most two
@@ -105,12 +110,13 @@ the existing agreement bound between independent readers. The capture still must
 observe the complete 984600 ms minimum; its acceptance threshold is unchanged.
 
 `python3 scripts/tcp_lifetime/damaged.py` rechecks the actual positive captures and
-rejects 18 classes per capture. Packet changes update the corresponding peer records
+rejects 20 cases per capture. Packet changes update the corresponding peer records
 and repair checksums. Cases remove a retry, FIN, probe, probe answer or reopening;
 alter ACK progress, the window, probe sequence or recovered bytes; falsify options,
-errors, reclamation or application deadlines; shift a packet clock; or shorten the
+errors, reclamation or application deadlines; shift a packet clock; shorten the
 responsive observation; or move a flow onto another live case's local endpoint.
-The complete matrix requires 396 rejected cases. Native protocol candidates also
+Recovery controls move a packet before reopening or backward within its direction.
+The complete matrix requires 440 rejected cases. Native protocol candidates also
 repair their test-only receipt bindings, so a stale hash cannot substitute for a
 protocol rejection. Originals remain unchanged. Twenty additional receipt controls
 per native capture reject missing or forged clocks, frame substitutions, invalid

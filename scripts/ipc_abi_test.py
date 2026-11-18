@@ -44,6 +44,10 @@ WORKLOADS = {
                          'named-datagram-read-pulse', 'named-datagram-write-pulse',
                          'named-datagram-peek-pulse')) +
                          ('socket-poll-masks',)),
+    'udp-waits': ('UDP_WAITS', tuple(
+        f'{call}-{family}-{event}-pulse' for call in ('poll', 'ppoll', 'select', 'pselect')
+        for family in ('ipv4', 'ipv6') for event in ('data', 'error')) +
+        ('ipv4-poll-masks', 'ipv6-poll-masks')),
     'select-waits': ('SELECT_WAITS', ('argument-order', 'bitmap-capacity', 'readiness-masks',
                                      'deadlines', 'temporary-signal-mask', 'retained-select',
                                      'retained-pselect', 'stopped-select', 'stopped-pselect')),
@@ -364,7 +368,7 @@ def guest(directory, workload, client):
         if (provider, linkage) == ('build', 'static') and (
                 workload.startswith('posix-') or workload in ('named-pipes', 'poll-waits', 'select-waits',
                                                           'epoll-lifetime', 'epoll-nested',
-                                                          'descriptor-wait-lifetime')):
+                                                          'descriptor-wait-lifetime', 'udp-waits')):
             image, disk = ext2_fixture(case, kernel, payload, script, workload)
             fingerprint = disk_digest(disk)
             for firmware in ('bios', 'uefi'):

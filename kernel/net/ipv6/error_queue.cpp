@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "socket.hpp"
+#include "io/descriptor_wait.hpp"
 
 namespace ax {
 bool inet6_queue_error(Inet6Socket* socket, const Inet6Error& metadata, const void* bytes,
@@ -25,6 +26,7 @@ bool inet6_queue_error(Inet6Socket* socket, const Inet6Error& metadata, const vo
     socket->errors[(socket->error_head + socket->error_count) % inet6_queue_count] = record;
     socket->error_count++;
     socket->error_bytes += cost;
+    descriptor_wait_notify(socket, 8);
     return true;
 }
 

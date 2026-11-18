@@ -5,7 +5,7 @@ NASM = nasm
 PYTHON = python3
 IPV4_WORKERS ?= 2
 IPV4_MULTICAST_CORE = $(wildcard kernel/net/ipv4/multicast/*.cpp)
-IPV6_CORE = $(wildcard kernel/net/ipv6/*.cpp) kernel/core/random/primitives.cpp
+IPV6_CORE = $(wildcard kernel/net/ipv6/*.cpp) kernel/core/random/primitives.cpp kernel/tests/net/descriptor_notify.cpp
 MUSL_CC = gcc -specs="$(CURDIR)/build/musl/build/compiler.specs"
 CLANG_FORMAT ?= clang-format-20
 CXXFLAGS = -std=c++20 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pie -fno-threadsafe-statics -fno-use-cxa-atexit -fno-builtin -m64 -mno-red-zone -mcmodel=kernel -mgeneral-regs-only -Ikernel/include -Ivendor
@@ -31,7 +31,7 @@ build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-o
 .PHONY: test-named-pipes test-named-pipes-native
 .PHONY: test-poll-waits test-poll-waits-native test-select-waits test-select-waits-native
 .PHONY: test-epoll-lifetime test-epoll-lifetime-native
-.PHONY: test-descriptor-wait-lifetime test-descriptor-wait-lifetime-native
+.PHONY: test-descriptor-wait-lifetime test-descriptor-wait-lifetime-native test-udp-waits test-udp-waits-native
 .PHONY: test-epoll-nested test-epoll-nested-native
 test-system-v-semaphores:
 	$(PYTHON) -B scripts/ipc_abi_test.py sysv-semaphores --directory build/system-v-semaphores-guest
@@ -86,6 +86,12 @@ test-descriptor-wait-lifetime:
 
 test-descriptor-wait-lifetime-native:
 	$(PYTHON) -B scripts/ipc_abi_test.py descriptor-wait-lifetime --native --directory build/descriptor-wait-lifetime-native
+
+test-udp-waits:
+	$(PYTHON) -B scripts/ipc_abi_test.py udp-waits --directory build/udp-waits-guest
+
+test-udp-waits-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py udp-waits --native --directory build/udp-waits-native
 
 test-select-waits:
 	$(PYTHON) -B scripts/ipc_abi_test.py select-waits --directory build/select-waits-guest

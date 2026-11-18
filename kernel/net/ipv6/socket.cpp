@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "socket.hpp"
+#include "io/descriptor_wait.hpp"
 #include "net/ipv6/router.hpp"
 
 namespace ax {
@@ -76,9 +77,14 @@ bool inet6_ready(Inet6Socket* socket, bool write) {
 void inet6_complete(Inet6Socket* socket, size_t bytes, int error) {
     if (!socket || !socket->used)
         return;
+    bool full = socket->transmitted >= socket->send_limit;
     socket->transmitted -= min(socket->transmitted, bytes);
-    if (error && socket->connected && !socket->error)
+    if (full && socket->transmitted < socket->send_limit)
+        descriptor_wait_notify(socket, 4 | 0x100 | 0x200);
+    if (error && socket->connected && !socket->error) {
         socket->error = -error;
+        descriptor_wait_notify(socket, 8);
+    }
 }
 
 Inet6Address inet6_peer(Inet6Socket* socket) {
@@ -171,6 +177,7 @@ static void enqueue(Inet6Socket& socket, unsigned index, const ip6::Address& sou
     socket.queue[(socket.head + socket.count) % inet6_queue_count] = frame;
     socket.count++;
     socket.bytes += cost;
+    descriptor_wait_notify(&socket, 1 | 0x40);
 }
 
 bool inet6_deliver(unsigned index, const ip6::Packet& packet) {

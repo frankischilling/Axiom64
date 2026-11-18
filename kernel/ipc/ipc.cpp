@@ -353,6 +353,12 @@ uint32_t readiness(Handle* h, const Task* task) {
         if (shutdown == 3)
             events |= 16;
     }
+    if (h->inet || h->inet6) {
+        if (events & 1)
+            events |= read_events;
+        if (events & 4)
+            events |= socket_write_events;
+    }
     if (h->socket && h->socket->type == 1) {
         auto socket = h->socket;
         if (events & 1)
@@ -601,6 +607,10 @@ const void* readiness_source(const Handle& handle) {
         return handle.pipe;
     if (handle.socket)
         return handle.socket;
+    if (handle.inet)
+        return handle.inet;
+    if (handle.inet6)
+        return handle.inet6;
     return &handle;
 }
 

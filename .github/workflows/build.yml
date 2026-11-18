@@ -1167,6 +1167,8 @@ jobs:
           make test-select-waits
           sudo -n make test-descriptor-wait-lifetime-native
           make test-descriptor-wait-lifetime
+          sudo -n make test-udp-waits-native
+          make test-udp-waits
           sudo -n make test-epoll-lifetime-native
           make test-epoll-lifetime
           sudo -n make test-epoll-nested-native
@@ -1838,6 +1840,8 @@ jobs:
             build/select-waits-guest/**
             build/descriptor-wait-lifetime-native/**
             build/descriptor-wait-lifetime-guest/**
+            build/udp-waits-native/**
+            build/udp-waits-guest/**
             build/epoll-lifetime-native/**
             build/epoll-lifetime-guest/**
             build/epoll-nested-native/**

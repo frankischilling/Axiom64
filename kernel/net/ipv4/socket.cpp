@@ -9,6 +9,7 @@
 #include "process/task.hpp"
 #include "socket.hpp"
 #include "io/io.hpp"
+#include "io/descriptor_wait.hpp"
 
 namespace ax {
 InetSocket inet_sockets[inet_socket_count];
@@ -189,8 +190,10 @@ void inet_failed(InetSocket* socket, int error, unsigned failed_index) {
         tcp_failed(socket, error, failed_index);
         return;
     }
-    if (socket && socket->used && !socket->error)
+    if (socket && socket->used && !socket->error && error) {
         socket->error = error;
+        descriptor_wait_notify(socket, 8);
+    }
 }
 
 void inet_icmp_error(unsigned index, const uint8_t* quote, int error, uint16_t announced_mtu) {
@@ -235,7 +238,10 @@ void inet_icmp_error(unsigned index, const uint8_t* quote, int error, uint16_t a
 }
 
 void inet_reclaim(InetSocket* socket, size_t length) {
+    bool full = socket->transmitted >= socket->send_limit;
     socket->transmitted -= min(socket->transmitted, length);
+    if (full && socket->transmitted < socket->send_limit && !inet_stream(socket))
+        descriptor_wait_notify(socket, 4 | 0x100 | 0x200);
 }
 
 bool inet_dont_fragment(const InetSocket* socket, bool path_locked) {
@@ -280,6 +286,7 @@ static void enqueue(InetSocket& socket, const Ipv4ReceiveMetadata& metadata, uin
     socket.queue[(socket.head + socket.count) % inet_queue_count] = frame;
     socket.count++;
     socket.bytes += length;
+    descriptor_wait_notify(&socket, 1 | 0x40);
 }
 
 bool inet_deliver(const Ipv4ReceiveMetadata& metadata, const void* data, size_t length) {
@@ -628,6 +635,7 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
         if (b > 2)
             return -22;
         socket->shutdown |= b == 0 ? 1 : b == 1 ? 2 : 3;
+        descriptor_wait_notify(socket, 0);
         return socket->peer ? 0 : -107;
     case 51:
     case 52: {

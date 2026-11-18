@@ -169,6 +169,14 @@ checks all four wait syscalls on pipes and Unix stream sockets, with
 BIOS, UEFI, and read-only ext2 fixtures. Use
 `sudo make test-descriptor-wait-lifetime-native` for the Linux comparison.
 
+IPv4 and IPv6 UDP sockets notify waiters when a packet enters their
+receive queue or a socket error is recorded. A waiter can observe the
+notification even if another thread reads the packet or clears the
+error before it runs. The wakeup belongs to the socket that generated
+it. `make test-udp-waits` exercises loopback packets, including
+zero-length packets, and connection-refused errors across all four
+wait calls. `sudo make test-udp-waits-native` runs the Linux comparison.
+
 ## Epoll descriptor lifetime
 
 Epoll accepts descriptors with a poll operation, including pipes, sockets,

@@ -19,14 +19,21 @@ static_assert(sizeof(PollDescriptor) == 8 && sizeof(WaitTime) == 16);
 
 constexpr unsigned bitmap_words = (max_fds + 63) / 64;
 
+struct WaitWatch {
+    Handle* handle;
+    uint32_t events, ready;
+};
+
 struct DescriptorWait {
     WaitCall call;
     uint64_t descriptors, timeout, start;
     uint32_t count;
-    bool finite, masked, restart;
+    bool finite, masked, restart, notified;
     WaitTime duration;
     PollDescriptor entries[max_fds];
     uint64_t set_pointers[3], sets[3][bitmap_words];
+    unsigned watch_count;
+    WaitWatch watches[max_fds];
 
     bool uses_bitmaps() const {
         return call == WaitCall::select || call == WaitCall::pselect;
@@ -106,16 +113,25 @@ static int write_poll(Task& task, const DescriptorWait& wait, int result) {
     return result;
 }
 
-static uint32_t descriptor_events(Task& task, unsigned fd) {
+static Handle* watched_handle(Task& task, unsigned fd) {
     auto handle = fd < max_fds ? task.files->entries[fd].handle : nullptr;
-    return !handle || (handle->flags & 010000000) ? 32 : readiness(handle, &task);
+    return handle && !(handle->flags & 010000000) ? handle : nullptr;
 }
 
-static bool expired(const DescriptorWait& wait, const Task& task) {
+static uint32_t descriptor_events(Task& task, unsigned fd) {
+    auto handle = watched_handle(task, fd);
+    return handle ? readiness(handle, &task) : 32;
+}
+
+static bool deadline_elapsed(const DescriptorWait& wait) {
     if (!wait.finite)
         return false;
     auto left = remaining(wait);
-    return !left.seconds && !left.fraction && !signal_wakes(task);
+    return !left.seconds && !left.fraction;
+}
+
+static bool expired(const DescriptorWait& wait, const Task& task) {
+    return deadline_elapsed(wait) && !signal_wakes(task);
 }
 
 static int64_t attempt_poll(Task& task, DescriptorWait& wait) {
@@ -132,10 +148,11 @@ static int64_t attempt_poll(Task& task, DescriptorWait& wait) {
     return would_block;
 }
 
+// Read, write and exceptional conditions each contribute one result bit.
+constexpr uint32_t select_events[] = {1 | 8 | 16 | 32 | 0x40 | 0x80, 4 | 8 | 32 | 0x100 | 0x200,
+                                      2 | 32};
+
 static int64_t attempt_select(Task& task, const DescriptorWait& wait) {
-    // Read, write and exceptional conditions each contribute one result bit.
-    constexpr uint32_t events[] = {1 | 8 | 16 | 32 | 0x40 | 0x80, 4 | 8 | 32 | 0x100 | 0x200,
-                                   2 | 32};
     uint64_t output[3][bitmap_words]{};
     int count = 0;
     for (unsigned fd = 0; fd < wait.count; ++fd) {
@@ -145,7 +162,7 @@ static int64_t attempt_select(Task& task, const DescriptorWait& wait) {
             continue;
         uint32_t ready = descriptor_events(task, fd);
         for (unsigned set = 0; set < 3; ++set)
-            if ((wait.sets[set][word] & bit) && (ready & events[set])) {
+            if ((wait.sets[set][word] & bit) && (ready & select_events[set])) {
                 output[set][word] |= bit;
                 ++count;
             }
@@ -162,6 +179,80 @@ static int64_t attempt_select(Task& task, const DescriptorWait& wait) {
 
 static int64_t attempt(Task& task, DescriptorWait& wait) {
     return wait.uses_bitmaps() ? attempt_select(task, wait) : attempt_poll(task, wait);
+}
+
+static void watch(Task& task, DescriptorWait& wait, unsigned fd, uint32_t events) {
+    auto handle = watched_handle(task, fd);
+    if (!handle || !handle_has_poll(*handle))
+        return;
+    retain(handle);
+    wait.watches[wait.watch_count++] = {handle, events, readiness(handle, &task) & events};
+}
+
+static void register_watches(Task& task, DescriptorWait& wait) {
+    if (!wait.uses_bitmaps()) {
+        for (unsigned i = 0; i < wait.count; ++i) {
+            const auto& entry = wait.entries[i];
+            if (entry.fd >= 0)
+                watch(task, wait, unsigned(entry.fd), entry.events | 8 | 16);
+        }
+        return;
+    }
+    for (unsigned fd = 0; fd < wait.count; ++fd) {
+        unsigned word = fd / 64;
+        uint64_t bit = 1ull << (fd % 64);
+        uint32_t events = 0;
+        for (unsigned set = 0; set < 3; ++set)
+            if (wait.sets[set][word] & bit)
+                events |= select_events[set];
+        if (events)
+            watch(task, wait, fd, events | select_events[2]);
+    }
+}
+
+static void release_watches(DescriptorWait& wait) {
+    unsigned count = wait.watch_count;
+    wait.watch_count = 0;
+    wait.notified = false;
+    for (unsigned i = 0; i < count; ++i)
+        close_handle(wait.watches[i].handle);
+}
+
+void descriptor_wait_notify(const void* source, uint32_t events) {
+    for (auto& task : tasks) {
+        auto wait = task.descriptor_wait;
+        if (!wait || wait->notified)
+            continue;
+        for (unsigned i = 0; i < wait->watch_count; ++i) {
+            auto& watch = wait->watches[i];
+            if (readiness_source(*watch.handle) != source)
+                continue;
+            uint32_t interested = watch.events;
+            if (watch.handle->pipe) {
+                unsigned mode = watch.handle->flags & 3;
+                if (mode == 0)
+                    interested &= ~(4u | 0x100 | 0x200);
+                if (mode == 1)
+                    interested &= ~(1u | 0x40 | 0x80);
+            }
+            if (!events || (interested & events)) {
+                wait->notified = true;
+                break;
+            }
+        }
+    }
+}
+
+static bool watch_wakes(Task& task, DescriptorWait& wait) {
+    bool notified = wait.notified;
+    wait.notified = false;
+    for (unsigned i = 0; i < wait.watch_count; ++i) {
+        auto& watch = wait.watches[i];
+        uint32_t ready = readiness(watch.handle, &task) & watch.events;
+        notified |= (ready & ~watch.ready) != 0;
+        watch.ready = ready;
+    }
+    return notified;
 }
 
 static int import_timeout(Task& task, DescriptorWait& wait, const Frame& frame) {
@@ -242,6 +333,7 @@ int64_t descriptor_wait_syscall(Task& task, const Frame& frame) {
         auto saved = static_cast<DescriptorWait*>(alloc(sizeof(DescriptorWait)));
         if (saved) {
             *saved = wait;
+            register_watches(task, *saved);
             task.descriptor_wait = saved;
             task.wait = Wait::descriptor;
             task.state = State::blocked;
@@ -255,8 +347,12 @@ int64_t descriptor_wait_syscall(Task& task, const Frame& frame) {
 }
 
 void descriptor_wait_discard(Task& task) {
-    release(task.descriptor_wait);
+    auto wait = task.descriptor_wait;
+    if (!wait)
+        return;
     task.descriptor_wait = nullptr;
+    release_watches(*wait);
+    release(wait);
 }
 
 static void complete(Task& task, int result) {
@@ -273,15 +369,18 @@ bool descriptor_wait_resume(Task& task) {
     auto wait = task.descriptor_wait;
     if (!wait)
         return false;
-    int64_t result = 0;
-    if (wait->restart) {
-        wait->restart = false;
-        result = import_poll(task, *wait);
-    }
+    bool restarting = wait->restart;
+    if (!restarting && !watch_wakes(task, *wait) && !deadline_elapsed(*wait) && !signal_wakes(task))
+        return false;
+    wait->restart = false;
+    int64_t result = restarting ? import_poll(task, *wait) : 0;
     if (!result)
         result = attempt(task, *wait);
-    if (result == would_block)
+    if (result == would_block) {
+        if (restarting)
+            register_watches(task, *wait);
         return false;
+    }
     write_timeout(task, *wait);
     complete(task, int(result));
     return true;
@@ -310,6 +409,7 @@ void descriptor_wait_stop(Task& task) {
         complete(task, error ? error : -4);
     } else if (wait->call == WaitCall::poll) {
         // The restarted poll reimports the array with the original time budget.
+        release_watches(*wait);
         wait->restart = true;
     } else {
         // Reimport the inputs and remaining relative time on SIGCONT.

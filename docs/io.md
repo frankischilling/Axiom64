@@ -140,6 +140,23 @@ that interval on continue. The wait's resolution is 10 ms.
 providers and linkages on BIOS and UEFI, with read-only ext2 coverage.
 `sudo make test-select-waits-native` compares the same cases on Linux.
 
+## Descriptor lifetime during poll and select
+
+A blocked poll or select wait holds references to the pollable file
+descriptions it registered. Closing or reusing the descriptor number
+in another thread leaves the registration in place. A wakeup from the
+original description prompts the wait to check the current descriptor
+table. For example, a pipe reader held by a wait still permits a write
+from the peer after another thread closes its descriptor. On wakeup,
+`poll` reports `POLLNVAL` if the number is now closed, or reports
+readiness for the description that currently occupies the number.
+
+These references are released when the attempt ends, including on
+timeout, interruption, and task exit. `make test-descriptor-wait-lifetime`
+checks all four wait syscalls on pipes and Unix stream sockets, with
+BIOS, UEFI, and read-only ext2 fixtures. Use
+`sudo make test-descriptor-wait-lifetime-native` for the Linux comparison.
+
 ## Epoll descriptor lifetime
 
 Epoll accepts descriptors with a poll operation, including pipes, sockets,

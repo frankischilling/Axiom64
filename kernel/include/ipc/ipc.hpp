@@ -99,6 +99,7 @@ int64_t socket_accept(Task&, Handle*, uint64_t address, uint64_t length, unsigne
 int socket_output_address(Task&, Socket*, uint64_t address, uint64_t length);
 
 uint32_t readiness(Handle*, const Task*);
+const void* readiness_source(const Handle&);
 
 void epoll_notify(Handle* source = nullptr, uint32_t events = 0);
 void epoll_signal_notify(const SignalHandlers&);

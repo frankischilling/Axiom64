@@ -36,6 +36,10 @@ WORKLOADS = {
     'poll-waits': ('POLL_WAITS', ('arguments-and-masks', 'revents-copy', 'raw-and-libc-deadlines',
                                  'temporary-signal-mask', 'retained-poll', 'retained-ppoll',
                                  'stopped-poll', 'stopped-ppoll')),
+    'descriptor-wait-lifetime': ('WAIT_LIFETIME', tuple(
+        f'{call}-{scenario}' for call in ('poll', 'ppoll', 'select', 'pselect')
+        for scenario in ('pipe-close', 'pipe-reuse', 'socket-close', 'interrupt', 'timeout',
+                         'task-exit'))),
     'select-waits': ('SELECT_WAITS', ('argument-order', 'bitmap-capacity', 'readiness-masks',
                                      'deadlines', 'temporary-signal-mask', 'retained-select',
                                      'retained-pselect', 'stopped-select', 'stopped-pselect')),
@@ -344,7 +348,8 @@ def guest(directory, workload, client):
             print(f'{prefix}_GUEST_PASS {provider}/{linkage}/{firmware}', flush=True)
         if (provider, linkage) == ('build', 'static') and (
                 workload.startswith('posix-') or workload in ('named-pipes', 'poll-waits', 'select-waits',
-                                                          'epoll-lifetime', 'epoll-nested')):
+                                                          'epoll-lifetime', 'epoll-nested',
+                                                          'descriptor-wait-lifetime')):
             image, disk = ext2_fixture(case, kernel, payload, script, workload)
             fingerprint = disk_digest(disk)
             for firmware in ('bios', 'uefi'):

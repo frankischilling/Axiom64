@@ -370,6 +370,8 @@ Pipes, Unix streams, polling, epoll, select, and SysV shared memory have guest t
 blocked waits. Ppoll also supports temporary signal masks and timespec deadlines.
 [Select and pselect](io.md#select-and-pselect-waits) retain fd sets and write
 back the remaining interval through the raw syscalls.
+[Blocked descriptor waits](io.md#descriptor-lifetime-during-poll-and-select)
+retain wakeup registrations across close and number reuse.
 [Named pipes](io.md#named-pipes) support filesystem names, blocking opens, descriptor
 readiness, signal interruption, and persistent ext2 inodes.
 [Epoll lifetime tests](io.md#epoll-descriptor-lifetime) check duplicate and reused

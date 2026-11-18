@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/vfs.hpp"
+#include "io/descriptor_wait.hpp"
 #include "fs/pipe.hpp"
 #include "ipc/posix_message_queues.hpp"
 #include "fs/xattr.hpp"
@@ -1100,8 +1101,11 @@ int64_t pipe_read(Pipe* pipe, void* buffer, size_t length, bool peek) {
     for (size_t n = 0; n < length; n++)
         bytes[n] = pipe->bytes[(pipe->head + n) % sizeof(pipe->bytes)];
     if (!peek) {
+        bool was_full = pipe->size == sizeof(pipe->bytes);
         pipe->head = (pipe->head + length) % sizeof(pipe->bytes);
         pipe->size -= length;
+        if (was_full && length)
+            descriptor_wait_notify(pipe, 4 | 0x100);
     }
     return length;
 }

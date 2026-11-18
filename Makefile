@@ -31,6 +31,7 @@ build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-o
 .PHONY: test-named-pipes test-named-pipes-native
 .PHONY: test-poll-waits test-poll-waits-native test-select-waits test-select-waits-native
 .PHONY: test-epoll-lifetime test-epoll-lifetime-native
+.PHONY: test-descriptor-wait-lifetime test-descriptor-wait-lifetime-native
 .PHONY: test-epoll-nested test-epoll-nested-native
 test-system-v-semaphores:
 	$(PYTHON) -B scripts/ipc_abi_test.py sysv-semaphores --directory build/system-v-semaphores-guest
@@ -79,6 +80,12 @@ test-poll-waits:
 
 test-poll-waits-native:
 	$(PYTHON) -B scripts/ipc_abi_test.py poll-waits --native --directory build/poll-waits-native
+
+test-descriptor-wait-lifetime:
+	$(PYTHON) -B scripts/ipc_abi_test.py descriptor-wait-lifetime --directory build/descriptor-wait-lifetime-guest
+
+test-descriptor-wait-lifetime-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py descriptor-wait-lifetime --native --directory build/descriptor-wait-lifetime-native
 
 test-select-waits:
 	$(PYTHON) -B scripts/ipc_abi_test.py select-waits --directory build/select-waits-guest

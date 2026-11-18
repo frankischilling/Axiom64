@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fs/pipe.hpp"
+#include "io/descriptor_wait.hpp"
 #include "fs/descriptor.hpp"
 #include "fs/inotify.hpp"
 #include "process/task.hpp"
@@ -26,8 +27,11 @@ void detach_pipe(Handle& handle) {
     if (mode != 0)
         --pipe->writers;
     handle.pipe = nullptr;
-    if (pipe->readers || pipe->writers)
+    if (pipe->readers || pipe->writers) {
+        if (!pipe->readers || !pipe->writers)
+            descriptor_wait_notify(pipe, 0);
         return;
+    }
     if (handle.node)
         handle.node->named_pipe = nullptr;
     release(pipe);

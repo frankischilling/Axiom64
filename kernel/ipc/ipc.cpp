@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ipc/ipc.hpp"
+#include "io/descriptor_wait.hpp"
 #include "fs/inotify.hpp"
 #include "fs/proc.hpp"
 #include "ipc/timerfd.hpp"
@@ -564,7 +565,7 @@ void epoll_stop_wait(Task& task) {
     epoll_discard_wait(task);
 }
 
-static const void* epoll_origin(const Handle& handle) {
+const void* readiness_source(const Handle& handle) {
     if (handle.pipe)
         return handle.pipe;
     if (handle.socket)
@@ -584,7 +585,7 @@ static uint32_t epoll_leaf_notification(EpollItem& item, const void* source, uin
         }
     } else
         pending = ready & ~item.last_ready;
-    if (source && epoll_origin(*target) == source)
+    if (source && readiness_source(*target) == source)
         pending |= ready & events;
     item.last_ready = ready;
     return pending;
@@ -621,7 +622,7 @@ static void epoll_notify_exclusive(const void* source, uint32_t events,
         if (!pending)
             continue;
         // All signalfd watches in this pass use the same signal wait queue.
-        const void* key = signal_wait_queue ? nullptr : epoll_origin(*watch.handle);
+        const void* key = signal_wait_queue ? nullptr : readiness_source(*watch.handle);
         unsigned claim = 0;
         while (claim < count && claims[claim].source != key)
             ++claim;
@@ -673,6 +674,8 @@ static void epoll_refresh(Epoll& epoll, const void* source, uint32_t events, uin
 }
 
 static void epoll_notify_source(const void* source, uint32_t events) {
+    if (source)
+        descriptor_wait_notify(source, events);
     epoll_notify_exclusive(source, events);
     uint64_t visited = 0;
     for (auto poll : epolls)
@@ -681,7 +684,7 @@ static void epoll_notify_source(const void* source, uint32_t events) {
 }
 
 void epoll_notify(Handle* source, uint32_t events) {
-    epoll_notify_source(source ? epoll_origin(*source) : nullptr, events);
+    epoll_notify_source(source ? readiness_source(*source) : nullptr, events);
 }
 
 void epoll_signal_notify(const SignalHandlers& handlers) {

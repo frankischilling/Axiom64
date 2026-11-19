@@ -119,7 +119,8 @@ extern "C" [[noreturn]] void kernel_main() {
     arch_init();
     uint64_t rsdp = rsdp_request.response ? uint64_t(rsdp_request.response->address) : 0;
     Acpi::InterruptTopology topology;
-    bool have_topology = firmware_discover(rsdp, topology);
+    Acpi::DefinitionBlocks definitions;
+    bool have_topology = firmware_discover(rsdp, topology, definitions);
     clock_init(rsdp);
     if (word(cmd, "irq=pic"))
         log("Interrupts: PIC/PIT selected by boot option\n");
@@ -127,6 +128,7 @@ extern "C" [[noreturn]] void kernel_main() {
         interrupt_init_apic(topology);
     else
         log("Interrupts: PIC/PIT fallback, no validated MADT\n");
+    firmware_configure_pci_interrupts(rsdp, topology, definitions);
     random_init(!word(cmd, "random.trust_cpu=off"), word(cmd, "random.trust_virtio=on"));
     auto modules = module_request.response;
     if (!modules || !modules->module_count)

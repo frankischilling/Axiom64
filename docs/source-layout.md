@@ -8,7 +8,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/boot/` | Boot protocol, kernel startup, and root selection |
 | `kernel/core/` | Freestanding runtime, diagnostics, and counter arithmetic |
 | `kernel/core/random/` | Cryptographic primitives, entropy pool and generator state |
-| `kernel/firmware/` | Bounded ACPI table parsing and QEMU generation-ID discovery |
+| `kernel/firmware/` | Bounded ACPI table parsing, AML PCI interrupt routing, and QEMU generation-ID discovery |
 | `kernel/abi/linux/` | Linux syscall dispatch and ABI structures |
 | `kernel/mm/` | Physical and virtual memory, mapping/protection and heap admission limits, grow-down stacks |
 | `kernel/process/` | Tasks, scheduling, CPU accounting, process resource tables, signals, futexes, child-event waits and checked executable argument capture |

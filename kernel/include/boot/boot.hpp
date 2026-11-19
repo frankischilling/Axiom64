@@ -38,7 +38,10 @@ const uint8_t* firmware_read(uint64_t address, size_t length, void* context);
 
 namespace Acpi {
 struct InterruptTopology;
-}
+struct DefinitionBlocks;
+} // namespace Acpi
 
-bool firmware_discover(uint64_t rsdp, Acpi::InterruptTopology&);
+bool firmware_discover(uint64_t rsdp, Acpi::InterruptTopology&, Acpi::DefinitionBlocks&);
+void firmware_configure_pci_interrupts(uint64_t rsdp, const Acpi::InterruptTopology&,
+                                       const Acpi::DefinitionBlocks&);
 } // namespace ax

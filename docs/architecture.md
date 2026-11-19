@@ -53,7 +53,14 @@ segment-zero buses without a usable ECAM mapping.
 
 Boot also validates the DSDT referenced by the FADT and the SSDTs listed in
 the ACPI root table. SSDTs retain their firmware order for namespace loading.
-ACPI method evaluation for PCI INTx routing remains under development.
+After verifying APIC delivery, the kernel evaluates the AML used by Q35's
+root PCI bus to select the interrupt model, resolve pin routes and read
+interrupt resources. The I/O APIC uses the firmware's polarity and trigger
+mode. A level-triggered line can serve several devices. Each device clears
+its own interrupt cause before the local APIC acknowledges the line. A
+repeatedly unclaimed line is masked and the driver resumes polling.
+Dynamic interrupt links, PCI bridge routing, and broader AML support remain
+under development.
 
 Sources and public headers use matching subsystem folders. Desktop configuration is under `userspace/desktop/`; guest and host tests are grouped by the subsystem they exercise. [Source layout and build discovery](source-layout.md) describe the paths and conventions.
 

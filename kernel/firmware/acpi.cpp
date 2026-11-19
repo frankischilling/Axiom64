@@ -280,9 +280,8 @@ bool find_fixed_description(uint64_t rsdp, Read reader, void* context, FixedDesc
 static bool read_definition(uint64_t address, const char* signature, Read reader, void* context,
                             size_t& budget, DefinitionBlock& result) {
     // The boot firmware reader can map at most one MiB per table.
-    constexpr size_t maximum = 1024 * 1024;
-    const uint8_t* block =
-        table(address, signature, 36, reader, context, budget < maximum ? budget : maximum);
+    const uint8_t* block = table(address, signature, 36, reader, context,
+                                 budget < max_definition_bytes ? budget : max_definition_bytes);
     if (!block)
         return false;
     size_t length = little(block + 4, 4);

@@ -81,6 +81,8 @@ struct IoApic {
 
 LocalApic local;
 IoApic controllers[max_controllers];
+Irq::GsiRange controller_ranges[max_controllers];
+unsigned controller_count;
 enum class TimerRoute { Pic, Probe, Apic };
 TimerRoute timer_route;
 volatile unsigned probe_ticks;
@@ -93,6 +95,50 @@ struct MessageHandler {
 };
 
 MessageHandler messages[past_message_vector - first_message_vector];
+
+constexpr unsigned max_lines = 16, max_line_sources = 8;
+
+struct LineSource {
+    Irq::LineHandler call;
+    void* context;
+};
+
+struct LineRoute {
+    Irq::Route route;
+    uint32_t gsi;
+    uint8_t vector;
+    bool shared, retired_by_error;
+    unsigned unclaimed;
+    LineSource sources[max_line_sources];
+};
+
+LineRoute lines[max_lines];
+
+unsigned line_register(const LineRoute& line) {
+    return 0x10 + 2 * line.route.input;
+}
+
+void mask_line(const LineRoute& line) {
+    unsigned reg = line_register(line);
+    auto& io = controllers[line.route.controller];
+    io.write(reg, io.read(reg) | lvt_mask);
+}
+
+void dispatch_line(void* context) {
+    auto& line = *static_cast<LineRoute*>(context);
+    bool claimed = false;
+    for (const auto& source : line.sources)
+        if (source.call)
+            claimed |= source.call(source.context);
+    if (claimed)
+        line.unclaimed = 0;
+    else if (line.vector && !line.retired_by_error && ++line.unclaimed == 8) {
+        // Drop delivery before local EOI allows a still-asserted level to retrigger.
+        mask_line(line);
+        line.retired_by_error = true;
+        log("Interrupts: masked unclaimed I/O APIC line gsi=%u\n", uint64_t(line.gsi));
+    }
+}
 
 bool local_apic(const Acpi::InterruptTopology& topology, LocalApic& result, unsigned& id,
                 unsigned& lvt_count) {
@@ -145,28 +191,28 @@ bool io_apics(const Acpi::InterruptTopology& topology, Irq::GsiRange* ranges) {
     return true;
 }
 
-bool observe_timer() {
+template <class Predicate> bool observe_interrupt(Predicate observed) {
     constexpr unsigned period = 59659; // 50 ms on the independent PIT channel 2.
     uint8_t control = in8(0x61);
-    for (unsigned attempt = 0; attempt < 3 && probe_ticks < 2; ++attempt) {
+    for (unsigned attempt = 0; attempt < 3 && !observed(); ++attempt) {
         out8(0x61, control & ~3u);
         out8(0x43, 0xb0);
         out8(0x42, uint8_t(period));
         out8(0x42, uint8_t(period >> 8));
         out8(0x61, (control & ~2u) | 1u);
         asm volatile("sti" ::: "memory");
-        for (unsigned spins = 0; spins < 2000000 && probe_ticks < 2 && !(in8(0x61) & 0x20); ++spins)
+        for (unsigned spins = 0; spins < 2000000 && !observed() && !(in8(0x61) & 0x20); ++spins)
             asm volatile("pause");
         asm volatile("cli" ::: "memory");
     }
     out8(0x61, control);
-    return probe_ticks >= 2;
+    return observed();
 }
 
 const char* configure_apic_timer(const Acpi::InterruptTopology& topology) {
     LocalApic candidate{};
     unsigned destination, lvt_count;
-    Irq::GsiRange ranges[max_controllers];
+    auto& ranges = controller_ranges;
     Irq::Route route;
     const auto& override = topology.isa[0];
     uint32_t gsi = override.present ? override.gsi : 0;
@@ -212,8 +258,9 @@ const char* configure_apic_timer(const Acpi::InterruptTopology& topology) {
     probe_ticks = 0;
     controller.write(low_register + 1, destination << 24);
     controller.write(low_register, route.mode | Irq::apic_timer);
-    if (observe_timer()) {
+    if (observe_interrupt([] { return probe_ticks >= 2; })) {
         apic_destination = destination;
+        controller_count = topology.io_apic_count;
         timer_route = TimerRoute::Apic;
         log("Interrupts: %s I/O APIC PIT irq=0 gsi=%u input=%u cpu=%u ticks=%u\n",
             candidate.x2 ? "x2APIC" : "xAPIC", uint64_t(gsi), uint64_t(route.input),
@@ -268,6 +315,10 @@ void interrupt_init_apic(const Acpi::InterruptTopology& topology) {
         log("Interrupts: PIC/PIT fallback, %s\n", error);
 }
 
+bool interrupt_apic_ready() {
+    return timer_route == TimerRoute::Apic;
+}
+
 bool interrupt_register_message(Irq::Handler handler, void* context, Irq::Message& result) {
     if (timer_route != TimerRoute::Apic || !handler || next_message_vector == past_message_vector)
         return false;
@@ -281,6 +332,86 @@ bool interrupt_register_message(Irq::Handler handler, void* context, Irq::Messag
 void interrupt_retire_message(uint8_t vector) {
     if (vector >= first_message_vector && vector < next_message_vector)
         messages[vector - first_message_vector] = {};
+}
+
+bool interrupt_register_line(uint32_t gsi, bool active_low, bool shared, Irq::LineHandler handler,
+                             void* context, Irq::Line& subscription) {
+    if (!interrupt_apic_ready() || !handler || subscription.index)
+        return false;
+    Irq::Route route;
+    uint16_t flags = 12 | (active_low ? 3 : 1);
+    if (!Irq::isa_route(gsi, flags, controller_ranges, controller_count, route))
+        return false;
+    unsigned spare = max_lines;
+    for (unsigned index = 0; index < max_lines; ++index) {
+        auto& line = lines[index];
+        if (!line.vector) {
+            if (spare == max_lines)
+                spare = index;
+            continue;
+        }
+        if (line.gsi != gsi)
+            continue;
+        if (!shared || !line.shared || line.route.mode != route.mode || line.retired_by_error)
+            return false;
+        for (unsigned slot = 0; slot < max_line_sources; ++slot)
+            if (!line.sources[slot].call) {
+                line.sources[slot] = {handler, context};
+                subscription = {uint8_t(index + 1), uint8_t(slot)};
+                return true;
+            }
+        return false;
+    }
+    if (spare == max_lines)
+        return false;
+    auto& io = controllers[route.controller];
+    unsigned reg = 0x10 + 2 * route.input;
+    uint32_t low = io.read(reg);
+    if (!(low & lvt_mask) || (low & ioapic_delivery_mask) == ioapic_smi || (low & (1u << 14)))
+        return false; // Another owner, firmware SMI, or outstanding level acknowledgement.
+    auto& line = lines[spare];
+    Irq::Message message;
+    if (!interrupt_register_message(dispatch_line, &line, message))
+        return false;
+    line = {route, gsi, message.vector, shared, false, 0, {{handler, context}}};
+    uint32_t previous_high = io.read(reg + 1);
+    uint32_t destination = apic_destination << 24;
+    uint32_t redirect = route.mode | message.vector;
+    io.write(reg + 1, destination);
+    io.write(reg, redirect);
+    constexpr uint32_t writable_low = 0x1afff;
+    if ((io.read(reg) & writable_low) != redirect ||
+        (io.read(reg + 1) & 0xff000000) != destination) {
+        io.write(reg, low);
+        io.write(reg + 1, previous_high);
+        interrupt_retire_message(line.vector);
+        line = {};
+        return false;
+    }
+    subscription = {uint8_t(spare + 1), 0};
+    return true;
+}
+
+void interrupt_retire_line(Irq::Line& subscription) {
+    if (!subscription.index)
+        return;
+    auto& line = lines[subscription.index - 1];
+    line.sources[subscription.slot] = {};
+    subscription = {};
+    for (const auto& source : line.sources)
+        if (source.call)
+            return;
+    mask_line(line);
+    interrupt_retire_message(line.vector);
+    line = {};
+}
+
+bool interrupt_wait_for(const volatile bool& observed) {
+    return observe_interrupt([&observed] { return observed; });
+}
+
+bool interrupt_line_ready(const Irq::Line& subscription) {
+    return subscription.index && !lines[subscription.index - 1].retired_by_error;
 }
 
 bool interrupt_dispatch(uint64_t vector) {

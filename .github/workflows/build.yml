@@ -1636,6 +1636,7 @@ jobs:
         run: |
           make test-clock-codec 2>&1 | tee build/clock-codec.log
           make test-pci-interrupts 2>&1 | tee build/pci-interrupts.log
+          make test-acpi-routing 2>&1 | tee build/acpi-routing.log
       - name: Test elapsed clocks and deadlines across delayed storage
         if: matrix.suite == 'configuration'
         run: make test-clock
@@ -1782,6 +1783,7 @@ jobs:
             build/udp-*-pic.json
             build/udp-*-e1000e.json
             build/udp-e1000e/**
+            build/udp-intx/**
             build/ipv4-multicast-evidence/**
             build/ipv4-multicast-audit/**
             build/*.trace

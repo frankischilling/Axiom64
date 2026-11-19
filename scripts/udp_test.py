@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import selectors
 import shutil
 import socket
@@ -19,7 +20,7 @@ from network_fault import inject
 
 def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
         capture_directory=None, image=None, expected_irq=None, machine='pc', no_vectors=False,
-        force_pic=False, e1000e=False):
+        force_pic=False, e1000e=False, intx=None):
     label = f'udp-{firmware}-{transport}' + ('-fault' if fault else '')
     if machine != 'pc':
         label += f'-{machine}'
@@ -29,6 +30,8 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
         label += '-pic'
     if e1000e:
         label += '-e1000e'
+    if intx:
+        label += f'-intx-{intx}'
     log = ROOT / 'build' / (label + '.log')
     selector = selectors.DefaultSelector()
     control = Path('/tmp') / f'axiom64-udp-{os.getpid()}.sock'
@@ -45,15 +48,18 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
                '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
     if fault:
         command += ['-gdb', 'tcp:127.0.0.1:1239']
-    for lane, model in enumerate(['virtio-net-pci', 'e1000e' if e1000e else 'e1000']):
+    models = ['e1000', 'e1000'] if intx == 'shared' else [
+        'virtio-net-pci', 'e1000e' if e1000e else 'e1000']
+    slots = (4, 8) if intx == 'shared' else (4, 5)
+    for lane, model in enumerate(models):
         server = socket.socket()
         server.bind(('127.0.0.1', 0))
         server.listen(1)
         server.setblocking(False)
         servers.append(server)
         selector.register(server, selectors.EVENT_READ, ('server', lane))
-        nic = f'{model},netdev=peer{lane},id=nic{lane},addr={lane + 4:x},mac={peers[lane].guest.hex(":")}'
-        if lane == 0:
+        nic = f'{model},netdev=peer{lane},id=nic{lane},addr={slots[lane]:x},mac={peers[lane].guest.hex(":")}'
+        if model == 'virtio-net-pci':
             nic += ',disable-legacy=on' if transport == 'modern' else ',disable-modern=on'
             if no_vectors:
                 nic += ',vectors=0'
@@ -213,6 +219,26 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
             missing += [marker for marker in completions if marker not in text]
         elif any(marker in text for marker in completions):
             missing.append('polling 82574L emitted MSI completions')
+    intx_routes = re.findall(r'^e1000: INTx verified index=(\d+) gsi=(\d+)\r?$', text, re.M)
+    if intx:
+        indices = ('1', '2') if intx == 'shared' else ('2',)
+        for index in indices:
+            mode = 'poll' if intx == 'poll' else 'intx'
+            route = f'e1000: index={index} model=82540EM rx=64 tx=64 irq={mode}'
+            if route not in text:
+                missing.append(route)
+            markers = [f'e1000: INTx {direction} completion index={index}' for direction in ('RX', 'TX')]
+            if intx != 'poll':
+                missing += [marker for marker in markers if marker not in text]
+            elif any(marker in text for marker in markers):
+                missing.append('polling 82540EM emitted INTx completions')
+        expected_devices = list(indices) if intx != 'poll' else []
+        if [index for index, _ in intx_routes] != expected_devices:
+            missing.append('verified INTx routes for the expected adapters')
+        if intx == 'shared' and len({gsi for _, gsi in intx_routes}) != 1:
+            missing.append('both INTx adapters on one firmware GSI')
+        if 'masked unclaimed I/O APIC line' in text:
+            missing.append('INTx line was masked during wire traffic')
     host_passed = (peers[0].arp == peers[1].arp == 1 and peers[0].frames == 0 and peers[1].frames == 1) if fault else (
         len(link_events) == 4 and all(p.arp == 2 and p.frames == 4 and p.zero == 1 and p.zero_checksum == 1 and
             p.malformed == 14 and p.filter_input == 3 and p.filter_errors == 1 and p.server_replies == 1 and
@@ -236,6 +262,8 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
                   pressure_arp=[p.pressure_arp for p in peers], unanswered_arp=[p.unanswered for p in peers],
                   seconds=round(time.monotonic() - started, 2), log=log.name,
                   passed=returncode == 1 and not timed_out and not error and not missing and injected and host_passed)
+    if intx:
+        result['intx_routes'] = [dict(index=int(index), gsi=int(gsi)) for index, gsi in intx_routes]
     print(json.dumps(result), flush=True)
     if not result['passed']:
         print('\n'.join(text.splitlines()[-25:]), flush=True)
@@ -253,12 +281,15 @@ def main():
     parser.add_argument('--no-vectors', action='store_true')
     parser.add_argument('--force-pic', action='store_true')
     parser.add_argument('--e1000e', action='store_true')
+    parser.add_argument('--intx', choices=['single', 'shared', 'poll'])
     parser.add_argument('--capture-directory', type=Path)
     parser.add_argument('--debugger-delay', type=float, default=0,
                         help='simulate slow fault debugger setup while the guest is stopped')
     args = parser.parse_args()
     if args.debugger_delay < 0 or args.debugger_delay > 10 or (args.debugger_delay and not args.fault):
         parser.error('--debugger-delay must be from 0 to 10 seconds and requires --fault')
+    if args.intx and (args.e1000e or args.fault or (args.intx == 'shared' and args.expected_irq)):
+        parser.error('--intx uses 82540EM and normal traffic, with two Intel devices in shared mode')
     fixture(program='udp-tests', script='userspace/tests/net/udp.sh',
             environment={'AXIOM64_UDP_FAULT': '1'} if args.fault else None)
     image = 'udp-test-pic.iso' if args.force_pic else 'udp-test.iso'
@@ -270,10 +301,10 @@ def main():
     boot_image = ROOT / 'build' / image
     result = run(args.firmware, args.transport, args.timeout, args.fault, args.debugger_delay,
                  expected_irq=args.expected_irq, machine=args.machine, no_vectors=args.no_vectors,
-                 force_pic=args.force_pic, e1000e=args.e1000e, image=boot_image,
+                 force_pic=args.force_pic, e1000e=args.e1000e, image=boot_image, intx=args.intx,
                  capture_directory=args.capture_directory)
     receipt = 'udp-results.json'
-    if args.expected_irq or args.e1000e:
+    if args.expected_irq or args.e1000e or args.intx:
         receipt = result['log'].removesuffix('.log') + '.json'
     (ROOT / 'build' / receipt).write_text(json.dumps([result], indent=2) + '\n')
     if args.capture_directory:

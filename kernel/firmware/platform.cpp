@@ -30,8 +30,8 @@
 namespace ax {
 const uint8_t* firmware_read(uint64_t address, size_t length, void*) {
     auto map = memmap_request.response;
-    if (!map || !length || length > Acpi::max_table_bytes || address > UINT64_MAX - direct_map ||
-        length - 1 > UINT64_MAX - direct_map - address)
+    if (!map || !length || length > Acpi::max_definition_bytes ||
+        address > UINT64_MAX - direct_map || length - 1 > UINT64_MAX - direct_map - address)
         return nullptr;
     for (size_t i = 0; i < map->entry_count; i++) {
         auto entry = map->entries[i];
@@ -49,7 +49,9 @@ const uint8_t* firmware_read(uint64_t address, size_t length, void*) {
     return nullptr;
 }
 
-bool firmware_discover(uint64_t rsdp, Acpi::InterruptTopology& topology) {
+bool firmware_discover(uint64_t rsdp, Acpi::InterruptTopology& topology,
+                       Acpi::DefinitionBlocks& blocks) {
+    blocks = {};
     if (!rsdp) {
         log("ACPI: no root pointer supplied by firmware\n");
         return false;
@@ -79,7 +81,6 @@ bool firmware_discover(uint64_t rsdp, Acpi::InterruptTopology& topology) {
             uint64_t(fixed.sci), uint64_t(fixed.boot_flags), uint64_t(fixed.flags));
     else
         log("ACPI: FADT absent or rejected\n");
-    Acpi::DefinitionBlocks blocks;
     if (Acpi::find_definition_blocks(rsdp, firmware_read, nullptr, blocks))
         log("ACPI definition blocks: DSDT=%u bytes SSDTs=%u\n", uint64_t(blocks.dsdt.length),
             uint64_t(blocks.ssdt_count));
@@ -91,5 +92,18 @@ bool firmware_discover(uint64_t rsdp, Acpi::InterruptTopology& topology) {
     else
         log("ACPI: MCFG absent or rejected\n");
     return have_topology;
+}
+
+void firmware_configure_pci_interrupts(uint64_t rsdp, const Acpi::InterruptTopology& topology,
+                                       const Acpi::DefinitionBlocks& blocks) {
+    if (!interrupt_apic_ready() || !blocks.dsdt.table)
+        return;
+    Acpi::FixedDescription fixed;
+    if (!Acpi::find_fixed_description(rsdp, firmware_read, nullptr, fixed))
+        return;
+    uint32_t sci = fixed.sci;
+    if (sci < 16 && topology.isa[sci].present)
+        sci = topology.isa[sci].gsi;
+    pci_configure_intx(blocks, sci);
 }
 } // namespace ax

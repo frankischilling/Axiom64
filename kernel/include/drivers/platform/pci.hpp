@@ -30,7 +30,8 @@
 namespace ax {
 namespace Acpi {
 struct Mcfg;
-}
+struct DefinitionBlocks;
+} // namespace Acpi
 
 struct PciFunction {
     uint8_t bus, slot, function;
@@ -84,6 +85,30 @@ class PciMsix {
     uint8_t capability_ = 0, vector_ = 0;
 };
 
+class PciIntx {
+  public:
+    bool start(const PciFunction&, Irq::LineHandler, void* context);
+
+    void stop(const PciFunction&);
+
+    bool active() const {
+        return subscription_.index != 0;
+    }
+
+    uint32_t gsi() const {
+        return gsi_;
+    }
+
+    bool delivery_failed() const {
+        return active() && !interrupt_line_ready(subscription_);
+    }
+
+  private:
+    Irq::Line subscription_;
+    uint32_t gsi_ = 0;
+};
+
 void pci_configure_ecam(const Acpi::Mcfg&);
+void pci_configure_intx(const Acpi::DefinitionBlocks&, uint32_t sci);
 void pci_scan(void (*visit)(const PciFunction&));
 } // namespace ax

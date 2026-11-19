@@ -29,6 +29,7 @@
 
 namespace ax::Acpi {
 constexpr size_t max_table_bytes = 65536;
+constexpr size_t max_definition_bytes = 1024 * 1024;
 constexpr size_t max_root_entries = 256;
 using Read = const uint8_t* (*)(uint64_t physical_address, size_t length, void* context);
 

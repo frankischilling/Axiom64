@@ -26,6 +26,7 @@
 #include "drivers/platform/pci.hpp"
 #include "boot/boot.hpp"
 #include "firmware/acpi.hpp"
+#include "firmware/aml.hpp"
 
 namespace ax {
 namespace {
@@ -33,6 +34,7 @@ constexpr uint16_t msix_enable = 1u << 15, msix_function_mask = 1u << 14;
 constexpr uint32_t msix_entry_mask = 1;
 constexpr uint16_t msi_enable = 1, msi_message_count = 7u << 4;
 constexpr uint16_t msi_wide_address = 1u << 7, msi_vector_masking = 1u << 8;
+constexpr uint16_t intx_disabled = 1u << 10;
 
 struct EcamBus {
     volatile uint8_t* address;
@@ -46,6 +48,8 @@ struct EcamWindow {
 
 EcamWindow windows[Acpi::Mcfg::max_regions];
 unsigned window_count;
+Acpi::PciPinRoutes pin_routes;
+uint32_t sci_gsi;
 
 uint64_t physical_limit() {
     uint32_t a = 0x80000000, b, c, d;
@@ -92,6 +96,14 @@ uint32_t selector(const PciFunction& p, uint16_t offset) {
            uint32_t(p.function) << 8 | (offset & 0xfc);
 }
 } // namespace
+
+void pci_configure_intx(const Acpi::DefinitionBlocks& blocks, uint32_t sci) {
+    sci_gsi = sci;
+    if (Acpi::decode_pci_pin_routes(blocks, pin_routes))
+        log("PCI INTx: %u firmware pin routes\n", uint64_t(pin_routes.count));
+    else
+        log("PCI INTx: no usable firmware routes\n");
+}
 
 void pci_configure_ecam(const Acpi::Mcfg& mcfg) {
     uint64_t limit = physical_limit();
@@ -229,7 +241,7 @@ bool PciFunction::memory_bar_size(unsigned index, uint64_t& address, uint64_t& l
 }
 
 bool PciMsi::start(const PciFunction& pci, Irq::Handler handler, void* context) {
-    if (active() || !(pci.read16(4) & (1u << 10)))
+    if (active() || !(pci.read16(4) & intx_disabled))
         return false;
     unsigned boundary;
     uint8_t offset = pci.find_capability(5, &boundary);
@@ -355,6 +367,37 @@ void PciMsix::stop(const PciFunction& pci) {
     interrupt_retire_message(vector_);
     vector_ = capability_ = 0;
     table_ = nullptr;
+}
+
+bool PciIntx::start(const PciFunction& pci, Irq::LineHandler handler, void* context) {
+    if (active())
+        return false;
+    auto* route = Acpi::find_pci_pin(pin_routes, pci.segment, pci.bus, pci.slot, pci.function,
+                                     pci.read8(0x3d));
+    if (!route || !route->level || route->gsi == sci_gsi)
+        return false;
+    uint8_t msi = pci.find_capability(5), msix = pci.find_capability(0x11);
+    if ((msi && (pci.read16(msi + 2) & msi_enable)) ||
+        (msix && (pci.read16(msix + 2) & msix_enable)) ||
+        !interrupt_register_line(route->gsi, route->active_low, route->shared, handler, context,
+                                 subscription_))
+        return false;
+    pci.write16(4, pci.read16(4) & ~intx_disabled);
+    if (pci.read16(4) & intx_disabled) {
+        stop(pci);
+        return false;
+    }
+    gsi_ = route->gsi;
+    return true;
+}
+
+void PciIntx::stop(const PciFunction& pci) {
+    if (!active())
+        return;
+    pci.write16(4, pci.read16(4) | intx_disabled);
+    pci.read16(4);
+    interrupt_retire_line(subscription_);
+    gsi_ = 0;
 }
 
 static unsigned scan_bus(uint16_t segment, unsigned bus, volatile uint8_t* ecam,

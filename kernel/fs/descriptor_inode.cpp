@@ -184,7 +184,10 @@ int descriptor_inode(Handle& handle, Node*& node) {
 }
 
 const char* descriptor_inode_name(const Node* node) {
-    return node && node->mount->ops == &operations ? node->name : nullptr;
+    if (!node)
+        return nullptr;
+    const auto mount = node->mount;
+    return mount == &pipes || mount == &sockets || mount == &anonymous ? node->name : nullptr;
 }
 
 bool is_anonymous_pipe_inode(const Node* node) {

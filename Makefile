@@ -30,7 +30,7 @@ build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-o
 .PHONY: test-posix-aio test-posix-aio-native
 .PHONY: test-named-pipes test-named-pipes-native
 .PHONY: test-pipe-transfer test-pipe-transfer-native
-.PHONY: test-sendfile test-sendfile-native
+.PHONY: test-file-transfers test-file-transfers-native test-sendfile test-sendfile-native
 .PHONY: test-socket-splice test-socket-splice-native
 .PHONY: test-poll-waits test-poll-waits-native test-select-waits test-select-waits-native
 .PHONY: test-epoll-lifetime test-epoll-lifetime-native
@@ -84,11 +84,15 @@ test-pipe-transfer:
 test-pipe-transfer-native:
 	$(PYTHON) -B scripts/ipc_abi_test.py pipe-transfer --native --directory build/pipe-transfer-native
 
-test-sendfile:
-	$(PYTHON) -B scripts/ipc_abi_test.py sendfile --directory build/sendfile-guest
+test-file-transfers:
+	$(PYTHON) -B scripts/ipc_abi_test.py file-transfers --directory build/file-transfers-guest
 
-test-sendfile-native:
-	$(PYTHON) -B scripts/ipc_abi_test.py sendfile --native --directory build/sendfile-native
+test-file-transfers-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py file-transfers --native --directory build/file-transfers-native
+
+test-sendfile: test-file-transfers
+
+test-sendfile-native: test-file-transfers-native
 
 test-socket-splice:
 	$(PYTHON) -B scripts/ipc_abi_test.py socket-splice --directory build/socket-splice-guest

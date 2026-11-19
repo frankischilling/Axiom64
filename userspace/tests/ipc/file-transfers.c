@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
- * @file    userspace/tests/ipc/sendfile.c
- * @brief   File descriptor transfers through sendfile.
+ * @file    userspace/tests/ipc/file-transfers.c
+ * @brief   File descriptor transfers through sendfile and copy_file_range.
  * @author  frankischilling
  * @date    2026-11-18
  *
- * Checks transfer offsets, pipe and socket backpressure, descriptor lifetime,
- * and file size limits for sendfile.
+ * Checks file transfer offsets, descriptor lifetime, file size limits, and
+ * errors, including pipe and socket backpressure and overlapping ranges.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -44,7 +44,8 @@
 #define CHECK(condition)                                                                           \
     do {                                                                                           \
         if (!(condition)) {                                                                        \
-            fprintf(stderr, "SENDFILE_FAIL line=%d errno=%d %s\n", __LINE__, errno, #condition);   \
+            fprintf(stderr, "FILE_TRANSFER_FAIL line=%d errno=%d %s\n", __LINE__, errno,           \
+                    #condition);                                                                   \
             exit(1);                                                                               \
         }                                                                                          \
     } while (0)
@@ -110,7 +111,7 @@ static void arguments(int input, int output) {
     CHECK(sendfile(output, input, NULL, 0) == 0 && lseek(input, 0, SEEK_CUR) == 0);
     close_pair(pipefd);
     close_pair(sockets);
-    puts("SENDFILE_CASE arguments");
+    puts("FILE_TRANSFER_CASE arguments");
 }
 
 static void file_offsets(int input, int output) {
@@ -137,7 +138,7 @@ static void file_offsets(int input, int output) {
     CHECK(lseek(input, 0, SEEK_CUR) == 33);
     CHECK(pread(input, received, 12, 21) == 12 && !memcmp(payload + 3, received, 12));
     CHECK(pwrite(input, payload + 21, 12, 21) == 12);
-    puts("SENDFILE_CASE file-offsets");
+    puts("FILE_TRANSFER_CASE file-offsets");
 }
 
 static void copyout_fault(int input, int output) {
@@ -153,7 +154,7 @@ static void copyout_fault(int input, int output) {
     CHECK(lseek(output, 0, SEEK_CUR) == 17);
     CHECK(pread(output, received, 17, 0) == 17 && !memcmp(payload + 11, received, 17));
     CHECK(munmap(offset, page) == 0);
-    puts("SENDFILE_CASE copyout-fault");
+    puts("FILE_TRANSFER_CASE copyout-fault");
 }
 
 static void file_size_limit(int input) {
@@ -171,7 +172,7 @@ static void file_size_limit(int input) {
     CHECK(lseek(output, 0, SEEK_CUR) == 11 && lseek(input, 0, SEEK_CUR) == 0);
     CHECK(pread(output, received, 11, 0) == 11 && !memcmp(payload + 19, received, 11));
     CHECK(close(output) == 0);
-    puts("SENDFILE_CASE file-size-limit");
+    puts("FILE_TRANSFER_CASE file-size-limit");
 }
 
 static void pipe_output(int input) {
@@ -194,7 +195,7 @@ static void pipe_output(int input) {
     CHECK(close(pipefd[0]) == 0);
     CHECK(sendfile(pipefd[1], input, &offset, 13) == -1 && errno == EPIPE && offset == 20);
     CHECK(close(pipefd[1]) == 0);
-    puts("SENDFILE_CASE pipe-output");
+    puts("FILE_TRANSFER_CASE pipe-output");
 }
 
 static void memory_devices(int input, int legacy) {
@@ -216,7 +217,7 @@ static void memory_devices(int input, int legacy) {
     }
     close_pair(pipefd);
     CHECK(close(zero) == 0 && close(null) == 0);
-    puts("SENDFILE_CASE memory-devices");
+    puts("FILE_TRANSFER_CASE memory-devices");
 }
 
 static void unix_sockets(int input) {
@@ -241,7 +242,7 @@ static void unix_sockets(int input) {
     CHECK(sendfile(pipefd[1], sockets[1], NULL, 6) == 0);
     close_pair(pipefd);
     close_pair(sockets);
-    puts("SENDFILE_CASE unix-sockets");
+    puts("FILE_TRANSFER_CASE unix-sockets");
 }
 
 static int bind_loopback(int family, int type, struct sockaddr_storage* address, socklen_t* size) {
@@ -284,7 +285,7 @@ static void tcp_sockets(int input) {
         close_pair(pipefd);
         CHECK(close(sender) == 0 && close(receiver) == 0);
     }
-    puts("SENDFILE_CASE tcp-sockets");
+    puts("FILE_TRANSFER_CASE tcp-sockets");
 }
 
 static void udp_sockets(int input, int legacy) {
@@ -333,7 +334,7 @@ static void udp_sockets(int input, int legacy) {
         const int ends[] = {sender, receiver};
         close_pair(ends);
     }
-    puts("SENDFILE_CASE udp-sockets");
+    puts("FILE_TRANSFER_CASE udp-sockets");
 }
 
 struct transfer {
@@ -392,7 +393,7 @@ static void retain_descriptions(void) {
     CHECK(!memcmp(received, "source", 6));
     CHECK(close(source) == 0 && close(replacement) == 0);
     close_pair(pipefd);
-    puts("SENDFILE_CASE retained-descriptions");
+    puts("FILE_TRANSFER_CASE retained-descriptions");
 }
 
 static void caught(int signal_number) {
@@ -425,7 +426,7 @@ static void socket_backpressure(int input) {
     CHECK(lseek(input, 0, SEEK_CUR) == 4096);
     CHECK(sigaction(SIGUSR1, &previous, NULL) == 0);
     close_pair(sockets);
-    puts("SENDFILE_CASE socket-backpressure");
+    puts("FILE_TRANSFER_CASE socket-backpressure");
 }
 
 static void interrupted_copyout(int input) {
@@ -450,7 +451,170 @@ static void interrupted_copyout(int input) {
     read_exact(pipefd[0], &byte, 1);
     CHECK(byte == 'x');
     close_pair(pipefd);
-    puts("SENDFILE_CASE interrupted-copyout");
+    puts("FILE_TRANSFER_CASE interrupted-copyout");
+}
+
+static void range_arguments(int input, int output) {
+    off_t in = 0, out = 0;
+    off_t* invalid = (off_t*)(uintptr_t)1;
+    CHECK(copy_file_range(-1, invalid, output, &out, 1, 1) == -1 && errno == EBADF);
+    CHECK(copy_file_range(input, invalid, -1, &out, 1, 1) == -1 && errno == EBADF);
+    CHECK(copy_file_range(input, invalid, output, &out, 1, 1) == -1 && errno == EFAULT);
+    CHECK(copy_file_range(input, &in, output, invalid, 0, 0) == -1 && errno == EFAULT);
+    CHECK(copy_file_range(input, &in, output, &out, 0, 1) == -1 && errno == EINVAL);
+    CHECK(in == 0 && out == 0);
+    in = -1;
+    CHECK(copy_file_range(input, &in, output, &out, 0, 0) == -1 && errno == EINVAL);
+    in = 9;
+    CHECK(copy_file_range(input, &in, output, &out, SIZE_MAX - 8, 0) == -1 && errno == EOVERFLOW);
+    out = INT64_MAX;
+    CHECK(copy_file_range(input, &in, output, &out, 1, 0) == -1 && errno == EFBIG);
+    CHECK(in == 9 && out == INT64_MAX);
+
+    int directory = open("/tmp", O_RDONLY | O_DIRECTORY);
+    int path = open("/tmp", O_PATH);
+    int pipefd[2];
+    CHECK(directory >= 0 && path >= 0 && pipe(pipefd) == 0);
+    CHECK(copy_file_range(directory, NULL, output, NULL, 1, 0) == -1 && errno == EISDIR);
+    CHECK(copy_file_range(input, NULL, directory, NULL, 1, 0) == -1 && errno == EISDIR);
+    CHECK(copy_file_range(path, invalid, output, NULL, 1, 0) == -1 && errno == EBADF);
+    CHECK(copy_file_range(pipefd[0], NULL, output, NULL, 1, 0) == -1 && errno == EINVAL);
+    CHECK(copy_file_range(input, NULL, pipefd[1], NULL, 1, 0) == -1 && errno == EINVAL);
+    close_pair(pipefd);
+    CHECK(close(directory) == 0 && close(path) == 0);
+
+    char name[] = "/tmp/axiom-range-mode-XXXXXX";
+    int rw = mkstemp(name);
+    CHECK(rw >= 0);
+    int ro = open(name, O_RDONLY), wo = open(name, O_WRONLY);
+    CHECK(ro >= 0 && wo >= 0 && unlink(name) == 0);
+    CHECK(copy_file_range(input, NULL, ro, NULL, 1, 0) == -1 && errno == EBADF);
+    CHECK(copy_file_range(wo, NULL, output, NULL, 1, 0) == -1 && errno == EBADF);
+    CHECK(fcntl(rw, F_SETFL, O_APPEND) == 0);
+    CHECK(copy_file_range(input, NULL, rw, NULL, 0, 0) == -1 && errno == EBADF);
+    CHECK(close(ro) == 0 && close(wo) == 0 && close(rw) == 0);
+    puts("FILE_TRANSFER_CASE range-arguments");
+}
+
+static void range_offsets(int input, int output) {
+    off_t in = 4093, out = 19;
+    const size_t length = 100003;
+    CHECK(lseek(input, 23, SEEK_SET) == 23 && lseek(output, 31, SEEK_SET) == 31);
+    CHECK(copy_file_range(input, &in, output, &out, length, 0) == (ssize_t)length);
+    CHECK(in == 4093 + (off_t)length && out == 19 + (off_t)length);
+    CHECK(lseek(input, 0, SEEK_CUR) == 23 && lseek(output, 0, SEEK_CUR) == 31);
+    CHECK(pread(output, received, length, 19) == (ssize_t)length);
+    CHECK(!memcmp(payload + 4093, received, length));
+
+    CHECK(copy_file_range(input, NULL, output, &out, 7, 0) == 7);
+    CHECK(lseek(input, 0, SEEK_CUR) == 30 && lseek(output, 0, SEEK_CUR) == 31);
+    CHECK(out == 26 + (off_t)length);
+    CHECK(pread(output, received, 7, out - 7) == 7 && !memcmp(payload + 23, received, 7));
+
+    CHECK(copy_file_range(input, &in, output, NULL, 11, 0) == 11);
+    CHECK(lseek(input, 0, SEEK_CUR) == 30 && lseek(output, 0, SEEK_CUR) == 42);
+    CHECK(in == 4104 + (off_t)length);
+    CHECK(pread(output, received, 11, 31) == 11 && !memcmp(payload + in - 11, received, 11));
+
+    CHECK(lseek(input, sizeof(payload) - 9, SEEK_SET) == (off_t)sizeof(payload) - 9);
+    CHECK(copy_file_range(input, NULL, output, NULL, 41, 0) == 9);
+    CHECK(copy_file_range(input, NULL, output, NULL, 41, 0) == 0);
+    CHECK(lseek(input, 0, SEEK_CUR) == (off_t)sizeof(payload) && lseek(output, 0, SEEK_CUR) == 51);
+    CHECK(pread(output, received, 9, 42) == 9 &&
+          !memcmp(payload + sizeof(payload) - 9, received, 9));
+    puts("FILE_TRANSFER_CASE range-offsets");
+}
+
+static void range_aliases(void) {
+    char path[] = "/tmp/axiom-range-alias-XXXXXX";
+    int input = mkstemp(path);
+    CHECK(input >= 0 && write(input, payload, 32) == 32);
+    char alias[sizeof(path) + 6];
+    CHECK(snprintf(alias, sizeof(alias), "%s-alias", path) == (int)sizeof(alias) - 1);
+    CHECK(link(path, alias) == 0);
+    int output = open(alias, O_RDWR);
+    CHECK(output >= 0 && unlink(alias) == 0 && unlink(path) == 0);
+
+    off_t in = 2, out = 5;
+    CHECK(copy_file_range(input, &in, output, &out, 9, 0) == -1 && errno == EINVAL);
+    CHECK(in == 2 && out == 5);
+    CHECK(pread(input, received, 32, 0) == 32 && !memcmp(payload, received, 32));
+    in = 24;
+    out = 32;
+    CHECK(copy_file_range(input, &in, output, &out, 24, 0) == 8 && in == 32 && out == 40);
+    CHECK(pread(input, received, 8, 32) == 8 && !memcmp(payload + 24, received, 8));
+    CHECK(lseek(input, 0, SEEK_CUR) == 32 && lseek(output, 0, SEEK_CUR) == 0);
+    CHECK(close(input) == 0 && close(output) == 0);
+    puts("FILE_TRANSFER_CASE range-aliases");
+}
+
+static void range_copyout(int input, int output) {
+    size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    off_t* fixed = mmap(NULL, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(fixed != MAP_FAILED);
+    *fixed = 13;
+    CHECK(mprotect(fixed, page, PROT_READ) == 0);
+    CHECK(lseek(input, 0, SEEK_SET) == 0 && lseek(output, 0, SEEK_SET) == 0);
+    CHECK(copy_file_range(input, fixed, output, NULL, 0, 0) == 0 && *fixed == 13);
+    off_t out = 37;
+    CHECK(copy_file_range(input, fixed, output, &out, 11, 0) == -1 && errno == EFAULT);
+    CHECK(*fixed == 13 && out == 48 && lseek(input, 0, SEEK_CUR) == 0);
+    CHECK(lseek(output, 0, SEEK_CUR) == 0);
+    CHECK(pread(output, received, 11, 37) == 11 && !memcmp(payload + 13, received, 11));
+
+    CHECK(copy_file_range(input, NULL, output, fixed, 10, 0) == -1 && errno == EFAULT);
+    CHECK(*fixed == 13 && lseek(input, 0, SEEK_CUR) == 10 && lseek(output, 0, SEEK_CUR) == 0);
+    CHECK(pread(output, received, 10, 13) == 10 && !memcmp(payload, received, 10));
+    CHECK(munmap(fixed, page) == 0);
+    puts("FILE_TRANSFER_CASE range-copyout");
+}
+
+static void range_mounts_and_holes(int input) {
+    char tmpfs[] = "/dev/shm/axiom-range-XXXXXX";
+    int other = mkstemp(tmpfs);
+    CHECK(other >= 0 && unlink(tmpfs) == 0);
+    off_t in = 4, out = 2;
+    CHECK(copy_file_range(input, &in, other, &out, 13, 0) == -1 && errno == EXDEV);
+    CHECK(copy_file_range(input, &in, other, &out, 0, 0) == -1 && errno == EXDEV);
+    CHECK(in == 4 && out == 2 && lseek(other, 0, SEEK_END) == 0);
+    CHECK(close(other) == 0);
+
+    int sparse = create_file(NULL, 0), output = create_file(payload, 24576);
+    CHECK(pwrite(sparse, "begin", 5, 0) == 5 && pwrite(sparse, "end", 3, 24573) == 3);
+    CHECK(copy_file_range(sparse, NULL, output, NULL, 24576, 0) == 24576);
+    CHECK(pread(output, received, 24576, 0) == 24576);
+    CHECK(!memcmp(received, "begin", 5) && !memcmp(received + 24573, "end", 3));
+    for (size_t i = 5; i < 24573; ++i)
+        CHECK(received[i] == 0);
+    CHECK(close(sparse) == 0 && close(output) == 0);
+    puts("FILE_TRANSFER_CASE range-mounts-and-holes");
+}
+
+static volatile sig_atomic_t file_limit_signals;
+
+static void report_file_limit(int signal_number) {
+    (void)signal_number;
+    ++file_limit_signals;
+}
+
+static void range_file_limit(int input) {
+    struct sigaction action = {.sa_handler = report_file_limit}, previous;
+    CHECK(sigemptyset(&action.sa_mask) == 0 && sigaction(SIGXFSZ, &action, &previous) == 0);
+    struct rlimit saved, clamped;
+    CHECK(getrlimit(RLIMIT_FSIZE, &saved) == 0);
+    clamped = saved;
+    clamped.rlim_cur = 8193;
+    int output = create_file(NULL, 0);
+    CHECK(setrlimit(RLIMIT_FSIZE, &clamped) == 0);
+    off_t in = 9, out = 4091;
+    CHECK(copy_file_range(input, &in, output, &out, 16384, 0) == 4102);
+    CHECK(in == 4111 && out == 8193 && file_limit_signals == 0);
+    CHECK(copy_file_range(input, &in, output, &out, 1, 0) == -1 && errno == EFBIG);
+    CHECK(in == 4111 && out == 8193 && file_limit_signals == 1);
+    CHECK(setrlimit(RLIMIT_FSIZE, &saved) == 0 && sigaction(SIGXFSZ, &previous, NULL) == 0);
+    CHECK(pread(output, received, 4102, 4091) == 4102 && !memcmp(payload + 9, received, 4102));
+    CHECK(lseek(output, 0, SEEK_END) == 8193 && close(output) == 0);
+    puts("FILE_TRANSFER_CASE range-file-limit");
 }
 
 int main(int argc, char** argv) {
@@ -479,7 +643,13 @@ int main(int argc, char** argv) {
     retain_descriptions();
     socket_backpressure(input);
     interrupted_copyout(input);
+    range_arguments(input, output);
+    range_offsets(input, output);
+    range_aliases();
+    range_copyout(input, output);
+    range_mounts_and_holes(input);
+    range_file_limit(input);
     CHECK(close(input) == 0 && close(output) == 0);
-    printf("SENDFILE_PASS uid=%u\n", (unsigned)getuid());
+    printf("FILE_TRANSFER_PASS uid=%u\n", (unsigned)getuid());
     return 0;
 }

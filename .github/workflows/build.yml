@@ -1177,8 +1177,8 @@ jobs:
       - name: Compare pipe, socket, and file transfers across processes and filesystems
         if: matrix.suite == 'boot'
         run: |
-          sudo -n make test-named-pipes-native test-pipe-transfer-native test-socket-splice-native test-sendfile-native
-          make test-named-pipes test-pipe-transfer test-socket-splice test-sendfile
+          sudo -n make test-named-pipes-native test-pipe-transfer-native test-socket-splice-native test-file-transfers-native
+          make test-named-pipes test-pipe-transfer test-socket-splice test-file-transfers
       - name: Compare POSIX semaphores, message queues, and asynchronous I/O
         if: matrix.suite == 'boot'
         run: |
@@ -1837,8 +1837,8 @@ jobs:
             build/named-pipes-guest/**
             build/pipe-transfer-native/**
             build/pipe-transfer-guest/**
-            build/sendfile-native/**
-            build/sendfile-guest/**
+            build/file-transfers-native/**
+            build/file-transfers-guest/**
             build/socket-splice-native/**
             build/socket-splice-guest/**
             build/poll-waits-native/**

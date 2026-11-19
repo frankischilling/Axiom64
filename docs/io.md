@@ -9,6 +9,7 @@ Axiom64 retains the open file description selected by an I/O syscall while that 
 | `read`, `write`, `readv`, `writev` | Existing regular files, pipes, Unix stream sockets, event counters, and character/block devices |
 | `splice`, `tee` | Pipe and FIFO transfers. `splice` also accepts regular RAM and ext2 files, supported memory devices, Unix streams and datagrams, IPv4 and IPv6 TCP and UDP, raw packet sockets, and route netlink sockets. |
 | `sendfile` | File and memory device transfers to regular files, devices, pipes, and sockets. A socket can feed a pipe. |
+| `copy_file_range` | Copies between regular files on the same RAM or ext2 filesystem. |
 | `vmsplice` | Transfers between userspace vectors and pipe or FIFO endpoints. |
 | `pread64`, `pwrite64` | Seekable files, block devices, and the standard memory devices described below. The shared file offset is preserved. Pipes, sockets, and other character devices return `ESPIPE`. |
 | `recvfrom`, `sendto` | Connected Unix streams, including receive-address output; a send destination is unsupported |
@@ -400,6 +401,15 @@ An interrupted call reports a partial transfer when bytes have moved. A
 copyout fault takes precedence over a signal restart. The checks cover file
 size limits, writable ext2, nonblocking pipes and sockets, and descriptor
 replacement while blocked.
+
+The `copy_file_range` syscall copies between regular files on the same
+filesystem, with independent source and destination offsets. Null offset
+pointers select the descriptions' shared positions. The kernel limits the
+copy at source EOF and at the destination file size limit. It rejects
+overlapping ranges in the same inode, including through a hard link, and
+returns `EXDEV` across filesystems so callers can use their read/write
+fallback. Copyout faults leave the transferred bytes in place and the other
+cursor still commits. Copied holes supply zero bytes.
 
 `vmsplice` captures the vector addresses and lengths before waiting. Memory
 queued into a pipe keeps a reference to each readable page until the pipe

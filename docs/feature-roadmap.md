@@ -226,7 +226,7 @@ Acceptance evidence:
 
 Static/dynamic musl programs and a tested syscall subset work; unsupported calls return ENOSYS.
 
-[Local flock](file-locks.md) is compared with actual Linux for descriptor ownership, conversion, restart, stop/continue and process lifetime. Four guest boots compare both linkages on RAM and ext2. [Sendfile](io.md) exercises regular files, devices, pipes, and socket transfers on both musl linkages and writable ext2. The complete syscall matrix and every requirement below remain open.
+[Local flock](file-locks.md) is compared with actual Linux for descriptor ownership, conversion, restart, stop/continue and process lifetime. Four guest boots compare both linkages on RAM and ext2. [File transfer tests](io.md) cover `sendfile` and `copy_file_range` on both musl linkages and writable ext2. The complete syscall matrix and every requirement below remain open.
 
 Required work:
 

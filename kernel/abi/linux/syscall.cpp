@@ -1610,6 +1610,8 @@ static int64_t dispatch(Frame* f) {
         }
         return done;
     }
+    case 326:
+        return io_syscall(*current, *f);
     default:
         log("unimplemented syscall %u pid=%u\n", f->rax, uint64_t(current->pid));
         return -38;

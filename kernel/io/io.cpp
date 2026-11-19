@@ -57,15 +57,29 @@ struct Message {
 
 static_assert(sizeof(Iovec) == 16 && sizeof(Message) == 56);
 
-struct SendfileBuffer {
+constexpr uint64_t max_transfer_count = uint64_t(INT32_MAX) & ~(uint64_t(page_size) - 1);
+
+struct TransferBuffer {
     Pipe pipe;
     PipeSlot slots[16];
+
+    void init() {
+        pipe = {};
+        pipe.slots = slots;
+        pipe.capacity = sizeof(slots) / sizeof(slots[0]);
+        pipe.readers = 1;
+    }
+
+    void discard() {
+        while (pipe.occupied)
+            pipe_consume_head(pipe, pipe.head_bytes());
+    }
 };
 
 struct IoRequest {
     Handle* handle;
     Handle* pipe_target;
-    SendfileBuffer* sendfile_buffer;
+    TransferBuffer* sendfile_buffer;
     uint64_t splice_position, output_position;
     Task* record_task = nullptr;
     unsigned record_command = 0;
@@ -127,8 +141,7 @@ static void destroy(IoRequest* request) {
     if (request->unix_rights)
         request->unix_rights->drop();
     if (auto buffer = request->sendfile_buffer) {
-        while (buffer->pipe.occupied)
-            pipe_consume_head(buffer->pipe, buffer->pipe.head_bytes());
+        buffer->discard();
         release(buffer);
     }
     close_handle(request->pipe_target);
@@ -1753,13 +1766,10 @@ static int64_t sendfile_attempt(Task& task, IoRequest& request) {
     if (!source_device && !splice_regular(source))
         return -22;
     if (!request.sendfile_buffer) {
-        auto buffer = static_cast<SendfileBuffer*>(alloc(sizeof(SendfileBuffer)));
+        auto buffer = static_cast<TransferBuffer*>(alloc(sizeof(TransferBuffer)));
         if (!buffer)
             return -12;
-        buffer->pipe = {};
-        buffer->pipe.slots = buffer->slots;
-        buffer->pipe.capacity = sizeof(buffer->slots) / sizeof(buffer->slots[0]);
-        buffer->pipe.readers = 1;
+        buffer->init();
         request.sendfile_buffer = buffer;
     }
     auto& pipe = request.sendfile_buffer->pipe;
@@ -2176,7 +2186,7 @@ static int64_t sendfile_syscall(Task& task, const Frame& frame) {
     auto target = unsigned(output) < max_fds ? task.files->entries[output].handle : nullptr;
     if (!target || (target->flags & 010000000) || !(target->flags & 3))
         return finish(-9);
-    size_t length = min(frame.r10, uint64_t(INT32_MAX) & ~(uint64_t(page_size) - 1));
+    size_t length = min(frame.r10, max_transfer_count);
     if (!target->pipe && (unseekable || (target->flags & 02000) || target->offset > INT64_MAX ||
                           length > uint64_t(INT64_MAX) - target->offset))
         return finish(-22);
@@ -2214,7 +2224,98 @@ static int64_t sendfile_syscall(Task& task, const Frame& frame) {
     return result;
 }
 
+static int64_t copy_file_range_syscall(Task& task, const Frame& frame) {
+    int input = int(frame.rdi), output = int(frame.rdx);
+    auto source = unsigned(input) < max_fds ? task.files->entries[input].handle : nullptr;
+    auto target = unsigned(output) < max_fds ? task.files->entries[output].handle : nullptr;
+    if (!source || !target || ((source->flags | target->flags) & 010000000))
+        return -9;
+
+    uint64_t in = source->offset, out = target->offset;
+    auto& space = task.memory->space;
+    if ((frame.rsi && !space.copy_in(&in, frame.rsi, sizeof(in))) ||
+        (frame.r10 && !space.copy_in(&out, frame.r10, sizeof(out))))
+        return -14;
+    if (uint32_t(frame.r9))
+        return -22;
+
+    auto from = source->node;
+    auto to = target->node;
+    unsigned from_type = from ? from->mode & 0170000 : 0;
+    unsigned to_type = to ? to->mode & 0170000 : 0;
+    if (from_type == directory || to_type == directory)
+        return -21;
+    if (from_type != regular_file || to_type != regular_file)
+        return -22;
+    if ((source->flags & 3) == 1 || !(target->flags & 3) || (target->flags & 02000))
+        return -9;
+    if (from->mount != to->mount)
+        return -18;
+
+    size_t length = frame.r8;
+    if (length > UINT64_MAX - in || length > UINT64_MAX - out)
+        return -75;
+    if (in > INT64_MAX || out > INT64_MAX)
+        return -22;
+    length = min(length, in < from->size ? from->size - in : 0);
+    if (length) {
+        if (int error = write_handle_limit_at(&task, *target, out, length))
+            return error;
+        length = min(uint64_t(length), uint64_t(INT64_MAX) - out);
+        if (!length)
+            return -27;
+    }
+    if (from == to && out + length > in && out < in + length)
+        return -22;
+    if (!length)
+        return 0;
+    if (!splice_regular(*source) || !splice_regular(*target))
+        return -22;
+
+    TransferBuffer buffer;
+    buffer.init();
+    length = min(uint64_t(length), max_transfer_count);
+    size_t copied = 0;
+    int64_t result = 0;
+    while (copied < length) {
+        uint64_t read_ahead = in;
+        auto read = splice_file_to_pipe(*source, buffer.pipe, read_ahead, length - copied);
+        if (read <= 0) {
+            result = read;
+            break;
+        }
+        result = splice_pipe_to_file(task, buffer.pipe, *target, out, read);
+        if (result > 0) {
+            copied += result;
+            in += result;
+        }
+        if (result < read)
+            break;
+    }
+    buffer.discard();
+    if (!copied)
+        return result;
+
+    inotify_dentry(source->opened_dentry, inotify_access);
+    inotify_dentry(target->opened_dentry, inotify_modify);
+    // Each cursor commits independently, even when the other user's pointer faults.
+    result = copied;
+    if (frame.rsi) {
+        if (!space.copy_out(frame.rsi, &in, sizeof(in)))
+            result = -14;
+    } else
+        source->offset = in;
+    if (frame.r10) {
+        if (!space.copy_out(frame.r10, &out, sizeof(out)))
+            result = -14;
+    } else
+        target->offset = out;
+    return result;
+}
+
 int64_t io_syscall(Task& task, const Frame& frame) {
+    if (frame.rax == 326)
+        return copy_file_range_syscall(task, frame);
     if (frame.rax == 40)
         return sendfile_syscall(task, frame);
     if (frame.rax == 275 || frame.rax == 276)

@@ -17,7 +17,7 @@ import tempfile
 
 from account_normal_test import write_cpio
 from disk_root import archive_entries
-from fetch import ROOT
+from fetch import ROOT, fetch
 from fixture_archive import fingerprint
 from sources import SOURCE_LOCK, port_sources
 
@@ -47,7 +47,7 @@ def supply_tool_sources(files, source_root):
     return records
 
 
-def pack_fixture(rootfs, destination, build_tools):
+def pack_fixture(rootfs, destination, build_tools, system_image):
     files = archive_entries(rootfs)
     source_root = Path('root/kernel-build')
     if any(Path(name).is_relative_to(source_root) for name in files):
@@ -56,6 +56,10 @@ def pack_fixture(rootfs, destination, build_tools):
     sources = [ROOT / 'Makefile', ROOT / 'vendor/limine.h']
     sources.extend(path for path in (ROOT / 'kernel').rglob('*')
                    if path.is_file() and path.suffix in {'.cpp', '.hpp', '.asm', '.ld'})
+    if system_image:
+        sources.extend(ROOT / name for name in ('boot/limine.conf', 'userspace/init/main.c',
+            'userspace/init/console.c', 'userspace/init/console.h', 'userspace/init/seed_records.h',
+            'userspace/tests/abi/abi.c'))
     inputs = {}
     for source in sorted(sources):
         name = source.relative_to(ROOT)
@@ -66,6 +70,12 @@ def pack_fixture(rootfs, destination, build_tools):
         payload = source.read_bytes()
         files[str(member)] = (stat.S_IFREG | 0o644, payload)
         inputs[name.as_posix()] = hashlib.sha256(payload).hexdigest()
+    if system_image:
+        for name, path in (('build-system.sh', ROOT / 'userspace/tests/toolchain/build-system.sh'),
+                           ('limine-binary.tar.gz', fetch('limine'))):
+            payload = path.read_bytes()
+            files[str(source_root / name)] = (0o100644, payload)
+            inputs[name] = hashlib.sha256(payload).hexdigest()
     checks = ''.join(f'{digest}  {name}\n' for name, digest in inputs.items())
     files[str(source_root / 'inputs.sha256')] = (0o100644, checks.encode())
     runner = ROOT / 'userspace/tests/toolchain/kernel-build.sh'
@@ -82,7 +92,7 @@ def make_image(directory, name, kernel, rootfs):
     return directory / name
 
 
-def export_kernel(directory, image, accelerator, timeout):
+def export_kernel(directory, image, accelerator, timeout, system_image):
     disk = directory / 'kernel-export.raw'
     with disk.open('xb') as output:
         output.truncate(96 * 1024 * 1024)
@@ -106,7 +116,10 @@ def export_kernel(directory, image, accelerator, timeout):
         subprocess.run(['e2fsck', '-f', '-n', str(disk)], stdout=fsck, stderr=subprocess.STDOUT, check=True)
     kernel = directory / 'guest-built.elf'
     checks = directory / 'source-check.log'
-    for artifact, guest in ((kernel, 'axiom64.elf'), (checks, 'source-check.log')):
+    exports = [(kernel, 'axiom64.elf'), (checks, 'source-check.log')]
+    if system_image:
+        exports.extend((directory / name, name) for name in ('rootfs.cpio', 'guest-built.iso'))
+    for artifact, guest in exports:
         subprocess.run(['debugfs', '-R', f'dump -p /{guest} "{artifact}"', str(disk)], check=True)
     expected = fingerprint(kernel)['sha256']
     for destination in ('build/axiom64.elf', '/mnt/kernel-export/axiom64.elf'):
@@ -115,11 +128,37 @@ def export_kernel(directory, image, accelerator, timeout):
     return kernel, checks, serial, command
 
 
+def verify_system_image(directory, kernel, serial):
+    rootfs, image = (directory / name for name in ('rootfs.cpio', 'guest-built.iso'))
+    lines = serial.read_text(errors='replace').splitlines()
+    for marker in ('AXIOM64_GUEST_ROOTFS_BUILT', 'AXIOM64_GUEST_IMAGE_BUILT'):
+        if lines.count(marker) != 1:
+            raise RuntimeError(f'missing {marker}, see {serial}')
+    for artifact in (rootfs, image):
+        identity = fingerprint(artifact)
+        if lines.count(f'{identity["sha256"]}  /mnt/kernel-export/{artifact.name}') != 1:
+            raise RuntimeError(f'guest and recovered {artifact.name} digests differ, see {serial}')
+    root_files = archive_entries(rootfs)
+    for member in ('sbin/init', 'bin/abi-static', 'bin/abi-dynamic'):
+        digest = hashlib.sha256(root_files[member][1]).hexdigest()
+        if lines.count(f'{digest}  {member}') != 1:
+            raise RuntimeError(f'guest and archived {member} digests differ, see {serial}')
+    with tempfile.TemporaryDirectory(prefix='image-members-', dir=directory) as scratch:
+        for member, original in (('axiom64.elf', kernel), ('rootfs.cpio', rootfs)):
+            extracted = Path(scratch) / member
+            subprocess.run(['xorriso', '-osirrox', 'on', '-indev', str(image), '-extract',
+                            '/boot/' + member, str(extracted)], check=True)
+            if fingerprint(extracted) != fingerprint(original):
+                raise RuntimeError(f'guest ISO contains a different {member}')
+    return image, fingerprint(rootfs)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--accelerator', choices=('kvm', 'tcg'), default=os.getenv('AXIOM64_KERNEL_BUILD_ACCEL', 'tcg'))
     parser.add_argument('--build-timeout', type=int, default=5400, help='seconds allowed for the in-guest build')
     parser.add_argument('--source-tools', action='store_true', help='build and use the pinned GNU Make and NASM sources')
+    parser.add_argument('--system-image', action='store_true', help='build init, a small rootfs, and the ISO in the guest')
     args = parser.parse_args()
     if args.build_timeout <= 0:
         parser.error('--build-timeout must be positive')
@@ -130,25 +169,32 @@ def main():
     kernel_identity = fingerprint(kernel)
     rootfs_identity = fingerprint(rootfs)
     build_root = directory / 'compiler.cpio'
-    sources, tools = pack_fixture(rootfs, build_root, args.source_tools)
+    sources, tools = pack_fixture(rootfs, build_root, args.source_tools, args.system_image)
     compile_image = make_image(directory, directory.name + '-compiler.iso', kernel, build_root)
-    result, check, serial, command = export_kernel(directory, compile_image, args.accelerator, args.build_timeout)
+    result, check, serial, command = export_kernel(directory, compile_image, args.accelerator, args.build_timeout,
+                                                   args.system_image)
     if args.source_tools and serial.read_text(errors='replace').splitlines().count('AXIOM64_BUILD_TOOLS_BUILT') != 1:
         raise RuntimeError(f'no completed source tool build was observed, see {serial}')
     if check.read_text().splitlines() != [f'{name}: OK' for name in sources]:
         raise RuntimeError(f'guest source checks did not cover the supplied tree, see {check}')
     if fingerprint(rootfs) != rootfs_identity or fingerprint(kernel) != kernel_identity:
         raise RuntimeError('bootstrap kernel or installed rootfs changed during guest compilation')
-    boot_image = make_image(directory, directory.name + '-boot.iso', result, rootfs)
+    if args.system_image:
+        boot_image, test_rootfs = verify_system_image(directory, result, serial)
+    else:
+        boot_image = make_image(directory, directory.name + '-boot.iso', result, rootfs)
+        test_rootfs = rootfs_identity
     boot_image_identity = fingerprint(boot_image)
     boot = subprocess.run([sys.executable, '-B', str(ROOT / 'scripts/boot_test.py'), '--prepared-image',
-                           str(boot_image), '--firmware', 'both', '--timeout', '900'], cwd=ROOT)
+                           str(boot_image), '--suite', 'guest-system' if args.system_image else 'full',
+                           '--firmware', 'both', '--timeout', '900'], cwd=ROOT)
     if fingerprint(boot_image) != boot_image_identity:
         raise RuntimeError('guest-built boot image changed during validation')
     report = dict(passed=boot.returncode == 0, sources=sources, tool_sources=tools, build_command=command,
                   initial_kernel=kernel_identity,
                   build_serial=fingerprint(serial), source_check=fingerprint(check), guest_kernel=fingerprint(result),
-                  reused_rootfs=rootfs_identity, boot_image=boot_image_identity,
+                  bootstrap_rootfs=rootfs_identity, boot_rootfs=test_rootfs, guest_authored_image=args.system_image,
+                  boot_image=boot_image_identity,
                   boot_results=json.loads((directory / 'boot-results.json').read_text()))
     (directory / 'result.json').write_text(json.dumps(report, indent=2) + '\n')
     boot.check_returncode()

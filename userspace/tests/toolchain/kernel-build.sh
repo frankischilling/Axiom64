@@ -24,6 +24,9 @@ else
     make -j2 build/axiom64.elf
 fi
 test -s build/axiom64.elf
+if test -f build-system.sh; then
+    /bin/sh build-system.sh
+fi
 cp build/axiom64.elf /mnt/kernel-export/axiom64.elf
 sha256sum build/axiom64.elf /mnt/kernel-export/axiom64.elf
 sync

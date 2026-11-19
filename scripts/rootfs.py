@@ -101,7 +101,8 @@ for package, archive in packages():
         continue
     if args.profile == "desktop" and package["name"] in {
         "gcc", "g++", "binutils", "musl-dev", "linux-headers", "libstdc++-dev",
-        "make", "nasm", "isl25", "mpfr4", "gmp", "libgomp"
+        "make", "nasm", "isl25", "mpfr4", "gmp", "libgomp", "acl-libs", "libburn", "libedit",
+        "libisoburn", "libisofs", "xorriso"
     }:
         continue
     with tarfile.open(archive, "r:gz", ignore_zeros=True) as stream:

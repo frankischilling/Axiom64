@@ -852,7 +852,7 @@ void start_init(const char* path) {
 
 extern "C" Frame* handle_trap(Frame* f) {
     if (f->vector >= 32) {
-        if (!interrupt_timer(f->vector))
+        if (!interrupt_dispatch(f->vector))
             return f;
         clock_refresh(true);
         if ((f->cs & 3) == 3)

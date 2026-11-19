@@ -27,8 +27,10 @@ def main(directory=None):
                 for firmware in ['bios', 'uefi']:
                     delay = 5 if fault and firmware == 'uefi' and transport == 'modern' else 0
                     case = phase / (firmware + '-' + transport)
+                    expected_irq = None if fault else 'msix' if transport == 'modern' else 'poll'
                     result = run(firmware, transport, 90, fault, delay,
-                                 capture_directory=case, image=phase / 'image.iso')
+                                 capture_directory=case, image=phase / 'image.iso',
+                                 expected_irq=expected_irq)
                     save_case(result, case)
                     results.append(result)
                     destination.write_text(json.dumps(results, indent=2) + '\n')

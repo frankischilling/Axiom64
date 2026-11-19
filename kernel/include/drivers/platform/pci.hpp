@@ -6,7 +6,7 @@
  * @date    2026-11-19
  *
  * Gives device drivers a segment, bus, slot, and function identity with
- * register access and memory BAR decoding.
+ * register access, memory BAR decoding, and MSI-X message setup.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #pragma once
+#include "arch/x86_64/interrupts.hpp"
 #include "core/base.hpp"
 
 namespace ax {
@@ -44,8 +45,26 @@ struct PciFunction {
 
     void write16(uint16_t offset, uint16_t value) const;
 
+    void write32(uint16_t offset, uint32_t value) const;
+
     // Assigned memory BAR only. Returns false for an I/O BAR, high half, or no address.
     bool memory_bar(unsigned index, uint64_t& address) const;
+
+    // Probe only while the function is quiescent and no driver is using its BARs.
+    bool memory_bar_size(unsigned index, uint64_t& address, uint64_t& length) const;
+};
+
+class PciMsix {
+  public:
+    bool prepare(const PciFunction&, uint8_t capability, Irq::Handler, void* context);
+
+    bool unmask(const PciFunction&);
+
+    void stop(const PciFunction&);
+
+  private:
+    volatile uint32_t* table_ = nullptr;
+    uint8_t capability_ = 0, vector_ = 0;
 };
 
 void pci_configure_ecam(const Acpi::Mcfg&);

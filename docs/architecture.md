@@ -39,7 +39,8 @@ kernel uses the MADT's ISA override to route PIT IRQ 0 through the I/O APIC.
 It checks the controller input ranges and observes two acknowledged timer
 interrupts before switching. If validation or delivery fails, the kernel
 keeps the legacy PIC/PIT path. The `irq=pic` boot option selects that path
-explicitly. Device drivers still poll.
+explicitly. Modern virtio-net can route receive and transmit completions to a
+shared MSI-X vector on the boot processor. Drivers keep their polling paths.
 
 PCI discovery uses the validated ACPI MCFG table for PCIe configuration
 registers. Each aperture identifies a PCI segment and bus range. Its base

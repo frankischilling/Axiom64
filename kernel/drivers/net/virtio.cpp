@@ -1,6 +1,30 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/drivers/net/virtio.cpp
+ * @brief   Services Ethernet traffic on virtio network adapters.
+ * @author  frankischilling
+ * @date    2026-11-19
+ *
+ * Owns receive and transmit buffers and drains completions through polling or MSI-X.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "net/ethernet.hpp"
 #include "drivers/virtio/pci.hpp"
+#include "ipc/ipc.hpp"
 
 namespace ax {
 namespace {
@@ -27,6 +51,7 @@ struct Controller {
     Buffer receive[slots], transmit[slots];
     unsigned rx_count = 0, tx_count = 0;
     size_t header = 0, capacity = 0, pages = 0;
+    bool irq_rx_reported = false, irq_tx_reported = false;
 };
 
 static Controller controllers[max_net_devices];
@@ -156,6 +181,23 @@ static int send(NetAdapter& adapter, const void* frame, size_t length) {
     return -11;
 }
 
+static void interrupt(void* context) {
+    auto& device = *static_cast<Controller*>(context);
+    const auto& info = device.adapter.info;
+    uint64_t rx_before = info.stats.rx_packets, tx_before = info.stats.tx_packets;
+    poll(device.adapter);
+    if (info.stats.rx_packets != rx_before && !device.irq_rx_reported) {
+        device.irq_rx_reported = true;
+        log("virtio-net: MSI-X RX completion index=%u\n", uint64_t(info.index));
+    }
+    if (info.stats.tx_packets != tx_before && !device.irq_tx_reported) {
+        device.irq_tx_reported = true;
+        log("virtio-net: MSI-X TX completion index=%u\n", uint64_t(info.index));
+    }
+    if (info.stats.rx_packets != rx_before || info.stats.tx_packets != tx_before)
+        epoll_notify();
+}
+
 static bool initialize(Controller& device, const PciFunction& pci) {
     device.adapter = {{}, poll, send, stop, &device};
     if (!device.pci.open(pci, feature_mtu | feature_mac | feature_status, 6))
@@ -185,16 +227,16 @@ static bool initialize(Controller& device, const PciFunction& pci) {
         if (!device.transmit[i].physical)
             return false;
     }
-    if (!device.pci.start())
+    if (!device.pci.start(interrupt, &device))
         return false;
     device.adapter.info.live = true;
     poll(device.adapter);
     if (!device.adapter.info.live || !net_register(device.adapter))
         return false;
-    log("virtio-net: index=%u transport=%s rx=%u tx=%u features=%x\n",
+    log("virtio-net: index=%u transport=%s irq=%s rx=%u tx=%u features=%x\n",
         uint64_t(device.adapter.info.index), device.pci.modern() ? "modern" : "legacy",
-        uint64_t(device.rx.layout().size), uint64_t(device.tx.layout().size),
-        device.pci.features());
+        device.pci.using_msix() ? "msix" : "poll", uint64_t(device.rx.layout().size),
+        uint64_t(device.tx.layout().size), device.pci.features());
     return true;
 }
 } // namespace

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/arch/x86_64/interrupts.cpp
- * @brief   Configures x86 interrupt controllers and routes the scheduling timer.
+ * @brief   Configures x86 controllers and dispatches hardware interrupts.
  * @author  frankischilling
  * @date    2026-11-19
  *
  * Programs the legacy PIC and PIT, then verifies I/O APIC delivery before
- * switching to APIC interrupt acknowledgement.
+ * switching to APIC interrupt acknowledgement. Dispatches registered PCI
+ * interrupt messages on the boot processor.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -38,6 +39,7 @@ constexpr uint32_t ioapic_smi = 2 << 8;
 constexpr uint32_t ioapic_delivery_mask = 7 << 8;
 constexpr uint32_t task_priority = 0x80, end_of_interrupt = 0xb0, spurious_register = 0xf0;
 constexpr unsigned max_controllers = 16;
+constexpr unsigned first_message_vector = 0x40, past_message_vector = 0x80;
 
 // These registers appear in LVT index order, including optional entries.
 constexpr unsigned lvt_registers[] = {0x320, 0x350, 0x360, 0x370, 0x340, 0x330, 0x2f0};
@@ -82,6 +84,15 @@ IoApic controllers[max_controllers];
 enum class TimerRoute { Pic, Probe, Apic };
 TimerRoute timer_route;
 volatile unsigned probe_ticks;
+unsigned apic_destination;
+unsigned next_message_vector = first_message_vector;
+
+struct MessageHandler {
+    Irq::Handler call;
+    void* context;
+};
+
+MessageHandler messages[past_message_vector - first_message_vector];
 
 bool local_apic(const Acpi::InterruptTopology& topology, LocalApic& result, unsigned& id,
                 unsigned& lvt_count) {
@@ -202,6 +213,7 @@ const char* configure_apic_timer(const Acpi::InterruptTopology& topology) {
     controller.write(low_register + 1, destination << 24);
     controller.write(low_register, route.mode | Irq::apic_timer);
     if (observe_timer()) {
+        apic_destination = destination;
         timer_route = TimerRoute::Apic;
         log("Interrupts: %s I/O APIC PIT irq=0 gsi=%u input=%u cpu=%u ticks=%u\n",
             candidate.x2 ? "x2APIC" : "xAPIC", uint64_t(gsi), uint64_t(route.input),
@@ -256,11 +268,31 @@ void interrupt_init_apic(const Acpi::InterruptTopology& topology) {
         log("Interrupts: PIC/PIT fallback, %s\n", error);
 }
 
-bool interrupt_timer(uint64_t vector) {
+bool interrupt_register_message(Irq::Handler handler, void* context, Irq::Message& result) {
+    if (timer_route != TimerRoute::Apic || !handler || next_message_vector == past_message_vector)
+        return false;
+    unsigned vector = next_message_vector++;
+    messages[vector - first_message_vector] = {handler, context};
+    // Compatibility-format MSI, physical destination and fixed edge delivery.
+    result = {0xfee00000u | (apic_destination << 12), uint8_t(vector)};
+    return true;
+}
+
+void interrupt_retire_message(uint8_t vector) {
+    if (vector >= first_message_vector && vector < next_message_vector)
+        messages[vector - first_message_vector] = {};
+}
+
+bool interrupt_dispatch(uint64_t vector) {
     // The LAPIC never puts its spurious vector in the in-service register.
     if (vector == Irq::spurious)
         return false;
     if ((local.x2 || local.mmio) && local.in_service(unsigned(vector))) {
+        if (vector >= first_message_vector && vector < next_message_vector) {
+            const auto handler = messages[vector - first_message_vector];
+            if (handler.call)
+                handler.call(handler.context);
+        }
         local.write(end_of_interrupt, 0);
         if (vector == Irq::apic_timer && timer_route == TimerRoute::Probe)
             probe_ticks = probe_ticks + 1;

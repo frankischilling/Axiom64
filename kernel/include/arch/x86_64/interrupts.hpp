@@ -50,6 +50,13 @@ struct Route {
     uint32_t mode;
 };
 
+using Handler = void (*)(void*);
+
+struct Message {
+    uint32_t address;
+    uint8_t vector;
+};
+
 // Resolve an ISA interrupt to exactly one validated I/O APIC input.
 constexpr bool isa_route(uint32_t gsi, uint16_t flags, const GsiRange* ranges, unsigned count,
                          Route& route) {
@@ -81,5 +88,9 @@ constexpr bool isa_route(uint32_t gsi, uint16_t flags, const GsiRange* ranges, u
 
 void interrupt_init_legacy();
 void interrupt_init_apic(const Acpi::InterruptTopology&);
-bool interrupt_timer(uint64_t vector);
+// Called with interrupts masked on the boot CPU. Retired vectors stay reserved
+// until reboot so a message already posted by a stopped device cannot be reused.
+bool interrupt_register_message(Irq::Handler, void* context, Irq::Message&);
+void interrupt_retire_message(uint8_t vector);
+bool interrupt_dispatch(uint64_t vector);
 } // namespace ax

@@ -17,8 +17,16 @@ from qmp import Qmp
 from network_fault import inject
 
 
-def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *, capture_directory=None, image=None):
+def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
+        capture_directory=None, image=None, expected_irq=None, machine='pc', no_vectors=False,
+        force_pic=False):
     label = f'udp-{firmware}-{transport}' + ('-fault' if fault else '')
+    if machine != 'pc':
+        label += f'-{machine}'
+    if no_vectors:
+        label += '-no-vectors'
+    if force_pic:
+        label += '-pic'
     log = ROOT / 'build' / (label + '.log')
     selector = selectors.DefaultSelector()
     control = Path('/tmp') / f'axiom64-udp-{os.getpid()}.sock'
@@ -28,7 +36,7 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *, captu
     armed.unlink(missing_ok=True)
     debugger = debug_log = None
     servers, peers = [], [Peer(lane, fault) for lane in range(2)]
-    command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '2G',
+    command = ['qemu-system-x86_64', '-machine', machine, '-cpu', 'max', '-m', '2G',
                '-cdrom', str(image or ROOT / 'build/udp-test.iso'), '-nic', 'none', '-display', 'none',
                '-serial', 'stdio', '-monitor', 'none', '-no-reboot',
                '-qmp', f'unix:{control},server=on,wait=off',
@@ -45,6 +53,8 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *, captu
         nic = f'{model},netdev=peer{lane},id=nic{lane},addr={lane + 4:x},mac={peers[lane].guest.hex(":")}'
         if lane == 0:
             nic += ',disable-legacy=on' if transport == 'modern' else ',disable-modern=on'
+            if no_vectors:
+                nic += ',vectors=0'
         command += ['-netdev', f'socket,id=peer{lane},connect=127.0.0.1:{server.getsockname()[1]}',
                     '-device', nic]
     if firmware == 'uefi':
@@ -176,6 +186,20 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *, captu
         required += ['UDP_INTERRUPT_PASS', 'UDP_RESTART_PASS', 'UDP_FORK_PASS', 'UDP_RESOURCE_CYCLES_PASS count=128']
         required += ['UDP_PAYLOAD_LIMIT_PASS bytes=65507', 'UDP_BUFFER_LIMIT_PASS bytes=2048 payload=2020']
     missing = [marker for marker in required if marker not in text]
+    if expected_irq:
+        route = f'virtio-net: index=1 transport={transport} irq={expected_irq} '
+        if route not in text:
+            missing.append(route.strip())
+        completions = [f'virtio-net: MSI-X {direction} completion index=1'
+                       for direction in ('RX', 'TX')]
+        if expected_irq == 'msix':
+            missing += [marker for marker in completions if marker not in text]
+        elif any(marker in text for marker in completions):
+            missing.append('polling boot emitted MSI-X completions')
+    if force_pic and 'Interrupts: PIC/PIT selected by boot option' not in text:
+        missing.append('forced PIC boot')
+    if machine == 'q35' and 'PCI ECAM: segment=0 ' not in text:
+        missing.append('Q35 PCI ECAM')
     host_passed = (peers[0].arp == peers[1].arp == 1 and peers[0].frames == 0 and peers[1].frames == 1) if fault else (
         len(link_events) == 4 and all(p.arp == 2 and p.frames == 4 and p.zero == 1 and p.zero_checksum == 1 and
             p.malformed == 14 and p.filter_input == 3 and p.filter_errors == 1 and p.server_replies == 1 and
@@ -211,6 +235,10 @@ def main():
     parser.add_argument('--transport', choices=['modern', 'legacy'], default='modern')
     parser.add_argument('--timeout', type=int, default=90)
     parser.add_argument('--fault', action='store_true')
+    parser.add_argument('--machine', choices=['pc', 'q35'], default='pc')
+    parser.add_argument('--expected-irq', choices=['msix', 'poll'])
+    parser.add_argument('--no-vectors', action='store_true')
+    parser.add_argument('--force-pic', action='store_true')
     parser.add_argument('--debugger-delay', type=float, default=0,
                         help='simulate slow fault debugger setup while the guest is stopped')
     args = parser.parse_args()
@@ -218,10 +246,19 @@ def main():
         parser.error('--debugger-delay must be from 0 to 10 seconds and requires --fault')
     fixture(program='udp-tests', script='userspace/tests/net/udp.sh',
             environment={'AXIOM64_UDP_FAULT': '1'} if args.fault else None)
-    subprocess.run([sys.executable, 'scripts/image.py', '--test', '--suite', 'network',
-                    '--output-name', 'udp-test.iso'], cwd=ROOT, check=True)
-    result = run(args.firmware, args.transport, args.timeout, args.fault, args.debugger_delay)
-    (ROOT / 'build/udp-results.json').write_text(json.dumps([result], indent=2) + '\n')
+    image = 'udp-test-pic.iso' if args.force_pic else 'udp-test.iso'
+    command = [sys.executable, 'scripts/image.py', '--test', '--suite', 'network',
+               '--output-name', image]
+    if args.force_pic:
+        command += ['--kernel-option', 'irq=pic']
+    subprocess.run(command, cwd=ROOT, check=True)
+    result = run(args.firmware, args.transport, args.timeout, args.fault, args.debugger_delay,
+                 expected_irq=args.expected_irq, machine=args.machine, no_vectors=args.no_vectors,
+                 force_pic=args.force_pic, image=ROOT / 'build' / image)
+    receipt = 'udp-results.json'
+    if args.expected_irq:
+        receipt = result['log'].removesuffix('.log') + '.json'
+    (ROOT / 'build' / receipt).write_text(json.dumps([result], indent=2) + '\n')
     raise SystemExit(0 if result['passed'] else 1)
 
 

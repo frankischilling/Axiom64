@@ -29,6 +29,9 @@
 
 namespace ax {
 namespace {
+constexpr uint16_t msix_enable = 1u << 15, msix_function_mask = 1u << 14;
+constexpr uint32_t msix_entry_mask = 1;
+
 struct EcamBus {
     volatile uint8_t* address;
     bool attempted;
@@ -138,6 +141,17 @@ void PciFunction::write16(uint16_t offset, uint16_t value) const {
     out16(0xcfc + (offset & 2), value);
 }
 
+void PciFunction::write32(uint16_t offset, uint32_t value) const {
+    if (configuration && offset < 4096) {
+        *reinterpret_cast<volatile uint32_t*>(configuration + (offset & ~3u)) = value;
+        return;
+    }
+    if (segment || offset >= 256)
+        return;
+    out32(0xcf8, selector(*this, offset));
+    out32(0xcfc, value);
+}
+
 bool PciFunction::memory_bar(unsigned index, uint64_t& address) const {
     if (index >= 6 || (read8(0x0e) & 0x7f) != 0)
         return false;
@@ -156,6 +170,95 @@ bool PciFunction::memory_bar(unsigned index, uint64_t& address) const {
         address |= uint64_t(read32(0x14 + index * 4)) << 32;
     }
     return address != 0;
+}
+
+bool PciFunction::memory_bar_size(unsigned index, uint64_t& address, uint64_t& length) const {
+    if (!memory_bar(index, address))
+        return false;
+    uint16_t offset = 0x10 + index * 4;
+    uint32_t low = read32(offset);
+    bool wide = (low & 6) == 4;
+    uint32_t high = wide ? read32(offset + 4) : 0;
+    uint16_t command = read16(4);
+    write16(4, command & ~7u); // Disable decoding and bus mastering during the probe.
+    if (read16(4) & 7u) {
+        write16(4, command);
+        return false;
+    }
+    write32(offset, UINT32_MAX);
+    if (wide)
+        write32(offset + 4, UINT32_MAX);
+    uint64_t mask = read32(offset) & ~15u;
+    if (wide)
+        mask |= uint64_t(read32(offset + 4)) << 32;
+    write32(offset, low);
+    if (wide)
+        write32(offset + 4, high);
+    write16(4, command);
+
+    length = wide ? -mask : uint32_t(-mask);
+    return length && !(length & (length - 1)) && !(address & (length - 1));
+}
+
+bool PciMsix::prepare(const PciFunction& pci, uint8_t capability, Irq::Handler handler,
+                      void* context) {
+    if (vector_ || capability < 0x40 || capability > 0xf4 || (capability & 3) ||
+        pci.read8(capability) != 0x11)
+        return false;
+    uint16_t control = pci.read16(capability + 2);
+    unsigned entries = (control & 0x7ff) + 1;
+    uint32_t location = pci.read32(capability + 4);
+    uint32_t offset = location & ~7u;
+    size_t bytes = entries * 16;
+    uint64_t address, length;
+    uint64_t limit = physical_limit();
+    if (!pci.memory_bar_size(location & 7, address, length) || offset > length ||
+        bytes > length - offset || address >= limit || offset > limit - address ||
+        bytes > limit - address - offset)
+        return false;
+
+    Irq::Message message{};
+    if (!interrupt_register_message(handler, context, message))
+        return false;
+    capability_ = capability;
+    vector_ = message.vector;
+    table_ = static_cast<volatile uint32_t*>(map_mmio(address + offset, bytes));
+    if (table_) {
+        pci.write16(capability + 2, control | msix_enable | msix_function_mask);
+        if ((pci.read16(capability + 2) & (msix_enable | msix_function_mask)) ==
+            (msix_enable | msix_function_mask)) {
+            for (unsigned i = 0; i < entries; ++i)
+                table_[i * 4 + 3] = msix_entry_mask;
+            table_[0] = message.address;
+            table_[1] = 0;
+            table_[2] = message.vector;
+            if (table_[0] == message.address && table_[1] == 0 && table_[2] == message.vector &&
+                table_[3] == msix_entry_mask)
+                return true;
+        }
+    }
+    stop(pci);
+    return false;
+}
+
+bool PciMsix::unmask(const PciFunction& pci) {
+    table_[3] = 0;
+    if (table_[3] & msix_entry_mask)
+        return false;
+    uint16_t control = pci.read16(capability_ + 2);
+    pci.write16(capability_ + 2, control & ~msix_function_mask);
+    return (pci.read16(capability_ + 2) & (msix_enable | msix_function_mask)) == msix_enable;
+}
+
+void PciMsix::stop(const PciFunction& pci) {
+    if (!vector_)
+        return;
+    uint16_t control = pci.read16(capability_ + 2);
+    pci.write16(capability_ + 2, (control | msix_function_mask) & ~msix_enable);
+    pci.read16(capability_ + 2);
+    interrupt_retire_message(vector_);
+    vector_ = capability_ = 0;
+    table_ = nullptr;
 }
 
 static unsigned scan_bus(uint16_t segment, unsigned bus, volatile uint8_t* ecam,

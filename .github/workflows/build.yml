@@ -1486,7 +1486,7 @@ jobs:
           name: axiom64-ipv4-fixtures
           if-no-files-found: warn
           path: build/axiom64-ipv4-*.iso
-      - name: Test IPv4 UDP, datagram lifetime, checksums, and failed-device sockets
+      - name: Test IPv4 UDP traffic, failed-device sockets, and PCI interrupt delivery
         if: matrix.suite == 'network'
         run: |
           sudo -n python3 -B scripts/tests/ipv4_multicast_fixture_owner_test.py
@@ -1775,6 +1775,9 @@ jobs:
             build/unix-stream-wait-native/**
             build/unix-stream-names-native/**
             build/udp-wire/**
+            build/udp-*-q35.json
+            build/udp-*-no-vectors.json
+            build/udp-*-pic.json
             build/ipv4-multicast-evidence/**
             build/ipv4-multicast-audit/**
             build/*.trace

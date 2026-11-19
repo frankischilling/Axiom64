@@ -1,10 +1,33 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/include/drivers/virtio/pci.hpp
+ * @brief   Declares the virtio PCI transport interface.
+ * @author  frankischilling
+ * @date    2026-11-19
+ *
+ * Provides queue registration, device configuration, polling, and optional MSI-X.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #pragma once
 #include "drivers/platform/pci.hpp"
 #include "drivers/virtio/queue.hpp"
 
 namespace ax {
-// Polling modern/legacy adapters; device-specific config/features stay in drivers.
+// Modern and legacy transport with optional MSI-X queue notifications.
 class VirtioPci {
   public:
     VirtioPci() = default;
@@ -19,7 +42,7 @@ class VirtioPci {
 
     bool read_config(size_t offset, void* output, size_t length) const;
 
-    bool start();
+    bool start(Irq::Handler handler = nullptr, void* context = nullptr);
 
     bool healthy() const;
 
@@ -28,6 +51,10 @@ class VirtioPci {
     int wait(SplitQueue&, VirtioCompletion&, unsigned timeout_seconds) const;
 
     bool stop();
+
+    bool using_msix() const {
+        return msix_active_;
+    }
 
     bool modern() const {
         return mode_ == Mode::modern;
@@ -81,13 +108,18 @@ class VirtioPci {
     };
 
     PciFunction pci_{};
+    PciMsix msix_;
     Mode mode_ = Mode::none;
     Region common_, notify_, config_, isr_;
     Binding queues_[8]{};
     uint16_t io_ = 0;
+    uint8_t msix_capability_ = 0;
     uint32_t notify_multiplier_ = 0;
     uint64_t accepted_ = 0;
     bool opened_ = false, initialized_ = false, running_ = false;
+    bool msix_active_ = false;
+
+    bool configure_msix(Irq::Handler, void* context);
 
     bool map_region(uint8_t capability, Region&);
 

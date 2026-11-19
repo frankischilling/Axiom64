@@ -279,15 +279,21 @@ Zero-length reads and failed output copies leave the packet queued. A mode
 change leaves existing slots in their original mode. A write can still merge
 its leading remainder into a stream slot already at the end of the queue.
 
-New pipes normally have 16 slots. The default unprivileged growth limit is
-1 MiB per pipe and 16,384 reserved pages per owning real UID. A new pipe above
-the per-user threshold starts with two slots. The limits use fixed defaults.
+New pipes normally have 16 slots. The `/proc/sys/fs/pipe-max-size` setting
+limits unprivileged pipe growth and initial capacity. It defaults to 1 MiB.
+`pipe-user-pages-soft` defaults to 16,384 reserved pages per owning real UID.
+When the soft limit would be exceeded, a new pipe starts with two slots.
+`pipe-user-pages-hard` rejects new pipes and FIFO buffers that would exceed
+the limit. A zero page limit disables that quota. Resizing checks growth
+against the owning UID's quota. Shrinking releases the reserved pages.
 
 `make test-named-pipes` checks descriptor replacement during a large write,
 signal interruption, reader close, atomic nonblocking writes, and pipe
 capacity and readiness. It grows a full pipe under a blocked writer and
 checks recovery after a read buffer fault. It also checks packet boundaries,
-short reads, copy faults, and mixed stream and packet writes. It runs
+short reads, copy faults, and mixed stream and packet writes. Guest runs check
+quota enforcement, descriptor aliases, and the permissions on pipe controls.
+It runs
 with two caller identities and both musl providers, linkages, and firmware
 types. It also verifies the same FIFO and hard link
 after rebooting a writable ext2 root. `sudo make test-named-pipes-native`
@@ -371,4 +377,4 @@ Socket timeout checks cover all ten supported operation forms, option validation
 
 Evidence is in `build/threads-io-{bios,uefi}.log` and `build/threads-io-results.json`. The complete thread and full ABI suites also require both linkage markers. Host results do not replace guest evidence.
 
-The implementation permits one saved I/O request per task, at most 1024 vectors, and at most `0x7ffff000` bytes per operation. Transfers use 4096-byte kernel buffers. It runs on one CPU with interrupts masked in syscalls. SMP synchronization, splice and configurable pipe quotas, terminal behavior, full TCP/connect interruption and deadline acceptance, broader message and socket features, and complete Linux conformance remain planned.
+The implementation permits one saved I/O request per task, at most 1024 vectors, and at most `0x7ffff000` bytes per operation. Transfers use 4096-byte kernel buffers. It runs on one CPU with interrupts masked in syscalls. SMP synchronization, splice, terminal behavior, full TCP/connect interruption and deadline acceptance, broader message and socket features, and complete Linux conformance remain planned.

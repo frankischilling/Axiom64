@@ -17,18 +17,16 @@ int digit(char c) {
                                   : -1;
 }
 
-} // namespace
-
-bool parse_integer(const char* bytes, size_t length, bool unsigned_value, int32_t& value,
-                   size_t& consumed) {
+bool parse_number(const char* bytes, size_t length, uint64_t limit, bool allow_negative,
+                  uint64_t& value, bool& negative, size_t& consumed) {
     size_t at = 0;
     while (at < length && space(bytes[at]))
         at++;
     size_t start = at;
-    bool negative = at < length && bytes[at] == '-';
+    negative = at < length && bytes[at] == '-';
     if (negative)
         at++;
-    if ((negative && unsigned_value) || at == length || bytes[at] < '0' || bytes[at] > '9')
+    if ((negative && !allow_negative) || at == length || bytes[at] < '0' || bytes[at] > '9')
         return false;
     unsigned base = 10;
     if (bytes[at] == '0') {
@@ -40,7 +38,7 @@ bool parse_integer(const char* bytes, size_t length, bool unsigned_value, int32_
         }
     }
     uint64_t number = 0;
-    uint64_t limit = unsigned_value ? UINT32_MAX : uint64_t(INT32_MAX) + negative;
+    limit += negative;
     while (at < length) {
         int next = digit(bytes[at]);
         if (next < 0 || unsigned(next) >= base)
@@ -56,22 +54,21 @@ bool parse_integer(const char* bytes, size_t length, bool unsigned_value, int32_
         return false;
     while (at < length && space(bytes[at]))
         at++;
-    value = negative ? int32_t(-int64_t(number)) : int32_t(number);
+    value = number;
     consumed = at;
     return true;
 }
 
-int64_t read_integer(int32_t value, uint64_t& offset, void* output, size_t length) {
+int64_t read_number(uint64_t number, bool negative, uint64_t& offset, void* output, size_t length) {
     if (!length || offset)
         return 0;
-    char text[12], reverse[10];
+    char text[22], reverse[20];
     size_t count = 0, digits = 0;
-    uint32_t number = value < 0 ? uint32_t(-int64_t(value)) : uint32_t(value);
     do {
         reverse[digits++] = char('0' + number % 10);
         number /= 10;
     } while (number);
-    if (value < 0)
+    if (negative)
         text[count++] = '-';
     while (digits)
         text[count++] = reverse[--digits];
@@ -80,5 +77,31 @@ int64_t read_integer(int32_t value, uint64_t& offset, void* output, size_t lengt
     memcpy(output, text, count);
     offset += count;
     return int64_t(count);
+}
+} // namespace
+
+bool parse_integer(const char* bytes, size_t length, bool unsigned_value, int32_t& value,
+                   size_t& consumed) {
+    uint64_t magnitude;
+    bool negative;
+    if (!parse_number(bytes, length, unsigned_value ? UINT32_MAX : uint64_t(INT32_MAX),
+                      !unsigned_value, magnitude, negative, consumed))
+        return false;
+    value = negative ? int32_t(-int64_t(magnitude)) : int32_t(magnitude);
+    return true;
+}
+
+bool parse_unsigned_long(const char* bytes, size_t length, uint64_t& value, size_t& consumed) {
+    bool negative;
+    return parse_number(bytes, length, UINT64_MAX, false, value, negative, consumed);
+}
+
+int64_t read_integer(int32_t value, uint64_t& offset, void* output, size_t length) {
+    uint64_t magnitude = value < 0 ? uint64_t(-int64_t(value)) : uint64_t(value);
+    return read_number(magnitude, value < 0, offset, output, length);
+}
+
+int64_t read_unsigned_long(uint64_t value, uint64_t& offset, void* output, size_t length) {
+    return read_number(value, false, offset, output, length);
 }
 } // namespace ax::proc

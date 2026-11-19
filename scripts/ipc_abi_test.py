@@ -91,6 +91,8 @@ def execute(command, log, expected_exit, uids, workload, firmware=None, root='ra
         f'Firmware: {firmware.upper()}', 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0']
     if root == 'ext2':
         markers.append('VFS_ROOT_PASS filesystem=ext2 device=/dev/vda readonly=1')
+    if workload == 'named-pipes' and firmware is not None:
+        markers.append('NAMED_PIPE_LIMITS_PASS')
     observed = {}
     if workload == 'descriptor-wait-lifetime':
         peeks = [re.fullmatch(r'WAIT_LIFETIME_PEEK call=(\w+) early=([01])', line)
@@ -351,7 +353,7 @@ def guest(directory, workload, client):
             applet = '/dev/shm/axiom-fifo-applet'
             boot = (f'/bin/busybox mkfifo -m 0640 {applet}\n'
                     f'test -p {applet}\n'
-                    f'/bin/busybox rm {applet}\n' + boot)
+                    f'/bin/busybox rm {applet}\n' + boot + f'\n/bin/{program.name} --limits')
         image = fixture(case, provider, linkage, program_builder=lambda *args: (program, inputs),
                         filename=program.name, command=boot,
                         extra_products={f'source/{client.name}': client,

@@ -481,9 +481,10 @@ static int64_t create_pipe(uint64_t dst, int flags) {
         return -22;
     if (!current->memory->space.valid(dst, 8, true))
         return -14;
-    auto pipe = create_pipe_buffer(current->credentials);
+    int error;
+    auto pipe = create_pipe_buffer(current->credentials, error);
     if (!pipe)
-        return -12;
+        return error;
     auto reader = pipe_handle(pipe, false);
     auto writer = pipe_handle(pipe, true);
     if (!reader || !writer) {

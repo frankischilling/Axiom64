@@ -4,6 +4,7 @@
  * @brief Compares pipe and FIFO I/O, peer lifetime, and ext2 FIFO persistence.
  */
 #define _GNU_SOURCE
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -606,9 +607,162 @@ static void storage_test(int create) {
            (unsigned long)inode.st_ino);
 }
 
+static const char pipe_max_size[] = "/proc/sys/fs/pipe-max-size";
+static const char pipe_hard_pages[] = "/proc/sys/fs/pipe-user-pages-hard";
+static const char pipe_soft_pages[] = "/proc/sys/fs/pipe-user-pages-soft";
+
+static void read_limit(int fd, char value[32]) {
+    CHECK(lseek(fd, 0, SEEK_SET) == 0);
+    ssize_t count = read(fd, value, 31);
+    CHECK(count > 0 && value[count - 1] == '\n');
+    value[count] = 0;
+    CHECK(read(fd, value + count, 1) == 0);
+}
+
+static void write_limit(int fd, const char* value, ssize_t accepted, const char* expected) {
+    CHECK(lseek(fd, 0, SEEK_SET) == 0);
+    CHECK(write(fd, value, strlen(value)) == accepted && (accepted >= 0 || errno == EINVAL));
+    char actual[32];
+    read_limit(fd, actual);
+    CHECK(strcmp(actual, expected) == 0);
+}
+
+static void drop_to(uid_t uid) {
+    CHECK(setgroups(0, NULL) == 0 && setgid(uid) == 0 && setuid(uid) == 0);
+    CHECK(getuid() == uid && geteuid() == uid);
+}
+
+static void wait_success(pid_t pid) {
+    int status;
+    CHECK(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+
+static void hard_quota(int max, const char* fifo) {
+    int ready[2], resume[2];
+    CHECK(pipe(ready) == 0 && pipe(resume) == 0);
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (child == 0) {
+        CHECK(close(ready[0]) == 0 && close(resume[1]) == 0);
+        drop_to(55100);
+        CHECK(open(pipe_max_size, O_WRONLY) == -1 && errno == EACCES);
+        CHECK(write(max, "65536", 5) == -1 && errno == EPERM);
+        int a[2], b[2] = {-1, -1};
+        CHECK(pipe(a) == 0 && fcntl(a[0], F_GETPIPE_SZ) == 32768);
+        CHECK(pipe(b) == -1 && errno == ENFILE && b[0] == -1 && b[1] == -1);
+        CHECK(fcntl(a[0], F_SETPIPE_SZ, 65536) == -1 && errno == EPERM);
+        CHECK(fcntl(a[0], F_SETPIPE_SZ, 16384) == 16384);
+        CHECK(pipe(b) == 0 && fcntl(b[1], F_GETPIPE_SZ) == 32768);
+        CHECK(fcntl(a[0], F_SETPIPE_SZ, 32768) == -1 && errno == EPERM);
+        CHECK(open(fifo, O_RDWR | O_NONBLOCK) == -1 && errno == ENOMEM);
+        CHECK(write(ready[1], "r", 1) == 1 && close(ready[1]) == 0);
+        char ack;
+        CHECK(read(resume[0], &ack, 1) == 1 && ack == 'g' && close(resume[0]) == 0);
+
+        CHECK(close(b[0]) == 0 && close(b[1]) == 0);
+        int named = open(fifo, O_RDWR | O_NONBLOCK);
+        CHECK(named >= 0 && fcntl(named, F_GETPIPE_SZ) == 32768);
+        CHECK(pipe(b) == -1 && errno == ENFILE);
+        CHECK(close(named) == 0 && pipe(b) == 0);
+        CHECK(close(b[0]) == 0 && close(b[1]) == 0);
+        CHECK(close(a[0]) == 0 && close(a[1]) == 0);
+        _exit(0);
+    }
+    CHECK(close(ready[1]) == 0 && close(resume[0]) == 0);
+    char signal;
+    CHECK(read(ready[0], &signal, 1) == 1 && signal == 'r' && close(ready[0]) == 0);
+    pid_t other = fork();
+    CHECK(other >= 0);
+    if (other == 0) {
+        CHECK(close(resume[1]) == 0);
+        drop_to(55101);
+        int fds[2];
+        CHECK(pipe(fds) == 0 && fcntl(fds[0], F_GETPIPE_SZ) == 32768);
+        CHECK(close(fds[0]) == 0 && close(fds[1]) == 0);
+        _exit(0);
+    }
+    wait_success(other);
+    CHECK(write(resume[1], "g", 1) == 1 && close(resume[1]) == 0);
+    wait_success(child);
+}
+
+static void soft_quota(void) {
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (child == 0) {
+        drop_to(55102);
+        int a[2], b[2], c[2], d[2];
+        CHECK(pipe(a) == 0 && fcntl(a[0], F_GETPIPE_SZ) == 32768);
+        CHECK(pipe(b) == 0 && fcntl(b[0], F_GETPIPE_SZ) == 8192);
+        CHECK(pipe(c) == 0 && fcntl(c[0], F_GETPIPE_SZ) == 8192);
+        CHECK(pipe(d) == -1 && errno == ENFILE);
+        CHECK(fcntl(c[0], F_SETPIPE_SZ, 16384) == -1 && errno == EPERM);
+        CHECK(fcntl(c[0], F_SETPIPE_SZ, 4096) == 4096);
+        int alias = dup(b[0]);
+        CHECK(alias >= 0 && close(b[0]) == 0 && close(b[1]) == 0);
+        CHECK(pipe(d) == -1 && errno == ENFILE);
+        CHECK(close(alias) == 0 && pipe(d) == 0 && fcntl(d[0], F_GETPIPE_SZ) == 8192);
+        _exit(0);
+    }
+    wait_success(child);
+}
+
+// Run only inside a test VM. These controls apply to the whole kernel.
+static void pipe_limits(void) {
+    DIR* directory_stream = opendir("/proc/sys/fs");
+    CHECK(directory_stream);
+    unsigned listed = 0;
+    for (struct dirent* item; (item = readdir(directory_stream));)
+        listed += !strcmp(item->d_name, "pipe-max-size") ||
+                  !strcmp(item->d_name, "pipe-user-pages-hard") ||
+                  !strcmp(item->d_name, "pipe-user-pages-soft");
+    CHECK(listed == 3 && closedir(directory_stream) == 0);
+    int max = open(pipe_max_size, O_RDWR);
+    int hard = open(pipe_hard_pages, O_RDWR);
+    int soft = open(pipe_soft_pages, O_RDWR);
+    CHECK(max >= 0 && hard >= 0 && soft >= 0);
+    char original_max[32], original_hard[32], original_soft[32];
+    read_limit(max, original_max);
+    read_limit(hard, original_hard);
+    read_limit(soft, original_soft);
+    write_limit(max, "4097", 4, "8192\n");
+    write_limit(max, "2147483649", -1, "8192\n");
+    write_limit(max, "0", 1, "4096\n");
+    write_limit(max, "32768", 5, "32768\n");
+    write_limit(hard, "18446744073709551615", 20, "18446744073709551615\n");
+    write_limit(hard, "18446744073709551616", -1, "18446744073709551615\n");
+    write_limit(soft, "-1", -1, original_soft);
+    write_limit(soft, "0", 1, "0\n");
+    write_limit(hard, "12", 2, "12\n");
+
+    mode_t mask = umask(0);
+    char directory[] = "/dev/shm/axiom-pipe-budget-XXXXXX";
+    CHECK(mkdtemp(directory) && chmod(directory, 0755) == 0);
+    char fifo[sizeof(directory) + sizeof("/fifo")];
+    CHECK(snprintf(fifo, sizeof(fifo), "%s/fifo", directory) > 0 && mkfifo(fifo, 0666) == 0);
+    umask(mask);
+    hard_quota(max, fifo);
+    CHECK(unlink(fifo) == 0 && rmdir(directory) == 0);
+    write_limit(soft, "8", 1, "8\n");
+    soft_quota();
+    int privileged[2];
+    CHECK(pipe(privileged) == 0 && fcntl(privileged[0], F_GETPIPE_SZ) == 65536);
+    CHECK(close(privileged[0]) == 0 && close(privileged[1]) == 0);
+
+    write_limit(soft, original_soft, strlen(original_soft), original_soft);
+    write_limit(hard, original_hard, strlen(original_hard), original_hard);
+    write_limit(max, original_max, strlen(original_max), original_max);
+    CHECK(close(soft) == 0 && close(hard) == 0 && close(max) == 0);
+    puts("NAMED_PIPE_LIMITS_PASS");
+}
+
 int main(int argc, char** argv) {
     CHECK(setvbuf(stdout, NULL, _IOLBF, 0) == 0);
     alarm(12);
+    if (argc == 2 && !strcmp(argv[1], "--limits")) {
+        pipe_limits();
+        return 0;
+    }
     if (argc == 2 &&
         (strcmp(argv[1], "--storage-create") == 0 || strcmp(argv[1], "--storage-reopen") == 0)) {
         storage_test(strcmp(argv[1], "--storage-create") == 0);

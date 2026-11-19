@@ -3,6 +3,8 @@
  * @file
  */
 #include "fs/proc.hpp"
+#include "fs/pipe.hpp"
+#include "fs/proc/integer.hpp"
 #include "fs/proc/ipv6.hpp"
 #include "fs/proc/ipv4.hpp"
 #include "net/ethernet.hpp"
@@ -22,6 +24,8 @@ enum class Kind {
     status,
     stat,
     sys,
+    fs,
+    pipe_limit,
     kernel,
     random,
     boot_id,
@@ -37,6 +41,14 @@ enum class Kind {
 
 // Kernel execution serializes generation. Every proc mount observes this same boot.
 char boot_identifier[37]{};
+constexpr const char* sys_directories[] = {"kernel", "net", "fs"};
+constexpr const char* pipe_limit_names[] = {"pipe-max-size", "pipe-user-pages-hard",
+                                            "pipe-user-pages-soft"};
+
+static bool is_control(Kind kind) {
+    return kind == Kind::network_property || kind == Kind::source_limit ||
+           kind == Kind::ipv4_forward || kind == Kind::pipe_limit;
+}
 
 struct Entry {
     Node node{};
@@ -298,7 +310,15 @@ static int lookup(Node* parent, const char* name, Node*& output) {
         kind = Kind::kernel;
     else if (context->kind == Kind::sys && !strcmp(name, "net"))
         kind = Kind::net;
-    else if (context->kind == Kind::net && !strcmp(name, "ipv6"))
+    else if (context->kind == Kind::sys && !strcmp(name, "fs"))
+        kind = Kind::fs;
+    else if (context->kind == Kind::fs) {
+        while (property < 3 && strcmp(name, pipe_limit_names[property]))
+            property++;
+        if (property == 3)
+            return -2;
+        kind = Kind::pipe_limit;
+    } else if (context->kind == Kind::net && !strcmp(name, "ipv6"))
         kind = Kind::ipv6;
     else if (context->kind == Kind::net && !strcmp(name, "ipv4"))
         kind = Kind::ipv4;
@@ -369,8 +389,7 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     result->property = property;
     result->network_generation = network_generation;
     result->ipv4_configuration = ipv4_configuration;
-    if (kind == Kind::network_property || kind == Kind::source_limit ||
-        kind == Kind::ipv4_forward) {
+    if (is_control(kind)) {
         result->node.mode = regular_file | (kind == Kind::network_property && !ipv4_configuration &&
                                                     property == proc6::secret_property
                                                 ? 0600
@@ -629,7 +648,8 @@ static int control_access(Node* node, unsigned mask, bool real) {
     // disable the normal setuid fixups. sysctl ownership still uses euid/egid.
     if (real && !(credentials.securebits & 4))
         capabilities = credentials.user.real ? 0 : credentials.permitted;
-    bool administrator = capabilities & (1ull << unsigned(Capability::net_admin));
+    bool administrator = entry(node)->kind != Kind::pipe_limit &&
+                         (capabilities & (1ull << unsigned(Capability::net_admin)));
     bool group = !credentials.group.effective;
     if (credentials.groups)
         for (unsigned at = 0; at < credentials.groups->count; at++)
@@ -645,6 +665,9 @@ static int64_t control_read(Handle* handle, void* output, size_t length) {
     if (int error = validate(handle->node))
         return error;
     auto item = entry(handle->node);
+    if (item->kind == Kind::pipe_limit)
+        return proc::read_unsigned_long(pipe_limit(PipeLimit(item->property)), handle->offset,
+                                        output, length);
     if (item->kind == Kind::source_limit)
         return proc4::source_limit_read(handle->offset, output, length);
     if (item->ipv4_configuration)
@@ -652,10 +675,33 @@ static int64_t control_read(Handle* handle, void* output, size_t length) {
     return proc6::read(item->network_index, item->property, handle->offset, output, length);
 }
 
+static int64_t pipe_limit_write(PipeLimit limit, uint64_t& offset, const void* input,
+                                size_t length) {
+    if (!length)
+        return 0;
+    if (offset) {
+        offset += length;
+        return int64_t(length);
+    }
+    uint64_t value;
+    size_t consumed, parsed = min(length, size_t(4095));
+    if (!proc::parse_unsigned_long(static_cast<const char*>(input), parsed, value, consumed))
+        return -22;
+    if (int error = set_pipe_limit(limit, value))
+        return error;
+    if (limit == PipeLimit::max_size)
+        consumed = parsed;
+    consumed += length - parsed;
+    offset += consumed;
+    return int64_t(consumed);
+}
+
 static int64_t control_write(Handle* handle, const void* input, size_t length) {
     if (int error = validate(handle->node))
         return error;
     auto item = entry(handle->node);
+    if (item->kind == Kind::pipe_limit)
+        return pipe_limit_write(PipeLimit(item->property), handle->offset, input, length);
     if (item->kind == Kind::source_limit)
         return proc4::source_limit_write(handle->offset, input, length);
     if (item->ipv4_configuration) {
@@ -676,11 +722,7 @@ static int control_truncate(Node*, size_t) {
 
 static const ControlFileOps* control(Node* node) {
     static const ControlFileOps ops{control_access, control_read, control_write, control_truncate};
-    auto kind = entry(node)->kind;
-    return kind == Kind::network_property || kind == Kind::source_limit ||
-                   kind == Kind::ipv4_forward
-               ? &ops
-               : nullptr;
+    return is_control(entry(node)->kind) ? &ops : nullptr;
 }
 
 static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
@@ -739,22 +781,26 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
             result.next = 5;
         } else
             return 0;
-    } else if (context->kind == Kind::sys || context->kind == Kind::kernel ||
-               context->kind == Kind::random || context->kind == Kind::net ||
-               context->kind == Kind::ipv6 || context->kind == Kind::ipv4) {
-        unsigned last = context->kind == Kind::ipv4                                ? 4u
-                        : context->kind == Kind::sys || context->kind == Kind::net ? 3u
-                                                                                   : 2u;
+    } else if (context->kind == Kind::sys || context->kind == Kind::fs) {
+        if (cookie - 2 >= 3)
+            return 0;
+        auto names = context->kind == Kind::sys ? sys_directories : pipe_limit_names;
+        const char* child = names[cookie - 2];
+        memcpy(name, child, strlen(child) + 1);
+        result.next = cookie + 1;
+    } else if (context->kind == Kind::kernel || context->kind == Kind::random ||
+               context->kind == Kind::net || context->kind == Kind::ipv6 ||
+               context->kind == Kind::ipv4) {
+        unsigned last = context->kind == Kind::ipv4 ? 4u : context->kind == Kind::net ? 3u : 2u;
         if (cookie > last)
             return 0;
-        const char* child = context->kind == Kind::sys      ? (cookie == 2 ? "kernel" : "net")
-                            : context->kind == Kind::kernel ? "random"
-                            : context->kind == Kind::net    ? (cookie == 2 ? "ipv6" : "ipv4")
-                            : context->kind == Kind::ipv4   ? (cookie == 2   ? "igmp_max_msf"
-                                                               : cookie == 3 ? "conf"
-                                                                             : "ip_forward")
-                            : context->kind == Kind::ipv6   ? "conf"
-                                                            : "boot_id";
+        const char* child = context->kind == Kind::kernel ? "random"
+                            : context->kind == Kind::net  ? (cookie == 2 ? "ipv6" : "ipv4")
+                            : context->kind == Kind::ipv4 ? (cookie == 2   ? "igmp_max_msf"
+                                                             : cookie == 3 ? "conf"
+                                                                           : "ip_forward")
+                            : context->kind == Kind::ipv6 ? "conf"
+                                                          : "boot_id";
         memcpy(name, child, strlen(child) + 1);
         result.next = cookie + 1;
     } else if (context->kind == Kind::conf) {
@@ -812,11 +858,7 @@ static int truncate(Node*, size_t) {
 }
 
 static int setattr(Node* node, uint32_t, Timestamp, Timestamp, uint32_t, uint32_t) {
-    auto kind = entry(node)->kind;
-    return kind == Kind::network_property || kind == Kind::source_limit ||
-                   kind == Kind::ipv4_forward
-               ? -1
-               : -30;
+    return is_control(entry(node)->kind) ? -1 : -30;
 }
 
 static int sync(Mount*, Node*, bool) {
@@ -872,8 +914,7 @@ const FilesystemOps procfs_ops = {lookup,
 
 bool procfs_has_poll(const Node& node) {
     auto kind = static_cast<const Entry*>(node.filesystem_data)->kind;
-    return kind == Kind::boot_id || kind == Kind::source_limit || kind == Kind::ipv4_forward ||
-           kind == Kind::network_property;
+    return kind == Kind::boot_id || is_control(kind);
 }
 
 Node* procfs_root(Mount* mount) {

@@ -9,6 +9,10 @@ struct Task;
 struct Credentials;
 
 inline constexpr uint32_t pipe_direct = 040000; // Linux O_DIRECT
+enum class PipeLimit { max_size, hard_pages, soft_pages };
+
+uint64_t pipe_limit(PipeLimit);
+int set_pipe_limit(PipeLimit, uint64_t);
 
 struct PipeSlot {
     uint64_t page;
@@ -45,7 +49,7 @@ struct Pipe {
     }
 };
 
-Pipe* create_pipe_buffer(const Credentials&);
+Pipe* create_pipe_buffer(const Credentials&, int& error);
 void destroy_pipe_buffer(Pipe&);
 int64_t pipe_fcntl(Handle&, unsigned command, uint32_t size, const Credentials&);
 int64_t pipe_write(Handle&, const void*, size_t, bool merge_tail);

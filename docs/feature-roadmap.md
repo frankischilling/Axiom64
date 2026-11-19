@@ -378,6 +378,8 @@ FIFO writes retain progress and their original descriptor across waits.
 The same tests cover shared capacity, page-slot readiness, resizing and
 queued data order on both kinds of pipe. Packet mode supports short-read
 discard, large-write splitting, and per-description mode changes.
+Pipe sysctls set the capacity ceiling and per-user page limits. Guest tests
+exercise quota failures, shrink, permission checks, and release after the last close.
 [Epoll lifetime tests](io.md#epoll-descriptor-lifetime) check duplicate and reused
 descriptors, inherited watches, waits that survive descriptor replacement,
 and file-type admission with the Linux errno and poll-mask behavior.

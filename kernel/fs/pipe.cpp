@@ -12,12 +12,53 @@
 
 namespace ax {
 static constexpr unsigned default_pipe_pages = 16;
-static constexpr unsigned pipe_user_pages_soft = 16384;
-static constexpr uint32_t unprivileged_pipe_bytes = 1024 * 1024;
+static uint64_t pipe_user_pages_soft = 16384;
+static uint64_t pipe_user_pages_hard;
+static uint32_t unprivileged_pipe_bytes = 1024 * 1024;
 static Pipe* live_pipes;
 
-static unsigned reserved_pages(uint32_t owner) {
-    unsigned total = 0;
+static uint32_t rounded_size(uint32_t size) {
+    if (size > (1u << 31))
+        return 0;
+    uint32_t bytes = page_size;
+    while (bytes < size)
+        bytes *= 2;
+    return bytes;
+}
+
+uint64_t pipe_limit(PipeLimit limit) {
+    switch (limit) {
+    case PipeLimit::max_size:
+        return unprivileged_pipe_bytes;
+    case PipeLimit::hard_pages:
+        return pipe_user_pages_hard;
+    case PipeLimit::soft_pages:
+        return pipe_user_pages_soft;
+    }
+    panic("invalid pipe limit");
+}
+
+int set_pipe_limit(PipeLimit limit, uint64_t value) {
+    switch (limit) {
+    case PipeLimit::max_size: {
+        uint32_t bytes = rounded_size(uint32_t(value));
+        if (!bytes)
+            return -22;
+        unprivileged_pipe_bytes = bytes;
+        return 0;
+    }
+    case PipeLimit::hard_pages:
+        pipe_user_pages_hard = value;
+        return 0;
+    case PipeLimit::soft_pages:
+        pipe_user_pages_soft = value;
+        return 0;
+    }
+    panic("invalid pipe limit");
+}
+
+static uint64_t reserved_pages(uint32_t owner) {
+    uint64_t total = 0;
     for (auto pipe = live_pipes; pipe; pipe = pipe->next)
         if (pipe->owner == owner)
             total += pipe->capacity;
@@ -29,16 +70,31 @@ static bool pipe_quota_applies(const Credentials& credentials) {
            !capable(credentials, Capability::sys_admin);
 }
 
-Pipe* create_pipe_buffer(const Credentials& credentials) {
+static bool exceeds_limit(uint64_t pages, uint64_t limit) {
+    return limit && pages > limit;
+}
+
+Pipe* create_pipe_buffer(const Credentials& credentials, int& error) {
+    uint32_t owner = credentials.user.real;
+    unsigned capacity = default_pipe_pages;
+    if (!capable(credentials, Capability::sys_resource))
+        capacity = min(capacity, unsigned(unprivileged_pipe_bytes / page_size));
+    if (pipe_quota_applies(credentials)) {
+        uint64_t reserved = reserved_pages(owner);
+        if (exceeds_limit(reserved + capacity, pipe_user_pages_soft))
+            capacity = 2;
+        if (exceeds_limit(reserved + capacity, pipe_user_pages_hard)) {
+            error = -23; // ENFILE for pipe(), translated to ENOMEM for FIFO opens.
+            return nullptr;
+        }
+    }
+    error = -12;
     auto pipe = static_cast<Pipe*>(alloc(sizeof(Pipe)));
     if (!pipe)
         return nullptr;
     *pipe = {};
-    pipe->owner = credentials.user.real;
-    pipe->capacity = default_pipe_pages;
-    if (pipe_quota_applies(credentials) &&
-        reserved_pages(pipe->owner) + default_pipe_pages > pipe_user_pages_soft)
-        pipe->capacity = 2;
+    pipe->owner = owner;
+    pipe->capacity = capacity;
     pipe->slots = static_cast<PipeSlot*>(alloc(pipe->capacity * sizeof(PipeSlot)));
     if (!pipe->slots) {
         release(pipe);
@@ -67,18 +123,20 @@ int64_t pipe_fcntl(Handle& handle, unsigned command, uint32_t size,
         return -9;
     if (command == 1032) // F_GETPIPE_SZ
         return pipe->capacity * page_size;
-    if (size > (1u << 31))
+    uint32_t bytes = rounded_size(size);
+    if (!bytes)
         return -22;
-    unsigned capacity = 1;
-    while (capacity * page_size < size)
-        capacity *= 2;
+    unsigned capacity = bytes / page_size;
     if (capacity > pipe->capacity) {
         if (capacity * page_size > unprivileged_pipe_bytes &&
             !capable(credentials, Capability::sys_resource))
             return -1;
-        if (pipe_quota_applies(credentials) &&
-            reserved_pages(pipe->owner) - pipe->capacity + capacity > pipe_user_pages_soft)
-            return -1;
+        if (pipe_quota_applies(credentials)) {
+            uint64_t reserved = reserved_pages(pipe->owner) - pipe->capacity + capacity;
+            if (exceeds_limit(reserved, pipe_user_pages_soft) ||
+                exceeds_limit(reserved, pipe_user_pages_hard))
+                return -1;
+        }
     }
     if (capacity < pipe->occupied)
         return -16;
@@ -195,8 +253,6 @@ int64_t open_fifo(Task& task, Node* inode, Node* dentry, uint32_t flags) {
     if (mode == 3 || (flags & pipe_direct))
         return -22;
     auto pipe = inode->named_pipe;
-    if (nonblocking && mode == 1 && (!pipe || !pipe->readers))
-        return -6;
     int fd = reserve_fd(task, 0, flags & 02000000);
     if (fd < 0)
         return fd;
@@ -207,14 +263,21 @@ int64_t open_fifo(Task& task, Node* inode, Node* dentry, uint32_t flags) {
         return error;
     }
     if (!pipe) {
-        pipe = create_pipe_buffer(task.credentials);
+        pipe = create_pipe_buffer(task.credentials, error);
         if (!pipe) {
             close_handle(handle);
             discard_reserved_fd(*task.files, fd);
             return -12;
         }
-        inode->named_pipe = pipe;
     }
+    if (nonblocking && mode == 1 && !pipe->readers) {
+        if (!inode->named_pipe)
+            destroy_pipe_buffer(*pipe);
+        close_handle(handle);
+        discard_reserved_fd(*task.files, fd);
+        return -6;
+    }
+    inode->named_pipe = pipe;
     handle->opened_dentry = dentry;
     attach_pipe(*handle, *pipe);
     bool wait_for_peer = mode == 0 ? !pipe->writers : mode == 1 && !pipe->readers;

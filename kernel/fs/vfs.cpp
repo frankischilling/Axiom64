@@ -1159,26 +1159,59 @@ int64_t read_handle(Handle* h, void* buf, size_t len) {
     return count;
 }
 
-int write_handle_limit(Handle* h, size_t& length) {
-    auto node = h->node;
+int write_handle_limit_at(Task* task, Handle& handle, uint64_t offset, size_t& length) {
+    auto node = handle.node;
     if (!length || !node || (node->mode & 0170000) != regular_file)
         return 0;
-    if ((h->flags & 3) == 0)
+    if ((handle.flags & 3) == 0)
         return -9;
     if (node_readonly(node))
         return -30;
     if (node_control(node) || node->mount->ops == &posix_queue_filesystem())
         return 0;
-    if (!current)
+    if (!task)
         return 0;
-    uint64_t offset = h->flags & 02000 ? node->size : h->offset;
-    uint64_t limit = current->process->limits.soft(Resource::file_size);
+    uint64_t limit = task->process->limits.soft(Resource::file_size);
     if (offset >= limit) {
-        queue_signal(current, 25, current->process->pid);
+        queue_signal(task, 25, task->process->pid);
         return -27;
     }
     length = min(uint64_t(length), limit - offset);
     return 0;
+}
+
+int write_handle_limit(Handle* h, size_t& length) {
+    uint64_t offset = h->node && (h->flags & 02000) ? h->node->size : h->offset;
+    return write_handle_limit_at(current, *h, offset, length);
+}
+
+int64_t write_regular_at(Task* task, Handle& handle, uint64_t& offset, const void* buf,
+                         size_t len) {
+    auto node = handle.node;
+    if (node_readonly(node))
+        return -30;
+    if (int error = node_drop_file_capabilities(node))
+        return error;
+    if (task && !capable(task->credentials, Capability::fsetid)) {
+        uint32_t mode = node->mode & ~04000;
+        if (mode & 010)
+            mode &= ~02000;
+        if (mode != node->mode) {
+            int error = node_setattr(node, mode, node->atime, node->mtime);
+            if (error)
+                return error;
+        }
+    }
+    int64_t count = node->mount->ops->write(node, offset, buf, len);
+    if (count > 0) {
+        offset += count;
+        if (handle.flags & 010000) {
+            int error = node_sync(node, true);
+            if (error)
+                return error;
+        }
+    }
+    return count;
 }
 
 int64_t write_handle(Handle* h, const void* buf, size_t len) {
@@ -1224,29 +1257,6 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
         return error;
     if (h->flags & 02000)
         h->offset = n->size;
-    if (node_readonly(n))
-        return -30;
-    if (int error = node_drop_file_capabilities(n))
-        return error;
-    if (current && !capable(current->credentials, Capability::fsetid)) {
-        uint32_t mode = n->mode & ~04000;
-        if (mode & 010)
-            mode &= ~02000;
-        if (mode != n->mode) {
-            int error = node_setattr(n, mode, n->atime, n->mtime);
-            if (error)
-                return error;
-        }
-    }
-    int64_t count = n->mount->ops->write(n, h->offset, buf, len);
-    if (count > 0) {
-        h->offset += count;
-        if (h->flags & 010000) {
-            int error = node_sync(n, true);
-            if (error)
-                return error;
-        }
-    }
-    return count;
+    return write_regular_at(current, *h, h->offset, buf, len);
 }
 } // namespace ax

@@ -27,6 +27,7 @@
 #include "io/vectors.hpp"
 #include "core/time.hpp"
 #include "drivers/platform/devices.hpp"
+#include "fs/ext2/ext2.hpp"
 #include "fs/file_lock.hpp"
 #include "fs/record_lock.hpp"
 #include "fs/descriptor.hpp"
@@ -58,6 +59,7 @@ static_assert(sizeof(Iovec) == 16 && sizeof(Message) == 56);
 struct IoRequest {
     Handle* handle;
     Handle* pipe_target;
+    uint64_t splice_position;
     Task* record_task = nullptr;
     unsigned record_command = 0;
     RecordFlock record{}, original_record{};
@@ -1551,11 +1553,25 @@ static int64_t inotify_attempt(Task& task, IoRequest& request) {
     return request.progress;
 }
 
-static int64_t pipe_transfer_attempt(Task& task, const IoRequest& request) {
+static int64_t pipe_transfer_attempt(Task& task, IoRequest& request) {
     auto source = request.handle;
     auto target = request.pipe_target;
     bool duplicate = request.call.rax == 276;
-    int64_t result = pipe_transfer(*source->pipe, *target->pipe, request.single.length, duplicate);
+    size_t length = request.single.length;
+    int64_t result;
+    Handle* file = nullptr;
+    uint64_t position_pointer = 0;
+    if (!source->pipe) {
+        file = source;
+        position_pointer = request.call.rsi;
+        result = splice_file_to_pipe(*source, *target->pipe, request.splice_position, length);
+    } else if (!target->pipe) {
+        file = target;
+        position_pointer = request.call.r10;
+        result = splice_pipe_to_file(task, *source->pipe, *target, request.splice_position, length);
+    } else {
+        result = pipe_transfer(*source->pipe, *target->pipe, length, duplicate);
+    }
     if (result == -32)
         queue_signal(&task, 13, task.process->pid);
     if (result == -11 && request.stream_blocking)
@@ -1568,6 +1584,13 @@ static int64_t pipe_transfer_attempt(Task& task, const IoRequest& request) {
             inotify_dentry(target->opened_dentry, inotify_modify);
             inotify_dentry(source->opened_dentry, inotify_access);
         }
+    }
+    if (result >= 0 && file) {
+        if (!position_pointer)
+            file->offset = request.splice_position;
+        else if (!task.memory->space.copy_out(position_pointer, &request.splice_position,
+                                              sizeof(request.splice_position)))
+            return -14;
     }
     return result;
 }
@@ -1793,11 +1816,32 @@ static int64_t pipe_transfer_syscall(Task& task, const Frame& frame) {
         return -9;
     if (!duplicate && ((source->pipe && frame.rsi) || (target->pipe && frame.r10)))
         return -29;
+    uint64_t position = 0;
+    if (!duplicate && ((frame.r10 && !task.memory->space.copy_in(&position, frame.r10, 8)) ||
+                       (frame.rsi && !task.memory->space.copy_in(&position, frame.rsi, 8))))
+        return -14;
     if (((source->flags | target->flags) & 010000000) || (source->flags & 3) == 1 ||
         !(target->flags & 3))
         return -9;
-    if (!source->pipe || !target->pipe || source->pipe == target->pipe)
+    if (source->pipe == target->pipe || (duplicate && (!source->pipe || !target->pipe)))
         return -22;
+    unsigned pipe_flags = 0;
+    if (!source->pipe || !target->pipe) {
+        auto file = source->pipe ? target : source;
+        auto node = file->node;
+        if (!node || (node->mode & 0170000) != regular_file ||
+            (node->mount->ops != &ramfs_ops && node->mount->ops != &ext2_ops) ||
+            (source->pipe && (target->flags & 02000)))
+            return -22;
+        uint64_t pointer = source->pipe ? frame.r10 : frame.rsi;
+        if (!pointer)
+            position = file->offset;
+        if (position > INT64_MAX || length > uint64_t(INT64_MAX) - position)
+            return -22;
+        pipe_flags = source->pipe ? source->flags : target->flags;
+    } else {
+        pipe_flags = source->flags | target->flags;
+    }
     if (task.io)
         panic("active I/O at syscall entry");
     auto request = static_cast<IoRequest*>(alloc(sizeof(IoRequest)));
@@ -1806,10 +1850,11 @@ static int64_t pipe_transfer_syscall(Task& task, const Frame& frame) {
     *request = {};
     request->handle = source;
     request->pipe_target = target;
+    request->splice_position = position;
     request->call = frame;
     request->vectors = &request->single;
     request->single.length = length;
-    request->stream_blocking = !(flags & 2) && !((source->flags | target->flags) & 04000);
+    request->stream_blocking = !(flags & 2) && !(pipe_flags & 04000);
     retain(source);
     retain(target);
     int64_t result = pipe_transfer_attempt(task, *request);

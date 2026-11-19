@@ -72,8 +72,10 @@ WORKLOADS = {
                                        'rendezvous', 'transient-peer',
                                        'interruption-cancellation', 'inode-aliases', 'unlink-recreate')),
     'pipe-transfer': ('PIPE_TRANSFER', ('arguments', 'shared-and-moved-slots', 'packet-boundaries',
+                                       'file-offsets', 'file-copy-faults', 'file-size-limit',
                                        'readiness', 'broken-output', 'retained-output',
-                                       'retained-input', 'interruption', 'restart')),
+                                       'retained-input', 'retained-file-input',
+                                       'retained-file-output', 'interruption', 'restart')),
     'posix-aio': ('POSIX_AIO', ('positioned-sync-errors', 'signal', 'lists-thread',
                                 'timeout-interrupt-cancel', 'descriptor-reuse')),
 }
@@ -94,6 +96,8 @@ def execute(command, log, expected_exit, uids, workload, firmware=None, root='ra
         f'Firmware: {firmware.upper()}', 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0']
     if root == 'ext2':
         markers.append('VFS_ROOT_PASS filesystem=ext2 device=/dev/vda readonly=1')
+    elif root == 'ext2-writable':
+        markers.append('VFS_ROOT_PASS filesystem=ext2 device=/dev/vda readonly=0')
     if workload == 'named-pipes' and firmware is not None:
         markers.append('NAMED_PIPE_LIMITS_PASS')
     observed = {}
@@ -271,9 +275,9 @@ def guest_command(case, image, firmware, disk=None, *, writable=False):
     return command
 
 
-def boot_guest(case, workload, image, firmware, disk=None):
-    root = 'ext2' if disk else 'ramfs'
-    command = guest_command(case, image, firmware, disk)
+def boot_guest(case, workload, image, firmware, disk=None, *, writable=False):
+    root = ('ext2-writable' if writable else 'ext2') if disk else 'ramfs'
+    command = guest_command(case, image, firmware, disk, writable=writable)
     log = case / (f'ext2-{firmware}.log' if disk else f'{firmware}.log')
     return execute(command, log, 1, [0, 65534], workload, firmware, root)
 
@@ -350,7 +354,7 @@ def guest(directory, workload, client):
         if binary_linkage(program) != linkage:
             raise RuntimeError('guest IPC executable linkage differs')
         boot = f'/bin/{program.name}\n/bin/{program.name} --ordinary'
-        if workload == 'sysv-shared-memory':
+        if workload in ('sysv-shared-memory', 'pipe-transfer'):
             boot = '/bin/busybox chmod 1777 /tmp\n' + boot
         elif workload == 'named-pipes':
             applet = '/dev/shm/axiom-fifo-applet'
@@ -376,16 +380,25 @@ def guest(directory, workload, client):
         if (provider, linkage) == ('build', 'static') and (
                 workload.startswith('posix-') or workload in ('named-pipes', 'poll-waits', 'select-waits',
                                                           'epoll-lifetime', 'epoll-nested',
-                                                          'descriptor-wait-lifetime', 'udp-waits')):
-            image, disk = ext2_fixture(case, kernel, payload, script, workload)
+                                                          'descriptor-wait-lifetime', 'udp-waits', 'pipe-transfer')):
+            writable = workload == 'pipe-transfer'
+            image, disk = ext2_fixture(case, kernel, payload, script, workload, readonly=not writable)
             fingerprint = disk_digest(disk)
             for firmware in ('bios', 'uefi'):
-                row = boot_guest(case, workload, image, firmware, disk)
+                row = boot_guest(case, workload, image, firmware, disk, writable=writable)
+                if writable:
+                    check = case / f'ext2-{firmware}.fsck.log'
+                    with check.open('xb') as output:
+                        subprocess.run(['e2fsck', '-fn', str(disk)], stdout=output,
+                                       stderr=subprocess.STDOUT, check=True)
+                    row.update(disk_after_sha256=disk_digest(disk), fsck_sha256=digest(check))
                 rows.append(dict(provider=provider, linkage=linkage, firmware=firmware,
                                  root='ext2', kernel_sha256=kernel, program_sha256=digest(program),
                                  image_sha256=digest(image), disk_sha256=fingerprint, **row))
                 print(f'{prefix}_GUEST_PASS ext2/{firmware}', flush=True)
-            if disk_digest(disk) != fingerprint:
+                if writable:
+                    fingerprint = row['disk_after_sha256']
+            if not writable and disk_digest(disk) != fingerprint:
                 raise RuntimeError('read-only ext2 fixture changed during boot')
             if workload == 'named-pipes':
                 named_pipe_storage(directory / 'storage', case, kernel, program, payload)

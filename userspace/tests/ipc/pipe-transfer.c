@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    userspace/tests/ipc/pipe-transfer.c
- * @brief   Pipe-to-pipe splice and tee tests.
+ * @brief   Pipe and regular-file splice and tee tests.
  * @author  frankischilling
  * @date    2026-11-18
  *
  * Exercises shared and moved pipe slots, packet boundaries, and held
- * descriptions across blocked transfers.
+ * descriptions across blocked transfers. Checks regular-file offsets, faults,
+ * append rejection, and file size limits.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -34,6 +35,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/mman.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 #define CHECK(condition)                                                                           \
@@ -110,6 +113,108 @@ static void packets(void) {
     puts("PIPE_TRANSFER_CASE packet-boundaries");
 }
 
+static int temporary_file(void) {
+    char path[] = "/tmp/axiom-splice-XXXXXX";
+    int fd = mkstemp(path);
+    CHECK(fd >= 0 && unlink(path) == 0);
+    return fd;
+}
+
+static void file_offsets(void) {
+    int file = temporary_file();
+    int ends[2];
+    char bytes[8];
+    CHECK(pipe2(ends, O_NONBLOCK) == 0);
+    CHECK(fcntl(ends[1], F_SETPIPE_SZ, 4096) == 4096);
+    CHECK(pwrite(file, "abcdef", 6, 4094) == 6);
+    CHECK(lseek(file, 4096, SEEK_SET) == 4096);
+    loff_t offset = 4094;
+    CHECK(splice(file, &offset, ends[1], NULL, 6, 0) == 2 && offset == 4096);
+    CHECK(write(ends[1], "x", 1) == -1 && errno == EAGAIN);
+    CHECK(splice(file, NULL, ends[1], NULL, 4, 0) == -1 && errno == EAGAIN);
+    CHECK(lseek(file, 0, SEEK_CUR) == 4096);
+    CHECK(read(ends[0], bytes, sizeof(bytes)) == 2 && !memcmp(bytes, "ab", 2));
+    CHECK(splice(file, NULL, ends[1], NULL, 6, 0) == 4);
+    CHECK(read(ends[0], bytes, sizeof(bytes)) == 4 && !memcmp(bytes, "cdef", 4));
+    CHECK(lseek(file, 0, SEEK_CUR) == 4100);
+    CHECK(splice(file, NULL, ends[1], NULL, 6, 0) == 0);
+    CHECK(write(ends[1], "xyzw", 4) == 4);
+    CHECK(fcntl(file, F_SETFL, O_APPEND) == 0);
+    CHECK(splice(ends[0], NULL, file, &offset, 2, 0) == -1 && errno == EINVAL);
+    CHECK(fcntl(file, F_SETFL, 0) == 0);
+    CHECK(splice(ends[0], NULL, file, &offset, 2, 0) == 2 && offset == 4098);
+    CHECK(lseek(file, 0, SEEK_CUR) == 4100);
+    CHECK(splice(ends[0], NULL, file, NULL, 6, 0) == 2);
+    CHECK(lseek(file, 0, SEEK_CUR) == 4102);
+    CHECK(pread(file, bytes, sizeof(bytes), 4094) == 8 && !memcmp(bytes, "abxyefzw", 8));
+    CHECK(close(file) == 0);
+    close_pair(ends);
+    puts("PIPE_TRANSFER_CASE file-offsets");
+}
+
+static void file_copy_faults(void) {
+    int file = temporary_file();
+    int ends[2];
+    char byte;
+    CHECK(pipe2(ends, O_DIRECT | O_NONBLOCK) == 0);
+    CHECK(pwrite(file, "abc", 3, 0) == 3);
+    loff_t* offset = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(offset != MAP_FAILED);
+    *offset = -1;
+    CHECK(splice(file, offset, ends[1], NULL, 1, 0) == -1 && errno == EINVAL);
+    *offset = 0;
+    CHECK(mprotect(offset, 4096, PROT_NONE) == 0);
+    CHECK(splice(file, offset, ends[1], NULL, 1, 0) == -1 && errno == EFAULT);
+    CHECK(read(ends[0], &byte, 1) == -1 && errno == EAGAIN);
+    CHECK(mprotect(offset, 4096, PROT_READ) == 0);
+    CHECK(splice(file, offset, ends[1], NULL, 2, 0) == -1 && errno == EFAULT);
+    CHECK(read(ends[0], &byte, 1) == 1 && byte == 'a');
+    CHECK(read(ends[0], &byte, 1) == 1 && byte == 'b');
+    CHECK(write(ends[1], "xyz", 3) == 3);
+    CHECK(splice(ends[0], NULL, file, offset, 1, 0) == -1 && errno == EFAULT);
+    CHECK(pread(file, &byte, 1, 0) == 1 && byte == 'x');
+    char bytes[3];
+    CHECK(read(ends[0], bytes, sizeof(bytes)) == 2 && !memcmp(bytes, "yz", 2));
+    CHECK(lseek(file, 0, SEEK_CUR) == 0 && *offset == 0);
+    CHECK(munmap(offset, 4096) == 0 && close(file) == 0);
+    close_pair(ends);
+    puts("PIPE_TRANSFER_CASE file-copy-faults");
+}
+
+static volatile sig_atomic_t file_limit_signals;
+
+static void record_sigxfsz(int signo) {
+    if (signo == SIGXFSZ)
+        ++file_limit_signals;
+}
+
+static void file_size_limit(void) {
+    int file = temporary_file();
+    int ends[2];
+    CHECK(pipe2(ends, O_DIRECT | O_NONBLOCK) == 0);
+    CHECK(write(ends[1], "abc", 3) == 3 && write(ends[1], "def", 3) == 3);
+    struct sigaction action = {.sa_handler = record_sigxfsz}, previous;
+    CHECK(sigemptyset(&action.sa_mask) == 0 && sigaction(SIGXFSZ, &action, &previous) == 0);
+    struct rlimit saved, limited;
+    CHECK(getrlimit(RLIMIT_FSIZE, &saved) == 0);
+    limited = saved;
+    limited.rlim_cur = 3;
+    CHECK(setrlimit(RLIMIT_FSIZE, &limited) == 0);
+    ssize_t first = splice(ends[0], NULL, file, NULL, 6, 0);
+    sig_atomic_t first_signals = file_limit_signals;
+    ssize_t second = splice(ends[0], NULL, file, NULL, 3, 0);
+    int error = errno;
+    CHECK(setrlimit(RLIMIT_FSIZE, &saved) == 0 && sigaction(SIGXFSZ, &previous, NULL) == 0);
+    CHECK(first == 3 && first_signals == 1);
+    CHECK(second == -1 && error == EFBIG && file_limit_signals == 2);
+    char bytes[3];
+    CHECK(read(ends[0], bytes, sizeof(bytes)) == 3 && !memcmp(bytes, "def", 3));
+    CHECK(pread(file, bytes, sizeof(bytes), 0) == 3 && !memcmp(bytes, "abc", 3));
+    CHECK(close(file) == 0);
+    close_pair(ends);
+    puts("PIPE_TRANSFER_CASE file-size-limit");
+}
+
 static void readiness(void) {
     int source[2], target[2];
     CHECK(pipe(source) == 0 && pipe(target) == 0);
@@ -173,14 +278,16 @@ struct transfer {
     int source, target, ready, complete;
     int duplicate;
     int expected_error;
+    loff_t* source_offset;
+    loff_t* target_offset;
 };
 
 static void* transfer_one(void* argument) {
     struct transfer* transfer = argument;
     CHECK(write(transfer->ready, "r", 1) == 1);
-    ssize_t count = transfer->duplicate
-                        ? tee(transfer->source, transfer->target, 1, 0)
-                        : splice(transfer->source, NULL, transfer->target, NULL, 1, 0);
+    ssize_t count = transfer->duplicate ? tee(transfer->source, transfer->target, 1, 0)
+                                        : splice(transfer->source, transfer->source_offset,
+                                                 transfer->target, transfer->target_offset, 1, 0);
     if (transfer->expected_error)
         CHECK(count == -1 && errno == transfer->expected_error);
     else
@@ -228,6 +335,53 @@ static void blocked(int duplicate) {
     close_pair(ready);
     close_pair(complete);
     puts(duplicate ? "PIPE_TRANSFER_CASE retained-input" : "PIPE_TRANSFER_CASE retained-output");
+}
+
+static void blocked_file(int to_pipe) {
+    int ends[2], ready[2], complete[2];
+    int file = temporary_file();
+    int replacement = temporary_file();
+    int original = dup(file);
+    CHECK(original >= 0 && pipe(ends) == 0 && pipe(ready) == 0 && pipe(complete) == 0);
+    char block[4096] = {0};
+    if (to_pipe) {
+        CHECK(fcntl(ends[1], F_SETPIPE_SZ, sizeof(block)) == sizeof(block));
+        CHECK(write(ends[1], block, sizeof(block)) == sizeof(block));
+        CHECK(pwrite(file, "old", 3, 0) == 3);
+    }
+    loff_t position = 1;
+    struct transfer transfer = {
+        .source = to_pipe ? file : ends[0],
+        .target = to_pipe ? ends[1] : file,
+        .ready = ready[1],
+        .complete = complete[1],
+        .source_offset = to_pipe ? &position : NULL,
+        .target_offset = to_pipe ? NULL : &position,
+    };
+    pthread_t worker;
+    CHECK(pthread_create(&worker, NULL, transfer_one, &transfer) == 0);
+    char byte;
+    CHECK(read(ready[0], &byte, 1) == 1 && byte == 'r');
+    struct pollfd done = {.fd = complete[0], .events = POLLIN};
+    CHECK(poll(&done, 1, 80) == 0);
+    CHECK(dup2(replacement, file) == file);
+    if (to_pipe)
+        CHECK(read(ends[0], block, sizeof(block)) == sizeof(block));
+    else
+        CHECK(write(ends[1], "w", 1) == 1);
+    CHECK(poll(&done, 1, 3000) == 1 && read(complete[0], &byte, 1) == 1 && byte == 'c');
+    CHECK(pthread_join(worker, NULL) == 0 && position == 2);
+    CHECK(lseek(original, 0, SEEK_CUR) == 0 && lseek(replacement, 0, SEEK_END) == 0);
+    if (to_pipe)
+        CHECK(read(ends[0], &byte, 1) == 1 && byte == 'l');
+    else
+        CHECK(pread(original, &byte, 1, 1) == 1 && byte == 'w');
+    CHECK(close(file) == 0 && close(original) == 0 && close(replacement) == 0);
+    close_pair(ends);
+    close_pair(ready);
+    close_pair(complete);
+    puts(to_pipe ? "PIPE_TRANSFER_CASE retained-file-input"
+                 : "PIPE_TRANSFER_CASE retained-file-output");
 }
 
 static volatile sig_atomic_t caught_signal;
@@ -298,10 +452,15 @@ int main(int argc, char** argv) {
     arguments();
     streams();
     packets();
+    file_offsets();
+    file_copy_faults();
+    file_size_limit();
     readiness();
     broken_output();
     blocked(0);
     blocked(1);
+    blocked_file(1);
+    blocked_file(0);
     interrupt(0);
     interrupt(1);
     printf("PIPE_TRANSFER_PASS uid=%u\n", (unsigned)getuid());

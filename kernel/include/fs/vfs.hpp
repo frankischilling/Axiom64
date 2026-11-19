@@ -271,8 +271,11 @@ int64_t read_handle(Handle*, void*, size_t);
 
 // Clamp a complete regular-file write before inspecting user payload pages.
 int write_handle_limit(Handle*, size_t&);
+int write_handle_limit_at(Task*, Handle&, uint64_t, size_t&);
 
 int64_t write_handle(Handle*, const void*, size_t);
+// Callers clamp the transfer with write_handle_limit_at before committing bytes.
+int64_t write_regular_at(Task*, Handle&, uint64_t&, const void*, size_t);
 
 bool handle_has_poll(const Handle&);
 bool handle_ready(Handle*, bool write, const Task*);

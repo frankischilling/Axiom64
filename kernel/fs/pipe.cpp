@@ -241,6 +241,74 @@ int64_t pipe_transfer(Pipe& input, Pipe& output, size_t length, bool duplicate) 
     return moved;
 }
 
+int64_t splice_file_to_pipe(Handle& input, Pipe& output, uint64_t& offset, size_t length) {
+    if (!output.readers)
+        return -32;
+    if (output.full())
+        return -11;
+
+    size_t moved = 0;
+    int64_t result = 0;
+    while (moved < length && !output.full()) {
+        uint64_t page = page_alloc();
+        if (!page) {
+            result = -12;
+            break;
+        }
+        size_t count = min(length - moved, size_t(page_size - offset % page_size));
+        result = description_read(&input, offset, physical(page), count);
+        if (result <= 0) {
+            page_free(page);
+            break;
+        }
+        output.slot(output.occupied++) = {page, 0, uint16_t(result), false, false};
+        offset += result;
+        output.size += result;
+        moved += result;
+        if (size_t(result) < count)
+            break;
+    }
+    if (moved)
+        descriptor_wait_notify(&output, 1 | 0x40);
+    return moved ? int64_t(moved) : result;
+}
+
+int64_t splice_pipe_to_file(Task& task, Pipe& input, Handle& output, uint64_t& offset,
+                            size_t length) {
+    if (!input.occupied)
+        return input.writers ? -11 : 0;
+    bool was_full = input.full();
+    size_t moved = 0;
+    int64_t result = 0;
+    while (moved < length && input.occupied) {
+        auto& slot = input.slot(0);
+        size_t available = slot.end - slot.begin;
+        size_t count = min(length - moved, available);
+        if (int error = write_handle_limit_at(&task, output, offset, count)) {
+            result = error;
+            break;
+        }
+        auto bytes = static_cast<const uint8_t*>(physical(slot.page)) + slot.begin;
+        uint64_t before = offset;
+        result = write_regular_at(&task, output, offset, bytes, count);
+        size_t committed = offset - before;
+        moved += committed;
+        input.size -= committed;
+        if (committed == available) {
+            page_free(slot.page);
+            input.first = (input.first + 1) & (input.capacity - 1);
+            --input.occupied;
+        } else {
+            slot.begin += committed;
+        }
+        if (result <= 0)
+            break;
+    }
+    if (was_full && !input.full())
+        descriptor_wait_notify(&input, 4 | 0x100);
+    return moved ? int64_t(moved) : result;
+}
+
 int64_t pipe_read(Pipe* pipe, void* buffer, size_t length, bool peek) {
     if (!length)
         return 0;

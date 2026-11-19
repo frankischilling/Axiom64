@@ -29,11 +29,13 @@
 #include "net/ipv6/destination.hpp"
 #include "net/ipv6/errors.hpp"
 #include "net/ipv6/path_mtu.hpp"
+#include "net/udp/cork.hpp"
 
 namespace ax {
 constexpr unsigned inet6_socket_count = 256, inet6_queue_count = 32;
 constexpr uint32_t inet6_queue_bytes = 65536;
 static_assert(inet6_socket_count <= ip6::path_mtu_reference_capacity);
+using Inet6UdpCork = UdpCork<Inet6Address, Inet6SendControl>;
 
 struct Inet6Socket {
     bool used = false, bound = false, connected = false, reuse = false, port_locked = false;
@@ -59,6 +61,8 @@ struct Inet6Socket {
     Inet6Error* errors[inet6_queue_count]{};
     unsigned error_head = 0, error_count = 0;
     size_t error_bytes = 0;
+    Inet6UdpCork* cork = nullptr;
+    bool udp_cork = false;
 };
 
 extern Inet6Socket inet6_sockets[inet6_socket_count];

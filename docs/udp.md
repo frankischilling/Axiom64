@@ -53,6 +53,24 @@ Common cases cover bind conflicts, disconnect policy, reused ports, shutdown, tr
 
 IPv4 UDP memberships and source filtering use the shared [multicast controls](ipv4.md). IPv4 packet-information, TTL and TOS [receive controls](ipv4.md#receive-metadata) are available. UDP segmentation/offload, further ancillary options, error queues, message batches, Unix datagram data and the complete Linux socket contract remain required. Common finite [socket deadlines](io.md) apply to blocking operations. Ports are sequential. The [credentials](credentials.md), [accounts](accounts.md) and [randomness](random.md) documents describe the current service prerequisites and limits.
 
+## UDP corking
+
+IPv4 and IPv6 UDP sockets assemble one pending datagram when a send uses
+`MSG_MORE`, a pipe transfer uses `SPLICE_F_MORE`, or `UDP_CORK` is enabled.
+Descriptor aliases share the pending bytes. A send without a corking flag
+flushes the datagram when `UDP_CORK` is off. Clearing `UDP_CORK` also flushes
+pending bytes. An empty send can flush pending bytes. An empty splice has no
+effect. Closing the last description discards any pending datagram.
+
+The final send reports its own byte count. An append that exceeds the datagram
+limit returns `EMSGSIZE` and discards the pending datagram. Pipe bytes from the
+failing append remain queued. The loopback tests check shared descriptors,
+destination selection, IPv4 TTL and IPv6 hop-limit controls, and replay after
+an oversized append. They record native Linux handling of a 17-slot page
+transfer separately, including successful byte counts followed by packet
+discard on Linux 7. Axiom64's copied transport must deliver all 17 bytes in
+one datagram.
+
 Protocol references are [UDP](https://www.rfc-editor.org/rfc/rfc768), [host requirements](https://www.rfc-editor.org/rfc/rfc1122), and [UDP surplus-area handling](https://www.rfc-editor.org/rfc/rfc9868). Linux comparisons use [Linux 6.12 UDP](https://github.com/torvalds/linux/blob/v6.12/net/ipv4/udp.c), [Internet socket operations](https://github.com/torvalds/linux/blob/v6.12/net/ipv4/af_inet.c), and [IP sysctls](https://github.com/torvalds/linux/blob/v6.12/Documentation/networking/ip-sysctl.rst). The tested contracts cover the behavior above; complete conformance remains planned.
 
 The complete matrix now retains normal and failed-device images separately under

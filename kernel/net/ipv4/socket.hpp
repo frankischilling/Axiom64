@@ -31,6 +31,7 @@
 #include "net/ipv4/options.hpp"
 #include "net/ipv6/destination.hpp"
 #include "net/tcp/address.hpp"
+#include "net/udp/cork.hpp"
 
 namespace ax::tcp {
 class Connection;
@@ -40,6 +41,7 @@ namespace ax {
 constexpr unsigned inet_socket_count = 256, inet_queue_count = 32;
 constexpr uint32_t inet_queue_bytes = 65536;
 constexpr int inet_protocol_limit = 263; // Linux IPPROTO_MAX includes MPTCP, 262.
+using InetUdpCork = UdpCork<InetAddress, InetSendControl>;
 
 struct InetSocket {
     bool used = false, broadcast = false, bound = false, port_locked = false, reuse = false;
@@ -63,6 +65,8 @@ struct InetSocket {
     unsigned shutdown = 0;
     uint64_t order = 0;
     InetFrame* queue[inet_queue_count]{};
+    InetUdpCork* cork = nullptr;
+    bool udp_cork = false;
 
     // Stream descriptions share one engine and port table across Internet domains.
     bool ipv6 = false, wire6 = false, v6only = false, bind_completed = false;

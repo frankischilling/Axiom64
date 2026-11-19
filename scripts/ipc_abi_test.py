@@ -80,7 +80,8 @@ WORKLOADS = {
                                        'interruption', 'restart')),
     'socket-splice': ('SOCKET_SPLICE', ('unix-stream', 'unix-datagram', 'large-datagram', 'tcp4',
                                        'tcp6', 'udp4', 'udp6', 'unix-rights', 'retained-input',
-                                       'retained-output', 'send-backpressure')),
+                                       'retained-output', 'send-backpressure', 'udp4-more',
+                                       'udp6-more')),
     'posix-aio': ('POSIX_AIO', ('positioned-sync-errors', 'signal', 'lists-thread',
                                 'timeout-interrupt-cancel', 'descriptor-reuse')),
 }
@@ -116,6 +117,18 @@ def execute(command, log, expected_exit, uids, workload, firmware=None, root='ra
         if datagrams != expected_datagrams * len(uids):
             raise RuntimeError(f'wrong socket splice datagram boundaries in {log}')
         observed['datagrams'] = expected_datagrams
+        batches = [line.removeprefix('SOCKET_SPLICE_UDP_BATCH ') for line in lines
+                   if line.startswith('SOCKET_SPLICE_UDP_BATCH ')]
+        families = ['ipv4', 'ipv6'] * len(uids)
+        if len(batches) != len(families):
+            raise RuntimeError(f'incomplete UDP splice batches in {log}')
+        for family, batch in zip(families, batches):
+            modes = ('coalesced',)
+            if firmware is None:
+                modes = ('split',) if legacy and family == 'ipv6' else (*modes, 'dropped')
+            if batch not in (f'{family}={mode}' for mode in modes):
+                raise RuntimeError(f'wrong UDP splice batch outcome in {log}')
+        observed['udp_batches'] = batches
     if workload == 'descriptor-wait-lifetime':
         peeks = [re.fullmatch(r'WAIT_LIFETIME_PEEK call=(\w+) early=([01])', line)
                  for line in lines if line.startswith('WAIT_LIFETIME_PEEK ')]
@@ -227,6 +240,8 @@ def native(directory, workload):
                     raise RuntimeError('cannot determine native Linux epoll seek ABI')
                 legacy_seek = tuple(map(int, version.groups())) < (6, 0)
             for uid, flags in ((0, []), (65534, ['--ordinary'])):
+                if workload == 'socket-splice':
+                    flags = ['--native', *flags]
                 if legacy_depth:
                     flags = ['--legacy-depth', *flags]
                 if legacy_seek:

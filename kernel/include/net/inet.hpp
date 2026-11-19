@@ -47,6 +47,7 @@ struct InetSendControl {
     uint8_t ttl = 64, tos = 0;
     bool cache_destination = false;
     bool header_included = false, probe = false;
+    bool ttl_override = false;
     Ipv4SendRoute route{};
     ip4::Options options{};
 };
@@ -69,6 +70,7 @@ void inet_close(InetSocket*);
 Ipv4Destination* inet_output_destination(InetSocket*, uint32_t address, bool lookup_failed);
 
 bool inet_payload(InetSocket*);
+bool inet_udp(const InetSocket*);
 
 bool inet_dont_fragment(const InetSocket*, bool path_locked = false);
 
@@ -124,7 +126,7 @@ int inet_send_admit(InetSocket*, InetAddress&, size_t, InetSendControl&);
 int inet_send_ready(InetSocket*, size_t, const InetSendControl* = nullptr);
 
 int64_t inet_send(InetSocket*, const InetAddress&, const void*, size_t, bool named = false,
-                  const InetSendControl* control = nullptr);
+                  const InetSendControl* control = nullptr, bool more = false);
 
 int64_t inet_read(InetSocket*, void*, size_t);
 

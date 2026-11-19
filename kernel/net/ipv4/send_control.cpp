@@ -109,7 +109,11 @@ int inet_prepare_send(InetSocket* socket, InetAddress& address, bool named, uint
                         return -22;
                     if (value < (header.type == 2 ? 1 : 0) || value > 255)
                         return -22;
-                    (header.type == 2 ? result.ttl : result.tos) = uint8_t(value);
+                    if (header.type == 2) {
+                        result.ttl = uint8_t(value);
+                        result.ttl_override = true;
+                    } else
+                        result.tos = uint8_t(value);
                 } else if (header.type == 7) {
                     ip4::OptionPolicy policy{net_raw, inet_option_unicast};
                     if (int error = result.options.assign(

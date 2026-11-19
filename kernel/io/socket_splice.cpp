@@ -70,15 +70,15 @@ int64_t splice_socket_to_pipe(Handle& handle, Pipe& pipe, size_t length) {
     return received;
 }
 
-static int64_t send(Task& task, Handle& handle, const void* bytes, size_t length) {
+static int64_t send(Task& task, Handle& handle, const void* bytes, size_t length, bool more) {
     if (handle.socket)
         return socket_write(task, handle.socket, bytes, length);
     if (handle.inet)
-        return inet_send(handle.inet, inet_peer(handle.inet), bytes, length);
-    return inet6_send(handle.inet6, inet6_peer(handle.inet6), bytes, length);
+        return inet_send(handle.inet, inet_peer(handle.inet), bytes, length, false, nullptr, more);
+    return inet6_send(handle.inet6, inet6_peer(handle.inet6), bytes, length, false, nullptr, more);
 }
 
-int64_t splice_pipe_to_socket(Task& task, Pipe& pipe, Handle& handle, size_t length) {
+int64_t splice_pipe_to_socket(Task& task, Pipe& pipe, Handle& handle, size_t length, bool more) {
     auto& first = pipe.slot(0);
     auto bytes = static_cast<const uint8_t*>(physical(first.page)) + first.begin;
     size_t first_length = first.end - first.begin;
@@ -102,7 +102,8 @@ int64_t splice_pipe_to_socket(Task& task, Pipe& pipe, Handle& handle, size_t len
         }
         bytes = batch;
     }
-    auto result = send(task, handle, bytes, length_to_send);
+    more |= length_to_send < length && pipe.occupied > socket_pipe_batch;
+    auto result = send(task, handle, bytes, length_to_send, more);
     release(batch);
     if (result > 0) {
         size_t remaining = result;

@@ -76,6 +76,7 @@ inline const uint8_t* inet6_bytes(const Inet6Frame* frame) {
 }
 
 void inet6_close(Inet6Socket*);
+bool inet6_udp(const Inet6Socket*);
 bool inet6_ready(Inet6Socket*, bool write);
 bool inet6_error_queued(Inet6Socket*);
 // Synchronous error-queue reads never enter retained blocking I/O.
@@ -96,7 +97,7 @@ int inet6_error(Inet6Socket*, bool clear = false);
 void inet6_complete(Inet6Socket*, size_t bytes, int error);
 bool inet6_deliver(unsigned index, const ip6::Packet&);
 int64_t inet6_send(Inet6Socket*, const Inet6Address&, const void*, size_t, bool named = false,
-                   const Inet6SendControl* = nullptr);
+                   const Inet6SendControl* = nullptr, bool more = false);
 int64_t inet6_read(Inet6Socket*, void*, size_t);
 int64_t inet6_syscall(Task&, const Frame&);
 } // namespace ax

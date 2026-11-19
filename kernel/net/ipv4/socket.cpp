@@ -68,6 +68,10 @@ bool inet_payload(InetSocket* socket) {
     return socket->type == 3 || socket->type == 2 || socket->type == 1;
 }
 
+bool inet_udp(const InetSocket* socket) {
+    return socket && socket->type == 2;
+}
+
 uint8_t inet_traffic_class(const InetSocket* socket) {
     return socket ? socket->tos : 0;
 }
@@ -104,6 +108,7 @@ void inet_consume(InetSocket* socket) {
 }
 
 void inet_dispose(InetSocket* socket) {
+    InetUdpCork::discard(socket->cork);
     inet_multicast_close(socket);
     ipv4_detach_owner(socket);
     ipv6_detach_output(socket);
@@ -395,6 +400,8 @@ int inet_send_ready(InetSocket* socket, size_t length, const InetSendControl* co
         return -error;
     if (socket->shutdown & 2)
         return -32;
+    if (socket->cork)
+        return 0;
     const bool header_included = control ? control->header_included : inet_header_included(socket);
     size_t overhead = header_included
                           ? 0
@@ -407,8 +414,8 @@ int inet_send_ready(InetSocket* socket, size_t length, const InetSendControl* co
     return 0;
 }
 
-int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* data, size_t length,
-                  bool named, const InetSendControl* selected) {
+static int64_t send_packet(InetSocket* socket, const InetAddress& address, const void* data,
+                           size_t length, bool named, const InetSendControl* selected) {
     if (inet_stream(socket))
         return tcp_write(socket, data, length);
     if (!inet_payload(socket))
@@ -472,6 +479,42 @@ int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* da
     if (!error)
         socket->transmitted += length + overhead;
     return error < 0 ? error : int64_t(length);
+}
+
+int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* data, size_t length,
+                  bool named, const InetSendControl* selected, bool more) {
+    more |= socket->udp_cork;
+    if (!inet_udp(socket) || (!more && !socket->cork))
+        return send_packet(socket, address, data, length, named, selected);
+    if (int error = inet_error(socket, true))
+        return -error;
+    if (socket->shutdown & 2)
+        return -32;
+    if (!socket->cork) {
+        auto target = address;
+        if (int error = inet_target(socket, target, named))
+            return error;
+        auto control = selected ? *selected : inet_send_defaults(socket, target, named);
+        if (int error = inet_send_admit(socket, target, length, control))
+            return error;
+        if (!socket->local_port)
+            if (int error = inet_bind_port(socket, socket->local, 0))
+                return error;
+        socket->cork = InetUdpCork::create(target, control, named);
+        if (!socket->cork)
+            return -105;
+    }
+    size_t overhead = 28 + socket->cork->control.options.size();
+    size_t limit = min(size_t(65535), size_t(socket->send_limit));
+    return InetUdpCork::write(
+        socket->cork, data, length, limit - min(limit, overhead), more,
+        [socket](const InetUdpCork& pending, size_t total) {
+            auto control = pending.control;
+            if (!control.ttl_override)
+                control.ttl = inet_send_defaults(socket, pending.address, pending.named).ttl;
+            return send_packet(socket, pending.address, pending.data, total, pending.named,
+                               &control);
+        });
 }
 
 int64_t inet_read(InetSocket* socket, void* data, size_t length) {
@@ -650,6 +693,13 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             socket->peer = value;
             socket->peer_port = address.port;
             socket->destination = destination;
+            if (auto cork = socket->cork) {
+                cork->address = inet_peer(socket);
+                cork->named = false;
+                cork->control.source = Ipv4Source::retained(socket->local);
+                cork->control.cache_destination = true;
+                cork->control.route = {};
+            }
         }
         return 0;
     }
@@ -768,6 +818,14 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             int error;
             return tcp_option(socket, unsigned(c), value, true, error) ? error : -92;
         }
+        if (b == 17 && c == 1 && inet_udp(socket)) {
+            socket->udp_cork = value != 0;
+            if (!socket->udp_cork && socket->cork) {
+                inet_send(socket, inet_peer(socket), nullptr, 0);
+                InetUdpCork::discard(socket->cork);
+            }
+            return 0;
+        }
         if (b == 1 && c == 2 && inet_payload(socket))
             socket->reuse = value != 0;
         else if (b == 1 && c == 6)
@@ -842,7 +900,9 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
                 value = tcp_ipv6(socket) ? 10 : 2;
             else
                 return -92;
-        } else if (b == 6 && inet_stream(socket)) {
+        } else if (b == 17 && c == 1 && inet_udp(socket))
+            value = socket->udp_cork;
+        else if (b == 6 && inet_stream(socket)) {
             int option_value = 0, error;
             if (!tcp_option(socket, unsigned(c), option_value, false, error))
                 return -92;

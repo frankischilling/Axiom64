@@ -33,5 +33,5 @@ struct Task;
 
 bool splice_socket(const Handle&);
 int64_t splice_socket_to_pipe(Handle&, Pipe&, size_t length);
-int64_t splice_pipe_to_socket(Task&, Pipe&, Handle&, size_t length);
+int64_t splice_pipe_to_socket(Task&, Pipe&, Handle&, size_t length, bool more);
 } // namespace ax

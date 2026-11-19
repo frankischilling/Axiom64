@@ -360,6 +360,8 @@ static int prepare_packet(Task& task, IoRequest& request) {
     unsigned allowed = request.write ? 0x4040 : 2 | 0x20 | 0x40;
     if (!request.write && request.handle->netlink)
         allowed |= 0x4100; // Netlink datagrams ignore MSG_WAITALL and MSG_NOSIGNAL.
+    if (request.write && (inet_udp(request.handle->inet) || inet6_udp(request.handle->inet6)))
+        allowed |= 0x8000; // MSG_MORE
     if (request.write && request.handle->inet && inet_header_included(request.handle->inet))
         allowed |= 0x8010; // Header-included output accepts MSG_MORE and MSG_PROBE.
     if (request.flags & ~allowed)
@@ -1282,12 +1284,12 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
             }
             return inet_send(request.handle->inet, request.inet_destination, request.packet_data,
                              request.packet_length, request.inet_destination_named,
-                             &request.inet_output);
+                             &request.inet_output, request.flags & 0x8000);
         }
         if (request.handle->inet6)
             return inet6_send(request.handle->inet6, request.inet6_destination, request.packet_data,
                               request.packet_length, request.inet_destination_named,
-                              &request.inet6_output);
+                              &request.inet6_output, request.flags & 0x8000);
         int result = net_send(request.destination_index, request.packet_data, request.packet_length,
                               request.handle->packet);
         return result ? result : int64_t(request.packet_length);
@@ -1653,8 +1655,8 @@ static int64_t socket_transfer_attempt(Task& task, IoRequest& request, Handle& s
     if (socket.inet || socket.inet6)
         net_poll();
     while (pipe.occupied && request.progress < request.single.length) {
-        auto result =
-            splice_pipe_to_socket(task, pipe, socket, request.single.length - request.progress);
+        auto result = splice_pipe_to_socket(
+            task, pipe, socket, request.single.length - request.progress, request.flags & 4);
         if (result == -11 && request.splice_socket_blocking)
             return wait_for_splice_socket(request, socket.send_timeout);
         if (result == -32)
@@ -1976,6 +1978,7 @@ static int64_t pipe_transfer_syscall(Task& task, const Frame& frame) {
     request->call = frame;
     request->vectors = &request->single;
     request->single.length = length;
+    request->flags = flags;
     request->stream_blocking = !(flags & 2) && !(pipe_flags & 04000);
     if (socket) {
         bool unix_receive = socket == source && socket->socket && socket->socket->type == 1;

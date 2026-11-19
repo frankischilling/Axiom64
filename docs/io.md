@@ -371,8 +371,10 @@ Pipe availability and socket availability use separate blocking rules.
 Socket waits observe the endpoint's send or receive timeout. Unix stream
 ingress also checks `SPLICE_F_NONBLOCK` before waiting for socket data.
 Tests cover both directions on Unix sockets and loopback TCP and UDP. They also
-check Unix socket descriptor reuse, large datagrams, and send backpressure. UDP corking through
-`SPLICE_F_MORE` and packet and netlink endpoints remain open.
+check Unix socket descriptor reuse, large datagrams, and send backpressure.
+On UDP output, `SPLICE_F_MORE` assembles a datagram with later splice or send
+calls on the same open description. See [UDP corking](udp.md#udp-corking).
+Packet and netlink endpoints remain open.
 
 `vmsplice` captures the vector addresses and lengths before waiting. Memory
 queued into a pipe keeps a reference to each readable page until the pipe

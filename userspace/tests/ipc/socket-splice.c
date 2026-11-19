@@ -28,6 +28,7 @@
 #include <fcntl.h>
 #include <grp.h>
 #include <netinet/in.h>
+#include <netinet/udp.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -297,11 +298,192 @@ static void backpressure(void) {
     puts("SOCKET_SPLICE_CASE send-backpressure");
 }
 
+static void splice_bytes(int socket, const char* bytes, unsigned flags) {
+    const size_t length = strlen(bytes);
+    int ends[2];
+    CHECK(pipe(ends) == 0 && write(ends[1], bytes, length) == (ssize_t)length);
+    CHECK(splice(ends[0], NULL, socket, NULL, length, flags) == (ssize_t)length);
+    close_pair(ends);
+}
+
+static void expect_packet(int socket, const char* expected) {
+    struct pollfd watch = {.fd = socket, .events = POLLIN};
+    CHECK(poll(&watch, 1, expected ? 2000 : 40) == (expected != NULL));
+    if (expected) {
+        char bytes[64];
+        size_t length = strlen(expected);
+        CHECK(recv(socket, bytes, sizeof(bytes), MSG_DONTWAIT) == (ssize_t)length &&
+              !memcmp(bytes, expected, length));
+    }
+}
+
+static void expect_hops(int receiver, int level, int kind, int hops) {
+    char bytes[4];
+
+    union {
+        struct cmsghdr aligned;
+        char data[CMSG_SPACE(sizeof(int))];
+    } control;
+    struct iovec slice = {.iov_base = bytes, .iov_len = sizeof(bytes)};
+    struct msghdr packet = {.msg_iov = &slice,
+                            .msg_iovlen = 1,
+                            .msg_control = control.data,
+                            .msg_controllen = sizeof(control.data)};
+    struct pollfd watch = {.fd = receiver, .events = POLLIN};
+    CHECK(poll(&watch, 1, 2000) == 1);
+    CHECK(recvmsg(receiver, &packet, MSG_DONTWAIT) == 4 && !memcmp(bytes, "abcd", 4));
+    struct cmsghdr* item = CMSG_FIRSTHDR(&packet);
+    CHECK(item && item->cmsg_level == level && item->cmsg_type == kind &&
+          item->cmsg_len == CMSG_LEN(sizeof(int)));
+    int received;
+    memcpy(&received, CMSG_DATA(item), sizeof(received));
+    CHECK(received == hops);
+}
+
+static void udp_hops(int sender, int receiver, int domain) {
+    int protocol = domain == AF_INET ? IPPROTO_IP : IPPROTO_IPV6;
+    int send_hops = domain == AF_INET ? IP_TTL : IPV6_UNICAST_HOPS;
+    int receive_hops = domain == AF_INET ? IP_RECVTTL : IPV6_RECVHOPLIMIT;
+    int header = domain == AF_INET ? IP_TTL : IPV6_HOPLIMIT;
+    int enabled = 1, hops = 37;
+    CHECK(setsockopt(receiver, protocol, receive_hops, &enabled, sizeof(enabled)) == 0);
+    CHECK(setsockopt(sender, protocol, send_hops, &hops, sizeof(hops)) == 0);
+    splice_bytes(sender, "ab", SPLICE_F_MORE);
+    hops = 54;
+    CHECK(setsockopt(sender, protocol, send_hops, &hops, sizeof(hops)) == 0);
+    CHECK(send(sender, "cd", 2, 0) == 2);
+    expect_hops(receiver, protocol, header, domain == AF_INET ? 54 : 37);
+
+    union {
+        struct cmsghdr aligned;
+        char data[CMSG_SPACE(sizeof(int))];
+    } control = {0};
+    struct iovec slice = {.iov_base = (void*)"ab", .iov_len = 2};
+    struct msghdr message = {.msg_iov = &slice,
+                             .msg_iovlen = 1,
+                             .msg_control = control.data,
+                             .msg_controllen = sizeof(control.data)};
+    struct cmsghdr* item = CMSG_FIRSTHDR(&message);
+    item->cmsg_level = protocol;
+    item->cmsg_type = header;
+    item->cmsg_len = CMSG_LEN(sizeof(int));
+    hops = 37;
+    memcpy(CMSG_DATA(item), &hops, sizeof(hops));
+    CHECK(sendmsg(sender, &message, MSG_MORE) == 2);
+    CHECK(send(sender, "cd", 2, 0) == 2);
+    expect_hops(receiver, protocol, header, 37);
+}
+
+static void udp_more(int domain, const char* name, int native, int legacy_ipv6) {
+    struct sockaddr_storage first = {0}, second = {0};
+    int receivers[] = {socket(domain, SOCK_DGRAM, 0), socket(domain, SOCK_DGRAM, 0)};
+    int sender = socket(domain, SOCK_DGRAM, 0);
+    CHECK(receivers[0] >= 0 && receivers[1] >= 0 && sender >= 0);
+    socklen_t first_size = bind_loopback(receivers[0], domain, &first);
+    socklen_t second_size = bind_loopback(receivers[1], domain, &second);
+    CHECK(connect(sender, (struct sockaddr*)&first, first_size) == 0);
+    splice_bytes(sender, "ab", SPLICE_F_MORE);
+    expect_packet(receivers[0], NULL);
+    splice_bytes(sender, "cd", 0);
+    expect_packet(receivers[0], "abcd");
+
+    splice_bytes(sender, "ab", SPLICE_F_MORE);
+    int alias = dup(sender);
+    CHECK(alias >= 0 && send(alias, "cd", 2, 0) == 2 && close(alias) == 0);
+    expect_packet(receivers[0], "abcd");
+    struct iovec slice = {.iov_base = (void*)"ab", .iov_len = 2};
+    struct msghdr message = {.msg_iov = &slice, .msg_iovlen = 1};
+    CHECK(sendmsg(sender, &message, MSG_MORE) == 2);
+    splice_bytes(sender, "", 0);
+    expect_packet(receivers[0], NULL);
+    CHECK(send(sender, "", 0, 0) == 0);
+    expect_packet(receivers[0], "ab");
+
+    udp_hops(sender, receivers[0], domain);
+
+    splice_bytes(sender, "ab", SPLICE_F_MORE);
+    CHECK(sendto(sender, "cd", 2, 0, (struct sockaddr*)&second, second_size) == 2);
+    expect_packet(receivers[0], "abcd");
+    expect_packet(receivers[1], NULL);
+
+    splice_bytes(sender, "ab", SPLICE_F_MORE);
+    CHECK(connect(sender, (struct sockaddr*)&second, second_size) == 0);
+    CHECK(send(sender, "cd", 2, 0) == 2);
+    expect_packet(receivers[legacy_ipv6 ? 0 : 1], "abcd");
+    expect_packet(receivers[legacy_ipv6 ? 1 : 0], NULL);
+
+    int ends[2];
+    CHECK(pipe2(ends, O_NONBLOCK) == 0);
+    CHECK(fcntl(ends[1], F_SETPIPE_SZ, 131072) == 131072);
+    static char sequence[] __attribute__((aligned(4096))) = "ABCDEFGHIJKLMNOPQ";
+    struct iovec slots[sizeof(sequence) - 1];
+    for (size_t i = 0; i < sizeof(sequence) - 1; ++i)
+        slots[i] = (struct iovec){.iov_base = sequence + i, .iov_len = 1};
+    CHECK(vmsplice(ends[1], slots, sizeof(sequence) - 1, 0) == sizeof(sequence) - 1);
+    CHECK(fcntl(ends[1], F_SETPIPE_SZ, 65536) == -1 && errno == EBUSY);
+    CHECK(splice(ends[0], NULL, sender, NULL, sizeof(sequence) - 1, SPLICE_F_NONBLOCK) ==
+          sizeof(sequence) - 1);
+    const char* batch = "coalesced";
+    if (legacy_ipv6) {
+        for (size_t i = 0; i < sizeof(sequence) - 1; ++i) {
+            char packet[] = {sequence[i], 0};
+            expect_packet(receivers[1], packet);
+        }
+        batch = "split";
+    } else {
+        struct pollfd watch = {.fd = receivers[1], .events = POLLIN};
+        int ready = poll(&watch, 1, 2000);
+        CHECK(ready == 1 || (native && ready == 0));
+        if (ready)
+            expect_packet(receivers[1], sequence);
+        else {
+            CHECK(send(sender, "Z", 1, 0) == 1);
+            expect_packet(receivers[1], "Z");
+            batch = "dropped";
+        }
+    }
+    printf("SOCKET_SPLICE_UDP_BATCH ipv%d=%s\n", domain == AF_INET ? 4 : 6, batch);
+    expect_packet(receivers[1], NULL);
+    close_pair(ends);
+
+    char full[65000] = {0};
+    CHECK(send(sender, full, sizeof(full), MSG_MORE) == sizeof(full));
+    CHECK(pipe(ends) == 0 && write(ends[1], full, 1000) == 1000);
+    CHECK(splice(ends[0], NULL, sender, NULL, 1000, 0) == -1 && errno == EMSGSIZE);
+    memset(full, 1, 1000);
+    CHECK(read(ends[0], full, 1000) == 1000 && full[0] == 0 && full[999] == 0);
+    close_pair(ends);
+    CHECK(send(sender, "z", 1, 0) == 1);
+    expect_packet(receivers[1], "z");
+    int cork = -1;
+    socklen_t size = sizeof(cork);
+    CHECK(getsockopt(sender, IPPROTO_UDP, UDP_CORK, &cork, &size) == 0 && cork == 0);
+    cork = -1;
+    CHECK(setsockopt(sender, IPPROTO_UDP, UDP_CORK, &cork, sizeof(cork)) == 0);
+    CHECK(getsockopt(sender, IPPROTO_UDP, UDP_CORK, &cork, &size) == 0 && cork == 1);
+    CHECK(send(sender, "ab", 2, 0) == 2);
+    splice_bytes(sender, "cd", 0);
+    expect_packet(receivers[1], NULL);
+    cork = 0;
+    CHECK(setsockopt(sender, IPPROTO_UDP, UDP_CORK, &cork, sizeof(cork)) == 0);
+    expect_packet(receivers[1], "abcd");
+    splice_bytes(sender, "ab", SPLICE_F_MORE);
+    CHECK(setsockopt(sender, IPPROTO_UDP, UDP_CORK, &cork, sizeof(cork)) == 0);
+    expect_packet(receivers[1], "ab");
+    splice_bytes(sender, "ab", SPLICE_F_MORE);
+    CHECK(close(sender) == 0);
+    expect_packet(receivers[1], NULL);
+    close_pair(receivers);
+    printf("SOCKET_SPLICE_CASE %s\n", name);
+}
+
 int main(int argc, char** argv) {
-    int legacy_datagrams = 0;
+    int native = 0, legacy_datagrams = 0;
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--ordinary"))
             CHECK(setgroups(0, NULL) == 0 && setgid(65534) == 0 && setuid(65534) == 0);
+        else if (!strcmp(argv[i], "--native"))
+            native = 1;
         else {
             CHECK(!strcmp(argv[i], "--legacy-datagrams"));
             legacy_datagrams = 1;
@@ -318,6 +500,8 @@ int main(int argc, char** argv) {
     retained(0);
     retained(1);
     backpressure();
+    udp_more(AF_INET, "udp4-more", native, 0);
+    udp_more(AF_INET6, "udp6-more", native, legacy_datagrams);
     printf("SOCKET_SPLICE_PASS uid=%u\n", (unsigned)getuid());
     return 0;
 }

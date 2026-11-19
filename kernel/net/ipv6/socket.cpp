@@ -60,6 +60,7 @@ void inet6_consume(Inet6Socket* socket) {
 }
 
 void inet6_close(Inet6Socket* socket) {
+    Inet6UdpCork::discard(socket->cork);
     ipv6_detach_owner(socket);
     ipv6_destination_clear(socket->destination);
     inet6_purge_errors(socket);
@@ -67,6 +68,10 @@ void inet6_close(Inet6Socket* socket) {
         inet6_consume(socket);
     inet6_extensions_clear(socket);
     socket->used = false;
+}
+
+bool inet6_udp(const Inet6Socket* socket) {
+    return socket && socket->type == 2;
 }
 
 int inet6_error(Inet6Socket* socket, bool clear) {
@@ -301,8 +306,8 @@ int inet6_send_admit(Inet6Socket* socket, const Inet6Address& address, size_t le
     return -inet6_error(socket, true);
 }
 
-int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const void* data,
-                   size_t length, bool named, const Inet6SendControl* control) {
+static int64_t send_packet(Inet6Socket* socket, const Inet6Address& requested, const void* data,
+                           size_t length, bool named, const Inet6SendControl* control) {
     if (socket->shutdown & 2)
         return -32;
     auto address = requested;
@@ -378,6 +383,45 @@ int64_t inet6_send(Inet6Socket* socket, const Inet6Address& requested, const voi
     if (!error)
         socket->transmitted += length + overhead;
     return error ? error : int64_t(length);
+}
+
+int64_t inet6_send(Inet6Socket* socket, const Inet6Address& address, const void* data,
+                   size_t length, bool named, const Inet6SendControl* selected, bool more) {
+    more |= socket->udp_cork;
+    if (!inet6_udp(socket) || (!more && !socket->cork))
+        return send_packet(socket, address, data, length, named, selected);
+    if (int error = inet6_error(socket, true))
+        return -error;
+    if (socket->shutdown & 2)
+        return -32;
+    if (!socket->cork) {
+        auto target = address;
+        if (int error = inet6_target(socket, target, named))
+            return error;
+        auto control = selected ? *selected : inet6_send_defaults(socket, target);
+        if (int error = inet6_send_admit(socket, target, length, nullptr, named, &control))
+            return error;
+        auto cork = Inet6UdpCork::create(target, control, named);
+        if (!cork)
+            return -105;
+        if (int error = inet6_own_send_extensions(cork->control, cork->control_bytes)) {
+            Inet6UdpCork::discard(cork);
+            return error;
+        }
+        if (!socket->local_port)
+            if (int error = inet6_bind_port(socket, socket->local, 0)) {
+                Inet6UdpCork::discard(cork);
+                return error;
+            }
+        socket->cork = cork;
+    }
+    size_t overhead = 8 + ip6::output_extension_size(socket->cork->control.extensions);
+    size_t limit = min(size_t(65535), size_t(socket->send_limit - min(socket->send_limit, 40u)));
+    return Inet6UdpCork::write(socket->cork, data, length, limit - min(limit, overhead), more,
+                               [socket](const Inet6UdpCork& pending, size_t total) {
+                                   return send_packet(socket, pending.address, pending.data, total,
+                                                      pending.named, &pending.control);
+                               });
 }
 
 int64_t inet6_read(Inet6Socket* socket, void* data, size_t capacity) {

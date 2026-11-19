@@ -356,9 +356,10 @@ void exit_task(Task* t, int status) {
     exit_thread(t, status);
 }
 
-void reap_task(Task* t) {
+void reap_task(Task* t, Process& parent) {
     if (t->state != State::zombie || t->process->live_threads || t->process->leader != t)
         panic("invalid process reap");
+    cpu_reap_child(parent, *t->process);
     release(t->process);
     t->process = nullptr;
     t->state = State::empty;

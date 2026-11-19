@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "process/waitid.hpp"
+#include "abi/linux/resource.hpp"
 
 namespace ax {
 constexpr unsigned nohang = 1, stopped = 2, exited = 4, continued = 8, nowait = 0x1000000;
@@ -65,18 +66,18 @@ int64_t wait_information(Task& caller, unsigned type, int selected, uint64_t inf
             value.code = kind == stopped ? 5 : 6;
             value.status = kind == stopped ? child.process->stop_signal : 18;
         }
+        auto report = linux_resource_usage(cpu_waited_usage(*child.process));
         // Linux consumes the event before copying the result. WNOWAIT keeps it
         // waitable, including when a user output buffer faults.
         if (!(options & nowait)) {
             if (kind == exited)
-                reap_task(&child);
+                reap_task(&child, *caller.process);
             else if (kind == stopped)
                 child.process->stop_reported = true;
             else
                 child.process->continued = false;
         }
-        uint64_t zeros[18]{};
-        if ((usage && !caller.memory->space.copy_out(usage, zeros, sizeof(zeros))) ||
+        if ((usage && !caller.memory->space.copy_out(usage, &report, sizeof(report))) ||
             (information && !caller.memory->space.copy_out(information, &value, information_bytes)))
             return -14;
         return 0;

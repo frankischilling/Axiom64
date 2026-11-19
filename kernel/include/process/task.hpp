@@ -79,6 +79,7 @@ struct Process {
     char executable[1024]{};
     uint64_t start_ticks = 0;
     uint64_t cpu_user_ticks = 0, cpu_system_ticks = 0;
+    uint64_t children_user_ticks = 0, children_system_ticks = 0;
     uint64_t alarm_deadline = 0, alarm_interval = 0, pending_signals = 0;
     SignalData signal_data[64]{};
 };
@@ -151,7 +152,7 @@ void exit_task(Task*, int);
 
 void exit_thread(Task*, int);
 
-void reap_task(Task*);
+void reap_task(Task*, Process&);
 
 int allocate_fd(Task*, Handle*, int start = 0, bool cloexec = false);
 

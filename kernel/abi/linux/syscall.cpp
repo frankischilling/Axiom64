@@ -412,12 +412,12 @@ static int64_t wait_child(int pid, uint64_t status, int options, uint64_t usage)
         if (status)
             current->memory->space.copy_out(status, &child_status, 4);
         if (usage) {
-            uint64_t zeros[18]{};
-            if (copy_result(usage, zeros, sizeof(zeros)))
+            auto report = linux_resource_usage(cpu_waited_usage(*t.process));
+            if (copy_result(usage, &report, sizeof(report)))
                 return -14;
         }
         if (t.state == State::zombie && !t.process->live_threads)
-            reap_task(&t);
+            reap_task(&t, *current->process);
         else if (continued)
             t.process->continued = false;
         else
@@ -1181,6 +1181,8 @@ static int64_t dispatch(Frame* f) {
     case 160:
     case 302:
         return resource_syscall(f);
+    case 98:
+        return resource_usage_syscall(int32_t(a), b);
     case 101: {
         if (!a)
             return -38;

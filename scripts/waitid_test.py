@@ -66,8 +66,8 @@ def execute(command, log, firmware=None):
     text = log.read_text().replace('\r\n', '\n')
     lines = text.splitlines()
     count = sum(line.startswith('WAITID_OBSERVATION ') for line in lines)
-    passed = not timed_out and process.returncode == (1 if firmware else 0) and count == 10 and \
-        lines.count('WAITID_PASS observations=10') == 1 and not any(
+    passed = not timed_out and process.returncode == (1 if firmware else 0) and count == 11 and \
+        lines.count('WAITID_PASS observations=11') == 1 and not any(
         marker in text for marker in ('WAITID_FAIL', 'PANIC:', 'FAULT pid='))
     if firmware:
         passed = passed and lines.count('AXIOM64_TESTS_PASS') == 1 and \

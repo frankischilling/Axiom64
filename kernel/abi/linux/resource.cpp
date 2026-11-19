@@ -15,6 +15,29 @@ bool permitted(const Task& target) {
 }
 } // namespace
 
+ResourceUsage linux_resource_usage(CpuUsage cpu) {
+    return {{int64_t(cpu.user_ticks / 100), int64_t(cpu.user_ticks % 100 * 10000)},
+            {int64_t(cpu.system_ticks / 100), int64_t(cpu.system_ticks % 100 * 10000)},
+            {}};
+}
+
+int64_t resource_usage_syscall(int who, uint64_t output) {
+    CpuUsage time;
+    switch (who) {
+    case 0:
+    case 1:
+        time = cpu_usage(*current, who == 1);
+        break;
+    case -1:
+        time = {current->process->children_user_ticks, current->process->children_system_ticks};
+        break;
+    default:
+        return -22;
+    }
+    auto usage = linux_resource_usage(time);
+    return current->memory->space.copy_out(output, &usage, sizeof(usage)) ? 0 : -14;
+}
+
 int64_t resource_syscall(Frame* frame) {
     auto& space = current->memory->space;
     Task* target = current;

@@ -16,6 +16,8 @@ The current implementation enforces these resources:
 
 Process and thread CPU totals also back `CLOCK_PROCESS_CPUTIME_ID` and `CLOCK_THREAD_CPUTIME_ID`. The existing wall clock and 100 Hz elapsed-time interface remain separate.
 
+`getrusage` reports user and system CPU time for the process, the calling thread, or reaped children. Reaping transfers a child's CPU time and the time it collected from its own children. `wait4` and the raw `waitid` syscall return the same child CPU totals. `WNOWAIT` observes the totals without transferring them. Other resource-usage counters currently return zero.
+
 The native quota comparison waits for a joined thread's procfs entry to disappear before checking that a new fork can use its quota. Linux can wake `pthread_join` before releasing the exiting task's real-UID charge. The wait has a two-second bound and keeps the original quota and fork assertions. A native regression places the joiner and worker on separate CPUs and runs the actual quota case 10,000 times. [Linux memory release](https://github.com/torvalds/linux/blob/v6.17/kernel/fork.c) wakes the joiner before [task retirement](https://github.com/torvalds/linux/blob/v6.17/kernel/exit.c) releases the charge.
 
 Exec error ordering follows the guest's existing filename-first contract. [Linux through 6.19](https://github.com/torvalds/linux/blob/v6.19/fs/exec.c) reports an invalid or empty filename before a deferred process-quota denial. [Linux 7.0](https://github.com/torvalds/linux/blob/v7.0/fs/exec.c) checks that denial before returning filename errors. Native comparisons select one exact order from the recorded kernel identity and require the client to report the same model. Both orders retain the valid-path argument fault and quota-denial cases, then check filename and argument faults again after restoring the quota. The comparison keeps all eleven resource observation groups.
@@ -35,6 +37,7 @@ make test-process-limits-policy test-proc-identity-policy test-exec-arguments-po
 sudo python3 scripts/resource_limits_test.py --native --directory build/resource-limits-native
 python3 scripts/resource_limits_test.py --directory build/resource-limits-guest
 python3 scripts/resource_limits_storage_test.py --directory build/resource-limits-ext2
+make test-waitid-native test-waitid
 ```
 
 Use new output directories for each source revision. Native comparisons need root so their own children can exercise credential transitions and privileged exceptions. They run in isolated mount, PID and IPC namespaces.

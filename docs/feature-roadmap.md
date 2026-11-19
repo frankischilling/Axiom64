@@ -382,8 +382,9 @@ Pipe sysctls set the capacity ceiling and per-user page limits. Guest tests
 exercise quota failures, shrink, permission checks, and release after the last close.
 Pipe-to-pipe `splice` and `tee` preserve packet boundaries and hold both
 descriptions during a blocked transfer. `splice` also transfers between a pipe
-and a regular RAM or ext2 file with explicit or shared offsets. Socket
-transfers cover Unix streams and datagrams, IPv4 and IPv6 TCP and UDP, raw
+and a regular RAM or ext2 file with explicit or shared offsets. Standard
+memory devices keep their offsets fixed during splice. Socket transfers cover
+Unix streams and datagrams, IPv4 and IPv6 TCP and UDP, raw
 packet sockets, and route netlink sockets.
 The socket tests exercise both directions, independent pipe and socket waits,
 and descriptor reuse. `vmsplice`

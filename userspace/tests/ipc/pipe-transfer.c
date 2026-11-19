@@ -37,6 +37,7 @@
 #include <sys/epoll.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <sys/uio.h>
 #include <unistd.h>
 
@@ -112,6 +113,57 @@ static void packets(void) {
     close_pair(source);
     close_pair(target);
     puts("PIPE_TRANSFER_CASE packet-boundaries");
+}
+
+static void memory_devices(int legacy) {
+    const char* paths[] = {"/dev/null", "/dev/zero", "/dev/full", "/dev/random", "/dev/urandom"};
+    const char original[] = "abcdefghABCDEFGH";
+    for (unsigned i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
+        int device = open(paths[i], O_RDWR | O_NONBLOCK);
+        CHECK(device >= 0 && lseek(device, 513, SEEK_SET) == 0);
+        unsigned char probe[8];
+        CHECK(pread(device, probe, sizeof(probe), 513) == (i == 0 ? 0 : 8));
+        int read_supported = i != 0 && (!legacy || i >= 3);
+        int write_supported = i != 2 && (!legacy || i != 1);
+        if (i == 2) {
+            struct stat info;
+            CHECK(fstat(device, &info) == 0 && S_ISCHR(info.st_mode) && info.st_rdev == 0x107);
+            CHECK(write(device, original, 1) == -1 && errno == ENOSPC);
+            CHECK(write(device, original, 0) == -1 && errno == ENOSPC);
+            CHECK(pwrite(device, original, 1, 513) == -1 && errno == ENOSPC);
+            CHECK(pwrite(device, original, 0, 513) == -1 && errno == ENOSPC);
+        } else
+            CHECK(pwrite(device, original, 1, 513) == 1);
+        for (int explicit_offset = 0; explicit_offset < 2; ++explicit_offset) {
+            loff_t offset = 513;
+            loff_t* position = explicit_offset ? &offset : NULL;
+            int pipe_ends[2];
+            CHECK(pipe2(pipe_ends, O_NONBLOCK) == 0);
+            unsigned char data[16];
+            ssize_t count = splice(device, position, pipe_ends[1], NULL, 8, SPLICE_F_NONBLOCK);
+            CHECK(read_supported ? count == 8 : count == -1 && errno == EINVAL);
+            CHECK(offset == 513);
+            if (read_supported) {
+                CHECK(read(pipe_ends[0], data, sizeof(data)) == 8);
+                if (i == 1 || i == 2) {
+                    static const unsigned char zeroes[8];
+                    CHECK(!memcmp(data, zeroes, sizeof(zeroes)));
+                }
+            }
+            CHECK(read(pipe_ends[0], data, sizeof(data)) == -1 && errno == EAGAIN);
+
+            CHECK(write(pipe_ends[1], original, sizeof(data)) == sizeof(data));
+            count = splice(pipe_ends[0], NULL, device, position, 8, SPLICE_F_NONBLOCK);
+            CHECK(write_supported ? count == 8 : count == -1 && errno == EINVAL);
+            CHECK(offset == 513 && lseek(device, 0, SEEK_CUR) == 0);
+            size_t consumed = write_supported ? 8 : 0;
+            CHECK(read(pipe_ends[0], data, sizeof(data)) == (ssize_t)(sizeof(data) - consumed) &&
+                  !memcmp(data, original + consumed, sizeof(data) - consumed));
+            CHECK(close(pipe_ends[0]) == 0 && close(pipe_ends[1]) == 0);
+        }
+        CHECK(close(device) == 0);
+    }
+    puts("PIPE_TRANSFER_CASE memory-devices");
 }
 
 static int temporary_file(void) {
@@ -550,11 +602,14 @@ static void interrupt(int restart) {
 }
 
 int main(int argc, char** argv) {
-    if (argc == 2) {
-        CHECK(!strcmp(argv[1], "--ordinary"));
-        CHECK(setgroups(0, NULL) == 0 && setgid(65534) == 0 && setuid(65534) == 0);
-    } else {
-        CHECK(argc == 1);
+    int legacy_memory = 0;
+    for (int i = 1; i < argc; ++i) {
+        if (!strcmp(argv[i], "--ordinary"))
+            CHECK(setgroups(0, NULL) == 0 && setgid(65534) == 0 && setuid(65534) == 0);
+        else {
+            CHECK(!strcmp(argv[i], "--legacy-memory-splice"));
+            legacy_memory = 1;
+        }
     }
     arguments();
     streams();
@@ -562,6 +617,7 @@ int main(int argc, char** argv) {
     file_offsets();
     file_copy_faults();
     file_size_limit();
+    memory_devices(legacy_memory);
     mapped_source();
     mapped_destination();
     readiness();

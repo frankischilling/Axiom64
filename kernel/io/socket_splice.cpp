@@ -26,7 +26,6 @@
 #include "io/socket_splice.hpp"
 #include "fs/pipe.hpp"
 #include "fs/vfs.hpp"
-#include "io/descriptor_wait.hpp"
 #include "ipc/ipc.hpp"
 #include "net/inet.hpp"
 #include "net/inet6.hpp"
@@ -44,7 +43,6 @@ bool splice_socket(const Handle& handle) {
 }
 
 int64_t splice_socket_to_pipe(Handle& handle, Pipe& pipe, size_t length) {
-    size_t free_space = size_t(pipe.capacity - pipe.occupied) * page_size;
     size_t available = socket_pipe_batch * page_size;
     if (handle.socket && handle.socket->type == 2) {
         const uint8_t* bytes;
@@ -52,25 +50,7 @@ int64_t splice_socket_to_pipe(Handle& handle, Pipe& pipe, size_t length) {
         if (handle.socket->datagrams.front(bytes, packet))
             available = max(size_t(1), packet);
     }
-    size_t capacity = min(length, min(free_space, available));
-    size_t pages = (capacity + page_size - 1) / page_size;
-    uint64_t page = page_alloc(pages);
-    if (!page)
-        return -12;
-    int64_t received = read_handle(&handle, physical(page), capacity);
-    size_t used = 0;
-    if (received > 0) {
-        for (size_t offset = 0; offset < size_t(received); offset += page_size) {
-            size_t count = min(size_t(received) - offset, size_t(page_size));
-            pipe.slot(pipe.occupied++) = {page + offset, 0, uint16_t(count), false, false};
-            ++used;
-        }
-        pipe.size += received;
-        descriptor_wait_notify(&pipe, 1 | 0x40);
-    }
-    if (used < pages)
-        page_free(page + used * page_size, pages - used);
-    return received;
+    return copy_handle_to_pipe(handle, pipe, min(length, available));
 }
 
 static int64_t send(Task& task, Handle& handle, const void* bytes, size_t length, bool more) {

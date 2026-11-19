@@ -7,9 +7,9 @@ Axiom64 retains the open file description selected by an I/O syscall while that 
 | Operations | Current scope |
 | --- | --- |
 | `read`, `write`, `readv`, `writev` | Existing regular files, pipes, Unix stream sockets, event counters, and character/block devices |
-| `splice`, `tee` | Pipe and FIFO transfers. `splice` also accepts regular RAM and ext2 files, Unix streams and datagrams, IPv4 and IPv6 TCP and UDP, raw packet sockets, and route netlink sockets. |
+| `splice`, `tee` | Pipe and FIFO transfers. `splice` also accepts regular RAM and ext2 files, supported memory devices, Unix streams and datagrams, IPv4 and IPv6 TCP and UDP, raw packet sockets, and route netlink sockets. |
 | `vmsplice` | Transfers between userspace vectors and pipe or FIFO endpoints. |
-| `pread64`, `pwrite64` | Existing seekable files and block devices; preserve the shared file offset; pipes, sockets, and character devices return `ESPIPE` |
+| `pread64`, `pwrite64` | Seekable files, block devices, and the standard memory devices described below. The shared file offset is preserved. Pipes, sockets, and other character devices return `ESPIPE`. |
 | `recvfrom`, `sendto` | Connected Unix streams, including receive-address output; a send destination is unsupported |
 | `recvmsg`, `sendmsg` | Unix stream messages with copied iovec metadata, receive source names, sender credentials and transferred file descriptions |
 | `accept`, `accept4` | Existing Unix listeners, optional address output, and accepted-descriptor nonblocking/close-on-exec flags |
@@ -361,6 +361,13 @@ Pipe-to-file `splice` consumes the written prefix, including partial packets.
 It uses the waiting task's file size limit and credentials. A supplied offset
 leaves the shared file position alone. A fault reading the offset prevents the
 transfer. A fault writing it back returns `EFAULT` after the bytes move.
+
+Memory device `splice` accepts `/dev/null` as a sink and `/dev/full` as a
+source. `/dev/zero`, `/dev/random` and `/dev/urandom` work in both directions.
+Device splice keeps the explicit offset and the shared device position fixed.
+`/dev/full` reads zeroes and reports `ENOSPC` for ordinary writes. A splice
+to `/dev/full` returns `EINVAL` and preserves the pipe contents. The native
+comparison records the older Linux behavior for `/dev/zero` and `/dev/full`.
 
 Socket `splice` copies through the existing transports. Socket offsets must be
 null. Ingress keeps unread stream bytes queued and consumes any truncated

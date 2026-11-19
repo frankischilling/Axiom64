@@ -40,7 +40,8 @@ enum class Device {
     ptmx,
     pty_slave,
     vt,
-    block
+    block,
+    full
 };
 
 struct Terminal {
@@ -76,6 +77,7 @@ void device_close(Handle*);
 bool device_has_poll(const Handle&);
 bool device_ready(Handle*, bool);
 
+bool memory_device(const Handle&);
 bool device_ignores_buffer(Handle*, bool write);
 
 int64_t device_read(Handle*, void*, size_t);

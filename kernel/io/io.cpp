@@ -73,7 +73,7 @@ struct IoRequest {
     unsigned flags;
     bool write, socket, accept, positioned, locking, connect, started;
     bool timed, stream_blocking;
-    bool splice_socket_blocking;
+    bool splice_endpoint_blocking;
     int connect_error;
     uint64_t deadline;
     uint64_t inet_generation;
@@ -645,7 +645,8 @@ static int prepare(Task& task, IoRequest& request) {
         if (request.handle->pipe || request.handle->event || request.handle->timer ||
             request.handle->signal_descriptor || request.handle->inotify ||
             request.handle->socket || inet_stream(request.handle->inet) ||
-            (request.handle->node && (request.handle->node->mode & 0170000) == character))
+            (request.handle->node && (request.handle->node->mode & 0170000) == character &&
+             !memory_device(*request.handle)))
             return -29;
         if (int64_t(f.r10) < 0)
             return -22;
@@ -1614,7 +1615,7 @@ static int64_t inotify_attempt(Task& task, IoRequest& request) {
 }
 
 static int64_t wait_for_splice_socket(IoRequest& request, SocketTimeout timeout) {
-    if (!request.splice_socket_blocking)
+    if (!request.splice_endpoint_blocking)
         return -11;
     if (!request.started) {
         request.started = true;
@@ -1657,7 +1658,7 @@ static int64_t socket_transfer_attempt(Task& task, IoRequest& request, Handle& s
     while (pipe.occupied && request.progress < request.single.length) {
         auto result = splice_pipe_to_socket(
             task, pipe, socket, request.single.length - request.progress, request.flags & 4);
-        if (result == -11 && request.splice_socket_blocking)
+        if (result == -11 && request.splice_endpoint_blocking)
             return wait_for_splice_socket(request, socket.send_timeout);
         if (result == -32)
             queue_signal(&task, 13, task.process->pid);
@@ -1680,20 +1681,28 @@ static int64_t pipe_transfer_attempt(Task& task, IoRequest& request) {
     int64_t result;
     Handle* file = nullptr;
     uint64_t position_pointer = 0;
+    bool blocking = request.stream_blocking;
     if (!source->pipe) {
         file = source;
         position_pointer = request.call.rsi;
-        result = splice_file_to_pipe(*source, *target->pipe, request.splice_position, length);
+        if (memory_device(*source)) {
+            if (!target->pipe->full())
+                blocking = request.splice_endpoint_blocking;
+            result = copy_handle_to_pipe(*source, *target->pipe, min(length, 16 * page_size));
+        } else
+            result = splice_file_to_pipe(*source, *target->pipe, request.splice_position, length);
     } else if (!target->pipe) {
         file = target;
         position_pointer = request.call.r10;
-        result = splice_pipe_to_file(task, *source->pipe, *target, request.splice_position, length);
+        result = memory_device(*target) ? splice_pipe_to_device(*source->pipe, *target, length)
+                                        : splice_pipe_to_file(task, *source->pipe, *target,
+                                                              request.splice_position, length);
     } else {
         result = pipe_transfer(*source->pipe, *target->pipe, length, duplicate);
     }
     if (result == -32)
         queue_signal(&task, 13, task.process->pid);
-    if (result == -11 && request.stream_blocking)
+    if (result == -11 && blocking)
         return would_block;
     if (result >= 0 && file) {
         if (!position_pointer)
@@ -1808,6 +1817,9 @@ static int64_t attempt(Task& task, IoRequest& request) {
     int64_t result = 0;
     uint64_t old_offset = h->offset;
     auto control = node_control(h->node);
+    if ((f.rax == 1 || f.rax == 18) && !request.single.length && memory_device(*h) &&
+        h->node->device == Device::full)
+        return f.rsi >= user_limit ? -14 : -28;
     // Scalar empty reads reach device readiness; empty readv requests keep their shortcut.
     if (f.rax == 0 && !request.single.length && !control)
         result = f.rsi >= user_limit ? -14 : read_handle(h, nullptr, 0);
@@ -1953,9 +1965,13 @@ static int64_t pipe_transfer_syscall(Task& task, const Frame& frame) {
                 return -22;
         } else {
             auto node = file->node;
-            if (!node || (node->mode & 0170000) != regular_file ||
-                (node->mount->ops != &ramfs_ops && node->mount->ops != &ext2_ops) ||
-                (source->pipe && (target->flags & 02000)))
+            if (source->pipe && (target->flags & 02000))
+                return -22;
+            if (memory_device(*file)) {
+                if (node->device == (source->pipe ? Device::full : Device::null))
+                    return -22;
+            } else if (!node || (node->mode & 0170000) != regular_file ||
+                       (node->mount->ops != &ramfs_ops && node->mount->ops != &ext2_ops))
                 return -22;
             if (!pointer)
                 position = file->offset;
@@ -1982,10 +1998,11 @@ static int64_t pipe_transfer_syscall(Task& task, const Frame& frame) {
     request->stream_blocking = !(flags & 2) && !(pipe_flags & 04000);
     if (socket) {
         bool unix_receive = socket == source && socket->socket && socket->socket->type == 1;
-        request->splice_socket_blocking =
+        request->splice_endpoint_blocking =
             !(socket->flags & 04000) && !(unix_receive && (flags & 2));
         request->inet_generation = tcp_generation(socket->inet);
-    }
+    } else if (memory_device(*source))
+        request->splice_endpoint_blocking = !(source->flags & 04000);
     retain(source);
     retain(target);
     int64_t result = pipe_transfer_attempt(task, *request);

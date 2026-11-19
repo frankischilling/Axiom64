@@ -797,9 +797,11 @@ static int64_t dispatch(Frame* f) {
         return descriptor_wait_syscall(*current, *f);
     case 8: {
         auto h = fd_handle(a);
-        if (!h)
+        if (!h || (h->flags & 010000000))
             return -9;
         if (h->epoll || h->event || h->timer || h->signal_descriptor || h->inotify)
+            return uint32_t(c) <= 4 ? 0 : -22;
+        if (memory_device(*h))
             return uint32_t(c) <= 4 ? 0 : -22;
         if (h->pipe || !h->node || (h->node->mode & 0170000) == character)
             return -29;

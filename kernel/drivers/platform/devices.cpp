@@ -292,6 +292,7 @@ void devices_init() {
     tag("/dev/ttyS0", Device::serial, 0x440);
     tag("/dev/null", Device::null);
     tag("/dev/zero", Device::zero);
+    tag("/dev/full", Device::full);
     tag("/dev/random", Device::random, 8);
     tag("/dev/urandom", Device::random, 9);
     tag("/dev/tty0", Device::vt);
@@ -356,6 +357,8 @@ uint64_t device_number(Node* node) {
         return 0x103;
     case Device::zero:
         return 0x105;
+    case Device::full:
+        return 0x107;
     case Device::random:
         return 0x100 | node->device_id;
     case Device::ptmx:
@@ -553,10 +556,18 @@ static int64_t block_bytes(Handle* h, void* data, size_t len, bool write) {
     return done;
 }
 
+bool memory_device(const Handle& handle) {
+    auto node = handle.node;
+    return node && (node->mode & 0170000) == character && !handle.pty &&
+           (node->device == Device::null || node->device == Device::zero ||
+            node->device == Device::full || node->device == Device::random);
+}
+
 bool device_ignores_buffer(Handle* handle, bool write) {
-    auto node = handle->node;
-    return node && (node->mode & 0170000) == character && !handle->pty &&
-           (node->device == Device::null || (write && node->device == Device::zero));
+    if (!memory_device(*handle))
+        return false;
+    auto kind = handle->node->device;
+    return kind == Device::null || (write && (kind == Device::zero || kind == Device::full));
 }
 
 int64_t device_read(Handle* h, void* data, size_t len) {
@@ -578,6 +589,7 @@ int64_t device_read(Handle* h, void* data, size_t len) {
     case Device::null:
         return 0;
     case Device::zero:
+    case Device::full:
         memset(data, 0, len);
         return len;
     case Device::random: {
@@ -635,6 +647,8 @@ int64_t device_write(Handle* h, const void* data, size_t len) {
     }
     if (h->node->device == Device::null || h->node->device == Device::zero)
         return len;
+    if (h->node->device == Device::full)
+        return -28;
     if (h->node->device == Device::random) {
         random_mix(data, len);
         return len;

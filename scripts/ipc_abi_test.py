@@ -73,6 +73,7 @@ WORKLOADS = {
                                        'interruption-cancellation', 'inode-aliases', 'unlink-recreate')),
     'pipe-transfer': ('PIPE_TRANSFER', ('arguments', 'shared-and-moved-slots', 'packet-boundaries',
                                        'file-offsets', 'file-copy-faults', 'file-size-limit',
+                                       'memory-devices',
                                        'mapped-source', 'mapped-destination',
                                        'readiness', 'broken-output', 'retained-output',
                                        'retained-input', 'retained-file-input',
@@ -249,6 +250,9 @@ def native(directory, workload):
             for uid, flags in ((0, []), (65534, ['--ordinary'])):
                 if workload == 'socket-splice':
                     flags = ['--native', *flags]
+                if (workload == 'pipe-transfer' and
+                        os.uname().release == '5.15.153.1-microsoft-standard-WSL2'):
+                    flags = ['--legacy-memory-splice', *flags]
                 if legacy_depth:
                     flags = ['--legacy-depth', *flags]
                 if legacy_seek:

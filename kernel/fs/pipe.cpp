@@ -242,6 +242,34 @@ int64_t pipe_transfer(Pipe& input, Pipe& output, size_t length, bool duplicate) 
     return moved;
 }
 
+int64_t copy_handle_to_pipe(Handle& input, Pipe& output, size_t length) {
+    if (!output.readers)
+        return -32;
+    if (output.full())
+        return -11;
+    size_t capacity = min(length, size_t(output.capacity - output.occupied) * page_size);
+    if (!capacity)
+        return 0;
+    size_t pages = (capacity + page_size - 1) / page_size;
+    uint64_t page = page_alloc(pages);
+    if (!page)
+        return -12;
+    int64_t received = read_handle(&input, physical(page), capacity);
+    size_t used = 0;
+    if (received > 0) {
+        for (size_t offset = 0; offset < size_t(received); offset += page_size) {
+            size_t count = min(size_t(received) - offset, size_t(page_size));
+            output.slot(output.occupied++) = {page + offset, 0, uint16_t(count), false, false};
+            ++used;
+        }
+        output.size += received;
+        descriptor_wait_notify(&output, 1 | 0x40);
+    }
+    if (used < pages)
+        page_free(page + used * page_size, pages - used);
+    return received;
+}
+
 int64_t splice_file_to_pipe(Handle& input, Pipe& output, uint64_t& offset, size_t length) {
     if (!output.readers)
         return -32;
@@ -286,6 +314,25 @@ void pipe_consume_head(Pipe& pipe, size_t length) {
         if (was_full)
             descriptor_wait_notify(&pipe, 4 | 0x100);
     }
+}
+
+int64_t splice_pipe_to_device(Pipe& input, Handle& output, size_t length) {
+    if (!input.occupied)
+        return input.writers ? -11 : 0;
+    size_t moved = 0;
+    while (moved < length && input.occupied) {
+        auto& slot = input.slot(0);
+        size_t count = min(length - moved, size_t(slot.end - slot.begin));
+        auto bytes = static_cast<const uint8_t*>(physical(slot.page)) + slot.begin;
+        auto result = write_handle(&output, bytes, count);
+        if (result <= 0)
+            return moved ? int64_t(moved) : result;
+        pipe_consume_head(input, result);
+        moved += result;
+        if (size_t(result) < count)
+            break;
+    }
+    return moved;
 }
 
 int64_t splice_memory_to_pipe(AddressSpace& space, Pipe& pipe, const IoVector* vectors,

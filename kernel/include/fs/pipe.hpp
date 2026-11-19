@@ -79,6 +79,8 @@ int64_t pipe_fcntl(Handle&, unsigned command, uint32_t size, const Credentials&)
 int64_t pipe_write(Handle&, const void*, size_t, bool merge_tail);
 int64_t pipe_transfer(Pipe& input, Pipe& output, size_t length, bool duplicate);
 struct IoVector;
+int64_t copy_handle_to_pipe(Handle&, Pipe&, size_t length);
+int64_t splice_pipe_to_device(Pipe&, Handle&, size_t length);
 int64_t splice_file_to_pipe(Handle&, Pipe&, uint64_t& offset, size_t length);
 int64_t splice_pipe_to_file(Task&, Pipe&, Handle&, uint64_t& offset, size_t length);
 int64_t splice_memory_to_pipe(AddressSpace&, Pipe&, const IoVector*, size_t);

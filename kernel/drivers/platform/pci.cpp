@@ -461,12 +461,45 @@ static void record_bridge(const PciFunction& pci) {
                                         pci.slot,    pci.function, ari,       false};
 }
 
+static bool read_pci_field(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t function,
+                           uint16_t offset, uint8_t width, uint32_t& result) {
+    if (slot >= 32 || function >= 8 || (width != 1 && width != 2 && width != 4) ||
+        (offset & (width - 1)) || unsigned(offset) + width > 4096)
+        return false;
+    volatile uint8_t* ecam = nullptr;
+    for (unsigned i = 0; i < window_count; ++i) {
+        auto& window = windows[i];
+        if (window.region.segment == segment && window.region.contains(bus)) {
+            ecam = map_bus(window, bus);
+            break;
+        }
+    }
+    if (!ecam && (segment || unsigned(offset) + width > 256))
+        return false;
+    PciFunction pci{bus, slot, function, segment,
+                    ecam ? ecam + (unsigned(slot) << 15) + (unsigned(function) << 12) : nullptr};
+    if (pci.read16(0) == UINT16_MAX)
+        return false;
+    switch (width) {
+    case 1:
+        result = pci.read8(offset);
+        break;
+    case 2:
+        result = pci.read16(offset);
+        break;
+    case 4:
+        result = pci.read32(offset);
+        break;
+    }
+    return true;
+}
+
 void pci_configure_intx(const Acpi::DefinitionBlocks& blocks, uint32_t sci) {
     sci_gsi = sci;
     bridges.count = 0;
     bridges.overflow = false;
     scan_pci_functions(record_bridge);
-    if (Acpi::decode_pci_pin_routes(blocks, pin_routes, &bridges))
+    if (Acpi::decode_pci_pin_routes(blocks, pin_routes, &bridges, read_pci_field))
         log("PCI INTx: %u firmware pin routes, %u configured bridges\n", uint64_t(pin_routes.count),
             uint64_t(bridges.count));
     else

@@ -724,6 +724,9 @@ test-udp:
 	$(PYTHON) scripts/udp_test.py --firmware uefi --machine q35 --intx poll --force-pic --expected-irq poll --capture-directory build/udp-intx/uefi-pic
 	$(PYTHON) scripts/udp_test.py --machine q35 --intx bridge --expected-irq msix --capture-directory build/udp-intx/bios-bridge
 	$(PYTHON) scripts/udp_test.py --firmware uefi --machine q35 --intx bridge --expected-irq msix --capture-directory build/udp-intx/uefi-bridge
+	$(PYTHON) scripts/udp_test.py --intx single --expected-irq msix --capture-directory build/udp-intx/pc-bios
+	$(PYTHON) scripts/udp_test.py --firmware uefi --intx single --expected-irq msix --capture-directory build/udp-intx/pc-uefi
+	$(PYTHON) scripts/udp_test.py --firmware uefi --intx poll --force-pic --expected-irq poll --capture-directory build/udp-intx/pc-uefi-pic
 
 .PHONY: test-pci-interrupts
 build/pci-interrupt-tests: kernel/tests/drivers/platform/pci_interrupts.cpp kernel/drivers/platform/pci.cpp $(call rwildcard,kernel/include/,*.hpp)

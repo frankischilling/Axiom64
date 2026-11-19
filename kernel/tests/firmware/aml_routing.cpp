@@ -116,14 +116,14 @@ Fixture firmware(bool invalid_checksum = false, bool duplicate = false, bool uns
 }
 
 bool evaluate(const Fixture& fixture, ax::Acpi::PciPinRoutes& routes, bool with_ssdt = true,
-              ax::Acpi::PciBridges* bridges = nullptr) {
+              ax::Acpi::PciBridges* bridges = nullptr, ax::Acpi::PciConfigRead read = nullptr) {
     ax::Acpi::DefinitionBlocks blocks{};
     blocks.dsdt = {fixture.dsdt.data(), 0x1000, fixture.dsdt.size()};
     if (with_ssdt) {
         blocks.ssdt[0] = {fixture.ssdt.data(), 0x2000, fixture.ssdt.size()};
         blocks.ssdt_count = 1;
     }
-    return ax::Acpi::decode_pci_pin_routes(blocks, routes, bridges);
+    return ax::Acpi::decode_pci_pin_routes(blocks, routes, bridges, read);
 }
 
 Bytes bridge_device(const char* label, uint8_t slot, const Bytes& children, uint16_t function = 0) {
@@ -198,6 +198,87 @@ void bridge_cases() {
     std::puts("ACPI_PCI_BRIDGE_ROUTING_PASS swizzle ari subordinate_prt wildcard_adr invalid_scope "
               "bus_ranges");
 }
+
+enum class DynamicCase { Valid, Disabled, Unbounded, EscapingField, HardwareStore };
+unsigned config_reads;
+uint8_t link_setting;
+
+bool read_config(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t function, uint16_t offset,
+                 uint8_t width, uint32_t& value) {
+    ++config_reads;
+    if (segment != 2 || bus != 3 || slot != 1 || function || offset != 0x60 || width != 1)
+        return false;
+    value = link_setting;
+    return true;
+}
+
+Fixture dynamic_firmware(DynamicCase scenario) {
+    // The route method builds two independent rows and sets the slot and pin through Index.
+    auto entry = package(4, sequence({{0, 0, 0x2e}, name("PCIBLNKA"), {0}}));
+    Bytes address{0x7d, 0x79, 0x72, 0x61, 0x0a, 4, 0, 0x0a, 16, 0, 0x0b, 0xff, 0xff, 0};
+    auto iteration =
+        sequence({{0x95, 0x61, 0x0a, 2, 0x70},
+                  entry,
+                  {0x62, 0x70},
+                  address,
+                  {0x88, 0x62, 0, 0, 0x70, 0x61, 0x88, 0x62, 1, 0, 0x70, 0x62, 0x88, 0x60, 0x61, 0},
+                  {0x75, 0x61}});
+    // Stall before allocations so the infinite-loop case exercises the instruction limit.
+    if (scenario == DynamicCase::Unbounded)
+        iteration = {1};
+    auto method = block({0x14}, sequence({name("_PRT"),
+                                          {0, 0x70},
+                                          package(2, {}),
+                                          {0x60, 0x70, 0, 0x61},
+                                          block({0xa2}, iteration),
+                                          {0xa4, 0x60}}));
+
+    Bytes resources{0x89, 6, 0, 9, 1, 0, 0, 0, 0, 0x79, 0};
+    auto buffer =
+        data("RBUF", block({0x11}, sequence({{0x0a, uint8_t(resources.size())}, resources})));
+    auto create = sequence({{0x8a}, name("RBUF"), {0x0a, 5}, name("IRQN")});
+    auto fill = block({0xa0}, sequence({{0x95, 0x68, 0x0a, 0x80, 0x70, 0x68}, name("IRQN")}));
+    auto helper =
+        block({0x14}, sequence({name("READ"), {1}, buffer, create, fill, {0xa4}, name("RBUF")}));
+    auto write =
+        scenario == DynamicCase::HardwareStore ? sequence({{0x70, 1}, name("PIN0")}) : Bytes{};
+    auto crs =
+        block({0x14}, sequence({name("_CRS"), {0}, write, {0xa4}, name("READ"), name("PIN0")}));
+    auto link = block({0x5b, 0x82}, sequence({name("LNKA"), crs}));
+    auto field = block({0x5b, 0x81}, sequence({name("PIRQ"), {1}, name("PIN0"), {8}}));
+    auto region = sequence({{0x5b, 0x80},
+                            name("PIRQ"),
+                            {2, 0x0a, 0x60, uint8_t(scenario != DynamicCase::EscapingField)}});
+    auto pci = bridge_device("PCIB", 1, sequence({region, field, helper, link}));
+    auto hid = data("_HID", {0x0c, 0x41, 0xd0, 0x0a, 0x03});
+    auto root = block({0x5b, 0x82}, sequence({name("PCI0"), hid, data("_SEG", {0x0a, 2}),
+                                              data("_BBN", {0x0a, 3}), pci, method}));
+    return {definition(root), {}};
+}
+
+void dynamic_cases() {
+    using namespace ax::Acpi;
+    // Positive and disabled controls share the same valid bytecode and differ only in the PCI read.
+    for (auto scenario : {DynamicCase::Valid, DynamicCase::Disabled, DynamicCase::Unbounded,
+                          DynamicCase::EscapingField, DynamicCase::HardwareStore}) {
+        PciPinRoutes routes{};
+        config_reads = 0;
+        link_setting = scenario == DynamicCase::Disabled ? 0x8a : 10;
+        bool admitted = evaluate(dynamic_firmware(scenario), routes, false, nullptr, read_config);
+        if (scenario == DynamicCase::Valid) {
+            assert(admitted && routes.count == 2 && config_reads == 2);
+            for (uint8_t lane = 0; lane < 2; ++lane) {
+                auto* route = find_pci_pin(routes, 2, 3, 4 + lane, 0, 1 + lane);
+                assert(route && route->gsi == 10 && route->level && !route->active_low);
+            }
+        } else {
+            assert(!admitted && !routes.count);
+            assert(config_reads == (scenario == DynamicCase::Disabled ? 2u : 0u));
+        }
+    }
+    std::puts(
+        "ACPI_PCI_DYNAMIC_ROUTING_PASS packages loop_bound pci_region disabled_link read_only");
+}
 } // namespace
 
 int main() {
@@ -222,4 +303,5 @@ int main() {
     std::puts("ACPI_PCI_ROUTING_PASS apic_model linked_gsi direct_gsi resource_checksum ambiguity "
               "truncation");
     bridge_cases();
+    dynamic_cases();
 }

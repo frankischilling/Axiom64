@@ -62,7 +62,9 @@ firmware's polarity and trigger
 mode. A level-triggered line can serve several devices. Each device clears
 its own interrupt cause before the local APIC acknowledges the line. A
 repeatedly unclaimed line is masked and the driver resumes polling.
-Dynamic interrupt links and broader AML support remain
+On i440fx, the evaluator builds the firmware's routing packages and reads
+the current interrupt link from PCI configuration space. Disabled links
+remain inactive. Programming new link settings and broader AML support remain
 under development.
 
 Sources and public headers use matching subsystem folders. Desktop configuration is under `userspace/desktop/`; guest and host tests are grouped by the subsystem they exercise. [Source layout and build discovery](source-layout.md) describe the paths and conventions.

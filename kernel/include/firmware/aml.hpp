@@ -53,8 +53,12 @@ struct PciBridges {
     bool overflow;
 };
 
+using PciConfigRead = bool (*)(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t function,
+                               uint16_t offset, uint8_t width, uint32_t& value);
+
 // Evaluates the boot interrupt model and resolves routing packages and resources.
-bool decode_pci_pin_routes(const DefinitionBlocks&, PciPinRoutes&, PciBridges* = nullptr);
+bool decode_pci_pin_routes(const DefinitionBlocks&, PciPinRoutes&, PciBridges* = nullptr,
+                           PciConfigRead = nullptr);
 
 const PciPinRoute* find_pci_pin(const PciPinRoutes&, uint16_t segment, uint8_t bus, uint8_t slot,
                                 uint8_t function, uint8_t pin, const PciBridges* = nullptr);

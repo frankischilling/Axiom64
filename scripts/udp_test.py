@@ -244,6 +244,8 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
             missing.append('both INTx adapters on one firmware GSI')
         if intx == 'bridge' and intx_routes != [('2', '23')]:
             missing.append('swizzled Q35 bridge route on GSI 23')
+        if intx == 'single' and machine == 'pc' and intx_routes != [('2', '10')]:
+            missing.append('i440fx firmware link on GSI 10')
         if 'masked unclaimed I/O APIC line' in text:
             missing.append('INTx line was masked during wire traffic')
     host_passed = (peers[0].arp == peers[1].arp == 1 and peers[0].frames == 0 and peers[1].frames == 1) if fault else (

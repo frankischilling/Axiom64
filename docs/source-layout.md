@@ -172,13 +172,17 @@ UEFI fixture and four replay tests live under `scripts/tests/`.
 
 The root `.clang-format` contains C++20 and C profiles. Kernel sources, headers, and host tests use the C++ profile. Userspace C sources use the C profile, and native C++ test programs use the C++ profile. Both preserve include order and use four spaces and a 100-column limit. Function bodies use multiple lines, and `SeparateDefinitionBlocks: Always` inserts a blank line between function, class, struct, and enum definitions. Keep one blank line between function prototypes too; `MaxEmptyLinesToKeep: 1` preserves that spacing. The Makefile continues to select C11 and C++20 for compilation.
 
-Start each project `.c` and `.cpp` file with its SPDX identifier and Doxygen
-header. Give `@file` the repository-relative path and include `@brief`,
-`@author`, and `@date`. Describe the file's current behavior in a short
-paragraph, followed by its copyright and GPL notice. Preserve upstream
-notices. Store frozen source snapshots as text so evidence readers can verify
-their original bytes. If a measured reference pins a live client's source,
-keep the recorded hash and verify the documented revision separately.
+Start project C and C++ sources and headers, assembly, linker scripts, and
+shell scripts with their SPDX identifier and Doxygen file header. Keep any
+shebang first and use the file's native comment syntax. Give `@file` the
+repository-relative path and include `@brief`, `@author`, and `@date`.
+Describe the file's current role in a short paragraph, followed by its
+copyright and GPL notice. Python modules use a module docstring.
+
+Preserve upstream notices and store frozen source snapshots as text so
+evidence readers can verify their original bytes. If a measured reference
+pins a live client's source, keep the recorded hash and verify the documented
+revision separately.
 
 On the Ubuntu build host, install the formatter and run these commands from the repository root:
 

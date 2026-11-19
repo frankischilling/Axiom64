@@ -5,7 +5,7 @@
  * @author  frankischilling
  * @date    2026-11-18
  *
- * Checks how process and thread identities are represented in procfs.
+ * Checks process and thread identities and pipe size controls in procfs.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -23,6 +23,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "fs/proc.hpp"
+#include "fs/pipe.hpp"
 #include "fs/proc/ipv4.hpp"
 #include "fs/proc/ipv6.hpp"
 #include "process/task.hpp"
@@ -42,6 +43,10 @@ static unsigned random_calls = 0;
 static Node* retained = nullptr;
 static uint64_t network_generation = 1;
 static unsigned network_reads = 0;
+
+[[noreturn]] void panic(const char*) {
+    std::abort();
+}
 
 void* alloc(size_t size) {
     return std::malloc(size);
@@ -203,6 +208,24 @@ static void network_lifetimes(bool ipv4) {
     ax::network_generation = 1;
 }
 
+static void pipe_control(ax::Node* root) {
+    auto limit = child(child(child(root, "sys"), "fs"), "pipe-max-size");
+    auto ops = ax::procfs_ops.control(limit);
+    assert(ops);
+    ax::Handle description{};
+    description.node = limit;
+    auto original = ax::pipe_limit(ax::PipeLimit::max_size);
+    assert(ops->write(&description, "4097\n", 5) == 5);
+    assert(ax::pipe_limit(ax::PipeLimit::max_size) == 8192);
+    description.offset = 0;
+    assert(ops->write(&description, "bad\n", 4) == -22);
+    assert(!description.offset);
+    char bytes[8]{};
+    assert(ops->read(&description, bytes, sizeof(bytes) - 1) == 5);
+    assert(!strcmp(bytes, "8192\n"));
+    assert(!ax::set_pipe_limit(ax::PipeLimit::max_size, original));
+}
+
 static unsigned long long start(const char* text) {
     const char* cursor = nullptr;
     for (auto item = text; *item; item++)
@@ -228,6 +251,7 @@ int main() {
     mount.root = ax::procfs_root(&mount);
     second.root = ax::procfs_root(&second);
     assert(mount.root && second.root);
+    pipe_control(mount.root);
     auto identifier = child(child(child(child(mount.root, "sys"), "kernel"), "random"), "boot_id");
     assert(identifier->mode == (ax::regular_file | 0444) && !identifier->uid && !identifier->gid);
     char bytes[2048]{};

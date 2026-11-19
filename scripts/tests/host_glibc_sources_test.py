@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Keep signed source-index identity stable during actual HTTP publication changes."""
 import hashlib
+import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -42,11 +43,16 @@ class HostSourceIndexTests(unittest.TestCase):
         self.mutable_data = b'newly published mutable source index'
         self.snapshot_data = self.data
         self.declared_size = None
+        self.disconnects = 0
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 owner.requests.append(self.path)
+                if owner.disconnects:
+                    owner.disconnects -= 1
+                    self.close_connection = True
+                    return
                 snapshot = self.path.startswith('/snapshot/')
                 mutable = self.path.endswith('/main/source/Sources.xz')
                 data = owner.snapshot_data if snapshot else owner.mutable_data if mutable else owner.served
@@ -74,7 +80,8 @@ class HostSourceIndexTests(unittest.TestCase):
         self.thread.join()
 
     def fetch(self):
-        with patch.object(host_sources, 'SNAPSHOT', self.mirror.replace('/ubuntu/', '/snapshot/')):
+        with (patch.object(host_sources, 'SNAPSHOT', self.mirror.replace('/ubuntu/', '/snapshot/')),
+              patch.object(host_sources.time, 'sleep')):
             return host_sources.authenticated_index(self.signed, self.cache, self.output, 'noble-updates', self.mirror)
 
     def proof(self):
@@ -206,6 +213,24 @@ class HostSourceIndexTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError):
             self.fetch()
         self.assertEqual(len(self.requests), 1)
+        self.assertFalse(self.index.exists())
+
+    def test_early_peer_disconnect_retries_the_same_signed_path(self):
+        self.disconnects = 1
+        self.assertEqual(self.fetch().read_bytes(), self.data)
+        self.assertEqual(self.requests, [self.requests[0]] * 2)
+        self.assertIn('/by-hash/SHA256/', self.requests[0])
+        self.assertEqual(self.proof()['attempts'][0]['error'], 'RemoteDisconnected')
+        self.assertTrue(self.proof()['attempts'][0]['retry'])
+
+    def test_persistent_peer_disconnect_keeps_the_failure_receipt(self):
+        self.disconnects = 3
+        with self.assertRaises(http.client.RemoteDisconnected):
+            self.fetch()
+        self.assertEqual(len(self.requests), 3)
+        self.assertEqual(self.requests, [self.requests[0]] * 3)
+        self.assertEqual(len(self.proof()['attempts']), 3)
+        self.assertFalse(self.proof()['passed'])
         self.assertFalse(self.index.exists())
 
     def test_missing_signed_index_is_rejected_before_network(self):

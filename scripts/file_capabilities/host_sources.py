@@ -10,14 +10,36 @@ import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import subprocess
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from fetch import ROOT
 
 
 SNAPSHOT = 'https://snapshot.ubuntu.com/ubuntu/'
+
+
+def open_archive_url(url, attempts=None):
+    for attempt in range(3):
+        try:
+            return urllib.request.urlopen(url, timeout=60)
+        except urllib.error.HTTPError as error:
+            if error.code not in (429, 500, 502, 503, 504) or attempt == 2:
+                raise
+            detail = dict(status=error.code)
+            error.close()
+        except (ConnectionError, TimeoutError, urllib.error.URLError) as error:
+            reason = getattr(error, 'reason', error)
+            temporary_dns = isinstance(reason, socket.gaierror) and reason.errno == socket.EAI_AGAIN
+            if attempt == 2 or not (isinstance(reason, (ConnectionError, TimeoutError)) or temporary_dns):
+                raise
+            detail = dict(error=type(reason).__name__, message=str(reason))
+        if attempts is not None:
+            attempts.append(dict(url=url, retry=True, **detail))
+        time.sleep(attempt + 1)
 
 
 def snapshot_index(release, suite):
@@ -60,7 +82,7 @@ def authenticated_index(signed, cache, output, suite, mirror):
             url = candidate
             interrupted = None
             try:
-                with urllib.request.urlopen(url, timeout=60) as response:
+                with open_archive_url(url, attempts) as response:
                     attempts.append(dict(url=url, status=response.status))
                     declared = response.headers.get('Content-Length')
                     try:
@@ -90,6 +112,13 @@ def authenticated_index(signed, cache, output, suite, mirror):
                 # hash path. The canonical bytes must match that same signature.
                 if position == len(candidates) - 1 or status != 404:
                     raise
+            except (ConnectionError, TimeoutError, urllib.error.URLError) as error:
+                reason = getattr(error, 'reason', error)
+                attempts.append(dict(url=url, error=type(reason).__name__, message=str(reason)))
+                (diagnostic / 'fetch.json').write_text(json.dumps(dict(
+                    url=url, attempts=attempts, passed=False, expected_sha256=expected,
+                    expected_bytes=size), indent=2) + '\n')
+                raise
     actual = hashlib.sha256(data).hexdigest()
     passed = interrupted is None and len(data) == size and actual == expected
     (diagnostic / 'Sources.xz').write_bytes(data)
@@ -130,7 +159,7 @@ def capture(output):
         if not path.exists():
             for mirror in mirrors:
                 try:
-                    with urllib.request.urlopen(mirror + filename, timeout=60) as response:
+                    with open_archive_url(mirror + filename) as response:
                         data = response.read()
                     path.write_bytes(data)
                     break
@@ -154,7 +183,7 @@ def capture(output):
                           (codename, 'https://archive.ubuntu.com/ubuntu/')):
         signed = cache / (suite + '-InRelease')
         if not signed.exists():
-            with urllib.request.urlopen(mirror + 'dists/' + suite + '/InRelease', timeout=60) as response:
+            with open_archive_url(mirror + 'dists/' + suite + '/InRelease') as response:
                 signed.write_bytes(response.read())
         verified = subprocess.run(['gpgv', '--keyring', str(keyring), str(signed)], capture_output=True, check=True)
         (output / (suite + '-signature.log')).write_bytes(verified.stdout + verified.stderr)

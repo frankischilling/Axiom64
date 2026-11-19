@@ -330,7 +330,10 @@ the interface whose local destination was removed. Both physical fences wait
 for actual fallback output before the client queries the absent source and
 fresh-bind denial. The client restores ownership through netlink and reopens the
 inventory before a separate fence releases the exact echo. That fence waits for
-the actual TCP acknowledgment. Route restoration, rebinding and complete close
+the actual TCP acknowledgment. If native Linux retransmits after the echo is
+released, the peer can replay the same echo twice. The capture reader verifies
+that each retransmission and replay match their original frames byte for byte
+and occur before the acknowledgment. Route restoration, rebinding and complete close
 then retain the original five exchanges and header/getter checks.
 
 `python3 scripts/tests/tcp6_zone_source_route_evidence_test.py` requires three
@@ -339,8 +342,9 @@ native and eight guest profiles, matching actual musl clients, both images and
 220 source inventories, 352 fresh-bind observations, 132 route snapshots and
 1,056 physical fence pairs. Every original native capture frame remains bound to
 its original clocks. A lossless packet subset goes through the existing route
-decoder with unchanged bytes and timestamps; the additional decoder checks all
-companion frames and ownership fences. It rejects 8,526 serialized capture/log
+decoder with unchanged bytes and timestamps. The additional decoder checks all
+companion frames, ownership fences, and any native fallback retransmissions.
+It rejects 8,526 serialized capture/log
 controls, 32 product controls and six matrix controls. Full 150-second execution,
 120-second alarm, five-second I/O, ten-second barrier and capture-clock bounds
 remain. Actual interface removal, broader expiry/reconnect and complete scoped

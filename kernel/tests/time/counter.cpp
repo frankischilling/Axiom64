@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "core/time.hpp"
 #include "firmware/acpi.hpp"
 #include <array>
@@ -289,8 +292,114 @@ static void firmware_tests() {
                 malformed);
 }
 
+static void platform_tables() {
+    constexpr uint64_t madt = Firmware::hpet + 128, fadt = Firmware::hpet + 512;
+    Firmware firmware;
+    firmware.put(Firmware::xsdt + 4, 60, 4);
+    firmware.put(Firmware::xsdt + 44, madt, 8);
+    firmware.put(Firmware::xsdt + 52, fadt, 8);
+    firmware.sum(Firmware::xsdt, 60, 9);
+    std::memcpy(firmware.at(madt), "APIC", 4);
+    firmware.put(madt + 4, 104, 4);
+    firmware.put(madt + 36, 0xfee00000, 4);
+    firmware.at(madt)[40] = 1;
+    const uint8_t apics[] = {
+        0,   8,  7, 3, 1,  0, 0,    0,                              // Processor Local APIC.
+        1,   12, 4, 0, 0,  0, 0xc0, 0xfe, 16, 0, 0, 0,              // I/O APIC.
+        2,   10, 0, 9, 19, 0, 0,    0,    15, 0,                    // ISA override.
+        128, 2,                                                     // Unrecognized OEM entry.
+        9,   16, 0, 0, 3,  1, 0,    0,    2,  0, 0, 0, 7, 16, 0, 0, // Local x2APIC.
+        5,   12, 0, 0, 0,  0, 0xe0, 0xfe, 1,  0, 0, 0,              // 64-bit LAPIC address.
+    };
+    static_assert(sizeof(apics) == 60);
+    std::memcpy(firmware.at(madt + 44), apics, sizeof(apics));
+    firmware.sum(madt, 104, 9);
+    std::memcpy(firmware.at(fadt), "FACP", 4);
+    firmware.put(fadt + 4, 116, 4);
+    firmware.at(fadt)[8] = 6;
+    firmware.at(fadt)[46] = 9;
+    firmware.at(fadt)[109] = 3;
+    firmware.put(fadt + 112, 0x100100, 4);
+    firmware.sum(fadt, 116, 9);
+
+    using namespace ax::Acpi;
+    InterruptTopology topology{};
+    Hpet timer;
+    FixedDescription fixed{};
+    assert(firmware.find(timer) && timer.address == 0xfed00000);
+    assert(find_interrupt_topology(Firmware::base, Firmware::read, &firmware, topology));
+    assert(topology.local_apic == 0x1fee00000 && topology.legacy_pic);
+    assert(topology.processor_count == 2 && topology.processors[0].uid == 7 &&
+           topology.processors[0].apic_id == 3 && topology.processors[0].flags == 1 &&
+           topology.processors[1].apic_id == 0x103 && topology.processors[1].uid == 0x1007 &&
+           topology.processors[1].flags == 2);
+    assert(topology.io_apic_count == 1 && topology.io_apics[0].id == 4 &&
+           topology.io_apics[0].address == 0xfec00000 && topology.io_apics[0].first_gsi == 16);
+    assert(!topology.isa[0].present && topology.isa[9].present && topology.isa[9].gsi == 19 &&
+           topology.isa[9].flags == 15);
+    assert(find_fixed_description(Firmware::base, Firmware::read, &firmware, fixed));
+    assert(fixed.flags == 0x100100 && fixed.sci == 9 && fixed.boot_flags == 3 &&
+           fixed.revision == 6);
+
+    for (unsigned variant = 0; variant < 8; ++variant) {
+        Firmware damaged = firmware;
+        switch (variant) {
+        case 0:
+            damaged.at(madt + 44)[1] = 0;
+            break; // Zero-length record.
+        case 1:
+            damaged.at(madt + 92)[1] = 13;
+            break; // Record crosses table end.
+        case 2:
+            damaged.at(madt + 52)[1] = 11;
+            break; // Truncated I/O APIC.
+        case 3:
+            damaged.at(madt + 64)[8] = 2;
+            break; // Reserved interrupt polarity.
+        case 4:
+            damaged.at(madt + 52)[4] = 1;
+            break; // Unaligned MMIO aperture.
+        case 5:
+            damaged.put(madt + 76 + 12, 7, 4);
+            break; // Duplicate ACPI processor UID.
+        case 6:
+            damaged.put(madt + 92 + 4, 1ull << 52, 8);
+            break; // Physical bound.
+        case 7:
+            damaged.put(madt + 92 + 4, 0xfec00000, 8);
+            break; // Colliding MMIO pages.
+        }
+        damaged.sum(madt, 104, 9);
+        assert(!find_interrupt_topology(Firmware::base, Firmware::read, &damaged, topology));
+        assert(topology.processor_count == 2 && topology.local_apic == 0x1fee00000);
+        assert(find_fixed_description(Firmware::base, Firmware::read, &damaged, fixed));
+    }
+    Firmware mixed = firmware;
+    mixed.put(madt + 76 + 4, 3, 4);
+    mixed.sum(madt, 104, 9);
+    assert(find_interrupt_topology(Firmware::base, Firmware::read, &mixed, topology));
+    assert(topology.processor_count == 1 && topology.processors[0].uid == 7);
+    mixed.at(madt + 44)[3] = 0xff;
+    mixed.sum(madt, 104, 9);
+    assert(find_interrupt_topology(Firmware::base, Firmware::read, &mixed, topology));
+    assert(topology.processor_count == 1 && topology.processors[0].uid == 0x1007);
+    mixed.put(madt + 76 + 4, UINT32_MAX, 4);
+    mixed.sum(madt, 104, 9);
+    assert(!find_interrupt_topology(Firmware::base, Firmware::read, &mixed, topology));
+
+    firmware.at(fadt)[8] = 1;
+    firmware.sum(fadt, 116, 9);
+    assert(find_fixed_description(Firmware::base, Firmware::read, &firmware, fixed));
+    assert(fixed.revision == 1 && !fixed.boot_flags && fixed.sci == 9);
+    firmware.at(fadt)[9]++;
+    assert(!find_fixed_description(Firmware::base, Firmware::read, &firmware, fixed));
+    assert(fixed.revision == 1 && fixed.sci == 9);
+    std::puts("ACPI_PLATFORM_TABLES_PASS malformed=9");
+}
+
 int main() {
     counter_tests();
     firmware_tests();
+    platform_tables();
     std::puts("CLOCK_CODEC_TESTS_PASS");
 }

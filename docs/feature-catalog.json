@@ -50,7 +50,7 @@
       "title": "Firmware, buses, and interrupt routing",
       "milestone": "M1",
       "state": "partial",
-      "current": "Limine BIOS/UEFI boot, legacy PIT/PIC interrupts, PCI configuration-mechanism-1 enumeration, shared modern/legacy virtio PCI setup, split-queue DMA ownership, and bounded ACPI HPET discovery work. PCIe ECAM, general ACPI/firmware handoff, and interrupt routing remain planned.",
+      "current": "Limine BIOS/UEFI boot, legacy PIT/PIC interrupts, PCI configuration-mechanism-1 enumeration, shared modern/legacy virtio PCI setup, split-queue DMA ownership, and bounded ACPI discovery of HPET, MADT interrupt topology, and FADT platform flags work. PCIe ECAM, APIC interrupt delivery, and broader firmware handoff remain planned.",
       "scope": [
         "PCI/PCIe enumeration and driver binding",
         "MMIO mapping, DMA allocation, address limits, and cache attributes",

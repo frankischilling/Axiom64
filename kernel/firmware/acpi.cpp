@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ * @brief Bounded ACPI root lookup and x86 platform table decoding.
+ */
 #include "firmware/acpi.hpp"
 
 namespace ax::Acpi {
+static constexpr uint64_t physical_limit = 1ull << 52;
+
 static uint64_t little(const uint8_t* bytes, size_t count) {
     uint64_t value = 0;
     for (size_t i = 0; i < count; i++)
@@ -24,8 +30,7 @@ static bool checksum(const uint8_t* bytes, size_t count) {
 }
 
 static const uint8_t* read(uint64_t address, size_t length, Read reader, void* context) {
-    constexpr uint64_t limit = 1ull << 52;
-    return !address || address >= limit || length > limit - address
+    return !address || address >= physical_limit || length > physical_limit - address
                ? nullptr
                : reader(address, length, context);
 }
@@ -45,7 +50,15 @@ static const uint8_t* table(uint64_t address, const char* signature, size_t mini
                : nullptr;
 }
 
-static bool find(uint64_t address, bool extended, Read reader, void* context, Hpet& result) {
+struct Query {
+    const char* signature;
+    size_t minimum;
+    bool (*accept)(const uint8_t*, void*);
+    void* output;
+};
+
+static bool find_in_root(uint64_t address, bool extended, Read reader, void* context,
+                         const Query& query) {
     const uint8_t* root = table(address, extended ? "XSDT" : "RSDT", 36, reader, context);
     if (!root)
         return false;
@@ -53,20 +66,15 @@ static bool find(uint64_t address, bool extended, Read reader, void* context, Hp
     if (bytes % stride || bytes / stride > max_root_entries)
         return false;
     for (size_t offset = 36; offset < 36 + bytes; offset += stride) {
-        const uint8_t* hpet = table(little(root + offset, stride), "HPET", 56, reader, context);
-        if (!hpet || hpet[40] || (hpet[41] && hpet[41] != 64) || hpet[42] ||
-            (hpet[43] && hpet[43] != 4))
-            continue;
-        uint64_t mmio = little(hpet + 44, 8);
-        if (!mmio || (mmio & 1023) || mmio > (1ull << 52) - 1024)
-            continue;
-        result = {mmio, uint32_t(little(hpet + 36, 4))};
-        return true;
+        const uint8_t* entry =
+            table(little(root + offset, stride), query.signature, query.minimum, reader, context);
+        if (entry && query.accept(entry, query.output))
+            return true;
     }
     return false;
 }
 
-bool find_hpet(uint64_t address, Read reader, void* context, Hpet& result) {
+static bool find(uint64_t address, Read reader, void* context, const Query& query) {
     if (!reader)
         return false;
     const uint8_t* first = read(address, 20, reader, context);
@@ -84,9 +92,147 @@ bool find_hpet(uint64_t address, Read reader, void* context, Hpet& result) {
         if (!complete || !match(complete, "RSD PTR ", 8) || little(complete + 20, 4) != length ||
             !checksum(complete, 20) || !checksum(complete, length))
             return false;
-        if (find(little(complete + 24, 8), true, reader, context, result))
+        if (find_in_root(little(complete + 24, 8), true, reader, context, query))
             return true;
     }
-    return find(rsdt, false, reader, context, result);
+    return find_in_root(rsdt, false, reader, context, query);
+}
+
+static bool accept_hpet(const uint8_t* hpet, void* output) {
+    if (hpet[40] || (hpet[41] && hpet[41] != 64) || hpet[42] || (hpet[43] && hpet[43] != 4))
+        return false;
+    uint64_t mmio = little(hpet + 44, 8);
+    if (!mmio || (mmio & 1023) || mmio > physical_limit - 1024)
+        return false;
+    *static_cast<Hpet*>(output) = {mmio, uint32_t(little(hpet + 36, 4))};
+    return true;
+}
+
+bool find_hpet(uint64_t rsdp, Read reader, void* context, Hpet& result) {
+    return find(rsdp, reader, context, {"HPET", 56, accept_hpet, &result});
+}
+
+static bool apic_page(uint64_t address) {
+    return address && !(address & 4095) && address <= physical_limit - 4096;
+}
+
+static bool append_processor(InterruptTopology& topology, Processor processor) {
+    if (!(processor.flags & 3))
+        return true;
+    if (topology.processor_count == sizeof(topology.processors) / sizeof(Processor))
+        return false;
+    for (unsigned index = 0; index < topology.processor_count; ++index) {
+        const auto& found = topology.processors[index];
+        if (found.apic_id == processor.apic_id || found.uid == processor.uid)
+            return false;
+    }
+    topology.processors[topology.processor_count++] = processor;
+    return true;
+}
+
+static bool append_io_apic(InterruptTopology& topology, IoApic io_apic) {
+    if (!apic_page(io_apic.address) ||
+        topology.io_apic_count == sizeof(topology.io_apics) / sizeof(IoApic))
+        return false;
+    for (unsigned index = 0; index < topology.io_apic_count; ++index) {
+        const auto& found = topology.io_apics[index];
+        if (found.id == io_apic.id || found.address == io_apic.address ||
+            found.first_gsi == io_apic.first_gsi)
+            return false;
+    }
+    topology.io_apics[topology.io_apic_count++] = io_apic;
+    return true;
+}
+
+static bool set_isa_override(InterruptTopology& topology, const uint8_t* entry) {
+    unsigned irq = entry[3];
+    if (entry[2] || irq >= 16 || topology.isa[irq].present)
+        return false;
+    auto flags = uint16_t(little(entry + 8, 2));
+    if ((flags & ~0xf) || (flags & 3) == 2 || ((flags >> 2) & 3) == 2)
+        return false;
+    topology.isa[irq] = {uint32_t(little(entry + 4, 4)), flags, true};
+    return true;
+}
+
+static bool accept_madt(const uint8_t* madt, void* output) {
+    InterruptTopology topology{};
+    topology.local_apic = little(madt + 36, 4);
+    topology.legacy_pic = madt[40] & 1;
+    bool address_override = false;
+    size_t length = little(madt + 4, 4);
+    for (size_t offset = 44; offset < length;) {
+        auto entry = madt + offset;
+        if (length - offset < 2 || entry[1] < 2 || entry[1] > length - offset)
+            return false;
+        unsigned bytes = entry[1];
+        switch (entry[0]) {
+        case 0: // Processor Local APIC.
+            if (bytes < 8)
+                return false;
+            if (entry[3] != 0xff &&
+                !append_processor(topology, {entry[3], entry[2], uint32_t(little(entry + 4, 4))}))
+                return false;
+            break;
+        case 1: // I/O APIC.
+            if (bytes < 12 || !append_io_apic(topology, {uint32_t(little(entry + 4, 4)),
+                                                         uint32_t(little(entry + 8, 4)), entry[2]}))
+                return false;
+            break;
+        case 2: // Interrupt Source Override.
+            if (bytes < 10 || !set_isa_override(topology, entry))
+                return false;
+            break;
+        case 5: // Local APIC Address Override.
+            if (bytes < 12 || address_override)
+                return false;
+            topology.local_apic = little(entry + 4, 8);
+            address_override = true;
+            break;
+        case 9: // Processor Local x2APIC.
+            if (bytes < 16)
+                return false;
+            break;
+        }
+        offset += bytes;
+    }
+    // In a mixed table, low APIC IDs come from Processor Local APIC entries.
+    bool mixed = topology.processor_count != 0;
+    for (size_t offset = 44; offset < length; offset += madt[offset + 1]) {
+        auto entry = madt + offset;
+        if (entry[0] != 9)
+            continue;
+        auto id = uint32_t(little(entry + 4, 4));
+        if (id != UINT32_MAX && (!mixed || id >= 0xff) &&
+            !append_processor(
+                topology, {id, uint32_t(little(entry + 12, 4)), uint32_t(little(entry + 8, 4))}))
+            return false;
+    }
+    if (!topology.processor_count || !apic_page(topology.local_apic))
+        return false;
+    for (unsigned index = 0; index < topology.io_apic_count; ++index)
+        if (topology.io_apics[index].address == topology.local_apic)
+            return false;
+    *static_cast<InterruptTopology*>(output) = topology;
+    return true;
+}
+
+bool find_interrupt_topology(uint64_t rsdp, Read reader, void* context, InterruptTopology& result) {
+    return find(rsdp, reader, context, {"APIC", 44, accept_madt, &result});
+}
+
+static bool accept_fadt(const uint8_t* fadt, void* output) {
+    uint8_t revision = fadt[8];
+    if (!revision)
+        return false;
+    auto boot_flags = uint16_t(revision >= 3 ? little(fadt + 109, 2) : 0);
+    auto sci = uint16_t(little(fadt + 46, 2));
+    *static_cast<FixedDescription*>(output) = {uint32_t(little(fadt + 112, 4)), sci, boot_flags,
+                                               revision};
+    return true;
+}
+
+bool find_fixed_description(uint64_t rsdp, Read reader, void* context, FixedDescription& result) {
+    return find(rsdp, reader, context, {"FACP", 116, accept_fadt, &result});
 }
 } // namespace ax::Acpi

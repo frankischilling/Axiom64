@@ -87,7 +87,7 @@ Start from current `main` after checking remote updates, ongoing work and CI. Pr
 
 ### F01. Firmware, buses, and interrupt routing
 
-Limine BIOS/UEFI boot, legacy PIT/PIC interrupts, PCI configuration-mechanism-1 enumeration, virtio DMA, and [bounded ACPI HPET discovery](time.md) work. PCIe ECAM, general ACPI/firmware handoff, and interrupt routing remain planned. [Storage support](storage.md) adds the PCI and MMIO support used by raw virtio disks.
+Limine BIOS/UEFI boot, legacy PIT/PIC interrupts, PCI configuration-mechanism-1 enumeration, virtio DMA, and [bounded ACPI HPET discovery](time.md) work. [Boot diagnostics](architecture.md) report validated interrupt topology and fixed platform flags from the MADT and FADT. PCIe ECAM, APIC interrupt delivery, and broader firmware handoff remain planned. [Storage support](storage.md) adds the PCI and MMIO support used by raw virtio disks.
 
 Required work:
 

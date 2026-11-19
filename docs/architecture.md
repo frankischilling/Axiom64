@@ -12,7 +12,7 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/drivers/platform/pci.cpp`, `kernel/drivers/virtio/` | PCI discovery, modern/legacy virtio transport, split-ring storage and descriptor ownership |
 | `kernel/drivers/block/block.cpp` | Virtio block request policy, raw sector I/O, flush, and filesystem claims |
 | `kernel/core/random/`, `kernel/drivers/random/` | Shared generator, initialization credit, source validation, and virtio entropy ownership |
-| `kernel/firmware/`, `kernel/arch/x86_64/rtc.cpp` | Bounded generation-ID discovery and boot UTC calendar sampling |
+| `kernel/firmware/`, `kernel/arch/x86_64/rtc.cpp` | ACPI table validation, interrupt topology discovery, generation ID, and boot UTC calendar sampling |
 | `kernel/net/`, `kernel/drivers/net/` | Ethernet ownership, virtio-net/e1000 devices, interface ioctls, packet sockets, IPv4/ARP/ICMP, UDP, TCP state/socket/error ownership, and netlink route/address control |
 | `kernel/process/task.cpp` | Process/thread ownership, ELF loading, clone/fork/exec/exit/wait, scheduling, TLS, FPU state |
 | `kernel/process/futex.cpp` | Expected-value waits, wake/bitsets, requeue, deadlines, shared backing lifetime |
@@ -30,6 +30,13 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `userspace/desktop/seat.c`, `authority.c`, `terminal.c` | Authenticated display ownership, private X11 cookies, process recovery and ordinary-user terminals |
 | `userspace/services/random_seed.c` | Private persisted seed loading, rotation, and interrupted-operation recovery |
 | `userspace/net/` | C++ configuration ownership, saved profiles, resolver metadata, and DHCP packet/state/transport modules; normal manager startup remains required |
+
+Boot diagnostics report the validated ACPI MADT and FADT when firmware
+supplies them. The MADT lists local APIC and x2APIC processor IDs, I/O APIC
+addresses and interrupt bases, and ISA source overrides. The FADT supplies the
+system control interrupt and platform flags. A missing or rejected table
+leaves the existing boot path available. The kernel still uses PIC/PIT
+interrupt delivery and one CPU.
 
 Sources and public headers use matching subsystem folders. Desktop configuration is under `userspace/desktop/`; guest and host tests are grouped by the subsystem they exercise. [Source layout and build discovery](source-layout.md) describe the paths and conventions.
 

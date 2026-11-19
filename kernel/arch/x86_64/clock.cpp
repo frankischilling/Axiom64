@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "boot/boot.hpp"
 #include "core/time.hpp"
 #include "firmware/acpi.hpp"
@@ -13,27 +16,6 @@ static uint64_t timestamp() {
     uint32_t low, high;
     asm volatile("lfence; rdtsc" : "=a"(low), "=d"(high)::"memory");
     return uint64_t(high) << 32 | low;
-}
-
-static const uint8_t* firmware_read(uint64_t address, size_t length, void*) {
-    auto map = memmap_request.response;
-    if (!map || !length || length > Acpi::max_table_bytes || address > UINT64_MAX - direct_map ||
-        length - 1 > UINT64_MAX - direct_map - address)
-        return nullptr;
-    for (size_t i = 0; i < map->entry_count; i++) {
-        auto entry = map->entries[i];
-        if (address < entry->base || address - entry->base > entry->length ||
-            length > entry->length - (address - entry->base))
-            continue;
-        // Base revision 3 does not directly map reserved/ACPI regions.
-        if (entry->type == LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE)
-            return static_cast<const uint8_t*>(physical(address));
-        if (entry->type == LIMINE_MEMMAP_RESERVED || entry->type == LIMINE_MEMMAP_ACPI_NVS ||
-            entry->type == LIMINE_MEMMAP_ACPI_RECLAIMABLE ||
-            entry->type == LIMINE_MEMMAP_RESERVED_MAPPED)
-            return static_cast<const uint8_t*>(map_mmio(address, length));
-    }
-    return nullptr;
 }
 
 static bool counter_read(uint64_t& value) {

@@ -1245,7 +1245,7 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
     if (h->inet6)
         return inet6_send(h->inet6, inet6_peer(h->inet6), buf, len);
     if (h->netlink)
-        return netlink_send(h->netlink, current->process->pid, buf, len);
+        return netlink_send(*current, h->netlink, buf, len);
     auto n = h->node;
     if (!n)
         return -9;

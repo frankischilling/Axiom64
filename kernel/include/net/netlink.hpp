@@ -92,7 +92,7 @@ void netlink_publish_delivery(NetlinkSocket*, NetlinkFrame*);
 
 int netlink_target(const NetlinkAddress&);
 
-int64_t netlink_send(NetlinkSocket*, unsigned process, const void*, size_t);
+int64_t netlink_send(Task&, NetlinkSocket*, const void*, size_t);
 
 int64_t netlink_read(NetlinkSocket*, void*, size_t);
 

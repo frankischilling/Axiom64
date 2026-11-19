@@ -30,6 +30,8 @@
 #include "ipc/ipc.hpp"
 #include "net/inet.hpp"
 #include "net/inet6.hpp"
+#include "net/netlink.hpp"
+#include "net/packet.hpp"
 #include "net/tcp/socket.hpp"
 
 namespace ax {
@@ -37,7 +39,8 @@ static constexpr unsigned socket_pipe_batch = 16;
 
 bool splice_socket(const Handle& handle) {
     return (handle.socket && (handle.socket->type == 1 || handle.socket->type == 2)) ||
-           (handle.inet && (inet_stream(handle.inet) || inet_payload(handle.inet))) || handle.inet6;
+           (handle.inet && (inet_stream(handle.inet) || inet_payload(handle.inet))) ||
+           handle.inet6 || handle.packet || handle.netlink;
 }
 
 int64_t splice_socket_to_pipe(Handle& handle, Pipe& pipe, size_t length) {
@@ -73,6 +76,10 @@ int64_t splice_socket_to_pipe(Handle& handle, Pipe& pipe, size_t length) {
 static int64_t send(Task& task, Handle& handle, const void* bytes, size_t length, bool more) {
     if (handle.socket)
         return socket_write(task, handle.socket, bytes, length);
+    if (handle.packet)
+        return packet_write(handle.packet, bytes, length);
+    if (handle.netlink)
+        return netlink_send(task, handle.netlink, bytes, length);
     if (handle.inet)
         return inet_send(handle.inet, inet_peer(handle.inet), bytes, length, false, nullptr, more);
     return inet6_send(handle.inet6, inet6_peer(handle.inet6), bytes, length, false, nullptr, more);

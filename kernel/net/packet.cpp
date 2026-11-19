@@ -153,8 +153,10 @@ void packet_deliver(const NetInfo& info, const void* data, size_t length, unsign
 
 int64_t packet_read(PacketSocket* socket, void* data, size_t length) {
     const auto frame = packet_front(socket);
-    if (!frame)
-        return -11;
+    if (!frame) {
+        auto info = net_info(socket->index);
+        return info && !info->live ? -5 : -11;
+    }
     size_t copied = min(length, frame->length);
     memcpy(data, packet_bytes(frame), copied);
     packet_observed(socket, *frame);

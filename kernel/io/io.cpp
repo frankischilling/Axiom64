@@ -1264,7 +1264,7 @@ static int64_t packet_attempt(Task& task, IoRequest& request) {
     const auto& f = request.call;
     if (request.write) {
         if (request.handle->netlink)
-            return netlink_send(request.handle->netlink, task.process->pid, request.packet_data,
+            return netlink_send(task, request.handle->netlink, request.packet_data,
                                 request.packet_length);
         if (request.handle->inet) {
             if (request.inet_output.header_included && request.inet_output.probe)
@@ -1643,7 +1643,7 @@ static int64_t socket_transfer_attempt(Task& task, IoRequest& request, Handle& s
         }
         if (pipe.full())
             return request.stream_blocking ? would_block : -11;
-        if (socket.inet || socket.inet6)
+        if (socket.inet || socket.inet6 || socket.packet)
             net_poll();
         auto result = splice_socket_to_pipe(socket, pipe, request.single.length);
         return result == -11 ? wait_for_splice_socket(request, socket.receive_timeout) : result;
@@ -1652,7 +1652,7 @@ static int64_t socket_transfer_attempt(Task& task, IoRequest& request, Handle& s
         return request.progress || !pipe.writers ? int64_t(request.progress)
                : request.stream_blocking         ? would_block
                                                  : -11;
-    if (socket.inet || socket.inet6)
+    if (socket.inet || socket.inet6 || socket.packet)
         net_poll();
     while (pipe.occupied && request.progress < request.single.length) {
         auto result = splice_pipe_to_socket(

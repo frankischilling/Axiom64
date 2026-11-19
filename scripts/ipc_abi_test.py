@@ -81,16 +81,21 @@ WORKLOADS = {
     'socket-splice': ('SOCKET_SPLICE', ('unix-stream', 'unix-datagram', 'large-datagram', 'tcp4',
                                        'tcp6', 'udp4', 'udp6', 'unix-rights', 'retained-input',
                                        'retained-output', 'send-backpressure', 'udp4-more',
-                                       'udp6-more')),
+                                       'udp6-more', 'route-netlink', 'raw-packets')),
     'posix-aio': ('POSIX_AIO', ('positioned-sync-errors', 'signal', 'lists-thread',
                                 'timeout-interrupt-cancel', 'descriptor-reuse')),
 }
 
 
 def execute(command, log, expected_exit, uids, workload, firmware=None, root='ramfs'):
+    observed = {}
     with log.open('xb') as output:
-        child = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=output,
-                               stderr=subprocess.STDOUT, timeout=90)
+        if workload == 'socket-splice' and firmware is not None:
+            from socket_splice_peer import run
+            returncode, observed['packet_captures'] = run(command, log, output)
+        else:
+            returncode = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=output,
+                                        stderr=subprocess.STDOUT, timeout=90).returncode
     lines = log.read_text().splitlines()
     prefix, cases = WORKLOADS[workload]
     receipts = [line for line in lines if line.startswith((f'{prefix}_CASE ', f'{prefix}_PASS '))]
@@ -106,7 +111,6 @@ def execute(command, log, expected_exit, uids, workload, firmware=None, root='ra
         markers.append('VFS_ROOT_PASS filesystem=ext2 device=/dev/vda readonly=0')
     if workload == 'named-pipes' and firmware is not None:
         markers.append('NAMED_PIPE_LIMITS_PASS')
-    observed = {}
     if workload == 'socket-splice':
         legacy = (firmware is None and
                   os.uname().release == '5.15.153.1-microsoft-standard-WSL2')
@@ -186,12 +190,12 @@ def execute(command, log, expected_exit, uids, workload, firmware=None, root='ra
         observed['cancellation_outcomes'] = [dict(uid=uid, cancel=outcomes[2 * index].split('=')[1],
                                                  close=outcomes[2 * index + 1].split('=')[1])
                                              for index, uid in enumerate(uids)]
-    if (child.returncode != expected_exit or receipts != expected or
+    if (returncode != expected_exit or receipts != expected or
             any(lines.count(marker) != 1 for marker in markers) or
             any(marker in line for marker in (f'{prefix}_FAIL', 'PANIC:', 'FAULT pid=')
                 for line in lines)):
         raise RuntimeError(f'{workload} workload failed in {log}')
-    return dict(returncode=child.returncode, uids=uids, log_sha256=digest(log), **observed)
+    return dict(returncode=returncode, uids=uids, log_sha256=digest(log), **observed)
 
 
 def compile_workload(case, compiler, linkage, workload):
@@ -221,7 +225,10 @@ def native(directory, workload):
             if digest(executable) != program_hash:
                 raise RuntimeError('native executable copy differs from the compiled client')
             namespace = ['unshare', '--ipc', '--']
-            if workload == 'posix-semaphores':
+            if workload == 'socket-splice':
+                namespace = ['unshare', '--ipc', '--net', '--', '/bin/sh', '-ec',
+                             'ip link set lo up; exec "$@"', 'axiom-socket-splice']
+            elif workload == 'posix-semaphores':
                 namespace = ['unshare', '--ipc', '--mount', '--', '/bin/sh', '-ec',
                              'mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /dev/shm; exec "$@"',
                              'axiom-posix-semaphores']

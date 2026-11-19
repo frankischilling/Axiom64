@@ -151,7 +151,7 @@ int64_t netlink_read(NetlinkSocket* socket, void* output, size_t length) {
     return copied;
 }
 
-int64_t netlink_send(NetlinkSocket* socket, unsigned process, const void* data, size_t length) {
+int64_t netlink_send(Task& task, NetlinkSocket* socket, const void* data, size_t length) {
     if (length > netlink_max_request)
         return -90;
     if (!length)
@@ -185,7 +185,7 @@ int64_t netlink_send(NetlinkSocket* socket, unsigned process, const void* data, 
     if (count > queue_count - socket->count - socket->deliveries ||
         total > queue_bytes - socket->bytes)
         return -11;
-    int error = socket->port ? 0 : bind_port(socket, 0, process);
+    int error = socket->port ? 0 : bind_port(socket, 0, task.process->pid);
     if (error)
         return error;
     NetlinkFrame* replies[queue_count]{};
@@ -201,9 +201,9 @@ int64_t netlink_send(NetlinkSocket* socket, unsigned process, const void* data, 
         auto reply = replies[i];
         reply->source = {};
         reply->reserved = capacities[i];
-        reply->length = routing_reply(
-            bytes + positions[i], socket->port, socket->capped, reply + 1,
-            current && capable(current->credentials, Capability::net_admin), socket->strict);
+        reply->length =
+            routing_reply(bytes + positions[i], socket->port, socket->capped, reply + 1,
+                          capable(task.credentials, Capability::net_admin), socket->strict);
         if (!reply->length) {
             release(reply);
             continue;

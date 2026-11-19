@@ -7,7 +7,7 @@ Axiom64 retains the open file description selected by an I/O syscall while that 
 | Operations | Current scope |
 | --- | --- |
 | `read`, `write`, `readv`, `writev` | Existing regular files, pipes, Unix stream sockets, event counters, and character/block devices |
-| `splice`, `tee` | Pipe and FIFO transfers. `splice` also accepts regular RAM and ext2 files, Unix streams and datagrams, and IPv4 and IPv6 TCP and UDP sockets. |
+| `splice`, `tee` | Pipe and FIFO transfers. `splice` also accepts regular RAM and ext2 files, Unix streams and datagrams, IPv4 and IPv6 TCP and UDP, raw packet sockets, and route netlink sockets. |
 | `vmsplice` | Transfers between userspace vectors and pipe or FIFO endpoints. |
 | `pread64`, `pwrite64` | Existing seekable files and block devices; preserve the shared file offset; pipes, sockets, and character devices return `ESPIPE` |
 | `recvfrom`, `sendto` | Connected Unix streams, including receive-address output; a send destination is unsupported |
@@ -374,7 +374,13 @@ Tests cover both directions on Unix sockets and loopback TCP and UDP. They also
 check Unix socket descriptor reuse, large datagrams, and send backpressure.
 On UDP output, `SPLICE_F_MORE` assembles a datagram with later splice or send
 calls on the same open description. See [UDP corking](udp.md#udp-corking).
-Packet and netlink endpoints remain open.
+Raw packet transfers use the bound Ethernet interface. Guest tests check
+transmit, receive, and truncation on virtio-net and e1000, and compare the
+exact Ethernet frames in the captures. Linux comparison uses loopback.
+Route netlink tests issue a link dump through a pipe, check the reply port and
+sequence, and read the multipart response through a pipe as root and as an
+ordinary caller. Packet socket creation and netlink requests use their
+existing permission checks.
 
 `vmsplice` captures the vector addresses and lengths before waiting. Memory
 queued into a pipe keeps a reference to each readable page until the pipe

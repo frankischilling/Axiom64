@@ -27,6 +27,10 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <linux/if_packet.h>
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <netinet/udp.h>
 #include <poll.h>
@@ -34,6 +38,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <time.h>
@@ -477,6 +482,146 @@ static void udp_more(int domain, const char* name, int native, int legacy_ipv6) 
     printf("SOCKET_SPLICE_CASE %s\n", name);
 }
 
+static void send_record(int socket, const void* bytes, size_t count) {
+    int ends[2];
+    CHECK(pipe(ends) == 0 && write(ends[1], bytes, count) == (ssize_t)count);
+    loff_t offset = 0;
+    CHECK(splice(ends[0], NULL, socket, &offset, count, 0) == -1 && errno == EINVAL);
+    CHECK(splice(ends[0], NULL, socket, NULL, count, 0) == (ssize_t)count);
+    close_pair(ends);
+}
+
+static size_t receive_record(int socket, void* bytes, size_t capacity) {
+    int ends[2];
+    CHECK(pipe(ends) == 0);
+    struct pollfd watch = {.fd = socket, .events = POLLIN};
+    CHECK(poll(&watch, 1, 2000) == 1);
+    loff_t offset = 0;
+    CHECK(splice(socket, &offset, ends[1], NULL, capacity, SPLICE_F_NONBLOCK) == -1 &&
+          errno == EINVAL);
+    ssize_t count = splice(socket, NULL, ends[1], NULL, capacity, SPLICE_F_NONBLOCK);
+    CHECK(count > 0 && read(ends[0], bytes, capacity) == count);
+    close_pair(ends);
+    return count;
+}
+
+static void route_netlink(void) {
+    int socket_fd = socket(AF_NETLINK, SOCK_RAW | SOCK_NONBLOCK, NETLINK_ROUTE);
+    CHECK(socket_fd >= 0);
+    const struct sockaddr_nl kernel = {.nl_family = AF_NETLINK};
+    CHECK(connect(socket_fd, (const struct sockaddr*)&kernel, sizeof(kernel)) == 0);
+    struct sockaddr_nl local;
+    socklen_t size = sizeof(local);
+    CHECK(getsockname(socket_fd, (struct sockaddr*)&local, &size) == 0 && size == sizeof(local));
+
+    struct {
+        struct nlmsghdr header;
+        struct ifinfomsg link;
+    } request = {.header = {.nlmsg_len = sizeof(request),
+                            .nlmsg_type = RTM_GETLINK,
+                            .nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP,
+                            .nlmsg_seq = 7654}};
+
+    send_record(socket_fd, &request, sizeof(request));
+
+    union {
+        struct nlmsghdr align;
+        char bytes[16384];
+    } reply;
+
+    int loopback = 0, done = 0;
+    for (unsigned i = 0; i < 16 && !done; ++i) {
+        int remaining = receive_record(socket_fd, reply.bytes, sizeof(reply.bytes));
+        for (struct nlmsghdr* message = &reply.align; NLMSG_OK(message, remaining);
+             message = NLMSG_NEXT(message, remaining)) {
+            CHECK(!done && message->nlmsg_seq == request.header.nlmsg_seq &&
+                  message->nlmsg_pid == local.nl_pid && (message->nlmsg_flags & NLM_F_MULTI));
+            if (message->nlmsg_type == NLMSG_DONE) {
+                done = 1;
+                continue;
+            }
+            CHECK(message->nlmsg_type == RTM_NEWLINK &&
+                  message->nlmsg_len >= NLMSG_LENGTH(sizeof(struct ifinfomsg)));
+            const struct ifinfomsg* link = NLMSG_DATA(message);
+            int attributes = IFLA_PAYLOAD(message);
+            for (struct rtattr* attr = IFLA_RTA(link); RTA_OK(attr, attributes);
+                 attr = RTA_NEXT(attr, attributes)) {
+                if (attr->rta_type == IFLA_IFNAME && RTA_PAYLOAD(attr) == 3 &&
+                    !memcmp(RTA_DATA(attr), "lo", 3)) {
+                    CHECK(link->ifi_flags & IFF_LOOPBACK);
+                    loopback = 1;
+                }
+            }
+            CHECK(attributes == 0);
+        }
+        CHECK(remaining == 0);
+    }
+    CHECK(loopback && done);
+    int ends[2];
+    CHECK(pipe(ends) == 0);
+    CHECK(splice(socket_fd, NULL, ends[1], NULL, 1, SPLICE_F_NONBLOCK) == -1 && errno == EAGAIN);
+    close_pair(ends);
+    CHECK(close(socket_fd) == 0);
+    puts("SOCKET_SPLICE_CASE route-netlink");
+}
+
+static void packet_link(int sender, int receiver, const char* name, unsigned lane, int native) {
+    int control = socket(AF_INET, SOCK_DGRAM, 0);
+    CHECK(control >= 0);
+    struct ifreq query = {0};
+    memcpy(query.ifr_name, name, strlen(name) + 1);
+    CHECK(ioctl(control, SIOCGIFINDEX, &query) == 0 && query.ifr_ifindex > 0);
+    struct sockaddr_ll address = {
+        .sll_family = AF_PACKET, .sll_protocol = htons(0x88b5), .sll_ifindex = query.ifr_ifindex};
+    CHECK(ioctl(control, SIOCGIFFLAGS, &query) == 0);
+    if (!(query.ifr_flags & IFF_UP)) {
+        query.ifr_flags |= IFF_UP;
+        CHECK(ioctl(control, SIOCSIFFLAGS, &query) == 0);
+    }
+    CHECK(ioctl(control, SIOCGIFHWADDR, &query) == 0 && close(control) == 0);
+    CHECK(bind(sender, (const struct sockaddr*)&address, sizeof(address)) == 0);
+    CHECK(bind(receiver, (const struct sockaddr*)&address, sizeof(address)) == 0);
+
+    unsigned char outgoing[64] = {0}, incoming[64], expected[64];
+    const unsigned char peer[] = {2, 0x9a, 0x58, 0x4d, 0x64, lane};
+    if (!native)
+        memcpy(outgoing, peer, sizeof(peer));
+    memcpy(outgoing + 6, query.ifr_hwaddr.sa_data, 6);
+    outgoing[12] = 0x88;
+    outgoing[13] = 0xb5;
+    for (unsigned sequence = 0; sequence < 2; ++sequence) {
+        for (size_t i = 14; i < sizeof(outgoing); ++i)
+            outgoing[i] = 0x40 + lane + sequence * 7 + i - 14;
+        send_record(sender, outgoing, sizeof(outgoing));
+        memcpy(expected, outgoing, sizeof(expected));
+        if (!native) {
+            memcpy(expected, outgoing + 6, 6);
+            memcpy(expected + 6, outgoing, 6);
+            for (size_t i = 14; i < sizeof(expected); ++i)
+                expected[i] ^= 0x80;
+        }
+        size_t count = sequence ? sizeof(incoming) : sizeof(incoming) - 1;
+        CHECK(receive_record(receiver, incoming, count) == count &&
+              !memcmp(incoming, expected, count));
+    }
+}
+
+static void raw_packets(int native) {
+    int protocol = htons(0x88b5);
+    int pair[2] = {socket(AF_PACKET, SOCK_RAW, protocol), -1};
+    if (getuid()) {
+        CHECK(pair[0] == -1 && errno == EPERM);
+    } else {
+        pair[1] = socket(AF_PACKET, SOCK_RAW, protocol);
+        CHECK(pair[0] >= 0 && pair[1] >= 0);
+        packet_link(pair[0], pair[1], native ? "lo" : "eth0", 0, native);
+        if (!native)
+            packet_link(pair[0], pair[1], "eth1", 1, native);
+        close_pair(pair);
+    }
+    puts("SOCKET_SPLICE_CASE raw-packets");
+}
+
 int main(int argc, char** argv) {
     int native = 0, legacy_datagrams = 0;
     for (int i = 1; i < argc; ++i) {
@@ -502,6 +647,8 @@ int main(int argc, char** argv) {
     backpressure();
     udp_more(AF_INET, "udp4-more", native, 0);
     udp_more(AF_INET6, "udp6-more", native, legacy_datagrams);
+    route_netlink();
+    raw_packets(native);
     printf("SOCKET_SPLICE_PASS uid=%u\n", (unsigned)getuid());
     return 0;
 }

@@ -252,8 +252,11 @@ test-proc-identity-native:
 	$(PYTHON) scripts/proc_identity_test.py --directory build/proc-identity-native --native
 build/proc-identity-policy: kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp \
     kernel/fs/proc/integer.cpp kernel/fs/pipe.cpp kernel/fs/descriptor_inode.cpp \
+    kernel/fs/inotify.cpp kernel/ipc/eventfd.cpp kernel/ipc/timerfd.cpp \
     kernel/process/limits.cpp kernel/security/credentials.cpp kernel/include/fs/pipe.hpp \
     kernel/include/fs/descriptor_inode.hpp kernel/include/fs/memfd.hpp kernel/include/fs/proc.hpp \
+    kernel/include/fs/inotify.hpp kernel/include/ipc/eventfd.hpp kernel/include/ipc/ipc.hpp \
+    kernel/include/ipc/signal_descriptor.hpp kernel/include/ipc/timerfd.hpp \
     kernel/include/fs/proc/integer.hpp kernel/include/fs/proc/ipv4.hpp kernel/include/fs/proc/ipv6.hpp \
     kernel/include/fs/vfs.hpp kernel/include/process/limits.hpp kernel/include/process/task.hpp \
     kernel/include/security/credentials.hpp

@@ -50,6 +50,7 @@
 #include <sys/statfs.h>
 #include <sys/timerfd.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #define CHECK(expression)                                                                          \
@@ -796,6 +797,161 @@ static void anonymous_object_links(void) {
     observed("proc_anonymous_object_links_supply_metadata_without_reopening_events_or_sockets");
 }
 
+static void read_fdinfo(int descriptor, char* output, size_t capacity) {
+    char path[64];
+    CHECK(snprintf(path, sizeof(path), "/proc/thread-self/fdinfo/%d", descriptor) > 0);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    CHECK(fd >= 0);
+    size_t used = 0;
+    while (used < capacity - 1) {
+        ssize_t length = read(fd, output + used, capacity - 1 - used);
+        CHECK(length >= 0);
+        if (!length)
+            break;
+        used += (size_t)length;
+    }
+    CHECK(used > 0 && used < capacity - 1 && close(fd) == 0);
+    output[used] = 0;
+}
+
+static uint64_t info_number(const char* contents, const char* key, int base) {
+    const char* begin = strstr(contents, key);
+    CHECK(begin);
+    begin += strlen(key);
+    char* end;
+    uint64_t result = strtoull(begin, &end, base);
+    CHECK(end > begin && (*end == '\n' || *end == ' '));
+    return result;
+}
+
+static void descriptor_information(void) {
+    char file[] = "/tmp/axiom-fdinfo-XXXXXX";
+    int fd = mkstemp(file);
+    CHECK(fd >= 0);
+    CHECK(fcntl(fd, F_SETFD, FD_CLOEXEC) == 0 && fcntl(fd, F_SETFL, O_NONBLOCK) == 0);
+    CHECK(lseek(fd, 23, SEEK_SET) == 23);
+    int alias = dup(fd);
+    CHECK(alias >= 0);
+    char content[2048], path[64];
+    read_fdinfo(fd, content, sizeof(content));
+    struct stat status;
+    CHECK(fstat(fd, &status) == 0 && info_number(content, "ino:\t", 10) == status.st_ino);
+    uint64_t flags = (uint64_t)fcntl(fd, F_GETFL);
+    CHECK(!(flags & (O_CREAT | O_EXCL | O_NOCTTY | O_TRUNC)));
+    CHECK((flags & (O_ACCMODE | O_NONBLOCK)) == (O_RDWR | O_NONBLOCK));
+    uint64_t mount = info_number(content, "mnt_id:\t", 10);
+    CHECK(mount && info_number(content, "pos:\t", 10) == 23);
+    CHECK(info_number(content, "flags:\t", 8) == (flags | O_CLOEXEC));
+    read_fdinfo(alias, content, sizeof(content));
+    CHECK(info_number(content, "flags:\t", 8) == flags);
+    CHECK(info_number(content, "pos:\t", 10) == 23 &&
+          info_number(content, "mnt_id:\t", 10) == mount &&
+          info_number(content, "ino:\t", 10) == status.st_ino);
+    DIR* directory = opendir("/proc/self/fdinfo");
+    CHECK(directory && snprintf(path, sizeof(path), "%d", fd) > 0);
+    struct dirent* entry;
+    while ((entry = readdir(directory)) && strcmp(entry->d_name, path)) {
+    }
+    CHECK(entry && entry->d_type == DT_REG && closedir(directory) == 0);
+
+    CHECK(snprintf(path, sizeof(path), "/proc/self/fdinfo/%d", fd) > 0);
+    int reader = open(path, O_RDONLY | O_CLOEXEC);
+    CHECK(reader >= 0 && read(reader, content, 5) == 5 && !memcmp(content, "pos:\t", 5));
+    CHECK(close(fd) == 0);
+    ssize_t length = read(reader, content, sizeof(content) - 1);
+    CHECK(length > 0);
+    content[length] = 0;
+    CHECK(!strncmp(content, "23\n", 3));
+    CHECK(lseek(reader, 0, SEEK_SET) == 0);
+    CHECK(read(reader, content, sizeof(content)) == -1 && errno == ENOENT);
+    CHECK(dup2(alias, fd) == fd && read(reader, content, sizeof(content)) > 0);
+    CHECK(close(reader) == 0 && close(alias) == 0);
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        CHECK(snprintf(path, sizeof(path), "/proc/%d/fdinfo/%d", getppid(), fd) > 0);
+        CHECK(setgroups(0, NULL) == 0 && setgid(65534) == 0 && setuid(65534) == 0);
+        CHECK(open(path, O_RDONLY) == -1 && errno == EACCES);
+        read_fdinfo(fd, content, sizeof(content));
+        CHECK(info_number(content, "pos:\t", 10) == 23);
+        _exit(73);
+    }
+    child_status(child);
+    CHECK(close(fd) == 0 && unlink(file) == 0);
+    observed("proc_fdinfo_position_flags_inode_reuse_and_access");
+}
+
+static void descriptor_event_information(int modern) {
+    char content[2048];
+    int event = eventfd(10, EFD_SEMAPHORE | EFD_NONBLOCK | EFD_CLOEXEC);
+    int epoll = epoll_create1(EPOLL_CLOEXEC);
+    CHECK(event >= 0 && epoll >= 0);
+    struct epoll_event interest = {.events = EPOLLIN | EPOLLONESHOT, .data.u64 = 0x1234abcd};
+    CHECK(epoll_ctl(epoll, EPOLL_CTL_ADD, event, &interest) == 0);
+    read_fdinfo(event, content, sizeof(content));
+    uint64_t id = info_number(content, "eventfd-id:", 10);
+    CHECK(info_number(content, "eventfd-count:", 16) == 10);
+    if (modern)
+        CHECK(info_number(content, "eventfd-semaphore:", 10) == 1);
+    uint64_t value;
+    CHECK(read(event, &value, sizeof(value)) == sizeof(value) && value == 1);
+    int alias = dup(event);
+    CHECK(alias >= 0);
+    read_fdinfo(alias, content, sizeof(content));
+    CHECK(info_number(content, "eventfd-id:", 10) == id &&
+          info_number(content, "eventfd-count:", 16) == 9);
+    CHECK(close(event) == 0);
+    read_fdinfo(epoll, content, sizeof(content));
+    CHECK(info_number(content, "tfd:", 10) == (uint64_t)event);
+    CHECK(info_number(content, "events:", 16) == (EPOLLIN | EPOLLONESHOT | EPOLLERR | EPOLLHUP));
+    CHECK(info_number(content, "data:", 16) == 0x1234abcd);
+    CHECK(epoll_wait(epoll, &interest, 1, 0) == 1);
+    read_fdinfo(epoll, content, sizeof(content));
+    CHECK(info_number(content, "events:", 16) == EPOLLONESHOT);
+    CHECK(close(alias) == 0);
+    read_fdinfo(epoll, content, sizeof(content));
+    CHECK(!strstr(content, "tfd:") && close(epoll) == 0);
+
+    sigset_t mask;
+    CHECK(sigemptyset(&mask) == 0 && sigaddset(&mask, SIGUSR1) == 0);
+    int signal = signalfd(-1, &mask, SFD_CLOEXEC);
+    CHECK(signal >= 0);
+    read_fdinfo(signal, content, sizeof(content));
+    CHECK(info_number(content, "sigmask:\t", 16) == (UINT64_C(1) << (SIGUSR1 - 1)));
+    CHECK(close(signal) == 0);
+
+    int timer = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
+    struct itimerspec setting = {.it_interval.tv_sec = 3};
+    CHECK(timer >= 0 && clock_gettime(CLOCK_MONOTONIC, &setting.it_value) == 0);
+    setting.it_value.tv_sec += 120;
+    CHECK(timerfd_settime(timer, TFD_TIMER_ABSTIME, &setting, NULL) == 0);
+    read_fdinfo(timer, content, sizeof(content));
+    CHECK(info_number(content, "clockid:", 10) == CLOCK_MONOTONIC);
+    CHECK(info_number(content, "settime flags:", 8) == TFD_TIMER_ABSTIME);
+    CHECK(info_number(content, "ticks:", 10) == 0 && strstr(content, "it_interval: (3, 0)"));
+    char* remaining = strstr(content, "it_value:");
+    unsigned long seconds, nanoseconds;
+    CHECK(remaining && sscanf(remaining, "it_value: (%lu, %lu)", &seconds, &nanoseconds) == 2 &&
+          seconds > 0 && seconds <= 120 && nanoseconds < 1000000000);
+    CHECK(close(timer) == 0);
+
+    char name[] = "/tmp/axiom-fdinfo-watch-XXXXXX";
+    int target = mkstemp(name), watcher = inotify_init1(IN_CLOEXEC);
+    CHECK(target >= 0 && watcher >= 0);
+    int watch = inotify_add_watch(watcher, name, IN_MODIFY | IN_ATTRIB);
+    struct stat status;
+    CHECK(watch >= 0 && fstat(target, &status) == 0);
+    read_fdinfo(watcher, content, sizeof(content));
+    CHECK(info_number(content, "inotify wd:", 16) == (uint64_t)watch &&
+          info_number(content, " ino:", 16) == status.st_ino &&
+          info_number(content, " mask:", 16) == (IN_MODIFY | IN_ATTRIB));
+    CHECK(inotify_rm_watch(watcher, watch) == 0);
+    read_fdinfo(watcher, content, sizeof(content));
+    CHECK(!strstr(content, "inotify wd:"));
+    CHECK(close(watcher) == 0 && close(target) == 0 && unlink(name) == 0);
+    observed("proc_fdinfo_live_event_state_and_watch_identity");
+}
+
 int main(int argc, char** argv) {
     if (getenv("SCRIPT_NAME"))
         return script_child(argc, argv);
@@ -838,6 +994,8 @@ int main(int argc, char** argv) {
     proc_descriptor_links();
     anonymous_pipe_links();
     anonymous_object_links();
+    descriptor_information();
+    descriptor_event_information(modern);
     printf("EXEC_ARGUMENTS_PASS observations=%u\n", observations);
     return 0;
 }

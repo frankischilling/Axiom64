@@ -161,6 +161,8 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
     bool path_only = flags & 010000000;
     if (path_only)
         flags &= 010000000 | 02000000 | 0200000 | 0400000;
+    else
+        flags |= 0100000; // Native x86-64 opens force O_LARGEFILE.
     Path name;
     if (!path_at(dirfd, path, name))
         return name.error;
@@ -1142,7 +1144,7 @@ static int64_t dispatch(Frame* f) {
             return 0;
         }
         if (b == 3)
-            return h->flags & ~uint32_t(02000000);
+            return file_status_flags(*h);
         if (h->flags & 010000000)
             return -9;
         if (b == 1031 || b == 1032)

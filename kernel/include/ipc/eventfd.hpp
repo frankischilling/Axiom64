@@ -29,9 +29,15 @@ namespace ax {
 struct Eventfd;
 struct Handle;
 
+struct EventfdInfo {
+    uint64_t count;
+    bool semaphore;
+};
+
 Handle* open_eventfd(uint32_t initial, bool semaphore, bool nonblocking, int& error);
 void close_eventfd(Eventfd*);
 bool eventfd_ready(const Eventfd*, bool write);
 int64_t eventfd_read(Eventfd*, void*, size_t);
 int64_t eventfd_write(Eventfd*, const void*, size_t);
+EventfdInfo eventfd_info(const Eventfd&);
 } // namespace ax

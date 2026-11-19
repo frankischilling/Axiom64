@@ -25,12 +25,17 @@
  */
 #include "fs/proc.hpp"
 #include "fs/descriptor_inode.hpp"
+#include "fs/inotify.hpp"
 #include "fs/memfd.hpp"
 #include "fs/pipe.hpp"
 #include "fs/proc/integer.hpp"
 #include "fs/proc/ipv6.hpp"
 #include "fs/proc/ipv4.hpp"
 #include "net/ethernet.hpp"
+#include "ipc/eventfd.hpp"
+#include "ipc/ipc.hpp"
+#include "ipc/signal_descriptor.hpp"
+#include "ipc/timerfd.hpp"
 #include "process/task.hpp"
 #include "core/random.hpp"
 #include "core/random/primitives.hpp"
@@ -46,6 +51,8 @@ enum class Kind {
     thread,
     fd_directory,
     fd_link,
+    fdinfo_directory,
+    fdinfo,
     status,
     stat,
     sys,
@@ -73,6 +80,14 @@ constexpr const char* pipe_limit_names[] = {"pipe-max-size", "pipe-user-pages-ha
 static bool is_control(Kind kind) {
     return kind == Kind::network_property || kind == Kind::source_limit ||
            kind == Kind::ipv4_forward || kind == Kind::pipe_limit;
+}
+
+static bool descriptor_directory(Kind kind) {
+    return kind == Kind::fd_directory || kind == Kind::fdinfo_directory;
+}
+
+static bool snapshot_file(Kind kind) {
+    return kind == Kind::status || kind == Kind::stat || kind == Kind::fdinfo;
 }
 
 struct Entry {
@@ -114,20 +129,23 @@ struct Text {
             character(*value++);
     }
 
-    void number(uint64_t value) {
-        char digits[20];
+    void number(uint64_t value, unsigned base = 10, unsigned width = 0, char padding = ' ') {
+        char digits[22];
         size_t count = 0;
         do {
-            digits[count++] = char('0' + value % 10);
-            value /= 10;
+            digits[count++] = "0123456789abcdef"[value % base];
+            value /= base;
         } while (value);
+        while (width > count) {
+            character(padding);
+            --width;
+        }
         while (count)
             character(digits[--count]);
     }
 
     void hexadecimal(uint64_t value) {
-        for (int shift = 60; shift >= 0; shift -= 4)
-            character("0123456789abcdef"[(value >> shift) & 15]);
+        number(value, 16, 16, '0');
     }
 
     void field(const char* name, uint64_t value) {
@@ -230,10 +248,16 @@ static int follow_link(Node* node, Node*& target) {
     return 1;
 }
 
-static bool allow_access(Node* node, unsigned mask) {
+static int access_override(Node* node, unsigned mask) {
     auto item = entry(node);
+    if (item->kind == Kind::fdinfo_directory || item->kind == Kind::fdinfo) {
+        auto owner = task(item->pid);
+        if (!owner)
+            return -3;
+        return descriptor_access(*owner) ? 0 : -13;
+    }
     auto owner = item->kind == Kind::fd_directory ? task(item->pid) : nullptr;
-    return owner && current && owner->process == current->process && !(mask & 2);
+    return owner && current && owner->process == current->process && !(mask & 2) ? 1 : 0;
 }
 
 static size_t link_target(Kind kind, char output[40]) {
@@ -299,7 +323,8 @@ static void collect(Proc* state) {
             if ((((item->kind == Kind::process || item->kind == Kind::thread) &&
                   !task(item->pid)) ||
                  (item->kind == Kind::network_scope && validate(&item->node)) ||
-                 (item->kind == Kind::fd_link && !descriptor(*item))) &&
+                 ((item->kind == Kind::fd_link || item->kind == Kind::fdinfo) &&
+                  !descriptor(*item))) &&
                 !node_referenced(&item->node)) {
                 dead = item;
                 break;
@@ -356,11 +381,11 @@ static Entry* make(Proc* state, Mount* mount, Node* parent, const char* name, Ki
     node->parent = parent;
     node->mount = mount;
     node->filesystem_data = item;
-    node->mode =
-        kind == Kind::status || kind == Kind::stat || kind == Kind::boot_id ? regular_file | 0444
-        : kind == Kind::self || kind == Kind::thread_self || kind == Kind::fd_link ? symlink | 0777
-        : kind == Kind::fd_directory ? directory | 0500
-                                     : directory | 0555;
+    node->mode = snapshot_file(kind) || kind == Kind::boot_id ? regular_file | 0444
+                 : kind == Kind::self || kind == Kind::thread_self || kind == Kind::fd_link
+                     ? symlink | 0777
+                 : kind == Kind::fd_directory ? directory | 0500
+                                              : directory | 0555;
     node->links = (node->mode & 0170000) == directory ? 2 : 1;
     memcpy(node->name, name, strlen(name) + 1);
     node->atime = node->mtime = node->ctime = node_now();
@@ -456,7 +481,10 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
              !strcmp(name, "fd"))
         kind = Kind::fd_directory;
-    else if (context->kind == Kind::fd_directory) {
+    else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
+             !strcmp(name, "fdinfo"))
+        kind = Kind::fdinfo_directory;
+    else if (descriptor_directory(context->kind)) {
         if (!descriptor_access(*owner))
             return -13;
         fd = unsigned(pid(name));
@@ -465,7 +493,7 @@ static int lookup(Node* parent, const char* name, Node*& output) {
         auto handle = owner->files->entries[fd].handle;
         if (!handle)
             return -2;
-        kind = Kind::fd_link;
+        kind = context->kind == Kind::fd_directory ? Kind::fd_link : Kind::fdinfo;
     } else if (context->kind == Kind::task_list) {
         selected_pid = pid(name);
         auto selected = task(selected_pid);
@@ -678,8 +706,123 @@ static int boot_id() {
     return 0;
 }
 
+static int epoll_fdinfo(Text& text, const Epoll& epoll) {
+    for (const auto& item : epoll.items) {
+        if (!item.live())
+            continue;
+        Node* inode;
+        if (int error = descriptor_inode(*item.handle, inode))
+            return error;
+        text.string("tfd: ");
+        text.number(item.fd, 10, 8);
+        text.string(" events: ");
+        text.number(item.enabled ? item.event.events | 0x18 : item.event.events & 0xf0000000, 16,
+                    8);
+        text.string(" data: ");
+        text.number(item.event.data, 16, 16);
+        text.string("  pos:");
+        text.number(item.handle->offset);
+        text.string(" ino:");
+        text.number(inode->inode, 16);
+        text.string(" sdev:");
+        text.number(inode->mount->id, 16);
+        text.character('\n');
+    }
+    return 0;
+}
+
+static void timespec(Text& text, const char* field, uint64_t ns) {
+    text.string(field);
+    text.string(": (");
+    text.number(ns / 1000000000);
+    text.string(", ");
+    text.number(ns % 1000000000);
+    text.string(")\n");
+}
+
+static int fdinfo(const Entry& item, Snapshot& output) {
+    auto owner = task(item.pid);
+    if (!owner || !owner->files)
+        return -2;
+    const auto& slot = owner->files->entries[item.descriptor];
+    auto handle = slot.handle;
+    if (!handle)
+        return -2;
+    Node* inode;
+    if (int error = descriptor_inode(*handle, inode))
+        return error;
+    size_t capacity = 512;
+    if (handle->epoll)
+        for (const auto& watch : handle->epoll->items)
+            if (watch.live())
+                capacity += 144;
+    if (handle->inotify)
+        capacity += size_t(inotify_watch_count(*handle->inotify)) * 128;
+    auto bytes = static_cast<char*>(alloc(capacity));
+    if (!bytes)
+        return -12;
+    Text text{bytes, 0, capacity};
+    text.field("pos", handle->offset);
+    text.string("flags:\t0");
+    text.number(file_status_flags(*handle) | (slot.cloexec ? 02000000 : 0), 8);
+    text.character('\n');
+    text.field("mnt_id", inode->mount->id);
+    text.field("ino", inode->inode);
+
+    int error = 0;
+    if (handle->event) {
+        auto event = eventfd_info(*handle->event);
+        text.string("eventfd-count: ");
+        text.number(event.count, 16, 16);
+        text.string("\neventfd-id: ");
+        text.number(handle->generation);
+        text.string("\neventfd-semaphore: ");
+        text.number(event.semaphore);
+        text.character('\n');
+    } else if (handle->signal_descriptor) {
+        text.bits("sigmask", handle->signal_descriptor->mask);
+    } else if (handle->timer) {
+        auto timer = timerfd_info(*handle->timer);
+        text.string("clockid: ");
+        text.number(unsigned(timer.clock));
+        text.string("\nticks: ");
+        text.number(timer.pending);
+        text.string("\nsettime flags: 0");
+        text.number(timer.flags, 8);
+        text.character('\n');
+        timespec(text, "it_value", timer.setting.value);
+        timespec(text, "it_interval", timer.setting.interval);
+    } else if (handle->epoll) {
+        error = epoll_fdinfo(text, *handle->epoll);
+    } else if (handle->inotify) {
+        inotify_visit_watches(
+            *handle->inotify, &text,
+            [](void* context, int wd, uint64_t inode, uint64_t mount, uint32_t mask) {
+                auto& out = *static_cast<Text*>(context);
+                out.string("inotify wd:");
+                out.number(wd, 16);
+                out.string(" ino:");
+                out.number(inode, 16);
+                out.string(" sdev:");
+                out.number(mount, 16);
+                out.string(" mask:");
+                out.number(mask & ~inotify_unmount, 16);
+                out.string(" ignored_mask:0 \n");
+            });
+    }
+    if (error || text.failed) {
+        release(bytes);
+        return error ? error : -75;
+    }
+    output = {bytes, text.length};
+    return 0;
+}
+
 static int make_snapshot(Node* node, Snapshot& output) {
-    return entry(node)->kind == Kind::stat ? stat(node, output) : status(node, output);
+    auto item = entry(node);
+    if (item->kind == Kind::fdinfo)
+        return fdinfo(*item, output);
+    return item->kind == Kind::stat ? stat(node, output) : status(node, output);
 }
 
 static int64_t copy(const char* bytes, size_t size, uint64_t offset, void* output, size_t length) {
@@ -730,7 +873,7 @@ static int64_t read(Node* node, uint64_t offset, void* output, size_t length) {
         return error ? error
                      : copy(boot_identifier, sizeof(boot_identifier), offset, output, length);
     }
-    if (kind != Kind::status && kind != Kind::stat)
+    if (!snapshot_file(kind))
         return -21;
     Snapshot snapshot{};
     int error = make_snapshot(node, snapshot);
@@ -743,7 +886,7 @@ static int64_t read(Node* node, uint64_t offset, void* output, size_t length) {
 
 static int64_t read_description(Handle* handle, uint64_t offset, void* output, size_t length) {
     auto kind = entry(handle->node)->kind;
-    if (kind != Kind::status && kind != Kind::stat)
+    if (!snapshot_file(kind))
         return read(handle->node, offset, output, length);
     auto snapshot = static_cast<Snapshot*>(handle->filesystem_data);
     if (!snapshot) {
@@ -867,7 +1010,7 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
     auto owner = context->pid ? task(context->pid) : nullptr;
     if (context->pid && !owner)
         return -2;
-    if (context->kind == Kind::fd_directory && !descriptor_access(*owner))
+    if (descriptor_directory(context->kind) && !descriptor_access(*owner))
         return -13;
     if (cookie < 2) {
         auto selected = cookie ? directory_parent(node) : node;
@@ -917,12 +1060,15 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
         } else if (cookie == 4) {
             memcpy(name, "fd", 3);
             result.next = 5;
-        } else if (cookie == 5 && context->kind == Kind::process) {
-            memcpy(name, "task", 5);
+        } else if (cookie == 5) {
+            memcpy(name, "fdinfo", 7);
             result.next = 6;
+        } else if (cookie == 6 && context->kind == Kind::process) {
+            memcpy(name, "task", 5);
+            result.next = 7;
         } else
             return 0;
-    } else if (context->kind == Kind::fd_directory) {
+    } else if (descriptor_directory(context->kind)) {
         if (!owner->files)
             return 0;
         for (; cookie - 2 < max_fds; cookie++) {
@@ -1065,7 +1211,7 @@ const FilesystemOps procfs_ops = {lookup,
                                   control,
                                   validate,
                                   follow_link,
-                                  allow_access};
+                                  access_override};
 
 bool procfs_has_poll(const Node& node) {
     auto kind = static_cast<const Entry*>(node.filesystem_data)->kind;

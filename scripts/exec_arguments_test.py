@@ -67,8 +67,8 @@ def execute(command, log, firmware=None):
     text = log.read_text().replace('\r\n', '\n')
     lines = text.splitlines()
     count = sum(line.startswith('EXEC_ARGUMENTS_OBSERVATION ') for line in lines)
-    passed = not timed_out and process.returncode == (1 if firmware else 0) and count == 21 and \
-        lines.count('EXEC_ARGUMENTS_PASS observations=21') == 1 and not any(
+    passed = not timed_out and process.returncode == (1 if firmware else 0) and count == 23 and \
+        lines.count('EXEC_ARGUMENTS_PASS observations=23') == 1 and not any(
         marker in text for marker in ('EXEC_ARGUMENTS_FAIL', 'PANIC:', 'FAULT pid='))
     if firmware:
         passed = passed and lines.count('AXIOM64_TESTS_PASS') == 1 and \

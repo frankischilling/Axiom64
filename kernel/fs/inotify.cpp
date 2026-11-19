@@ -80,6 +80,18 @@ struct Inotify {
     bool wrapped;
 };
 
+unsigned inotify_watch_count(const Inotify& instance) {
+    return instance.watches;
+}
+
+void inotify_visit_watches(const Inotify& instance, void* context,
+                           void (*visit)(void*, int, uint64_t, uint64_t, uint32_t)) {
+    for (auto block = instance.blocks; block; block = block->next)
+        for (const auto& watch : block->watches)
+            if (watch.owner)
+                visit(context, watch.wd, watch.inode, watch.mount, watch.mask);
+}
+
 Handle* open_inotify(uint32_t uid, bool nonblocking, int& error) {
     unsigned count = 0;
     for (auto instance = instances; instance; instance = instance->next)

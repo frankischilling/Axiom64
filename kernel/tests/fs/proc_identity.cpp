@@ -30,6 +30,7 @@
 #include "process/task.hpp"
 #include "core/random.hpp"
 #include "core/random/primitives.hpp"
+#include "core/time.hpp"
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -59,6 +60,10 @@ void release(void* memory) {
 
 Timestamp node_now() {
     return {};
+}
+
+uint64_t clock_realtime_ticks() {
+    return ticks;
 }
 
 Node* directory_parent(Node* node) {

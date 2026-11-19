@@ -50,6 +50,10 @@ void close_eventfd(Eventfd* counter) {
     release(counter);
 }
 
+EventfdInfo eventfd_info(const Eventfd& counter) {
+    return {counter.count, counter.semaphore};
+}
+
 bool eventfd_ready(const Eventfd* counter, bool write) {
     return write ? counter->count < UINT64_MAX - 1 : counter->count != 0;
 }

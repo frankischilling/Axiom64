@@ -36,6 +36,13 @@ struct TimerfdSetting {
     uint64_t interval, value;
 };
 
+struct TimerfdInfo {
+    TimerClock clock;
+    uint32_t flags;
+    uint64_t pending;
+    TimerfdSetting setting;
+};
+
 Handle* open_timerfd(TimerClock, bool nonblocking, int& error);
 void close_timerfd(Timerfd*);
 bool timerfd_ready(Timerfd&);
@@ -44,4 +51,5 @@ int64_t timerfd_read(Timerfd&, void*, size_t);
 void timerfd_set_ticks(Timerfd&, uint64_t);
 TimerfdSetting timerfd_get(Timerfd&);
 TimerfdSetting timerfd_set(Timerfd&, TimerfdSetting, bool absolute);
+TimerfdInfo timerfd_info(const Timerfd&);
 } // namespace ax

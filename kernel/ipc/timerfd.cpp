@@ -29,13 +29,14 @@
 namespace ax {
 struct Timerfd {
     TimerClock clock;
-    bool absolute_realtime;
+    bool absolute;
     bool expired;
     uint64_t deadline, interval, pending, notification;
 
     uint64_t now() const {
         constexpr uint64_t tick_ns = 10000000;
-        uint64_t current = absolute_realtime ? clock_realtime_ticks() : ticks;
+        uint64_t current =
+            absolute && clock == TimerClock::realtime ? clock_realtime_ticks() : ticks;
         return current > INT64_MAX / tick_ns ? INT64_MAX : current * tick_ns;
     }
 
@@ -117,12 +118,20 @@ TimerfdSetting timerfd_get(Timerfd& timer) {
 
 TimerfdSetting timerfd_set(Timerfd& timer, TimerfdSetting next, bool absolute) {
     TimerfdSetting old = timerfd_get(timer);
-    timer.absolute_realtime = absolute && timer.clock == TimerClock::realtime;
+    timer.absolute = absolute;
     timer.interval = next.interval;
     timer.pending = 0;
     timer.deadline = next.value;
     if (next.value && !absolute)
         timer.deadline = min(timer.now() + next.value, uint64_t(INT64_MAX));
     return old;
+}
+
+TimerfdInfo timerfd_info(const Timerfd& timer) {
+    auto snapshot = timer;
+    auto now = snapshot.now();
+    snapshot.accrue(now);
+    uint64_t remaining = timer.deadline > now ? timer.deadline - now : 0;
+    return {timer.clock, uint32_t(timer.absolute), snapshot.pending, {timer.interval, remaining}};
 }
 } // namespace ax

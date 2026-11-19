@@ -89,6 +89,10 @@ struct EpollItem {
     Epoll* exclusive_owner = nullptr;
     EpollItem* exclusive_prev = nullptr;
     EpollItem* exclusive_next = nullptr;
+
+    bool live() const {
+        return used && handle->references && handle->generation == generation;
+    }
 };
 
 struct Epoll {

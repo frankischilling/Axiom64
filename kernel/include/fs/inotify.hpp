@@ -63,6 +63,9 @@ void close_inotify(Inotify*);
 int inotify_add_watch(Inotify&, Node*, uint32_t mask);
 int inotify_remove_watch(Inotify&, int wd);
 InotifyQueue& inotify_queue(Inotify&);
+unsigned inotify_watch_count(const Inotify&);
+void inotify_visit_watches(const Inotify&, void*,
+                           void (*)(void*, int, uint64_t, uint64_t, uint32_t));
 
 void inotify_inode(Node*, uint32_t mask);
 void inotify_dentry(Node*, uint32_t mask);

@@ -324,9 +324,9 @@ int node_access(Node* node, unsigned mask, bool real) {
         node->mount->ops->refresh(node);
     if (auto control = node_control(node))
         return control->access(node, mask, real);
-    if (auto allow = node->mount->ops->allow_access)
-        if (allow(node, mask))
-            return 0;
+    if (auto access = node->mount->ops->access_override)
+        if (int result = access(node, mask))
+            return min(result, 0);
     const Credentials boot{};
     return credential_access(current ? current->credentials : boot, node->uid, node->gid,
                              node->mode, mask, real);

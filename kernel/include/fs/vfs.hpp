@@ -142,7 +142,8 @@ struct FilesystemOps {
     int (*validate)(Node*) = nullptr;
     // Positive results supply the resolved node of a filesystem-specific link.
     int (*follow_link)(Node*, Node*&) = nullptr;
-    bool (*allow_access)(Node*, unsigned mask) = nullptr;
+    // Positive grants access, negative denies it, and zero applies ordinary DAC.
+    int (*access_override)(Node*, unsigned mask) = nullptr;
 };
 
 struct Mount {
@@ -195,6 +196,10 @@ struct Handle {
     Node* anonymous_path = nullptr;
     uint32_t opener_uid = 0, opener_gid = 0;
 };
+
+inline uint32_t file_status_flags(const Handle& handle) {
+    return handle.flags & ~uint32_t(02000000 | 0100 | 0200 | 0400 | 01000);
+}
 
 extern Node* root_node;
 extern Node nodes[16384];

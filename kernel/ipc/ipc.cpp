@@ -415,10 +415,6 @@ uint32_t readiness(Handle* h, const Task* task) {
     return events;
 }
 
-static bool epoll_item_live(const EpollItem& item) {
-    return item.used && item.handle->references && item.handle->generation == item.generation;
-}
-
 static void epoll_append_exclusive(Epoll& epoll, EpollItem& item) {
     item.exclusive_owner = &epoll;
     item.exclusive_prev = exclusive_last;
@@ -453,7 +449,7 @@ struct EpollScan {
 static bool epoll_readable(Epoll&, EpollScan&);
 
 static uint32_t epoll_item_events(EpollItem& item, EpollScan& scan) {
-    if (!item.enabled || !epoll_item_live(item))
+    if (!item.enabled || !item.live())
         return 0;
     auto child = item.handle->epoll;
     bool requires_notification =
@@ -678,7 +674,7 @@ static void epoll_notify_exclusive(const void* source, uint32_t events,
     for (auto item = exclusive_first; item;) {
         auto& watch = *item;
         item = watch.exclusive_next;
-        if (!epoll_item_live(watch)) {
+        if (!watch.live()) {
             epoll_unlink_exclusive(watch);
             continue;
         }
@@ -718,8 +714,7 @@ static void epoll_refresh(Epoll& epoll, const void* source, uint32_t events, uin
     visited |= bit;
     bool notified = false;
     for (auto& item : epoll.items) {
-        if (!item.enabled || item.exclusive_owner || item.signal_wait_queue ||
-            !epoll_item_live(item))
+        if (!item.enabled || item.exclusive_owner || item.signal_wait_queue || !item.live())
             continue;
         uint32_t pending = 0;
         auto target = item.handle;
@@ -764,7 +759,7 @@ void epoll_signal_notify(const SignalHandlers& handlers) {
         bool notified = false;
         for (auto& item : poll->items)
             if (item.enabled && !item.exclusive_owner &&
-                item.signal_wait_queue == handlers.descriptor_wait_queue && epoll_item_live(item)) {
+                item.signal_wait_queue == handlers.descriptor_wait_queue && item.live()) {
                 uint32_t pending = item.event.events & 1;
                 item.pending |= pending;
                 notified |= pending != 0;
@@ -804,7 +799,7 @@ static bool epoll_can_nest(const Epoll& parent, const Epoll& child) {
     for (auto poll : epolls)
         if (poll)
             for (auto& item : poll->items)
-                if (epoll_item_live(item) && item.handle->epoll) {
+                if (item.live() && item.handle->epoll) {
                     unsigned index = item.handle->epoll->index;
                     children[poll->index] |= 1ull << index;
                     parents[index] |= 1ull << poll->index;
@@ -1166,7 +1161,7 @@ int64_t ipc_syscall(Frame* f) {
             return -40;
         if (!item)
             for (auto& candidate : h->epoll->items)
-                if (!epoll_item_live(candidate)) {
+                if (!candidate.live()) {
                     item = &candidate;
                     break;
                 }

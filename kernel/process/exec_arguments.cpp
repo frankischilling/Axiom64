@@ -260,6 +260,57 @@ int ExecArguments::capture_kernel(const char* path, const char* const* argv,
     return error;
 }
 
+int ExecArguments::enter_interpreter(const char* interpreter, const char* option,
+                                     const char* script) {
+    size_t removed = strlen(values_[0]) + 1;
+    size_t previous_count = count_;
+    size_t interpreter_size = strlen(interpreter) + 1;
+    size_t option_size = option ? strlen(option) + 1 : 0;
+    size_t script_size = strlen(script) + 1;
+    size_t prefix_entries = option ? 3 : 2;
+    size_t prefix_size = interpreter_size + option_size + script_size;
+    if (prefix_size + (prefix_entries - 1) * sizeof(uint64_t) > limit_ - budget_ + removed)
+        return -7;
+
+    memmove(text_, text_ + removed, used_ - removed);
+    used_ -= removed;
+    budget_ -= removed;
+    values_[0] = nullptr;
+    for (size_t i = 1; i < previous_count; i++)
+        if (values_[i])
+            values_[i] -= removed;
+
+    for (size_t i = 1; i < prefix_entries; i++) {
+        if (int error = append_pointer(nullptr, true))
+            return error;
+    }
+    if (int error = append_bytes(interpreter, interpreter_size))
+        return error;
+    if (option_size)
+        if (int error = append_bytes(option, option_size))
+            return error;
+    if (int error = append_bytes(script, script_size))
+        return error;
+
+    // Keep argv and envp in string order as well as pointer order.
+    memmove(text_ + prefix_size, text_, used_ - prefix_size);
+    memcpy(text_, interpreter, interpreter_size);
+    if (option_size)
+        memcpy(text_ + interpreter_size, option, option_size);
+    memcpy(text_ + interpreter_size + option_size, script, script_size);
+    for (size_t i = 1; i < previous_count; i++)
+        if (values_[i])
+            values_[i] += prefix_size;
+    memmove(values_ + prefix_entries, values_ + 1, (previous_count - 1) * sizeof(*values_));
+    values_[0] = text_;
+    if (option_size)
+        values_[1] = text_ + interpreter_size;
+    values_[prefix_entries - 1] = text_ + interpreter_size + option_size;
+    processed_ = count_;
+    argc_ += prefix_entries - 1;
+    return 0;
+}
+
 int ExecArguments::layout(uint64_t top, size_t auxiliary_size, ExecStack& output) const {
     if (!ready_ || top >= user_limit || top % page_size || auxiliary_size % 16)
         return -22;

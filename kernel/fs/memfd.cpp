@@ -49,7 +49,7 @@ struct MemoryFile {
     MemfdMapping* mappings;
     uint64_t pages;
     unsigned seals;
-    bool descriptor;
+    unsigned descriptions;
 };
 } // namespace
 
@@ -122,7 +122,7 @@ void discard_pages(MemoryFile& memory, uint64_t& table, unsigned shift, uint64_t
 }
 
 void collect(MemoryFile& memory) {
-    if (memory.descriptor || memory.mappings || memory.node.exec_images)
+    if (memory.descriptions || memory.mappings || memory.node.exec_images)
         return;
     discard_pages(memory, memory.pages, root_shift, 0, 0, UINT64_MAX);
     release(&memory);
@@ -400,7 +400,6 @@ int64_t memfd_create(Task& task, uint64_t pointer, uint32_t flags) {
     }
     *memory = {};
     memory->seals = flags & noexec_seal ? seal_exec : (flags & allow_sealing ? 0 : seal_seal);
-    memory->descriptor = true;
     auto& node = memory->node;
     node.mount = &mount;
     node.filesystem_data = memory;
@@ -509,9 +508,13 @@ int memfd_write_limit(const Node* node, uint64_t offset, size_t& length) {
     return 0;
 }
 
+void memfd_open(Node* node) {
+    ++file(node).descriptions;
+}
+
 void memfd_close(Node* node) {
     auto& memory = file(node);
-    memory.descriptor = false;
+    --memory.descriptions;
     collect(memory);
 }
 

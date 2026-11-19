@@ -37,6 +37,7 @@ int64_t memfd_create(Task&, uint64_t name, uint32_t flags);
 int64_t memfd_fcntl(Handle&, unsigned command, uint32_t seals);
 int memfd_fallocate(Task&, Handle&, unsigned mode, uint64_t offset, uint64_t length);
 int memfd_write_limit(const Node*, uint64_t offset, size_t& length);
+void memfd_open(Node*);
 void memfd_close(Node*);
 void memfd_reap(Node*);
 

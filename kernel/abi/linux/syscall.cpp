@@ -658,6 +658,7 @@ static int64_t execveat_user(Frame& frame) {
         return -22;
 
     Node* file = nullptr;
+    bool path_inaccessible = false;
     if (path.text[0] == '/') {
         path.base = task.fs->root_node;
     } else if (fd == -100) {
@@ -666,6 +667,7 @@ static int64_t execveat_user(Frame& frame) {
         auto handle = fd_handle(fd, true);
         if (!handle)
             return -9;
+        path_inaccessible = task.files->entries[fd].cloexec;
         file = path.base = handle->node;
         if (length && (!file || (file->mode & 0170000) != directory))
             return -20;
@@ -684,7 +686,7 @@ static int64_t execveat_user(Frame& frame) {
     int result = arguments.capture_named(read_exec_data, &space, display, frame.rdx, frame.r10,
                                          task.process->limits.soft(Resource::stack));
     if (!result && !(flags & check_only)) {
-        result = exec_task(&task, arguments, file);
+        result = exec_task(&task, arguments, file, path_inaccessible);
         if (!result)
             frame = task.frame;
     }
@@ -759,11 +761,11 @@ static int64_t readlink_path(int fd, uint64_t path, uint64_t buffer, size_t capa
     if ((node->mode & 0170000) != symlink)
         return -22;
     uint8_t data[1024];
-    size_t count = min(capacity, node->size), done = 0;
-    while (done < count) {
-        int64_t result = node_read(node, done, data, min(sizeof(data), count - done));
+    size_t done = 0;
+    while (done < capacity) {
+        int64_t result = node_read(node, done, data, min(sizeof(data), capacity - done));
         if (result <= 0)
-            return result < 0 ? result : -5;
+            return result < 0 ? result : int64_t(done);
         if (copy_result(buffer + done, data, result))
             return -14;
         done += result;

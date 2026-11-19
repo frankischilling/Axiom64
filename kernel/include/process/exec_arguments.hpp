@@ -55,6 +55,7 @@ class ExecArguments {
                       uint64_t stack_limit = UINT64_MAX);
     int capture_kernel(const char*, const char* const*, const char* const*,
                        uint64_t stack_limit = UINT64_MAX);
+    int enter_interpreter(const char* interpreter, const char* option, const char* script);
 
     const char* path() const {
         return path_;

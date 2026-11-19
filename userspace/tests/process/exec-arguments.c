@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #define _GNU_SOURCE
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -480,7 +481,207 @@ static void memfd_exec(void) {
     observed("libc_fexecve_runs_sealed_memfd_as_root_and_ordinary_user");
 }
 
+static int script_child(int argc, char** argv) {
+    const char* name = getenv("SCRIPT_NAME");
+    const char* option = getenv("SCRIPT_OPTION");
+    const char* inner = getenv("SCRIPT_INNER");
+    CHECK(!strcmp(name, (const char*)getauxval(AT_EXECFN)));
+    CHECK(!strcmp(argv[0], getenv("SCRIPT_INTERPRETER")));
+    CHECK(argc == 3 + (option != NULL) + (inner ? 2 : 0));
+    int next = 1;
+    if (inner) {
+        CHECK(!strcmp(argv[next++], "inner"));
+        CHECK(!strcmp(argv[next++], inner));
+    }
+    if (option)
+        CHECK(!strcmp(argv[next++], option));
+    CHECK(!strcmp(argv[next++], name) && !strcmp(argv[next], "original argument"));
+    CHECK(geteuid() == (uid_t)atoi(getenv("SCRIPT_UID")));
+    int fd = open(name, O_RDONLY | O_CLOEXEC);
+    char prefix[2];
+    CHECK(fd >= 0 && read(fd, prefix, sizeof(prefix)) == sizeof(prefix) &&
+          !memcmp(prefix, "#!", sizeof(prefix)) && close(fd) == 0);
+    return 73;
+}
+
+static void script_run(const char* path, const char* name, const char* option, const char* inner,
+                       int fd, int flags, int ordinary) {
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        if (ordinary)
+            CHECK(setgroups(0, NULL) == 0 && setgid(65534) == 0 && setuid(65534) == 0);
+        CHECK(setenv("SCRIPT_UID", ordinary ? "65534" : "0", 1) == 0 &&
+              setenv("SCRIPT_NAME", name, 1) == 0 &&
+              setenv("SCRIPT_INTERPRETER", executable, 1) == 0);
+        if (option)
+            CHECK(setenv("SCRIPT_OPTION", option, 1) == 0);
+        if (inner)
+            CHECK(setenv("SCRIPT_INNER", inner, 1) == 0);
+        char* args[] = {"discarded", "original argument", NULL};
+        if (fd == -1)
+            syscall(SYS_execve, path, args, environ);
+        else
+            syscall(SYS_execveat, fd, path, args, environ, flags);
+        CHECK(0);
+    }
+    child_status(child);
+}
+
+static void write_script(int fd, const char* text) {
+    CHECK(fd >= 0 && write(fd, text, strlen(text)) == (ssize_t)strlen(text));
+}
+
+static void script_file(const char* path, const char* contents, mode_t mode) {
+    int fd = open(path, O_WRONLY | O_TRUNC | O_CREAT | O_CLOEXEC, 0600);
+    write_script(fd, contents);
+    CHECK(fchmod(fd, mode) == 0 && close(fd) == 0);
+}
+
+static void interpreter_scripts(int modern) {
+    char directory[] = "/tmp/axiom-script-XXXXXX";
+    CHECK(mkdtemp(directory) && chmod(directory, 0755) == 0);
+    char outer[128], inner[128], line[1024];
+    CHECK(snprintf(outer, sizeof(outer), "%s/outer", directory) > 0);
+    CHECK(snprintf(inner, sizeof(inner), "%s/inner", directory) > 0);
+    CHECK(snprintf(line, sizeof(line), "#! \t %s\t  one \t option   \t\nbody\n", executable) > 0);
+    script_file(outer, line, 04755);
+    script_run(outer, outer, "one \t option", NULL, -1, 0, 0);
+    script_run(outer, outer, "one \t option", NULL, -1, 0, 1);
+    CHECK(snprintf(line, sizeof(line), "#!%s inner\n", executable) > 0);
+    script_file(inner, line, 0755);
+    CHECK(snprintf(line, sizeof(line), "#!%s outer\n", inner) > 0);
+    script_file(outer, line, 0755);
+    script_run(outer, outer, "outer", inner, -1, 0, 0);
+    CHECK(snprintf(line, sizeof(line), "#!%s", executable) > 0);
+    script_file(inner, line, 0755);
+    script_run(inner, inner, NULL, NULL, -1, 0, 0);
+    int start = snprintf(line, sizeof(line), "#!%s ", executable);
+    CHECK(start > 0 && start < 255);
+    memset(line + start, 'z', 300);
+    line[start + 300] = 0;
+    script_file(inner, line, 0755);
+    char truncated[256];
+    memset(truncated, 'z', (size_t)(255 - start));
+    truncated[255 - start] = 0;
+    script_run(inner, inner, truncated, NULL, -1, 0, 0);
+    const char* shell_script =
+        access("/bin/busybox", X_OK) == 0 ? "#!/bin/busybox sh\nexit 73\n" : "#!/bin/sh\nexit 73\n";
+    script_file(inner, shell_script, 0755);
+    pid_t shell = fork();
+    CHECK(shell >= 0);
+    if (!shell) {
+        char* shell_args[] = {inner, NULL};
+        syscall(SYS_execve, inner, shell_args, environ);
+        CHECK(0);
+    }
+    child_status(shell);
+    observed("shebang_literal_option_nested_arguments_bounds_and_credentials");
+
+    char* args[] = {"unreachable", NULL};
+    CHECK(snprintf(line, sizeof(line), "#!%s\n", outer) > 0);
+    script_file(outer, line, 0755);
+    CHECK(syscall(SYS_execve, outer, args, NULL) == -1 && errno == ELOOP);
+    script_file(outer, "#! \t\n", 0755);
+    CHECK(syscall(SYS_execve, outer, args, NULL) == -1 && errno == ENOEXEC);
+    memset(line, 'a', 256);
+    line[0] = '#';
+    line[1] = '!';
+    line[256] = 0;
+    script_file(outer, line, 0755);
+    CHECK(syscall(SYS_execve, outer, args, NULL) == -1 && errno == ENOEXEC);
+    CHECK(snprintf(line, sizeof(line), "#!%s\r\n", executable) > 0);
+    script_file(outer, line, 0755);
+    CHECK(syscall(SYS_execve, outer, args, NULL) == -1 && errno == ENOENT);
+    script_file(outer, line, 0600);
+    CHECK(syscall(SYS_execve, outer, args, NULL) == -1 && errno == EACCES);
+    observed("shebang_format_recursion_and_interpreter_errors");
+
+    CHECK(snprintf(line, sizeof(line), "#!%s\n", executable) > 0);
+    script_file(outer, line, 0755);
+    int dir = open(directory, O_PATH | O_DIRECTORY | O_CLOEXEC);
+    int file = open(outer, O_RDONLY | O_CLOEXEC);
+    CHECK(dir >= 0 && file >= 0);
+    CHECK(syscall(SYS_execveat, dir, "outer", args, NULL, 0) == -1 && errno == ENOENT);
+    CHECK(syscall(SYS_execveat, file, "", args, NULL, AT_EMPTY_PATH) == -1 && errno == ENOENT);
+    if (modern)
+        CHECK(syscall(SYS_execveat, file, "", args, NULL, AT_EMPTY_PATH | 0x10000) == 0);
+    CHECK(fcntl(dir, F_SETFD, 0) == 0 && fcntl(file, F_SETFD, 0) == 0);
+    char display[128];
+    fd_display(display, sizeof(display), dir, "outer");
+    script_run("outer", display, NULL, NULL, dir, 0, 0);
+    CHECK(unlink(outer) == 0);
+    fd_display(display, sizeof(display), file, "");
+    script_run("", display, NULL, NULL, file, AT_EMPTY_PATH, 0);
+    CHECK(close(file) == 0 && close(dir) == 0 && unlink(inner) == 0 && rmdir(directory) == 0);
+    observed("shebang_execveat_dirfd_unlinked_file_and_cloexec");
+
+    file = memfd_create("interpreter-script", MFD_ALLOW_SEALING);
+    write_script(file, line);
+    CHECK(fchmod(file, 0755) == 0);
+    CHECK(fcntl(file, F_ADD_SEALS, F_SEAL_WRITE | F_SEAL_GROW | F_SEAL_SHRINK) == 0);
+    fd_display(display, sizeof(display), file, "");
+    script_run("", display, NULL, NULL, file, AT_EMPTY_PATH, 0);
+    char buffer[256];
+    const char label[] = "/memfd:interpreter-script (deleted)";
+    CHECK(readlink(display, buffer, sizeof(buffer)) == sizeof(label) - 1 &&
+          !memcmp(buffer, label, sizeof(label) - 1));
+    int reopened = open(display, O_RDONLY | O_CLOEXEC);
+    CHECK(reopened >= 0 && lseek(reopened, 0, SEEK_CUR) == 0 && close(file) == 0);
+    CHECK(read(reopened, buffer, sizeof(buffer)) == (ssize_t)strlen(line) &&
+          !memcmp(buffer, line, strlen(line)) && close(reopened) == 0);
+    observed("shebang_sealed_memfd_and_independent_reopen_lifetime");
+}
+
+static void proc_descriptor_links(void) {
+    char file[] = "/tmp/axiom-procfd-XXXXXX";
+    int fd = mkstemp(file);
+    CHECK(fd >= 0);
+    char name[16], link[64], target[256];
+    CHECK(snprintf(name, sizeof(name), "%d", fd) > 0);
+    CHECK(snprintf(link, sizeof(link), "/proc/self/fd/%d", fd) > 0);
+    CHECK(readlink(link, target, sizeof(target)) == (ssize_t)strlen(file) &&
+          !memcmp(target, file, strlen(file)));
+    struct stat first, second;
+    CHECK(fstat(fd, &first) == 0 && stat(link, &second) == 0 && first.st_dev == second.st_dev &&
+          first.st_ino == second.st_ino);
+    CHECK(lstat(link, &second) == 0 && S_ISLNK(second.st_mode) && (second.st_mode & 0777) == 0700);
+    DIR* directory = opendir("/proc/thread-self/fd");
+    CHECK(directory);
+    struct dirent* entry;
+    while ((entry = readdir(directory)) && strcmp(entry->d_name, name)) {
+    }
+    CHECK(entry && entry->d_type == DT_LNK && closedir(directory) == 0);
+    CHECK(open(link, O_NOFOLLOW | O_RDONLY) == -1 && errno == ELOOP);
+    int saved = open(link, O_PATH | O_NOFOLLOW | O_CLOEXEC);
+    CHECK(saved >= 0);
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        CHECK(snprintf(link, sizeof(link), "/proc/%d/fd/%d", getppid(), fd) > 0);
+        CHECK(setgroups(0, NULL) == 0 && setgid(65534) == 0 && setuid(65534) == 0);
+        CHECK(readlink(link, target, sizeof(target)) == -1 && errno == EACCES);
+        fd_display(link, sizeof(link), fd, "");
+        CHECK(readlink(link, target, sizeof(target)) == (ssize_t)strlen(file));
+        CHECK(open(link, O_RDONLY) == -1 && errno == EACCES);
+        _exit(73);
+    }
+    child_status(child);
+    CHECK(close(fd) == 0 && unlink(file) == 0);
+    CHECK(readlinkat(saved, "", target, sizeof(target)) == -1 && errno == ENOENT);
+    CHECK(fstat(saved, &second) == 0 && (second.st_mode & 0777) == 0700);
+    int replacement = open("/dev/null", O_RDONLY);
+    CHECK(replacement == fd);
+    CHECK(readlinkat(saved, "", target, sizeof(target)) == 9 && !memcmp(target, "/dev/null", 9));
+    CHECK(lstat(link, &second) == 0 && (second.st_mode & 0777) == 0500);
+    CHECK(fstat(saved, &second) == 0 && (second.st_mode & 0777) == 0500);
+    CHECK(close(replacement) == 0 && close(saved) == 0);
+    observed("proc_fd_magic_links_follow_list_reuse_and_restrict_credentials");
+}
+
 int main(int argc, char** argv) {
+    if (getenv("SCRIPT_NAME"))
+        return script_child(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "--fd-child"))
         return fd_child(argc, argv);
     if (getenv("EMPTY_ARGV_EXPECTED") || (argc > 1 && !strcmp(argv[1], "--verify")))
@@ -513,8 +714,11 @@ int main(int argc, char** argv) {
     negative_pointers();
     aggregate();
     observed("successful_reexec_initial_stack_alignment_auxiliary_vectors_and_owned_string_bytes");
-    exec_at_paths(argc == 1 || strcmp(argv[1], "--legacy-execveat"));
+    int modern = argc == 1 || strcmp(argv[1], "--legacy-execveat");
+    exec_at_paths(modern);
     memfd_exec();
+    interpreter_scripts(modern);
+    proc_descriptor_links();
     printf("EXEC_ARGUMENTS_PASS observations=%u\n", observations);
     return 0;
 }

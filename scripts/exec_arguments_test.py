@@ -67,8 +67,8 @@ def execute(command, log, firmware=None):
     text = log.read_text().replace('\r\n', '\n')
     lines = text.splitlines()
     count = sum(line.startswith('EXEC_ARGUMENTS_OBSERVATION ') for line in lines)
-    passed = not timed_out and process.returncode == (1 if firmware else 0) and count == 14 and \
-        lines.count('EXEC_ARGUMENTS_PASS observations=14') == 1 and not any(
+    passed = not timed_out and process.returncode == (1 if firmware else 0) and count == 19 and \
+        lines.count('EXEC_ARGUMENTS_PASS observations=19') == 1 and not any(
         marker in text for marker in ('EXEC_ARGUMENTS_FAIL', 'PANIC:', 'FAULT pid='))
     if firmware:
         passed = passed and lines.count('AXIOM64_TESTS_PASS') == 1 and \
@@ -148,7 +148,8 @@ def main():
                 if args.native:
                     print('EXEC_ARGUMENTS_NATIVE_PASS ' + case.name, flush=True)
     assert source == {name: digest(ROOT / name) for name in source}, 'source changed during validation'
-    print('EXEC_ARGUMENTS_MATRIX_PASS profiles=' + str(len(rows)) + ' observations=' + str(len(rows) * 14), flush=True)
+    print('EXEC_ARGUMENTS_MATRIX_PASS profiles=' + str(len(rows)) +
+          ' observations=' + str(sum(row['observations'] for row in rows)), flush=True)
 
 
 if __name__ == '__main__':

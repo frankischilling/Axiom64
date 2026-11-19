@@ -140,6 +140,9 @@ struct FilesystemOps {
     const ControlFileOps* (*control)(Node*) = nullptr;
     // Dynamic filesystem objects may retire while descriptions still pin them.
     int (*validate)(Node*) = nullptr;
+    // Positive results supply the resolved node of a filesystem-specific link.
+    int (*follow_link)(Node*, Node*&) = nullptr;
+    bool (*allow_access)(Node*, unsigned mask) = nullptr;
 };
 
 struct Mount {
@@ -281,5 +284,5 @@ int64_t write_regular_at(Task*, Handle&, uint64_t&, const void*, size_t);
 bool handle_has_poll(const Handle&);
 bool handle_ready(Handle*, bool write, const Task*);
 
-void node_path(Node*, char*, size_t);
+void node_path(Node*, char*, size_t, bool include_unlinked = false);
 } // namespace ax

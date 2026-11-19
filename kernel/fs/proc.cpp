@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "fs/proc.hpp"
+#include "fs/memfd.hpp"
 #include "fs/pipe.hpp"
 #include "fs/proc/integer.hpp"
 #include "fs/proc/ipv6.hpp"
@@ -42,6 +43,8 @@ enum class Kind {
     process,
     task_list,
     thread,
+    fd_directory,
+    fd_link,
     status,
     stat,
     sys,
@@ -76,6 +79,7 @@ struct Entry {
     Entry* next = nullptr;
     Kind kind;
     int pid, tgid;
+    unsigned descriptor = 0;
     unsigned network_index = 0, property = 0;
     uint64_t network_generation = 0;
     bool ipv4_configuration = false;
@@ -184,6 +188,51 @@ static int pid(const char* name) {
     return int(result);
 }
 
+static Handle* descriptor(const Entry& item) {
+    auto owner = task(item.pid);
+    auto handle = owner && owner->files ? owner->files->entries[item.descriptor].handle : nullptr;
+    return handle && handle->node ? handle : nullptr;
+}
+
+static bool descriptor_access(const Task& owner) {
+    if (!current)
+        return false;
+    const auto& caller = current->credentials;
+    const auto& target = owner.credentials;
+    return current->process == owner.process || capable(caller, Capability::sys_ptrace) ||
+           (owner.memory && owner.memory->dumpable && caller.user.filesystem == target.user.real &&
+            caller.user.filesystem == target.user.effective &&
+            caller.user.filesystem == target.user.saved &&
+            caller.group.filesystem == target.group.real &&
+            caller.group.filesystem == target.group.effective &&
+            caller.group.filesystem == target.group.saved &&
+            !(target.permitted & ~caller.effective));
+}
+
+static int link_descriptor(const Entry& item, Handle*& handle) {
+    auto owner = task(item.pid);
+    if (!owner || !(handle = descriptor(item)))
+        return -2;
+    return descriptor_access(*owner) ? 0 : -13;
+}
+
+static int follow_link(Node* node, Node*& target) {
+    auto item = entry(node);
+    if (item->kind != Kind::fd_link)
+        return 0;
+    Handle* handle = nullptr;
+    if (int error = link_descriptor(*item, handle))
+        return error;
+    target = handle->opened_dentry ? handle->opened_dentry : handle->node;
+    return 1;
+}
+
+static bool allow_access(Node* node, unsigned mask) {
+    auto item = entry(node);
+    auto owner = item->kind == Kind::fd_directory ? task(item->pid) : nullptr;
+    return owner && current && owner->process == current->process && !(mask & 2);
+}
+
 static size_t link_target(Kind kind, char output[40]) {
     if (!current)
         return 0;
@@ -207,6 +256,18 @@ static void refresh(Node* node) {
         bool user_owned = owner->memory && owner->memory->dumpable;
         node->uid = user_owned ? owner->credentials.user.effective : 0;
         node->gid = user_owned ? owner->credentials.group.effective : 0;
+    }
+}
+
+static void refresh_fd_link(Entry& item) {
+    auto handle = descriptor(item);
+    item.node.mode = symlink;
+    if (handle && !(handle->flags & 010000000)) {
+        unsigned access = handle->flags & 3;
+        if (access != 1)
+            item.node.mode |= 0500;
+        if (access != 0)
+            item.node.mode |= 0300;
     }
 }
 
@@ -234,7 +295,8 @@ static void collect(Proc* state) {
         for (auto item = state->entries; item; item = item->next)
             if ((((item->kind == Kind::process || item->kind == Kind::thread) &&
                   !task(item->pid)) ||
-                 (item->kind == Kind::network_scope && validate(&item->node))) &&
+                 (item->kind == Kind::network_scope && validate(&item->node)) ||
+                 (item->kind == Kind::fd_link && !descriptor(*item))) &&
                 !node_referenced(&item->node)) {
                 dead = item;
                 break;
@@ -291,10 +353,11 @@ static Entry* make(Proc* state, Mount* mount, Node* parent, const char* name, Ki
     node->parent = parent;
     node->mount = mount;
     node->filesystem_data = item;
-    node->mode = kind == Kind::status || kind == Kind::stat || kind == Kind::boot_id
-                     ? regular_file | 0444
-                 : kind == Kind::self || kind == Kind::thread_self ? symlink | 0777
-                                                                   : directory | 0555;
+    node->mode =
+        kind == Kind::status || kind == Kind::stat || kind == Kind::boot_id ? regular_file | 0444
+        : kind == Kind::self || kind == Kind::thread_self || kind == Kind::fd_link ? symlink | 0777
+        : kind == Kind::fd_directory ? directory | 0500
+                                     : directory | 0555;
     node->links = (node->mode & 0170000) == directory ? 2 : 1;
     memcpy(node->name, name, strlen(name) + 1);
     node->atime = node->mtime = node->ctime = node_now();
@@ -318,7 +381,7 @@ static int lookup(Node* parent, const char* name, Node*& output) {
         return -2;
     Kind kind;
     int selected_pid = context->pid, group = context->tgid;
-    unsigned network_index = context->network_index, property = 0;
+    unsigned network_index = context->network_index, property = 0, fd = 0;
     uint64_t network_generation = context->network_generation;
     bool ipv4_configuration = context->ipv4_configuration || context->kind == Kind::ipv4;
     if (context->kind == Kind::root && !strcmp(name, "self"))
@@ -387,7 +450,20 @@ static int lookup(Node* parent, const char* name, Node*& output) {
         kind = Kind::stat;
     else if (context->kind == Kind::process && !strcmp(name, "task"))
         kind = Kind::task_list;
-    else if (context->kind == Kind::task_list) {
+    else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
+             !strcmp(name, "fd"))
+        kind = Kind::fd_directory;
+    else if (context->kind == Kind::fd_directory) {
+        if (!descriptor_access(*owner))
+            return -13;
+        fd = unsigned(pid(name));
+        if ((!fd && strcmp(name, "0")) || fd >= max_fds || !owner->files)
+            return -2;
+        auto handle = owner->files->entries[fd].handle;
+        if (!handle || !handle->node)
+            return -2;
+        kind = Kind::fd_link;
+    } else if (context->kind == Kind::task_list) {
         selected_pid = pid(name);
         auto selected = task(selected_pid);
         if (!selected || selected->process->pid != group)
@@ -400,6 +476,8 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     for (auto child = parent->first_child; child; child = child->next_sibling)
         if (!strcmp(child->name, name) && !validate(child)) {
             refresh(child);
+            if (kind == Kind::fd_link)
+                refresh_fd_link(*entry(child));
             output = child;
             return 0;
         }
@@ -410,6 +488,11 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     result->property = property;
     result->network_generation = network_generation;
     result->ipv4_configuration = ipv4_configuration;
+    result->descriptor = fd;
+    if (kind == Kind::fd_link) {
+        result->node.size = 64;
+        refresh_fd_link(*result);
+    }
     if (is_control(kind)) {
         result->node.mode = regular_file | (kind == Kind::network_property && !ipv4_configuration &&
                                                     property == proc6::secret_property
@@ -611,6 +694,29 @@ static int64_t read(Node* node, uint64_t offset, void* output, size_t length) {
         size_t size = link_target(kind, target);
         return copy(target, size, offset, output, length);
     }
+    if (kind == Kind::fd_link) {
+        Handle* handle = nullptr;
+        if (int error = link_descriptor(*entry(node), handle))
+            return error;
+        auto dentry = handle->opened_dentry ? handle->opened_dentry : handle->node;
+        char target[2048]{};
+        if (is_memfd(handle->node)) {
+            target[0] = '/';
+            memcpy(target + 1, dentry->name, strlen(dentry->name) + 1);
+        } else {
+            node_path(dentry, target, sizeof(target), true);
+            if (!target[0])
+                return -2;
+        }
+        if (dentry->removed || is_memfd(handle->node)) {
+            constexpr char deleted[] = " (deleted)";
+            size_t end = strlen(target);
+            if (sizeof(deleted) > sizeof(target) - end)
+                return -36;
+            memcpy(target + end, deleted, sizeof(deleted));
+        }
+        return copy(target, strlen(target), offset, output, length);
+    }
     if (kind == Kind::boot_id) {
         int error = boot_id();
         return error ? error
@@ -750,8 +856,11 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
     if (int error = validate(node))
         return error;
     auto context = entry(node);
-    if (context->pid && !task(context->pid))
+    auto owner = context->pid ? task(context->pid) : nullptr;
+    if (context->pid && !owner)
         return -2;
+    if (context->kind == Kind::fd_directory && !descriptor_access(*owner))
+        return -13;
     if (cookie < 2) {
         auto selected = cookie ? directory_parent(node) : node;
         result.inode = selected->inode;
@@ -797,11 +906,26 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
         } else if (cookie == 3) {
             memcpy(name, "stat", 5);
             result.next = 4;
-        } else if (cookie == 4 && context->kind == Kind::process) {
-            memcpy(name, "task", 5);
+        } else if (cookie == 4) {
+            memcpy(name, "fd", 3);
             result.next = 5;
+        } else if (cookie == 5 && context->kind == Kind::process) {
+            memcpy(name, "task", 5);
+            result.next = 6;
         } else
             return 0;
+    } else if (context->kind == Kind::fd_directory) {
+        if (!owner->files)
+            return 0;
+        for (; cookie - 2 < max_fds; cookie++) {
+            auto handle = owner->files->entries[cookie - 2].handle;
+            if (handle && handle->node)
+                break;
+        }
+        if (cookie - 2 >= max_fds)
+            return 0;
+        decimal(int(cookie - 2), name);
+        result.next = cookie + 1;
     } else if (context->kind == Kind::sys || context->kind == Kind::fs) {
         if (cookie - 2 >= 3)
             return 0;
@@ -931,7 +1055,9 @@ const FilesystemOps procfs_ops = {lookup,
                                   read_description,
                                   close_description,
                                   control,
-                                  validate};
+                                  validate,
+                                  follow_link,
+                                  allow_access};
 
 bool procfs_has_poll(const Node& node) {
     auto kind = static_cast<const Entry*>(node.filesystem_data)->kind;

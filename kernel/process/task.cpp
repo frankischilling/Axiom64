@@ -658,21 +658,82 @@ int executable_access(const Task& task, Node* file) {
     return !is_memfd(file) && node_open_for_write(file) ? -26 : 0;
 }
 
-int exec_task(Task* t, const ExecArguments& arguments, Node* file) {
-    if (int error = process_exec_limit(*t))
-        return error;
-    const char* path = arguments.path();
+static int script_header(Node* file, char (&header)[256], const char*& interpreter,
+                         const char*& option) {
+    auto length = node_read(file, 0, header, sizeof(header));
+    if (length < 0)
+        return length;
+    if (length < 2 || header[0] != '#' || header[1] != '!')
+        return 0;
+    auto space = [](char value) { return value == ' ' || value == '\t'; };
+    size_t start = 2;
+    while (start < sizeof(header) && space(header[start]))
+        ++start;
+    if (start == sizeof(header) || !header[start] || header[start] == '\n')
+        return -8;
+    size_t end = start;
+    while (end < sizeof(header) - 1 && header[end] && header[end] != '\n')
+        ++end;
+    if (header[end] != '\n')
+        end = sizeof(header) - 1;
+    while (end > start && space(header[end - 1]))
+        --end;
+
+    size_t separator = start;
+    while (separator <= end && header[separator] && header[separator] != '\n' &&
+           !space(header[separator]))
+        ++separator;
+    if (separator > end)
+        return -8; // The interpreter path did not fit.
+    size_t argument = separator;
+    while (argument < end && space(header[argument]))
+        ++argument;
+    if (argument < end && header[argument] && header[argument] != '\n')
+        option = header + argument;
+    header[separator] = header[end] = 0;
+    interpreter = header + start;
+    return 1;
+}
+
+static int select_executable(Task& task, ExecArguments& arguments, Node*& file,
+                             bool path_inaccessible) {
+    Path name;
+    name.base = task.fs->cwd_node;
+    const char* script = arguments.path();
     if (!file) {
-        Path name;
-        name.base = t->fs->cwd_node;
-        if (strlen(path) >= sizeof(name.text))
+        if (strlen(script) >= sizeof(name.text))
             return -36;
-        memcpy(name.text, path, strlen(path) + 1);
+        memcpy(name.text, script, strlen(script) + 1);
         if (int error = resolve_path(name, file))
             return error;
     }
-    file = file_node(file);
-    if (int error = executable_access(*t, file))
+    for (unsigned rewrites = 0; rewrites <= 5; rewrites++) {
+        file = file_node(file);
+        if (int error = executable_access(task, file))
+            return error;
+        char header[256]{};
+        const char* interpreter = nullptr;
+        const char* option = nullptr;
+        int result = script_header(file, header, interpreter, option);
+        if (result <= 0)
+            return result;
+        if (path_inaccessible)
+            return -2;
+        if (int error = arguments.enter_interpreter(interpreter, option, script))
+            return error;
+        memcpy(name.text, interpreter, strlen(interpreter) + 1);
+        script = name.text;
+        if (int error = resolve_path(name, file))
+            return error;
+    }
+    return -40;
+}
+
+int exec_task(Task* t, ExecArguments& arguments, Node* file, bool path_inaccessible) {
+    if (int error = process_exec_limit(*t))
+        return error;
+    const char* path = arguments.path();
+    if (int error = select_executable(*t, arguments, file, path_inaccessible))
         return error;
     FileCapabilities capabilities;
     if (!file->mount->nosuid && file->mount->ops->getxattr) {

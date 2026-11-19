@@ -130,7 +130,7 @@ Node* directory_parent(Node* node) {
     return node->parent ? node->parent : node;
 }
 
-void node_path(Node* node, char* result, size_t cap) {
+void node_path(Node* node, char* result, size_t cap, bool include_unlinked) {
     if (!cap)
         return;
     result[0] = 0;
@@ -142,7 +142,7 @@ void node_path(Node* node, char* result, size_t cap) {
             node = node->mount->point;
             continue;
         }
-        if (node->removed)
+        if (node->removed && !include_unlinked)
             return;
         chain[count++] = node;
         node = node->parent;
@@ -221,6 +221,13 @@ int resolve_path(const Path& path, Node*& result, bool follow) {
             if (++links > 40)
                 return -40;
             auto target = file_node(child);
+            if (auto follow_link = target->mount->ops->follow_link) {
+                int resolved = follow_link(target, node);
+                if (resolved < 0)
+                    return resolved;
+                if (resolved)
+                    continue;
+            }
             if (!target->size)
                 return -2;
             size_t tail = strlen(pending + p);
@@ -316,6 +323,9 @@ int node_access(Node* node, unsigned mask, bool real) {
         node->mount->ops->refresh(node);
     if (auto control = node_control(node))
         return control->access(node, mask, real);
+    if (auto allow = node->mount->ops->allow_access)
+        if (allow(node, mask))
+            return 0;
     const Credentials boot{};
     return credential_access(current ? current->credentials : boot, node->uid, node->gid,
                              node->mode, mask, real);
@@ -999,6 +1009,8 @@ Handle* open_handle(Node* n, uint32_t flags, int* error) {
             }
             if (error)
                 *error = 0;
+            if (is_memfd(n))
+                memfd_open(n);
             return &h;
         }
     return nullptr;

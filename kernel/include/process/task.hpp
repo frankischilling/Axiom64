@@ -196,7 +196,7 @@ int clone_task(Frame*, uint64_t flags, uint64_t stack, uint64_t parent_tid, uint
 class ExecArguments;
 
 int executable_access(const Task&, Node*);
-int exec_task(Task*, const ExecArguments&, Node* file = nullptr);
+int exec_task(Task*, ExecArguments&, Node* file = nullptr, bool path_inaccessible = false);
 
 void exit_task(Task*, int);
 

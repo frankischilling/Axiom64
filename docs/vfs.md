@@ -25,7 +25,11 @@ The ELF loader and private file mappings read through the filesystem interface. 
 | `truncate`, `ftruncate` | Filesystem delegation with negative-length, file-type, capacity, and mount checks |
 | `flock` | [Advisory shared/exclusive locks](file-locks.md) owned by a canonical local file description |
 | `fcntl` record locks | POSIX and open-file-description byte ranges, foreign conflict queries, blocking acquisition and descriptor lifetime |
-| `proc` mounts | Real process/thread status and enumeration, caller-relative self links and description-owned read buffers |
+| `proc` mounts | Process and thread status, caller-relative self links, file-backed descriptor links, and description-owned read buffers |
+
+Procfs lists file-backed descriptors under `/proc/<pid>/fd` and `/proc/<pid>/task/<tid>/fd`. The `self` and `thread-self` aliases use the calling process or thread. `/dev/fd` points to `/proc/self/fd`. Standard input, output, and error have aliases under `/dev`.
+
+Opening one of these links reopens the existing file with an independent offset. Renamed and unlinked files stay reachable while an open descriptor holds them. Looking up another process's descriptor checks its credentials and dumpability. Anonymous descriptors without a filesystem node, such as sockets and unnamed pipes, still need procfs support.
 
 Record locking supports `F_GETLK`, `F_SETLK`, `F_SETLKW` and their OFD equivalents. Ranges normalize SEEK_SET/CUR/END, negative lengths and zero lengths extending through future growth. Own locks split, convert and coalesce. POSIX locks belong to a file table and closing an ordinary descriptor for the inode releases them; closing an `O_PATH` descriptor preserves them. OFD locks belong to an open file description and survive dup/fork until its final close. Multithreaded exec retains an exclusively owned table after sibling cleanup, preserving POSIX locks; a close-on-exec ordinary alias still releases them. These ownership rules follow [Linux's record-lock contract](https://man7.org/linux/man-pages/man2/fcntl_locking.2.html), [Linux 6.17 close behavior](https://github.com/torvalds/linux/blob/v6.17/fs/open.c), and [Linux 6.17 exec ordering](https://github.com/torvalds/linux/blob/v6.17/fs/exec.c).
 

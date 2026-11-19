@@ -95,6 +95,21 @@ static void ipc_mount(const char* name, const char* type) {
         failure(name, error);
     lookup(name)->mode = directory | 01777;
 }
+
+static void descriptor_links() {
+    const char* names[] = {"/dev/fd", "/dev/stdin", "/dev/stdout", "/dev/stderr"};
+    const char* targets[] = {"/proc/self/fd", "/proc/self/fd/0", "/proc/self/fd/1",
+                             "/proc/self/fd/2"};
+    for (unsigned i = 0; i < sizeof(names) / sizeof(*names); i++) {
+        auto name = path(names[i]);
+        Node* node = nullptr;
+        int error = resolve_path(name, node, false);
+        if (error == -2)
+            error = create_node(name, symlink | 0777, node, targets[i]);
+        if (error)
+            failure(names[i], error);
+    }
+}
 } // namespace
 
 void boot_root_init(const char* command) {
@@ -110,6 +125,7 @@ void boot_root_init(const char* command) {
         volatile_mount("/proc");
         ipc_mount("/dev/shm", "ramfs");
         ipc_mount("/dev/mqueue", "mqueue");
+        descriptor_links();
         return;
     }
     if (strlen(root) != 8 || memcmp(root, "/dev/vd", 7) || root[7] < 'a' || root[7] > 'h')
@@ -132,6 +148,7 @@ void boot_root_init(const char* command) {
         volatile_mount(name);
     ipc_mount("/dev/shm", "ramfs");
     ipc_mount("/dev/mqueue", "mqueue");
+    descriptor_links();
     // /tmp is private scratch space even when ordinary root files are persistent.
     auto temporary = lookup("/tmp");
     temporary->mode = directory | 01777;

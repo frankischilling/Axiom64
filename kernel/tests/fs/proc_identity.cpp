@@ -23,6 +23,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "fs/proc.hpp"
+#include "fs/memfd.hpp"
 #include "fs/pipe.hpp"
 #include "fs/proc/ipv4.hpp"
 #include "fs/proc/ipv6.hpp"
@@ -69,6 +70,15 @@ bool node_referenced(Node* node) {
         if (item == node)
             return true;
     return false;
+}
+
+// Named descriptor targets use the real VFS and memfd implementations in guest tests.
+void node_path(Node*, char*, size_t, bool) {
+    std::abort();
+}
+
+bool is_memfd(const Node*) {
+    std::abort();
 }
 
 int random_read(void* output, size_t size, bool insecure) {

@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "fs/pipe.hpp"
+#include "fs/descriptor_inode.hpp"
 #include "io/descriptor_wait.hpp"
 #include "io/vectors.hpp"
 #include "fs/descriptor.hpp"
@@ -491,7 +492,8 @@ int64_t open_fifo(Task& task, Node* inode, Node* dentry, uint32_t flags) {
             return -12;
         }
     }
-    if (nonblocking && mode == 1 && !pipe->readers) {
+    bool anonymous = is_anonymous_pipe_inode(inode);
+    if (!anonymous && nonblocking && mode == 1 && !pipe->readers) {
         if (!inode->named_pipe)
             destroy_pipe_buffer(*pipe);
         close_handle(handle);
@@ -502,7 +504,7 @@ int64_t open_fifo(Task& task, Node* inode, Node* dentry, uint32_t flags) {
     handle->opened_dentry = dentry;
     attach_pipe(*handle, *pipe);
     bool wait_for_peer = mode == 0 ? !pipe->writers : mode == 1 && !pipe->readers;
-    if (!wait_for_peer)
+    if (anonymous || !wait_for_peer)
         return install(task, fd, handle);
     if (nonblocking) {
         handle->pipe_hangup_generation = pipe->writer_generation;

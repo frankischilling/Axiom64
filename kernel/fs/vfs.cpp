@@ -32,6 +32,7 @@
 #include "fs/file_lock.hpp"
 #include "fs/record_lock.hpp"
 #include "fs/proc.hpp"
+#include "fs/descriptor_inode.hpp"
 #include "drivers/platform/devices.hpp"
 #include "ipc/ipc.hpp"
 #include "ipc/unix_rights.hpp"
@@ -1000,6 +1001,10 @@ Handle* open_handle(Node* n, uint32_t flags, int* error) {
         if (!h.references) {
             h = {n, nullptr, 0, flags, 1, false};
             h.generation = next_generation++;
+            if (current) {
+                h.opener_uid = current->credentials.user.filesystem;
+                h.opener_gid = current->credentials.group.filesystem;
+            }
             int result = flags & 010000000 ? 0 : device_open(&h);
             if (result) {
                 h.references = 0;
@@ -1011,6 +1016,7 @@ Handle* open_handle(Node* n, uint32_t flags, int* error) {
                 *error = 0;
             if (is_memfd(n))
                 memfd_open(n);
+            retain_descriptor_inode(n);
             return &h;
         }
     return nullptr;
@@ -1087,13 +1093,20 @@ void close_handle(Handle* h) {
     if (h->pipe)
         detach_pipe(*h);
     auto retired_node = h->node;
+    auto anonymous_path = h->anonymous_path;
     h->node = nullptr;
     h->opened_dentry = nullptr;
     h->pipe = nullptr;
+    h->anonymous_path = nullptr;
     node_retire_xattrs(retired_node);
-    posix_queue_reap(retired_node);
-    if (is_memfd(retired_node))
+    if (auto metadata = anonymous_path                        ? anonymous_path
+                        : descriptor_inode_name(retired_node) ? retired_node
+                                                              : nullptr)
+        release_descriptor_inode(metadata);
+    else if (is_memfd(retired_node))
         memfd_close(retired_node);
+    else
+        posix_queue_reap(retired_node);
 }
 
 bool handle_has_poll(const Handle& handle) {

@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "fs/proc.hpp"
+#include "fs/descriptor_inode.hpp"
 #include "fs/memfd.hpp"
 #include "fs/pipe.hpp"
 #include "fs/proc/integer.hpp"
@@ -190,8 +191,7 @@ static int pid(const char* name) {
 
 static Handle* descriptor(const Entry& item) {
     auto owner = task(item.pid);
-    auto handle = owner && owner->files ? owner->files->entries[item.descriptor].handle : nullptr;
-    return handle && handle->node ? handle : nullptr;
+    return owner && owner->files ? owner->files->entries[item.descriptor].handle : nullptr;
 }
 
 static bool descriptor_access(const Task& owner) {
@@ -223,7 +223,10 @@ static int follow_link(Node* node, Node*& target) {
     Handle* handle = nullptr;
     if (int error = link_descriptor(*item, handle))
         return error;
-    target = handle->opened_dentry ? handle->opened_dentry : handle->node;
+    if (int error = descriptor_inode(*handle, target))
+        return error;
+    if (handle->opened_dentry)
+        target = handle->opened_dentry;
     return 1;
 }
 
@@ -460,7 +463,7 @@ static int lookup(Node* parent, const char* name, Node*& output) {
         if ((!fd && strcmp(name, "0")) || fd >= max_fds || !owner->files)
             return -2;
         auto handle = owner->files->entries[fd].handle;
-        if (!handle || !handle->node)
+        if (!handle)
             return -2;
         kind = Kind::fd_link;
     } else if (context->kind == Kind::task_list) {
@@ -698,7 +701,12 @@ static int64_t read(Node* node, uint64_t offset, void* output, size_t length) {
         Handle* handle = nullptr;
         if (int error = link_descriptor(*entry(node), handle))
             return error;
-        auto dentry = handle->opened_dentry ? handle->opened_dentry : handle->node;
+        Node* inode;
+        if (int error = descriptor_inode(*handle, inode))
+            return error;
+        if (auto name = descriptor_inode_name(inode))
+            return copy(name, strlen(name), offset, output, length);
+        auto dentry = handle->opened_dentry ? handle->opened_dentry : inode;
         char target[2048]{};
         if (is_memfd(handle->node)) {
             target[0] = '/';
@@ -919,7 +927,7 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
             return 0;
         for (; cookie - 2 < max_fds; cookie++) {
             auto handle = owner->files->entries[cookie - 2].handle;
-            if (handle && handle->node)
+            if (handle)
                 break;
         }
         if (cookie - 2 >= max_fds)

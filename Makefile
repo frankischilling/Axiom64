@@ -250,7 +250,13 @@ test-proc-identity:
 	$(PYTHON) scripts/proc_identity_test.py --directory build/proc-identity
 test-proc-identity-native:
 	$(PYTHON) scripts/proc_identity_test.py --directory build/proc-identity-native --native
-build/proc-identity-policy: kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp kernel/fs/proc/integer.cpp kernel/fs/pipe.cpp kernel/process/limits.cpp kernel/include/fs/pipe.hpp kernel/include/fs/proc/integer.hpp kernel/include/fs/proc/ipv4.hpp kernel/include/process/limits.hpp kernel/include/fs/proc.hpp kernel/include/process/task.hpp
+build/proc-identity-policy: kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp \
+    kernel/fs/proc/integer.cpp kernel/fs/pipe.cpp kernel/fs/descriptor_inode.cpp \
+    kernel/process/limits.cpp kernel/security/credentials.cpp kernel/include/fs/pipe.hpp \
+    kernel/include/fs/descriptor_inode.hpp kernel/include/fs/memfd.hpp kernel/include/fs/proc.hpp \
+    kernel/include/fs/proc/integer.hpp kernel/include/fs/proc/ipv4.hpp kernel/include/fs/proc/ipv6.hpp \
+    kernel/include/fs/vfs.hpp kernel/include/process/limits.hpp kernel/include/process/task.hpp \
+    kernel/include/security/credentials.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 test-proc-identity-policy: build/proc-identity-policy

@@ -192,6 +192,8 @@ struct Handle {
     void* filesystem_data = nullptr;
     SocketTimeout receive_timeout{}, send_timeout{};
     uint64_t pipe_hangup_generation = 0;
+    Node* anonymous_path = nullptr;
+    uint32_t opener_uid = 0, opener_gid = 0;
 };
 
 extern Node* root_node;

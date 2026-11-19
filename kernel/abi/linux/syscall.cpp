@@ -55,6 +55,7 @@
 #include "abi/linux/xattr.hpp"
 #include "fs/record_lock.hpp"
 #include "fs/proc.hpp"
+#include "fs/descriptor_inode.hpp"
 #include "fs/descriptor.hpp"
 #include "fs/pipe.hpp"
 #include "fs/memfd.hpp"
@@ -189,6 +190,8 @@ static int64_t open_file(int dirfd, uint64_t path, uint32_t flags, uint32_t mode
         mask |= 2;
     if (!path_only && !created && (error = node_access(n, mask)))
         return error;
+    if (!path_only && descriptor_inode_path_only(n))
+        return -6;
     if (!path_only && n->mount->nodev &&
         ((n->mode & 0170000) == character || (n->mode & 0170000) == block_device))
         return -13;
@@ -298,18 +301,9 @@ static int64_t stat_node(Node* n, uint64_t dst) {
 static int64_t stat_descriptor(Handle* handle, uint64_t dst) {
     if (!handle)
         return -9;
-    LinuxStat stat{};
-    if (handle->epoll || handle->event || handle->timer || handle->signal_descriptor ||
-        handle->inotify)
-        stat.mode = 0600;
-    else if (handle->socket || handle->packet || handle->inet || handle->inet6 || handle->netlink)
-        stat.mode = 0140777;
-    else if (handle->pipe && !handle->node)
-        stat.mode = 0010600;
-    else
-        return stat_node(handle->node, dst);
-    stat.nlink = 1;
-    return copy_result(dst, &stat, sizeof(stat));
+    Node* node;
+    int error = descriptor_inode(*handle, node);
+    return error ? error : stat_node(node, dst);
 }
 
 static int64_t stat_path(int dirfd, uint64_t path, uint64_t dst, bool follow) {
@@ -520,6 +514,11 @@ static int64_t create_pipe(uint64_t dst, int flags) {
         if (!reader && !writer)
             destroy_pipe_buffer(*pipe);
         return -23;
+    }
+    if (int error = attach_pipe_inode(*pipe, *reader, *writer)) {
+        close_handle(reader);
+        close_handle(writer);
+        return error;
     }
     reader->flags |= flags & 04000;
     writer->flags |= flags & (04000 | pipe_direct);
@@ -1312,10 +1311,9 @@ static int64_t dispatch(Frame* f) {
         auto h = fd_handle(a);
         if (!h)
             return -9;
-        if (!h->node)
-            return -22;
-        auto node = h->opened_dentry ? h->opened_dentry : h->node;
-        return node_chmod(node, b);
+        Node* node;
+        int error = descriptor_inode(*h, node);
+        return error ? error : node_chmod(h->opened_dentry ? h->opened_dentry : node, b);
     }
     case 95: {
         uint32_t old = current->fs->umask;
@@ -1327,7 +1325,11 @@ static int64_t dispatch(Frame* f) {
     case 94: {
         if (f->rax == 93) {
             auto h = fd_handle(a);
-            return !h ? -9 : node_chown(h->opened_dentry ? h->opened_dentry : h->node, b, c);
+            if (!h)
+                return -9;
+            Node* node;
+            int error = descriptor_inode(*h, node);
+            return error ? error : node_chown(h->opened_dentry ? h->opened_dentry : node, b, c);
         }
         Path path;
         if (!path_at(-100, a, path))
@@ -1516,7 +1518,11 @@ static int64_t dispatch(Frame* f) {
     }
     case 138: {
         auto h = fd_handle(a, true);
-        return !h ? -9 : !h->node ? -22 : statfs_node(h->node, b);
+        if (!h)
+            return -9;
+        Node* node;
+        int error = descriptor_inode(*h, node);
+        return error ? error : statfs_node(node, b);
     }
     case 162:
         return sync_filesystems();

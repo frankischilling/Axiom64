@@ -37,11 +37,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/auxv.h>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
+#include <sys/inotify.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/resource.h>
+#include <sys/signalfd.h>
+#include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/stat.h>
+#include <sys/statfs.h>
+#include <sys/timerfd.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -679,6 +686,116 @@ static void proc_descriptor_links(void) {
     observed("proc_fd_magic_links_follow_list_reuse_and_restrict_credentials");
 }
 
+static void expect_link(const char* path, const char* target) {
+    char buffer[128];
+    CHECK(readlink(path, buffer, sizeof(buffer)) == (ssize_t)strlen(target));
+    CHECK(!memcmp(buffer, target, strlen(target)));
+}
+
+static void same_descriptor_inode(int fd, const char* path, uint64_t filesystem) {
+    struct stat original, linked;
+    struct statfs mount;
+    CHECK(fstat(fd, &original) == 0 && stat(path, &linked) == 0);
+    CHECK(original.st_ino && linked.st_ino == original.st_ino && linked.st_dev == original.st_dev &&
+          linked.st_mode == original.st_mode);
+    CHECK(fstatfs(fd, &mount) == 0 && (uint64_t)mount.f_type == filesystem);
+    CHECK(statfs(path, &mount) == 0 && (uint64_t)mount.f_type == filesystem);
+}
+
+static void anonymous_pipe_links(void) {
+    int ends[2];
+    CHECK(pipe2(ends, O_CLOEXEC) == 0);
+    char reader[64], writer[64], label[64], path[64];
+    fd_display(reader, sizeof(reader), ends[0], "");
+    fd_display(writer, sizeof(writer), ends[1], "");
+    struct stat info;
+    CHECK(fstat(ends[0], &info) == 0 && S_ISFIFO(info.st_mode));
+    CHECK(snprintf(label, sizeof(label), "pipe:[%llu]", (unsigned long long)info.st_ino) > 0);
+    expect_link(reader, label);
+    expect_link(writer, label);
+    same_descriptor_inode(ends[0], writer, 0x50495045);
+    same_descriptor_inode(ends[1], reader, 0x50495045);
+    int duplicate = open(reader, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    CHECK(duplicate >= 0 && (fcntl(duplicate, F_GETFL) & O_NONBLOCK));
+    CHECK(!(fcntl(ends[0], F_GETFL) & O_NONBLOCK));
+    char data;
+    CHECK(read(duplicate, &data, 1) == -1 && errno == EAGAIN);
+    CHECK(write(ends[1], "s", 1) == 1);
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        CHECK(dup2(ends[0], STDIN_FILENO) == STDIN_FILENO);
+        int input = open("/dev/stdin", O_RDONLY);
+        CHECK(input >= 0 && read(input, &data, 1) == 1 && data == 's');
+        _exit(73);
+    }
+    child_status(child);
+    int anchor = open(writer, O_PATH | O_CLOEXEC);
+    CHECK(anchor >= 0);
+    fd_display(path, sizeof(path), anchor, "");
+    expect_link(path, label);
+    CHECK(close(duplicate) == 0 && close(ends[0]) == 0);
+    int alone = open(writer, O_WRONLY | O_NONBLOCK);
+    CHECK(alone >= 0 && close(alone) == 0);
+    CHECK(close(ends[1]) == 0);
+    alone = open(path, O_RDONLY | O_CLOEXEC);
+    CHECK(alone >= 0 && read(alone, &data, 1) == 0 && close(alone) == 0);
+    int both = open(path, O_RDWR | O_CLOEXEC);
+    CHECK(both >= 0 && close(anchor) == 0);
+    CHECK(write(both, "n", 1) == 1 && read(both, &data, 1) == 1 && data == 'n');
+    CHECK(fstat(both, &info) == 0 && S_ISFIFO(info.st_mode) && close(both) == 0);
+    observed("proc_pipe_links_reopen_live_endpoints_and_retain_inode_without_peers");
+}
+
+static void anonymous_object_links(void) {
+    int pair[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) == 0);
+    char path[64], label[64];
+    struct stat socket_info, retained;
+    CHECK(fstat(pair[0], &socket_info) == 0 && S_ISSOCK(socket_info.st_mode));
+    fd_display(path, sizeof(path), pair[0], "");
+    CHECK(snprintf(label, sizeof(label), "socket:[%llu]", (unsigned long long)socket_info.st_ino) >
+          0);
+    expect_link(path, label);
+    same_descriptor_inode(pair[0], path, 0x534f434b);
+    CHECK(open(path, O_RDONLY | O_NONBLOCK) == -1 && errno == ENXIO);
+    int anchor = open(path, O_PATH | O_CLOEXEC);
+    CHECK(anchor >= 0 && close(pair[0]) == 0);
+    char data;
+    CHECK(read(pair[1], &data, 1) == 0 && close(pair[1]) == 0);
+    CHECK(fstat(anchor, &retained) == 0 && retained.st_ino == socket_info.st_ino &&
+          retained.st_dev == socket_info.st_dev && S_ISSOCK(retained.st_mode));
+    fd_display(path, sizeof(path), anchor, "");
+    expect_link(path, label);
+    CHECK(close(anchor) == 0);
+
+    sigset_t signals;
+    CHECK(sigemptyset(&signals) == 0 && sigaddset(&signals, SIGUSR1) == 0);
+    int descriptors[] = {epoll_create1(EPOLL_CLOEXEC), eventfd(2, EFD_CLOEXEC),
+                         timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC),
+                         signalfd(-1, &signals, SFD_CLOEXEC), inotify_init1(IN_CLOEXEC)};
+    const char* targets[] = {"anon_inode:[eventpoll]", "anon_inode:[eventfd]",
+                             "anon_inode:[timerfd]", "anon_inode:[signalfd]", "anon_inode:inotify"};
+    struct stat shared;
+    CHECK(fstat(descriptors[0], &shared) == 0);
+    for (unsigned i = 0; i < sizeof(descriptors) / sizeof(*descriptors); i++) {
+        int fd = descriptors[i];
+        CHECK(fd >= 0);
+        fd_display(path, sizeof(path), fd, "");
+        expect_link(path, targets[i]);
+        same_descriptor_inode(fd, path, 0x09041934);
+        CHECK(open(path, O_RDWR | O_NONBLOCK) == -1 && errno == ENXIO);
+        anchor = open(path, O_PATH | O_CLOEXEC);
+        CHECK(anchor >= 0 && close(fd) == 0);
+        CHECK(fstat(anchor, &retained) == 0 && retained.st_ino == shared.st_ino &&
+              retained.st_dev == shared.st_dev && (retained.st_mode & S_IFMT) == 0);
+        fd_display(path, sizeof(path), anchor, "");
+        expect_link(path, targets[i]);
+        CHECK(close(anchor) == 0);
+    }
+    observed("proc_anonymous_object_links_supply_metadata_without_reopening_events_or_sockets");
+}
+
 int main(int argc, char** argv) {
     if (getenv("SCRIPT_NAME"))
         return script_child(argc, argv);
@@ -719,6 +836,8 @@ int main(int argc, char** argv) {
     memfd_exec();
     interpreter_scripts(modern);
     proc_descriptor_links();
+    anonymous_pipe_links();
+    anonymous_object_links();
     printf("EXEC_ARGUMENTS_PASS observations=%u\n", observations);
     return 0;
 }

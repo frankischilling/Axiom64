@@ -1639,7 +1639,7 @@ jobs:
         run: make test-clock
       - name: Compare Linux file locks and test RAM/ext2 description lifetime
         if: matrix.suite == 'configuration'
-        run: make test-file-locks
+        run: make test-file-locks FILE_LOCK_ARGS=--include-q35
       - name: Compare Linux path descriptors and test RAM/ext2 lifetime and access
         id: path_descriptors
         if: matrix.suite == 'configuration'

@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/include/firmware/acpi.hpp
+ * @brief   Declares the ACPI table reader and decoded platform records.
+ * @author  frankischilling
+ * @date    2026-11-19
+ *
+ * Defines the clock, interrupt, fixed-description, and PCI aperture records
+ * returned by the bounded firmware parsers.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
@@ -48,8 +72,32 @@ struct FixedDescription {
     uint8_t revision;
 };
 
+struct EcamRegion {
+    static constexpr uint64_t bus_bytes = 1ull << 20;
+
+    uint64_t base;
+    uint16_t segment;
+    uint8_t first_bus;
+    uint8_t last_bus;
+
+    uint64_t bus_address(unsigned bus) const {
+        return base + bus * bus_bytes;
+    }
+
+    bool contains(unsigned bus) const {
+        return bus >= first_bus && bus <= last_bus;
+    }
+};
+
+struct Mcfg {
+    static constexpr unsigned max_regions = 16;
+    EcamRegion regions[max_regions];
+    unsigned count;
+};
+
 // Reader must return stable, mapped bytes or nullptr. Never follows unbounded lengths.
 bool find_hpet(uint64_t rsdp, Read reader, void* context, Hpet& result);
 bool find_interrupt_topology(uint64_t rsdp, Read reader, void* context, InterruptTopology& result);
 bool find_fixed_description(uint64_t rsdp, Read reader, void* context, FixedDescription& result);
+bool find_mcfg(uint64_t rsdp, Read reader, void* context, Mcfg& result);
 } // namespace ax::Acpi

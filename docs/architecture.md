@@ -9,7 +9,7 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/arch/x86_64/arch.cpp`, `entry.asm` | CPU tables, interrupts, syscall entry, register frames, return to Ring 3 |
 | `kernel/boot/root.cpp` | Root-device selection, required boot paths, and volatile runtime mounts |
 | `kernel/mm/memory.cpp` | Physical allocation, page references, user page tables, validated user copies |
-| `kernel/drivers/platform/pci.cpp`, `kernel/drivers/virtio/` | PCI discovery, modern/legacy virtio transport, split-ring storage and descriptor ownership |
+| `kernel/drivers/platform/pci.cpp`, `kernel/drivers/virtio/` | PCI and PCIe discovery, modern/legacy virtio transport, split-ring storage and descriptor ownership |
 | `kernel/drivers/block/block.cpp` | Virtio block request policy, raw sector I/O, flush, and filesystem claims |
 | `kernel/core/random/`, `kernel/drivers/random/` | Shared generator, initialization credit, source validation, and virtio entropy ownership |
 | `kernel/firmware/`, `kernel/arch/x86_64/rtc.cpp` | ACPI table validation, interrupt topology discovery, generation ID, and boot UTC calendar sampling |
@@ -37,6 +37,14 @@ addresses and interrupt bases, and ISA source overrides. The FADT supplies the
 system control interrupt and platform flags. A missing or rejected table
 leaves the existing boot path available. The kernel still uses PIC/PIT
 interrupt delivery and one CPU.
+
+PCI discovery uses the validated ACPI MCFG table for PCIe configuration
+registers. Each aperture identifies a PCI segment and bus range. Its base
+address refers to bus zero even when the aperture starts at another bus.
+The kernel rejects overlapping entries and apertures that intersect RAM or
+exceed the CPU's physical address limit. It maps configuration registers
+with device cache attributes and uses legacy PCI configuration ports for
+segment-zero buses without a usable ECAM mapping.
 
 Sources and public headers use matching subsystem folders. Desktop configuration is under `userspace/desktop/`; guest and host tests are grouped by the subsystem they exercise. [Source layout and build discovery](source-layout.md) describe the paths and conventions.
 

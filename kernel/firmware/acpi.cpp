@@ -1,7 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
- * @file
- * @brief Bounded ACPI root lookup and x86 platform table decoding.
+ * @file    kernel/firmware/acpi.cpp
+ * @brief   Validates ACPI platform tables.
+ * @author  frankischilling
+ * @date    2026-11-19
+ *
+ * Verifies checksums and bounds before decoding clock, interrupt, and PCI
+ * configuration data from the firmware root tables.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "firmware/acpi.hpp"
 
@@ -234,5 +254,42 @@ static bool accept_fadt(const uint8_t* fadt, void* output) {
 
 bool find_fixed_description(uint64_t rsdp, Read reader, void* context, FixedDescription& result) {
     return find(rsdp, reader, context, {"FACP", 116, accept_fadt, &result});
+}
+
+static bool ecam_conflicts(const EcamRegion& first, const EcamRegion& second) {
+    if (first.segment == second.segment && first.first_bus <= second.last_bus &&
+        second.first_bus <= first.last_bus)
+        return true;
+    return first.bus_address(first.first_bus) < second.bus_address(second.last_bus + 1) &&
+           second.bus_address(second.first_bus) < first.bus_address(first.last_bus + 1);
+}
+
+static bool accept_mcfg(const uint8_t* mcfg, void* output) {
+    constexpr unsigned header_bytes = 44, entry_bytes = 16;
+    size_t bytes = little(mcfg + 4, 4) - header_bytes;
+    Mcfg result{};
+    if (mcfg[8] != 1 || little(mcfg + 36, 8) || bytes % entry_bytes ||
+        bytes / entry_bytes > Mcfg::max_regions)
+        return false;
+
+    for (size_t offset = header_bytes; offset < header_bytes + bytes; offset += entry_bytes) {
+        const auto entry = mcfg + offset;
+        EcamRegion region{little(entry, 8), uint16_t(little(entry + 8, 2)), entry[10], entry[11]};
+        if (!region.base || region.base % EcamRegion::bus_bytes ||
+            region.first_bus > region.last_bus ||
+            region.base > physical_limit - (region.last_bus + 1) * EcamRegion::bus_bytes ||
+            little(entry + 12, 4))
+            return false;
+        for (unsigned i = 0; i < result.count; ++i)
+            if (ecam_conflicts(region, result.regions[i]))
+                return false;
+        result.regions[result.count++] = region;
+    }
+    *static_cast<Mcfg*>(output) = result;
+    return true;
+}
+
+bool find_mcfg(uint64_t rsdp, Read reader, void* context, Mcfg& result) {
+    return find(rsdp, reader, context, {"MCFG", 60, accept_mcfg, &result});
 }
 } // namespace ax::Acpi

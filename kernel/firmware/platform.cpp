@@ -1,9 +1,30 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
- * @file
- * @brief Boot-time ACPI mapping and x86 firmware diagnostics.
+ * @file    kernel/firmware/platform.cpp
+ * @brief   Discovers ACPI resources during x86 boot.
+ * @author  frankischilling
+ * @date    2026-11-19
+ *
+ * Reads platform tables through the boot memory map, reports interrupt
+ * topology, and hands PCI configuration apertures to the PCI driver.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "boot/boot.hpp"
+#include "drivers/platform/pci.hpp"
 #include "firmware/acpi.hpp"
 
 namespace ax {
@@ -58,5 +79,10 @@ void firmware_discover(uint64_t rsdp) {
             uint64_t(fixed.sci), uint64_t(fixed.boot_flags), uint64_t(fixed.flags));
     else
         log("ACPI: FADT absent or rejected\n");
+    Acpi::Mcfg mcfg;
+    if (Acpi::find_mcfg(rsdp, firmware_read, nullptr, mcfg))
+        pci_configure_ecam(mcfg);
+    else
+        log("ACPI: MCFG absent or rejected\n");
 }
 } // namespace ax

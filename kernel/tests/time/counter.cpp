@@ -1,6 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
- * @file
+ * @file    kernel/tests/time/counter.cpp
+ * @brief   Exercises timekeeping and ACPI platform table validation.
+ * @author  frankischilling
+ * @date    2026-11-19
+ *
+ * Tests counter arithmetic and checks the firmware reader with valid and
+ * malformed platform tables.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "core/time.hpp"
 #include "firmware/acpi.hpp"
@@ -397,9 +418,79 @@ static void platform_tables() {
     std::puts("ACPI_PLATFORM_TABLES_PASS malformed=9");
 }
 
+static void ecam_tables() {
+    constexpr uint64_t mcfg = Firmware::hpet + 128;
+    Firmware fixture;
+    fixture.put(Firmware::xsdt + 4, 44, 4);
+    fixture.put(Firmware::xsdt + 36, mcfg, 8);
+    fixture.sum(Firmware::xsdt, 44, 9);
+    std::memcpy(fixture.at(mcfg), "MCFG", 4);
+    fixture.put(mcfg + 4, 76, 4);
+    fixture.put(mcfg + 8, 1, 1);
+    fixture.put(mcfg + 44, 0xe0000000, 8);
+    fixture.put(mcfg + 54, 16, 1);
+    fixture.put(mcfg + 55, 31, 1);
+    fixture.put(mcfg + 60, 0x100000000, 8);
+    fixture.put(mcfg + 68, 7, 2);
+    fixture.put(mcfg + 71, 255, 1);
+    fixture.sum(mcfg, 76, 9);
+
+    using namespace ax::Acpi;
+    Mcfg result{};
+    assert(find_mcfg(Firmware::base, Firmware::read, &fixture, result));
+    assert(result.count == 2 && result.regions[0].segment == 0 && result.regions[1].segment == 7);
+    assert(result.regions[0].contains(16) && result.regions[0].contains(31));
+    assert(!result.regions[0].contains(15) && !result.regions[0].contains(32));
+    assert(result.regions[0].bus_address(16) == 0xe1000000);
+    assert(result.regions[1].bus_address(255) == 0x10ff00000);
+
+    for (unsigned variant = 0; variant < 10; ++variant) {
+        Firmware damaged = fixture;
+        size_t length = 76;
+        switch (variant) {
+        case 0:
+            length = 75;
+            break;
+        case 1:
+            length = 44;
+            break;
+        case 2:
+            damaged.put(mcfg + 36, 1, 1);
+            break;
+        case 3:
+            damaged.put(mcfg + 56, 1, 1);
+            break;
+        case 4:
+            damaged.put(mcfg + 44, 0xe0000001, 8);
+            break;
+        case 5:
+            damaged.put(mcfg + 54, 32, 1);
+            break;
+        case 6:
+            damaged.put(mcfg + 60, (1ull << 52) - EcamRegion::bus_bytes, 8);
+            break;
+        case 7:
+            damaged.put(mcfg + 68, 0, 2);
+            break;
+        case 8:
+            damaged.put(mcfg + 60, 0xe1000000, 8);
+            break;
+        case 9:
+            damaged.put(mcfg + 8, 0, 1);
+            break;
+        }
+        damaged.put(mcfg + 4, length, 4);
+        damaged.sum(mcfg, length, 9);
+        assert(!find_mcfg(Firmware::base, Firmware::read, &damaged, result));
+        assert(result.count == 2 && result.regions[1].segment == 7);
+    }
+    std::puts("ACPI_MCFG_PASS regions=2 malformed=10");
+}
+
 int main() {
     counter_tests();
     firmware_tests();
     platform_tables();
+    ecam_tables();
     std::puts("CLOCK_CODEC_TESTS_PASS");
 }

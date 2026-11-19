@@ -139,13 +139,17 @@ def ensure(provider='build'):
                 run(['perl', str(source / 'Configure'), 'linux-x86_64', '--prefix=/usr',
                      '--libdir=lib', '--openssldir=/etc/ssl', '--with-rand-seed=os',
                      'no-shared' if linkage == 'static' else 'shared'])
-                run(['make', '-j4', 'build_sw'])
+                # Both targets build the PROGRAMS list. Select the executables
+                # that OpenSSL marks for installation.
+                installed_programs = 'PROGRAMS=$(INSTALL_PROGRAMS)'
+                run(['make', '-j4', installed_programs, 'build_sw'])
                 if linkage == 'static':
                     # Only the executable link is static. Optional modules retain their
                     # normal build, and the shared profile can load them at runtime.
                     (build / 'apps/openssl').unlink()
                     run(['make', '-j4', 'apps/openssl', 'LDFLAGS=-static'])
-                run(['make', 'DESTDIR=' + str(stage), 'install_sw', 'install_ssldirs'])
+                run(['make', installed_programs, 'DESTDIR=' + str(stage),
+                     'install_sw', 'install_ssldirs'])
             configuration = build / 'include/openssl/configuration.h'
             configured = configuration.read_text()
             if not re.search(r'^\s*#\s*define\s+OPENSSL_RAND_SEED_OS\s*$', configured, re.MULTILINE):

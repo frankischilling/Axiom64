@@ -8,6 +8,7 @@ Axiom64 retains the open file description selected by an I/O syscall while that 
 | --- | --- |
 | `read`, `write`, `readv`, `writev` | Existing regular files, pipes, Unix stream sockets, event counters, and character/block devices |
 | `splice`, `tee` | Pipe and FIFO transfers. `splice` also accepts regular RAM and ext2 files, supported memory devices, Unix streams and datagrams, IPv4 and IPv6 TCP and UDP, raw packet sockets, and route netlink sockets. |
+| `sendfile` | File and memory device transfers to regular files, devices, pipes, and sockets. A socket can feed a pipe. |
 | `vmsplice` | Transfers between userspace vectors and pipe or FIFO endpoints. |
 | `pread64`, `pwrite64` | Seekable files, block devices, and the standard memory devices described below. The shared file offset is preserved. Pipes, sockets, and other character devices return `ESPIPE`. |
 | `recvfrom`, `sendto` | Connected Unix streams, including receive-address output; a send destination is unsupported |
@@ -388,6 +389,17 @@ Route netlink tests issue a link dump through a pipe, check the reply port and
 sequence, and read the multipart response through a pipe as root and as an
 ordinary caller. Packet socket creation and netlink requests use their
 existing permission checks.
+
+`sendfile` uses the same transfer paths. Regular RAM and ext2 files and
+supported memory devices can feed a pipe, another regular file, or a supported
+device or socket. A socket can feed a pipe with an implicit source position.
+An explicit source offset leaves the source description's position alone.
+The result and offsets count the bytes the destination accepted. A copyout
+fault returns `EFAULT` after the data and destination position have committed.
+An interrupted call reports a partial transfer when bytes have moved. A
+copyout fault takes precedence over a signal restart. The checks cover file
+size limits, writable ext2, nonblocking pipes and sockets, and descriptor
+replacement while blocked.
 
 `vmsplice` captures the vector addresses and lengths before waiting. Memory
 queued into a pipe keeps a reference to each readable page until the pipe

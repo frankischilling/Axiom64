@@ -190,6 +190,7 @@ void signal_interrupt(Task& task) {
         (flags & 0x10000000) && (restartable || task.wait == Wait::posix_queue || fifo_open);
     // A caught signal ends this attempt. A restarted call imports its inputs again.
     int64_t interrupted_result = io_interrupted_result(task);
+    restart = restart && interrupted_result == -4;
     io_discard(task);
     epoll_discard_wait(task);
     if (futex)

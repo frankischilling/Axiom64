@@ -128,6 +128,7 @@ int inet_send_ready(InetSocket*, size_t, const InetSendControl* = nullptr);
 int64_t inet_send(InetSocket*, const InetAddress&, const void*, size_t, bool named = false,
                   const InetSendControl* control = nullptr, bool more = false);
 
+void inet_udp_flush(InetSocket*);
 int64_t inet_read(InetSocket*, void*, size_t);
 
 int64_t inet_syscall(Task&, const Frame&);

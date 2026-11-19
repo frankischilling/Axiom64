@@ -57,10 +57,16 @@ struct Message {
 
 static_assert(sizeof(Iovec) == 16 && sizeof(Message) == 56);
 
+struct SendfileBuffer {
+    Pipe pipe;
+    PipeSlot slots[16];
+};
+
 struct IoRequest {
     Handle* handle;
     Handle* pipe_target;
-    uint64_t splice_position;
+    SendfileBuffer* sendfile_buffer;
+    uint64_t splice_position, output_position;
     Task* record_task = nullptr;
     unsigned record_command = 0;
     RecordFlock record{}, original_record{};
@@ -120,6 +126,11 @@ static void destroy(IoRequest* request) {
         request->unix_record->drop();
     if (request->unix_rights)
         request->unix_rights->drop();
+    if (auto buffer = request->sendfile_buffer) {
+        while (buffer->pipe.occupied)
+            pipe_consume_head(buffer->pipe, buffer->pipe.head_bytes());
+        release(buffer);
+    }
     close_handle(request->pipe_target);
     close_handle(request->handle);
     release(request);
@@ -185,7 +196,7 @@ static int64_t unix_receive_output(Task& task, const IoRequest& request,
 static void notify_pipe_transfer(const IoRequest& request) {
     auto input = request.handle->opened_dentry;
     auto output = request.pipe_target->opened_dentry;
-    if (request.call.rax == 276) {
+    if (request.call.rax == 276 || request.call.rax == 40) {
         inotify_dentry(input, inotify_access);
         inotify_dentry(output, inotify_modify);
     } else {
@@ -194,8 +205,27 @@ static void notify_pipe_transfer(const IoRequest& request) {
     }
 }
 
+static int64_t sendfile_offset_result(Task& task, uint64_t pointer, uint64_t position,
+                                      int64_t result) {
+    if (pointer && !task.memory->space.copy_out(pointer, &position, sizeof(position)))
+        return -14;
+    return result;
+}
+
+static int64_t sendfile_result(Task& task, const IoRequest& request, int64_t result) {
+    if (request.progress) {
+        notify_pipe_transfer(request);
+        request.pipe_target->offset = request.output_position;
+        if (!request.call.rdx)
+            request.handle->offset = request.splice_position;
+    }
+    return sendfile_offset_result(task, request.call.rdx, request.splice_position, result);
+}
+
 int64_t io_interrupted_result(Task& task) {
     auto request = task.io;
+    if (request && request->call.rax == 40)
+        return sendfile_result(task, *request, request->progress ? int64_t(request->progress) : -4);
     if (!request || !request->progress)
         return -4;
     if (request->pipe_target) {
@@ -1669,6 +1699,106 @@ static int64_t socket_transfer_attempt(Task& task, IoRequest& request, Handle& s
     return request.progress;
 }
 
+static bool splice_regular(const Handle& handle) {
+    auto node = handle.node;
+    return node && (node->mode & 0170000) == regular_file &&
+           (node->mount->ops == &ramfs_ops || node->mount->ops == &ext2_ops);
+}
+
+static int64_t sendfile_attempt(Task& task, IoRequest& request) {
+    auto& source = *request.handle;
+    auto& target = *request.pipe_target;
+    size_t length = request.single.length;
+    if (target.pipe) {
+        if (splice_socket(source) && length) {
+            auto count = socket_transfer_attempt(task, request, source, *target.pipe, false);
+            if (count > 0)
+                request.progress = count;
+            return count;
+        }
+        if (!target.pipe->readers) {
+            queue_signal(&task, 13, task.process->pid);
+            return -32;
+        }
+        if (target.pipe->full())
+            return request.stream_blocking ? would_block : -11;
+        if (!length)
+            return 0;
+        int64_t count;
+        if (memory_device(source) && source.node->device != Device::null)
+            count = copy_handle_to_pipe(source, *target.pipe, min(length, 16 * page_size));
+        else if (splice_regular(source))
+            count = splice_file_to_pipe(source, *target.pipe, request.splice_position, length);
+        else
+            return -22;
+        if (count > 0)
+            request.progress = count;
+        return count == -11 && request.splice_endpoint_blocking ? would_block : count;
+    }
+
+    bool socket = splice_socket(target);
+    if (socket && inet_stream(target.inet) &&
+        request.inet_generation != tcp_generation(target.inet)) {
+        if (request.progress)
+            return request.progress;
+        int error = tcp_cancelled_write_error(target.inet);
+        if (error == 32)
+            queue_signal(&task, 13, task.process->pid);
+        return -error;
+    }
+    if (!length)
+        return 0;
+    bool source_device = memory_device(source) && source.node->device != Device::null;
+    bool target_device = memory_device(target) && target.node->device != Device::full;
+    if (!source_device && !splice_regular(source))
+        return -22;
+    if (!request.sendfile_buffer) {
+        auto buffer = static_cast<SendfileBuffer*>(alloc(sizeof(SendfileBuffer)));
+        if (!buffer)
+            return -12;
+        buffer->pipe = {};
+        buffer->pipe.slots = buffer->slots;
+        buffer->pipe.capacity = sizeof(buffer->slots) / sizeof(buffer->slots[0]);
+        buffer->pipe.readers = 1;
+        request.sendfile_buffer = buffer;
+    }
+    auto& pipe = request.sendfile_buffer->pipe;
+    if (socket && (target.inet || target.inet6 || target.packet))
+        net_poll();
+    while (request.progress < length) {
+        size_t remaining = length - request.progress;
+        if (!pipe.occupied) {
+            // Advance the input cursor only once the output accepts the bytes.
+            uint64_t position = request.splice_position;
+            auto count = source_device ? copy_handle_to_pipe(source, pipe, remaining)
+                                       : splice_file_to_pipe(source, pipe, position, remaining);
+            if (count == -11 && !(source.flags & 04000))
+                return would_block;
+            if (count <= 0) {
+                if (!count && request.progress && target.inet)
+                    inet_udp_flush(target.inet);
+                return request.progress ? int64_t(request.progress) : count;
+            }
+        }
+        auto count =
+            socket ? splice_pipe_to_socket(task, pipe, target, remaining, remaining > pipe.size)
+            : target_device ? splice_pipe_to_device(pipe, target, remaining)
+            : splice_regular(target)
+                ? splice_pipe_to_file(task, pipe, target, request.output_position, remaining)
+                : -22;
+        if (count == -11 && socket && request.splice_endpoint_blocking)
+            return wait_for_splice_socket(request, target.send_timeout);
+        if (count == -32)
+            queue_signal(&task, 13, task.process->pid);
+        if (count <= 0)
+            return request.progress ? int64_t(request.progress) : count;
+        request.progress += count;
+        if (!source_device)
+            request.splice_position += count;
+    }
+    return request.progress;
+}
+
 static int64_t pipe_transfer_attempt(Task& task, IoRequest& request) {
     auto source = request.handle;
     auto target = request.pipe_target;
@@ -1718,6 +1848,8 @@ static int64_t pipe_transfer_attempt(Task& task, IoRequest& request) {
 }
 
 static int64_t attempt(Task& task, IoRequest& request) {
+    if (request.call.rax == 40)
+        return sendfile_attempt(task, request);
     if (request.pipe_target)
         return pipe_transfer_attempt(task, request);
     if (request.call.rax == 278)
@@ -1970,8 +2102,7 @@ static int64_t pipe_transfer_syscall(Task& task, const Frame& frame) {
             if (memory_device(*file)) {
                 if (node->device == (source->pipe ? Device::full : Device::null))
                     return -22;
-            } else if (!node || (node->mode & 0170000) != regular_file ||
-                       (node->mount->ops != &ramfs_ops && node->mount->ops != &ext2_ops))
+            } else if (!splice_regular(*file))
                 return -22;
             if (!pointer)
                 position = file->offset;
@@ -2019,7 +2150,73 @@ static int64_t pipe_transfer_syscall(Task& task, const Frame& frame) {
     return result;
 }
 
+static int64_t sendfile_syscall(Task& task, const Frame& frame) {
+    uint64_t position = 0;
+    if (frame.rdx && !task.memory->space.copy_in(&position, frame.rdx, sizeof(position)))
+        return -14;
+    auto finish = [&](int64_t result) {
+        return sendfile_offset_result(task, frame.rdx, position, result);
+    };
+    int input = int(frame.rsi);
+    int output = int(frame.rdi);
+    auto source = unsigned(input) < max_fds ? task.files->entries[input].handle : nullptr;
+    if (!source || (source->flags & 010000000) || (source->flags & 3) == 1)
+        return finish(-9);
+    bool socket_input = splice_socket(*source);
+    bool unseekable = source->pipe || socket_input || source->packet || source->netlink ||
+                      source->event || source->timer || source->signal_descriptor ||
+                      source->inotify;
+    if (frame.rdx && unseekable)
+        return finish(-29);
+    if (!frame.rdx)
+        position = source->offset;
+    if (position > INT64_MAX || frame.r10 > uint64_t(INT64_MAX) - position)
+        return finish(-22);
+
+    auto target = unsigned(output) < max_fds ? task.files->entries[output].handle : nullptr;
+    if (!target || (target->flags & 010000000) || !(target->flags & 3))
+        return finish(-9);
+    size_t length = min(frame.r10, uint64_t(INT32_MAX) & ~(uint64_t(page_size) - 1));
+    if (!target->pipe && (unseekable || (target->flags & 02000) || target->offset > INT64_MAX ||
+                          length > uint64_t(INT64_MAX) - target->offset))
+        return finish(-22);
+    if (task.io)
+        panic("active I/O at syscall entry");
+    auto request = static_cast<IoRequest*>(alloc(sizeof(IoRequest)));
+    if (!request)
+        return finish(-12);
+    *request = {};
+    request->handle = source;
+    request->pipe_target = target;
+    request->splice_position = position;
+    request->output_position = target->offset;
+    request->call = frame;
+    request->vectors = &request->single;
+    request->single.length = length;
+    request->stream_blocking = !(target->flags & 04000);
+    request->splice_endpoint_blocking =
+        target->pipe ? !(source->flags & 04000) : request->stream_blocking;
+    request->inet_generation = tcp_generation(target->pipe ? source->inet : target->inet);
+    retain(source);
+    retain(target);
+    int64_t result = sendfile_attempt(task, *request);
+    if (result == would_block && timeout_expired(*request))
+        result = timeout_result(task, *request);
+    if (result == would_block) {
+        task.io = request;
+        task.state = State::blocked;
+        task.wait = Wait::write;
+        task.wait_fd = output;
+    } else {
+        result = sendfile_result(task, *request, result);
+        destroy(request);
+    }
+    return result;
+}
+
 int64_t io_syscall(Task& task, const Frame& frame) {
+    if (frame.rax == 40)
+        return sendfile_syscall(task, frame);
     if (frame.rax == 275 || frame.rax == 276)
         return pipe_transfer_syscall(task, frame);
     if (frame.rax == 278 && (uint32_t(frame.r10) & ~15u))
@@ -2090,7 +2287,9 @@ bool io_resume(Task& task) {
             return false;
         result = timeout_result(task, *request);
     }
-    if (result > 0 && !request->locking) {
+    if (request->call.rax == 40)
+        result = sendfile_result(task, *request, result);
+    else if (result > 0 && !request->locking) {
         if (request->pipe_target)
             notify_pipe_transfer(*request);
         else

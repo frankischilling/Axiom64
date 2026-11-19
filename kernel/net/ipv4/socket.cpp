@@ -517,6 +517,13 @@ int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* da
         });
 }
 
+void inet_udp_flush(InetSocket* socket) {
+    if (socket->cork && !socket->udp_cork) {
+        inet_send(socket, inet_peer(socket), nullptr, 0);
+        InetUdpCork::discard(socket->cork);
+    }
+}
+
 int64_t inet_read(InetSocket* socket, void* data, size_t length) {
     if (inet_stream(socket))
         return tcp_read(socket, data, length);
@@ -820,10 +827,7 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
         }
         if (b == 17 && c == 1 && inet_udp(socket)) {
             socket->udp_cork = value != 0;
-            if (!socket->udp_cork && socket->cork) {
-                inet_send(socket, inet_peer(socket), nullptr, 0);
-                InetUdpCork::discard(socket->cork);
-            }
+            inet_udp_flush(socket);
             return 0;
         }
         if (b == 1 && c == 2 && inet_payload(socket))

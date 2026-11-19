@@ -79,6 +79,10 @@ WORKLOADS = {
                                        'retained-input', 'retained-file-input',
                                        'retained-file-output', 'retained-vector',
                                        'interruption', 'restart')),
+    'sendfile': ('SENDFILE', ('arguments', 'file-offsets', 'copyout-fault', 'file-size-limit',
+                              'pipe-output', 'memory-devices', 'unix-sockets', 'tcp-sockets',
+                              'udp-sockets', 'retained-descriptions', 'socket-backpressure',
+                              'interrupted-copyout')),
     'socket-splice': ('SOCKET_SPLICE', ('unix-stream', 'unix-datagram', 'large-datagram', 'tcp4',
                                        'tcp6', 'udp4', 'udp6', 'unix-rights', 'retained-input',
                                        'retained-output', 'send-backpressure', 'udp4-more',
@@ -226,9 +230,9 @@ def native(directory, workload):
             if digest(executable) != program_hash:
                 raise RuntimeError('native executable copy differs from the compiled client')
             namespace = ['unshare', '--ipc', '--']
-            if workload == 'socket-splice':
+            if workload in ('socket-splice', 'sendfile'):
                 namespace = ['unshare', '--ipc', '--net', '--', '/bin/sh', '-ec',
-                             'ip link set lo up; exec "$@"', 'axiom-socket-splice']
+                             'ip link set lo up; exec "$@"', f'axiom-{workload}']
             elif workload == 'posix-semaphores':
                 namespace = ['unshare', '--ipc', '--mount', '--', '/bin/sh', '-ec',
                              'mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /dev/shm; exec "$@"',
@@ -253,6 +257,9 @@ def native(directory, workload):
                 if (workload == 'pipe-transfer' and
                         os.uname().release == '5.15.153.1-microsoft-standard-WSL2'):
                     flags = ['--legacy-memory-splice', *flags]
+                if (workload == 'sendfile' and
+                        os.uname().release == '5.15.153.1-microsoft-standard-WSL2'):
+                    flags = ['--legacy-sendfile', *flags]
                 if legacy_depth:
                     flags = ['--legacy-depth', *flags]
                 if legacy_seek:
@@ -399,7 +406,7 @@ def guest(directory, workload, client):
         if binary_linkage(program) != linkage:
             raise RuntimeError('guest IPC executable linkage differs')
         boot = f'/bin/{program.name}\n/bin/{program.name} --ordinary'
-        if workload in ('sysv-shared-memory', 'pipe-transfer'):
+        if workload in ('sysv-shared-memory', 'pipe-transfer', 'sendfile'):
             boot = '/bin/busybox chmod 1777 /tmp\n' + boot
         elif workload == 'named-pipes':
             applet = '/dev/shm/axiom-fifo-applet'
@@ -425,8 +432,9 @@ def guest(directory, workload, client):
         if (provider, linkage) == ('build', 'static') and (
                 workload.startswith('posix-') or workload in ('named-pipes', 'poll-waits', 'select-waits',
                                                           'epoll-lifetime', 'epoll-nested',
-                                                          'descriptor-wait-lifetime', 'udp-waits', 'pipe-transfer')):
-            writable = workload == 'pipe-transfer'
+                                                          'descriptor-wait-lifetime', 'udp-waits', 'pipe-transfer',
+                                                          'sendfile')):
+            writable = workload in ('pipe-transfer', 'sendfile')
             image, disk = ext2_fixture(case, kernel, payload, script, workload, readonly=not writable)
             fingerprint = disk_digest(disk)
             for firmware in ('bios', 'uefi'):

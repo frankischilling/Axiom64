@@ -563,6 +563,15 @@ static int prepare(Task& task, IoRequest& request) {
         request.locking = true;
         return 0;
     }
+    if (f.rax == 278) {
+        request.write = (request.handle->flags & 3) != 0;
+        request.flags = uint32_t(f.r10);
+        if (int result = import_vectors(task, request, f.rsi, f.rdx))
+            return result;
+        for (size_t i = 0; i < request.count; ++i)
+            request.single.length += request.vectors[i].length;
+        return request.single.length && !request.handle->pipe ? -9 : 0;
+    }
     if (f.rax == 42 && inet_stream(request.handle->inet)) {
         request.connect = request.write = true;
         if (tcp_ipv6(request.handle->inet))
@@ -734,6 +743,34 @@ struct VectorCursor {
         return true;
     }
 };
+
+static int64_t vmsplice_attempt(Task& task, IoRequest& request) {
+    size_t length = request.single.length;
+    if (!length)
+        return 0;
+    auto& pipe = *request.handle->pipe;
+    int64_t result = 0;
+    if (request.write) {
+        result = splice_memory_to_pipe(task.memory->space, pipe, request.vectors, request.count);
+        if (result == -32)
+            queue_signal(&task, 13, task.process->pid);
+    } else if (!pipe.occupied) {
+        result = pipe.writers ? -11 : 0;
+    } else {
+        VectorCursor cursor{request};
+        uint8_t buffer[page_size];
+        while (size_t(result) < length && pipe.occupied) {
+            auto& slot = pipe.slot(0);
+            size_t count = min(length - size_t(result), size_t(slot.end - slot.begin));
+            memcpy(buffer, static_cast<const uint8_t*>(physical(slot.page)) + slot.begin, count);
+            if (!cursor.copy(task, buffer, count))
+                return result ? result : -14;
+            pipe_consume_head(pipe, count);
+            result += count;
+        }
+    }
+    return result == -11 && !(request.flags & 2) ? would_block : result;
+}
 
 static int64_t control_attempt(Task& task, IoRequest& request, const ControlFileOps& control) {
     auto handle = request.handle;
@@ -1598,6 +1635,8 @@ static int64_t pipe_transfer_attempt(Task& task, IoRequest& request) {
 static int64_t attempt(Task& task, IoRequest& request) {
     if (request.pipe_target)
         return pipe_transfer_attempt(task, request);
+    if (request.call.rax == 278)
+        return vmsplice_attempt(task, request);
     auto h = request.handle;
     const auto& f = request.call;
     // A disconnected stream may already have a successor on this description.
@@ -1872,6 +1911,8 @@ static int64_t pipe_transfer_syscall(Task& task, const Frame& frame) {
 int64_t io_syscall(Task& task, const Frame& frame) {
     if (frame.rax == 275 || frame.rax == 276)
         return pipe_transfer_syscall(task, frame);
+    if (frame.rax == 278 && (uint32_t(frame.r10) & ~15u))
+        return -22;
     // Linux validates the operation before looking up the descriptor.
     if (frame.rax == 73 && !file_lock_operation(uint32_t(frame.rsi)))
         return -22;

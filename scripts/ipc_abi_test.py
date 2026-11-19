@@ -73,9 +73,11 @@ WORKLOADS = {
                                        'interruption-cancellation', 'inode-aliases', 'unlink-recreate')),
     'pipe-transfer': ('PIPE_TRANSFER', ('arguments', 'shared-and-moved-slots', 'packet-boundaries',
                                        'file-offsets', 'file-copy-faults', 'file-size-limit',
+                                       'mapped-source', 'mapped-destination',
                                        'readiness', 'broken-output', 'retained-output',
                                        'retained-input', 'retained-file-input',
-                                       'retained-file-output', 'interruption', 'restart')),
+                                       'retained-file-output', 'retained-vector',
+                                       'interruption', 'restart')),
     'posix-aio': ('POSIX_AIO', ('positioned-sync-errors', 'signal', 'lists-thread',
                                 'timeout-interrupt-cancel', 'descriptor-reuse')),
 }

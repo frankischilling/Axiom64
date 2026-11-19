@@ -772,6 +772,7 @@ static int64_t dispatch(Frame* f) {
     case 73:
     case 275:
     case 276:
+    case 278:
     case 288:
         return io_syscall(*current, *f);
     case 2:

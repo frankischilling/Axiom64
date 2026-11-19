@@ -382,6 +382,17 @@ bool AddressSpace::valid(uint64_t va, size_t len, bool write) const {
     return true;
 }
 
+uint64_t AddressSpace::retain_readable_page(uint64_t address) {
+    if (!valid(address, 1))
+        return 0;
+    uint64_t mapping = *entry(address);
+    // External device mappings have no allocator reference to retain.
+    if (mapping & 0x200)
+        return 0;
+    uint64_t page = mapping & page_mask;
+    return page_try_retain(page) ? page : 0;
+}
+
 bool AddressSpace::copy_in(void* dst, uint64_t src, size_t len) const {
     if (!valid(src, len))
         return false;

@@ -78,8 +78,11 @@ void destroy_pipe_buffer(Pipe&);
 int64_t pipe_fcntl(Handle&, unsigned command, uint32_t size, const Credentials&);
 int64_t pipe_write(Handle&, const void*, size_t, bool merge_tail);
 int64_t pipe_transfer(Pipe& input, Pipe& output, size_t length, bool duplicate);
+struct IoVector;
 int64_t splice_file_to_pipe(Handle&, Pipe&, uint64_t& offset, size_t length);
 int64_t splice_pipe_to_file(Task&, Pipe&, Handle&, uint64_t& offset, size_t length);
+int64_t splice_memory_to_pipe(AddressSpace&, Pipe&, const IoVector*, size_t);
+void pipe_consume_head(Pipe&, size_t length);
 // Preview queued bytes before committing a userspace copy.
 int64_t pipe_read(Pipe*, void*, size_t, bool peek = false);
 

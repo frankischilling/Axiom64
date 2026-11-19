@@ -182,6 +182,7 @@ struct AddressSpace {
     bool protect(uint64_t va, size_t len, int prot);
 
     bool valid(uint64_t va, size_t len, bool write = false) const;
+    uint64_t retain_readable_page(uint64_t address);
 
     bool copy_in(void* dst, uint64_t src, size_t len) const;
 

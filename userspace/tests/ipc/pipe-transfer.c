@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    userspace/tests/ipc/pipe-transfer.c
- * @brief   Pipe and regular-file splice and tee tests.
+ * @brief   Pipe, regular-file, and user-memory splice tests.
  * @author  frankischilling
  * @date    2026-11-18
  *
@@ -37,6 +37,7 @@
 #include <sys/epoll.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 #define CHECK(condition)                                                                           \
@@ -215,6 +216,70 @@ static void file_size_limit(void) {
     puts("PIPE_TRANSFER_CASE file-size-limit");
 }
 
+static void mapped_source(void) {
+    int ends[2], duplicate[2];
+    CHECK(pipe2(ends, O_DIRECT | O_NONBLOCK) == 0 && pipe(duplicate) == 0);
+    CHECK(fcntl(ends[1], F_SETPIPE_SZ, 4096) == 4096);
+    char* page = mmap(NULL, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(page != MAP_FAILED);
+    memcpy(page + 4094, "abcd", 4);
+    struct iovec slice = {.iov_base = page + 4094, .iov_len = 4};
+    CHECK(vmsplice(-1, &slice, 0, ~0u) == -1 && errno == EINVAL);
+    CHECK(vmsplice(-1, &slice, 0, 0) == -1 && errno == EBADF);
+    int file = temporary_file();
+    CHECK(vmsplice(file, NULL, 0, 0) == 0);
+    CHECK(vmsplice(file, &slice, 1, 0) == -1 && errno == EBADF);
+    CHECK(close(file) == 0);
+    CHECK(vmsplice(ends[1], &slice, 1, SPLICE_F_NONBLOCK) == 2);
+    CHECK(vmsplice(ends[1], &slice, 1, SPLICE_F_NONBLOCK) == -1 && errno == EAGAIN);
+    CHECK(tee(ends[0], duplicate[1], 2, 0) == 2);
+    memcpy(page + 4094, "xy", 2);
+    CHECK(munmap(page, 8192) == 0);
+    CHECK(mmap(page, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1,
+               0) == page);
+    memset(page + 4094, 'n', 2);
+    char byte;
+    CHECK(read(ends[0], &byte, 1) == 1 && byte == 'x');
+    CHECK(read(ends[0], &byte, 1) == 1 && byte == 'y');
+    char both[2];
+    CHECK(read(duplicate[0], both, 2) == 2 && !memcmp(both, "xy", 2));
+    struct iovec vectors[] = {{page + 4094, 2}, {page + 4096, 2}};
+    CHECK(mprotect(page + 4096, 4096, PROT_NONE) == 0);
+    CHECK(fcntl(duplicate[1], F_GETPIPE_SZ) >= 8192);
+    CHECK(vmsplice(duplicate[1], vectors, 2, SPLICE_F_GIFT | SPLICE_F_NONBLOCK) == 2);
+    CHECK(read(duplicate[0], both, 2) == 2 && !memcmp(both, "nn", 2));
+    CHECK(vmsplice(duplicate[1], &vectors[1], 1, SPLICE_F_NONBLOCK) == -1 && errno == EFAULT);
+    CHECK(munmap(page, 8192) == 0);
+    close_pair(ends);
+    close_pair(duplicate);
+    puts("PIPE_TRANSFER_CASE mapped-source");
+}
+
+static void mapped_destination(void) {
+    int ends[2];
+    CHECK(pipe2(ends, O_DIRECT | O_NONBLOCK) == 0);
+    CHECK(write(ends[1], "abcd", 4) == 4);
+    char* page = mmap(NULL, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(page != MAP_FAILED && mprotect(page + 4096, 4096, PROT_NONE) == 0);
+    struct iovec slice = {.iov_base = page + 4094, .iov_len = 4};
+    CHECK(vmsplice(ends[0], &slice, 1, SPLICE_F_NONBLOCK) == -1 && errno == EFAULT);
+    CHECK(!memcmp(page + 4094, "ab", 2));
+    char first, second, tail[2];
+    struct iovec vectors[] = {{&first, 1}, {&second, 1}};
+    CHECK(vmsplice(ends[0], vectors, 2, SPLICE_F_NONBLOCK) == 2);
+    CHECK(first == 'a' && second == 'b');
+    CHECK(read(ends[0], tail, 2) == 2 && !memcmp(tail, "cd", 2));
+    CHECK(write(ends[1], "ef", 2) == 2 && write(ends[1], "gh", 2) == 2);
+    CHECK(vmsplice(ends[0], &slice, 1, SPLICE_F_NONBLOCK) == 2);
+    CHECK(!memcmp(page + 4094, "ef", 2));
+    CHECK(read(ends[0], tail, 2) == 2 && !memcmp(tail, "gh", 2));
+    CHECK(vmsplice(ends[0], vectors, 2, SPLICE_F_NONBLOCK) == -1 && errno == EAGAIN);
+    CHECK(close(ends[1]) == 0);
+    CHECK(vmsplice(ends[0], vectors, 2, SPLICE_F_NONBLOCK) == 0);
+    CHECK(close(ends[0]) == 0 && munmap(page, 8192) == 0);
+    puts("PIPE_TRANSFER_CASE mapped-destination");
+}
+
 static void readiness(void) {
     int source[2], target[2];
     CHECK(pipe(source) == 0 && pipe(target) == 0);
@@ -280,14 +345,20 @@ struct transfer {
     int expected_error;
     loff_t* source_offset;
     loff_t* target_offset;
+    struct iovec* memory;
 };
 
 static void* transfer_one(void* argument) {
     struct transfer* transfer = argument;
     CHECK(write(transfer->ready, "r", 1) == 1);
-    ssize_t count = transfer->duplicate ? tee(transfer->source, transfer->target, 1, 0)
-                                        : splice(transfer->source, transfer->source_offset,
-                                                 transfer->target, transfer->target_offset, 1, 0);
+    ssize_t count;
+    if (transfer->memory)
+        count = vmsplice(transfer->target, transfer->memory, 1, 0);
+    else if (transfer->duplicate)
+        count = tee(transfer->source, transfer->target, 1, 0);
+    else
+        count = splice(transfer->source, transfer->source_offset, transfer->target,
+                       transfer->target_offset, 1, 0);
     if (transfer->expected_error)
         CHECK(count == -1 && errno == transfer->expected_error);
     else
@@ -384,6 +455,42 @@ static void blocked_file(int to_pipe) {
                  : "PIPE_TRANSFER_CASE retained-file-output");
 }
 
+static void blocked_mapping(void) {
+    int ends[2], ready[2], complete[2], replacement[2];
+    CHECK(pipe2(ends, O_NONBLOCK) == 0 && pipe(ready) == 0 && pipe(complete) == 0);
+    CHECK(pipe2(replacement, O_NONBLOCK) == 0);
+    CHECK(fcntl(ends[1], F_SETPIPE_SZ, 4096) == 4096);
+    char block[4096] = {0};
+    CHECK(write(ends[1], block, sizeof(block)) == sizeof(block));
+    char original = 'a', changed = 'z';
+    struct iovec vector = {.iov_base = &original, .iov_len = 1};
+    struct transfer transfer = {
+        .target = ends[1],
+        .ready = ready[1],
+        .complete = complete[1],
+        .memory = &vector,
+    };
+    pthread_t worker;
+    CHECK(pthread_create(&worker, NULL, transfer_one, &transfer) == 0);
+    char byte;
+    CHECK(read(ready[0], &byte, 1) == 1 && byte == 'r');
+    struct pollfd done = {.fd = complete[0], .events = POLLIN};
+    CHECK(poll(&done, 1, 80) == 0);
+    vector.iov_base = &changed;
+    original = 'b';
+    CHECK(dup2(replacement[1], ends[1]) == ends[1]);
+    CHECK(read(ends[0], block, sizeof(block)) == sizeof(block));
+    CHECK(poll(&done, 1, 3000) == 1 && read(complete[0], &byte, 1) == 1 && byte == 'c');
+    CHECK(pthread_join(worker, NULL) == 0);
+    CHECK(read(ends[0], &byte, 1) == 1 && byte == 'b');
+    CHECK(read(replacement[0], &byte, 1) == -1 && errno == EAGAIN);
+    close_pair(ends);
+    close_pair(ready);
+    close_pair(complete);
+    close_pair(replacement);
+    puts("PIPE_TRANSFER_CASE retained-vector");
+}
+
 static volatile sig_atomic_t caught_signal;
 
 static void report_interrupt(int signo) {
@@ -455,12 +562,15 @@ int main(int argc, char** argv) {
     file_offsets();
     file_copy_faults();
     file_size_limit();
+    mapped_source();
+    mapped_destination();
     readiness();
     broken_output();
     blocked(0);
     blocked(1);
     blocked_file(1);
     blocked_file(0);
+    blocked_mapping();
     interrupt(0);
     interrupt(1);
     printf("PIPE_TRANSFER_PASS uid=%u\n", (unsigned)getuid());

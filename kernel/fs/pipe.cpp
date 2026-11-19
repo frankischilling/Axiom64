@@ -25,6 +25,7 @@
  */
 #include "fs/pipe.hpp"
 #include "io/descriptor_wait.hpp"
+#include "io/vectors.hpp"
 #include "fs/descriptor.hpp"
 #include "fs/inotify.hpp"
 #include "ipc/ipc.hpp"
@@ -273,11 +274,54 @@ int64_t splice_file_to_pipe(Handle& input, Pipe& output, uint64_t& offset, size_
     return moved ? int64_t(moved) : result;
 }
 
+void pipe_consume_head(Pipe& pipe, size_t length) {
+    auto& slot = pipe.slot(0);
+    bool was_full = pipe.full();
+    pipe.size -= length;
+    slot.begin += length;
+    if (slot.begin == slot.end) {
+        page_free(slot.page);
+        pipe.first = (pipe.first + 1) & (pipe.capacity - 1);
+        --pipe.occupied;
+        if (was_full)
+            descriptor_wait_notify(&pipe, 4 | 0x100);
+    }
+}
+
+int64_t splice_memory_to_pipe(AddressSpace& space, Pipe& pipe, const IoVector* vectors,
+                              size_t count) {
+    if (!pipe.readers)
+        return -32;
+    if (pipe.full())
+        return -11;
+    size_t moved = 0;
+    int error = 0;
+    for (size_t i = 0; i < count && !pipe.full() && !error; ++i) {
+        const auto& vector = vectors[i];
+        for (size_t at = 0; at < vector.length && !pipe.full();) {
+            uint64_t address = vector.base + at;
+            uint16_t begin = address % page_size;
+            size_t length = min(size_t(vector.length - at), size_t(page_size - begin));
+            uint64_t page = space.retain_readable_page(address);
+            if (!page) {
+                error = -14;
+                break;
+            }
+            pipe.slot(pipe.occupied++) = {page, begin, uint16_t(begin + length), false, false};
+            pipe.size += length;
+            moved += length;
+            at += length;
+        }
+    }
+    if (moved)
+        descriptor_wait_notify(&pipe, 1 | 0x40);
+    return moved ? int64_t(moved) : error;
+}
+
 int64_t splice_pipe_to_file(Task& task, Pipe& input, Handle& output, uint64_t& offset,
                             size_t length) {
     if (!input.occupied)
         return input.writers ? -11 : 0;
-    bool was_full = input.full();
     size_t moved = 0;
     int64_t result = 0;
     while (moved < length && input.occupied) {
@@ -293,19 +337,11 @@ int64_t splice_pipe_to_file(Task& task, Pipe& input, Handle& output, uint64_t& o
         result = write_regular_at(&task, output, offset, bytes, count);
         size_t committed = offset - before;
         moved += committed;
-        input.size -= committed;
-        if (committed == available) {
-            page_free(slot.page);
-            input.first = (input.first + 1) & (input.capacity - 1);
-            --input.occupied;
-        } else {
-            slot.begin += committed;
-        }
+        if (committed)
+            pipe_consume_head(input, committed);
         if (result <= 0)
             break;
     }
-    if (was_full && !input.full())
-        descriptor_wait_notify(&input, 4 | 0x100);
     return moved ? int64_t(moved) : result;
 }
 

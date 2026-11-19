@@ -8,6 +8,7 @@ Axiom64 retains the open file description selected by an I/O syscall while that 
 | --- | --- |
 | `read`, `write`, `readv`, `writev` | Existing regular files, pipes, Unix stream sockets, event counters, and character/block devices |
 | `splice`, `tee` | Pipe and FIFO transfers. `splice` also accepts regular RAM and ext2 files as one endpoint. |
+| `vmsplice` | Transfers between userspace vectors and pipe or FIFO endpoints. |
 | `pread64`, `pwrite64` | Existing seekable files and block devices; preserve the shared file offset; pipes, sockets, and character devices return `ESPIPE` |
 | `recvfrom`, `sendto` | Connected Unix streams, including receive-address output; a send destination is unsupported |
 | `recvmsg`, `sendmsg` | Unix stream messages with copied iovec metadata, receive source names, sender credentials and transferred file descriptions |
@@ -361,6 +362,15 @@ It uses the waiting task's file size limit and credentials. A supplied offset
 leaves the shared file position alone. A fault reading the offset prevents the
 transfer. A fault writing it back returns `EFAULT` after the bytes move.
 
+`vmsplice` captures the vector addresses and lengths before waiting. Memory
+queued into a pipe keeps a reference to each readable page until the pipe
+consumes or releases it. Unmapping a queued page does not discard its bytes.
+The pipe-to-memory direction copies each slot into the captured vectors. A
+copy fault preserves the faulting slot and returns any completed prefix.
+`SPLICE_F_NONBLOCK` controls waits. The pipe's `O_NONBLOCK` flag does not
+change a `vmsplice` call. Device mappings without allocator-owned pages return
+`EFAULT` when queued.
+
 Blocking TCP write/writev/send/sendmsg calls keep the transferred count and remaining cursor while the send queue is full. Completion uses the original retained description and imported vectors even after close/reuse or dup2 replacement. Blocking mode is captured at syscall entry; changing O_NONBLOCK through an alias does not convert an in-progress send or MSG_WAITALL into a different attempt. Finite send deadlines and caught signals return an already queued prefix without replaying it, including with SA_RESTART. Initially nonblocking calls and MSG_DONTWAIT return their available prefix immediately. Native and VM comparisons check this send progress; the remaining TCP reliability requirements are described in [TCP support](tcp.md).
 
 Blocking TCP connect requests retain the original description and imported destination while the handshake remains pending, including a blocking retry of an earlier nonblocking call. Entry blocking mode survives alias flag changes and descriptor replacement. Each request captures its initial EINPROGRESS or repeated EALREADY result for finite expiry. Completion updates the socket pending state once; a failed attempt consumes its error and releases its connection storage so the same description can be used again. Native Linux comparisons cover ordinary completion, retry, binding, descriptor replacement, finite deadlines and caught-signal/restart behavior. Controlled NIC interruption, parallel retry generations and full connect acceptance remain unfinished; see [TCP support](tcp.md).
@@ -397,5 +407,5 @@ Evidence is in `build/threads-io-{bios,uefi}.log` and `build/threads-io-results.
 The implementation permits one saved I/O request per task. Vectored I/O
 accepts up to 1024 vectors and `0x7ffff000` bytes per request. It runs on one
 CPU with interrupts masked in syscalls. Transfers between sockets and pipes,
-`vmsplice`, SMP synchronization, terminal behavior, broader
+SMP synchronization, terminal behavior, broader
 TCP/connect deadline coverage, and complete Linux conformance remain planned.

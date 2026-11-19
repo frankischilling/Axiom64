@@ -6,7 +6,7 @@
  * @date    2026-11-19
  *
  * Gives device drivers a segment, bus, slot, and function identity with
- * register access, memory BAR decoding, and MSI-X message setup.
+ * register access, memory BAR decoding, and MSI and MSI-X message setup.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -47,11 +47,28 @@ struct PciFunction {
 
     void write32(uint16_t offset, uint32_t value) const;
 
+    uint8_t find_capability(uint8_t id, unsigned* boundary = nullptr) const;
+
     // Assigned memory BAR only. Returns false for an I/O BAR, high half, or no address.
     bool memory_bar(unsigned index, uint64_t& address) const;
 
     // Probe only while the function is quiescent and no driver is using its BARs.
     bool memory_bar_size(unsigned index, uint64_t& address, uint64_t& length) const;
+};
+
+class PciMsi {
+  public:
+    // Keep the device's interrupt sources masked until start succeeds.
+    bool start(const PciFunction&, Irq::Handler, void* context);
+
+    void stop(const PciFunction&);
+
+    bool active() const {
+        return vector_ != 0;
+    }
+
+  private:
+    uint8_t capability_ = 0, mask_ = 0, vector_ = 0;
 };
 
 class PciMsix {

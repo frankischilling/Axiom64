@@ -19,7 +19,7 @@ from network_fault import inject
 
 def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
         capture_directory=None, image=None, expected_irq=None, machine='pc', no_vectors=False,
-        force_pic=False):
+        force_pic=False, e1000e=False):
     label = f'udp-{firmware}-{transport}' + ('-fault' if fault else '')
     if machine != 'pc':
         label += f'-{machine}'
@@ -27,6 +27,8 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
         label += '-no-vectors'
     if force_pic:
         label += '-pic'
+    if e1000e:
+        label += '-e1000e'
     log = ROOT / 'build' / (label + '.log')
     selector = selectors.DefaultSelector()
     control = Path('/tmp') / f'axiom64-udp-{os.getpid()}.sock'
@@ -43,7 +45,7 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
                '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
     if fault:
         command += ['-gdb', 'tcp:127.0.0.1:1239']
-    for lane, model in enumerate(['virtio-net-pci', 'e1000']):
+    for lane, model in enumerate(['virtio-net-pci', 'e1000e' if e1000e else 'e1000']):
         server = socket.socket()
         server.bind(('127.0.0.1', 0))
         server.listen(1)
@@ -200,6 +202,17 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
         missing.append('forced PIC boot')
     if machine == 'q35' and 'PCI ECAM: segment=0 ' not in text:
         missing.append('Q35 PCI ECAM')
+    if e1000e:
+        mode = 'poll' if force_pic else 'msi'
+        route = f'e1000: index=2 model=82574L rx=64 tx=64 irq={mode}'
+        if route not in text:
+            missing.append(route)
+        completions = [f'e1000: MSI {direction} completion index=2'
+                       for direction in ('RX', 'TX')]
+        if mode == 'msi':
+            missing += [marker for marker in completions if marker not in text]
+        elif any(marker in text for marker in completions):
+            missing.append('polling 82574L emitted MSI completions')
     host_passed = (peers[0].arp == peers[1].arp == 1 and peers[0].frames == 0 and peers[1].frames == 1) if fault else (
         len(link_events) == 4 and all(p.arp == 2 and p.frames == 4 and p.zero == 1 and p.zero_checksum == 1 and
             p.malformed == 14 and p.filter_input == 3 and p.filter_errors == 1 and p.server_replies == 1 and
@@ -239,6 +252,8 @@ def main():
     parser.add_argument('--expected-irq', choices=['msix', 'poll'])
     parser.add_argument('--no-vectors', action='store_true')
     parser.add_argument('--force-pic', action='store_true')
+    parser.add_argument('--e1000e', action='store_true')
+    parser.add_argument('--capture-directory', type=Path)
     parser.add_argument('--debugger-delay', type=float, default=0,
                         help='simulate slow fault debugger setup while the guest is stopped')
     args = parser.parse_args()
@@ -252,13 +267,25 @@ def main():
     if args.force_pic:
         command += ['--kernel-option', 'irq=pic']
     subprocess.run(command, cwd=ROOT, check=True)
+    boot_image = ROOT / 'build' / image
     result = run(args.firmware, args.transport, args.timeout, args.fault, args.debugger_delay,
                  expected_irq=args.expected_irq, machine=args.machine, no_vectors=args.no_vectors,
-                 force_pic=args.force_pic, image=ROOT / 'build' / image)
+                 force_pic=args.force_pic, e1000e=args.e1000e, image=boot_image,
+                 capture_directory=args.capture_directory)
     receipt = 'udp-results.json'
-    if args.expected_irq:
+    if args.expected_irq or args.e1000e:
         receipt = result['log'].removesuffix('.log') + '.json'
     (ROOT / 'build' / receipt).write_text(json.dumps([result], indent=2) + '\n')
+    if args.capture_directory:
+        from udp_capture import audit_capture
+        from udp_inputs import save_case
+        case = args.capture_directory
+        save_case(result, case)
+        shutil.copyfile(boot_image, case / 'image.iso')
+        if result['passed']:
+            captures = [audit_capture(case / f'lane{lane}.pcap', lane, args.fault,
+                                      route_retirement=True) for lane in range(2)]
+            (case / 'capture-audit.json').write_text(json.dumps(captures, indent=2) + '\n')
     raise SystemExit(0 if result['passed'] else 1)
 
 

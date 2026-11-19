@@ -716,6 +716,16 @@ test-udp:
 	$(PYTHON) scripts/udp_test.py --firmware uefi --machine q35 --expected-irq msix
 	$(PYTHON) scripts/udp_test.py --expected-irq poll --no-vectors
 	$(PYTHON) scripts/udp_test.py --expected-irq poll --force-pic
+	$(PYTHON) scripts/udp_test.py --machine q35 --e1000e --expected-irq msix --capture-directory build/udp-e1000e/bios
+	$(PYTHON) scripts/udp_test.py --firmware uefi --machine q35 --e1000e --expected-irq msix --capture-directory build/udp-e1000e/uefi
+	$(PYTHON) scripts/udp_test.py --firmware uefi --machine q35 --e1000e --expected-irq poll --force-pic --capture-directory build/udp-e1000e/uefi-pic
+
+.PHONY: test-pci-interrupts
+build/pci-interrupt-tests: kernel/tests/drivers/platform/pci_interrupts.cpp kernel/drivers/platform/pci.cpp $(call rwildcard,kernel/include/,*.hpp)
+	@mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include -Ivendor $(filter %.cpp,$^) -o $@
+test-pci-interrupts: build/pci-interrupt-tests
+	./build/pci-interrupt-tests
 build/netlink-codec-host: kernel/tests/net/netlink.cpp kernel/net/netlink/routes.cpp kernel/include/net/netlink.hpp kernel/include/net/ipv4.hpp kernel/tests/net/ipv6_disabled.cpp kernel/net/ipv6/wire.cpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@

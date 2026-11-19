@@ -40,7 +40,8 @@ It checks the controller input ranges and observes two acknowledged timer
 interrupts before switching. If validation or delivery fails, the kernel
 keeps the legacy PIC/PIT path. The `irq=pic` boot option selects that path
 explicitly. Modern virtio-net can route receive and transmit completions to a
-shared MSI-X vector on the boot processor. Drivers keep their polling paths.
+shared MSI-X vector on the boot processor. The Intel 82574L adapter uses a
+single PCI MSI message. Drivers keep their polling paths.
 
 PCI discovery uses the validated ACPI MCFG table for PCIe configuration
 registers. Each aperture identifies a PCI segment and bus range. Its base

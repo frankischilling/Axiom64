@@ -1631,9 +1631,11 @@ jobs:
         run: |
           python3 scripts/ci/paired_network.py --suite "$SUITE" \
             --archive "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz" --temporary-parent "$RUNNER_TEMP"
-      - name: Test counter scaling and ACPI discovery with sanitizers
+      - name: Test counter scaling, ACPI discovery, and PCI interrupt resources with sanitizers
         if: matrix.suite == 'configuration'
-        run: make test-clock-codec 2>&1 | tee build/clock-codec.log
+        run: |
+          make test-clock-codec 2>&1 | tee build/clock-codec.log
+          make test-pci-interrupts 2>&1 | tee build/pci-interrupts.log
       - name: Test elapsed clocks and deadlines across delayed storage
         if: matrix.suite == 'configuration'
         run: make test-clock
@@ -1778,6 +1780,8 @@ jobs:
             build/udp-*-q35.json
             build/udp-*-no-vectors.json
             build/udp-*-pic.json
+            build/udp-*-e1000e.json
+            build/udp-e1000e/**
             build/ipv4-multicast-evidence/**
             build/ipv4-multicast-audit/**
             build/*.trace

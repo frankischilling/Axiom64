@@ -87,7 +87,7 @@ Start from current `main` after checking remote updates, ongoing work and CI. Pr
 
 ### F01. Firmware, buses, and interrupt routing
 
-Limine boots through BIOS and UEFI. [Boot diagnostics](architecture.md) report validated MADT topology and FADT flags, and the PCI driver uses validated MCFG windows for ECAM. The scheduling PIT uses the I/O APIC after boot verifies timer delivery. Modern virtio-net handles receive and transmit completions through MSI-X on the boot CPU. Legacy PCI, PIC/PIT, and [bounded ACPI HPET discovery](time.md) remain available. Q35 tests exercise the timer, modern virtio disk, and both Ethernet drivers. MSI-only and PCI INTx routing and broader firmware handoff remain required. [Storage support](storage.md) describes the PCI and MMIO support used by raw virtio disks.
+Limine boots through BIOS and UEFI. [Boot diagnostics](architecture.md) report validated MADT topology and FADT flags, and the PCI driver uses validated MCFG windows for ECAM. The scheduling PIT uses the I/O APIC after boot verifies timer delivery. Modern virtio-net uses MSI-X and the Intel 82574L uses one PCI MSI message for Ethernet completions on the boot CPU. Legacy PCI, PIC/PIT, and [bounded ACPI HPET discovery](time.md) remain available. Q35 tests exercise the timer, modern virtio disk, and the Ethernet drivers. PCI INTx routing and broader firmware handoff remain required. [Storage support](storage.md) describes the PCI and MMIO support used by raw virtio disks.
 
 Required work:
 
@@ -282,7 +282,7 @@ Acceptance evidence:
 
 ### F11. Ethernet devices and link management
 
-[PCI virtio-net and QEMU 82540EM e1000](network.md) share bounded Ethernet ownership and Linux raw packet sockets. Modern/legacy transport, multiple interfaces, carrier/MTU controls, rollover, and controlled-peer tests cover this slice; wider hardware, interrupt-driven completion, and advanced networking remain planned. The same checks exercise both adapters. The usable network release still requires the complete protocol and configuration work below.
+[PCI virtio-net and QEMU's Intel 82540EM and 82574L models](network.md) share bounded Ethernet ownership and Linux raw packet sockets. Guest tests cover modern and legacy virtio, multiple interfaces, carrier and MTU changes, and controlled peers. Modern virtio-net and the 82574L have interrupt completion tests. Wider hardware and the protocol and configuration work below remain required.
 
 Required work:
 

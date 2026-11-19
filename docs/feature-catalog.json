@@ -50,7 +50,7 @@
       "title": "Firmware, buses, and interrupt routing",
       "milestone": "M1",
       "state": "partial",
-      "current": "Limine boots through BIOS and UEFI. Bounded ACPI parsing covers HPET, MADT, FADT, and MCFG. PCI enumeration uses validated ECAM apertures or legacy PCI configuration ports on segment zero. The kernel verifies delivery of the scheduling PIT through the I/O APIC and falls back to PIC/PIT when necessary. Modern virtio-net handles receive and transmit completions through MSI-X on the boot CPU. Q35 tests exercise timer delivery, modern virtio disk I/O, and both Ethernet drivers. MSI-only and PCI INTx routing and broader firmware handoff remain required.",
+      "current": "Limine boots through BIOS and UEFI. Bounded ACPI parsing covers HPET, MADT, FADT, and MCFG. PCI enumeration uses validated ECAM apertures or legacy PCI configuration ports on segment zero. The kernel verifies delivery of the scheduling PIT through the I/O APIC and falls back to PIC/PIT when necessary. Modern virtio-net uses MSI-X and the Intel 82574L uses one PCI MSI message for Ethernet completions on the boot CPU. Q35 tests exercise timer delivery, modern virtio disk I/O, and Ethernet. PCI INTx routing and broader firmware handoff remain required.",
       "scope": [
         "PCI/PCIe enumeration and driver binding",
         "MMIO mapping, DMA allocation, address limits, and cache attributes",
@@ -473,7 +473,7 @@
       "title": "Ethernet devices and link management",
       "milestone": "M3",
       "state": "partial",
-      "current": "PCI virtio-net and QEMU 82540EM e1000 share bounded Ethernet ownership and Linux raw packet sockets. Modern virtio-net supports MSI-X completion with polling fallback. Both transports, multiple interfaces, carrier/MTU controls, rollover, and controlled peers have guest tests. Wider hardware and advanced networking remain planned.",
+      "current": "PCI virtio-net and QEMU's Intel 82540EM and 82574L models share bounded Ethernet ownership and Linux raw packet sockets. Modern virtio-net and the 82574L complete packets through MSI-X and MSI respectively, with polling fallback. Both virtio transports, multiple interfaces, carrier and MTU controls, rollover, and controlled peers have guest tests. Wider hardware and advanced networking remain planned.",
       "scope": [
         "Network-device interface, packet buffers, statistics, MTU, and link state",
         "Virtio-net first on QEMU",

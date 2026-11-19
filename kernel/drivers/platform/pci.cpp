@@ -31,6 +31,8 @@ namespace ax {
 namespace {
 constexpr uint16_t msix_enable = 1u << 15, msix_function_mask = 1u << 14;
 constexpr uint32_t msix_entry_mask = 1;
+constexpr uint16_t msi_enable = 1, msi_message_count = 7u << 4;
+constexpr uint16_t msi_wide_address = 1u << 7, msi_vector_masking = 1u << 8;
 
 struct EcamBus {
     volatile uint8_t* address;
@@ -152,6 +154,32 @@ void PciFunction::write32(uint16_t offset, uint32_t value) const {
     out32(0xcfc, value);
 }
 
+uint8_t PciFunction::find_capability(uint8_t id, unsigned* boundary) const {
+    if (!(read16(6) & 16) || (read8(0x0e) & 0x7f) > 1)
+        return 0;
+    uint64_t visited = 0;
+    uint8_t offset = read8(0x34) & 0xfc;
+    uint8_t found = 0;
+    while (offset) {
+        if (offset < 0x40 || (visited & (1ull << (offset / 4))))
+            return 0;
+        visited |= 1ull << (offset / 4);
+        if (read8(offset) == id) {
+            if (found)
+                return 0;
+            found = offset;
+        }
+        offset = read8(offset + 1) & 0xfc;
+    }
+    if (found && boundary) {
+        unsigned next = found + 4;
+        while (next < 256 && !(visited & (1ull << (next / 4))))
+            next += 4;
+        *boundary = next;
+    }
+    return found;
+}
+
 bool PciFunction::memory_bar(unsigned index, uint64_t& address) const {
     if (index >= 6 || (read8(0x0e) & 0x7f) != 0)
         return false;
@@ -198,6 +226,74 @@ bool PciFunction::memory_bar_size(unsigned index, uint64_t& address, uint64_t& l
 
     length = wide ? -mask : uint32_t(-mask);
     return length && !(length & (length - 1)) && !(address & (length - 1));
+}
+
+bool PciMsi::start(const PciFunction& pci, Irq::Handler handler, void* context) {
+    if (active() || !(pci.read16(4) & (1u << 10)))
+        return false;
+    unsigned boundary;
+    uint8_t offset = pci.find_capability(5, &boundary);
+    if (!offset)
+        return false;
+    uint16_t control = pci.read16(offset + 2);
+    bool wide = control & msi_wide_address;
+    bool maskable = control & msi_vector_masking;
+    unsigned data = offset + (wide ? 12 : 8);
+    unsigned mask = data + 4;
+    unsigned end = maskable ? mask + 8 : data + 2;
+    if (end > boundary || (control & 0xe) > 0xa)
+        return false;
+    uint8_t msix = pci.find_capability(0x11);
+    if (msix) {
+        uint16_t other = pci.read16(msix + 2);
+        if (other & msix_enable) {
+            pci.write16(msix + 2, (other | msix_function_mask) & ~msix_enable);
+            if (pci.read16(msix + 2) & msix_enable)
+                return false;
+        }
+    }
+    control &= ~(msi_enable | msi_message_count);
+    pci.write16(offset + 2, control);
+    if (pci.read16(offset + 2) & msi_enable)
+        return false;
+    if (maskable)
+        pci.write32(mask, pci.read32(mask) | 1);
+
+    Irq::Message message{};
+    if (!interrupt_register_message(handler, context, message))
+        return false;
+    capability_ = offset;
+    mask_ = maskable ? mask : 0;
+    vector_ = message.vector;
+    pci.write32(offset + 4, message.address);
+    if (wide)
+        pci.write32(offset + 8, 0);
+    pci.write16(data, message.vector);
+    if (pci.read32(offset + 4) == message.address && (!wide || pci.read32(offset + 8) == 0) &&
+        pci.read16(data) == message.vector) {
+        pci.write16(offset + 2, control | msi_enable);
+        if ((pci.read16(offset + 2) & (msi_enable | msi_message_count)) == msi_enable) {
+            if (!maskable)
+                return true;
+            pci.write32(mask, pci.read32(mask) & ~1u);
+            if (!(pci.read32(mask) & 1))
+                return true;
+        }
+    }
+    stop(pci);
+    return false;
+}
+
+void PciMsi::stop(const PciFunction& pci) {
+    if (!active())
+        return;
+    uint16_t control = pci.read16(capability_ + 2);
+    if (mask_)
+        pci.write32(mask_, pci.read32(mask_) | 1);
+    pci.write16(capability_ + 2, control & ~msi_enable);
+    pci.read16(capability_ + 2);
+    interrupt_retire_message(vector_);
+    capability_ = mask_ = vector_ = 0;
 }
 
 bool PciMsix::prepare(const PciFunction& pci, uint8_t capability, Irq::Handler handler,

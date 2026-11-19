@@ -1,13 +1,43 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/drivers/net/e1000.cpp
+ * @brief   Drives Intel-compatible Ethernet rings on supported PCI devices.
+ * @author  frankischilling
+ * @date    2026-11-19
+ *
+ * Initializes the MAC and exchanges frames through legacy descriptors.
+ * The 82574L can deliver completions through a single PCI MSI message.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "net/ethernet.hpp"
 #include "drivers/platform/pci.hpp"
 #include "drivers/virtio/queue.hpp"
+#include "ipc/ipc.hpp"
 
 namespace ax {
 namespace {
 constexpr unsigned ring_size = 64, buffer_size = 2048;
-constexpr unsigned ctrl = 0, status = 8, icr = 0xc0, imc = 0xd8, rctl = 0x100;
+constexpr uint32_t model_82540em = 0x100e8086, model_82574l = 0x10d38086;
+constexpr unsigned ctrl = 0, status = 8, icr = 0xc0, ims = 0xd0, imc = 0xd8, rctl = 0x100;
+constexpr uint32_t tx_writeback = 1u << 0, link_change = 1u << 2, rx_timer = 1u << 7;
+constexpr uint32_t interrupt_sources = tx_writeback | link_change | rx_timer;
 constexpr unsigned tctl = 0x400, tipg = 0x410, rx_base = 0x2800, tx_base = 0x3800;
+constexpr unsigned rx_checksum = 0x5000;
+constexpr uint32_t disable_packet_checksum = 1u << 13;
 constexpr unsigned mac_low = 0x5400, mac_high = 0x5404, multicast = 0x5200;
 
 struct RxDescriptor {
@@ -29,12 +59,15 @@ static_assert(sizeof(RxDescriptor) == 16 && sizeof(TxDescriptor) == 16);
 struct Controller {
     NetAdapter adapter{};
     PciFunction pci{};
+    PciMsi msi;
+    uint32_t model = 0;
     volatile uint32_t* registers = nullptr;
     uint64_t rings = 0, receive = 0, transmit = 0;
     volatile RxDescriptor* rx = nullptr;
     volatile TxDescriptor* tx = nullptr;
     unsigned rx_next = 0, tx_next = 0, tx_oldest = 0, pending = 0;
     bool fragment = false;
+    bool irq_rx_reported = false, irq_tx_reported = false;
 
     uint32_t read(unsigned offset) const {
         return registers[offset / 4];
@@ -58,6 +91,7 @@ static void stop(NetAdapter& adapter) {
         device.write(tctl, 0);
         device.read(icr);
     }
+    device.msi.stop(device.pci);
     device.pci.write16(4, (device.pci.read16(4) | 0x400) & ~uint16_t(4));
     // DMA pages remain owned for the controller's entire lifetime, even on failure.
 }
@@ -67,7 +101,7 @@ static void poll(NetAdapter& adapter) {
     if (!adapter.info.live)
         return;
     uint32_t state = device.read(status);
-    if (state == UINT32_MAX || device.pci.read32(0) != 0x100e8086) {
+    if (state == UINT32_MAX || device.pci.read32(0) != device.model) {
         while (device.pending) {
             net_tx_complete(adapter, device.tx[device.tx_oldest].length, true);
             device.tx_oldest = (device.tx_oldest + 1) % ring_size;
@@ -77,7 +111,8 @@ static void poll(NetAdapter& adapter) {
         return;
     }
     adapter.info.carrier = state & 2;
-    device.read(icr); // All NIC interrupts remain masked; discard stale causes.
+    if (!device.msi.active())
+        device.read(icr); // Discard causes for polling devices.
     while (device.pending && (device.tx[device.tx_oldest].status & 1)) {
         virtio_dma_barrier();
         const auto& descriptor = device.tx[device.tx_oldest];
@@ -132,8 +167,30 @@ static int send(NetAdapter& adapter, const void* frame, size_t length) {
     return 0;
 }
 
-static bool initialize(Controller& device, const PciFunction& pci) {
+static void interrupt(void* context) {
+    auto& device = *static_cast<Controller*>(context);
+    if (!device.read(icr))
+        return;
+    const auto& info = device.adapter.info;
+    uint64_t rx_before = info.stats.rx_packets, tx_before = info.stats.tx_packets;
+    bool previous_carrier = info.carrier, previous_live = info.live;
+    poll(device.adapter);
+    if (info.stats.rx_packets != rx_before && !device.irq_rx_reported) {
+        device.irq_rx_reported = true;
+        log("e1000: MSI RX completion index=%u\n", uint64_t(info.index));
+    }
+    if (info.stats.tx_packets != tx_before && !device.irq_tx_reported) {
+        device.irq_tx_reported = true;
+        log("e1000: MSI TX completion index=%u\n", uint64_t(info.index));
+    }
+    if (info.stats.rx_packets != rx_before || info.stats.tx_packets != tx_before ||
+        previous_carrier != info.carrier || previous_live != info.live)
+        epoll_notify();
+}
+
+static bool initialize(Controller& device, const PciFunction& pci, uint32_t model) {
     device.pci = pci;
+    device.model = model;
     device.adapter = {{}, poll, send, stop, &device};
     uint64_t address;
     if (pci.read8(0x0b) != 2 || pci.read8(0x0a) != 0 || !pci.memory_bar(0, address))
@@ -185,6 +242,9 @@ static bool initialize(Controller& device, const PciFunction& pci) {
     device.write(tx_base + 0x10, 0);
     device.write(tx_base + 0x18, 0);
     device.write(tipg, 10 | (8 << 10) | (6 << 20));
+    // Hand complete frames to the network stack for checksum validation.
+    if (model == model_82574l)
+        device.write(rx_checksum, disable_packet_checksum);
     virtio_dma_barrier();
     device.write(tctl, 2 | 8 | (15 << 4) | (64 << 12));
     device.write(rctl, 2 | (1u << 4) | (1u << 15) | (1u << 26));
@@ -192,17 +252,27 @@ static bool initialize(Controller& device, const PciFunction& pci) {
     poll(device.adapter);
     if (!device.adapter.info.live || !net_register(device.adapter))
         return false;
-    log("e1000: index=%u model=82540EM rx=%u tx=%u\n", uint64_t(device.adapter.info.index),
-        uint64_t(ring_size), uint64_t(ring_size));
+    if (model == model_82574l && device.msi.start(pci, interrupt, &device)) {
+        device.read(icr);
+        device.write(ims, interrupt_sources);
+        if ((device.read(ims) & interrupt_sources) != interrupt_sources) {
+            device.write(imc, UINT32_MAX);
+            device.msi.stop(pci);
+        }
+    }
+    log("e1000: index=%u model=%s rx=%u tx=%u irq=%s\n", uint64_t(device.adapter.info.index),
+        model == model_82574l ? "82574L" : "82540EM", uint64_t(ring_size), uint64_t(ring_size),
+        device.msi.active() ? "msi" : "poll");
     return true;
 }
 } // namespace
 
 void e1000_attach(const PciFunction& pci) {
-    if (attempts == max_net_devices || pci.read32(0) != 0x100e8086)
+    uint32_t model = pci.read32(0);
+    if (attempts == max_net_devices || (model != model_82540em && model != model_82574l))
         return;
     auto& device = controllers[attempts++];
-    if (initialize(device, pci))
+    if (initialize(device, pci, model))
         return;
     stop(device.adapter);
     log("e1000: initialization failed at %u:%u.%u\n", uint64_t(pci.bus), uint64_t(pci.slot),

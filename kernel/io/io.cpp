@@ -57,6 +57,7 @@ static_assert(sizeof(Iovec) == 16 && sizeof(Message) == 56);
 
 struct IoRequest {
     Handle* handle;
+    Handle* pipe_target;
     Task* record_task = nullptr;
     unsigned record_command = 0;
     RecordFlock record{}, original_record{};
@@ -115,6 +116,7 @@ static void destroy(IoRequest* request) {
         request->unix_record->drop();
     if (request->unix_rights)
         request->unix_rights->drop();
+    close_handle(request->pipe_target);
     close_handle(request->handle);
     release(request);
 }
@@ -1549,7 +1551,30 @@ static int64_t inotify_attempt(Task& task, IoRequest& request) {
     return request.progress;
 }
 
+static int64_t pipe_transfer_attempt(Task& task, const IoRequest& request) {
+    auto source = request.handle;
+    auto target = request.pipe_target;
+    bool duplicate = request.call.rax == 276;
+    int64_t result = pipe_transfer(*source->pipe, *target->pipe, request.single.length, duplicate);
+    if (result == -32)
+        queue_signal(&task, 13, task.process->pid);
+    if (result == -11 && request.stream_blocking)
+        return would_block;
+    if (result > 0) {
+        if (duplicate) {
+            inotify_dentry(source->opened_dentry, inotify_access);
+            inotify_dentry(target->opened_dentry, inotify_modify);
+        } else {
+            inotify_dentry(target->opened_dentry, inotify_modify);
+            inotify_dentry(source->opened_dentry, inotify_access);
+        }
+    }
+    return result;
+}
+
 static int64_t attempt(Task& task, IoRequest& request) {
+    if (request.pipe_target)
+        return pipe_transfer_attempt(task, request);
     auto h = request.handle;
     const auto& f = request.call;
     // A disconnected stream may already have a successor on this description.
@@ -1750,7 +1775,58 @@ static int64_t attempt(Task& task, IoRequest& request) {
     return result;
 }
 
+static int64_t pipe_transfer_syscall(Task& task, const Frame& frame) {
+    bool duplicate = frame.rax == 276;
+    unsigned flags = duplicate ? frame.r10 : frame.r9;
+    size_t length = duplicate ? frame.rdx : frame.r8;
+    if (!length && !duplicate)
+        return 0;
+    if (flags & ~15u)
+        return -22;
+    if (!length)
+        return 0;
+    int input = int(frame.rdi);
+    int output = int(duplicate ? frame.rsi : frame.rdx);
+    auto source = unsigned(input) < max_fds ? task.files->entries[input].handle : nullptr;
+    auto target = unsigned(output) < max_fds ? task.files->entries[output].handle : nullptr;
+    if (!source || !target)
+        return -9;
+    if (!duplicate && ((source->pipe && frame.rsi) || (target->pipe && frame.r10)))
+        return -29;
+    if (((source->flags | target->flags) & 010000000) || (source->flags & 3) == 1 ||
+        !(target->flags & 3))
+        return -9;
+    if (!source->pipe || !target->pipe || source->pipe == target->pipe)
+        return -22;
+    if (task.io)
+        panic("active I/O at syscall entry");
+    auto request = static_cast<IoRequest*>(alloc(sizeof(IoRequest)));
+    if (!request)
+        return -12;
+    *request = {};
+    request->handle = source;
+    request->pipe_target = target;
+    request->call = frame;
+    request->vectors = &request->single;
+    request->single.length = length;
+    request->stream_blocking = !(flags & 2) && !((source->flags | target->flags) & 04000);
+    retain(source);
+    retain(target);
+    int64_t result = pipe_transfer_attempt(task, *request);
+    if (result == would_block) {
+        task.io = request;
+        task.state = State::blocked;
+        task.wait = Wait::read;
+        task.wait_fd = input;
+    } else {
+        destroy(request);
+    }
+    return result;
+}
+
 int64_t io_syscall(Task& task, const Frame& frame) {
+    if (frame.rax == 275 || frame.rax == 276)
+        return pipe_transfer_syscall(task, frame);
     // Linux validates the operation before looking up the descriptor.
     if (frame.rax == 73 && !file_lock_operation(uint32_t(frame.rsi)))
         return -22;
@@ -1805,8 +1881,8 @@ bool io_resume(Task& task) {
         panic("blocked I/O without request");
     // An unavailable handle cannot make progress or access an expired wait's buffers.
     int64_t result = would_block;
-    if (request->locking || request->handle->packet || request->handle->inet ||
-        request->handle->netlink ||
+    if (request->pipe_target || request->locking || request->handle->packet ||
+        request->handle->inet || request->handle->netlink ||
         (request->handle->socket && request->handle->socket->type == 2 &&
          (request->unix_record || request->handle->socket->write_closed ||
           request->handle->socket->datagram_error)) ||
@@ -1817,7 +1893,7 @@ bool io_resume(Task& task) {
             return false;
         result = timeout_result(task, *request);
     }
-    if (result > 0 && !request->locking)
+    if (result > 0 && !request->locking && !request->pipe_target)
         inotify_dentry(request->handle->opened_dentry,
                        request->write ? inotify_modify : inotify_access);
     // Commit the result before signal delivery; handlers have their own syscall state.

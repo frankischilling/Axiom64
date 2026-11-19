@@ -71,6 +71,9 @@ WORKLOADS = {
                                        'retained-writes', 'partial-writes',
                                        'rendezvous', 'transient-peer',
                                        'interruption-cancellation', 'inode-aliases', 'unlink-recreate')),
+    'pipe-transfer': ('PIPE_TRANSFER', ('arguments', 'shared-and-moved-slots', 'packet-boundaries',
+                                       'readiness', 'broken-output', 'retained-output',
+                                       'retained-input', 'interruption', 'restart')),
     'posix-aio': ('POSIX_AIO', ('positioned-sync-errors', 'signal', 'lists-thread',
                                 'timeout-interrupt-cancel', 'descriptor-reuse')),
 }

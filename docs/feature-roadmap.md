@@ -380,6 +380,9 @@ queued data order on both kinds of pipe. Packet mode supports short-read
 discard, large-write splitting, and per-description mode changes.
 Pipe sysctls set the capacity ceiling and per-user page limits. Guest tests
 exercise quota failures, shrink, permission checks, and release after the last close.
+Pipe-to-pipe `splice` and `tee` preserve packet boundaries and hold both
+descriptions during a blocked transfer. Transfers between files or sockets
+and pipes remain planned.
 [Epoll lifetime tests](io.md#epoll-descriptor-lifetime) check duplicate and reused
 descriptors, inherited watches, waits that survive descriptor replacement,
 and file-type admission with the Linux errno and poll-mask behavior.

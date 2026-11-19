@@ -1174,11 +1174,11 @@ jobs:
           make test-epoll-lifetime
           sudo -n make test-epoll-nested-native
           make test-epoll-nested
-      - name: Compare named pipe behavior across processes and ext2 boots
+      - name: Compare pipe transfers and named pipe behavior across processes and filesystems
         if: matrix.suite == 'boot'
         run: |
-          sudo -n make test-named-pipes-native
-          make test-named-pipes
+          sudo -n make test-named-pipes-native test-pipe-transfer-native
+          make test-named-pipes test-pipe-transfer
       - name: Compare POSIX semaphores, message queues, and asynchronous I/O
         if: matrix.suite == 'boot'
         run: |
@@ -1835,6 +1835,8 @@ jobs:
             build/posix-aio-guest/**
             build/named-pipes-native/**
             build/named-pipes-guest/**
+            build/pipe-transfer-native/**
+            build/pipe-transfer-guest/**
             build/poll-waits-native/**
             build/poll-waits-guest/**
             build/select-waits-native/**

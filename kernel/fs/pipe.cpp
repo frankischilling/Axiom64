@@ -181,7 +181,8 @@ int64_t pipe_write(Handle& handle, const void* data, size_t count, bool merge_ta
         uint64_t page = page_alloc();
         if (!page)
             return -12;
-        pipe.slot(pipe.occupied++) = {page, 0, 0, bool(handle.flags & pipe_direct)};
+        bool packet = handle.flags & pipe_direct;
+        pipe.slot(pipe.occupied++) = {page, 0, 0, packet, !packet};
     }
     auto& slot = pipe.slot(pipe.occupied - 1);
     memcpy(static_cast<uint8_t*>(physical(slot.page)) + slot.end, data, count);
@@ -189,6 +190,55 @@ int64_t pipe_write(Handle& handle, const void* data, size_t count, bool merge_ta
     pipe.size += count;
     epoll_notify(&handle, 1 | 0x40);
     return count;
+}
+
+int64_t pipe_transfer(Pipe& input, Pipe& output, size_t length, bool duplicate) {
+    if (!input.occupied && input.writers)
+        return -11;
+    if (!output.readers)
+        return -32;
+    if (output.full())
+        return -11;
+
+    bool input_was_full = input.full();
+    size_t moved = 0;
+    unsigned index = 0;
+    int error = 0;
+    while (moved < length && index < input.occupied && !output.full()) {
+        auto& source = input.slot(index);
+        size_t available = source.end - source.begin;
+        size_t count = min(length - moved, available);
+        auto target = source;
+        if (duplicate || count < available) {
+            if (!page_try_retain(source.page)) {
+                error = -14;
+                break;
+            }
+            target.can_merge = false;
+        }
+        target.end = target.begin + count;
+        output.slot(output.occupied++) = target;
+        output.size += count;
+        moved += count;
+
+        if (duplicate) {
+            ++index;
+        } else {
+            input.size -= count;
+            if (count == available) {
+                input.first = (input.first + 1) & (input.capacity - 1);
+                --input.occupied;
+            } else {
+                source.begin += count;
+            }
+        }
+    }
+    if (!moved)
+        return error;
+    if (input_was_full && !input.full())
+        descriptor_wait_notify(&input, 4 | 0x100);
+    descriptor_wait_notify(&output, 1 | 0x40);
+    return moved;
 }
 
 int64_t pipe_read(Pipe* pipe, void* buffer, size_t length, bool peek) {

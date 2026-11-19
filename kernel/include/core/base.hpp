@@ -137,6 +137,7 @@ uint64_t page_alloc(size_t count = 1);
 void page_free(uint64_t p, size_t count = 1);
 
 void page_retain(uint64_t p, size_t count = 1);
+bool page_try_retain(uint64_t p);
 
 bool page_shared(uint64_t p, size_t count = 1);
 

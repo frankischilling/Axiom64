@@ -148,6 +148,18 @@ void page_retain(uint64_t p, size_t count) {
     }
 }
 
+bool page_try_retain(uint64_t p) {
+    if (!p || p % page_size || p / page_size >= max_pages)
+        panic("invalid page retain");
+    auto& refs = page_references[p / page_size];
+    if (!refs)
+        panic("invalid page reference");
+    if (refs == UINT16_MAX)
+        return false;
+    ++refs;
+    return true;
+}
+
 bool page_shared(uint64_t p, size_t count) {
     if (!p || p / page_size + count > max_pages)
         return false;

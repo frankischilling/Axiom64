@@ -7,6 +7,7 @@ Axiom64 retains the open file description selected by an I/O syscall while that 
 | Operations | Current scope |
 | --- | --- |
 | `read`, `write`, `readv`, `writev` | Existing regular files, pipes, Unix stream sockets, event counters, and character/block devices |
+| `splice`, `tee` | Page-backed transfers between two distinct pipes or FIFO endpoints |
 | `pread64`, `pwrite64` | Existing seekable files and block devices; preserve the shared file offset; pipes, sockets, and character devices return `ESPIPE` |
 | `recvfrom`, `sendto` | Connected Unix streams, including receive-address output; a send destination is unsupported |
 | `recvmsg`, `sendmsg` | Unix stream messages with copied iovec metadata, receive source names, sender credentials and transferred file descriptions |
@@ -344,7 +345,15 @@ TCP transfers check stream availability and errors before accessing user pages. 
 
 `tcp_write_check` checks pending errors and send capacity before source copying. The receive peek/copy/consume sequence uses the existing single-CPU syscall discipline; synchronization across that sequence remains required before SMP.
 
-Each request retains one `Handle`, including the pipe endpoint, socket/listener, device, or inode that it owns. Completion, errors, timeout expiry, caught-signal interruption, group stop, thread/group exit, and successful exec teardown release that reference. A failed exec leaves other threads and their waiting requests intact. Closing the last retained pipe endpoint updates reader/writer counts; closing the last socket description releases its socket and wakes its peer through the normal readiness path.
+Each request holds the open descriptions it uses until completion, error, timeout, signal interruption, group stop, thread/group exit, or successful exec teardown. A failed exec leaves other threads and their waiting requests intact. Closing the last retained pipe endpoint updates reader and writer counts. Closing the last socket description releases its socket and wakes its peer through the normal readiness path.
+
+Pipe-to-pipe `splice` moves complete slots and shares a page for a partial move.
+`tee` shares the input pages and leaves the source pipe readable. Shared output
+slots preserve packet boundaries and do not accept appended bytes. A blocked
+transfer holds both open descriptions and returns the first available prefix.
+The native and guest checks cover slot capacity, partial transfers, packet
+boundaries, readiness, SIGPIPE, signal interruption, restart, and descriptor
+reuse.
 
 Blocking TCP write/writev/send/sendmsg calls keep the transferred count and remaining cursor while the send queue is full. Completion uses the original retained description and imported vectors even after close/reuse or dup2 replacement. Blocking mode is captured at syscall entry; changing O_NONBLOCK through an alias does not convert an in-progress send or MSG_WAITALL into a different attempt. Finite send deadlines and caught signals return an already queued prefix without replaying it, including with SA_RESTART. Initially nonblocking calls and MSG_DONTWAIT return their available prefix immediately. Native and VM comparisons check this send progress; the remaining TCP reliability requirements are described in [TCP support](tcp.md).
 
@@ -365,6 +374,8 @@ Nested handlers can issue their own blocking I/O. `sigreturn` restores the appro
 ```sh
 sudo -n make test-thread-io-native
 make test-thread-io
+sudo -n make test-pipe-transfer-native
+make test-pipe-transfer
 make test-threads
 make test
 ```
@@ -377,4 +388,8 @@ Socket timeout checks cover all ten supported operation forms, option validation
 
 Evidence is in `build/threads-io-{bios,uefi}.log` and `build/threads-io-results.json`. The complete thread and full ABI suites also require both linkage markers. Host results do not replace guest evidence.
 
-The implementation permits one saved I/O request per task, at most 1024 vectors, and at most `0x7ffff000` bytes per operation. Transfers use 4096-byte kernel buffers. It runs on one CPU with interrupts masked in syscalls. SMP synchronization, splice, terminal behavior, full TCP/connect interruption and deadline acceptance, broader message and socket features, and complete Linux conformance remain planned.
+The implementation permits one saved I/O request per task. Vectored I/O
+accepts up to 1024 vectors and `0x7ffff000` bytes per request. It runs on one
+CPU with interrupts masked in syscalls. Transfers between files or sockets
+and pipes, `vmsplice`, SMP synchronization, terminal behavior, broader
+TCP/connect deadline coverage, and complete Linux conformance remain planned.

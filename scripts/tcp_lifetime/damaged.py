@@ -97,6 +97,12 @@ def mutations(path, lane, evidence, native, directory, statistics=None):
                                clock.pcap_ms(opened[0], opened[2]['ms'] - LONGER_MS + 1000), initial + 1000)
     next(flow for flow in adjusted['flows'] if flow['kind'] == 3 and flow['role'] == 0)['reopened_at'] = initial + 1000
     reject(bytes_, adjusted)
+    # A recovery packet can cross an opposite-direction timestamp, but it
+    # cannot move before the recorded reopen or run backward in its own lane.
+    changed(recovered, recovered[1], opened[2]['ms'] - 1)
+    previous_outgoing, last_outgoing = [entry for entry in flows[3] if entry[0] > opened[0] and
+                                        entry[2]['outgoing']][-2:]
+    changed(last_outgoing, last_outgoing[1], previous_outgoing[2]['ms'] - .001)
     # Move a whole flow onto another live case's endpoint, with valid checksums
     # and matching peer records. The original seventeen controls stay intact.
     bytes_, adjusted = original, copy.deepcopy(evidence)
@@ -108,7 +114,7 @@ def mutations(path, lane, evidence, native, directory, statistics=None):
             struct.pack_into('!H', modified, tcp_at + (0 if row['outgoing'] else 2), 46080 + lane)
             bytes_, adjusted = rewrite(bytes_, offset, repair(modified), adjusted, endian)
     reject(bytes_, adjusted)
-    assert count == 18
+    assert count == 20
     return count
 
 
@@ -131,7 +137,7 @@ def main():
                     assert verify(capture, lane, peers[lane], native, statistics) == verified[item]
                     negatives += mutations(capture, lane, peers[lane], native, Path(temporary), statistics=statistics)
                     captures += 1
-    assert captures == len(report['captures']) and negatives == captures * 18
+    assert captures == len(report['captures']) and negatives == captures * 20
     print(f'TCP_LIFETIME_CAPTURE_CHECKER_PASS captures={captures} negative_cases={negatives}')
     (directory / 'tcp-lifetime-damage-results.json').write_text(json.dumps(dict(captures=captures,
         negative_cases=negatives, complete_matrix=report['complete_matrix'], passed=True), indent=2) + '\n')

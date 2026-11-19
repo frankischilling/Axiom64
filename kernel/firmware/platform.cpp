@@ -6,7 +6,7 @@
  * @date    2026-11-19
  *
  * Reads platform tables through the boot memory map, reports interrupt
- * topology, and hands PCI configuration apertures to the PCI driver.
+ * topology and definition blocks, and passes PCI apertures to the driver.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -79,6 +79,12 @@ bool firmware_discover(uint64_t rsdp, Acpi::InterruptTopology& topology) {
             uint64_t(fixed.sci), uint64_t(fixed.boot_flags), uint64_t(fixed.flags));
     else
         log("ACPI: FADT absent or rejected\n");
+    Acpi::DefinitionBlocks blocks;
+    if (Acpi::find_definition_blocks(rsdp, firmware_read, nullptr, blocks))
+        log("ACPI definition blocks: DSDT=%u bytes SSDTs=%u\n", uint64_t(blocks.dsdt.length),
+            uint64_t(blocks.ssdt_count));
+    else
+        log("ACPI: definition blocks absent or rejected\n");
     Acpi::Mcfg mcfg;
     if (Acpi::find_mcfg(rsdp, firmware_read, nullptr, mcfg))
         pci_configure_ecam(mcfg);

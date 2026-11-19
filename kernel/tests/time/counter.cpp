@@ -516,11 +516,112 @@ static void isa_routes() {
     std::puts("ISA_INTERRUPT_ROUTE_PASS valid=4 rejected=9");
 }
 
+static void definition_blocks() {
+    using ax::Acpi::DefinitionBlocks;
+    constexpr auto rsdp = Firmware::base, rsdt = Firmware::rsdt, xsdt = Firmware::xsdt;
+    constexpr auto fadt = Firmware::hpet + 512, dsdt32 = fadt + 256, dsdt64 = dsdt32 + 64;
+    constexpr auto ssdt_a = dsdt64 + 128, ssdt_b = ssdt_a + 64;
+    constexpr uint64_t high = 1ull << 32;
+    Firmware f;
+    auto table = [&](uint64_t address, const char* signature, size_t length) {
+        std::memcpy(f.at(address), signature, 4);
+        f.put(address + 4, length, 4);
+        f.sum(address, length, 9);
+    };
+    table(fadt, "FACP", 148);
+    f.put(fadt + 40, dsdt32, 4);
+    f.put(fadt + 140, high + dsdt64, 8);
+    f.sum(fadt, 148, 9);
+    table(dsdt32, "DSDT", 40);
+    table(dsdt64, "DSDT", 41);
+    table(ssdt_a, "SSDT", 42);
+    table(ssdt_b, "SSDT", 43);
+    f.put(xsdt + 36, ssdt_b, 8);
+    f.put(xsdt + 44, fadt, 8);
+    f.put(xsdt + 52, ssdt_a, 8);
+    f.put(xsdt + 60, ssdt_b, 8);
+    table(xsdt, "XSDT", 68);
+    f.put(rsdt + 36, fadt, 4);
+    f.put(rsdt + 40, ssdt_a, 4);
+    table(rsdt, "RSDT", 44);
+    f.put(rsdp + 16, rsdt, 4);
+    f.rsdp_sum();
+
+    auto reader = +[](uint64_t address, size_t length, void* context) -> const uint8_t* {
+        if (address >= high)
+            address -= high;
+        return Firmware::read(address, length, context);
+    };
+    DefinitionBlocks blocks;
+    auto find = [&]() { return ax::Acpi::find_definition_blocks(rsdp, reader, &f, blocks); };
+    assert(find() && blocks.dsdt.table == f.at(dsdt64) && blocks.dsdt.address == high + dsdt64 &&
+           blocks.dsdt.length == 41 && blocks.ssdt_count == 2);
+    assert(blocks.ssdt[0].address == ssdt_b && blocks.ssdt[0].length == 43 &&
+           blocks.ssdt[1].address == ssdt_a && blocks.ssdt[1].length == 42);
+
+    f.at(ssdt_a)[9]++;
+    assert(!find() && !blocks.dsdt.table && !blocks.ssdt_count && !blocks.ssdt[0].table);
+    f.sum(ssdt_a, 42, 9);
+    f.at(dsdt64)[9]++;
+    assert(!find() && !blocks.dsdt.table);
+    f.sum(dsdt64, 41, 9);
+    f.put(dsdt64 + 4, 1024 * 1024 + 1, 4);
+    assert(!find() && !blocks.dsdt.table);
+    table(dsdt64, "DSDT", 41);
+    f.at(xsdt)[9]++;
+    assert(!find()); // A damaged XSDT cannot select a different AML namespace.
+    f.sum(xsdt, 68, 9);
+    f.put(xsdt + 60, 1ull << 52, 8);
+    f.sum(xsdt, 68, 9);
+    assert(!find() && !blocks.dsdt.table && !blocks.ssdt_count);
+    f.put(xsdt + 60, 0, 8);
+    f.sum(xsdt, 68, 9);
+    assert(find() && blocks.ssdt_count == 2);
+
+    f.put(fadt + 140, 0, 8);
+    f.sum(fadt, 148, 9);
+    assert(find() && blocks.dsdt.address == dsdt32 && blocks.ssdt_count == 2);
+    // An ACPI 1.0 FADT has no extended pointer even if the following bytes are readable.
+    f.put(fadt + 140, high + dsdt64, 8);
+    table(fadt, "FACP", 116);
+    f.at(rsdp)[15] = 0;
+    f.rsdp_sum();
+    assert(find() && blocks.dsdt.address == dsdt32 && blocks.ssdt_count == 1 &&
+           blocks.ssdt[0].address == ssdt_a);
+
+    constexpr uint64_t large_base = 1ull << 40, megabyte = 1024 * 1024;
+    static std::array<uint8_t, megabyte> large{};
+    std::memcpy(large.data(), "SSDT", 4);
+    large[6] = 16; // One MiB in the little-endian table length.
+    uint8_t sum = 0;
+    for (uint8_t byte : large)
+        sum += byte;
+    large[9] = uint8_t(0 - sum);
+    auto large_reader = +[](uint64_t address, size_t length, void* context) -> const uint8_t* {
+        if (address >= large_base && address < large_base + 8 * megabyte && length <= large.size())
+            return large.data();
+        return Firmware::read(address, length, context);
+    };
+    f.at(rsdp)[15] = 2;
+    f.rsdp_sum();
+    f.put(xsdt + 36, fadt, 8);
+    for (unsigned index = 0; index < 8; ++index)
+        f.put(xsdt + 44 + 8 * index, large_base + index * megabyte, 8);
+    table(xsdt, "XSDT", 36 + 8 * 8); // FADT and seven one-MiB SSDTs fit together.
+    assert(ax::Acpi::find_definition_blocks(rsdp, large_reader, &f, blocks) &&
+           blocks.ssdt_count == 7);
+    table(xsdt, "XSDT", 36 + 9 * 8);
+    assert(!ax::Acpi::find_definition_blocks(rsdp, large_reader, &f, blocks) &&
+           !blocks.dsdt.table && !blocks.ssdt_count);
+    std::puts("ACPI_DEFINITION_BLOCKS_PASS legacy extended ordered_ssdt invalid_namespace budget");
+}
+
 int main() {
     counter_tests();
     firmware_tests();
     platform_tables();
     ecam_tables();
     isa_routes();
+    definition_blocks();
     std::puts("CLOCK_CODEC_TESTS_PASS");
 }

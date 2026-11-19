@@ -6,7 +6,7 @@
  * @date    2026-11-19
  *
  * Verifies checksums and bounds before decoding clock, interrupt, and PCI
- * configuration data from the firmware root tables.
+ * configuration data or exposing ACPI definition blocks.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -56,12 +56,12 @@ static const uint8_t* read(uint64_t address, size_t length, Read reader, void* c
 }
 
 static const uint8_t* table(uint64_t address, const char* signature, size_t minimum, Read reader,
-                            void* context) {
+                            void* context, size_t maximum = max_table_bytes) {
     const uint8_t* header = read(address, 36, reader, context);
     if (!header || !match(header, signature, 4))
         return nullptr;
     size_t length = little(header + 4, 4);
-    if (length < minimum || length > max_table_bytes)
+    if (length < minimum || length > maximum)
         return nullptr;
     const uint8_t* complete = read(address, length, reader, context);
     return complete && little(complete + 4, 4) == length && match(complete, signature, 4) &&
@@ -77,30 +77,44 @@ struct Query {
     void* output;
 };
 
-static bool find_in_root(uint64_t address, bool extended, Read reader, void* context,
-                         const Query& query) {
+struct Root {
+    const uint8_t* entries;
+    size_t count, width;
+
+    uint64_t address(size_t index) const {
+        return little(entries + index * width, width);
+    }
+};
+
+static Root read_root(uint64_t address, bool extended, Read reader, void* context) {
     const uint8_t* root = table(address, extended ? "XSDT" : "RSDT", 36, reader, context);
     if (!root)
-        return false;
+        return {};
     size_t bytes = little(root + 4, 4) - 36, stride = extended ? 8 : 4;
     if (bytes % stride || bytes / stride > max_root_entries)
-        return false;
-    for (size_t offset = 36; offset < 36 + bytes; offset += stride) {
+        return {};
+    return {root + 36, bytes / stride, stride};
+}
+
+static bool find_in_root(Root root, Read reader, void* context, const Query& query) {
+    for (size_t i = 0; i < root.count; ++i) {
         const uint8_t* entry =
-            table(little(root + offset, stride), query.signature, query.minimum, reader, context);
+            table(root.address(i), query.signature, query.minimum, reader, context);
         if (entry && query.accept(entry, query.output))
             return true;
     }
     return false;
 }
 
-static bool find(uint64_t address, Read reader, void* context, const Query& query) {
+static bool read_roots(uint64_t address, Read reader, void* context, uint64_t& rsdt,
+                       uint64_t& xsdt) {
     if (!reader)
         return false;
     const uint8_t* first = read(address, 20, reader, context);
     if (!first || !match(first, "RSD PTR ", 8) || !checksum(first, 20) || first[15] == 1)
         return false;
-    uint64_t rsdt = little(first + 16, 4);
+    rsdt = little(first + 16, 4);
+    xsdt = 0;
     if (first[15] >= 2) {
         const uint8_t* header = read(address, 36, reader, context);
         if (!header)
@@ -112,10 +126,17 @@ static bool find(uint64_t address, Read reader, void* context, const Query& quer
         if (!complete || !match(complete, "RSD PTR ", 8) || little(complete + 20, 4) != length ||
             !checksum(complete, 20) || !checksum(complete, length))
             return false;
-        if (find_in_root(little(complete + 24, 8), true, reader, context, query))
-            return true;
+        xsdt = little(complete + 24, 8);
     }
-    return find_in_root(rsdt, false, reader, context, query);
+    return true;
+}
+
+static bool find(uint64_t address, Read reader, void* context, const Query& query) {
+    uint64_t rsdt, xsdt;
+    if (!read_roots(address, reader, context, rsdt, xsdt))
+        return false;
+    return find_in_root(read_root(xsdt, true, reader, context), reader, context, query) ||
+           find_in_root(read_root(rsdt, false, reader, context), reader, context, query);
 }
 
 static bool accept_hpet(const uint8_t* hpet, void* output) {
@@ -254,6 +275,63 @@ static bool accept_fadt(const uint8_t* fadt, void* output) {
 
 bool find_fixed_description(uint64_t rsdp, Read reader, void* context, FixedDescription& result) {
     return find(rsdp, reader, context, {"FACP", 116, accept_fadt, &result});
+}
+
+static bool read_definition(uint64_t address, const char* signature, Read reader, void* context,
+                            size_t& budget, DefinitionBlock& result) {
+    // The boot firmware reader can map at most one MiB per table.
+    constexpr size_t maximum = 1024 * 1024;
+    const uint8_t* block =
+        table(address, signature, 36, reader, context, budget < maximum ? budget : maximum);
+    if (!block)
+        return false;
+    size_t length = little(block + 4, 4);
+    result = {block, address, length};
+    budget -= length;
+    return true;
+}
+
+bool find_definition_blocks(uint64_t rsdp, Read reader, void* context, DefinitionBlocks& result) {
+    result = {};
+    uint64_t rsdt, xsdt;
+    if (!read_roots(rsdp, reader, context, rsdt, xsdt))
+        return false;
+    Root root = read_root(xsdt ? xsdt : rsdt, xsdt != 0, reader, context);
+    const uint8_t* fadt = nullptr;
+    for (size_t i = 0; i < root.count && !fadt; ++i)
+        fadt = table(root.address(i), "FACP", 116, reader, context);
+    if (!fadt)
+        return false;
+    uint64_t dsdt = little(fadt + 4, 4) >= 148 ? little(fadt + 140, 8) : 0;
+    if (!dsdt)
+        dsdt = little(fadt + 40, 4);
+    size_t budget = 8 * 1024 * 1024;
+    if (!read_definition(dsdt, "DSDT", reader, context, budget, result.dsdt))
+        return false;
+    for (size_t i = 0; i < root.count; ++i) {
+        uint64_t address = root.address(i);
+        if (!address)
+            continue;
+        const auto signature = read(address, 4, reader, context);
+        if (!signature) {
+            result = {};
+            return false;
+        }
+        if (!match(signature, "SSDT", 4))
+            continue;
+        bool repeated = false;
+        for (size_t n = 0; n < result.ssdt_count; ++n)
+            repeated |= result.ssdt[n].address == address;
+        if (repeated)
+            continue;
+        if (!read_definition(address, "SSDT", reader, context, budget,
+                             result.ssdt[result.ssdt_count])) {
+            result = {};
+            return false;
+        }
+        ++result.ssdt_count;
+    }
+    return true;
 }
 
 static bool ecam_conflicts(const EcamRegion& first, const EcamRegion& second) {

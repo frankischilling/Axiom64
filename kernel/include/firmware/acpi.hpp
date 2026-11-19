@@ -5,8 +5,8 @@
  * @author  frankischilling
  * @date    2026-11-19
  *
- * Defines the clock, interrupt, fixed-description, and PCI aperture records
- * returned by the bounded firmware parsers.
+ * Defines clock, interrupt, fixed-description, PCI aperture, and definition
+ * block records returned by the bounded firmware parsers.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -95,9 +95,23 @@ struct Mcfg {
     unsigned count;
 };
 
+struct DefinitionBlock {
+    const uint8_t* table;
+    uint64_t address;
+    size_t length;
+};
+
+struct DefinitionBlocks {
+    DefinitionBlock dsdt;
+    DefinitionBlock ssdt[max_root_entries];
+    size_t ssdt_count;
+};
+
 // Reader must return stable, mapped bytes or nullptr. Never follows unbounded lengths.
 bool find_hpet(uint64_t rsdp, Read reader, void* context, Hpet& result);
 bool find_interrupt_topology(uint64_t rsdp, Read reader, void* context, InterruptTopology& result);
 bool find_fixed_description(uint64_t rsdp, Read reader, void* context, FixedDescription& result);
 bool find_mcfg(uint64_t rsdp, Read reader, void* context, Mcfg& result);
+// Borrows immutable table storage. SSDTs retain root-table order after the DSDT.
+bool find_definition_blocks(uint64_t rsdp, Read reader, void* context, DefinitionBlocks& result);
 } // namespace ax::Acpi

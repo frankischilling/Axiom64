@@ -51,6 +51,10 @@ exceed the CPU's physical address limit. It maps configuration registers
 with device cache attributes and uses legacy PCI configuration ports for
 segment-zero buses without a usable ECAM mapping.
 
+Boot also validates the DSDT referenced by the FADT and the SSDTs listed in
+the ACPI root table. SSDTs retain their firmware order for namespace loading.
+ACPI method evaluation for PCI INTx routing remains under development.
+
 Sources and public headers use matching subsystem folders. Desktop configuration is under `userspace/desktop/`; guest and host tests are grouped by the subsystem they exercise. [Source layout and build discovery](source-layout.md) describe the paths and conventions.
 
 Each memory context has four-level user page tables with user, write, and execute permissions. The upper half shares supervisor mappings. Syscall buffers are validated across the full range and copied through the physical mapping. Clone can share the address space, file table, working directory/umask, and signal dispositions; fork copies private pages and retains shared page references. The scheduler uses one CPU, bounded task slots, and timer preemption; syscalls execute with interrupts masked.

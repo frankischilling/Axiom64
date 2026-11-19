@@ -101,6 +101,10 @@ def run(firmware, transport, timeout, seed, scratch, reference, machine='pc'):
                            r'gsi=(\d+) input=(\d+) cpu=(\d+) ticks=(\d+)$', text, re.M)
         if len(timer) != 1 or int(timer[0][-1]) < 2:
             missing.append('two delivered PIT IRQs before switching to I/O APIC')
+        definitions = re.findall(r'^ACPI definition blocks: DSDT=(\d+) bytes SSDTs=(\d+)$',
+                                 text, re.M)
+        if len(definitions) != 1 or int(definitions[0][0]) < 36:
+            missing.append('validated Q35 ACPI definition blocks')
     traces = re.findall(r'FILE_LOCK_TRACE_PASS operations=4096 digest=([0-9a-f]{8})', text)
     error = None
     fsck = None

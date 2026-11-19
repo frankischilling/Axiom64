@@ -44,6 +44,7 @@ class HostSourceIndexTests(unittest.TestCase):
         self.snapshot_data = self.data
         self.declared_size = None
         self.disconnects = 0
+        self.payloads = {}
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -52,6 +53,13 @@ class HostSourceIndexTests(unittest.TestCase):
                 if owner.disconnects:
                     owner.disconnects -= 1
                     self.close_connection = True
+                    return
+                if self.path in owner.payloads:
+                    status, data = owner.payloads[self.path]
+                    self.send_response(status)
+                    self.send_header('Content-Length', str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
                     return
                 snapshot = self.path.startswith('/snapshot/')
                 mutable = self.path.endswith('/main/source/Sources.xz')
@@ -205,6 +213,61 @@ class HostSourceIndexTests(unittest.TestCase):
             self.fetch()
         self.assertFalse(self.index.exists())
         self.assertEqual(self.proof()['actual_sha256'], hashlib.sha256(self.snapshot_data).hexdigest())
+
+    def signed_payload(self):
+        name = 'glibc_2.39-0ubuntu8.12.dsc'
+        bases = ('/primary/', '/security/', '/snapshot/')
+        paths = [base + name for base in bases]
+        mirrors = tuple(self.mirror.replace('/ubuntu/', base) for base in bases)
+        report = self.output / 'archive-authentication' / 'glibc-payloads' / (name + '.json')
+        files = (self.cache / name, report)
+        args = (name, self.cache, self.output, mirrors, hashlib.sha256(self.data).hexdigest(), len(self.data))
+        return paths, files, args
+
+    def test_public_pool_denial_can_use_an_authenticated_mirror(self):
+        paths, (cache, report), args = self.signed_payload()
+        self.payloads.update({paths[0]: (403, b'denied'), paths[1]: (200, self.data)})
+        self.assertEqual(host_sources.authenticated_payload(*args), cache)
+        self.assertEqual(cache.read_bytes(), self.data)
+        self.assertEqual(self.requests, paths[:2])
+        receipt = json.loads(report.read_text())
+        self.assertEqual([item['status'] for item in receipt['attempts']], [403, 200])
+        self.assertTrue(receipt['passed'])
+        self.assertEqual(cache.stat().st_mode & 0o777, 0o644)
+
+    def test_rotated_pool_payload_can_use_the_signed_publication_snapshot(self):
+        paths, (cache, report), args = self.signed_payload()
+        self.payloads.update(dict(zip(paths, [(403, b''), (404, b''), (200, self.data)])))
+        self.assertEqual(host_sources.authenticated_payload(*args).read_bytes(), self.data)
+        self.assertEqual(self.requests, paths)
+        self.assertTrue(json.loads(report.read_text())['passed'])
+
+    def test_corrupt_payload_is_never_cached_or_retried_on_another_mirror(self):
+        paths, (cache, report), args = self.signed_payload()
+        self.payloads.update({paths[0]: (200, self.data[::-1]), paths[1]: (200, self.data)})
+        with self.assertRaisesRegex(ValueError, 'checksum differs'):
+            host_sources.authenticated_payload(*args)
+        self.assertEqual(self.requests, paths[:1])
+        self.assertFalse(cache.exists())
+        self.assertFalse(json.loads(report.read_text())['passed'])
+
+    def test_exhausted_public_pool_mirrors_retain_all_failures(self):
+        paths, (cache, report), args = self.signed_payload()
+        self.payloads.update(dict(zip(paths, [(403, b''), (404, b''), (403, b'')])))
+        with self.assertRaises(urllib.error.HTTPError) as failed:
+            host_sources.authenticated_payload(*args)
+        self.assertEqual(failed.exception.code, 403)
+        self.assertFalse(cache.exists())
+        self.assertEqual([x['status'] for x in json.loads(report.read_text())['attempts']], [403, 404, 403])
+
+    def test_bad_cached_payload_fails_before_network(self):
+        _, (cache, report), args = self.signed_payload()
+        cache.write_bytes(b'corrupt')
+        with self.assertRaisesRegex(ValueError, 'checksum differs'):
+            host_sources.authenticated_payload(*args)
+        self.assertEqual(self.requests, [])
+        self.assertEqual(cache.read_bytes(), b'corrupt')
+        self.assertFalse(json.loads(report.read_text())['passed'])
 
     def test_nonpublication_http_failure_has_no_fallback(self):
         self.status = 403

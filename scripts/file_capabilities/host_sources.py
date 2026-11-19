@@ -42,7 +42,7 @@ def open_archive_url(url, attempts=None):
         time.sleep(attempt + 1)
 
 
-def snapshot_index(release, suite):
+def snapshot_archive(release):
     """Locate the signed publication in Canonical's dated archive."""
     match = re.search(r'^Date: (.+)$', release, re.M)
     if not match:
@@ -54,7 +54,22 @@ def snapshot_index(release, suite):
     if published.tzinfo is None:
         return None
     day = published.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-    return f'{SNAPSHOT}{day}/dists/{suite}/main/source/Sources.xz'
+    return f'{SNAPSHOT}{day}/'
+
+
+def publish_cache(path, data):
+    # Native capture runs as root. Ordinary CI readers need these public bytes.
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name + '.',
+                                         suffix='.part', delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(data)
+            os.fchmod(stream.fileno(), 0o644)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def authenticated_index(signed, cache, output, suite, mirror):
@@ -76,7 +91,8 @@ def authenticated_index(signed, cache, output, suite, mirror):
         data = index.read_bytes()
     else:
         canonical = mirror + 'dists/' + suite + '/main/source/Sources.xz'
-        frozen = snapshot_index(release, suite)
+        snapshot = snapshot_archive(release)
+        frozen = snapshot + 'dists/' + suite + '/main/source/Sources.xz' if snapshot else None
         candidates = (url, canonical, frozen) if frozen else (url, canonical)
         for position, candidate in enumerate(candidates):
             url = candidate
@@ -128,21 +144,68 @@ def authenticated_index(signed, cache, output, suite, mirror):
     if not passed:
         raise ValueError('signed Ubuntu Sources index checksum differs')
     if not cached:
-        # A failed transfer never becomes a completed cache entry.
-        temporary = None
-        try:
-            with tempfile.NamedTemporaryFile(dir=cache, prefix=index.name + '.', suffix='.part', delete=False) as stream:
-                temporary = Path(stream.name)
-                stream.write(data)
-                # Native capture runs as root; ordinary CI readers need these public bytes.
-                os.fchmod(stream.fileno(), 0o644)
-            os.replace(temporary, index)
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
+        publish_cache(index, data)
     else:
         index.chmod(0o644)
     return index
+
+
+def authenticated_payload(filename, cache, output, mirrors, checksum, size):
+    """Fetch a public pool file only after learning its authenticated digest."""
+    if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9.+_~-]*', filename):
+        raise ValueError('unsafe glibc source filename')
+    if size <= 0 or not re.fullmatch(r'[a-f0-9]{64}', checksum):
+        raise ValueError('invalid glibc source checksum record')
+    path = cache / filename
+    diagnostic = output / 'archive-authentication' / 'glibc-payloads'
+    diagnostic.mkdir(parents=True, exist_ok=True)
+    report = diagnostic / (filename + '.json')
+    cached = path.exists()
+    attempts = []
+    receipt = dict(filename=filename, cached=cached, attempts=attempts, expected_sha256=checksum,
+                   expected_bytes=size, passed=False)
+
+    def report_status():
+        report.write_text(json.dumps(receipt, indent=2) + '\n')
+
+    if cached:
+        with path.open('rb') as stream:
+            data = stream.read(size + 1)
+    else:
+        for position, mirror in enumerate(mirrors):
+            url = mirror + filename
+            try:
+                with open_archive_url(url, attempts) as response:
+                    attempts.append(dict(url=url, status=response.status))
+                    data = response.read(size + 1)
+                break
+            except urllib.error.HTTPError as error:
+                status = error.code
+                attempts.append(dict(url=url, status=status))
+                error.close()
+                if status not in (403, 404) or position == len(mirrors) - 1:
+                    report_status()
+                    raise
+            except (ConnectionError, TimeoutError, urllib.error.URLError, http.client.IncompleteRead) as error:
+                reason = getattr(error, 'reason', error)
+                attempts.append(dict(url=url, error=type(reason).__name__, message=str(reason)))
+                report_status()
+                raise
+        else:
+            report_status()
+            raise RuntimeError('no archive mirror for authenticated glibc source')
+
+    actual = hashlib.sha256(data).hexdigest()
+    receipt.update(actual_sha256=actual, actual_bytes=len(data),
+                   passed=actual == checksum and len(data) == size)
+    report_status()
+    if not receipt['passed']:
+        raise ValueError('authenticated glibc source checksum differs: ' + filename)
+    if not cached:
+        publish_cache(path, data)
+    else:
+        path.chmod(0o644)
+    return path
 
 
 def capture(output):
@@ -152,23 +215,6 @@ def capture(output):
     name = 'glibc_' + version.split(':')[-1] + '.dsc'
     cache = ROOT / 'downloads/host-glibc' / version.replace(':', '_')
     cache.mkdir(parents=True, exist_ok=True)
-    mirrors = ('https://archive.ubuntu.com/ubuntu/pool/main/g/glibc/',
-               'https://security.ubuntu.com/ubuntu/pool/main/g/glibc/')
-    def fetch(filename):
-        path = cache / filename
-        if not path.exists():
-            for mirror in mirrors:
-                try:
-                    with open_archive_url(mirror + filename) as response:
-                        data = response.read()
-                    path.write_bytes(data)
-                    break
-                except urllib.error.HTTPError as error:
-                    if error.code != 404:
-                        raise
-            else:
-                raise RuntimeError('installed glibc corresponding source is unavailable: ' + filename)
-        return path
     keyring = Path('/usr/share/keyrings/ubuntu-archive-keyring.gpg')
     # Source descriptors are signed by uploaders, whose keys need not occur in
     # the archive keyring. Authenticate the descriptor through the archive's
@@ -198,14 +244,19 @@ def capture(output):
             break
     if paragraph is None:
         raise RuntimeError('installed glibc source version is absent from authenticated Ubuntu indices')
-    descriptor = fetch(name)
     checksums = re.search(r'^Checksums-Sha256:\n((?: [^\n]+\n)+)', paragraph, re.M)
     if not checksums:
         raise ValueError('authenticated glibc source lacks descriptor checksums')
     expected = {filename: (checksum, int(size)) for checksum, size, filename in
                 (line.split() for line in checksums[1].splitlines())}
-    if name not in expected or (hashlib.sha256(descriptor.read_bytes()).hexdigest(), descriptor.stat().st_size) != expected[name]:
-        raise ValueError('authenticated glibc source descriptor checksum differs')
+    if name not in expected:
+        raise ValueError('authenticated glibc source lacks the installed version descriptor')
+    mirrors = ['https://archive.ubuntu.com/ubuntu/', 'https://security.ubuntu.com/ubuntu/']
+    snapshot = snapshot_archive(archive_files[0].read_text())
+    if snapshot:
+        mirrors.append(snapshot)
+    archives = tuple(mirror + 'pool/main/g/glibc/' for mirror in mirrors)
+    descriptor = authenticated_payload(name, cache, output, archives, *expected[name])
     text = descriptor.read_text()
     if not re.search(r'^Version: ' + re.escape(version) + r'$', text, re.M):
         raise ValueError('signed glibc descriptor differs from installed source version')
@@ -215,13 +266,7 @@ def capture(output):
     files = [descriptor]
     for line in match[1].splitlines():
         expected, size, filename = line.split()
-        if Path(filename).name != filename:
-            raise ValueError('unsafe glibc source filename')
-        path = fetch(filename)
-        data = path.read_bytes()
-        if len(data) != int(size) or hashlib.sha256(data).hexdigest() != expected:
-            raise ValueError('signed glibc source checksum differs: ' + filename)
-        files.append(path)
+        files.append(authenticated_payload(filename, cache, output, archives, expected, int(size)))
     destination = output / 'glibc-source'
     destination.mkdir()
     for path in [*files, keyring, *archive_files]:

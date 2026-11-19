@@ -211,7 +211,8 @@ int64_t socket_read(Socket* s, void* data, size_t len, bool peek, size_t peek_of
     return copied;
 }
 
-int64_t socket_write(Socket* s, const void* data, size_t len, uint32_t datagram_entry_limit) {
+int64_t socket_write(Task& task, Socket* s, const void* data, size_t len,
+                     uint32_t datagram_entry_limit) {
     if (s->type == 2) {
         if (s->pass_credentials)
             if (int error = socket_unix_autobind(*s))
@@ -224,7 +225,7 @@ int64_t socket_write(Socket* s, const void* data, size_t len, uint32_t datagram_
         if (len)
             memcpy(record->data(), data, len);
         UnixDatagramTarget target;
-        int64_t result = socket_datagram_write(*current, s, record, nullptr, target);
+        int64_t result = socket_datagram_write(task, s, record, nullptr, target);
         if (result < 0)
             record->drop();
         return result;
@@ -247,7 +248,7 @@ int64_t socket_write(Socket* s, const void* data, size_t len, uint32_t datagram_
     memcpy(record->data(), data, len);
     UnixMessageCredentials identity;
     if (s->pass_credentials || peer->pass_credentials)
-        identity.capture(*current);
+        identity.capture(task);
     UnixRights* rights = nullptr;
     peer->publish_stream(record, len, identity, rights, s->local_name);
     return len;

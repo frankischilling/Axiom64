@@ -78,6 +78,9 @@ WORKLOADS = {
                                        'retained-input', 'retained-file-input',
                                        'retained-file-output', 'retained-vector',
                                        'interruption', 'restart')),
+    'socket-splice': ('SOCKET_SPLICE', ('unix-stream', 'unix-datagram', 'large-datagram', 'tcp4',
+                                       'tcp6', 'udp4', 'udp6', 'unix-rights', 'retained-input',
+                                       'retained-output', 'send-backpressure')),
     'posix-aio': ('POSIX_AIO', ('positioned-sync-errors', 'signal', 'lists-thread',
                                 'timeout-interrupt-cancel', 'descriptor-reuse')),
 }
@@ -103,6 +106,16 @@ def execute(command, log, expected_exit, uids, workload, firmware=None, root='ra
     if workload == 'named-pipes' and firmware is not None:
         markers.append('NAMED_PIPE_LIMITS_PASS')
     observed = {}
+    if workload == 'socket-splice':
+        legacy = (firmware is None and
+                  os.uname().release == '5.15.153.1-microsoft-standard-WSL2')
+        datagrams = [line.removeprefix('SOCKET_SPLICE_DATAGRAM ') for line in lines
+                     if line.startswith('SOCKET_SPLICE_DATAGRAM ')]
+        expected_datagrams = ['unix-datagram=split' if legacy else 'unix-datagram=batched',
+                              'udp4=batched', 'udp6=split' if legacy else 'udp6=batched']
+        if datagrams != expected_datagrams * len(uids):
+            raise RuntimeError(f'wrong socket splice datagram boundaries in {log}')
+        observed['datagrams'] = expected_datagrams
     if workload == 'descriptor-wait-lifetime':
         peeks = [re.fullmatch(r'WAIT_LIFETIME_PEEK call=(\w+) early=([01])', line)
                  for line in lines if line.startswith('WAIT_LIFETIME_PEEK ')]
@@ -205,6 +218,8 @@ def native(directory, workload):
                              'axiom-posix-message-queues']
             legacy_depth = (workload == 'epoll-nested' and
                             os.uname().release == '5.15.153.1-microsoft-standard-WSL2')
+            legacy_datagrams = (workload == 'socket-splice' and
+                                os.uname().release == '5.15.153.1-microsoft-standard-WSL2')
             legacy_seek = False
             if workload == 'epoll-lifetime':
                 version = re.match(r'(\d+)\.(\d+)', os.uname().release)
@@ -216,6 +231,8 @@ def native(directory, workload):
                     flags = ['--legacy-depth', *flags]
                 if legacy_seek:
                     flags = ['--legacy-seek', *flags]
+                if legacy_datagrams:
+                    flags = ['--legacy-datagrams', *flags]
                 row = execute([*namespace, str(executable), *flags],
                               case / f'{uid}.log', 0, [uid], workload)
                 if workload == 'epoll-nested':

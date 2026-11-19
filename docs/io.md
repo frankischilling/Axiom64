@@ -7,7 +7,7 @@ Axiom64 retains the open file description selected by an I/O syscall while that 
 | Operations | Current scope |
 | --- | --- |
 | `read`, `write`, `readv`, `writev` | Existing regular files, pipes, Unix stream sockets, event counters, and character/block devices |
-| `splice`, `tee` | Pipe and FIFO transfers. `splice` also accepts regular RAM and ext2 files as one endpoint. |
+| `splice`, `tee` | Pipe and FIFO transfers. `splice` also accepts regular RAM and ext2 files, Unix streams and datagrams, and IPv4 and IPv6 TCP and UDP sockets. |
 | `vmsplice` | Transfers between userspace vectors and pipe or FIFO endpoints. |
 | `pread64`, `pwrite64` | Existing seekable files and block devices; preserve the shared file offset; pipes, sockets, and character devices return `ESPIPE` |
 | `recvfrom`, `sendto` | Connected Unix streams, including receive-address output; a send destination is unsupported |
@@ -361,6 +361,18 @@ Pipe-to-file `splice` consumes the written prefix, including partial packets.
 It uses the waiting task's file size limit and credentials. A supplied offset
 leaves the shared file position alone. A fault reading the offset prevents the
 transfer. A fault writing it back returns `EFAULT` after the bytes move.
+
+Socket `splice` copies through the existing transports. Socket offsets must be
+null. Ingress keeps unread stream bytes queued and consumes any truncated
+datagram. Unix stream ingress ends at a descriptor-passing boundary and
+releases the attached descriptors. Pipe-to-socket transfers consume the
+accepted bytes across pipe slots and keep the remaining bytes available.
+Pipe availability and socket availability use separate blocking rules.
+Socket waits observe the endpoint's send or receive timeout. Unix stream
+ingress also checks `SPLICE_F_NONBLOCK` before waiting for socket data.
+Tests cover both directions on Unix sockets and loopback TCP and UDP. They also
+check Unix socket descriptor reuse, large datagrams, and send backpressure. UDP corking through
+`SPLICE_F_MORE` and packet and netlink endpoints remain open.
 
 `vmsplice` captures the vector addresses and lengths before waiting. Memory
 queued into a pipe keeps a reference to each readable page until the pipe

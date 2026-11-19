@@ -30,6 +30,7 @@ build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-o
 .PHONY: test-posix-aio test-posix-aio-native
 .PHONY: test-named-pipes test-named-pipes-native
 .PHONY: test-pipe-transfer test-pipe-transfer-native
+.PHONY: test-socket-splice test-socket-splice-native
 .PHONY: test-poll-waits test-poll-waits-native test-select-waits test-select-waits-native
 .PHONY: test-epoll-lifetime test-epoll-lifetime-native
 .PHONY: test-descriptor-wait-lifetime test-descriptor-wait-lifetime-native test-udp-waits test-udp-waits-native
@@ -81,6 +82,12 @@ test-pipe-transfer:
 
 test-pipe-transfer-native:
 	$(PYTHON) -B scripts/ipc_abi_test.py pipe-transfer --native --directory build/pipe-transfer-native
+
+test-socket-splice:
+	$(PYTHON) -B scripts/ipc_abi_test.py socket-splice --directory build/socket-splice-guest
+
+test-socket-splice-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py socket-splice --native --directory build/socket-splice-native
 
 test-poll-waits:
 	$(PYTHON) -B scripts/ipc_abi_test.py poll-waits --directory build/poll-waits-guest

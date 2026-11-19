@@ -1237,7 +1237,7 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
     if (!len)
         return 0;
     if (h->socket)
-        return socket_write(h->socket, buf, len);
+        return socket_write(*current, h->socket, buf, len);
     if (h->packet)
         return packet_write(h->packet, buf, len);
     if (h->inet)

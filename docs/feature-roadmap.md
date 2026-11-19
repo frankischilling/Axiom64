@@ -382,9 +382,12 @@ Pipe sysctls set the capacity ceiling and per-user page limits. Guest tests
 exercise quota failures, shrink, permission checks, and release after the last close.
 Pipe-to-pipe `splice` and `tee` preserve packet boundaries and hold both
 descriptions during a blocked transfer. `splice` also transfers between a pipe
-and a regular RAM or ext2 file with explicit or shared offsets. `vmsplice`
+and a regular RAM or ext2 file with explicit or shared offsets. Socket
+transfers cover Unix streams and datagrams and IPv4 and IPv6 TCP and UDP.
+The socket tests exercise both directions, independent pipe and socket waits,
+and descriptor reuse. `vmsplice`
 passes page references from userspace to the pipe and copies pipe data back
-into userspace vectors. Socket transfers remain planned.
+into userspace vectors.
 [Epoll lifetime tests](io.md#epoll-descriptor-lifetime) check duplicate and reused
 descriptors, inherited watches, waits that survive descriptor replacement,
 and file-type admission with the Linux errno and poll-mask behavior.

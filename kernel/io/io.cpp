@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "io/io.hpp"
+#include "io/socket_splice.hpp"
 #include "io/vectors.hpp"
 #include "core/time.hpp"
 #include "drivers/platform/devices.hpp"
@@ -72,6 +73,7 @@ struct IoRequest {
     unsigned flags;
     bool write, socket, accept, positioned, locking, connect, started;
     bool timed, stream_blocking;
+    bool splice_socket_blocking;
     int connect_error;
     uint64_t deadline;
     uint64_t inet_generation;
@@ -180,10 +182,26 @@ static int64_t unix_receive_output(Task& task, const IoRequest& request,
     return result;
 }
 
+static void notify_pipe_transfer(const IoRequest& request) {
+    auto input = request.handle->opened_dentry;
+    auto output = request.pipe_target->opened_dentry;
+    if (request.call.rax == 276) {
+        inotify_dentry(input, inotify_access);
+        inotify_dentry(output, inotify_modify);
+    } else {
+        inotify_dentry(output, inotify_modify);
+        inotify_dentry(input, inotify_access);
+    }
+}
+
 int64_t io_interrupted_result(Task& task) {
     auto request = task.io;
     if (!request || !request->progress)
         return -4;
+    if (request->pipe_target) {
+        notify_pipe_transfer(*request);
+        return request->progress;
+    }
     if (request->handle->pipe && request->write)
         inotify_dentry(request->handle->opened_dentry, inotify_modify);
     // Linux releases its partial receive cookie on signal exit without emitting
@@ -193,16 +211,19 @@ int64_t io_interrupted_result(Task& task) {
                : int64_t(request->progress);
 }
 
-static void capture_timeout(IoRequest& request) {
-    auto h = request.handle;
-    if (request.locking || (!h->socket && !h->inet && !h->inet6 && !h->packet && !h->netlink))
-        return;
-    auto timeout = request.write ? h->send_timeout : h->receive_timeout;
+static void arm_timeout(IoRequest& request, SocketTimeout timeout) {
     if (!timeout.finite)
         return;
     clock_refresh();
     request.timed = true;
     request.deadline = timeout.ticks > UINT64_MAX - ticks ? UINT64_MAX : ticks + timeout.ticks;
+}
+
+static void capture_timeout(IoRequest& request) {
+    auto h = request.handle;
+    if (request.locking || (!h->socket && !h->inet && !h->inet6 && !h->packet && !h->netlink))
+        return;
+    arm_timeout(request, request.write ? h->send_timeout : h->receive_timeout);
 }
 
 static bool timeout_expired(const IoRequest& request) {
@@ -874,7 +895,7 @@ static int64_t local_stream_attempt(Task& task, IoRequest& request) {
         int64_t result;
         bool packet = false;
         if (request.write) {
-            result = socket_write(handle->socket, nullptr, 0);
+            result = socket_write(task, handle->socket, nullptr, 0);
             if (!result) {
                 size_t capacity = UnixStreamQueue::capacity - handle->socket->peer->stream.size();
                 if (!capacity)
@@ -882,7 +903,7 @@ static int64_t local_stream_attempt(Task& task, IoRequest& request) {
                 count = min(count, capacity);
                 if (!cursor.copy(task, buffer, count))
                     return done ? int64_t(done) : -14;
-                result = socket_write(handle->socket, buffer, count);
+                result = socket_write(task, handle->socket, buffer, count);
             }
         } else {
             // Commit a completed pipe slot before touching the next user span.
@@ -937,7 +958,7 @@ static int64_t unix_stream_attempt(Task& task, IoRequest& request) {
     if (request.write) {
         if (!remaining && !request.socket)
             return 0;
-        int error = int(socket_write(socket, nullptr, 0));
+        int error = int(socket_write(task, socket, nullptr, 0));
         if (error) {
             // Linux's queue-space wait returns EPIPE without entering the
             // fresh-send SIGPIPE path. An accepted prefix also suppresses it.
@@ -1590,9 +1611,68 @@ static int64_t inotify_attempt(Task& task, IoRequest& request) {
     return request.progress;
 }
 
+static int64_t wait_for_splice_socket(IoRequest& request, SocketTimeout timeout) {
+    if (!request.splice_socket_blocking)
+        return -11;
+    if (!request.started) {
+        request.started = true;
+        arm_timeout(request, timeout);
+    }
+    return would_block;
+}
+
+static int64_t socket_transfer_attempt(Task& task, IoRequest& request, Handle& socket, Pipe& pipe,
+                                       bool sending) {
+    bool tcp = inet_stream(socket.inet);
+    if (tcp && request.inet_generation != tcp_generation(socket.inet)) {
+        if (request.progress)
+            return request.progress;
+        if (!sending)
+            return 0;
+        int error = tcp_cancelled_write_error(socket.inet);
+        if (error == 32)
+            queue_signal(&task, 13, task.process->pid);
+        return -error;
+    }
+    if (!sending) {
+        if (!pipe.readers) {
+            queue_signal(&task, 13, task.process->pid);
+            return -32;
+        }
+        if (pipe.full())
+            return request.stream_blocking ? would_block : -11;
+        if (socket.inet || socket.inet6)
+            net_poll();
+        auto result = splice_socket_to_pipe(socket, pipe, request.single.length);
+        return result == -11 ? wait_for_splice_socket(request, socket.receive_timeout) : result;
+    }
+    if (!pipe.occupied)
+        return request.progress || !pipe.writers ? int64_t(request.progress)
+               : request.stream_blocking         ? would_block
+                                                 : -11;
+    if (socket.inet || socket.inet6)
+        net_poll();
+    while (pipe.occupied && request.progress < request.single.length) {
+        auto result =
+            splice_pipe_to_socket(task, pipe, socket, request.single.length - request.progress);
+        if (result == -11 && request.splice_socket_blocking)
+            return wait_for_splice_socket(request, socket.send_timeout);
+        if (result == -32)
+            queue_signal(&task, 13, task.process->pid);
+        if (result <= 0)
+            return request.progress ? int64_t(request.progress) : result;
+        request.progress += result;
+    }
+    return request.progress;
+}
+
 static int64_t pipe_transfer_attempt(Task& task, IoRequest& request) {
     auto source = request.handle;
     auto target = request.pipe_target;
+    if (splice_socket(*source))
+        return socket_transfer_attempt(task, request, *source, *target->pipe, false);
+    if (splice_socket(*target))
+        return socket_transfer_attempt(task, request, *target, *source->pipe, true);
     bool duplicate = request.call.rax == 276;
     size_t length = request.single.length;
     int64_t result;
@@ -1613,21 +1693,15 @@ static int64_t pipe_transfer_attempt(Task& task, IoRequest& request) {
         queue_signal(&task, 13, task.process->pid);
     if (result == -11 && request.stream_blocking)
         return would_block;
-    if (result > 0) {
-        if (duplicate) {
-            inotify_dentry(source->opened_dentry, inotify_access);
-            inotify_dentry(target->opened_dentry, inotify_modify);
-        } else {
-            inotify_dentry(target->opened_dentry, inotify_modify);
-            inotify_dentry(source->opened_dentry, inotify_access);
-        }
-    }
     if (result >= 0 && file) {
         if (!position_pointer)
             file->offset = request.splice_position;
         else if (!task.memory->space.copy_out(position_pointer, &request.splice_position,
-                                              sizeof(request.splice_position)))
+                                              sizeof(request.splice_position))) {
+            if (result > 0)
+                notify_pipe_transfer(request);
             return -14;
+        }
     }
     return result;
 }
@@ -1748,7 +1822,7 @@ static int64_t attempt(Task& task, IoRequest& request) {
         if (empty) {
             empty_send = true;
             result = inet_stream(h->inet) ? tcp_write(h->inet, nullptr, 0)
-                                          : socket_write(h->socket, nullptr, 0);
+                                          : socket_write(task, h->socket, nullptr, 0);
             if (result == -32 && !(request.flags & 0x4000))
                 queue_signal(&task, 13, task.process->pid);
             completion = true;
@@ -1865,18 +1939,27 @@ static int64_t pipe_transfer_syscall(Task& task, const Frame& frame) {
     if (source->pipe == target->pipe || (duplicate && (!source->pipe || !target->pipe)))
         return -22;
     unsigned pipe_flags = 0;
+    Handle* socket = nullptr;
     if (!source->pipe || !target->pipe) {
         auto file = source->pipe ? target : source;
-        auto node = file->node;
-        if (!node || (node->mode & 0170000) != regular_file ||
-            (node->mount->ops != &ramfs_ops && node->mount->ops != &ext2_ops) ||
-            (source->pipe && (target->flags & 02000)))
-            return -22;
         uint64_t pointer = source->pipe ? frame.r10 : frame.rsi;
-        if (!pointer)
-            position = file->offset;
-        if (position > INT64_MAX || length > uint64_t(INT64_MAX) - position)
-            return -22;
+        if (splice_socket(*file)) {
+            if (pointer)
+                return -22;
+            socket = file;
+            if (length > INT64_MAX)
+                return -22;
+        } else {
+            auto node = file->node;
+            if (!node || (node->mode & 0170000) != regular_file ||
+                (node->mount->ops != &ramfs_ops && node->mount->ops != &ext2_ops) ||
+                (source->pipe && (target->flags & 02000)))
+                return -22;
+            if (!pointer)
+                position = file->offset;
+            if (position > INT64_MAX || length > uint64_t(INT64_MAX) - position)
+                return -22;
+        }
         pipe_flags = source->pipe ? source->flags : target->flags;
     } else {
         pipe_flags = source->flags | target->flags;
@@ -1894,6 +1977,12 @@ static int64_t pipe_transfer_syscall(Task& task, const Frame& frame) {
     request->vectors = &request->single;
     request->single.length = length;
     request->stream_blocking = !(flags & 2) && !(pipe_flags & 04000);
+    if (socket) {
+        bool unix_receive = socket == source && socket->socket && socket->socket->type == 1;
+        request->splice_socket_blocking =
+            !(socket->flags & 04000) && !(unix_receive && (flags & 2));
+        request->inet_generation = tcp_generation(socket->inet);
+    }
     retain(source);
     retain(target);
     int64_t result = pipe_transfer_attempt(task, *request);
@@ -1903,6 +1992,8 @@ static int64_t pipe_transfer_syscall(Task& task, const Frame& frame) {
         task.wait = Wait::read;
         task.wait_fd = input;
     } else {
+        if (result > 0)
+            notify_pipe_transfer(*request);
         destroy(request);
     }
     return result;
@@ -1979,9 +2070,13 @@ bool io_resume(Task& task) {
             return false;
         result = timeout_result(task, *request);
     }
-    if (result > 0 && !request->locking && !request->pipe_target)
-        inotify_dentry(request->handle->opened_dentry,
-                       request->write ? inotify_modify : inotify_access);
+    if (result > 0 && !request->locking) {
+        if (request->pipe_target)
+            notify_pipe_transfer(*request);
+        else
+            inotify_dentry(request->handle->opened_dentry,
+                           request->write ? inotify_modify : inotify_access);
+    }
     // Commit the result before signal delivery; handlers have their own syscall state.
     task.frame.rip += 2;
     task.frame.rax = result;

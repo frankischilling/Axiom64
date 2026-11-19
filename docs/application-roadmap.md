@@ -500,7 +500,7 @@ The catalog contains 479 inventory entries, of which 478 remain in scope. A proj
 | `git` | planned | [F28](feature-roadmap.md#f28-native-development-and-full-self-hosting) |
 | `libtool` | planned | [F28](feature-roadmap.md#f28-native-development-and-full-self-hosting) |
 | `make` | demonstrated | [F28](feature-roadmap.md#f28-native-development-and-full-self-hosting) |
-| `nasm` | planned | [F28](feature-roadmap.md#f28-native-development-and-full-self-hosting) |
+| `nasm` | demonstrated | [F28](feature-roadmap.md#f28-native-development-and-full-self-hosting) |
 | `pkg-config` | planned | [F28](feature-roadmap.md#f28-native-development-and-full-self-hosting) |
 | `python` | planned | [F28](feature-roadmap.md#f28-native-development-and-full-self-hosting) |
 

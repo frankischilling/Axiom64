@@ -689,6 +689,9 @@ disk-root: build/axiom64.elf build/rootfs.cpio
 	$(PYTHON) scripts/image.py --root-device /dev/vda --output-name axiom64-disk.iso
 test: image
 	$(PYTHON) scripts/boot_test.py --firmware both
+.PHONY: test-guest-kernel
+test-guest-kernel: build/axiom64.elf build/rootfs.cpio
+	$(PYTHON) -B scripts/guest_kernel_test.py $(GUEST_KERNEL_FLAGS)
 test-storage:
 	$(PYTHON) scripts/storage_test.py
 test-ext2:

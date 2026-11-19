@@ -850,6 +850,18 @@
       "source_commit": "ddaf59b84bc6983a37d6e24d2210c2c4791642bb"
     },
     {
+      "name": "nasm",
+      "version": "2.16.03-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/nasm-2.16.03-r0.apk",
+      "archive": "nasm-2.16.03-r0.apk",
+      "sha256": "015c7d4412e51536e512ea32aedf0bea3372586629cfb9b6531ef9822718bed1",
+      "license": "BSD-2-Clause",
+      "upstream": "https://www.nasm.us",
+      "origin": "nasm",
+      "source_commit": "35052d7065f369f499758533b04be9c9d8e1d733"
+    },
+    {
       "name": "ncurses-terminfo-base",
       "version": "6.5_p20250503-r0",
       "repository": "main",

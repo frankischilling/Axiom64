@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+int native_asm_add(int left, int right);
+
 int main(void) {
     int* values = malloc(100 * sizeof(int));
     if (!values)
@@ -15,5 +17,8 @@ int main(void) {
     if (sum != 4950)
         return 2;
     puts("NATIVE_C_PASS");
+    if (native_asm_add(sum, -50) != 4900)
+        return 3;
+    puts("NATIVE_ASSEMBLER_PASS");
     return 0;
 }

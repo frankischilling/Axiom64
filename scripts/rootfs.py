@@ -101,7 +101,7 @@ for package, archive in packages():
         continue
     if args.profile == "desktop" and package["name"] in {
         "gcc", "g++", "binutils", "musl-dev", "linux-headers", "libstdc++-dev",
-        "make", "isl25", "mpfr4", "gmp", "libgomp"
+        "make", "nasm", "isl25", "mpfr4", "gmp", "libgomp"
     }:
         continue
     with tarfile.open(archive, "r:gz", ignore_zeros=True) as stream:
@@ -171,7 +171,7 @@ with tempfile.TemporaryDirectory(prefix="axiom64-fonts-") as temporary:
     subprocess.run(["mkfontscale", "-b", "-s", "-l", str(font_stage)], check=True)
     regular(font_path + "/fonts.dir", font_stage / "fonts.dir", 0o100644)
 directory("root/toolchain-test")
-for filename in ["hello.c", "hello.cpp", "broken.c", "threads.cpp", "Makefile"]:
+for filename in ["hello.c", "hello.cpp", "broken.c", "threads.cpp", "arithmetic.asm", "Makefile"]:
     regular(f"root/toolchain-test/{filename}", ROOT / "userspace/tests/toolchain" / filename, 0o100644)
 
 

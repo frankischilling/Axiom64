@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "net/ipv6/reassembly.hpp"
 #include "core/base.hpp"
 #include <new>

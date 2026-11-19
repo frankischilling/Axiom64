@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "net/config/route_snapshot.hpp"
 #include <arpa/inet.h>
 #include <errno.h>

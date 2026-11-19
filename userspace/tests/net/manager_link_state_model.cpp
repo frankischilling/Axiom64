@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 // Exercise the actual observer with Linux operational-state observations.
 #define main manager_link_fixture_main
 #include "manager-link.cpp"

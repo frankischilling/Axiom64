@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-/** @file Compares pipe and FIFO I/O, peer lifetime, and ext2 FIFO persistence. */
+/**
+ * @file
+ * @brief Compares pipe and FIFO I/O, peer lifetime, and ext2 FIFO persistence.
+ */
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>

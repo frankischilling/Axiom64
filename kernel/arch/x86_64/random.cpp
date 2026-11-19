@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "core/random.hpp"
 #include "core/random/engine.hpp"
 #include "core/base.hpp"

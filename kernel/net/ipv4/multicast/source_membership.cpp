@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "net/ipv4/multicast.hpp"
 
 namespace ax::ip4 {

@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "boot/root.hpp"
 #include "fs/vfs.hpp"
 

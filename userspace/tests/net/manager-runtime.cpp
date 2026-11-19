@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 // Use the actual private runtime lifecycle with real Client and saved Store.
 #define AXIOM64_MANAGER_RUNTIME_TEST
 #include "../../net/manager/runtime.cpp"

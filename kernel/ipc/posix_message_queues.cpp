@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "ipc/posix_message_queues.hpp"
 #include "core/time.hpp"
 #include "fs/descriptor.hpp"

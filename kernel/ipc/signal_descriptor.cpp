@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "ipc/signal_descriptor.hpp"
 #include "fs/vfs.hpp"
 #include "process/signals.hpp"

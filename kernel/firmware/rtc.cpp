@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "firmware/rtc.hpp"
 #include "core/base.hpp"
 

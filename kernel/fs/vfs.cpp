@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-/** @file Virtual filesystem routing, path resolution, and open descriptions. */
+/**
+ * @file
+ * @brief Virtual filesystem routing, path resolution, and open descriptions.
+ */
 #include "fs/vfs.hpp"
 #include "io/descriptor_wait.hpp"
 #include "fs/pipe.hpp"

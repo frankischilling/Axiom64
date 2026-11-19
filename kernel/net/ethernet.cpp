@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "net/ethernet.hpp"
 #include "net/packet.hpp"
 #include "net/ipv4.hpp"

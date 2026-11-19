@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 // Exercise query output across a diagnostic between separate output calls.
 #define _GNU_SOURCE
 #define main ownership_fixture_main

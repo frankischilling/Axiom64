@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "socket_registry.hpp"
 #include "core/random.hpp"
 #include "io/descriptor_wait.hpp"

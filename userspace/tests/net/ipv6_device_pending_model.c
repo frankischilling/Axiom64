@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #define main ipv6_pending_client_main
 #include "ipv6_device_pending.c"
 #undef main

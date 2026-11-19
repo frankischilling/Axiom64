@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "fs/ext2/ext2.hpp"
 #include "fs/ext2/xattr.hpp"
 #include "fs/ext2/journal.hpp"

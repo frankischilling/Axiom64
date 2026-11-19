@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 // Exercises production modules; normal daemon startup remains a separate gate.
 #include "net/dhcp/transport.hpp"
 #include "net/config/configuration.hpp"

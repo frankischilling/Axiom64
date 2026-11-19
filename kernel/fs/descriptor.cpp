@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "fs/descriptor.hpp"
 #include "process/task.hpp"
 #include "fs/record_lock.hpp"

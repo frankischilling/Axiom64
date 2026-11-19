@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "tests/net/manager-fixture.hpp"
 #include <arpa/inet.h>
 #include <linux/if_ether.h>

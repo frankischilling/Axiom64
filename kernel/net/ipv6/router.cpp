@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "net/ipv6/router.hpp"
 #include "net/ipv6/host.hpp"
 #include "net/ipv6/configuration.hpp"

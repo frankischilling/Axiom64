@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "net/tcp/socket.hpp"
 #include "core/time.hpp"
 #include "net/tcp/connection.hpp"

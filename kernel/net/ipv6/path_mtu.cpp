@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "net/ipv6/path_mtu.hpp"
 
 namespace ax::ip6 {

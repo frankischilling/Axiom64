@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 // Exercise the actual observer with the old and replacement dump records.
 #define main ipv6_dad_program_main
 #include "ipv6_dad.c"

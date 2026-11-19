@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "dns/contract.h"
 
 static void* parallel_lookup(void* opaque) {

@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 // An empty IPv6 namespace for the isolated IPv4 netlink codec fixtures.
 #include "net/netlink.hpp"
 #include "net/ipv6/configuration.hpp"

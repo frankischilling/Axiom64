@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "net/dhcp/wire.hpp"
 #include <stdio.h>
 #include <stdlib.h>

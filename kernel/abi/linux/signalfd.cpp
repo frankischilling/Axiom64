@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "abi/linux/signalfd.hpp"
 #include "fs/descriptor.hpp"
 #include "ipc/ipc.hpp"

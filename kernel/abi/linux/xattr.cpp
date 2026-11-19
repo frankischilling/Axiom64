@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "abi/linux/xattr.hpp"
 #include "fs/xattr.hpp"
 #include "process/task.hpp"

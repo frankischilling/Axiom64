@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "net/socket_options.hpp"
 #include "net/ipv4.hpp"
 #include "net/ipv6.hpp"

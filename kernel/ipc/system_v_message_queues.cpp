@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "ipc/system_v_message_queues.hpp"
 #include "ipc/system_v_permissions.hpp"
 #include "core/time.hpp"

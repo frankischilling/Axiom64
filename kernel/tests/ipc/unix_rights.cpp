@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "ipc/ipc.hpp"
 #include "ipc/unix_rights.hpp"
 #include <assert.h>

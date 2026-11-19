@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 // Linked only into the fault-test manager. Surrounding calls use actual files
 // and sockets; the normal installed manager has no injected-failure behavior.
 #include <arpa/inet.h>

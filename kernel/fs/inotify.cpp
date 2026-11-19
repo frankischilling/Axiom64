@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "fs/inotify.hpp"
 #include "fs/vfs.hpp"
 #include "ipc/ipc.hpp"

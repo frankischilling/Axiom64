@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #define _GNU_SOURCE
 #include "console.h"
 #include <errno.h>

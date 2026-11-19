@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "fs/inotify_queue.hpp"
 #include <assert.h>
 #include <stdlib.h>

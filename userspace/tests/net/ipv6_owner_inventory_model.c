@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 // Exercise the actual selector with a measured tentative-owner handoff.
 #define main ownership_program_main
 #include "ipv6_address_ownership.c"

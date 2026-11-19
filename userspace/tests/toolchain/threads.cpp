@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include <condition_variable>
 #include <cstdio>
 #include <mutex>

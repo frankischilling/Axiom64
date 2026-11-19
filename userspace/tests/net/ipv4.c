@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #define _GNU_SOURCE
 #include "ipv4_aliases.h"
 #include "ipv4_gateways.h"

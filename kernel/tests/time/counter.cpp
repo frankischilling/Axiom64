@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "core/time.hpp"
 #include "firmware/acpi.hpp"
 #include <array>

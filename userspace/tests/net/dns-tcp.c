@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #define DNS_CAPTURE_FRAMES 8192
 #include "dns/contract.h"
 

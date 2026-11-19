@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 // Exercise the packet client's actual administrative flag check.
 #define main packet_fixture_main
 #include "packet.c"

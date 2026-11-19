@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 // Exercise actual record emission before adding asynchronous conflict controls.
 #define main ready_device_fixture_main
 #include "ipv6_device_lifecycle.c"

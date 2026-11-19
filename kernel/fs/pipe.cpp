@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-/** @file Pipe page queues, capacity ownership, and FIFO rendezvous. */
+/**
+ * @file
+ * @brief Pipe page queues, capacity ownership, and FIFO rendezvous.
+ */
 #include "fs/pipe.hpp"
 #include "io/descriptor_wait.hpp"
 #include "fs/descriptor.hpp"

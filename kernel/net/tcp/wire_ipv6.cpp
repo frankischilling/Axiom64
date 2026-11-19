@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "wire_detail.hpp"
 #include "net/ipv6/wire.hpp"
 

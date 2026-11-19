@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-/** @file Tests IPv4 UDP socket behavior and retained I/O on two guest Ethernet adapters. */
+/**
+ * @file
+ * @brief Tests IPv4 UDP socket behavior and retained I/O on two guest Ethernet adapters.
+ */
 #define _GNU_SOURCE
 #define UDP_ROUTE_LIFETIME_VERSION 2
 #define UDP_WIRE_FIXTURE_VERSION 3

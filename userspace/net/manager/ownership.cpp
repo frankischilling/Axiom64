@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "net/manager/ownership.hpp"
 #include "net/config/saved.hpp"
 #include <errno.h>

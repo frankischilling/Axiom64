@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>

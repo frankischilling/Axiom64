@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #define main tcp_icmp_contract_main
 #include "../../userspace/tests/net/tcp_icmp.c"
 #undef main

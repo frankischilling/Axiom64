@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "drivers/random/virtio.hpp"
 #include "drivers/random/sample.hpp"
 #include "drivers/virtio/pci.hpp"

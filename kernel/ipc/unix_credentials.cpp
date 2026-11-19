@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "ipc/unix_credentials.hpp"
 #include "ipc/unix_control.hpp"
 #include "ipc/unix_rights.hpp"

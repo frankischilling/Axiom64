@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "io/descriptor_wait.hpp"
 #include "ipc/ipc.hpp"
 #include "process/signals.hpp"

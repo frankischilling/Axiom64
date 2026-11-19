@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "process/signals.hpp"
 #include "fs/pipe.hpp"
 #include "ipc/system_v_semaphores.hpp"

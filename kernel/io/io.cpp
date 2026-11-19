@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-/** @file Linux I/O dispatch, retained requests, and userspace transfers. */
+/**
+ * @file
+ * @brief Linux I/O dispatch, retained requests, and userspace transfers.
+ */
 #include "io/io.hpp"
 #include "io/vectors.hpp"
 #include "core/time.hpp"

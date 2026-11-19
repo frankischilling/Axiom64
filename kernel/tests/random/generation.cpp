@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "firmware/generation.hpp"
 #include "core/random/engine.hpp"
 #include <assert.h>

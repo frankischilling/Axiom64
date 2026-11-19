@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-/** @file Unix socket operations and epoll readiness delivery. */
+/**
+ * @file
+ * @brief Unix socket operations and epoll readiness delivery.
+ */
 #include "ipc/ipc.hpp"
 #include "io/descriptor_wait.hpp"
 #include "fs/inotify.hpp"

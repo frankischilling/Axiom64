@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #define main network_fixture_main
 #ifdef IPV4_CONTROL_MODEL
 #include "ipv4.c"

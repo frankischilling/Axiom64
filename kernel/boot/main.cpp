@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "boot/boot.hpp"
 #include "boot/root.hpp"
 #include "drivers/block/block.hpp"

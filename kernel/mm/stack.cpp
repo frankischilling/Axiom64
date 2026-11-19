@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "mm/stack.hpp"
 #include "mm/limits.hpp"
 #include "process/task.hpp"

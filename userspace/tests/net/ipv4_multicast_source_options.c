@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 /* Native Linux 6.6/6.17 observations fix the expectations. The same source
  * executes every operation in Axiom64; native setup alone owns a namespace. */
 #define _GNU_SOURCE

@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "socket.hpp"
 #include "io/descriptor_wait.hpp"
 #include "net/ipv6/router.hpp"

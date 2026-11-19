@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "fs/proc.hpp"
 #include "fs/proc/ipv6.hpp"
 #include "fs/proc/ipv4.hpp"

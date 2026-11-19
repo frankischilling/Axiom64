@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "process/exec_arguments.hpp"
 #include <cassert>
 #include <cstdio>

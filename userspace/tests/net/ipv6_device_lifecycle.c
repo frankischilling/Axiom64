@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "ipv6_device_fixture.h"
 
 int main(int argc, char** argv) {

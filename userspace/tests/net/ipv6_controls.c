@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #define _GNU_SOURCE
 #define IPV6_TEST_LABEL "IPV6_CONTROLS"
 #define IPV6_BARRIER_PROTOCOL 0x88bd

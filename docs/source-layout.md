@@ -172,6 +172,10 @@ UEFI fixture and four replay tests live under `scripts/tests/`.
 
 The root `.clang-format` contains C++20 and C profiles. Kernel sources, headers, and host tests use the C++ profile. Userspace C sources use the C profile, and native C++ test programs use the C++ profile. Both preserve include order and use four spaces and a 100-column limit. Function bodies use multiple lines, and `SeparateDefinitionBlocks: Always` inserts a blank line between function, class, struct, and enum definitions. Keep one blank line between function prototypes too; `MaxEmptyLinesToKeep: 1` preserves that spacing. The Makefile continues to select C11 and C++20 for compilation.
 
+Start each project `.c` and `.cpp` file with a Doxygen `@file` comment after
+the license notice. Put a file summary on a separate `@brief` line when it
+helps explain the file's role.
+
 On the Ubuntu build host, install the formatter and run these commands from the repository root:
 
 ```sh

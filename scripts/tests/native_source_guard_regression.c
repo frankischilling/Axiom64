@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #define main source_route_client_main
 #include "../../userspace/tests/net/ipv4/source_route_wire.c"
 #undef main

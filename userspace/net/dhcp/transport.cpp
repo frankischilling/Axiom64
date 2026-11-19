@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "net/dhcp/transport.hpp"
 #include <arpa/inet.h>
 #include <errno.h>

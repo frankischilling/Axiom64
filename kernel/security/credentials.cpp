@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file
+ */
 #include "security/credentials.hpp"
 #include "security/file_capabilities.hpp"
 #include "core/base.hpp"

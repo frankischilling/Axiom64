@@ -9,19 +9,34 @@ from tcp_fault_peer import ACK,FIN,SYN,check,checksum
 
 MARKER='TCP6_ZONE_SOURCE_ROUTE_PASS lanes=2 rounds_each=2 retained_flows=4 companion_flows=4'
 COMPANION=ipaddress.IPv6Address('fe80::3').packed
+MAX_FALLBACK_RETRIES=2
 
 class Retained(RouteFlow):
     def __init__(self,owner,round_):
-        super().__init__(owner,round_);self.deferred=None;self.input_restored=False
+        super().__init__(owner,round_);self.deferred=None;self.released_echo=None;self.retries=0
     def send(self,peer,flags=ACK,data=b'',sequence=None):
-        if data==payload(self.owner.lane,self.round,2) and not self.input_restored:
+        if data==payload(self.owner.lane,self.round,2) and self.released_echo is None:
             check(self.deferred is None,'one actual withheld fallback echo')
             self.deferred=(peer,flags,data,self.server if sequence is None else sequence);return
         return super().send(peer,flags,data,sequence)
     def restore_input(self):
-        check(self.deferred is not None and not self.input_restored,'actual fallback output precedes restored input')
-        self.input_restored=True;peer,flags,data,sequence=self.deferred;self.deferred=None
-        super().send(peer,flags,data,sequence)
+        check(self.deferred is not None and self.released_echo is None,'actual fallback output precedes restored input')
+        self.released_echo=self.deferred;self.deferred=None
+        super().send(*self.released_echo)
+
+    def receive(self,peer,value,header):
+        if self.owner.native and self.released_echo and self.tags == [0,1,2] and 2 not in self.acked:
+            original_peer, flags, data, sequence = self.released_echo
+            if value['seq'] == (self.client - len(data)) & 0xffffffff:
+                check(peer is original_peer and header == (37, 168) and value['flags'] == flags and
+                      value['ack'] == sequence and value['data'] == data and
+                      value['source_ip'] == peer.address and value['target_ip'] == peer.ip and
+                      self.retries < MAX_FALLBACK_RETRIES,
+                      'bounded identical restored-source fallback retransmission')
+                self.retries += 1
+                super().send(*self.released_echo)
+                return
+        super().receive(peer, value, header)
 
 class Companion:
     def __init__(self,peer,round_):
@@ -82,7 +97,7 @@ class Peer(RoutePeer):
             origin,rest=divmod(phase,64);round_,step=divmod(rest,16)
             if step==12 and self.lane==origin:
                 flow=self.peers[origin].flows[round_]
-                if not flow.input_restored:flow.restore_input()
+                if flow.released_echo is None:flow.restore_input()
             self.complete_if_ready();return
         if len(frame)>=74 and frame[12:14]==b'\x86\xdd' and frame[20]==6:
             value=packet(frame)

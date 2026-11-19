@@ -77,7 +77,7 @@ def verify(path,lane,log,native=False,statistics=None):
                     'actual raw source observations fall between their acknowledged ownership fences')
     originals={};filtered={};flows={(n,r):[] for n in range(2) for r in range(2)};ownership_fences={};clock=None
     for physical in range(2):
-        capture=path.parent/f'lane{physical}.pcap';rows=read_capture(capture);originals[physical]=rows;filtered[physical]=[]
+        capture=path.parent/f'lane{physical}.pcap';rows=read_capture(capture);originals[physical]=rows;filtered[physical]={}
         if native and physical==lane:clock=bind(capture,rows,statistics)
         guest=bytes([0x52,0x54,0,0x12,0x34,0x10+physical]);peer=bytes([2,0x41,0x58,0x54,0x43,physical])
         ownership_fences[physical]={}
@@ -102,38 +102,56 @@ def verify(path,lane,log,native=False,statistics=None):
                     frame[:12]==(guest+control if answer else control+guest) and frame[14:19]==b'IP6G'+bytes([physical]) and
                     not any(frame[21:]),'every actual ownership fence has its full physical envelope')
                 ownership_fences[physical][phase,answer]=index
-            if not selected and not extra_fence:filtered[physical].append(row)
+            if not selected and not extra_fence:filtered[physical][index]=row
         require(list(ownership_fences[physical])==[(phase,a) for phase in expected_ownership for a in (0,1)],
             'both original captures retain all ordered ownership requests and acknowledgments')
-    # Native clocks bind every original physical frame above. The route decoder
-    # sees a lossless subset with unchanged packet bytes and timestamps, while
-    # this decoder checks every removed companion frame separately below.
-    with tempfile.TemporaryDirectory(prefix='axiom-source-route-read-') as temporary:
-        directory=Path(temporary)
-        for physical,rows in filtered.items():(directory/f'lane{physical}.pcap').write_bytes(encode_capture(rows))
-        route=route_verify(directory/path.name,lane,route_log,native=False)
+    retried = {0: [], 1: []}
     for origin in range(2):
         for round_ in range(2):
             base=origin*64+round_*16;rows=originals[origin]
             fences=ownership_fences[origin]
-            sent=[];echo=[];acks=[]
-            for index,row in enumerate(rows):
-                frame=row['frame']
-                if not(len(frame)>=74 and frame[12:14]==b'\x86\xdd' and frame[20]==6):continue
-                value=packet(frame);ports=(value['source'],value['target']);local=52000+origin*100+round_*10
-                expected=bytes((origin*53+round_*31+2*17+n*7)&255 for n in range(16))
-                if ports==(local,local+1000) and value['data']==expected:sent.append((index,value))
-                if ports==(local+1000,local) and value['data']==expected:echo.append((index,value))
-            require(len(sent)==len(echo)==1 and sent[0][0]<fences[base+11,1]<fences[base+12,0]<echo[0][0]<fences[base+12,1],
+            local = 52000 + origin * 100 + round_ * 10
+            expected = bytes((origin * 53 + round_ * 31 + 2 * 17 + n * 7) & 255 for n in range(16))
+            sent, echoes, acknowledgments = [], [], []
+            for index, row in enumerate(rows):
+                frame = row['frame']
+                if not (len(frame) >= 74 and frame[12:14] == b'\x86\xdd' and frame[20] == 6):
+                    continue
+                value = packet(frame)
+                ports = value['source'], value['target']
+                if ports == (local, local + 1000):
+                    if value['data'] == expected:
+                        sent.append((index, value))
+                    elif value['flags'] == ACK and not value['data']:
+                        acknowledgments.append((index, value))
+                elif ports == (local + 1000, local) and value['data'] == expected:
+                    echoes.append(index)
+            require(len(sent) == len(echoes) and 1 <= len(sent) <= (3 if native else 1) and
+                sent[0][0] < fences[base+11,1] < fences[base+12,0] < echoes[0] < fences[base+12,1],
                 'actual withdrawn fallback packet observed before restoring ownership and releasing its echo')
-            for index,row in enumerate(rows):
-                frame=row['frame']
-                if not(len(frame)>=74 and frame[12:14]==b'\x86\xdd' and frame[20]==6):continue
-                value=packet(frame)
-                if ((value['source'],value['target'])==(local,local+1000) and value['flags']==ACK and not value['data'] and
-                        value['seq']==(sent[0][1]['seq']+16)&0xffffffff and value['ack']==(sent[0][1]['ack']+16)&0xffffffff):
-                    acks.append(index)
-            require(any(echo[0][0]<index<fences[base+12,1] for index in acks),'actual fallback TCP echo acknowledgment precedes ownership fence completion')
+            first_send, initial = sent[0]
+            previous_echo = echoes[0]
+            for (retry, _), replay in zip(sent[1:], echoes[1:]):
+                require(previous_echo < retry < replay < fences[base+12,1] and
+                    rows[retry]['frame'] == rows[first_send]['frame'] and
+                    rows[replay]['frame'] == rows[echoes[0]]['frame'],
+                    'native restored-source retransmission and reply are unchanged and precede fence completion')
+                del filtered[origin][retry], filtered[origin][replay]
+                retried[origin].append((retry, replay))
+                previous_echo = replay
+            ack = next((index for index, value in acknowledgments
+                        if value['seq'] == (initial['seq'] + 16) & 0xffffffff and
+                           value['ack'] == (initial['ack'] + 16) & 0xffffffff), None)
+            require(ack is not None and previous_echo < ack < fences[base+12,1],
+                'actual fallback TCP echo acknowledgment follows the last echo and precedes ownership fence completion')
+    # Keep both original captures and their clocks. The route decoder reads the
+    # primary exchanges, with companion frames and validated retransmissions
+    # accounted for separately here.
+    with tempfile.TemporaryDirectory(prefix='axiom-source-route-read-') as temporary:
+        directory=Path(temporary)
+        for physical,rows in filtered.items():
+            (directory/f'lane{physical}.pcap').write_bytes(encode_capture(rows.values()))
+        route=route_verify(directory/path.name,lane,route_log,native=False)
     observations=[]
     for (origin,round_),flow in flows.items():
         syn=[x for x in flow if x['outgoing'] and x['value']['flags']==SYN]
@@ -177,7 +195,8 @@ def verify(path,lane,log,native=False,statistics=None):
         observations.append(dict(origin=origin,round=round_,output_index=data[0]['index'],final_index=final[0]['index']))
     route.update(clock=clock,sha256=hashlib.sha256(path.read_bytes()).hexdigest(),combined_scoped_source_route=True,
         actual_companion_flows=2,actual_source_withdrawals=2,actual_source_snapshots=10,actual_fresh_bind_observations=16,actual_ownership_fence_pairs=8,
-        companion_observations=[o for o in observations if o['origin']==lane])
+        companion_observations=[o for o in observations if o['origin']==lane],
+        fallback_retransmissions=retried[lane])
     return route
 
 
@@ -186,13 +205,14 @@ def damaged(path,lane,log,native,output,statistics=None):
     import json
     import zipfile
     from tcp_fault_peer import checksum
-    verify(path,lane,log,native,statistics)
+    proof=verify(path,lane,log,native,statistics)
     rows=read_capture(path);original=path.read_bytes();other=path.parent/f'lane{lane^1}.pcap';companion=other.read_bytes()
     for n,row in enumerate(rows):row['_clock_source']=n
     guest=bytes([0x52,0x54,0,0x12,0x34,0x10+lane]);variants=[]
     tcp=[n for n,row in enumerate(rows) if len(row['frame'])>=74 and row['frame'][12:14]==b'\x86\xdd' and row['frame'][20]==6]
     outgoing=[n for n in tcp if rows[n]['frame'][6:12]==guest]
-    outputs=[n for n in outgoing if packet(rows[n]['frame'])['data']]
+    retransmitted={index for pair in proof['fallback_retransmissions'] for index in pair}
+    outputs=[n for n in outgoing if n not in retransmitted and packet(rows[n]['frame'])['data']]
     require(len(outputs)==12,'all actual retained and fresh companion output mutation inputs')
     for number,index in enumerate(outputs):
         for field in ('source','hop','class','payload','sequence','zone'):
@@ -206,7 +226,7 @@ def damaged(path,lane,log,native,output,statistics=None):
             size=int.from_bytes(frame[18:20],'big');frame[70:72]=bytes(2)
             frame[70:72]=struct.pack('!H',checksum(frame[22:54]+struct.pack('!I3xB',size,6)+frame[54:54+size]))
             changed[index]['frame']=bytes(frame);variants.append((f'output-{number}-{field}',changed,log))
-    echoes=[n for n in tcp if rows[n]['frame'][6:12]!=guest and packet(rows[n]['frame'])['data']]
+    echoes=[n for n in tcp if n not in retransmitted and rows[n]['frame'][6:12]!=guest and packet(rows[n]['frame'])['data']]
     require(len(echoes)==12,'all actual retained and companion echo mutation inputs')
     for number,index in enumerate(echoes):
         for field in ('payload','sequence','acknowledgment'):

@@ -26,6 +26,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <signal.h>
 #include <pthread.h>
 #include <sched.h>
@@ -36,8 +37,10 @@
 #include <string.h>
 #include <sys/auxv.h>
 #include <sys/mman.h>
+#include <sys/mount.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -289,7 +292,197 @@ static void aggregate(void) {
     observed("six_mib_combined_argument_pointer_budget_acceptance_and_overflow_denial");
 }
 
+static void copy_executable(int destination) {
+    int source = open(executable, O_RDONLY | O_CLOEXEC);
+    CHECK(source >= 0);
+    char buffer[8192];
+    for (;;) {
+        ssize_t length = read(source, buffer, sizeof(buffer));
+        CHECK(length >= 0);
+        if (!length)
+            break;
+        size_t written = 0;
+        while (written < (size_t)length) {
+            ssize_t count = write(destination, buffer + written, (size_t)length - written);
+            CHECK(count > 0);
+            written += (size_t)count;
+        }
+    }
+    CHECK(close(source) == 0);
+}
+
+static void fd_display(char* output, size_t size, int fd, const char* tail) {
+    int length = snprintf(output, size, "/dev/fd/%d%s%s", fd, *tail ? "/" : "", tail);
+    CHECK(length > 0 && (size_t)length < size);
+}
+
+static int fd_child(int argc, char** argv) {
+    CHECK(argc == 7 && !strcmp(argv[0], "argv-zero-kept"));
+    CHECK(!strcmp((const char*)getauxval(AT_EXECFN), argv[2]));
+    CHECK(getenv("EXEC_FD_ENV") && !strcmp(getenv("EXEC_FD_ENV"), "owned"));
+    int gone = atoi(argv[3]);
+    if (gone >= 0)
+        CHECK(fcntl(gone, F_GETFD) == -1 && errno == EBADF);
+    int ready = atoi(argv[4]), resume = atoi(argv[5]);
+    if (ready >= 0) {
+        char byte;
+        CHECK(write(ready, "r", 1) == 1);
+        CHECK(read(resume, &byte, 1) == 1 && byte == 'g');
+    }
+    CHECK((unsigned)getuid() == (unsigned)strtoul(argv[6], NULL, 10));
+    return 73;
+}
+
+static void replace_from_fd(int fd, const char* path, int flags, char* display, int dropped,
+                            int ready, int resume, int use_fexecve) {
+    char a[16], b[16], c[16], uid[16];
+    CHECK(snprintf(a, sizeof(a), "%d", dropped) > 0);
+    CHECK(snprintf(b, sizeof(b), "%d", ready) > 0);
+    CHECK(snprintf(c, sizeof(c), "%d", resume) > 0);
+    CHECK(snprintf(uid, sizeof(uid), "%u", (unsigned)getuid()) > 0);
+    char* args[] = {"argv-zero-kept", "--fd-child", display, a, b, c, uid, NULL};
+    char* environment[] = {"EXEC_FD_ENV=owned", NULL};
+    if (use_fexecve)
+        fexecve(fd, args, environment);
+    else
+        syscall(SYS_execveat, fd, path, args, environment, flags);
+    CHECK(0);
+}
+
+static void child_exec_at(int fd, const char* path, int flags, char* display, int dropped) {
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child)
+        replace_from_fd(fd, path, flags, display, dropped, -1, -1, 0);
+    child_status(child);
+}
+
+static void exec_at_paths(int modern) {
+    char directory[] = "/tmp/axiom-execveat-XXXXXX";
+    CHECK(mkdtemp(directory));
+    char path[sizeof(directory) + 32], alias[sizeof(path)], linkname[sizeof(path)];
+    CHECK(snprintf(path, sizeof(path), "%s/program", directory) > 0);
+    CHECK(snprintf(alias, sizeof(alias), "%s/alias", directory) > 0);
+    CHECK(snprintf(linkname, sizeof(linkname), "%s/symlink", directory) > 0);
+    int writer = open(path, O_CREAT | O_WRONLY | O_CLOEXEC, 0700);
+    int dir = open(directory, O_PATH | O_DIRECTORY | O_CLOEXEC);
+    CHECK(writer >= 0 && dir >= 0);
+    copy_executable(writer);
+    CHECK(link(path, alias) == 0 && symlink("program", linkname) == 0);
+    int image = open(alias, O_PATH | O_CLOEXEC);
+    CHECK(image >= 0);
+    char* args[] = {"never-executed", NULL};
+    char* environment[] = {NULL};
+    CHECK(syscall(SYS_execveat, image, "", args, environment, AT_EMPTY_PATH) == -1 &&
+          errno == ETXTBSY);
+    CHECK(close(writer) == 0);
+
+    CHECK(syscall(SYS_execveat, -1, "program", args, environment, 0) == -1 && errno == EBADF);
+    CHECK(syscall(SYS_execveat, dir, (void*)(uintptr_t)1, args, environment, 0) == -1 &&
+          errno == EFAULT);
+    CHECK(syscall(SYS_execveat, image, "", args, environment, 0) == -1 && errno == ENOENT);
+    CHECK(syscall(SYS_execveat, dir, "", args, environment, AT_EMPTY_PATH) == -1 &&
+          errno == EACCES);
+    CHECK(syscall(SYS_execveat, image, "program", args, environment, 0) == -1 && errno == ENOTDIR);
+    CHECK(syscall(SYS_execveat, dir, "program", args, environment, 0x4000) == -1 &&
+          errno == EINVAL);
+    CHECK(syscall(SYS_execveat, dir, "symlink", args, environment, AT_SYMLINK_NOFOLLOW) == -1 &&
+          errno == ELOOP);
+    int symlink_fd = open(linkname, O_PATH | O_NOFOLLOW | O_CLOEXEC);
+    CHECK(symlink_fd >= 0);
+    CHECK(syscall(SYS_execveat, symlink_fd, "", args, environment, AT_EMPTY_PATH) == -1 &&
+          errno == ELOOP);
+    CHECK(close(symlink_fd) == 0);
+    observed("execveat_argument_errors_and_writer_conflict");
+
+    char display[sizeof(path) + 32];
+    fd_display(display, sizeof(display), dir, "symlink");
+    child_exec_at(dir, "symlink", 0, display, dir);
+    child_exec_at(-1, path, 0, path, -1);
+    fd_display(display, sizeof(display), image, "");
+    child_exec_at(image, "", AT_EMPTY_PATH, display, image);
+    observed("execveat_directory_relative_absolute_and_path_descriptor");
+
+    // The executing inode stays deny-write until its last executing process exits.
+    int ready[2], resume[2];
+    CHECK(pipe(ready) == 0 && pipe(resume) == 0);
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child)
+        replace_from_fd(image, "", AT_EMPTY_PATH, display, image, ready[1], resume[0], 0);
+    CHECK(close(ready[1]) == 0 && close(resume[0]) == 0);
+    char byte;
+    CHECK(read(ready[0], &byte, 1) == 1 && byte == 'r');
+    CHECK(open(path, O_WRONLY) == -1 && errno == ETXTBSY);
+    CHECK(open(alias, O_RDONLY | O_TRUNC) == -1 && errno == ETXTBSY);
+    CHECK(truncate(alias, 0) == -1 && errno == ETXTBSY);
+    CHECK(write(resume[1], "g", 1) == 1);
+    child_status(child);
+    CHECK(close(resume[1]) == 0 && close(ready[0]) == 0);
+    writer = open(path, O_WRONLY);
+    CHECK(writer >= 0 && close(writer) == 0);
+    CHECK(unlink(path) == 0 && unlink(alias) == 0 && unlink(linkname) == 0);
+    child_exec_at(image, "", AT_EMPTY_PATH, display, image);
+    CHECK(close(image) == 0 && close(dir) == 0);
+    observed("execveat_unlinked_inode_and_running_image_writer_exclusion");
+
+    CHECK(mount("none", directory, "ramfs", MS_NOEXEC, NULL) == 0);
+    writer = open(path, O_CREAT | O_WRONLY | O_CLOEXEC, 0700);
+    CHECK(writer >= 0);
+    copy_executable(writer);
+    CHECK(close(writer) == 0);
+    image = open(path, O_PATH | O_CLOEXEC);
+    CHECK(image >= 0);
+    CHECK(syscall(SYS_execveat, image, "", args, environment, AT_EMPTY_PATH) == -1 &&
+          errno == EACCES);
+    CHECK(close(image) == 0 && unlink(path) == 0);
+    CHECK(umount(directory) == 0 && rmdir(directory) == 0);
+
+    image = memfd_create("format-check", MFD_CLOEXEC);
+    CHECK(image >= 0);
+    CHECK(syscall(SYS_execveat, image, "", args, environment, AT_EMPTY_PATH) == -1 &&
+          errno == ENOEXEC);
+    int flags = AT_EMPTY_PATH | 0x10000;
+    if (modern) {
+        CHECK(syscall(SYS_execveat, image, "", args, environment, flags) == 0);
+        CHECK(syscall(SYS_execveat, image, "", (void*)(uintptr_t)1, environment, flags) == -1 &&
+              errno == EFAULT);
+        CHECK(fchmod(image, 0600) == 0);
+        CHECK(syscall(SYS_execveat, image, "", args, environment, flags) == -1 && errno == EACCES);
+    } else
+        CHECK(syscall(SYS_execveat, image, "", args, environment, flags) == -1 && errno == EINVAL);
+    CHECK(fcntl(image, F_GETFD) == FD_CLOEXEC && close(image) == 0);
+    observed("execveat_permission_only_check_and_failed_exec_descriptor_state");
+}
+
+static void memfd_exec(void) {
+    for (unsigned identity = 0; identity < 2; ++identity) {
+        pid_t child = fork();
+        CHECK(child >= 0);
+        if (!child) {
+            if (identity)
+                CHECK(setgroups(0, NULL) == 0 && setgid(65534) == 0 && setuid(65534) == 0);
+            int image = memfd_create("compiler-output", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+            CHECK(image >= 0);
+            copy_executable(image);
+            CHECK(fchmod(image, 0600) == 0);
+            char* args[] = {"never-executed", NULL};
+            CHECK(syscall(SYS_execveat, image, "", args, NULL, AT_EMPTY_PATH) == -1 &&
+                  errno == EACCES);
+            CHECK(fchmod(image, 0755) == 0);
+            CHECK(fcntl(image, F_ADD_SEALS, F_SEAL_WRITE | F_SEAL_SHRINK | F_SEAL_GROW) == 0);
+            char display[48];
+            fd_display(display, sizeof(display), image, "");
+            replace_from_fd(image, "", AT_EMPTY_PATH, display, image, -1, -1, 1);
+        }
+        child_status(child);
+    }
+    observed("libc_fexecve_runs_sealed_memfd_as_root_and_ordinary_user");
+}
+
 int main(int argc, char** argv) {
+    if (argc > 1 && !strcmp(argv[1], "--fd-child"))
+        return fd_child(argc, argv);
     if (getenv("EMPTY_ARGV_EXPECTED") || (argc > 1 && !strcmp(argv[1], "--verify")))
         return verify(argc, argv);
     executable = argv[0];
@@ -320,6 +513,8 @@ int main(int argc, char** argv) {
     negative_pointers();
     aggregate();
     observed("successful_reexec_initial_stack_alignment_auxiliary_vectors_and_owned_string_bytes");
+    exec_at_paths(argc == 1 || strcmp(argv[1], "--legacy-execveat"));
+    memfd_exec();
     printf("EXEC_ARGUMENTS_PASS observations=%u\n", observations);
     return 0;
 }

@@ -580,6 +580,10 @@ static int64_t wait_child(int pid, uint64_t status, int options, uint64_t usage)
     return block(Wait::child, -1, pid);
 }
 
+static bool read_exec_data(void* context, uint64_t address, void* output, size_t size) {
+    return static_cast<AddressSpace*>(context)->copy_in(output, address, size);
+}
+
 static int64_t exec_user(uint64_t path, uint64_t argv, uint64_t envp, Frame* frame) {
     if (current->process_limit_exceeded) {
         // Capture filename errors before the deferred quota check; argv/envp follow it.
@@ -599,15 +603,90 @@ static int64_t exec_user(uint64_t path, uint64_t argv, uint64_t envp, Frame* fra
             return error;
     }
     ExecArguments arguments;
-    auto read = [](void* context, uint64_t address, void* output, size_t size) {
-        return static_cast<AddressSpace*>(context)->copy_in(output, address, size);
-    };
-    int result = arguments.capture(read, &current->memory->space, path, argv, envp,
+    int result = arguments.capture(read_exec_data, &current->memory->space, path, argv, envp,
                                    current->process->limits.soft(Resource::stack));
     if (!result) {
         result = exec_task(current, arguments);
         if (!result)
             *frame = current->frame;
+    }
+    return result;
+}
+
+static void exec_filename_at(int fd, const char* path, char* display) {
+    if (fd == -100 || path[0] == '/') {
+        memcpy(display, path, strlen(path) + 1);
+        return;
+    }
+    memcpy(display, "/dev/fd/", 8);
+    char digits[10];
+    size_t count = 0;
+    do {
+        digits[count++] = '0' + fd % 10;
+        fd /= 10;
+    } while (fd);
+    auto next = display + 8;
+    while (count)
+        *next++ = digits[--count];
+    if (*path)
+        *next++ = '/';
+    memcpy(next, path, strlen(path) + 1);
+}
+
+static int64_t execveat_user(Frame& frame) {
+    constexpr uint32_t nofollow = 0x100, empty_path = 0x1000, check_only = 0x10000;
+    uint32_t flags = frame.r8;
+    int fd = int(frame.rdi);
+    Path path;
+    auto& task = *current;
+    auto& space = task.memory->space;
+    size_t length = 0;
+    while (length < sizeof(path.text)) {
+        if (!space.copy_in(path.text + length, frame.rsi + length, 1))
+            return -14;
+        if (!path.text[length])
+            break;
+        ++length;
+    }
+    if (length == sizeof(path.text))
+        return -36;
+    if (!length && !(flags & empty_path))
+        return -2;
+    if (int error = process_exec_limit(task))
+        return error;
+    if (flags & ~(nofollow | empty_path | check_only))
+        return -22;
+
+    Node* file = nullptr;
+    if (path.text[0] == '/') {
+        path.base = task.fs->root_node;
+    } else if (fd == -100) {
+        file = path.base = task.fs->cwd_node;
+    } else {
+        auto handle = fd_handle(fd, true);
+        if (!handle)
+            return -9;
+        file = path.base = handle->node;
+        if (length && (!file || (file->mode & 0170000) != directory))
+            return -20;
+    }
+    if (length) {
+        if (int error = resolve_path(path, file, !(flags & nofollow)))
+            return error;
+    }
+    file = file_node(file);
+    if (int error = executable_access(task, file))
+        return error;
+
+    char display[exec_filename_limit];
+    exec_filename_at(fd, path.text, display);
+    ExecArguments arguments;
+    int result = arguments.capture_named(read_exec_data, &space, display, frame.rdx, frame.r10,
+                                         task.process->limits.soft(Resource::stack));
+    if (!result && !(flags & check_only)) {
+        result = exec_task(&task, arguments, file);
+        if (!result)
+            frame = task.frame;
     }
     return result;
 }
@@ -1623,6 +1702,8 @@ static int64_t dispatch(Frame* f) {
     }
     case 319:
         return memfd_create(*current, a, b);
+    case 322:
+        return execveat_user(*f);
     case 326:
         return io_syscall(*current, *f);
     default:

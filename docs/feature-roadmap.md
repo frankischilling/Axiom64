@@ -226,7 +226,7 @@ Acceptance evidence:
 
 Static/dynamic musl programs and a tested syscall subset work; unsupported calls return ENOSYS.
 
-[Local flock](file-locks.md) is compared with actual Linux for descriptor ownership, conversion, restart, stop/continue and process lifetime. Four guest boots compare both linkages on RAM and ext2. [File transfer tests](io.md) cover `sendfile` and `copy_file_range` on both musl linkages and writable ext2. Anonymous memory file tests cover sealing, descriptor passing, sparse I/O, and shared and private mapping lifetime. The complete syscall matrix and every requirement below remain open.
+[Local flock](file-locks.md) is compared with actual Linux for descriptor ownership, conversion, restart, stop/continue and process lifetime. Four guest boots compare both linkages on RAM and ext2. [File transfer tests](io.md) cover `sendfile` and `copy_file_range` on both musl linkages and writable ext2. Anonymous memory file tests cover sealing, descriptor passing, sparse I/O, and shared and private mapping lifetime. Static and dynamic ELF tests execute regular files and sealed memory files by descriptor, with close-on-exec and writer exclusion checks. The complete syscall matrix and every requirement below remain open.
 
 Required work:
 

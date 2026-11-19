@@ -433,8 +433,9 @@ pages. Other filesystem types can return `EOPNOTSUPP` for allocation.
 page pins. `F_SEAL_FUTURE_WRITE` blocks descriptor writes and new writable shared
 mappings while preserving access on existing mappings. Grow, shrink, and
 execute seals constrain inode changes. `MFD_NOEXEC_SEAL` fixes the inode's
-execute bits at zero. Huge-page memory files, proc descriptor links, and
-execution through a file descriptor remain outside the current implementation.
+execute bits at zero. Executable memory files can run through `execveat` and
+libc `fexecve`. Huge-page memory files and proc descriptor links remain outside
+the current implementation.
 
 ### Userspace and pipe buffers
 

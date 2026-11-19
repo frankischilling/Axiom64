@@ -75,6 +75,12 @@ static void release_memory(Task* t) {
         if (memory->space.root && read_cr3() == memory->space.root)
             activate_kernel_memory();
         memory->space.destroy();
+        if (auto file = memory->exec_file) {
+            --file->exec_images;
+            inotify_retire_inode(file);
+            node_retire_xattrs(file);
+            memfd_reap(file);
+        }
         inotify_reap_inodes();
     }
     if (!--memory->references)
@@ -256,6 +262,10 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         child->memory->brk_end = current->memory->brk_end;
         child->memory->initial_data_size = current->memory->initial_data_size;
         child->memory->dumpable = current->memory->dumpable;
+        if (auto file = current->memory->exec_file) {
+            ++file->exec_images;
+            child->memory->exec_file = file;
+        }
     }
     if (flags & clone_files) {
         release_files(child->files);
@@ -632,29 +642,38 @@ static int load_image(AddressSpace& mem, Node* file, uint64_t base, Image& image
     return 0;
 }
 
-int exec_task(Task* t, const ExecArguments& arguments) {
+int executable_access(const Task& task, Node* file) {
+    if (!file)
+        return -13;
+    if (int error = node_validate(file))
+        return error;
+    if ((file->mode & 0170000) == symlink)
+        return -40;
+    if ((file->mode & 0170000) != regular_file || file->mount->noexec)
+        return -13;
+    if (int error = credential_access(task.credentials, file->uid, file->gid, file->mode, 1))
+        return error;
+    // An anonymous memory file has no writable namespace open. Its original
+    // memory-file descriptor can execute the image it just created.
+    return !is_memfd(file) && node_open_for_write(file) ? -26 : 0;
+}
+
+int exec_task(Task* t, const ExecArguments& arguments, Node* file) {
     if (int error = process_exec_limit(*t))
         return error;
     const char* path = arguments.path();
-    Path name;
-    name.base = t->fs->cwd_node;
-    if (strlen(path) >= sizeof(name.text))
-        return -36;
-    memcpy(name.text, path, strlen(path) + 1);
-    Node* file = nullptr;
-    int lookup_error = resolve_path(name, file);
-    if (lookup_error)
-        return lookup_error;
+    if (!file) {
+        Path name;
+        name.base = t->fs->cwd_node;
+        if (strlen(path) >= sizeof(name.text))
+            return -36;
+        memcpy(name.text, path, strlen(path) + 1);
+        if (int error = resolve_path(name, file))
+            return error;
+    }
     file = file_node(file);
-    if (!file)
-        return -2;
-    if ((file->mode & 0170000) != regular_file)
-        return -13;
-    int access_error = credential_access(t->credentials, file->uid, file->gid, file->mode, 1);
-    if (access_error)
-        return access_error;
-    if (file->mount->noexec)
-        return -13;
+    if (int error = executable_access(*t, file))
+        return error;
     FileCapabilities capabilities;
     if (!file->mount->nosuid && file->mount->ops->getxattr) {
         uint8_t value[24];
@@ -693,10 +712,7 @@ int exec_task(Task* t, const ExecArguments& arguments) {
         error = resolve_path(interpreter_path, interpreter);
         if (!error) {
             interpreter = file_node(interpreter);
-            error = (interpreter->mode & 0170000) != regular_file || interpreter->mount->noexec
-                        ? -13
-                        : credential_access(t->credentials, interpreter->uid, interpreter->gid,
-                                            interpreter->mode, 1);
+            error = executable_access(*t, interpreter);
         }
         if (!error)
             error = load_image(memory, interpreter, 0x7000000000, interp);
@@ -815,6 +831,8 @@ int exec_task(Task* t, const ExecArguments& arguments) {
                 child.real_parent_tid = t->pid;
     }
     replacement->space = memory;
+    ++file->exec_images;
+    replacement->exec_file = file;
     clear_tid(t);
     io_discard(*t);
     if (t == current)
@@ -857,7 +875,9 @@ int exec_task(Task* t, const ExecArguments& arguments) {
     for (auto& action : t->handlers->signal_actions)
         if (action[0] != 1)
             memset(action, 0, sizeof(action));
-    memcpy(t->process->executable, path, min(strlen(path) + 1, sizeof(t->process->executable)));
+    size_t display_length = min(strlen(path), sizeof(t->process->executable) - 1);
+    memcpy(t->process->executable, path, display_length);
+    t->process->executable[display_length] = 0;
     for (unsigned fd = 0; fd < max_fds; fd++)
         if (t->files->entries[fd].cloexec)
             close_descriptor(*t->files, int(fd));

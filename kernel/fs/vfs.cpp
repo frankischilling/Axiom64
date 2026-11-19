@@ -566,6 +566,8 @@ int node_truncate(Node* node, uint64_t size) {
         return node && (node->mode & 0170000) == directory ? -21 : -22;
     if (node_readonly(node))
         return -30;
+    if (node->exec_images && !is_memfd(node))
+        return -26;
     if (current && size > node->size && size > current->process->limits.soft(Resource::file_size)) {
         queue_signal(current, 25, current->process->pid);
         return -27;
@@ -723,9 +725,17 @@ bool node_referenced(Node* node) {
         if (task.state != State::empty && task.state != State::zombie && task.fs &&
             (references(task.fs->cwd_node) || references(task.fs->root_node)))
             return true;
-    return socket_node_busy(node) ||
+    return node->exec_images || socket_node_busy(node) ||
            (node->backing_physical &&
             page_shared(node->backing_physical, node->capacity / page_size));
+}
+
+bool node_open_for_write(const Node* node) {
+    for (const auto& handle : handles)
+        if (handle.references && handle.node == node && (handle.flags & 3) &&
+            !(handle.flags & 010000000))
+            return true;
+    return false;
 }
 
 static bool mount_busy(Mount* mount, bool writers_only) {
@@ -738,7 +748,8 @@ static bool mount_busy(Mount* mount, bool writers_only) {
     for (auto& task : tasks)
         if (!writers_only && task.state != State::empty && task.state != State::zombie &&
             ((task.fs->cwd_node && task.fs->cwd_node->mount == mount) ||
-             (task.fs->root_node && task.fs->root_node->mount == mount)))
+             (task.fs->root_node && task.fs->root_node->mount == mount) ||
+             (task.memory && task.memory->exec_file && task.memory->exec_file->mount == mount)))
             return true;
     // Shared file pages outlive file descriptors, including after fork.
     for (size_t i = 0; i < node_count; i++) {
@@ -967,11 +978,17 @@ void vfs_init(const void* archive, size_t length) {
 }
 
 Handle* open_handle(Node* n, uint32_t flags, int* error) {
+    n = file_node(n);
+    if (n && n->exec_images && (flags & 3) && !(flags & 010000000) && !is_memfd(n)) {
+        if (error)
+            *error = -26;
+        return nullptr;
+    }
     if (error)
         *error = -23;
     for (auto& h : handles)
         if (!h.references) {
-            h = {file_node(n), nullptr, 0, flags, 1, false};
+            h = {n, nullptr, 0, flags, 1, false};
             h.generation = next_generation++;
             int result = flags & 010000000 ? 0 : device_open(&h);
             if (result) {

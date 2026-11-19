@@ -67,6 +67,7 @@ struct MemoryContext {
     uint64_t brk_base = 0, brk_end = 0;
     uint64_t initial_data_size = 0;
     SharedMemoryMapping* shared = nullptr;
+    Node* exec_file = nullptr;
 };
 
 struct FileTable {
@@ -194,7 +195,8 @@ int clone_task(Frame*, uint64_t flags, uint64_t stack, uint64_t parent_tid, uint
 
 class ExecArguments;
 
-int exec_task(Task*, const ExecArguments&);
+int executable_access(const Task&, Node*);
+int exec_task(Task*, const ExecArguments&, Node* file = nullptr);
 
 void exit_task(Task*, int);
 

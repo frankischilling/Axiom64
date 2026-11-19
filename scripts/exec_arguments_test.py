@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import tempfile
@@ -32,7 +33,7 @@ def build(provider, linkage, directory, native_runtime=None):
     if linkage == 'static':
         command += ['-static']
     elif native_runtime and provider != 'native':
-        native_runtime.mkdir()
+        native_runtime.mkdir(mode=0o755)
         runtime = native_runtime / 'libc.so'
         shutil.copyfile(loader(provider), runtime)
         runtime.chmod(0o755)
@@ -66,8 +67,8 @@ def execute(command, log, firmware=None):
     text = log.read_text().replace('\r\n', '\n')
     lines = text.splitlines()
     count = sum(line.startswith('EXEC_ARGUMENTS_OBSERVATION ') for line in lines)
-    passed = not timed_out and process.returncode == (1 if firmware else 0) and count == 9 and \
-        lines.count('EXEC_ARGUMENTS_PASS observations=9') == 1 and not any(
+    passed = not timed_out and process.returncode == (1 if firmware else 0) and count == 14 and \
+        lines.count('EXEC_ARGUMENTS_PASS observations=14') == 1 and not any(
         marker in text for marker in ('EXEC_ARGUMENTS_FAIL', 'PANIC:', 'FAULT pid='))
     if firmware:
         passed = passed and lines.count('AXIOM64_TESTS_PASS') == 1 and \
@@ -93,8 +94,14 @@ def main():
     if not args.native:
         subprocess.run(['make', '-s', '-j2', 'build/axiom64.elf', 'build/init', 'busybox'], cwd=ROOT, check=True)
     rows = []
+    release = re.match(r'(\d+)\.(\d+)', platform.release())
+    if args.native and not release:
+        raise RuntimeError('cannot determine native Linux execveat flags')
+    legacy_flags = (['--legacy-execveat'] if args.native and tuple(map(int, release.groups())) < (6, 14)
+                    else [])
     with tempfile.TemporaryDirectory(prefix='axiom64-exec-arguments-') as temporary:
         native_root = Path(temporary)
+        native_root.chmod(0o755)
         for provider in ('build', 'runtime', 'native') if args.native else ('build', 'runtime'):
             for linkage in ('static', 'dynamic'):
                 case = args.directory / (provider + '-' + linkage)
@@ -102,7 +109,14 @@ def main():
                 program, inputs = build(provider, linkage, case,
                     native_root / case.name if args.native else None)
                 if args.native:
-                    command = ['unshare', '--mount', '--pid', '--fork', '--mount-proc', str(program), '--native']
+                    public = native_root / ('client-' + case.name)
+                    public.mkdir(mode=0o755)
+                    executable = public / program.name
+                    shutil.copy2(program, executable)
+                    if digest(executable) != inputs['binary_sha256']:
+                        raise RuntimeError('native exec fixture copy changed')
+                    command = ['unshare', '--mount', '--pid', '--fork', '--mount-proc', str(executable),
+                               *legacy_flags]
                     row = execute(command, case / 'native.log')
                     row.update(provider=provider, linkage=linkage, inputs=inputs)
                     rows.append(row)
@@ -134,7 +148,7 @@ def main():
                 if args.native:
                     print('EXEC_ARGUMENTS_NATIVE_PASS ' + case.name, flush=True)
     assert source == {name: digest(ROOT / name) for name in source}, 'source changed during validation'
-    print('EXEC_ARGUMENTS_MATRIX_PASS profiles=' + str(len(rows)) + ' observations=' + str(len(rows) * 9), flush=True)
+    print('EXEC_ARGUMENTS_MATRIX_PASS profiles=' + str(len(rows)) + ' observations=' + str(len(rows) * 14), flush=True)
 
 
 if __name__ == '__main__':

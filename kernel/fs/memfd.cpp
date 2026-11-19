@@ -122,7 +122,7 @@ void discard_pages(MemoryFile& memory, uint64_t& table, unsigned shift, uint64_t
 }
 
 void collect(MemoryFile& memory) {
-    if (memory.descriptor || memory.mappings)
+    if (memory.descriptor || memory.mappings || memory.node.exec_images)
         return;
     discard_pages(memory, memory.pages, root_shift, 0, 0, UINT64_MAX);
     release(&memory);
@@ -513,6 +513,11 @@ void memfd_close(Node* node) {
     auto& memory = file(node);
     memory.descriptor = false;
     collect(memory);
+}
+
+void memfd_reap(Node* node) {
+    if (is_memfd(node))
+        collect(file(node));
 }
 
 uint64_t memfd_page_protection(uint64_t entry, int prot) {

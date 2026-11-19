@@ -78,7 +78,7 @@ struct Node {
     Mount* mount;
     void* filesystem_data;
     Xattr* xattrs = nullptr;
-    unsigned lock_readers;
+    unsigned lock_readers, exec_images;
     Handle* lock_writer;
     Pipe* named_pipe = nullptr;
 };
@@ -258,6 +258,7 @@ int node_map_shared(Node*, uint64_t, size_t, bool write, uint64_t&);
 int node_stats(Node*, FilesystemStats&);
 
 bool node_referenced(Node*);
+bool node_open_for_write(const Node*);
 
 Handle* open_handle(Node*, uint32_t, int* error = nullptr);
 

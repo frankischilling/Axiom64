@@ -183,7 +183,7 @@ int ExecArguments::capture(Read read, void* context, uint64_t path, uint64_t arg
         return -22;
     size_t length = 0;
     int error = 0;
-    while (length < sizeof(path_)) {
+    while (length < exec_path_limit) {
         if (path >= user_limit || !read(context, path++, path_ + length, 1)) {
             error = -14;
             break;
@@ -191,11 +191,31 @@ int ExecArguments::capture(Read read, void* context, uint64_t path, uint64_t arg
         if (!path_[length++])
             break;
     }
-    if (!error && (length == sizeof(path_) && path_[length - 1]))
+    if (!error && (length == exec_path_limit && path_[length - 1]))
         error = -36;
+    if (error) {
+        clear();
+        return error;
+    }
     budget_ = length;
-    if (!error)
-        error = vector(read, context, argv, nullptr, argc_);
+    return capture_user_vectors(read, context, argv, envp);
+}
+
+int ExecArguments::capture_named(Read read, void* context, const char* filename, uint64_t argv,
+                                 uint64_t envp, uint64_t stack_limit) {
+    clear();
+    stack_limit_ = stack_limit;
+    limit_ = max(size_t(32 * page_size), min(exec_argument_limit, size_t(stack_limit / 4)));
+    size_t length = strlen(filename) + 1;
+    if (length > sizeof(path_))
+        return -36;
+    memcpy(path_, filename, length);
+    budget_ = length;
+    return capture_user_vectors(read, context, argv, envp);
+}
+
+int ExecArguments::capture_user_vectors(Read read, void* context, uint64_t argv, uint64_t envp) {
+    int error = vector(read, context, argv, nullptr, argc_);
     bool empty = !argc_;
     if (!error && empty) {
         // Linux supplies one empty argument when the caller passes argc zero.
@@ -219,9 +239,9 @@ int ExecArguments::capture_kernel(const char* path, const char* const* argv,
     if (!path)
         return -14;
     size_t length = 0;
-    while (length < sizeof(path_) && path[length])
+    while (length < exec_path_limit && path[length])
         length++;
-    if (length == sizeof(path_))
+    if (length == exec_path_limit)
         return -36;
     memcpy(path_, path, length + 1);
     budget_ = length + 1;

@@ -8,6 +8,7 @@ import re
 import zipfile
 from ipv6_extension_execution import verify_execution
 from fetch import ROOT
+from reference_source import matches_file
 
 SOURCE = 'userspace/tests/net/ipv6_sticky_controls.c'
 FIXTURE = ROOT / 'scripts/tests/fixtures/ipv6-sticky-controls-linux7.json'
@@ -58,7 +59,7 @@ def fixture():
     saved = json.loads(FIXTURE.read_text())
     require(saved['schema'] == 1 and saved['reference']['kernel'] == '7.0.0-1017-azure' and
             saved['reference']['actual_program_completed'] and saved['reference']['actual_cpio_reopened'] and
-            saved['reference']['source_sha256'] == digest(ROOT / SOURCE), 'executed source-bound Linux7 sticky reference')
+            matches_file(ROOT, SOURCE, saved['reference']['source_sha256']), 'executed source-bound Linux7 sticky reference')
     rows = []
     for original in saved['rows']:
         row = dict(original)

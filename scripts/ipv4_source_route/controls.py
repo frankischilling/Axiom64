@@ -3,6 +3,7 @@
 import hashlib
 import json
 from pathlib import Path
+from reference_source import matches
 
 CLIENT = 'userspace/tests/net/ipv4/source_route_controls.c'
 SCRIPT = b'#!/bin/sh\nset -e\n/bin/ipv4-source-controls\necho AXIOM64_TESTS_PASS\n'
@@ -59,7 +60,8 @@ def observations(text, native):
 
 
 def client_binding(inputs):
-    require(inputs.get(CLIENT) == fixture()['client_source_sha256'], 'same fixed native and guest client')
+    require(matches(CLIENT, fixture()['client_source_sha256'], inputs.get(CLIENT)),
+            'same fixed native and guest client')
     require(inputs.get('scripts/ipv4_source_route/controls.json') ==
             fingerprint(Path(__file__).with_name('controls.json').read_bytes()), 'same fixed Linux fixture bytes')
 

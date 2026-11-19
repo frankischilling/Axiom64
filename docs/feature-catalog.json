@@ -50,7 +50,7 @@
       "title": "Firmware, buses, and interrupt routing",
       "milestone": "M1",
       "state": "partial",
-      "current": "Limine boots through BIOS and UEFI. Bounded ACPI parsing covers HPET, MADT, FADT, and MCFG. PCI enumeration uses validated ECAM apertures or legacy PCI configuration ports on segment zero. Q35 boots exercise modern virtio disk I/O and discovery of both Ethernet drivers. Interrupts still use PIC/PIT. APIC interrupt delivery and broader firmware handoff remain required.",
+      "current": "Limine boots through BIOS and UEFI. Bounded ACPI parsing covers HPET, MADT, FADT, and MCFG. PCI enumeration uses validated ECAM apertures or legacy PCI configuration ports on segment zero. The kernel verifies delivery of the scheduling PIT through the I/O APIC and falls back to PIC/PIT when necessary. Q35 boots exercise timer delivery, modern virtio disk I/O, and discovery of both Ethernet drivers. PCI device interrupt routing, MSI/MSI-X, and broader firmware handoff remain required.",
       "scope": [
         "PCI/PCIe enumeration and driver binding",
         "MMIO mapping, DMA allocation, address limits, and cache attributes",

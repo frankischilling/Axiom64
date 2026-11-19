@@ -87,7 +87,7 @@ Start from current `main` after checking remote updates, ongoing work and CI. Pr
 
 ### F01. Firmware, buses, and interrupt routing
 
-Limine boots through BIOS and UEFI. [Boot diagnostics](architecture.md) report validated MADT topology and FADT flags, and the PCI driver uses validated MCFG windows for ECAM. Q35 boots exercise the modern virtio disk and both network drivers. Legacy PCI enumeration and [bounded ACPI HPET discovery](time.md) remain available. APIC interrupt delivery and broader firmware handoff are still required. [Storage support](storage.md) describes the PCI and MMIO support used by raw virtio disks.
+Limine boots through BIOS and UEFI. [Boot diagnostics](architecture.md) report validated MADT topology and FADT flags, and the PCI driver uses validated MCFG windows for ECAM. The scheduling PIT uses the I/O APIC after boot verifies timer delivery. Legacy PCI, PIC/PIT, and [bounded ACPI HPET discovery](time.md) remain available. Q35 boots exercise the timer, modern virtio disk, and discovery of both network drivers. PCI device interrupt routing, MSI/MSI-X, and broader firmware handoff remain required. [Storage support](storage.md) describes the PCI and MMIO support used by raw virtio disks.
 
 Required work:
 

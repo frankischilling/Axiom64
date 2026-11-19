@@ -4,7 +4,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 
 | Folder | Contents |
 | --- | --- |
-| `kernel/arch/x86_64/` | CPU setup, counter clock selection, RTC I/O, assembly entry, linker layout |
+| `kernel/arch/x86_64/` | CPU setup, interrupt delivery, counter clock selection, RTC I/O, assembly entry, linker layout |
 | `kernel/boot/` | Boot protocol, kernel startup, and root selection |
 | `kernel/core/` | Freestanding runtime, diagnostics, and counter arithmetic |
 | `kernel/core/random/` | Cryptographic primitives, entropy pool and generator state |

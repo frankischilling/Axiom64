@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "core/time.hpp"
+#include "arch/x86_64/interrupts.hpp"
 #include "firmware/acpi.hpp"
 #include <array>
 #include <cassert>
@@ -487,10 +488,39 @@ static void ecam_tables() {
     std::puts("ACPI_MCFG_PASS regions=2 malformed=10");
 }
 
+static void isa_routes() {
+    using namespace ax::Irq;
+    constexpr GsiRange ranges[] = {{0, 24}, {32, 16}};
+    Route route{};
+    assert(isa_route(0, 0, ranges, 2, route) && !route.controller && !route.input && !route.mode);
+    assert(isa_route(2, 5, ranges, 2, route) && !route.controller && route.input == 2 &&
+           !route.mode);
+    assert(isa_route(47, 15, ranges, 2, route) && route.controller == 1 && route.input == 15 &&
+           route.mode == (active_low | level_triggered));
+    assert(isa_route(36, 3, ranges, 2, route) && route.controller == 1 && route.input == 4 &&
+           route.mode == active_low);
+    assert(!isa_route(24, 0, ranges, 2, route));
+    assert(!isa_route(48, 0, ranges, 2, route));
+    assert(!isa_route(0, 2, ranges, 2, route));
+    assert(!isa_route(0, 8, ranges, 2, route));
+    assert(!isa_route(0, 16, ranges, 2, route));
+    constexpr GsiRange overlap[] = {{0, 24}, {20, 24}};
+    assert(!isa_route(21, 0, overlap, 2, route));
+    constexpr GsiRange overflow[] = {{UINT32_MAX, 2}};
+    assert(!isa_route(UINT32_MAX, 0, overflow, 1, route));
+    constexpr GsiRange too_many[] = {{0, max_inputs + 1}};
+    assert(!isa_route(0, 0, too_many, 1, route));
+    constexpr GsiRange empty[] = {{0, 0}};
+    assert(!isa_route(0, 0, empty, 1, route));
+    assert(route.controller == 1 && route.input == 4 && route.mode == active_low);
+    std::puts("ISA_INTERRUPT_ROUTE_PASS valid=4 rejected=9");
+}
+
 int main() {
     counter_tests();
     firmware_tests();
     platform_tables();
     ecam_tables();
+    isa_routes();
     std::puts("CLOCK_CODEC_TESTS_PASS");
 }

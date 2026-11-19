@@ -34,9 +34,12 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 Boot diagnostics report the validated ACPI MADT and FADT when firmware
 supplies them. The MADT lists local APIC and x2APIC processor IDs, I/O APIC
 addresses and interrupt bases, and ISA source overrides. The FADT supplies the
-system control interrupt and platform flags. A missing or rejected table
-leaves the existing boot path available. The kernel still uses PIC/PIT
-interrupt delivery and one CPU.
+system control interrupt and platform flags. On the single boot CPU, the
+kernel uses the MADT's ISA override to route PIT IRQ 0 through the I/O APIC.
+It checks the controller input ranges and observes two acknowledged timer
+interrupts before switching. If validation or delivery fails, the kernel
+keeps the legacy PIC/PIT path. The `irq=pic` boot option selects that path
+explicitly. Device drivers still poll.
 
 PCI discovery uses the validated ACPI MCFG table for PCIe configuration
 registers. Each aperture identifies a PCI segment and bus range. Its base

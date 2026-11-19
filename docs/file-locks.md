@@ -37,7 +37,7 @@ The guest harness first runs the common C program on Linux using GNU ASAN/UBSAN 
 Four BIOS/UEFI modern/legacy virtio boots run both guest linkages on RAM and real ext2. Every suite checks aliases, advisory I/O, fork/exec/close-on-exec lifetime, 48 blocked close/dup2 reuse cycles, `O_NONBLOCK`, interruption/restart, stop/continue, exit_group, kill, successful exec, and eight contending processes performing 256 updates while yielding under the lock. Every guest trace must match the current native result. Guest-only tests check explicit unsupported errors. Read-only ext2 lock tests, successful unmount, independent unchanged seed-file bytes and host fsck check filesystem lifetime. Evidence is in `build/file-lock-{native-results,results}.json` and `build/file-lock-*.log`.
 
 Run `make test-file-locks FILE_LOCK_ARGS=--include-q35` to repeat the modern disk
-tests on Q35 under BIOS and UEFI. Those boots also check ECAM mapping and device
-discovery for e1000 and virtio-net.
+tests on Q35 under BIOS and UEFI. Those boots also verify ECAM mapping, delivery
+of the PIT through the I/O APIC, and device discovery for e1000 and virtio-net.
 
 Descriptions without a canonical VFS node, including anonymous pipes, sockets and epoll, return `EOPNOTSUPP`. `O_PATH` descriptions return `EBADF`; complete O_PATH behavior remains outside the supported flock interface. Invalid modes or extra operation bits return `EINVAL` before descriptor lookup. Deprecated mandatory-lock flags also return `EINVAL`, so this implementation does not reproduce Linux's legacy ignored-success behavior for those flags. [POSIX/OFD record locks](vfs.md) use a separate ownership/range module with native and guest tests. Wider deadlock, restart, exhaustion and persistent-inode acceptance remain unfinished. NFS/SMB semantics, FIFO fairness and the complete locking ABI remain required work.

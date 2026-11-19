@@ -437,7 +437,7 @@ test-file-locks-native:
 	$(PYTHON) scripts/file_lock_native.py
 test-file-locks:
 	$(PYTHON) scripts/file_lock_test.py $(FILE_LOCK_ARGS)
-build/clock-codec-tests: kernel/tests/time/counter.cpp kernel/core/time.cpp kernel/firmware/acpi.cpp kernel/include/core/time.hpp kernel/include/firmware/acpi.hpp
+build/clock-codec-tests: kernel/tests/time/counter.cpp kernel/core/time.cpp kernel/firmware/acpi.cpp kernel/include/core/time.hpp kernel/include/firmware/acpi.hpp kernel/include/arch/x86_64/interrupts.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/time/counter.cpp kernel/core/time.cpp kernel/firmware/acpi.cpp -o $@
 test-clock-codec: build/clock-codec-tests

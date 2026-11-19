@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "boot/boot.hpp"
+#include "arch/x86_64/interrupts.hpp"
 #include "boot/root.hpp"
 #include "drivers/block/block.hpp"
 #include "drivers/platform/devices.hpp"
@@ -31,6 +32,7 @@
 #include "net/ethernet.hpp"
 #include "core/time.hpp"
 #include "core/random.hpp"
+#include "firmware/acpi.hpp"
 
 namespace ax {
 [[gnu::used, gnu::section(".limine_requests_start")]] static volatile uint64_t requests_start[] =
@@ -116,8 +118,15 @@ extern "C" [[noreturn]] void kernel_main() {
     memory_init();
     arch_init();
     uint64_t rsdp = rsdp_request.response ? uint64_t(rsdp_request.response->address) : 0;
-    firmware_discover(rsdp);
+    Acpi::InterruptTopology topology;
+    bool have_topology = firmware_discover(rsdp, topology);
     clock_init(rsdp);
+    if (word(cmd, "irq=pic"))
+        log("Interrupts: PIC/PIT selected by boot option\n");
+    else if (have_topology)
+        interrupt_init_apic(topology);
+    else
+        log("Interrupts: PIC/PIT fallback, no validated MADT\n");
     random_init(!word(cmd, "random.trust_cpu=off"), word(cmd, "random.trust_virtio=on"));
     auto modules = module_request.response;
     if (!modules || !modules->module_count)

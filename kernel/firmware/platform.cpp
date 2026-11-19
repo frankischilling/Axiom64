@@ -49,13 +49,13 @@ const uint8_t* firmware_read(uint64_t address, size_t length, void*) {
     return nullptr;
 }
 
-void firmware_discover(uint64_t rsdp) {
+bool firmware_discover(uint64_t rsdp, Acpi::InterruptTopology& topology) {
     if (!rsdp) {
         log("ACPI: no root pointer supplied by firmware\n");
-        return;
+        return false;
     }
-    Acpi::InterruptTopology topology;
-    if (Acpi::find_interrupt_topology(rsdp, firmware_read, nullptr, topology)) {
+    bool have_topology = Acpi::find_interrupt_topology(rsdp, firmware_read, nullptr, topology);
+    if (have_topology) {
         log("ACPI MADT: local-apic=%x processors=%u io-apics=%u legacy-pic=%u\n",
             topology.local_apic, uint64_t(topology.processor_count),
             uint64_t(topology.io_apic_count), uint64_t(topology.legacy_pic));
@@ -84,5 +84,6 @@ void firmware_discover(uint64_t rsdp) {
         pci_configure_ecam(mcfg);
     else
         log("ACPI: MCFG absent or rejected\n");
+    return have_topology;
 }
 } // namespace ax

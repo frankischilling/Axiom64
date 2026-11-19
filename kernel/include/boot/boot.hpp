@@ -35,5 +35,10 @@ extern volatile limine_framebuffer_request framebuffer_request;
 extern volatile limine_executable_cmdline_request cmdline_request;
 
 const uint8_t* firmware_read(uint64_t address, size_t length, void* context);
-void firmware_discover(uint64_t rsdp);
+
+namespace Acpi {
+struct InterruptTopology;
+}
+
+bool firmware_discover(uint64_t rsdp, Acpi::InterruptTopology&);
 } // namespace ax

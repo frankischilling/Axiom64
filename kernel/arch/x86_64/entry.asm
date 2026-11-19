@@ -1,4 +1,28 @@
 ; SPDX-License-Identifier: GPL-3.0-or-later
+; /**
+;  * @file    kernel/arch/x86_64/entry.asm
+;  * @brief   x86-64 kernel entry and return.
+;  * @author  frankischilling
+;  * @date    2026-11-18
+;  *
+;  * Saves syscall and exception frames, dispatches them on kernel stacks, and
+;  * restores the selected task with IRETQ.
+;  *
+;  * Copyright (C) 2026 frankischilling
+;  *
+;  * This program is free software: you can redistribute it and/or modify
+;  * it under the terms of the GNU General Public License as published by
+;  * the Free Software Foundation, either version 3 of the License, or
+;  * (at your option) any later version.
+;  *
+;  * This program is distributed in the hope that it will be useful,
+;  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+;  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+;  * GNU General Public License for more details.
+;  *
+;  * You should have received a copy of the GNU General Public License
+;  * along with this program. If not, see <https://gnu.org/licenses/>.
+;  */
 bits 64
 default rel
 section .text
@@ -64,7 +88,7 @@ restore_frame:
     iretq
 
 %assign i 0
-%rep 48
+%rep 256
 interrupt_%+i:
 %if i != 8 && i != 10 && i != 11 && i != 12 && i != 13 && i != 14 && i != 17 && i != 21 && i != 29 && i != 30
     push qword 0
@@ -105,7 +129,7 @@ section .rodata
 global interrupt_table
 interrupt_table:
 %assign i 0
-%rep 48
+%rep 256
     dq interrupt_%+i
 %assign i i+1
 %endrep

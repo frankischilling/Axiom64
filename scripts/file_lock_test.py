@@ -97,6 +97,10 @@ def run(firmware, transport, timeout, seed, scratch, reference, machine='pc'):
                     if marker not in text]
         if 'PCI ECAM: cannot map' in text:
             missing.append('complete Q35 ECAM mappings')
+        timer = re.findall(r'^Interrupts: (?:xAPIC|x2APIC) I/O APIC PIT irq=0 '
+                           r'gsi=(\d+) input=(\d+) cpu=(\d+) ticks=(\d+)$', text, re.M)
+        if len(timer) != 1 or int(timer[0][-1]) < 2:
+            missing.append('two delivered PIT IRQs before switching to I/O APIC')
     traces = re.findall(r'FILE_LOCK_TRACE_PASS operations=4096 digest=([0-9a-f]{8})', text)
     error = None
     fsck = None

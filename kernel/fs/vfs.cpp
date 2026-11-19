@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "fs/vfs.hpp"
+#include "fs/memfd.hpp"
 #include "io/descriptor_wait.hpp"
 #include "fs/pipe.hpp"
 #include "ipc/posix_message_queues.hpp"
@@ -1062,6 +1063,8 @@ void close_handle(Handle* h) {
     h->pipe = nullptr;
     node_retire_xattrs(retired_node);
     posix_queue_reap(retired_node);
+    if (is_memfd(retired_node))
+        memfd_close(retired_node);
 }
 
 bool handle_has_poll(const Handle& handle) {
@@ -1169,15 +1172,15 @@ int write_handle_limit_at(Task* task, Handle& handle, uint64_t offset, size_t& l
         return -30;
     if (node_control(node) || node->mount->ops == &posix_queue_filesystem())
         return 0;
-    if (!task)
-        return 0;
-    uint64_t limit = task->process->limits.soft(Resource::file_size);
-    if (offset >= limit) {
-        queue_signal(task, 25, task->process->pid);
-        return -27;
+    if (task) {
+        uint64_t limit = task->process->limits.soft(Resource::file_size);
+        if (offset >= limit) {
+            queue_signal(task, 25, task->process->pid);
+            return -27;
+        }
+        length = min(uint64_t(length), limit - offset);
     }
-    length = min(uint64_t(length), limit - offset);
-    return 0;
+    return memfd_write_limit(node, offset, length);
 }
 
 int write_handle_limit(Handle* h, size_t& length) {

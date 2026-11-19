@@ -46,6 +46,8 @@ constexpr uint64_t page_mask = 0x000ffffffffff000;
 // Software bit outside the x86-64 physical-address field: mapping may not gain execution.
 constexpr uint64_t page_no_execute = 1ull << 52;
 constexpr uint64_t page_private = 1ull << 53, page_stack = 1ull << 54;
+constexpr uint64_t page_file = 1ull << 55, page_file_access = 1ull << 56,
+                   page_file_write = 1ull << 57, page_file_cow = 1ull << 58;
 constexpr uint64_t page_software = 0xe00 | page_no_execute | page_private | page_stack;
 
 constexpr uint64_t align_down(uint64_t x) {
@@ -140,6 +142,7 @@ void page_retain(uint64_t p, size_t count = 1);
 bool page_try_retain(uint64_t p);
 
 bool page_shared(uint64_t p, size_t count = 1);
+unsigned page_reference_count(uint64_t p);
 
 void* alloc(size_t);
 
@@ -152,9 +155,12 @@ struct Frame {
 
 static_assert(sizeof(Frame) == 22 * 8);
 
+struct MemfdMapping;
+
 struct AddressSpace {
     uint64_t root = 0;
     uint64_t next_map = 0x100000000;
+    MemfdMapping* file_mappings = nullptr;
 
     bool create();
 

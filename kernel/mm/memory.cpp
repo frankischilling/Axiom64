@@ -25,6 +25,7 @@
  */
 #include "boot/boot.hpp"
 #include "mm/stack.hpp"
+#include "fs/memfd.hpp"
 
 namespace ax {
 uint64_t direct_map;
@@ -160,6 +161,10 @@ bool page_try_retain(uint64_t p) {
     return true;
 }
 
+unsigned page_reference_count(uint64_t p) {
+    return p && p / page_size < max_pages ? page_references[p / page_size] : 0;
+}
+
 bool page_shared(uint64_t p, size_t count) {
     if (!p || p / page_size + count > max_pages)
         return false;
@@ -228,11 +233,12 @@ static uint64_t mapped_length(uint64_t table, unsigned level, uint64_t base, uin
     uint64_t span = 1ull << (12 + (level - 1) * 9), result = 0;
     for (unsigned i = 0; i < (level == 4 ? 256u : 512u); i++) {
         uint64_t address = base + i * span;
-        if (!(entries[i] & page_mask) || address >= end || address + span <= start)
+        if (!(entries[i] & (page_mask | page_file)) || address >= end || address + span <= start)
             continue;
         if (level == 1 || (entries[i] & 128)) {
+            bool writable = entries[i] & ((entries[i] & page_file) ? page_file_write : 2);
             if (!private_data || ((entries[i] & page_private) && !(entries[i] & page_stack) &&
-                                  (make_writable || (entries[i] & 2))))
+                                  (make_writable || writable)))
                 result += min(end, address + span) - max(start, address);
         } else
             result += mapped_length(entries[i] & page_mask, level - 1, address, start, end,
@@ -253,7 +259,7 @@ static uint64_t first_mapping(uint64_t table, unsigned level, uint64_t base, uin
     uint64_t span = 1ull << (12 + (level - 1) * 9);
     unsigned last = (end - 1 - base) / span;
     for (unsigned slot = (start - base) / span; slot <= last; ++slot) {
-        if (!(entries[slot] & page_mask))
+        if (!(entries[slot] & (page_mask | page_file)))
             continue;
         uint64_t address = base + slot * span;
         uint64_t first = max(start, address);
@@ -343,8 +349,8 @@ void AddressSpace::unmap(uint64_t va, size_t len) {
         return;
     for (uint64_t p = align_down(va); p < va + len; p += page_size) {
         auto e = entry(p);
-        if (e && (*e & page_mask)) {
-            if (!(*e & 0x200))
+        if (e && (*e & (page_mask | page_file))) {
+            if ((*e & page_mask) && !(*e & 0x200))
                 page_free(*e & page_mask);
             *e = 0;
         }
@@ -358,13 +364,14 @@ bool AddressSpace::protect(uint64_t va, size_t len, int prot) {
         return false;
     for (uint64_t p = va; p < va + len; p += page_size) {
         auto e = entry(p);
-        if (!e || !(*e & page_mask) || ((prot & 2) && (*e & 0x800)) ||
+        if (!e || !(*e & (page_mask | page_file)) || ((prot & 2) && (*e & 0x800)) ||
             ((prot & 4) && (*e & page_no_execute)))
             return false;
     }
     for (uint64_t p = va; p < va + len; p += page_size) {
         auto e = entry(p);
-        *e = (*e & (page_mask | page_software)) | permissions(prot);
+        *e = *e & page_file ? memfd_page_protection(*e, prot)
+                            : (*e & (page_mask | page_software)) | permissions(prot);
     }
     if (read_cr3() == root)
         write_cr3(root);
@@ -374,10 +381,17 @@ bool AddressSpace::protect(uint64_t va, size_t len, int prot) {
 bool AddressSpace::valid(uint64_t va, size_t len, bool write) const {
     if (va >= user_limit || len > user_limit - va)
         return false;
+    auto& space = *const_cast<AddressSpace*>(this);
     for (uint64_t p = align_down(va); p < va + len; p += page_size) {
-        auto e = const_cast<AddressSpace*>(this)->entry(p);
-        if (!e || ((*e & 5) != 5) || (write && !(*e & 2)))
-            return grow_user_stack(*this, va, len, write);
+        auto e = space.entry(p);
+        if (e && ((*e & 5) == 5) && (!write || (*e & 2)))
+            continue;
+        if (e && (*e & page_file)) {
+            if (memfd_fault(space, p, write, false) != MemfdFault::resolved)
+                return false;
+        } else if (!grow_user_stack(*this, max(p, va), 1, write)) {
+            return false;
+        }
     }
     return true;
 }
@@ -451,36 +465,41 @@ void AddressSpace::destroy() {
         destroy_table(root, 4);
         root = 0;
     }
+    memfd_release_mappings(*this);
 }
 
 static bool clone_table(uint64_t dest, uint64_t src, int level) {
     auto d = (uint64_t*)physical(dest), s = (uint64_t*)physical(src);
     size_t end = level == 4 ? 256 : 512;
-    for (size_t i = 0; i < end; i++)
-        if (s[i] & page_mask) {
-            if (level == 1 && (s[i] & 0x600)) {
+    for (size_t i = 0; i < end; i++) {
+        if (!(s[i] & page_mask)) {
+            if (level == 1 && (s[i] & page_file))
                 d[i] = s[i];
-                if (!(s[i] & 0x200))
-                    page_retain(s[i] & page_mask);
-                continue;
-            }
-            uint64_t p = page_alloc();
-            if (!p)
-                return false;
-            d[i] = p | (s[i] & ~page_mask);
-            if (level > 1) {
-                if (!clone_table(p, s[i] & page_mask, level - 1))
-                    return false;
-            } else
-                memcpy(physical(p), physical(s[i] & page_mask), page_size);
+            continue;
         }
+        if (level == 1 && (s[i] & 0x600)) {
+            d[i] = s[i];
+            if (!(s[i] & 0x200))
+                page_retain(s[i] & page_mask);
+            continue;
+        }
+        uint64_t p = page_alloc();
+        if (!p)
+            return false;
+        d[i] = p | (s[i] & ~page_mask);
+        if (level > 1) {
+            if (!clone_table(p, s[i] & page_mask, level - 1))
+                return false;
+        } else
+            memcpy(physical(p), physical(s[i] & page_mask), page_size);
+    }
     return true;
 }
 
 bool AddressSpace::clone_from(const AddressSpace& src) {
     if (!create())
         return false;
-    if (!clone_table(root, src.root, 4)) {
+    if (!clone_table(root, src.root, 4) || !memfd_clone_mappings(*this, src)) {
         destroy();
         return false;
     }

@@ -79,6 +79,10 @@ WORKLOADS = {
                                        'retained-input', 'retained-file-input',
                                        'retained-file-output', 'retained-vector',
                                        'interruption', 'restart')),
+    'memfd': ('MEMFD', ('arguments', 'exec-descriptors', 'sparse-pages',
+                        'descriptor-and-mapping-lifetime', 'mapping-faults-and-replacement',
+                        'lazy-pages-in-user-copy', 'seals', 'pipe-pinned-pages',
+                        'preallocation-and-hole-punch', 'file-transfers', 'executable-seals')),
     'file-transfers': ('FILE_TRANSFER', ('arguments', 'file-offsets', 'copyout-fault', 'file-size-limit',
                               'pipe-output', 'memory-devices', 'unix-sockets', 'tcp-sockets',
                               'udp-sockets', 'retained-descriptions', 'socket-backpressure',
@@ -262,6 +266,9 @@ def native(directory, workload):
                 if (workload == 'file-transfers' and
                         os.uname().release == '5.15.153.1-microsoft-standard-WSL2'):
                     flags = ['--legacy-sendfile', *flags]
+                if (workload == 'memfd' and
+                        os.uname().release == '5.15.153.1-microsoft-standard-WSL2'):
+                    flags = ['--legacy-memfd', *flags]
                 if legacy_depth:
                     flags = ['--legacy-depth', *flags]
                 if legacy_seek:

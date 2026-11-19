@@ -9,7 +9,9 @@ Axiom64 retains the open file description selected by an I/O syscall while that 
 | `read`, `write`, `readv`, `writev` | Existing regular files, pipes, Unix stream sockets, event counters, and character/block devices |
 | `splice`, `tee` | Pipe and FIFO transfers. `splice` also accepts regular RAM and ext2 files, supported memory devices, Unix streams and datagrams, IPv4 and IPv6 TCP and UDP, raw packet sockets, and route netlink sockets. |
 | `sendfile` | File and memory device transfers to regular files, devices, pipes, and sockets. A socket can feed a pipe. |
-| `copy_file_range` | Copies between regular files on the same RAM or ext2 filesystem. |
+| `copy_file_range` | Copies between regular files on the same RAM or ext2 filesystem or between anonymous memory files. |
+| `memfd_create`, `F_ADD_SEALS`, `F_GET_SEALS` | Sparse anonymous files with file seals and shared or private mappings. |
+| `fallocate` | Allocates pages and punches holes in anonymous memory files. |
 | `vmsplice` | Transfers between userspace vectors and pipe or FIFO endpoints. |
 | `pread64`, `pwrite64` | Seekable files, block devices, and the standard memory devices described below. The shared file offset is preserved. Pipes, sockets, and other character devices return `ESPIPE`. |
 | `recvfrom`, `sendto` | Connected Unix streams, including receive-address output; a send destination is unsupported |
@@ -410,6 +412,31 @@ overlapping ranges in the same inode, including through a hard link, and
 returns `EXDEV` across filesystems so callers can use their read/write
 fallback. Copyout faults leave the transferred bytes in place and the other
 cursor still commits. Copied holes supply zero bytes.
+
+### Anonymous memory files
+
+`memfd_create` opens an unnamed, sparse file. It supports descriptor-local
+`MFD_CLOEXEC`, optional sealing, positioned I/O, and descriptor passing over
+Unix sockets. A shared mapping keeps the file alive after the last descriptor
+closes. It reads and writes the same pages as descriptor I/O. Private mappings
+copy a file page on their first write.
+
+Pages are allocated on demand. Access to a whole page beyond EOF raises
+`SIGBUS`. Truncation invalidates mapped pages beyond the new EOF, including
+private copies. Growing the file lets those addresses fault in zeroed pages.
+Mapped ranges can be protected, split, replaced, and inherited across fork.
+`fallocate` reserves pages before use and can leave the file length unchanged.
+Punching a hole clears shared file data and preserves already copied private
+pages. Other filesystem types can return `EOPNOTSUPP` for allocation.
+
+`F_SEAL_WRITE` checks shared mappings that may gain write access and outstanding
+page pins. `F_SEAL_FUTURE_WRITE` blocks descriptor writes and new writable shared
+mappings while preserving access on existing mappings. Grow, shrink, and
+execute seals constrain inode changes. `MFD_NOEXEC_SEAL` fixes the inode's
+execute bits at zero. Huge-page memory files, proc descriptor links, and
+execution through a file descriptor remain outside the current implementation.
+
+### Userspace and pipe buffers
 
 `vmsplice` captures the vector addresses and lengths before waiting. Memory
 queued into a pipe keeps a reference to each readable page until the pipe

@@ -34,6 +34,7 @@
 #include "fs/descriptor.hpp"
 #include "fs/inotify.hpp"
 #include "fs/pipe.hpp"
+#include "fs/memfd.hpp"
 #include "ipc/ipc.hpp"
 #include "ipc/signal_descriptor.hpp"
 #include "ipc/unix_control.hpp"
@@ -1715,7 +1716,7 @@ static int64_t socket_transfer_attempt(Task& task, IoRequest& request, Handle& s
 static bool splice_regular(const Handle& handle) {
     auto node = handle.node;
     return node && (node->mode & 0170000) == regular_file &&
-           (node->mount->ops == &ramfs_ops || node->mount->ops == &ext2_ops);
+           (node->mount->ops == &ramfs_ops || node->mount->ops == &ext2_ops || is_memfd(node));
 }
 
 static int64_t sendfile_attempt(Task& task, IoRequest& request) {

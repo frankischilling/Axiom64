@@ -57,6 +57,7 @@
 #include "fs/proc.hpp"
 #include "fs/descriptor.hpp"
 #include "fs/pipe.hpp"
+#include "fs/memfd.hpp"
 #include "fs/inotify.hpp"
 
 namespace ax {
@@ -390,6 +391,10 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
             for (uint64_t page = addr; page < addr + len; page += page_size)
                 *current->memory->space.entry(page) |= page_private;
         return result < 0 ? result : complete();
+    }
+    if (h && is_memfd(h->node)) {
+        int error = memfd_map(*current, *h, addr, len, off, prot, flags & 1, flags & 0x10);
+        return error ? error : complete();
     }
     if (h && (flags & 1)) {
         uint64_t backing;
@@ -1062,6 +1067,8 @@ static int64_t dispatch(Frame* f) {
             return -9;
         if (b == 1031 || b == 1032)
             return pipe_fcntl(*h, b, c, current->credentials);
+        if (b == 1033 || b == 1034)
+            return memfd_fcntl(*h, b, c);
         if (b == 4) {
             uint32_t mask = 06000;
             if (h->pipe)
@@ -1562,6 +1569,10 @@ static int64_t dispatch(Frame* f) {
     case 282:
     case 289:
         return signalfd_syscall(*f);
+    case 285: {
+        auto h = fd_handle(a);
+        return h ? memfd_fallocate(*current, *h, b, c, d) : -9;
+    }
     case 283:
     case 286:
     case 287:
@@ -1610,6 +1621,8 @@ static int64_t dispatch(Frame* f) {
         }
         return done;
     }
+    case 319:
+        return memfd_create(*current, a, b);
     case 326:
         return io_syscall(*current, *f);
     default:

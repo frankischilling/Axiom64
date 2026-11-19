@@ -1178,7 +1178,8 @@ jobs:
         if: matrix.suite == 'boot'
         run: |
           sudo -n make test-named-pipes-native test-pipe-transfer-native test-socket-splice-native test-file-transfers-native
-          make test-named-pipes test-pipe-transfer test-socket-splice test-file-transfers
+          sudo -n make test-memfd-native
+          make test-named-pipes test-pipe-transfer test-socket-splice test-file-transfers test-memfd
       - name: Compare POSIX semaphores, message queues, and asynchronous I/O
         if: matrix.suite == 'boot'
         run: |
@@ -1839,6 +1840,8 @@ jobs:
             build/pipe-transfer-guest/**
             build/file-transfers-native/**
             build/file-transfers-guest/**
+            build/memfd-native/**
+            build/memfd-guest/**
             build/socket-splice-native/**
             build/socket-splice-guest/**
             build/poll-waits-native/**

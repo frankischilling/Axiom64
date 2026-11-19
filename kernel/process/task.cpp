@@ -36,6 +36,7 @@
 #include "ipc/shared_memory.hpp"
 #include "fs/descriptor.hpp"
 #include "fs/pipe.hpp"
+#include "fs/memfd.hpp"
 #include "fs/inotify.hpp"
 #include "drivers/platform/devices.hpp"
 #include "ipc/ipc.hpp"
@@ -913,24 +914,35 @@ extern "C" Frame* handle_trap(Frame* f) {
     asm volatile("mov %%cr2,%0" : "=r"(cr2));
     if ((f->cs & 3) == 3 && current) {
         cpu_account();
-        if (f->vector == 14 && !(f->error & 9)) {
+        auto fault = MemfdFault::outside;
+        if (f->vector == 14 && !(f->error & 8)) {
             cpu_account(current);
-            if (grow_user_stack(current->memory->space, cr2, 1, f->error & 2, f->error & 16))
+            auto& space = current->memory->space;
+            fault = memfd_fault(space, cr2, f->error & 2, f->error & 16);
+            if (fault == MemfdFault::resolved ||
+                (fault == MemfdFault::outside && !(f->error & 1) &&
+                 grow_user_stack(space, cr2, 1, f->error & 2, f->error & 16)))
                 return schedule(f, false);
             cpu_account();
         }
-        int signal = f->vector == 0 || f->vector == 16 || f->vector == 19 ? 8
-                     : f->vector == 6                                     ? 4
-                     : f->vector == 1 || f->vector == 3                   ? 5
-                                                                          : 11;
+        int signal = fault == MemfdFault::bus                               ? 7
+                     : f->vector == 0 || f->vector == 16 || f->vector == 19 ? 8
+                     : f->vector == 6                                       ? 4
+                     : f->vector == 1 || f->vector == 3                     ? 5
+                                                                            : 11;
         log("User exception: vector=%u rip=%x address=%x pid=%u signal=%u\n", f->vector, f->rip,
             cr2, uint64_t(current->pid), uint64_t(signal));
         if (current->signal_mask & (1ull << (signal - 1)) ||
             current->handlers->signal_actions[signal - 1][0] == 1)
             exit_task(current, signal);
         else
-            queue_signal(current, signal, 0, f->vector == 14 ? (f->error & 1) ? 2 : 1 : 1, 0,
-                         f->vector == 14 ? cr2 : f->rip);
+            queue_signal(
+                current, signal, 0,
+                fault == MemfdFault::bus ||
+                        (f->vector == 14 && ((f->error & 1) || fault == MemfdFault::protection))
+                    ? 2
+                    : 1,
+                0, f->vector == 14 ? cr2 : f->rip);
         return schedule(f, true);
     }
     log("FAULT vector=%u error=%x rip=%x address=%x pid=%u\n", f->vector, f->error, f->rip, cr2,

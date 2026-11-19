@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "ipc/shared_memory.hpp"
+#include "fs/memfd.hpp"
 #include "ipc/system_v_permissions.hpp"
 #include "core/time.hpp"
 #include "mm/limits.hpp"
@@ -398,6 +399,10 @@ int shared_memory_unmap(Task& task, uint64_t base, size_t length) {
                 return -12;
             break;
         }
+    if (int error = memfd_unmap(memory.space, base, length)) {
+        release(suffix);
+        return error;
+    }
     memory.space.unmap(base, length);
     int pid = task.process->pid;
     auto** link = &memory.shared;

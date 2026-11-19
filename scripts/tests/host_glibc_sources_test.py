@@ -13,11 +13,12 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 import urllib.error
 import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from file_capabilities.host_sources import authenticated_index
+from file_capabilities import host_sources
 
 
 class HostSourceIndexTests(unittest.TestCase):
@@ -39,15 +40,18 @@ class HostSourceIndexTests(unittest.TestCase):
         self.status = 200
         self.mutable_status = None
         self.mutable_data = b'newly published mutable source index'
+        self.snapshot_data = self.data
         self.declared_size = None
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 owner.requests.append(self.path)
+                snapshot = self.path.startswith('/snapshot/')
                 mutable = self.path.endswith('/main/source/Sources.xz')
-                data = owner.mutable_data if mutable else owner.served
-                status = owner.mutable_status if mutable and owner.mutable_status is not None else owner.status
+                data = owner.snapshot_data if snapshot else owner.mutable_data if mutable else owner.served
+                status = (200 if snapshot else
+                          owner.mutable_status if mutable and owner.mutable_status is not None else owner.status)
                 self.send_response(status)
                 self.send_header('Content-Length', str(owner.declared_size or len(data)))
                 self.end_headers()
@@ -70,7 +74,8 @@ class HostSourceIndexTests(unittest.TestCase):
         self.thread.join()
 
     def fetch(self):
-        return authenticated_index(self.signed, self.cache, self.output, 'noble-updates', self.mirror)
+        with patch.object(host_sources, 'SNAPSHOT', self.mirror.replace('/ubuntu/', '/snapshot/')):
+            return host_sources.authenticated_index(self.signed, self.cache, self.output, 'noble-updates', self.mirror)
 
     def proof(self):
         return json.loads((self.output / 'archive-authentication/noble-updates/fetch.json').read_text())
@@ -174,6 +179,25 @@ class HostSourceIndexTests(unittest.TestCase):
         self.assertFalse(self.proof()['passed'])
         self.assertEqual(self.proof()['attempts'][0]['status'], 404)
         self.assertEqual((self.output / 'archive-authentication/noble-updates/Sources.xz').read_bytes(), self.mutable_data)
+
+    def test_dated_snapshot_recovers_the_same_signed_bytes_after_mirror_rotation(self):
+        self.signed.write_text('Date: Thu, 19 Nov 2026  5:57:09 UTC\n' + self.signed.read_text())
+        self.status, self.mutable_status = 404, 200
+        self.assertEqual(self.fetch().read_bytes(), self.data)
+        self.assertTrue(self.proof()['passed'])
+        self.assertEqual(self.requests[-1], '/snapshot/20261119T055709Z/dists/noble-updates/main/source/Sources.xz')
+        self.assertEqual(self.proof()['attempts'][1]['actual_sha256'], hashlib.sha256(self.mutable_data).hexdigest())
+        evidence = self.output / 'archive-authentication/noble-updates'
+        self.assertEqual((evidence / 'Sources.canonical.xz').read_bytes(), self.mutable_data)
+
+    def test_dated_snapshot_must_match_the_original_release(self):
+        self.signed.write_text('Date: Thu, 19 Nov 2026  5:57:09 UTC\n' + self.signed.read_text())
+        self.status, self.mutable_status = 404, 200
+        self.snapshot_data = self.data[::-1]
+        with self.assertRaisesRegex(ValueError, 'checksum differs'):
+            self.fetch()
+        self.assertFalse(self.index.exists())
+        self.assertEqual(self.proof()['actual_sha256'], hashlib.sha256(self.snapshot_data).hexdigest())
 
     def test_nonpublication_http_failure_has_no_fallback(self):
         self.status = 403

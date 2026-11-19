@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Retain the signed corresponding Ubuntu glibc source for native test binaries."""
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 import hashlib
 import http.client
 import json
@@ -15,12 +17,31 @@ import urllib.request
 from fetch import ROOT
 
 
+SNAPSHOT = 'https://snapshot.ubuntu.com/ubuntu/'
+
+
+def snapshot_index(release, suite):
+    """Locate the signed publication in Canonical's dated archive."""
+    match = re.search(r'^Date: (.+)$', release, re.M)
+    if not match:
+        return None
+    try:
+        published = parsedate_to_datetime(match[1])
+    except (ValueError, OverflowError):
+        return None
+    if published.tzinfo is None:
+        return None
+    day = published.astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    return f'{SNAPSHOT}{day}/dists/{suite}/main/source/Sources.xz'
+
+
 def authenticated_index(signed, cache, output, suite, mirror):
     """Fetch the exact index named by an already signature-verified Release."""
     diagnostic = output / 'archive-authentication' / suite
     diagnostic.mkdir(parents=True, exist_ok=True)
     shutil.copy2(signed, diagnostic / 'InRelease')
-    match = re.search(r'^ ([a-f0-9]{64})\s+(\d+) main/source/Sources.xz$', signed.read_text(), re.M)
+    release = signed.read_text()
+    match = re.search(r'^ ([a-f0-9]{64})\s+(\d+) main/source/Sources.xz$', release, re.M)
     if not match:
         raise ValueError('signed Ubuntu Release lacks the Sources index')
     expected, size = match[1], int(match[2])
@@ -33,8 +54,11 @@ def authenticated_index(signed, cache, output, suite, mirror):
         data = index.read_bytes()
     else:
         canonical = mirror + 'dists/' + suite + '/main/source/Sources.xz'
-        for position, candidate in enumerate((url, canonical)):
+        frozen = snapshot_index(release, suite)
+        candidates = (url, canonical, frozen) if frozen else (url, canonical)
+        for position, candidate in enumerate(candidates):
             url = candidate
+            interrupted = None
             try:
                 with urllib.request.urlopen(url, timeout=60) as response:
                     attempts.append(dict(url=url, status=response.status))
@@ -46,6 +70,14 @@ def authenticated_index(signed, cache, output, suite, mirror):
                         interrupted = 'incomplete HTTP response'
                     if declared and declared.isdecimal() and len(data) < int(declared):
                         interrupted = 'incomplete HTTP response'
+                # A mutable path may be out of sync with the signed Release.
+                # Keep those bytes and check the dated copy against the same pin.
+                if candidate == canonical and frozen and (interrupted or len(data) != size or
+                                                          hashlib.sha256(data).hexdigest() != expected):
+                    (diagnostic / 'Sources.canonical.xz').write_bytes(data)
+                    attempts[-1].update(actual_sha256=hashlib.sha256(data).hexdigest(), actual_bytes=len(data),
+                                        interrupted=interrupted)
+                    continue
                 break
             except urllib.error.HTTPError as error:
                 status = error.code
@@ -56,7 +88,7 @@ def authenticated_index(signed, cache, output, suite, mirror):
                 error.close()
                 # A publishing mirror can expose the signed Release before its
                 # hash path. The canonical bytes must match that same signature.
-                if position != 0 or status != 404:
+                if position == len(candidates) - 1 or status != 404:
                     raise
     actual = hashlib.sha256(data).hexdigest()
     passed = interrupted is None and len(data) == size and actual == expected

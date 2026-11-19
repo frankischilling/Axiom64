@@ -376,7 +376,8 @@ retain wakeup registrations across close and number reuse.
 readiness, signal interruption, and persistent ext2 inodes. Large blocking pipe and
 FIFO writes retain progress and their original descriptor across waits.
 The same tests cover shared capacity, page-slot readiness, resizing and
-queued data order on both kinds of pipe.
+queued data order on both kinds of pipe. Packet mode supports short-read
+discard, large-write splitting, and per-description mode changes.
 [Epoll lifetime tests](io.md#epoll-descriptor-lifetime) check duplicate and reused
 descriptors, inherited watches, waits that survive descriptor replacement,
 and file-type admission with the Linux errno and poll-mask behavior.

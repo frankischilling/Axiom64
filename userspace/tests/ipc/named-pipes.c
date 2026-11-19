@@ -506,6 +506,78 @@ static void replace(int at) {
     puts("NAMED_PIPE_CASE unlink-recreate");
 }
 
+static void packet_pipes(void) {
+    int fds[2];
+    CHECK(pipe2(fds, O_DIRECT | O_NONBLOCK | O_CLOEXEC) == 0);
+    int reader = fds[0], writer = fds[1];
+    CHECK(fcntl(reader, F_GETFL) == (O_RDONLY | O_NONBLOCK));
+    CHECK(fcntl(writer, F_GETFL) == (O_WRONLY | O_DIRECT | O_NONBLOCK));
+    CHECK(fcntl(reader, F_GETFD) == FD_CLOEXEC && fcntl(writer, F_GETFD) == FD_CLOEXEC);
+    int alias = dup(writer);
+    CHECK(alias >= 0 && fcntl(alias, F_GETFD) == 0);
+    CHECK(fcntl(alias, F_SETPIPE_SZ, 8192) == 8192);
+
+    struct iovec parts[] = {{.iov_base = "ab", .iov_len = 2}, {.iov_base = "cd", .iov_len = 2}};
+    CHECK(writev(alias, parts, 2) == 4);
+    CHECK(write(writer, "XYZ", 3) == 3);
+    CHECK(write(writer, "", 0) == 0);
+    CHECK(write(writer, "!", 1) == -1 && errno == EAGAIN);
+    CHECK(fcntl(writer, F_SETPIPE_SZ, 4096) == -1 && errno == EBUSY);
+    struct pollfd writable = {.fd = writer, .events = POLLOUT};
+    CHECK(poll(&writable, 1, 0) == 0);
+    char buffer[8192];
+    CHECK(read(reader, buffer, 0) == 0);
+    CHECK(read(reader, buffer, 2) == 2 && memcmp(buffer, "ab", 2) == 0);
+    int count = -1;
+    CHECK(ioctl(reader, FIONREAD, &count) == 0 && count == 3);
+    CHECK(poll(&writable, 1, 0) == 1 && writable.revents == POLLOUT);
+    CHECK(fcntl(reader, F_SETPIPE_SZ, 4096) == 4096);
+    CHECK(fcntl(reader, F_SETPIPE_SZ, 8192) == 8192);
+
+    // The original packet survives a copy fault, and a following read stops at its boundary.
+    void* inaccessible = mmap(NULL, 4096, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(inaccessible != MAP_FAILED);
+    CHECK(syscall(SYS_read, reader, inaccessible, 2) == -1 && errno == EFAULT);
+    CHECK(munmap(inaccessible, 4096) == 0);
+    CHECK(fcntl(alias, F_SETFL, O_NONBLOCK) == 0 && !(fcntl(writer, F_GETFL) & O_DIRECT));
+    CHECK(write(writer, "yz", 2) == 2);
+    char first, rest[8];
+    struct iovec reads[] = {{.iov_base = &first, .iov_len = 1},
+                            {.iov_base = rest, .iov_len = sizeof(rest)}};
+    CHECK(readv(reader, reads, 2) == 3 && first == 'X' && memcmp(rest, "YZ", 2) == 0);
+    // Linux merges a leading remainder into an already queued stream slot after a mode change.
+    CHECK(fcntl(alias, F_SETFL, O_NONBLOCK | O_DIRECT) == 0);
+    CHECK((fcntl(writer, F_GETFL) & O_DIRECT) != 0);
+    CHECK(write(writer, "q", 1) == 1);
+    CHECK(read(reader, buffer, sizeof(buffer)) == 3 && memcmp(buffer, "yzq", 3) == 0);
+
+    memset(buffer, 'x', 4096);
+    memset(buffer + 4096, 'y', 9);
+    CHECK(write(writer, buffer, 4105) == 4105);
+    memset(buffer, 0, sizeof(buffer));
+    CHECK(read(reader, buffer, sizeof(buffer)) == 4096 && buffer[0] == 'x' && buffer[4095] == 'x');
+    CHECK(read(reader, buffer, sizeof(buffer)) == 9 && buffer[0] == 'y' && buffer[8] == 'y');
+    CHECK(read(reader, buffer, sizeof(buffer)) == -1 && errno == EAGAIN);
+    CHECK(close(alias) == 0 && close(writer) == 0);
+    CHECK(read(reader, buffer, sizeof(buffer)) == 0 && close(reader) == 0);
+    puts("NAMED_PIPE_CASE packet-mode");
+}
+
+static void packet_fifo(int at) {
+    CHECK(openat(at, "queue", O_RDWR | O_NONBLOCK | O_DIRECT) == -1 && errno == EINVAL);
+    int reader = openat(at, "queue", O_RDONLY | O_NONBLOCK);
+    int writer = openat(at, "queue", O_WRONLY | O_NONBLOCK);
+    CHECK(reader >= 0 && writer >= 0);
+    CHECK(fcntl(writer, F_SETFL, O_NONBLOCK | O_DIRECT) == 0);
+    CHECK(write(writer, "abc", 3) == 3 && write(writer, "d", 1) == 1);
+    char bytes[8];
+    CHECK(read(reader, bytes, 1) == 1 && bytes[0] == 'a');
+    CHECK(read(reader, bytes, sizeof(bytes)) == 1 && bytes[0] == 'd');
+    CHECK(read(reader, bytes, sizeof(bytes)) == -1 && errno == EAGAIN);
+    CHECK(close(writer) == 0 && close(reader) == 0);
+    puts("NAMED_PIPE_CASE fifo-packet-mode");
+}
+
 static void storage_test(int create) {
     const char* path = "/source/axiom-fifo-retained";
     const char* alias = "/source/axiom-fifo-alias";
@@ -571,6 +643,8 @@ int main(int argc, char** argv) {
     resize_wakes_writer();
     read_fault_after_head_slot();
     puts("NAMED_PIPE_CASE capacity-and-readiness");
+    packet_pipes();
+    packet_fifo(at);
     atomic_nonblocking_write();
     puts("NAMED_PIPE_CASE atomic-writev");
     retained_vector_write(-1);

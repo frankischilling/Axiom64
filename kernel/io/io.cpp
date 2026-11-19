@@ -770,7 +770,7 @@ static int64_t pipe_write_attempt(Task& task, IoRequest& request) {
         }
         size_t remainder = total % page_size;
         bool merge_tail = !request.started && remainder && remainder <= pipe->tail_space();
-        // Only the leading remainder can merge into a previously queued page.
+        // A leading remainder may merge into an existing stream slot even after O_DIRECT changes.
         request.started = true;
         if (pipe->full() && !merge_tail) {
             if (!(request.handle->flags & 04000))
@@ -808,6 +808,7 @@ static int64_t local_stream_attempt(Task& task, IoRequest& request) {
     while (remaining) {
         size_t count = min(remaining, sizeof(buffer));
         int64_t result;
+        bool packet = false;
         if (request.write) {
             result = socket_write(handle->socket, nullptr, 0);
             if (!result) {
@@ -821,8 +822,10 @@ static int64_t local_stream_attempt(Task& task, IoRequest& request) {
             }
         } else {
             // Commit a completed pipe slot before touching the next user span.
-            if (handle->pipe && handle->pipe->size)
+            if (handle->pipe && handle->pipe->size) {
                 count = min(count, handle->pipe->head_bytes());
+                packet = handle->pipe->slot(0).packet;
+            }
             result = handle->socket
                          ? socket_read(handle->socket, buffer, count, true, peek ? done : 0)
                          : pipe_read(handle->pipe, buffer, count, true);
@@ -846,7 +849,7 @@ static int64_t local_stream_attempt(Task& task, IoRequest& request) {
         }
         done += result;
         remaining -= result;
-        if (size_t(result) < count)
+        if (packet || size_t(result) < count)
             break;
     }
     return done;

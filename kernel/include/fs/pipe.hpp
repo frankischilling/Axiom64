@@ -8,9 +8,12 @@ struct Node;
 struct Task;
 struct Credentials;
 
+inline constexpr uint32_t pipe_direct = 040000; // Linux O_DIRECT
+
 struct PipeSlot {
     uint64_t page;
     uint16_t begin, end;
+    bool packet;
 };
 
 struct Pipe {
@@ -31,7 +34,10 @@ struct Pipe {
     }
 
     size_t tail_space() {
-        return occupied ? page_size - slot(occupied - 1).end : 0;
+        if (!occupied)
+            return 0;
+        const auto& tail = slot(occupied - 1);
+        return tail.packet ? 0 : page_size - tail.end;
     }
 
     size_t head_bytes() {

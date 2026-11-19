@@ -100,7 +100,7 @@ int64_t pipe_write(Handle& handle, const void* data, size_t count, bool merge_ta
         uint64_t page = page_alloc();
         if (!page)
             return -12;
-        pipe.slot(pipe.occupied++) = {page, 0, 0};
+        pipe.slot(pipe.occupied++) = {page, 0, 0, bool(handle.flags & pipe_direct)};
     }
     auto& slot = pipe.slot(pipe.occupied - 1);
     memcpy(static_cast<uint8_t*>(physical(slot.page)) + slot.end, data, count);
@@ -115,31 +115,38 @@ int64_t pipe_read(Pipe* pipe, void* buffer, size_t length, bool peek) {
         return 0;
     if (!pipe->size)
         return pipe->writers ? -11 : 0;
-    size_t count = min(length, pipe->size);
     auto bytes = static_cast<uint8_t*>(buffer);
     bool was_full = pipe->full();
     unsigned removed = 0;
-    for (size_t copied = 0; copied < count;) {
-        auto& slot = pipe->slot(removed);
-        size_t part = min(count - copied, size_t(slot.end - slot.begin));
+    size_t copied = 0;
+    size_t consumed = 0;
+    for (unsigned index = 0; index < pipe->occupied && copied < length; ++index) {
+        auto& slot = pipe->slot(index);
+        size_t available = slot.end - slot.begin;
+        size_t part = min(length - copied, available);
         memcpy(bytes + copied, static_cast<const uint8_t*>(physical(slot.page)) + slot.begin, part);
         copied += part;
-        if (part == size_t(slot.end - slot.begin)) {
-            if (!peek)
+        if (!peek) {
+            if (slot.packet || part == available) {
+                consumed += available;
                 page_free(slot.page);
-            ++removed;
-        } else if (!peek) {
-            slot.begin += part;
+                ++removed;
+            } else {
+                consumed += part;
+                slot.begin += part;
+            }
         }
+        if (slot.packet)
+            break;
     }
     if (!peek) {
-        pipe->size -= count;
+        pipe->size -= consumed;
         pipe->first = (pipe->first + removed) & (pipe->capacity - 1);
         pipe->occupied -= removed;
         if (was_full && removed)
             descriptor_wait_notify(pipe, 4 | 0x100);
     }
-    return count;
+    return copied;
 }
 
 void attach_pipe(Handle& handle, Pipe& pipe) {
@@ -182,7 +189,7 @@ static int install(Task& task, int fd, Handle* handle) {
 int64_t open_fifo(Task& task, Node* inode, Node* dentry, uint32_t flags) {
     unsigned mode = flags & 3;
     bool nonblocking = flags & 04000;
-    if (mode == 3 || (flags & 040000))
+    if (mode == 3 || (flags & pipe_direct))
         return -22;
     auto pipe = inode->named_pipe;
     if (nonblocking && mode == 1 && (!pipe || !pipe->readers))

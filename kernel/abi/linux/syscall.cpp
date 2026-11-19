@@ -474,7 +474,7 @@ static int64_t make_special_node(int dirfd, uint64_t address, uint32_t mode) {
 }
 
 static int64_t create_pipe(uint64_t dst, int flags) {
-    if (flags & ~(04000 | 02000000))
+    if (flags & ~(04000 | pipe_direct | 02000000))
         return -22;
     if (!current->memory->space.valid(dst, 8, true))
         return -14;
@@ -492,8 +492,8 @@ static int64_t create_pipe(uint64_t dst, int flags) {
             destroy_pipe_buffer(*pipe);
         return -23;
     }
-    reader->flags |= flags;
-    writer->flags |= flags;
+    reader->flags |= flags & 04000;
+    writer->flags |= flags & (04000 | pipe_direct);
     int result[2] = {allocate_fd(current, reader, 0, flags & 02000000), -1};
     if (result[0] >= 0)
         result[1] = allocate_fd(current, writer, 0, flags & 02000000);
@@ -1033,7 +1033,10 @@ static int64_t dispatch(Frame* f) {
         if (b == 1031 || b == 1032)
             return pipe_fcntl(*h, b, c, current->credentials);
         if (b == 4) {
-            h->flags = (h->flags & ~uint32_t(06000)) | (c & 06000);
+            uint32_t mask = 06000;
+            if (h->pipe)
+                mask |= pipe_direct;
+            h->flags = (h->flags & ~mask) | (c & mask);
             return 0;
         }
         return -22;

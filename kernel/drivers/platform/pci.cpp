@@ -49,6 +49,7 @@ struct EcamWindow {
 EcamWindow windows[Acpi::Mcfg::max_regions];
 unsigned window_count;
 Acpi::PciPinRoutes pin_routes;
+Acpi::PciBridges bridges;
 uint32_t sci_gsi;
 
 uint64_t physical_limit() {
@@ -96,14 +97,6 @@ uint32_t selector(const PciFunction& p, uint16_t offset) {
            uint32_t(p.function) << 8 | (offset & 0xfc);
 }
 } // namespace
-
-void pci_configure_intx(const Acpi::DefinitionBlocks& blocks, uint32_t sci) {
-    sci_gsi = sci;
-    if (Acpi::decode_pci_pin_routes(blocks, pin_routes))
-        log("PCI INTx: %u firmware pin routes\n", uint64_t(pin_routes.count));
-    else
-        log("PCI INTx: no usable firmware routes\n");
-}
 
 void pci_configure_ecam(const Acpi::Mcfg& mcfg) {
     uint64_t limit = physical_limit();
@@ -373,7 +366,7 @@ bool PciIntx::start(const PciFunction& pci, Irq::LineHandler handler, void* cont
     if (active())
         return false;
     auto* route = Acpi::find_pci_pin(pin_routes, pci.segment, pci.bus, pci.slot, pci.function,
-                                     pci.read8(0x3d));
+                                     pci.read8(0x3d), &bridges);
     if (!route || !route->level || route->gsi == sci_gsi)
         return false;
     uint8_t msi = pci.find_capability(5), msix = pci.find_capability(0x11);
@@ -426,7 +419,7 @@ static unsigned scan_bus(uint16_t segment, unsigned bus, volatile uint8_t* ecam,
     return count;
 }
 
-void pci_scan(void (*visit)(const PciFunction&)) {
+static unsigned scan_pci_functions(void (*visit)(const PciFunction&)) {
     unsigned count = 0;
     for (unsigned bus = 0; bus < 256; ++bus) {
         volatile uint8_t* ecam = nullptr;
@@ -446,6 +439,41 @@ void pci_scan(void (*visit)(const PciFunction&)) {
             for (unsigned bus = region.first_bus; bus <= region.last_bus; ++bus)
                 count += scan_bus(region.segment, bus, map_bus(window, bus), visit);
     }
-    log("PCI: %u functions discovered\n", uint64_t(count));
+    return count;
+}
+
+static void record_bridge(const PciFunction& pci) {
+    if ((pci.read8(0x0e) & 0x7f) != 1 || pci.read16(0x0a) != 0x0604)
+        return;
+    uint32_t buses = pci.read32(0x18);
+    uint8_t secondary = buses >> 8, subordinate = buses >> 16;
+    if (uint8_t(buses) != pci.bus || secondary <= pci.bus || subordinate < secondary)
+        return;
+    if (bridges.count == sizeof(bridges.entries) / sizeof(*bridges.entries)) {
+        bridges.overflow = true;
+        return;
+    }
+    unsigned boundary;
+    uint8_t express = pci.find_capability(0x10, &boundary);
+    bool ari = express && express + 0x2a <= int(boundary) && (pci.read16(express + 2) & 15) >= 2 &&
+               (pci.read16(express + 0x28) & (1u << 5));
+    bridges.entries[bridges.count++] = {pci.segment, pci.bus,      secondary, subordinate,
+                                        pci.slot,    pci.function, ari,       false};
+}
+
+void pci_configure_intx(const Acpi::DefinitionBlocks& blocks, uint32_t sci) {
+    sci_gsi = sci;
+    bridges.count = 0;
+    bridges.overflow = false;
+    scan_pci_functions(record_bridge);
+    if (Acpi::decode_pci_pin_routes(blocks, pin_routes, &bridges))
+        log("PCI INTx: %u firmware pin routes, %u configured bridges\n", uint64_t(pin_routes.count),
+            uint64_t(bridges.count));
+    else
+        log("PCI INTx: no usable firmware routes\n");
+}
+
+void pci_scan(void (*visit)(const PciFunction&)) {
+    log("PCI: %u functions discovered\n", uint64_t(scan_pci_functions(visit)));
 }
 } // namespace ax

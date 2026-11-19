@@ -85,7 +85,8 @@ struct Fixture {
     Bytes dsdt, ssdt;
 };
 
-Fixture firmware(bool invalid_checksum = false, bool duplicate = false, bool unsupported = false) {
+Fixture firmware(bool invalid_checksum = false, bool duplicate = false, bool unsupported = false,
+                 Bytes children = {}) {
     // A link in a different table from its references. Its interrupt is at resource index 1.
     Bytes resources{
         0x71, 0xaa, 0x89, 6, 0, 9, 1, 45, 0, 0, 0, 0x79, uint8_t(invalid_checksum ? 1 : 0)};
@@ -106,7 +107,7 @@ Fixture firmware(bool invalid_checksum = false, bool duplicate = false, bool uns
     // This name shadows the link inside the bridge, but RTBL is declared in the parent.
     auto local = data("LNKA", {0});
     auto bridge = block({0x5b, 0x82}, sequence({name("PCI0"), hid, data("_SEG", {0x0a, 2}),
-                                                data("_BBN", {0x0a, 3}), local, prt}));
+                                                data("_BBN", {0x0a, 3}), local, prt, children}));
     auto scope = block({0x10}, sequence({name("_SB_"), routes, bridge}));
     Bytes method = unsupported ? Bytes{0x5b, 0x22, 0} : sequence({{0x70, 0x68}, name("PICF")});
     auto pic = block({0x14}, sequence({name("_PIC"), {1}, method}));
@@ -114,14 +115,88 @@ Fixture firmware(bool invalid_checksum = false, bool duplicate = false, bool uns
     return {main, supplement};
 }
 
-bool evaluate(const Fixture& fixture, ax::Acpi::PciPinRoutes& routes, bool with_ssdt = true) {
+bool evaluate(const Fixture& fixture, ax::Acpi::PciPinRoutes& routes, bool with_ssdt = true,
+              ax::Acpi::PciBridges* bridges = nullptr) {
     ax::Acpi::DefinitionBlocks blocks{};
     blocks.dsdt = {fixture.dsdt.data(), 0x1000, fixture.dsdt.size()};
     if (with_ssdt) {
         blocks.ssdt[0] = {fixture.ssdt.data(), 0x2000, fixture.ssdt.size()};
         blocks.ssdt_count = 1;
     }
-    return ax::Acpi::decode_pci_pin_routes(blocks, routes);
+    return ax::Acpi::decode_pci_pin_routes(blocks, routes, bridges);
+}
+
+Bytes bridge_device(const char* label, uint8_t slot, const Bytes& children, uint16_t function = 0) {
+    return block({0x5b, 0x82},
+                 sequence({name(label),
+                           data("_ADR", {0x0c, uint8_t(function), uint8_t(function >> 8), slot, 0}),
+                           children}));
+}
+
+Bytes bridge_table(uint8_t slot, uint8_t pin, uint8_t gsi) {
+    return data("_PRT",
+                package(1, package(4, {0x0c, 0xff, 0xff, slot, 0, 0x0a, pin, 0, 0x0a, gsi})));
+}
+
+void bridge_cases() {
+    using namespace ax::Acpi;
+    PciPinRoutes routes{};
+    PciBridges bridges{
+        {{2, 3, 4, 8, 4, 0, false, false}, {2, 4, 7, 8, 3, 0, false, false}}, 2, false};
+    assert(evaluate(firmware(), routes, true, &bridges));
+    auto route = find_pci_pin(routes, 2, 7, 1, 0, 1, &bridges);
+    assert(route && route->gsi == 45 && route->bus == 3);
+    assert(!find_pci_pin(routes, 2, 7, 1, 0, 0, &bridges));
+    assert(!find_pci_pin(routes, 3, 7, 1, 0, 1, &bridges));
+    assert(!find_pci_pin(routes, 2, 7, 1, 0, 1));
+
+    bridges.entries[0].ari = true;
+    route = find_pci_pin(routes, 2, 4, 3, 1, 1, &bridges);
+    assert(route && route->gsi == 45);
+    bridges.entries[0].ari = false;
+    assert(!find_pci_pin(routes, 2, 4, 3, 1, 1, &bridges));
+
+    auto root_child = bridge_device("UPST", 4, bridge_table(3, 1, 61));
+    assert(evaluate(firmware(false, false, false, root_child), routes, true, &bridges));
+    route = find_pci_pin(routes, 2, 7, 1, 0, 1, &bridges);
+    assert(route && route->gsi == 61 && route->bus == 4);
+
+    auto downstream = bridge_device("DOWN", 3, bridge_table(1, 0, 73));
+    root_child = bridge_device("UPST", 4, sequence({bridge_table(3, 1, 61), downstream}));
+    assert(evaluate(firmware(false, false, false, root_child), routes, true, &bridges));
+    route = find_pci_pin(routes, 2, 7, 1, 0, 1, &bridges);
+    assert(route && route->gsi == 73 && route->bus == 7);
+
+    downstream = bridge_device("DOWN", 3, data("_PRT", {0}));
+    root_child = bridge_device("UPST", 4, sequence({bridge_table(3, 1, 61), downstream}));
+    assert(evaluate(firmware(false, false, false, root_child), routes, true, &bridges));
+    assert(!find_pci_pin(routes, 2, 7, 1, 0, 1, &bridges));
+    assert(find_pci_pin(routes, 2, 3, 4, 0, 1, &bridges));
+
+    bridges.entries[2] = {2, 3, 9, 10, 4, 1, false, false};
+    bridges.count = 3;
+    auto wildcard = bridge_device("UPST", 4, bridge_table(3, 1, 61), UINT16_MAX);
+    assert(evaluate(firmware(false, false, false, wildcard), routes, true, &bridges));
+    route = find_pci_pin(routes, 2, 4, 3, 0, 2, &bridges);
+    assert(route && route->gsi == 61 && route->bus == 4);
+    route = find_pci_pin(routes, 2, 9, 3, 0, 2, &bridges);
+    assert(route && route->gsi == 61 && route->bus == 9);
+    bridges.count = 2;
+
+    assert(evaluate(firmware(), routes, true, &bridges));
+    bridges.entries[0].subordinate = 6;
+    assert(!find_pci_pin(routes, 2, 7, 1, 0, 1, &bridges));
+    bridges.entries[0].subordinate = 8;
+    bridges.entries[2] = {2, 3, 5, 9, 6, 0, false, false};
+    bridges.count = 3;
+    assert(!find_pci_pin(routes, 2, 7, 1, 0, 1, &bridges));
+    bridges.entries[2].secondary = 4;
+    assert(!find_pci_pin(routes, 2, 7, 1, 0, 1, &bridges));
+    bridges.overflow = true;
+    assert(!find_pci_pin(routes, 2, 7, 1, 0, 1, &bridges));
+    assert(find_pci_pin(routes, 2, 3, 4, 0, 1, &bridges));
+    std::puts("ACPI_PCI_BRIDGE_ROUTING_PASS swizzle ari subordinate_prt wildcard_adr invalid_scope "
+              "bus_ranges");
 }
 } // namespace
 
@@ -146,4 +221,5 @@ int main() {
     }
     std::puts("ACPI_PCI_ROUTING_PASS apic_model linked_gsi direct_gsi resource_checksum ambiguity "
               "truncation");
+    bridge_cases();
 }

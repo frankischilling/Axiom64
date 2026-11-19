@@ -657,12 +657,85 @@ bool pci_root_id(Value id) {
            (!memcmp(id.content.next, "PNP0A03", 7) || !memcmp(id.content.next, "PNP0A08", 7));
 }
 
-bool routing(Namespace& space, PciPinRoutes& output) {
+struct ParentBridge {
+    const PciBridge* bridge = nullptr;
+    bool invalid = false;
+};
+
+ParentBridge parent_bridge(const PciBridges& bridges, uint16_t segment, uint8_t bus) {
+    ParentBridge result;
+    for (unsigned i = 0; i < bridges.count; ++i) {
+        const auto& bridge = bridges.entries[i];
+        if (bridge.segment != segment || bridge.secondary != bus)
+            continue;
+        if (result.bridge || bridge.primary >= bus || bridge.subordinate < bus)
+            return {nullptr, true};
+        result.bridge = &bridge;
+    }
+    if (result.bridge)
+        for (unsigned i = 0; i < bridges.count; ++i) {
+            const auto& peer = bridges.entries[i];
+            if (&peer != result.bridge && peer.segment == segment &&
+                peer.primary == result.bridge->primary &&
+                peer.secondary <= result.bridge->subordinate && peer.subordinate >= bus)
+                return {nullptr, true};
+        }
+    return result;
+}
+
+bool scope_routes(Namespace& space, const Path& scope, uint16_t segment, uint8_t bus,
+                  PciPinRoutes& output) {
+    if (!space.child(scope, name_segment("_PRT")))
+        return true;
+    Value routes{};
+    return space.config(scope, name_segment("_PRT"), routes) &&
+           route_package(space, scope, routes, segment, bus, output);
+}
+
+void bridge_routes(Namespace& space, const Path& scope, uint16_t segment, uint8_t bus,
+                   uint8_t subordinate, PciBridges& bridges, bool* bound, PciPinRoutes& output) {
+    for (unsigned i = 0; i < space.count; ++i) {
+        const auto& device = space.objects[i];
+        Value address{};
+        if (device.kind != Kind::Device || device.path.count != scope.count + 1 ||
+            !match(parent(device.path), scope) ||
+            !space.config(device.path, name_segment("_ADR"), address) ||
+            address.type != Type::Integer || address.number >> 16 >= 32)
+            continue;
+        unsigned function = address.number & 0xffff;
+        if (function >= 8 && function != UINT16_MAX)
+            continue;
+        for (unsigned j = 0; j < bridges.count; ++j) {
+            auto& bridge = bridges.entries[j];
+            if (bridge.segment != segment || bridge.primary != bus ||
+                bridge.slot != (address.number >> 16) ||
+                (function != UINT16_MAX && bridge.function != function) ||
+                bridge.subordinate > subordinate ||
+                parent_bridge(bridges, segment, bridge.secondary).bridge != &bridge)
+                continue;
+            if (bound[j]) {
+                bridge.routing_rejected = true;
+                continue;
+            }
+            bound[j] = true;
+            unsigned first = output.count;
+            if (!scope_routes(space, device.path, segment, bridge.secondary, output)) {
+                output.count = first;
+                bridge.routing_rejected = true;
+            }
+            bridge_routes(space, device.path, segment, bridge.secondary, bridge.subordinate,
+                          bridges, bound, output);
+        }
+    }
+}
+
+bool routing(Namespace& space, PciPinRoutes& output, PciBridges* bridges) {
     if (auto pic = space.child({}, name_segment("_PIC"))) {
         Value mode{Type::Integer, 1, {}, nullptr}, ignored{};
         if (!space.method(*pic, &mode, 1, ignored))
             return false;
     }
+    bool bound[256]{};
     for (unsigned i = 0; i < space.count; ++i) {
         const auto& device = space.objects[i];
         Value hid{};
@@ -677,21 +750,51 @@ bool routing(Namespace& space, PciPinRoutes& output) {
             seg.type != Type::Integer || seg.number > UINT16_MAX || bus.type != Type::Integer ||
             bus.number > UINT8_MAX)
             return false;
-        Value routes{};
-        if (space.child(device.path, name_segment("_PRT")) &&
-            (!space.config(device.path, name_segment("_PRT"), routes) ||
-             !route_package(space, device.path, routes, seg.number, bus.number, output)))
+        if (!scope_routes(space, device.path, seg.number, bus.number, output))
             return false;
+        if (bridges && !bridges->overflow)
+            bridge_routes(space, device.path, seg.number, bus.number, UINT8_MAX, *bridges, bound,
+                          output);
     }
     return output.count != 0;
 }
 
+const PciPinRoute* bus_route(const PciPinRoutes& routes, uint16_t segment, uint8_t bus,
+                             uint8_t slot, uint8_t function, uint8_t pin, bool& ambiguous) {
+    const PciPinRoute* exact = nullptr;
+    const PciPinRoute* wildcard = nullptr;
+    for (unsigned i = 0; i < routes.count; ++i) {
+        const auto& route = routes.entries[i];
+        if (route.segment != segment || route.bus != bus || route.slot != slot || route.pin != pin)
+            continue;
+        if (route.function == function) {
+            if (exact) {
+                ambiguous = true;
+                return nullptr;
+            }
+            exact = &route;
+        } else if (route.function == UINT8_MAX) {
+            if (wildcard) {
+                ambiguous = true;
+                return nullptr;
+            }
+            wildcard = &route;
+        }
+    }
+    return exact ? exact : wildcard;
+}
+
 } // namespace
 
-bool decode_pci_pin_routes(const DefinitionBlocks& blocks, PciPinRoutes& result) {
+bool decode_pci_pin_routes(const DefinitionBlocks& blocks, PciPinRoutes& result,
+                           PciBridges* bridges) {
     result.count = 0;
-    if (blocks.ssdt_count > max_root_entries)
+    if (blocks.ssdt_count > max_root_entries ||
+        (bridges && bridges->count > sizeof(bridges->entries) / sizeof(*bridges->entries)))
         return false;
+    if (bridges)
+        for (unsigned i = 0; i < bridges->count; ++i)
+            bridges->entries[i].routing_rejected = false;
     auto* space = static_cast<Namespace*>(alloc(sizeof(Namespace)));
     if (!space)
         return false;
@@ -704,7 +807,7 @@ bool decode_pci_pin_routes(const DefinitionBlocks& blocks, PciPinRoutes& result)
     bool ok = load(blocks.dsdt);
     for (size_t i = 0; ok && i < blocks.ssdt_count; ++i)
         ok = load(blocks.ssdt[i]);
-    ok = ok && routing(*space, result);
+    ok = ok && routing(*space, result, bridges);
     release(space);
     if (!ok)
         result.count = 0;
@@ -712,24 +815,31 @@ bool decode_pci_pin_routes(const DefinitionBlocks& blocks, PciPinRoutes& result)
 }
 
 const PciPinRoute* find_pci_pin(const PciPinRoutes& routes, uint16_t segment, uint8_t bus,
-                                uint8_t slot, uint8_t function, uint8_t pin) {
-    const PciPinRoute* exact = nullptr;
-    const PciPinRoute* wildcard = nullptr;
-    for (unsigned i = 0; i < routes.count; ++i) {
-        const auto& route = routes.entries[i];
-        if (route.segment != segment || route.bus != bus || route.slot != slot || route.pin != pin)
-            continue;
-        if (route.function == function) {
-            if (exact)
-                return nullptr;
-            exact = &route;
-        } else if (route.function == UINT8_MAX) {
-            if (wildcard)
-                return nullptr;
-            wildcard = &route;
-        }
+                                uint8_t slot, uint8_t function, uint8_t pin,
+                                const PciBridges* bridges) {
+    if (!pin || pin > 4 || slot >= 32 || function >= 8)
+        return nullptr;
+    uint8_t subordinate = bus;
+    for (;;) {
+        ParentBridge parent;
+        if (bridges && !bridges->overflow)
+            parent = parent_bridge(*bridges, segment, bus);
+        const auto* bridge = parent.bridge;
+        if (parent.invalid ||
+            (bridge && (bridge->subordinate < subordinate || bridge->routing_rejected)))
+            return nullptr;
+        bool ambiguous = false;
+        const auto* route = bus_route(routes, segment, bus, slot, function, pin, ambiguous);
+        if (ambiguous || route || !bridge)
+            return route;
+        // An ARI-enabled downstream port interprets every function as slot zero.
+        unsigned device = bridge->ari ? 0 : slot;
+        pin = ((pin - 1 + device) & 3) + 1;
+        bus = bridge->primary;
+        slot = bridge->slot;
+        function = bridge->function;
+        subordinate = bridge->subordinate;
     }
-    return exact ? exact : wildcard;
 }
 
 } // namespace ax::Acpi

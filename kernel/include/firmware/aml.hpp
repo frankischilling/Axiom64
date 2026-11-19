@@ -5,7 +5,8 @@
  * @author  frankischilling
  * @date    2026-11-19
  *
- * Exposes decoded PCI pin routes from ACPI definition blocks.
+ * Resolves PCI pin routes from ACPI definition blocks and the configured
+ * PCI bridge topology.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -39,10 +40,23 @@ struct PciPinRoutes {
     unsigned count;
 };
 
+struct PciBridge {
+    uint16_t segment;
+    uint8_t primary, secondary, subordinate, slot, function;
+    bool ari;
+    bool routing_rejected;
+};
+
+struct PciBridges {
+    PciBridge entries[256];
+    unsigned count;
+    bool overflow;
+};
+
 // Evaluates the boot interrupt model and resolves routing packages and resources.
-bool decode_pci_pin_routes(const DefinitionBlocks&, PciPinRoutes&);
+bool decode_pci_pin_routes(const DefinitionBlocks&, PciPinRoutes&, PciBridges* = nullptr);
 
 const PciPinRoute* find_pci_pin(const PciPinRoutes&, uint16_t segment, uint8_t bus, uint8_t slot,
-                                uint8_t function, uint8_t pin);
+                                uint8_t function, uint8_t pin, const PciBridges* = nullptr);
 
 } // namespace ax::Acpi

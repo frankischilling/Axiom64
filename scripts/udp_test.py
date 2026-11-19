@@ -48,6 +48,9 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
                '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
     if fault:
         command += ['-gdb', 'tcp:127.0.0.1:1239']
+    if intx == 'bridge':
+        command += ['-device', 'pcie-root-port,id=upstream,bus=pcie.0,addr=6,slot=6',
+                    '-device', 'pcie-pci-bridge,id=legacy,bus=upstream,addr=0']
     models = ['e1000', 'e1000'] if intx == 'shared' else [
         'virtio-net-pci', 'e1000e' if e1000e else 'e1000']
     slots = (4, 8) if intx == 'shared' else (4, 5)
@@ -59,6 +62,8 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
         servers.append(server)
         selector.register(server, selectors.EVENT_READ, ('server', lane))
         nic = f'{model},netdev=peer{lane},id=nic{lane},addr={slots[lane]:x},mac={peers[lane].guest.hex(":")}'
+        if intx == 'bridge' and lane == 1:
+            nic += ',bus=legacy'
         if model == 'virtio-net-pci':
             nic += ',disable-legacy=on' if transport == 'modern' else ',disable-modern=on'
             if no_vectors:
@@ -237,6 +242,8 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
             missing.append('verified INTx routes for the expected adapters')
         if intx == 'shared' and len({gsi for _, gsi in intx_routes}) != 1:
             missing.append('both INTx adapters on one firmware GSI')
+        if intx == 'bridge' and intx_routes != [('2', '23')]:
+            missing.append('swizzled Q35 bridge route on GSI 23')
         if 'masked unclaimed I/O APIC line' in text:
             missing.append('INTx line was masked during wire traffic')
     host_passed = (peers[0].arp == peers[1].arp == 1 and peers[0].frames == 0 and peers[1].frames == 1) if fault else (
@@ -281,7 +288,7 @@ def main():
     parser.add_argument('--no-vectors', action='store_true')
     parser.add_argument('--force-pic', action='store_true')
     parser.add_argument('--e1000e', action='store_true')
-    parser.add_argument('--intx', choices=['single', 'shared', 'poll'])
+    parser.add_argument('--intx', choices=['single', 'shared', 'bridge', 'poll'])
     parser.add_argument('--capture-directory', type=Path)
     parser.add_argument('--debugger-delay', type=float, default=0,
                         help='simulate slow fault debugger setup while the guest is stopped')
@@ -290,6 +297,8 @@ def main():
         parser.error('--debugger-delay must be from 0 to 10 seconds and requires --fault')
     if args.intx and (args.e1000e or args.fault or (args.intx == 'shared' and args.expected_irq)):
         parser.error('--intx uses 82540EM and normal traffic, with two Intel devices in shared mode')
+    if args.intx == 'bridge' and (args.machine != 'q35' or args.force_pic):
+        parser.error('--intx bridge requires Q35 with APIC routing')
     fixture(program='udp-tests', script='userspace/tests/net/udp.sh',
             environment={'AXIOM64_UDP_FAULT': '1'} if args.fault else None)
     image = 'udp-test-pic.iso' if args.force_pic else 'udp-test.iso'

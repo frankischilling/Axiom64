@@ -102,7 +102,14 @@ def mutations(path, lane, evidence, native, directory, statistics=None):
     changed(recovered, recovered[1], opened[2]['ms'] - 1)
     previous_outgoing, last_outgoing = [entry for entry in flows[3] if entry[0] > opened[0] and
                                         entry[2]['outgoing']][-2:]
-    changed(last_outgoing, last_outgoing[1], previous_outgoing[2]['ms'] - .001)
+    # Encode an exact reversal at capture precision. Floating-point arithmetic
+    # on epoch milliseconds can round a one-microsecond change back to equality.
+    seconds, fraction = struct.unpack_from(endian + 'II', original, previous_outgoing[0])
+    before = seconds * 1000000 + fraction - 1
+    assert before >= 0
+    reversed_clock = bytearray(original)
+    struct.pack_into(endian + 'II', reversed_clock, last_outgoing[0], *divmod(before, 1000000))
+    reject(bytes(reversed_clock), evidence)
     # Move a whole flow onto another live case's endpoint, with valid checksums
     # and matching peer records. The original seventeen controls stay intact.
     bytes_, adjusted = original, copy.deepcopy(evidence)

@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "fs/file_lock.hpp"
+#include "fs/descriptor_inode.hpp"
 
 namespace ax {
 bool file_lock_operation(uint32_t operation) {
@@ -48,7 +49,7 @@ int file_lock_try(Handle* handle, uint32_t operation) {
     if (!handle || (handle->flags & 010000000)) // O_PATH does not allow flock.
         return -9;
     auto node = handle->node;
-    if (!node)
+    if (!node || is_anonymous_pipe_inode(node))
         return -95;
     unsigned kind = operation & ~uint32_t(4);
     if (kind == handle->file_lock)

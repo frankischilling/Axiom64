@@ -396,11 +396,20 @@ static void trace(const char* directory) {
     printf("FILE_LOCK_TRACE_PASS operations=4096 digest=%08x\n", digest);
 }
 
-static void unsupported(void) {
+static void descriptor_types(const char* directory) {
     int endpoints[2];
     CHECK(pipe(endpoints) == 0);
     CHECK(flock(endpoints[0], LOCK_EX | LOCK_NB) == -1 && errno == EOPNOTSUPP);
     CHECK(close(endpoints[0]) == 0 && close(endpoints[1]) == 0);
+    char fifo[1024];
+    CHECK(snprintf(fifo, sizeof(fifo), "%s/fifo", directory) > 0);
+    CHECK(mkfifo(fifo, 0600) == 0);
+    int fifo_owner = open(fifo, O_RDWR | O_NONBLOCK);
+    int fifo_probe = open(fifo, O_RDWR | O_NONBLOCK);
+    CHECK(fifo_owner >= 0 && fifo_probe >= 0 && flock(fifo_owner, LOCK_EX | LOCK_NB) == 0);
+    conflict(fifo_probe, LOCK_EX);
+    CHECK(close(fifo_owner) == 0 && flock(fifo_probe, LOCK_EX | LOCK_NB) == 0);
+    CHECK(close(fifo_probe) == 0 && unlink(fifo) == 0);
     CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, endpoints) == 0);
     CHECK(flock(endpoints[0], LOCK_SH | LOCK_NB) == -1 && errno == EOPNOTSUPP);
     CHECK(close(endpoints[0]) == 0 && close(endpoints[1]) == 0);
@@ -470,7 +479,7 @@ int main(int argc, char** argv) {
     contention();
     trace(directory);
     if (guest)
-        unsupported();
+        descriptor_types(directory);
     CHECK(unlink(path) == 0 && unlink(other) == 0 && rmdir(directory) == 0);
     printf("FILE_LOCK_TESTS_PASS linkage=%s\n", LOCK_LINKAGE);
     return 0;

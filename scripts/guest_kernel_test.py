@@ -36,9 +36,11 @@ import tempfile
 import time
 
 from account_normal_test import write_cpio
+from build_musl import checked_patches, runtime_sources
 from disk_root import archive_entries
 from fetch import LOCK, ROOT, fetch
 from fixture_archive import fingerprint
+from linux_uapi import headers
 from qemu_acceleration import Acceleration
 from qmp import Qmp
 from sources import SOURCE_LOCK, port_sources
@@ -91,13 +93,39 @@ def pack_fixture(rootfs, destination, build_tools, system_image):
         files[str(member)] = (stat.S_IFREG | 0o644, payload)
         inputs[name.as_posix()] = hashlib.sha256(payload).hexdigest()
     fixture_inputs = {}
+    runtime = None
+    uapi = None
     if system_image:
+        lock = json.loads(SOURCE_LOCK.read_text())
+        runtime, patches, verified = runtime_sources(lock, checked_patches(lock))
+        stack_guard, = (path for path in verified if path.name == '__stack_chk_fail_local.c')
+        _, uapi = headers()
         fixture_inputs.update({
             'build-system.sh': ROOT / 'userspace/tests/toolchain/build-system.sh',
+            'build-runtime.sh': ROOT / 'userspace/tests/toolchain/build-runtime.sh',
             'configure-busybox.sh': ROOT / 'scripts/configure-busybox.sh',
             'busybox.tar.bz2': fetch('busybox'),
             'limine-binary.tar.gz': fetch('limine'),
+            'musl.tar.gz': runtime,
+            'musl-ssp.c': stack_guard,
         })
+        files[str(source_root / 'musl-patches')] = (0o40755, b'')
+        for patch in patches:
+            name = 'musl-patches/' + patch.name
+            if name in fixture_inputs:
+                raise ValueError(f'duplicate musl patch: {name}')
+            fixture_inputs[name] = patch
+        uapi_checks = []
+        for name, digest in sorted(uapi['products'].items()):
+            if hashlib.sha256(files[name][1]).hexdigest() != digest:
+                raise ValueError(f'bootstrap Linux header differs from the pinned source: {name}')
+            uapi_checks.append(f'{digest}  {name}\n')
+        for name, payload in (
+            ('musl-patches/series', ''.join(patch.name + '\n' for patch in patches).encode()),
+            ('linux-uapi.sha256', ''.join(uapi_checks).encode()),
+        ):
+            files[str(source_root / name)] = (0o100644, payload)
+            inputs[name] = hashlib.sha256(payload).hexdigest()
     if build_tools:
         fixture_inputs.update({
             'build-tools.sh': ROOT / 'userspace/tests/toolchain/build-tools.sh',
@@ -113,7 +141,7 @@ def pack_fixture(rootfs, destination, build_tools, system_image):
     files['etc/boot-test.sh'] = (0o100755, runner.read_bytes())
     tools = supply_tool_sources(files, source_root) if build_tools else {}
     write_cpio(destination, files)
-    return inputs, tools
+    return inputs, tools, runtime, uapi
 
 
 def make_image(directory, name, kernel, rootfs):
@@ -188,10 +216,40 @@ def export_kernel(directory, image, acceleration, timeout, system_image):
     return kernel, checks, serial, command
 
 
-def verify_system_image(directory, kernel, serial):
+def verify_runtime(root_files, bootstrap_rootfs, archive, uapi, scratch):
+    loader = 'lib/ld-musl-x86_64.so.1'
+    notice = 'usr/share/licenses/musl/COPYRIGHT'
+    if not stat.S_ISREG(root_files[loader][0]) or root_files[loader][1] == archive_entries(bootstrap_rootfs)[loader][1]:
+        raise RuntimeError('the guest did not install a new musl interpreter')
+    for alias, target in (('lib/libc.musl-x86_64.so.1', b'ld-musl-x86_64.so.1'),
+                          ('usr/lib/libc.so', b'../../lib/ld-musl-x86_64.so.1')):
+        if not stat.S_ISLNK(root_files[alias][0]) or root_files[alias][1] != target:
+            raise RuntimeError(f'invalid guest musl link: {alias}')
+    with tarfile.open(archive) as source:
+        with source.extractfile('musl-1.2.5/COPYRIGHT') as upstream:
+            if root_files[notice][1] != upstream.read():
+                raise RuntimeError('guest musl notice differs from the pinned source')
+    for name, digest in uapi['products'].items():
+        if hashlib.sha256(root_files[name][1]).hexdigest() != digest:
+            raise RuntimeError(f'guest Linux header differs from the pinned source: {name}')
+    libraries = ('usr/lib/libc.a', 'usr/lib/libssp_nonshared.a')
+    if (not root_files['usr/include/stdlib.h'][1] or
+            any(not root_files[name][1].startswith(b'!<arch>\n') for name in libraries)):
+        raise RuntimeError('guest musl SDK is incomplete')
+    client = Path(scratch) / 'abi-dynamic'
+    client.write_bytes(root_files['bin/abi-dynamic'][1])
+    elf = subprocess.check_output(['readelf', '-Wld', str(client)], text=True)
+    if f'Requesting program interpreter: /{loader}]' not in elf or '[libc.musl-x86_64.so.1]' not in elf:
+        raise RuntimeError('guest ABI client does not use the installed musl interpreter and SONAME')
+    return {name: dict(bytes=len(root_files[name][1]), sha256=hashlib.sha256(root_files[name][1]).hexdigest())
+            for name in (loader, *libraries, 'usr/lib/Scrt1.o', 'usr/lib/musl-gcc.specs', notice)}
+
+
+def verify_system_image(directory, kernel, serial, bootstrap_rootfs, runtime, uapi):
     rootfs, image = (directory / name for name in ('rootfs.cpio', 'guest-built.iso'))
     lines = serial.read_text(errors='replace').splitlines()
-    for marker in ('AXIOM64_GUEST_ROOTFS_BUILT', 'AXIOM64_GUEST_IMAGE_BUILT'):
+    for marker in ('AXIOM64_GUEST_MUSL_BUILT', 'AXIOM64_GUEST_ROOTFS_BUILT', 'AXIOM64_GUEST_IMAGE_BUILT',
+                   'LOAD /tmp/guest-root/usr/lib/libc.a', 'LOAD /tmp/guest-root/usr/lib/libc.so'):
         if lines.count(marker) != 1:
             raise RuntimeError(f'missing {marker}, see {serial}')
     for artifact in (rootfs, image):
@@ -202,7 +260,9 @@ def verify_system_image(directory, kernel, serial):
     busybox_license = 'usr/share/licenses/BusyBox/LICENSE'
     busybox_config = 'usr/share/doc/BusyBox/config'
     for member in ('sbin/init', 'bin/abi-static', 'bin/abi-dynamic', 'bin/busybox',
-                   busybox_license, busybox_config):
+                   busybox_license, busybox_config, 'lib/ld-musl-x86_64.so.1', 'usr/lib/libc.a',
+                   'usr/lib/libssp_nonshared.a',
+                   'usr/lib/Scrt1.o', 'usr/lib/musl-gcc.specs', 'usr/share/licenses/musl/COPYRIGHT'):
         digest = hashlib.sha256(root_files[member][1]).hexdigest()
         if lines.count(f'{digest}  {member}') != 1:
             raise RuntimeError(f'guest and archived {member} digests differ, see {serial}')
@@ -211,6 +271,7 @@ def verify_system_image(directory, kernel, serial):
             if root_files[busybox_license][1] != notice.read():
                 raise RuntimeError('guest BusyBox license differs from the pinned source')
     with tempfile.TemporaryDirectory(prefix='image-members-', dir=directory) as scratch:
+        runtime_identity = verify_runtime(root_files, bootstrap_rootfs, runtime, uapi, scratch)
         busybox = Path(scratch) / 'busybox'
         busybox.write_bytes(root_files['bin/busybox'][1])
         headers = subprocess.check_output(['readelf', '-Wl', str(busybox)], text=True)
@@ -223,7 +284,7 @@ def verify_system_image(directory, kernel, serial):
                             '/boot/' + member, str(extracted)], check=True)
             if fingerprint(extracted) != fingerprint(original):
                 raise RuntimeError(f'guest ISO contains a different {member}')
-    return image, fingerprint(rootfs), busybox_identity
+    return image, fingerprint(rootfs), busybox_identity, runtime_identity
 
 
 def main():
@@ -245,7 +306,7 @@ def main():
     rootfs_identity = fingerprint(rootfs)
     build_root = directory / 'compiler.cpio'
     build_tools = args.source_tools or args.system_image
-    sources, tools = pack_fixture(rootfs, build_root, build_tools, args.system_image)
+    sources, tools, runtime, uapi = pack_fixture(rootfs, build_root, build_tools, args.system_image)
     compile_image = make_image(directory, directory.name + '-compiler.iso', kernel, build_root)
     result, check, serial, command = export_kernel(directory, compile_image, acceleration, args.build_timeout,
                                                    args.system_image)
@@ -256,7 +317,8 @@ def main():
     if fingerprint(rootfs) != rootfs_identity or fingerprint(kernel) != kernel_identity:
         raise RuntimeError('bootstrap kernel or installed rootfs changed during guest compilation')
     if args.system_image:
-        boot_image, test_rootfs, busybox = verify_system_image(directory, result, serial)
+        boot_image, test_rootfs, busybox, guest_runtime = verify_system_image(
+            directory, result, serial, rootfs, runtime, uapi)
     else:
         boot_image = make_image(directory, directory.name + '-boot.iso', result, rootfs)
         test_rootfs = rootfs_identity
@@ -274,6 +336,8 @@ def main():
                   boot_results=json.loads((directory / 'boot-results.json').read_text()))
     if args.system_image:
         report['guest_busybox'] = busybox
+        report['guest_musl'] = guest_runtime
+        report['linux_uapi'] = uapi
     (directory / 'result.json').write_text(json.dumps(report, indent=2) + '\n')
     boot.check_returncode()
 

@@ -6,7 +6,7 @@
 # @author  frankischilling
 # @date    2026-11-19
 #
-# Builds init and both ABI clients, creates the initramfs, and writes the ISO.
+# Builds the libc, init and both ABI clients, then writes the initramfs and ISO.
 # A native Limine build installs the BIOS portion of the exported media.
 #
 # Copyright (C) 2026 frankischilling
@@ -30,6 +30,9 @@ project=/root/kernel-build
 export_dir=/mnt/kernel-export
 root=/tmp/guest-root
 media=/tmp/guest-iso
+mkdir -p "$root" "$media/boot/limine" "$media/EFI/BOOT"
+/bin/sh "$project/build-runtime.sh" "$root"
+cc=$project/guest-musl-gcc
 workspace=/tmp/guest-busybox
 mkdir "$workspace"
 mount -t ramfs none "$workspace"
@@ -40,23 +43,24 @@ cd "$workspace"/busybox-*/
 make defconfig < /dev/null
 /bin/sh "$project/configure-busybox.sh" .config
 make oldconfig < /dev/null
-make -j2 CC=gcc HOSTCC=gcc < /dev/null
+make -j2 "CC=$cc" HOSTCC=gcc < /dev/null
 ./busybox --list > "$workspace/applets"
 busybox_source=$PWD
 
-mkdir -p "$root" "$media/boot/limine" "$media/EFI/BOOT"
 cd "$root"
 mkdir -p bin dev etc lib proc run sbin sys tmp usr/share/licenses/BusyBox usr/share/doc/BusyBox
 chmod 1777 tmp
-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static \
+"$cc" -std=c11 -O2 -g -Wall -Wextra -Werror -static \
     "$project/userspace/init/main.c" "$project/userspace/init/console.c" -o sbin/init
-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static "$project/userspace/tests/abi/abi.c" -o bin/abi-static
-gcc -std=c11 -O2 -g -Wall -Wextra -Werror '-DABI_LINKAGE="dynamic"' \
-    "$project/userspace/tests/abi/abi.c" -o bin/abi-dynamic
+"$cc" -std=c11 -O2 -g -Wall -Wextra -Werror -static \
+    "$project/userspace/tests/abi/abi.c" -Wl,-Map,"$workspace/abi-static.map" -o bin/abi-static
+"$cc" -std=c11 -O2 -g -Wall -Wextra -Werror '-DABI_LINKAGE="dynamic"' \
+    "$project/userspace/tests/abi/abi.c" -Wl,-Map,"$workspace/abi-dynamic.map" -o bin/abi-dynamic
+grep -Fx "LOAD $root/usr/lib/libc.a" "$workspace/abi-static.map"
+grep -Fx "LOAD $root/usr/lib/libc.so" "$workspace/abi-dynamic.map"
 cp "$busybox_source/busybox" bin/busybox
 cp "$busybox_source/LICENSE" usr/share/licenses/BusyBox/LICENSE
 cp "$busybox_source/.config" usr/share/doc/BusyBox/config
-cp /lib/ld-musl-x86_64.so.1 lib/ld-musl-x86_64.so.1
 while IFS= read -r applet; do
     if [ "$applet" != busybox ]; then
         ln -s /bin/busybox "bin/$applet"
@@ -64,7 +68,6 @@ while IFS= read -r applet; do
 done < "$workspace/applets"
 unset TMPDIR
 umount "$workspace"
-ln -s /lib/ld-musl-x86_64.so.1 lib/libc.so
 cat > etc/boot-test.sh <<'BOOT'
 #!/bin/sh
 set -eu
@@ -82,7 +85,9 @@ chmod 755 etc/boot-test.sh
 find bin dev etc lib proc run sbin sys tmp usr -print0 | sort -z | \
     cpio -o -0 -H newc --renumber-inodes --ignore-devno > "$export_dir/rootfs.cpio"
 sha256sum sbin/init bin/abi-static bin/abi-dynamic bin/busybox \
-    usr/share/licenses/BusyBox/LICENSE usr/share/doc/BusyBox/config
+    usr/share/licenses/BusyBox/LICENSE usr/share/doc/BusyBox/config \
+    lib/ld-musl-x86_64.so.1 usr/lib/libc.a usr/lib/libssp_nonshared.a usr/lib/Scrt1.o usr/lib/musl-gcc.specs \
+    usr/share/licenses/musl/COPYRIGHT
 echo AXIOM64_GUEST_ROOTFS_BUILT
 
 tar xf "$project/limine-binary.tar.gz" -C /tmp

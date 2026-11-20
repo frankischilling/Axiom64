@@ -32,17 +32,19 @@ def checked_patches(lock):
     return patches
 
 
-def inputs(provider, lock):
-    if provider == 'build':
-        paths = [verify(download(row['url'], CACHE / 'build-musl' / row['name']),
-                        row['sha256'], 'sha256') for row in lock['build_musl']['files']]
-        archive = next(path for path in paths if path.name.endswith('.orig.tar.gz'))
-        packaging = next(path for path in paths if path.name.endswith('.debian.tar.xz'))
-        return archive, packaging, paths
+def build_sources(lock):
+    paths = [verify(download(row['url'], CACHE / 'build-musl' / row['name']),
+                    row['sha256'], 'sha256') for row in lock['build_musl']['files']]
+    archive = next(path for path in paths if path.name.endswith('.orig.tar.gz'))
+    packaging = next(path for path in paths if path.name.endswith('.debian.tar.xz'))
+    return archive, packaging, paths
+
+
+def runtime_sources(lock, local_patches):
     row = next(row for row in lock['ports'] if row['origin'] == 'musl')
     _, paths = port_sources(row)
     archive = next(path for path in paths if path.name == 'musl-1.2.5.tar.gz')
-    return archive, None, paths
+    return archive, [path for path in paths if path.suffix == '.patch'] + local_patches, paths
 
 
 def ensure(provider='build'):
@@ -70,7 +72,12 @@ def ensure(provider='build'):
                     if digest(destination / name) != expected:
                         raise RuntimeError(f'cached musl product changed: {provider}/{name}')
                 return destination
-        archive, packaging, verified = inputs(provider, lock)
+        if provider == 'build':
+            archive, packaging, verified = build_sources(lock)
+            ordered = []
+        else:
+            archive, ordered, verified = runtime_sources(lock, patches)
+            packaging = None
         destination.mkdir(parents=True, exist_ok=True)
         logfile = destination / 'build.log'
         with tempfile.TemporaryDirectory(prefix=f'axiom64-musl-{provider}-') as temporary:
@@ -78,7 +85,6 @@ def ensure(provider='build'):
             with tarfile.open(archive) as stream:
                 stream.extractall(scratch, filter='data')
             source = scratch / ('musl-1.2.4' if provider == 'build' else 'musl-1.2.5')
-            ordered = []
             if packaging:
                 with tarfile.open(packaging) as stream:
                     stream.extractall(source, filter='data')
@@ -88,9 +94,7 @@ def ensure(provider='build'):
                         name = line.split('#', 1)[0].strip()
                         if name:
                             ordered.append(source / 'debian/patches' / name)
-            else:
-                ordered.extend(path for path in verified if path.suffix == '.patch')
-            ordered.extend(patches)
+                ordered.extend(patches)
             environment = os.environ.copy()
             # Explicit source-built libc uses its own headers and startup files.
             for name in ('CFLAGS', 'CPPFLAGS', 'LDFLAGS', 'CPATH', 'C_INCLUDE_PATH',

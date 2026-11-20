@@ -1062,7 +1062,7 @@ test-ipv6-fragments-native: test-ipv6-fragment-observation
 build/ipv6-wire-host: kernel/tests/net/ipv6_wire.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
-build/ipv6-host: kernel/tests/net/ipv6_host.cpp kernel/tests/net/ipv6_output_owner.cpp kernel/tests/net/ipv6_link_configuration.cpp kernel/tests/net/ipv6_router.cpp kernel/tests/net/ipv6_address_lifecycle.cpp $(IPV6_CORE) kernel/fs/proc/ipv6.cpp kernel/fs/proc/integer.cpp kernel/net/ipv6/socket/send_control.cpp kernel/net/ethernet.cpp kernel/net/netlink/ipv6.cpp kernel/net/netlink/addresses.cpp kernel/net/netlink/link.cpp kernel/net/netlink/inventory.cpp kernel/net/netlink/routes.cpp $(call rwildcard,kernel/include/,*.hpp)
+build/ipv6-host: kernel/tests/net/ipv6_host.cpp kernel/tests/net/ipv6_host_addresses.cpp kernel/tests/net/ipv6_host_packets.cpp kernel/tests/net/ipv6_host_fixture.hpp kernel/tests/net/ipv6_output_owner.cpp kernel/tests/net/ipv6_link_configuration.cpp kernel/tests/net/ipv6_router.cpp kernel/tests/net/ipv6_address_lifecycle.cpp $(IPV6_CORE) kernel/fs/proc/ipv6.cpp kernel/fs/proc/integer.cpp kernel/net/ipv6/socket/send_control.cpp kernel/net/ethernet.cpp kernel/net/netlink/ipv6.cpp kernel/net/netlink/addresses.cpp kernel/net/netlink/link.cpp kernel/net/netlink/inventory.cpp kernel/net/netlink/routes.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 build/ipv6-reassembly-host: kernel/tests/net/ipv6_reassembly.cpp kernel/net/ipv6/reassembly.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/reassembly.hpp kernel/include/net/ipv6/wire.hpp kernel/include/core/base.hpp
@@ -1469,13 +1469,15 @@ test-tcp6-abi: build/axiom64.elf build/init busybox
 .PHONY: test-tcp6-control-state
 test-tcp6-control-state: build/axiom64.elf build/init busybox
 	$(PYTHON) scripts/tcp6_control_state_test.py
-build/tcp-native: userspace/tests/net/tcp.c userspace/tests/net/tcp_maxseg.c userspace/tests/net/tcp_maxseg.h
+TCP_SOCKET_TEST_INPUTS = userspace/tests/net/tcp.c userspace/tests/net/tcp_maxseg.c userspace/tests/net/tcp_maxseg.h \
+	userspace/tests/net/tcp_accept.c userspace/tests/net/tcp_test.h
+build/tcp-native: $(TCP_SOCKET_TEST_INPUTS)
 	@mkdir -p build
 	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@
-build/tcp-static: userspace/tests/net/tcp.c userspace/tests/net/tcp_maxseg.c userspace/tests/net/tcp_maxseg.h
+build/tcp-static: $(TCP_SOCKET_TEST_INPUTS)
 	@mkdir -p build
 	$(MUSL_CC) -std=gnu11 -static -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@
-build/tcp-dynamic: userspace/tests/net/tcp.c userspace/tests/net/tcp_maxseg.c userspace/tests/net/tcp_maxseg.h
+build/tcp-dynamic: $(TCP_SOCKET_TEST_INPUTS)
 	@mkdir -p build
 	$(MUSL_CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@
 .PHONY: test-tcp-native test-tcp-sockets test-tcp-native-wire

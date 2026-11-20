@@ -7,7 +7,7 @@ SOURCES = ('Makefile', 'scripts/tcp_capture_link.py', 'scripts/tests/tcp_packet_
            'scripts/tcp_pressure_inputs.py', 'scripts/tcp_pressure_capture.py',
            'scripts/tcp_pressure_test.py', 'scripts/tcp_icmp_inputs.py', 'scripts/tcp_icmp_capture.py',
            'scripts/tcp_fault_peer.py', 'scripts/tcp_fault_test.py', 'scripts/tcp_fault_native.py',
-           'kernel/io/io.cpp',
+           'kernel/io/io.cpp', 'kernel/io/packet.hpp', 'kernel/io/request.hpp',
            'kernel/net/tcp/socket.cpp', 'kernel/include/net/tcp/socket.hpp',
            'kernel/net/tcp/connection.cpp', 'kernel/include/net/tcp/connection.hpp',
            'kernel/net/tcp/time_wait.cpp', 'kernel/include/net/tcp/time_wait.hpp',

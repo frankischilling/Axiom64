@@ -24,10 +24,10 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/net/`, `kernel/drivers/net/` | Ethernet ownership, virtio-net/e1000 devices, interface ioctls, packet sockets, IPv4/ARP/ICMP, UDP, TCP state/socket/error ownership, and netlink route/address control |
 | `kernel/process/task.cpp` | Process/thread ownership, ELF loading, clone/fork/exec/exit/wait, scheduling, TLS, FPU state |
 | `kernel/process/futex.cpp` | Expected-value waits, wake/bitsets, requeue, deadlines, shared backing lifetime |
-| `kernel/io/io.cpp` | Retained I/O requests, captured vectors, wait completion, and interruption cleanup |
+| `kernel/io/` | Retained I/O requests, packet transfer, wait completion, and interruption cleanup |
 | `kernel/fs/file_lock.cpp` | Canonical-node advisory locks owned by open descriptions |
 | `kernel/fs/vfs.cpp`, `ramfs.cpp` | Filesystem dispatch, mount namespace, RAM volumes, initramfs, file descriptions, pipes |
-| `kernel/fs/ext2/ext2.cpp` | Classic ext2 volumes, mount validation, allocation, file/directory operations, synchronous commits |
+| `kernel/fs/ext2/` | Classic ext2 volumes, mount validation and recovery, allocation, file and directory operations |
 | `kernel/abi/linux/syscall.cpp` | Linux syscall numbers, ABI structures, errors, blocking operations |
 | `kernel/process/signals.cpp` | Queues, masks, actions, signal frames, return, alternate stacks, timers |
 | `kernel/process/signal_wait.cpp` | Captured Linux synchronous signal waits, dequeue order, timeout and interruption |

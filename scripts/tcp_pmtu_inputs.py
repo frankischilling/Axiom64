@@ -8,7 +8,7 @@ SOURCES = ('Makefile', 'scripts/tcp_capture_link.py', 'scripts/tests/tcp_packet_
            'scripts/tcp_pmtu_capture.py', 'scripts/tcp_icmp_inputs.py',
            'scripts/tcp_icmp_capture.py', 'scripts/tcp_fault_peer.py',
            'scripts/tcp_fault_test.py', 'scripts/tcp_fault_native.py',
-           'kernel/io/io.cpp',
+           'kernel/io/io.cpp', 'kernel/io/packet.hpp', 'kernel/io/request.hpp',
            'kernel/net/tcp/icmp.cpp', 'kernel/include/net/tcp/icmp.hpp',
            'kernel/net/tcp/connection.cpp', 'kernel/include/net/tcp/connection.hpp',
            'kernel/net/tcp/sender.cpp', 'kernel/include/net/tcp/sender.hpp',

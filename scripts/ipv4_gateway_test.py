@@ -60,7 +60,8 @@ def prepare(linkage):
              ROOT / 'build' / (program + '.inputs.json')]
     sources = tuple(dict.fromkeys((*manifest['sources'], *IPV4_MODULES,
         'kernel/net/ipv4/core.cpp', 'kernel/net/ipv4/socket.cpp', 'scripts/ipv4_gateway_test.py',
-        'kernel/io/io.cpp', 'kernel/net/udp/core.cpp', 'kernel/include/net/udp.hpp',
+        'kernel/io/io.cpp', 'kernel/io/packet.hpp', 'kernel/io/request.hpp',
+        'kernel/net/udp/core.cpp', 'kernel/include/net/udp.hpp',
         'scripts/ipv4_gateways.py', 'scripts/ipv4_gateway_capture.py', 'scripts/ipv4_expiry_capture.py',
         'scripts/ipv4_unconfigured.py', 'scripts/ipv4_unconfigured_capture.py',
         'scripts/ipv4_retained.py', 'scripts/ipv4_retained_capture.py',

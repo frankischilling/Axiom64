@@ -1244,6 +1244,9 @@ jobs:
             build/network-test.iso
             build/rootfs-network.cpio
             build/net-tests
+            build/network-results.json
+            build/network-matrix-schedule.json
+            build/network-*.log
             userspace/tests/net/packet.c
             userspace/tests/net/run.sh
       - name: Compare gateway routing with three native Linux linkages

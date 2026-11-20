@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'ci/network_window.py'
 SPEC = importlib.util.spec_from_file_location('network_window', SCRIPT)
@@ -98,6 +99,37 @@ class NetworkWindowTest(unittest.TestCase):
             self.assertIsNotNone(report['workers']['native']['returncode'])
 
 
+class MatrixPreparationTest(unittest.TestCase):
+    def test_shared_images_preserve_phase_and_status(self):
+        import network_matrix as matrix
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'build').mkdir()
+            statuses = []
+            built = []
+
+            def build_image(command, check):
+                phase = command[command.index('--phase') + 1]
+                path = Path(command[command.index('--output-directory') + 1]) / 'network-test.iso'
+                path.parent.mkdir()
+                key = statuses[-1], phase
+                built.append(key)
+                path.write_text(repr(key))
+
+            with patch.object(matrix, 'ROOT', root), patch.object(matrix, 'fixture', statuses.append), \
+                 patch.object(matrix.subprocess, 'run', build_image):
+                cases = list(matrix.cases())
+                images = matrix.prepare_images(cases, root)
+            self.assertEqual(statuses, [False, True])
+            self.assertEqual(len(built), 6)
+            self.assertEqual(set(built), {(False, 'verify'), (True, 'verify'), (True, 'queue'),
+                                         (True, 'error'), (True, 'invalid'), (True, 'pressure')})
+            for case in cases:
+                key = matrix.image_key(case)
+                self.assertEqual(images[key].read_text(), repr(key))
+            self.assertEqual((root / 'build/network-test.iso').read_text(), repr((True, 'pressure')))
+
+
 class CompletionContractTest(unittest.TestCase):
     def setUp(self):
         from network_matrix import cases
@@ -105,10 +137,8 @@ class CompletionContractTest(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         names = ['build/' + name for name in WINDOW.PRODUCTS]
-        sources = ['scripts/ci/network_window.py', 'scripts/ci/paired_network.py',
-                   'scripts/network_matrix.py', 'scripts/ipv4_fragment_native.py',
-                   'scripts/native_icmp_budget_test.py', 'Makefile']
-        for name in names + sources:
+        sources = WINDOW.SOURCES
+        for name in [*names, *sources]:
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b'owned fixture input')

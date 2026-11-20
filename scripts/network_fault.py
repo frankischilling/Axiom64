@@ -41,6 +41,7 @@ def inject(model, kind, port, prefix, armed):
 
 def defer_tx(model, port, prefix, armed, released):
     """Defer completion observation without modifying device-written memory."""
+    endpoint = f'127.0.0.1:{port}' if isinstance(port, int) else str(port)
     source = f'kernel/drivers/net/{model}.cpp'
     target = f"'{source}'::'ax::(anonymous namespace)::controllers'[0]"
     lines = (ROOT / source).read_text().splitlines()
@@ -55,7 +56,7 @@ def defer_tx(model, port, prefix, armed, released):
     script = ROOT / 'build' / (prefix + '.gdb')
     script.write_text('\n'.join([
         'set pagination off', 'set confirm off', f'file {ROOT / "build/axiom64.elf"}',
-        f'target remote 127.0.0.1:{port}', f'set $nic = &{target}', 'set $deferred = 0',
+        f'target remote {endpoint}', f'set $nic = &{target}', 'set $deferred = 0',
         f'break -source {source} -line {entries[0]} if {condition}',
         'commands', 'silent',
         f'python gdb.set_convenience_variable("hold", int(not __import__("os").path.exists({str(released)!r})))',

@@ -1160,6 +1160,12 @@ receive metadata; it does not establish native packet-clock timing acceptance.
 The complete 46-boot Ethernet matrix also requires a protocol-specific listener
 to receive its first actual incoming reply on every ordinary adapter. Existing
 frame counts, wrap, fault, pressure, timestamp and deadline gates remain required.
+The matrix prepares one read-only ISO per boot phase and status feature, then
+shuffles the boots and records its seed in `build/network-matrix-schedule.json`.
+Each boot has private monitor and debugger sockets, peer connections, logs and
+writable UEFI variables. The default is two workers on hosts with at least
+four available CPUs. Use `python3 scripts/network_matrix.py --workers 1 --seed SEED`
+to replay a particular order with one worker.
 
 `python3 scripts/tests/packet_protocol_observation_test.py -v` reopens four actual
 Ethernet logs covering two and eight ordinary adapters, a malformed-completion

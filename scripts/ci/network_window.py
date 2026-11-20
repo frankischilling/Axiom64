@@ -16,6 +16,10 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 from ci.paired_network import capture, interrupted
 
 PRODUCTS = ('ipv4-native', 'ipv4-tests', 'ipv4-dynamic', 'native-icmp-budget')
+SOURCES = ('scripts/ci/network_window.py', 'scripts/ci/paired_network.py',
+           'scripts/image.py', 'scripts/network_matrix.py', 'scripts/network_test.py',
+           'scripts/network_fault.py', 'scripts/ipv4_fragment_native.py',
+           'scripts/native_icmp_budget_test.py', 'Makefile')
 
 
 def digest(path):
@@ -59,10 +63,7 @@ def run_window(root, commands=None, products=None):
     if set(commands) != {'native', 'guest'}:
         raise ValueError('the network window requires both complete workers')
     before = {str(path.relative_to(root)): digest(path) for path in products or []}
-    sources = {name: digest(root / name) for name in ('scripts/ci/network_window.py',
-               'scripts/ci/paired_network.py', 'scripts/network_matrix.py',
-               'scripts/ipv4_fragment_native.py', 'scripts/native_icmp_budget_test.py', 'Makefile')
-               if (root / name).is_file()}
+    sources = {name: digest(root / name) for name in SOURCES if (root / name).is_file()}
     workers, readers, records = {}, {}, {}
     waiters = []
     failures = []
@@ -125,14 +126,11 @@ def validate_window(root, report):
     root = Path(root)
     expected_commands = {'native': ['sudo', '-n', 'make', '-j1', 'test-native-icmp-budget',
                                    'test-ipv4-fragments-native'], 'guest': ['make', 'test-network']}
-    expected_sources = {'scripts/ci/network_window.py', 'scripts/ci/paired_network.py',
-                        'scripts/network_matrix.py', 'scripts/ipv4_fragment_native.py',
-                        'scripts/native_icmp_budget_test.py', 'Makefile'}
     if not (report['passed'] and report['original_complete_commands'] and report['inputs_unchanged']
             and report['original_clocks_and_deadlines_preserved'] and
             set(report['workers']) == set(expected_commands) and
             set(report['immutable_products']) == {'build/' + name for name in PRODUCTS} and
-            set(report['source_sha256']) == expected_sources):
+            set(report['source_sha256']) == set(SOURCES)):
         raise ValueError('both original workers and complete immutable input inventories are required')
     for name, worker in report['workers'].items():
         if not (worker['command'] == expected_commands[name] and worker['returncode'] == 0 and

@@ -95,11 +95,12 @@ def packet_protocol_observations(text, indices):
     return dict(passed=not malformed and events == expected, observations=observations, passes=passes)
 
 
-def run(firmware, transport, models, queue, timeout, wrap, gdb=False, fault=None, status=True, mtu=0, pressure=False):
+def run(firmware, transport, models, queue, timeout, wrap, gdb=False, fault=None, status=True, mtu=0, pressure=False,
+        image_path=None, socket_directory=None):
     label = f'network-{firmware}-{transport}-{"-".join(models)}-q{queue}{"-wrap" if wrap else ""}{"-fault-" + fault if fault else ""}{"-no-status" if not status else ""}{"-mtu" + str(mtu) if mtu else ""}{"-pressure" if pressure else ""}'
     log = ROOT / 'build' / (label + '.log')
     selector = selectors.DefaultSelector()
-    control = Path('/tmp') / f'axiom64-network-{os.getpid()}.sock'
+    control = Path(socket_directory) / 'qmp.sock' if socket_directory else Path('/tmp') / f'axiom64-network-{os.getpid()}.sock'
     control.unlink(missing_ok=True)
     link_events = set()
     debugger = debug_log = None
@@ -107,15 +108,17 @@ def run(firmware, transport, models, queue, timeout, wrap, gdb=False, fault=None
     armed.unlink(missing_ok=True)
     released = control.with_suffix('.released')
     released.unlink(missing_ok=True)
-    debug_port = 1235
+    debug_endpoint = Path(socket_directory) / 'gdb.sock' if socket_directory else 1235
     servers, peers = [], []
     command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '2G',
-               '-cdrom', str(ROOT / 'build/network-test.iso'), '-nic', 'none', '-display', 'none',
+               '-cdrom', str(image_path or ROOT / 'build/network-test.iso'), '-nic', 'none', '-display', 'none',
                '-serial', 'stdio', '-monitor', 'none', '-no-reboot',
                '-qmp', f'unix:{control},server=on,wait=off',
                '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
     if gdb or fault or pressure:
-        command += ['-gdb', f'tcp:127.0.0.1:{debug_port}']
+        debugger_transport = (f'unix:{debug_endpoint},server=on,wait=off' if socket_directory
+                              else f'tcp:127.0.0.1:{debug_endpoint}')
+        command += ['-gdb', debugger_transport]
         if gdb:
             command += ['-S']
     for lane, model in enumerate(models):
@@ -151,9 +154,9 @@ def run(firmware, transport, models, queue, timeout, wrap, gdb=False, fault=None
                     break
                 tail = log.read_text(errors='replace')
                 if fault and debugger is None and 'PACKET_FAULT_READY' in tail:
-                    debugger, debug_log = inject(models[0], fault, debug_port, label, armed)
+                    debugger, debug_log = inject(models[0], fault, debug_endpoint, label, armed)
                 if pressure and debugger is None and 'PACKET_PRESSURE_READY' in tail:
-                    debugger, debug_log = defer_tx(models[0], debug_port, label, armed, released)
+                    debugger, debug_log = defer_tx(models[0], debug_endpoint, label, armed, released)
                 if pressure and 'PACKET_PRESSURE_FULL' in tail:
                     released.touch()
                 if debugger is not None and debugger.poll() not in [None, 0]:

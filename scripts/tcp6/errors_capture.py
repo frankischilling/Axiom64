@@ -119,6 +119,9 @@ def inspect(rows, lane, log, native=False):
         require(begin['index'] < hint['index'] < observed['index'] < end['index'] and
                 observed['lower'] - hint['upper'] >= 50000000,
                 'full actual fifty-ms quoted-error observation')
+        if mode != 1:
+            require(requests[scenario * 3 + 2]['index'] < hint['index'],
+                    'quoted error follows socket syscall completion')
         quoted_event = next((item for item in events if item['outgoing'] and
             (item['flags'] & 2 if mode in (0, 1, 4) else item['data'])), None)
         require(quoted_event is not None and quoted_event['index'] < hint['index'],
@@ -277,6 +280,11 @@ def damaged(path, lane, log, native, output, statistics=None):
                                                f'lane={lane} case=0 mode=0 error=111')
     variants['false-passive-generation'] = rows, log.replace(f'lane={lane} case=14 mode=1 error=0 replacement=1',
                                                             f'lane={lane} case=14 mode=1 error=0 replacement=0')
+    changed = copy.deepcopy(rows)
+    request = next(n for n, row in enumerate(changed) if row['frame'][12:14] == b'\x88\xc3' and
+                   row['frame'][19:21] == b'\2\0')
+    changed.insert(hints[0], changed.pop(request))
+    variants['before-socket-syscall-completion'] = changed, log
     changed = copy.deepcopy(rows)
     phase = next(n for n, row in enumerate(changed) if row['frame'][12:14] == b'\x88\xc3' and
                  row['frame'][19:21] == b'\2\1')

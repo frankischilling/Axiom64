@@ -29,6 +29,7 @@
 #include "process/signals.hpp"
 #include "process/task.hpp"
 #include "process/cpu.hpp"
+#include "mm/barrier.hpp"
 #include "mm/limits.hpp"
 #include "mm/stack.hpp"
 #include "process/exec_arguments.hpp"
@@ -1524,6 +1525,8 @@ static int64_t dispatch(Frame* f) {
         }
         return done;
     }
+    case 324:
+        return memory_barrier(*current->memory, uint32_t(a), uint32_t(b));
     default:
         log("unimplemented syscall %u pid=%u\n", f->rax, uint64_t(current->pid));
         return -38;

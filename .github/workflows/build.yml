@@ -680,7 +680,7 @@ jobs:
         run: |
           sudo -n make test-pty-security-native test-parent-death-native test-signal-wait-native
           sudo -n make test-waitid-native test-proc-identity-native test-exec-arguments-native
-          make test-sysinfo-native
+          make test-sysinfo-native test-membarrier-native
           sudo -n python3 scripts/proc_retirement_test.py
           sudo -n python3 scripts/proc_test.py --native --directory build/proc-native
           sudo -n python3 scripts/terminal_flush_test.py --native --directory build/terminal-flush-native
@@ -689,7 +689,7 @@ jobs:
         if: matrix.suite == 'accounts-process-guest'
         run: |
           make test-pty-security test-parent-death test-signal-wait
-          make test-waitid test-proc-identity test-exec-arguments test-sysinfo
+          make test-waitid test-proc-identity test-exec-arguments test-sysinfo test-membarrier
           python3 scripts/proc_test.py
           python3 scripts/terminal_flush_test.py
       - name: Compare POSIX and OFD record locks with actual native process lifetimes
@@ -1909,6 +1909,7 @@ jobs:
             build/signal-wait*/**
             build/waitid*/**
             build/sysinfo*/**
+            build/membarrier*/**
             build/proc*/**
             build/exec-arguments*/**
             build/vm-state-test/**
@@ -2262,13 +2263,13 @@ jobs:
       - name: Interrupt every basic rotation target in all fault modes
         run: |
           cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-basic-$CACHE-$SHARD"
-          sudo -n python3 scripts/account_logbook_rotation_ext2.py --journal --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --scenario "basic" --cache-model "$CACHE" --fault-mode eio pause-before pause-after --shard-count "$SHARD_COUNT" --shard-index "$SHARD" --directory "build/account-rotation-storage-$cell"
+          sudo -n python3 scripts/account_logbook_rotation_ext2.py --journal --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --scenario "basic" --cache-model "$CACHE" --fault-mode eio pause-before pause-after --jobs 2 --shard-count "$SHARD_COUNT" --shard-index "$SHARD" --directory "build/account-rotation-storage-$cell"
           sudo -n python3 scripts/account_rotation_storage_coverage.py collect --directory "build/account-rotation-storage-$cell" --output "build/account-rotation-storage-$cell/coverage-index.json"
       - name: Interrupt every expiry rotation target in all fault modes
         if: ${{ !cancelled() }}
         run: |
           cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-expiry-$CACHE-$SHARD"
-          sudo -n python3 scripts/account_logbook_rotation_ext2.py --journal --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --scenario "expiry" --cache-model "$CACHE" --fault-mode eio pause-before pause-after --shard-count "$SHARD_COUNT" --shard-index "$SHARD" --directory "build/account-rotation-storage-$cell"
+          sudo -n python3 scripts/account_logbook_rotation_ext2.py --journal --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --scenario "expiry" --cache-model "$CACHE" --fault-mode eio pause-before pause-after --jobs 2 --shard-count "$SHARD_COUNT" --shard-index "$SHARD" --directory "build/account-rotation-storage-$cell"
           sudo -n python3 scripts/account_rotation_storage_coverage.py collect --directory "build/account-rotation-storage-$cell" --output "build/account-rotation-storage-$cell/coverage-index.json"
       - name: Give the runner ownership of completed rotation evidence
         if: always()

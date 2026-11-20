@@ -8,6 +8,8 @@ an interrupted volume.  Writeback and writethrough are explicit test models.
 """
 import argparse
 import binascii
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 import hashlib
 import json
 import os
@@ -801,6 +803,7 @@ def guest(args, rows):
                         save(prefix / 'baseline' / 'result.json', baseline)
                         save(args.directory / 'results.json', rows)
                         baseline_trace = trace_events(prefix / 'baseline' / 'block.jsonl')
+                        faults = []
                         for selected in selection['selected_targets']:
                             phase, operation, request = (selected[name] for name in
                                                          ('phase', 'operation', 'request'))
@@ -813,11 +816,18 @@ def guest(args, rows):
                             for model in args.cache_model:
                                 for mode in args.fault_mode:
                                     label = '-'.join((phase, operation, str(request), model, mode))
-                                    row = cell(prefix / label, image[scenario], image['recover'], base,
-                                               offset, firmware, transport, scenario, model=model,
-                                               operation=operation, request=request, mode=mode, label=label,
-                                               target_shape=shape)
-                                    rows.append(row)
+                                    faults.append(partial(cell, prefix / label, image[scenario],
+                                                          image['recover'], base, offset, firmware,
+                                                          transport, scenario, model=model,
+                                                          operation=operation, request=request,
+                                                          mode=mode, label=label, target_shape=shape))
+                        # Each fault owns its disk, VM and sockets. Keep the cohort
+                        # order and stop submitting work when a batch fails.
+                        with ThreadPoolExecutor(max_workers=args.jobs) as workers:
+                            for start in range(0, len(faults), args.jobs):
+                                batch = [workers.submit(fault) for fault in faults[start:start + args.jobs]]
+                                for result in batch:
+                                    rows.append(result.result())
                                     save(args.directory / 'results.json', rows)
     assert digest(base) == seed_hash
     assert all(digest(Path(name)) == value for name, value in product_hashes.items())
@@ -838,10 +848,13 @@ def main():
     parser.add_argument('--scenario', choices=('basic', 'expiry'), nargs='+', default=['basic', 'expiry'])
     parser.add_argument('--cache-model', choices=('writeback', 'writethrough'), nargs='+', default=['writeback', 'writethrough'])
     parser.add_argument('--fault-mode', choices=('eio', 'pause-before', 'pause-after'), nargs='+', default=['eio', 'pause-before', 'pause-after'])
+    parser.add_argument('--jobs', type=int, default=1, help='maximum concurrent guest fault cases')
     parser.add_argument('--shard-index', type=int, default=0)
     parser.add_argument('--shard-count', type=int, default=1,
                         help='partition observed phase/write/flush targets; all shards are required')
     args = parser.parse_args()
+    if args.jobs < 1:
+        parser.error('--jobs must be positive')
     if args.shard_count < 1 or not 0 <= args.shard_index < args.shard_count:
         parser.error('use a positive shard count and an index within that count')
     if (args.backend_only or args.native_observer) and (args.shard_index or args.shard_count != 1):

@@ -50,6 +50,19 @@ The x86-64 `clone` syscall accepts these flags:
 
 Separate process children require `SIGCHLD`. Shared-memory creation requires a child stack except for vfork. Invalid supported combinations return `EINVAL`; invalid stack/TID pointers return `EFAULT`. Unsupported flags, other process exit signals, and `clone3` return `ENOSYS`. This interface does not implement every Linux clone mode.
 
+## Memory barriers
+
+`membarrier` supports global, expedited global, expedited private and expedited
+private sync-core commands on the single x86-64 CPU. Separate registration is
+required for the two private commands. Tasks that share an address space share
+registrations. Fork inherits a copy. Successful exec starts with no registrations.
+`MEMBARRIER_CMD_GET_REGISTRATIONS` reports the current registrations. Restartable
+sequence commands are unsupported.
+
+`make test-membarrier-native` compares the ABI with native Linux.
+`make test-membarrier` runs the contract with static and dynamic musl under BIOS
+and UEFI.
+
 ## Futex interface
 
 | Operation | Behavior |

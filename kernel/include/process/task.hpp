@@ -66,6 +66,7 @@ struct SignalData {
 struct MemoryContext {
     unsigned references = 1;
     bool dumpable = true;
+    uint32_t barrier_registrations = 0;
     AddressSpace space;
     uint64_t brk_base = 0, brk_end = 0;
     uint64_t initial_data_size = 0;

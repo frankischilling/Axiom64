@@ -223,6 +223,7 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         child->memory->brk_end = current->memory->brk_end;
         child->memory->initial_data_size = current->memory->initial_data_size;
         child->memory->dumpable = current->memory->dumpable;
+        child->memory->barrier_registrations = current->memory->barrier_registrations;
         shared_memory_fork(child, current);
     }
     if (flags & clone_files) {

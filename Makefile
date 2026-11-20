@@ -112,6 +112,11 @@ test-sysinfo:
 	$(PYTHON) scripts/sysinfo_test.py
 test-sysinfo-native:
 	$(PYTHON) scripts/sysinfo_test.py --native
+.PHONY: test-membarrier test-membarrier-native
+test-membarrier:
+	$(PYTHON) scripts/membarrier_test.py
+test-membarrier-native:
+	$(PYTHON) scripts/membarrier_test.py --native
 test-proc-identity:
 	$(PYTHON) scripts/proc_identity_test.py --directory build/proc-identity
 test-proc-identity-native:

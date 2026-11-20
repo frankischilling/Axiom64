@@ -86,8 +86,8 @@ Keep imported, buildable and runtime-verified software distinct. Compilation,
 boot banners, bundled packages and test summaries alone do not establish a
 working feature or a usable operating system.
 
-Before integration, require every job and aggregate in the full workflow for the
-proposed revision, plus its required source, product and runtime checks. Preserve
+Before integration, run the affected [local validation suites](testing.md) and
+their required source, product and runtime checks for the proposed revision. Preserve
 BIOS/UEFI, static/dynamic linkage, native comparisons, device variants, sanitizers,
 filesystem checks and actual guest workloads. Keep original clocks, observation
 windows and deadlines. Failed, cancelled, skipped or missing required work is

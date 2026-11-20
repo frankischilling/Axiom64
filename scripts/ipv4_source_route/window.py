@@ -45,7 +45,8 @@ def run(directory, commands=None):
             filters=[sys.executable, '-B', '-m', 'ipv4_multicast.source_matrix', 'build/ipv4-source-evidence', '--produce'],
             routing=[sys.executable, '-B', '-m', 'ipv4_source_route.window', '--directory', str(directory), '--routing-only'])
     require(set(commands) == {'filters', 'routing'}, 'both complete source cohort workers')
-    source = {name: digest(ROOT / name) for name in ('scripts/ipv4_source_route/window.py', '.github/workflows/build.yml')}
+    source = {name: digest(ROOT / name) for name in ('scripts/ipv4_source_route/window.py',
+                                                   'scripts/local_test_suites.toml')}
     records, processes, threads, failures = {}, {}, [], []
     lock = threading.Lock()
     def observe(name, process):
@@ -82,7 +83,7 @@ def run(directory, commands=None):
         write(directory / 'processes.json', records)
     require(not failures and all(process.returncode == 0 for process in processes.values()),
             'both complete source cohorts and retained output readers must succeed')
-    require(source == {name: digest(ROOT / name) for name in source}, 'unchanged cohort orchestration and workflow')
+    require(source == {name: digest(ROOT / name) for name in source}, 'unchanged cohort orchestration and test plan')
     proof = dict(passed=True, workers=records, source=source, elapsed_ns=time.monotonic_ns() - began,
                  source_filter_cases_removed=0, routing_campaign_workers=2, observations_rescaled=False)
     write(directory / 'verified.json', proof)

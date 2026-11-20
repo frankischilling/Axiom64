@@ -502,7 +502,9 @@ TCP loss job while preserving the global-address workload and every deadline.
 TCP Packet Too Big cases on each adapter. They reuse the three native and eight
 guest linkage/firmware/transport profiles. The same strict source, compiler,
 executable and actual-ISO readers select the PMTU packet decoder and serialized
-negative controls. The existing TCP loss job retains both complete PMTU evidence
+negative controls. The PMTU control socket subscribes to its barrier EtherType.
+The independent wire capture retains the TCP traffic and barrier frames. The
+existing TCP loss job retains both complete PMTU evidence
 directories in addition to its original loss and congestion coverage; the job
 count and all original deadlines remain unchanged. These global-address tests
 qualify the initial PTB ownership and metric subset. Scoped TCP, ordinary

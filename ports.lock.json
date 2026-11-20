@@ -38,6 +38,18 @@
       "source_commit": "c9fc8f3f9e02fef01aa118290fa1343b7cede614"
     },
     {
+      "name": "bison",
+      "version": "3.8.2-r2",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/bison-3.8.2-r2.apk",
+      "archive": "bison-3.8.2-r2.apk",
+      "sha256": "b726c1014f18db8b06aaddc0ec9177ad8b6bce196ca928ce73bdcf2d643120fc",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://www.gnu.org/software/bison/bison.html",
+      "origin": "bison",
+      "source_commit": "be0833caee3020f089f02c5d7223e971a9a11ffb"
+    },
+    {
       "name": "brotli-libs",
       "version": "1.1.1-r0",
       "repository": "main",
@@ -96,6 +108,18 @@
       "upstream": "https://github.com/eudev-project/eudev",
       "origin": "eudev",
       "source_commit": "8bac74716d06c84627ab02d101fd9d2bafd0a34c"
+    },
+    {
+      "name": "flex",
+      "version": "2.6.4-r7",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/flex-2.6.4-r7.apk",
+      "archive": "flex-2.6.4-r7.apk",
+      "sha256": "bd71c91ed105924225664c40907c3557c53196ce4e07c7d8d9bf4f51a612938e",
+      "license": "BSD-2-Clause",
+      "upstream": "https://github.com/westes/flex",
+      "origin": "flex",
+      "source_commit": "be0833caee3020f089f02c5d7223e971a9a11ffb"
     },
     {
       "name": "font-alias",
@@ -778,6 +802,18 @@
       "sha256": "d0926e20a9e2e65f03f673c1d9d2e69f807e5858920146a0eaedaa68b30fe443",
       "license": "Apache-2.0",
       "upstream": "https://llvm.org/"
+    },
+    {
+      "name": "m4",
+      "version": "1.4.19-r4",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/m4-1.4.19-r4.apk",
+      "archive": "m4-1.4.19-r4.apk",
+      "sha256": "eb62124bbe5c6f1cc977bd4fb517116bfbc849415997c65c53097eda6a015f32",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://www.gnu.org/software/m4",
+      "origin": "m4",
+      "source_commit": "be0833caee3020f089f02c5d7223e971a9a11ffb"
     },
     {
       "name": "make",

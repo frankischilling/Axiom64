@@ -848,11 +848,13 @@ disk-root: build/axiom64.elf build/rootfs.cpio
 	$(PYTHON) scripts/image.py --root-device /dev/vda --output-name axiom64-disk.iso
 test: image
 	$(PYTHON) scripts/boot_test.py --firmware both
-.PHONY: test-guest-kernel test-guest-system
+.PHONY: test-guest-kernel test-guest-system test-guest-binutils
 test-guest-kernel: build/axiom64.elf build/rootfs.cpio
 	$(PYTHON) -B scripts/guest_kernel_test.py $(GUEST_KERNEL_FLAGS)
 test-guest-system: build/axiom64.elf build/rootfs.cpio
 	$(PYTHON) -B scripts/guest_kernel_test.py --source-tools --system-image $(GUEST_KERNEL_FLAGS)
+test-guest-binutils: build/axiom64.elf build/rootfs.cpio
+	$(PYTHON) -B scripts/guest_binutils_test.py
 .PHONY: test-suite test-suites
 test-suite:
 	$(PYTHON) -B scripts/local_validation.py "$(SUITE)"

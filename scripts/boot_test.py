@@ -19,7 +19,7 @@ from fixture_archive import archive_fixture
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--firmware", choices=["bios", "uefi", "both"], default="both")
-parser.add_argument("--suite", choices=["full", "abi", "desktop", "threads", "guest-system"], default="full")
+parser.add_argument("--suite", choices=["full", "abi", "desktop", "threads", "guest-system", "guest-binutils"], default="full")
 parser.add_argument("--phase", choices=["all", "cond", "io"], default="all", help="threads test selection")
 parser.add_argument("--timeout", type=int, default=600)
 parser.add_argument("--trace", action="store_true")
@@ -33,11 +33,11 @@ if args.interactive and args.suite != "full":
     parser.error("--interactive uses the full image")
 if args.prepared_image:
     args.prepared_image = args.prepared_image.resolve()
-    if (args.suite not in ["full", "guest-system"] or args.interactive or args.disk_root or args.trace or
+    if (args.suite not in ["full", "guest-system", "guest-binutils"] or args.interactive or args.disk_root or args.trace or
             not args.prepared_image.is_file()):
-        parser.error("--prepared-image requires a full or guest-system test ISO on an initramfs root")
-elif args.suite == "guest-system":
-    parser.error("the guest-system suite requires --prepared-image")
+        parser.error("--prepared-image requires a full, guest-system or guest-binutils test ISO on an initramfs root")
+elif args.suite in ["guest-system", "guest-binutils"]:
+    parser.error(f"the {args.suite} suite requires --prepared-image")
 output_directory = args.prepared_image.parent if args.prepared_image else ROOT / "build"
 desktop_checks = args.suite in ["full", "desktop"]
 if not args.prepared_image:
@@ -202,6 +202,8 @@ for firmware in firmwares:
         required += ["AXIOM64_TESTS_PASS", "AXIOM64_EXIT status=0"]
     if args.suite == "guest-system":
         required += ["BUSYBOX_SHELL_PASS", "ABI_TESTS_PASS linkage=static", "ABI_TESTS_PASS linkage=dynamic"]
+    if args.suite == "guest-binutils":
+        required.append("AXIOM64_BINUTILS_LINK_PASS")
     if args.suite in ["full", "abi"] and not args.interactive:
         required += ["ABI_TESTS_PASS linkage=static", "ABI_TESTS_PASS linkage=dynamic",
                      "IPC_TESTS_PASS", "SIGNAL_TESTS_PASS", "VFS_TESTS_PASS", "BUSYBOX_SHELL_PASS",

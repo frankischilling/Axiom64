@@ -30,6 +30,9 @@ def worker(directory, profile, parent_namespace):
     require(os.geteuid() == 0 and profile in PROFILES and
             Path('/proc/self/ns/net').stat().st_ino != parent_namespace,
             'actual root worker owns an isolated native network namespace')
+    # Netlink changes can schedule the deferrable IPv4 timer on the current CPU.
+    # Keep the fixture's timed wake-ups on that CPU for the entire case.
+    os.sched_setaffinity(0, {min(os.sched_getaffinity(0))})
     directory.mkdir(exist_ok=False)
     for interface in ('eth0', 'eth1'):
         for arguments in (('link', 'add', interface, 'type', 'dummy'), ('link', 'set', interface, 'up')):
@@ -148,8 +151,9 @@ def verify(directory):
                 command[-3:] == ['--native', 'eth0', 'eth1'] and Path(command[-4]).name == 'ipv4-address-lifetimes-' + profile,
                 'actual native command selects both fixture interfaces')
         runtime = decode((case / 'runtime.json').read_text())
-        require(type(runtime['client_pid']) is int and runtime['client_pid'] > 0 and runtime['affinity'],
-                'actual observed client process and CPU affinity')
+        require(type(runtime['client_pid']) is int and runtime['client_pid'] > 0 and
+                len(runtime['affinity']) == 1 and type(runtime['affinity'][0]) is int and
+                runtime['affinity'][0] >= 0, 'actual native client runs on one CPU')
         selected_loader = command[0] if profile == 'dynamic' else None
         providers(case, runtime, (case / 'maps.txt').read_text(), profile,
                   set(command[:-3]), selected_loader)

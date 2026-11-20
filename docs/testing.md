@@ -13,6 +13,10 @@ compares GNU libc and static/dynamic musl in three separate Linux network
 namespaces. These address-control cases use two dummy interfaces and retain
 actual kernel timer configuration, executable mappings and mapped libraries.
 They do not establish Ethernet wire behavior. Clock jumps fail qualification.
+Each native worker and its client use one permitted CPU. The client breaks
+lifetime waits into sleeps of up to 20 milliseconds so Linux can service its
+deferrable IPv4 address timer. The netlink checks keep their original elapsed
+times.
 Independent kernel address stamps bracket each native client. They measure
 the relation between Linux's jiffies-based stamp epoch and the unmodified
 monotonic clock. Both anchors must agree within three centiseconds; the

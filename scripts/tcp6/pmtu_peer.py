@@ -37,6 +37,7 @@ class Flow(WireFlow):
         self.window = 8192
         self.notices = []
         self.next_reduction = None
+        self.pending_idle_quote = None
         self.idle_quoted = False
 
     @property
@@ -111,6 +112,9 @@ class Flow(WireFlow):
         if self.next_reduction is not None and self.observation is None:
             original, self.next_reduction = self.next_reduction, None
             self.notify(original, 1280)
+        if self.pending_idle_quote is not None and self.observation is None:
+            original, self.pending_idle_quote = self.pending_idle_quote, None
+            self.notify(original, 1500 if self.scenario == 9 else 1280)
 
     def accept(self, segment):
         data, sequence, flags = segment['data'], segment['seq'], segment['flags']
@@ -170,7 +174,8 @@ class Flow(WireFlow):
         if self.scenario in (20, 21) or self.scenario == 9 and len(self.notices) >= 2:
             if self.acknowledged == SIZE and not self.idle_quoted and not data and not flags & FIN:
                 self.idle_quoted = True
-                self.notify(self.first if self.scenario == 20 else frame, 1500 if self.scenario == 9 else 1280)
+                # The final ACK can arrive before the independent observer reports the previous PTB.
+                self.pending_idle_quote = self.first if self.scenario == 20 else frame
         if data:
             if self.first is None:
                 self.first = frame
@@ -221,6 +226,7 @@ class Peer(EthernetPeer):
             scenario, part = (self.phase - 1) // 3, (self.phase - 1) % 3
             flow = self.flows[scenario]
             if part == 1 and (flow.acknowledged != SIZE or flow.observation is not None or
+                flow.pending_idle_quote is not None or
                 flow.last_injected is None or time.monotonic() - flow.last_injected < .05):
                 return
             if part == 2 and not flow.done:

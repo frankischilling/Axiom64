@@ -8,10 +8,13 @@ import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ipv4_expiry_capture import read_capture
 from tcp6.native import Tap
 from tcp6.observation import Capture, bind
+from tcp6.pmtu_peer import Flow, SIZE
+from tcp_fault_peer import ACK
 
 
 def send_window(tap, frame, pause=0):
@@ -21,6 +24,32 @@ def send_window(tap, frame, pause=0):
         time.sleep(pause)
     assert os.write(tap.fd, frame) == len(frame)
     return before, time.monotonic_ns()
+
+
+def delayed_pmtu_receipt():
+    sent = []
+    observed = []
+    peer = SimpleNamespace(lane=0, ip=bytes(16), address=bytes(16),
+                           envelope=lambda source, target, body: body,
+                           observe_input=lambda packet: lambda: None, send=sent.append)
+    flow = Flow(peer, 9)
+    flow.guest_origin = 1000
+    flow.sent = flow.prefix = SIZE
+    flow.notices = [dict(mtu=1400), dict(mtu=1280)]
+    flow.observation = lambda: observed[0] if observed else None
+    ack = dict(data=b'', flags=ACK, window=8192, seq=flow.guest_next, ack=(flow.origin + SIZE) & 0xffffffff)
+    frame = bytes(range(74))
+    flow.input(ack, dict(frame=frame.hex()))
+    flow.tick()
+    assert flow.pending_idle_quote == frame and not sent
+    observed.append(time.monotonic())
+    flow.tick()
+    assert flow.pending_idle_quote is None and len(sent) == 1
+    assert sent[0] == b'\2\0\0\0' + (1500).to_bytes(4, 'big') + frame[14:62]
+    assert flow.notices[1]['observed_monotonic_seconds'] == observed[0]
+    flow.input(ack, dict(frame=frame.hex()))
+    flow.tick()
+    assert len(sent) == 1
 
 
 def child():
@@ -55,4 +84,5 @@ if __name__ == '__main__':
     if '--child' in sys.argv:
         child()
     else:
+        delayed_pmtu_receipt()
         subprocess.run(['unshare', '--net', sys.executable, '-B', __file__, '--child'], check=True)

@@ -1,4 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    userspace/tests/net/ipv6_fixture.h
+ * @brief   IPv6 test client setup.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Provides shared address, socket, and adapter operations for IPv6 tests.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #pragma once
 #ifndef IPV6_TEST_LABEL
 #define IPV6_TEST_LABEL "IPV6_SOCKETS"
@@ -197,7 +220,7 @@ static inline int wire_socket(unsigned lane, int type, unsigned local_port, unsi
     return fd;
 }
 
-static inline int fixture_interfaces(void) {
+static inline int fixture_interfaces_for_protocol(unsigned protocol) {
     int control = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
     check(control >= 0, "fixture interface control");
     for (unsigned lane = 0; lane < 2; lane++) {
@@ -209,10 +232,10 @@ static inline int fixture_interfaces(void) {
         memcpy(macs[lane], request.ifr_hwaddr.sa_data, 6);
         request.ifr_flags = IFF_UP;
         check(!ioctl(control, SIOCSIFFLAGS, &request), "fixture interface up");
-        packets[lane] = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, htons(3));
+        packets[lane] = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, htons(protocol));
         check(packets[lane] >= 0, "fixture Ethernet socket");
         struct sockaddr_ll binding = {
-            .sll_family = AF_PACKET, .sll_protocol = htons(3), .sll_ifindex = indices[lane]};
+            .sll_family = AF_PACKET, .sll_protocol = htons(protocol), .sll_ifindex = indices[lane]};
         check(!bind(packets[lane], (struct sockaddr*)&binding, sizeof(binding)),
               "fixture Ethernet binding");
         barrier(lane, 0);
@@ -220,4 +243,8 @@ static inline int fixture_interfaces(void) {
         configure(lane, 0);
     }
     return control;
+}
+
+static inline int fixture_interfaces(void) {
+    return fixture_interfaces_for_protocol(3);
 }

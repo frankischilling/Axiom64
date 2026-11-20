@@ -16,6 +16,7 @@ from account_store_guest import fixture
 from build_musl import loader
 from compile_uapi_client import audit_compile, sources
 from fetch import ROOT
+from reference_source import matches_file
 from tcp_fixture_inputs import audit_fixture
 
 SOURCE = 'userspace/tests/net/ipv6_configuration.c'
@@ -174,7 +175,7 @@ def main():
         DEVICE_MODE = True
         SOURCE = 'userspace/tests/net/ipv6_device_inventory.c'
         REFERENCE = 'scripts/tests/fixtures/ipv6-device-inventory-linux7.json'
-        if digest(ROOT / SOURCE) != json.loads((ROOT / REFERENCE).read_text())['source_sha256']:
+        if not matches_file(ROOT, SOURCE, json.loads((ROOT / REFERENCE).read_text())['source_sha256']):
             raise ValueError('device inventory client differs from the measured Linux reference source')
     if args.link_mode:
         LINK_MODE = True
@@ -184,16 +185,16 @@ def main():
         SOCKET_MODE = True
         SOURCE = 'userspace/tests/net/ipv6_socket_configuration.c'
         REFERENCE = 'scripts/tests/fixtures/ipv6-socket-configuration-linux7.json'
-        if digest(ROOT / SOURCE) != json.loads((ROOT / REFERENCE).read_text())['source_sha256']:
+        if not matches_file(ROOT, SOURCE, json.loads((ROOT / REFERENCE).read_text())['source_sha256']):
             raise ValueError('socket client differs from the measured Linux reference source')
     if args.lifetime_mode:
         LIFETIME_MODE = True
         SOURCE = 'userspace/tests/net/ipv6_configuration_lifetime.c'
         REFERENCE = lifetime_reference(platform.release() if args.native or args.child else None)
-        if digest(ROOT / SOURCE) != json.loads((ROOT / REFERENCE).read_text())['source_sha256']:
+        if not matches_file(ROOT, SOURCE, json.loads((ROOT / REFERENCE).read_text())['source_sha256']):
             raise ValueError('lifetime client differs from the measured Linux reference source')
     if not args.link_mode and not args.socket_mode and not args.lifetime_mode and not args.device_mode:
-        if digest(ROOT / SOURCE) != json.loads((ROOT / REFERENCE).read_text())['client_source_sha256']:
+        if not matches_file(ROOT, SOURCE, json.loads((ROOT / REFERENCE).read_text())['client_source_sha256']):
             raise ValueError('proc configuration client differs from the measured Linux reference source')
     args.directory = args.directory.resolve()
     if args.child:
@@ -203,7 +204,7 @@ def main():
         raise ValueError('native configuration comparisons need root for isolated namespaces')
     args.directory.mkdir(parents=True, exist_ok=False)
     names = [SOURCE, REFERENCE, 'scripts/ipv6_configuration_test.py', 'scripts/account_store_guest.py',
-             'scripts/compile_uapi_client.py', 'scripts/tcp_fixture_inputs.py', 'scripts/image.py',
+             'scripts/compile_uapi_client.py', 'scripts/reference_source.py', 'scripts/tcp_fixture_inputs.py', 'scripts/image.py',
              'Makefile', 'sources.lock.json', 'dependencies.json', 'boot/limine.conf']
     if DEVICE_MODE:
         names.append('scripts/ipv6_device_inventory.py')

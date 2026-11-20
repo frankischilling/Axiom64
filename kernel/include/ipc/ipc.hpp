@@ -56,6 +56,10 @@ struct Socket {
     Handle* description = nullptr;
     Socket* accepting = nullptr;
 
+    void publish_stream(UnixStreamRecord*, size_t, const UnixMessageCredentials&, UnixRights*&,
+                        UnixAddressName* sender);
+    void consume_stream(size_t, UnixRights*&);
+
     Handle* rights_owner() const {
         return description ? description : accepting ? accepting->description : nullptr;
     }
@@ -71,6 +75,8 @@ struct [[gnu::packed]] EpollEvent {
     uint64_t data;
 };
 
+struct Epoll;
+
 struct EpollItem {
     Handle* handle;
     uint64_t generation;
@@ -78,10 +84,20 @@ struct EpollItem {
     EpollEvent event;
     bool used, enabled;
     uint32_t last_ready, pending;
-    uint64_t timer_notification;
+    uint64_t observed_notification;
+    uint64_t signal_wait_queue;
+    Epoll* exclusive_owner = nullptr;
+    EpollItem* exclusive_prev = nullptr;
+    EpollItem* exclusive_next = nullptr;
+
+    bool live() const {
+        return used && handle->references && handle->generation == generation;
+    }
 };
 
 struct Epoll {
+    unsigned index, cursor;
+    uint64_t notification;
     EpollItem items[max_fds];
 };
 
@@ -97,7 +113,7 @@ bool socket_ready(Socket*, bool);
 
 int64_t socket_read(Socket*, void*, size_t, bool peek = false, size_t peek_offset = 0);
 
-int64_t socket_write(Socket*, const void*, size_t, uint32_t datagram_entry_limit = 0);
+int64_t socket_write(Task&, Socket*, const void*, size_t, uint32_t datagram_entry_limit = 0);
 // Success transfers the prepared record to the receiver; errors retain it.
 int64_t socket_datagram_write(Task&, Socket*, UnixDatagramRecord*, const UnixAddressValue*,
                               UnixDatagramTarget&);
@@ -107,25 +123,22 @@ int socket_unix_autobind(Socket&);
 int socket_datagram_connect(Task&, Socket&, uint64_t pointer, uint32_t length);
 int socket_unix_output_name(Task&, const UnixAddressName*, uint64_t, uint64_t);
 bool socket_datagram_writable(const Socket&);
+void socket_datagram_receive_wakeup(const Socket&);
 
 int64_t socket_accept(Task&, Handle*, uint64_t address, uint64_t length, unsigned flags,
                       int reserved_fd);
 
 int socket_output_address(Task&, Socket*, uint64_t address, uint64_t length);
 
-uint32_t readiness(Handle*);
-
-bool poll_task_ready(Task&);
-
-int select_events(Task&, const Frame&, bool copy);
+uint32_t readiness(Handle*, const Task*);
+const void* readiness_source(const Handle&);
 
 void epoll_notify(Handle* source = nullptr, uint32_t events = 0);
+void epoll_signal_notify(const SignalHandlers&);
 
 void epoll_close(Epoll*);
+bool epoll_resume_wait(Task&);
+void epoll_discard_wait(Task&);
+void epoll_stop_wait(Task&);
 
-int64_t shared_memory_syscall(Frame*);
-
-void shared_memory_fork(Task*, const Task*);
-
-void shared_memory_release(Task*);
 } // namespace ax

@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import zipfile
 from ipv6_extension_execution import verify_execution
+from reference_source import matches_file
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = 'userspace/tests/net/ipv6_extension_controls.c'
@@ -62,7 +63,7 @@ def fixture():
     require(saved['schema'] == 1 and saved['reference']['kernel'] == '7.0.0-1017-azure' and
             saved['reference']['actual_program_completed'] is True and
             saved['reference']['actual_cpio_reopened'] is True and
-            saved['reference']['source_sha256'] == digest(ROOT / SOURCE),
+            matches_file(ROOT, SOURCE, saved['reference']['source_sha256']),
             'executed Linux7 extension reference bound to the current probe source')
     require(len(saved['rows']) == 256, 'complete saved Linux7 reference observations')
     # Run the same syntax/matrix checks on the frozen original reference rows.

@@ -1,8 +1,41 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/fs/proc.cpp
+ * @brief   Process and system information filesystem.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Presents process information and routes writable kernel settings through
+ * procfs file operations.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "fs/proc.hpp"
+#include "fs/descriptor_inode.hpp"
+#include "fs/inotify.hpp"
+#include "fs/memfd.hpp"
+#include "fs/pipe.hpp"
+#include "fs/proc/integer.hpp"
 #include "fs/proc/ipv6.hpp"
 #include "fs/proc/ipv4.hpp"
 #include "net/ethernet.hpp"
+#include "ipc/eventfd.hpp"
+#include "ipc/ipc.hpp"
+#include "ipc/signal_descriptor.hpp"
+#include "ipc/timerfd.hpp"
 #include "process/task.hpp"
 #include "core/random.hpp"
 #include "core/random/primitives.hpp"
@@ -16,9 +49,15 @@ enum class Kind {
     process,
     task_list,
     thread,
+    fd_directory,
+    fd_link,
+    fdinfo_directory,
+    fdinfo,
     status,
     stat,
     sys,
+    fs,
+    pipe_limit,
     kernel,
     random,
     boot_id,
@@ -34,12 +73,29 @@ enum class Kind {
 
 // Kernel execution serializes generation. Every proc mount observes this same boot.
 char boot_identifier[37]{};
+constexpr const char* sys_directories[] = {"kernel", "net", "fs"};
+constexpr const char* pipe_limit_names[] = {"pipe-max-size", "pipe-user-pages-hard",
+                                            "pipe-user-pages-soft"};
+
+static bool is_control(Kind kind) {
+    return kind == Kind::network_property || kind == Kind::source_limit ||
+           kind == Kind::ipv4_forward || kind == Kind::pipe_limit;
+}
+
+static bool descriptor_directory(Kind kind) {
+    return kind == Kind::fd_directory || kind == Kind::fdinfo_directory;
+}
+
+static bool snapshot_file(Kind kind) {
+    return kind == Kind::status || kind == Kind::stat || kind == Kind::fdinfo;
+}
 
 struct Entry {
     Node node{};
     Entry* next = nullptr;
     Kind kind;
     int pid, tgid;
+    unsigned descriptor = 0;
     unsigned network_index = 0, property = 0;
     uint64_t network_generation = 0;
     bool ipv4_configuration = false;
@@ -73,20 +129,23 @@ struct Text {
             character(*value++);
     }
 
-    void number(uint64_t value) {
-        char digits[20];
+    void number(uint64_t value, unsigned base = 10, unsigned width = 0, char padding = ' ') {
+        char digits[22];
         size_t count = 0;
         do {
-            digits[count++] = char('0' + value % 10);
-            value /= 10;
+            digits[count++] = "0123456789abcdef"[value % base];
+            value /= base;
         } while (value);
+        while (width > count) {
+            character(padding);
+            --width;
+        }
         while (count)
             character(digits[--count]);
     }
 
     void hexadecimal(uint64_t value) {
-        for (int shift = 60; shift >= 0; shift -= 4)
-            character("0123456789abcdef"[(value >> shift) & 15]);
+        number(value, 16, 16, '0');
     }
 
     void field(const char* name, uint64_t value) {
@@ -148,6 +207,59 @@ static int pid(const char* name) {
     return int(result);
 }
 
+static Handle* descriptor(const Entry& item) {
+    auto owner = task(item.pid);
+    return owner && owner->files ? owner->files->entries[item.descriptor].handle : nullptr;
+}
+
+static bool descriptor_access(const Task& owner) {
+    if (!current)
+        return false;
+    const auto& caller = current->credentials;
+    const auto& target = owner.credentials;
+    return current->process == owner.process || capable(caller, Capability::sys_ptrace) ||
+           (owner.memory && owner.memory->dumpable && caller.user.filesystem == target.user.real &&
+            caller.user.filesystem == target.user.effective &&
+            caller.user.filesystem == target.user.saved &&
+            caller.group.filesystem == target.group.real &&
+            caller.group.filesystem == target.group.effective &&
+            caller.group.filesystem == target.group.saved &&
+            !(target.permitted & ~caller.effective));
+}
+
+static int link_descriptor(const Entry& item, Handle*& handle) {
+    auto owner = task(item.pid);
+    if (!owner || !(handle = descriptor(item)))
+        return -2;
+    return descriptor_access(*owner) ? 0 : -13;
+}
+
+static int follow_link(Node* node, Node*& target) {
+    auto item = entry(node);
+    if (item->kind != Kind::fd_link)
+        return 0;
+    Handle* handle = nullptr;
+    if (int error = link_descriptor(*item, handle))
+        return error;
+    if (int error = descriptor_inode(*handle, target))
+        return error;
+    if (handle->opened_dentry)
+        target = handle->opened_dentry;
+    return 1;
+}
+
+static int access_override(Node* node, unsigned mask) {
+    auto item = entry(node);
+    if (item->kind == Kind::fdinfo_directory || item->kind == Kind::fdinfo) {
+        auto owner = task(item->pid);
+        if (!owner)
+            return -3;
+        return descriptor_access(*owner) ? 0 : -13;
+    }
+    auto owner = item->kind == Kind::fd_directory ? task(item->pid) : nullptr;
+    return owner && current && owner->process == current->process && !(mask & 2) ? 1 : 0;
+}
+
 static size_t link_target(Kind kind, char output[40]) {
     if (!current)
         return 0;
@@ -171,6 +283,18 @@ static void refresh(Node* node) {
         bool user_owned = owner->memory && owner->memory->dumpable;
         node->uid = user_owned ? owner->credentials.user.effective : 0;
         node->gid = user_owned ? owner->credentials.group.effective : 0;
+    }
+}
+
+static void refresh_fd_link(Entry& item) {
+    auto handle = descriptor(item);
+    item.node.mode = symlink;
+    if (handle && !(handle->flags & 010000000)) {
+        unsigned access = handle->flags & 3;
+        if (access != 1)
+            item.node.mode |= 0500;
+        if (access != 0)
+            item.node.mode |= 0300;
     }
 }
 
@@ -198,7 +322,9 @@ static void collect(Proc* state) {
         for (auto item = state->entries; item; item = item->next)
             if ((((item->kind == Kind::process || item->kind == Kind::thread) &&
                   !task(item->pid)) ||
-                 (item->kind == Kind::network_scope && validate(&item->node))) &&
+                 (item->kind == Kind::network_scope && validate(&item->node)) ||
+                 ((item->kind == Kind::fd_link || item->kind == Kind::fdinfo) &&
+                  !descriptor(*item))) &&
                 !node_referenced(&item->node)) {
                 dead = item;
                 break;
@@ -255,10 +381,11 @@ static Entry* make(Proc* state, Mount* mount, Node* parent, const char* name, Ki
     node->parent = parent;
     node->mount = mount;
     node->filesystem_data = item;
-    node->mode = kind == Kind::status || kind == Kind::stat || kind == Kind::boot_id
-                     ? regular_file | 0444
-                 : kind == Kind::self || kind == Kind::thread_self ? symlink | 0777
-                                                                   : directory | 0555;
+    node->mode = snapshot_file(kind) || kind == Kind::boot_id ? regular_file | 0444
+                 : kind == Kind::self || kind == Kind::thread_self || kind == Kind::fd_link
+                     ? symlink | 0777
+                 : kind == Kind::fd_directory ? directory | 0500
+                                              : directory | 0555;
     node->links = (node->mode & 0170000) == directory ? 2 : 1;
     memcpy(node->name, name, strlen(name) + 1);
     node->atime = node->mtime = node->ctime = node_now();
@@ -282,7 +409,7 @@ static int lookup(Node* parent, const char* name, Node*& output) {
         return -2;
     Kind kind;
     int selected_pid = context->pid, group = context->tgid;
-    unsigned network_index = context->network_index, property = 0;
+    unsigned network_index = context->network_index, property = 0, fd = 0;
     uint64_t network_generation = context->network_generation;
     bool ipv4_configuration = context->ipv4_configuration || context->kind == Kind::ipv4;
     if (context->kind == Kind::root && !strcmp(name, "self"))
@@ -295,7 +422,15 @@ static int lookup(Node* parent, const char* name, Node*& output) {
         kind = Kind::kernel;
     else if (context->kind == Kind::sys && !strcmp(name, "net"))
         kind = Kind::net;
-    else if (context->kind == Kind::net && !strcmp(name, "ipv6"))
+    else if (context->kind == Kind::sys && !strcmp(name, "fs"))
+        kind = Kind::fs;
+    else if (context->kind == Kind::fs) {
+        while (property < 3 && strcmp(name, pipe_limit_names[property]))
+            property++;
+        if (property == 3)
+            return -2;
+        kind = Kind::pipe_limit;
+    } else if (context->kind == Kind::net && !strcmp(name, "ipv6"))
         kind = Kind::ipv6;
     else if (context->kind == Kind::net && !strcmp(name, "ipv4"))
         kind = Kind::ipv4;
@@ -343,7 +478,23 @@ static int lookup(Node* parent, const char* name, Node*& output) {
         kind = Kind::stat;
     else if (context->kind == Kind::process && !strcmp(name, "task"))
         kind = Kind::task_list;
-    else if (context->kind == Kind::task_list) {
+    else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
+             !strcmp(name, "fd"))
+        kind = Kind::fd_directory;
+    else if ((context->kind == Kind::process || context->kind == Kind::thread) &&
+             !strcmp(name, "fdinfo"))
+        kind = Kind::fdinfo_directory;
+    else if (descriptor_directory(context->kind)) {
+        if (!descriptor_access(*owner))
+            return -13;
+        fd = unsigned(pid(name));
+        if ((!fd && strcmp(name, "0")) || fd >= max_fds || !owner->files)
+            return -2;
+        auto handle = owner->files->entries[fd].handle;
+        if (!handle)
+            return -2;
+        kind = context->kind == Kind::fd_directory ? Kind::fd_link : Kind::fdinfo;
+    } else if (context->kind == Kind::task_list) {
         selected_pid = pid(name);
         auto selected = task(selected_pid);
         if (!selected || selected->process->pid != group)
@@ -356,6 +507,8 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     for (auto child = parent->first_child; child; child = child->next_sibling)
         if (!strcmp(child->name, name) && !validate(child)) {
             refresh(child);
+            if (kind == Kind::fd_link)
+                refresh_fd_link(*entry(child));
             output = child;
             return 0;
         }
@@ -366,8 +519,12 @@ static int lookup(Node* parent, const char* name, Node*& output) {
     result->property = property;
     result->network_generation = network_generation;
     result->ipv4_configuration = ipv4_configuration;
-    if (kind == Kind::network_property || kind == Kind::source_limit ||
-        kind == Kind::ipv4_forward) {
+    result->descriptor = fd;
+    if (kind == Kind::fd_link) {
+        result->node.size = 64;
+        refresh_fd_link(*result);
+    }
+    if (is_control(kind)) {
         result->node.mode = regular_file | (kind == Kind::network_property && !ipv4_configuration &&
                                                     property == proc6::secret_property
                                                 ? 0600
@@ -426,8 +583,8 @@ static int status(Node* node, Snapshot& snapshot) {
         }
     text.character('\n');
     text.field("Threads", owner->process->live_threads ? owner->process->live_threads : 1);
-    text.bits("SigPnd", owner->pending_signals);
-    text.bits("ShdPnd", owner->process->pending_signals);
+    text.bits("SigPnd", owner->pending_signals.mask());
+    text.bits("ShdPnd", owner->process->pending_signals.mask());
     text.bits("SigBlk", owner->signal_mask);
     text.bits("CapInh", owner->credentials.inheritable);
     text.bits("CapPrm", owner->credentials.permitted);
@@ -494,7 +651,7 @@ static int stat(Node* node, Snapshot& snapshot) {
                                                       : owner->start_ticks;
             break;
         case 31:
-            value = owner->pending_signals & 0x7fffffff;
+            value = owner->pending_signals.mask() & 0x7fffffff;
             break;
         case 32:
             value = owner->signal_mask & 0x7fffffff;
@@ -549,8 +706,123 @@ static int boot_id() {
     return 0;
 }
 
+static int epoll_fdinfo(Text& text, const Epoll& epoll) {
+    for (const auto& item : epoll.items) {
+        if (!item.live())
+            continue;
+        Node* inode;
+        if (int error = descriptor_inode(*item.handle, inode))
+            return error;
+        text.string("tfd: ");
+        text.number(item.fd, 10, 8);
+        text.string(" events: ");
+        text.number(item.enabled ? item.event.events | 0x18 : item.event.events & 0xf0000000, 16,
+                    8);
+        text.string(" data: ");
+        text.number(item.event.data, 16, 16);
+        text.string("  pos:");
+        text.number(item.handle->offset);
+        text.string(" ino:");
+        text.number(inode->inode, 16);
+        text.string(" sdev:");
+        text.number(inode->mount->id, 16);
+        text.character('\n');
+    }
+    return 0;
+}
+
+static void timespec(Text& text, const char* field, uint64_t ns) {
+    text.string(field);
+    text.string(": (");
+    text.number(ns / 1000000000);
+    text.string(", ");
+    text.number(ns % 1000000000);
+    text.string(")\n");
+}
+
+static int fdinfo(const Entry& item, Snapshot& output) {
+    auto owner = task(item.pid);
+    if (!owner || !owner->files)
+        return -2;
+    const auto& slot = owner->files->entries[item.descriptor];
+    auto handle = slot.handle;
+    if (!handle)
+        return -2;
+    Node* inode;
+    if (int error = descriptor_inode(*handle, inode))
+        return error;
+    size_t capacity = 512;
+    if (handle->epoll)
+        for (const auto& watch : handle->epoll->items)
+            if (watch.live())
+                capacity += 144;
+    if (handle->inotify)
+        capacity += size_t(inotify_watch_count(*handle->inotify)) * 128;
+    auto bytes = static_cast<char*>(alloc(capacity));
+    if (!bytes)
+        return -12;
+    Text text{bytes, 0, capacity};
+    text.field("pos", handle->offset);
+    text.string("flags:\t0");
+    text.number(file_status_flags(*handle) | (slot.cloexec ? 02000000 : 0), 8);
+    text.character('\n');
+    text.field("mnt_id", inode->mount->id);
+    text.field("ino", inode->inode);
+
+    int error = 0;
+    if (handle->event) {
+        auto event = eventfd_info(*handle->event);
+        text.string("eventfd-count: ");
+        text.number(event.count, 16, 16);
+        text.string("\neventfd-id: ");
+        text.number(handle->generation);
+        text.string("\neventfd-semaphore: ");
+        text.number(event.semaphore);
+        text.character('\n');
+    } else if (handle->signal_descriptor) {
+        text.bits("sigmask", handle->signal_descriptor->mask);
+    } else if (handle->timer) {
+        auto timer = timerfd_info(*handle->timer);
+        text.string("clockid: ");
+        text.number(unsigned(timer.clock));
+        text.string("\nticks: ");
+        text.number(timer.pending);
+        text.string("\nsettime flags: 0");
+        text.number(timer.flags, 8);
+        text.character('\n');
+        timespec(text, "it_value", timer.setting.value);
+        timespec(text, "it_interval", timer.setting.interval);
+    } else if (handle->epoll) {
+        error = epoll_fdinfo(text, *handle->epoll);
+    } else if (handle->inotify) {
+        inotify_visit_watches(
+            *handle->inotify, &text,
+            [](void* context, int wd, uint64_t inode, uint64_t mount, uint32_t mask) {
+                auto& out = *static_cast<Text*>(context);
+                out.string("inotify wd:");
+                out.number(wd, 16);
+                out.string(" ino:");
+                out.number(inode, 16);
+                out.string(" sdev:");
+                out.number(mount, 16);
+                out.string(" mask:");
+                out.number(mask & ~inotify_unmount, 16);
+                out.string(" ignored_mask:0 \n");
+            });
+    }
+    if (error || text.failed) {
+        release(bytes);
+        return error ? error : -75;
+    }
+    output = {bytes, text.length};
+    return 0;
+}
+
 static int make_snapshot(Node* node, Snapshot& output) {
-    return entry(node)->kind == Kind::stat ? stat(node, output) : status(node, output);
+    auto item = entry(node);
+    if (item->kind == Kind::fdinfo)
+        return fdinfo(*item, output);
+    return item->kind == Kind::stat ? stat(node, output) : status(node, output);
 }
 
 static int64_t copy(const char* bytes, size_t size, uint64_t offset, void* output, size_t length) {
@@ -568,12 +840,40 @@ static int64_t read(Node* node, uint64_t offset, void* output, size_t length) {
         size_t size = link_target(kind, target);
         return copy(target, size, offset, output, length);
     }
+    if (kind == Kind::fd_link) {
+        Handle* handle = nullptr;
+        if (int error = link_descriptor(*entry(node), handle))
+            return error;
+        Node* inode;
+        if (int error = descriptor_inode(*handle, inode))
+            return error;
+        if (auto name = descriptor_inode_name(inode))
+            return copy(name, strlen(name), offset, output, length);
+        auto dentry = handle->opened_dentry ? handle->opened_dentry : inode;
+        char target[2048]{};
+        if (is_memfd(handle->node)) {
+            target[0] = '/';
+            memcpy(target + 1, dentry->name, strlen(dentry->name) + 1);
+        } else {
+            node_path(dentry, target, sizeof(target), true);
+            if (!target[0])
+                return -2;
+        }
+        if (dentry->removed || is_memfd(handle->node)) {
+            constexpr char deleted[] = " (deleted)";
+            size_t end = strlen(target);
+            if (sizeof(deleted) > sizeof(target) - end)
+                return -36;
+            memcpy(target + end, deleted, sizeof(deleted));
+        }
+        return copy(target, strlen(target), offset, output, length);
+    }
     if (kind == Kind::boot_id) {
         int error = boot_id();
         return error ? error
                      : copy(boot_identifier, sizeof(boot_identifier), offset, output, length);
     }
-    if (kind != Kind::status && kind != Kind::stat)
+    if (!snapshot_file(kind))
         return -21;
     Snapshot snapshot{};
     int error = make_snapshot(node, snapshot);
@@ -586,7 +886,7 @@ static int64_t read(Node* node, uint64_t offset, void* output, size_t length) {
 
 static int64_t read_description(Handle* handle, uint64_t offset, void* output, size_t length) {
     auto kind = entry(handle->node)->kind;
-    if (kind != Kind::status && kind != Kind::stat)
+    if (!snapshot_file(kind))
         return read(handle->node, offset, output, length);
     auto snapshot = static_cast<Snapshot*>(handle->filesystem_data);
     if (!snapshot) {
@@ -626,7 +926,8 @@ static int control_access(Node* node, unsigned mask, bool real) {
     // disable the normal setuid fixups. sysctl ownership still uses euid/egid.
     if (real && !(credentials.securebits & 4))
         capabilities = credentials.user.real ? 0 : credentials.permitted;
-    bool administrator = capabilities & (1ull << unsigned(Capability::net_admin));
+    bool administrator = entry(node)->kind != Kind::pipe_limit &&
+                         (capabilities & (1ull << unsigned(Capability::net_admin)));
     bool group = !credentials.group.effective;
     if (credentials.groups)
         for (unsigned at = 0; at < credentials.groups->count; at++)
@@ -642,6 +943,9 @@ static int64_t control_read(Handle* handle, void* output, size_t length) {
     if (int error = validate(handle->node))
         return error;
     auto item = entry(handle->node);
+    if (item->kind == Kind::pipe_limit)
+        return proc::read_unsigned_long(pipe_limit(PipeLimit(item->property)), handle->offset,
+                                        output, length);
     if (item->kind == Kind::source_limit)
         return proc4::source_limit_read(handle->offset, output, length);
     if (item->ipv4_configuration)
@@ -649,10 +953,33 @@ static int64_t control_read(Handle* handle, void* output, size_t length) {
     return proc6::read(item->network_index, item->property, handle->offset, output, length);
 }
 
+static int64_t pipe_limit_write(PipeLimit limit, uint64_t& offset, const void* input,
+                                size_t length) {
+    if (!length)
+        return 0;
+    if (offset) {
+        offset += length;
+        return int64_t(length);
+    }
+    uint64_t value;
+    size_t consumed, parsed = min(length, size_t(4095));
+    if (!proc::parse_unsigned_long(static_cast<const char*>(input), parsed, value, consumed))
+        return -22;
+    if (int error = set_pipe_limit(limit, value))
+        return error;
+    if (limit == PipeLimit::max_size)
+        consumed = parsed;
+    consumed += length - parsed;
+    offset += consumed;
+    return int64_t(consumed);
+}
+
 static int64_t control_write(Handle* handle, const void* input, size_t length) {
     if (int error = validate(handle->node))
         return error;
     auto item = entry(handle->node);
+    if (item->kind == Kind::pipe_limit)
+        return pipe_limit_write(PipeLimit(item->property), handle->offset, input, length);
     if (item->kind == Kind::source_limit)
         return proc4::source_limit_write(handle->offset, input, length);
     if (item->ipv4_configuration) {
@@ -673,19 +1000,18 @@ static int control_truncate(Node*, size_t) {
 
 static const ControlFileOps* control(Node* node) {
     static const ControlFileOps ops{control_access, control_read, control_write, control_truncate};
-    auto kind = entry(node)->kind;
-    return kind == Kind::network_property || kind == Kind::source_limit ||
-                   kind == Kind::ipv4_forward
-               ? &ops
-               : nullptr;
+    return is_control(entry(node)->kind) ? &ops : nullptr;
 }
 
 static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
     if (int error = validate(node))
         return error;
     auto context = entry(node);
-    if (context->pid && !task(context->pid))
+    auto owner = context->pid ? task(context->pid) : nullptr;
+    if (context->pid && !owner)
         return -2;
+    if (descriptor_directory(context->kind) && !descriptor_access(*owner))
+        return -13;
     if (cookie < 2) {
         auto selected = cookie ? directory_parent(node) : node;
         result.inode = selected->inode;
@@ -731,27 +1057,49 @@ static int readdir(Node* node, uint64_t cookie, DirectoryEntry& result) {
         } else if (cookie == 3) {
             memcpy(name, "stat", 5);
             result.next = 4;
-        } else if (cookie == 4 && context->kind == Kind::process) {
-            memcpy(name, "task", 5);
+        } else if (cookie == 4) {
+            memcpy(name, "fd", 3);
             result.next = 5;
+        } else if (cookie == 5) {
+            memcpy(name, "fdinfo", 7);
+            result.next = 6;
+        } else if (cookie == 6 && context->kind == Kind::process) {
+            memcpy(name, "task", 5);
+            result.next = 7;
         } else
             return 0;
-    } else if (context->kind == Kind::sys || context->kind == Kind::kernel ||
-               context->kind == Kind::random || context->kind == Kind::net ||
-               context->kind == Kind::ipv6 || context->kind == Kind::ipv4) {
-        unsigned last = context->kind == Kind::ipv4                                ? 4u
-                        : context->kind == Kind::sys || context->kind == Kind::net ? 3u
-                                                                                   : 2u;
+    } else if (descriptor_directory(context->kind)) {
+        if (!owner->files)
+            return 0;
+        for (; cookie - 2 < max_fds; cookie++) {
+            auto handle = owner->files->entries[cookie - 2].handle;
+            if (handle)
+                break;
+        }
+        if (cookie - 2 >= max_fds)
+            return 0;
+        decimal(int(cookie - 2), name);
+        result.next = cookie + 1;
+    } else if (context->kind == Kind::sys || context->kind == Kind::fs) {
+        if (cookie - 2 >= 3)
+            return 0;
+        auto names = context->kind == Kind::sys ? sys_directories : pipe_limit_names;
+        const char* child = names[cookie - 2];
+        memcpy(name, child, strlen(child) + 1);
+        result.next = cookie + 1;
+    } else if (context->kind == Kind::kernel || context->kind == Kind::random ||
+               context->kind == Kind::net || context->kind == Kind::ipv6 ||
+               context->kind == Kind::ipv4) {
+        unsigned last = context->kind == Kind::ipv4 ? 4u : context->kind == Kind::net ? 3u : 2u;
         if (cookie > last)
             return 0;
-        const char* child = context->kind == Kind::sys      ? (cookie == 2 ? "kernel" : "net")
-                            : context->kind == Kind::kernel ? "random"
-                            : context->kind == Kind::net    ? (cookie == 2 ? "ipv6" : "ipv4")
-                            : context->kind == Kind::ipv4   ? (cookie == 2   ? "igmp_max_msf"
-                                                               : cookie == 3 ? "conf"
-                                                                             : "ip_forward")
-                            : context->kind == Kind::ipv6   ? "conf"
-                                                            : "boot_id";
+        const char* child = context->kind == Kind::kernel ? "random"
+                            : context->kind == Kind::net  ? (cookie == 2 ? "ipv6" : "ipv4")
+                            : context->kind == Kind::ipv4 ? (cookie == 2   ? "igmp_max_msf"
+                                                             : cookie == 3 ? "conf"
+                                                                           : "ip_forward")
+                            : context->kind == Kind::ipv6 ? "conf"
+                                                          : "boot_id";
         memcpy(name, child, strlen(child) + 1);
         result.next = cookie + 1;
     } else if (context->kind == Kind::conf) {
@@ -809,11 +1157,7 @@ static int truncate(Node*, size_t) {
 }
 
 static int setattr(Node* node, uint32_t, Timestamp, Timestamp, uint32_t, uint32_t) {
-    auto kind = entry(node)->kind;
-    return kind == Kind::network_property || kind == Kind::source_limit ||
-                   kind == Kind::ipv4_forward
-               ? -1
-               : -30;
+    return is_control(entry(node)->kind) ? -1 : -30;
 }
 
 static int sync(Mount*, Node*, bool) {
@@ -865,7 +1209,14 @@ const FilesystemOps procfs_ops = {lookup,
                                   read_description,
                                   close_description,
                                   control,
-                                  validate};
+                                  validate,
+                                  follow_link,
+                                  access_override};
+
+bool procfs_has_poll(const Node& node) {
+    auto kind = static_cast<const Entry*>(node.filesystem_data)->kind;
+    return kind == Kind::boot_id || is_control(kind);
+}
 
 Node* procfs_root(Mount* mount) {
     auto state = static_cast<Proc*>(alloc(sizeof(Proc)));

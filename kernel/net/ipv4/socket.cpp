@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/net/ipv4/socket.cpp
+ * @brief   IPv4 socket operations.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Manages IPv4 endpoint configuration, packet queues, and Linux socket
+ * requests.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "net/inet.hpp"
 #include "net/ipv4.hpp"
 #include "net/ipv4/multicast_runtime.hpp"
@@ -9,6 +33,7 @@
 #include "process/task.hpp"
 #include "socket.hpp"
 #include "io/io.hpp"
+#include "io/descriptor_wait.hpp"
 
 namespace ax {
 InetSocket inet_sockets[inet_socket_count];
@@ -41,6 +66,10 @@ Ipv4Destination* inet_output_destination(InetSocket* socket, uint32_t address, b
 
 bool inet_payload(InetSocket* socket) {
     return socket->type == 3 || socket->type == 2 || socket->type == 1;
+}
+
+bool inet_udp(const InetSocket* socket) {
+    return socket && socket->type == 2;
 }
 
 uint8_t inet_traffic_class(const InetSocket* socket) {
@@ -79,6 +108,7 @@ void inet_consume(InetSocket* socket) {
 }
 
 void inet_dispose(InetSocket* socket) {
+    InetUdpCork::discard(socket->cork);
     inet_multicast_close(socket);
     ipv4_detach_owner(socket);
     ipv6_detach_output(socket);
@@ -189,8 +219,10 @@ void inet_failed(InetSocket* socket, int error, unsigned failed_index) {
         tcp_failed(socket, error, failed_index);
         return;
     }
-    if (socket && socket->used && !socket->error)
+    if (socket && socket->used && !socket->error && error) {
         socket->error = error;
+        descriptor_wait_notify(socket, 8);
+    }
 }
 
 void inet_icmp_error(unsigned index, const uint8_t* quote, int error, uint16_t announced_mtu) {
@@ -235,7 +267,10 @@ void inet_icmp_error(unsigned index, const uint8_t* quote, int error, uint16_t a
 }
 
 void inet_reclaim(InetSocket* socket, size_t length) {
+    bool full = socket->transmitted >= socket->send_limit;
     socket->transmitted -= min(socket->transmitted, length);
+    if (full && socket->transmitted < socket->send_limit && !inet_stream(socket))
+        descriptor_wait_notify(socket, 4 | 0x100 | 0x200);
 }
 
 bool inet_dont_fragment(const InetSocket* socket, bool path_locked) {
@@ -280,6 +315,7 @@ static void enqueue(InetSocket& socket, const Ipv4ReceiveMetadata& metadata, uin
     socket.queue[(socket.head + socket.count) % inet_queue_count] = frame;
     socket.count++;
     socket.bytes += length;
+    descriptor_wait_notify(&socket, 1 | 0x40);
 }
 
 bool inet_deliver(const Ipv4ReceiveMetadata& metadata, const void* data, size_t length) {
@@ -364,6 +400,8 @@ int inet_send_ready(InetSocket* socket, size_t length, const InetSendControl* co
         return -error;
     if (socket->shutdown & 2)
         return -32;
+    if (socket->cork)
+        return 0;
     const bool header_included = control ? control->header_included : inet_header_included(socket);
     size_t overhead = header_included
                           ? 0
@@ -376,8 +414,8 @@ int inet_send_ready(InetSocket* socket, size_t length, const InetSendControl* co
     return 0;
 }
 
-int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* data, size_t length,
-                  bool named, const InetSendControl* selected) {
+static int64_t send_packet(InetSocket* socket, const InetAddress& address, const void* data,
+                           size_t length, bool named, const InetSendControl* selected) {
     if (inet_stream(socket))
         return tcp_write(socket, data, length);
     if (!inet_payload(socket))
@@ -441,6 +479,49 @@ int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* da
     if (!error)
         socket->transmitted += length + overhead;
     return error < 0 ? error : int64_t(length);
+}
+
+int64_t inet_send(InetSocket* socket, const InetAddress& address, const void* data, size_t length,
+                  bool named, const InetSendControl* selected, bool more) {
+    more |= socket->udp_cork;
+    if (!inet_udp(socket) || (!more && !socket->cork))
+        return send_packet(socket, address, data, length, named, selected);
+    if (int error = inet_error(socket, true))
+        return -error;
+    if (socket->shutdown & 2)
+        return -32;
+    if (!socket->cork) {
+        auto target = address;
+        if (int error = inet_target(socket, target, named))
+            return error;
+        auto control = selected ? *selected : inet_send_defaults(socket, target, named);
+        if (int error = inet_send_admit(socket, target, length, control))
+            return error;
+        if (!socket->local_port)
+            if (int error = inet_bind_port(socket, socket->local, 0))
+                return error;
+        socket->cork = InetUdpCork::create(target, control, named);
+        if (!socket->cork)
+            return -105;
+    }
+    size_t overhead = 28 + socket->cork->control.options.size();
+    size_t limit = min(size_t(65535), size_t(socket->send_limit));
+    return InetUdpCork::write(
+        socket->cork, data, length, limit - min(limit, overhead), more,
+        [socket](const InetUdpCork& pending, size_t total) {
+            auto control = pending.control;
+            if (!control.ttl_override)
+                control.ttl = inet_send_defaults(socket, pending.address, pending.named).ttl;
+            return send_packet(socket, pending.address, pending.data, total, pending.named,
+                               &control);
+        });
+}
+
+void inet_udp_flush(InetSocket* socket) {
+    if (socket->cork && !socket->udp_cork) {
+        inet_send(socket, inet_peer(socket), nullptr, 0);
+        InetUdpCork::discard(socket->cork);
+    }
 }
 
 int64_t inet_read(InetSocket* socket, void* data, size_t length) {
@@ -619,6 +700,13 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             socket->peer = value;
             socket->peer_port = address.port;
             socket->destination = destination;
+            if (auto cork = socket->cork) {
+                cork->address = inet_peer(socket);
+                cork->named = false;
+                cork->control.source = Ipv4Source::retained(socket->local);
+                cork->control.cache_destination = true;
+                cork->control.route = {};
+            }
         }
         return 0;
     }
@@ -628,6 +716,7 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
         if (b > 2)
             return -22;
         socket->shutdown |= b == 0 ? 1 : b == 1 ? 2 : 3;
+        descriptor_wait_notify(socket, 0);
         return socket->peer ? 0 : -107;
     case 51:
     case 52: {
@@ -736,6 +825,11 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
             int error;
             return tcp_option(socket, unsigned(c), value, true, error) ? error : -92;
         }
+        if (b == 17 && c == 1 && inet_udp(socket)) {
+            socket->udp_cork = value != 0;
+            inet_udp_flush(socket);
+            return 0;
+        }
         if (b == 1 && c == 2 && inet_payload(socket))
             socket->reuse = value != 0;
         else if (b == 1 && c == 6)
@@ -810,7 +904,9 @@ int64_t inet_syscall(Task& task, const Frame& frame) {
                 value = tcp_ipv6(socket) ? 10 : 2;
             else
                 return -92;
-        } else if (b == 6 && inet_stream(socket)) {
+        } else if (b == 17 && c == 1 && inet_udp(socket))
+            value = socket->udp_cork;
+        else if (b == 6 && inet_stream(socket)) {
             int option_value = 0, error;
             if (!tcp_option(socket, unsigned(c), option_value, false, error))
                 return -92;

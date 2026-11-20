@@ -27,6 +27,7 @@
 #include "fs/vfs.hpp"
 #include "security/credentials.hpp"
 #include "process/limits.hpp"
+#include "process/pending_signals.hpp"
 
 namespace ax {
 constexpr unsigned max_tasks = 64, max_fds = 128;
@@ -37,13 +38,18 @@ enum class Wait {
     write,
     child,
     sleep,
-    poll,
+    descriptor,
     vfork,
     signal,
     signal_queue,
     futex,
     file_lock,
-    random
+    random,
+    semaphore,
+    message_queue,
+    posix_queue,
+    fifo_open,
+    epoll_wait
 };
 
 struct Descriptor {
@@ -52,16 +58,7 @@ struct Descriptor {
     bool reserved = false;
 };
 
-struct SharedAttachment {
-    int id;
-    uint64_t base, length;
-};
-
-struct SignalData {
-    int sender, code, status;
-    uint64_t address;
-    uint32_t uid = 0;
-};
+struct SharedMemoryMapping;
 
 struct MemoryContext {
     unsigned references = 1;
@@ -70,12 +67,20 @@ struct MemoryContext {
     AddressSpace space;
     uint64_t brk_base = 0, brk_end = 0;
     uint64_t initial_data_size = 0;
-    SharedAttachment shared[64]{};
+    SharedMemoryMapping* shared = nullptr;
+    Node* exec_file = nullptr;
 };
 
 struct FileTable {
     unsigned references = 1;
+    // select copies a bitmap only as far as the expanded descriptor table.
+    unsigned capacity = 64;
     Descriptor entries[max_fds]{};
+
+    void expand(unsigned fd) {
+        if (fd >= capacity)
+            capacity = max_fds;
+    }
 };
 
 struct FsContext {
@@ -88,10 +93,12 @@ struct FsContext {
 
 struct SignalHandlers {
     unsigned references = 1;
+    uint64_t descriptor_wait_queue = 0;
     uint64_t signal_actions[64][4]{};
 };
 struct Task;
 struct IoRequest;
+struct DescriptorWait;
 
 struct Process {
     ProcessLimits limits{max_fds};
@@ -101,12 +108,13 @@ struct Process {
     Pty* controlling_pty = nullptr;
     bool controlling_console = false, stop_reported = false, continued = false, stopped = false;
     bool executed = false;
+    uint64_t exec_generation = 0;
     char executable[1024]{};
     uint64_t start_ticks = 0;
     uint64_t cpu_user_ticks = 0, cpu_system_ticks = 0;
     uint64_t children_user_ticks = 0, children_system_ticks = 0;
-    uint64_t alarm_deadline = 0, alarm_interval = 0, pending_signals = 0;
-    SignalData signal_data[64]{};
+    uint64_t alarm_deadline = 0, alarm_interval = 0;
+    PendingSignals pending_signals;
 };
 
 struct FutexWait {
@@ -114,6 +122,17 @@ struct FutexWait {
     uint64_t identity = 0, pinned_page = 0, deadline = 0;
     uint32_t bitset = 0;
     bool queued = false;
+};
+
+struct SemaphoreRequest;
+struct SemaphoreUndo;
+struct MessageQueueRequest;
+struct PosixQueueRequest;
+
+struct FifoOpen {
+    Handle* handle;
+    int fd;
+    uint64_t peer_generation;
 };
 
 struct Task {
@@ -138,8 +157,8 @@ struct Task {
     SignalHandlers* handlers;
     Credentials credentials;
     uint64_t fs_base, tid_address, signal_mask;
-    uint64_t pending_signals, altstack_base, altstack_size;
-    SignalData signal_data[64];
+    uint64_t altstack_base, altstack_size;
+    PendingSignals pending_signals;
     uint64_t suspend_saved_mask;
     bool suspend_mask;
     Wait wait;
@@ -148,6 +167,13 @@ struct Task {
     int vfork_parent;
     FutexWait futex;
     IoRequest* io;
+    DescriptorWait* descriptor_wait;
+    SemaphoreRequest* semaphore_request;
+    SemaphoreUndo* semaphore_undo;
+    MessageQueueRequest* message_queue_request;
+    PosixQueueRequest* posix_queue_request;
+    FifoOpen fifo_open;
+    Handle* epoll_wait_handle;
     alignas(16) uint8_t fpu[512];
 };
 
@@ -171,7 +197,8 @@ int clone_task(Frame*, uint64_t flags, uint64_t stack, uint64_t parent_tid, uint
 
 class ExecArguments;
 
-int exec_task(Task*, const ExecArguments&);
+int executable_access(const Task&, Node*);
+int exec_task(Task*, ExecArguments&, Node* file = nullptr, bool path_inaccessible = false);
 
 void exit_task(Task*, int);
 

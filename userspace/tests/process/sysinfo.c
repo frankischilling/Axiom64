@@ -24,6 +24,7 @@
  */
 #define _GNU_SOURCE
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -139,6 +140,28 @@ static void guest_shared_mapping(void) {
     puts("SYSINFO_GUEST_SHARED_PASS");
 }
 
+static void guest_memfd(void) {
+    const size_t page = (size_t)sysconf(_SC_PAGESIZE);
+    const unsigned long before = read_info().sharedram;
+    int fd = memfd_create("sysinfo-accounting", 0);
+    CHECK(fd >= 0 && ftruncate(fd, 2 * page) == 0);
+    CHECK(read_info().sharedram == before);
+    CHECK(fallocate(fd, 0, page, page) == 0);
+    CHECK(read_info().sharedram == before + page);
+    CHECK(write(fd, "M", 1) == 1);
+    CHECK(read_info().sharedram == before + 2 * page);
+
+    char* shared = mmap(NULL, page, PROT_READ, MAP_SHARED, fd, 0);
+    char* private = mmap(NULL, page, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+    CHECK(shared != MAP_FAILED && private != MAP_FAILED && shared[0] == 'M');
+    private[0] = 'P';
+    CHECK(shared[0] == 'M' && read_info().sharedram == before + 2 * page);
+    CHECK(close(fd) == 0 && munmap(shared, page) == 0);
+    CHECK(read_info().sharedram == before + 2 * page);
+    CHECK(munmap(private, page) == 0 && read_info().sharedram == before);
+    puts("SYSINFO_GUEST_MEMFD_PASS");
+}
+
 static void guest_buffers(void) {
     struct sysinfo before = read_info();
     CHECK(before.bufferram == 0);
@@ -187,6 +210,7 @@ int main(int argc, char** argv) {
     if (argc == 2) {
         guest_memory();
         guest_shared_mapping();
+        guest_memfd();
         guest_buffers();
         guest_load();
     }

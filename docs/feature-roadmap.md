@@ -226,7 +226,7 @@ Acceptance evidence:
 
 Static/dynamic musl programs and a tested syscall subset work; unsupported calls return ENOSYS.
 
-[Local flock](file-locks.md) is compared with actual Linux for descriptor ownership, conversion, restart, stop/continue and process lifetime. Four guest boots compare both linkages on RAM/ext2. The complete syscall matrix and every requirement below remain open.
+[Local flock](file-locks.md) is compared with actual Linux for descriptor ownership, conversion, restart, stop/continue and process lifetime. Four guest boots compare both linkages on RAM and ext2. [File transfer tests](io.md) cover `sendfile` and `copy_file_range` on both musl linkages and writable ext2. Anonymous memory file tests cover sealing, descriptor passing, sparse I/O, and shared and private mapping lifetime. Static and dynamic ELF tests execute regular files and sealed memory files by descriptor, with close-on-exec and writer exclusion checks. Shebang tests cover nested interpreters and reopening pathname and descriptor scripts. The complete syscall matrix and every requirement below remain open.
 
 Required work:
 
@@ -366,8 +366,59 @@ Acceptance evidence:
 ### F15. IPC and event notification
 
 Pipes, Unix streams, polling, epoll, select, and SysV shared memory have guest tests.
+[Poll and ppoll](io.md#poll-and-ppoll-waits) retain descriptor inputs across
+blocked waits. Ppoll also supports temporary signal masks and timespec deadlines.
+[Select and pselect](io.md#select-and-pselect-waits) retain fd sets and write
+back the remaining interval through the raw syscalls.
+[Blocked descriptor waits](io.md#descriptor-lifetime-during-poll-and-select)
+retain wakeup registrations across close and number reuse.
+[Named pipes](io.md#named-pipes) support filesystem names, blocking opens, descriptor
+readiness, signal interruption, and persistent ext2 inodes. Large blocking pipe and
+FIFO writes retain progress and their original descriptor across waits.
+The same tests cover shared capacity, page-slot readiness, resizing and
+queued data order on both kinds of pipe. Packet mode supports short-read
+discard, large-write splitting, and per-description mode changes.
+Pipe sysctls set the capacity ceiling and per-user page limits. Guest tests
+exercise quota failures, shrink, permission checks, and release after the last close.
+Pipe-to-pipe `splice` and `tee` preserve packet boundaries and hold both
+descriptions during a blocked transfer. `splice` also transfers between a pipe
+and a regular RAM or ext2 file with explicit or shared offsets. Standard
+memory devices keep their offsets fixed during splice. Socket transfers cover
+Unix streams and datagrams, IPv4 and IPv6 TCP and UDP, raw
+packet sockets, and route netlink sockets.
+The socket tests exercise both directions, independent pipe and socket waits,
+and descriptor reuse. `vmsplice`
+passes page references from userspace to the pipe and copies pipe data back
+into userspace vectors.
+[Epoll lifetime tests](io.md#epoll-descriptor-lifetime) check duplicate and reused
+descriptors, inherited watches, waits that survive descriptor replacement,
+and file-type admission with the Linux errno and poll-mask behavior.
+`epoll_pwait2` supports relative timespec deadlines and temporary signal masks
+through the same wait path.
+[Exclusive epoll](io.md#exclusive-epoll-wakeups) limits wakeups across competing
+instances while continuing to notify ordinary watches.
+[Nested epoll](io.md#nested-epoll) supports polling epoll descriptors, propagates
+wakeups through nested watches, and rotates through the ready set in small batches.
 [Timer descriptors](io.md#timer-descriptors) let event loops wait for expiration
 counts alongside other readable descriptors.
+[Signal descriptors](io.md#signal-descriptors) deliver blocked signals through
+read and readiness operations.
+Axiom64 also implements [inotify for files and directories](testing.md#filesystem-notifications)
+on RAM and ext2 mounts.
+[System V semaphore tests](threads.md#system-v-semaphores) cover atomic vectors,
+timed waits, permissions, set removal, and cross-process undo.
+[System V message queue tests](threads.md#system-v-message-queues) cover
+type selection, blocking sends and receives, removal, and permissions.
+[System V shared-memory tests](threads.md#system-v-shared-memory) cover
+fragmented attachments, fixed replacements, fork and exec, removal, and permissions.
+[POSIX semaphore tests](threads.md#posix-semaphores) cover named and unnamed
+semaphores, concurrent creation, timeouts, permissions, and unlink lifetime.
+[POSIX message queue tests](threads.md#posix-message-queues) cover
+priorities, blocking calls, descriptor readiness, notifications, and open
+descriptions that survive unlink.
+[POSIX asynchronous I/O tests](threads.md#posix-asynchronous-io) exercise
+positioned file I/O, list completion, notifications, cancellation, and
+descriptor reuse through the guest's musl worker threads.
 
 Required work:
 

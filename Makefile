@@ -5,7 +5,7 @@ NASM = nasm
 PYTHON = python3
 IPV4_WORKERS ?= 2
 IPV4_MULTICAST_CORE = $(wildcard kernel/net/ipv4/multicast/*.cpp)
-IPV6_CORE = $(wildcard kernel/net/ipv6/*.cpp) kernel/core/random/primitives.cpp
+IPV6_CORE = $(wildcard kernel/net/ipv6/*.cpp) kernel/core/random/primitives.cpp kernel/tests/net/descriptor_notify.cpp
 MUSL_CC = gcc -specs="$(CURDIR)/build/musl/build/compiler.specs"
 CLANG_FORMAT ?= clang-format-20
 CXXFLAGS = -std=c++20 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pie -fno-threadsafe-statics -fno-use-cxa-atexit -fno-builtin -m64 -mno-red-zone -mcmodel=kernel -mgeneral-regs-only -Ikernel/include -Ivendor
@@ -21,11 +21,150 @@ all: image
 build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-output-host build/tcp-socket-output-host: kernel/net/ipv4/configuration.cpp
 .PHONY: test-rtc-codec test-clock-wall test-clock-wall-native
 .PHONY: test-timerfd test-timerfd-native
+.PHONY: test-signalfd test-signalfd-native
+.PHONY: test-system-v-semaphores test-system-v-semaphores-native
+.PHONY: test-system-v-message-queues test-system-v-message-queues-native
+.PHONY: test-system-v-shared-memory test-system-v-shared-memory-native
+.PHONY: test-memfd test-memfd-native
+.PHONY: test-posix-semaphores test-posix-semaphores-native
+.PHONY: test-posix-message-queues test-posix-message-queues-native
+.PHONY: test-posix-aio test-posix-aio-native
+.PHONY: test-named-pipes test-named-pipes-native
+.PHONY: test-pipe-transfer test-pipe-transfer-native
+.PHONY: test-file-transfers test-file-transfers-native test-sendfile test-sendfile-native
+.PHONY: test-socket-splice test-socket-splice-native
+.PHONY: test-poll-waits test-poll-waits-native test-select-waits test-select-waits-native
+.PHONY: test-epoll-lifetime test-epoll-lifetime-native
+.PHONY: test-descriptor-wait-lifetime test-descriptor-wait-lifetime-native test-udp-waits test-udp-waits-native
+.PHONY: test-epoll-nested test-epoll-nested-native
+test-system-v-semaphores:
+	$(PYTHON) -B scripts/ipc_abi_test.py sysv-semaphores --directory build/system-v-semaphores-guest
+
+test-system-v-semaphores-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py sysv-semaphores --native --directory build/system-v-semaphores-native
+
+test-system-v-message-queues:
+	$(PYTHON) -B scripts/ipc_abi_test.py sysv-message-queues --directory build/system-v-message-queues-guest
+
+test-system-v-message-queues-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py sysv-message-queues --native --directory build/system-v-message-queues-native
+
+test-system-v-shared-memory:
+	$(PYTHON) -B scripts/ipc_abi_test.py sysv-shared-memory --directory build/system-v-shared-memory-guest
+
+test-system-v-shared-memory-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py sysv-shared-memory --native --directory build/system-v-shared-memory-native
+
+test-memfd:
+	$(PYTHON) -B scripts/ipc_abi_test.py memfd --directory build/memfd-guest
+
+test-memfd-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py memfd --native --directory build/memfd-native
+
+test-posix-semaphores:
+	$(PYTHON) -B scripts/ipc_abi_test.py posix-semaphores --directory build/posix-semaphores-guest
+
+test-posix-semaphores-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py posix-semaphores --native --directory build/posix-semaphores-native
+
+test-posix-message-queues:
+	$(PYTHON) -B scripts/ipc_abi_test.py posix-message-queues --directory build/posix-message-queues-guest
+
+test-posix-message-queues-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py posix-message-queues --native --directory build/posix-message-queues-native
+
+test-posix-aio:
+	$(PYTHON) -B scripts/ipc_abi_test.py posix-aio --directory build/posix-aio-guest
+
+test-posix-aio-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py posix-aio --native --directory build/posix-aio-native
+
+test-named-pipes:
+	$(PYTHON) -B scripts/ipc_abi_test.py named-pipes --directory build/named-pipes-guest
+
+test-named-pipes-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py named-pipes --native --directory build/named-pipes-native
+
+test-pipe-transfer:
+	$(PYTHON) -B scripts/ipc_abi_test.py pipe-transfer --directory build/pipe-transfer-guest
+
+test-pipe-transfer-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py pipe-transfer --native --directory build/pipe-transfer-native
+
+test-file-transfers:
+	$(PYTHON) -B scripts/ipc_abi_test.py file-transfers --directory build/file-transfers-guest
+
+test-file-transfers-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py file-transfers --native --directory build/file-transfers-native
+
+test-sendfile: test-file-transfers
+
+test-sendfile-native: test-file-transfers-native
+
+test-socket-splice:
+	$(PYTHON) -B scripts/ipc_abi_test.py socket-splice --directory build/socket-splice-guest
+
+test-socket-splice-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py socket-splice --native --directory build/socket-splice-native
+
+test-poll-waits:
+	$(PYTHON) -B scripts/ipc_abi_test.py poll-waits --directory build/poll-waits-guest
+
+test-poll-waits-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py poll-waits --native --directory build/poll-waits-native
+
+test-descriptor-wait-lifetime:
+	$(PYTHON) -B scripts/ipc_abi_test.py descriptor-wait-lifetime --directory build/descriptor-wait-lifetime-guest
+
+test-descriptor-wait-lifetime-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py descriptor-wait-lifetime --native --directory build/descriptor-wait-lifetime-native
+
+test-udp-waits:
+	$(PYTHON) -B scripts/ipc_abi_test.py udp-waits --directory build/udp-waits-guest
+
+test-udp-waits-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py udp-waits --native --directory build/udp-waits-native
+
+test-select-waits:
+	$(PYTHON) -B scripts/ipc_abi_test.py select-waits --directory build/select-waits-guest
+
+test-select-waits-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py select-waits --native --directory build/select-waits-native
+
+test-epoll-lifetime:
+	$(PYTHON) -B scripts/ipc_abi_test.py epoll-lifetime --directory build/epoll-lifetime-guest
+
+test-epoll-lifetime-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py epoll-lifetime --native --directory build/epoll-lifetime-native
+
+test-epoll-nested:
+	$(PYTHON) -B scripts/ipc_abi_test.py epoll-nested --directory build/epoll-nested-guest
+
+test-epoll-nested-native:
+	$(PYTHON) -B scripts/ipc_abi_test.py epoll-nested --native --directory build/epoll-nested-native
+
+test-signalfd:
+	$(PYTHON) -B scripts/timerfd_test.py --descriptor signalfd --directory build/signalfd-guest
+
+test-signalfd-native:
+	$(PYTHON) -B scripts/timerfd_test.py --descriptor signalfd --native --directory build/signalfd-native
+
 test-timerfd:
 	$(PYTHON) -B scripts/timerfd_test.py --directory build/timerfd-guest
 
 test-timerfd-native:
 	$(PYTHON) -B scripts/timerfd_test.py --native --directory build/timerfd-native
+
+.PHONY: test-inotify test-inotify-native test-inotify-queue
+test-inotify:
+	$(PYTHON) -B scripts/inotify_test.py --directory build/inotify-guest
+test-inotify-native:
+	$(PYTHON) -B scripts/inotify_test.py --native --directory build/inotify-native
+build/inotify-queue: kernel/tests/fs/inotify_queue.cpp kernel/fs/inotify_queue.cpp kernel/include/fs/inotify_queue.hpp kernel/include/core/base.hpp
+	mkdir -p build
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -fno-pie -no-pie -Ikernel/include $(filter %.cpp,$^) -o $@
+test-inotify-queue: build/inotify-queue
+	./build/inotify-queue
 
 .PHONY: test-random-crypto test-random-crypto-native test-random-crypto-wait test-random-crypto-wait-native
 .PHONY: openssl libxcrypt curl ca-bundle test-password-library-native test-password-library test-random-installed
@@ -121,9 +260,18 @@ test-proc-identity:
 	$(PYTHON) scripts/proc_identity_test.py --directory build/proc-identity
 test-proc-identity-native:
 	$(PYTHON) scripts/proc_identity_test.py --directory build/proc-identity-native --native
-build/proc-identity-policy: kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp kernel/process/limits.cpp kernel/include/fs/proc/ipv4.hpp kernel/include/process/limits.hpp kernel/include/fs/proc.hpp kernel/include/process/task.hpp
+build/proc-identity-policy: kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp \
+    kernel/fs/proc/integer.cpp kernel/fs/pipe.cpp kernel/fs/descriptor_inode.cpp \
+    kernel/fs/inotify.cpp kernel/ipc/eventfd.cpp kernel/ipc/timerfd.cpp \
+    kernel/process/limits.cpp kernel/security/credentials.cpp kernel/include/fs/pipe.hpp \
+    kernel/include/fs/descriptor_inode.hpp kernel/include/fs/memfd.hpp kernel/include/fs/proc.hpp \
+    kernel/include/fs/inotify.hpp kernel/include/ipc/eventfd.hpp kernel/include/ipc/ipc.hpp \
+    kernel/include/ipc/signal_descriptor.hpp kernel/include/ipc/timerfd.hpp \
+    kernel/include/fs/proc/integer.hpp kernel/include/fs/proc/ipv4.hpp kernel/include/fs/proc/ipv6.hpp \
+    kernel/include/fs/vfs.hpp kernel/include/process/limits.hpp kernel/include/process/task.hpp \
+    kernel/include/security/credentials.hpp
 	@mkdir -p build
-	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include kernel/tests/fs/proc_identity.cpp kernel/fs/proc.cpp kernel/process/limits.cpp -o $@
+	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 test-proc-identity-policy: build/proc-identity-policy
 	ASAN_OPTIONS=detect_leaks=1 ./build/proc-identity-policy
 test-record-lock-lifecycle:

@@ -1,29 +1,27 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-# /**
-#  * @file    scripts/guest_kernel_test.py
-#  * @brief   Build, export, and boot a kernel produced inside Axiom64.
-#  * @author  frankischilling
-#  * @date    2026-11-19
-#  *
-#  * Stages the kernel and optional tool sources, verifies the virtio disk export,
-#  * and passes the recovered kernel or guest-authored image to the boot tests.
-#  *
-#  * Copyright (C) 2026 frankischilling
-#  *
-#  * This program is free software: you can redistribute it and/or modify
-#  * it under the terms of the GNU General Public License as published by
-#  * the Free Software Foundation, either version 3 of the License, or
-#  * (at your option) any later version.
-#  *
-#  * This program is distributed in the hope that it will be useful,
-#  * but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  * GNU General Public License for more details.
-#  *
-#  * You should have received a copy of the GNU General Public License
-#  * along with this program. If not, see <https://gnu.org/licenses/>.
-#  */
+# @file    scripts/guest_kernel_test.py
+# @brief   Build, export, and boot a kernel produced inside Axiom64.
+# @author  frankischilling
+# @date    2026-11-19
+#
+# Stages the kernel and optional tool sources, verifies the virtio disk export,
+# and passes the recovered kernel or guest-authored image to the boot tests.
+#
+# Copyright (C) 2026 frankischilling
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://gnu.org/licenses/>.
 
 import argparse
 import hashlib
@@ -179,19 +177,26 @@ def verify_system_image(directory, kernel, serial):
 def build_accelerator(requested):
     if requested != 'auto':
         return requested
-    # QEMU can reject KVM even when the device node exists and is accessible.
-    # Verify that the accelerator can start a VM before beginning the source build.
-    command = ['qemu-system-x86_64', '-machine', 'pc,accel=kvm', '-cpu', 'host', '-m', '64',
-               '-nodefaults', '-display', 'none', '-S', '-qmp', 'stdio']
-    commands = '{"execute":"qmp_capabilities"}\n{"execute":"quit"}\n'
+    # A paused monitor can exit successfully before QEMU opens /dev/kvm.
+    # Require a BIOS boot sector to execute outl(0xf4, 0x2e) on the vCPU.
+    instructions = bytes.fromhex('ba f4 00 66 b8 2e 00 00 00 66 ef f4')
+    sector = instructions.ljust(510, b'\0') + b'\x55\xaa'
     try:
-        probe = subprocess.run(command, input=commands, text=True, capture_output=True, timeout=10)
+        with tempfile.TemporaryDirectory(prefix='axiom64-kvm-') as temporary:
+            disk = Path(temporary) / 'probe.img'
+            disk.write_bytes(sector)
+            command = ['qemu-system-x86_64', '-machine', 'pc', '-accel', 'kvm', '-cpu', 'host',
+                       '-m', '64', '-boot', 'a', '-drive', f'if=floppy,format=raw,readonly=on,file={disk}',
+                       '-display', 'none', '-serial', 'none', '-monitor', 'none', '-no-reboot',
+                       '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
+            probe = subprocess.run(command, stdin=subprocess.DEVNULL, text=True,
+                                   capture_output=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired) as error:
         print(f'KVM preflight failed: {error}', file=sys.stderr)
         return 'tcg'
-    if probe.returncode == 0:
+    if probe.returncode == ((0x2e << 1) | 1):
         return 'kvm'
-    print(f'KVM preflight failed: {probe.stderr.strip()}', file=sys.stderr)
+    print(f'KVM preflight exited with status {probe.returncode}: {probe.stderr.strip()}', file=sys.stderr)
     return 'tcg'
 
 

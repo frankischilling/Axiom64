@@ -324,7 +324,7 @@
       "title": "Linux syscall and libc compatibility",
       "milestone": "M4",
       "state": "partial",
-      "current": "Static/dynamic musl programs and a tested syscall subset work, including retained blocking I/O and tested restart behavior. Unsupported calls return ENOSYS; complete Linux conformance remains planned. Local advisory flock supports canonical inode ownership, descriptor lifetime, retained waits, and tested signal restart on the single-CPU kernel. POSIX/OFD record locks have native and RAM/ext2 lifetime, deadlock, restart, descriptor-replacement, exhaustion and reboot checks. Owned exec argument/environment capture and checked stack loading accept long Linux commands while preserving failed-exec state; seven Linux resource limits now have native and guest enforcement checks, including real stack growth, CPU accounting and coordinated ordinary-user pressure. Other stored resource selectors and broader resource-consuming interfaces still require their Linux ABI implementations. Captured vector imports now share signed-length, full-span and bounded-total checks with IPv6 error receives. Real descriptor tests compare 77 metadata, 24 read-copy, 20 write-copy, 16 empty-send/signal and 18 cross-vector chunk cases across three native profiles and both static/dynamic BIOS/UEFI guests; broader Linux conformance remains required.",
+      "current": "Static/dynamic musl programs and a tested syscall subset work, including retained blocking I/O and tested restart behavior. Unsupported calls return ENOSYS; complete Linux conformance remains planned. Local advisory flock supports canonical inode ownership, descriptor lifetime, retained waits, and tested signal restart on the single-CPU kernel. POSIX/OFD record locks have native and RAM/ext2 lifetime, deadlock, restart, descriptor-replacement, exhaustion and reboot checks. Owned exec argument/environment capture and checked stack loading accept long Linux commands while preserving failed-exec state; seven Linux resource limits now have native and guest enforcement checks, including real stack growth, CPU accounting and coordinated ordinary-user pressure. Other stored resource selectors and broader resource-consuming interfaces still require their Linux ABI implementations. Captured vector imports now share signed-length, full-span and bounded-total checks with IPv6 error receives. Real descriptor tests compare 77 metadata, 24 read-copy, 20 write-copy, 16 empty-send/signal and 18 cross-vector chunk cases across three native profiles and both static/dynamic BIOS/UEFI guests. Sendfile and copy_file_range have native and guest checks for offsets, copyout faults, and file size limits. The same suites cover pipe and socket transfers, retained descriptions, overlapping ranges, and cross-filesystem errors. Anonymous memory files support sparse pages, descriptor passing, shared and private mappings, SIGBUS beyond EOF, and inode seals. Execveat runs ELF images by pathname or descriptor, including sealed memory files, and keeps ordinary executable inodes protected from new writers. Broader Linux conformance remains required.",
       "scope": [
         "Machine-readable Linux x86-64 syscall/structure/flag/error matrix with tests",
         "Extend musl coverage without silent successful stubs",
@@ -349,6 +349,8 @@
         "userspace/tests/abi/abi.c",
         "userspace/tests/process/signals.c",
         "kernel/io/io.cpp",
+        "userspace/tests/ipc/file-transfers.c",
+        "userspace/tests/ipc/memfd.c",
         "userspace/tests/threads/io.c",
         "docs/io.md",
         "kernel/fs/file_lock.cpp",
@@ -1126,7 +1128,7 @@
       "title": "IPC and event notification",
       "milestone": "M2",
       "state": "partial",
-      "current": "Pipes, Unix streams, polling, epoll, select and SysV shared memory have guest tests. Nine shared Unix clients, including stream shutdown and retained send/MSG_WAITALL receive checks, pass 144 local executions across both musl providers, linkages, firmware types and caller identities. Frozen readers verify sources, SDK headers, programs, images and logs. Timer descriptors support monotonic, realtime and boot-time timers with expiration counts, blocking reads and readiness. Remaining IPC lifetime, notification and queue/semaphore acceptance is required.",
+      "current": "Anonymous pipes, named pipes, Unix streams, polling, epoll, select and SysV shared memory have guest tests. Named pipes rendezvous across processes, share a stream through hard links and retain their inode on ext2 across reboot. Large blocking pipe and FIFO writes preserve committed bytes and the original descriptor across waits, signals, and descriptor reuse. Pipe capacity controls resize by occupied page slots and preserve queued data, readiness, and blocked writer wakeups. Pipe packet mode preserves record boundaries, discards truncated payloads after a successful read, and supports per-description mode changes. Pipe sysctls configure the capacity ceiling and soft and hard page quotas per real UID. Pipe-to-pipe splice and tee preserve packet boundaries, retain both descriptions while blocked, and wake readers and writers after each transfer. Splice also transfers between pipes and regular RAM or ext2 files with explicit and shared offsets. Splice keeps explicit and shared offsets fixed on standard memory devices. Socket splice covers Unix streams and datagrams, IPv4 and IPv6 TCP and UDP, raw packet sockets, and route netlink sockets, with retained descriptions and separate pipe and socket waits. Vmsplice retains userspace pages when writing into pipes and copies pipe slots into saved vectors when reading. Poll and ppoll retain descriptor inputs across blocked waits. Ppoll supports temporary signal masks and timespec deadlines. Select and pselect retain fd sets across waits and return remaining time through the raw syscalls. Blocked polling and selection retain wakeup registrations across descriptor close and reuse. Unix streams and datagrams notify those registrations when data arrives or send capacity becomes available. IPv4 and IPv6 UDP queue publication and socket errors notify the original watch. Epoll watches follow open file descriptions across close, number reuse, fork, exec and descriptor transfer. Epoll rejects files without a poll operation and reports anonymous-inode metadata for its own descriptors. Blocked waits keep their original instance. Epoll_pwait and epoll_pwait2 apply temporary signal masks, and epoll_pwait2 accepts relative timespec deadlines. Poll, select and outer epoll watches report when an epoll descriptor has an event to deliver. Nested watches reject cycles and a fifth link, and small batches rotate through ready events. Exclusive watches limit notifications across blocked waiters while ordinary watches still receive events. Nine shared Unix clients, including stream shutdown and retained send/MSG_WAITALL receive checks, pass 144 local executions across both musl providers, linkages, firmware types and caller identities. Frozen readers verify sources, SDK headers, programs, images and logs. Timer descriptors support monotonic, realtime and boot-time timers with expiration counts, blocking reads and readiness. Signal descriptors deliver blocked signals and their queued payloads through readable descriptions. Inotify provides inode and directory watches on RAM and ext2. The native and guest suites check event order, readiness, description ownership, faults and unmount. System V semaphore sets support atomic operation vectors, timed waits, permissions, and shared undo ownership. System V message queues support typed selection, blocking delivery, and owner and group permissions. System V shared memory tracks mappings across protection changes, partial unmap, fixed replacement, fork, exec, and exit. Libc POSIX semaphores use a volatile shared-memory mount for named objects and futexes for blocking waits. POSIX message queues support priorities, realtime waits, descriptor readiness, and one-shot signal and thread notifications. Both musl providers run POSIX asynchronous I/O in the guest, including list completion, signal and thread notification, interruption, cancellation, and descriptor reuse. Hosted qualification and remaining IPC lifetime and notification acceptance are pending.",
       "scope": [
         "Complete pipe/FIFO, poll/select/epoll, descriptor-generation, and close semantics",
         "System V semaphores, message queues, and shared-memory permissions/lifetime",
@@ -1150,7 +1152,9 @@
         "kernel/io/io.cpp",
         "userspace/tests/ipc/unix_shutdown.c",
         "userspace/tests/ipc/unix_stream_wait.c",
-        "scripts/unix_datagram_proof.py"
+        "scripts/unix_datagram_proof.py",
+        "kernel/fs/inotify.cpp",
+        "scripts/inotify_test.py"
       ],
       "branch": "feature/f15-ipc-and-event-notification",
       "issue": "https://github.com/frankischilling/Axiom64/issues/15"
@@ -5321,10 +5325,10 @@
     {
       "name": "pthread",
       "kind": "runtime-library",
-      "state": "planned",
+      "state": "partial",
       "owner": "F15",
       "issue": "https://github.com/frankischilling/Axiom64/issues/15",
-      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+      "acceptance": "Guest workloads exercise musl threads, futex waits, and named and process-shared semaphores. Broader thread and synchronization coverage remains open."
     },
     {
       "name": "pwdb",
@@ -5353,10 +5357,10 @@
     {
       "name": "rt",
       "kind": "runtime-library",
-      "state": "planned",
+      "state": "partial",
       "owner": "F15",
       "issue": "https://github.com/frankischilling/Axiom64/issues/15",
-      "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+      "acceptance": "Guest tests link with -lrt and verify POSIX asynchronous I/O through both musl providers. Broader realtime-library coverage remains open."
     },
     {
       "name": "sys",

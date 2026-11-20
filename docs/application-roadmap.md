@@ -479,11 +479,11 @@ The catalog contains 479 inventory entries, of which 478 remain in scope. A proj
 | `libuu` | planned | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |
 | `m` | planned | [F08](feature-roadmap.md#f08-linux-syscall-and-libc-compatibility) |
 | `proc` | planned | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |
-| `pthread` | planned | [F15](feature-roadmap.md#f15-ipc-and-event-notification) |
+| `pthread` | partial | [F15](feature-roadmap.md#f15-ipc-and-event-notification) |
 | `pwdb` | planned | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |
 | `regex` | planned | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |
 | `resolv` | planned | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |
-| `rt` | planned | [F15](feature-roadmap.md#f15-ipc-and-event-notification) |
+| `rt` | partial | [F15](feature-roadmap.md#f15-ipc-and-event-notification) |
 | `sys` | planned | [F08](feature-roadmap.md#f08-linux-syscall-and-libc-compatibility) |
 | `usb` | planned | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |
 | `yacc` | planned | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |

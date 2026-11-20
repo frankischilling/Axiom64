@@ -68,7 +68,13 @@ static long barrier(uint64_t command, uint64_t flags, int cpu) {
 static bool reports_registrations;
 
 static void expect_registrations(int expected) {
-    REQUIRE(barrier(get_registrations, 0, 0) == (reports_registrations ? expected : -EINVAL));
+    if (expected & register_private_sync_core)
+        expected |= register_private_expedited;
+    long actual = barrier(get_registrations, 0, 0);
+    long wanted = reports_registrations ? expected : -EINVAL;
+    if (actual != wanted)
+        fprintf(stderr, "MEMBARRIER_REGISTRATIONS expected=%ld actual=%ld\n", wanted, actual);
+    REQUIRE(actual == wanted);
 }
 
 static void verify_clean_context(bool guest) {

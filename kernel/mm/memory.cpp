@@ -25,6 +25,7 @@
  */
 #include "boot/boot.hpp"
 #include "mm/stack.hpp"
+#include "fs/memfd.hpp"
 
 namespace ax {
 uint64_t direct_map;
@@ -182,6 +183,22 @@ void page_retain(uint64_t p, size_t count) {
     }
 }
 
+bool page_try_retain(uint64_t p) {
+    if (!p || p % page_size || p / page_size >= max_pages)
+        panic("invalid page retain");
+    auto& refs = page_references[p / page_size];
+    if (!refs)
+        panic("invalid page reference");
+    if (refs == UINT16_MAX)
+        return false;
+    ++refs;
+    return true;
+}
+
+unsigned page_reference_count(uint64_t p) {
+    return p && p / page_size < max_pages ? page_references[p / page_size] : 0;
+}
+
 bool page_shared(uint64_t p, size_t count) {
     if (!p || p / page_size + count > max_pages)
         return false;
@@ -250,11 +267,12 @@ static uint64_t mapped_length(uint64_t table, unsigned level, uint64_t base, uin
     uint64_t span = 1ull << (12 + (level - 1) * 9), result = 0;
     for (unsigned i = 0; i < (level == 4 ? 256u : 512u); i++) {
         uint64_t address = base + i * span;
-        if (!(entries[i] & page_mask) || address >= end || address + span <= start)
+        if (!(entries[i] & (page_mask | page_file)) || address >= end || address + span <= start)
             continue;
         if (level == 1 || (entries[i] & 128)) {
+            bool writable = entries[i] & ((entries[i] & page_file) ? page_file_write : 2);
             if (!private_data || ((entries[i] & page_private) && !(entries[i] & page_stack) &&
-                                  (make_writable || (entries[i] & 2))))
+                                  (make_writable || writable)))
                 result += min(end, address + span) - max(start, address);
         } else
             result += mapped_length(entries[i] & page_mask, level - 1, address, start, end,
@@ -269,6 +287,38 @@ uint64_t AddressSpace::mapped_size(uint64_t start, uint64_t length) const {
     return root && length ? mapped_length(root, 4, 0, start, start + length) : 0;
 }
 
+static uint64_t first_mapping(uint64_t table, unsigned level, uint64_t base, uint64_t start,
+                              uint64_t end) {
+    const auto entries = static_cast<const uint64_t*>(physical(table));
+    uint64_t span = 1ull << (12 + (level - 1) * 9);
+    unsigned last = (end - 1 - base) / span;
+    for (unsigned slot = (start - base) / span; slot <= last; ++slot) {
+        if (!(entries[slot] & (page_mask | page_file)))
+            continue;
+        uint64_t address = base + slot * span;
+        uint64_t first = max(start, address);
+        if (level == 1 || (entries[slot] & 128))
+            return first;
+        first = first_mapping(entries[slot] & page_mask, level - 1, address, first,
+                              min(end, address + span));
+        if (first != user_limit)
+            return first;
+    }
+    return user_limit;
+}
+
+uint64_t AddressSpace::find_unmapped(size_t length) const {
+    if (!root || !length)
+        return 0;
+    for (uint64_t start = next_map; start < user_limit && length <= user_limit - start;) {
+        uint64_t occupied = first_mapping(root, 4, 0, start, start + length);
+        if (occupied == user_limit)
+            return start;
+        start = occupied + page_size;
+    }
+    return 0;
+}
+
 uint64_t AddressSpace::private_writable_size(uint64_t start, uint64_t length,
                                              bool make_writable) const {
     if (start > user_limit || length > user_limit - start)
@@ -281,42 +331,95 @@ static uint64_t permissions(int prot) {
     return 4 | ((prot & 3) ? 1 : 0) | ((prot & 2) ? 2 : 0) | ((prot & 4) ? 1 : (1ull << 63));
 }
 
-bool AddressSpace::map(uint64_t va, size_t len, int prot, bool private_mapping) {
-    if (va % page_size || va < page_size || va >= user_limit || len > user_limit - va ||
-        len > SIZE_MAX - page_size)
-        return false;
-    for (uint64_t p = va; p < va + align_up(len); p += page_size) {
-        auto e = entry(p, true);
-        if (!e)
-            return false;
-        if (!(*e & page_mask)) {
-            uint64_t physical_page = page_alloc();
-            if (!physical_page)
-                return false;
-            *e = physical_page;
+static void release_empty_tables(uint64_t table, unsigned level, uint64_t base, uint64_t start,
+                                 uint64_t end) {
+    auto entries = static_cast<uint64_t*>(physical(table));
+    uint64_t span = 1ull << (12 + (level - 1) * 9);
+    for (size_t i = (start - base) / span; i <= (end - base - 1) / span; i++) {
+        auto& entry = entries[i];
+        if (!(entry & 1) || (entry & 128))
+            continue;
+        uint64_t child = entry & page_mask;
+        uint64_t address = base + i * span;
+        if (level > 2)
+            release_empty_tables(child, level - 1, address, max(start, address),
+                                 min(end, address + span));
+        auto children = static_cast<const uint64_t*>(physical(child));
+        size_t used = 0;
+        while (used < 512 && !(children[used] & (page_mask | page_file)))
+            used++;
+        if (used == 512) {
+            entry = 0;
+            page_free(child);
         }
-        *e = (*e & (page_mask | page_software)) | permissions(prot);
-        *e = private_mapping ? *e | page_private : *e & ~page_private;
+    }
+}
+
+static void discard_empty_tables(AddressSpace& space, uint64_t start, uint64_t end) {
+    release_empty_tables(space.root, 4, 0, start, end);
+    if (read_cr3() == space.root)
+        write_cr3(space.root);
+}
+
+bool AddressSpace::map(uint64_t va, size_t len, int prot, bool private_mapping) {
+    if (!prepare_mapping(va, len))
+        return false;
+    uint64_t end = va + align_up(len);
+    // Pending entries are nonpresent and have no user or file bits set.
+    constexpr uint64_t pending = 1ull << 59;
+    for (uint64_t p = va; p < end; p += page_size) {
+        auto& e = *entry(p);
+        if ((e & page_mask) && !(e & page_file))
+            continue;
+        uint64_t physical_page = e & page_file ? 0 : page_alloc();
+        if (!physical_page) {
+            for (uint64_t previous = va; previous < p; previous += page_size) {
+                auto& candidate = *entry(previous);
+                if ((candidate & pending) && !(candidate & 4)) {
+                    uint64_t allocated = candidate & page_mask;
+                    candidate = 0;
+                    page_free(allocated);
+                }
+            }
+            discard_empty_tables(*this, va, end);
+            return false;
+        }
+        e = physical_page | pending;
+    }
+    for (uint64_t p = va; p < end; p += page_size) {
+        auto& e = *entry(p);
+        e = (e & (page_mask | page_software)) | permissions(prot);
+        e = private_mapping ? e | page_private : e & ~page_private;
     }
     if (read_cr3() == root)
         write_cr3(root);
     return true;
 }
 
-bool AddressSpace::map_physical(uint64_t va, uint64_t pa, size_t len, int prot, bool external) {
-    if (va % page_size || pa % page_size || va < page_size || va >= user_limit ||
-        len > user_limit - va)
+bool AddressSpace::prepare_mapping(uint64_t va, size_t len) {
+    if (va % page_size || va < page_size || va >= user_limit || len > user_limit - va)
         return false;
-    for (uint64_t offset = 0; offset < align_up(len); offset += page_size) {
-        auto e = entry(va + offset, true);
-        if (!e)
+    uint64_t end = va + align_up(len);
+    constexpr uint64_t leaf_span = 512 * page_size;
+    for (uint64_t address = va; address < end; address = (address | (leaf_span - 1)) + 1) {
+        if (!entry(address, true)) {
+            if (root)
+                discard_empty_tables(*this, va, end);
             return false;
-        if (*e & page_mask) {
-            if (!(*e & 0x200))
-                page_free(*e & page_mask);
         }
+    }
+    return true;
+}
+
+bool AddressSpace::map_physical(uint64_t va, uint64_t pa, size_t len, int prot, bool external) {
+    if (pa % page_size || !prepare_mapping(va, len))
+        return false;
+    for (uint64_t offset = 0; offset < len; offset += page_size) {
+        auto e = entry(va + offset);
         if (!external)
             page_retain(pa + offset);
+        if ((*e & page_mask) && !(*e & 0x200))
+            page_free(*e & page_mask);
         *e = (pa + offset) | permissions(prot) | (external ? 0x200 : 0x400);
     }
     if (read_cr3() == root)
@@ -329,8 +432,8 @@ void AddressSpace::unmap(uint64_t va, size_t len) {
         return;
     for (uint64_t p = align_down(va); p < va + len; p += page_size) {
         auto e = entry(p);
-        if (e && (*e & page_mask)) {
-            if (!(*e & 0x200))
+        if (e && (*e & (page_mask | page_file))) {
+            if ((*e & page_mask) && !(*e & 0x200))
                 page_free(*e & page_mask);
             *e = 0;
         }
@@ -344,13 +447,14 @@ bool AddressSpace::protect(uint64_t va, size_t len, int prot) {
         return false;
     for (uint64_t p = va; p < va + len; p += page_size) {
         auto e = entry(p);
-        if (!e || !(*e & page_mask) || ((prot & 2) && (*e & 0x800)) ||
+        if (!e || !(*e & (page_mask | page_file)) || ((prot & 2) && (*e & 0x800)) ||
             ((prot & 4) && (*e & page_no_execute)))
             return false;
     }
     for (uint64_t p = va; p < va + len; p += page_size) {
         auto e = entry(p);
-        *e = (*e & (page_mask | page_software)) | permissions(prot);
+        *e = *e & page_file ? memfd_page_protection(*e, prot)
+                            : (*e & (page_mask | page_software)) | permissions(prot);
     }
     if (read_cr3() == root)
         write_cr3(root);
@@ -360,12 +464,30 @@ bool AddressSpace::protect(uint64_t va, size_t len, int prot) {
 bool AddressSpace::valid(uint64_t va, size_t len, bool write) const {
     if (va >= user_limit || len > user_limit - va)
         return false;
+    auto& space = *const_cast<AddressSpace*>(this);
     for (uint64_t p = align_down(va); p < va + len; p += page_size) {
-        auto e = const_cast<AddressSpace*>(this)->entry(p);
-        if (!e || ((*e & 5) != 5) || (write && !(*e & 2)))
-            return grow_user_stack(*this, va, len, write);
+        auto e = space.entry(p);
+        if (e && ((*e & 5) == 5) && (!write || (*e & 2)))
+            continue;
+        if (e && (*e & page_file)) {
+            if (memfd_fault(space, p, write, false) != MemfdFault::resolved)
+                return false;
+        } else if (!grow_user_stack(*this, max(p, va), 1, write)) {
+            return false;
+        }
     }
     return true;
+}
+
+uint64_t AddressSpace::retain_readable_page(uint64_t address) {
+    if (!valid(address, 1))
+        return 0;
+    uint64_t mapping = *entry(address);
+    // External device mappings have no allocator reference to retain.
+    if (mapping & 0x200)
+        return 0;
+    uint64_t page = mapping & page_mask;
+    return page_try_retain(page) ? page : 0;
 }
 
 bool AddressSpace::copy_in(void* dst, uint64_t src, size_t len) const {
@@ -426,36 +548,41 @@ void AddressSpace::destroy() {
         destroy_table(root, 4);
         root = 0;
     }
+    memfd_release_mappings(*this);
 }
 
 static bool clone_table(uint64_t dest, uint64_t src, int level) {
     auto d = (uint64_t*)physical(dest), s = (uint64_t*)physical(src);
     size_t end = level == 4 ? 256 : 512;
-    for (size_t i = 0; i < end; i++)
-        if (s[i] & page_mask) {
-            if (level == 1 && (s[i] & 0x600)) {
+    for (size_t i = 0; i < end; i++) {
+        if (!(s[i] & page_mask)) {
+            if (level == 1 && (s[i] & page_file))
                 d[i] = s[i];
-                if (!(s[i] & 0x200))
-                    page_retain(s[i] & page_mask);
-                continue;
-            }
-            uint64_t p = page_alloc();
-            if (!p)
-                return false;
-            d[i] = p | (s[i] & ~page_mask);
-            if (level > 1) {
-                if (!clone_table(p, s[i] & page_mask, level - 1))
-                    return false;
-            } else
-                memcpy(physical(p), physical(s[i] & page_mask), page_size);
+            continue;
         }
+        if (level == 1 && (s[i] & 0x600)) {
+            d[i] = s[i];
+            if (!(s[i] & 0x200))
+                page_retain(s[i] & page_mask);
+            continue;
+        }
+        uint64_t p = page_alloc();
+        if (!p)
+            return false;
+        d[i] = p | (s[i] & ~page_mask);
+        if (level > 1) {
+            if (!clone_table(p, s[i] & page_mask, level - 1))
+                return false;
+        } else
+            memcpy(physical(p), physical(s[i] & page_mask), page_size);
+    }
     return true;
 }
 
 bool AddressSpace::clone_from(const AddressSpace& src) {
     if (!create())
         return false;
-    if (!clone_table(root, src.root, 4)) {
+    if (!clone_table(root, src.root, 4) || !memfd_clone_mappings(*this, src)) {
         destroy();
         return false;
     }

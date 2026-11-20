@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/drivers/platform/devices.cpp
+ * @brief   Built-in device nodes.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Connects console, terminal, input, and other built-in devices to the kernel's
+ * file interfaces.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "drivers/platform/devices.hpp"
 #include "drivers/block/block.hpp"
 #include "boot/boot.hpp"
@@ -268,6 +292,7 @@ void devices_init() {
     tag("/dev/ttyS0", Device::serial, 0x440);
     tag("/dev/null", Device::null);
     tag("/dev/zero", Device::zero);
+    tag("/dev/full", Device::full);
     tag("/dev/random", Device::random, 8);
     tag("/dev/urandom", Device::random, 9);
     tag("/dev/tty0", Device::vt);
@@ -332,6 +357,8 @@ uint64_t device_number(Node* node) {
         return 0x103;
     case Device::zero:
         return 0x105;
+    case Device::full:
+        return 0x107;
     case Device::random:
         return 0x100 | node->device_id;
     case Device::ptmx:
@@ -446,6 +473,23 @@ void device_close(Handle* h) {
     }
 }
 
+bool device_has_poll(const Handle& handle) {
+    if (handle.pty)
+        return true;
+    switch (handle.node->device) {
+    case Device::serial:
+    case Device::tty:
+    case Device::vt:
+    case Device::keyboard:
+    case Device::mouse:
+        return true;
+    case Device::random:
+        return handle.node->device_id == 8;
+    default:
+        return false;
+    }
+}
+
 bool device_ready(Handle* h, bool write) {
     if (h->pty) {
         auto p = h->pty;
@@ -512,10 +556,18 @@ static int64_t block_bytes(Handle* h, void* data, size_t len, bool write) {
     return done;
 }
 
+bool memory_device(const Handle& handle) {
+    auto node = handle.node;
+    return node && (node->mode & 0170000) == character && !handle.pty &&
+           (node->device == Device::null || node->device == Device::zero ||
+            node->device == Device::full || node->device == Device::random);
+}
+
 bool device_ignores_buffer(Handle* handle, bool write) {
-    auto node = handle->node;
-    return node && (node->mode & 0170000) == character && !handle->pty &&
-           (node->device == Device::null || (write && node->device == Device::zero));
+    if (!memory_device(*handle))
+        return false;
+    auto kind = handle->node->device;
+    return kind == Device::null || (write && (kind == Device::zero || kind == Device::full));
 }
 
 int64_t device_read(Handle* h, void* data, size_t len) {
@@ -537,6 +589,7 @@ int64_t device_read(Handle* h, void* data, size_t len) {
     case Device::null:
         return 0;
     case Device::zero:
+    case Device::full:
         memset(data, 0, len);
         return len;
     case Device::random: {
@@ -594,6 +647,8 @@ int64_t device_write(Handle* h, const void* data, size_t len) {
     }
     if (h->node->device == Device::null || h->node->device == Device::zero)
         return len;
+    if (h->node->device == Device::full)
+        return -28;
     if (h->node->device == Device::random) {
         random_mix(data, len);
         return len;

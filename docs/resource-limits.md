@@ -19,7 +19,7 @@ Process and thread CPU totals also back `CLOCK_PROCESS_CPUTIME_ID` and `CLOCK_TH
 `getrusage` reports user and system CPU time for the process, the calling thread, or reaped children. Reaping transfers a child's CPU time and the time it collected from its own children. `wait4` and the raw `waitid` syscall return the same child CPU totals. `WNOWAIT` observes the totals without transferring them. Other resource-usage counters currently return zero.
 
 `sysinfo` reports boot uptime, live task slots, usable and free physical memory,
-shared anonymous and System V pages, and ext2 block-cache memory. Each shared
+shared anonymous, System V and memfd pages, and ext2 block-cache memory. Each shared
 page counts once until its last physical reference is released. The scheduler
 samples runnable tasks from the timer interrupt and returns the 1-, 5-, and
 15-minute load averages in the Linux fixed-point format. Swap and high-memory

@@ -1,4 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/ipc/timerfd.cpp
+ * @brief   Timer descriptor state.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Tracks timer deadlines, expiration counts, and descriptor readiness.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "ipc/timerfd.hpp"
 #include "core/time.hpp"
 #include "fs/vfs.hpp"
@@ -6,13 +29,14 @@
 namespace ax {
 struct Timerfd {
     TimerClock clock;
-    bool absolute_realtime;
+    bool absolute;
     bool expired;
     uint64_t deadline, interval, pending, notification;
 
     uint64_t now() const {
         constexpr uint64_t tick_ns = 10000000;
-        uint64_t current = absolute_realtime ? clock_realtime_ticks() : ticks;
+        uint64_t current =
+            absolute && clock == TimerClock::realtime ? clock_realtime_ticks() : ticks;
         return current > INT64_MAX / tick_ns ? INT64_MAX : current * tick_ns;
     }
 
@@ -94,12 +118,20 @@ TimerfdSetting timerfd_get(Timerfd& timer) {
 
 TimerfdSetting timerfd_set(Timerfd& timer, TimerfdSetting next, bool absolute) {
     TimerfdSetting old = timerfd_get(timer);
-    timer.absolute_realtime = absolute && timer.clock == TimerClock::realtime;
+    timer.absolute = absolute;
     timer.interval = next.interval;
     timer.pending = 0;
     timer.deadline = next.value;
     if (next.value && !absolute)
         timer.deadline = min(timer.now() + next.value, uint64_t(INT64_MAX));
     return old;
+}
+
+TimerfdInfo timerfd_info(const Timerfd& timer) {
+    auto snapshot = timer;
+    auto now = snapshot.now();
+    snapshot.accrue(now);
+    uint64_t remaining = timer.deadline > now ? timer.deadline - now : 0;
+    return {timer.clock, uint32_t(timer.absolute), snapshot.pending, {timer.interval, remaining}};
 }
 } // namespace ax

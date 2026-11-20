@@ -85,7 +85,7 @@ static uint8_t file_type(uint32_t mode) {
         return 3;
     case block_device:
         return 4;
-    case 0010000:
+    case fifo:
         return 5;
     case 0140000:
         return 6;
@@ -1656,7 +1656,8 @@ struct Validation {
                             return v.fail(-95);
                     continue;
                 }
-                if (type != regular_file && type != directory && type != symlink && type != 0140000)
+                if (type != regular_file && type != directory && type != symlink && type != fifo &&
+                    type != 0140000)
                     return v.fail(-95);
                 // Inode flags and fragments need separate policy/layout support.
                 if (u32(data + 32) || u32(data + 112) || u16(data + 116) ||
@@ -1691,7 +1692,7 @@ struct Validation {
                     return v.fail();
                 if (type == symlink && (!length || length > 4095))
                     return v.fail();
-                if (type == 0140000 &&
+                if ((type == fifo || type == 0140000) &&
                     (length || u32(data + 28) != count * (v.block_size / sector_size)))
                     return v.fail();
                 if (resize) {

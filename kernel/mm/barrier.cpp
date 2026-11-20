@@ -53,6 +53,9 @@ int memory_barrier(MemoryContext& memory, uint32_t command, uint32_t flags) {
     case query:
         return supported;
     case get_registrations:
+        // Linux exposes the common private state used by sync-core registration.
+        if (memory.barrier_registrations & register_private_sync_core)
+            return memory.barrier_registrations | register_private_expedited;
         return memory.barrier_registrations;
     case register_global_expedited:
     case register_private_expedited:

@@ -1,29 +1,27 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-# /**
-#  * @file    scripts/sysinfo_test.py
-#  * @brief   Verify Linux sysinfo with native and guest libc clients.
-#  * @author  frankischilling
-#  * @date    2026-11-19
-#  *
-#  * Compiles the test clients, boots isolated BIOS and UEFI guests, and checks
-#  * memory accounting, process load, and clean ext2 cache teardown.
-#  *
-#  * Copyright (C) 2026 frankischilling
-#  *
-#  * This program is free software: you can redistribute it and/or modify
-#  * it under the terms of the GNU General Public License as published by
-#  * the Free Software Foundation, either version 3 of the License, or
-#  * (at your option) any later version.
-#  *
-#  * This program is distributed in the hope that it will be useful,
-#  * but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  * GNU General Public License for more details.
-#  *
-#  * You should have received a copy of the GNU General Public License
-#  * along with this program. If not, see <https://gnu.org/licenses/>.
-#  */
+# @file    scripts/sysinfo_test.py
+# @brief   Verify Linux sysinfo with native and guest libc clients.
+# @author  frankischilling
+# @date    2026-11-19
+#
+# Compiles the test clients, boots isolated BIOS and UEFI guests, and checks
+# memory accounting, process load, and clean ext2 cache teardown.
+#
+# Copyright (C) 2026 frankischilling
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://gnu.org/licenses/>.
 """Exercise sysinfo with native libc clients and real Axiom64 allocations and tasks."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -39,7 +37,8 @@ from fetch import ROOT
 
 SOURCE = ROOT / 'userspace/tests/process/sysinfo.c'
 FIRMWARE = Path('/usr/share/OVMF')
-GUEST_MARKERS = ('SYSINFO_GUEST_MEMORY_PASS', 'SYSINFO_GUEST_SHARED_PASS', 'SYSINFO_GUEST_BUFFERS_PASS',
+GUEST_MARKERS = ('SYSINFO_GUEST_MEMORY_PASS', 'SYSINFO_GUEST_SHARED_PASS', 'SYSINFO_GUEST_MEMFD_PASS',
+                 'SYSINFO_GUEST_BUFFERS_PASS',
                  'SYSINFO_GUEST_LOAD_PASS ', 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0')
 
 

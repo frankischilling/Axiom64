@@ -11,6 +11,7 @@ from fetch import ROOT
 from ipv6_extension_execution import verify_execution
 from ipv6_lifetime_capture import records as wire_records
 from ipv6_queued_sources_capture import records as queued_records
+from reference_source import matches_file
 
 SOURCE = 'userspace/tests/net/ipv6_address_lifetimes.c'
 HOST = 'userspace/tests/net/ipv6_host.c'
@@ -147,8 +148,8 @@ def fixture():
     reference = saved['reference']
     require(saved['schema'] == 3 and reference['kernel'] == '7.0.0-1017-azure' and
             reference['actual_program_completed'] and reference['actual_cpio_reopened'] and
-            reference['complete_host_client'] and reference['source_sha256'] == digest(ROOT / SOURCE) and
-            reference['host_source_sha256'] == digest(ROOT / HOST), 'executed complete source-bound Linux7 lifetime reference')
+            reference['complete_host_client'] and matches_file(ROOT, SOURCE, reference['source_sha256']) and
+            matches_file(ROOT, HOST, reference['host_source_sha256']), 'executed complete source-bound Linux7 lifetime reference')
     require(len(saved['observations']['rows']) == 58 and len(saved['observations']['sources']) == 6,
             'complete Linux7 reference inventory')
     require(reference['queued_source_cases'] == 16 and reference['queued_valid_lifetime_seconds'] == 1 and

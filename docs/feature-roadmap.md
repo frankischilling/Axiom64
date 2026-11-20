@@ -665,7 +665,7 @@ Acceptance evidence:
 
 ### F28. Native development and full self-hosting
 
-Guest GCC, binutils, Make, and NASM assemble, compile, link, and execute C and C++. The native toolchain suite builds and loads a shared C++ library and checks cross-library exceptions and thread-local state. The guest builds the kernel, init, the ABI clients, and BusyBox from source. A small initramfs and ISO can be assembled inside Axiom64, exported, and booted under BIOS and UEFI. The full installed userspace still uses the host root filesystem pipeline.
+Guest GCC, binutils, Make, and NASM assemble, compile, link, and execute C and C++. The native toolchain suite builds and loads a shared C++ library and checks cross-library exceptions and thread-local state. The guest builds the kernel and musl from source. It links init, BusyBox, and the static and dynamic ABI clients against the resulting sysroot, then boots the guest-authored ISO under BIOS and UEFI. The full installed userspace still uses the host root filesystem pipeline.
 
 Required work:
 

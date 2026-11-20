@@ -173,15 +173,37 @@ def verify_system_image(directory, kernel, serial):
     return image, fingerprint(rootfs)
 
 
+def build_accelerator(requested):
+    if requested != 'auto':
+        return requested
+    # QEMU can reject KVM even when the device node exists and is accessible.
+    # Verify that the accelerator can start a VM before beginning the source build.
+    command = ['qemu-system-x86_64', '-machine', 'pc,accel=kvm', '-cpu', 'host', '-m', '64',
+               '-nodefaults', '-display', 'none', '-S', '-qmp', 'stdio']
+    commands = '{"execute":"qmp_capabilities"}\n{"execute":"quit"}\n'
+    try:
+        probe = subprocess.run(command, input=commands, text=True, capture_output=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print(f'KVM preflight failed: {error}', file=sys.stderr)
+        return 'tcg'
+    if probe.returncode == 0:
+        return 'kvm'
+    print(f'KVM preflight failed: {probe.stderr.strip()}', file=sys.stderr)
+    return 'tcg'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--accelerator', choices=('kvm', 'tcg'), default=os.getenv('AXIOM64_KERNEL_BUILD_ACCEL', 'tcg'))
+    parser.add_argument('--accelerator', choices=('auto', 'kvm', 'tcg'),
+                        default=os.getenv('AXIOM64_KERNEL_BUILD_ACCEL', 'tcg'))
     parser.add_argument('--build-timeout', type=int, default=5400, help='seconds allowed for the in-guest build')
     parser.add_argument('--source-tools', action='store_true', help='build and use the pinned GNU Make and NASM sources')
     parser.add_argument('--system-image', action='store_true', help='build init, a small rootfs, and the ISO in the guest')
     args = parser.parse_args()
     if args.build_timeout <= 0:
         parser.error('--build-timeout must be positive')
+    accelerator = build_accelerator(args.accelerator)
+    print(f'Guest build accelerator: {accelerator}', flush=True)
     build = ROOT / 'build'
     directory = Path(tempfile.mkdtemp(prefix='guest-kernel-', dir=build))
     print(f'Guest kernel evidence: {directory}', flush=True)
@@ -191,7 +213,7 @@ def main():
     build_root = directory / 'compiler.cpio'
     sources, tools = pack_fixture(rootfs, build_root, args.source_tools, args.system_image)
     compile_image = make_image(directory, directory.name + '-compiler.iso', kernel, build_root)
-    result, check, serial, command = export_kernel(directory, compile_image, args.accelerator, args.build_timeout,
+    result, check, serial, command = export_kernel(directory, compile_image, accelerator, args.build_timeout,
                                                    args.system_image)
     if args.source_tools and serial.read_text(errors='replace').splitlines().count('AXIOM64_BUILD_TOOLS_BUILT') != 1:
         raise RuntimeError(f'no completed source tool build was observed, see {serial}')

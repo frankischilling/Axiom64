@@ -4,6 +4,8 @@ on:
     branches: [main]
     tags: ['**']
   pull_request:
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
     inputs:
       manager_accelerator:
@@ -2417,7 +2419,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require the build and every test suite to pass
+      - name: Require the build and every test suite to pass on the first attempt
         env:
           BUILD_RESULT: ${{ needs.build.result }}
           ADMISSION_RESULT: ${{ needs.storage-admission.result }}
@@ -2427,6 +2429,10 @@ jobs:
           ACCOUNT_ROTATION_RESULT: ${{ needs.account-rotation-storage.result }}
           ACCOUNT_COVERAGE_RESULT: ${{ needs.account-storage-coverage.result }}
         run: |
+          if [ "$GITHUB_RUN_ATTEMPT" != 1 ]; then
+            echo "::error::Fix the original failure and push a new revision. A rerun cannot qualify this commit."
+            exit 1
+          fi
           test "$BUILD_RESULT" = success
           test "$ADMISSION_RESULT" = success
           test "$TEST_RESULT" = success

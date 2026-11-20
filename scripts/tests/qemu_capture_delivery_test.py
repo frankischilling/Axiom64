@@ -11,7 +11,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ipv6_device_frames import decode
 from ipv6_device_pending_capture import inspect, plan
-from ipv6_device_pending_peer import Peer
+from ipv6_device_pending_peer import CONFLICT, STATE, Peer
 from ipv6_router_capture import qemu_records
 from qemu_capture_delivery import Delivery
 
@@ -48,7 +48,7 @@ class PhysicalDelivery(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, row['expected_error']):
                         inspect(case / 'lane0.pcap', 0, text, row['action'], row['state'])
 
-    def test_partial_record_gates_the_actual_peer(self):
+    def test_partial_probe_and_conflict_records_gate_the_actual_peer(self):
         case, row = self.fixture('before')
         packets = [list(qemu_records(case / f'lane{lane}.pcap')) for lane in range(2)]
         for subject in range(2):
@@ -60,53 +60,61 @@ class PhysicalDelivery(unittest.TestCase):
                 for peer in peers:
                     peer.bind_peers(peers)
                 companion = 1 - subject
+                companion_peer = peers[companion]
                 requests = [packet['frame'] for packet in packets[companion] if
                             packet['frame'][12:14] == b'\x88\xc4' and
-                            packet['frame'][6:12] == peers[companion].guest]
+                            packet['frame'][6:12] == companion_peer.guest]
+                capture_name = f'lane{subject}.pcap'
+                data = (case / capture_name).read_bytes()
+                capture = directory / capture_name
+                records = {}
+                offset = 24
+                for packet in packets[subject]:
+                    end = offset + 16 + len(packet['frame'])
+                    records.setdefault(packet['frame'], (offset, end, packet['stamp']))
+                    offset = end
+
+                def acknowledge_after_capture(request, delivered):
+                    start, end, stamp = records[delivered]
+                    for length in (start + 7, end - 1):
+                        capture.write_bytes(data[:length])
+                        companion_peer.tick()
+                        self.assertFalse(companion_peer.outgoing)
+                    capture.write_bytes(data[:end])
+                    companion_peer.tick()
+                    acknowledgment = next(packet['frame'] for packet in packets[companion] if
+                                          packet['frame'][12:14] == b'\x88\xc4' and
+                                          packet['frame'][6:12] == companion_peer.control and
+                                          packet['frame'][19] == request[19])
+                    self.assertEqual(companion_peer.outgoing, [acknowledgment])
+                    companion_peer.outgoing.clear()
+                    companion_peer.tick()
+                    self.assertFalse(companion_peer.outgoing)
+                    return stamp
+
                 probe = next(packet['frame'] for packet in packets[subject] if
                              len(packet['frame']) == 86 and packet['frame'][54] == 135)
                 for frame in requests:
-                    if (frame[20], frame[23]) == (2, 10):
+                    companion_peer.receive(frame)
+                    if frame[20] == STATE:
+                        companion_peer.tick()
+                        self.assertFalse(companion_peer.outgoing)
                         peers[subject].receive(probe)
-                    peers[companion].receive(frame)
-                    if frame[20] == 12:
+                        capture.write_bytes(data[:23])
+                        companion_peer.tick()
+                        self.assertFalse(companion_peer.outgoing)
+                        acknowledge_after_capture(frame, probe)
+                    if frame[20] == CONFLICT:
                         break
-                    peers[companion].outgoing.clear()
+                    companion_peer.outgoing.clear()
                 conflict = peers[subject].outgoing.pop()
                 self.assertFalse(peers[subject].output)
-                self.assertFalse(peers[companion].outgoing)
-                data = (case / f'lane{subject}.pcap').read_bytes()
-                offset = 24
-                while True:
-                    size = struct.unpack_from('<I', data, offset + 8)[0]
-                    if data[offset + 16:offset + 16 + size] == conflict:
-                        break
-                    offset += 16 + size
-                capture = directory / f'lane{subject}.pcap'
-                capture.write_bytes(data[:23])
-                peers[companion].tick()
-                self.assertFalse(peers[companion].outgoing)
-                capture.write_bytes(data[:offset + 7])
-                peers[companion].tick()
-                self.assertFalse(peers[companion].outgoing)
-                capture.write_bytes(data[:offset + 16 + size - 1])
-                peers[companion].tick()
-                self.assertFalse(peers[companion].outgoing)
-                capture.write_bytes(data[:offset + 16 + size])
-                peers[companion].tick()
-                acknowledgment = next(packet['frame'] for packet in packets[companion] if
-                                      packet['frame'][12:14] == b'\x88\xc4' and
-                                      packet['frame'][6:12] == peers[companion].control and
-                                      packet['frame'][19] == frame[19])
-                self.assertEqual(peers[companion].outgoing, [acknowledgment])
-                receipt = peers[companion].conflicts[-1]['capture_delivery']
+                self.assertFalse(companion_peer.outgoing)
+                stamp = acknowledge_after_capture(frame, conflict)
+                receipt = companion_peer.conflicts[-1]['capture_delivery']
                 self.assertEqual(receipt['physical'], subject)
                 self.assertEqual(receipt['sha256'], hashlib.sha256(conflict).hexdigest())
-                self.assertEqual(receipt['packet_microseconds'], next(
-                    packet['stamp'] for packet in packets[subject] if packet['frame'] == conflict))
-                peers[companion].outgoing.clear()
-                peers[companion].tick()
-                self.assertFalse(peers[companion].outgoing)
+                self.assertEqual(receipt['packet_microseconds'], stamp)
 
     def test_actual_first_ready_query_precedes_the_initial_inventory(self):
         case, row = self.fixture('first-ready')

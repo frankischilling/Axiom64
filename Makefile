@@ -854,7 +854,7 @@ test-guest-kernel: build/axiom64.elf build/rootfs.cpio
 test-guest-system: build/axiom64.elf build/rootfs.cpio
 	$(PYTHON) -B scripts/guest_kernel_test.py --source-tools --system-image $(GUEST_KERNEL_FLAGS)
 test-guest-binutils: build/axiom64.elf build/rootfs.cpio
-	$(PYTHON) -B scripts/guest_binutils_test.py
+	$(PYTHON) -B scripts/guest_binutils_test.py $(GUEST_BINUTILS_FLAGS)
 .PHONY: cross-toolchain cross-toolchain-sources test-cross-toolchain
 cross-toolchain:
 	$(PYTHON) -B scripts/build_cross_toolchain.py $(CROSS_TOOLCHAIN_FLAGS)

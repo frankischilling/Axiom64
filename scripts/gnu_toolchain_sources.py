@@ -50,8 +50,7 @@ def archive_file(name, url, checksum, offline):
     return download(url, destination, expected_sha256=checksum)
 
 
-def source_inputs(offline=False):
-    lock = pins()
+def release_inputs(lock, names, offline=False):
     verify(KEYS, lock['keys_sha256'], 'sha256')
     paths = [KEYS]
     signed = []
@@ -59,7 +58,8 @@ def source_inputs(offline=False):
         keyring = Path(home) / 'release-keys.gpg'
         subprocess.run(['gpg', '--batch', '--homedir', home, '--output', str(keyring),
                         '--dearmor', str(KEYS)], check=True)
-        for release in lock['releases'].values():
+        for component in names:
+            release = lock['releases'][component]
             name, url = release['archive'], release['url']
             source = archive_file(name, url, release['sha256'], offline)
             signature = archive_file(name + '.sig', url + '.sig', release['signature_sha256'], offline)
@@ -71,6 +71,12 @@ def source_inputs(offline=False):
                 raise RuntimeError(f'{name}: release signature failed\n{result.stderr}')
             paths.extend((source, signature))
             signed.append({'archive': name, 'signer': signers[0]})
+    return paths, signed
+
+
+def source_inputs(offline=False):
+    lock = pins()
+    paths, signed = release_inputs(lock, lock['releases'], offline)
     for item in lock['gcc_prerequisites'].values():
         name = item['archive']
         paths.append(archive_file(name, INFRASTRUCTURE + name, item['sha256'], offline))

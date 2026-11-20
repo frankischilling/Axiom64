@@ -40,7 +40,7 @@ cd "$source"
 sha256sum -c /root/binutils-inputs/source.sha256 > "$output/source-check.log"
 echo AXIOM64_BINUTILS_SOURCES_VERIFIED
 cd "$work"
-release="$source/binutils-with-gold-2.44"
+release="$source/@BINUTILS_RELEASE@"
 target=$(gcc -dumpmachine)
 bison --version
 flex --version

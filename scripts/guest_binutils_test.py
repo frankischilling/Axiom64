@@ -38,6 +38,7 @@ from account_normal_test import write_cpio
 from disk_root import archive_entries
 from fetch import ROOT
 from fixture_archive import fingerprint
+from gnu_toolchain_sources import pins as gnu_pins, release_inputs
 from guest_kernel_test import make_image, run_build_vm
 from ports import LOCKFILE, locked_package, overlay_tar
 from qemu_acceleration import Acceleration
@@ -45,7 +46,7 @@ from sources import SOURCE_LOCK, port_sources
 
 
 TOOLCHAIN = ROOT / 'userspace/tests/toolchain'
-RELEASE = 'binutils-with-gold-2.44'
+PATCHED_RELEASE = 'binutils-with-gold-2.44'
 LICENSES = ('COPYING', 'COPYING.LIB', 'COPYING3', 'COPYING3.LIB')
 GENERATORS = {'bison', 'flex', 'm4'}
 
@@ -71,29 +72,39 @@ def make_disk(path, size, tree=None):
     subprocess.run([*command, str(path)], check=True)
 
 
-def prepare_source(directory):
-    pin, = (row for row in json.loads(SOURCE_LOCK.read_text())['ports'] if row['origin'] == 'binutils')
-    _, paths = port_sources(pin)
-    archive, = (path for path in paths if path.name == f'{RELEASE}.tar.xz')
-    patches = [path for path in paths if path.suffix == '.patch']
+def prepare_source(directory, version):
+    if version == '2.44':
+        pin, = (row for row in json.loads(SOURCE_LOCK.read_text())['ports'] if row['origin'] == 'binutils')
+        _, paths = port_sources(pin)
+        release, size = PATCHED_RELEASE, 512
+        patches = [path for path in paths if path.suffix == '.patch']
+        archive, = (path for path in paths if path.name == f'{release}.tar.xz')
+    else:
+        lock = gnu_pins()
+        pin = lock['releases']['binutils']
+        paths, _ = release_inputs(lock, ('binutils',))
+        release, size = pin['directory'], 640
+        patches = []
+        archive, = (path for path in paths if path.name == pin['archive'])
     disk = directory / 'source.raw'
     with tempfile.TemporaryDirectory(prefix='source-tree-', dir=directory) as temporary:
-        tree = Path(temporary) / RELEASE
-        with tarfile.open(archive) as release:
-            release.extractall(temporary, filter='data')
+        tree = Path(temporary) / release
+        with tarfile.open(archive) as stream:
+            stream.extractall(temporary, filter='data')
         for patch in patches:
             subprocess.run(['patch', '--batch', '--fuzz=0', '--no-backup-if-mismatch',
                             '-p1', '-i', str(patch)], cwd=tree, check=True)
         # The patches change ldgram.y and ldlex.l. Leaving their release outputs
         # in the source tree makes the lexer wrapper include stale code and the
         # install rules try to update files on the read-only source disk.
-        for generated in ('ldgram.c', 'ldgram.h', 'ldlex.c'):
-            (tree / 'ld' / generated).unlink()
+        if patches:
+            for generated in ('ldgram.c', 'ldgram.h', 'ldlex.c'):
+                (tree / 'ld' / generated).unlink()
         checks = source_checklist(Path(temporary))
         (directory / 'source.sha256').write_bytes(checks)
         licenses = {name: (tree / name).read_bytes() for name in LICENSES}
-        make_disk(disk, 512, temporary)
-    return disk, checks, licenses, pin
+        make_disk(disk, size, temporary)
+    return disk, checks, licenses, pin, release
 
 
 def verify_generator_inputs(files):
@@ -111,7 +122,7 @@ def verify_generator_inputs(files):
     return pins
 
 
-def pack_compiler(rootfs, destination, checks):
+def pack_compiler(rootfs, destination, checks, release):
     files = archive_entries(rootfs)
     pins = verify_generator_inputs(files)
     directory = 'root/binutils-inputs'
@@ -121,7 +132,11 @@ def pack_compiler(rootfs, destination, checks):
     files[directory] = (0o40755, b'')
     files[f'{directory}/source.sha256'] = (0o100644, checks)
     files[f'{directory}/check-binutils.sh'] = (0o100755, (TOOLCHAIN / 'check-binutils.sh').read_bytes())
-    files['etc/boot-test.sh'] = (0o100755, (TOOLCHAIN / 'build-binutils.sh').read_bytes())
+    template = (TOOLCHAIN / 'build-binutils.sh').read_bytes()
+    token = b'@BINUTILS_RELEASE@'
+    if template.count(token) != 1:
+        raise RuntimeError('binutils build script is missing its release input')
+    files['etc/boot-test.sh'] = (0o100755, template.replace(token, release.encode()))
     write_cpio(destination, files)
     return pins
 
@@ -218,6 +233,7 @@ def verify_boot(directory, kernel, rootfs, package, licenses):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--release', choices=('2.44', '2.46'), default='2.44')
     parser.add_argument('--accelerator', choices=('auto', 'kvm', 'tcg'), default='auto')
     parser.add_argument('--build-timeout', type=int, default=7200)
     args = parser.parse_args()
@@ -228,10 +244,10 @@ def main():
     print(f'Guest binutils evidence: {directory}', flush=True)
     kernel, rootfs = build / 'axiom64.elf', build / 'rootfs.cpio'
     inputs = dict(kernel=fingerprint(kernel), bootstrap=fingerprint(rootfs))
-    source, checks, licenses, pin = prepare_source(directory)
+    source, checks, licenses, pin, release = prepare_source(directory, args.release)
     source_identity = fingerprint(source)
     bootstrap = directory / 'compiler.cpio'
-    generators = pack_compiler(rootfs, bootstrap, checks)
+    generators = pack_compiler(rootfs, bootstrap, checks, release)
     image = make_image(directory, 'binutils-compiler.iso', kernel, bootstrap)
     acceleration = Acceleration(args.accelerator)
     package, command = build_tools(directory, source, image, acceleration, args.build_timeout)
@@ -239,7 +255,7 @@ def main():
             rootfs) != inputs['bootstrap']:
         raise RuntimeError('an input changed during the native binutils build')
     status, result = verify_boot(directory, kernel, rootfs, package, licenses)
-    report = dict(passed=status == 0, inputs=inputs, source=source_identity, source_pin=pin,
+    report = dict(passed=status == 0, release=args.release, inputs=inputs, source=source_identity, source_pin=pin,
                   prepared_source_list=fingerprint(directory / 'source.sha256'), generators=generators,
                   command=command, accelerator=acceleration.evidence, package=fingerprint(package), **result)
     (directory / 'result.json').write_text(json.dumps(report, indent=2) + '\n')

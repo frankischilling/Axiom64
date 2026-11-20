@@ -17,11 +17,14 @@ MODULES = ('store', 'transaction', 'database', 'record', 'password', 'home', 'au
            'protected', 'login_record', 'logbook', 'recorded', 'update', 'busy', 'guard')
 PROGRAMS = {'accountctl': 'manage', 'account-access': 'access', 'account-console': 'console'}
 DESKTOP_INPUTS = [f'userspace/desktop/{name}.{suffix}' for name in ('seat', 'authority') for suffix in ('c', 'h')]
-INPUTS = [*(f'userspace/accounts/{name}.{suffix}' for name in MODULES for suffix in ('c', 'h')),
-          'userspace/accounts/logbook_rotation.c', 'userspace/accounts/logbook_internal.h',
+COMMON_SOURCES = [*(f'userspace/accounts/{name}.c' for name in MODULES),
+                  'userspace/accounts/logbook_rotation.c',
+                  *(name for name in DESKTOP_INPUTS if name.endswith('.c'))]
+INPUTS = [*COMMON_SOURCES, *(f'userspace/accounts/{name}.h' for name in MODULES),
+          'userspace/accounts/logbook_internal.h', *(name for name in DESKTOP_INPUTS if name.endswith('.h')),
           *(f'userspace/accounts/{name}.c' for name in PROGRAMS.values()),
           'scripts/build_accounts.py', 'scripts/build_libxcrypt.py', 'scripts/build_musl.py',
-          'scripts/linux_uapi.py', 'dependencies.json', 'sources.lock.json', *DESKTOP_INPUTS]
+          'scripts/linux_uapi.py', 'dependencies.json', 'sources.lock.json']
 
 
 def digest(path):
@@ -68,20 +71,32 @@ def ensure(provider='build', linkage='static'):
         if destination.exists():
             raise RuntimeError('incomplete account build retained: ' + str(destination))
         destination.mkdir()
+        flags = [*compiler, '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
+                 '-I' + str(stage / 'usr/include'), '-ffile-prefix-map=' + str(ROOT) + '=/usr/src/axiom64']
+        link_flags = ['-static', str(stage / 'usr/lib/libcrypt.a')] if linkage == 'static' else [
+            '-L' + str(stage / 'usr/lib'), '-lcrypt']
+        compile_flags = [*flags, '-static'] if linkage == 'static' else flags
+        env = environment()
+        object_dir = destination / 'objects'
+        object_dir.mkdir()
+        objects = []
+        module_commands = []
+        with (destination / 'modules-build.log').open('wb') as log:
+            for name in COMMON_SOURCES:
+                source_file = ROOT / name
+                output = object_dir / source_file.with_suffix('.o').name
+                command = [*compile_flags, '-c', str(source_file), '-o', str(output)]
+                subprocess.run(command, cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
+                               stdout=log, stderr=subprocess.STDOUT, check=True)
+                objects.append(output)
+                module_commands.append(command)
         commands, products = {}, {}
         for program, main in PROGRAMS.items():
             output = destination / program
-            command = [*compiler, '-std=c11', '-O2', '-g', '-Wall', '-Wextra', '-Werror',
-                       '-I' + str(stage / 'usr/include'),
-                       '-ffile-prefix-map=' + str(ROOT) + '=/usr/src/axiom64',
-                       *(str(ROOT / f'userspace/accounts/{name}.c') for name in MODULES),
-                       str(ROOT / 'userspace/accounts/logbook_rotation.c'),
-                       *(str(ROOT / name) for name in DESKTOP_INPUTS if name.endswith('.c')),
-                       str(ROOT / f'userspace/accounts/{main}.c'), '-o', str(output)]
-            command += ['-static', str(stage / 'usr/lib/libcrypt.a')] if linkage == 'static' else [
-                '-L' + str(stage / 'usr/lib'), '-lcrypt']
+            command = [*flags, *map(str, objects), str(ROOT / f'userspace/accounts/{main}.c'),
+                       '-o', str(output), *link_flags]
             with (destination / (program + '-build.log')).open('wb') as log:
-                subprocess.run(command, cwd=ROOT, env=environment(), stdin=subprocess.DEVNULL,
+                subprocess.run(command, cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
                                stdout=log, stderr=subprocess.STDOUT, check=True)
             headers = subprocess.check_output(['readelf', '-W', '-l', str(output)], text=True)
             dynamic = subprocess.check_output(['readelf', '-W', '-d', str(output)], text=True)
@@ -95,8 +110,11 @@ def ensure(provider='build', linkage='static'):
             products[program] = digest(output)
         if source != {name: digest(ROOT / name) for name in source}:
             raise RuntimeError('account source changed during build')
+        for output in objects:
+            output.unlink()
+        object_dir.rmdir()
         manifest.write_text(json.dumps(dict(identity=identity, identity_inputs=identity_inputs,
-            commands=commands, products=products), indent=2) + '\n')
+            module_commands=module_commands, commands=commands, products=products), indent=2) + '\n')
     print('ACCOUNTS_BUILD_PASS provider=' + provider + ' linkage=' + linkage, flush=True)
     return destination
 

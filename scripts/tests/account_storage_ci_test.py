@@ -3,15 +3,17 @@
 import itertools
 import json
 import os
-import subprocess
 import tempfile
 from pathlib import Path
 import sys
+import tomllib
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from account_storage_ci import matrices, outputs
 from account_storage_shards import partition_targets, verify_complete_shards
+import local_validation
 
 
 def expand(matrix):
@@ -24,20 +26,10 @@ def rotation_profiles(matrix):
             yield dict(job, scenario=scenario)
 
 
-def rotation_workflow():
-    text = (Path(__file__).resolve().parents[2] / '.github/workflows/build.yml').read_text()
-    return text.split('  account-rotation-storage:\n', 1)[1].split('\n  account-storage-coverage:\n', 1)[0]
-
-
 def rotation_steps():
-    result = []
-    for block in rotation_workflow().split('      - name: ')[1:]:
-        name, body = block.split('\n', 1)
-        if name.startswith('Interrupt every '):
-            command = body.split('        run: |\n', 1)[1]
-            command = '\n'.join(line[10:] for line in command.splitlines() if line.strip())
-            result.append((name, body, command))
-    return result
+    with (local_validation.ROOT / 'scripts/local_test_suites.toml').open('rb') as stream:
+        plan = tomllib.load(stream)
+    return [step for step in plan['step'] if 'account-rotation-storage' in step['suites']]
 
 
 class StorageCI(unittest.TestCase):
@@ -102,11 +94,11 @@ class StorageCI(unittest.TestCase):
 
     def run_rotation_steps(self, jobs, failures=()):
         steps = rotation_steps()
-        self.assertEqual(len(steps), 2)
-        self.assertNotIn('continue-on-error:', rotation_workflow())
-        self.assertIn('    timeout-minutes: 75\n', rotation_workflow())
-        self.assertIn('        if: ${{ !cancelled() }}\n', steps[1][1])
-        with tempfile.TemporaryDirectory(prefix='rotation-workflow-') as temporary:
+        self.assertEqual(len(steps), 3)
+        self.assertFalse(steps[0].get('after_failure', False))
+        self.assertTrue(steps[1]['after_failure'])
+        self.assertTrue(steps[2]['after_failure'])
+        with tempfile.TemporaryDirectory(prefix='rotation-validation-') as temporary:
             directory = Path(temporary)
             bindir = directory / 'bin'
             bindir.mkdir()
@@ -127,19 +119,17 @@ class StorageCI(unittest.TestCase):
                                    SHARD_COUNT='1', CI_CALL_LOG=str(log),
                                    CI_FAIL_SCENARIOS=json.dumps(failures),
                                    PATH=str(bindir)+os.pathsep+os.environ['PATH'])
-                for name, body, command in steps:
-                    result = subprocess.run(['bash', '--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', command],
-                                            cwd=directory, env=environment, text=True, capture_output=True)
-                    expected = 17 if any('every '+scenario+' rotation' in name for scenario in failures) else 0
-                    self.assertEqual(result.returncode, expected, result.stderr)
-                    results.append(result.returncode)
+                with patch.object(local_validation, 'ROOT', directory):
+                    status = local_validation.run_steps(steps, environment)
+                self.assertEqual(status, 17 if failures else 0)
+                results.append(status)
             calls = [json.loads(line) for line in log.read_text().splitlines()]
         return results, calls
 
     def test_actual_rotation_steps_dispatch_every_profile_once(self):
         jobs = expand(matrices()['account_rotation_matrix'])
         statuses, calls = self.run_rotation_steps(jobs)
-        self.assertEqual(statuses, [0] * 64)
+        self.assertEqual(statuses, [0] * 32)
         producers = [row for row in calls if row[2].endswith('account_logbook_rotation_ext2.py')]
         collectors = [row for row in calls if row[2].endswith('account_rotation_storage_coverage.py')]
         self.assertEqual(len(producers), 64)
@@ -178,22 +168,15 @@ class StorageCI(unittest.TestCase):
                 self.assertTrue(all(not any('-'+scenario+'-' in row[row.index('--directory')+1]
                                             for scenario in failures) for row in collectors))
 
-    def test_both_published_indices_keep_their_scenario_directories(self):
-        workflow = rotation_workflow()
-        block = workflow.split('      - name: Upload rotation coverage index\n', 1)[1]
-        paths = block.split('          path: |\n', 1)[1].splitlines()
-        self.assertEqual(len(paths), 2)
+    def test_both_retained_indices_keep_their_scenario_directories(self):
         job = expand(matrices()['account_rotation_matrix'])[0]
-        rendered = []
-        for path in paths:
-            for name, value in job.items():
-                path = path.replace('${{ matrix.'+name+' }}', str(value))
-            self.assertNotIn('${{', path)
-            rendered.append(Path(path.strip()))
-        self.assertEqual(os.path.commonpath(rendered), 'build')
-        members = {path.relative_to('build').as_posix() for path in rendered}
+        _, calls = self.run_rotation_steps([job])
+        retained = [row[row.index('--output') + 1] for row in calls
+                    if row[2].endswith('account_rotation_storage_coverage.py')]
+        self.assertEqual(os.path.commonpath(retained), 'build')
+        members = {Path(path).relative_to('build').as_posix() for path in retained}
         self.assertEqual(len(members), 2)
-        self.assertTrue(all(path.name == 'coverage-index.json' for path in rendered))
+        self.assertTrue(all(Path(path).name == 'coverage-index.json' for path in retained))
         self.assertTrue(any('-basic-' in path for path in members))
         self.assertTrue(any('-expiry-' in path for path in members))
 

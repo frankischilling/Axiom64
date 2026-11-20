@@ -3,9 +3,12 @@
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tcp_icmp_capture import capture_receipts, within
+from tcp_icmp_peer import Flow, Peer, SYN
+from tcp_fault_test import flush_peer
 
 
 class PacketArrivalClock(unittest.TestCase):
@@ -68,6 +71,41 @@ class PacketArrivalClock(unittest.TestCase):
                                                ready + 'ICMP_CAPTURE_CLOCK phase=end')
         with self.assertRaisesRegex(ValueError, 'observers armed before traffic'):
             capture_receipts(text)
+
+
+class CycleQuoteTiming(unittest.TestCase):
+    def test_delayed_tick_preserves_silence_after_stale_quote(self):
+        peer = Peer(0)
+        previous = Flow(peer, 0, 49000, 41000, cycle=0)
+        previous.syn_frame = bytes(38) + b'old!'
+        current_frame = bytes(38) + b'new!'
+        current = Flow(peer, 0, 49000, 41000, cycle=2)
+        peer.flows = [previous, current]
+        now = 10.0
+        channel = Mock()
+        channel.send.side_effect = BlockingIOError
+        with patch('tcp_icmp_peer.time.monotonic', side_effect=lambda: now), \
+                patch.object(current, 'quote', side_effect=peer.outgoing.append):
+            current.input({'flags': SYN, 'seq': 1}, current_frame)
+            now = 10.157  # A runner pause lasts past both original trigger times.
+            peer.tick()
+            self.assertEqual(peer.outgoing, [previous.syn_frame])
+            flush_peer(peer, channel)
+            self.assertTrue(peer.output)
+            now = 10.29  # The transport has yet to finish sending the stale quote.
+            peer.tick()
+            self.assertFalse(peer.outgoing)
+            channel.send.side_effect = None
+            channel.send.return_value = len(peer.output)
+            flush_peer(peer, channel)
+            self.assertFalse(peer.output)
+            now = 10.39
+            peer.tick()
+            self.assertFalse(peer.outgoing)
+            now = 10.416
+            peer.tick()
+            self.assertEqual(peer.outgoing, [current_frame])
+            self.assertFalse(peer.pending)
 
 
 if __name__ == '__main__':

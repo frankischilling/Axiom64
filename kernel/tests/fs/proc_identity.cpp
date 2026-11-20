@@ -1,10 +1,36 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/tests/fs/proc_identity.cpp
+ * @brief   Procfs identity tests.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Checks process and thread identities and pipe size controls in procfs.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "fs/proc.hpp"
+#include "fs/memfd.hpp"
+#include "fs/pipe.hpp"
 #include "fs/proc/ipv4.hpp"
 #include "fs/proc/ipv6.hpp"
 #include "process/task.hpp"
 #include "core/random.hpp"
 #include "core/random/primitives.hpp"
+#include "core/time.hpp"
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
@@ -20,6 +46,10 @@ static Node* retained = nullptr;
 static uint64_t network_generation = 1;
 static unsigned network_reads = 0;
 
+[[noreturn]] void panic(const char*) {
+    std::abort();
+}
+
 void* alloc(size_t size) {
     return std::malloc(size);
 }
@@ -32,6 +62,10 @@ Timestamp node_now() {
     return {};
 }
 
+uint64_t clock_realtime_ticks() {
+    return ticks;
+}
+
 Node* directory_parent(Node* node) {
     return node->parent ? node->parent : node;
 }
@@ -41,6 +75,15 @@ bool node_referenced(Node* node) {
         if (item == node)
             return true;
     return false;
+}
+
+// Named descriptor targets use the real VFS and memfd implementations in guest tests.
+void node_path(Node*, char*, size_t, bool) {
+    std::abort();
+}
+
+bool is_memfd(const Node*) {
+    std::abort();
 }
 
 int random_read(void* output, size_t size, bool insecure) {
@@ -180,6 +223,24 @@ static void network_lifetimes(bool ipv4) {
     ax::network_generation = 1;
 }
 
+static void pipe_control(ax::Node* root) {
+    auto limit = child(child(child(root, "sys"), "fs"), "pipe-max-size");
+    auto ops = ax::procfs_ops.control(limit);
+    assert(ops);
+    ax::Handle description{};
+    description.node = limit;
+    auto original = ax::pipe_limit(ax::PipeLimit::max_size);
+    assert(ops->write(&description, "4097\n", 5) == 5);
+    assert(ax::pipe_limit(ax::PipeLimit::max_size) == 8192);
+    description.offset = 0;
+    assert(ops->write(&description, "bad\n", 4) == -22);
+    assert(!description.offset);
+    char bytes[8]{};
+    assert(ops->read(&description, bytes, sizeof(bytes) - 1) == 5);
+    assert(!strcmp(bytes, "8192\n"));
+    assert(!ax::set_pipe_limit(ax::PipeLimit::max_size, original));
+}
+
 static unsigned long long start(const char* text) {
     const char* cursor = nullptr;
     for (auto item = text; *item; item++)
@@ -205,6 +266,7 @@ int main() {
     mount.root = ax::procfs_root(&mount);
     second.root = ax::procfs_root(&second);
     assert(mount.root && second.root);
+    pipe_control(mount.root);
     auto identifier = child(child(child(child(mount.root, "sys"), "kernel"), "random"), "boot_id");
     assert(identifier->mode == (ax::regular_file | 0444) && !identifier->uid && !identifier->gid);
     char bytes[2048]{};

@@ -1,4 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    userspace/tests/net/ipv4/address_lifetime_wire.c
+ * @brief   IPv4 address lifecycle wire test.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Changes interface addresses and observes how traffic follows their lifetimes.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
@@ -37,13 +60,14 @@ static uint64_t now(clockid_t clock) {
     return (uint64_t)value.tv_sec * 1000000000 + (uint64_t)value.tv_nsec;
 }
 
-static void event(const char* phase, long long status) {
+static uint64_t event(const char* phase, long long status) {
     uint64_t monotonic = now(CLOCK_MONOTONIC), realtime = now(CLOCK_REALTIME);
     printf("LIFETIME_WIRE_EVENT {\"case\":%u,\"lane\":%u,\"index\":%u,\"transport\":%u,"
            "\"survival\":%u,\"source\":%u,\"peer\":%u,\"guard\":%u,\"phase\":\"%s\","
            "\"status\":%lld,\"monotonic_ns\":%llu,\"realtime_ns\":%llu}\n",
            current_case, lane, device, transport, survival, local, peer, guard, phase, status,
            (unsigned long long)monotonic, (unsigned long long)realtime);
+    return monotonic;
 }
 
 static void hex(const void* input, size_t length) {
@@ -313,8 +337,8 @@ static void exercise(void) {
         event("stream-before", 64);
     }
     address(local, 0, 1, 1);
-    uint64_t began = now(CLOCK_MONOTONIC);
-    event("lifetime-start", 1);
+    /* Start the wait at the same clock sample the independent observer reads. */
+    uint64_t began = event("lifetime-start", 1);
     unsigned char bytes[64];
     payload(bytes, transport == 2 ? 5 : 2);
     if (transport != 2) {
@@ -332,8 +356,7 @@ static void exercise(void) {
         uint64_t next = current + 50000000;
         wait_until(next < expiry_deadline ? next : expiry_deadline);
     }
-    require(now(CLOCK_MONOTONIC) <= expiry_deadline, "bounded actual primary withdrawal");
-    event("withdrawn", 0);
+    require(event("withdrawn", 0) <= expiry_deadline, "bounded actual primary withdrawal");
     require(assigned(other) == (survival == 1 || survival == 3),
             "actual cascade or surviving address");
     command('B');

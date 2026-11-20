@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from ipv4_expiry_capture import read_capture
-from tcp6.isolation_capture import inspect
+from tcp6.isolation_capture import inspect, verify_capture_order
 
 FIXTURE=Path(__file__).parent/'fixtures/tcp6-isolation-prelude'
 
@@ -56,6 +56,21 @@ class Prelude(unittest.TestCase):
         changed=[copy.deepcopy(prelude) for _ in range(257)]+changed
         with self.assertRaisesRegex(ValueError,'before readiness'):
             inspect(changed,0,self.log)
+
+    def test_native_opposite_directions_can_interleave_kernel_timestamps(self):
+        client = bytes.fromhex('525400123410')
+        peer = bytes.fromhex('024950360100')
+        rows = [
+            dict(ns=10_000, frame=peer + client),
+            dict(ns=4_000, frame=client + peer),
+            dict(ns=11_000, frame=peer + client),
+        ]
+        verify_capture_order(rows, client, native=True)
+        with self.assertRaisesRegex(ValueError, 'capture order'):
+            verify_capture_order(rows, client, native=False)
+        rows[-1]['ns'] = 9_000
+        with self.assertRaisesRegex(ValueError, 'capture order'):
+            verify_capture_order(rows, client, native=True)
 
 
 if __name__=='__main__':

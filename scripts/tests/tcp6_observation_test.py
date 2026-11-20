@@ -17,6 +17,15 @@ from tcp6.pmtu_peer import Flow, SIZE
 from tcp_fault_peer import ACK
 
 
+def send_window(tap, frame, pause=0):
+    before = time.monotonic_ns()
+    # Model a producer descheduled between the timestamp and the write.
+    if pause:
+        time.sleep(pause)
+    assert os.write(tap.fd, frame) == len(frame)
+    return before, time.monotonic_ns()
+
+
 def delayed_pmtu_receipt():
     sent = []
     observed = []
@@ -52,11 +61,9 @@ def child():
         try:
             time.sleep(.08)
             frame = bytes.fromhex('02000000000102000000000288c1') + bytes(46)
-            first = time.monotonic_ns()
-            assert os.write(tap.fd, frame) == len(frame)
+            first = send_window(tap, frame, pause=.07)
             time.sleep(.12)
-            second = time.monotonic_ns()
-            assert os.write(tap.fd, frame) == len(frame)
+            second = send_window(tap, frame)
             time.sleep(.08)
         finally:
             statistics = capture.close()
@@ -65,8 +72,10 @@ def child():
         bind(path, rows, statistics)
         selected = [row for row in rows if row['frame'] == frame]
         assert len(selected) == 2
-        for row, sent in zip(selected, (first, second)):
-            assert row['arrival_lower_ns'] <= sent <= row['arrival_upper_ns']
+        for row, (before, after) in zip(selected, (first, second)):
+            lower, upper = row['arrival_lower_ns'], row['arrival_upper_ns']
+            assert lower <= after and before <= upper, (lower, upper, before, after)
+        assert selected[0]['arrival_lower_ns'] > first[0]
         assert selected[1]['arrival_lower_ns'] - selected[0]['arrival_upper_ns'] >= 100000000
         print(json.dumps(dict(passed=True, packets=statistics['packets'], quiet_gaps=3)))
 

@@ -45,11 +45,31 @@ musl-gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static -pthread userspace/tests/
 
 The matrix requires eight boots: BIOS/UEFI and modern/legacy virtio, each with normal traffic and a real virtio RX completion fault. The modern UEFI fault case adds five seconds of debugger setup delay to prove that host startup cannot consume guest ARP deadlines. Both adapters run together. The host peers construct and validate Ethernet/IP/UDP packets independently; guest socket operations execute in the kernel.
 
+During send-queue pressure, an alias keeps the original socket alive after its descriptor number is reused. The test requires both original epoll registrations to wake when the queue drains. The replacement socket must get a new registration before it can report readiness. The fixture reader requires a separate completion record for each adapter and rejects missing records or a downgraded fixture manifest.
+
 Normal cases require odd and maximum-MTU payloads, zero payloads, checksum-zero encoding, fourteen malformed forms per interface, source/peer filtering, client and server exchanges, loss/duplication/reordering, exact ICMP quotes, broadcast copies, byte quotas, and 48 proven broadcast arrivals retaining the oldest 32 on a lagging socket. A 33rd send blocks behind 32 unresolved outputs; the host then checks all original ports and payloads after descriptor and buffer replacement. QMP changes carrier state, and administrative state is tested separately. Administrative shutdown must clear both `IFF_UP` and `IFF_RUNNING`; the client records the queried flags before checking `ENETUNREACH` and restored transfers. This matches [Linux IPv4 route selection](https://github.com/torvalds/linux/blob/v7.0/net/ipv4/route.c#L2781-L2784) for a connected, device-bound socket after route retirement. Physical carrier loss retains its separate `ENETDOWN` check. Administrative shutdown also retires the learned path metric and neighbor mapping. The client queries the original locked MTU of 552 and the fresh MTU of 1500 after restored traffic. The peer requires a second complete ARP exchange and DF on that fresh route, while physical carrier return retains the earlier locked-path flags. All eight guest cases retain the original ninety-second bound and delayed UEFI fault case. Independent inspection opens both images and sixteen passive captures, checks the flag records and selected recovery/fault-isolation transfers, and rejects 76 serialized and reopened corruptions. That audit covers queried flags and selected transfers. Complete wire inspection is recorded below; final-source hosted and wider socket acceptance remain required.
 
 Common cases cover bind conflicts, disconnect policy, reused ports, shutdown, truncation and copy faults, zero-size receives, a 65507-byte loopback payload, retained receive metadata, interruption/restart, fork ownership, and 128 resource-reuse cycles. Guest checks also prove the exact 2048-byte send quota, including 28 header bytes. CI runs the common cases on native Linux. Fault cases pause the guest while GDB installs the breakpoint, then require the actual corrupted completion, persistent device errors, and an exchange on the remaining adapter. Results are `build/udp-results.json`; serial and debugger evidence use `build/udp-*.log` and `build/udp-*.gdb`.
 
 IPv4 UDP memberships and source filtering use the shared [multicast controls](ipv4.md). IPv4 packet-information, TTL and TOS [receive controls](ipv4.md#receive-metadata) are available. UDP segmentation/offload, further ancillary options, error queues, message batches, Unix datagram data and the complete Linux socket contract remain required. Common finite [socket deadlines](io.md) apply to blocking operations. Ports are sequential. The [credentials](credentials.md), [accounts](accounts.md) and [randomness](random.md) documents describe the current service prerequisites and limits.
+
+## UDP corking
+
+IPv4 and IPv6 UDP sockets assemble one pending datagram when a send uses
+`MSG_MORE`, a pipe transfer uses `SPLICE_F_MORE`, or `UDP_CORK` is enabled.
+Descriptor aliases share the pending bytes. A send without a corking flag
+flushes the datagram when `UDP_CORK` is off. Clearing `UDP_CORK` also flushes
+pending bytes. An empty send can flush pending bytes. An empty splice has no
+effect. Closing the last description discards any pending datagram.
+
+The final send reports its own byte count. An append that exceeds the datagram
+limit returns `EMSGSIZE` and discards the pending datagram. Pipe bytes from the
+failing append remain queued. The loopback tests check shared descriptors,
+destination selection, IPv4 TTL and IPv6 hop-limit controls, and replay after
+an oversized append. They record native Linux handling of a 17-slot page
+transfer separately, including successful byte counts followed by packet
+discard on Linux 7. Axiom64's copied transport must deliver all 17 bytes in
+one datagram.
 
 Protocol references are [UDP](https://www.rfc-editor.org/rfc/rfc768), [host requirements](https://www.rfc-editor.org/rfc/rfc1122), and [UDP surplus-area handling](https://www.rfc-editor.org/rfc/rfc9868). Linux comparisons use [Linux 6.12 UDP](https://github.com/torvalds/linux/blob/v6.12/net/ipv4/udp.c), [Internet socket operations](https://github.com/torvalds/linux/blob/v6.12/net/ipv4/af_inet.c), and [IP sysctls](https://github.com/torvalds/linux/blob/v6.12/Documentation/networking/ip-sysctl.rst). The tested contracts cover the behavior above; complete conformance remains planned.
 

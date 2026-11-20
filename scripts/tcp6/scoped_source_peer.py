@@ -6,6 +6,7 @@ from tcp6.source_peer import Peer as SourcePeer,Flow as SourceFlow
 from tcp_fault_peer import ACK,check,checksum
 
 MARKER='TCP6_SCOPED_SOURCE_LIFETIME_PASS lanes=2 rounds_each=2 flows_each=4 data_each=12 withdrawn_each=6'
+STEPS = (1, 8, 9, 10, 2, 11, 3, 4, 5, 6, 7)
 
 class Flow(SourceFlow):
     def __init__(self,peer,round_,companion):
@@ -28,6 +29,11 @@ class Peer(SourcePeer):
             if step in (8,9,10):
                 if step!=8 or self.flows[r*2].echo_ack:self.answer(frame);self.waiting=None
                 return
+            if step == 11:
+                if self.flows[r * 2 + 1].done:
+                    self.answer(frame)
+                    self.waiting = None
+                return
         return super().complete_if_ready()
     def receive(self,frame):
         if (len(frame)>=70 and frame[12:14]==b'\x86\xdd' and frame[20]==58 and
@@ -44,7 +50,7 @@ class Peer(SourcePeer):
             self.frames.append(dict(direction='receive',ms=(time.monotonic()-self.began)*1000,frame=frame.hex()))
             return
         if len(frame)>=21 and frame[12:14]==self.barrier_protocol and frame[19]:
-            phase=frame[19];expected=[r*16+s for r in range(2) for s in (1,8,9,10,2,3,4,5,6,7)]
+            phase=frame[19];expected=[r*16+s for r in range(2) for s in STEPS]
             check(self.ready and len(self.phases)<len(expected) and phase==expected[len(self.phases)] and
                 self.waiting is None and len(frame)==60 and frame[:12]==bytes([2,73,80,54,self.lane,0])+self.guest and
                 frame[14:19]==self.barrier_magic+bytes([self.lane]) and not any(frame[20:]),'ordered scoped source barriers')
@@ -52,7 +58,7 @@ class Peer(SourcePeer):
             self.phases.append(phase);self.waiting=(phase,frame);self.complete_if_ready();return
         return super().receive(frame)
     def result(self):
-        check(all(f.done for f in self.flows) and len(self.phases)==20 and self.waiting is None,
+        check(all(f.done for f in self.flows) and len(self.phases)==2*len(STEPS) and self.waiting is None,
             'complete actual scoped source-lifetime scenario')
         return dict(passed=True,lane=self.lane,frames=self.frames,scoped_source_withdrawal=True,
             full_scoped_source_device_semantics_qualified=False,

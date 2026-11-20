@@ -26,7 +26,7 @@ def main():
         expected=([(profile,None,None) for profile in ('native','static','dynamic')] if environment=='native' else
             [(profile,firmware,transport) for profile in ('static','dynamic') for firmware in ('bios','uefi') for transport in ('modern','legacy')])
         report=audit(directory,audit_root/environment,expected=expected)
-        controls=420 if environment=='native' else 416
+        controls=424 if environment=='native' else 420
         require(report['suite']=='scoped-source' and report['full_matrix'] and
                 report['rejected_capture_controls']==controls*len(expected),
                 'complete scoped-source profiles and semantic controls')
@@ -65,7 +65,7 @@ def main():
         link_local_source_withdrawal_with_companion_route=True,
         full_scoped_source_device_semantics_qualified=False)
     require((proof['rejected_capture_controls'],proof['rejected_product_controls'],proof['rejected_matrix_controls'])==
-            (4588,32,6),'complete packet, product and matrix control inventories')
+            (4632,32,6),'complete packet, product and matrix control inventories')
     write(args.output,proof)
     print(json.dumps(proof,indent=2))
 

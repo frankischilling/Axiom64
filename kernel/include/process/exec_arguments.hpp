@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/include/process/exec_arguments.hpp
+ * @brief   Executable argument import interface.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Defines the bounds and storage used when importing argument and environment
+ * vectors for exec.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #pragma once
 #include "core/base.hpp"
 
@@ -6,6 +30,7 @@ namespace ax {
 constexpr size_t exec_argument_limit = 6 * 1024 * 1024;
 constexpr size_t exec_string_limit = 32 * page_size; // Includes the terminating NUL.
 constexpr size_t exec_path_limit = 1024;             // Matches the current VFS path representation.
+constexpr size_t exec_filename_limit = exec_path_limit + 24;
 
 struct ExecStack {
     uint64_t bottom, top, strings, platform, filename, random, pointer;
@@ -26,8 +51,11 @@ class ExecArguments {
 
     int capture(Read, void*, uint64_t path, uint64_t argv, uint64_t envp,
                 uint64_t stack_limit = UINT64_MAX);
+    int capture_named(Read, void*, const char* filename, uint64_t argv, uint64_t envp,
+                      uint64_t stack_limit = UINT64_MAX);
     int capture_kernel(const char*, const char* const*, const char* const*,
                        uint64_t stack_limit = UINT64_MAX);
+    int enter_interpreter(const char* interpreter, const char* option, const char* script);
 
     const char* path() const {
         return path_;
@@ -54,7 +82,7 @@ class ExecArguments {
                     size_t auxiliary_size) const;
 
   private:
-    char path_[exec_path_limit]{};
+    char path_[exec_filename_limit]{};
     char* text_ = nullptr;
     const char** values_ = nullptr;
     size_t used_ = 0, capacity_ = 0, count_ = 0, vector_capacity_ = 0;
@@ -69,5 +97,6 @@ class ExecArguments {
     int vector(Read, void*, uint64_t, const char* const*, size_t&);
     int string(Read, void*, uint64_t, const char*, size_t);
     int finish(Read, void*, bool kernel, bool empty);
+    int capture_user_vectors(Read, void*, uint64_t argv, uint64_t envp);
 };
 } // namespace ax

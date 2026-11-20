@@ -1145,6 +1145,50 @@ jobs:
         run: |
           sudo -n make test-timerfd-native
           make test-timerfd
+      - name: Compare Linux signal descriptors and test queued signal delivery
+        if: matrix.suite == 'boot'
+        run: |
+          sudo -n make test-signalfd-native
+          make test-signalfd
+      - name: Compare System V semaphore, message queue, and shared-memory behavior
+        if: matrix.suite == 'boot'
+        run: |
+          sudo -n make test-system-v-semaphores-native
+          make test-system-v-semaphores
+          sudo -n make test-system-v-message-queues-native
+          make test-system-v-message-queues
+          sudo -n make test-system-v-shared-memory-native
+          make test-system-v-shared-memory
+      - name: Compare poll, select, and epoll descriptor and signal waits
+        if: matrix.suite == 'boot'
+        run: |
+          sudo -n make test-poll-waits-native
+          make test-poll-waits
+          sudo -n make test-select-waits-native
+          make test-select-waits
+          sudo -n make test-descriptor-wait-lifetime-native
+          make test-descriptor-wait-lifetime
+          sudo -n make test-udp-waits-native
+          make test-udp-waits
+          sudo -n make test-epoll-lifetime-native
+          make test-epoll-lifetime
+          sudo -n make test-epoll-nested-native
+          make test-epoll-nested
+      - name: Compare pipe, socket, and file transfers across processes and filesystems
+        if: matrix.suite == 'boot'
+        run: |
+          sudo -n make test-named-pipes-native test-pipe-transfer-native test-socket-splice-native test-file-transfers-native
+          sudo -n make test-memfd-native
+          make test-named-pipes test-pipe-transfer test-socket-splice test-file-transfers test-memfd
+      - name: Compare POSIX semaphores, message queues, and asynchronous I/O
+        if: matrix.suite == 'boot'
+        run: |
+          sudo -n make test-posix-semaphores-native
+          make test-posix-semaphores
+          sudo -n make test-posix-message-queues-native
+          make test-posix-message-queues
+          sudo -n make test-posix-aio-native
+          make test-posix-aio
       - name: Test virtio queue sizes and offered features
         if: matrix.suite == 'boot'
         run: make test-virtio
@@ -1651,6 +1695,12 @@ jobs:
           python3 scripts/tests/path_descriptor_storage_test.py
           sudo -n python3 scripts/path_descriptor_test.py --native --directory build/path-descriptors-native --fixtures /tmp/axiom64-ci-path-descriptors
           sudo -n python3 scripts/path_descriptor_test.py --directory build/path-descriptors-guest
+      - name: Compare Linux inotify and test guest RAM and ext2 event lifetimes
+        if: matrix.suite == 'configuration'
+        run: |
+          make test-inotify-queue
+          sudo -n make test-inotify-native
+          make test-inotify
 
       - name: Test virtio disks and reboot persistence
         if: matrix.suite == 'storage'
@@ -1773,6 +1823,42 @@ jobs:
             build/unix-datagram-guest.tar.gz
             build/timerfd-native/**
             build/timerfd-guest/**
+            build/signalfd-native/**
+            build/signalfd-guest/**
+            build/system-v-semaphores-native/**
+            build/system-v-semaphores-guest/**
+            build/system-v-message-queues-native/**
+            build/system-v-message-queues-guest/**
+            build/system-v-shared-memory-native/**
+            build/system-v-shared-memory-guest/**
+            build/posix-semaphores-native/**
+            build/posix-semaphores-guest/**
+            build/posix-message-queues-native/**
+            build/posix-message-queues-guest/**
+            build/posix-aio-native/**
+            build/posix-aio-guest/**
+            build/named-pipes-native/**
+            build/named-pipes-guest/**
+            build/pipe-transfer-native/**
+            build/pipe-transfer-guest/**
+            build/file-transfers-native/**
+            build/file-transfers-guest/**
+            build/memfd-native/**
+            build/memfd-guest/**
+            build/socket-splice-native/**
+            build/socket-splice-guest/**
+            build/poll-waits-native/**
+            build/poll-waits-guest/**
+            build/select-waits-native/**
+            build/select-waits-guest/**
+            build/descriptor-wait-lifetime-native/**
+            build/descriptor-wait-lifetime-guest/**
+            build/udp-waits-native/**
+            build/udp-waits-guest/**
+            build/epoll-lifetime-native/**
+            build/epoll-lifetime-guest/**
+            build/epoll-nested-native/**
+            build/epoll-nested-guest/**
             build/unix-stream-native/**
             build/unix-shutdown-native/**
             build/unix-stream-wait-native/**
@@ -1877,7 +1963,9 @@ jobs:
           name: axiom64-path-descriptors-evidence
           if-no-files-found: error
           compression-level: 1
-          path: build/path-descriptors-*/**
+          path: |
+            build/path-descriptors-*/**
+            build/inotify-*/**
       - name: Upload complete account source, process, filesystem and graphical evidence
         if: always() && startsWith(matrix.suite, 'accounts-')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

@@ -3,6 +3,7 @@
 import hashlib
 import json
 from pathlib import Path
+from reference_source import matches
 
 
 def digest(path):
@@ -22,7 +23,7 @@ def verify_execution(path, native, source, source_hash):
             'completed original full client with unchanged inputs')
     if native:
         before = json.loads((directory / 'preexecution.json').read_text())
-        require(before['source_sha256'][source] == source_hash,
+        require(matches(source, source_hash, before['source_sha256'][source]),
                 'actual native application contains the source-bound probe')
         for number, command in enumerate(before['command']):
             require(digest(directory / 'products' / f'{number}-{Path(command).name}') ==
@@ -30,5 +31,5 @@ def verify_execution(path, native, source, source_hash):
     else:
         linkage = directory.name.split('-', 1)[0]
         before = json.loads((directory.parent / (linkage + '-inputs.json')).read_text())
-        require(before['sources'][source] == source_hash,
+        require(matches(source, source_hash, before['sources'][source]),
                 'actual guest application contains the source-bound probe')

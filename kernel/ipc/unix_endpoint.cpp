@@ -1,6 +1,31 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/ipc/unix_endpoint.cpp
+ * @brief   Unix socket endpoint state.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Maintains names and endpoint references for bound, connected, and listening
+ * Unix sockets.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "socket_registry.hpp"
 #include "core/random.hpp"
+#include "io/descriptor_wait.hpp"
 
 namespace ax {
 static bool local_name_used(const UnixAddressValue& value, unsigned type) {
@@ -99,10 +124,19 @@ bool permits(const Socket& receiver, const Socket& sender) {
            (receiver.peer == &sender && receiver.peer_generation == sender.generation);
 }
 
+constexpr size_t max_unpaired_queue = 11;
+
 bool receiver_full(const Socket& receiver, const Socket& sender) {
     return &receiver != &sender &&
            !(receiver.peer == &sender && receiver.peer_generation == sender.generation) &&
-           receiver.datagrams.count() > 10;
+           receiver.datagrams.count() >= max_unpaired_queue;
+}
+
+void notify_datagram_space(const Socket& receiver) {
+    for (auto& sender : sockets)
+        if (sender.used && sender.type == 2 && sender.peer == &receiver &&
+            sender.peer_generation == receiver.generation && sender.datagram_send->writable())
+            descriptor_wait_notify(&sender, 4 | 0x100 | 0x200);
 }
 
 // Retained requests resume before the scheduler selects current. VFS lookup
@@ -174,11 +208,18 @@ void replace_peer(Socket& socket, Socket* peer) {
         old_name->drop();
     if (had_peer && (old.socket != peer || !live(old))) {
         bool lost = socket.datagrams.readable();
+        bool was_full = socket.datagrams.count() >= max_unpaired_queue;
         socket.datagrams.clear();
+        if (was_full)
+            notify_datagram_space(socket);
         if (lost && live(old) && old.socket->peer == &socket &&
-            old.socket->peer_generation == socket.generation)
+            old.socket->peer_generation == socket.generation) {
             old.socket->datagram_error = 104;
+            descriptor_wait_notify(old.socket, 8);
+        }
     }
+    if (socket_datagram_writable(socket))
+        descriptor_wait_notify(&socket, 4 | 0x100 | 0x200);
 }
 } // namespace
 
@@ -214,6 +255,13 @@ bool socket_datagram_writable(const Socket& socket) {
         return false;
     UnixDatagramTarget peer{socket.peer, socket.peer_generation};
     return !live(peer) || !receiver_full(*peer.socket, socket);
+}
+
+void socket_datagram_receive_wakeup(const Socket& receiver) {
+    // Connected nonreciprocal senders can be waiting on this receive queue.
+    // A peek can wake their poll registration without changing occupancy.
+    if (receiver.datagrams.count() >= max_unpaired_queue)
+        notify_datagram_space(receiver);
 }
 
 int64_t socket_datagram_write(Task& task, Socket* sender, UnixDatagramRecord* record,
@@ -263,6 +311,7 @@ int64_t socket_datagram_write(Task& task, Socket* sender, UnixDatagramRecord* re
             return -11;
         size_t length = record->size();
         receiver->datagrams.accept(record, receiver);
+        epoll_notify(receiver->description, 1 | 0x40);
         return length;
     }
 }

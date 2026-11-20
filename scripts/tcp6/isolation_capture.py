@@ -24,6 +24,16 @@ def upper(row):
     return row.get('arrival_upper_ns',row['ns'])
 
 
+def verify_capture_order(rows, client_mac, native):
+    previous = {}
+    for row in rows:
+        # A Linux packet socket can enqueue ingress and egress in a different
+        # order from their kernel timestamps. Keep both streams in read order.
+        direction = native and row['frame'][6:12] == client_mac
+        require(row['ns'] >= previous.get(direction, 0), 'unscaled original isolation capture order')
+        previous[direction] = row['ns']
+
+
 def data(round_, lane, tag, size=32):
     return bytes((round_*53+lane*97+tag*29+n*7)%256 for n in range(size))
 
@@ -132,7 +142,7 @@ def inspect(rows,lane,log,native=False):
     require(set(barriers)=={(p,a) for p in phases for a in range(2)}, 'all original two-way isolation controls')
     ordered=[barriers[p,a]['index'] for p in phases for a in range(2)]
     require(ordered==sorted(ordered) and len(set(ordered))==50, 'ordered original isolation barriers')
-    require(all(a['ns']<=b['ns'] for a,b in zip(rows,rows[1:])), 'unscaled original isolation capture order')
+    verify_capture_order(rows, guest, native)
     durations=[]
     concurrency=[]
     for round_ in range(4):

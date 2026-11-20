@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/net/packet.cpp
+ * @brief   Linux packet sockets.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Delivers link-layer frames and implements packet socket binding and
+ * transmission.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "net/packet.hpp"
 #include "process/task.hpp"
 #include "core/time.hpp"
@@ -129,8 +153,10 @@ void packet_deliver(const NetInfo& info, const void* data, size_t length, unsign
 
 int64_t packet_read(PacketSocket* socket, void* data, size_t length) {
     const auto frame = packet_front(socket);
-    if (!frame)
-        return -11;
+    if (!frame) {
+        auto info = net_info(socket->index);
+        return info && !info->live ? -5 : -11;
+    }
     size_t copied = min(length, frame->length);
     memcpy(data, packet_bytes(frame), copied);
     packet_observed(socket, *frame);

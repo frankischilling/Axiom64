@@ -267,7 +267,7 @@ def profile_controls(directory, reports, destination):
                     variants.append((f'wrong-administrative-{index}-{flags}', row,
                                      {relative + '/' + row['log']: changed.encode()},
                                      'exact original UDP administrative-down query flags'))
-        if version == 2 and not row['fault']:
+        if version >= 2 and not row['fault']:
             for index in (1, 2):
                 marker = f'UDP_ADMIN_ROUTE index={index} before=552 after=1500'
                 for field, replacement in (('missing', ''), ('before', marker.replace('before=552', 'before=1500')),
@@ -316,8 +316,10 @@ def input_controls(directory, input_root, destination):
         labels = ['missing-source', 'changed-source', 'changed-product', 'short-deadline',
                   'wrong-linkage', 'wrong-mode', 'changed-compiler-source', 'forged-UAPI-pin',
                   'missing-static-compile', 'changed-provider', 'unowned-image-client']
-        if original['version'] == 2:
+        if original['version'] >= 2:
             labels.append('route-contract-downgrade')
+        if original['version'] >= 3:
+            labels.append('epoll-alias-contract-downgrade')
         for label in labels:
             value = copy.deepcopy(original)
             changed = {}
@@ -344,6 +346,9 @@ def input_controls(directory, input_root, destination):
                 for name in ('scripts/tests/udp_peer_test.py', 'scripts/tests/fixtures/udp-route-retirement.json'):
                     del value['sources'][name]
                 expected = 'UDP route-lifetime contract matches the actual compiled client source'
+            elif label == 'epoll-alias-contract-downgrade':
+                value['version'] = 2
+                expected = 'UDP epoll alias contract matches the actual compiled client source'
             elif label == 'changed-provider':
                 provider = json.loads((source / 'musl-manifest.json').read_text())
                 provider['products']['sysroot/usr/lib/libc.a'] = '0' * 64
@@ -421,7 +426,7 @@ def main():
     retirement_controls = 0
     for row in reports:
         phase = args.directory / ('fault' if row['fault'] else 'normal')
-        route_retirement = json.loads((phase / 'inputs.json').read_text())['version'] == 2
+        route_retirement = json.loads((phase / 'inputs.json').read_text())['version'] >= 2
         case = args.directory / ('fault' if row['fault'] else 'normal') / (row['firmware'] + '-' + row['transport'])
         for lane in range(2):
             original = case / f'lane{lane}.pcap'

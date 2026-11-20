@@ -1,5 +1,30 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/net/ipv6/socket/syscall.cpp
+ * @brief   Linux IPv6 socket dispatch.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Translates socket calls into IPv6 endpoint operations and handles userspace
+ * data transfer.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "../socket.hpp"
+#include "io/descriptor_wait.hpp"
 #include "process/task.hpp"
 #include "net/tcp/socket.hpp"
 #include "net/socket_options.hpp"
@@ -167,6 +192,13 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             socket->index = index;
             socket->connected = true;
             ipv6_destination_store(socket->destination, path, first);
+            if (auto cork = socket->cork) {
+                cork->address = inet6_peer(socket);
+                cork->named = false;
+                cork->control.source = socket->local;
+                cork->control.index = socket->index;
+                cork->control.source_policy = Ipv6SourcePolicy::retained;
+            }
         }
         return 0;
     }
@@ -174,6 +206,7 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
         if (b > 2)
             return -22;
         socket->shutdown |= b == 0 ? 1 : b == 1 ? 2 : 3;
+        descriptor_wait_notify(socket, 0);
         return socket->connected ? 0 : -107;
     case 51:
     case 52: {
@@ -268,6 +301,14 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
             return -22;
         if ((d || b != 41) && !task.memory->space.copy_in(&value, d, 4))
             return -14;
+        if (b == 17 && c == 1 && inet6_udp(socket)) {
+            socket->udp_cork = value != 0;
+            if (!socket->udp_cork && socket->cork) {
+                inet6_send(socket, inet6_peer(socket), nullptr, 0);
+                Inet6UdpCork::discard(socket->cork);
+            }
+            return 0;
+        }
         if (b == 1 && c == 2)
             socket->reuse = value != 0;
         else if (b == 1 && (c == 7 || c == 8 || c == 32)) {
@@ -353,7 +394,9 @@ int64_t inet6_syscall(Task& task, const Frame& frame) {
                 value = 10;
             else
                 return -92;
-        } else if (b == 41 && c == 16)
+        } else if (b == 17 && c == 1 && inet6_udp(socket))
+            value = socket->udp_cork;
+        else if (b == 41 && c == 16)
             value = socket->hops < 0 ? ipv6_destination_hops(socket->destination) : socket->hops;
         else if (b == 41 && c == 67)
             value = socket->traffic_class;

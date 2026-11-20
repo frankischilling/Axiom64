@@ -1,4 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    userspace/tests/net/tcp6/scoped_source.c
+ * @brief   IPv6 TCP scoped source test.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Checks which source address and zone are selected for scoped connections.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #define _GNU_SOURCE
 #define IPV6_TEST_LABEL "TCP6_SCOPED_SOURCE_LIFETIME"
 #define IPV6_BARRIER_PROTOCOL 0x88cc
@@ -225,6 +248,8 @@ static void one(unsigned lane, unsigned round) {
     int companion = stream(lane, round, 1);
     send_bytes(lane, round, companion, 9, 1);
     close_stream(companion);
+    /* A local EOF can precede delivery of the final ACK to the peer. */
+    phase(lane, round, 11);
     send_bytes(lane, round, fd, 1, 0);
     phase(lane, round, 3);
     option(fd, IPPROTO_IPV6, IPV6_UNICAST_HOPS, 37);

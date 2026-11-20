@@ -12,10 +12,10 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/abi/linux/` | Linux syscall dispatch and ABI structures |
 | `kernel/mm/` | Physical and virtual memory, mapping/protection and heap admission limits, grow-down stacks |
 | `kernel/process/` | Tasks, scheduling, CPU accounting, process resource tables, signals, futexes, child-event waits and checked executable argument capture |
-| `kernel/fs/` | VFS, RAM filesystems, procfs process identity and IPv6 configuration controls, xattrs and advisory file locks; ext2 storage and EA codec have their own subfolder |
+| `kernel/fs/` | VFS, RAM filesystems, pipe and FIFO queues, procfs process identity and IPv6 configuration controls, xattrs, advisory file locks, and inotify; ext2 storage and EA codec have their own subfolder |
 | `kernel/security/` | Task credential transitions and bounded file capability decoding |
 | `kernel/io/` | Retained blocking I/O requests and captured vector bounds shared with IPv6 error receives |
-| `kernel/ipc/` | Sockets, Unix endpoint lookup and connection policy, owned datagram and stream records, binding names, per-message credentials, retained descriptor transfers and bounded cycle collection, event counters, readiness, shared memory |
+| `kernel/ipc/` | Sockets, Unix endpoint lookup and connection policy, owned datagram and stream records, binding names, per-message credentials, retained descriptor transfers and bounded cycle collection, event counters, readiness, shared memory, System V semaphore sets, undo ownership, and message queues |
 | `kernel/net/` | Ethernet interfaces, interface/route ioctls, and Linux raw packet sockets |
 | `kernel/net/ipv4/` | IPv4 routes/output, bounded reassembly, shared path-MTU limits and fragment emission, ARP cache/timers, ICMP, and Internet socket descriptions |
 | `kernel/net/ipv6/` | IPv6 wire and quoted-error validation, bounded reassembly, source-fragment encoding, owned output queues, route-owned path-MTU limits, scoped address/route ownership, DAD, neighbor state, copied extended-error queues and raw/UDP socket ownership; `router.cpp` owns solicitation schedules, learned routers/prefixes, per-link advertised parameters and SLAAC lifetimes, including first-PIO refresh, stable conflict regeneration and owned exhausted-prefix cleanup; `output.cpp` snapshots inherited hop limits after route selection; nested `socket/` owns Linux controls and error-receive copying |
@@ -171,6 +171,18 @@ UEFI fixture and four replay tests live under `scripts/tests/`.
 ## Formatting
 
 The root `.clang-format` contains C++20 and C profiles. Kernel sources, headers, and host tests use the C++ profile. Userspace C sources use the C profile, and native C++ test programs use the C++ profile. Both preserve include order and use four spaces and a 100-column limit. Function bodies use multiple lines, and `SeparateDefinitionBlocks: Always` inserts a blank line between function, class, struct, and enum definitions. Keep one blank line between function prototypes too; `MaxEmptyLinesToKeep: 1` preserves that spacing. The Makefile continues to select C11 and C++20 for compilation.
+
+Start project C and C++ sources and headers, assembly, linker scripts, and
+shell scripts with their SPDX identifier and Doxygen file header. Keep any
+shebang first and use the file's native comment syntax. Give `@file` the
+repository-relative path and include `@brief`, `@author`, and `@date`.
+Describe the file's current role in a short paragraph, followed by its
+copyright and GPL notice. Python modules use a module docstring.
+
+Preserve upstream notices and store frozen source snapshots as text so
+evidence readers can verify their original bytes. If a measured reference
+pins a live client's source, keep the recorded hash and verify the documented
+revision separately.
 
 On the Ubuntu build host, install the formatter and run these commands from the repository root:
 

@@ -188,6 +188,7 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
                      f'UDP_BROADCAST_QUEUE_PASS index={lane + 1} ingress=48 retained=32',
                      f'UDP_LINK_PASS index={lane + 1}',
                      f'UDP_PRESSURE_PASS index={lane + 1} packets=33',
+                     f'UDP_EPOLL_ALIAS_PASS index={lane + 1}',
                      f'UDP_UNREACHABLE_PASS index={lane + 1}']
     injected = not fault or (debug_log is not None and debugger.returncode == 0 and
         'PACKET_FAULT_INJECTED model=virtio kind=id' in debug_log.read_text(errors='replace'))

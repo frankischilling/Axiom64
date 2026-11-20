@@ -1,14 +1,45 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/fs/vfs.cpp
+ * @brief   Virtual filesystem dispatch.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Resolves paths and manages open descriptions and mount references across
+ * filesystem implementations.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "fs/vfs.hpp"
+#include "fs/memfd.hpp"
+#include "io/descriptor_wait.hpp"
+#include "fs/pipe.hpp"
+#include "ipc/posix_message_queues.hpp"
 #include "fs/xattr.hpp"
 #include "fs/file_lock.hpp"
 #include "fs/record_lock.hpp"
 #include "fs/proc.hpp"
+#include "fs/descriptor_inode.hpp"
 #include "drivers/platform/devices.hpp"
 #include "ipc/ipc.hpp"
 #include "ipc/unix_rights.hpp"
 #include "ipc/eventfd.hpp"
 #include "ipc/timerfd.hpp"
+#include "ipc/signal_descriptor.hpp"
+#include "fs/inotify.hpp"
 #include "net/packet.hpp"
 #include "net/inet.hpp"
 #include "net/inet6.hpp"
@@ -100,7 +131,7 @@ Node* directory_parent(Node* node) {
     return node->parent ? node->parent : node;
 }
 
-void node_path(Node* node, char* result, size_t cap) {
+void node_path(Node* node, char* result, size_t cap, bool include_unlinked) {
     if (!cap)
         return;
     result[0] = 0;
@@ -112,7 +143,7 @@ void node_path(Node* node, char* result, size_t cap) {
             node = node->mount->point;
             continue;
         }
-        if (node->removed)
+        if (node->removed && !include_unlinked)
             return;
         chain[count++] = node;
         node = node->parent;
@@ -191,6 +222,13 @@ int resolve_path(const Path& path, Node*& result, bool follow) {
             if (++links > 40)
                 return -40;
             auto target = file_node(child);
+            if (auto follow_link = target->mount->ops->follow_link) {
+                int resolved = follow_link(target, node);
+                if (resolved < 0)
+                    return resolved;
+                if (resolved)
+                    continue;
+            }
             if (!target->size)
                 return -2;
             size_t tail = strlen(pending + p);
@@ -286,6 +324,9 @@ int node_access(Node* node, unsigned mask, bool real) {
         node->mount->ops->refresh(node);
     if (auto control = node_control(node))
         return control->access(node, mask, real);
+    if (auto access = node->mount->ops->access_override)
+        if (int result = access(node, mask))
+            return min(result, 0);
     const Credentials boot{};
     return credential_access(current ? current->credentials : boot, node->uid, node->gid,
                              node->mode, mask, real);
@@ -331,7 +372,11 @@ int create_node(const Path& path, uint32_t mode, Node*& node, const char* target
         return -21;
     if ((parent->mode & 02000) && (mode & 0170000) == directory)
         mode |= 02000;
-    return parent->mount->ops->create(parent, name, mode, target, node);
+    error = parent->mount->ops->create(parent, name, mode, target, node);
+    if (!error)
+        inotify_name(parent, inotify_create | ((mode & 0170000) == directory ? inotify_isdir : 0),
+                     name);
+    return error;
 }
 
 Node* make_node(const char* text, uint32_t mode) {
@@ -377,9 +422,20 @@ int link_node(const Path& from, const Path& to, bool follow) {
     if (error != -2)
         return error;
     if ((target->mode & 0170000) != regular_file && (target->mode & 0170000) != symlink &&
-        (target->mode & 0170000) != 0140000)
+        (target->mode & 0170000) != 0140000 && (target->mode & 0170000) != fifo)
         return -95;
-    return parent->mount->ops->link(target, parent, name);
+    error = parent->mount->ops->link(target, parent, name);
+    if (!error) {
+        inotify_inode(target, inotify_attrib);
+        inotify_name(parent, inotify_create, name);
+    }
+    return error;
+}
+
+static void report_unlinked(Node* node, bool dir) {
+    if (!dir)
+        inotify_inode(node, inotify_attrib);
+    inotify_retire_inode(node);
 }
 
 static bool mount_root(Node* node) {
@@ -433,7 +489,13 @@ int remove_node(const Path& path, bool dir) {
             return error;
     } else if ((node->mode & 0170000) == directory)
         return -21;
-    return node->mount->ops->remove(node);
+    error = node->mount->ops->remove(node);
+    if (!error) {
+        report_unlinked(node, dir);
+        posix_queue_reap(node);
+        inotify_name(node->parent, inotify_delete | (dir ? inotify_isdir : 0), node->name);
+    }
+    return error;
 }
 
 int rename_node(const Path& from, const Path& to, bool no_replace) {
@@ -487,7 +549,22 @@ int rename_node(const Path& from, const Path& to, bool no_replace) {
         if (other_dir && (error = empty_directory(replaced)))
             return error;
     }
-    return node->mount->ops->rename(node, parent, name, replaced);
+    Node* old_parent = node->parent;
+    char old_name[sizeof(Node::name)];
+    memcpy(old_name, node->name, strlen(node->name) + 1);
+    error = node->mount->ops->rename(node, parent, name, replaced);
+    if (!error) {
+        uint32_t cookie = inotify_move_cookie();
+        uint32_t type = dir ? inotify_isdir : 0;
+        inotify_name(old_parent, inotify_moved_from | type, old_name, cookie);
+        inotify_name(parent, inotify_moved_to | type, name, cookie);
+        if (replaced)
+            inotify_inode(replaced, inotify_attrib | type);
+        inotify_inode(node, inotify_move_self);
+        if (replaced)
+            inotify_retire_inode(replaced);
+    }
+    return error;
 }
 
 int node_truncate(Node* node, uint64_t size) {
@@ -500,6 +577,8 @@ int node_truncate(Node* node, uint64_t size) {
         return node && (node->mode & 0170000) == directory ? -21 : -22;
     if (node_readonly(node))
         return -30;
+    if (node->exec_images && !is_memfd(node))
+        return -26;
     if (current && size > node->size && size > current->process->limits.soft(Resource::file_size)) {
         queue_signal(current, 25, current->process->pid);
         return -27;
@@ -525,14 +604,19 @@ bool node_resize(Node* node, size_t size) {
     return node_truncate(node, size) == 0;
 }
 
-int node_setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime) {
+int node_setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime, uint32_t event_mask) {
+    auto dentry = node;
     node = file_node(node);
     if (node_readonly(node))
         return -30;
-    return node->mount->ops->setattr(node, mode, atime, mtime, node->uid, node->gid);
+    int error = node->mount->ops->setattr(node, mode, atime, mtime, node->uid, node->gid);
+    if (!error)
+        inotify_dentry(dentry, event_mask ? event_mask : inotify_attrib);
+    return error;
 }
 
 int node_chmod(Node* node, uint32_t mode) {
+    auto dentry = node;
     node = file_node(node);
     if (current && current->credentials.user.filesystem != node->uid &&
         !capable(current->credentials, Capability::fowner))
@@ -541,10 +625,11 @@ int node_chmod(Node* node, uint32_t mode) {
     if (current && !credential_group(current->credentials, node->gid) &&
         !capable(current->credentials, Capability::fsetid))
         mode &= ~02000;
-    return node_setattr(node, (node->mode & 0170000) | mode, node->atime, node->mtime);
+    return node_setattr(dentry, (node->mode & 0170000) | mode, node->atime, node->mtime);
 }
 
 int node_chown(Node* node, uint32_t uid, uint32_t gid) {
+    auto dentry = node;
     node = file_node(node);
     if (!node)
         return -22;
@@ -566,7 +651,10 @@ int node_chown(Node* node, uint32_t uid, uint32_t gid) {
         if (mode & 010)
             mode &= ~02000;
     }
-    return node->mount->ops->setattr(node, mode, node->atime, node->mtime, uid, gid);
+    int error = node->mount->ops->setattr(node, mode, node->atime, node->mtime, uid, gid);
+    if (!error)
+        inotify_dentry(dentry, inotify_attrib);
+    return error;
 }
 
 int64_t node_read(Node* node, uint64_t offset, void* buffer, size_t length) {
@@ -645,12 +733,20 @@ bool node_referenced(Node* node) {
         if (handle.references && references(handle.node))
             return true;
     for (auto& task : tasks)
-        if (task.state != State::empty && task.state != State::zombie &&
+        if (task.state != State::empty && task.state != State::zombie && task.fs &&
             (references(task.fs->cwd_node) || references(task.fs->root_node)))
             return true;
-    return socket_node_busy(node) ||
+    return node->exec_images || socket_node_busy(node) ||
            (node->backing_physical &&
             page_shared(node->backing_physical, node->capacity / page_size));
+}
+
+bool node_open_for_write(const Node* node) {
+    for (const auto& handle : handles)
+        if (handle.references && handle.node == node && (handle.flags & 3) &&
+            !(handle.flags & 010000000))
+            return true;
+    return false;
 }
 
 static bool mount_busy(Mount* mount, bool writers_only) {
@@ -663,7 +759,8 @@ static bool mount_busy(Mount* mount, bool writers_only) {
     for (auto& task : tasks)
         if (!writers_only && task.state != State::empty && task.state != State::zombie &&
             ((task.fs->cwd_node && task.fs->cwd_node->mount == mount) ||
-             (task.fs->root_node && task.fs->root_node->mount == mount)))
+             (task.fs->root_node && task.fs->root_node->mount == mount) ||
+             (task.memory && task.memory->exec_file && task.memory->exec_file->mount == mount)))
             return true;
     // Shared file pages outlive file descriptors, including after fork.
     for (size_t i = 0; i < node_count; i++) {
@@ -709,7 +806,10 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
         mount->noexec = flags & 8;
         return 0;
     }
-    bool ram = type && !strcmp(type, "ramfs"), disk = type && !strcmp(type, "ext2");
+    bool queues = type && !strcmp(type, "mqueue");
+    if (queues && posix_queue_mounted())
+        return -16;
+    bool ram = queues || (type && !strcmp(type, "ramfs")), disk = type && !strcmp(type, "ext2");
     bool proc = type && !strcmp(type, "proc");
     if (!ram && !disk && !proc)
         return -19;
@@ -730,7 +830,8 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
                      nullptr,
                      point,
                      point->mount,
-                     ram    ? &ramfs_ops
+                     queues ? &posix_queue_filesystem()
+                     : ram  ? &ramfs_ops
                      : proc ? &procfs_ops
                             : &ext2_ops,
                      nullptr,
@@ -753,6 +854,8 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
             mount.nosuid = proc || (flags & 2);
             mount.nodev = proc || (flags & 4);
             mount.noexec = proc || (flags & 8);
+            if (queues)
+                posix_queue_mount(mount.root);
             return 0;
         }
     return -28;
@@ -793,6 +896,8 @@ int unmount(const Path& path, uint64_t flags) {
     if (!mount_root(node) || !node->mount->point)
         return -22;
     auto mount = node->mount;
+    if (mount->ops == &posix_queue_filesystem())
+        return -16;
     for (auto& child : mounts)
         if (child.active && child.parent == mount)
             return -16;
@@ -806,6 +911,8 @@ int unmount(const Path& path, uint64_t flags) {
         if (error)
             return error;
     }
+    inotify_reap_inodes();
+    inotify_retire_mount(*mount);
     mount->active = false;
     mount->ops->destroy(mount);
     *mount = {};
@@ -882,12 +989,22 @@ void vfs_init(const void* archive, size_t length) {
 }
 
 Handle* open_handle(Node* n, uint32_t flags, int* error) {
+    n = file_node(n);
+    if (n && n->exec_images && (flags & 3) && !(flags & 010000000) && !is_memfd(n)) {
+        if (error)
+            *error = -26;
+        return nullptr;
+    }
     if (error)
         *error = -23;
     for (auto& h : handles)
         if (!h.references) {
-            h = {file_node(n), nullptr, 0, flags, 1, false};
+            h = {n, nullptr, 0, flags, 1, false};
             h.generation = next_generation++;
+            if (current) {
+                h.opener_uid = current->credentials.user.filesystem;
+                h.opener_gid = current->credentials.group.filesystem;
+            }
             int result = flags & 010000000 ? 0 : device_open(&h);
             if (result) {
                 h.references = 0;
@@ -897,6 +1014,9 @@ Handle* open_handle(Node* n, uint32_t flags, int* error) {
             }
             if (error)
                 *error = 0;
+            if (is_memfd(n))
+                memfd_open(n);
+            retain_descriptor_inode(n);
             return &h;
         }
     return nullptr;
@@ -904,14 +1024,8 @@ Handle* open_handle(Node* n, uint32_t flags, int* error) {
 
 Handle* pipe_handle(Pipe* p, bool writer) {
     Handle* h = open_handle(nullptr, writer ? 1 : 0);
-    if (h) {
-        h->pipe = p;
-        h->writer = writer;
-        if (writer)
-            p->writers++;
-        else
-            p->readers++;
-    }
+    if (h)
+        attach_pipe(*h, *p);
     return h;
 }
 
@@ -936,14 +1050,20 @@ void close_handle(Handle* h) {
 
     if (--h->references)
         return;
+    if (!(h->flags & 010000000))
+        inotify_dentry(h->opened_dentry,
+                       (h->flags & 3) ? inotify_close_write : inotify_close_nowrite);
+    inotify_retire_inode(h->node);
     file_lock_release(h);
     record_lock_release(*h);
     if (h->node && h->node->mount->ops->close_description)
         h->node->mount->ops->close_description(h);
     if (!(h->flags & 010000000))
         device_close(h);
-    if (h->socket)
+    if (h->socket) {
         socket_close(h->socket);
+        inotify_reap_inodes();
+    }
     if (h->packet)
         packet_close(h->packet);
     if (h->inet)
@@ -962,22 +1082,51 @@ void close_handle(Handle* h) {
         close_timerfd(h->timer);
         h->timer = nullptr;
     }
-    if (h->pipe) {
-        auto p = h->pipe;
-        if (h->writer)
-            p->writers--;
-        else
-            p->readers--;
-        if (!p->readers && !p->writers)
-            release(p);
+    if (h->signal_descriptor) {
+        release(h->signal_descriptor);
+        h->signal_descriptor = nullptr;
     }
+    if (h->inotify) {
+        close_inotify(h->inotify);
+        h->inotify = nullptr;
+    }
+    if (h->pipe)
+        detach_pipe(*h);
     auto retired_node = h->node;
+    auto anonymous_path = h->anonymous_path;
     h->node = nullptr;
+    h->opened_dentry = nullptr;
     h->pipe = nullptr;
+    h->anonymous_path = nullptr;
     node_retire_xattrs(retired_node);
+    if (auto metadata = anonymous_path                        ? anonymous_path
+                        : descriptor_inode_name(retired_node) ? retired_node
+                                                              : nullptr)
+        release_descriptor_inode(metadata);
+    else if (is_memfd(retired_node))
+        memfd_close(retired_node);
+    else
+        posix_queue_reap(retired_node);
 }
 
-bool handle_ready(Handle* h, bool write) {
+bool handle_has_poll(const Handle& handle) {
+    if (handle.pipe || handle.socket || handle.packet || handle.inet || handle.inet6 ||
+        handle.netlink || handle.epoll || handle.event || handle.timer ||
+        handle.signal_descriptor || handle.inotify)
+        return true;
+    auto node = handle.node;
+    if (!node)
+        return false;
+    if ((node->mode & 0170000) == character)
+        return device_has_poll(handle);
+    if ((node->mode & 0170000) != regular_file)
+        return false;
+    auto filesystem = node->mount->ops;
+    return filesystem == &posix_queue_filesystem() ||
+           (filesystem == &procfs_ops && procfs_has_poll(*node));
+}
+
+bool handle_ready(Handle* h, bool write, const Task* task) {
     if (!h)
         return true;
     if (h->socket)
@@ -991,33 +1140,23 @@ bool handle_ready(Handle* h, bool write) {
     if (h->netlink)
         return netlink_ready(h->netlink, write);
     if (h->epoll)
-        return true;
+        return !write && (readiness(h, task) & 1);
     if (h->event)
         return eventfd_ready(h->event, write);
     if (h->timer)
         return !write && timerfd_ready(*h->timer);
+    if (h->signal_descriptor)
+        return !write && task && signal_descriptor_ready(*h->signal_descriptor, *task);
+    if (h->inotify)
+        return !write && inotify_queue(*h->inotify).bytes();
     if (h->pipe)
-        return write ? h->pipe->size < sizeof(Pipe::bytes) || !h->pipe->readers
-                     : h->pipe->size || !h->pipe->writers;
+        return write ? !h->pipe->full() || !h->pipe->readers : h->pipe->size || !h->pipe->writers;
+    if (h->node && h->node->mount->ops == &posix_queue_filesystem() &&
+        (h->node->mode & 0170000) == regular_file)
+        return posix_queue_ready(h->node, write);
     if (!h->node || (h->node->mode & 0170000) != character)
         return true;
     return device_ready(h, write);
-}
-
-int64_t pipe_read(Pipe* pipe, void* buffer, size_t length, bool peek) {
-    if (!length)
-        return 0;
-    if (!pipe->size)
-        return pipe->writers ? -11 : 0;
-    length = min(length, pipe->size);
-    auto bytes = static_cast<uint8_t*>(buffer);
-    for (size_t n = 0; n < length; n++)
-        bytes[n] = pipe->bytes[(pipe->head + n) % sizeof(pipe->bytes)];
-    if (!peek) {
-        pipe->head = (pipe->head + length) % sizeof(pipe->bytes);
-        pipe->size -= length;
-    }
-    return length;
 }
 
 int64_t read_handle(Handle* h, void* buf, size_t len) {
@@ -1065,26 +1204,59 @@ int64_t read_handle(Handle* h, void* buf, size_t len) {
     return count;
 }
 
-int write_handle_limit(Handle* h, size_t& length) {
-    auto node = h->node;
+int write_handle_limit_at(Task* task, Handle& handle, uint64_t offset, size_t& length) {
+    auto node = handle.node;
     if (!length || !node || (node->mode & 0170000) != regular_file)
         return 0;
-    if ((h->flags & 3) == 0)
+    if ((handle.flags & 3) == 0)
         return -9;
     if (node_readonly(node))
         return -30;
-    if (node_control(node))
+    if (node_control(node) || node->mount->ops == &posix_queue_filesystem())
         return 0;
-    if (!current)
-        return 0;
-    uint64_t offset = h->flags & 02000 ? node->size : h->offset;
-    uint64_t limit = current->process->limits.soft(Resource::file_size);
-    if (offset >= limit) {
-        queue_signal(current, 25, current->process->pid);
-        return -27;
+    if (task) {
+        uint64_t limit = task->process->limits.soft(Resource::file_size);
+        if (offset >= limit) {
+            queue_signal(task, 25, task->process->pid);
+            return -27;
+        }
+        length = min(uint64_t(length), limit - offset);
     }
-    length = min(uint64_t(length), limit - offset);
-    return 0;
+    return memfd_write_limit(node, offset, length);
+}
+
+int write_handle_limit(Handle* h, size_t& length) {
+    uint64_t offset = h->node && (h->flags & 02000) ? h->node->size : h->offset;
+    return write_handle_limit_at(current, *h, offset, length);
+}
+
+int64_t write_regular_at(Task* task, Handle& handle, uint64_t& offset, const void* buf,
+                         size_t len) {
+    auto node = handle.node;
+    if (node_readonly(node))
+        return -30;
+    if (int error = node_drop_file_capabilities(node))
+        return error;
+    if (task && !capable(task->credentials, Capability::fsetid)) {
+        uint32_t mode = node->mode & ~04000;
+        if (mode & 010)
+            mode &= ~02000;
+        if (mode != node->mode) {
+            int error = node_setattr(node, mode, node->atime, node->mtime);
+            if (error)
+                return error;
+        }
+    }
+    int64_t count = node->mount->ops->write(node, offset, buf, len);
+    if (count > 0) {
+        offset += count;
+        if (handle.flags & 010000) {
+            int error = node_sync(node, true);
+            if (error)
+                return error;
+        }
+    }
+    return count;
 }
 
 int64_t write_handle(Handle* h, const void* buf, size_t len) {
@@ -1110,7 +1282,7 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
     if (!len)
         return 0;
     if (h->socket)
-        return socket_write(h->socket, buf, len);
+        return socket_write(*current, h->socket, buf, len);
     if (h->packet)
         return packet_write(h->packet, buf, len);
     if (h->inet)
@@ -1118,20 +1290,7 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
     if (h->inet6)
         return inet6_send(h->inet6, inet6_peer(h->inet6), buf, len);
     if (h->netlink)
-        return netlink_send(h->netlink, current->process->pid, buf, len);
-    auto data = (const uint8_t*)buf;
-    if (h->pipe) {
-        auto p = h->pipe;
-        if (!p->readers)
-            return -32;
-        if (p->size == sizeof(p->bytes))
-            return -11;
-        size_t n = min(len, sizeof(p->bytes) - p->size);
-        for (size_t i = 0; i < n; i++)
-            p->bytes[(p->head + p->size + i) % sizeof(p->bytes)] = data[i];
-        p->size += n;
-        return n;
-    }
+        return netlink_send(*current, h->netlink, buf, len);
     auto n = h->node;
     if (!n)
         return -9;
@@ -1143,29 +1302,6 @@ int64_t write_handle(Handle* h, const void* buf, size_t len) {
         return error;
     if (h->flags & 02000)
         h->offset = n->size;
-    if (node_readonly(n))
-        return -30;
-    if (int error = node_drop_file_capabilities(n))
-        return error;
-    if (current && !capable(current->credentials, Capability::fsetid)) {
-        uint32_t mode = n->mode & ~04000;
-        if (mode & 010)
-            mode &= ~02000;
-        if (mode != n->mode) {
-            int error = node_setattr(n, mode, n->atime, n->mtime);
-            if (error)
-                return error;
-        }
-    }
-    int64_t count = n->mount->ops->write(n, h->offset, buf, len);
-    if (count > 0) {
-        h->offset += count;
-        if (h->flags & 010000) {
-            int error = node_sync(n, true);
-            if (error)
-                return error;
-        }
-    }
-    return count;
+    return write_regular_at(current, *h, h->offset, buf, len);
 }
 } // namespace ax

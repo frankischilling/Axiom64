@@ -679,6 +679,14 @@ Run `make test-threads` for the dedicated static/dynamic musl, futex, lifecycle,
 
 Run `make test-thread-io` for the focused [blocking I/O suite](io.md#verification-and-limits). The full and complete thread suites also require its static/dynamic tests.
 
+Run `make test-signalfd` to check [signal descriptors](io.md#signal-descriptors).
+The guest matrix uses both musl providers, static and dynamic binaries, and
+BIOS and UEFI. Each boot tests root and an ordinary user. The client checks
+record layout, copy faults, epoll, interrupted reads, descriptor lifetime,
+ordered queued payloads, and queue admission. `sudo make test-signalfd-native`
+runs the client on Linux for comparison. The boot CI job retains binaries,
+source bindings, images, and logs for both suites.
+
 Run `make test-timerfd` to check [timer descriptors](io.md#timer-descriptors)
 across both musl providers, static and dynamic linkage, and BIOS and UEFI.
 Each boot runs the same client as root and as UID 65534. The test retains the
@@ -2102,3 +2110,22 @@ initramfs contents and original serial logs. The production ownership sanitizer
 model is `make test-unix-rights-policy`. These local comparisons do not establish
 current hosted acceptance. Broader stream options, interruption, remaining
 shutdown contracts and complete Unix socket lifetime qualification remain required.
+
+## Filesystem notifications
+
+Inotify watches file and directory inodes on RAM and ext2. Hardlinks share a
+watch. Directory events carry the entry name and paired rename events carry
+the same cookie. An unlinked inode remains watched while an open description
+or another live reference retains it. Unmount delivers the final unmount and
+ignored records to surviving instances.
+
+Each instance queues up to 16,384 events and can report an overflow when a
+record is lost. Axiom64 allows 128 instances and 8,192 watches per effective
+user ID. Applications can wait through read, poll, select, or epoll. Signal-
+driven I/O notification and procfs watch inventories remain open.
+
+Run `make test-inotify-queue`, `sudo -n make test-inotify-native`, and
+`make test-inotify`. The guest matrix uses both musl providers and linkages,
+BIOS and UEFI, and both virtio block transports. Each profile exercises RAM
+and ext2 with root and ordinary users, reopens its boot image before execution,
+and checks the final ext2 image with e2fsck.

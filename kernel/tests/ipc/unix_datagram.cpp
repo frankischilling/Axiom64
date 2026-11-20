@@ -1,4 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/tests/ipc/unix_datagram.cpp
+ * @brief   Unix datagram kernel tests.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Checks datagram record ownership, delivery, and readiness transitions.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "ipc/unix_datagram.hpp"
 #include <assert.h>
 #include <stdio.h>
@@ -8,9 +31,19 @@ namespace {
 size_t allocations;
 bool refuse, reenter;
 ax::UnixDatagramQueue* releasing;
+const ax::UnixSendBudget* watched_budget;
+unsigned writable_events;
 } // namespace
 
 namespace ax {
+void descriptor_wait_notify(const void* source, uint32_t events) {
+    if (watched_budget) {
+        assert(source == watched_budget && events == (4 | 0x100 | 0x200));
+        assert(watched_budget->writable());
+        writable_events++;
+    }
+}
+
 void retain(Handle*) {
     abort();
 }
@@ -172,8 +205,34 @@ static void addresses() {
     assert(!allocations && !queue.count());
 }
 
+static void budget_notifications() {
+    ax::UnixDatagramQueue queue;
+    auto budget = ax::UnixSendBudget::create();
+    assert(budget);
+    budget->resize(0);
+    char payload[4000]{};
+    assert(queue.append(*budget, payload, sizeof(payload)) == sizeof(payload));
+    assert(!budget->writable());
+    watched_budget = budget;
+    assert(!writable_events);
+    budget->resize(16000);
+    assert(writable_events == 1);
+    budget->resize(16000);
+    budget->resize(0);
+    assert(writable_events == 1 && !budget->writable());
+    budget->close();
+    auto replacement = ax::UnixSendBudget::create();
+    assert(replacement && replacement != budget);
+    queue.consume();
+    assert(writable_events == 2);
+    watched_budget = nullptr;
+    replacement->close();
+    assert(!allocations);
+}
+
 int main() {
     addresses();
+    budget_notifications();
     ax::UnixDatagramQueue queue;
     auto budget = ax::UnixSendBudget::create();
     assert(budget && allocations == 1 && budget->size() == 212992 && budget->writable());

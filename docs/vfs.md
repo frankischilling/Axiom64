@@ -25,7 +25,13 @@ The ELF loader and private file mappings read through the filesystem interface. 
 | `truncate`, `ftruncate` | Filesystem delegation with negative-length, file-type, capacity, and mount checks |
 | `flock` | [Advisory shared/exclusive locks](file-locks.md) owned by a canonical local file description |
 | `fcntl` record locks | POSIX and open-file-description byte ranges, foreign conflict queries, blocking acquisition and descriptor lifetime |
-| `proc` mounts | Real process/thread status and enumeration, caller-relative self links and description-owned read buffers |
+| `proc` mounts | Process and thread status, caller-relative self links, descriptor links, and description-owned read buffers |
+
+Procfs lists descriptors under `/proc/<pid>/fd` and `/proc/<pid>/task/<tid>/fd`. The `self` and `thread-self` aliases use the calling process or thread. `/dev/fd` points to `/proc/self/fd`. Standard input, output, and error have aliases under `/dev`.
+
+Opening a file link reopens the existing file with an independent offset. Renamed and unlinked files stay reachable while an open descriptor holds them. Pipe links open independent endpoints on the same pipe. Anonymous pipes can reopen without waiting for a peer. An `O_PATH` handle preserves the inode after the final pipe endpoint closes. Socket and event-descriptor links expose their Linux-style names and support `stat` and `O_PATH`. An ordinary open fails with `ENXIO` when the caller has access. Looking up another process's descriptor checks its credentials and dumpability.
+
+The adjacent `fdinfo` directory reports the position, open flags, mount ID, and inode for each descriptor. Eventfd, signalfd, timerfd, epoll, and inotify add records for counters, masks, timers, and watches. An open report can finish reading a snapshot after the target descriptor closes. Reading again from offset zero resolves the current descriptor slot. Lock records and exportable inotify file handles remain pending.
 
 Record locking supports `F_GETLK`, `F_SETLK`, `F_SETLKW` and their OFD equivalents. Ranges normalize SEEK_SET/CUR/END, negative lengths and zero lengths extending through future growth. Own locks split, convert and coalesce. POSIX locks belong to a file table and closing an ordinary descriptor for the inode releases them; closing an `O_PATH` descriptor preserves them. OFD locks belong to an open file description and survive dup/fork until its final close. Multithreaded exec retains an exclusively owned table after sibling cleanup, preserving POSIX locks; a close-on-exec ordinary alias still releases them. These ownership rules follow [Linux's record-lock contract](https://man7.org/linux/man-pages/man2/fcntl_locking.2.html), [Linux 6.17 close behavior](https://github.com/torvalds/linux/blob/v6.17/fs/open.c), and [Linux 6.17 exec ordering](https://github.com/torvalds/linux/blob/v6.17/fs/exec.c).
 

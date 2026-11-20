@@ -23,9 +23,9 @@ PRODUCTS = ('image.iso', 'kernel.elf', 'client.elf', 'client.inputs.json', 'clie
             'libc.a', 'compiler.specs')
 
 
-def source_names(root, version=2):
+def source_names(root, version=3):
     names = set(SOURCES)
-    if version == 2:
+    if version >= 2:
         names.update(('scripts/tests/udp_peer_test.py',
                       'scripts/tests/fixtures/udp-route-retirement.json'))
     for prefix in ('kernel', 'userspace/init'):
@@ -61,7 +61,7 @@ def record(directory, fault):
         products[name] = dict(bytes=original.stat().st_size, sha256=fingerprint)
     require(before == {name: digest(ROOT / name) for name in before},
             'UDP sources stay unchanged while recording the fixture')
-    value = dict(version=2, fault=bool(fault), sources=before, products=products,
+    value = dict(version=3, fault=bool(fault), sources=before, products=products,
                  compilation=compilation, linkage='static',
                  guest_deadline_seconds=90, delayed_UEFI_fault_seconds=5)
     (directory / 'inputs.json').write_text(json.dumps(value, indent=2) + '\n')
@@ -81,7 +81,7 @@ def audit(directory, input_root=ROOT, open_image=True):
     """Verify retained products and their corresponding project source snapshot."""
     directory, input_root = Path(directory), Path(input_root)
     value = json.loads((directory / 'inputs.json').read_text())
-    require(type(value.get('version')) is int and value['version'] in (1, 2) and type(value.get('fault')) is bool and
+    require(type(value.get('version')) is int and value['version'] in (1, 2, 3) and type(value.get('fault')) is bool and
             directory.name == ('fault' if value['fault'] else 'normal') and
             value.get('linkage') == 'static' and value.get('guest_deadline_seconds') == 90 and
             value.get('delayed_UEFI_fault_seconds') == 5, 'original complete UDP fixture contract')
@@ -93,9 +93,11 @@ def audit(directory, input_root=ROOT, open_image=True):
         file = directory / name
         require(file.is_file() and not file.is_symlink() and file.stat().st_size == product['bytes'] and
                 digest(file) == product['sha256'], 'actual retained UDP product: ' + name)
-    marker = b'#define UDP_ROUTE_LIFETIME_VERSION 2\n'
-    require((marker in (directory / 'client.c').read_bytes()) == (value['version'] == 2),
+    client = (directory / 'client.c').read_bytes().splitlines()
+    require((b'#define UDP_ROUTE_LIFETIME_VERSION 2' in client) == (value['version'] >= 2),
             'UDP route-lifetime contract matches the actual compiled client source')
+    require((b'#define UDP_WIRE_FIXTURE_VERSION 3' in client) == (value['version'] == 3),
+            'UDP epoll alias contract matches the actual compiled client source')
     compilation = json.loads((directory / 'client.inputs.json').read_text())
     require(compilation == value['compilation'] and
             compilation['product']['sha256'] == value['products']['client.elf']['sha256'] and

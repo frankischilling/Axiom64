@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/include/fs/vfs.hpp
+ * @brief   Virtual filesystem types and operations.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Defines nodes, mounts, path walking, filesystem operations, and
+ * open-description interfaces.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #pragma once
 #include "core/base.hpp"
 
@@ -14,8 +38,12 @@ struct NetlinkSocket;
 struct Epoll;
 struct Eventfd;
 struct Timerfd;
+struct SignalDescriptor;
+struct Task;
+struct Inotify;
 struct Mount;
 struct Handle;
+struct Pipe;
 struct Xattr;
 struct XattrName;
 
@@ -27,7 +55,7 @@ struct Timestamp {
 Timestamp node_now();
 
 constexpr uint32_t regular_file = 0100000, directory = 0040000, symlink = 0120000,
-                   character = 0020000, block_device = 0060000;
+                   character = 0020000, block_device = 0060000, fifo = 0010000;
 
 struct Node {
     uint64_t inode;
@@ -50,8 +78,9 @@ struct Node {
     Mount* mount;
     void* filesystem_data;
     Xattr* xattrs = nullptr;
-    unsigned lock_readers;
+    unsigned lock_readers, exec_images;
     Handle* lock_writer;
+    Pipe* named_pipe = nullptr;
 };
 
 // Relative paths retain their directory identity even when a mount covers it.
@@ -111,6 +140,10 @@ struct FilesystemOps {
     const ControlFileOps* (*control)(Node*) = nullptr;
     // Dynamic filesystem objects may retire while descriptions still pin them.
     int (*validate)(Node*) = nullptr;
+    // Positive results supply the resolved node of a filesystem-specific link.
+    int (*follow_link)(Node*, Node*&) = nullptr;
+    // Positive grants access, negative denies it, and zero applies ordinary DAC.
+    int (*access_override)(Node*, unsigned mask) = nullptr;
 };
 
 struct Mount {
@@ -130,12 +163,6 @@ Node* ramfs_root(Mount*, uint32_t);
 
 // Release an unlinked, unreferenced kernel-created character device.
 void ramfs_reclaim_device(Node*);
-
-struct Pipe {
-    uint8_t bytes[16384];
-    size_t head, size;
-    unsigned readers, writers;
-};
 
 struct SocketTimeout {
     uint64_t ticks = 0;
@@ -158,11 +185,21 @@ struct Handle {
     Epoll* epoll = nullptr;
     Eventfd* event = nullptr;
     Timerfd* timer = nullptr;
+    SignalDescriptor* signal_descriptor = nullptr;
+    Inotify* inotify = nullptr;
+    Node* opened_dentry = nullptr;
     uint64_t generation = 0;
     uint8_t file_lock = 0;
     void* filesystem_data = nullptr;
     SocketTimeout receive_timeout{}, send_timeout{};
+    uint64_t pipe_hangup_generation = 0;
+    Node* anonymous_path = nullptr;
+    uint32_t opener_uid = 0, opener_gid = 0;
 };
+
+inline uint32_t file_status_flags(const Handle& handle) {
+    return handle.flags & ~uint32_t(02000000 | 0100 | 0200 | 0400 | 01000);
+}
 
 extern Node* root_node;
 extern Node nodes[16384];
@@ -207,7 +244,7 @@ bool node_resize(Node*, size_t);
 
 int node_truncate(Node*, uint64_t);
 
-int node_setattr(Node*, uint32_t, Timestamp, Timestamp);
+int node_setattr(Node*, uint32_t, Timestamp, Timestamp, uint32_t event_mask = 0);
 int node_access(Node*, unsigned mask, bool real = false);
 
 const ControlFileOps* node_control(Node*);
@@ -231,6 +268,7 @@ int node_map_shared(Node*, uint64_t, size_t, bool write, uint64_t&);
 int node_stats(Node*, FilesystemStats&);
 
 bool node_referenced(Node*);
+bool node_open_for_write(const Node*);
 
 Handle* open_handle(Node*, uint32_t, int* error = nullptr);
 
@@ -242,15 +280,16 @@ void close_handle(Handle*);
 
 int64_t read_handle(Handle*, void*, size_t);
 
-// Preview queued pipe bytes without consuming them during a user copy.
-int64_t pipe_read(Pipe*, void*, size_t, bool peek = false);
-
 // Clamp a complete regular-file write before inspecting user payload pages.
 int write_handle_limit(Handle*, size_t&);
+int write_handle_limit_at(Task*, Handle&, uint64_t, size_t&);
 
 int64_t write_handle(Handle*, const void*, size_t);
+// Callers clamp the transfer with write_handle_limit_at before committing bytes.
+int64_t write_regular_at(Task*, Handle&, uint64_t&, const void*, size_t);
 
-bool handle_ready(Handle*, bool write);
+bool handle_has_poll(const Handle&);
+bool handle_ready(Handle*, bool write, const Task*);
 
-void node_path(Node*, char*, size_t);
+void node_path(Node*, char*, size_t, bool include_unlinked = false);
 } // namespace ax

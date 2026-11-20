@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/net/ipv4/socket.hpp
+ * @brief   IPv4 socket internals.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Defines internal IPv4 socket state and operations used by the protocol and
+ * I/O layers.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #pragma once
 #include "net/inet.hpp"
 #include "net/ipv4.hpp"
@@ -7,6 +31,7 @@
 #include "net/ipv4/options.hpp"
 #include "net/ipv6/destination.hpp"
 #include "net/tcp/address.hpp"
+#include "net/udp/cork.hpp"
 
 namespace ax::tcp {
 class Connection;
@@ -16,6 +41,7 @@ namespace ax {
 constexpr unsigned inet_socket_count = 256, inet_queue_count = 32;
 constexpr uint32_t inet_queue_bytes = 65536;
 constexpr int inet_protocol_limit = 263; // Linux IPPROTO_MAX includes MPTCP, 262.
+using InetUdpCork = UdpCork<InetAddress, InetSendControl>;
 
 struct InetSocket {
     bool used = false, broadcast = false, bound = false, port_locked = false, reuse = false;
@@ -39,6 +65,8 @@ struct InetSocket {
     unsigned shutdown = 0;
     uint64_t order = 0;
     InetFrame* queue[inet_queue_count]{};
+    InetUdpCork* cork = nullptr;
+    bool udp_cork = false;
 
     // Stream descriptions share one engine and port table across Internet domains.
     bool ipv6 = false, wire6 = false, v6only = false, bind_completed = false;

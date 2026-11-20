@@ -16,11 +16,12 @@ from tcp6.peer import packet
 from tcp_fault_peer import ACK,FIN,SYN,checksum
 
 MARKER='TCP6_SCOPED_SOURCE_LIFETIME_PASS lanes=2 rounds_each=2 flows_each=4 data_each=12 withdrawn_each=6'
+STEPS = (1, 8, 9, 10, 2, 11, 3, 4, 5, 6, 7)
 
 def _reconstruct(path,lane,log,native=False,statistics=None):
     require(log.splitlines().count(MARKER)==1,'actual source-lifetime application completion')
     phases=[tuple(map(int,row)) for row in re.findall(r'^TCP6_SCOPED_SOURCE_LIFETIME_PHASE_PASS lane=(\d+) phase=(\d+)\r?$',log,re.M)]
-    require(phases==[(0,0),(1,0)]+[(n,r*16+s) for n in range(2) for r in range(2) for s in (1,8,9,10,2,3,4,5,6,7)],'all actual source-lifetime phases')
+    require(phases==[(0,0),(1,0)]+[(n,r*16+s) for n in range(2) for r in range(2) for s in STEPS],'all actual source-lifetime phases')
     fixtures=[tuple(map(int,row)) for row in re.findall(
         r'^TCP6_SCOPED_SOURCE_FIXTURE lane=(\d+) index=(\d+) removed_error=(-?\d+) bind_result=(-?\d+) bind_errno=(\d+)\r?$',log,re.M)]
     require(len(fixtures)==2 and [r[0] for r in fixtures]==[0,1] and
@@ -47,7 +48,7 @@ def _reconstruct(path,lane,log,native=False,statistics=None):
         frame=row['frame']
         if len(frame)>=21 and frame[12:14]==b'\x88\xcc':
             phase,answer=frame[19:21]
-            require(len(frame)==60 and phase in [0]+[r*16+s for r in range(2) for s in (1,8,9,10,2,3,4,5,6,7)] and answer in (0,1) and
+            require(len(frame)==60 and phase in [0]+[r*16+s for r in range(2) for s in STEPS] and answer in (0,1) and
                 (phase,answer) not in barriers and frame[:12]==(guest+controls if answer else controls+guest) and
                 frame[14:19]==b'IP6Z'+bytes([lane]) and not any(frame[21:]),'unique actual source Ethernet barriers')
             barriers[phase,answer]=index
@@ -64,7 +65,7 @@ def _reconstruct(path,lane,log,native=False,statistics=None):
         require(value['source_ip']+value['target_ip']==(local+remote if outgoing else remote+local),'actual retained or fresh full source address')
         streams[r,companion].append(dict(index=index,value=value,outgoing=outgoing,
             header=(frame[21],(int.from_bytes(frame[14:18],'big')>>20)&255)))
-    require(set(barriers)=={(p,a) for p in [0]+[r*16+s for r in range(2) for s in (1,8,9,10,2,3,4,5,6,7)] for a in (0,1)},'complete source barriers in actual capture')
+    require(set(barriers)=={(p,a) for p in [0]+[r*16+s for r in range(2) for s in STEPS] for a in (0,1)},'complete source barriers in actual capture')
     observations=[]
     for (r,companion),flow in streams.items():
         syn=[x for x in flow if x['outgoing'] and x['value']['flags']==SYN]
@@ -111,10 +112,12 @@ def _reconstruct(path,lane,log,native=False,statistics=None):
             main=streams[r,False]
             removed=next(x for x in main if x['outgoing'] and x['value']['data']==
                 bytes((lane*53+r*31+17+k*7)&255 for k in range(16)))
-            require(barriers[base+2,1]<syn[0]['index']<data[0]['index']<final[0]['index']<removed['index'],
+            require(barriers[base+2,1] < syn[0]['index'] < data[0]['index'] < barriers[base+11,0] <
+                    barriers[base+11,1] < removed['index'] and final[0]['index'] < barriers[base+11,1],
                 'fresh companion proves usable route before retained-source output')
         observations.append(dict(round=r,companion=companion,data_headers=[x['header'] for x in data],
-            syn_header=syn[0]['header'],fin_header=fin[0]['header'],data_frames=[x['index'] for x in data]))
+            syn_header=syn[0]['header'],fin_header=fin[0]['header'],data_frames=[x['index'] for x in data],
+            final_ack_frame=final[0]['index']))
     return dict(passed=True,
         lane=lane,actual_flows=4,actual_output_blocks=12,withdrawn_source_blocks=6,
         points=[p for p in points if p[0]==lane],indices=indices,zone_bindings=bindings,observations=observations,clock=clock,
@@ -196,12 +199,17 @@ def damaged(path,lane,log,native,output,statistics=None):
         changed=deepcopy(rows);a,b=barriers[base+9,0],barriers[base+10,0]
         changed[a]['frame'],changed[b]['frame']=changed[b]['frame'],changed[a]['frame']
         variants.append((f'quiet-{round_}-device-order',changed,log))
+        companion = next(f for f in actual['observations'] if f['round'] == round_ and f['companion'])
+        changed = deepcopy(rows)
+        a, b = companion['final_ack_frame'], flow['data_frames'][1]
+        changed[a]['frame'], changed[b]['frame'] = changed[b]['frame'], changed[a]['frame']
+        variants.append((f'companion-{round_}-late-final-ack', changed, log))
     for n in range(2):
         for field in ('index','removed_error','bind_result','bind_errno'):
             scalar(f'fixture-{n}-{field}',rf'^(TCP6_SCOPED_SOURCE_FIXTURE lane={n} .*?{field}=)([^ \r\n]+)',field)
     variants.extend((('completion',deepcopy(rows),log.replace(MARKER,'')),
         ('source-barrier',deepcopy(rows),re.sub(rf'^TCP6_SCOPED_SOURCE_LIFETIME_PHASE_PASS lane={lane} phase=3\r?\n','',log,count=1,flags=re.M))))
-    require(len(variants)==208,'complete scoped semantic-control inventory')
+    require(len(variants)==210,'complete scoped semantic-control inventory')
     clocks=([json.loads(line) for line in path.with_suffix('.clocks.jsonl').read_text().splitlines()] if native else [])
     if native:variants.extend((label,deepcopy(rows),log) for label in ('arrival-bound','capture-drop'))
     archive_path=output/(path.stem+'-damaged.zip');contexts=[]
@@ -245,5 +253,5 @@ def damaged(path,lane,log,native,output,statistics=None):
                             'scoped corruption reaches its semantic predicate: '+item['label'])
                     rejected.append(dict(name=item['label'],reason=str(error)))
                 else:raise ValueError('corrupt scoped evidence passed: '+item['label'])
-    require(len(rejected)==(210 if native else 208) and path.read_bytes()==original,'every scoped control rejects; actual input unchanged')
+    require(len(rejected)==(212 if native else 210) and path.read_bytes()==original,'every scoped control rejects; actual input unchanged')
     return dict(passed=True,rejected=rejected,archive_sha256=hashlib.sha256(archive_path.read_bytes()).hexdigest())

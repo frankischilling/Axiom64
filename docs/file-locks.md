@@ -13,6 +13,8 @@ Linux x86-64 `flock` (syscall 73) supports shared, exclusive and unlock operatio
 
 Locks remain advisory: other descriptions can still read, write, rename or unlink the file. Read-only opens and read-only mounts permit exclusive locks. Independent opens conflict even within one process. Duplicate and fork-inherited descriptors share one lock; any of them can change or release it. A final description close releases ownership, including process exit and close-on-exec. A retained blocking operation can keep the description alive after its visible descriptors close.
 
+Named FIFOs support advisory locks through their filesystem nodes. Axiom64 returns `EOPNOTSUPP` on anonymous pipes, sockets, and event descriptors.
+
 Hardlink and symlink access reaches the canonical inode. Rename preserves identity. An unlinked, still-open inode retains its lock; creating a new file under the old pathname creates separate ownership. Ext2 metadata updates preserve the in-memory lock state. Lock records are never persisted to disk.
 
 Repeated acquisition of the same mode succeeds without another shared-owner count. Converting modes first releases the old lock. A conflicting conversion can therefore return `EWOULDBLOCK` after dropping the original shared lock. Conversion does not provide atomic upgrade or deadlock detection. These contracts follow the [Linux manual](https://man7.org/linux/man-pages/man2/flock.2.html) and are checked against actual Linux execution.

@@ -1,6 +1,31 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    userspace/tests/net/udp.c
+ * @brief   UDP userspace tests.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Exercises IPv4 datagram traffic, retained I/O, and readiness across two guest
+ * interfaces.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #define _GNU_SOURCE
 #define UDP_ROUTE_LIFETIME_VERSION 2
+#define UDP_WIRE_FIXTURE_VERSION 3
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -883,6 +908,8 @@ static void pressure(int control, unsigned lane) {
               "reuse original UDP sender descriptor");
         replacement = fd;
     }
+    check(epoll_ctl(epoll, EPOLL_CTL_MOD, replacement, &event) == -1 && errno == ENOENT,
+          "reused descriptor cannot modify the original UDP watch");
     memset(sender.bytes, 0xa5, sizeof(sender.bytes));
     memset(sender.poison, 0xa5, sizeof(sender.poison));
     sender.destination = address(9999, 0x0a170104 + (lane << 8));
@@ -896,14 +923,26 @@ static void pressure(int control, unsigned lane) {
     fflush(stdout);
     check(pthread_join(thread, NULL) == 0 && sender.result == sizeof(sender.bytes),
           "UDP retained send description, original destination port and bytes");
-    check(epoll_wait(epoll, &event, 1, 2000) == 1 && event.data.u64 == 2 &&
-              (event.events & EPOLLOUT) && epoll_wait(epoll, &event, 1, 0) == 0,
-          "UDP capacity wakes retained observer and excludes reused descriptor");
+    unsigned registrations = 0;
+    for (unsigned n = 0; n < 2; ++n) {
+        check(epoll_wait(epoll, &event, 1, 2000) == 1 &&
+                  (event.data.u64 == 1 || event.data.u64 == 2) && (event.events & EPOLLOUT),
+              "UDP capacity wakes each original registration");
+        registrations |= 1u << event.data.u64;
+    }
+    check(registrations == 6 && epoll_wait(epoll, &event, 1, 0) == 0,
+          "UDP delivers distinct registrations while an alias owns the original socket");
     struct sockaddr_in local = address(45000 + lane, 0x0a170102 + (lane << 8));
     check(bind(replacement, (struct sockaddr*)&local, sizeof(local)) == -1 && errno == EADDRINUSE &&
               close(observer) == 0 &&
               bind(replacement, (struct sockaddr*)&local, sizeof(local)) == 0,
           "UDP pending sender port remains until final owner closes");
+    event = (struct epoll_event){.events = EPOLLOUT | EPOLLET, .data.u64 = 3};
+    check(epoll_ctl(epoll, EPOLL_CTL_ADD, replacement, &event) == 0 &&
+              epoll_wait(epoll, &event, 1, 2000) == 1 && event.data.u64 == 3 &&
+              (event.events & EPOLLOUT) && epoll_wait(epoll, &event, 1, 0) == 0,
+          "replacement UDP socket wakes only after its own registration");
+    printf("UDP_EPOLL_ALIAS_PASS index=%u\n", lane + 1);
     empty(replacement);
     close(replacement);
     close(epoll);

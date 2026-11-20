@@ -1,4 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/include/net/inet.hpp
+ * @brief   IPv4 socket address helpers.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Declares address conversion and marshaling for Internet sockets.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #pragma once
 #include "core/base.hpp"
 #include "net/ipv4.hpp"
@@ -24,6 +47,7 @@ struct InetSendControl {
     uint8_t ttl = 64, tos = 0;
     bool cache_destination = false;
     bool header_included = false, probe = false;
+    bool ttl_override = false;
     Ipv4SendRoute route{};
     ip4::Options options{};
 };
@@ -46,6 +70,7 @@ void inet_close(InetSocket*);
 Ipv4Destination* inet_output_destination(InetSocket*, uint32_t address, bool lookup_failed);
 
 bool inet_payload(InetSocket*);
+bool inet_udp(const InetSocket*);
 
 bool inet_dont_fragment(const InetSocket*, bool path_locked = false);
 
@@ -101,8 +126,9 @@ int inet_send_admit(InetSocket*, InetAddress&, size_t, InetSendControl&);
 int inet_send_ready(InetSocket*, size_t, const InetSendControl* = nullptr);
 
 int64_t inet_send(InetSocket*, const InetAddress&, const void*, size_t, bool named = false,
-                  const InetSendControl* control = nullptr);
+                  const InetSendControl* control = nullptr, bool more = false);
 
+void inet_udp_flush(InetSocket*);
 int64_t inet_read(InetSocket*, void*, size_t);
 
 int64_t inet_syscall(Task&, const Frame&);

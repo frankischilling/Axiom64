@@ -7,7 +7,13 @@ Axiom64 retains the open file description selected by an I/O syscall while that 
 | Operations | Current scope |
 | --- | --- |
 | `read`, `write`, `readv`, `writev` | Existing regular files, pipes, Unix stream sockets, event counters, and character/block devices |
-| `pread64`, `pwrite64` | Existing seekable files and block devices; preserve the shared file offset; pipes, sockets, and character devices return `ESPIPE` |
+| `splice`, `tee` | Pipe and FIFO transfers. `splice` also accepts regular RAM and ext2 files, supported memory devices, Unix streams and datagrams, IPv4 and IPv6 TCP and UDP, raw packet sockets, and route netlink sockets. |
+| `sendfile` | File and memory device transfers to regular files, devices, pipes, and sockets. A socket can feed a pipe. |
+| `copy_file_range` | Copies between regular files on the same RAM or ext2 filesystem or between anonymous memory files. |
+| `memfd_create`, `F_ADD_SEALS`, `F_GET_SEALS` | Sparse anonymous files with file seals and shared or private mappings. |
+| `fallocate` | Allocates pages and punches holes in anonymous memory files. |
+| `vmsplice` | Transfers between userspace vectors and pipe or FIFO endpoints. |
+| `pread64`, `pwrite64` | Seekable files, block devices, and the standard memory devices described below. The shared file offset is preserved. Pipes, sockets, and other character devices return `ESPIPE`. |
 | `recvfrom`, `sendto` | Connected Unix streams, including receive-address output; a send destination is unsupported |
 | `recvmsg`, `sendmsg` | Unix stream messages with copied iovec metadata, receive source names, sender credentials and transferred file descriptions |
 | `accept`, `accept4` | Existing Unix listeners, optional address output, and accepted-descriptor nonblocking/close-on-exec flags |
@@ -82,6 +88,224 @@ Durations round up to the kernel's 10 ms clock units, following the jiffy conver
 
 Each supported socket I/O attempt captures one absolute monotonic deadline after importing its arguments. Changing the option through an alias does not change a waiting attempt's deadline. The first attempt can still return ready data or an immediate error. An expired wait without progress returns `EAGAIN` and releases its retained request exactly once. It does not access a buffer unmapped during an unavailable socket wait; a readable wake-up still checks the buffer and returns `EFAULT` for an invalid destination. A transferred prefix returns its byte count; it is never replayed after expiry. Nonblocking descriptions and `MSG_DONTWAIT` retain their immediate behavior. Read/readv/recv/recvmsg and accept use the receive deadline; write/writev/send/sendmsg use the send deadline. [TCP](tcp.md) also retains connect requests, uses the send deadline and returns `EINPROGRESS` on connect expiry. Full TCP interruption/deadline and retained-call acceptance remains in [TCP reliability](tcp.md).
 
+## Signal descriptors
+
+`signalfd` and `signalfd4` let event loops receive blocked signals through a file
+descriptor. Redirecting the descriptor's mask through an alias updates the
+shared open description. A read uses the caller's pending signals, so forked
+processes can use an inherited descriptor without draining their parent's queue.
+Poll and select check the caller's queue. Epoll follows the signal notification
+context that registered the descriptor.
+
+Reads return complete 128-byte records. One `readv` can split a record across
+vectors or drain several records. A fault consumes the signal for that record.
+The read reports any complete records copied before the fault. A caught signal
+can interrupt a blocking read or restart it through the normal signal path.
+
+Standard signals coalesce. `sigqueue` and thread-directed queued sends preserve
+real-time payloads and order for repeated instances of the same signal.
+`signalfd`, `sigtimedwait` and signal handlers consume the same pending records.
+Pending signal records share a 4,096-entry kernel pool. The receiver's
+`RLIMIT_SIGPENDING` limits charged records by real UID. Real-time sends that
+require a queue record return `EAGAIN` when admission fails.
+
+## Poll and ppoll waits
+
+`poll` and `ppoll` keep the supplied descriptor numbers and event masks while
+a wait is blocked. Completion writes only the `revents` fields. Both calls
+look up the retained numbers in the caller's descriptor table when checking
+readiness. Ready descriptors take precedence over a pending signal.
+
+`ppoll` accepts an optional relative timespec and a temporary signal mask.
+The raw syscall writes back the remaining interval. The libc wrapper
+preserves the original timespec. The kernel measures waits in 10 ms ticks.
+On a process stop and continue, `poll` reimports the descriptor list and keeps
+its original deadline. `ppoll` restarts with the remaining relative interval.
+
+`make test-poll-waits` checks these behaviors for root and ordinary callers
+with both musl providers and linkages on BIOS and UEFI, with additional
+read-only ext2 boots. `sudo make test-poll-waits-native` runs the same cases
+on Linux.
+
+## Select and pselect waits
+
+`select` and `pselect` retain the input fd sets across a blocked wait.
+Each ready bit counts separately across read, write, and exceptional
+conditions. The calls read and write whole bitmap words up to the smaller
+of `nfds` and the descriptor table's current capacity. Requesting a closed
+descriptor within that range returns `EBADF`. A caught signal
+ends the wait without replacing the caller's fd sets.
+
+`select` and raw `pselect6` write back the remaining relative timeout.
+The libc `pselect` wrapper preserves the original timespec. The temporary
+mask applies during the wait, with the original mask restored on return.
+On a process stop, both waits write back the time left and restart with
+that interval on continue. The wait's resolution is 10 ms.
+
+`make test-select-waits` checks both caller identities and both musl
+providers and linkages on BIOS and UEFI, with read-only ext2 coverage.
+`sudo make test-select-waits-native` compares the same cases on Linux.
+
+## Descriptor lifetime during poll and select
+
+A blocked poll or select wait holds references to the pollable file
+descriptions it registered. Closing or reusing the descriptor number
+in another thread leaves the registration in place. A wakeup from the
+original description prompts the wait to check the current descriptor
+table. For example, a pipe reader held by a wait still permits a write
+from the peer after another thread closes its descriptor. On wakeup,
+`poll` reports `POLLNVAL` if the number is now closed, or reports
+readiness for the description that currently occupies the number.
+
+Unix stream sockets notify waits when data is queued and when a full
+receive queue gains space. This preserves the wakeup even if another
+thread consumes the data or fills the queue before the waiter runs.
+Stream sockets also report the normal read and write bits and peer
+write shutdown through `POLLRDHUP`.
+
+Unix datagrams notify readers after a whole record is queued, including
+zero-length records. Datagram writers get wakeups when their send budget
+becomes writable or a full connected peer queue is read. A peek can wake
+the waiter while the queue stays full. The send budget stays with queued records when the original socket closes
+and cannot wake a replacement socket in the same slot.
+
+These references are released when the attempt ends, including on
+timeout, interruption, and task exit. `make test-descriptor-wait-lifetime`
+checks all four wait syscalls on pipes and Unix stream sockets, with
+BIOS, UEFI, and read-only ext2 fixtures. Use
+`sudo make test-descriptor-wait-lifetime-native` for the Linux comparison.
+
+IPv4 and IPv6 UDP sockets notify waiters when a packet enters their
+receive queue or a socket error is recorded. A waiter can observe the
+notification even if another thread reads the packet or clears the
+error before it runs. The wakeup belongs to the socket that generated
+it. `make test-udp-waits` exercises loopback packets, including
+zero-length packets, and connection-refused errors across all four
+wait calls. `sudo make test-udp-waits-native` runs the Linux comparison.
+
+## Epoll descriptor lifetime
+
+Epoll accepts descriptors with a poll operation, including pipes, sockets,
+event descriptors, message queues, terminals, and selected proc controls.
+Registering a regular RAM or ext2 file, a directory, or a device such as
+`/dev/null` returns `EPERM`. Those descriptors still report the default
+read and write readiness flags through `poll`. `O_PATH` descriptors return
+`EBADF` from epoll registration.
+
+An epoll descriptor reports anonymous-inode mode through `fstat` and
+`fstatat` with `AT_EMPTY_PATH`. Reads and writes return `EINVAL`, and
+positioned I/O returns `ESPIPE`. As on current Linux, `lseek` returns zero
+without changing the position.
+
+An epoll watch is keyed by the registered descriptor number and its open
+file description. If another descriptor still holds that description,
+closing the registered number leaves the watch in place. A new file that
+reuses the number can have its own watch. The old watch goes away when the
+last reference to its file description closes.
+
+A blocked wait holds the epoll instance it entered. Closing or replacing
+its descriptor in another thread leaves that wait on the original instance.
+`epoll_pwait` and `epoll_pwait2` apply a temporary signal mask during the wait
+and restore the previous mask afterward. `epoll_pwait2` takes a relative
+`timespec` in seconds and nanoseconds. A null pointer waits indefinitely and a
+zero interval checks immediately. Positive intervals round up to the scheduler's
+10 ms clock, and the kernel leaves the caller's timespec untouched.
+If copying a batch faults after some events, the wait returns the events it
+copied and leaves the remaining events ready.
+
+`make test-epoll-lifetime` checks duplicate and reused descriptors, fork
+and exec, descriptors in queued `SCM_RIGHTS` messages, blocked waits, signal
+masks, relative deadline rounding, and event copy faults. It runs both caller
+identities and both musl providers and linkages on BIOS and UEFI, with
+additional read-only ext2 boots.
+`sudo make test-epoll-lifetime-native` runs the Linux comparison.
+
+## Exclusive epoll wakeups
+
+`EPOLLEXCLUSIVE` applies when adding a watch. Delete and add the watch again
+to change it. The flag accepts `EPOLLIN`, `EPOLLOUT`, `EPOLLERR`, `EPOLLHUP`,
+`EPOLLET`, and `EPOLLWAKEUP` as companion bits. Axiom64 has no system suspend
+integration for `EPOLLWAKEUP`.
+
+Ordinary watches still receive the event. Exclusive watches queue it in
+registration order until one reaches a blocked epoll waiter. A watch on an
+instance that is only being polled can queue the event while the notification
+continues to a blocked waiter. The lifetime tests cover pipe readers, eventfd
+writers, signal descriptors, and a Unix listener whose backlog is already
+readable when another connection arrives.
+
+## Nested epoll
+
+Poll, select, and an outer epoll instance report an epoll descriptor as
+readable when it has an event to deliver. A watch can span up to four links
+between epoll instances. Adding a cycle or a fifth link returns `ELOOP`.
+An `EPOLLEXCLUSIVE` watch on an epoll descriptor returns `EINVAL`.
+Successive waits that return only part of the ready set rotate through it.
+
+`make test-epoll-nested` checks readiness, descriptor aliases, nesting limits,
+timer and signal wakeups, and rotation through ready events in the same guest
+profiles as the lifetime tests. `sudo make test-epoll-nested-native` checks the
+same behavior on Linux. The native comparison records the depth policy and
+accounts for the tested Linux 5.15 WSL kernel accepting deeper empty chains.
+
+## Named pipes
+
+`mkfifo` and `mkfifoat` create a FIFO with the caller's ownership and umask.
+The kernel pairs blocking opens for reading and writing. A nonblocking
+reader can open an empty FIFO without a writer. A nonblocking writer needs
+a reader or gets `ENXIO`. Opening with `O_RDWR` supplies both ends.
+
+Each open of the same inode uses the same pipe, including opens through hard
+links. Unlinking a name leaves open descriptions usable. Recreating the name
+creates a separate FIFO. On ext2 the inode persists across reboot. Data in
+the pipe lives in memory and is discarded when the last description closes.
+
+Blocking writes to pipes and FIFOs keep the original open description and
+vector positions while waiting for room. A signal or a disappearing reader
+returns the bytes already copied. Closing the last reader also sends
+`SIGPIPE`. A partial write to a FIFO still generates an inotify modify
+event. A `writev` of at most 4096 bytes waits until the whole request
+fits or returns `EAGAIN` without queuing a prefix in nonblocking mode.
+
+`F_GETPIPE_SZ` reports the capacity shared by the endpoints of an anonymous
+pipe or FIFO. `F_SETPIPE_SZ` rounds the size up to a power of two, with a
+4096-byte minimum. Shrinking below the number of occupied page slots fails
+with `EBUSY`. A partly consumed page still occupies its slot. `poll` and
+`epoll` report writable once a slot becomes available, even though a small
+write can sometimes fit in the final page of a full pipe. Resizing preserves
+the queued bytes and wakes writers when it creates room. If an output
+buffer faults during a read, completed slots stay consumed and the faulting
+slot stays queued.
+
+`pipe2(O_DIRECT)` enables packet mode on the write end. `F_SETFL` can change
+the mode on an open pipe or FIFO description, including through a duplicate.
+Packet slots hold up to 4096 bytes. A read stops at the first packet, and a
+short read discards that packet's remaining bytes after a successful copy.
+Zero-length reads and failed output copies leave the packet queued. A mode
+change leaves existing slots in their original mode. A write can still merge
+its leading remainder into a stream slot already at the end of the queue.
+
+New pipes normally have 16 slots. The `/proc/sys/fs/pipe-max-size` setting
+limits unprivileged pipe growth and initial capacity. It defaults to 1 MiB.
+`pipe-user-pages-soft` defaults to 16,384 reserved pages per owning real UID.
+When the soft limit would be exceeded, a new pipe starts with two slots.
+`pipe-user-pages-hard` rejects new pipes and FIFO buffers that would exceed
+the limit. A zero page limit disables that quota. Resizing checks growth
+against the owning UID's quota. Shrinking releases the reserved pages.
+
+`make test-named-pipes` checks descriptor replacement during a large write,
+signal interruption, reader close, atomic nonblocking writes, and pipe
+capacity and readiness. It grows a full pipe under a blocked writer and
+checks recovery after a read buffer fault. It also checks packet boundaries,
+short reads, copy faults, and mixed stream and packet writes. Guest runs check
+quota enforcement, descriptor aliases, and the permissions on pipe controls.
+It runs
+with two caller identities and both musl providers, linkages, and firmware
+types. It also verifies the same FIFO and hard link
+after rebooting a writable ext2 root. `sudo make test-named-pipes-native`
+runs the main workload on Linux. The `mknod` entry points currently create
+regular files and FIFOs.
+
 ## Timer descriptors
 
 `timerfd_create`, `timerfd_settime` and `timerfd_gettime` provide Linux x86-64
@@ -126,7 +350,103 @@ TCP transfers check stream availability and errors before accessing user pages. 
 
 `tcp_write_check` checks pending errors and send capacity before source copying. The receive peek/copy/consume sequence uses the existing single-CPU syscall discipline; synchronization across that sequence remains required before SMP.
 
-Each request retains one `Handle`, including the pipe endpoint, socket/listener, device, or inode that it owns. Completion, errors, timeout expiry, caught-signal interruption, group stop, thread/group exit, and successful exec teardown release that reference. A failed exec leaves other threads and their waiting requests intact. Closing the last retained pipe endpoint updates reader/writer counts; closing the last socket description releases its socket and wakes its peer through the normal readiness path.
+Each request holds the open descriptions it uses until completion, error, timeout, signal interruption, group stop, thread/group exit, or successful exec teardown. A failed exec leaves other threads and their waiting requests intact. Closing the last retained pipe endpoint updates reader and writer counts. Closing the last socket description releases its socket and wakes its peer through the normal readiness path.
+
+Pipe-to-pipe `splice` moves complete slots and shares a page for a partial move.
+`tee` shares the input pages and leaves the source pipe readable. Shared output
+slots preserve packet boundaries and do not accept appended bytes. A blocked
+transfer holds both open descriptions and returns the first available prefix.
+The native and guest checks cover slot capacity, partial transfers, packet
+boundaries, readiness, SIGPIPE, signal interruption, restart, and descriptor
+reuse.
+
+File-to-pipe `splice` fills non-mergeable pipe slots at file page boundaries.
+Pipe-to-file `splice` consumes the written prefix, including partial packets.
+It uses the waiting task's file size limit and credentials. A supplied offset
+leaves the shared file position alone. A fault reading the offset prevents the
+transfer. A fault writing it back returns `EFAULT` after the bytes move.
+
+Memory device `splice` accepts `/dev/null` as a sink and `/dev/full` as a
+source. `/dev/zero`, `/dev/random` and `/dev/urandom` work in both directions.
+Device splice keeps the explicit offset and the shared device position fixed.
+`/dev/full` reads zeroes and reports `ENOSPC` for ordinary writes. A splice
+to `/dev/full` returns `EINVAL` and preserves the pipe contents. The native
+comparison records the older Linux behavior for `/dev/zero` and `/dev/full`.
+
+Socket `splice` copies through the existing transports. Socket offsets must be
+null. Ingress keeps unread stream bytes queued and consumes any truncated
+datagram. Unix stream ingress ends at a descriptor-passing boundary and
+releases the attached descriptors. Pipe-to-socket transfers consume the
+accepted bytes across pipe slots and keep the remaining bytes available.
+Pipe availability and socket availability use separate blocking rules.
+Socket waits observe the endpoint's send or receive timeout. Unix stream
+ingress also checks `SPLICE_F_NONBLOCK` before waiting for socket data.
+Tests cover both directions on Unix sockets and loopback TCP and UDP. They also
+check Unix socket descriptor reuse, large datagrams, and send backpressure.
+On UDP output, `SPLICE_F_MORE` assembles a datagram with later splice or send
+calls on the same open description. See [UDP corking](udp.md#udp-corking).
+Raw packet transfers use the bound Ethernet interface. Guest tests check
+transmit, receive, and truncation on virtio-net and e1000, and compare the
+exact Ethernet frames in the captures. Linux comparison uses loopback.
+Route netlink tests issue a link dump through a pipe, check the reply port and
+sequence, and read the multipart response through a pipe as root and as an
+ordinary caller. Packet socket creation and netlink requests use their
+existing permission checks.
+
+`sendfile` uses the same transfer paths. Regular RAM and ext2 files and
+supported memory devices can feed a pipe, another regular file, or a supported
+device or socket. A socket can feed a pipe with an implicit source position.
+An explicit source offset leaves the source description's position alone.
+The result and offsets count the bytes the destination accepted. A copyout
+fault returns `EFAULT` after the data and destination position have committed.
+An interrupted call reports a partial transfer when bytes have moved. A
+copyout fault takes precedence over a signal restart. The checks cover file
+size limits, writable ext2, nonblocking pipes and sockets, and descriptor
+replacement while blocked.
+
+The `copy_file_range` syscall copies between regular files on the same
+filesystem, with independent source and destination offsets. Null offset
+pointers select the descriptions' shared positions. The kernel limits the
+copy at source EOF and at the destination file size limit. It rejects
+overlapping ranges in the same inode, including through a hard link, and
+returns `EXDEV` across filesystems so callers can use their read/write
+fallback. Copyout faults leave the transferred bytes in place and the other
+cursor still commits. Copied holes supply zero bytes.
+
+### Anonymous memory files
+
+`memfd_create` opens an unnamed, sparse file. It supports descriptor-local
+`MFD_CLOEXEC`, optional sealing, positioned I/O, and descriptor passing over
+Unix sockets. A shared mapping keeps the file alive after the last descriptor
+closes. It reads and writes the same pages as descriptor I/O. Private mappings
+copy a file page on their first write.
+
+Pages are allocated on demand. Access to a whole page beyond EOF raises
+`SIGBUS`. Truncation invalidates mapped pages beyond the new EOF, including
+private copies. Growing the file lets those addresses fault in zeroed pages.
+Mapped ranges can be protected, split, replaced, and inherited across fork.
+`fallocate` reserves pages before use and can leave the file length unchanged.
+Punching a hole clears shared file data and preserves already copied private
+pages. Other filesystem types can return `EOPNOTSUPP` for allocation.
+
+`F_SEAL_WRITE` checks shared mappings that may gain write access and outstanding
+page pins. `F_SEAL_FUTURE_WRITE` blocks descriptor writes and new writable shared
+mappings while preserving access on existing mappings. Grow, shrink, and
+execute seals constrain inode changes. `MFD_NOEXEC_SEAL` fixes the inode's
+execute bits at zero. Executable memory files can run through `execveat` and
+libc `fexecve`. Huge-page memory files and proc descriptor links remain outside
+the current implementation.
+
+### Userspace and pipe buffers
+
+`vmsplice` captures the vector addresses and lengths before waiting. Memory
+queued into a pipe keeps a reference to each readable page until the pipe
+consumes or releases it. Unmapping a queued page does not discard its bytes.
+The pipe-to-memory direction copies each slot into the captured vectors. A
+copy fault preserves the faulting slot and returns any completed prefix.
+`SPLICE_F_NONBLOCK` controls waits. The pipe's `O_NONBLOCK` flag does not
+change a `vmsplice` call. Device mappings without allocator-owned pages return
+`EFAULT` when queued.
 
 Blocking TCP write/writev/send/sendmsg calls keep the transferred count and remaining cursor while the send queue is full. Completion uses the original retained description and imported vectors even after close/reuse or dup2 replacement. Blocking mode is captured at syscall entry; changing O_NONBLOCK through an alias does not convert an in-progress send or MSG_WAITALL into a different attempt. Finite send deadlines and caught signals return an already queued prefix without replaying it, including with SA_RESTART. Initially nonblocking calls and MSG_DONTWAIT return their available prefix immediately. Native and VM comparisons check this send progress; the remaining TCP reliability requirements are described in [TCP support](tcp.md).
 
@@ -147,6 +467,8 @@ Nested handlers can issue their own blocking I/O. `sigreturn` restores the appro
 ```sh
 sudo -n make test-thread-io-native
 make test-thread-io
+sudo -n make test-pipe-transfer-native
+make test-pipe-transfer
 make test-threads
 make test
 ```
@@ -159,4 +481,8 @@ Socket timeout checks cover all ten supported operation forms, option validation
 
 Evidence is in `build/threads-io-{bios,uefi}.log` and `build/threads-io-results.json`. The complete thread and full ABI suites also require both linkage markers. Host results do not replace guest evidence.
 
-The implementation permits one saved I/O request per task, at most 1024 vectors, and at most `0x7ffff000` bytes per operation. Transfers use 4096-byte kernel buffers. It runs on one CPU with interrupts masked in syscalls. SMP synchronization, complete pipe atomicity and terminal behavior, full TCP/connect interruption/deadline acceptance, broader message/socket features, cancellation and complete Linux conformance remain planned.
+The implementation permits one saved I/O request per task. Vectored I/O
+accepts up to 1024 vectors and `0x7ffff000` bytes per request. It runs on one
+CPU with interrupts masked in syscalls. Transfers between sockets and pipes,
+SMP synchronization, terminal behavior, broader
+TCP/connect deadline coverage, and complete Linux conformance remain planned.

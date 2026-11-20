@@ -88,6 +88,11 @@ class Flow:
         self.events.append(dict(event='icmp', ms=self.peer.ms(), type=case['type'], code=case['code'],
                                 mutation=mutation, receiving_lane=delivery.lane))
 
+    def quote_cycle(self, stale, current):
+        check(self.peer.cycle_quote is None, 'one pending current-cycle quote per adapter')
+        self.quote(stale)
+        self.peer.cycle_quote = (self, current)
+
     def synack(self):
         self.send(SYN | ACK, sequence=self.initial)
 
@@ -129,8 +134,9 @@ class Flow:
                     stale = previous[-1].syn_frame
                     check(stale is not None and stale[34:38] == frame[34:38] and
                           stale[38:42] != frame[38:42], 'same tuple has a fresh sequence owner')
-                    self.later(.025, lambda: self.quote(stale))
-                self.later(.15, lambda: self.quote(frame))
+                    self.later(.025, lambda: self.quote_cycle(stale, frame))
+                else:
+                    self.later(.15, lambda: self.quote(frame))
                 return
             if self.generation or self.case['mode'] in ('SOFT', 'RECOVER', 'CONSUME', 'TIME_WAIT'):
                 self.synack()
@@ -225,6 +231,7 @@ class Peer(EthernetPeer):
     def __init__(self, lane, minimum_fin_ms=0):
         super().__init__(lane, minimum_fin_ms)
         self.flows, self.pending, self.completed, self.cycles, self.others = [], [], set(), set(), None
+        self.cycle_quote = None
 
     def ms(self):
         return (time.monotonic() - self.began) * 1000
@@ -308,6 +315,12 @@ class Peer(EthernetPeer):
         check(flow is not None, 'each TCP segment has an independently observed connection owner')
         self.frames[-1].update(case=flow.ordinal, generation=flow.generation, cycle=flow.cycle)
         flow.input(segment, frame)
+
+    def output_drained(self):
+        if self.cycle_quote is not None:
+            current, frame = self.cycle_quote
+            self.cycle_quote = None
+            current.later(.125, lambda: current.quote(frame))
 
     def tick(self):
         for due, flow, function in list(self.pending):

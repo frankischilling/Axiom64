@@ -1364,6 +1364,8 @@ name = "Compare quoted ICMP failures across Linux and the complete guest matrix"
 run = '''
 dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' libc6:amd64 > build/tcp-icmp-native-package.txt
 cp /usr/share/doc/libc6/copyright build/tcp-icmp-native-copyright.txt
+make -j2 build/tcp-icmp-native build/tcp-icmp-static build/tcp-icmp-dynamic
+python3 scripts/build_musl.py --provider runtime
 sudo -n python3 scripts/tests/tcp_packet_observer_test.py
 sudo -n python3 scripts/tests/tcp_icmp_error_order_test.py
 sudo -n make test-tcp-icmp-native

@@ -1139,7 +1139,8 @@ build/ipv4-address-lifetimes-static build/ipv4-address-lifetimes-dynamic: usersp
 test-ipv4-address-lifetimes-guest:
 	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_lifetimes.guest build/ipv4-address-lifetimes-guest --produce
 test-ipv4-address-lifetimes-native:
-	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_lifetimes.native build/ipv4-address-lifetimes-native --produce
+	@mkdir -p build
+	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_lifetimes.native build/ipv4-address-lifetimes-native-controls --produce
 build/ipv4-lifetime-wire-native: userspace/tests/net/ipv4/address_lifetime_wire.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
 	@mkdir -p build
 	$(PYTHON) scripts/compile_uapi_client.py --compiler '$(CC)' --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $<

@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ipv6_device_pending_capture import inspect
@@ -38,7 +39,17 @@ class PendingDeviceCaptures(unittest.TestCase):
                     for frame in requests:
                         if frame[20] == 2 and frame[23] == 10:
                             peers[0].receive(probe)
+                            with patch.object(delivery, 'receipt', return_value=None):
+                                peers[1].tick()
+                            self.assertEqual(peers[1].outgoing, [])
+                            peers[1].tick()
+                            self.assertEqual(len(peers[1].outgoing), 1)
+                            self.assertEqual(peers[1].outgoing.pop()[19], requests[2][19])
+                            self.assertTrue(peers[1].mode_seen)
                         peers[1].receive(frame)
+                        if frame[20] == 11:
+                            peers[1].tick()
+                            self.assertEqual(peers[1].outgoing, [])
                         if frame[20] == 12:
                             break
                         peers[1].outgoing.clear()

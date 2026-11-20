@@ -1771,7 +1771,10 @@ is one byte, so UART line completion cannot consume another polling tick.
 Readers reopen the actual command bytes and bind their monotonic receipts
 to the recorded guard requests. The reader checks one-second retry spacing and
 failure after the third ARP request, retaining the 20 ms precision and one-second observer
-bounds. Native captures retain the running kernel configuration, original
+bounds. For native cases with the raw guard, the retry-spacing check uses the
+kernel timestamps of the ARP packets. The reader matches those bytes and times
+to the independent capture and keeps the receipt checks for the guard and error.
+Native captures retain the running kernel configuration, original
 neighbor parameters, independent ingress taps and pre/post IP receive counters.
 Timer-wheel rounding follows the recorded `CONFIG_HZ` and the pinned
 [Linux timer implementation](https://github.com/torvalds/linux/blob/v6.6/kernel/time/timer.c).

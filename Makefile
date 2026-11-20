@@ -18,7 +18,7 @@ FORMAT_SOURCES += scripts/tests/tcp_icmp_port_ownership.c
 
 .PHONY: all image disk-root test test-storage test-ext2 test-disk-root test-root-io test-network test-ipv4 test-udp test-netlink test-netlink-codec test-address-codec test-configuration test-dhcp-codec test-dhcp-modules test-dhcp-transport test-profiles test-resolver test-resolver-native test-clock-codec test-clock test-file-locks test-file-locks-native test-threads test-thread-io test-virtqueue test-virtio format check-format run run-serial deps busybox sources clean
 all: image
-build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-output-host build/tcp-socket-output-host: kernel/net/ipv4/configuration.cpp
+build/tcp-socket-output-host: kernel/net/ipv4/configuration.cpp
 .PHONY: test-rtc-codec test-clock-wall test-clock-wall-native
 .PHONY: test-timerfd test-timerfd-native
 .PHONY: test-signalfd test-signalfd-native
@@ -1043,8 +1043,6 @@ build/ipv6-wire-host: kernel/tests/net/ipv6_wire.cpp kernel/net/ipv6/wire.cpp ke
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
 build/ipv6-host: kernel/tests/net/ipv6_host.cpp kernel/tests/net/ipv6_output_owner.cpp kernel/tests/net/ipv6_link_configuration.cpp kernel/tests/net/ipv6_router.cpp kernel/tests/net/ipv6_address_lifecycle.cpp $(IPV6_CORE) kernel/fs/proc/ipv6.cpp kernel/fs/proc/integer.cpp kernel/net/ipv6/socket/send_control.cpp kernel/net/ethernet.cpp kernel/net/netlink/ipv6.cpp kernel/net/netlink/addresses.cpp kernel/net/netlink/link.cpp kernel/net/netlink/inventory.cpp kernel/net/netlink/routes.cpp $(call rwildcard,kernel/include/,*.hpp)
-	@mkdir -p build
-	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 build/ipv6-reassembly-host: kernel/tests/net/ipv6_reassembly.cpp kernel/net/ipv6/reassembly.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/reassembly.hpp kernel/include/net/ipv6/wire.hpp kernel/include/core/base.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
@@ -1147,8 +1145,6 @@ test-ipv4-address-lifetimes-wire:
 test-ipv4-address-lifetimes:
 	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_lifetimes.cohort build/ipv4-address-lifetimes-cohort --produce
 build/ipv4-source-route-host: kernel/tests/net/ipv4_source_route.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/configuration.cpp kernel/net/ipv4/options.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(IPV4_MULTICAST_CORE) $(call rwildcard,kernel/include/,*.hpp)
-	@mkdir -p build
-	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 build/ipv4-source-controls-static build/ipv4-source-controls-dynamic: userspace/tests/net/ipv4/source_route_controls.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
 	$(PYTHON) scripts/compile_uapi_client.py --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $(if $(filter %-static,$@),-static) userspace/tests/net/ipv4/source_route_controls.c
 build/ipv4-source-wire-native: userspace/tests/net/ipv4/source_route_wire.c userspace/tests/net/ipv4/source_route_apps.h
@@ -1178,19 +1174,37 @@ test-ipv4-options:
 	$(PYTHON) scripts/ipv4_options_test.py
 
 build/ipv4-paths-host: kernel/tests/net/ipv4_paths.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/options.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(call rwildcard,kernel/include/,*.hpp) $(IPV4_MULTICAST_CORE)
-	@mkdir -p build
-	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 .PHONY: test-ipv4-paths
 build/ipv4-output-host: kernel/tests/net/ipv4_output.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/options.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(call rwildcard,kernel/include/,*.hpp) $(IPV4_MULTICAST_CORE)
-	@mkdir -p build
-	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 build/ipv4-socket-output-host: kernel/tests/net/ipv4_socket_output.cpp kernel/tests/net/ipv4_send_control.cpp kernel/tests/net/ipv4_raw_headers.cpp kernel/net/ipv4/socket.cpp kernel/net/ipv4/send_control.cpp kernel/net/udp/core.cpp kernel/net/ipv4/core.cpp kernel/net/ipv4/options.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp kernel/net/ipv4/path_mtu.cpp kernel/net/ipv4/reassembly.cpp kernel/net/ipv4/fragmentation.cpp kernel/net/ethernet.cpp $(IPV6_CORE) $(call rwildcard,kernel/include/,*.hpp) kernel/net/ipv4/socket.hpp $(IPV4_MULTICAST_CORE)
-	@mkdir -p build
-	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 build/ipv4-routes-host: kernel/tests/net/ipv4_routes.cpp kernel/net/ipv4/routes.cpp kernel/net/ipv4/addresses.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
+build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-output-host: kernel/net/ipv4/configuration.cpp
 build/ipv4-socket-output-host: kernel/tests/net/ipv4_raw_header_queue.cpp kernel/tests/net/ipv4_address_lifecycle.cpp
+
+# These host tests use the same ASan/UBSan object flags. Keep each binary's
+# ordered list of source prerequisites, including the additional source rules.
+NET_SANITIZER_TARGETS = build/ipv6-host build/ipv4-paths-host build/ipv4-output-host \
+	build/ipv4-socket-output-host build/ipv4-source-route-host
+NET_SANITIZER_FLAGS = -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer
+
+.SECONDEXPANSION:
+$(NET_SANITIZER_TARGETS): $$(patsubst %.cpp,build/net-sanitizer/%.o,$$(filter %.cpp,$$^))
+	$(CXX) $(NET_SANITIZER_FLAGS) -Wl,--gc-sections $(filter %.o,$^) -o $@
+
+.PHONY: net-sanitizer-compiler-check
+build/net-sanitizer/compiler: net-sanitizer-compiler-check
+	@mkdir -p $(@D)
+	@temporary=$@.$$$$; trap 'rm -f "$$temporary"' EXIT; \
+		printf '%s\n' '$(subst ','"'"',$(CXX) $(NET_SANITIZER_FLAGS))' > "$$temporary" && \
+		{ cmp -s "$$temporary" $@ || mv -f "$$temporary" $@; }
+
+build/net-sanitizer/%.o: %.cpp Makefile build/net-sanitizer/compiler
+	@mkdir -p $(@D)
+	$(CXX) $(NET_SANITIZER_FLAGS) -ffunction-sections -fdata-sections -Ikernel/include -MMD -MP -MF $@.d -c $< -o $@
+
+-include $(call rwildcard,build/net-sanitizer/,*.d)
 
 test-ipv4-paths: build/ipv4-paths-host build/ipv4-addresses-host build/ipv4-output-host build/ipv4-socket-output-host build/ipv4-routes-host
 	ASAN_OPTIONS=detect_leaks=1 ./build/ipv4-paths-host

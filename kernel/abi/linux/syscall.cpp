@@ -335,8 +335,11 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
         for (uint64_t page = addr; page < addr + len; page += page_size)
             *current->memory->space.entry(page) |= page_stack;
     if ((flags & 0x21) == 0x21)
-        for (uint64_t page = addr; page < addr + len; page += page_size)
-            *current->memory->space.entry(page) |= 0x400;
+        for (uint64_t page = addr; page < addr + len; page += page_size) {
+            uint64_t& entry = *current->memory->space.entry(page);
+            entry |= 0x400;
+            page_account_shared(entry & page_mask);
+        }
     if (h && off < h->node->size) {
         uint8_t buffer[4096];
         size_t count = min(len, h->node->size - size_t(off));

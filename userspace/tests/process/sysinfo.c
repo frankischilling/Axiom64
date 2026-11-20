@@ -110,6 +110,35 @@ static void guest_memory(void) {
     puts("SYSINFO_GUEST_MEMORY_PASS");
 }
 
+static void guest_shared_mapping(void) {
+    const size_t bytes = 3 * (size_t)sysconf(_SC_PAGESIZE);
+    const unsigned long before = read_info().sharedram;
+    volatile char* shared =
+        mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    CHECK(shared != MAP_FAILED && read_info().sharedram == before + bytes);
+    int ready[2];
+    CHECK(pipe(ready) == 0);
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        close(ready[1]);
+        alarm(5);
+        char signal;
+        CHECK(read(ready[0], &signal, 1) == 1 && shared[bytes - 1] == signal);
+        CHECK(read_info().sharedram == before + bytes);
+        _exit(0);
+    }
+    close(ready[0]);
+    const char value = 'm';
+    shared[bytes - 1] = value;
+    CHECK(munmap((void*)shared, bytes) == 0 && read_info().sharedram == before + bytes);
+    CHECK(write(ready[1], &value, 1) == 1 && close(ready[1]) == 0);
+    int status;
+    CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    CHECK(read_info().sharedram == before);
+    puts("SYSINFO_GUEST_SHARED_PASS");
+}
+
 static void guest_buffers(void) {
     struct sysinfo before = read_info();
     CHECK(before.bufferram == 0);
@@ -157,6 +186,7 @@ int main(int argc, char** argv) {
     abi();
     if (argc == 2) {
         guest_memory();
+        guest_shared_mapping();
         guest_buffers();
         guest_load();
     }

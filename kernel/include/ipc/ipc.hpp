@@ -124,7 +124,6 @@ void epoll_notify(Handle* source = nullptr, uint32_t events = 0);
 void epoll_close(Epoll*);
 
 int64_t shared_memory_syscall(Frame*);
-uint64_t shared_memory_bytes();
 
 void shared_memory_fork(Task*, const Task*);
 

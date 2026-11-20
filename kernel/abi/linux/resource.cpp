@@ -26,7 +26,6 @@
 #include "abi/linux/resource.hpp"
 #include "core/time.hpp"
 #include "fs/ext2/ext2.hpp"
-#include "ipc/ipc.hpp"
 #include "process/task.hpp"
 
 namespace ax {
@@ -90,7 +89,7 @@ int64_t system_information_syscall(uint64_t output) {
     info.loads[2] = load.fifteen;
     info.totalram = ram.total;
     info.freeram = ram.free;
-    info.sharedram = shared_memory_bytes();
+    info.sharedram = ram.shared;
     info.bufferram = ext2_buffer_bytes();
     for (const auto& task : tasks)
         if (task.state != State::empty)

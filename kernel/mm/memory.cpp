@@ -30,10 +30,11 @@ namespace ax {
 uint64_t direct_map;
 static constexpr size_t max_pages = (4ull * 1024 * 1024 * 1024) / page_size;
 static uint8_t bitmap[max_pages / 8];
+static uint8_t shared_bitmap[max_pages / 8];
 static uint16_t page_references[max_pages];
 static size_t search_page = 1;
 static uint64_t kernel_root;
-static size_t total_pages, free_pages;
+static size_t total_pages, free_pages, shared_pages;
 
 static bool used(size_t p) {
     return bitmap[p / 8] & (1u << (p % 8));
@@ -71,7 +72,7 @@ void memory_init() {
 }
 
 PhysicalMemoryStats physical_memory_stats() {
-    return {total_pages * page_size, free_pages * page_size};
+    return {total_pages * page_size, free_pages * page_size, shared_pages * page_size};
 }
 
 void activate_kernel_memory() {
@@ -133,6 +134,22 @@ uint64_t page_alloc(size_t count) {
     return 0;
 }
 
+void page_account_shared(uint64_t p, size_t count) {
+    const size_t start = p / page_size;
+    if (p % page_size || start >= max_pages || count > max_pages - start)
+        panic("invalid shared page range");
+    for (size_t index = start; index < start + count; index++) {
+        if (!page_references[index])
+            panic("shared accounting requires an allocated page");
+        uint8_t& flags = shared_bitmap[index / 8];
+        const uint8_t bit = 1u << (index % 8);
+        if (!(flags & bit)) {
+            flags |= bit;
+            shared_pages++;
+        }
+    }
+}
+
 void page_free(uint64_t p, size_t count) {
     if (!p || p % page_size || p / page_size + count > max_pages)
         panic("invalid physical free");
@@ -143,6 +160,12 @@ void page_free(uint64_t p, size_t count) {
         if (!--page_references[index]) {
             mark(index, false);
             free_pages++;
+            uint8_t& flags = shared_bitmap[index / 8];
+            const uint8_t bit = 1u << (index % 8);
+            if (flags & bit) {
+                flags &= ~bit;
+                shared_pages--;
+            }
         }
     }
     search_page = min(search_page, size_t(p / page_size));

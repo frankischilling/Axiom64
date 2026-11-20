@@ -38,14 +38,6 @@ struct Segment {
 static Segment segments[64];
 static int next_id = 1;
 
-uint64_t shared_memory_bytes() {
-    uint64_t bytes = 0;
-    for (const auto& segment : segments)
-        if (segment.id)
-            bytes += align_up(segment.size);
-    return bytes;
-}
-
 static int access(const Segment& segment, unsigned requested) {
     const auto& cred = current->credentials;
     unsigned allowed = segment.mode;
@@ -139,9 +131,11 @@ int64_t shared_memory_syscall(Frame* f) {
             return -22;
         for (auto& segment : segments)
             if (!segment.id) {
-                uint64_t address = page_alloc(align_up(b) / page_size);
+                size_t pages = align_up(b) / page_size;
+                uint64_t address = page_alloc(pages);
                 if (!address)
                     return -12;
+                page_account_shared(address, pages);
                 segment = {next_id++, int(a), current->process->pid, current->process->pid,
                            address,   b,      ticks / 100,           0,
                            0,         0,      unsigned(c & 0777),    false};

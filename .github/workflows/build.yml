@@ -483,7 +483,6 @@ jobs:
           - accounts-guest-frontends
           - accounts-process-native
           - accounts-process-guest
-          - accounts-record-native
           - accounts-record-bios-modern
           - accounts-record-bios-legacy
           - accounts-record-uefi-modern
@@ -507,6 +506,7 @@ jobs:
       - name: Restore source and build together
         run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
       - name: Install build and emulation tools
+        id: prepare_test_tools
         run: bash scripts/ci/tools.sh restore
       - name: Compare complete source-filter and source-route cohorts with native Linux and both guest adapters
         if: matrix.suite == 'ipv4-source-filters'
@@ -676,7 +676,7 @@ jobs:
           python3 scripts/account_access_test.py
           python3 scripts/account_console_test.py
       - name: Compare terminal ownership, parent death, signal waits, waitid, procfs and exec with native Linux
-        if: matrix.suite == 'accounts-process-native'
+        if: "!cancelled() && matrix.suite == 'accounts-process-native' && steps.prepare_test_tools.outcome == 'success'"
         run: |
           sudo -n make test-pty-security-native test-parent-death-native test-signal-wait-native
           sudo -n make test-waitid-native test-proc-identity-native test-exec-arguments-native
@@ -692,12 +692,12 @@ jobs:
           python3 scripts/proc_test.py
           python3 scripts/terminal_flush_test.py
       - name: Compare POSIX and OFD record locks with actual native process lifetimes
-        if: matrix.suite == 'accounts-record-native'
+        if: "!cancelled() && matrix.suite == 'accounts-process-native' && steps.prepare_test_tools.outcome == 'success'"
         run: |
           sudo -n python3 scripts/record_lock_test.py --native --directory build/record-locks-native --fixtures /tmp/axiom64-ci-record-locks
           sudo -n make test-record-lock-lifecycle-native
       - name: Verify POSIX and OFD record-lock lifetime and ext2 reboot persistence
-        if: startsWith(matrix.suite, 'accounts-record-') && matrix.suite != 'accounts-record-native'
+        if: startsWith(matrix.suite, 'accounts-record-')
         env:
           SUITE: ${{ matrix.suite }}
         run: |

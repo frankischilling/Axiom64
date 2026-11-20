@@ -31,12 +31,13 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 
 from account_normal_test import write_cpio
 from disk_root import archive_entries
-from fetch import ROOT, fetch
+from fetch import LOCK, ROOT, fetch
 from fixture_archive import fingerprint
 from qemu_acceleration import Acceleration
 from qmp import Qmp
@@ -89,17 +90,23 @@ def pack_fixture(rootfs, destination, build_tools, system_image):
         payload = source.read_bytes()
         files[str(member)] = (stat.S_IFREG | 0o644, payload)
         inputs[name.as_posix()] = hashlib.sha256(payload).hexdigest()
+    fixture_inputs = {}
     if system_image:
-        for name, path in (('build-system.sh', ROOT / 'userspace/tests/toolchain/build-system.sh'),
-                           ('limine-binary.tar.gz', fetch('limine'))):
-            payload = path.read_bytes()
-            files[str(source_root / name)] = (0o100644, payload)
-            inputs[name] = hashlib.sha256(payload).hexdigest()
+        fixture_inputs.update({
+            'build-system.sh': ROOT / 'userspace/tests/toolchain/build-system.sh',
+            'configure-busybox.sh': ROOT / 'scripts/configure-busybox.sh',
+            'busybox.tar.bz2': fetch('busybox'),
+            'limine-binary.tar.gz': fetch('limine'),
+        })
     if build_tools:
-        runner = ROOT / 'userspace/tests/toolchain/build-tools.sh'
-        payload = runner.read_bytes()
-        files[str(source_root / runner.name)] = (0o100755, payload)
-        inputs[runner.name] = hashlib.sha256(payload).hexdigest()
+        fixture_inputs.update({
+            'build-tools.sh': ROOT / 'userspace/tests/toolchain/build-tools.sh',
+            'make-environment-prefix.patch': ROOT / 'vendor/make/environment-prefix.patch',
+        })
+    for name, path in fixture_inputs.items():
+        payload = path.read_bytes()
+        files[str(source_root / name)] = (0o100644, payload)
+        inputs[name] = hashlib.sha256(payload).hexdigest()
     checks = ''.join(f'{digest}  {name}\n' for name, digest in inputs.items())
     files[str(source_root / 'inputs.sha256')] = (0o100644, checks.encode())
     runner = ROOT / 'userspace/tests/toolchain/kernel-build.sh'
@@ -192,18 +199,31 @@ def verify_system_image(directory, kernel, serial):
         if lines.count(f'{identity["sha256"]}  /mnt/kernel-export/{artifact.name}') != 1:
             raise RuntimeError(f'guest and recovered {artifact.name} digests differ, see {serial}')
     root_files = archive_entries(rootfs)
-    for member in ('sbin/init', 'bin/abi-static', 'bin/abi-dynamic'):
+    busybox_license = 'usr/share/licenses/BusyBox/LICENSE'
+    busybox_config = 'usr/share/doc/BusyBox/config'
+    for member in ('sbin/init', 'bin/abi-static', 'bin/abi-dynamic', 'bin/busybox',
+                   busybox_license, busybox_config):
         digest = hashlib.sha256(root_files[member][1]).hexdigest()
         if lines.count(f'{digest}  {member}') != 1:
             raise RuntimeError(f'guest and archived {member} digests differ, see {serial}')
+    with tarfile.open(fetch('busybox')) as source:
+        with source.extractfile(f"busybox-{LOCK['busybox']['version']}/LICENSE") as notice:
+            if root_files[busybox_license][1] != notice.read():
+                raise RuntimeError('guest BusyBox license differs from the pinned source')
     with tempfile.TemporaryDirectory(prefix='image-members-', dir=directory) as scratch:
+        busybox = Path(scratch) / 'busybox'
+        busybox.write_bytes(root_files['bin/busybox'][1])
+        headers = subprocess.check_output(['readelf', '-Wl', str(busybox)], text=True)
+        if 'INTERP' in headers:
+            raise RuntimeError('guest-built BusyBox uses a dynamic interpreter')
+        busybox_identity = fingerprint(busybox)
         for member, original in (('axiom64.elf', kernel), ('rootfs.cpio', rootfs)):
             extracted = Path(scratch) / member
             subprocess.run(['xorriso', '-osirrox', 'on', '-indev', str(image), '-extract',
                             '/boot/' + member, str(extracted)], check=True)
             if fingerprint(extracted) != fingerprint(original):
                 raise RuntimeError(f'guest ISO contains a different {member}')
-    return image, fingerprint(rootfs)
+    return image, fingerprint(rootfs), busybox_identity
 
 
 def main():
@@ -224,18 +244,19 @@ def main():
     kernel_identity = fingerprint(kernel)
     rootfs_identity = fingerprint(rootfs)
     build_root = directory / 'compiler.cpio'
-    sources, tools = pack_fixture(rootfs, build_root, args.source_tools, args.system_image)
+    build_tools = args.source_tools or args.system_image
+    sources, tools = pack_fixture(rootfs, build_root, build_tools, args.system_image)
     compile_image = make_image(directory, directory.name + '-compiler.iso', kernel, build_root)
     result, check, serial, command = export_kernel(directory, compile_image, acceleration, args.build_timeout,
                                                    args.system_image)
-    if args.source_tools and serial.read_text(errors='replace').splitlines().count('AXIOM64_BUILD_TOOLS_BUILT') != 1:
+    if build_tools and serial.read_text(errors='replace').splitlines().count('AXIOM64_BUILD_TOOLS_BUILT') != 1:
         raise RuntimeError(f'no completed source tool build was observed, see {serial}')
     if check.read_text().splitlines() != [f'{name}: OK' for name in sources]:
         raise RuntimeError(f'guest source checks did not cover the supplied tree, see {check}')
     if fingerprint(rootfs) != rootfs_identity or fingerprint(kernel) != kernel_identity:
         raise RuntimeError('bootstrap kernel or installed rootfs changed during guest compilation')
     if args.system_image:
-        boot_image, test_rootfs = verify_system_image(directory, result, serial)
+        boot_image, test_rootfs, busybox = verify_system_image(directory, result, serial)
     else:
         boot_image = make_image(directory, directory.name + '-boot.iso', result, rootfs)
         test_rootfs = rootfs_identity
@@ -251,6 +272,8 @@ def main():
                   bootstrap_rootfs=rootfs_identity, boot_rootfs=test_rootfs, guest_authored_image=args.system_image,
                   boot_image=boot_image_identity,
                   boot_results=json.loads((directory / 'boot-results.json').read_text()))
+    if args.system_image:
+        report['guest_busybox'] = busybox
     (directory / 'result.json').write_text(json.dumps(report, indent=2) + '\n')
     boot.check_returncode()
 

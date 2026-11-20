@@ -16,6 +16,8 @@ from fetch import ROOT
 
 CAPACITY = 16 * 1024 * 1024
 SEED = b"host-created seed\n"
+CACHE_GROUPS = 384
+CACHE_FILES_PER_GROUP = 192
 FORMATS = [(1024, 128, "default"), (2048, 256, "default"),
            (4096, 256, "default"), (1024, 128, "original")]
 
@@ -46,15 +48,15 @@ def create_cache_volume(disk):
         seed = root / "seed.txt"
         seed.write_bytes(SEED)
         os.link(seed, root / "seed-alias")
-        for group in range(32):
+        for group in range(CACHE_GROUPS):
             directory = root / f"group-{group:02d}"
             directory.mkdir()
-            for file in range(384):
+            for file in range(CACHE_FILES_PER_GROUP):
                 (directory / f"file-{file:03d}").touch()
         with disk.open("wb") as output:
-            output.truncate(48 * 1024 * 1024)
+            output.truncate(96 * 1024 * 1024)
         subprocess.run(["mke2fs", "-q", "-F", "-t", "ext2", "-b", "4096", "-I", "128",
-                        "-N", "16384", "-O", "none,filetype,sparse_super", "-d", str(root),
+                        "-g", "8192", "-N", "81920", "-O", "none,filetype,sparse_super", "-d", str(root),
                         str(disk)], check=True, capture_output=True)
 
 
@@ -132,7 +134,7 @@ def boot(firmware, transport, phase, disks, images, label, timeout, readonly=Fal
         recovered = sum(int(re.match(rb"AXIOM64_EXT2_RECOVER=(\d),", disk.read_bytes())[1]) for disk in disks)
         markers.append(f"EXT2_RECOVERY_PASS volumes={len(disks)} repaired={recovered}")
     if phase == "cache":
-        markers.append("EXT2_CACHE_PASS entries=12288 scans=2")
+        markers.append(f"EXT2_CACHE_PASS entries={CACHE_GROUPS * CACHE_FILES_PER_GROUP} scans=2")
     for index, disk in enumerate(disks):
         markers.append(f"virtio-blk: disk={index} transport={transport} sectors={disk.stat().st_size // 512} readonly={int(readonly)} flush=1")
     started = time.monotonic()

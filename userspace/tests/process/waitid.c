@@ -26,6 +26,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -84,6 +85,22 @@ static void* spend_cpu_time(void* unused) {
             count++;
     } while (thread_nanoseconds() < finish);
     return NULL;
+}
+
+static void pin_resource_usage_to_one_cpu(void) {
+    cpu_set_t available;
+    CPU_ZERO(&available);
+    CHECK(sched_getaffinity(0, sizeof(available), &available) == 0);
+    for (int cpu = 0; cpu < CPU_SETSIZE; cpu++) {
+        if (CPU_ISSET(cpu, &available)) {
+            cpu_set_t single;
+            CPU_ZERO(&single);
+            CPU_SET(cpu, &single);
+            CHECK(sched_setaffinity(0, sizeof(single), &single) == 0);
+            return;
+        }
+    }
+    CHECK(0);
 }
 
 static void resource_usage(void) {
@@ -191,7 +208,8 @@ static void blocked(pid_t pid) {
     CHECK(0);
 }
 
-int main(void) {
+int main(int argc, char** argv) {
+    CHECK(argc == 1 || (argc == 2 && strcmp(argv[1], "--native") == 0));
     alarm(40);
     int ready[2], finish[2], status;
     CHECK(pipe(ready) == 0 && pipe(finish) == 0);
@@ -351,6 +369,10 @@ int main(void) {
     CHECK(syscall(SYS_waitid, P_PID, pid, NULL, WEXITED, NULL) == 0);
     CHECK(waitpid(pid, &status, WNOHANG) == -1 && errno == ECHILD);
     observed("linux_null_information_consumes_event");
+    // Linux can publish a zombie before its final scheduling switch. On one
+    // CPU the child has switched out by the time the parent's wait runs.
+    if (argc == 2)
+        pin_resource_usage_to_one_cpu();
     resource_usage();
     close(ready[0]);
     close(ready[1]);

@@ -102,7 +102,8 @@ def main():
                 program, inputs = build(provider, linkage, case,
                     native_root / case.name if args.native else None)
                 if args.native:
-                    command = ['unshare', '--mount', '--pid', '--fork', '--mount-proc', str(program)]
+                    command = ['unshare', '--mount', '--pid', '--fork', '--mount-proc',
+                               str(program), '--native']
                     row = execute(command, case / 'native.log')
                     row.update(provider=provider, linkage=linkage, inputs=inputs)
                     rows.append(row)
@@ -134,7 +135,8 @@ def main():
                 if args.native:
                     print('WAITID_NATIVE_PASS ' + case.name, flush=True)
     assert source == {name: digest(ROOT / name) for name in source}, 'source changed during validation'
-    print('WAITID_MATRIX_PASS profiles=' + str(len(rows)) + ' observations=' + str(len(rows) * 10), flush=True)
+    total = sum(row['observations'] for row in rows)
+    print(f'WAITID_MATRIX_PASS profiles={len(rows)} observations={total}', flush=True)
 
 
 if __name__ == '__main__':

@@ -208,6 +208,34 @@ def authenticated_payload(filename, cache, output, mirrors, checksum, size):
     return path
 
 
+def indexed_glibc(version, keyring, cache, output, candidates):
+    for suite, mirror in candidates:
+        signed = cache / (suite + '-InRelease')
+        if not signed.exists():
+            with open_archive_url(mirror + 'dists/' + suite + '/InRelease') as response:
+                publish_cache(signed, response.read())
+        verified = subprocess.run(['gpgv', '--keyring', str(keyring), str(signed)], capture_output=True, check=True)
+        (output / (suite + '-signature.log')).write_bytes(verified.stdout + verified.stderr)
+        index = authenticated_index(signed, cache, output, suite, mirror)
+        for item in lzma.decompress(index.read_bytes()).decode().split('\n\n'):
+            if re.search(r'^Package: glibc$', item, re.M) and re.search(r'^Version: ' + re.escape(version) + '$', item, re.M):
+                return item + '\n', (signed, index)
+    return None, ()
+
+
+def pinned_glibc_snapshot(version, descriptor):
+    manifest = ROOT / 'vendor/gnu-utmp-reader/inputs.json'
+    source = json.loads(manifest.read_text())['sources']['glibc']
+    if source['version'] == version:
+        for item in source['files']:
+            if item['name'] == descriptor:
+                match = re.fullmatch(re.escape(SNAPSHOT) + r'(\d{8}T\d{6}Z)/pool/main/g/glibc/' +
+                                     re.escape(descriptor), item['url'])
+                if match:
+                    return match[1]
+    return None
+
+
 def capture(output):
     version = subprocess.check_output(['dpkg-query', '-W', '-f=${source:Version}', 'libc6'], text=True).strip()
     if not re.fullmatch(r'[0-9][a-zA-Z0-9.+~:-]*', version):
@@ -223,27 +251,21 @@ def capture(output):
     codename = release['UBUNTU_CODENAME'].strip('"')
     if not re.fullmatch('[a-z]+', codename):
         raise ValueError('unexpected Ubuntu source suite')
-    archive_files, paragraph = [], None
-    for suite, mirror in ((codename + '-updates', 'https://archive.ubuntu.com/ubuntu/'),
-                          (codename + '-security', 'https://security.ubuntu.com/ubuntu/'),
-                          (codename, 'https://archive.ubuntu.com/ubuntu/')):
-        signed = cache / (suite + '-InRelease')
-        if not signed.exists():
-            with open_archive_url(mirror + 'dists/' + suite + '/InRelease') as response:
-                signed.write_bytes(response.read())
-        verified = subprocess.run(['gpgv', '--keyring', str(keyring), str(signed)], capture_output=True, check=True)
-        (output / (suite + '-signature.log')).write_bytes(verified.stdout + verified.stderr)
-        index = authenticated_index(signed, cache, output, suite, mirror)
-        data = index.read_bytes()
-        for item in lzma.decompress(data).decode().split('\n\n'):
-            if re.search(r'^Package: glibc$', item, re.M) and re.search(r'^Version: ' + re.escape(version) + '$', item, re.M):
-                paragraph = item + '\n'
-                break
-        if paragraph:
-            archive_files = [signed, index]
-            break
+    candidates = ((codename + '-updates', 'https://archive.ubuntu.com/ubuntu/'),
+                  (codename + '-security', 'https://security.ubuntu.com/ubuntu/'),
+                  (codename, 'https://archive.ubuntu.com/ubuntu/'))
+    paragraph, archive_files = indexed_glibc(version, keyring, cache, output, candidates)
+    historical_mirror = None
+    if paragraph is None and (timestamp := pinned_glibc_snapshot(version, name)):
+        historical_mirror = SNAPSHOT + timestamp + '/'
+        historical_cache = cache / timestamp
+        historical_output = output / 'historical-archive' / timestamp
+        for directory in (historical_cache, historical_output):
+            directory.mkdir(parents=True, exist_ok=True)
+        paragraph, archive_files = indexed_glibc(version, keyring, historical_cache, historical_output,
+                                                [(suite, historical_mirror) for suite, _ in candidates])
     if paragraph is None:
-        raise RuntimeError('installed glibc source version is absent from authenticated Ubuntu indices')
+        raise RuntimeError(f'installed glibc source {version} is absent from authenticated Ubuntu indices')
     checksums = re.search(r'^Checksums-Sha256:\n((?: [^\n]+\n)+)', paragraph, re.M)
     if not checksums:
         raise ValueError('authenticated glibc source lacks descriptor checksums')
@@ -253,7 +275,9 @@ def capture(output):
         raise ValueError('authenticated glibc source lacks the installed version descriptor')
     mirrors = ['https://archive.ubuntu.com/ubuntu/', 'https://security.ubuntu.com/ubuntu/']
     snapshot = snapshot_archive(archive_files[0].read_text())
-    if snapshot:
+    if historical_mirror:
+        mirrors.insert(0, historical_mirror)
+    if snapshot and snapshot != historical_mirror:
         mirrors.append(snapshot)
     archives = tuple(mirror + 'pool/main/g/glibc/' for mirror in mirrors)
     descriptor = authenticated_payload(name, cache, output, archives, *expected[name])

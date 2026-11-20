@@ -57,15 +57,12 @@ static uint64_t clock_ns(clockid_t clock) {
     return (uint64_t)value.tv_sec * 1000000000 + (uint64_t)value.tv_nsec;
 }
 
-static void wait_until(uint64_t deadline, int native) {
+static void wait_until(uint64_t deadline) {
     for (;;) {
         uint64_t now = clock_ns(CLOCK_MONOTONIC);
         if (now >= deadline)
             return;
         uint64_t left = deadline - now;
-        // Keep waking the CPU that owns Linux's deferrable address timer.
-        if (native && left > 20000000)
-            left = 20000000;
         struct timespec delay = {(time_t)(left / 1000000000), (long)(left % 1000000000)};
         check(!nanosleep(&delay, NULL) || errno == EINTR, "real elapsed lifetime");
     }
@@ -374,7 +371,7 @@ static void exercise(const char* interface, int native) {
     check(change(index, first, NLM_F_REPLACE | NLM_F_EXCL, 0, 16, 1, 3, NULL) == -EEXIST,
           "exclusive replacement rejected");
     phase = "finite-deprecated";
-    wait_until(created + 1500000000, native);
+    wait_until(created + 1500000000);
     struct address_state aged = inventory(index, first);
     check(aged.present && aged.flags == IFA_F_DEPRECATED && !aged.cache.ifa_prefered &&
               aged.cache.ifa_valid >= 1 && aged.cache.ifa_valid <= 2 &&
@@ -396,13 +393,13 @@ static void exercise(const char* interface, int native) {
               fresh.cache.tstamp != initial.cache.tstamp && !strcmp(fresh.label, initial.label),
           "renewal restores preference and preserves creation and label");
     phase = "renewed-deprecated";
-    wait_until(renewed + 2500000000, native);
+    wait_until(renewed + 2500000000);
     aged = inventory(index, first);
     check(aged.present && aged.flags == IFA_F_DEPRECATED && !aged.cache.ifa_prefered &&
               aged.cache.ifa_valid >= 1 && aged.cache.ifa_valid <= 2,
           "renewed preferred deadline");
     phase = "finite-expired";
-    wait_until(renewed + 4500000000, native);
+    wait_until(renewed + 4500000000);
     check(!inventory(index, first).present && !inventory(index, alias).present &&
               inventory(index, permanent).present && inventory(index, deprecated).present,
           "valid expiry cascades only matching-prefix secondaries");
@@ -422,7 +419,7 @@ static void exercise(const char* interface, int native) {
         check(secondary.present && secondary.flags == (IFA_F_SECONDARY | IFA_F_PERMANENT),
               "secondary flag");
         phase = global ? "global-promoted" : "device-promoted";
-        wait_until(began + 1500000000, native);
+        wait_until(began + 1500000000);
         uint64_t expiry_deadline = began + 2500000000;
         struct address_state primary;
         while ((primary = inventory(index, first)).present) {
@@ -434,7 +431,7 @@ static void exercise(const char* interface, int native) {
             uint64_t current = clock_ns(CLOCK_MONOTONIC);
             check(current < expiry_deadline, "bounded actual primary expiry");
             uint64_t next = current + 50000000;
-            wait_until(next < expiry_deadline ? next : expiry_deadline, native);
+            wait_until(next < expiry_deadline ? next : expiry_deadline);
         }
         check(!native || clock_ns(CLOCK_MONOTONIC) <= expiry_deadline,
               "bounded actual primary withdrawal");

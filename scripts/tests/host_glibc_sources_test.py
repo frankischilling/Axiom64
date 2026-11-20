@@ -95,6 +95,21 @@ class HostSourceIndexTests(unittest.TestCase):
     def proof(self):
         return json.loads((self.output / 'archive-authentication/noble-updates/fetch.json').read_text())
 
+    def test_historical_lookup_requires_the_exact_locked_descriptor(self):
+        manifest = self.root / 'vendor/gnu-utmp-reader/inputs.json'
+        manifest.parent.mkdir(parents=True)
+        version = '2.39-test'
+        descriptor = 'glibc_2.39-test.dsc'
+        url = host_sources.SNAPSHOT + '20261108T000000Z/pool/main/g/glibc/' + descriptor
+        with patch.object(host_sources, 'ROOT', self.root):
+            for candidate in (url, url.replace('snapshot.ubuntu.com', 'archive.ubuntu.com'), url + '?other'):
+                manifest.write_text(json.dumps(dict(sources=dict(glibc=dict(version=version,
+                    files=[dict(name=descriptor, url=candidate)])))))
+                self.assertEqual(host_sources.pinned_glibc_snapshot(version, descriptor),
+                                 '20261108T000000Z' if candidate == url else None)
+                self.assertIsNone(host_sources.pinned_glibc_snapshot(version + '2', descriptor))
+                self.assertIsNone(host_sources.pinned_glibc_snapshot(version, 'other.dsc'))
+
     def test_publication_change_uses_the_authenticated_hash_path(self):
         mutable = self.mirror + 'dists/noble-updates/main/source/Sources.xz'
         with urllib.request.urlopen(mutable, timeout=5) as response:

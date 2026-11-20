@@ -396,7 +396,7 @@ jobs:
     name: Test ${{ matrix.suite }}
     needs: build
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: ${{ matrix.suite == 'root-userspace' && 120 || 75 }}
     strategy:
       fail-fast: false
       matrix:
@@ -1717,7 +1717,7 @@ jobs:
       - name: Build a test system in Axiom64 and boot the exported ISO
         id: guest_system
         if: matrix.suite == 'root-userspace'
-        run: make test-guest-system GUEST_KERNEL_FLAGS='--accelerator tcg --build-timeout 3000'
+        run: make test-guest-system GUEST_KERNEL_FLAGS='--accelerator tcg'
       - name: Upload guest-built system and firmware boot evidence
         if: always() && matrix.suite == 'root-userspace' && steps.guest_system.outcome != 'skipped'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

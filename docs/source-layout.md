@@ -174,7 +174,8 @@ The root `.clang-format` contains C++20 and C profiles. Kernel sources, headers,
 
 Start project C and C++ sources and headers, assembly, linker scripts, and
 shell scripts with their SPDX identifier and Doxygen file header. Keep any
-shebang first and use the file's native comment syntax. Give `@file` the
+shebang first. Use plain `;` lines in NASM, plain `#` lines in x86 GNU
+assembly and shell scripts, and `/* ... */` blocks in linker scripts. Give `@file` the
 repository-relative path and include `@brief`, `@author`, and `@date`.
 Describe the file's current role in a short paragraph, followed by its
 copyright and GPL notice. Python modules use a module docstring.

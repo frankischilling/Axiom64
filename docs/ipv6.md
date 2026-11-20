@@ -123,6 +123,11 @@ The first-arriving fragment starts a fixed 60-second lifetime, as specified by [
 
 The separate `make test-ipv6-fragments` and `make test-ipv6-fragments-native` cohorts cover three native linkages and eight BIOS/UEFI static/dynamic modern/legacy guest profiles, each with both adapters. They exercise real raw and UDP receivers, a 65,527-byte UDP payload, varying extension prefixes, exact duplicates, overlaps, atomic-fragment isolation, scoped identities and malformed first headers. Each interface retains a real 60-second fragment context, a duplicate at 30 seconds and staggered suppression contexts. Both interfaces age concurrently through at least 70 seconds of observation, followed by late-tail and identification-reuse checks. An independent reader checks original packet bytes, diagnostics, quotes, timing and application results, and rejects damaged evidence. Native captures retain their original kernel timestamps and independent monotonic receipts, with zero dropped packets. No fragment lifetime or guest clock is shortened. The existing host and socket cohorts retain their original timing and coverage.
 
+Each expected datagram has one five-second receive deadline. If a nonblocking
+receive reports `EAGAIN` after readiness, the client polls again for the
+remaining time. Native raw sockets can report readiness before receive-time
+checksum validation. The client still checks the exact size, source and bytes.
+
 ## Source output
 
 `kernel/net/ipv6/output.cpp` owns copied logical datagrams, their device progress and completion. The 32-entry queue bounds retained packets and reusable fragment buffers to 262,144 bytes. `kernel/net/ipv6/fragmentation.cpp` encodes fixed-header source packets according to [RFC 8200](https://www.rfc-editor.org/rfc/rfc8200.html#section-4.5). A datagram keeps one nonzero identification from the initialized random generator. At most eight pieces per datagram are submitted in each poll. Only device acceptance advances the offset; a later MTU increase keeps a partially transmitted datagram fragmented. Route, source ownership and MTU are checked again after device polling. Cancellation defers release of a borrowed buffer until submission returns. Closing a socket retains already queued packets and detaches callbacks from a reused description.

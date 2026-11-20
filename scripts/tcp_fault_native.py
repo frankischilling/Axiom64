@@ -66,6 +66,17 @@ class Capture:
             sha256=hashlib.sha256(frame).hexdigest(), kernel_realtime_ns=timestamp,
             **observed)) + '\n')
 
+    def record(self, frame, timestamp, observed):
+        if self.defer_receipts:
+            # Keep formatting and writes off the receive path for bounded workloads.
+            self.receipt_bytes += len(frame)
+            check(self.receipt_bytes <= 16 * 1024 * 1024 and len(self.receipts) < 10000,
+                  'bounded deferred native packet and clock ownership')
+            self.receipts.append((self.frame_count, frame, timestamp, observed))
+        else:
+            self.write_record(self.frame_count, frame, timestamp, observed)
+        self.frame_count += 1
+
     def collect(self):
         try:
             while True:
@@ -84,20 +95,7 @@ class Capture:
                 seconds, nanoseconds = struct.unpack('=qq', stamps[0])
                 check(seconds >= 0 and 0 <= nanoseconds < 1000000000, 'kernel receipt timestamp bounds')
                 timestamp = seconds * 1000000000 + nanoseconds
-                # Both files stay buffered during bursts. The original PCAP
-                # timestamp and frame remain unchanged; each record binds them
-                # to an independently observed monotonic receipt.
-                if self.defer_receipts:
-                    # The isolated IPv4 collector owns a bounded complete
-                    # workload. Keep formatting and file writes off its receive
-                    # path while retaining the actual per-frame clock samples.
-                    self.receipt_bytes += len(frame)
-                    check(self.receipt_bytes <= 16 * 1024 * 1024 and len(self.receipts) < 10000,
-                          'bounded deferred native packet and clock ownership')
-                    self.receipts.append((self.frame_count, frame, timestamp, observed))
-                else:
-                    self.write_record(self.frame_count, frame, timestamp, observed)
-                self.frame_count += 1
+                self.record(frame, timestamp, observed)
                 if self.injection is not None:
                     with self.injection_lock:
                         waiting = self.injection

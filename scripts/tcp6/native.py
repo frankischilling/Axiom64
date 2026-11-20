@@ -97,7 +97,7 @@ def child(directory, profile, parent_namespace, suite='loss'):
             taps.append(Tap(name))
             command('ip', 'link', 'set', 'dev', name, 'address', peer.guest.hex(':'), 'mtu', '1500')
             command('ip', 'link', 'set', 'dev', name, 'up')
-            captures.append(Capture(name, directory / f'lane{lane}.pcap'))
+            captures.append(Capture(name, directory / f'lane{lane}.pcap', defer_receipts=suite == 'scoped'))
             if hasattr(peer, 'observe_input'):
                 peer.observe_input = captures[-1].watch
             interfaces.append(json.loads(command('ip', '-j', '-d', 'link', 'show', 'dev', name))[0])

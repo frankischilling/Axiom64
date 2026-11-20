@@ -300,11 +300,11 @@ static bool initialize(Controller& device, const PciFunction& pci, uint32_t mode
     if (!device.adapter.info.live || !net_register(device.adapter))
         return false;
     configure_interrupt(device);
-    log("e1000: index=%u model=%s rx=%u tx=%u irq=%s\n", uint64_t(device.adapter.info.index),
-        model == model_82574l ? "82574L" : "82540EM", uint64_t(ring_size), uint64_t(ring_size),
-        device.msi.active()    ? "msi"
-        : device.intx.active() ? "intx"
-                               : "poll");
+    uint64_t index = device.adapter.info.index;
+    log("e1000: index=%u model=%s rx=%u tx=%u\n", index,
+        model == model_82574l ? "82574L" : "82540EM", uint64_t(ring_size), uint64_t(ring_size));
+    const char* mode = device.msi.active() ? "msi" : device.intx.active() ? "intx" : "poll";
+    log("e1000 IRQ: index=%u mode=%s\n", index, mode);
     return true;
 }
 } // namespace

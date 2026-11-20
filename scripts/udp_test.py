@@ -199,10 +199,14 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
         required += ['UDP_INTERRUPT_PASS', 'UDP_RESTART_PASS', 'UDP_FORK_PASS', 'UDP_RESOURCE_CYCLES_PASS count=128']
         required += ['UDP_PAYLOAD_LIMIT_PASS bytes=65507', 'UDP_BUFFER_LIMIT_PASS bytes=2048 payload=2020']
     missing = [marker for marker in required if marker not in text]
+    lines = text.splitlines()
     if expected_irq:
-        route = f'virtio-net: index=1 transport={transport} irq={expected_irq} '
-        if route not in text:
-            missing.append(route.strip())
+        route = f'virtio-net IRQ: index=1 mode={expected_irq}'
+        adapter = f'virtio-net: index=1 transport={transport} rx='
+        if sum(line.startswith(adapter) for line in lines) != 1:
+            missing.append(adapter)
+        if lines.count(route) != 1:
+            missing.append(route)
         completions = [f'virtio-net: MSI-X {direction} completion index=1'
                        for direction in ('RX', 'TX')]
         if expected_irq == 'msix':
@@ -215,9 +219,8 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
         missing.append('Q35 PCI ECAM')
     if e1000e:
         mode = 'poll' if force_pic else 'msi'
-        route = f'e1000: index=2 model=82574L rx=64 tx=64 irq={mode}'
-        if route not in text:
-            missing.append(route)
+        missing += [line for line in ('e1000: index=2 model=82574L rx=64 tx=64',
+                                      f'e1000 IRQ: index=2 mode={mode}') if lines.count(line) != 1]
         completions = [f'e1000: MSI {direction} completion index=2'
                        for direction in ('RX', 'TX')]
         if mode == 'msi':
@@ -229,9 +232,8 @@ def run(firmware, transport, timeout=90, fault=False, debugger_delay=0, *,
         indices = ('1', '2') if intx == 'shared' else ('2',)
         for index in indices:
             mode = 'poll' if intx == 'poll' else 'intx'
-            route = f'e1000: index={index} model=82540EM rx=64 tx=64 irq={mode}'
-            if route not in text:
-                missing.append(route)
+            missing += [line for line in (f'e1000: index={index} model=82540EM rx=64 tx=64',
+                                          f'e1000 IRQ: index={index} mode={mode}') if lines.count(line) != 1]
             markers = [f'e1000: INTx {direction} completion index={index}' for direction in ('RX', 'TX')]
             if intx != 'poll':
                 missing += [marker for marker in markers if marker not in text]

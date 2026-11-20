@@ -192,8 +192,11 @@ Each family uses three native and eight guest profiles on both adapters, with
 the same pinned musl clients and loader in native and guest executions. Actual
 router advertisements change default hops from 41 to 51. Eleven active byte-checked
 exchanges per adapter cover traffic-class/TOS cache invalidation, zero and
-explicit IPv6 hops, normalized unchanged values and device reselection. A
-checksum-valid duplicate FIN arrives after the application releases its final
+explicit IPv6 hops, normalized unchanged values and device reselection. Before
+changing route controls, the client waits for the peer to see the TCP ACK for
+the previous reply. The reader checks the exact acknowledgment and barrier on
+both adapters. Linux captures use the original packet timestamps for that order.
+A checksum-valid duplicate FIN arrives after the application releases its final
 descriptor; the detached reply must use the measured default hop/TTL and retained
 class/TOS. IPv4 wire output retains its independent live TTL and TOS.
 
@@ -210,7 +213,7 @@ The one-second engine retry timer, original guest clock and established
 
 The existing packet harness retains the 150-second execution deadline, original
 capture clocks, zero native drops and fifty-millisecond arrival brackets.
-Ninety damaged packet/log variants per capture are serialized, reopened and
+Ninety-one damaged packet/log variants per capture are serialized, reopened and
 rejected through the real reader. Header and echo mutations have repaired
 checksums; native frame fingerprints are rebound to reach semantic checks.
 `python3 scripts/tests/tcp6_control_wire_evidence_test.py` reopens all six evidence

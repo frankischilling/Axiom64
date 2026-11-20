@@ -233,10 +233,11 @@ static bool initialize(Controller& device, const PciFunction& pci) {
     poll(device.adapter);
     if (!device.adapter.info.live || !net_register(device.adapter))
         return false;
-    log("virtio-net: index=%u transport=%s irq=%s rx=%u tx=%u features=%x\n",
-        uint64_t(device.adapter.info.index), device.pci.modern() ? "modern" : "legacy",
-        device.pci.using_msix() ? "msix" : "poll", uint64_t(device.rx.layout().size),
+    uint64_t index = device.adapter.info.index;
+    log("virtio-net: index=%u transport=%s rx=%u tx=%u features=%x\n", index,
+        device.pci.modern() ? "modern" : "legacy", uint64_t(device.rx.layout().size),
         uint64_t(device.tx.layout().size), device.pci.features());
+    log("virtio-net IRQ: index=%u mode=%s\n", index, device.pci.using_msix() ? "msix" : "poll");
     return true;
 }
 } // namespace

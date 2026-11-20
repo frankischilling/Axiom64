@@ -8,6 +8,8 @@ from tcp6.peer import Peer as EthernetPeer, packet as packet6
 from tcp_fault_peer import ACK, FIN, SYN, check, checksum, packet as packet4
 
 FAMILIES=('ipv6','mapped','ipv4')
+ACTIVE_PHASES = (1, 9, 10, 2, 11, 12, 13, 14, 3)
+ACK_PHASE_TAGS = {9: 0, 10: 1, 11: 6, 12: 7, 13: 8, 14: 9}
 def marker(family):
     return f'TCP_CONTROL_FAMILY_PASS family={family} lanes=2 exchanges_each=16 router_hops=41,51 detached_replies=3 passive_flows_each=2 pending_retry=1 listener_closed=1'
 def payload(lane,tag):return bytes((tag*17+lane*53+n*7)&255 for n in range(16))
@@ -24,6 +26,8 @@ class ActivePeer(EthernetPeer):
         self.flows=[SimpleNamespace(done=False)]
         self.phases=[];self.tags=[];self.state=None;self.pending=None
         self.closed=False;self.late_sent=False;self.late_seen=False
+        self.acknowledged_tags = 0
+        self.pending_ack_phase = None
 
     @property
     def local(self):return self.address if self.family=='ipv6' else self.address4
@@ -55,6 +59,11 @@ class ActivePeer(EthernetPeer):
             ipaddress.IPv6Address('fe80::2').packed,body,58,255))
 
     def tick(self):
+        if self.pending_ack_phase is not None:
+            frame, count = self.pending_ack_phase
+            if self.acknowledged_tags == count:
+                self.answer(frame)
+                self.pending_ack_phase = None
         if self.pending is not None and self.closed and not self.late_sent:
             self.late_sent=True
             self.transmit(FIN|ACK,sequence=self.state['server_next']-1)
@@ -73,7 +82,8 @@ class ActivePeer(EthernetPeer):
             return
         if len(frame)>=21 and frame[12:14]==self.barrier_protocol and frame[19]:
             phase=frame[19]
-            check(self.ready and phase==len(self.phases)+1 and phase in (1,2,3) and
+            check(self.ready and len(self.phases) < len(ACTIVE_PHASES) and
+                phase == ACTIVE_PHASES[len(self.phases)] and self.pending_ack_phase is None and
                 len(frame)==60 and frame[:6]==bytes([2,73,80,54,self.lane,0]) and
                 frame[6:12]==self.guest and frame[14:19]==self.barrier_magic+bytes([self.lane]) and
                 not any(frame[20:]),'exact actual family control barrier')
@@ -82,9 +92,14 @@ class ActivePeer(EthernetPeer):
             if phase in (1,2):
                 check((not self.tags) if phase==1 else self.tags==list(range(5)),'actual family RA boundary')
                 self.router(41 if phase==1 else 51);self.answer(frame)
-            else:
+            elif phase==3:
                 check(self.tags==list(range(11)),'all family bytes precede detached reply')
                 self.pending=frame
+            else:
+                count = ACK_PHASE_TAGS[phase] + 1
+                check(self.tags == list(range(count)), 'ACK barrier follows the selected live reply')
+                self.pending_ack_phase = (frame, count)
+                self.tick()
             return
         v6=len(frame)>=74 and frame[12:14]==b'\x86\xdd' and frame[20]==6
         v4=len(frame)>=54 and frame[12:14]==b'\x08\0' and frame[23]==6
@@ -126,11 +141,14 @@ class ActivePeer(EthernetPeer):
                     expected=(51,168) if v6 else (64,168 if self.family=='mapped' else 108)
                     check(header==expected,f'actual detached {self.family} header expected={expected} observed={header}')
                     self.late_seen=True;self.answer(self.pending);self.pending=None;self.flows[0].done=True
+            elif value['flags'] == ACK and not value['data'] and value['ack'] == state['server_next']:
+                self.acknowledged_tags = len(self.tags)
+                self.tick()
             return
         super().receive(frame)
 
     def result(self):
-        check(self.phases==[1,2,3] and self.tags==list(range(11)) and self.closed and
+        check(self.phases==list(ACTIVE_PHASES) and self.tags==list(range(11)) and self.closed and
             self.late_sent and self.late_seen and self.pending is None and self.flows[0].done,'complete actual family probe')
         return dict(lane=self.lane,family=self.family,passed=True,tags=self.tags,router_hops=[41,51],detached_reply=True,frames=self.frames)
 
@@ -225,7 +243,7 @@ class Peer(ActivePeer):
                 child.send(FIN|ACK,sequence=child.remote_next-1)
 
     def receive(self,frame):
-        if len(frame)>=21 and frame[12:14]==self.barrier_protocol and frame[19]>=4:
+        if len(frame)>=21 and frame[12:14]==self.barrier_protocol and 4 <= frame[19] <= 8:
             phase=frame[19]
             check(self.ready and phase==len(self.passive_phases)+4 and phase<=8 and self.waiting is None and
                 len(frame)==60 and frame[:6]==bytes([2,73,80,54,self.lane,0]) and frame[6:12]==self.guest and

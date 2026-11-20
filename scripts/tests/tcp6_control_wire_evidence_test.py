@@ -35,7 +35,7 @@ def main():
             if complete_source is None:
                 complete_source = inventory
             require(inventory == complete_source, 'all family executions bind identical complete source')
-            require(report['rejected_capture_controls'] == 180 * len(expected) and
+            require(report['rejected_capture_controls'] == 182 * len(expected) and
                     report['suite'] == 'controls-' + family, 'complete family packet controls and suite')
             cases[environment] = directory
             results.append(dict(family=family, environment=environment, profiles=len(expected),
@@ -49,7 +49,7 @@ def main():
             if profile == 'dynamic':
                 require(digest(native / 'loader') == digest(guest / 'loader'), 'identical native and guest musl loader')
     proof = dict(passed=True, families=3, profiles=33, captures=66, actual_exchanges=1056,
-                 actual_scalar_snapshots=1584, rejected_capture_controls=5940,
+                 actual_scalar_snapshots=1584, rejected_capture_controls=6006,
                  actual_flows=198, pending_listener_controls=True,
                  full_passive_source_route_device_and_expiry_acceptance=False, results=results)
     write(args.output, proof)

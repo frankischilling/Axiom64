@@ -1151,24 +1151,6 @@ jobs:
       - name: Test normal desktop startup
         if: matrix.suite == 'boot'
         run: python3 scripts/boot_test.py --interactive --firmware both --timeout 180
-      - name: Build a test system in Axiom64 and boot the exported ISO
-        id: guest_system
-        if: matrix.suite == 'boot'
-        run: make test-guest-system GUEST_KERNEL_FLAGS='--accelerator tcg --build-timeout 3000'
-      - name: Upload guest-built system and firmware boot evidence
-        if: always() && matrix.suite == 'boot' && steps.guest_system.outcome != 'skipped'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: axiom64-guest-built-system
-          compression-level: 1
-          if-no-files-found: error
-          path: |
-            build/guest-kernel-*/*.log
-            build/guest-kernel-*/*.json
-            build/guest-kernel-*/kernel-export.raw
-            build/guest-kernel-*/guest-built.elf
-            build/guest-kernel-*/guest-built.iso
-            build/guest-kernel-*/rootfs.cpio
 
       - name: Test delayed IPv6 datagrams and isolated expiry campaign control
         if: matrix.suite == 'ipv6-expiry'
@@ -1732,6 +1714,24 @@ jobs:
             build/axiom64-disk.iso
             build/root-disk.raw
             build/disk-root-*-boot-*.raw
+      - name: Build a test system in Axiom64 and boot the exported ISO
+        id: guest_system
+        if: matrix.suite == 'root-userspace'
+        run: make test-guest-system GUEST_KERNEL_FLAGS='--accelerator tcg --build-timeout 3000'
+      - name: Upload guest-built system and firmware boot evidence
+        if: always() && matrix.suite == 'root-userspace' && steps.guest_system.outcome != 'skipped'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: axiom64-guest-built-system
+          compression-level: 1
+          if-no-files-found: error
+          path: |
+            build/guest-kernel-*/*.log
+            build/guest-kernel-*/*.json
+            build/guest-kernel-*/kernel-export.raw
+            build/guest-kernel-*/guest-built.elf
+            build/guest-kernel-*/guest-built.iso
+            build/guest-kernel-*/rootfs.cpio
       - name: Verify normal init recovery with the same desktop and console
         if: startsWith(matrix.suite, 'normal-init-')
         env:

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Build the upstream BusyBox release against the checked local musl provider."""
+import hashlib
 import os
 import json
 from pathlib import Path
@@ -12,7 +13,9 @@ version = LOCK["busybox"]["version"]
 source = ROOT / "build" / f"busybox-{version}"
 binary = source / "busybox"
 toolchain = ensure()
-identity = json.loads((toolchain / 'manifest.json').read_text())['identity']
+configure = ROOT / 'scripts/configure-busybox.sh'
+toolchain_identity = json.loads((toolchain / 'manifest.json').read_text())['identity']
+identity = toolchain_identity + '\n' + hashlib.sha256(configure.read_bytes()).hexdigest()
 stamp = source / '.axiom64-toolchain'
 if not binary.exists() or not stamp.exists() or stamp.read_text() != identity:
     # Shared CI caches retain the executable and configuration without source files.
@@ -29,13 +32,7 @@ if not binary.exists() or not stamp.exists() or stamp.read_text() != identity:
         def run(args):
             subprocess.run(args, cwd=source, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, check=True)
         run(["make", "defconfig"])
-        config = source / ".config"
-        lines = config.read_text().splitlines()
-        settings = {"CONFIG_STATIC": "y", "CONFIG_TC": "n", "CONFIG_SELINUX": "n"}
-        for key, value in settings.items():
-            lines = [line for line in lines if not line.startswith(key + "=") and line != f"# {key} is not set"]
-            lines.append(f"{key}=y" if value == "y" else f"# {key} is not set")
-        config.write_text("\n".join(lines) + "\n")
+        run(["sh", str(configure), ".config"])
         try:
             run(["make", "oldconfig"])
             # Recompile cached objects when their linked libc provider changes.

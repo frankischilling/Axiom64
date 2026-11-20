@@ -38,10 +38,9 @@ ld --version
 make --version
 if test -f build-tools.sh; then
     /bin/sh build-tools.sh
-    /tmp/guest-tools/make -j2 NASM=/tmp/guest-tools/nasm build/axiom64.elf
-else
-    make -j2 build/axiom64.elf
+    export PATH=/tmp/guest-tools:$PATH
 fi
+make -j2 build/axiom64.elf
 test -s build/axiom64.elf
 if test -f build-system.sh; then
     /bin/sh build-system.sh

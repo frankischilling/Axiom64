@@ -201,7 +201,7 @@ for firmware in firmwares:
     else:
         required += ["AXIOM64_TESTS_PASS", "AXIOM64_EXIT status=0"]
     if args.suite == "guest-system":
-        required += ["ABI_TESTS_PASS linkage=static", "ABI_TESTS_PASS linkage=dynamic"]
+        required += ["BUSYBOX_SHELL_PASS", "ABI_TESTS_PASS linkage=static", "ABI_TESTS_PASS linkage=dynamic"]
     if args.suite in ["full", "abi"] and not args.interactive:
         required += ["ABI_TESTS_PASS linkage=static", "ABI_TESTS_PASS linkage=dynamic",
                      "IPC_TESTS_PASS", "SIGNAL_TESTS_PASS", "VFS_TESTS_PASS", "BUSYBOX_SHELL_PASS",

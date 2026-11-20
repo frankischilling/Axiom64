@@ -27,23 +27,31 @@
 set -eu
 cd /root/kernel-build/tool-sources
 sha512sum -c sources.sha512
-mkdir /tmp/guest-tools
-tar xf make-*.tar.gz -C /tmp/guest-tools
-tar xf nasm-*.tar.xz -C /tmp/guest-tools
+tools=/tmp/guest-tools
+workspace=/tmp/guest-tool-source
+mkdir "$tools" "$workspace"
+mount -t ramfs none "$workspace"
+export TMPDIR="$workspace/tmp"
+mkdir "$TMPDIR"
+tar xf make-*.tar.gz -C "$workspace"
+tar xf nasm-*.tar.xz -C "$workspace"
 
 # These temporary tools build the test system. Keep compilation work small
 # when the guest runs under software emulation.
 tool_cflags='-O0 -g0'
 # GNU config.guess does not recognize the Axiom64 uname string.
-cd /tmp/guest-tools/make-*/
+cd "$workspace"/make-*/
+patch -p1 < /root/kernel-build/make-environment-prefix.patch
 /bin/sh ./configure --build=x86_64-pc-linux-musl --prefix=/usr CC=gcc CFLAGS="$tool_cflags"
 /usr/bin/make -j2
-cp ./make ../make
-../make --version
+cp ./make "$tools/make"
+"$tools/make" --version
 
-cd /tmp/guest-tools/nasm-*/
+cd "$workspace"/nasm-*/
 /bin/sh ./configure --build=x86_64-pc-linux-musl --prefix=/usr CC=gcc CFLAGS="$tool_cflags"
-../make -j2 nasm ndisasm
-cp ./nasm ./ndisasm ../
-../nasm -v
+"$tools/make" -j2 nasm ndisasm
+cp ./nasm ./ndisasm "$tools/"
+"$tools/nasm" -v
+cd /
+umount "$workspace"
 echo AXIOM64_BUILD_TOOLS_BUILT

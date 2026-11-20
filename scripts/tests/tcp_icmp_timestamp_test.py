@@ -46,6 +46,12 @@ class PacketArrivalClock(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'both packet arrival clock anchors'):
             capture_receipts(self.log().split('\n', 1)[1])
 
+    def test_interrupt_log_inside_an_anchor_is_rejected(self):
+        text = self.log().replace(' monotonic_after_ns=54000000000',
+                                  'e1000: INTx TX completion index=2\n monotonic_after_ns=54000000000')
+        with self.assertRaisesRegex(ValueError, 'both packet arrival clock anchors'):
+            capture_receipts(text)
+
     def test_future_arrival_and_legacy_receipt_are_rejected(self):
         with self.assertRaisesRegex(ValueError, 'arrival precedes dequeue'):
             capture_receipts(self.log(dequeue=54640))

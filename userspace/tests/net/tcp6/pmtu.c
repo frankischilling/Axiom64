@@ -129,7 +129,9 @@ int main(int argc, char** argv) {
     signal(SIGPIPE, SIG_IGN);
     alarm(120);
     check(argc == 1 || (argc == 2 && !strcmp(argv[1], "--native")), "known fixture invocation");
-    check(close(fixture_interfaces()) == 0, "PMTU interface setup");
+    // Only the Ethernet barrier uses this socket. Keep the TCP burst out of its queue.
+    check(close(fixture_interfaces_for_protocol(IPV6_BARRIER_PROTOCOL)) == 0,
+          "PMTU interface setup");
     for (unsigned lane = 0; lane < 2; lane++)
         for (unsigned scenario = 0; scenario < scenarios; scenario++)
             flow(lane, scenario);

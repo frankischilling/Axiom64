@@ -220,7 +220,7 @@ static inline int wire_socket(unsigned lane, int type, unsigned local_port, unsi
     return fd;
 }
 
-static inline int fixture_interfaces(void) {
+static inline int fixture_interfaces_for_protocol(unsigned protocol) {
     int control = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
     check(control >= 0, "fixture interface control");
     for (unsigned lane = 0; lane < 2; lane++) {
@@ -232,10 +232,10 @@ static inline int fixture_interfaces(void) {
         memcpy(macs[lane], request.ifr_hwaddr.sa_data, 6);
         request.ifr_flags = IFF_UP;
         check(!ioctl(control, SIOCSIFFLAGS, &request), "fixture interface up");
-        packets[lane] = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, htons(3));
+        packets[lane] = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, htons(protocol));
         check(packets[lane] >= 0, "fixture Ethernet socket");
         struct sockaddr_ll binding = {
-            .sll_family = AF_PACKET, .sll_protocol = htons(3), .sll_ifindex = indices[lane]};
+            .sll_family = AF_PACKET, .sll_protocol = htons(protocol), .sll_ifindex = indices[lane]};
         check(!bind(packets[lane], (struct sockaddr*)&binding, sizeof(binding)),
               "fixture Ethernet binding");
         barrier(lane, 0);
@@ -243,4 +243,8 @@ static inline int fixture_interfaces(void) {
         configure(lane, 0);
     }
     return control;
+}
+
+static inline int fixture_interfaces(void) {
+    return fixture_interfaces_for_protocol(3);
 }

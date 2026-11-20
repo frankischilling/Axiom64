@@ -124,11 +124,14 @@ def boot(directory, spec, firmware):
     require(lines.count('Firmware: ' + spec['firmware'].upper()) == 1 and
             len([line for line in lines if line.startswith('Firmware: ')]) == 1,
             'actual requested boot firmware')
+    virtio = [line for line in lines if line.startswith('virtio-net: index=')]
+    intel = [line for line in lines if line.startswith('e1000: index=')]
     require([line for line in lines if line.startswith('NET_DEVICE ')] == [
             f'NET_DEVICE index={n + 1} name=eth{n} mtu=1500 carrier=1 mac=2:0:0:0:0:{n + 1}' for n in (0, 1)] and
-            len([line for line in lines if line.startswith('virtio-net: ')]) == 1 and
-            re.search(r'^virtio-net: index=1 transport=' + spec['transport'] + r' rx=\d+ tx=\d+ features=[0-9a-f]+$', text, re.M) and
-            lines.count('e1000: index=2 model=82540EM rx=64 tx=64') == 1, 'actual two-adapter driver and transport inventory')
+            len(virtio) == 1 and re.fullmatch(r'virtio-net: index=1 transport=' + spec['transport'] +
+                                             r' rx=\d+ tx=\d+ features=[0-9a-f]+', virtio[0]) and
+            intel == ['e1000: index=2 model=82540EM rx=64 tx=64'],
+            'actual two-adapter driver and transport inventory')
     require(command[command.index('-machine') + 1] == 'pc' and command[command.index('-cpu') + 1] == 'max' and
             command[command.index('-m') + 1] == '256M', 'original machine CPU and memory configuration')
     devices = [command[n + 1] for n, value in enumerate(command) if value == '-device']

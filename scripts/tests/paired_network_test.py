@@ -100,7 +100,8 @@ sys.exit(7 if settings['fail'] == worker else 0)
 
 
 class PairTest(unittest.TestCase):
-    def fixture(self, directory, fail=None, spawn=False, hang=False, normal_missing=False, changed_alias=None):
+    def fixture(self, directory, fail=None, spawn=False, hang=False, normal_missing=False, changed_alias=None,
+                zstd=False):
         root = directory / 'source'
         (root / 'scripts').mkdir(parents=True)
         barrier = directory / 'barrier'
@@ -114,16 +115,19 @@ class PairTest(unittest.TestCase):
         (root / 'build').mkdir()
         (root / 'build/axiom64.elf').write_bytes(b'prepared-kernel')
         (root / 'build/rootfs.cpio').write_bytes(b'prepared-production-root')
-        archive = directory / 'inputs.tar.gz'
-        with tarfile.open(archive, 'w:gz') as output:
-            for source in root.iterdir():
-                output.add(source, arcname=source.name)
+        archive = directory / ('inputs.tar.zst' if zstd else 'inputs.tar.gz')
+        if zstd:
+            subprocess.run(['tar', '--zstd', '-cf', str(archive), '-C', str(root), '.'], check=True)
+        else:
+            with tarfile.open(archive, 'w:gz') as output:
+                for source in root.iterdir():
+                    output.add(source, arcname=source.name)
         return root, archive
 
-    def check_pair(self, fail):
+    def check_pair(self, fail, zstd=False):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            root, archive = self.fixture(directory, fail)
+            root, archive = self.fixture(directory, fail, zstd=zstd)
             status = PAIRED.run_pair(root, archive, directory, 'protocol-bios-modern-lane0')
             self.assertEqual(status, 1 if fail else 0)
             evidence = root / 'build' / 'paired-network' / 'protocol-bios-modern-lane0'
@@ -143,6 +147,9 @@ class PairTest(unittest.TestCase):
 
     def test_both_linkages_run_concurrently_with_independent_fixtures(self):
         self.check_pair(None)
+
+    def test_both_linkages_accept_zstd_inputs(self):
+        self.check_pair(None, zstd=True)
 
     def test_dynamic_failure_retains_both_workers_and_packet_evidence(self):
         self.check_pair('dynamic')

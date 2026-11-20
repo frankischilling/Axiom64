@@ -36,11 +36,14 @@ output=$(cd "${RUNNER_TEMP:?RUNNER_TEMP is required}" && pwd -P)
 case "$output/" in
   "$workspace/"*) echo 'Input archives must be written outside the workspace.' >&2; exit 2 ;;
 esac
-archive="$output/$name.tar"
-if [[ -e "$archive" || -e "$archive.gz" ]]; then
+archive="$output/$name.tar.zst"
+if [[ -e "$archive" || -e "$output/$name.tar" || -e "$output/$name.tar.gz" ]]; then
   echo 'Input archive already exists.' >&2
   exit 2
 fi
+pending=
+crypto_excludes=
+trap 'rm -f -- "$pending" "$crypto_excludes"' EXIT
 busybox_dir=$(python3 -c "import json; print('build/busybox-' + json.load(open('dependencies.json'))['busybox']['version'])")
 excludes=(
   --exclude='./.git' --exclude='./.local' --exclude='__pycache__'
@@ -86,13 +89,13 @@ else
   # Use the same completed outputs for cold builds and cache restores. Leave
   # the workspace intact for the build's own evidence and failure diagnostics.
   crypto_excludes=$(mktemp "$output/axiom64-crypto-excludes.XXXXXXXX")
-  trap 'rm -f -- "$crypto_excludes"' EXIT
   script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
   python3 -B "$script_dir/crypto_input_excludes.py" > "$crypto_excludes"
   excludes+=(--anchored --no-wildcards --exclude-from="$crypto_excludes")
 fi
 # Keep source/output times and modes, including the prepared BusyBox inputs.
-tar -cf "$archive" "${excludes[@]}" . \
+pending=$(mktemp "$output/$name.tar.zst.XXXXXXXX")
+tar --use-compress-program='zstd -q -3 -T0' -cf "$pending" "${excludes[@]}" . \
   "$busybox_dir/busybox" "$busybox_dir/.config" "$busybox_dir/LICENSE" "$busybox_dir/.axiom64-toolchain" \
   "${extra_inputs[@]}"
-gzip -1 "$archive"
+ln -- "$pending" "$archive"

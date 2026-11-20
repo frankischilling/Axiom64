@@ -2,6 +2,7 @@
 """Exercise archive privacy, profile boundaries and preserved build metadata."""
 from pathlib import Path
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -108,8 +109,9 @@ class InputArchives(unittest.TestCase):
                               env=env or self.env, capture_output=True, text=True)
 
     def read(self, profile):
-        name = 'ci-inputs.tar.gz' if profile == 'full' else 'ci-rotation-inputs.tar.gz'
-        with tarfile.open(self.output / name) as archive:
+        name = 'ci-inputs.tar.zst' if profile == 'full' else 'ci-rotation-inputs.tar.zst'
+        data = subprocess.check_output(['zstd', '-dc', str(self.output / name)])
+        with tarfile.open(fileobj=io.BytesIO(data), mode='r:') as archive:
             members = {member.name.removeprefix('./'): member for member in archive.getmembers()}
             files = {name: archive.extractfile(member).read()
                      for name, member in members.items() if member.isfile()}
@@ -145,7 +147,7 @@ class InputArchives(unittest.TestCase):
             self.assertEqual(members[name].mode, 0o751)
             self.assertEqual(members[name].mtime, 1577836800)
         self.assertNotIn('downloads/sources/ca-bundle/cache.tmp', members)
-        (self.output / 'ci-inputs.tar.gz').unlink()
+        (self.output / 'ci-inputs.tar.zst').unlink()
         missing = next(iter(CA_INPUTS))
         (self.workspace / missing).unlink()
         result = self.run_helper('full')
@@ -184,7 +186,7 @@ class InputArchives(unittest.TestCase):
         result = self.run_helper('rotation')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('linux-headers-locked.apk', result.stderr)
-        self.assertFalse((self.output / 'ci-rotation-inputs.tar.gz').exists())
+        self.assertFalse((self.output / 'ci-rotation-inputs.tar.zst').exists())
 
     def test_full_retains_verified_crypto_and_leaves_intermediates_in_workspace(self):
         link = 'build/curl/build/id/static/stage/usr/bin/curl-alias'
@@ -240,10 +242,20 @@ class InputArchives(unittest.TestCase):
         self.assertEqual(self.run_helper('unknown').returncode, 2)
         self.assertFalse(list(self.output.iterdir()))
         self.assertEqual(self.run_helper('full').returncode, 0)
-        path = self.output / 'ci-inputs.tar.gz'
+        path = self.output / 'ci-inputs.tar.zst'
         before = hashlib.sha256(path.read_bytes()).hexdigest()
         self.assertEqual(self.run_helper('full').returncode, 2)
         self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), before)
+
+    def test_failed_compression_leaves_no_archive(self):
+        tools = self.output.parent / 'tools'
+        tools.mkdir()
+        compressor = tools / 'zstd'
+        compressor.write_text("#!/bin/sh\nprintf 'incomplete output'\nexit 1\n")
+        compressor.chmod(0o755)
+        env = dict(self.env, PATH=f"{tools}:{self.env['PATH']}")
+        self.assertNotEqual(self.run_helper('full', env).returncode, 0)
+        self.assertFalse(list(self.output.iterdir()))
 
     def test_reject_output_inside_workspace(self):
         inside = self.workspace / 'nested exports'

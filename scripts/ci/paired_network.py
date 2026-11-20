@@ -168,7 +168,7 @@ def run_pair(root, archive, temporary_parent, suite, scenarios=None, root_type=N
     try:
         dynamic = Path(temporary)
         try:
-            subprocess.run(['tar', '-xzf', str(archive), '-C', str(dynamic)], check=True)
+            subprocess.run(['tar', '-xf', str(archive), '-C', str(dynamic)], check=True)
             if kind == 'normal':
                 for name in ('axiom64.elf', 'rootfs.cpio'):
                     original = root / 'build' / name

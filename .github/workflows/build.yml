@@ -373,7 +373,7 @@ jobs:
           compression-level: 0
           retention-days: 1
           if-no-files-found: error
-          path: ${{ runner.temp }}/ci-inputs.tar.gz
+          path: ${{ runner.temp }}/ci-inputs.tar.zst
       - name: Share focused rotation inputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -381,7 +381,7 @@ jobs:
           compression-level: 0
           retention-days: 1
           if-no-files-found: error
-          path: ${{ runner.temp }}/ci-rotation-inputs.tar.gz
+          path: ${{ runner.temp }}/ci-rotation-inputs.tar.zst
       - name: Upload boot image and kernel
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -505,7 +505,7 @@ jobs:
           name: axiom64-ci-inputs
           path: ${{ runner.temp }}/ci-inputs
       - name: Restore source and build together
-        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
+        run: tar -xf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.zst"
       - name: Install build and emulation tools
         run: bash scripts/ci/tools.sh restore
       - name: Compare complete source-filter and source-route cohorts with native Linux and both guest adapters
@@ -1661,7 +1661,7 @@ jobs:
           SUITE: ${{ matrix.suite }}
         run: |
           python3 scripts/ci/paired_network.py --suite "$SUITE" \
-            --archive "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz" --temporary-parent "$RUNNER_TEMP"
+            --archive "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.zst" --temporary-parent "$RUNNER_TEMP"
       - name: Test carrier peer packets, physical removal, and observation barriers
         if: startsWith(matrix.suite, 'link-')
         run: |
@@ -1674,7 +1674,7 @@ jobs:
           AXIOM64_QEMU_ACCELERATOR: ${{ inputs.manager_accelerator || 'tcg' }}
         run: |
           python3 scripts/ci/paired_network.py --suite "$SUITE" \
-            --archive "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz" --temporary-parent "$RUNNER_TEMP"
+            --archive "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.zst" --temporary-parent "$RUNNER_TEMP"
       - name: Test counter scaling and ACPI discovery with sanitizers
         if: matrix.suite == 'configuration'
         run: make test-clock-codec 2>&1 | tee build/clock-codec.log
@@ -1776,7 +1776,7 @@ jobs:
           python3 scripts/normal_manager_peer_test.py 2>&1 | tee build/normal-init-peer.log
           mkdir -p build/ci-normal-workers
           python3 scripts/ci/paired_network.py --suite "$SUITE" \
-            --archive "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz" \
+            --archive "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.zst" \
             --temporary-parent "$GITHUB_WORKSPACE/build/ci-normal-workers"
       - name: Upload normal init root fixtures
         if: always() && startsWith(matrix.suite, 'normal-init-')
@@ -2211,7 +2211,7 @@ jobs:
           name: axiom64-ci-rotation-inputs
           path: ${{ runner.temp }}/ci-inputs
       - name: Restore source and build together
-        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-rotation-inputs.tar.gz"
+        run: tar -xf "$RUNNER_TEMP/ci-inputs/ci-rotation-inputs.tar.zst"
       - name: Install build and emulation tools
         run: bash scripts/ci/tools.sh restore
       - name: Run actual administration, concurrent commands and fresh-kernel checks
@@ -2266,7 +2266,7 @@ jobs:
           name: axiom64-ci-rotation-inputs
           path: ${{ runner.temp }}/ci-inputs
       - name: Restore source and build together
-        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-rotation-inputs.tar.gz"
+        run: tar -xf "$RUNNER_TEMP/ci-inputs/ci-rotation-inputs.tar.zst"
       - name: Install build and emulation tools
         run: bash scripts/ci/tools.sh restore
       - name: Interrupt every observed actual administration request and boot normal recovery
@@ -2320,7 +2320,7 @@ jobs:
           name: axiom64-ci-rotation-inputs
           path: ${{ runner.temp }}/ci-inputs
       - name: Restore source and build together
-        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-rotation-inputs.tar.gz"
+        run: tar -xf "$RUNNER_TEMP/ci-inputs/ci-rotation-inputs.tar.zst"
       - name: Install build and emulation tools
         run: bash scripts/ci/tools.sh restore
       - name: Interrupt every basic rotation target in all fault modes
@@ -2385,7 +2385,7 @@ jobs:
           name: axiom64-ci-rotation-inputs
           path: ${{ runner.temp }}/ci-inputs
       - name: Restore the exact verified source and build inputs
-        run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-rotation-inputs.tar.gz"
+        run: tar -xf "$RUNNER_TEMP/ci-inputs/ci-rotation-inputs.tar.zst"
       - name: Download every administration coverage index
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:

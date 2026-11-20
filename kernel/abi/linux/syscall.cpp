@@ -35,6 +35,7 @@
 #include "process/cpu.hpp"
 #include "mm/barrier.hpp"
 #include "mm/limits.hpp"
+#include "mm/remap.hpp"
 #include "mm/stack.hpp"
 #include "process/exec_arguments.hpp"
 #include "process/futex.hpp"
@@ -332,7 +333,7 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
     bool no_replace = flags & map_fixed_noreplace;
     bool fixed = no_replace || (flags & map_fixed);
     bool replace_existing = fixed && !no_replace;
-    if (!len || len > 256 * 1024 * 1024 || off % page_size || !(flags & 3) || (flags & 3) == 3)
+    if (!len || len > mmap_length_limit || off % page_size || !(flags & 3) || (flags & 3) == 3)
         return -22;
     // Linux mmap ignores protection bits outside the access permissions.
     prot &= 7;
@@ -423,11 +424,13 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
     int error = replace();
     if (error)
         return error;
-    if (!current->memory->space.map(addr, len, 3, private_mapping))
-        return -12;
+    uint64_t mapping_flags = private_mapping ? page_private : 0;
     if (stack_mapping)
-        for (uint64_t page = addr; page < addr + len; page += page_size)
-            *current->memory->space.entry(page) |= page_stack;
+        mapping_flags |= page_stack;
+    else if (private_mapping && (flags & 0x20))
+        mapping_flags |= page_anonymous;
+    if (!current->memory->space.map(addr, len, 3, mapping_flags))
+        return -12;
     if ((flags & 0x21) == 0x21)
         for (uint64_t page = addr; page < addr + len; page += page_size) {
             uint64_t& entry = *current->memory->space.entry(page);
@@ -1031,6 +1034,8 @@ static int64_t dispatch(Frame* f) {
         return create_pipe(a, 0);
     case 24:
         return 0;
+    case 25:
+        return remap_anonymous(*current, a, b, c, d);
     case 26:
         if (a % page_size || (c & ~7) || (c & 5) == 5)
             return -22;

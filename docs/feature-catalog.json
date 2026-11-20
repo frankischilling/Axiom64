@@ -272,7 +272,7 @@
       "title": "Demand paging, copy-on-write, and swap",
       "milestone": "M2",
       "state": "partial",
-      "current": "User page tables and shared mappings exist; fork eagerly copies private pages.",
+      "current": "User page tables and shared mappings exist. Private anonymous mappings can resize or relocate. Fork eagerly copies private pages.",
       "scope": [
         "VM maps, objects, pages, reservations, and bounded allocation accounting",
         "Demand-paged stacks and file-backed mmap with shared page-cache coherence",
@@ -292,6 +292,7 @@
       ],
       "evidence": [
         "kernel/mm/memory.cpp",
+        "kernel/mm/remap.cpp",
         "kernel/ipc/shared_memory.cpp"
       ],
       "branch": "feature/f06-demand-paging-copy-on-write-and-swap",

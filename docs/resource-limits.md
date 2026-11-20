@@ -35,6 +35,12 @@ Exec captures a stack-limit snapshot with its owned argument/environment strings
 
 The resource table recognizes all sixteen Linux selectors. Other stored values do not establish enforcement. These limits alone do not establish readiness for exposed network services. Task slots, descriptor tables and other system-wide capacity bounds also remain. The broader Linux ABI and service roadmaps retain resource-consuming interfaces and operational requirements outside this supported contract.
 
+## Anonymous mapping resize
+
+`mremap` can shrink or grow an ordinary private anonymous mapping. Sizes round up to page boundaries and follow the 256 MiB mapping limit. Growth requires uniform protections across the source. With `MREMAP_MAYMOVE`, an occupied tail permits relocation to a free range. The new mapping keeps the old pages and their protections, and the added pages start zeroed. The address-space and private writable data limits charge only the added pages. Failed growth preserves the old range and its neighbors.
+
+File-backed mappings, shared mappings, grow-down stacks, `MREMAP_FIXED`, and `MREMAP_DONTUNMAP` remain outside this implementation.
+
 ## Validation
 
 From the Linux build environment:
@@ -59,4 +65,4 @@ The native runner copies its executable and loader into accessible temporary fix
 
 A coordinated isolation case runs two distinct ordinary users. The pressure worker holds exhausted descriptors, file and memory allowances, and a full task quota while the healthy worker continues opening files, mapping memory, forking/reaping and writing its private file. Cross-user file access, signaling and remote resource changes fail. Seven handshakes require unchanged healthy-worker limits and continued progress after hard CPU termination. Ext2 cases retain its actual seven-byte file and check mode, owner/group and link count with native tools. A same-identity negative control is rejected at the private-file denial assertion.
 
-The focused client checks real descriptor/file pressure, quota failures and reclamation, fork/thread/exec ownership, actual CPU use and signals, and mapping/protection/heap boundaries. Stack checks include 22 growth/protection/copy scenarios and twenty actual exec payload/limit combinations. Local validation passes six native libc/linkage profiles, eight BIOS/UEFI RAM guests and sixteen ext2 guests across both virtio transports: 330 observation groups, including thirty coordinated isolation cases. Independent inspection binds the executed source and binaries, actual ISO contents, sixteen fresh strict filesystem checks and persisted file bytes. All fourteen existing native/guest exec profiles also pass their nine groups. The complete local suite remains required for the proposed final revision.
+The focused client checks real descriptor/file pressure, quota failures and reclamation, fork/thread/exec ownership, actual CPU use and signals, and mapping/protection/heap boundaries. The address-space group also exercises resize in place, relocation of inaccessible pages, protection and data preservation, and rejection before changing an existing mapping. Stack checks include 22 growth/protection/copy scenarios and twenty actual exec payload/limit combinations. Local validation passes six native libc/linkage profiles, eight BIOS/UEFI RAM guests and sixteen ext2 guests across both virtio transports: 330 observation groups, including thirty coordinated isolation cases. Independent inspection binds the executed source and binaries, actual ISO contents, sixteen fresh strict filesystem checks and persisted file bytes. All fourteen existing native/guest exec profiles also pass their nine groups. The complete local suite remains required for the proposed final revision.

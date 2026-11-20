@@ -89,9 +89,9 @@ class Flow:
                                 mutation=mutation, receiving_lane=delivery.lane))
 
     def quote_cycle(self, stale, current):
+        check(self.peer.cycle_quote is None, 'one pending current-cycle quote per adapter')
         self.quote(stale)
-        # A delayed peer tick must preserve the gap between the two sends.
-        self.later(.125, lambda: self.quote(current))
+        self.peer.cycle_quote = (self, current)
 
     def synack(self):
         self.send(SYN | ACK, sequence=self.initial)
@@ -231,6 +231,7 @@ class Peer(EthernetPeer):
     def __init__(self, lane, minimum_fin_ms=0):
         super().__init__(lane, minimum_fin_ms)
         self.flows, self.pending, self.completed, self.cycles, self.others = [], [], set(), set(), None
+        self.cycle_quote = None
 
     def ms(self):
         return (time.monotonic() - self.began) * 1000
@@ -314,6 +315,12 @@ class Peer(EthernetPeer):
         check(flow is not None, 'each TCP segment has an independently observed connection owner')
         self.frames[-1].update(case=flow.ordinal, generation=flow.generation, cycle=flow.cycle)
         flow.input(segment, frame)
+
+    def output_drained(self):
+        if self.cycle_quote is not None:
+            current, frame = self.cycle_quote
+            self.cycle_quote = None
+            current.later(.125, lambda: current.quote(frame))
 
     def tick(self):
         for due, flow, function in list(self.pending):

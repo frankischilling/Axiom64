@@ -190,7 +190,7 @@ static int lookup(Node* parent, const char* name, Node*& result) {
     uint32_t number;
     if (!locate(v, parent->inode, name, number))
         return v.error;
-    for (auto entry = v.entries; entry; entry = entry->next)
+    for (auto entry = v.entries.inode_bucket(number); entry; entry = entry->inode_next)
         if (entry->number == number && entry->node.parent == parent && !entry->node.removed &&
             !strcmp(entry->node.name, name)) {
             result = &entry->node;
@@ -216,7 +216,7 @@ static int create(Node* parent, const char* name, uint32_t mode, const char* tar
     if (!entry)
         return v.error;
     if (!v.begin()) {
-        release(entry);
+        v.entries.cancel(entry);
         return v.error;
     }
     bool dir = (mode & 0170000) == directory;
@@ -266,7 +266,7 @@ static int create(Node* parent, const char* name, uint32_t mode, const char* tar
     success = success && v.save_inode(number, inode, true) &&
               add_name(v, parent->inode, name, number, mode);
     if (!success) {
-        release(entry);
+        v.entries.cancel(entry);
         return v.finish(false);
     }
     result = v.add_entry(entry, number, parent, name, inode);
@@ -581,7 +581,7 @@ static int sync(Mount* mount, Node*, bool) {
         return v.error;
     if (mount->readonly)
         return 0;
-    for (auto entry = v.entries; entry; entry = entry->next) {
+    for (auto entry = v.entries.first(); entry; entry = entry->next) {
         if (!entry->number || entry->node.hardlink)
             continue;
         uint8_t inode[inode_bytes];
@@ -618,7 +618,7 @@ static int remount(Mount* mount, bool readonly) {
     if (!readonly && !v.writable_safe)
         return -117;
     if (readonly)
-        for (auto entry = v.entries; entry; entry = entry->next)
+        for (auto entry = v.entries.first(); entry; entry = entry->next)
             if (entry->number && !entry->node.hardlink && !entry->node.links)
                 return -16;
     if (!v.begin())
@@ -634,7 +634,7 @@ static int prepare_unmount(Mount* mount) {
         return v.error;
     // Unmount has no live users; terminal shutdown never resumes the tasks.
     // Reclaim open unlinked inodes before declaring their filesystem clean.
-    for (auto entry = v.entries; entry; entry = entry->next) {
+    for (auto entry = v.entries.first(); entry; entry = entry->next) {
         if (!entry->number || entry->node.hardlink)
             continue;
         uint8_t inode[inode_bytes];
@@ -654,11 +654,7 @@ static void destroy(Mount* mount) {
     if (!v)
         return;
     v->discard();
-    while (v->entries) {
-        auto next = v->entries->next;
-        release(v->entries);
-        v->entries = next;
-    }
+    v->entries.clear();
     if (v->claimed)
         block_unclaim(v->device, v);
     release(v->groups);

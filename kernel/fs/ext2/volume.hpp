@@ -30,10 +30,11 @@
 #include "process/task.hpp"
 #include "drivers/block/block.hpp"
 #include "drivers/platform/devices.hpp"
+#include "entries.hpp"
 
 namespace ax::ext2_detail {
 constexpr size_t max_block_size = 4096, inode_bytes = 128;
-constexpr unsigned max_changes = 4096, max_entries = 8192, cached_blocks = 128;
+constexpr unsigned max_changes = 4096, cached_blocks = 128;
 
 inline uint16_t u16(const uint8_t* p) {
     return uint16_t(p[0]) | (uint16_t(p[1]) << 8);
@@ -106,13 +107,6 @@ struct Change {
     uint8_t data[max_block_size];
 };
 
-struct Entry {
-    Node node;
-    Entry* next;
-    uint32_t number;
-    bool atime_dirty;
-};
-
 struct CachedBlock {
     uint32_t block;
     bool valid;
@@ -121,13 +115,13 @@ struct CachedBlock {
 
 struct Volume {
     Mount* mount;
-    unsigned device, block_size, inode_size, group_count, change_count, entry_count;
+    unsigned device, block_size, inode_size, group_count, change_count;
     uint32_t blocks, inodes, first, blocks_per_group, inodes_per_group, first_inode;
     uint32_t gdt, gdt_blocks, reserved_gdt, revision, compatible, readonly_features;
     bool typed_entries, claimed, writable_safe;
     Group* groups;
     Change* changes;
-    Entry* entries;
+    EntryCache entries;
     CachedBlock* cache;
     Journal* journal;
     uint32_t* journal_map;
@@ -274,7 +268,7 @@ struct Volume {
     }
 
     Entry* canonical(uint32_t number) {
-        for (auto entry = entries; entry; entry = entry->next)
+        for (auto entry = entries.inode_bucket(number); entry; entry = entry->inode_next)
             if (entry->number == number && !entry->node.hardlink)
                 return entry;
         return nullptr;
@@ -308,7 +302,7 @@ struct Volume {
                          2))
             return false;
         // Initial mount recovery has no cached identities to refresh.
-        if (!entries)
+        if (!entries.first())
             return true;
         for (unsigned i = 0; i < touched_count; i++)
             if (touched[i] == number)
@@ -342,7 +336,8 @@ struct Volume {
                 if (!load_inode(touched[i], inode, false))
                     return false;
                 populate(entry, inode);
-                for (auto alias = entries; alias; alias = alias->next)
+                for (auto alias = entries.inode_bucket(touched[i]); alias;
+                     alias = alias->inode_next)
                     if (alias->node.hardlink == &entry->node)
                         alias->node.mode = entry->node.mode;
             }
@@ -408,16 +403,9 @@ struct Volume {
     }
 
     Entry* reserve_entry() {
-        if (entry_count == max_entries) {
+        auto entry = entries.reserve();
+        if (!entry)
             fail(-12);
-            return nullptr;
-        }
-        auto entry = (Entry*)alloc(sizeof(Entry));
-        if (!entry) {
-            fail(-12);
-            return nullptr;
-        }
-        memset(entry, 0, sizeof(Entry));
         return entry;
     }
 
@@ -434,9 +422,7 @@ struct Volume {
             entry->node.mode = original->node.mode;
         } else
             populate(entry, inode);
-        entry->next = entries;
-        entries = entry;
-        entry_count++;
+        entries.insert(entry);
         return &entry->node;
     }
 

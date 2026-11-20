@@ -14,7 +14,7 @@ Kernel sources and headers are grouped by subsystem. Includes name the module, s
 | `kernel/process/` | Tasks, scheduling, CPU accounting, process resource tables, signals, futexes, child-event waits and checked executable argument capture |
 | `kernel/fs/` | VFS, RAM filesystems, pipe and FIFO queues, procfs process identity and IPv6 configuration controls, xattrs, advisory file locks, and inotify; ext2 storage and EA codec have their own subfolder |
 | `kernel/security/` | Task credential transitions and bounded file capability decoding |
-| `kernel/io/` | Retained blocking I/O requests and captured vector bounds shared with IPv6 error receives |
+| `kernel/io/` | Retained blocking I/O requests and vector handling, with packet preparation and completion in `packet.hpp` |
 | `kernel/ipc/` | Sockets, Unix endpoint lookup and connection policy, owned datagram and stream records, binding names, per-message credentials, retained descriptor transfers and bounded cycle collection, event counters, readiness, shared memory, System V semaphore sets, undo ownership, and message queues |
 | `kernel/net/` | Ethernet interfaces, interface/route ioctls, and Linux raw packet sockets |
 | `kernel/net/ipv4/` | IPv4 routes/output, bounded reassembly, shared path-MTU limits and fragment emission, ARP cache/timers, ICMP, and Internet socket descriptions |

@@ -332,7 +332,7 @@ These behaviors follow the [Linux timerfd interface](https://github.com/torvalds
 
 [Packet sockets](network.md#linux-socket-contract), [IPv4 raw sockets](ipv4.md#raw-icmp-socket-contract), [UDP](udp.md), and [netlink route sockets](netlink.md#socket-ownership-and-bounds) also use retained requests. Their linked contracts describe datagram boundaries, supported named addresses, copy-fault behavior, and queue limits.
 
-`kernel/io/io.cpp` owns request import, transfer, completion, and release through `kernel/include/io/io.hpp`:
+`kernel/io/io.cpp` dispatches requests and manages their lifetime through `kernel/include/io/io.hpp`. `kernel/io/packet.hpp` prepares packet requests and completes their transfers. Both use the same request state and vector bounds.
 
 | Function | Contract |
 | --- | --- |

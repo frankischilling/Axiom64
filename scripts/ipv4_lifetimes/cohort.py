@@ -85,7 +85,7 @@ def verify(directory):
                 row['log_sha256'] == digest(directory / (row['name'] + '.log')) for row in index['commands']), 'every complete finite-address cohort command passed')
     inputs = source(directory, index['source'])
     require(all(inputs[name] == digest(ROOT / name) for name in
-                ('scripts/ipv4_lifetimes/cohort.py', '.github/workflows/build.yml', 'Makefile')), 'same complete CI orchestration and build inputs')
+                ('scripts/ipv4_lifetimes/cohort.py', 'scripts/local_test_suites.toml', 'Makefile')), 'same complete test orchestration and build inputs')
     export = directory.parent / AUDIT / 'wire'
     require(inputs == decode((export / 'artifacts/source/source-inputs.json').read_text()), 'every cohort and runtime source byte matches')
     proof = wire_protected.verify(export)

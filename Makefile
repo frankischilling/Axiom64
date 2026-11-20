@@ -837,6 +837,11 @@ disk-root: build/axiom64.elf build/rootfs.cpio
 	$(PYTHON) scripts/image.py --root-device /dev/vda --output-name axiom64-disk.iso
 test: image
 	$(PYTHON) scripts/boot_test.py --firmware both
+.PHONY: test-suite test-suites
+test-suite:
+	$(PYTHON) -B scripts/local_validation.py "$(SUITE)"
+test-suites:
+	$(PYTHON) -B scripts/local_validation.py --list
 test-storage:
 	$(PYTHON) scripts/storage_test.py
 test-ext2:

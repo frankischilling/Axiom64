@@ -1167,6 +1167,12 @@ writable UEFI variables. The default is two workers on hosts with at least
 four available CPUs. Use `python3 scripts/network_matrix.py --workers 1 --seed SEED`
 to replay a particular order with one worker.
 
+CI runs native IPv4 fragment and path MTU expiry in the existing native
+download job. That job and the Ethernet guest job can proceed independently.
+The native reader still reopens all three linkages and all six captures. The
+Ethernet reader requires every original boot, and the aggregate requires both
+jobs to pass.
+
 `python3 scripts/tests/packet_protocol_observation_test.py -v` reopens four actual
 Ethernet logs covering two and eight ordinary adapters, a malformed-completion
 case and a transmit-pressure case. It requires the exact ordered numeric protocol

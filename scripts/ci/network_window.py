@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Overlap the complete native expiry comparison with isolated Ethernet guests."""
+"""Verify native expiry and Ethernet guest evidence, with a paired local runner."""
 import argparse
 import hashlib
 import json
@@ -122,7 +122,6 @@ def run_window(root, commands=None, products=None):
 
 
 def validate_window(root, report):
-    from network_matrix import cases
     root = Path(root)
     expected_commands = {'native': ['sudo', '-n', 'make', '-j1', 'test-native-icmp-budget',
                                    'test-ipv4-fragments-native'], 'guest': ['make', 'test-network']}
@@ -145,6 +144,12 @@ def validate_window(root, report):
     if not all(digest(root / name) == value for name, value in
                {**report['immutable_products'], **report['source_sha256']}.items()):
         raise ValueError('original compiler products and observer source bytes must remain unchanged')
+    return verify_ethernet(root)
+
+
+def verify_ethernet(root):
+    from network_matrix import cases
+
     rows = json.loads((root / 'build/network-results.json').read_text())
     expected = {(c['firmware'], c['transport'], tuple(c['models']), c['queue'], c.get('wrap', False),
                  c.get('fault'), c.get('pressure', False), c.get('status', True), c.get('mtu', 0)) for c in cases()}
@@ -157,13 +162,9 @@ def validate_window(root, report):
     return len(rows)
 
 
-def audit_window(root):
+def verify_native(root):
     from ipv4_fragment_native import verify_capture, verify_path_mtu, verify_path_lifetime, verify_preflight
     from ipv4_query_model import query_model
-    root = Path(root)
-    directory = root / 'build/network-window'
-    report = json.loads((directory / 'results.json').read_text())
-    guest_cells = validate_window(root, report)
     native = root / 'build/ipv4-fragments-native'
     receipt = json.loads((native / 'receipt.json').read_text())
     if not (receipt['passed'] and not receipt['pmtu_only'] and not receipt['lifetime_only'] and
@@ -188,21 +189,36 @@ def audit_window(root):
                 path=verify_path_mtu(capture_path, lane, log, native=True,
                                      query_model=query_model(before['kernel'])),
                 lifetime=verify_path_lifetime(capture_path, lane, log, native=True)))
-    result = dict(passed=True, complete_native_profiles=3, captures=6, observations=observations,
-                  preflight_audits=preflights,
-                  original_complete_guest_command=True, original_guest_cells=guest_cells,
-                  original_clocks_and_deadlines_preserved=True)
-    (directory / 'audit.json').write_text(json.dumps(result, indent=2) + '\n')
+    return dict(passed=True, complete_native_profiles=3, captures=6, observations=observations,
+                preflight_audits=preflights, original_clocks_and_deadlines_preserved=True)
+
+
+def write_audit(destination, result):
+    destination.write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({k: v for k, v in result.items() if k not in ('observations', 'preflight_audits')}), flush=True)
     return 0
 
 
+def audit_window(root):
+    directory = root / 'build/network-window'
+    report = json.loads((directory / 'results.json').read_text())
+    guest_cells = validate_window(root, report)
+    result = verify_native(root)
+    result.update(original_complete_guest_command=True, original_guest_cells=guest_cells)
+    return write_audit(directory / 'audit.json', result)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=('run', 'audit'))
+    parser.add_argument('mode', choices=('run', 'audit', 'audit-native', 'audit-ethernet'))
     args = parser.parse_args()
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
+    if args.mode == 'audit-native':
+        return write_audit(ROOT / 'build/ipv4-fragments-native-audit.json', verify_native(ROOT))
+    if args.mode == 'audit-ethernet':
+        return write_audit(ROOT / 'build/network-ethernet-audit.json',
+                           dict(passed=True, original_guest_cells=verify_ethernet(ROOT)))
     return run_window(ROOT) if args.mode == 'run' else audit_window(ROOT)
 
 

@@ -557,6 +557,28 @@ jobs:
           sudo -n python3 scripts/tests/http_host_network_test.py --directory build/http-downloads/host-network-controls
           sudo -n python3 scripts/http_download_failure_native_test.py --output build/http-downloads/normal-native
           sudo -n python3 scripts/http_download_wget_native_test.py --output build/http-downloads/native-wget
+      - name: Observe native IPv4 fragment and path MTU expiry with all three linkages
+        if: matrix.suite == 'downloads-native'
+        run: |
+          sudo -n make -j1 test-native-icmp-budget test-ipv4-fragments-native 2>&1 | tee build/ipv4-fragments-native.log
+          python3 -B scripts/ci/network_window.py audit-native
+      - name: Upload native IPv4 fragment evidence
+        if: always() && matrix.suite == 'downloads-native'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ipv4-fragments-native
+          if-no-files-found: warn
+          path: |
+            build/ipv4-fragments-native
+            build/ipv4-fragments-native-audit.json
+            build/ipv4-fragments-native.log
+      - name: Upload cold and primed native ICMP controls
+        if: always() && matrix.suite == 'downloads-native'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-icmp-budget
+          if-no-files-found: warn
+          path: build/native-icmp-budget-evidence
       - name: Download real HTTP and authenticated HTTPS fixtures on both guest adapters
         if: startsWith(matrix.suite, 'downloads-') && matrix.suite != 'downloads-native'
         env:
@@ -1231,7 +1253,9 @@ jobs:
             build/musl/**/sysroot/usr/lib/libc.a
       - name: Test virtio and e1000 Ethernet with packet sockets
         if: matrix.suite == 'network'
-        run: python3 -B scripts/ci/network_window.py run
+        run: |
+          make test-network
+          python3 -B scripts/ci/network_window.py audit-ethernet
       - name: Retain the actual Ethernet image and packet client
         if: always() && matrix.suite == 'network'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1245,6 +1269,7 @@ jobs:
             build/rootfs-network.cpio
             build/net-tests
             build/network-results.json
+            build/network-ethernet-audit.json
             build/network-matrix-schedule.json
             build/network-*.log
             userspace/tests/net/packet.c
@@ -1497,9 +1522,6 @@ jobs:
       - name: Test IPv4 routes, ARP, raw ICMP, ping, and failed-device sockets
         if: matrix.suite == 'network'
         run: make test-ipv4 IPV4_WORKERS=4
-      - name: Compare IPv4 fragment receive behavior with three native Linux linkages
-        if: matrix.suite == 'network'
-        run: python3 -B scripts/ci/network_window.py audit
       - name: Compare labelled IPv4 address ownership with native Linux
         if: matrix.suite == 'network'
         run: sudo -n python3 scripts/ipv4_alias_native.py
@@ -1510,22 +1532,6 @@ jobs:
           name: ipv4-aliases-native
           if-no-files-found: warn
           path: build/ipv4-aliases-native
-      - name: Upload native IPv4 fragment evidence
-        if: always() && matrix.suite == 'network'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: ipv4-fragments-native
-          if-no-files-found: warn
-          path: |
-            build/ipv4-fragments-native
-            build/network-window
-      - name: Upload cold and primed native ICMP controls
-        if: always() && matrix.suite == 'network'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: native-icmp-budget
-          if-no-files-found: warn
-          path: build/native-icmp-budget-evidence
       - name: Upload actual normal and failed-device IPv4 images
         if: always() && matrix.suite == 'network'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

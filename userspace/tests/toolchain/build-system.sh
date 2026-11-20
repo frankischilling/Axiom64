@@ -30,24 +30,59 @@ project=/root/kernel-build
 export_dir=/mnt/kernel-export
 root=/tmp/guest-root
 media=/tmp/guest-iso
+workspace=/tmp/guest-busybox
+mkdir "$workspace"
+mount -t ramfs none "$workspace"
+export TMPDIR="$workspace/tmp"
+mkdir "$TMPDIR"
+tar xf "$project/busybox.tar.bz2" -C "$workspace"
+cd "$workspace"/busybox-*/
+make defconfig < /dev/null
+/bin/sh "$project/configure-busybox.sh" .config
+make oldconfig < /dev/null
+make -j2 CC=gcc HOSTCC=gcc < /dev/null
+./busybox --list > "$workspace/applets"
+busybox_source=$PWD
+
 mkdir -p "$root" "$media/boot/limine" "$media/EFI/BOOT"
 cd "$root"
-mkdir bin dev etc lib proc run sbin sys tmp
+mkdir -p bin dev etc lib proc run sbin sys tmp usr/share/licenses/BusyBox usr/share/doc/BusyBox
 chmod 1777 tmp
 gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static \
     "$project/userspace/init/main.c" "$project/userspace/init/console.c" -o sbin/init
 gcc -std=c11 -O2 -g -Wall -Wextra -Werror -static "$project/userspace/tests/abi/abi.c" -o bin/abi-static
 gcc -std=c11 -O2 -g -Wall -Wextra -Werror '-DABI_LINKAGE="dynamic"' \
     "$project/userspace/tests/abi/abi.c" -o bin/abi-dynamic
-cp /bin/busybox bin/busybox
+cp "$busybox_source/busybox" bin/busybox
+cp "$busybox_source/LICENSE" usr/share/licenses/BusyBox/LICENSE
+cp "$busybox_source/.config" usr/share/doc/BusyBox/config
 cp /lib/ld-musl-x86_64.so.1 lib/ld-musl-x86_64.so.1
-ln -s /bin/busybox bin/sh
+while IFS= read -r applet; do
+    if [ "$applet" != busybox ]; then
+        ln -s /bin/busybox "bin/$applet"
+    fi
+done < "$workspace/applets"
+unset TMPDIR
+umount "$workspace"
 ln -s /lib/ld-musl-x86_64.so.1 lib/libc.so
-printf '%s\n' '#!/bin/sh' 'set -eu' '/bin/abi-static' '/bin/abi-dynamic' 'echo AXIOM64_TESTS_PASS' > etc/boot-test.sh
+cat > etc/boot-test.sh <<'BOOT'
+#!/bin/sh
+set -eu
+printf 'alpha\nbeta\n' > /tmp/shell-data
+test "$(cat /tmp/shell-data | wc -l)" -eq 2
+cp /tmp/shell-data /tmp/shell-copy
+cmp /tmp/shell-data /tmp/shell-copy
+rm /tmp/shell-data /tmp/shell-copy
+echo BUSYBOX_SHELL_PASS
+/bin/abi-static
+/bin/abi-dynamic
+echo AXIOM64_TESTS_PASS
+BOOT
 chmod 755 etc/boot-test.sh
-find bin dev etc lib proc run sbin sys tmp -print0 | sort -z | \
+find bin dev etc lib proc run sbin sys tmp usr -print0 | sort -z | \
     cpio -o -0 -H newc --renumber-inodes --ignore-devno > "$export_dir/rootfs.cpio"
-sha256sum sbin/init bin/abi-static bin/abi-dynamic
+sha256sum sbin/init bin/abi-static bin/abi-dynamic bin/busybox \
+    usr/share/licenses/BusyBox/LICENSE usr/share/doc/BusyBox/config
 echo AXIOM64_GUEST_ROOTFS_BUILT
 
 tar xf "$project/limine-binary.tar.gz" -C /tmp

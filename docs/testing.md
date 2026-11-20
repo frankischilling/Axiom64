@@ -685,6 +685,8 @@ Run `make test-storage` for the complete disk matrix. The harness creates and ov
 
 Run `make test-ext2` for the complete filesystem matrix. [Ext2 verification](ext2.md#verification) describes supported layouts, host `debugfs`/`e2fsck` checks, failure injection, and remaining limits. The harness creates its own disk images under `build/` and accepts no user disk path.
 
+Run `python3 scripts/ext2_test.py --checks cache` to exercise the inode cache on its own. Each BIOS and UEFI boot scans 12,288 files twice, checks the identity of an open file and its hard-link alias, and unmounts the read-only volume. The host checks that the disk bytes stayed the same and runs `e2fsck`.
+
 Run `make test-threads` for the dedicated static/dynamic musl, futex, lifecycle, and guest-compiled C++ suite. [Thread verification](threads.md#verification) describes coverage and evidence files; complete POSIX threading and SMP remain planned.
 
 Run `make test-thread-io` for the focused [blocking I/O suite](io.md#verification-and-limits). The full and complete thread suites also require its static/dynamic tests.

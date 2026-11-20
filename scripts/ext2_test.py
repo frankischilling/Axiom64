@@ -3,12 +3,14 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 from fetch import ROOT
 
@@ -36,6 +38,24 @@ def create_volume(disk, block_size=1024, inode_size=128, features="default", cap
     seed = disk.with_suffix(".seed")
     seed.write_bytes(SEED)
     debugfs(disk, f"write {seed} /seed.txt", write=True)
+
+
+def create_cache_volume(disk):
+    with tempfile.TemporaryDirectory(prefix="ext2-cache-", dir=disk.parent) as temporary:
+        root = Path(temporary)
+        seed = root / "seed.txt"
+        seed.write_bytes(SEED)
+        os.link(seed, root / "seed-alias")
+        for group in range(32):
+            directory = root / f"group-{group:02d}"
+            directory.mkdir()
+            for file in range(384):
+                (directory / f"file-{file:03d}").touch()
+        with disk.open("wb") as output:
+            output.truncate(48 * 1024 * 1024)
+        subprocess.run(["mke2fs", "-q", "-F", "-t", "ext2", "-b", "4096", "-I", "128",
+                        "-N", "16384", "-O", "none,filetype,sparse_super", "-d", str(root),
+                        str(disk)], check=True, capture_output=True)
 
 
 def check_fs(disk, label):
@@ -111,6 +131,8 @@ def boot(firmware, transport, phase, disks, images, label, timeout, readonly=Fal
     if phase == "recovery":
         recovered = sum(int(re.match(rb"AXIOM64_EXT2_RECOVER=(\d),", disk.read_bytes())[1]) for disk in disks)
         markers.append(f"EXT2_RECOVERY_PASS volumes={len(disks)} repaired={recovered}")
+    if phase == "cache":
+        markers.append("EXT2_CACHE_PASS entries=12288 scans=2")
     for index, disk in enumerate(disks):
         markers.append(f"virtio-blk: disk={index} transport={transport} sectors={disk.stat().st_size // 512} readonly={int(readonly)} flush=1")
     started = time.monotonic()
@@ -347,7 +369,7 @@ def main():
     parser.add_argument("--firmware", choices=["bios", "uefi", "both"], default="both")
     parser.add_argument("--transport", choices=["modern", "legacy", "both"], default="both")
     parser.add_argument("--quick", action="store_true", help="Run only the first format's write/reboot checks")
-    parser.add_argument("--checks", choices=["all", "files", "invalid", "errors", "full", "recovery"], default="all")
+    parser.add_argument("--checks", choices=["all", "files", "invalid", "errors", "full", "recovery", "cache"], default="all")
     parser.add_argument("--tag", help="Distinct label for generated images and results")
     parser.add_argument("--timeout", type=int, default=240)
     args = parser.parse_args()
@@ -357,9 +379,9 @@ def main():
     subprocess.run(["make", "-j2", "build/axiom64.elf", "build/rootfs-desktop.cpio"], cwd=ROOT, check=True)
     checks = "files" if args.quick else args.checks
     phases = ["write", "verify"] if args.quick else {
-        "all": ["write", "verify", "readonly", "invalid", "error", "full", "recovery"],
+        "all": ["write", "verify", "readonly", "invalid", "error", "full", "recovery", "cache"],
         "files": ["write", "verify", "readonly"], "invalid": ["invalid"],
-        "errors": ["error"], "full": ["full"], "recovery": ["recovery"]}[checks]
+        "errors": ["error"], "full": ["full"], "recovery": ["recovery"], "cache": ["cache"]}[checks]
     images = {}
     for phase in phases:
         with (ROOT / "build" / f"{suite_label}-image-{phase}.log").open("w") as output:
@@ -382,6 +404,15 @@ def main():
         for firmware in firmwares:
             for transport in transports:
                 prefix = ROOT / "build" / f"{suite_label}-{firmware}-{transport}"
+                if "cache" in phases:
+                    label = f"{prefix.name}-cache"
+                    disk = ROOT / "build" / f"{label}.raw"
+                    create_cache_volume(disk)
+                    before = hashlib.sha256(disk.read_bytes()).hexdigest()
+                    report = run(firmware, transport, "cache", [disk], label, readonly=True)
+                    if hashlib.sha256(disk.read_bytes()).hexdigest() != before:
+                        raise RuntimeError(f"read-only ext2 cache test changed {disk.name}")
+                    report.update(fsck=check_fs(disk, label), host_verified=True, disk_sha256=before)
                 formats = (FORMATS[:1] if args.quick else FORMATS) if checks in ["all", "files"] else []
                 for block_size, inode_size, features in formats:
                     label = f"{prefix.name}-{block_size}-{inode_size}-{features}"

@@ -474,6 +474,35 @@ static void full_tests(void) {
     puts("EXT2_FULL_VOLUME_PASS");
 }
 
+static void cache_tests(void) {
+    CHECK(mount("/dev/vda", volume, "ext2", MS_RDONLY, NULL) == 0);
+    int root = open(volume, O_RDONLY | O_DIRECTORY);
+    CHECK(root >= 0);
+    int held = openat(root, "seed.txt", O_RDONLY);
+    struct stat seed, status;
+    CHECK(held >= 0 && fstat(held, &seed) == 0 && seed.st_nlink == 2);
+    for (unsigned pass = 0; pass < 2; pass++) {
+        for (unsigned group = 0; group < 32; group++) {
+            char name[24];
+            snprintf(name, sizeof(name), "group-%02u", group);
+            int directory = openat(root, name, O_RDONLY | O_DIRECTORY);
+            CHECK(directory >= 0);
+            for (unsigned file = 0; file < 384; file++) {
+                snprintf(name, sizeof(name), "file-%03u", file);
+                CHECK(fstatat(directory, name, &status, AT_SYMLINK_NOFOLLOW) == 0 &&
+                      S_ISREG(status.st_mode) && status.st_size == 0);
+            }
+            CHECK(close(directory) == 0);
+        }
+    }
+    CHECK(fstatat(root, "seed-alias", &status, 0) == 0 && status.st_ino == seed.st_ino &&
+          status.st_nlink == seed.st_nlink);
+    CHECK(fstat(held, &status) == 0 && status.st_ino == seed.st_ino);
+    expect(held, "host-created seed\n");
+    CHECK(close(root) == 0 && umount(volume) == 0);
+    puts("EXT2_CACHE_PASS entries=12288 scans=2");
+}
+
 int main(int argc, char** argv) {
     CHECK(argc == 2 && mkdir(volume, 0755) == 0);
     const char* phase = argv[1];
@@ -491,6 +520,8 @@ int main(int argc, char** argv) {
         recovery_tests();
     else if (!strcmp(phase, "full"))
         full_tests();
+    else if (!strcmp(phase, "cache"))
+        cache_tests();
     else
         CHECK(0);
     printf("EXT2_PHASE_PASS phase=%s\n", phase);

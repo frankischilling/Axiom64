@@ -3,9 +3,11 @@
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tcp_icmp_capture import capture_receipts, within
+from tcp_icmp_peer import Flow, Peer, SYN
 
 
 class PacketArrivalClock(unittest.TestCase):
@@ -68,6 +70,32 @@ class PacketArrivalClock(unittest.TestCase):
                                                ready + 'ICMP_CAPTURE_CLOCK phase=end')
         with self.assertRaisesRegex(ValueError, 'observers armed before traffic'):
             capture_receipts(text)
+
+
+class CycleQuoteTiming(unittest.TestCase):
+    def test_delayed_tick_preserves_silence_after_stale_quote(self):
+        peer = Peer(0)
+        previous = Flow(peer, 0, 49000, 41000, cycle=0)
+        previous.syn_frame = bytes(38) + b'old!'
+        current_frame = bytes(38) + b'new!'
+        current = Flow(peer, 0, 49000, 41000, cycle=2)
+        peer.flows = [previous, current]
+        now = 10.0
+        delivered = []
+        with patch('tcp_icmp_peer.time.monotonic', side_effect=lambda: now), \
+                patch.object(current, 'quote', side_effect=lambda frame: delivered.append((now, frame))):
+            current.input({'flags': SYN, 'seq': 1}, current_frame)
+            now = 10.157  # A runner pause lasts past both original trigger times.
+            peer.tick()
+            self.assertEqual(delivered, [(10.157, previous.syn_frame)])
+            now = 10.257
+            peer.tick()
+            self.assertEqual(len(delivered), 1)
+            now = 10.283
+            peer.tick()
+            self.assertEqual(delivered[-1], (10.283, current_frame))
+            self.assertEqual(len(delivered), 2)
+            self.assertFalse(peer.pending)
 
 
 if __name__ == '__main__':

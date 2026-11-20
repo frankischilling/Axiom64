@@ -88,6 +88,11 @@ class Flow:
         self.events.append(dict(event='icmp', ms=self.peer.ms(), type=case['type'], code=case['code'],
                                 mutation=mutation, receiving_lane=delivery.lane))
 
+    def quote_cycle(self, stale, current):
+        self.quote(stale)
+        # A delayed peer tick must preserve the gap between the two sends.
+        self.later(.125, lambda: self.quote(current))
+
     def synack(self):
         self.send(SYN | ACK, sequence=self.initial)
 
@@ -129,8 +134,9 @@ class Flow:
                     stale = previous[-1].syn_frame
                     check(stale is not None and stale[34:38] == frame[34:38] and
                           stale[38:42] != frame[38:42], 'same tuple has a fresh sequence owner')
-                    self.later(.025, lambda: self.quote(stale))
-                self.later(.15, lambda: self.quote(frame))
+                    self.later(.025, lambda: self.quote_cycle(stale, frame))
+                else:
+                    self.later(.15, lambda: self.quote(frame))
                 return
             if self.generation or self.case['mode'] in ('SOFT', 'RECOVER', 'CONSUME', 'TIME_WAIT'):
                 self.synack()

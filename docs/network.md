@@ -55,7 +55,7 @@ Optional-feature tests validate the negotiated bits, carrier fallback without ST
 
 The contracts follow [virtio 1.2](https://docs.oasis-open.org/virtio/virtio/v1.2/virtio-v1.2.html), [Linux packet sockets](https://man7.org/linux/man-pages/man7/packet.7.html), [Linux interface ioctls](https://man7.org/linux/man-pages/man7/netdevice.7.html), and [QEMU's e1000 model](https://github.com/qemu/qemu/blob/v8.2.2/hw/net/e1000.c). The controlled peer uses [QEMU's socket framing](https://github.com/qemu/qemu/blob/v8.2.2/net/socket.c).
 
-The corrected local matrix passes all 46 boots with the original capacity, readiness, wakeup and timing checks. Independent inspection opens 34 distinct images, binds their actual kernel and packet client, requires each normal adapter to report administrative-down flags `1002` and rejects 164 archived changed logs. This clears administrative and operational flags while preserving the independent physical-carrier checks. A controlled diagnostic first reproduces exhaustion with two IPv6 router solicitations occupying the full ring, then passes with the explicit link precondition. Its added five-second diagnostic pause is separate from the complete matrix. Current hosted acceptance remains required.
+The corrected local matrix passes all 46 boots with the original capacity, readiness, wakeup and timing checks. Independent inspection opens 34 distinct images, binds their actual kernel and packet client, requires each normal adapter to report administrative-down flags `1002` and rejects 164 archived changed logs. This clears administrative and operational flags while preserving the independent physical-carrier checks. A controlled diagnostic first reproduces exhaustion with two IPv6 router solicitations occupying the full ring, then passes with the explicit link precondition. Its added five-second diagnostic pause is separate from the complete matrix. Complete local validation remains required.
 
 
 Ready IPv6 link-local owners are checked across administrative shutdown, carrier
@@ -64,7 +64,7 @@ DAD with the retained key; MTU restoration uses current defaults and a fresh sco
 carrier restoration preserves the ready address. Operational link flags clear on
 administrative shutdown. See [IPv6](ipv6.md) and the device-transition commands in
 [testing](testing.md). The complete local device-state matrix also covers probing, regeneration, retrying
-and exhausted owners. Complete feature and current-source hosted acceptance remain required.
+and exhausted owners. Complete feature and complete local validation remain required.
 
 
 The ownership conflict observer tracks previously conflicted identities while a
@@ -115,5 +115,5 @@ a sixteen-byte capacity and return the actual terminated interface name.
 Readback observes shared binding changes and preserves destination state.
 The paired [scoped TCP cohort](ipv6.md) checks protected-page copies, result
 lengths, alias lifetime, loopback names and binding release on native Linux and
-the guest. Complete networking and current-revision hosted acceptance remain
+the guest. Complete networking and complete local validation remain
 required.

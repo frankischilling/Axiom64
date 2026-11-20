@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
-/**
+/*
  * @file    kernel/arch/x86_64/linker.ld
  * @brief   x86-64 kernel memory layout.
  * @author  frankischilling

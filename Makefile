@@ -852,6 +852,11 @@ test-guest-kernel: build/axiom64.elf build/rootfs.cpio
 	$(PYTHON) -B scripts/guest_kernel_test.py $(GUEST_KERNEL_FLAGS)
 test-guest-system: build/axiom64.elf build/rootfs.cpio
 	$(PYTHON) -B scripts/guest_kernel_test.py --source-tools --system-image $(GUEST_KERNEL_FLAGS)
+.PHONY: test-suite test-suites
+test-suite:
+	$(PYTHON) -B scripts/local_validation.py "$(SUITE)"
+test-suites:
+	$(PYTHON) -B scripts/local_validation.py --list
 test-storage:
 	$(PYTHON) scripts/storage_test.py
 test-ext2:
@@ -1149,7 +1154,8 @@ build/ipv4-address-lifetimes-static build/ipv4-address-lifetimes-dynamic: usersp
 test-ipv4-address-lifetimes-guest:
 	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_lifetimes.guest build/ipv4-address-lifetimes-guest --produce
 test-ipv4-address-lifetimes-native:
-	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_lifetimes.native build/ipv4-address-lifetimes-native --produce
+	@mkdir -p build
+	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_lifetimes.native build/ipv4-address-lifetimes-native-controls --produce
 build/ipv4-lifetime-wire-native: userspace/tests/net/ipv4/address_lifetime_wire.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
 	@mkdir -p build
 	$(PYTHON) scripts/compile_uapi_client.py --compiler '$(CC)' --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $<
@@ -1733,6 +1739,7 @@ clean:
 MUSL_INPUTS = sources.lock.json scripts/build_musl.py scripts/musl_cc.py $(wildcard vendor/musl/patches/*.patch)
 MUSL_PROGRAMS = build/address-query-static build/address-query-dynamic build/credentials-static build/credentials-dynamic build/random-static build/random-dynamic build/abi-static build/file-lock-static build/file-lock-dynamic build/clock-elapsed-tests build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/net-tests build/ipv4-tests build/udp-tests build/dns-static build/dns-dynamic build/normal-dns-static build/normal-dns-dynamic build/netlink-tests build/network-manager-faults build/network-manager-dynamic-faults build/network-manager build/network-manager-dynamic build/manager-tests build/manager-protocol build/manager-link build/init-supervision build/ownership-tests build/ownership-dynamic build/configuration-tests build/configuration-dynamic build/dhcp-codec-tests build/dhcp-state-tests build/dhcp-profile-tests build/profile-privacy-tests build/profile-privacy-dynamic build/dhcp-transport-tests build/resolver-tests build/thread-static build/thread-io-static build/thread-io-dynamic build/thread-dynamic build/futex-static build/futex-dynamic build/lifecycle-static build/lifecycle-dynamic build/x11-probe build/tcp-static build/tcp-dynamic build/tcp-fault-static build/tcp-fault-dynamic build/tcp-lifetime-static build/tcp-lifetime-dynamic build/tcp-challenge-static build/tcp-challenge-dynamic build/tcp-timeout-static build/tcp-timeout-dynamic build/ipv4-multicast-static build/ipv4-multicast-dynamic
 MUSL_PROGRAMS += build/tcp-icmp-static build/tcp-icmp-dynamic
+MUSL_PROGRAMS += build/desktop-terminal build/file-capabilities-static build/file-capabilities-dynamic
 MUSL_PROGRAMS += build/ipv4-dynamic
 MUSL_PROGRAMS += build/tcp-pmtu-static build/tcp-pmtu-dynamic
 MUSL_PROGRAMS += build/tcp-pressure-static build/tcp-pressure-dynamic

@@ -211,7 +211,7 @@ for firmware in firmwares:
                      "THREAD_IO_TESTS_PASS linkage=static", "THREAD_IO_TESTS_PASS linkage=dynamic"]
     if args.suite == "full" and not args.interactive:
         required += ["NATIVE_C_PASS", "NATIVE_ASSEMBLER_PASS", "NATIVE_CPP_PASS", "NATIVE_THREADS_PASS",
-                     "NATIVE_DIAGNOSTICS_PASS", "NATIVE_TOOLCHAIN_PASS"]
+                     "NATIVE_SHARED_CPP_PASS", "NATIVE_DIAGNOSTICS_PASS", "NATIVE_TOOLCHAIN_PASS"]
     if not args.interactive and (args.suite in ["full", "abi"] or
                                 (args.suite == "threads" and args.phase != "cond")):
         required += [f"THREAD_IO_TIMEOUTS_PASS linkage={linkage} operations=10 signals=4 families=4 cycles=300"

@@ -174,7 +174,8 @@ The root `.clang-format` contains C++20 and C profiles. Kernel sources, headers,
 
 Start project C and C++ sources and headers, assembly, linker scripts, and
 shell scripts with their SPDX identifier and Doxygen file header. Keep any
-shebang first and use the file's native comment syntax. Give `@file` the
+shebang first. Use plain `;` lines in NASM, plain `#` lines in x86 GNU
+assembly and shell scripts, and `/* ... */` blocks in linker scripts. Give `@file` the
 repository-relative path and include `@brief`, `@author`, and `@date`.
 Describe the file's current role in a short paragraph, followed by its
 copyright and GPL notice. Python modules use a module docstring.
@@ -337,12 +338,10 @@ it checks companion traffic, actual address inventories and ownership fences
 separately. Shared native/guest execution and image/product/source ownership
 remain in the existing TCP6 harness.
 
-`scripts/ci/storage_admission.py` owns bounded observation of the current
-workflow run, attempt, source head and network runner. Storage matrices depend
-on that admission decision and then use the available runner pool. The
-required aggregate includes its result. Its recorded-metadata and HTTP protocol
-checks live in `scripts/tests/storage_admission_test.py`; the original API
-observations and source fingerprints form the uploaded admission report.
+`scripts/local_validation.py` runs the selected commands in
+`scripts/local_test_suites.toml`. Storage matrix choices come from
+`scripts/account_storage_ci.py`. The local coverage suite reopens the original
+administration and rotation indexes and verifies their complete case unions.
 
 `userspace/tests/random/crypto_wait.c` owns the actual OpenSSL child and checks
 readiness, pending state, output and signal status. Its serial release protocol

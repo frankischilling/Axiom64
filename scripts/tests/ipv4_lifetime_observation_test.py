@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Check the original client and peer lifetime observation windows."""
+from copy import deepcopy
 from pathlib import Path
 import sys
 import unittest
@@ -7,7 +8,31 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ipv4_lifetimes.wire_peer import Peer
+from ipv4_lifetimes.native import verify_wakeups
 from ipv4_lifetimes.reader import DEPRECATED, native_promotion_sample
+
+
+class NativeTimerWakeups(unittest.TestCase):
+    def test_complete_cpu_coverage_and_rejected_damage(self):
+        online = '0-1,3\n'
+        cpus = [0, 1, 3]
+        original = dict(online=online, online_after=online, workers=[
+            dict(affinity=[cpu], started_ns=10, finished_ns=100, pulses=3, max_gap_ns=25)
+            for cpu in cpus
+        ])
+        verify_wakeups(original, [cpus] * 3, 20, 90)
+        for change, expected in (
+            (lambda value: value['workers'].pop(), 'every available CPU'),
+            (lambda value: value.update(online_after='0-3\n'), 'every available CPU'),
+            (lambda value: value['workers'][0].update(finished_ns=80), 'complete native observations'),
+            (lambda value: value['workers'][2].update(pulses=0), 'complete native observations'),
+        ):
+            damaged = deepcopy(original)
+            change(damaged)
+            with self.assertRaisesRegex(ValueError, expected):
+                verify_wakeups(damaged, [cpus] * 3, 20, 90)
+        with self.assertRaisesRegex(ValueError, 'every available CPU'):
+            verify_wakeups(original, [[0, 1], cpus, cpus], 20, 90)
 
 
 class NativePromotionObservation(unittest.TestCase):

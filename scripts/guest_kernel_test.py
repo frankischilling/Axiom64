@@ -184,7 +184,7 @@ def run_build_vm(command, serial, acceleration, timeout):
 def export_kernel(directory, image, acceleration, timeout, system_image):
     disk = directory / 'kernel-export.raw'
     with disk.open('xb') as output:
-        output.truncate(96 * 1024 * 1024)
+        output.truncate((128 if system_image else 96) * 1024 * 1024)
     subprocess.run(['mke2fs', '-q', '-F', '-t', 'ext2', '-b', '4096', '-I', '128',
                     '-O', 'none,filetype,sparse_super', str(disk)], check=True)
     serial = directory / 'build-serial.log'
@@ -249,7 +249,8 @@ def verify_system_image(directory, kernel, serial, bootstrap_rootfs, runtime, ua
     rootfs, image = (directory / name for name in ('rootfs.cpio', 'guest-built.iso'))
     lines = serial.read_text(errors='replace').splitlines()
     for marker in ('AXIOM64_GUEST_MUSL_BUILT', 'AXIOM64_GUEST_ROOTFS_BUILT', 'AXIOM64_GUEST_IMAGE_BUILT',
-                   'LOAD /tmp/guest-root/usr/lib/libc.a', 'LOAD /tmp/guest-root/usr/lib/libc.so'):
+                   'LOAD /mnt/kernel-export/guest-root/usr/lib/libc.a',
+                   'LOAD /mnt/kernel-export/guest-root/usr/lib/libc.so'):
         if lines.count(marker) != 1:
             raise RuntimeError(f'missing {marker}, see {serial}')
     for artifact in (rootfs, image):

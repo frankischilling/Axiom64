@@ -58,7 +58,7 @@ tar xf "$workspace/linux-uapi.tar" -C "$root"
 sed "s@/usr/@$root/usr/@g" "$root/usr/lib/musl-gcc.specs" > "$project/guest-musl.specs"
 cat > "$project/guest-musl-gcc" <<'CC'
 #!/bin/sh
-exec gcc -specs=/root/kernel-build/guest-musl.specs "$@"
+exec gcc -pipe -specs=/root/kernel-build/guest-musl.specs "$@"
 CC
 chmod 755 "$project/guest-musl-gcc"
 # The Alpine GCC driver expects this archive even when using an explicit sysroot.

@@ -28,7 +28,8 @@ set -eu
 set -o pipefail
 project=/root/kernel-build
 export_dir=/mnt/kernel-export
-root=/tmp/guest-root
+# Keep the installed headers and libraries off the compiler's RAM filesystem.
+root=$export_dir/guest-root
 media=/tmp/guest-iso
 mkdir -p "$root" "$media/boot/limine" "$media/EFI/BOOT"
 /bin/sh "$project/build-runtime.sh" "$root"

@@ -30,6 +30,9 @@ jobs:
       rotation_shard_count: ${{ steps.storage_matrices.outputs.rotation_shard_count }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          filter: blob:none
       - name: Install build and emulation tools
         run: bash scripts/ci/tools.sh prepare
       - name: Cache locked dependency and source archives
@@ -2173,6 +2176,8 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          fetch-depth: 0
+          filter: blob:none
           persist-credentials: false
       - name: Verify and observe this attempt's actual network runner
         env:

@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/process/task.cpp
+ * @brief   Task and process lifecycle.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Manages scheduling, creation, executable replacement, and termination of
+ * kernel tasks.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "process/task.hpp"
 #include "process/exec_arguments.hpp"
 #include "process/cpu.hpp"
@@ -829,6 +853,7 @@ void start_init(const char* path) {
 extern "C" Frame* handle_trap(Frame* f) {
     if (f->vector == 32) {
         clock_refresh(true);
+        cpu_sample_load();
         if ((f->cs & 3) == 3)
             cpu_account();
         devices_poll();

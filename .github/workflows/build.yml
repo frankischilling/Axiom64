@@ -680,6 +680,7 @@ jobs:
         run: |
           sudo -n make test-pty-security-native test-parent-death-native test-signal-wait-native
           sudo -n make test-waitid-native test-proc-identity-native test-exec-arguments-native
+          make test-sysinfo-native
           sudo -n python3 scripts/proc_retirement_test.py
           sudo -n python3 scripts/proc_test.py --native --directory build/proc-native
           sudo -n python3 scripts/terminal_flush_test.py --native --directory build/terminal-flush-native
@@ -688,7 +689,7 @@ jobs:
         if: matrix.suite == 'accounts-process-guest'
         run: |
           make test-pty-security test-parent-death test-signal-wait
-          make test-waitid test-proc-identity test-exec-arguments
+          make test-waitid test-proc-identity test-exec-arguments test-sysinfo
           python3 scripts/proc_test.py
           python3 scripts/terminal_flush_test.py
       - name: Compare POSIX and OFD record locks with actual native process lifetimes
@@ -1907,6 +1908,7 @@ jobs:
             build/parent-death*/**
             build/signal-wait*/**
             build/waitid*/**
+            build/sysinfo*/**
             build/proc*/**
             build/exec-arguments*/**
             build/vm-state-test/**

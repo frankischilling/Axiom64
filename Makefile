@@ -107,6 +107,11 @@ test-waitid:
 	$(PYTHON) scripts/waitid_test.py --directory build/waitid
 test-waitid-native:
 	$(PYTHON) scripts/waitid_test.py --directory build/waitid-native --native
+.PHONY: test-sysinfo test-sysinfo-native
+test-sysinfo:
+	$(PYTHON) scripts/sysinfo_test.py
+test-sysinfo-native:
+	$(PYTHON) scripts/sysinfo_test.py --native
 test-proc-identity:
 	$(PYTHON) scripts/proc_identity_test.py --directory build/proc-identity
 test-proc-identity-native:

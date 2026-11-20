@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/mm/memory.cpp
+ * @brief   Physical and virtual memory management.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Manages page allocation, page tables, address spaces, and copies across the
+ * userspace boundary.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "boot/boot.hpp"
 #include "mm/stack.hpp"
 
@@ -9,6 +33,7 @@ static uint8_t bitmap[max_pages / 8];
 static uint16_t page_references[max_pages];
 static size_t search_page = 1;
 static uint64_t kernel_root;
+static size_t total_pages, free_pages;
 
 static bool used(size_t p) {
     return bitmap[p / 8] & (1u << (p % 8));
@@ -27,7 +52,7 @@ void memory_init() {
     direct_map = hhdm_request.response->offset;
     kernel_root = read_cr3() & page_mask;
     memset(bitmap, 0xff, sizeof(bitmap));
-    uint64_t available = 0;
+    total_pages = 0;
     auto map = memmap_request.response;
     for (size_t i = 0; i < map->entry_count; i++) {
         auto e = map->entries[i];
@@ -35,11 +60,18 @@ void memory_init() {
             continue;
         uint64_t end = min(align_down(e->base + e->length) / page_size, uint64_t(max_pages));
         for (uint64_t p = max(align_up(e->base) / page_size, uint64_t(1)); p < end; p++) {
-            mark(p, false);
-            available++;
+            if (used(p)) {
+                mark(p, false);
+                total_pages++;
+            }
         }
     }
-    log("Memory: %u MiB available, isolated four-level paging\n", available / 256);
+    free_pages = total_pages;
+    log("Memory: %u MiB available, isolated four-level paging\n", uint64_t(total_pages / 256));
+}
+
+PhysicalMemoryStats physical_memory_stats() {
+    return {total_pages * page_size, free_pages * page_size};
 }
 
 void activate_kernel_memory() {
@@ -78,7 +110,7 @@ void* map_mmio(uint64_t address, size_t length) {
 }
 
 uint64_t page_alloc(size_t count) {
-    if (!count || count >= max_pages)
+    if (!count || count > free_pages)
         return 0;
     for (int pass = 0; pass < 2; pass++) {
         size_t first = pass ? 1 : search_page, end = pass ? search_page : max_pages;
@@ -91,6 +123,7 @@ uint64_t page_alloc(size_t count) {
                     mark(k, true);
                     page_references[k] = 1;
                 }
+                free_pages -= count;
                 search_page = p + 1;
                 memset(physical(start * page_size), 0, count * page_size);
                 return start * page_size;
@@ -107,8 +140,10 @@ void page_free(uint64_t p, size_t count) {
         auto index = p / page_size + i;
         if (!page_references[index])
             panic("physical page double free");
-        if (!--page_references[index])
+        if (!--page_references[index]) {
             mark(index, false);
+            free_pages++;
+        }
     }
     search_page = min(search_page, size_t(p / page_size));
 }

@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/fs/ext2/ext2.cpp
+ * @brief   ext2 filesystem operations.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Reads and updates ext2 inodes, directories, and block mappings through the
+ * block device layer.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "fs/ext2/ext2.hpp"
 #include "fs/ext2/xattr.hpp"
 #include "fs/ext2/journal.hpp"
@@ -10,6 +34,7 @@ namespace ax {
 namespace {
 constexpr size_t max_block_size = 4096, inode_bytes = 128;
 constexpr unsigned max_changes = 4096, max_entries = 8192, cached_blocks = 128;
+static uint64_t ext2_cache_bytes;
 
 static uint16_t u16(const uint8_t* p) {
     return uint16_t(p[0]) | (uint16_t(p[1]) << 8);
@@ -1368,6 +1393,8 @@ static void destroy(Mount* mount) {
     if (v->claimed)
         block_unclaim(v->device, v);
     release(v->groups);
+    if (v->cache)
+        ext2_cache_bytes -= sizeof(CachedBlock) * cached_blocks;
     release(v->cache);
     journal_close(v->journal);
     release(v->journal_map);
@@ -2145,6 +2172,10 @@ static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check
 
 } // namespace
 
+uint64_t ext2_buffer_bytes() {
+    return ext2_cache_bytes;
+}
+
 const FilesystemOps ext2_ops = {lookup,   create,     link,    remove,          rename,   read,
                                 write,    truncate,   setattr, readdir,         sync,     nullptr,
                                 stats,    destroy,    remount, prepare_unmount, getxattr, listxattr,
@@ -2187,8 +2218,10 @@ int ext2_mount(Mount* mount, Node* device, bool check_dirty) {
         v->cache = (CachedBlock*)alloc(sizeof(CachedBlock) * cached_blocks);
         if (!v->cache)
             result = -12;
-        else
+        else {
             memset(v->cache, 0, sizeof(CachedBlock) * cached_blocks);
+            ext2_cache_bytes += sizeof(CachedBlock) * cached_blocks;
+        }
     }
     if (!result && !mount->readonly) {
         set16(header + 58, u16(header + 58) & ~1u);

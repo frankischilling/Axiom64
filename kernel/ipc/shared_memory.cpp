@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/ipc/shared_memory.cpp
+ * @brief   System V shared memory.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Tracks segment IDs, attachments, permissions, and removal across process
+ * lifetimes.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "ipc/ipc.hpp"
 #include "mm/limits.hpp"
 
@@ -13,6 +37,14 @@ struct Segment {
 
 static Segment segments[64];
 static int next_id = 1;
+
+uint64_t shared_memory_bytes() {
+    uint64_t bytes = 0;
+    for (const auto& segment : segments)
+        if (segment.id)
+            bytes += align_up(segment.size);
+    return bytes;
+}
 
 static int access(const Segment& segment, unsigned requested) {
     const auto& cred = current->credentials;

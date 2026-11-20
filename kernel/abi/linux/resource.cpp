@@ -1,9 +1,50 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/abi/linux/resource.cpp
+ * @brief   Linux resource limits, usage, and system information.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Translates Linux resource IDs and copies process usage and system accounting
+ * to the Linux x86-64 userspace layouts.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "abi/linux/resource.hpp"
+#include "core/time.hpp"
+#include "fs/ext2/ext2.hpp"
+#include "ipc/ipc.hpp"
 #include "process/task.hpp"
 
 namespace ax {
 namespace {
+struct SystemInformation {
+    int64_t uptime;
+    uint64_t loads[3];
+    uint64_t totalram, freeram, sharedram, bufferram, totalswap, freeswap;
+    uint16_t procs, pad;
+    uint32_t alignment;
+    uint64_t totalhigh, freehigh;
+    uint32_t mem_unit, tail;
+};
+
+static_assert(sizeof(SystemInformation) == 112 && offsetof(SystemInformation, procs) == 80 &&
+              offsetof(SystemInformation, totalhigh) == 88 &&
+              offsetof(SystemInformation, mem_unit) == 104);
+
 bool permitted(const Task& target) {
     if (&target == current || capable(current->credentials, Capability::sys_resource))
         return true;
@@ -36,6 +77,26 @@ int64_t resource_usage_syscall(int who, uint64_t output) {
     }
     auto usage = linux_resource_usage(time);
     return current->memory->space.copy_out(output, &usage, sizeof(usage)) ? 0 : -14;
+}
+
+int64_t system_information_syscall(uint64_t output) {
+    clock_refresh();
+    const auto ram = physical_memory_stats();
+    const auto load = cpu_load_averages();
+    SystemInformation info{};
+    info.uptime = ticks / 100 + (ticks % 100 != 0);
+    info.loads[0] = load.one;
+    info.loads[1] = load.five;
+    info.loads[2] = load.fifteen;
+    info.totalram = ram.total;
+    info.freeram = ram.free;
+    info.sharedram = shared_memory_bytes();
+    info.bufferram = ext2_buffer_bytes();
+    for (const auto& task : tasks)
+        if (task.state != State::empty)
+            info.procs++;
+    info.mem_unit = 1;
+    return current->memory->space.copy_out(output, &info, sizeof(info)) ? 0 : -14;
 }
 
 int64_t resource_syscall(Frame* frame) {

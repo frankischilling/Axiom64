@@ -200,6 +200,9 @@ def gnu_reader_kit(archive):
 
 
 def bundle(inputs):
+    from gnu_toolchain_sources import ORIGIN as gnu_origin, source_inputs as gnu_sources
+    cross_inputs, _ = gnu_sources()
+    inputs = [*inputs, (gnu_origin, cross_inputs)]
     destination = ROOT / "build" / "axiom64-sources.tar"
     with tarfile.open(destination, "w") as archive:
         members = set()

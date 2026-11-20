@@ -17,17 +17,20 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def case_sensitive(directory):
+    with tempfile.TemporaryDirectory(prefix='case-probe-', dir=directory) as temporary:
+        probe = Path(temporary)
+        (probe / 'a').write_bytes(b'lowercase')
+        return not (probe / 'A').exists()
+
+
 def headers():
     packages = json.loads((ROOT / 'ports.lock.json').read_text())['packages']
     package, = (item for item in packages if item['name'] == 'linux-headers')
     archive = locked_package(package)
     output = ROOT / 'build/linux-uapi'
     output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='case-probe-', dir=output) as temporary:
-        probe = Path(temporary)
-        (probe / 'a').write_bytes(b'lowercase')
-        case_sensitive = not (probe / 'A').exists()
-    if case_sensitive:
+    if case_sensitive(output):
         destination = output / package['sha256']
     else:
         cache = Path(os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache')))

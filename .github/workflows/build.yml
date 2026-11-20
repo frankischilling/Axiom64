@@ -420,12 +420,11 @@ jobs:
           - manager-uefi-legacy
           - random
           - random-devices
-          - random-seeds-native
+          - random-native
           - random-seeds-bios-modern
           - random-seeds-bios-legacy
           - random-seeds-uefi-modern
           - random-seeds-uefi-legacy
-          - random-crypto-native
           - random-crypto-bios
           - random-crypto-uefi
           - random-crypto-prerequisites
@@ -507,6 +506,7 @@ jobs:
       - name: Restore source and build together
         run: tar -xzf "$RUNNER_TEMP/ci-inputs/ci-inputs.tar.gz"
       - name: Install build and emulation tools
+        id: prepare_test_tools
         run: bash scripts/ci/tools.sh restore
       - name: Compare complete source-filter and source-route cohorts with native Linux and both guest adapters
         if: matrix.suite == 'ipv4-source-filters'
@@ -765,13 +765,13 @@ jobs:
           python3 scripts/random_snapshot_test.py --output build/random-lifecycle/snapshot
           python3 scripts/random_generation_exec_test.py --output build/random-lifecycle/generation-exec
       - name: Compare persisted seed ownership and actual ext2 process crashes with three native libc profiles
-        if: matrix.suite == 'random-seeds-native'
+        if: "!cancelled() && matrix.suite == 'random-native' && steps.prepare_test_tools.outcome == 'success'"
         run: |
           mkdir -p build/random-lifecycle
           sudo -n python3 scripts/random_seed_native.py --output build/random-lifecycle/seed-native
           sudo -n unshare --mount --propagation private python3 scripts/random_seed_crash_test.py --native --output build/random-lifecycle/crash-native
       - name: Verify seed reboot, device errors, full disks, real VM crashes and checked recovery
-        if: startsWith(matrix.suite, 'random-seeds-') && matrix.suite != 'random-seeds-native'
+        if: startsWith(matrix.suite, 'random-seeds-')
         env:
           SUITE: ${{ matrix.suite }}
         run: |
@@ -784,7 +784,7 @@ jobs:
           python3 scripts/random_seed_crash_test.py --firmware "$firmware" --transport "$transport" --output build/random-lifecycle/crash
           python3 scripts/random_seed_recovery_test.py --firmware "$firmware" --transport "$transport" --output build/random-lifecycle/recovery
       - name: Compare actual OpenSSL key, signature, certificate and TLS clients with native Linux
-        if: matrix.suite == 'random-crypto-native'
+        if: "!cancelled() && matrix.suite == 'random-native' && steps.prepare_test_tools.outcome == 'success'"
         run: |
           python3 scripts/random_crypto_test.py --native --output build/random-lifecycle/crypto-native
           python3 scripts/random_crypto_wait_test.py --native --output build/random-lifecycle/crypto-wait-native

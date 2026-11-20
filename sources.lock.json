@@ -3517,6 +3517,54 @@
     "public_key_sha256": "3a2b9dd46fcb218a5ec628452db45bb14825a9f2d0a7301ec154cf87897eec0e",
     "signing_primary_fingerprint": "678CE3FEE430311596DB8C16F52E98007594C21D"
   },
+  "gnu_cross_toolchain": {
+    "keys_sha256": "ed271ec19112ecf183d4fc5911c9c51a6179da05515776310a5e6015140d8690",
+    "releases": {
+      "binutils": {
+        "directory": "binutils-with-gold-2.46",
+        "archive": "binutils-with-gold-2.46.tar.xz",
+        "url": "https://sourceware.org/pub/binutils/releases/binutils-with-gold-2.46.tar.xz",
+        "sha256": "a389850c2d3919f2cc96fb8b5e7711eacfc819259aaffb11615c9fb9756eaeae",
+        "signature_sha256": "f3bc49a380afdcdc5bbf11faeebd58d12465c13ecd51ff47a1371c9d7dd43a9e",
+        "signer": "3A24BC1E8FB409FA9F14371813FCEF89DD9E3C4F"
+      },
+      "gcc": {
+        "directory": "gcc-16.1.0",
+        "archive": "gcc-16.1.0.tar.xz",
+        "url": "https://gcc.gnu.org/ftp/gcc/releases/gcc-16.1.0/gcc-16.1.0.tar.xz",
+        "sha256": "50efb4d94c3397aff3b0d61a5abd748b4dd31d9d3f2ab7be05b171d36a510f79",
+        "signature_sha256": "33a851c045ea2ef6f580d82b2abfb1dc75d8b270727800028ca5f40c3b4a4246",
+        "signer": "D3A93CAD751C2AF4F8C7AD516C35B99309B5FA62"
+      }
+    },
+    "gcc_prerequisites": {
+      "gmp": {
+        "directory": "gmp-6.3.0",
+        "archive": "gmp-6.3.0.tar.bz2",
+        "sha256": "ac28211a7cfb609bae2e2c8d6058d66c8fe96434f740cf6fe2e47b000d1c20cb"
+      },
+      "mpfr": {
+        "directory": "mpfr-4.2.2",
+        "archive": "mpfr-4.2.2.tar.bz2",
+        "sha256": "9ad62c7dc910303cd384ff8f1f4767a655124980bb6d8650fe62c815a231bb7b"
+      },
+      "mpc": {
+        "directory": "mpc-1.3.1",
+        "archive": "mpc-1.3.1.tar.gz",
+        "sha256": "ab642492f5cf882b74aa0cb730cd410a81edcdbec895183ce930e706c1c759b8"
+      },
+      "isl": {
+        "directory": "isl-0.24",
+        "archive": "isl-0.24.tar.bz2",
+        "sha256": "fcf78dd9656c10eb8cf9fbd5f59a0b6b01386205fe1934b3b287a0a1898145c0"
+      },
+      "gettext": {
+        "directory": "gettext-0.22",
+        "archive": "gettext-0.22.tar.gz",
+        "sha256": "49f089be11b490170bbf09ed2f51e5f5177f55be4cc66504a5861820e0fb06ab"
+      }
+    }
+  },
   "openssl_upstream": {
     "version": "3.5.9",
     "archive": "openssl-3.5.9.tar.gz",

@@ -855,6 +855,13 @@ test-guest-system: build/axiom64.elf build/rootfs.cpio
 	$(PYTHON) -B scripts/guest_kernel_test.py --source-tools --system-image $(GUEST_KERNEL_FLAGS)
 test-guest-binutils: build/axiom64.elf build/rootfs.cpio
 	$(PYTHON) -B scripts/guest_binutils_test.py
+.PHONY: cross-toolchain cross-toolchain-sources test-cross-toolchain
+cross-toolchain:
+	$(PYTHON) -B scripts/build_cross_toolchain.py $(CROSS_TOOLCHAIN_FLAGS)
+cross-toolchain-sources:
+	$(PYTHON) -B scripts/build_cross_toolchain.py --sources-only $(CROSS_TOOLCHAIN_FLAGS)
+test-cross-toolchain: build/axiom64.elf build/rootfs.cpio
+	$(PYTHON) -B scripts/cross_toolchain_test.py --prefix "$(CROSS_TOOLCHAIN_PREFIX)"
 .PHONY: test-suite test-suites
 test-suite:
 	$(PYTHON) -B scripts/local_validation.py "$(SUITE)"

@@ -361,7 +361,7 @@ static void discard_empty_tables(AddressSpace& space, uint64_t start, uint64_t e
         write_cr3(space.root);
 }
 
-bool AddressSpace::map(uint64_t va, size_t len, int prot, bool private_mapping) {
+bool AddressSpace::map(uint64_t va, size_t len, int prot, uint64_t mapping_flags) {
     if (!prepare_mapping(va, len))
         return false;
     uint64_t end = va + align_up(len);
@@ -388,11 +388,30 @@ bool AddressSpace::map(uint64_t va, size_t len, int prot, bool private_mapping) 
     }
     for (uint64_t p = va; p < end; p += page_size) {
         auto& e = *entry(p);
-        e = (e & (page_mask | page_software)) | permissions(prot);
-        e = private_mapping ? e | page_private : e & ~page_private;
+        e = (e & (page_mask | (page_software & ~page_private))) | permissions(prot) | mapping_flags;
     }
     if (read_cr3() == root)
         write_cr3(root);
+    return true;
+}
+
+bool AddressSpace::move_anonymous_mapping(uint64_t source, size_t old_size, uint64_t destination,
+                                          size_t new_size, int protection) {
+    // The caller has checked the source and found a free, disjoint destination.
+    if (!prepare_mapping(destination, new_size))
+        return false;
+    if (!map(destination + old_size, new_size - old_size, protection,
+             page_private | page_anonymous)) {
+        discard_empty_tables(*this, destination, destination + new_size);
+        return false;
+    }
+    // Transfer the old pages only after every allocation has succeeded.
+    for (size_t offset = 0; offset < old_size; offset += page_size) {
+        auto& old = *entry(source + offset);
+        *entry(destination + offset) = old;
+        old = 0;
+    }
+    discard_empty_tables(*this, source, source + old_size);
     return true;
 }
 

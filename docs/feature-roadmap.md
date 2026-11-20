@@ -186,7 +186,7 @@ Acceptance evidence:
 
 ### F06. Demand paging, copy-on-write, and swap
 
-User page tables and shared mappings exist; fork eagerly copies private pages.
+User page tables and shared mappings exist. Private anonymous mappings can resize or relocate. Fork eagerly copies private pages.
 
 Required work:
 

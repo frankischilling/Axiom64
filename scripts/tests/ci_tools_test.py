@@ -67,7 +67,7 @@ class PackageRestore(unittest.TestCase):
         self.assertEqual(len(apt), 2)
         for row in apt:
             for option in ('Acquire::http::Timeout=30', 'Acquire::https::Timeout=30',
-                           'Acquire::Retries=2', 'DPkg::Lock::Timeout=60', 'Acquire::Languages=none'):
+                           'Acquire::Retries=0', 'DPkg::Lock::Timeout=60', 'Acquire::Languages=none'):
                 self.assertIn(option, row)
             self.assertNotIn('--allow-unauthenticated', row)
         limits = [row for row in calls if row[0] == 'timeout']

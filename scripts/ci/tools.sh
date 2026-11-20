@@ -32,7 +32,7 @@ bundle=build/ci-packages
 shopt -s nullglob
 
 apt_options=(-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
-             -o Acquire::Retries=2 -o DPkg::Lock::Timeout=60
+             -o Acquire::Retries=0 -o DPkg::Lock::Timeout=60
              -o APT::Update::Error-Mode=any -o Acquire::Languages=none)
 
 apt_get() {

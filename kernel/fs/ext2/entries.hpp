@@ -36,7 +36,10 @@ struct Entry {
 };
 
 class EntryCache {
-    static constexpr unsigned batch_size = 8, max_batches = 8192, bucket_count = 4096;
+    static constexpr unsigned batch_size = 8;
+    static constexpr size_t initial_buckets = 4096, entries_per_bucket = 16;
+    static constexpr size_t memory_divisor = 8;
+    static inline size_t cache_pages;
 
     struct Batch {
         Batch* next;
@@ -44,16 +47,66 @@ class EntryCache {
         Entry entries[batch_size];
     };
 
-    // Leave room for the heap header so each batch costs one physical page.
-    static_assert(sizeof(Batch) + 32 <= page_size);
+    static_assert(sizeof(Batch) <= page_size);
 
     Batch* batches;
     Entry** buckets;
     Entry *published, *unused;
-    unsigned batch_count;
+    size_t bucket_count, published_count;
 
-    static unsigned index(uint32_t number) {
-        return (number * 2654435761u) >> 20;
+    static size_t index(uint32_t number, size_t count) {
+        uint32_t hash = number * 2654435761u;
+        return (hash ^ (hash >> 16)) & (count - 1);
+    }
+
+    static void* allocate_pages(size_t count) {
+        // Published entries keep their addresses until unmount. Share a
+        // physical memory budget across mounts so pinned entries leave room
+        // for userspace, filesystem operations and new mounts.
+        const auto budget = physical_memory_stats().total / page_size / memory_divisor;
+        if (count > budget || cache_pages > budget - count)
+            return nullptr;
+        auto address = page_alloc(count);
+        if (!address)
+            return nullptr;
+        cache_pages += count;
+        return physical(address);
+    }
+
+    static void free_pages(void* address, size_t count) {
+        if (!address)
+            return;
+        page_free(reinterpret_cast<uint64_t>(address) - direct_map, count);
+        cache_pages -= count;
+    }
+
+    static size_t index_pages(size_t count) {
+        return align_up(count * sizeof(Entry*)) / page_size;
+    }
+
+    bool grow_index() {
+        const size_t count = bucket_count ? bucket_count * 2 : initial_buckets;
+        auto replacement = static_cast<Entry**>(allocate_pages(index_pages(count)));
+        if (!replacement)
+            return false;
+        for (size_t bucket = 0; bucket < bucket_count; ++bucket) {
+            // Doubling splits a bucket in two. Preserve the order of each
+            // chain, as lookup prefers the most recently published entry.
+            Entry** lower = &replacement[bucket];
+            Entry** upper = &replacement[bucket + bucket_count];
+            for (auto entry = buckets[bucket]; entry;) {
+                auto next = entry->inode_next;
+                auto& tail = index(entry->number, count) == bucket ? lower : upper;
+                *tail = entry;
+                tail = &entry->inode_next;
+                entry = next;
+            }
+            *lower = *upper = nullptr;
+        }
+        free_pages(buckets, index_pages(bucket_count));
+        buckets = replacement;
+        bucket_count = count;
+        return true;
     }
 
   public:
@@ -62,7 +115,7 @@ class EntryCache {
     }
 
     Entry* inode_bucket(uint32_t number) const {
-        return buckets ? buckets[index(number)] : nullptr;
+        return buckets ? buckets[index(number, bucket_count)] : nullptr;
     }
 
     Entry* reserve() {
@@ -72,22 +125,17 @@ class EntryCache {
             *entry = {};
             return entry;
         }
-        if (!buckets) {
-            buckets = static_cast<Entry**>(alloc(bucket_count * sizeof(Entry*)));
-            if (!buckets)
-                return nullptr;
-            memset(buckets, 0, bucket_count * sizeof(Entry*));
-        }
+        if (!buckets && !grow_index())
+            return nullptr;
         if (!batches || batches->used == batch_size) {
-            if (batch_count == max_batches)
-                return nullptr;
-            auto batch = static_cast<Batch*>(alloc(sizeof(Batch)));
+            auto batch = static_cast<Batch*>(allocate_pages(1));
             if (!batch)
                 return nullptr;
             batch->next = batches;
             batch->used = 0;
             batches = batch;
-            batch_count++;
+            if (published_count >= entries_per_bucket * bucket_count)
+                grow_index();
         }
         auto entry = &batches->entries[batches->used++];
         *entry = {};
@@ -103,18 +151,19 @@ class EntryCache {
     void insert(Entry* entry) {
         entry->next = published;
         published = entry;
-        auto& bucket = buckets[index(entry->number)];
+        auto& bucket = buckets[index(entry->number, bucket_count)];
         entry->inode_next = bucket;
         bucket = entry;
+        ++published_count;
     }
 
     void clear() {
         while (batches) {
             auto batch = batches;
             batches = batch->next;
-            release(batch);
+            free_pages(batch, 1);
         }
-        release(buckets);
+        free_pages(buckets, index_pages(bucket_count));
         *this = {};
     }
 };

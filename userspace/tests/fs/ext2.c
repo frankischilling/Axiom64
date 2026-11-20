@@ -481,13 +481,15 @@ static void cache_tests(void) {
     int held = openat(root, "seed.txt", O_RDONLY);
     struct stat seed, status;
     CHECK(held >= 0 && fstat(held, &seed) == 0 && seed.st_nlink == 2);
+    CHECK(fstatat(root, "seed-alias", &status, 0) == 0 && status.st_ino == seed.st_ino);
+    const unsigned groups = 384, files_per_group = 192;
     for (unsigned pass = 0; pass < 2; pass++) {
-        for (unsigned group = 0; group < 32; group++) {
+        for (unsigned group = 0; group < groups; group++) {
             char name[24];
             snprintf(name, sizeof(name), "group-%02u", group);
             int directory = openat(root, name, O_RDONLY | O_DIRECTORY);
             CHECK(directory >= 0);
-            for (unsigned file = 0; file < 384; file++) {
+            for (unsigned file = 0; file < files_per_group; file++) {
                 snprintf(name, sizeof(name), "file-%03u", file);
                 CHECK(fstatat(directory, name, &status, AT_SYMLINK_NOFOLLOW) == 0 &&
                       S_ISREG(status.st_mode) && status.st_size == 0);
@@ -500,7 +502,7 @@ static void cache_tests(void) {
     CHECK(fstat(held, &status) == 0 && status.st_ino == seed.st_ino);
     expect(held, "host-created seed\n");
     CHECK(close(root) == 0 && umount(volume) == 0);
-    puts("EXT2_CACHE_PASS entries=12288 scans=2");
+    printf("EXT2_CACHE_PASS entries=%u scans=2\n", groups * files_per_group);
 }
 
 int main(int argc, char** argv) {

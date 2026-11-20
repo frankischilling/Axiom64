@@ -17,6 +17,7 @@ matrix = [
     "root",
     "root-userspace",
     "guest-system",
+    "guest-binutils",
     "manager-bios-modern",
     "manager-bios-legacy",
     "manager-uefi-modern",
@@ -2276,6 +2277,13 @@ suites = ["root-userspace", "guest-system"]
 name = "Build a test system inside Axiom64 and boot the exported ISO"
 run = '''
 make test-guest-system GUEST_KERNEL_FLAGS=--accelerator=auto
+'''
+
+[[step]]
+suites = ["guest-binutils"]
+name = "Build GNU binutils in Axiom64 and link programs after reboot"
+run = '''
+make test-guest-binutils
 '''
 
 [[step]]

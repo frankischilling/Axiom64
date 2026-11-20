@@ -32,15 +32,18 @@ mkdir /tmp/guest-tools
 tar xf make-*.tar.gz -C /tmp/guest-tools
 tar xf nasm-*.tar.xz -C /tmp/guest-tools
 
+# These temporary tools build the test system. Keep compilation work small
+# when the guest runs under software emulation.
+tool_cflags='-O0 -g0'
 # GNU config.guess does not recognize the Axiom64 uname string.
 cd /tmp/guest-tools/make-*/
-/bin/sh ./configure --build=x86_64-pc-linux-musl --prefix=/usr CC=gcc
+/bin/sh ./configure --build=x86_64-pc-linux-musl --prefix=/usr CC=gcc CFLAGS="$tool_cflags"
 /usr/bin/make -j2
 cp ./make ../make
 ../make --version
 
 cd /tmp/guest-tools/nasm-*/
-/bin/sh ./configure --build=x86_64-pc-linux-musl --prefix=/usr CC=gcc
+/bin/sh ./configure --build=x86_64-pc-linux-musl --prefix=/usr CC=gcc CFLAGS="$tool_cflags"
 ../make -j2 nasm ndisasm
 cp ./nasm ./ndisasm ../
 ../nasm -v

@@ -62,8 +62,6 @@ def supply_tool_sources(files, source_root):
         files[str(directory / path.name)] = (0o100644, payload)
         records[name] = dict(archive=path.name, sha512=digest, recipe_sha256=pin['recipe_sha256'])
     files[str(directory / 'sources.sha512')] = (0o100644, ''.join(checks).encode())
-    runner = ROOT / 'userspace/tests/toolchain/build-tools.sh'
-    files[str(source_root / runner.name)] = (0o100755, runner.read_bytes())
     return records
 
 
@@ -96,6 +94,11 @@ def pack_fixture(rootfs, destination, build_tools, system_image):
             payload = path.read_bytes()
             files[str(source_root / name)] = (0o100644, payload)
             inputs[name] = hashlib.sha256(payload).hexdigest()
+    if build_tools:
+        runner = ROOT / 'userspace/tests/toolchain/build-tools.sh'
+        payload = runner.read_bytes()
+        files[str(source_root / runner.name)] = (0o100755, payload)
+        inputs[runner.name] = hashlib.sha256(payload).hexdigest()
     checks = ''.join(f'{digest}  {name}\n' for name, digest in inputs.items())
     files[str(source_root / 'inputs.sha256')] = (0o100644, checks.encode())
     runner = ROOT / 'userspace/tests/toolchain/kernel-build.sh'

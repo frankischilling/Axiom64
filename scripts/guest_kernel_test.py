@@ -32,11 +32,14 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 from account_normal_test import write_cpio
 from disk_root import archive_entries
 from fetch import ROOT, fetch
 from fixture_archive import fingerprint
+from qemu_acceleration import Acceleration
+from qmp import Qmp
 from sources import SOURCE_LOCK, port_sources
 
 
@@ -113,24 +116,53 @@ def make_image(directory, name, kernel, rootfs):
     return directory / name
 
 
-def export_kernel(directory, image, accelerator, timeout, system_image):
+def run_build_vm(command, serial, acceleration, timeout):
+    with tempfile.TemporaryDirectory(prefix='axiom64-build-qmp-') as temporary:
+        control = Path(temporary) / 'qmp.sock'
+        command = [*command, '-S', '-qmp', f'unix:{control},server=on,wait=off']
+        with serial.open('wb') as log:
+            deadline = time.monotonic() + timeout
+            process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
+                                       stdin=subprocess.DEVNULL)
+            try:
+                while not control.exists():
+                    if process.poll() is not None or time.monotonic() >= deadline:
+                        raise RuntimeError(f'guest build VM did not start, see {serial}')
+                    time.sleep(.01)
+                monitor = Qmp(control)
+                try:
+                    observed = acceleration.observe(monitor)
+                    (serial.parent / 'build-accelerator.json').write_text(json.dumps(observed) + '\n')
+                    print(f'Guest build accelerator: {observed["used"]} (requested {observed["requested"]})',
+                          flush=True)
+                    monitor.command('cont')
+                finally:
+                    monitor.close()
+                status = process.wait(timeout=max(0, deadline - time.monotonic()))
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.wait()
+            return status, command
+
+
+def export_kernel(directory, image, acceleration, timeout, system_image):
     disk = directory / 'kernel-export.raw'
     with disk.open('xb') as output:
         output.truncate(96 * 1024 * 1024)
     subprocess.run(['mke2fs', '-q', '-F', '-t', 'ext2', '-b', '4096', '-I', '128',
                     '-O', 'none,filetype,sparse_super', str(disk)], check=True)
     serial = directory / 'build-serial.log'
-    command = ['qemu-system-x86_64', '-machine', 'pc', '-accel', accelerator,
-               '-cpu', 'host' if accelerator == 'kvm' else 'max', '-smp', '2', '-m', '2G', '-nic', 'none',
+    command = ['qemu-system-x86_64', '-machine', acceleration.machine,
+               '-cpu', 'host' if acceleration.requested == 'kvm' else 'max',
+               '-smp', '2', '-m', '2G', '-nic', 'none',
                '-cdrom', str(image), '-display', 'none', '-serial', 'stdio', '-monitor', 'none', '-no-reboot',
                '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04',
                '-drive', f'if=none,id=export,format=raw,cache=writeback,file={disk}',
                '-device', 'virtio-blk-pci,drive=export,disable-legacy=on']
-    with serial.open('wb') as log:
-        build = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                               timeout=timeout)
+    status, command = run_build_vm(command, serial, acceleration, timeout)
     lines = serial.read_text(errors='replace').splitlines()
-    if build.returncode != 1 or lines.count('AXIOM64_KERNEL_EXPORTED') != 1 or not any(
+    if status != 1 or lines.count('AXIOM64_KERNEL_EXPORTED') != 1 or not any(
             'AXIOM64_EXIT status=0' in line for line in lines):
         raise RuntimeError(f'guest kernel build failed, see {serial}')
     with (directory / 'export-fsck.log').open('wb') as fsck:
@@ -174,32 +206,6 @@ def verify_system_image(directory, kernel, serial):
     return image, fingerprint(rootfs)
 
 
-def build_accelerator(requested):
-    if requested != 'auto':
-        return requested
-    # A paused monitor can exit successfully before QEMU opens /dev/kvm.
-    # Require a BIOS boot sector to execute outl(0xf4, 0x2e) on the vCPU.
-    instructions = bytes.fromhex('ba f4 00 66 b8 2e 00 00 00 66 ef f4')
-    sector = instructions.ljust(510, b'\0') + b'\x55\xaa'
-    try:
-        with tempfile.TemporaryDirectory(prefix='axiom64-kvm-') as temporary:
-            disk = Path(temporary) / 'probe.img'
-            disk.write_bytes(sector)
-            command = ['qemu-system-x86_64', '-machine', 'pc', '-accel', 'kvm', '-cpu', 'host',
-                       '-m', '64', '-boot', 'a', '-drive', f'if=floppy,format=raw,readonly=on,file={disk}',
-                       '-display', 'none', '-serial', 'none', '-monitor', 'none', '-no-reboot',
-                       '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
-            probe = subprocess.run(command, stdin=subprocess.DEVNULL, text=True,
-                                   capture_output=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        print(f'KVM preflight failed: {error}', file=sys.stderr)
-        return 'tcg'
-    if probe.returncode == ((0x2e << 1) | 1):
-        return 'kvm'
-    print(f'KVM preflight exited with status {probe.returncode}: {probe.stderr.strip()}', file=sys.stderr)
-    return 'tcg'
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--accelerator', choices=('auto', 'kvm', 'tcg'),
@@ -210,8 +216,7 @@ def main():
     args = parser.parse_args()
     if args.build_timeout <= 0:
         parser.error('--build-timeout must be positive')
-    accelerator = build_accelerator(args.accelerator)
-    print(f'Guest build accelerator: {accelerator}', flush=True)
+    acceleration = Acceleration(args.accelerator)
     build = ROOT / 'build'
     directory = Path(tempfile.mkdtemp(prefix='guest-kernel-', dir=build))
     print(f'Guest kernel evidence: {directory}', flush=True)
@@ -221,7 +226,7 @@ def main():
     build_root = directory / 'compiler.cpio'
     sources, tools = pack_fixture(rootfs, build_root, args.source_tools, args.system_image)
     compile_image = make_image(directory, directory.name + '-compiler.iso', kernel, build_root)
-    result, check, serial, command = export_kernel(directory, compile_image, accelerator, args.build_timeout,
+    result, check, serial, command = export_kernel(directory, compile_image, acceleration, args.build_timeout,
                                                    args.system_image)
     if args.source_tools and serial.read_text(errors='replace').splitlines().count('AXIOM64_BUILD_TOOLS_BUILT') != 1:
         raise RuntimeError(f'no completed source tool build was observed, see {serial}')
@@ -241,7 +246,7 @@ def main():
     if fingerprint(boot_image) != boot_image_identity:
         raise RuntimeError('guest-built boot image changed during validation')
     report = dict(passed=boot.returncode == 0, sources=sources, tool_sources=tools, build_command=command,
-                  initial_kernel=kernel_identity,
+                  build_acceleration=acceleration.evidence, initial_kernel=kernel_identity,
                   build_serial=fingerprint(serial), source_check=fingerprint(check), guest_kernel=fingerprint(result),
                   bootstrap_rootfs=rootfs_identity, boot_rootfs=test_rootfs, guest_authored_image=args.system_image,
                   boot_image=boot_image_identity,

@@ -1769,8 +1769,11 @@ jobs:
         id: guest_system
         if: matrix.suite == 'root-userspace'
         run: |
-          if [[ -c /dev/kvm && ! -w /dev/kvm ]] && command -v setfacl >/dev/null; then
-            sudo -n setfacl -m "u:$(id -u):rw" /dev/kvm || true
+          if [[ -c /dev/kvm ]]; then
+            printf 'KERNEL=="kvm", OWNER="%s", GROUP="kvm", MODE="0660", OPTIONS+="static_node=kvm"\n' "$(id -un)" |
+              sudo -n tee /etc/udev/rules.d/99-axiom64-kvm.rules >/dev/null
+            sudo -n udevadm control --reload-rules
+            sudo -n udevadm trigger --settle --name-match=kvm
           fi
           make test-guest-system GUEST_KERNEL_FLAGS='--accelerator auto'
       - name: Upload guest-built system and firmware boot evidence

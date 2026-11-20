@@ -1,29 +1,27 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# /**
-#  * @file    scripts/ci/tools.sh
-#  * @brief   CI toolchain preparation.
-#  * @author  frankischilling
-#  * @date    2026-11-18
-#  *
-#  * Installs host build and emulation dependencies and configures the pinned CI
-#  * tool set.
-#  *
-#  * Copyright (C) 2026 frankischilling
-#  *
-#  * This program is free software: you can redistribute it and/or modify
-#  * it under the terms of the GNU General Public License as published by
-#  * the Free Software Foundation, either version 3 of the License, or
-#  * (at your option) any later version.
-#  *
-#  * This program is distributed in the hope that it will be useful,
-#  * but WITHOUT ANY WARRANTY; without even the implied warranty of
-#  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-#  * GNU General Public License for more details.
-#  *
-#  * You should have received a copy of the GNU General Public License
-#  * along with this program. If not, see <https://gnu.org/licenses/>.
-#  */
+# @file    scripts/ci/tools.sh
+# @brief   CI toolchain preparation.
+# @author  frankischilling
+# @date    2026-11-18
+#
+# Installs host build and emulation dependencies and configures the pinned CI
+# tool set.
+#
+# Copyright (C) 2026 frankischilling
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://gnu.org/licenses/>.
 set -euo pipefail
 
 tools=(g++ libc6-dev make musl-tools linux-libc-dev nasm python3 perl bzip2 gpg gpgv openssl xorriso qemu-system-x86 qemu-utils xvfb libx11-6 x11-utils

@@ -50,6 +50,26 @@ enum operation {
 
 static unsigned phases[2], action;
 static int control_fd;
+static int observations[2] = {-1, -1};
+
+static int companion_observation(unsigned lane) {
+    if (observations[lane] < 0) {
+        int fd = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, htons(0x88c4));
+        check(fd >= 0, "companion observation socket");
+        struct sockaddr_ll binding = {
+            .sll_family = AF_PACKET, .sll_protocol = htons(0x88c4), .sll_ifindex = indices[lane]};
+        check(!bind(fd, (struct sockaddr*)&binding, sizeof(binding)),
+              "companion observation binding");
+        observations[lane] = fd;
+    }
+    return observations[lane];
+}
+
+static void close_companion_observation(unsigned subject) {
+    unsigned lane = 1 - subject;
+    check(observations[lane] >= 0 && !close(observations[lane]), "close companion observation");
+    observations[lane] = -1;
+}
 
 static void pause_poll(void) {
     struct timespec delay = {0, 20000000};
@@ -104,12 +124,9 @@ static void control(unsigned subject, unsigned kind, unsigned stage,
                                  .sll_ifindex = indices[lane],
                                  .sll_halen = 6};
     memcpy(target.sll_addr, frame, 6);
-    int observation = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, htons(0x88c4));
-    check(observation >= 0, "fresh companion observation socket");
-    struct sockaddr_ll binding = {
-        .sll_family = AF_PACKET, .sll_protocol = htons(0x88c4), .sll_ifindex = indices[lane]};
-    check(!bind(observation, (struct sockaddr*)&binding, sizeof(binding)),
-          "fresh companion observation binding");
+    // Reuse the bound socket during this observation sequence. Repeated
+    // packet socket setup and teardown can delay the transition past DAD.
+    int observation = companion_observation(lane);
     check(sendto(observation, frame, sizeof(frame), 0, (struct sockaddr*)&target, sizeof(target)) ==
               sizeof(frame),
           "complete companion device control");
@@ -124,7 +141,6 @@ static void control(unsigned subject, unsigned kind, unsigned stage,
             break;
         check(now() - stamp < 10000000000ULL, "finite device control");
     }
-    check(!close(observation), "close companion observation");
     emit_control_record(frame, stamp);
 }
 

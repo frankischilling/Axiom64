@@ -87,10 +87,14 @@ int main(int argc, char** argv) {
         link_state(subject, 4);
         inventory(subject, 4);
         control(subject, END, 0, NULL);
+        // The companion is the next subject and may go administratively down.
+        close_companion_observation(subject);
         property(scope, "disable_ipv6", 1);
     }
-    for (unsigned subject = 0; subject < 2; subject++)
+    for (unsigned subject = 0; subject < 2; subject++) {
         control(subject, FINISH, 0, NULL);
+        close_companion_observation(subject);
+    }
     close(control_fd);
     printf("IPV6_DEVICE_PASS adapters=2 action=%s state=ready quiet_seconds=4\n", argv[2]);
     return 0;

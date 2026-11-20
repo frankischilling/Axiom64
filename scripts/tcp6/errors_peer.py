@@ -25,6 +25,7 @@ class Flow(WireFlow):
         self.sent = self.acknowledged = 0
         self.fin_sent = self.fin_received = self.done = False
         self.notices, self.resets = [], []
+        self.quote = None
         self.observation = self.injected = self.pending = None
         self.handshake = False
         self.replacement = False
@@ -109,9 +110,12 @@ class Flow(WireFlow):
             if self.replacement:
                 self.send()
                 self.handshake = True
-            elif self.mode in (0, 1, 4):
+            elif self.mode == 1:
                 if not self.notices:
                     self.notify(frame)
+            elif self.mode in (0, 4):
+                if self.quote is None and not self.notices:
+                    self.quote = frame
             else:
                 self.handshake = True
                 self.send(SYN | ACK, sequence=self.initial)
@@ -128,9 +132,9 @@ class Flow(WireFlow):
             check(start <= len(self.received) and data == wanted[start:start + len(data)],
                   'exact error-surviving stream bytes')
             self.received.extend(data[max(0, len(self.received) - start):])
-            if self.mode in (2, 3) and not self.notices:
+            if self.mode in (2, 3) and self.quote is None and not self.notices:
                 check(self.received == b'one', 'error quotes first outstanding data')
-                self.notify(frame)
+                self.quote = frame
             if self.received == wanted:
                 self.send()
                 if not self.sent:
@@ -171,6 +175,11 @@ class Peer(EthernetPeer):
             return
         scenario, part = divmod(self.phase - 1, 3)
         flow = self.flows[scenario]
+        # The second request follows connect or send returning to userspace.
+        # Linux can record only a soft error while the syscall owns the socket.
+        if part == 1 and flow.quote is not None:
+            flow.notify(flow.quote)
+            flow.quote = None
         if part == 1 and (flow.injected is None or time.monotonic() - flow.injected < .1 or
                           flow.mode == 1 and not flow.handshake):
             return

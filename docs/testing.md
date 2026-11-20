@@ -499,7 +499,9 @@ TCP loss job while preserving the global-address workload and every deadline.
 TCP Packet Too Big cases on each adapter. They reuse the three native and eight
 guest linkage/firmware/transport profiles. The same strict source, compiler,
 executable and actual-ISO readers select the PMTU packet decoder and serialized
-negative controls. The existing TCP loss job retains both complete PMTU evidence
+negative controls. The PMTU control socket subscribes to its barrier EtherType.
+The independent wire capture retains the TCP traffic and barrier frames. The
+existing TCP loss job retains both complete PMTU evidence
 directories in addition to its original loss and congestion coverage; the job
 count and all original deadlines remain unchanged. These global-address tests
 qualify the initial PTB ownership and metric subset. Scoped TCP, ordinary
@@ -526,7 +528,7 @@ Three [resource-limit jobs](resource-limits.md) cover six native libc/linkage pr
 
 Twelve additional [randomness and cryptographic-client jobs](random.md) retain complete administration, virtio source, VM memory restore, seed ownership/rotation, actual disk-failure, interrupted-VM recovery, native ext2 process-crash, calendar/inventory, TLS/key/signature and ordinary-init matrices. Four seed jobs select BIOS/UEFI and modern/legacy transport while retaining both musl linkages and every crash/fault case. Real CPU and virtio reseeding intervals remain unchanged. Each job retains its actual inputs, images, disks, logs and results in an `axiom64-random-*-evidence` artifact, including partial failures. OpenSSL builds once against both target providers and native Linux; jobs reuse checked staged products. The shared input archive omits its extracted upstream source cache, intermediate objects/archives and unused upstream test/fuzz executables while retaining every manifest product and generated configuration header. Corresponding upstream sources and signatures remain in the separate source artifact.
 
-Run `python3 scripts/tests/random_crypto_wait_observer_test.py` for the cryptographic initialization observer protocol. Real subprocesses and the native monotonic clock check an early guest marker, a host delay after serial delivery, premature completion, a failed client and missing release confirmation. These protocol checks run within the existing cryptographic guest steps. Actual OpenSSL acceptance still requires the complete native and guest clients, both half-second observations, zero-credit/pending/output checks, original images and recorded inputs.
+Run `python3 scripts/tests/random_crypto_wait_observer_test.py` for the cryptographic initialization observer protocol. Real subprocesses and the native monotonic clock check an early guest marker, a host delay after serial delivery, premature completion, a failed client and missing release confirmation. These protocol checks run within the existing cryptographic guest steps. Actual OpenSSL acceptance still requires the complete native and guest clients, both half-second observations, zero-credit/pending/output checks, original images and recorded inputs. Native runners select or rebuild the provider for their own linker inputs before running the clients.
 
 Physical PCI removal in the carrier fixture pauses the guest and preserves its configuration-address register before resuming it. A guest stopped between its address write and data read must still read the selected device. `python3 scripts/tests/manager_link_hardware_test.py` checks this behavior for both adapters and transports, including failed removal verification.
 
@@ -628,7 +630,7 @@ rotation bundle keeps its separate input profile.
 
 Read these reports together: `inputs.json` records the exact key and build inputs, `cache-hit.txt` records whether the cache action found that key, and `products.json` records the completed manifests and verified product counts. An empty or `false` cache-hit value means a miss; `true` alone does not prove that restored products passed verification. Compare successful complete workflows with matching build inputs, including queue time and the unchanged guest jobs. Documentation changes can reuse the key because they do not change a dependency recipe or product.
 
-Artifact downloads use a pinned Node 24 action and reject digest mismatches before restored inputs reach tests. Native file-capability comparisons obtain Ubuntu source indices through the content hash in a signature-verified Release. This avoids combining an older Release with a newly published mutable index. Capture retains rejected index bytes and their expected/actual hashes under `archive-authentication/`; a failed transfer never becomes a completed index cache entry. Verified public indices use mode `0644`, so ordinary CI readers and uploaders can read files produced by root. Twelve HTTP regression cases cover publication identity, truncated responses, missing indices, damaged cached bytes and evidence-reader access. If a publishing mirror returns 404 for its hash path, one canonical-index request may supply the same bytes; its complete length and SHA-256 must still match the already signature-verified Release. Both request statuses remain recorded. A changed canonical index, other HTTP errors and damaged cached data remain failures. When run as root, the access case drops to an unprivileged UID to read the actual cached and copied files. The extracted-source checks run these cases too.
+Artifact downloads use a pinned Node 24 action and reject digest mismatches before restored inputs reach tests. Native comparisons retain the Ubuntu source corresponding to the runner's glibc. The capture verifies the Release signature and reads only the Sources index with the signed byte count and SHA-256. A missing content-addressed index can use the canonical index or the dated snapshot, with the same checks. Pool files rejected with HTTP 403 or 404 can be fetched from another official mirror or the dated snapshot. The descriptor must match the signed index, and each source file must match the descriptor. The capture records download attempts, including failures, under `archive-authentication/`. Verified cache entries use mode `0644` so ordinary CI readers can inspect root-owned evidence.
 
 For shorter development loops:
 
@@ -673,6 +675,14 @@ Run `make test-ext2` for the complete filesystem matrix. [Ext2 verification](ext
 Run `make test-threads` for the dedicated static/dynamic musl, futex, lifecycle, and guest-compiled C++ suite. [Thread verification](threads.md#verification) describes coverage and evidence files; complete POSIX threading and SMP remain planned.
 
 Run `make test-thread-io` for the focused [blocking I/O suite](io.md#verification-and-limits). The full and complete thread suites also require its static/dynamic tests.
+
+Run `make test-signalfd` to check [signal descriptors](io.md#signal-descriptors).
+The guest matrix uses both musl providers, static and dynamic binaries, and
+BIOS and UEFI. Each boot tests root and an ordinary user. The client checks
+record layout, copy faults, epoll, interrupted reads, descriptor lifetime,
+ordered queued payloads, and queue admission. `sudo make test-signalfd-native`
+runs the client on Linux for comparison. The boot CI job retains binaries,
+source bindings, images, and logs for both suites.
 
 Run `make test-timerfd` to check [timer descriptors](io.md#timer-descriptors)
 across both musl providers, static and dynamic linkage, and BIOS and UEFI.
@@ -1763,7 +1773,10 @@ is one byte, so UART line completion cannot consume another polling tick.
 Readers reopen the actual command bytes and bind their monotonic receipts
 to the recorded guard requests. The reader checks one-second retry spacing and
 failure after the third ARP request, retaining the 20 ms precision and one-second observer
-bounds. Native captures retain the running kernel configuration, original
+bounds. For native cases with the raw guard, the retry-spacing check uses the
+kernel timestamps of the ARP packets. The reader matches those bytes and times
+to the independent capture and keeps the receipt checks for the guard and error.
+Native captures retain the running kernel configuration, original
 neighbor parameters, independent ingress taps and pre/post IP receive counters.
 Timer-wheel rounding follows the recorded `CONFIG_HZ` and the pinned
 [Linux timer implementation](https://github.com/torvalds/linux/blob/v6.6/kernel/time/timer.c).
@@ -2094,3 +2107,22 @@ initramfs contents and original serial logs. The production ownership sanitizer
 model is `make test-unix-rights-policy`. These local comparisons do not establish
 current hosted acceptance. Broader stream options, interruption, remaining
 shutdown contracts and complete Unix socket lifetime qualification remain required.
+
+## Filesystem notifications
+
+Inotify watches file and directory inodes on RAM and ext2. Hardlinks share a
+watch. Directory events carry the entry name and paired rename events carry
+the same cookie. An unlinked inode remains watched while an open description
+or another live reference retains it. Unmount delivers the final unmount and
+ignored records to surviving instances.
+
+Each instance queues up to 16,384 events and can report an overflow when a
+record is lost. Axiom64 allows 128 instances and 8,192 watches per effective
+user ID. Applications can wait through read, poll, select, or epoll. Signal-
+driven I/O notification and procfs watch inventories remain open.
+
+Run `make test-inotify-queue`, `sudo -n make test-inotify-native`, and
+`make test-inotify`. The guest matrix uses both musl providers and linkages,
+BIOS and UEFI, and both virtio block transports. Each profile exercises RAM
+and ext2 with root and ordinary users, reopens its boot image before execution,
+and checks the final ext2 image with e2fsck.

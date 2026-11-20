@@ -289,7 +289,11 @@ class Peer(RouterPeer):
             lifetime_ok = (preferred,valid) == (INFINITY,INFINITY)
             if kind == FIRST and case == 4:
                 original = self.inventories[case,2][0]
-                elapsed = stamp - original['guest_ns']
+                # Linux starts the replacement's cache clock on allocation,
+                # after the conflict. The guest retains the original clock.
+                since = (self.conflicts[case, 0]['observed_ns'] if self.native
+                         else original['guest_ns'])
+                elapsed = stamp - since
                 # Cache readback counts whole seconds. The first query can
                 # arrive after a second of normal aging; it is not creation.
                 # Allow two 10-ms source ticks only at a second boundary.

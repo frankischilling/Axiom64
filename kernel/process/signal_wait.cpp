@@ -1,51 +1,91 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/process/signal_wait.cpp
+ * @brief   Synchronous signal waits.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Implements waits for selected pending signals with Linux timeout and
+ * interruption semantics.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "process/signals.hpp"
 
 namespace ax {
-namespace {
-int64_t consume(Task& task, uint64_t mask, uint64_t information) {
-    uint64_t pending = task.pending_signals & mask;
-    bool thread = pending != 0;
+bool signal_pending_for(const Task& task, uint64_t mask) {
+    return ((task.pending_signals.mask() | task.process->pending_signals.mask()) & mask) != 0;
+}
+
+int next_pending_signal(const Task& task, uint64_t mask) {
+    uint64_t pending = task.pending_signals.mask() & mask;
     if (!pending)
-        pending = task.process->pending_signals & mask;
+        pending = task.process->pending_signals.mask() & mask;
+    if (!pending)
+        return 0;
     // Linux selects the thread queue before the shared queue, and synchronous
     // signals before other numbers within either queue.
     constexpr uint64_t synchronous =
         (1ull << 3) | (1ull << 4) | (1ull << 6) | (1ull << 7) | (1ull << 10) | (1ull << 30);
     if (pending & synchronous)
         pending &= synchronous;
-    for (int signal = 1; signal <= 64; signal++) {
-        uint64_t bit = 1ull << (signal - 1);
-        if (!(pending & bit))
-            continue;
-        SignalData data;
-        if (thread) {
-            task.pending_signals &= ~bit;
-            data = task.signal_data[signal - 1];
-        } else {
-            task.process->pending_signals &= ~bit;
-            data = task.process->signal_data[signal - 1];
-        }
-        if (information) {
-            uint8_t bytes[128]{};
-            int32_t number = signal;
-            memcpy(bytes, &number, 4);
-            memcpy(bytes + 8, &data.code, 4);
-            if (data.code > 0 && (signal == 11 || signal == 7 || signal == 4 || signal == 8))
-                memcpy(bytes + 16, &data.address, 8);
-            else {
-                memcpy(bytes + 16, &data.sender, 4);
-                memcpy(bytes + 20, &data.uid, 4);
-                memcpy(bytes + 24, &data.status, 4);
-            }
-            // Linux dequeues before copying siginfo. A failed output copy still
-            // consumes this signal and must not leave it pending for another waiter.
-            if (!task.memory->space.copy_out(information, bytes, sizeof(bytes)))
-                return -14;
-        }
-        return signal;
+    return int(__builtin_ctzll(pending)) + 1;
+}
+
+int take_pending_signal(Task& task, uint64_t mask, SignalData& data) {
+    int number = next_pending_signal(task, mask);
+    if (number) {
+        auto& queue = task.pending_signals.mask() & mask ? task.pending_signals
+                                                         : task.process->pending_signals;
+        data = queue.take(number);
     }
-    return 0;
+    return number;
+}
+
+void format_signal_info(uint8_t (&bytes)[128], int number, const SignalData& data) {
+    memset(bytes, 0, sizeof(bytes));
+    memcpy(bytes, &number, 4);
+    memcpy(bytes + 4, &data.error, 4);
+    memcpy(bytes + 8, &data.code, 4);
+    if (data.code > 0 && (number == 11 || number == 7 || number == 5 || number == 4 || number == 8))
+        memcpy(bytes + 16, &data.address, 8);
+    else {
+        memcpy(bytes + 16, &data.sender, 4);
+        memcpy(bytes + 20, &data.uid, 4);
+        if (data.code < 0 && data.code != -6)
+            memcpy(bytes + 24, &data.value, 8);
+        else if (number == 17 && data.code > 0) {
+            memcpy(bytes + 24, &data.status, 4);
+            memcpy(bytes + 32, &data.child_user_ticks, 8);
+            memcpy(bytes + 40, &data.child_system_ticks, 8);
+        }
+    }
+}
+
+namespace {
+int64_t consume(Task& task, uint64_t mask, uint64_t information) {
+    SignalData data;
+    int32_t number = take_pending_signal(task, mask, data);
+    if (!number || !information)
+        return number;
+    uint8_t bytes[128];
+    format_signal_info(bytes, number, data);
+    // Linux dequeues before copying siginfo. A failed output copy still
+    // consumes this signal and must not leave it pending for another waiter.
+    return task.memory->space.copy_out(information, bytes, sizeof(bytes)) ? number : -14;
 }
 } // namespace
 
@@ -55,7 +95,7 @@ int64_t signal_wait_enter(Frame* frame) {
     uint64_t mask;
     if (!current->memory->space.copy_in(&mask, frame->rdi, sizeof(mask)))
         return -14;
-    mask &= ~((1ull << 8) | (1ull << 18));
+    mask &= ~unmaskable_signals;
     bool finite = frame->rdx != 0;
     uint64_t deadline = 0;
     if (finite) {

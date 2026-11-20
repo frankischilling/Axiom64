@@ -8,6 +8,7 @@ import re
 import zipfile
 from fetch import ROOT
 from ipv6_extension_execution import verify_execution
+from reference_source import matches_file
 
 SOURCE = 'userspace/tests/net/ipv6_receive_extensions.c'
 FIXTURE = ROOT / 'scripts/tests/fixtures/ipv6-receive-extensions-linux7.json'
@@ -63,7 +64,7 @@ def fixture():
     require(saved['schema'] == 1 and reference['kernel'] == '7.0.0-1017-azure' and
             reference['kernel_sha256'] == '1499d4e93269e5607c0aed401f55a6c256d4ca82e91b6b79f4032d0a181f22e5' and
             reference['actual_program_completed'] and reference['actual_cpio_reopened'] and
-            reference['complete_error_client'] and reference['source_sha256'] == digest(ROOT / SOURCE),
+            reference['complete_error_client'] and matches_file(ROOT, SOURCE, reference['source_sha256']),
             'actual complete Linux 7 client bound to the current receive probe')
     text = '\n'.join(PREFIX + ' '.join(key + '=' + value for key, value in row.items())
                      for row in saved['rows']) + '\n' + DONE + '\n'

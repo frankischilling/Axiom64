@@ -46,7 +46,8 @@ The x86-64 `clone` syscall accepts these flags:
 | `CLONE_PARENT_SETTID`, `CLONE_CHILD_SETTID` | Write the new TID to validated parent/child pointers |
 | `CLONE_CHILD_CLEARTID` | Register the child pointer for exit/exec clearing and wakeup |
 | `CLONE_VFORK` | Suspend the caller; requires shared memory and a separate process |
-| `CLONE_SYSVSEM`, `CLONE_DETACHED` | Accepted for musl; SysV semaphore undo is not implemented and detached is ignored |
+| `CLONE_SYSVSEM` | Share the System V semaphore undo list. The last owner to exit applies the adjustments. |
+| `CLONE_DETACHED` | Accepted and ignored for Linux compatibility |
 
 Separate process children require `SIGCHLD`. Shared-memory creation requires a child stack except for vfork. Invalid supported combinations return `EINVAL`; invalid stack/TID pointers return `EFAULT`. Unsupported flags, other process exit signals, and `clone3` return `ENOSYS`. This interface does not implement every Linux clone mode.
 
@@ -84,8 +85,119 @@ Lifecycle tests exercise blocked group teardown, a surviving worker after leader
 
 Evidence is saved in `build/threads-all-{bios,uefi}.log` and `build/threads-all-results.json`. The condition-only profile writes `threads-cond-*` evidence and the I/O profile writes `threads-io-*`. Host execution of a test program is a contract comparison and does not replace guest evidence.
 
+## System V semaphores
+
+`semget`, `semctl`, `semop`, and `semtimedop` support keyed and private sets.
+An operation vector changes the set atomically. Blocked calls keep their original
+vector, and a timeout or caught signal ends the wait without applying its operations.
+Removing a set wakes its waiters with `EIDRM`. A regular fork starts with an empty
+undo list. `CLONE_SYSVSEM` shares the caller's list, and `SETVAL` and `SETALL`
+clear pending adjustments for the affected members.
+
+`make test-system-v-semaphores` checks both musl providers and linkages on BIOS
+and UEFI as root and UID 65534. `sudo make test-system-v-semaphores-native`
+runs the matching Linux workload in isolated IPC namespaces. Both retain logs
+and compiler inputs with the tested executable.
+
+## System V message queues
+
+`msgget`, `msgsnd`, `msgrcv`, and `msgctl` support private and keyed queues
+on x86-64. Receivers can select the first message, an exact or excluded type,
+the lowest type up to a limit, or a queue position for a nondestructive
+`MSG_COPY`. `MSG_NOERROR` truncates a destructive read. `E2BIG` leaves the
+message queued, and a user-buffer fault after a destructive read consumes it.
+
+Queues retain messages across process exit and exec until a receiver takes them
+or an owner removes the queue. A blocked sender keeps the imported payload while
+waiting for capacity. A caught signal returns `EINTR`, and queue removal returns
+`EIDRM` to sleeping callers. Owner, creator and group permissions govern access,
+and `msgctl` reports ownership, limits, usage and send/receive metadata.
+
+`make test-system-v-message-queues` exercises both musl providers and linkages
+on BIOS and UEFI as root and UID 65534. `sudo make test-system-v-message-queues-native`
+runs the same workload in isolated Linux IPC namespaces. Axiom64 uses one global
+IPC scope with fixed defaults of 32,000 queues, 8,192 bytes per message, and
+16,384 bytes of capacity on a new queue. IPC namespaces and Linux IPC sysctls
+remain unimplemented.
+
+## System V shared memory
+
+`shmat` maps a segment into the caller's address space. Separate mappings and
+forked processes share the same backing pages. Read-only attachments cannot
+gain write access through `mprotect`. `SHM_REMAP` can replace an existing
+range, and `shmdt` removes only the surviving fragments of the selected
+attachment. Anonymous or file mappings added in the gaps stay mapped.
+
+`IPC_RMID` releases the key immediately. A marked segment remains accessible
+by ID until its last mapping goes away through unmap, detach, exec, or exit.
+`shmctl` reports wall-clock timestamps, mapping counts, owners, and usage.
+`SHM_LOCK` accounts for the caller's locked-memory limit. Axiom64 keeps segment
+pages resident and supports up to 4,096 segments of up to 64 MiB each,
+subject to available memory. Huge pages and IPC namespaces remain unimplemented.
+
+`make test-system-v-shared-memory` checks mappings, fork and exec, removal,
+permissions, and executable attachments as root and UID 65534 on BIOS and
+UEFI with both musl providers and linkages. The matching Linux comparison runs
+with `sudo make test-system-v-shared-memory-native`.
+
+## POSIX semaphores
+
+The kernel mounts a volatile, root-owned `/dev/shm` on both RAM and ext2
+roots. Its sticky permissions let ordinary users create named semaphores
+and protect other owners' names from removal. Programs use the libc
+`sem_open` and `sem_unlink` interfaces. Unlinking removes the name while
+existing mappings remain usable. Process-shared unnamed semaphores use
+shared mappings and futexes.
+
+`make test-posix-semaphores` checks expiration, signal restart, fork and exec,
+exclusive creation, and name permissions. It runs as root and UID 65534
+with both musl providers and linkages on BIOS and UEFI RAM boots. It also
+runs the build-provider static client from a read-only ext2 root on both
+firmware types. `sudo make test-posix-semaphores-native` compares the same
+workload on Linux with a private `/dev/shm` mount.
+
+## POSIX message queues
+
+POSIX message queues use ordinary file descriptors and appear under
+`/dev/mqueue`. Messages arrive from highest to lowest priority, in send
+order within each priority. Unlinking removes the name while open
+descriptions and waiting calls keep the queue alive.
+
+`mq_timedsend` and `mq_timedreceive` use absolute realtime deadlines.
+`O_NONBLOCK` belongs to the open description, so descriptor aliases share it.
+Poll and epoll report queued messages and available capacity. Queue limits
+include the creator's `RLIMIT_MSGQUEUE` budget. One-shot notification
+supports signals with sender information and libc thread callbacks over
+netlink.
+
+`make test-posix-message-queues` exercises both caller identities with both
+musl providers and linkages on BIOS and UEFI. It also boots a read-only ext2
+root under both firmware types. `sudo make test-posix-message-queues-native`
+runs the same client in a private Linux IPC namespace. IPC namespace
+creation and runtime queue sysctls remain unimplemented.
+
+## POSIX asynchronous I/O
+
+Both musl providers run POSIX AIO in userspace. Their worker threads use
+Axiom64's file and pipe operations, futexes, and queued signals. Programs link
+with `-pthread -lrt` and use the standard `<aio.h>` interface.
+
+`make test-posix-aio` covers positioned reads and writes, both `aio_fsync`
+modes, errors on read-only descriptors, and `LIO_WAIT` and `LIO_NOWAIT` lists.
+It checks signal payloads for single requests and thread callbacks for
+individual requests and lists. A pending pipe read demonstrates timeout, interruption and
+cancellation with notification. A separate test closes and reuses the same
+descriptor number while checking that the old operation cannot take data
+from the replacement pipe.
+
+The workload runs as root and UID 65534 with both musl providers and both
+linkages on BIOS and UEFI. Read-only ext2 boots also read the test executable
+with AIO. Writable tests use volatile `/dev/shm`. `sudo make test-posix-aio-native`
+compares the same workload with Linux glibc, where an in-flight operation
+that cannot be cancelled must still finish on its original file description.
+
 ## Remaining work
 
-The limit is one CPU, 64 task slots, and 128 descriptors per file table. FPU switching uses FXSAVE/FXRSTOR for x87/SSE state, without extended XSAVE state. Caught signals currently return `EINTR` from futex waits even with `SA_RESTART`.
+The limit is one CPU, 64 task slots, and 128 descriptors per file table. FPU switching uses FXSAVE/FXRSTOR for x87/SSE state, without extended XSAVE state. An untimed futex wait honors `SA_RESTART`. A caught signal interrupts a timed futex wait with `EINTR`.
 
-Robust owner-death lists, priority inheritance, `FUTEX_WAKE_OP`, newer wait-vector operations, cancellation coverage, rwlocks/barriers, complete process-shared POSIX synchronization, thread-targeted timers, and full fork/exec/signal semantics remain unfinished. SysV semaphore undo and complete resource limits are also pending. Working musl and C++ tests do not establish complete POSIX threading or Linux compatibility. [SMP](feature-roadmap.md#f07-smp-scheduling-and-kernel-synchronization) follows the tested single-CPU interface.
+Robust owner-death lists, priority inheritance, `FUTEX_WAKE_OP`, newer wait-vector operations, cancellation coverage, rwlocks/barriers, complete process-shared POSIX synchronization, thread-targeted timers, full fork/exec/signal semantics, and complete resource limits remain unfinished. Working musl and C++ tests do not establish complete POSIX threading or Linux compatibility. [SMP](feature-roadmap.md#f07-smp-scheduling-and-kernel-synchronization) follows the tested single-CPU interface.

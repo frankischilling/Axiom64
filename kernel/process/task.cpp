@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/process/task.cpp
+ * @brief   Task and process lifecycle.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Manages scheduling, creation, executable replacement, and termination of
+ * kernel tasks.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "process/task.hpp"
 #include "process/exec_arguments.hpp"
 #include "process/cpu.hpp"
@@ -6,12 +30,20 @@
 #include "mm/stack.hpp"
 #include "fs/record_lock.hpp"
 #include "process/waitid.hpp"
+#include "ipc/system_v_semaphores.hpp"
+#include "ipc/system_v_message_queues.hpp"
+#include "ipc/posix_message_queues.hpp"
+#include "ipc/shared_memory.hpp"
 #include "fs/descriptor.hpp"
+#include "fs/pipe.hpp"
+#include "fs/memfd.hpp"
+#include "fs/inotify.hpp"
 #include "drivers/platform/devices.hpp"
 #include "ipc/ipc.hpp"
 #include "process/signals.hpp"
 #include "process/futex.hpp"
 #include "io/io.hpp"
+#include "io/descriptor_wait.hpp"
 #include "net/ethernet.hpp"
 #include "core/time.hpp"
 #include "core/random.hpp"
@@ -39,10 +71,17 @@ static void release_memory(Task* t) {
     if (!memory)
         return;
     if (memory->references == 1) {
-        shared_memory_release(t);
+        shared_memory_release(*t);
         if (memory->space.root && read_cr3() == memory->space.root)
             activate_kernel_memory();
         memory->space.destroy();
+        if (auto file = memory->exec_file) {
+            --file->exec_images;
+            inotify_retire_inode(file);
+            node_retire_xattrs(file);
+            memfd_reap(file);
+        }
+        inotify_reap_inodes();
     }
     if (!--memory->references)
         release(memory);
@@ -58,17 +97,32 @@ static void release_files(FileTable* table) {
     }
 }
 
+static void copy_descriptors(FileTable& table, const FileTable& source) {
+    for (unsigned i = 0; i < max_fds; ++i) {
+        auto desc = source.entries[i];
+        if (desc.handle) {
+            table.entries[i] = desc;
+            table.expand(i);
+            retain(desc.handle);
+        }
+    }
+}
+
 static FileTable* copy_files(const FileTable* source) {
     auto table = make_resource<FileTable>();
     if (table)
-        for (unsigned i = 0; i < max_fds; i++) {
-            table->entries[i] = source->entries[i].handle ? source->entries[i] : Descriptor{};
-            retain(table->entries[i].handle);
-        }
+        copy_descriptors(*table, *source);
     return table;
 }
 
 static void release_resources(Task* t) {
+    message_queue_discard(*t);
+    posix_queue_discard(*t);
+    discard_fifo_open(*t);
+    epoll_discard_wait(*t);
+    descriptor_wait_discard(*t);
+    semaphore_exit(*t);
+    t->pending_signals.discard(UINT64_MAX);
     credential_release(t->credentials);
     io_discard(*t);
     futex_discard(*t);
@@ -78,6 +132,7 @@ static void release_resources(Task* t) {
     if (t->fs && !--t->fs->references)
         release(t->fs);
     t->fs = nullptr;
+    inotify_reap_inodes();
     if (t->handlers && !--t->handlers->references)
         release(t->handlers);
     t->handlers = nullptr;
@@ -182,13 +237,21 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
     Task* child = new_task();
     if (!child)
         return -11;
+    if ((flags & clone_sysvsem) && !semaphore_share_undo(*child, *current)) {
+        release_resources(child);
+        release(child->process);
+        child->process = nullptr;
+        child->state = State::empty;
+        return -12;
+    }
     credential_inherit(child->credentials, current->credentials);
     if (vm) {
         release_memory(child);
         child->memory = current->memory;
         child->memory->references++;
     } else {
-        if (!child->memory->space.clone_from(current->memory->space)) {
+        if (!child->memory->space.clone_from(current->memory->space) ||
+            !shared_memory_fork(*child, *current)) {
             release_resources(child);
             release(child->process);
             child->process = nullptr;
@@ -199,18 +262,18 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         child->memory->brk_end = current->memory->brk_end;
         child->memory->initial_data_size = current->memory->initial_data_size;
         child->memory->dumpable = current->memory->dumpable;
-        shared_memory_fork(child, current);
+        if (auto file = current->memory->exec_file) {
+            ++file->exec_images;
+            child->memory->exec_file = file;
+        }
     }
     if (flags & clone_files) {
         release_files(child->files);
         child->files = current->files;
         child->files->references++;
-    } else
-        for (unsigned i = 0; i < max_fds; i++) {
-            child->files->entries[i] =
-                current->files->entries[i].handle ? current->files->entries[i] : Descriptor{};
-            retain(child->files->entries[i].handle);
-        }
+    } else {
+        copy_descriptors(*child->files, *current->files);
+    }
     if (flags & clone_fs) {
         release(child->fs);
         child->fs = current->fs;
@@ -288,7 +351,8 @@ static void finish_process(Task* last) {
             queue_process_signal(parent.process, 17, process->pid,
                                  (process->exit_status & 127) ? 2 : 1,
                                  (process->exit_status & 127) ? process->exit_status & 127
-                                                              : process->exit_status >> 8);
+                                                              : process->exit_status >> 8,
+                                 0, process);
     if (process->pid == 1) {
         if (test_mode)
             poweroff((process->exit_status & 127) ? 128 + (process->exit_status & 127)
@@ -337,8 +401,11 @@ void exit_thread(Task* t, int status) {
     release_resources(t);
     if (process->leader == t || process->live_threads == 1)
         process->exit_status = status;
-    if (!--process->live_threads)
+    if (!--process->live_threads) {
+        posix_queue_process_exit(*process);
+        process->pending_signals.discard(UINT64_MAX);
         finish_process(t);
+    }
     if (process->leader != t) {
         t->state = State::empty;
         t->process = nullptr;
@@ -368,6 +435,9 @@ static bool awaken(Task& t) {
     if (t.state != State::blocked)
         return t.state == State::runnable;
     if (t.wait == Wait::signal_queue && signal_wait_resume(t))
+        return true;
+    if (resume_fifo_open(t) || epoll_resume_wait(t) || descriptor_wait_resume(t) ||
+        io_resume_signal_descriptor(t))
         return true;
     if (signal_wakes(t)) {
         signal_interrupt(t);
@@ -399,9 +469,6 @@ static bool awaken(Task& t) {
     case Wait::sleep:
         ready = ticks >= t.deadline;
         break;
-    case Wait::poll:
-        ready = poll_task_ready(t);
-        break;
     case Wait::vfork:
         ready = true;
         for (auto& c : tasks)
@@ -417,6 +484,15 @@ static bool awaken(Task& t) {
     case Wait::futex:
         ready = futex_ready(t);
         break;
+    case Wait::semaphore:
+        return semaphore_timeout(t);
+    case Wait::message_queue:
+    case Wait::fifo_open:
+    case Wait::epoll_wait:
+    case Wait::descriptor:
+        return false;
+    case Wait::posix_queue:
+        return posix_queue_expire(t);
     default:
         ready = true;
         break;
@@ -566,29 +642,99 @@ static int load_image(AddressSpace& mem, Node* file, uint64_t base, Image& image
     return 0;
 }
 
-int exec_task(Task* t, const ExecArguments& arguments) {
+int executable_access(const Task& task, Node* file) {
+    if (!file)
+        return -13;
+    if (int error = node_validate(file))
+        return error;
+    if ((file->mode & 0170000) == symlink)
+        return -40;
+    if ((file->mode & 0170000) != regular_file || file->mount->noexec)
+        return -13;
+    if (int error = credential_access(task.credentials, file->uid, file->gid, file->mode, 1))
+        return error;
+    // An anonymous memory file has no writable namespace open. Its original
+    // memory-file descriptor can execute the image it just created.
+    return !is_memfd(file) && node_open_for_write(file) ? -26 : 0;
+}
+
+static int script_header(Node* file, char (&header)[256], const char*& interpreter,
+                         const char*& option) {
+    auto length = node_read(file, 0, header, sizeof(header));
+    if (length < 0)
+        return length;
+    if (length < 2 || header[0] != '#' || header[1] != '!')
+        return 0;
+    auto space = [](char value) { return value == ' ' || value == '\t'; };
+    size_t start = 2;
+    while (start < sizeof(header) && space(header[start]))
+        ++start;
+    if (start == sizeof(header) || !header[start] || header[start] == '\n')
+        return -8;
+    size_t end = start;
+    while (end < sizeof(header) - 1 && header[end] && header[end] != '\n')
+        ++end;
+    if (header[end] != '\n')
+        end = sizeof(header) - 1;
+    while (end > start && space(header[end - 1]))
+        --end;
+
+    size_t separator = start;
+    while (separator <= end && header[separator] && header[separator] != '\n' &&
+           !space(header[separator]))
+        ++separator;
+    if (separator > end)
+        return -8; // The interpreter path did not fit.
+    size_t argument = separator;
+    while (argument < end && space(header[argument]))
+        ++argument;
+    if (argument < end && header[argument] && header[argument] != '\n')
+        option = header + argument;
+    header[separator] = header[end] = 0;
+    interpreter = header + start;
+    return 1;
+}
+
+static int select_executable(Task& task, ExecArguments& arguments, Node*& file,
+                             bool path_inaccessible) {
+    Path name;
+    name.base = task.fs->cwd_node;
+    const char* script = arguments.path();
+    if (!file) {
+        if (strlen(script) >= sizeof(name.text))
+            return -36;
+        memcpy(name.text, script, strlen(script) + 1);
+        if (int error = resolve_path(name, file))
+            return error;
+    }
+    for (unsigned rewrites = 0; rewrites <= 5; rewrites++) {
+        file = file_node(file);
+        if (int error = executable_access(task, file))
+            return error;
+        char header[256]{};
+        const char* interpreter = nullptr;
+        const char* option = nullptr;
+        int result = script_header(file, header, interpreter, option);
+        if (result <= 0)
+            return result;
+        if (path_inaccessible)
+            return -2;
+        if (int error = arguments.enter_interpreter(interpreter, option, script))
+            return error;
+        memcpy(name.text, interpreter, strlen(interpreter) + 1);
+        script = name.text;
+        if (int error = resolve_path(name, file))
+            return error;
+    }
+    return -40;
+}
+
+int exec_task(Task* t, ExecArguments& arguments, Node* file, bool path_inaccessible) {
     if (int error = process_exec_limit(*t))
         return error;
     const char* path = arguments.path();
-    Path name;
-    name.base = t->fs->cwd_node;
-    if (strlen(path) >= sizeof(name.text))
-        return -36;
-    memcpy(name.text, path, strlen(path) + 1);
-    Node* file = nullptr;
-    int lookup_error = resolve_path(name, file);
-    if (lookup_error)
-        return lookup_error;
-    file = file_node(file);
-    if (!file)
-        return -2;
-    if ((file->mode & 0170000) != regular_file)
-        return -13;
-    int access_error = credential_access(t->credentials, file->uid, file->gid, file->mode, 1);
-    if (access_error)
-        return access_error;
-    if (file->mount->noexec)
-        return -13;
+    if (int error = select_executable(*t, arguments, file, path_inaccessible))
+        return error;
     FileCapabilities capabilities;
     if (!file->mount->nosuid && file->mount->ops->getxattr) {
         uint8_t value[24];
@@ -627,10 +773,7 @@ int exec_task(Task* t, const ExecArguments& arguments) {
         error = resolve_path(interpreter_path, interpreter);
         if (!error) {
             interpreter = file_node(interpreter);
-            error = (interpreter->mode & 0170000) != regular_file || interpreter->mount->noexec
-                        ? -13
-                        : credential_access(t->credentials, interpreter->uid, interpreter->gid,
-                                            interpreter->mode, 1);
+            error = executable_access(*t, interpreter);
         }
         if (!error)
             error = load_image(memory, interpreter, 0x7000000000, interp);
@@ -722,6 +865,7 @@ int exec_task(Task* t, const ExecArguments& arguments) {
     if (handlers) {
         *handlers = *t->handlers;
         handlers->references = 1;
+        handlers->descriptor_wait_queue = 0;
     }
     auto process = t->process;
     for (auto& member : tasks)
@@ -748,6 +892,8 @@ int exec_task(Task* t, const ExecArguments& arguments) {
                 child.real_parent_tid = t->pid;
     }
     replacement->space = memory;
+    ++file->exec_images;
+    replacement->exec_file = file;
     clear_tid(t);
     io_discard(*t);
     if (t == current)
@@ -764,6 +910,7 @@ int exec_task(Task* t, const ExecArguments& arguments) {
         t->parent_death_signal = 0;
     t->credentials = credentials;
     process->executed = true;
+    ++process->exec_generation;
     if (files) {
         release_files(t->files);
         t->files = files;
@@ -789,7 +936,9 @@ int exec_task(Task* t, const ExecArguments& arguments) {
     for (auto& action : t->handlers->signal_actions)
         if (action[0] != 1)
             memset(action, 0, sizeof(action));
-    memcpy(t->process->executable, path, min(strlen(path) + 1, sizeof(t->process->executable)));
+    size_t display_length = min(strlen(path), sizeof(t->process->executable) - 1);
+    memcpy(t->process->executable, path, display_length);
+    t->process->executable[display_length] = 0;
     for (unsigned fd = 0; fd < max_fds; fd++)
         if (t->files->entries[fd].cloexec)
             close_descriptor(*t->files, int(fd));
@@ -846,24 +995,35 @@ extern "C" Frame* handle_trap(Frame* f) {
     asm volatile("mov %%cr2,%0" : "=r"(cr2));
     if ((f->cs & 3) == 3 && current) {
         cpu_account();
-        if (f->vector == 14 && !(f->error & 9)) {
+        auto fault = MemfdFault::outside;
+        if (f->vector == 14 && !(f->error & 8)) {
             cpu_account(current);
-            if (grow_user_stack(current->memory->space, cr2, 1, f->error & 2, f->error & 16))
+            auto& space = current->memory->space;
+            fault = memfd_fault(space, cr2, f->error & 2, f->error & 16);
+            if (fault == MemfdFault::resolved ||
+                (fault == MemfdFault::outside && !(f->error & 1) &&
+                 grow_user_stack(space, cr2, 1, f->error & 2, f->error & 16)))
                 return schedule(f, false);
             cpu_account();
         }
-        int signal = f->vector == 0 || f->vector == 16 || f->vector == 19 ? 8
-                     : f->vector == 6                                     ? 4
-                     : f->vector == 1 || f->vector == 3                   ? 5
-                                                                          : 11;
+        int signal = fault == MemfdFault::bus                               ? 7
+                     : f->vector == 0 || f->vector == 16 || f->vector == 19 ? 8
+                     : f->vector == 6                                       ? 4
+                     : f->vector == 1 || f->vector == 3                     ? 5
+                                                                            : 11;
         log("User exception: vector=%u rip=%x address=%x pid=%u signal=%u\n", f->vector, f->rip,
             cr2, uint64_t(current->pid), uint64_t(signal));
         if (current->signal_mask & (1ull << (signal - 1)) ||
             current->handlers->signal_actions[signal - 1][0] == 1)
             exit_task(current, signal);
         else
-            queue_signal(current, signal, 0, f->vector == 14 ? (f->error & 1) ? 2 : 1 : 1, 0,
-                         f->vector == 14 ? cr2 : f->rip);
+            queue_signal(
+                current, signal, 0,
+                fault == MemfdFault::bus ||
+                        (f->vector == 14 && ((f->error & 1) || fault == MemfdFault::protection))
+                    ? 2
+                    : 1,
+                0, f->vector == 14 ? cr2 : f->rip);
         return schedule(f, true);
     }
     log("FAULT vector=%u error=%x rip=%x address=%x pid=%u\n", f->vector, f->error, f->rip, cr2,

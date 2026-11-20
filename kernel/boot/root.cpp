@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/boot/root.cpp
+ * @brief   Root filesystem bootstrap.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Uses boot arguments and available block devices to select and mount the
+ * initial root filesystem.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "boot/root.hpp"
 #include "fs/vfs.hpp"
 
@@ -54,6 +78,38 @@ static void volatile_mount(const char* name) {
     if (error)
         failure(name, error);
 }
+
+static void ipc_mount(const char* name, const char* type) {
+    Path destination = path(name);
+    Node* point = nullptr;
+    int error = resolve_path(destination, point, false);
+    if (error == -2)
+        error = create_node(destination, directory | 0755, point);
+    if (error)
+        failure(name, error);
+    if ((point->mode & 0170000) != directory)
+        failure(name, -20);
+    constexpr unsigned nosuid = 2, nodev = 4;
+    error = mount_filesystem(destination, path(""), type, nosuid | nodev);
+    if (error)
+        failure(name, error);
+    lookup(name)->mode = directory | 01777;
+}
+
+static void descriptor_links() {
+    const char* names[] = {"/dev/fd", "/dev/stdin", "/dev/stdout", "/dev/stderr"};
+    const char* targets[] = {"/proc/self/fd", "/proc/self/fd/0", "/proc/self/fd/1",
+                             "/proc/self/fd/2"};
+    for (unsigned i = 0; i < sizeof(names) / sizeof(*names); i++) {
+        auto name = path(names[i]);
+        Node* node = nullptr;
+        int error = resolve_path(name, node, false);
+        if (error == -2)
+            error = create_node(name, symlink | 0777, node, targets[i]);
+        if (error)
+            failure(names[i], error);
+    }
+}
 } // namespace
 
 void boot_root_init(const char* command) {
@@ -67,6 +123,9 @@ void boot_root_init(const char* command) {
         if (filesystem || policy)
             failure("configuration", -22);
         volatile_mount("/proc");
+        ipc_mount("/dev/shm", "ramfs");
+        ipc_mount("/dev/mqueue", "mqueue");
+        descriptor_links();
         return;
     }
     if (strlen(root) != 8 || memcmp(root, "/dev/vd", 7) || root[7] < 'a' || root[7] > 'h')
@@ -87,6 +146,9 @@ void boot_root_init(const char* command) {
     const char* volatile_paths[] = {"/dev", "/proc", "/sys", "/tmp", "/run"};
     for (auto name : volatile_paths)
         volatile_mount(name);
+    ipc_mount("/dev/shm", "ramfs");
+    ipc_mount("/dev/mqueue", "mqueue");
+    descriptor_links();
     // /tmp is private scratch space even when ordinary root files are persistent.
     auto temporary = lookup("/tmp");
     temporary->mode = directory | 01777;

@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/process/exec_arguments.cpp
+ * @brief   Executable argument collection.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Copies user argument and environment vectors and prepares their layout for
+ * program startup.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "process/exec_arguments.hpp"
 
 namespace ax {
@@ -159,7 +183,7 @@ int ExecArguments::capture(Read read, void* context, uint64_t path, uint64_t arg
         return -22;
     size_t length = 0;
     int error = 0;
-    while (length < sizeof(path_)) {
+    while (length < exec_path_limit) {
         if (path >= user_limit || !read(context, path++, path_ + length, 1)) {
             error = -14;
             break;
@@ -167,11 +191,31 @@ int ExecArguments::capture(Read read, void* context, uint64_t path, uint64_t arg
         if (!path_[length++])
             break;
     }
-    if (!error && (length == sizeof(path_) && path_[length - 1]))
+    if (!error && (length == exec_path_limit && path_[length - 1]))
         error = -36;
+    if (error) {
+        clear();
+        return error;
+    }
     budget_ = length;
-    if (!error)
-        error = vector(read, context, argv, nullptr, argc_);
+    return capture_user_vectors(read, context, argv, envp);
+}
+
+int ExecArguments::capture_named(Read read, void* context, const char* filename, uint64_t argv,
+                                 uint64_t envp, uint64_t stack_limit) {
+    clear();
+    stack_limit_ = stack_limit;
+    limit_ = max(size_t(32 * page_size), min(exec_argument_limit, size_t(stack_limit / 4)));
+    size_t length = strlen(filename) + 1;
+    if (length > sizeof(path_))
+        return -36;
+    memcpy(path_, filename, length);
+    budget_ = length;
+    return capture_user_vectors(read, context, argv, envp);
+}
+
+int ExecArguments::capture_user_vectors(Read read, void* context, uint64_t argv, uint64_t envp) {
+    int error = vector(read, context, argv, nullptr, argc_);
     bool empty = !argc_;
     if (!error && empty) {
         // Linux supplies one empty argument when the caller passes argc zero.
@@ -195,9 +239,9 @@ int ExecArguments::capture_kernel(const char* path, const char* const* argv,
     if (!path)
         return -14;
     size_t length = 0;
-    while (length < sizeof(path_) && path[length])
+    while (length < exec_path_limit && path[length])
         length++;
-    if (length == sizeof(path_))
+    if (length == exec_path_limit)
         return -36;
     memcpy(path_, path, length + 1);
     budget_ = length + 1;
@@ -214,6 +258,57 @@ int ExecArguments::capture_kernel(const char* path, const char* const* argv,
     if (error)
         clear();
     return error;
+}
+
+int ExecArguments::enter_interpreter(const char* interpreter, const char* option,
+                                     const char* script) {
+    size_t removed = strlen(values_[0]) + 1;
+    size_t previous_count = count_;
+    size_t interpreter_size = strlen(interpreter) + 1;
+    size_t option_size = option ? strlen(option) + 1 : 0;
+    size_t script_size = strlen(script) + 1;
+    size_t prefix_entries = option ? 3 : 2;
+    size_t prefix_size = interpreter_size + option_size + script_size;
+    if (prefix_size + (prefix_entries - 1) * sizeof(uint64_t) > limit_ - budget_ + removed)
+        return -7;
+
+    memmove(text_, text_ + removed, used_ - removed);
+    used_ -= removed;
+    budget_ -= removed;
+    values_[0] = nullptr;
+    for (size_t i = 1; i < previous_count; i++)
+        if (values_[i])
+            values_[i] -= removed;
+
+    for (size_t i = 1; i < prefix_entries; i++) {
+        if (int error = append_pointer(nullptr, true))
+            return error;
+    }
+    if (int error = append_bytes(interpreter, interpreter_size))
+        return error;
+    if (option_size)
+        if (int error = append_bytes(option, option_size))
+            return error;
+    if (int error = append_bytes(script, script_size))
+        return error;
+
+    // Keep argv and envp in string order as well as pointer order.
+    memmove(text_ + prefix_size, text_, used_ - prefix_size);
+    memcpy(text_, interpreter, interpreter_size);
+    if (option_size)
+        memcpy(text_ + interpreter_size, option, option_size);
+    memcpy(text_ + interpreter_size + option_size, script, script_size);
+    for (size_t i = 1; i < previous_count; i++)
+        if (values_[i])
+            values_[i] += prefix_size;
+    memmove(values_ + prefix_entries, values_ + 1, (previous_count - 1) * sizeof(*values_));
+    values_[0] = text_;
+    if (option_size)
+        values_[1] = text_ + interpreter_size;
+    values_[prefix_entries - 1] = text_ + interpreter_size + option_size;
+    processed_ = count_;
+    argc_ += prefix_entries - 1;
+    return 0;
 }
 
 int ExecArguments::layout(uint64_t top, size_t auxiliary_size, ExecStack& output) const {

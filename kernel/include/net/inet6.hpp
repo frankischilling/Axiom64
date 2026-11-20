@@ -1,4 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/include/net/inet6.hpp
+ * @brief   IPv6 socket address helpers.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Declares IPv6 socket address construction, parsing, and conversion helpers.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #pragma once
 #include "core/base.hpp"
 #include "net/ipv6.hpp"
@@ -53,6 +76,7 @@ inline const uint8_t* inet6_bytes(const Inet6Frame* frame) {
 }
 
 void inet6_close(Inet6Socket*);
+bool inet6_udp(const Inet6Socket*);
 bool inet6_ready(Inet6Socket*, bool write);
 bool inet6_error_queued(Inet6Socket*);
 // Synchronous error-queue reads never enter retained blocking I/O.
@@ -73,7 +97,7 @@ int inet6_error(Inet6Socket*, bool clear = false);
 void inet6_complete(Inet6Socket*, size_t bytes, int error);
 bool inet6_deliver(unsigned index, const ip6::Packet&);
 int64_t inet6_send(Inet6Socket*, const Inet6Address&, const void*, size_t, bool named = false,
-                   const Inet6SendControl* = nullptr);
+                   const Inet6SendControl* = nullptr, bool more = false);
 int64_t inet6_read(Inet6Socket*, void*, size_t);
 int64_t inet6_syscall(Task&, const Frame&);
 } // namespace ax

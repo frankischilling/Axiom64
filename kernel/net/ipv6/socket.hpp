@@ -1,15 +1,41 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/net/ipv6/socket.hpp
+ * @brief   IPv6 socket internals.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Defines internal IPv6 socket state shared by the protocol, option, and
+ * ancillary handlers.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #pragma once
 #include "net/inet6.hpp"
 #include "net/ipv6.hpp"
 #include "net/ipv6/destination.hpp"
 #include "net/ipv6/errors.hpp"
 #include "net/ipv6/path_mtu.hpp"
+#include "net/udp/cork.hpp"
 
 namespace ax {
 constexpr unsigned inet6_socket_count = 256, inet6_queue_count = 32;
 constexpr uint32_t inet6_queue_bytes = 65536;
 static_assert(inet6_socket_count <= ip6::path_mtu_reference_capacity);
+using Inet6UdpCork = UdpCork<Inet6Address, Inet6SendControl>;
 
 struct Inet6Socket {
     bool used = false, bound = false, connected = false, reuse = false, port_locked = false;
@@ -35,6 +61,8 @@ struct Inet6Socket {
     Inet6Error* errors[inet6_queue_count]{};
     unsigned error_head = 0, error_count = 0;
     size_t error_bytes = 0;
+    Inet6UdpCork* cork = nullptr;
+    bool udp_cork = false;
 };
 
 extern Inet6Socket inet6_sockets[inet6_socket_count];

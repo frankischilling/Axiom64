@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/fs/ext2/ext2.cpp
+ * @brief   ext2 filesystem operations.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Reads and updates ext2 inodes, directories, and block mappings through the
+ * block device layer.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "fs/ext2/ext2.hpp"
 #include "fs/ext2/xattr.hpp"
 #include "fs/ext2/journal.hpp"
@@ -60,7 +84,7 @@ static uint8_t file_type(uint32_t mode) {
         return 3;
     case block_device:
         return 4;
-    case 0010000:
+    case fifo:
         return 5;
     case 0140000:
         return 6;
@@ -1629,7 +1653,8 @@ struct Validation {
                             return v.fail(-95);
                     continue;
                 }
-                if (type != regular_file && type != directory && type != symlink && type != 0140000)
+                if (type != regular_file && type != directory && type != symlink && type != fifo &&
+                    type != 0140000)
                     return v.fail(-95);
                 // Inode flags and fragments need separate policy/layout support.
                 if (u32(data + 32) || u32(data + 112) || u16(data + 116) ||
@@ -1664,7 +1689,7 @@ struct Validation {
                     return v.fail();
                 if (type == symlink && (!length || length > 4095))
                     return v.fail();
-                if (type == 0140000 &&
+                if ((type == fifo || type == 0140000) &&
                     (length || u32(data + 28) != count * (v.block_size / sector_size)))
                     return v.fail();
                 if (resize) {

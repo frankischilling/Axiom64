@@ -41,5 +41,6 @@ scripts/tests/fixtures/udp-wire/**/serial.log -text -whitespace
 scripts/tests/fixtures/dns-observer/*.log -text -whitespace
 scripts/tests/fixtures/dns-observer/*.pcap binary
 scripts/tests/fixtures/tcp6-isolation-prelude/client.log -text -whitespace
+scripts/tests/fixtures/tcp6-isolation-prelude/client.c.txt -text -whitespace
 scripts/tests/fixtures/tcp6-isolation-prelude/*.pcap binary
 scripts/tests/fixtures/normal-console/supervision-interrupted-prompt.txt -text -whitespace

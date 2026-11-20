@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import zipfile
 from fetch import ROOT
+from reference_source import matches_file
 
 FIXTURE = ROOT / 'scripts/tests/fixtures/ipv6-source-policy-linux7.json'
 PREFIX = 'IPV6_SOURCE_POLICY'
@@ -42,9 +43,9 @@ def records(text):
 def verify_log(text):
     expected = json.loads(FIXTURE.read_text())
     reference = expected['reference']
-    source = ROOT / 'userspace/tests/net/ipv6_source_policy.c'
+    source = 'userspace/tests/net/ipv6_source_policy.c'
     if (expected['schema'] != 1 or reference['kernel'] != '7.0.0-1017-azure' or
-            reference['source_sha256'] != hashlib.sha256(source.read_bytes()).hexdigest() or
+            not matches_file(ROOT, source, reference['source_sha256']) or
             not reference['actual_program_completed'] or not reference['actual_cpio_reopened'] or
             len(expected['observations']) != 114):
         raise ValueError('complete executed source-bound Linux source-policy reference')

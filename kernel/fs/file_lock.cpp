@@ -1,5 +1,30 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/fs/file_lock.cpp
+ * @brief   Whole-file advisory locks.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Manages lock owners, compatibility, and wakeups for the kernel's flock
+ * operations.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "fs/file_lock.hpp"
+#include "fs/descriptor_inode.hpp"
 
 namespace ax {
 bool file_lock_operation(uint32_t operation) {
@@ -24,7 +49,7 @@ int file_lock_try(Handle* handle, uint32_t operation) {
     if (!handle || (handle->flags & 010000000)) // O_PATH does not allow flock.
         return -9;
     auto node = handle->node;
-    if (!node)
+    if (!node || is_anonymous_pipe_inode(node))
         return -95;
     unsigned kind = operation & ~uint32_t(4);
     if (kind == handle->file_lock)

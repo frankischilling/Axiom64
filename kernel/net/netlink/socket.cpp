@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/net/netlink/socket.cpp
+ * @brief   Netlink socket transport.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Queues requests and responses and maintains netlink socket addressing and
+ * readiness.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "net/netlink.hpp"
 #include "process/task.hpp"
 
@@ -16,6 +40,7 @@ size_t aligned(size_t size) {
 struct NetlinkSocket {
     bool used = false, connected = false, capped = false, strict = false;
     unsigned type = 3, head = 0, count = 0;
+    unsigned deliveries = 0;
     uint32_t port = 0;
     size_t bytes = 0;
     NetlinkFrame* queue[queue_count]{};
@@ -93,8 +118,27 @@ size_t netlink_available(NetlinkSocket* socket) {
 }
 
 bool netlink_ready(NetlinkSocket* socket, bool write) {
-    return write ? socket->count < queue_count && socket->bytes + 36 <= queue_bytes
+    return write ? socket->count + socket->deliveries < queue_count &&
+                       socket->bytes + 36 <= queue_bytes
                  : socket->count != 0;
+}
+
+int netlink_reserve_delivery(NetlinkSocket* socket, size_t length, NetlinkFrame*& frame) {
+    if (socket->count + socket->deliveries >= queue_count || length > queue_bytes - socket->bytes)
+        return -11;
+    frame = static_cast<NetlinkFrame*>(alloc(sizeof(NetlinkFrame) + length));
+    if (!frame)
+        return -12;
+    frame->source = {};
+    frame->length = frame->reserved = length;
+    ++socket->deliveries;
+    socket->bytes += length;
+    return 0;
+}
+
+void netlink_publish_delivery(NetlinkSocket* socket, NetlinkFrame* frame) {
+    --socket->deliveries;
+    socket->queue[(socket->head + socket->count++) % queue_count] = frame;
 }
 
 int64_t netlink_read(NetlinkSocket* socket, void* output, size_t length) {
@@ -107,7 +151,7 @@ int64_t netlink_read(NetlinkSocket* socket, void* output, size_t length) {
     return copied;
 }
 
-int64_t netlink_send(NetlinkSocket* socket, unsigned process, const void* data, size_t length) {
+int64_t netlink_send(Task& task, NetlinkSocket* socket, const void* data, size_t length) {
     if (length > netlink_max_request)
         return -90;
     if (!length)
@@ -138,9 +182,10 @@ int64_t netlink_send(NetlinkSocket* socket, unsigned process, const void* data, 
     }
     if (total > queue_bytes)
         return -90;
-    if (count > queue_count - socket->count || total > queue_bytes - socket->bytes)
+    if (count > queue_count - socket->count - socket->deliveries ||
+        total > queue_bytes - socket->bytes)
         return -11;
-    int error = socket->port ? 0 : bind_port(socket, 0, process);
+    int error = socket->port ? 0 : bind_port(socket, 0, task.process->pid);
     if (error)
         return error;
     NetlinkFrame* replies[queue_count]{};
@@ -156,9 +201,9 @@ int64_t netlink_send(NetlinkSocket* socket, unsigned process, const void* data, 
         auto reply = replies[i];
         reply->source = {};
         reply->reserved = capacities[i];
-        reply->length = routing_reply(
-            bytes + positions[i], socket->port, socket->capped, reply + 1,
-            current && capable(current->credentials, Capability::net_admin), socket->strict);
+        reply->length =
+            routing_reply(bytes + positions[i], socket->port, socket->capped, reply + 1,
+                          capable(task.credentials, Capability::net_admin), socket->strict);
         if (!reply->length) {
             release(reply);
             continue;

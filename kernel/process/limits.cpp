@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/process/limits.cpp
+ * @brief   Process resource limits.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Stores and enforces the resource limits shared by a process and inherited by
+ * its children.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #include "process/limits.hpp"
 
 namespace ax {
@@ -9,6 +33,7 @@ ProcessLimits::ProcessLimits(uint64_t descriptor_capacity)
     values_[unsigned(Resource::open_files)] = {descriptor_capacity, descriptor_capacity};
     values_[unsigned(Resource::stack)].soft = 8 * 1024 * 1024;
     values_[unsigned(Resource::core)].soft = 0;
+    values_[unsigned(Resource::message_queue)] = {819200, 819200};
     values_[unsigned(Resource::nice)] = {0, 0};
     values_[unsigned(Resource::realtime_priority)] = {0, 0};
 }

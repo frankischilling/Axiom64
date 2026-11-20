@@ -348,12 +348,15 @@ def inspect(path,lane,text,group,native=False,statistics=None,native_kernel_rele
                 require(first['target']==ready['target'] and first['target']!=automatic['target'] and
                         first['target']!=prefixes[case][:8]+identifier,'stable retry has a fresh non-EUI64 identity')
                 if case==4:
-                    elapsed=first['guest_ns']-replaced['guest_ns']
+                    require(case_conflicts[0]['row']['index'] < first['row']['index'],
+                            'the original conflict precedes the first finite retry query')
+                    elapsed = (1000 * (microseconds(first['row']) - microseconds(case_conflicts[0]['row']))
+                               if native else first['guest_ns'] - replaced['guest_ns'])
                     require(first['flags']==0x840 and elapsed>=0 and 0<first['preferred']<=6 and
                             first['valid']==first['preferred']+4 and
                             max(0,6-(elapsed+20000000)//1000000000)<=first['preferred']<=
                             6-max(0,elapsed-20000000)//1000000000,
-                            'first finite retry query ages from the captured six/ten replacement')
+                            'first finite retry query ages from the observed cache origin')
                 else:exact(first,{1:0x8c0,3:0x8c2}[case],inf,inf)
                 require(ready['flags']=={1:0x880,3:0x882,4:0x800}[case], 'actual retry becomes ready with preserved raw flags')
                 retry=[probe for probe in case_probes if probe['target']==first['target']]

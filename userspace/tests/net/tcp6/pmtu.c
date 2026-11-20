@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    userspace/tests/net/tcp6/pmtu.c
+ * @brief   IPv6 TCP path MTU test.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Checks TCP transfer behavior when IPv6 path MTU feedback changes segment
+ * sizes.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #define _GNU_SOURCE
 #define IPV6_TEST_LABEL "TCP6_PMTU"
 #define IPV6_BARRIER_PROTOCOL 0x88c2
@@ -105,7 +129,9 @@ int main(int argc, char** argv) {
     signal(SIGPIPE, SIG_IGN);
     alarm(120);
     check(argc == 1 || (argc == 2 && !strcmp(argv[1], "--native")), "known fixture invocation");
-    check(close(fixture_interfaces()) == 0, "PMTU interface setup");
+    // Only the Ethernet barrier uses this socket. Keep the TCP burst out of its queue.
+    check(close(fixture_interfaces_for_protocol(IPV6_BARRIER_PROTOCOL)) == 0,
+          "PMTU interface setup");
     for (unsigned lane = 0; lane < 2; lane++)
         for (unsigned scenario = 0; scenario < scenarios; scenario++)
             flow(lane, scenario);

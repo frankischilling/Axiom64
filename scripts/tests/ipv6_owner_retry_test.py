@@ -14,13 +14,14 @@ FIXTURE = Path(__file__).parent / 'fixtures/ipv6-owner-native-retry-aged-lane0.p
 
 
 class FiniteOwnerRetry(unittest.TestCase):
-    def replay(self, mutate=None):
+    def replay(self, mutate=None, conflict_delay_ns=0):
         peer = Peer(0, 'global', native=True)
         # This historical capture predates the case 3 probe barrier. Replay
         # just the finite takeover case with consecutive control phases.
         peer.cases = (4,)
         in_case = False
         found = False
+        realtime_offset_ns = None
         for row in raw_records(FIXTURE):
             frame = row['frame']
             if frame[6:12] != peer.guest:
@@ -32,12 +33,18 @@ class FiniteOwnerRetry(unittest.TestCase):
                 continue
             selected = control and frame[20:22] == bytes([9, 4])
             if control:
+                if realtime_offset_ns is None:
+                    realtime_offset_ns = row['stamp'] * 1000 - int.from_bytes(frame[52:60], 'big')
                 frame = bytearray(frame)
                 frame[19] = len(peer.controls)
                 if selected and mutate:
                     mutate(frame)
                 frame = bytes(frame)
-            with patch('ipv6_owner_peer.time.monotonic_ns', return_value=row['stamp'] * 1000):
+            received_ns = row['stamp'] * 1000 - realtime_offset_ns
+            if (control and frame[20:22] == bytes([4, 4])) or peer.pending is not None:
+                received_ns += conflict_delay_ns
+            with patch('ipv6_owner_peer.time.monotonic_ns',
+                       return_value=received_ns):
                 peer.receive(frame)
             peer.outgoing.clear()
             if selected:
@@ -49,6 +56,15 @@ class FiniteOwnerRetry(unittest.TestCase):
     def test_original_native_first_query_keeps_aged_five_nine_cache(self):
         peer = self.replay()
         self.assertEqual((peer.samples[4, 9]['preferred'], peer.samples[4, 9]['valid']), (5, 9))
+
+    def test_delayed_conflict_starts_native_retry_aging_later(self):
+        def fresh_cache(frame):
+            struct.pack_into('!II', frame, 28, 6, 10)
+            stamp = int.from_bytes(frame[52:60], 'big') + 30_000_000
+            frame[52:60] = stamp.to_bytes(8, 'big')
+
+        peer = self.replay(fresh_cache, conflict_delay_ns=450_000_000)
+        self.assertEqual((peer.samples[4, 9]['preferred'], peer.samples[4, 9]['valid']), (6, 10))
 
     def test_wrong_raw_flags_are_still_rejected(self):
         with self.assertRaisesRegex(ValueError, 'actual retry'):

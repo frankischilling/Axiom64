@@ -1,4 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+/**
+ * @file    kernel/include/core/base.hpp
+ * @brief   Kernel core types and runtime interfaces.
+ * @author  frankischilling
+ * @date    2026-11-18
+ *
+ * Defines shared scalar types, page constants, low-level runtime functions, and
+ * memory allocation declarations.
+ *
+ * Copyright (C) 2026 frankischilling
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <https://gnu.org/licenses/>.
+ */
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
@@ -22,6 +46,8 @@ constexpr uint64_t page_mask = 0x000ffffffffff000;
 // Software bit outside the x86-64 physical-address field: mapping may not gain execution.
 constexpr uint64_t page_no_execute = 1ull << 52;
 constexpr uint64_t page_private = 1ull << 53, page_stack = 1ull << 54;
+constexpr uint64_t page_file = 1ull << 55, page_file_access = 1ull << 56,
+                   page_file_write = 1ull << 57, page_file_cow = 1ull << 58;
 constexpr uint64_t page_software = 0xe00 | page_no_execute | page_private | page_stack;
 
 constexpr uint64_t align_down(uint64_t x) {
@@ -113,8 +139,10 @@ uint64_t page_alloc(size_t count = 1);
 void page_free(uint64_t p, size_t count = 1);
 
 void page_retain(uint64_t p, size_t count = 1);
+bool page_try_retain(uint64_t p);
 
 bool page_shared(uint64_t p, size_t count = 1);
+unsigned page_reference_count(uint64_t p);
 
 void* alloc(size_t);
 
@@ -127,9 +155,12 @@ struct Frame {
 
 static_assert(sizeof(Frame) == 22 * 8);
 
+struct MemfdMapping;
+
 struct AddressSpace {
     uint64_t root = 0;
     uint64_t next_map = 0x100000000;
+    MemfdMapping* file_mappings = nullptr;
 
     bool create();
 
@@ -141,10 +172,14 @@ struct AddressSpace {
 
     uint64_t mapped_size(uint64_t start = 0, uint64_t length = user_limit) const;
 
+    uint64_t find_unmapped(size_t length) const;
+
     uint64_t private_writable_size(uint64_t start = 0, uint64_t length = user_limit,
                                    bool make_writable = false) const;
 
     bool map(uint64_t va, size_t len, int prot, bool private_mapping = true);
+
+    bool prepare_mapping(uint64_t va, size_t len);
 
     bool map_physical(uint64_t va, uint64_t pa, size_t len, int prot, bool external = false);
 
@@ -153,6 +188,7 @@ struct AddressSpace {
     bool protect(uint64_t va, size_t len, int prot);
 
     bool valid(uint64_t va, size_t len, bool write = false) const;
+    uint64_t retain_readable_page(uint64_t address);
 
     bool copy_in(void* dst, uint64_t src, size_t len) const;
 

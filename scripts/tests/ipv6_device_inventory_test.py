@@ -13,6 +13,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from ipv6_device_inventory import observations
+from reference_source import matches, matches_file
 
 FIXTURES = ROOT / 'scripts/tests/fixtures'
 REFERENCE = FIXTURES / 'ipv6-device-inventory-linux7.json'
@@ -65,8 +66,12 @@ class ActualDeviceInventory(unittest.TestCase):
         self.text = data.decode()
 
     def test_actual_native_queries_and_current_source(self):
-        self.assertEqual(hashlib.sha256((ROOT / 'userspace/tests/net/ipv6_device_inventory.c').read_bytes()).hexdigest(),
-                         self.reference['source_sha256'])
+        source = 'userspace/tests/net/ipv6_device_inventory.c'
+        original = self.reference['source_sha256']
+        self.assertTrue(matches_file(ROOT, source, original))
+        self.assertTrue(matches(source, original, original))
+        changed = hashlib.sha256((ROOT / source).read_bytes() + b'\n').hexdigest()
+        self.assertFalse(matches(source, original, changed))
         result = observations(self.text, self.reference)
         self.assertTrue(result['passed'], result)
         self.assertEqual((len(result['observations']), result['raw_transactions']), (60, 48))

@@ -28,7 +28,7 @@ Policy was checked against Linux commit [`3857c2fe5449541e24afc5efdb0f81a8a8f9a3
 
 ## Upstream tools and verification
 
-`/usr/sbin/getcap` and `/usr/sbin/setcap` come from the SHA256-pinned [libcap 2.78 release](https://www.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-2.78.tar.xz). The build elects upstream's BSD-3-Clause option and preserves the complete upstream `License`, archive and relinkable `libcap.a`. Runtime tools link against the pinned runtime musl provider; test fixtures retain static and dynamic tools built against the separate build provider. Native tests retain the actual glibc libraries/startup objects, notices, and matching source authenticated through Ubuntu's signed archive indices.
+`/usr/sbin/getcap` and `/usr/sbin/setcap` come from the SHA256-pinned [libcap 2.78 release](https://www.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-2.78.tar.xz). The build elects upstream's BSD-3-Clause option and preserves the complete upstream `License`, archive and relinkable `libcap.a`. Runtime tools link against the pinned runtime musl provider; test fixtures retain static and dynamic tools built against the separate build provider. Native tests retain the actual glibc libraries/startup objects, notices, and matching source authenticated through Ubuntu's signed archive indices. If the live indices have moved past the GNU login reader's pinned glibc version, the test checks that version in its dated Ubuntu archive with the same signature and checksum verification.
 
 ```sh
 make test-file-capabilities-policy test-xattr-store test-ext2-xattr-codec

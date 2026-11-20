@@ -284,8 +284,8 @@ def audit_case(directory, row, *, version=1):
 
     require(type(row.get('fault')) is bool and row.get('firmware') in ('bios', 'uefi') and
             row.get('transport') in ('modern', 'legacy'), 'known UDP firmware, transport and mode')
-    require(type(version) is int and version in (1, 2), 'known UDP route-lifetime source contract')
-    route_retirement = version == 2
+    require(type(version) is int and version in (1, 2, 3), 'known UDP wire fixture source contract')
+    route_retirement = version >= 2
     fault = row['fault']
     phase = Path(directory) / ('fault' if fault else 'normal')
     case = phase / (row['firmware'] + '-' + row['transport'])
@@ -321,6 +321,8 @@ def audit_case(directory, row, *, version=1):
                          f'UDP_LINK_DOWN index={index}', f'UDP_LINK_UP index={index}',
                          f'UDP_LINK_PASS index={index}', f'UDP_PRESSURE_PASS index={index} packets=33',
                          f'UDP_UNREACHABLE_PASS index={index}']
+            if version >= 3:
+                required.append(f'UDP_EPOLL_ALIAS_PASS index={index}')
     lines = text.splitlines()
     require(all(lines.count(marker) == 1 for marker in required) and
             not any(marker in text for marker in ('UDP_FAIL ', 'PANIC:', 'FAULT pid=')),

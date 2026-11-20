@@ -1,3 +1,4 @@
+#!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 # @file    userspace/tests/net/dhcp-codec.sh
 # @brief   Guest DHCP wire codec test.

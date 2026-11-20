@@ -10,6 +10,11 @@ Each node belongs to one mount. `stat.st_dev` identifies that mount; hard links 
 
 The ELF loader and private file mappings read through the filesystem interface. Shared mappings request backing from the filesystem and return `ENODEV` when it has no shared-mapping operation. RAM shared pages remain referenced after descriptors close and across fork. A mapping created from a read-only descriptor or mount cannot gain write access through `mprotect`.
 
+`MAP_FIXED_NOREPLACE` maps the requested address or returns `EEXIST` if any part
+of it is already mapped, including `PROT_NONE` pages and memfd pages that have
+yet to fault in. If page allocation fails during mapping, the kernel releases
+newly allocated pages and empty page tables before returning `ENOMEM`.
+
 ## Guest operations
 
 | Operation | Supported behavior |

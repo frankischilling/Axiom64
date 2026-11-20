@@ -56,6 +56,7 @@
 
 static const char* executable;
 static int exec_quota_first;
+static int native_comparison;
 static unsigned observations;
 static volatile sig_atomic_t file_signals;
 
@@ -428,6 +429,14 @@ static void address_space(void) {
     held[0] = 'Q';
     void* slot = held + page;
     CHECK(munmap(slot, (size_t)page * 2) == 0);
+    const int fixed = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE;
+    CHECK(mmap(held + 1, (size_t)page, PROT_NONE, fixed, -1, 0) == MAP_FAILED && errno == EINVAL);
+    CHECK(mmap(slot, 2 * (size_t)page + 1, PROT_NONE, fixed, -1, 0) == MAP_FAILED &&
+          errno == EEXIST);
+    CHECK(mmap(slot, (size_t)page, PROT_NONE, fixed, -1, 0) == slot);
+    CHECK(mmap(slot, (size_t)page, PROT_READ, fixed | MAP_FIXED, -1, 0) == MAP_FAILED &&
+          errno == EEXIST);
+    CHECK(munmap(slot, (size_t)page) == 0 && held[0] == 'Q');
     char path[] = "/tmp/resource-map-XXXXXX";
     int file = mkstemp(path);
     CHECK(file >= 0 && ftruncate(file, page) == 0);
@@ -443,6 +452,9 @@ static void address_space(void) {
           errno == ENOMEM);
     CHECK(mmap(NULL, (size_t)page, PROT_READ | PROT_WRITE, MAP_SHARED, file, 0) == MAP_FAILED &&
           errno == ENOMEM);
+    CHECK(mmap(held, (size_t)page, PROT_NONE, fixed, -1, 0) == MAP_FAILED && errno == EEXIST &&
+          held[0] == 'Q');
+    CHECK(mmap(slot, (size_t)page, PROT_NONE, fixed, -1, 0) == MAP_FAILED && errno == ENOMEM);
     uintptr_t old_break = (uintptr_t)syscall(SYS_brk, 0);
     CHECK((uintptr_t)syscall(SYS_brk, old_break + (uintptr_t)page) == old_break);
     CHECK(shmat(segment, NULL, 0) == (void*)-1 && errno == ENOMEM);
@@ -499,6 +511,24 @@ static void address_space(void) {
     void* shared = shmat(segment, NULL, 0);
     CHECK(shared != (void*)-1 && shmdt(shared) == 0 && shmctl(segment, IPC_RMID, NULL) == 0);
     CHECK(munmap(held, (size_t)page * 4) == 0 && close(file) == 0 && unlink(path) == 0);
+    if (!native_comparison) {
+        // The guest has 256 MiB total RAM, including the kernel and initramfs.
+        uintptr_t base = UINT64_C(0x20000000000);
+        int memory = memfd_create("rollback-neighbour", 0);
+        CHECK(memory >= 0 && ftruncate(memory, page) == 0);
+        char* neighbour = mmap((void*)base, (size_t)page, PROT_READ,
+                               MAP_PRIVATE | MAP_FIXED_NOREPLACE, memory, 0);
+        CHECK(neighbour == (void*)base && close(memory) == 0);
+        void* address = (void*)(base + (uintptr_t)page);
+        CHECK(mmap(address, 256 * 1024 * 1024, PROT_READ | PROT_WRITE, fixed, -1, 0) ==
+                  MAP_FAILED &&
+              errno == ENOMEM);
+        CHECK(*neighbour == 0 && munmap(neighbour, (size_t)page) == 0);
+        unsigned char* retry = mmap(address, (size_t)page, PROT_READ | PROT_WRITE, fixed, -1, 0);
+        CHECK(retry == address && *retry == 0);
+        *retry = 'R';
+        CHECK(munmap(retry, (size_t)page) == 0);
+    }
 }
 
 static void isolated(void (*run)(void), const char* name) {
@@ -1271,7 +1301,8 @@ int main(int argc, char** argv) {
     }
     CHECK((argc == 1 || (argc == 2 && !strcmp(argv[1], "--native"))) && geteuid() == 0);
     executable = argv[0];
-    if (argc == 2) {
+    native_comparison = argc == 2;
+    if (native_comparison) {
         struct utsname kernel;
         unsigned major, minor;
         CHECK(uname(&kernel) == 0 && sscanf(kernel.release, "%u.%u", &major, &minor) == 2);

@@ -25,7 +25,10 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
+#include <sched.h>
 #include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +36,7 @@
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #define CHECK(expression)                                                                          \
@@ -59,6 +63,99 @@ static void observed(const char* label) {
     printf("WAITID_OBSERVATION %s\n", label);
     fflush(stdout);
     observations++;
+}
+
+static int64_t microseconds(struct timeval time) {
+    CHECK(time.tv_usec >= 0 && time.tv_usec < 1000000);
+    return (int64_t)time.tv_sec * 1000000 + time.tv_usec;
+}
+
+static int64_t thread_nanoseconds(void) {
+    struct timespec time;
+    CHECK(clock_gettime(CLOCK_THREAD_CPUTIME_ID, &time) == 0);
+    return (int64_t)time.tv_sec * 1000000000 + time.tv_nsec;
+}
+
+static void* spend_cpu_time(void* unused) {
+    (void)unused;
+    int64_t finish = thread_nanoseconds() + 150000000;
+    volatile unsigned count = 0;
+    do {
+        for (unsigned i = 0; i < 100000; i++)
+            count++;
+    } while (thread_nanoseconds() < finish);
+    return NULL;
+}
+
+static void pin_resource_usage_to_one_cpu(void) {
+    cpu_set_t available;
+    CPU_ZERO(&available);
+    CHECK(sched_getaffinity(0, sizeof(available), &available) == 0);
+    for (int cpu = 0; cpu < CPU_SETSIZE; cpu++) {
+        if (CPU_ISSET(cpu, &available)) {
+            cpu_set_t single;
+            CPU_ZERO(&single);
+            CPU_SET(cpu, &single);
+            CHECK(sched_setaffinity(0, sizeof(single), &single) == 0);
+            return;
+        }
+    }
+    CHECK(0);
+}
+
+static void resource_usage(void) {
+    struct rusage before, after, this_thread, later_thread, pending, waited;
+    CHECK(getrusage(RUSAGE_SELF, &before) == 0 && getrusage(RUSAGE_THREAD, &this_thread) == 0);
+    pthread_t other;
+    CHECK(pthread_create(&other, NULL, spend_cpu_time, NULL) == 0 &&
+          pthread_join(other, NULL) == 0);
+    CHECK(getrusage(RUSAGE_THREAD, &later_thread) == 0 && getrusage(RUSAGE_SELF, &after) == 0);
+    CHECK(microseconds(after.ru_utime) - microseconds(before.ru_utime) >=
+          microseconds(later_thread.ru_utime) - microseconds(this_thread.ru_utime) + 80000);
+    CHECK(microseconds(after.ru_stime) >= microseconds(before.ru_stime));
+    CHECK(syscall(SYS_getrusage, 42, &after) == -1 && errno == EINVAL);
+    CHECK(syscall(SYS_getrusage, RUSAGE_SELF, (void*)1) == -1 && errno == EFAULT);
+
+    CHECK(getrusage(RUSAGE_CHILDREN, &before) == 0);
+    pid_t pid = fork();
+    CHECK(pid >= 0);
+    if (!pid) {
+        pid_t grandchild = fork();
+        CHECK(grandchild >= 0);
+        if (!grandchild) {
+            spend_cpu_time(NULL);
+            _exit(0);
+        }
+        int status;
+        CHECK(waitpid(grandchild, &status, 0) == grandchild && WIFEXITED(status) &&
+              !WEXITSTATUS(status));
+        _exit(23);
+    }
+    siginfo_t info;
+    int status;
+    CHECK(syscall(SYS_waitid, P_PID, pid, &info, WEXITED | WNOWAIT, &pending) == 0 &&
+          info.si_status == 23);
+    CHECK(getrusage(RUSAGE_CHILDREN, &after) == 0);
+    CHECK(microseconds(after.ru_utime) == microseconds(before.ru_utime));
+    CHECK(wait4(pid, &status, 0, &waited) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 23);
+    CHECK(microseconds(waited.ru_utime) >= 80000 &&
+          microseconds(waited.ru_utime) == microseconds(pending.ru_utime));
+    CHECK(getrusage(RUSAGE_CHILDREN, &after) == 0);
+    CHECK(llabs(microseconds(after.ru_utime) - microseconds(before.ru_utime) -
+                microseconds(waited.ru_utime)) <= 1);
+
+    before = after;
+    pid = fork();
+    CHECK(pid >= 0);
+    if (!pid) {
+        spend_cpu_time(NULL);
+        _exit(0);
+    }
+    CHECK(syscall(SYS_waitid, P_PID, pid, &info, WEXITED, &waited) == 0 && info.si_pid == pid);
+    CHECK(microseconds(waited.ru_utime) >= 80000 && getrusage(RUSAGE_CHILDREN, &after) == 0);
+    CHECK(llabs(microseconds(after.ru_utime) - microseconds(before.ru_utime) -
+                microseconds(waited.ru_utime)) <= 1);
+    observed("self_thread_and_reaped_child_cpu_usage");
 }
 
 static void byte(int fd, int writing) {
@@ -111,7 +208,8 @@ static void blocked(pid_t pid) {
     CHECK(0);
 }
 
-int main(void) {
+int main(int argc, char** argv) {
+    CHECK(argc == 1 || (argc == 2 && strcmp(argv[1], "--native") == 0));
     alarm(40);
     int ready[2], finish[2], status;
     CHECK(pipe(ready) == 0 && pipe(finish) == 0);
@@ -271,6 +369,11 @@ int main(void) {
     CHECK(syscall(SYS_waitid, P_PID, pid, NULL, WEXITED, NULL) == 0);
     CHECK(waitpid(pid, &status, WNOHANG) == -1 && errno == ECHILD);
     observed("linux_null_information_consumes_event");
+    // Linux can publish a zombie before its final scheduling switch. On one
+    // CPU the child has switched out by the time the parent's wait runs.
+    if (argc == 2)
+        pin_resource_usage_to_one_cpu();
+    resource_usage();
     close(ready[0]);
     close(ready[1]);
     close(finish[0]);

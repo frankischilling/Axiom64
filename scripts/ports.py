@@ -12,7 +12,7 @@ from fetch import ROOT, verify_archive
 
 BASE = "https://dl-cdn.alpinelinux.org/alpine/v3.22"
 LOCKFILE = ROOT / "ports.lock.json"
-TOOLCHAIN = ["gcc", "g++", "binutils", "musl-dev", "linux-headers", "make"]
+TOOLCHAIN = ["gcc", "g++", "binutils", "musl-dev", "linux-headers", "make", "nasm", "xorriso"]
 
 
 def download(url, destination, *, expected_sha256=None):

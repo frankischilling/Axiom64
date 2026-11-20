@@ -4,6 +4,14 @@ Axiom64 uses one repository and build system. The kernel is a modular monolith: 
 
 Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies a memory map, direct physical mapping, and framebuffer. The kernel installs its GDT, TSS, IDT, syscall entry, and 100 Hz PIT, selects an [elapsed counter clock](time.md), discovers block devices, and selects either the initramfs or an [ext2 disk root](disk-root.md) before executing `/sbin/init`.
 
+## Subsystem guides
+
+- [Persistent storage](storage.md), [filesystems and mounts](vfs.md), [advisory file locks](file-locks.md), and [extended attributes and file capabilities](file-capabilities.md)
+- [Accounts and authenticated sessions](accounts.md), [threads and futexes](threads.md), and [clocks and elapsed waits](time.md)
+- [Ethernet and packet sockets](network.md), [IPv4 routing and diagnostics](ipv4.md), [IPv6 addresses and sockets](ipv6.md), [UDP sockets](udp.md), [netlink](netlink.md), and [network configuration and DHCP](network-configuration.md)
+
+## Kernel and userspace layout
+
 | Module | Responsibility |
 | --- | --- |
 | `kernel/arch/x86_64/arch.cpp`, `entry.asm` | CPU tables, interrupts, syscall entry, register frames, return to Ring 3 |

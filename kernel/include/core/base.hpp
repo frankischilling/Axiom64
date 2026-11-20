@@ -134,7 +134,15 @@ inline void* physical(uint64_t p) {
     return reinterpret_cast<void*>(p + direct_map);
 }
 
+struct PhysicalMemoryStats {
+    uint64_t total, free, shared;
+};
+
+PhysicalMemoryStats physical_memory_stats();
+
 uint64_t page_alloc(size_t count = 1);
+
+void page_account_shared(uint64_t p, size_t count = 1);
 
 void page_free(uint64_t p, size_t count = 1);
 

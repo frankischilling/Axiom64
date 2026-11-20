@@ -197,6 +197,7 @@ The catalog contains 479 inventory entries, of which 478 remain in scope. A proj
 | `posixtestsuite` | planned | [F35](feature-roadmap.md#f35-reliability-and-compatibility-verification) |
 | `psymp3` | planned | [F24](feature-roadmap.md#f24-hd-audio-and-multimedia-interfaces) |
 | `python` | planned | [F28](feature-roadmap.md#f28-native-development-and-full-self-hosting) |
+| `xorriso` | demonstrated | [F28](feature-roadmap.md#f28-native-development-and-full-self-hosting) |
 | `qman` | planned | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |
 | `quickjs` | planned | [F28](feature-roadmap.md#f28-native-development-and-full-self-hosting) |
 | `readline` | bundled | [F36](feature-roadmap.md#f36-base-commands-and-runtime-library-coverage) |
@@ -500,7 +501,7 @@ The catalog contains 479 inventory entries, of which 478 remain in scope. A proj
 | `git` | planned | [F28](feature-roadmap.md#f28-native-development-and-full-self-hosting) |
 | `libtool` | planned | [F28](feature-roadmap.md#f28-native-development-and-full-self-hosting) |
 | `make` | demonstrated | [F28](feature-roadmap.md#f28-native-development-and-full-self-hosting) |
-| `nasm` | planned | [F28](feature-roadmap.md#f28-native-development-and-full-self-hosting) |
+| `nasm` | demonstrated | [F28](feature-roadmap.md#f28-native-development-and-full-self-hosting) |
 | `pkg-config` | planned | [F28](feature-roadmap.md#f28-native-development-and-full-self-hosting) |
 | `python` | planned | [F28](feature-roadmap.md#f28-native-development-and-full-self-hosting) |
 

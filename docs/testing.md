@@ -211,8 +211,11 @@ must be new; use `scripts/tcp6_test.py --output-directory PATH` for another run.
 reopens existing evidence without rerunning its producer. Kernel realtime packet
 timestamps remain untouched. A native monotonic arrival bracket of at most
 fifty milliseconds supplies a conservative lower bound for each retry interval;
-an overdue reader fails capture acceptance. The quiet-queue observer check is
-`sudo -n python3 scripts/tests/tcp6_observation_test.py`. These checks cover the
+an overdue reader fails capture acceptance. The monitor wakes on socket
+readiness. The scoped native loss suite saves the actual frames and clock
+samples before formatting their evidence files at shutdown. Run
+`sudo -n python3 scripts/tests/tcp6_observation_test.py` to check the quiet-queue
+observer. These checks cover the
 active/passive loss subset; ICMPv6, PMTU and full TCP6 lifetime acceptance remain
 open.
 

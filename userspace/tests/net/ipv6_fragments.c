@@ -169,16 +169,40 @@ static int wire_socket(unsigned lane, int type, unsigned local_port, unsigned pe
 
 static void payload(unsigned lane, unsigned number, int fd, size_t size, int link, int echo) {
     struct pollfd item = {.fd = fd, .events = POLLIN};
-    check(poll(&item, 1, 5000) == 1 && (item.revents & POLLIN), "fragment datagram readiness");
     struct sockaddr_in6 source, wanted = address(lane, 1,
                                                  echo   ? 0
                                                  : link ? 58011
                                                         : 57000 + lane,
                                                  link);
-    socklen_t length = sizeof(source);
-    check(recvfrom(fd, received, sizeof(received), MSG_DONTWAIT, (struct sockaddr*)&source,
-                   &length) == (ssize_t)size,
-          "complete reassembled datagram size");
+    uint64_t deadline = now() + 5000000000ULL;
+    socklen_t length;
+    ssize_t count;
+    for (;;) {
+        uint64_t current = now();
+        if (current >= deadline) {
+            errno = ETIMEDOUT;
+            check(0, "fragment datagram readiness");
+        }
+        int timeout = (int)((deadline - current + 999999) / 1000000);
+        int ready = poll(&item, 1, timeout);
+        if (ready < 0 && errno == EINTR)
+            continue;
+        if (!ready)
+            errno = ETIMEDOUT;
+        check(ready == 1 && (item.revents & POLLIN), "fragment datagram readiness");
+        length = sizeof(source);
+        errno = 0;
+        count = recvfrom(fd, received, sizeof(received), MSG_DONTWAIT, (struct sockaddr*)&source,
+                         &length);
+        // A receive can discard a checksum failure after poll reports a queued datagram.
+        if (count < 0 && (errno == EAGAIN || errno == EINTR))
+            continue;
+        break;
+    }
+    if (count != (ssize_t)size)
+        fprintf(stderr, "IPV6_FRAGMENTS_RECEIVE lane=%u case=%u expected=%zu received=%zd\n", lane,
+                number, size, count);
+    check(count == (ssize_t)size, "complete reassembled datagram size");
     check(length == sizeof(source) && !memcmp(&source, &wanted, sizeof(source)),
           "original datagram source and scope");
     if (echo)

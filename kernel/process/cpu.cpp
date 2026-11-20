@@ -32,10 +32,53 @@ Task* owner;
 uint64_t started;
 bool user;
 
+constexpr uint64_t load_period = 501; // Five seconds plus one 100 Hz tick.
+constexpr uint64_t load_scale = 1 << 11;
+uint64_t load_tick;
+LoadAverages load_average;
+
+uint64_t decay_for_periods(uint64_t decay, uint64_t periods) {
+    uint64_t result = load_scale;
+    while (periods) {
+        if (periods & 1)
+            result = (result * decay + load_scale / 2) / load_scale;
+        decay = (decay * decay + load_scale / 2) / load_scale;
+        periods >>= 1;
+    }
+    return result;
+}
+
+uint64_t smooth_load(uint64_t previous, uint64_t target, uint64_t decay, uint64_t periods) {
+    const uint64_t weight = decay_for_periods(decay, periods);
+    if (previous <= target)
+        return target - (target - previous) * weight / load_scale;
+    return target + (previous - target) * weight / load_scale;
+}
+
 uint64_t add(uint64_t left, uint64_t right) {
     return right > UINT64_MAX - left ? UINT64_MAX : left + right;
 }
 } // namespace
+
+void cpu_sample_load() {
+    const uint64_t periods = (ticks - load_tick) / load_period;
+    if (!periods)
+        return;
+    load_tick += periods * load_period;
+    uint64_t runnable = 0;
+    for (const auto& task : tasks)
+        if (task.state == State::runnable)
+            runnable++;
+    const uint64_t target = runnable * load_scale;
+    load_average.one = smooth_load(load_average.one, target, 1884, periods);
+    load_average.five = smooth_load(load_average.five, target, 2014, periods);
+    load_average.fifteen = smooth_load(load_average.fifteen, target, 2037, periods);
+}
+
+LoadAverages cpu_load_averages() {
+    // Linux's userspace representation has 16 fractional bits.
+    return {load_average.one << 5, load_average.five << 5, load_average.fifteen << 5};
+}
 
 void cpu_account(Task* next, bool userspace) {
     clock_refresh();
@@ -65,9 +108,26 @@ void cpu_depart(Task& task) {
         cpu_account();
 }
 
-uint64_t cpu_ticks(const Task& task, bool thread) {
+CpuUsage cpu_usage(const Task& task, bool thread) {
     cpu_refresh();
-    return thread ? add(task.cpu_user_ticks, task.cpu_system_ticks)
-                  : add(task.process->cpu_user_ticks, task.process->cpu_system_ticks);
+    if (thread)
+        return {task.cpu_user_ticks, task.cpu_system_ticks};
+    return {task.process->cpu_user_ticks, task.process->cpu_system_ticks};
+}
+
+CpuUsage cpu_waited_usage(const Process& process) {
+    return {add(process.cpu_user_ticks, process.children_user_ticks),
+            add(process.cpu_system_ticks, process.children_system_ticks)};
+}
+
+void cpu_reap_child(Process& parent, const Process& child) {
+    auto usage = cpu_waited_usage(child);
+    parent.children_user_ticks = add(parent.children_user_ticks, usage.user_ticks);
+    parent.children_system_ticks = add(parent.children_system_ticks, usage.system_ticks);
+}
+
+uint64_t cpu_ticks(const Task& task, bool thread) {
+    auto usage = cpu_usage(task, thread);
+    return add(usage.user_ticks, usage.system_ticks);
 }
 } // namespace ax

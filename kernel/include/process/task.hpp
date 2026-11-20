@@ -63,6 +63,7 @@ struct SharedMemoryMapping;
 struct MemoryContext {
     unsigned references = 1;
     bool dumpable = true;
+    uint32_t barrier_registrations = 0;
     AddressSpace space;
     uint64_t brk_base = 0, brk_end = 0;
     uint64_t initial_data_size = 0;
@@ -111,6 +112,7 @@ struct Process {
     char executable[1024]{};
     uint64_t start_ticks = 0;
     uint64_t cpu_user_ticks = 0, cpu_system_ticks = 0;
+    uint64_t children_user_ticks = 0, children_system_ticks = 0;
     uint64_t alarm_deadline = 0, alarm_interval = 0;
     PendingSignals pending_signals;
 };
@@ -202,7 +204,7 @@ void exit_task(Task*, int);
 
 void exit_thread(Task*, int);
 
-void reap_task(Task*);
+void reap_task(Task*, Process&);
 
 int allocate_fd(Task*, Handle*, int start = 0, bool cloexec = false);
 

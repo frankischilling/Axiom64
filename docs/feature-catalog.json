@@ -1543,7 +1543,7 @@
       "title": "Native development and full self-hosting",
       "milestone": "M4",
       "state": "partial",
-      "current": "Guest GCC/binutils/Make compile and execute C/C++ examples, including exceptions.",
+      "current": "Guest GCC, binutils, Make, and NASM build and run C, C++, and assembly. The guest builds the kernel, init, the ABI clients, and a small bootable ISO. The full installed root filesystem still uses the host build pipeline.",
       "scope": [
         "Build tools, Git, editors, Python, and the developer package catalog first",
         "Native GCC/binutils/GDB and portable build tools with a coherent sysroot",
@@ -1566,6 +1566,7 @@
       ],
       "evidence": [
         "userspace/tests/toolchain/Makefile",
+        "scripts/guest_kernel_test.py",
         "docs/ports.md"
       ],
       "branch": "feature/f28-native-development-and-full-self-hosting",
@@ -3114,10 +3115,18 @@
     {
       "name": "nasm",
       "kind": "developer-tool",
-      "state": "planned",
+      "state": "demonstrated",
       "owner": "F28",
       "issue": "https://github.com/frankischilling/Axiom64/issues/28",
       "acceptance": "Add a guest smoke or conformance test for its documented behavior; archive presence alone is insufficient."
+    },
+    {
+      "name": "xorriso",
+      "kind": "developer-tool",
+      "state": "demonstrated",
+      "owner": "F28",
+      "issue": "https://github.com/frankischilling/Axiom64/issues/28",
+      "acceptance": "Author an ISO inside Axiom64 and boot the exported image under BIOS and UEFI."
     },
     {
       "name": "pkg-config",

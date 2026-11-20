@@ -16,6 +16,7 @@ matrix = [
     "storage-journal-lifetime-uefi-legacy",
     "root",
     "root-userspace",
+    "guest-system",
     "manager-bios-modern",
     "manager-bios-legacy",
     "manager-uefi-modern",
@@ -841,6 +842,7 @@ name = "Compare terminal ownership, parent death, signal waits, waitid, procfs a
 run = '''
 sudo -n make test-pty-security-native test-parent-death-native test-signal-wait-native
 sudo -n make test-waitid-native test-proc-identity-native test-exec-arguments-native
+make test-sysinfo-native test-membarrier-native
 sudo -n python3 scripts/proc_retirement_test.py
 sudo -n python3 scripts/proc_test.py --native --directory build/proc-native
 sudo -n python3 scripts/terminal_flush_test.py --native --directory build/terminal-flush-native
@@ -852,7 +854,7 @@ suites = ["accounts-process-guest"]
 name = "Verify terminal ownership, parent death, signal waits, waitid, procfs and exec in fresh guest kernels"
 run = '''
 make test-pty-security test-parent-death test-signal-wait
-make test-waitid test-proc-identity test-exec-arguments
+make test-waitid test-proc-identity test-exec-arguments test-sysinfo test-membarrier
 python3 scripts/proc_test.py
 python3 scripts/terminal_flush_test.py
 '''
@@ -2270,6 +2272,13 @@ python3 scripts/boot_test.py --disk-root --interactive --transport legacy --firm
 '''
 
 [[step]]
+suites = ["root-userspace", "guest-system"]
+name = "Build a test system inside Axiom64 and boot the exported ISO"
+run = '''
+make test-guest-system GUEST_KERNEL_FLAGS=--accelerator=auto
+'''
+
+[[step]]
 suites = ["normal-init-bios", "normal-init-uefi"]
 name = "Verify normal init recovery with the same desktop and console"
 run = '''
@@ -2329,7 +2338,7 @@ suites = ["account-rotation-storage"]
 name = "Interrupt every basic rotation target in all fault modes"
 run = '''
 cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-basic-$CACHE-$SHARD"
-sudo -n python3 scripts/account_logbook_rotation_ext2.py --journal --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --scenario "basic" --cache-model "$CACHE" --fault-mode eio pause-before pause-after --shard-count "$SHARD_COUNT" --shard-index "$SHARD" --directory "build/account-rotation-storage-$cell"
+sudo -n python3 scripts/account_logbook_rotation_ext2.py --journal --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --scenario "basic" --cache-model "$CACHE" --fault-mode eio pause-before pause-after --jobs 2 --shard-count "$SHARD_COUNT" --shard-index "$SHARD" --directory "build/account-rotation-storage-$cell"
 sudo -n python3 scripts/account_rotation_storage_coverage.py collect --directory "build/account-rotation-storage-$cell" --output "build/account-rotation-storage-$cell/coverage-index.json"
 '''
 
@@ -2339,7 +2348,7 @@ name = "Interrupt every expiry rotation target in all fault modes"
 after_failure = true
 run = '''
 cell="$PROVIDER-$LINKAGE-$FIRMWARE-$TRANSPORT-expiry-$CACHE-$SHARD"
-sudo -n python3 scripts/account_logbook_rotation_ext2.py --journal --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --scenario "expiry" --cache-model "$CACHE" --fault-mode eio pause-before pause-after --shard-count "$SHARD_COUNT" --shard-index "$SHARD" --directory "build/account-rotation-storage-$cell"
+sudo -n python3 scripts/account_logbook_rotation_ext2.py --journal --provider "$PROVIDER" --linkage "$LINKAGE" --firmware "$FIRMWARE" --transport "$TRANSPORT" --scenario "expiry" --cache-model "$CACHE" --fault-mode eio pause-before pause-after --jobs 2 --shard-count "$SHARD_COUNT" --shard-index "$SHARD" --directory "build/account-rotation-storage-$cell"
 sudo -n python3 scripts/account_rotation_storage_coverage.py collect --directory "build/account-rotation-storage-$cell" --output "build/account-rotation-storage-$cell/coverage-index.json"
 '''
 

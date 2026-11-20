@@ -34,6 +34,7 @@ namespace ax {
 namespace {
 constexpr size_t max_block_size = 4096, inode_bytes = 128;
 constexpr unsigned max_changes = 4096, max_entries = 8192, cached_blocks = 128;
+static uint64_t ext2_cache_bytes;
 
 static uint16_t u16(const uint8_t* p) {
     return uint16_t(p[0]) | (uint16_t(p[1]) << 8);
@@ -1392,6 +1393,8 @@ static void destroy(Mount* mount) {
     if (v->claimed)
         block_unclaim(v->device, v);
     release(v->groups);
+    if (v->cache)
+        ext2_cache_bytes -= sizeof(CachedBlock) * cached_blocks;
     release(v->cache);
     journal_close(v->journal);
     release(v->journal_map);
@@ -2170,6 +2173,10 @@ static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check
 
 } // namespace
 
+uint64_t ext2_buffer_bytes() {
+    return ext2_cache_bytes;
+}
+
 const FilesystemOps ext2_ops = {lookup,   create,     link,    remove,          rename,   read,
                                 write,    truncate,   setattr, readdir,         sync,     nullptr,
                                 stats,    destroy,    remount, prepare_unmount, getxattr, listxattr,
@@ -2212,8 +2219,10 @@ int ext2_mount(Mount* mount, Node* device, bool check_dirty) {
         v->cache = (CachedBlock*)alloc(sizeof(CachedBlock) * cached_blocks);
         if (!v->cache)
             result = -12;
-        else
+        else {
             memset(v->cache, 0, sizeof(CachedBlock) * cached_blocks);
+            ext2_cache_bytes += sizeof(CachedBlock) * cached_blocks;
+        }
     }
     if (!result && !mount->readonly) {
         set16(header + 58, u16(header + 58) & ~1u);

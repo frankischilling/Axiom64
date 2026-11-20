@@ -9,6 +9,7 @@ No clock translation, interval rescaling or scheduling delay can enlarge them.
 """
 import hashlib
 import json
+import select
 import socket
 import struct
 import time
@@ -23,6 +24,8 @@ class Capture(OriginalCapture):
         self.failure = None
         try:
             self.socket.setblocking(False)
+            readable = select.poll()
+            readable.register(self.socket, select.POLLIN)
             while True:
                 frame, ancillary, flags, observed = None, (), None, None
                 began = time.monotonic_ns()
@@ -34,7 +37,8 @@ class Capture(OriginalCapture):
                     empty = began
                     if self.stopping.is_set():
                         break
-                    self.stopping.wait(.001)
+                    # Wake at packet arrival, and refresh the empty-queue bound every millisecond.
+                    readable.poll(1)
                     continue
                 require(empty is not None and not flags & (socket.MSG_TRUNC | socket.MSG_CTRUNC),
                         'complete packet follows an independently observed empty queue')
@@ -46,11 +50,7 @@ class Capture(OriginalCapture):
                 seconds, nanos = struct.unpack('=qq', stamps[0])
                 require(seconds >= 0 and 0 <= nanos < 1000000000, 'original packet timestamp bounds')
                 stamp = seconds * 1000000000 + nanos
-                self.output.write(struct.pack('<IIII', seconds, nanos // 1000, len(frame), len(frame)) + frame)
-                self.clocks.write(json.dumps(dict(frame=self.frame_count,
-                    sha256=hashlib.sha256(frame).hexdigest(), kernel_realtime_ns=stamp,
-                    arrival_lower_ns=empty, **observed)) + '\n')
-                self.frame_count += 1
+                self.record(frame, stamp, dict(arrival_lower_ns=empty, **observed))
                 if self.injection is not None:
                     with self.injection_lock:
                         waiting = self.injection

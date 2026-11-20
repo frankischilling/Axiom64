@@ -421,8 +421,11 @@ def observations(text, wire, results, native, *, timer_bounds=None, guard_comman
                 error_receipts.append(value['monotonic_ns'])
         require(len(retries) == (3 if row['suppress_arp'] else 1), 'all actual neighbor retries retained')
         if row['suppress_arp']:
-            require(all(timer_bounds[0] <= right - left <= timer_bounds[1]
-                        for left, right in zip(retries, retries[1:])), 'actual one-second ARP retry spacing')
+            # The native raw guard has kernel timestamps bound to these exact packets below.
+            # Its timer proof avoids measuring how long the host took to service its socket.
+            if not native or number not in guards:
+                require(all(timer_bounds[0] <= right - left <= timer_bounds[1]
+                            for left, right in zip(retries, retries[1:])), 'actual one-second ARP retry spacing')
             require(all(timer_bounds[0] <= receipt - retries[2] <= timer_bounds[1] for receipt in error_receipts),
                     'actual ICMP error follows the third ARP retransmission timer')
         if row['timed']:

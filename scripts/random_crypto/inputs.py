@@ -1,18 +1,20 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Read completed, fingerprinted OpenSSL products without changing their build."""
+"""Resolve fingerprinted OpenSSL products for the current test environment."""
 import hashlib
 import json
 import os
 from pathlib import Path
 
 from build_musl import ensure as musl
-from build_openssl import OUTPUT, digest, native_inputs
+from build_openssl import OUTPUT, digest, ensure, native_inputs
 from fetch import LOCK, ROOT
 
 
 def provider(name):
     candidates = []
-    for manifest in (OUTPUT / name).glob('*/manifest.json'):
+    manifests = ((ensure('native') / 'manifest.json',) if name == 'native' else
+                 (OUTPUT / name).glob('*/manifest.json'))
+    for manifest in manifests:
         data = json.loads(manifest.read_text())
         if (data['dependency'] == LOCK['openssl'] and data['provider'] == name and
                 data['recipe_sha256'] == digest(ROOT / 'scripts/build_openssl.py')):

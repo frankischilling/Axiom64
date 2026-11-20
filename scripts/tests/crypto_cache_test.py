@@ -2,16 +2,22 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Exercise cache invalidation and complete library/source retention without rebuilding."""
 import copy
+import hashlib
 import importlib.util
 import io
 import json
 from pathlib import Path
 import shutil
+import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'scripts'))
+from random_crypto import inputs
+
 spec = importlib.util.spec_from_file_location('crypto_cache', ROOT / 'scripts/ci/crypto_cache.py')
 cache = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cache)
@@ -53,6 +59,30 @@ class CryptoCacheTest(unittest.TestCase):
                 changed = copy.deepcopy(self.host)
                 changed[name] = 'changed'
                 self.assertNotEqual(before, self.key(changed))
+
+    def test_native_consumer_selects_the_producer_for_this_runner(self):
+        output = self.root / 'build/openssl'
+        def produce(native):
+            data = dict(dependency=inputs.LOCK['openssl'], provider='native', compiler='14.2',
+                        target='x86_64-linux-gnu', libc_identity=None, native_inputs=native, uapi={},
+                        recipe_sha256=inputs.digest(ROOT / 'scripts/build_openssl.py'),
+                        uapi_recipe_sha256=inputs.digest(ROOT / 'scripts/linux_uapi.py'))
+            identity = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+            directory = output / 'native' / identity
+            directory.mkdir(parents=True)
+            (directory / 'manifest.json').write_text(json.dumps(dict(data, identity=identity, products={}, symlinks={})))
+            return directory
+
+        stale = produce({'libc.so.6': 'earlier runner'})
+        current_inputs = {'libc.so.6': 'current runner'}
+        current = produce(current_inputs)
+        with (patch.object(inputs, 'OUTPUT', output), patch.object(inputs, 'ensure', return_value=current) as producer,
+              patch.object(inputs, 'native_inputs', return_value=current_inputs)):
+            directory, loaded = inputs.provider('native')
+        self.assertEqual(directory, current)
+        self.assertEqual(loaded['native_inputs'], current_inputs)
+        producer.assert_called_once_with('native')
+        self.assertTrue((stale / 'manifest.json').is_file())
 
     def test_unrelated_kernel_and_document_changes_reuse(self):
         before = self.key()

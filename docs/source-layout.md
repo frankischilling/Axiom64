@@ -194,6 +194,33 @@ make check-format
 
 The targets cover project C/C++ sources and headers under `kernel/` and `userspace/`, plus the native ICMP control client under `scripts/tests/`. Imported headers under `vendor/` retain their upstream formatting. Set `CLANG_FORMAT=/path/to/clang-format-20` when the executable uses another name. Clang-format 20 or newer can read the separate C profile; version 20 is used for the checked formatting. CI runs `make check-format`, and the corresponding-source bundle includes the configuration.
 
+### Pre-push checks
+
+Install the local hook once per clone from the repository root.
+
+```sh
+sudo apt-get install -y clang-format-20 shellcheck
+python3 scripts/ci/pre_push.py --install
+```
+
+Use the build tools in [Build and run](build.md). For Git for Windows, run
+`python scripts/ci/pre_push.py --install` in the Windows checkout and install the
+Linux tools in the default WSL distribution.
+
+The hook checks whitespace in the diff and applies the project formatter to
+changed C and C++ files. It runs compiler warnings and type checks on changed
+source files, assembles changed assembly, checks linker scripts, and parses
+changed Python, JSON, and TOML. ShellCheck reports error-level diagnostics on
+changed shell files. A header change also checks sources that include it,
+including through other headers. Computed include paths select the full
+project source set.
+The checks read the commits being pushed. The hook rejects a failed check or a
+push that exceeds nine seconds of local checks.
+
+The full workflow checks the actual build recipes and the runtime matrix. After
+updating this hook, repeat the install command to replace the checker in the
+clone's hooks directory.
+
 `kernel/tests/net/packet.cpp` exercises the production packet demultiplexer with
 captured bytes. `scripts/tests/packet_protocol_test.py` builds that sanitizer model.
 The shared `userspace/tests/net/packet.c` listener check runs in ordinary Ethernet

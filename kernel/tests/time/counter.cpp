@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/tests/time/counter.cpp
- * @brief   Elapsed counter and ACPI timer tests.
+ * @brief   Exercises timekeeping and ACPI platform table validation.
  * @author  frankischilling
- * @date    2026-11-18
+ * @date    2026-11-19
  *
- * Checks clock arithmetic and firmware table validation with controlled inputs.
+ * Tests counter arithmetic and checks the firmware reader with valid and
+ * malformed platform tables.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -23,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "core/time.hpp"
+#include "arch/x86_64/interrupts.hpp"
 #include "firmware/acpi.hpp"
 #include <array>
 #include <cassert>
@@ -312,8 +314,314 @@ static void firmware_tests() {
                 malformed);
 }
 
+static void platform_tables() {
+    constexpr uint64_t madt = Firmware::hpet + 128, fadt = Firmware::hpet + 512;
+    Firmware firmware;
+    firmware.put(Firmware::xsdt + 4, 60, 4);
+    firmware.put(Firmware::xsdt + 44, madt, 8);
+    firmware.put(Firmware::xsdt + 52, fadt, 8);
+    firmware.sum(Firmware::xsdt, 60, 9);
+    std::memcpy(firmware.at(madt), "APIC", 4);
+    firmware.put(madt + 4, 104, 4);
+    firmware.put(madt + 36, 0xfee00000, 4);
+    firmware.at(madt)[40] = 1;
+    const uint8_t apics[] = {
+        0,   8,  7, 3, 1,  0, 0,    0,                              // Processor Local APIC.
+        1,   12, 4, 0, 0,  0, 0xc0, 0xfe, 16, 0, 0, 0,              // I/O APIC.
+        2,   10, 0, 9, 19, 0, 0,    0,    15, 0,                    // ISA override.
+        128, 2,                                                     // Unrecognized OEM entry.
+        9,   16, 0, 0, 3,  1, 0,    0,    2,  0, 0, 0, 7, 16, 0, 0, // Local x2APIC.
+        5,   12, 0, 0, 0,  0, 0xe0, 0xfe, 1,  0, 0, 0,              // 64-bit LAPIC address.
+    };
+    static_assert(sizeof(apics) == 60);
+    std::memcpy(firmware.at(madt + 44), apics, sizeof(apics));
+    firmware.sum(madt, 104, 9);
+    std::memcpy(firmware.at(fadt), "FACP", 4);
+    firmware.put(fadt + 4, 116, 4);
+    firmware.at(fadt)[8] = 6;
+    firmware.at(fadt)[46] = 9;
+    firmware.at(fadt)[109] = 3;
+    firmware.put(fadt + 112, 0x100100, 4);
+    firmware.sum(fadt, 116, 9);
+
+    using namespace ax::Acpi;
+    InterruptTopology topology{};
+    Hpet timer;
+    FixedDescription fixed{};
+    assert(firmware.find(timer) && timer.address == 0xfed00000);
+    assert(find_interrupt_topology(Firmware::base, Firmware::read, &firmware, topology));
+    assert(topology.local_apic == 0x1fee00000 && topology.legacy_pic);
+    assert(topology.processor_count == 2 && topology.processors[0].uid == 7 &&
+           topology.processors[0].apic_id == 3 && topology.processors[0].flags == 1 &&
+           topology.processors[1].apic_id == 0x103 && topology.processors[1].uid == 0x1007 &&
+           topology.processors[1].flags == 2);
+    assert(topology.io_apic_count == 1 && topology.io_apics[0].id == 4 &&
+           topology.io_apics[0].address == 0xfec00000 && topology.io_apics[0].first_gsi == 16);
+    assert(!topology.isa[0].present && topology.isa[9].present && topology.isa[9].gsi == 19 &&
+           topology.isa[9].flags == 15);
+    assert(find_fixed_description(Firmware::base, Firmware::read, &firmware, fixed));
+    assert(fixed.flags == 0x100100 && fixed.sci == 9 && fixed.boot_flags == 3 &&
+           fixed.revision == 6);
+
+    for (unsigned variant = 0; variant < 8; ++variant) {
+        Firmware damaged = firmware;
+        switch (variant) {
+        case 0:
+            damaged.at(madt + 44)[1] = 0;
+            break; // Zero-length record.
+        case 1:
+            damaged.at(madt + 92)[1] = 13;
+            break; // Record crosses table end.
+        case 2:
+            damaged.at(madt + 52)[1] = 11;
+            break; // Truncated I/O APIC.
+        case 3:
+            damaged.at(madt + 64)[8] = 2;
+            break; // Reserved interrupt polarity.
+        case 4:
+            damaged.at(madt + 52)[4] = 1;
+            break; // Unaligned MMIO aperture.
+        case 5:
+            damaged.put(madt + 76 + 12, 7, 4);
+            break; // Duplicate ACPI processor UID.
+        case 6:
+            damaged.put(madt + 92 + 4, 1ull << 52, 8);
+            break; // Physical bound.
+        case 7:
+            damaged.put(madt + 92 + 4, 0xfec00000, 8);
+            break; // Colliding MMIO pages.
+        }
+        damaged.sum(madt, 104, 9);
+        assert(!find_interrupt_topology(Firmware::base, Firmware::read, &damaged, topology));
+        assert(topology.processor_count == 2 && topology.local_apic == 0x1fee00000);
+        assert(find_fixed_description(Firmware::base, Firmware::read, &damaged, fixed));
+    }
+    Firmware mixed = firmware;
+    mixed.put(madt + 76 + 4, 3, 4);
+    mixed.sum(madt, 104, 9);
+    assert(find_interrupt_topology(Firmware::base, Firmware::read, &mixed, topology));
+    assert(topology.processor_count == 1 && topology.processors[0].uid == 7);
+    mixed.at(madt + 44)[3] = 0xff;
+    mixed.sum(madt, 104, 9);
+    assert(find_interrupt_topology(Firmware::base, Firmware::read, &mixed, topology));
+    assert(topology.processor_count == 1 && topology.processors[0].uid == 0x1007);
+    mixed.put(madt + 76 + 4, UINT32_MAX, 4);
+    mixed.sum(madt, 104, 9);
+    assert(!find_interrupt_topology(Firmware::base, Firmware::read, &mixed, topology));
+
+    firmware.at(fadt)[8] = 1;
+    firmware.sum(fadt, 116, 9);
+    assert(find_fixed_description(Firmware::base, Firmware::read, &firmware, fixed));
+    assert(fixed.revision == 1 && !fixed.boot_flags && fixed.sci == 9);
+    firmware.at(fadt)[9]++;
+    assert(!find_fixed_description(Firmware::base, Firmware::read, &firmware, fixed));
+    assert(fixed.revision == 1 && fixed.sci == 9);
+    std::puts("ACPI_PLATFORM_TABLES_PASS malformed=9");
+}
+
+static void ecam_tables() {
+    constexpr uint64_t mcfg = Firmware::hpet + 128;
+    Firmware fixture;
+    fixture.put(Firmware::xsdt + 4, 44, 4);
+    fixture.put(Firmware::xsdt + 36, mcfg, 8);
+    fixture.sum(Firmware::xsdt, 44, 9);
+    std::memcpy(fixture.at(mcfg), "MCFG", 4);
+    fixture.put(mcfg + 4, 76, 4);
+    fixture.put(mcfg + 8, 1, 1);
+    fixture.put(mcfg + 44, 0xe0000000, 8);
+    fixture.put(mcfg + 54, 16, 1);
+    fixture.put(mcfg + 55, 31, 1);
+    fixture.put(mcfg + 60, 0x100000000, 8);
+    fixture.put(mcfg + 68, 7, 2);
+    fixture.put(mcfg + 71, 255, 1);
+    fixture.sum(mcfg, 76, 9);
+
+    using namespace ax::Acpi;
+    Mcfg result{};
+    assert(find_mcfg(Firmware::base, Firmware::read, &fixture, result));
+    assert(result.count == 2 && result.regions[0].segment == 0 && result.regions[1].segment == 7);
+    assert(result.regions[0].contains(16) && result.regions[0].contains(31));
+    assert(!result.regions[0].contains(15) && !result.regions[0].contains(32));
+    assert(result.regions[0].bus_address(16) == 0xe1000000);
+    assert(result.regions[1].bus_address(255) == 0x10ff00000);
+
+    for (unsigned variant = 0; variant < 10; ++variant) {
+        Firmware damaged = fixture;
+        size_t length = 76;
+        switch (variant) {
+        case 0:
+            length = 75;
+            break;
+        case 1:
+            length = 44;
+            break;
+        case 2:
+            damaged.put(mcfg + 36, 1, 1);
+            break;
+        case 3:
+            damaged.put(mcfg + 56, 1, 1);
+            break;
+        case 4:
+            damaged.put(mcfg + 44, 0xe0000001, 8);
+            break;
+        case 5:
+            damaged.put(mcfg + 54, 32, 1);
+            break;
+        case 6:
+            damaged.put(mcfg + 60, (1ull << 52) - EcamRegion::bus_bytes, 8);
+            break;
+        case 7:
+            damaged.put(mcfg + 68, 0, 2);
+            break;
+        case 8:
+            damaged.put(mcfg + 60, 0xe1000000, 8);
+            break;
+        case 9:
+            damaged.put(mcfg + 8, 0, 1);
+            break;
+        }
+        damaged.put(mcfg + 4, length, 4);
+        damaged.sum(mcfg, length, 9);
+        assert(!find_mcfg(Firmware::base, Firmware::read, &damaged, result));
+        assert(result.count == 2 && result.regions[1].segment == 7);
+    }
+    std::puts("ACPI_MCFG_PASS regions=2 malformed=10");
+}
+
+static void isa_routes() {
+    using namespace ax::Irq;
+    constexpr GsiRange ranges[] = {{0, 24}, {32, 16}};
+    Route route{};
+    assert(isa_route(0, 0, ranges, 2, route) && !route.controller && !route.input && !route.mode);
+    assert(isa_route(2, 5, ranges, 2, route) && !route.controller && route.input == 2 &&
+           !route.mode);
+    assert(isa_route(47, 15, ranges, 2, route) && route.controller == 1 && route.input == 15 &&
+           route.mode == (active_low | level_triggered));
+    assert(isa_route(36, 3, ranges, 2, route) && route.controller == 1 && route.input == 4 &&
+           route.mode == active_low);
+    assert(!isa_route(24, 0, ranges, 2, route));
+    assert(!isa_route(48, 0, ranges, 2, route));
+    assert(!isa_route(0, 2, ranges, 2, route));
+    assert(!isa_route(0, 8, ranges, 2, route));
+    assert(!isa_route(0, 16, ranges, 2, route));
+    constexpr GsiRange overlap[] = {{0, 24}, {20, 24}};
+    assert(!isa_route(21, 0, overlap, 2, route));
+    constexpr GsiRange overflow[] = {{UINT32_MAX, 2}};
+    assert(!isa_route(UINT32_MAX, 0, overflow, 1, route));
+    constexpr GsiRange too_many[] = {{0, max_inputs + 1}};
+    assert(!isa_route(0, 0, too_many, 1, route));
+    constexpr GsiRange empty[] = {{0, 0}};
+    assert(!isa_route(0, 0, empty, 1, route));
+    assert(route.controller == 1 && route.input == 4 && route.mode == active_low);
+    std::puts("ISA_INTERRUPT_ROUTE_PASS valid=4 rejected=9");
+}
+
+static void definition_blocks() {
+    using ax::Acpi::DefinitionBlocks;
+    constexpr auto rsdp = Firmware::base, rsdt = Firmware::rsdt, xsdt = Firmware::xsdt;
+    constexpr auto fadt = Firmware::hpet + 512, dsdt32 = fadt + 256, dsdt64 = dsdt32 + 64;
+    constexpr auto ssdt_a = dsdt64 + 128, ssdt_b = ssdt_a + 64;
+    constexpr uint64_t high = 1ull << 32;
+    Firmware f;
+    auto table = [&](uint64_t address, const char* signature, size_t length) {
+        std::memcpy(f.at(address), signature, 4);
+        f.put(address + 4, length, 4);
+        f.sum(address, length, 9);
+    };
+    table(fadt, "FACP", 148);
+    f.put(fadt + 40, dsdt32, 4);
+    f.put(fadt + 140, high + dsdt64, 8);
+    f.sum(fadt, 148, 9);
+    table(dsdt32, "DSDT", 40);
+    table(dsdt64, "DSDT", 41);
+    table(ssdt_a, "SSDT", 42);
+    table(ssdt_b, "SSDT", 43);
+    f.put(xsdt + 36, ssdt_b, 8);
+    f.put(xsdt + 44, fadt, 8);
+    f.put(xsdt + 52, ssdt_a, 8);
+    f.put(xsdt + 60, ssdt_b, 8);
+    table(xsdt, "XSDT", 68);
+    f.put(rsdt + 36, fadt, 4);
+    f.put(rsdt + 40, ssdt_a, 4);
+    table(rsdt, "RSDT", 44);
+    f.put(rsdp + 16, rsdt, 4);
+    f.rsdp_sum();
+
+    auto reader = +[](uint64_t address, size_t length, void* context) -> const uint8_t* {
+        if (address >= high)
+            address -= high;
+        return Firmware::read(address, length, context);
+    };
+    DefinitionBlocks blocks;
+    auto find = [&]() { return ax::Acpi::find_definition_blocks(rsdp, reader, &f, blocks); };
+    assert(find() && blocks.dsdt.table == f.at(dsdt64) && blocks.dsdt.address == high + dsdt64 &&
+           blocks.dsdt.length == 41 && blocks.ssdt_count == 2);
+    assert(blocks.ssdt[0].address == ssdt_b && blocks.ssdt[0].length == 43 &&
+           blocks.ssdt[1].address == ssdt_a && blocks.ssdt[1].length == 42);
+
+    f.at(ssdt_a)[9]++;
+    assert(!find() && !blocks.dsdt.table && !blocks.ssdt_count && !blocks.ssdt[0].table);
+    f.sum(ssdt_a, 42, 9);
+    f.at(dsdt64)[9]++;
+    assert(!find() && !blocks.dsdt.table);
+    f.sum(dsdt64, 41, 9);
+    f.put(dsdt64 + 4, 1024 * 1024 + 1, 4);
+    assert(!find() && !blocks.dsdt.table);
+    table(dsdt64, "DSDT", 41);
+    f.at(xsdt)[9]++;
+    assert(!find()); // A damaged XSDT cannot select a different AML namespace.
+    f.sum(xsdt, 68, 9);
+    f.put(xsdt + 60, 1ull << 52, 8);
+    f.sum(xsdt, 68, 9);
+    assert(!find() && !blocks.dsdt.table && !blocks.ssdt_count);
+    f.put(xsdt + 60, 0, 8);
+    f.sum(xsdt, 68, 9);
+    assert(find() && blocks.ssdt_count == 2);
+
+    f.put(fadt + 140, 0, 8);
+    f.sum(fadt, 148, 9);
+    assert(find() && blocks.dsdt.address == dsdt32 && blocks.ssdt_count == 2);
+    // An ACPI 1.0 FADT has no extended pointer even if the following bytes are readable.
+    f.put(fadt + 140, high + dsdt64, 8);
+    table(fadt, "FACP", 116);
+    f.at(rsdp)[15] = 0;
+    f.rsdp_sum();
+    assert(find() && blocks.dsdt.address == dsdt32 && blocks.ssdt_count == 1 &&
+           blocks.ssdt[0].address == ssdt_a);
+
+    constexpr uint64_t large_base = 1ull << 40, megabyte = 1024 * 1024;
+    static std::array<uint8_t, megabyte> large{};
+    std::memcpy(large.data(), "SSDT", 4);
+    large[6] = 16; // One MiB in the little-endian table length.
+    uint8_t sum = 0;
+    for (uint8_t byte : large)
+        sum += byte;
+    large[9] = uint8_t(0 - sum);
+    auto large_reader = +[](uint64_t address, size_t length, void* context) -> const uint8_t* {
+        if (address >= large_base && address < large_base + 8 * megabyte && length <= large.size())
+            return large.data();
+        return Firmware::read(address, length, context);
+    };
+    f.at(rsdp)[15] = 2;
+    f.rsdp_sum();
+    f.put(xsdt + 36, fadt, 8);
+    for (unsigned index = 0; index < 8; ++index)
+        f.put(xsdt + 44 + 8 * index, large_base + index * megabyte, 8);
+    table(xsdt, "XSDT", 36 + 8 * 8); // FADT and seven one-MiB SSDTs fit together.
+    assert(ax::Acpi::find_definition_blocks(rsdp, large_reader, &f, blocks) &&
+           blocks.ssdt_count == 7);
+    table(xsdt, "XSDT", 36 + 9 * 8);
+    assert(!ax::Acpi::find_definition_blocks(rsdp, large_reader, &f, blocks) &&
+           !blocks.dsdt.table && !blocks.ssdt_count);
+    std::puts("ACPI_DEFINITION_BLOCKS_PASS legacy extended ordered_ssdt invalid_namespace budget");
+}
+
 int main() {
     counter_tests();
     firmware_tests();
+    platform_tables();
+    ecam_tables();
+    isa_routes();
+    definition_blocks();
     std::puts("CLOCK_CODEC_TESTS_PASS");
 }

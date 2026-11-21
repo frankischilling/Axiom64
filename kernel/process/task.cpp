@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "process/task.hpp"
+#include "arch/x86_64/interrupts.hpp"
 #include "process/exec_arguments.hpp"
 #include "process/cpu.hpp"
 #include "mm/limits.hpp"
@@ -977,7 +978,9 @@ void start_init(const char* path) {
 }
 
 extern "C" Frame* handle_trap(Frame* f) {
-    if (f->vector == 32) {
+    if (f->vector >= 32) {
+        if (!interrupt_dispatch(f->vector))
+            return f;
         clock_refresh(true);
         cpu_sample_load();
         if ((f->cs & 3) == 3)
@@ -985,13 +988,8 @@ extern "C" Frame* handle_trap(Frame* f) {
         devices_poll();
         epoll_notify();
         signal_tick();
-        out8(0x20, 0x20);
         if ((f->cs & 3) == 3 && current)
             return schedule(f, true);
-        return f;
-    }
-    if (f->vector >= 32) {
-        out8(0x20, 0x20);
         return f;
     }
     uint64_t cr2 = 0;

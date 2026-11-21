@@ -29,6 +29,14 @@ GitHub Actions runs linked below document historical results. For current work,
 run the relevant native and guest suites before committing. Match the tests to
 the change and use the complete affected matrix when qualifying a feature.
 
+For firmware and PCI changes, run `make test-clock-codec test-pci-interrupts
+test-acpi-routing` for sanitizer checks. Run `make test-udp` for interrupt
+delivery and polling on i440fx and Q35. Run `make test-file-locks
+FILE_LOCK_ARGS=--include-q35` to compare Linux file locking with guest results
+from both chipsets under BIOS and UEFI. The native comparison exercises
+invalid flag handling before descriptor lookup. Use a Linux 7.0 VM if the
+host kernel reports `EBADF` for that case.
+
 `make test-ipv4-address-lifetimes-guest` runs the finite IPv4 address-control
 client on both Ethernet adapters in eight static/dynamic, BIOS/UEFI and
 modern/legacy PCI profiles. Two workers share immutable images. Original

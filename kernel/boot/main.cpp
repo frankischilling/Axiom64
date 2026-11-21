@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/boot/main.cpp
- * @brief   Kernel bootstrap.
+ * @brief   Starts the Axiom64 kernel and enters userspace.
  * @author  frankischilling
- * @date    2026-11-18
+ * @date    2026-11-19
  *
- * Brings up core kernel services from the bootloader handoff and launches the
- * initial userspace process.
+ * Initializes memory, firmware, device drivers, and the root filesystem
+ * before starting the first Ring 3 process.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "boot/boot.hpp"
+#include "arch/x86_64/interrupts.hpp"
 #include "boot/root.hpp"
 #include "drivers/block/block.hpp"
 #include "drivers/platform/devices.hpp"
@@ -31,6 +32,7 @@
 #include "net/ethernet.hpp"
 #include "core/time.hpp"
 #include "core/random.hpp"
+#include "firmware/acpi.hpp"
 
 namespace ax {
 [[gnu::used, gnu::section(".limine_requests_start")]] static volatile uint64_t requests_start[] =
@@ -117,7 +119,18 @@ extern "C" [[noreturn]] void kernel_main() {
         test_phase = "AXIOM64_PHASE=pressure";
     memory_init();
     arch_init();
-    clock_init(rsdp_request.response ? uint64_t(rsdp_request.response->address) : 0);
+    uint64_t rsdp = rsdp_request.response ? uint64_t(rsdp_request.response->address) : 0;
+    Acpi::InterruptTopology topology;
+    Acpi::DefinitionBlocks definitions;
+    bool have_topology = firmware_discover(rsdp, topology, definitions);
+    clock_init(rsdp);
+    if (word(cmd, "irq=pic"))
+        log("Interrupts: PIC/PIT selected by boot option\n");
+    else if (have_topology)
+        interrupt_init_apic(topology);
+    else
+        log("Interrupts: PIC/PIT fallback, no validated MADT\n");
+    firmware_configure_pci_interrupts(rsdp, topology, definitions);
     random_init(!word(cmd, "random.trust_cpu=off"), word(cmd, "random.trust_virtio=on"));
     auto modules = module_request.response;
     if (!modules || !modules->module_count)

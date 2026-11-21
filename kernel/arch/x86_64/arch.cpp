@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "core/base.hpp"
+#include "arch/x86_64/interrupts.hpp"
 
 namespace ax {
 struct [[gnu::packed]] TablePointer {
@@ -71,7 +72,7 @@ void arch_init() {
     gdt[6] = b >> 32;
     TablePointer gdtr{sizeof(gdt) - 1, uint64_t(gdt)};
     load_gdt(&gdtr);
-    for (unsigned i = 0; i < 48; i++) {
+    for (unsigned i = 0; i < 256; i++) {
         uint64_t p = uint64_t(interrupt_table[i]);
         idt[i] = {uint16_t(p),       8, uint8_t(i == 8 ? 1 : 0), 0x8e, uint16_t(p >> 16),
                   uint32_t(p >> 32), 0};
@@ -89,20 +90,7 @@ void arch_init() {
     wrmsr(0xc0000081, (uint64_t(0x13) << 48) | (uint64_t(8) << 32));
     wrmsr(0xc0000082, uint64_t(syscall_entry));
     wrmsr(0xc0000084, 0x47700); // Clear IF, DF, TF, AC, NT on entry.
-    // PIC remap; only the 100 Hz PIT interrupt is enabled.
-    out8(0x20, 0x11);
-    out8(0xa0, 0x11);
-    out8(0x21, 32);
-    out8(0xa1, 40);
-    out8(0x21, 4);
-    out8(0xa1, 2);
-    out8(0x21, 1);
-    out8(0xa1, 1);
-    out8(0x21, 0xfe);
-    out8(0xa1, 0xff);
-    out8(0x43, 0x36);
-    out8(0x40, uint8_t(11932));
-    out8(0x40, uint8_t(11932 >> 8));
+    interrupt_init_legacy();
     log("CPU: GDT, TSS, IDT, SYSCALL and PIT initialized\n");
 }
 

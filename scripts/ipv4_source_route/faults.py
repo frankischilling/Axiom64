@@ -79,6 +79,14 @@ def damage_requests(directory):
     add('wrong-device-log', uefi, 'boot', 'client.log', lambda file:
         file.read_bytes().replace(b'virtio-net: index=1 transport=legacy', b'virtio-net: index=1 transport=modern'),
         spec=spec, firmware=index['firmware'])
+    def duplicate_inventory(file, prefix):
+        text = file.read_bytes()
+        inventory = next(line for line in text.splitlines() if line.startswith(prefix))
+        return text + b'\n' + inventory + b'\n'
+    for driver in ('virtio-net', 'e1000'):
+        add('duplicate-' + driver + '-inventory', uefi, 'boot', 'client.log',
+            lambda file, prefix=(driver + ': index=').encode(): duplicate_inventory(file, prefix),
+            spec=spec, firmware=index['firmware'])
     add('wrong-device-command', uefi, 'boot', 'command.json', lambda file:
         file.read_bytes().replace(b'disable-modern=on', b'disable-legacy=on'), spec=spec, firmware=index['firmware'])
     add('missing-device', uefi, 'boot', 'client.log', lambda file:
@@ -120,7 +128,7 @@ def damage_requests(directory):
     add('missing-model-case', directory / 'model', 'model', 'completed.json', lambda file:
         altered(file, lambda value: value['results'].pop()))
     add('actual-model-program', directory / 'model', 'model', 'program', flip)
-    require(len(result) == 33, 'complete archive product linkage firmware device matrix and model faults')
+    require(len(result) == 35, 'complete archive product linkage firmware device matrix and model faults')
     return result
 
 

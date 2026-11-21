@@ -81,13 +81,13 @@ Develop each feature as one coherent change with guest tests and documentation. 
 
 Record the exact requirements each change completes. Treat a feature area as unfinished until every requirement has evidence. Report an application as bundled separately from demonstrated. Preserve the full firmware suite; add disk reboot, controlled network peer, threading, audio, and real hardware evidence when the corresponding feature is claimed. Host checks must observe the guest's actual behavior.
 
-Start from current `main` after checking remote updates, ongoing work and CI. Preserve unrelated local changes and use an isolated worktree when needed. Keep private answers under `.local/`; do not copy the questionnaire or private inputs into commits or source bundles.
+Start from current `main` after checking remote updates and ongoing work. Run the relevant [local tests](testing.md) before committing. Preserve unrelated local changes and use an isolated worktree when needed. Keep private notes and inputs under `.local/`.
 
 ## Detailed scope
 
 ### F01. Firmware, buses, and interrupt routing
 
-Limine BIOS/UEFI boot, legacy PIT/PIC interrupts, PCI configuration-mechanism-1 enumeration, virtio DMA, and [bounded ACPI HPET discovery](time.md) work. PCIe ECAM, general ACPI/firmware handoff, and interrupt routing remain planned. [Storage support](storage.md) adds the PCI and MMIO support used by raw virtio disks.
+Limine boots through BIOS and UEFI. [Boot diagnostics](architecture.md) report validated MADT topology and FADT flags, and the PCI driver uses validated MCFG windows for ECAM. The scheduling PIT uses the I/O APIC after boot verifies timer delivery. Q35 uses ACPI firmware routes for shared Intel INTx and follows configured PCI bridges to resolve downstream pins. i440fx resolves firmware-configured links by executing the routing method and reading PCI configuration fields. Modern virtio-net and the Intel 82574L also have working MSI-X and MSI paths. Legacy PCI, PIC/PIT, and [bounded ACPI HPET discovery](time.md) remain available. Link programming and broader firmware handoff remain required. [Storage support](storage.md) describes the PCI and MMIO support used by raw virtio disks.
 
 Required work:
 
@@ -282,7 +282,7 @@ Acceptance evidence:
 
 ### F11. Ethernet devices and link management
 
-[PCI virtio-net and QEMU 82540EM e1000](network.md) share bounded Ethernet ownership and Linux raw packet sockets. Modern/legacy transport, multiple interfaces, carrier/MTU controls, rollover, and controlled-peer tests cover this slice; wider hardware, interrupt-driven completion, and advanced networking remain planned. The same checks exercise both adapters. The usable network release still requires the complete protocol and configuration work below.
+[PCI virtio-net and QEMU's Intel 82540EM and 82574L models](network.md) share bounded Ethernet ownership and Linux raw packet sockets. Guest tests cover modern and legacy virtio, multiple interfaces, carrier and MTU changes, and controlled peers. Modern virtio-net and the 82574L have interrupt completion tests. Wider hardware and the protocol and configuration work below remain required.
 
 Required work:
 

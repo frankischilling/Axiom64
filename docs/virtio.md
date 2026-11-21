@@ -1,6 +1,6 @@
 # Virtio transport and split queues
 
-`kernel/include/drivers/virtio/pci.hpp` handles polling PCI devices through modern MMIO or legacy I/O registers. `kernel/include/drivers/virtio/queue.hpp` owns split-ring storage, descriptor chains, completion identity, and CPU metadata. The block driver uses these modules for one outstanding request. Separate receive/transmit queues hold several buffers in flight for the [virtio Ethernet driver](network.md).
+`kernel/include/drivers/virtio/pci.hpp` handles modern MMIO and legacy I/O registers and provides optional MSI-X queue notifications. `kernel/include/drivers/virtio/queue.hpp` owns split-ring storage, descriptor chains, completion identity, and CPU metadata. The block driver uses these modules for one outstanding request. Separate receive and transmit queues hold several buffers in flight for the [virtio Ethernet driver](network.md).
 
 ## Driver lifecycle
 
@@ -9,7 +9,7 @@ Keep the transport, queues, and payload allocations alive throughout device owne
 1. `VirtioPci::open(pci, device_features, minimum_config_bytes)` discovers registers, resets, and negotiates features. Drivers select supported device bits 0 through 23; the module manages modern `VERSION_1`/`FEATURES_OK` and rejects unsupported transport features.
 2. `setup_queue(queue, id, preferred_size, minimum_size)` configures each queue. Modern devices negotiate a power-of-two size no larger than the preference or offer, with readback checks. Legacy devices use their exact reported size. Up to eight queues can bind to one transport.
 3. Allocate physically contiguous payloads and submit `VirtioBuffer { physical_address, length, writable }` arrays. Readable elements must precede writable elements. `queue.submit(buffers, count, cookie)` returns the chain head or a negative error. Exhaustion returns `-EAGAIN` without publishing a partial chain.
-4. `start()` sets driver-ready status and notifies queues with pre-submitted buffers. After startup, use `notify(queue)` following a submission or batch.
+4. `start()` enables modern queues, sets driver-ready status, and notifies queues with pre-submitted buffers. A driver may pass an interrupt handler and context. The transport verifies MSI-X vector assignment for every bound queue before enabling the queues and falls back to polling if setup fails. After startup, use `notify(queue)` following a submission or batch.
 5. `queue.complete(result)` returns one for a completion, zero when none is ready, or `-EIO` for a broken queue. The result contains the original cookie/head and device-reported used length. The driver validates its request-specific length, status, and payload. `wait(queue, result, timeout_seconds)` provides a synchronous poll with an explicit deadline of 1 through 60 seconds and returns `-ETIMEDOUT` on expiry. Asynchronous drivers must check `healthy()` and apply their own deadlines.
 6. `stop()` resets the whole device. Only a successful return permits releasing outstanding payloads and calling `queue.release()`. On reset failure, retain every allocation and its ownership record. Later calls must not reuse or overwrite quarantined payloads.
 
@@ -25,9 +25,9 @@ A malformed completion stops new submissions. The queue checks do not prove a de
 
 ## Registers and limits
 
-The module preserves assigned 32/64-bit BAR decoding, bounded capability walks, supervisor uncached mappings, register alignment, configuration generations, and notification bounds. MSI/MSI-X are disabled and INTx is masked. Available rings suppress used-buffer interrupts. PIT channel 2 calibrates the TSC. Reset acknowledgement uses two seconds; the block driver allows 30 seconds per request, including flushes. Iteration bounds apply only when calibration fails, so fast polling cannot shorten a calibrated deadline.
+The module uses assigned 32/64-bit BAR decoding, bounded capability walks, supervisor uncached mappings, register alignment, configuration generations, and notification bounds. MSI and INTx are masked. MSI-X is optional for modern devices. The PCI layer sizes the table BAR with decoding disabled and validates the full table span before touching entries. Bound queues share one vector and request used-buffer notifications. Polling queues suppress those notifications. Stopping a device masks MSI-X and retires its vector before resetting the transport. PIT channel 2 calibrates the TSC. Reset acknowledgement uses two seconds; the block driver allows 30 seconds per request, including flushes. Iteration bounds apply only when calibration fails, so fast polling cannot shorten a calibrated deadline.
 
-Callers currently run on one CPU. SMP synchronization, interrupt-driven completion, packed/indirect/event-index rings, individual queue reset, hotplug, PCIe ECAM, and IOMMU support remain planned. Offering an optional feature does not mean the guest negotiates it. See the remaining requirements for [firmware and interrupt routing](feature-roadmap.md#f01-firmware-buses-and-interrupt-routing), [block storage](storage.md), and [Ethernet](network.md).
+Callers currently run on one CPU. SMP synchronization, packed/indirect/event-index rings, individual queue reset, hotplug, and IOMMU support remain planned. See the remaining requirements for [firmware and interrupt routing](feature-roadmap.md#f01-firmware-buses-and-interrupt-routing), [block storage](storage.md), and [Ethernet](network.md).
 
 ## Verification
 

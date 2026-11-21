@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/include/boot/boot.hpp
- * @brief   Bootloader request declarations.
+ * @brief   Declares boot requests and early initialization interfaces.
  * @author  frankischilling
- * @date    2026-11-18
+ * @date    2026-11-19
  *
- * Exposes the bootloader requests and response helpers used during kernel
- * startup.
+ * Connects bootloader responses to the memory, firmware, clock, root
+ * filesystem, and userspace startup paths.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -33,4 +33,15 @@ extern volatile limine_memmap_request memmap_request;
 extern volatile limine_module_request module_request;
 extern volatile limine_framebuffer_request framebuffer_request;
 extern volatile limine_executable_cmdline_request cmdline_request;
+
+const uint8_t* firmware_read(uint64_t address, size_t length, void* context);
+
+namespace Acpi {
+struct InterruptTopology;
+struct DefinitionBlocks;
+} // namespace Acpi
+
+bool firmware_discover(uint64_t rsdp, Acpi::InterruptTopology&, Acpi::DefinitionBlocks&);
+void firmware_configure_pci_interrupts(uint64_t rsdp, const Acpi::InterruptTopology&,
+                                       const Acpi::DefinitionBlocks&);
 } // namespace ax

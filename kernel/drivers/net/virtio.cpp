@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/drivers/net/virtio.cpp
- * @brief   Virtio network driver.
+ * @brief   Services Ethernet traffic on virtio network adapters.
  * @author  frankischilling
- * @date    2026-11-18
+ * @date    2026-11-19
  *
- * Manages transmit and receive buffers on virtio queues and reports link
- * information.
+ * Owns receive and transmit buffers and drains completions through polling or MSI-X.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -25,6 +24,7 @@
  */
 #include "net/ethernet.hpp"
 #include "drivers/virtio/pci.hpp"
+#include "ipc/ipc.hpp"
 
 namespace ax {
 namespace {
@@ -51,6 +51,7 @@ struct Controller {
     Buffer receive[slots], transmit[slots];
     unsigned rx_count = 0, tx_count = 0;
     size_t header = 0, capacity = 0, pages = 0;
+    bool irq_rx_reported = false, irq_tx_reported = false;
 };
 
 static Controller controllers[max_net_devices];
@@ -180,6 +181,23 @@ static int send(NetAdapter& adapter, const void* frame, size_t length) {
     return -11;
 }
 
+static void interrupt(void* context) {
+    auto& device = *static_cast<Controller*>(context);
+    const auto& info = device.adapter.info;
+    uint64_t rx_before = info.stats.rx_packets, tx_before = info.stats.tx_packets;
+    poll(device.adapter);
+    if (info.stats.rx_packets != rx_before && !device.irq_rx_reported) {
+        device.irq_rx_reported = true;
+        log("virtio-net: MSI-X RX completion index=%u\n", uint64_t(info.index));
+    }
+    if (info.stats.tx_packets != tx_before && !device.irq_tx_reported) {
+        device.irq_tx_reported = true;
+        log("virtio-net: MSI-X TX completion index=%u\n", uint64_t(info.index));
+    }
+    if (info.stats.rx_packets != rx_before || info.stats.tx_packets != tx_before)
+        epoll_notify();
+}
+
 static bool initialize(Controller& device, const PciFunction& pci) {
     device.adapter = {{}, poll, send, stop, &device};
     if (!device.pci.open(pci, feature_mtu | feature_mac | feature_status, 6))
@@ -209,16 +227,17 @@ static bool initialize(Controller& device, const PciFunction& pci) {
         if (!device.transmit[i].physical)
             return false;
     }
-    if (!device.pci.start())
+    if (!device.pci.start(interrupt, &device))
         return false;
     device.adapter.info.live = true;
     poll(device.adapter);
     if (!device.adapter.info.live || !net_register(device.adapter))
         return false;
-    log("virtio-net: index=%u transport=%s rx=%u tx=%u features=%x\n",
-        uint64_t(device.adapter.info.index), device.pci.modern() ? "modern" : "legacy",
-        uint64_t(device.rx.layout().size), uint64_t(device.tx.layout().size),
-        device.pci.features());
+    uint64_t index = device.adapter.info.index;
+    log("virtio-net: index=%u transport=%s rx=%u tx=%u features=%x\n", index,
+        device.pci.modern() ? "modern" : "legacy", uint64_t(device.rx.layout().size),
+        uint64_t(device.tx.layout().size), device.pci.features());
+    log("virtio-net IRQ: index=%u mode=%s\n", index, device.pci.using_msix() ? "msix" : "poll");
     return true;
 }
 } // namespace

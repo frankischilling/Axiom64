@@ -50,7 +50,7 @@
       "title": "Firmware, buses, and interrupt routing",
       "milestone": "M1",
       "state": "partial",
-      "current": "Limine BIOS/UEFI boot, legacy PIT/PIC interrupts, PCI configuration-mechanism-1 enumeration, shared modern/legacy virtio PCI setup, split-queue DMA ownership, and bounded ACPI HPET discovery work. PCIe ECAM, general ACPI/firmware handoff, and interrupt routing remain planned.",
+      "current": "Limine boots through BIOS and UEFI. Bounded ACPI parsing covers HPET, MADT, FADT, MCFG, DSDT, and SSDT. PCI enumeration uses validated ECAM apertures or legacy PCI configuration ports on segment zero. The kernel verifies delivery of the scheduling PIT through the I/O APIC and falls back to PIC/PIT when necessary. Modern virtio-net uses MSI-X and the Intel 82574L uses MSI. Q35 BIOS and UEFI deliver Intel INTx through firmware routes, including shared lines and adapters behind configured PCI bridges. i440fx BIOS and UEFI build dynamic routing packages and read firmware-configured interrupt links. Link programming and broader firmware handoff remain required.",
       "scope": [
         "PCI/PCIe enumeration and driver binding",
         "MMIO mapping, DMA allocation, address limits, and cache attributes",
@@ -484,7 +484,7 @@
       "title": "Ethernet devices and link management",
       "milestone": "M3",
       "state": "partial",
-      "current": "PCI virtio-net and QEMU 82540EM e1000 share bounded Ethernet ownership and Linux raw packet sockets. Modern/legacy transport, multiple interfaces, carrier/MTU controls, rollover, and controlled-peer tests cover this slice; wider hardware, interrupt-driven completion, and advanced networking remain planned.",
+      "current": "PCI virtio-net and QEMU's Intel 82540EM and 82574L models share bounded Ethernet ownership and Linux raw packet sockets. Modern virtio-net and the 82574L complete packets through MSI-X and MSI respectively, with polling fallback. Both virtio transports, multiple interfaces, carrier and MTU controls, rollover, and controlled peers have guest tests. Wider hardware and advanced networking remain planned.",
       "scope": [
         "Network-device interface, packet buffers, statistics, MTU, and link state",
         "Virtio-net first on QEMU",

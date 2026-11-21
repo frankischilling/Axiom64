@@ -1900,7 +1900,7 @@ sudo -n python3 scripts/ipv4_alias_native.py
 
 [[step]]
 suites = ["network"]
-name = "Test IPv4 UDP, datagram lifetime, checksums, and failed-device sockets"
+name = "Test IPv4 UDP traffic, failed-device sockets, and PCI interrupt delivery"
 run = '''
 sudo -n python3 -B scripts/tests/ipv4_multicast_fixture_owner_test.py
 make test-udp
@@ -2144,9 +2144,11 @@ python3 scripts/ci/paired_network.py --suite "$SUITE" \
 
 [[step]]
 suites = ["configuration"]
-name = "Test counter scaling and ACPI discovery with sanitizers"
+name = "Test clock scaling, ACPI discovery, PCI interrupts, and firmware routing with sanitizers"
 run = '''
 make test-clock-codec 2>&1 | tee build/clock-codec.log
+make test-pci-interrupts 2>&1 | tee build/pci-interrupts.log
+make test-acpi-routing 2>&1 | tee build/acpi-routing.log
 '''
 
 [[step]]
@@ -2158,9 +2160,9 @@ make test-clock
 
 [[step]]
 suites = ["configuration"]
-name = "Compare Linux file locks and test RAM/ext2 description lifetime"
+name = "Compare Linux file locks and test RAM/ext2 description lifetime on i440fx and Q35"
 run = '''
-make test-file-locks
+make test-file-locks FILE_LOCK_ARGS=--include-q35
 '''
 
 [[step]]

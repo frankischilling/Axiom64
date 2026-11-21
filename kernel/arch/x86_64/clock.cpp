@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/arch/x86_64/clock.cpp
- * @brief   x86-64 monotonic clock source.
+ * @brief   Selects and maintains the x86 elapsed clock.
  * @author  frankischilling
- * @date    2026-11-18
+ * @date    2026-11-19
  *
- * Selects and samples an HPET or calibrated TSC and updates the kernel's
- * elapsed tick counter.
+ * Uses supported counter sources to report elapsed time and keeps the PIT
+ * fallback available when hardware calibration fails.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -37,27 +37,6 @@ static uint64_t timestamp() {
     uint32_t low, high;
     asm volatile("lfence; rdtsc" : "=a"(low), "=d"(high)::"memory");
     return uint64_t(high) << 32 | low;
-}
-
-static const uint8_t* firmware_read(uint64_t address, size_t length, void*) {
-    auto map = memmap_request.response;
-    if (!map || !length || length > Acpi::max_table_bytes || address > UINT64_MAX - direct_map ||
-        length - 1 > UINT64_MAX - direct_map - address)
-        return nullptr;
-    for (size_t i = 0; i < map->entry_count; i++) {
-        auto entry = map->entries[i];
-        if (address < entry->base || address - entry->base > entry->length ||
-            length > entry->length - (address - entry->base))
-            continue;
-        // Base revision 3 does not directly map reserved/ACPI regions.
-        if (entry->type == LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE)
-            return static_cast<const uint8_t*>(physical(address));
-        if (entry->type == LIMINE_MEMMAP_RESERVED || entry->type == LIMINE_MEMMAP_ACPI_NVS ||
-            entry->type == LIMINE_MEMMAP_ACPI_RECLAIMABLE ||
-            entry->type == LIMINE_MEMMAP_RESERVED_MAPPED)
-            return static_cast<const uint8_t*>(map_mmio(address, length));
-    }
-    return nullptr;
 }
 
 static bool counter_read(uint64_t& value) {

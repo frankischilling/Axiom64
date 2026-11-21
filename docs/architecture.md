@@ -17,10 +17,10 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/arch/x86_64/arch.cpp`, `entry.asm` | CPU tables, interrupts, syscall entry, register frames, return to Ring 3 |
 | `kernel/boot/root.cpp` | Root-device selection, required boot paths, and volatile runtime mounts |
 | `kernel/mm/memory.cpp` | Physical allocation, page references, user page tables, validated user copies |
-| `kernel/drivers/platform/pci.cpp`, `kernel/drivers/virtio/` | PCI discovery, modern/legacy virtio transport, split-ring storage and descriptor ownership |
+| `kernel/drivers/platform/pci.cpp`, `kernel/drivers/virtio/` | PCI and PCIe discovery, modern/legacy virtio transport, split-ring storage and descriptor ownership |
 | `kernel/drivers/block/block.cpp` | Virtio block request policy, raw sector I/O, flush, and filesystem claims |
 | `kernel/core/random/`, `kernel/drivers/random/` | Shared generator, initialization credit, source validation, and virtio entropy ownership |
-| `kernel/firmware/`, `kernel/arch/x86_64/rtc.cpp` | Bounded generation-ID discovery and boot UTC calendar sampling |
+| `kernel/firmware/`, `kernel/arch/x86_64/rtc.cpp` | ACPI table validation, interrupt topology discovery, generation ID, and boot UTC calendar sampling |
 | `kernel/net/`, `kernel/drivers/net/` | Ethernet ownership, virtio-net/e1000 devices, interface ioctls, packet sockets, IPv4/ARP/ICMP, UDP, TCP state/socket/error ownership, and netlink route/address control |
 | `kernel/process/task.cpp` | Process/thread ownership, ELF loading, clone/fork/exec/exit/wait, scheduling, TLS, FPU state |
 | `kernel/process/futex.cpp` | Expected-value waits, wake/bitsets, requeue, deadlines, shared backing lifetime |
@@ -38,6 +38,42 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `userspace/desktop/seat.c`, `authority.c`, `terminal.c` | Authenticated display ownership, private X11 cookies, process recovery and ordinary-user terminals |
 | `userspace/services/random_seed.c` | Private persisted seed loading, rotation, and interrupted-operation recovery |
 | `userspace/net/` | C++ configuration ownership, saved profiles, resolver metadata, and DHCP packet/state/transport modules; normal manager startup remains required |
+
+Boot diagnostics report the validated ACPI MADT and FADT when firmware
+supplies them. The MADT lists local APIC and x2APIC processor IDs, I/O APIC
+addresses and interrupt bases, and ISA source overrides. The FADT supplies the
+system control interrupt and platform flags. On the single boot CPU, the
+kernel uses the MADT's ISA override to route PIT IRQ 0 through the I/O APIC.
+It checks the controller input ranges and observes two acknowledged timer
+interrupts before switching. If validation or delivery fails, the kernel
+keeps the legacy PIC/PIT path. The `irq=pic` boot option selects that path
+explicitly. Modern virtio-net can route receive and transmit completions to a
+shared MSI-X vector on the boot processor. The Intel 82574L adapter uses a
+single PCI MSI message. Drivers keep their polling paths.
+
+PCI discovery uses the validated ACPI MCFG table for PCIe configuration
+registers. Each aperture identifies a PCI segment and bus range. Its base
+address refers to bus zero even when the aperture starts at another bus.
+The kernel rejects overlapping entries and apertures that intersect RAM or
+exceed the CPU's physical address limit. It maps configuration registers
+with device cache attributes and uses legacy PCI configuration ports for
+segment-zero buses without a usable ECAM mapping.
+
+Boot also validates the DSDT referenced by the FADT and the SSDTs listed in
+the ACPI root table. SSDTs retain their firmware order for namespace loading.
+After verifying APIC delivery, the kernel evaluates AML to select the
+interrupt model, resolve PCI pin routes, and read interrupt resources.
+Bridge-local routes take precedence. When a pin has no local route,
+the kernel walks the configured PCI bridge chain and rotates the pin at
+each hop. It rejects ambiguous bridge ranges. The I/O APIC uses the
+firmware's polarity and trigger mode. A level-triggered line can serve
+several devices. Each device clears
+its own interrupt cause before the local APIC acknowledges the line. A
+repeatedly unclaimed line is masked and the driver resumes polling.
+On i440fx, the evaluator builds the firmware's routing packages and reads
+the current interrupt link from PCI configuration space. Disabled links
+remain inactive. Programming new link settings and broader AML support remain
+under development.
 
 Sources and public headers use matching subsystem folders. Desktop configuration is under `userspace/desktop/`; guest and host tests are grouped by the subsystem they exercise. [Source layout and build discovery](source-layout.md) describe the paths and conventions.
 

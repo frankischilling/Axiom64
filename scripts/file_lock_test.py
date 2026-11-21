@@ -43,21 +43,26 @@ def fixture():
                     '--output-name', 'axiom64-file-lock.iso'], cwd=ROOT, check=True)
 
 
-def run(firmware, transport, timeout, seed, scratch, reference):
-    label = f'file-lock-{firmware}-{transport}'
+def run(firmware, transport, timeout, seed, scratch, reference, machine='pc'):
+    label = f'file-lock-{firmware}-{transport}' if machine == 'pc' else f'file-lock-{machine}-{firmware}-{transport}'
     log = ROOT / 'build' / (label + '.log')
     disk = scratch / 'volume.raw'
     shutil.copyfile(seed, disk)
     seed_hash = hashlib.sha256(seed.read_bytes()).hexdigest()
     if hashlib.sha256(disk.read_bytes()).hexdigest() != seed_hash:
         raise RuntimeError('guest file-lock disk differs from the seed')
-    command = ['qemu-system-x86_64', '-machine', 'pc', '-cpu', 'max', '-m', '512M',
+    command = ['qemu-system-x86_64', '-machine', machine, '-cpu', 'max', '-m', '512M',
                '-cdrom', str(ROOT / 'build/axiom64-file-lock.iso'), '-nic', 'none',
                '-display', 'none', '-serial', 'stdio', '-monitor', 'none', '-no-reboot',
                '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04',
                '-drive', f'if=none,id=locks,format=raw,file={disk}',
                '-device', 'virtio-blk-pci,drive=locks,addr=5,' +
                ('disable-legacy=on' if transport == 'modern' else 'disable-modern=on')]
+    if machine == 'q35':
+        command += ['-netdev', 'user,id=e1000test,restrict=on',
+                    '-device', 'e1000,addr=6,netdev=e1000test',
+                    '-netdev', 'user,id=virtiotest,restrict=on',
+                    '-device', 'virtio-net-pci,addr=7,disable-legacy=on,netdev=virtiotest']
     if firmware == 'uefi':
         variables = ROOT / 'build' / (label + '-OVMF_VARS.fd')
         shutil.copyfile('/usr/share/OVMF/OVMF_VARS_4M.fd', variables)
@@ -85,6 +90,21 @@ def run(firmware, transport, timeout, seed, scratch, reference):
     missing += [marker for marker in ['FILE_LOCK_FILESYSTEM ramfs', 'FILE_LOCK_FILESYSTEM ext2',
                 'FILE_LOCK_UNMOUNT_PASS', 'AXIOM64_TESTS_PASS', 'AXIOM64_EXIT status=0']
                 if text.count(marker) != 1]
+    if machine == 'q35':
+        missing += [marker for marker in ('PCI ECAM: segment=0 buses=0-', 'ACPI MADT:', 'ACPI FADT:',
+                                         'virtio-blk: disk=0 transport=modern', 'e1000: index=',
+                                         'virtio-net: index=')
+                    if marker not in text]
+        if 'PCI ECAM: cannot map' in text:
+            missing.append('complete Q35 ECAM mappings')
+        timer = re.findall(r'^Interrupts: (?:xAPIC|x2APIC) I/O APIC PIT irq=0 '
+                           r'gsi=(\d+) input=(\d+) cpu=(\d+) ticks=(\d+)$', text, re.M)
+        if len(timer) != 1 or int(timer[0][-1]) < 2:
+            missing.append('two delivered PIT IRQs before switching to I/O APIC')
+        definitions = re.findall(r'^ACPI definition blocks: DSDT=(\d+) bytes SSDTs=(\d+)$',
+                                 text, re.M)
+        if len(definitions) != 1 or int(definitions[0][0]) < 36:
+            missing.append('validated Q35 ACPI definition blocks')
     traces = re.findall(r'FILE_LOCK_TRACE_PASS operations=4096 digest=([0-9a-f]{8})', text)
     error = None
     fsck = None
@@ -98,7 +118,7 @@ def run(firmware, transport, timeout, seed, scratch, reference):
              len(traces) == 4 and set(traces) == {reference['trace']} and not any(
                  marker in text for marker in ['FILE_LOCK_FAIL', 'PANIC:', 'Page fault',
                                                'FILESYSTEM_SHUTDOWN_FAIL'])
-    result = dict(firmware=firmware, transport=transport, returncode=process.returncode,
+    result = dict(machine=machine, firmware=firmware, transport=transport, returncode=process.returncode,
                   timed_out=timed_out, missing=missing, traces=traces, seed_sha256=seed_hash,
                   error=error, fsck=fsck, log=log.name, seconds=round(time.monotonic() - started, 3),
                   passed=passed)
@@ -112,6 +132,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--firmware', choices=['bios', 'uefi', 'both'], default='both')
     parser.add_argument('--transport', choices=['modern', 'legacy', 'both'], default='both')
+    parser.add_argument('--include-q35', action='store_true',
+                        help='also exercise PCIe ECAM with storage and both network drivers')
     parser.add_argument('--timeout', type=float, default=90)
     args = parser.parse_args()
     if args.timeout <= 0:
@@ -124,16 +146,20 @@ def main():
         seed = scratch / 'seed.raw'
         create_volume(seed)
         seed_hash = hashlib.sha256(seed.read_bytes()).hexdigest()
-        for firmware in ['bios', 'uefi'] if args.firmware == 'both' else [args.firmware]:
-            for transport in ['modern', 'legacy'] if args.transport == 'both' else [args.transport]:
-                result = run(firmware, transport, args.timeout, seed, scratch, reference)
-                results.append(result)
-                unchanged = hashlib.sha256(seed.read_bytes()).hexdigest() == seed_hash
-                evidence = dict(native=reference, seed_sha256=seed_hash, seed_unchanged=unchanged,
-                                boots=results)
-                (ROOT / 'build/file-lock-results.json').write_text(json.dumps(evidence, indent=2) + '\n')
-                if not unchanged or not result['passed']:
-                    raise SystemExit('File-lock guest contract failed')
+        firmwares = ['bios', 'uefi'] if args.firmware == 'both' else [args.firmware]
+        transports = ['modern', 'legacy'] if args.transport == 'both' else [args.transport]
+        cases = [('pc', firmware, transport) for firmware in firmwares for transport in transports]
+        if args.include_q35:
+            cases.extend(('q35', firmware, 'modern') for firmware in firmwares)
+        for machine, firmware, transport in cases:
+            result = run(firmware, transport, args.timeout, seed, scratch, reference, machine)
+            results.append(result)
+            unchanged = hashlib.sha256(seed.read_bytes()).hexdigest() == seed_hash
+            evidence = dict(native=reference, seed_sha256=seed_hash, seed_unchanged=unchanged,
+                            boots=results)
+            (ROOT / 'build/file-lock-results.json').write_text(json.dumps(evidence, indent=2) + '\n')
+            if not unchanged or not result['passed']:
+                raise SystemExit('File-lock guest contract failed')
 
 
 if __name__ == '__main__':

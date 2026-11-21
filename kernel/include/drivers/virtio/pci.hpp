@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/include/drivers/virtio/pci.hpp
- * @brief   VirtIO PCI transport interface.
+ * @brief   Declares the virtio PCI transport interface.
  * @author  frankischilling
- * @date    2026-11-18
+ * @date    2026-11-19
  *
- * Defines the PCI transport state and declares feature, status, notification,
- * and queue operations.
+ * Provides queue registration, device configuration, polling, and optional MSI-X.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -28,7 +27,7 @@
 #include "drivers/virtio/queue.hpp"
 
 namespace ax {
-// Polling modern/legacy adapters; device-specific config/features stay in drivers.
+// Modern and legacy transport with optional MSI-X queue notifications.
 class VirtioPci {
   public:
     VirtioPci() = default;
@@ -43,7 +42,7 @@ class VirtioPci {
 
     bool read_config(size_t offset, void* output, size_t length) const;
 
-    bool start();
+    bool start(Irq::Handler handler = nullptr, void* context = nullptr);
 
     bool healthy() const;
 
@@ -52,6 +51,10 @@ class VirtioPci {
     int wait(SplitQueue&, VirtioCompletion&, unsigned timeout_seconds) const;
 
     bool stop();
+
+    bool using_msix() const {
+        return msix_active_;
+    }
 
     bool modern() const {
         return mode_ == Mode::modern;
@@ -105,13 +108,18 @@ class VirtioPci {
     };
 
     PciFunction pci_{};
+    PciMsix msix_;
     Mode mode_ = Mode::none;
     Region common_, notify_, config_, isr_;
     Binding queues_[8]{};
     uint16_t io_ = 0;
+    uint8_t msix_capability_ = 0;
     uint32_t notify_multiplier_ = 0;
     uint64_t accepted_ = 0;
     bool opened_ = false, initialized_ = false, running_ = false;
+    bool msix_active_ = false;
+
+    bool configure_msix(Irq::Handler, void* context);
 
     bool map_region(uint8_t capability, Region&);
 

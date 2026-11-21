@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/drivers/virtio/pci.cpp
- * @brief   Virtio PCI transport.
+ * @brief   Implements modern and legacy virtio PCI transport.
  * @author  frankischilling
- * @date    2026-11-18
+ * @date    2026-11-19
  *
- * Discovers transport resources and configures feature negotiation, queue
- * addresses, and notifications.
+ * Configures PCI registers, queues, notifications, MSI-X, and device reset.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -28,6 +27,7 @@
 namespace ax {
 namespace {
 constexpr uint64_t version_one = 1ull << 32;
+constexpr uint16_t no_vector = UINT16_MAX;
 static uint64_t tsc_frequency;
 static bool calibrated;
 
@@ -98,8 +98,11 @@ bool VirtioPci::discover(size_t minimum) {
                 return false;
             seen[at] = true;
             uint8_t id = pci_.read8(at), next = pci_.read8(at + 1) & 0xfc;
-            if (id == 0x11) // MSI-X disabled; legacy config begins at offset 20.
+            if (id == 0x11) {
+                // With MSI-X disabled, legacy config begins at offset 20.
                 pci_.write16(at + 2, pci_.read16(at + 2) & ~0x8000u);
+                msix_capability_ = at;
+            }
             if (id == 5)
                 pci_.write16(at + 2, pci_.read16(at + 2) & ~1u);
             if (id == 9) {
@@ -179,7 +182,7 @@ bool VirtioPci::open(const PciFunction& pci, uint64_t features, size_t minimum) 
         set_status(11);
         if (!(status() & 8))
             return false;
-        common_.w16(16, 0xffff);
+        common_.w16(16, no_vector);
     } else {
         out32(io_ + 4, accepted_);
     }
@@ -238,13 +241,10 @@ bool VirtioPci::setup_queue(SplitQueue& queue, uint16_t id, uint16_t preferred, 
     queue.device_owned_ = true; // Before handing any address to the device.
     virtio_dma_barrier();
     if (modern()) {
-        common_.w16(26, 0xffff);
+        common_.w16(26, no_vector);
         common_.w64(32, layout.descriptors);
         common_.w64(40, layout.available);
         common_.w64(48, layout.used);
-        common_.w16(28, 1);
-        if (common_.r16(28) != 1)
-            return false;
     } else {
         out32(io_ + 8, layout.descriptors / page_size);
         if (in32(io_ + 8) != layout.descriptors / page_size)
@@ -281,7 +281,33 @@ bool VirtioPci::read_config(size_t offset, void* output, size_t length) const {
     return false;
 }
 
-bool VirtioPci::start() {
+bool VirtioPci::configure_msix(Irq::Handler handler, void* context) {
+    if (!msix_.prepare(pci_, msix_capability_, handler, context))
+        return false;
+    bool bound = true;
+    for (const auto& item : queues_)
+        if (item.queue) {
+            common_.w16(22, item.id);
+            common_.w16(26, 0);
+            bound &= common_.r16(26) == 0;
+        }
+    if (bound && msix_.unmask(pci_)) {
+        for (const auto& item : queues_)
+            if (item.queue)
+                item.queue->available_ring_[0] = 0; // Request used-buffer notifications.
+        virtio_dma_barrier();
+        return true;
+    }
+    for (const auto& item : queues_)
+        if (item.queue) {
+            common_.w16(22, item.id);
+            common_.w16(26, no_vector);
+        }
+    msix_.stop(pci_);
+    return false;
+}
+
+bool VirtioPci::start(Irq::Handler handler, void* context) {
     if (!initialized_ || running_)
         return false;
     bool present = false;
@@ -289,6 +315,16 @@ bool VirtioPci::start() {
         present |= item.queue != nullptr;
     if (!present)
         return false;
+    if (modern()) {
+        msix_active_ = handler && configure_msix(handler, context);
+        for (const auto& item : queues_)
+            if (item.queue) {
+                common_.w16(22, item.id);
+                common_.w16(28, 1);
+                if (common_.r16(28) != 1)
+                    return false;
+            }
+    }
     set_status(modern() ? 15 : 7);
     running_ = true;
     if (!healthy()) {
@@ -348,6 +384,8 @@ int VirtioPci::wait(SplitQueue& queue, VirtioCompletion& completion,
 
 bool VirtioPci::stop() {
     running_ = initialized_ = false;
+    msix_.stop(pci_);
+    msix_active_ = false;
     if (mode_ == Mode::none)
         return false;
     set_status(0);

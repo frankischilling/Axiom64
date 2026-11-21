@@ -76,6 +76,13 @@ python3 scripts/ext2_journal_rejection_test.py
 '''
 
 [[step]]
+suites = ["storage-journal"]
+name = "Recover a normal journaled VM root after abrupt shutdown"
+run = '''
+make test-vm-journal
+'''
+
+[[step]]
 suites = ["storage-journal-lifetime-bios-modern", "storage-journal-lifetime-bios-legacy", "storage-journal-lifetime-uefi-modern", "storage-journal-lifetime-uefi-legacy"]
 name = "Recover open descriptions after VM interruption and reject damaged metadata"
 run = '''

@@ -69,7 +69,7 @@ After an interrupted journaled mount, validated deletion-marked inodes with no d
 
 Current focused guest checks recover an inode pointer whose allocation bitmap was not yet written, preserve every preceding file byte, and then exercise append, file creation, rename and clean unmount. Independent native checks compare journal replay with a separate filesystem-checker copy; that repaired copy is never used as guest input. Empty-log startup and recovery advance the transaction ID past abandoned records before reusing journal blocks. Crash controls cover stale records and 32-bit ID wraparound. Broader profile and device-failure acceptance remains in progress. Unjournaled corrupted pointers remain errors; enabling recovery does not allocate blocks by guessing from them.
 
-An operation must fit the available journal and the existing 4,096-block overlay bound. Journal sizing, larger-operation handling and modern journal features remain part of the storage roadmap. The format follows the Linux [journal documentation](https://docs.kernel.org/filesystems/ext4/journal.html) and [v6.17 JBD2 definitions](https://github.com/torvalds/linux/blob/v6.17/include/linux/jbd2.h); this implementation uses Axiom64's synchronous block interface.
+An operation must fit both the journal and the 4,096-block overlay. The driver reserves space for descriptors and the commit record before staging each distinct block. An operation that exceeds the journal limit returns `ENOSPC` and discards the staged changes. Smaller operations can continue. New [normal VM roots](build.md) have a 32 MiB journal, enough for the full overlay. Splitting large mutations across transactions and supporting newer journal formats remain in development. The format follows the Linux [journal documentation](https://docs.kernel.org/filesystems/ext4/journal.html) and [v6.17 JBD2 definitions](https://github.com/torvalds/linux/blob/v6.17/include/linux/jbd2.h).
 
 Limits are 4,096 block groups and 4,096 changed blocks per operation. The inode index grows with the number of cached identities. Cache entries share allocator pages and retain their addresses until unmount, including after unlink. All ext2 mounts share an inode-cache budget of one eighth of managed physical memory, including entry pages and indexes. Unmount returns those pages to the allocator. The mount scan uses temporary memory proportional to filesystem block and inode counts. Allocation failures return `ENOMEM`. Filesystem calls are serialized on one CPU. Asynchronous writeback, namespaces, permission enforcement, special-file import, broader date support, and advanced ext2/ext4 features remain in development. Private mappings copy file bytes. Ext2 shared mappings return `ENODEV`.
 
@@ -77,11 +77,14 @@ Limits are 4,096 block groups and 4,096 changed blocks per operation. The inode 
 
 ```sh
 make test-ext2
+make test-vm-journal
 python3 scripts/ext2_test.py --quick --firmware bios --transport modern
 python3 scripts/ext2_test.py --checks errors --firmware uefi --transport legacy
 python3 scripts/ext2_test.py --checks recovery
 python3 scripts/ext2_deleted_inode_test.py --directory build/ext2-deleted-recovery
 ```
+
+`make test-vm-journal` exercises the normal launch command on BIOS and UEFI. An administrator signs in, creates a file, and syncs it before the test cuts the VM. A fresh boot reopens the same disk, authenticates the same account, and reads the file. Host checks verify the recovery flag before reboot, the file bytes after reboot, and a clean filesystem after shutdown. Separate journal fault tests cover interruption during a transaction.
 
 The complete matrix has 100 boots across BIOS/UEFI and modern/legacy virtio with four layouts: 1 KiB/128-byte inodes, 2 KiB/256-byte inodes, 4 KiB/256-byte inodes, and original revision 0 directory records. Every layout has write, fresh-boot read, and read-only hardware phases. Guest tests cover shell mount/unmount commands, direct/indirect and sparse storage, a triple-indirect sparse file above 4 GiB, truncation/freeing, long names and multi-block enumeration, links, replacement/open lifetime, removed directory traversal, symlinks, signed timestamps, remounts, raw-disk claims, private mappings, and executable loading.
 

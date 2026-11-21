@@ -179,6 +179,8 @@ struct Volume {
             }
         if (change_count == max_changes)
             return fail(-12);
+        if (journal && change_count >= journal_payload_limit(journal))
+            return fail(-28);
         auto change = (Change*)alloc(sizeof(Change));
         if (!change)
             return fail(-12);

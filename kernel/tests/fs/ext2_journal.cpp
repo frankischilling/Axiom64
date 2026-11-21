@@ -24,10 +24,10 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "fs/ext2/journal.hpp"
+#include "../../fs/ext2/volume.hpp"
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <vector>
 
 namespace ax {
@@ -417,6 +417,36 @@ unsigned restart_sequences(unsigned size, bool writeback) {
         }
     return cases;
 }
+
+void transaction_capacity(unsigned size) {
+    Device device(size, true);
+    Journal* journal = device.open();
+    unsigned limit = journal_payload_limit(journal);
+    unsigned tags = (size - 28) / 8, ring = device.map.size() - 1;
+    auto needed = [tags](unsigned count) { return count + (count + tags - 1) / tags + 1; };
+    assert(needed(limit) <= ring && needed(limit + 1) > ring);
+    std::vector<uint8_t> data(size, 0xa7);
+    std::vector<JournalWrite> writes(limit + 1);
+    for (unsigned index = 0; index < writes.size(); index++)
+        writes[index] = {index + 4, data.data()};
+    ext2_detail::Volume volume{};
+    volume.journal = journal;
+    volume.block_size = size;
+    volume.blocks = 4096;
+    for (unsigned index = 0; index < limit; index++)
+        assert(volume.write_block(writes[index].block, data.data(), 0));
+    assert(volume.write_block(writes[0].block, data.data(), 1));
+    assert(!volume.write_block(writes[limit].block, data.data(), 0));
+    assert(volume.error == -28 && volume.change_count == limit && device.calls == 0);
+    volume.discard();
+    assert(!volume.changes && !volume.change_count);
+    assert(journal_commit(journal, writes.data(), writes.size()) == -28);
+    assert(device.calls == 0 && !journal_pending(journal));
+    assert(!journal_commit(journal, writes.data(), limit));
+    assert(device.durable[(limit + 3) * size] == 0xa7);
+    assert(device.durable[(limit + 4) * size] == 0);
+    journal_close(journal);
+}
 } // namespace
 
 int main() {
@@ -427,6 +457,7 @@ int main() {
             restarts += restart_sequences(size, writeback);
         }
         multiple_descriptors(size);
+        transaction_capacity(size);
     }
     printf("EXT2_JOURNAL_NATIVE_PASS crash_and_retry_cases=%u negatives=%u replay_controls=%u "
            "restart_cases=%u layouts=3\n",

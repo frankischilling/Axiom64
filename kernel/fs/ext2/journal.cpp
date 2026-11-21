@@ -54,7 +54,7 @@ struct Journal {
     uint8_t header[max_block], *reserved;
     Replay* plan;
     uint32_t first, length, sequence, start, next_sequence;
-    unsigned plan_count;
+    unsigned plan_count, payload_limit;
     bool scanned, staged, retrying;
     uint64_t retry_hash;
     size_t retry_count;
@@ -105,6 +105,10 @@ void journal_close(Journal* journal) {
 
 bool journal_pending(const Journal* journal) {
     return journal && (journal->start || journal->retrying);
+}
+
+unsigned journal_payload_limit(const Journal* journal) {
+    return journal->payload_limit;
 }
 
 Journal* journal_open(const JournalStorage& io, const uint8_t uuid[16], int& error) {
@@ -172,6 +176,13 @@ Journal* journal_open(const JournalStorage& io, const uint8_t uuid[16], int& err
     if (!journal->start)
         journal->sequence++;
     journal->next_sequence = journal->sequence;
+    // Each descriptor carries a UUID on its first tag, and every transaction
+    // needs a separate commit record.
+    unsigned tags = (io.block_size - 28) / 8;
+    uint32_t available = journal->length - journal->first - 1;
+    uint32_t remainder = available % (tags + 1);
+    journal->payload_limit =
+        min(max_replay, available / (tags + 1) * tags + (remainder ? remainder - 1 : 0));
     error = 0;
     return journal;
 }
@@ -348,8 +359,7 @@ int journal_commit(Journal* journal, const JournalWrite* writes, size_t count) {
     if (count > max_replay)
         return -12;
     unsigned tags = (journal->io.block_size - 28) / 8;
-    uint64_t needed = count + (count + tags - 1) / tags + 1;
-    if (needed > journal->length - journal->first)
+    if (count > journal_payload_limit(journal))
         return -28;
     uint64_t hash = 14695981039346656037ull;
     for (size_t index = 0; index < count; index++) {

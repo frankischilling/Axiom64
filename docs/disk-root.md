@@ -2,6 +2,8 @@
 
 Axiom64 mounts a classic ext2 root on a whole virtio disk or a partition. A small initramfs supplies the initial VFS namespace. The kernel replaces that root before starting any user process. The full disk-root image contains Ring 3 init, shells, the native GNU toolchain, and the Xorg desktop. Writable ext2 data mounts can run alongside the disk root.
 
+The [normal VM launcher](build.md) formats new persistent roots with a classic internal journal. The development fixture below uses unjournaled ext2 for compatibility and explicit recovery tests.
+
 ## Build and boot
 
 On the Ubuntu build host, install the dependencies in [build.md](build.md), including `e2fsprogs`, then run:

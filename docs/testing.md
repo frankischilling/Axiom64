@@ -42,12 +42,18 @@ PIIX routing byte after firmware setup. The host reads back the programmed
 IRQ, and the guest must report actual RX and TX interrupts. Serial, debugger,
 and packet capture evidence stays under `build/udp-intx/pc-*-reprogram/`.
 
-`make test-suite SUITE=legacy-ports` boots BIOS and UEFI on i440fx and Q35
-with each combination of UART and printer presence. The fixture checks
-device numbers, unprivileged access, and absence of phantom nodes. It
-exchanges bytes over the serial chardev and compares the printer chardev's
-binary output. The cases cover HPET and calibrated TSC. The harness keeps
-logs and output bytes under `build/legacy-ports/`.
+`make test-suite SUITE=legacy-ports` runs a sanitizer model and boots BIOS
+and UEFI on i440fx and Q35 with each combination of UART and printer
+presence. The guests check device numbers and unprivileged access. They
+exchange bytes over the serial chardev and compare the printer chardev's
+binary output.
+
+The alternate-port cases use GDB to model the ISA Plug and Play
+configuration registers. Actual QEMU UART and printer devices handle I/O
+at `0x2f8` and `0x278`. The bad checksum cases leave both devices
+unbound and send no printer bytes. Tests cover HPET and calibrated TSC.
+Logs, configuration traces, and transfer bytes stay under
+`build/legacy-ports/`.
 
 `make test-suite SUITE=legacy-ata` tests ATA and virtio disks together in
 BIOS and UEFI guests. It checks ATA partitions, byte writes across the

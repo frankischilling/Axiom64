@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/include/drivers/platform/legacy_io.hpp
- * @brief   Fixed ISA UART and printer interfaces.
+ * @brief   Polled ISA UART and printer interfaces.
  * @author  frankischilling
  * @date    2026-11-21
  *
- * Declares the early COM1 console and the standard parallel printer port.
+ * Declares the early COM1 console and firmware-assigned legacy device discovery.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -28,6 +28,7 @@
 
 namespace ax {
 void serial_init();
+void legacy_pnp_init();
 bool serial_present();
 bool serial_put(char);
 int serial_read();

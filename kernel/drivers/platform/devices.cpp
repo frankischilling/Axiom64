@@ -287,14 +287,13 @@ void devices_init() {
         log("Framebuffer: %ux%u pitch=%u bpp=%u\n", framebuffer->width, framebuffer->height,
             framebuffer->pitch, uint64_t(framebuffer->bpp));
     }
+    legacy_pnp_init();
     tag("/dev/console", Device::serial, 0x501);
     tag("/dev/tty", Device::tty);
     if (serial_present())
         tag("/dev/ttyS0", Device::serial, 0x440);
-    if (parallel_init()) {
+    if (parallel_init())
         tag("/dev/lp0", Device::parallel);
-        log("ISA: parallel printer at 0x378\n");
-    }
     tag("/dev/null", Device::null);
     tag("/dev/zero", Device::zero);
     tag("/dev/full", Device::full);

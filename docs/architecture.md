@@ -33,7 +33,7 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/process/signal_wait.cpp` | Captured Linux synchronous signal waits, dequeue order, timeout and interruption |
 | `kernel/ipc/ipc.cpp`, `shared_memory.cpp` | Unix stream sockets, readiness, epoll, select, shared mappings, SysV segments |
 | `kernel/drivers/platform/devices.cpp` | Serial terminal, PTYs, framebuffer, PS/2 events, Linux block-device file operations |
-| `kernel/drivers/platform/legacy_io.cpp` | Polled COM1 console and LPT1 printer |
+| `kernel/drivers/platform/isa_pnp.cpp`, `legacy_io.cpp` | ISA card discovery, active resource readback, polled UART and printer drivers |
 | `kernel/drivers/platform/power.cpp` | PIIX4 power off after filesystem synchronization on the tested QEMU platform |
 | `userspace/init/main.c`, `console.c` | Seed/network supervision, authenticated console startup, child reaping and console recovery |
 | `userspace/desktop/seat.c`, `authority.c`, `terminal.c` | Authenticated display ownership, private X11 cookies, process recovery and ordinary-user terminals |
@@ -58,9 +58,16 @@ and exposes `/dev/ttyS0` when the probe succeeds. With a running HPET or
 calibrated TSC, it also probes the standard LPT1 port (`0x378`). A detected
 printer interface appears as root-owned `/dev/lp0`. It writes raw bytes in
 compatibility mode and returns `EIO` if the port fails before sending any
-bytes. A failure after partial output returns the number sent. The fixed
-ports use polling. ISA Plug-and-Play resource assignment and legacy disk
-drivers remain in development.
+bytes. A failure after partial output returns the number sent.
+
+Once the clock is running, ISA Plug and Play discovery isolates cards,
+validates their serial identifiers and resource data, and reads the active
+I/O assignment for compatible UARTs and standard parallel ports. The
+kernel keeps a working COM1 or LPT1. If the fixed-port probe finds no
+device, it can bind an unambiguous active assignment at a standard
+alternate port. It probes the selected device before publishing a node.
+Discovery changes only card selection, leaving logical-device assignments
+intact. Assigning resources to inactive devices remains open.
 
 Legacy PCI IDE compatibility channels also support polled ATA disks. Reads,
 writes, partition discovery, and persistent roots use the shared block layer.

@@ -24,14 +24,14 @@
  */
 #include "drivers/block/nvme.hpp"
 #include "drivers/block/nvme_command.hpp"
-#include "drivers/block/poll.hpp"
+#include "drivers/platform/poll.hpp"
 #include "drivers/platform/pci.hpp"
 #include "mm/dma.hpp"
 
 namespace ax {
 namespace {
 using namespace Nvme;
-using BlockPoll::wait;
+using DevicePoll::wait;
 constexpr unsigned cap_low = 0, cap_high = 1, version_reg = 2, interrupt_mask = 3;
 constexpr unsigned configuration = 5, status_reg = 7, attributes = 9, admin_sq = 10, admin_cq = 12;
 constexpr size_t doorbells = 0x1000;

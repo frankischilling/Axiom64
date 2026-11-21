@@ -100,6 +100,17 @@ DMA address range, write error recovery, and media replacement under BIOS
 and UEFI. It reboots and checks an ext2 data floppy with host `e2fsck`.
 Images, serial logs, and monitor receipts stay under `build/floppy-test/`.
 
+`make test-suite SUITE=hda` boots i440fx and Q35 with BIOS and UEFI. Each
+profile checks the absent-device case, records playback externally, and
+supplies a known capture waveform through QEMU's ALSA backend. The host
+checks the stereo amplitude sequence, mono playback, and simultaneous duplex
+output. The guest checks device permissions, duplicate and competing opens,
+nonblocking capture, scheduling during drain, and capture recovery after a
+deliberate overrun. QEMU needs the WAV and ALSA audio backends. The capture
+fixture supplies samples from a file with a bounded ALSA buffer and runs the
+codec in callback mode. It requires no host sound card. Logs, audio files,
+and image digests stay under `build/pcm-test/`.
+
 `make test-ipv4-address-lifetimes-guest` runs the finite IPv4 address-control
 client on both Ethernet adapters in eight static/dynamic, BIOS/UEFI and
 modern/legacy PCI profiles. Two workers share immutable images. Original

@@ -33,6 +33,7 @@ matrix = [
     "ahci",
     "nvme",
     "floppy",
+    "hda",
     "network",
     "ipv4-source-filters",
     "ipv6-expiry",

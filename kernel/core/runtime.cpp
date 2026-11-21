@@ -26,6 +26,7 @@
 #include "core/base.hpp"
 #include "drivers/block/block.hpp"
 #include "drivers/platform/legacy_io.hpp"
+#include "drivers/audio/pcm.hpp"
 #include "drivers/platform/power.hpp"
 #include "fs/vfs.hpp"
 #include "net/ethernet.hpp"
@@ -153,6 +154,7 @@ void log(const char* s, ...) {
 
 [[noreturn]] void poweroff(int status) {
     net_shutdown();
+    Pcm::shutdown();
     int error = shutdown_filesystems();
     if (error) {
         log("FILESYSTEM_SHUTDOWN_FAIL errno=%d\n", int64_t(-error));

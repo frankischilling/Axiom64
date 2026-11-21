@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
- * @file    kernel/include/drivers/block/poll.hpp
+ * @file    kernel/include/drivers/platform/poll.hpp
  * @brief   Bounded waits for polled block devices.
  * @author  frankischilling
  * @date    2026-11-21
@@ -25,7 +25,7 @@
 #pragma once
 #include "core/time.hpp"
 
-namespace ax::BlockPoll {
+namespace ax::DevicePoll {
 template <typename Ready> bool wait(Ready ready, unsigned timeout_ticks) {
     clock_refresh();
     const uint64_t started = ticks;
@@ -47,4 +47,4 @@ template <typename Ready> bool wait(Ready ready, unsigned timeout_ticks) {
         asm volatile("pause");
     }
 }
-} // namespace ax::BlockPoll
+} // namespace ax::DevicePoll

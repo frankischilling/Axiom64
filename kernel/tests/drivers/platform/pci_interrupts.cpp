@@ -95,9 +95,15 @@ void test_msi(const ax::PciFunction& pci) {
 
 void test_msix(const ax::PciFunction& pci) {
     ax::PciMsix msix;
+    const auto prepare = [&](uint8_t at) {
+        ax::PciBar bar;
+        if (at <= 0xf4)
+            pci.probe_bar(pci.read32(at + 4) & 7, ax::PciBarSpace::memory, bar);
+        return msix.prepare(pci, at, bar, handler, nullptr);
+    };
     reset(pci, 0x11, 0);
     pci.write32(0x10, base);
-    assert(msix.prepare(pci, capability, handler, nullptr));
+    assert(prepare(capability));
     assert(pci.read16(4) == command && pci.read32(0x10) == base);
     assert(pci.read16(capability + 2) == 0xc000);
     assert(table[0] == 0xfee00000 && table[1] == 0 && table[2] == 0x40 && table[3] == 1);
@@ -107,30 +113,147 @@ void test_msix(const ax::PciFunction& pci) {
     assert(retirements == 3 && pci.read16(capability + 2) == 0x4000);
 
     pci.write32(capability + 4, 8);
-    assert(!msix.prepare(pci, capability, handler, nullptr));
+    assert(!prepare(capability));
     pci.write32(capability + 4, 0);
     pci.write16(capability + 2, 1);
-    assert(!msix.prepare(pci, capability, handler, nullptr));
+    assert(!prepare(capability));
     pci.write16(capability + 2, 0);
     pci.write32(0x10, base | 1);
-    assert(!msix.prepare(pci, capability, handler, nullptr));
+    assert(!prepare(capability));
     pci.write32(0x10, base | 4);
     pci.write32(capability + 4, 1);
-    assert(!msix.prepare(pci, capability, handler, nullptr));
+    assert(!prepare(capability));
     pci.write32(capability + 4, 6);
-    assert(!msix.prepare(pci, capability, handler, nullptr));
-    assert(!msix.prepare(pci, 0xf8, handler, nullptr));
+    assert(!prepare(capability));
+    assert(!prepare(0xf8));
     pci.write32(capability + 4, 0);
     pci.write32(0x14, UINT32_MAX);
-    assert(!msix.prepare(pci, capability, handler, nullptr));
+    assert(!prepare(capability));
     assert(pci.read16(4) == command && pci.read32(0x14) == UINT32_MAX);
     assert(registrations == 4 && mappings == 1 && retirements == 3);
 
     pci.write32(0x10, base);
     mapping_error = true;
-    assert(!msix.prepare(pci, capability, handler, nullptr));
+    assert(!prepare(capability));
     assert(mappings == 2 && retirements == 4 && pci.read16(capability + 2) == 0x4000);
     std::puts("PCI_MSIX_RESOURCE_PASS single_entry invalid_resource_ranges failed_mapping");
+}
+
+struct ConfigModel {
+    mutable uint16_t flags = command;
+    mutable uint32_t bars[6]{};
+    uint32_t masks[6]{};
+    mutable bool sizing[6]{};
+    mutable unsigned bar_writes = 0;
+    uint8_t header_type = 0;
+    bool refuse_quiet = false, refuse_restore = false, refuse_enable = false;
+
+    uint8_t read8(unsigned offset) const {
+        assert(offset == 0x0e);
+        return header_type;
+    }
+
+    uint16_t read16(unsigned offset) const {
+        assert(offset == 4);
+        return flags;
+    }
+
+    uint32_t read32(unsigned offset) const {
+        assert(offset >= 0x10 && offset <= 0x24 && !(offset & 3));
+        unsigned index = (offset - 0x10) / 4;
+        return sizing[index] ? masks[index] : bars[index];
+    }
+
+    void write16(unsigned offset, uint16_t next) const {
+        assert(offset == 4);
+        if ((next & 7) ? refuse_enable : refuse_quiet)
+            return;
+        if (next & 7)
+            for (bool probing : sizing)
+                assert(!probing);
+        flags = next;
+    }
+
+    void write32(unsigned offset, uint32_t value) const {
+        assert(!(flags & 7));
+        assert(offset >= 0x10 && offset <= 0x24 && !(offset & 3));
+        unsigned index = (offset - 0x10) / 4;
+        ++bar_writes;
+        if (value == UINT32_MAX)
+            sizing[index] = true;
+        else if (!refuse_restore) {
+            sizing[index] = false;
+            bars[index] = value;
+        }
+    }
+};
+
+void test_apertures() {
+    using namespace ax;
+    using enum PciBarStatus;
+    using enum PciBarSpace;
+    constexpr uint64_t limit = 1ull << 36;
+    ConfigModel pci;
+    PciBar resource;
+    const auto probe = [&](unsigned index, PciBarSpace space) {
+        return PciBarProbe::probe(pci, index, space, limit, resource);
+    };
+
+    pci.bars[0] = base | 8;
+    pci.masks[0] = 0xfffe0008;
+    assert(probe(0, memory) == valid);
+    assert(resource.base == base && resource.size == 0x20000 && resource.index == 0);
+    assert(pci.flags == command && pci.bars[0] == (base | 8) && pci.bar_writes == 2);
+    uint64_t address = 0;
+    assert(resource.range(0x1fff8, 8, address) && address == base + 0x1fff8);
+    assert(!resource.range(0x1fff8, 9, address) && address == base + 0x1fff8);
+    assert(!resource.range(0x20000, 1, address) && !resource.range(0, 0, address));
+
+    pci.bars[2] = 4;
+    pci.bars[3] = 2;
+    pci.masks[2] = 0xffffc004;
+    pci.masks[3] = UINT32_MAX;
+    assert(probe(3, memory) == invalid && pci.bar_writes == 2);
+    assert(probe(2, memory) == valid);
+    assert(resource.base == 2ull << 32 && resource.size == 0x4000 && resource.index == 2);
+    assert(pci.flags == command && pci.bars[2] == 4 && pci.bars[3] == 2 && pci.bar_writes == 6);
+    pci.bars[3] = 16;
+    assert(probe(2, memory) == invalid && pci.bar_writes == 6);
+    pci.bars[5] = 4;
+    assert(probe(5, memory) == invalid && probe(6, memory) == invalid && pci.bar_writes == 6);
+
+    pci.bars[4] = 0xffe1;
+    pci.masks[4] = 0x0000ffe1;
+    assert(probe(4, ports) == valid && resource.base == 0xffe0 && resource.size == 32);
+    assert(resource.range(20, 12, address) && address == 0xfff4);
+    assert(!resource.range(20, 13, address) && probe(4, memory) == invalid);
+    pci.masks[4] = 0xffffffe1;
+    assert(probe(4, ports) == valid && resource.size == 32);
+    pci.bars[4] = 0x10001;
+    assert(probe(4, ports) == invalid);
+
+    pci.masks[0] = 0xfffef008;
+    assert(probe(0, memory) == invalid && pci.flags == command && pci.bars[0] == (base | 8));
+    pci.masks[0] = 0xfffe0008;
+    pci.bars[0] = base + 0x1000;
+    assert(probe(0, memory) == invalid && pci.flags == command);
+    pci.bars[0] = base;
+    pci.header_type = 1;
+    assert(probe(0, memory) == invalid);
+    pci.header_type = 0;
+    pci.refuse_quiet = true;
+    const auto writes = pci.bar_writes;
+    assert(probe(0, memory) == invalid && pci.bar_writes == writes && pci.flags == command);
+    pci.refuse_quiet = false;
+    pci.refuse_restore = true;
+    assert(probe(0, memory) == restore_failed && !(pci.flags & 7) && pci.sizing[0]);
+    assert(resource.base == 0xffe0 && resource.size == 32 && resource.index == 4);
+    pci = {};
+    pci.bars[0] = base;
+    pci.masks[0] = 0xfffe0000;
+    pci.refuse_enable = true;
+    assert(probe(0, memory) == restore_failed && !(pci.flags & 7) && !pci.sizing[0]);
+    std::puts("PCI_BAR_PASS mem32 mem64 ports aperture_end malformed_masks restore_readback");
 }
 } // namespace
 
@@ -163,5 +286,6 @@ int main() {
     ax::PciFunction pci{0, 1, 0, 0, page};
     test_msi(pci);
     test_msix(pci);
+    test_apertures();
     assert(munmap(page, 4096) == 0);
 }

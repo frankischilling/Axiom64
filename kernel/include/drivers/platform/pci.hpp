@@ -26,6 +26,7 @@
 #pragma once
 #include "arch/x86_64/interrupts.hpp"
 #include "core/base.hpp"
+#include "drivers/platform/pci_bar.hpp"
 
 namespace ax {
 namespace Acpi {
@@ -50,11 +51,8 @@ struct PciFunction {
 
     uint8_t find_capability(uint8_t id, unsigned* boundary = nullptr) const;
 
-    // Assigned memory BAR only. Returns false for an I/O BAR, high half, or no address.
-    bool memory_bar(unsigned index, uint64_t& address) const;
-
     // Probe only while the function is quiescent and no driver is using its BARs.
-    bool memory_bar_size(unsigned index, uint64_t& address, uint64_t& length) const;
+    PciBarStatus probe_bar(unsigned index, PciBarSpace space, PciBar& resource) const;
 };
 
 class PciMsi {
@@ -74,7 +72,8 @@ class PciMsi {
 
 class PciMsix {
   public:
-    bool prepare(const PciFunction&, uint8_t capability, Irq::Handler, void* context);
+    bool prepare(const PciFunction&, uint8_t capability, const PciBar&, Irq::Handler,
+                 void* context);
 
     bool unmask(const PciFunction&);
 

@@ -101,6 +101,14 @@ uncacheable type and preserves already compatible entries. It stages any
 new page tables and publishes them only after checking the entire range.
 A rejected range leaves the old mappings intact. [Intel system programming manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
 
+Virtio and Intel Ethernet size the firmware-assigned PCI BARs before using
+their registers. The kernel disables decoding and bus mastering while it
+reads a size mask, then verifies that the original address was restored
+before restoring decoding. Drivers check each register span against the
+BAR. Modern virtio retains the MSI-X aperture from discovery so IRQ setup
+can use it after queue configuration. Legacy virtio bounds configuration
+reads by its measured I/O BAR.
+
 The direct DMA allocator gives drivers contiguous, zeroed RAM within a
 device address limit and an optional power-of-two boundary. Virtio and
 Intel Ethernet use a 32-bit PCI aperture. The floppy controller uses a

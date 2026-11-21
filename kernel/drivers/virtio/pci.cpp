@@ -76,13 +76,18 @@ uint8_t VirtioPci::status() const {
     return modern() ? common_.r8(20) : in8(io_ + 18);
 }
 
-bool VirtioPci::map_region(uint8_t capability, Region& result) {
-    uint64_t bar;
-    uint32_t offset = pci_.read32(capability + 8), length = pci_.read32(capability + 12);
-    if (!length || !pci_.memory_bar(pci_.read8(capability + 4), bar) ||
-        bar > (1ull << 52) - offset || length > (1ull << 52) - bar - offset)
+bool VirtioPci::map_region(uint8_t capability, Region& result, PciBar (&bars)[6]) {
+    const auto index = pci_.read8(capability + 4);
+    if (index >= 6)
         return false;
-    void* mapped = map_mmio(bar + offset, length);
+    auto& bar = bars[index];
+    if (!bar.size && pci_.probe_bar(index, PciBarSpace::memory, bar) != PciBarStatus::valid)
+        return false;
+    uint32_t offset = pci_.read32(capability + 8), length = pci_.read32(capability + 12);
+    uint64_t address;
+    if (!bar.range(offset, length, address))
+        return false;
+    void* mapped = map_mmio(address, length);
     if (!mapped)
         return false;
     result = {(volatile uint8_t*)mapped, length};
@@ -90,6 +95,7 @@ bool VirtioPci::map_region(uint8_t capability, Region& result) {
 }
 
 bool VirtioPci::discover(size_t minimum) {
+    PciBar bars[6]{};
     if (pci_.read16(6) & 16) {
         uint8_t at = pci_.read8(0x34) & 0xfc;
         bool seen[256]{};
@@ -115,7 +121,7 @@ bool VirtioPci::discover(size_t minimum) {
                                  : kind == 4 ? &config_
                                              : nullptr;
                 if (target && !target->bytes) {
-                    if (!map_region(at, *target))
+                    if (!map_region(at, *target, bars))
                         return false;
                     if (kind == 2) {
                         if (length < 20)
@@ -135,18 +141,27 @@ bool VirtioPci::discover(size_t minimum) {
         if ((uint64_t(common_.bytes) & 3) || (uint64_t(config_.bytes) & 3) ||
             (uint64_t(notify_.bytes) & 1))
             return false;
+        if (msix_capability_ && msix_capability_ <= 0xf4) {
+            const auto index = pci_.read32(msix_capability_ + 4) & 7;
+            if (index < 6 && bars[index].size)
+                msix_bar_ = bars[index];
+            else if (pci_.probe_bar(index, PciBarSpace::memory, msix_bar_) ==
+                     PciBarStatus::restore_failed)
+                return false;
+        }
         mode_ = Mode::modern;
         return true;
     }
     uint16_t id = pci_.read16(2);
     if (id < 0x1000 || id > 0x103f)
         return false;
-    uint32_t bar = pci_.read32(0x10);
-    if (!(bar & 1) || !(bar & ~3u) || (bar & ~3u) > 0xffc0)
+    PciBar bar;
+    uint64_t port;
+    if (pci_.probe_bar(0, PciBarSpace::ports, bar) != PciBarStatus::valid ||
+        !bar.range(0, 20 + minimum, port))
         return false;
-    io_ = bar & ~3u;
-    if (minimum > 0x10000u - io_ - 20)
-        return false;
+    io_ = port;
+    io_config_bytes_ = bar.size - 20;
     mode_ = Mode::legacy;
     return true;
 }
@@ -158,8 +173,19 @@ bool VirtioPci::open(const PciFunction& pci, uint64_t features, size_t minimum) 
     opened_ = true;
     pci_ = pci;
     calibrate_timeout();
-    pci_.write16(4, pci_.read16(4) | 7 | 0x400);
-    if (!discover(minimum) || !stop())
+    constexpr uint16_t command_bits = 0x407;
+    const uint16_t quiet = (pci_.read16(4) & ~7u) | 0x400;
+    pci_.write16(4, quiet);
+    if ((pci_.read16(4) & command_bits) != 0x400 || !discover(minimum))
+        return false;
+    const uint16_t enable = modern() ? 0x406 : 0x405;
+    pci_.write16(4, quiet | enable);
+    if ((pci_.read16(4) & command_bits) != enable) {
+        pci_.write16(4, quiet);
+        mode_ = Mode::none;
+        return false;
+    }
+    if (!stop())
         return false;
     set_status(3);
     uint64_t offered;
@@ -254,7 +280,7 @@ bool VirtioPci::setup_queue(SplitQueue& queue, uint16_t id, uint16_t preferred, 
 }
 
 bool VirtioPci::read_config(size_t offset, void* output, size_t length) const {
-    size_t limit = modern() ? config_.length : 0x10000u - io_ - 20;
+    size_t limit = modern() ? config_.length : io_config_bytes_;
     if (!initialized_ || !output || offset > limit || length > limit - offset)
         return false;
     for (unsigned attempt = 0; attempt < 100; attempt++) {
@@ -282,7 +308,7 @@ bool VirtioPci::read_config(size_t offset, void* output, size_t length) const {
 }
 
 bool VirtioPci::configure_msix(Irq::Handler handler, void* context) {
-    if (!msix_.prepare(pci_, msix_capability_, handler, context))
+    if (!msix_.prepare(pci_, msix_capability_, msix_bar_, handler, context))
         return false;
     bool bound = true;
     for (const auto& item : queues_)

@@ -109,10 +109,11 @@ class VirtioPci {
 
     PciFunction pci_{};
     PciMsix msix_;
+    PciBar msix_bar_;
     Mode mode_ = Mode::none;
     Region common_, notify_, config_, isr_;
     Binding queues_[8]{};
-    uint16_t io_ = 0;
+    uint16_t io_ = 0, io_config_bytes_ = 0;
     uint8_t msix_capability_ = 0;
     uint32_t notify_multiplier_ = 0;
     uint64_t accepted_ = 0;
@@ -121,7 +122,7 @@ class VirtioPci {
 
     bool configure_msix(Irq::Handler, void* context);
 
-    bool map_region(uint8_t capability, Region&);
+    bool map_region(uint8_t capability, Region&, PciBar (&bars)[6]);
 
     bool discover(size_t config_minimum);
 

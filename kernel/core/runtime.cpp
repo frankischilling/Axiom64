@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "core/base.hpp"
+#include "drivers/platform/legacy_io.hpp"
 #include "drivers/platform/power.hpp"
 #include "fs/vfs.hpp"
 #include "net/ethernet.hpp"
@@ -83,26 +84,8 @@ extern "C" void __cxa_pure_virtual() {
 }
 
 namespace ax {
-void serial_init() {
-    out8(0x3f9, 0);
-    out8(0x3fb, 0x80);
-    out8(0x3f8, 1);
-    out8(0x3f9, 0);
-    out8(0x3fb, 3);
-    out8(0x3fa, 0xc7);
-    out8(0x3fc, 0x0b);
-}
-
 void putchar(char c) {
-    if (c == '\n')
-        putchar('\r');
-    while (!(in8(0x3fd) & 0x20))
-        asm volatile("pause");
-    out8(0x3f8, c);
-}
-
-int serial_read() {
-    return (in8(0x3fd) & 1) ? in8(0x3f8) : -1;
+    serial_put(c);
 }
 
 static void number(uint64_t v, unsigned base) {

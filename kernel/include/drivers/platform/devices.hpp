@@ -41,7 +41,8 @@ enum class Device {
     pty_slave,
     vt,
     block,
-    full
+    full,
+    parallel
 };
 
 struct Terminal {

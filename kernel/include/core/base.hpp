@@ -120,11 +120,7 @@ inline void write_cr3(uint64_t v) {
     asm volatile("mov %0,%%cr3" ::"r"(v) : "memory");
 }
 
-void serial_init();
-
 void putchar(char);
-
-int serial_read();
 
 void log(const char*, ...);
 

@@ -582,6 +582,13 @@ make test-acpi-routing 2>&1 | tee build/acpi-routing.log
 '''
 
 [[step]]
+suites = ["legacy-ports"]
+name = "Verify ISA UART and printer binding and data transfer"
+run = '''
+python3 -B scripts/legacy_ports_test.py
+'''
+
+[[step]]
 suites = ["configuration"]
 name = "Test elapsed clocks and deadlines across delayed storage"
 run = '''

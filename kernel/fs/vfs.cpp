@@ -1005,7 +1005,7 @@ void vfs_init(const void* archive, size_t length) {
     for (auto p : dirs)
         if (!lookup(p))
             make_node(p, directory | 0755);
-    const char* devices[] = {"/dev/console", "/dev/tty",    "/dev/ttyS0",  "/dev/null",
+    const char* devices[] = {"/dev/console", "/dev/tty",    "/dev/null",
                              "/dev/zero",    "/dev/random", "/dev/urandom"};
     for (auto p : devices)
         if (!lookup(p))

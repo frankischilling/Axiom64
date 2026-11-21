@@ -44,4 +44,6 @@ void clock_realtime_init();
 uint64_t clock_realtime_ticks();
 // Called with interrupts disabled; timer=true supplies the IRQ-only fallback.
 void clock_refresh(bool timer = false);
+// Bounded short waits for polled devices. False if the elapsed clock is unavailable.
+bool clock_delay_us(unsigned microseconds);
 } // namespace ax

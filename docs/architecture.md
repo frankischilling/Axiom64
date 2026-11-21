@@ -33,6 +33,7 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/process/signal_wait.cpp` | Captured Linux synchronous signal waits, dequeue order, timeout and interruption |
 | `kernel/ipc/ipc.cpp`, `shared_memory.cpp` | Unix stream sockets, readiness, epoll, select, shared mappings, SysV segments |
 | `kernel/drivers/platform/devices.cpp` | Serial terminal, PTYs, framebuffer, PS/2 events, Linux block-device file operations |
+| `kernel/drivers/platform/legacy_io.cpp` | Polled COM1 console and LPT1 printer |
 | `kernel/drivers/platform/power.cpp` | PIIX4 power off after filesystem synchronization on the tested QEMU platform |
 | `userspace/init/main.c`, `console.c` | Seed/network supervision, authenticated console startup, child reaping and console recovery |
 | `userspace/desktop/seat.c`, `authority.c`, `terminal.c` | Authenticated display ownership, private X11 cookies, process recovery and ordinary-user terminals |
@@ -50,6 +51,16 @@ keeps the legacy PIC/PIT path. The `irq=pic` boot option selects that path
 explicitly. Modern virtio-net can route receive and transmit completions to a
 shared MSI-X vector on the boot processor. The Intel 82574L adapter uses a
 single PCI MSI message. Drivers keep their polling paths.
+
+The early console checks for a scratch-register UART at COM1 (I/O port
+`0x3f8`) before enabling serial output. The kernel bounds transmit waits
+and exposes `/dev/ttyS0` when the probe succeeds. With a running HPET or
+calibrated TSC, it also probes the standard LPT1 port (`0x378`). A detected
+printer interface appears as root-owned `/dev/lp0`. It writes raw bytes in
+compatibility mode and returns `EIO` if the port fails before sending any
+bytes. A failure after partial output returns the number sent. The fixed
+ports use polling. ISA Plug-and-Play resource assignment and legacy disk
+drivers remain in development.
 
 PCI discovery uses the validated ACPI MCFG table for PCIe configuration
 registers. Each aperture identifies a PCI segment and bus range. Its base

@@ -36,12 +36,39 @@ from account_storage_ci import ROTATION_SHARDS, matrices
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PLAN = Path('scripts/local_test_suites.toml')
 ACCOUNT_SUITES = {
     'account-storage-clean': 'account_clean_matrix',
     'account-storage-fault': 'account_fault_matrix',
     'account-rotation-storage': 'account_rotation_matrix',
 }
 PAIRED_PREFIXES = ('protocol-', 'link-', 'normal-init-')
+
+
+def read_toml(path):
+    with (ROOT / path).open('rb') as stream:
+        return tomllib.load(stream)
+
+
+def plan_parts(index):
+    names = index['parts']
+    if len(set(names)) != len(names) or any(
+            Path(name).name != name or not name.endswith('.toml') for name in names):
+        raise ValueError('test plan parts must be distinct TOML filenames')
+    return [PLAN.with_suffix('') / name for name in names]
+
+
+def plan_sources():
+    """Return the source paths needed to reproduce the local suite plan."""
+    parts = plan_parts(read_toml(PLAN))
+    return ('scripts/local_validation.py', PLAN.as_posix(),
+            *(path.as_posix() for path in parts))
+
+
+def load_plan():
+    index = read_toml(PLAN)
+    steps = [step for path in plan_parts(index) for step in read_toml(path)['step']]
+    return dict(matrix=index['matrix'], step=steps)
 
 
 def selections(plan):
@@ -81,8 +108,7 @@ def main():
     mode.add_argument('--list', action='store_true', help='list available suites')
     mode.add_argument('--plan', action='store_true', help='print the selected commands')
     args = parser.parse_args()
-    with (ROOT / 'scripts/local_test_suites.toml').open('rb') as stream:
-        plan = tomllib.load(stream)
+    plan = load_plan()
     suites = selections(plan)
     if args.list:
         if args.suite:

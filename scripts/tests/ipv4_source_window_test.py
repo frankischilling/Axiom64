@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Check full worker completion and cleanup across source-cohort failures."""
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -32,6 +33,13 @@ class SourceWindowTest(unittest.TestCase):
             commands[name] = [sys.executable, '-B', '-c', source]
         proof = run(self.directory / 'parallel', commands)
         self.assertTrue(proof['passed'])
+        bound = [ROOT / name for name in ('scripts/ipv4_source_route/window.py',
+                                          'scripts/local_validation.py', 'scripts/local_test_suites.toml')]
+        bound.extend((ROOT / 'scripts/local_test_suites').glob('*.toml'))
+        self.assertEqual(proof['source'], {
+            path.relative_to(ROOT).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in bound
+        })
         for name in commands:
             self.assertEqual((self.directory / 'parallel' / (name + '.log')).read_text().strip(), name + '_COMPLETE')
 

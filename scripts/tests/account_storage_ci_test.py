@@ -6,7 +6,6 @@ import os
 import tempfile
 from pathlib import Path
 import sys
-import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -27,8 +26,7 @@ def rotation_profiles(matrix):
 
 
 def rotation_steps():
-    with (local_validation.ROOT / 'scripts/local_test_suites.toml').open('rb') as stream:
-        plan = tomllib.load(stream)
+    plan = local_validation.load_plan()
     return [step for step in plan['step'] if 'account-rotation-storage' in step['suites']]
 
 

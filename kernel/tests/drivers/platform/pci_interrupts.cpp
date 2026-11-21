@@ -27,6 +27,7 @@
 #include <cstdio>
 #include <sys/mman.h>
 #include "drivers/platform/pci.hpp"
+#include "drivers/platform/pci_bridge.hpp"
 
 namespace {
 constexpr uint32_t base = 0x10000000;
@@ -255,9 +256,95 @@ void test_apertures() {
     assert(probe(0, memory) == restore_failed && !(pci.flags & 7) && !pci.sizing[0]);
     std::puts("PCI_BAR_PASS mem32 mem64 ports aperture_end malformed_masks restore_readback");
 }
+
+uint32_t bridge_config[2][16];
+
+bool read_bridge(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t function, uint16_t offset,
+                 uint8_t width, uint32_t& value) {
+    if (segment != 0 || bus > 1 || slot != bus + 3 || function != 0)
+        return false;
+    assert(offset < sizeof(bridge_config[bus]) && (width == 2 || width == 4));
+    value = bridge_config[bus][offset / 4] >> ((offset % 4) * 8);
+    if (width == 2)
+        value &= 0xffff;
+    return true;
+}
+
+void test_bridge_windows() {
+    using namespace ax;
+    using enum PciBarSpace;
+    Acpi::PciBridges topology{
+        {{0, 0, 1, 3, 3, 0, false, false}, {0, 1, 2, 2, 4, 0, false, false}}, 2, false};
+    for (unsigned bus = 0; bus < 2; ++bus) {
+        const auto& bridge = topology.entries[bus];
+        auto& config = bridge_config[bus];
+        config[0x04 / 4] = 3;
+        config[0x18 / 4] =
+            bus | unsigned(bridge.secondary) << 8 | unsigned(bridge.subordinate) << 16;
+        config[0x1c / 4] = 0x2121; // 0x2000 to 0x2fff, 32-bit I/O window.
+        config[0x20 / 4] = 0x10001000;
+        config[0x24 / 4] = 0x00110001; // 0x200000000 to 0x2001fffff.
+        config[0x28 / 4] = config[0x2c / 4] = 2;
+    }
+    const auto forwards = [&](PciBarSpace space, const PciBar& bar, bool prefetchable = false) {
+        return PciBridgeWindows::forwards(topology, 0, 2, space, prefetchable, bar, read_bridge);
+    };
+    const PciBar mmio{base, 0x100000, 0}, mmio64{2ull << 32, 0x200000, 0};
+    const PciBar io{0x20e0, 32, 0};
+    assert(forwards(memory, mmio) && forwards(memory, mmio, true));
+    assert(!forwards(memory, {base, 0x100001, 0}));
+    assert(forwards(memory, mmio64, true) && !forwards(memory, mmio64));
+    assert(!forwards(memory, {2ull << 32, 0x200001, 0}, true));
+    assert(forwards(ports, io) && !forwards(ports, {0x2ff0, 32, 0}));
+    bridge_config[1][0x1c / 4] = 0x2020; // The same aperture with a 16-bit type.
+    assert(forwards(ports, io));
+    bridge_config[1][0x1c / 4] = 0x2120;
+    assert(!forwards(ports, io));
+    bridge_config[1][0x1c / 4] = 0x2121;
+    bridge_config[1][0x30 / 4] = 0x00010001;
+    assert(!forwards(ports, io));
+    bridge_config[1][0x30 / 4] = 0;
+    bridge_config[0][0x3c / 4] = 4u << 16;
+    assert(forwards(ports, io) && !forwards(ports, {0x20e0, 64, 0}));
+    assert(!forwards(ports, {0x2100, 16, 0}));
+    bridge_config[0][0x3c / 4] = 0x40u << 16;
+    assert(!forwards(memory, mmio));
+    bridge_config[0][0x3c / 4] = 0;
+    bridge_config[0][0x20 / 4] = 0;
+    assert(!forwards(memory, mmio) && forwards(memory, mmio64, true));
+    bridge_config[0][0x20 / 4] = 0x10001000;
+    bridge_config[0][0x04 / 4] = 1;
+    assert(!forwards(memory, mmio) && forwards(ports, io));
+    bridge_config[0][0x04 / 4] = 3;
+    bridge_config[0][0x2c / 4] = 1;
+    assert(!forwards(memory, mmio64, true));
+    bridge_config[0][0x2c / 4] = 2;
+    bridge_config[0][0x18 / 4] ^= 1u << 16;
+    assert(!forwards(memory, mmio)); // The live bridge changed since enumeration.
+    bridge_config[0][0x18 / 4] ^= 1u << 16;
+    topology.entries[1].invalid_primary = true;
+    assert(!forwards(memory, mmio));
+    topology.entries[1].invalid_primary = false;
+    assert(!PciBridgeWindows::forwards(topology, 0, 3, memory, false, mmio, read_bridge));
+    assert(PciBridgeWindows::forwards(topology, 1, 3, memory, false, mmio, read_bridge));
+    topology.entries[2] = {0, 0, 2, 4, 5, 0, false, false};
+    ++topology.count;
+    assert(!forwards(memory, mmio));
+    --topology.count;
+    topology.entries[1].subordinate = 4;
+    bridge_config[1][0x18 / 4] = 0x040201;
+    assert(!forwards(memory, mmio)); // The child range extends past its parent.
+    topology.overflow = true;
+    assert(!forwards(memory, mmio));
+    assert(PciBridgeWindows::forwards(topology, 0, 0, memory, false, mmio, read_bridge));
+    std::puts("PCI_BRIDGE_WINDOWS_PASS nested mem32 mem64 ports isa commands topology");
+}
 } // namespace
 
 namespace ax {
+void log(const char*, ...) {
+}
+
 void* map_mmio(uint64_t address, size_t bytes) {
     assert(address == base && bytes == sizeof(table));
     ++mappings;
@@ -287,5 +374,6 @@ int main() {
     test_msi(pci);
     test_msix(pci);
     test_apertures();
+    test_bridge_windows();
     assert(munmap(page, 4096) == 0);
 }

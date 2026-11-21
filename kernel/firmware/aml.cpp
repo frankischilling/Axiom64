@@ -1065,32 +1065,6 @@ bool pci_root_id(Value id) {
            (!memcmp(id.content.next, "PNP0A03", 7) || !memcmp(id.content.next, "PNP0A08", 7));
 }
 
-struct ParentBridge {
-    const PciBridge* bridge = nullptr;
-    bool invalid = false;
-};
-
-ParentBridge parent_bridge(const PciBridges& bridges, uint16_t segment, uint8_t bus) {
-    ParentBridge result;
-    for (unsigned i = 0; i < bridges.count; ++i) {
-        const auto& bridge = bridges.entries[i];
-        if (bridge.segment != segment || bridge.secondary != bus)
-            continue;
-        if (result.bridge || bridge.primary >= bus || bridge.subordinate < bus)
-            return {nullptr, true};
-        result.bridge = &bridge;
-    }
-    if (result.bridge)
-        for (unsigned i = 0; i < bridges.count; ++i) {
-            const auto& peer = bridges.entries[i];
-            if (&peer != result.bridge && peer.segment == segment &&
-                peer.primary == result.bridge->primary &&
-                peer.secondary <= result.bridge->subordinate && peer.subordinate >= bus)
-                return {nullptr, true};
-        }
-    return result;
-}
-
 bool Namespace::field_address(const Object& field, ConfigField& address, unsigned depth) {
     if (depth >= max_depth)
         return false;

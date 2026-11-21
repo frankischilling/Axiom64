@@ -109,6 +109,15 @@ BAR. Modern virtio retains the MSI-X aperture from discovery so IRQ setup
 can use it after queue configuration. Legacy virtio bounds configuration
 reads by its measured I/O BAR.
 
+The kernel also checks the entire BAR against the enabled forwarding windows
+of each upstream PCI bridge. It checks the bridge bus numbers and rejects
+ambiguous paths, closed windows, and ranges that stop partway through the
+BAR. A prefetchable BAR can fit either memory window. A non-prefetchable BAR
+must fit the ordinary memory window. Standard bridge I/O windows also honor
+ISA forwarding restrictions. This check uses firmware assignments and
+leaves bridge programming untouched. Resource reassignment, subtractive
+forwarding, and device-specific bridge windows remain open.
+
 The direct DMA allocator gives drivers contiguous, zeroed RAM within a
 device address limit and an optional power-of-two boundary. Virtio and
 Intel Ethernet use a 32-bit PCI aperture. The floppy controller uses a

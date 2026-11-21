@@ -27,20 +27,25 @@ import subprocess
 import time
 
 
-def boot(directory, iso, disks, firmware, transport, markers, success=True, *, hardware_readonly=False):
+def guest_command(directory, iso, disks, firmware, transport, disk_options=""):
     command = ["qemu-system-x86_64", "-machine", "pc", "-cpu", "max", "-m", "256M",
                "-boot", "order=d", "-cdrom", str(iso), "-display", "none", "-serial", "stdio",
                "-monitor", "none", "-no-reboot", "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"]
     mode = "disable-legacy=on" if transport == "modern" else "disable-modern=on"
-    access = ",readonly=on" if hardware_readonly else ""
     for index, path in enumerate(disks):
-        command += ["-drive", f"if=none,id=d{index},format=raw,file={path}{access}",
+        command += ["-drive", f"if=none,id=d{index},format=raw,file={path}{disk_options}",
                     "-device", f"virtio-blk-pci,drive=d{index},{mode},addr={5 + index}"]
     if firmware == "uefi":
         variables = directory / "VARS.fd"
         shutil.copyfile("/usr/share/OVMF/OVMF_VARS_4M.fd", variables)
         command += ["-drive", "if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd",
                     "-drive", f"if=pflash,format=raw,file={variables}"]
+    return command
+
+
+def boot(directory, iso, disks, firmware, transport, markers, success=True, *, hardware_readonly=False):
+    command = guest_command(directory, iso, disks, firmware, transport,
+                            ",readonly=on" if hardware_readonly else "")
     logfile = directory / (iso.stem + ".log")
     with logfile.open("wb") as log:
         result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=log,
@@ -60,26 +65,32 @@ def cut_after_write_fault(directory, iso, disk, sector, marker):
     rule = directory / "home.conf"
     rule.write_text('[inject-error]\nevent = "write_aio"\niotype = "write"\n'
                     f'sector = "{sector}"\nerrno = "5"\nonce = "on"\n')
-    serial = directory / "home-fault.log"
-    command = ["qemu-system-x86_64", "-machine", "pc", "-cpu", "max", "-m", "256M",
-               "-boot", "order=d", "-cdrom", str(iso), "-display", "none", "-serial", "stdio",
-               "-monitor", "none", "-no-reboot", "-nic", "none",
-               "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04",
-               "-drive", f"if=none,id=d0,format=raw,file=blkdebug:{rule}:{disk},cache=writethrough,werror=report",
-               "-device", "virtio-blk-pci,drive=d0,disable-legacy=on,addr=5"]
+    return stop_at_marker(directory, iso, f"blkdebug:{rule}:{disk}", "bios", "modern", marker,
+                          logfile="home-fault.log", disk_options=",cache=writethrough,werror=report")
+
+
+def stop_at_marker(directory, iso, disk, firmware, transport, marker, *,
+                   logfile="cut.log", disk_options=",cache=writethrough"):
+    serial = directory / logfile
+    command = guest_command(directory, iso, [disk], firmware, transport, disk_options)
     with serial.open("wb") as log, subprocess.Popen(
             command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT) as vm:
         try:
             deadline = time.monotonic() + 70
             while time.monotonic() < deadline and vm.poll() is None:
-                if marker.encode() in serial.read_bytes().splitlines():
+                if marker.encode() in serial.read_bytes().splitlines() and vm.poll() is None:
                     break
                 time.sleep(0.05)
             else:
-                raise RuntimeError(f"{serial}: guest did not report the home write fault")
+                raise RuntimeError(f"{serial}: guest did not reach {marker}")
         finally:
             if vm.poll() is None:
                 vm.kill()
                 vm.wait()
         if vm.returncode != -SIGKILL:
             raise RuntimeError(f"{serial}: expected an abrupt VM stop, got {vm.returncode}")
+    output = serial.read_text(errors="replace")
+    if f"Firmware: {firmware.upper()}" not in output or any(
+            token in output for token in ("FAULT ", "PANIC:", "FILESYSTEM_SHUTDOWN_FAIL")):
+        raise RuntimeError(f"{serial}: guest failed before the requested stop")
+    return output

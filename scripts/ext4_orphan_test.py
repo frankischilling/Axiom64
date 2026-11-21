@@ -279,17 +279,19 @@ def cut_recovery(directory, seed, target_block, block, images, targets, orphan):
     valid_volume(directory, recovered, targets, orphan)
 
 
-def images(directory, root_test, extra_phases=(), prefix="ext4-orphan"):
+def images(directory, root_test, extra_phases=(), prefix="ext4-orphan", *,
+           base_phases=("write", "verify", "invalid", "error", "pressure"),
+           source="userspace/tests/fs/ext4-orphan.c"):
     subprocess.run(["make", "-j2", "build/axiom64.elf"], cwd=ROOT, check=True)
     client = directory / "ext4-orphan"
     subprocess.run(["musl-gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-static",
-                    "userspace/tests/fs/ext4-orphan.c", "-o", client], cwd=ROOT, check=True)
+                    source, "-o", client], cwd=ROOT, check=True)
     archive = directory / "initramfs.cpio"
     files = {name: (0o40755, b"") for name in ("dev", "proc", "run", "sbin", "sys", "tmp")}
     files["sbin/init"] = 0o100755, client.read_bytes()
     write_cpio(archive, files)
     result = {}
-    phases = ["write", "verify", "invalid", "error", "pressure"]
+    phases = list(base_phases)
     if root_test:
         phases.append("root")
     phases.extend(extra_phases)

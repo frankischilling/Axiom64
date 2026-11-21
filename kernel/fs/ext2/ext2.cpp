@@ -163,7 +163,7 @@ static bool adjust_links(Volume& v, uint32_t number, int delta) {
     return v.save_inode(number, inode);
 }
 
-static bool drop_inode(Volume& v, Node* node) {
+static bool drop_inode(Volume& v, Node* node, bool defer, bool& reclaim_now) {
     node = file_node(node);
     Inode inode;
     if (!v.load_inode(node->inode, inode))
@@ -175,11 +175,40 @@ static bool drop_inode(Volume& v, Node* node) {
     set16(inode + 26, dir ? 0 : links - 1);
     inode.set_time(inode_ctime, node_now());
     if (!u16(inode + 26)) {
-        if (!node_referenced(node))
+        reclaim_now = !node_referenced(node);
+        if (reclaim_now && !defer)
             return v.delete_inode(node->inode, inode);
+        if (v.journal) {
+            // A detached directory has no visible entries or live parent on disk.
+            if (dir)
+                set32(inode + 4, 0);
+            return NativeOrphans(v).add(inode);
+        }
         set32(inode + 20, u32(inode + 12));
     }
     return v.save_inode(node->inode, inode);
+}
+
+// If reclaiming the target outgrows the transaction, retry the namespace
+// change with an orphan record and reclaim the target after it commits.
+static bool stage_removal(Volume& v, auto stage, bool& deferred) {
+    bool reclaim_now = false;
+    bool success = stage(false, reclaim_now);
+    if (success || !reclaim_now || !v.journal || v.error != -28)
+        return success;
+    v.discard();
+    v.error = 0;
+    deferred = true;
+    return stage(true, reclaim_now);
+}
+
+static int finish_removal(Volume& v, bool success, uint32_t deferred) {
+    int result = v.finish(success);
+    // The namespace change has committed. A failed reclamation can be
+    // retried by sync or recovered using the durable orphan record.
+    if (!result && deferred)
+        NativeOrphans(v).reap(deferred);
+    return result;
 }
 
 static int lookup(Node* parent, const char* name, Node*& result) {
@@ -291,23 +320,27 @@ static int remove(Node* node) {
     auto& v = volume(node);
     if (!v.begin())
         return v.error;
-    bool dir = (node->mode & 0170000) == directory;
-    bool success = erase_name(v, node->parent->inode, node->name, node->inode) &&
-                   (!dir || adjust_links(v, node->parent->inode, -1)) && drop_inode(v, node);
+    bool dir = (node->mode & 0170000) == directory, deferred = false;
+    bool success = stage_removal(
+        v,
+        [&](bool defer, bool& reclaim_now) {
+            return erase_name(v, node->parent->inode, node->name, node->inode) &&
+                   (!dir || adjust_links(v, node->parent->inode, -1)) &&
+                   drop_inode(v, node, defer, reclaim_now);
+        },
+        deferred);
     if (success)
         node->removed = true;
-    return v.finish(success);
+    return finish_removal(v, success, deferred ? node->inode : 0);
 }
 
-static int rename(Node* node, Node* parent, const char* name, Node* replaced) {
-    auto& v = volume(node);
-    if (!v.begin())
-        return v.error;
+static bool stage_rename(Volume& v, Node* node, Node* parent, const char* name, Node* replaced,
+                         bool defer, bool& reclaim_now) {
     bool dir = (node->mode & 0170000) == directory, success = true;
     if (replaced) {
         success = erase_name(v, parent->inode, replaced->name, replaced->inode) &&
                   ((replaced->mode & 0170000) != directory || adjust_links(v, parent->inode, -1)) &&
-                  drop_inode(v, replaced);
+                  drop_inode(v, replaced, defer, reclaim_now);
     }
     success = success && erase_name(v, node->parent->inode, node->name, node->inode) &&
               add_name(v, parent->inode, name, node->inode, node->mode);
@@ -325,21 +358,31 @@ static int rename(Node* node, Node* parent, const char* name, Node* replaced) {
                       adjust_links(v, node->parent->inode, -1) && adjust_links(v, parent->inode, 1);
         }
     }
-    if (success) {
-        Inode inode;
-        success = v.load_inode(node->inode, inode);
-        if (success) {
-            inode.set_time(inode_ctime, node_now());
-            success = v.save_inode(node->inode, inode);
-        }
-    }
+    Inode inode;
+    if (!success || !v.load_inode(node->inode, inode))
+        return false;
+    inode.set_time(inode_ctime, node_now());
+    return v.save_inode(node->inode, inode);
+}
+
+static int rename(Node* node, Node* parent, const char* name, Node* replaced) {
+    auto& v = volume(node);
+    if (!v.begin())
+        return v.error;
+    bool deferred = false;
+    bool success = stage_removal(
+        v,
+        [&](bool defer, bool& reclaim_now) {
+            return stage_rename(v, node, parent, name, replaced, defer, reclaim_now);
+        },
+        deferred);
     if (success) {
         if (replaced)
             replaced->removed = true;
         node->parent = parent;
         memcpy(node->name, name, strlen(name) + 1);
     }
-    return v.finish(success);
+    return finish_removal(v, success, deferred ? replaced->inode : 0);
 }
 
 static int64_t read(Node* node, uint64_t offset, void* buffer, size_t length) {
@@ -608,9 +651,9 @@ static int sync(Mount* mount, Node*, bool) {
         bool orphan = !u16(inode + 26) && !node_referenced(&entry->node);
         if (!orphan && !entry->atime_dirty)
             continue;
-        bool success =
-            orphan ? v.delete_inode(entry->number, inode) : v.save_inode(entry->number, inode);
-        int result = v.finish(success);
+        int result = orphan && v.journal ? NativeOrphans(v).reap(entry->number)
+                                         : v.finish(orphan ? v.delete_inode(entry->number, inode)
+                                                           : v.save_inode(entry->number, inode));
         if (result)
             return result;
     }
@@ -659,7 +702,8 @@ static int prepare_unmount(Mount* mount) {
         if (!v.load_inode(entry->number, inode))
             return v.error;
         if (!u16(inode + 26)) {
-            int result = v.finish(v.delete_inode(entry->number, inode));
+            int result = v.journal ? NativeOrphans(v).reap(entry->number)
+                                   : v.finish(v.delete_inode(entry->number, inode));
             if (result)
                 return result;
         }

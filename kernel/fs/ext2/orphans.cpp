@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/fs/ext2/orphans.cpp
- * @brief   Validate native ext4 orphan lists and orphan files.
+ * @brief   Record and recover native ext-family orphans.
  * @author  frankischilling
  * @date    2026-11-20
  *
- * Validates the journal replay view and recovers the inode mappings in
- * restartable transactions, retiring records only after cleanup.
+ * Journals orphan tracking with namespace mutations, validates the replay
+ * view, and reclaims inode mappings in restartable transactions.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -36,6 +36,82 @@ uint32_t checksum(Volume& v, const Inode& inode, uint32_t block, const uint8_t* 
     set32(address, block);
     return crc32c(crc32c(v.inode_seed(inode), address, sizeof(address)), data,
                   v.block_size - orphan_tail_bytes);
+}
+
+bool load_orphan_file(Volume& v, Inode& inode) {
+    if (!v.load_inode(v.orphan_inode, inode))
+        return false;
+    uint64_t length = file_size(inode);
+    return ((u16(inode) & 0170000) == regular_file && u16(inode + 26) == 1 && !u32(inode + 20) &&
+            !u32(inode + 104) && !(length % v.block_size) &&
+            length / v.block_size <= orphan_block_limit) ||
+           v.fail();
+}
+
+bool read_orphan_block(Volume& v, Inode& inode, unsigned index, uint32_t& block, uint8_t* data) {
+    if (!v.map_block(inode, index, false, block, 0) || !block || !v.read_block(block, data))
+        return v.fail();
+    unsigned tail = v.block_size - orphan_tail_bytes;
+    return (u32(data + tail) == orphan_block_magic &&
+            (!v.checksums() || u32(data + tail + 4) == checksum(v, inode, block, data))) ||
+           v.fail();
+}
+
+bool write_orphan_block(Volume& v, const Inode& inode, uint32_t block, uint8_t* data) {
+    if (v.checksums())
+        set32(data + v.block_size - 4, checksum(v, inode, block, data));
+    return v.write_block(block, data, 4);
+}
+
+// On success, updated is false if every slot was occupied (insertion) or
+// the inode had no slot (removal).
+bool change_slot(Volume& v, uint32_t before, uint32_t after, bool& updated) {
+    updated = false;
+    if (!v.orphan_inode)
+        return true;
+    Inode inode;
+    if (!load_orphan_file(v, inode))
+        return false;
+    for (unsigned index = 0; index < file_size(inode) / v.block_size; index++) {
+        uint32_t block;
+        uint8_t data[max_block_size];
+        if (!read_orphan_block(v, inode, index, block, data))
+            return false;
+        for (unsigned offset = 0; offset < v.block_size - orphan_tail_bytes; offset += 4) {
+            if (u32(data + offset) != before)
+                continue;
+            set32(data + offset, after);
+            updated = true;
+            return write_orphan_block(v, inode, block, data);
+        }
+    }
+    return true;
+}
+
+bool remove_record(Volume& v, const Inode& inode) {
+    uint8_t header[1024];
+    if (!v.super(header))
+        return false;
+    uint32_t head = u32(header + last_orphan_offset), next = u32(inode + 20);
+    if (head == inode.number) {
+        set32(header + last_orphan_offset, next);
+        return v.save_super(header);
+    }
+    for (uint32_t number = head, depth = 0; number; depth++) {
+        Inode predecessor;
+        if (depth >= v.inodes || number < v.first_inode || !v.load_inode(number, predecessor) ||
+            u16(predecessor + 26))
+            return v.fail();
+        number = u32(predecessor + 20);
+        if (number == inode.number) {
+            set32(predecessor + 20, next);
+            return v.save_inode(predecessor.number, predecessor);
+        }
+    }
+    bool updated;
+    return (next == 0 && (u32(header + 100) & orphan_present_feature) &&
+            change_slot(v, inode.number, 0, updated) && updated) ||
+           v.fail();
 }
 } // namespace
 
@@ -70,22 +146,15 @@ bool NativeOrphans::check_file(const uint8_t* header, const uint8_t* allocated, 
     if (!v.orphan_inode)
         return true;
     Inode inode;
-    if (!v.load_inode(v.orphan_inode, inode))
+    if (!load_orphan_file(v, inode))
         return false;
-    uint64_t length = file_size(inode);
-    if ((u16(inode) & 0170000) != regular_file || u16(inode + 26) != 1 || u32(inode + 20) ||
-        u32(inode + 104) || length % v.block_size || length / v.block_size > orphan_block_limit)
-        return v.fail();
     unsigned tail = v.block_size - orphan_tail_bytes;
     bool present = (u32(header + 100) & orphan_present_feature) != 0;
-    for (unsigned index = 0; index < length / v.block_size; index++) {
+    for (unsigned index = 0; index < file_size(inode) / v.block_size; index++) {
         uint32_t block;
         uint8_t data[max_block_size];
-        if (!v.map_block(inode, index, false, block, 0) || !block || !v.read_block(block, data))
-            return v.fail();
-        if (u32(data + tail) != orphan_block_magic ||
-            (v.checksums() && u32(data + tail + 4) != checksum(v, inode, block, data)))
-            return v.fail();
+        if (!read_orphan_block(v, inode, index, block, data))
+            return false;
         bool changed = false;
         for (unsigned offset = 0; offset < tail; offset += 4) {
             uint32_t number = u32(data + offset);
@@ -113,11 +182,7 @@ bool NativeOrphans::check_file(const uint8_t* header, const uint8_t* allocated, 
                     return v.fail();
             }
         }
-        if (!changed)
-            continue;
-        if (v.checksums())
-            set32(data + tail + 4, checksum(v, inode, block, data));
-        if (!v.write_block(block, data, 4))
+        if (changed && !write_orphan_block(v, inode, block, data))
             return false;
     }
     return true;
@@ -201,6 +266,39 @@ bool NativeOrphans::trim_inode(uint32_t number) {
         limit /= 2;
         if (!v.load_inode(number, inode))
             return false;
+    }
+}
+
+bool NativeOrphans::add(Inode& inode) {
+    uint8_t header[1024];
+    bool inserted;
+    if (!v.super(header) || !change_slot(v, 0, inode.number, inserted))
+        return false;
+    if (inserted) {
+        set32(inode + 20, 0);
+        set32(header + 100, u32(header + 100) | orphan_present_feature);
+    } else {
+        set32(inode + 20, u32(header + last_orphan_offset));
+        set32(header + last_orphan_offset, inode.number);
+    }
+    return v.save_super(header) && v.save_inode(inode.number, inode);
+}
+
+int NativeOrphans::reap(uint32_t number) {
+    for (;;) {
+        Inode inode;
+        if (!v.load_inode(number, inode) || u16(inode + 26))
+            return v.finish(v.fail());
+        if (remove_record(v, inode) && v.delete_inode(number, inode))
+            return v.finish(true);
+        int result = v.finish(false);
+        if (result != -28)
+            return result;
+        v.error = 0;
+        if (!trim_inode(number))
+            return v.finish(false);
+        if (!v.flush())
+            return v.error;
     }
 }
 

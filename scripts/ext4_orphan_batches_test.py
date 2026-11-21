@@ -235,8 +235,8 @@ def verify_many(directory, images, file_format):
             "guest_sha256": digest(guest)}
 
 
-def make_truncate(directory, extent):
-    disk = directory / "pending.raw"
+def make_large_file(directory, extent, name):
+    disk = directory / name
     with tempfile.TemporaryDirectory(prefix="ext4-orphan-truncate-") as scratch:
         source = Path(scratch)
         (source / "shrink").write_bytes(CONTENTS)
@@ -249,9 +249,14 @@ def make_truncate(directory, extent):
     groups = {(int(item) - 1) // 256 for item in allocated}
     if len(groups) < 1050:
         raise RuntimeError(f"native allocation reached only {len(groups)} block groups")
+    return disk, inode, len(groups)
+
+
+def make_truncate(directory, extent):
+    disk, inode, groups = make_large_file(directory, extent, "pending.raw")
     set_inode(disk, "/shrink", "size", 5000)
     arm(disk, head=inode)
-    return disk, inode, len(groups)
+    return disk, inode, groups
 
 
 def count_blocks(disk):

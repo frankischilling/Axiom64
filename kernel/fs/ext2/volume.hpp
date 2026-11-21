@@ -869,6 +869,11 @@ struct Volume {
         uint8_t header[1024];
         if (!super(header))
             return false;
+        if (clean && journal) {
+            if (u32(header + last_orphan_offset))
+                return fail();
+            set32(header + 100, u32(header + 100) & ~orphan_present_feature);
+        }
         set16(header + 58, clean ? u16(header + 58) | 1 : u16(header + 58) & ~1u);
         if (journal)
             set32(header + 96, clean ? u32(header + 96) & ~4u : u32(header + 96) | 4u);
@@ -975,6 +980,8 @@ class NativeOrphans {
 
     bool collect(const uint8_t* header, const uint8_t* allocated);
     bool recover(uint8_t* header, uint32_t free_blocks, uint32_t free_inodes);
+    bool add(Inode& inode);
+    int reap(uint32_t number);
 };
 
 bool validate_volume(Volume&, uint8_t* header, Recovery);

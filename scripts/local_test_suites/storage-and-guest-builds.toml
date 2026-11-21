@@ -80,6 +80,13 @@ python3 scripts/ext2_journal_rejection_test.py
 
 [[step]]
 suites = ["storage-journal"]
+name = "Check native orphan records and interrupted cleanup"
+run = '''
+make test-ext4-orphans test-ext4-orphan-batches test-ext4-orphan-writer
+'''
+
+[[step]]
+suites = ["storage-journal"]
 name = "Recover a normal journaled VM root after abrupt shutdown"
 run = '''
 make test-vm-journal

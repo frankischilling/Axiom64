@@ -23,16 +23,15 @@ build/ipv6-host build/ipv4-paths-host build/ipv4-output-host build/ipv4-socket-o
 .PHONY: test-partitions test-partitions-native
 .PHONY: test-block-cache test-guest-media
 .PHONY: test-vm-journal
-.PHONY: test-ext2-index
-.PHONY: test-ext4-extents test-ext4-orphans test-ext4-orphan-batches
+.PHONY: test-ext2-index test-ext4-extents test-ext4-orphans test-ext4-orphan-batches test-ext4-orphan-writer
 test-ext4-extents:
 	$(PYTHON) -B scripts/ext4_extent_test.py
-
 test-ext4-orphans:
 	$(PYTHON) -B scripts/ext4_orphan_test.py
-
 test-ext4-orphan-batches:
 	$(PYTHON) -B scripts/ext4_orphan_batches_test.py
+test-ext4-orphan-writer:
+	$(PYTHON) -B scripts/ext4_orphan_writer_test.py
 
 test-ext2-index:
 	$(PYTHON) -B scripts/ext2_index_test.py

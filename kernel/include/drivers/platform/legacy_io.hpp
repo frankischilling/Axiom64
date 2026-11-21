@@ -33,6 +33,6 @@ bool serial_present();
 bool serial_put(char);
 int serial_read();
 
-bool parallel_init();
+bool parallel_present();
 int64_t parallel_write(const void*, size_t);
 } // namespace ax

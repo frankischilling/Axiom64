@@ -66,8 +66,15 @@ I/O assignment for compatible UARTs and standard parallel ports. The
 kernel keeps a working COM1 or LPT1. If the fixed-port probe finds no
 device, it can bind an unambiguous active assignment at a standard
 alternate port. It probes the selected device before publishing a node.
-Discovery changes only card selection, leaving logical-device assignments
-intact. Assigning resources to inactive devices remains open.
+
+If a class has no active device, the kernel can configure an inactive
+standard UART or printer that advertises one I/O range and supports ISA
+range checking. It checks for an existing decoder and verifies both
+range-check patterns before activation. The new device uses polling with
+its IRQ selection disabled. A failed range check or driver probe triggers
+restoration of the previous configuration. A failed rollback stops
+further activation. Devices that require memory, DMA, or several I/O
+ranges still require firmware setup. [ISA Plug and Play specification](https://ethw.org/w/images/7/7f/PNP-ISA-v1.0a.pdf)
 
 Legacy PCI IDE compatibility channels also support polled ATA disks. Reads,
 writes, partition discovery, and persistent roots use the shared block layer.

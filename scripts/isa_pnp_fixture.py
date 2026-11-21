@@ -31,15 +31,34 @@ import gdb
 KEY = bytes.fromhex('6a b5 da ed f6 fb 7d be df 6f 37 1b 0d 86 c3 61 '
                     'b0 58 2c 16 8b 45 a2 d1 e8 74 3a 9d ce e7 73 39')
 SERIAL = bytes.fromhex('41 d0 80 01 01 02 03 04 c0')
-RESOURCES = bytes.fromhex('15 41 d0 05 01 00 4b f8 02 08 '
-                          '15 41 d0 04 00 00 4b 78 02 03 79')
-RESOURCES += bytes((-sum(RESOURCES) % 256,))
+PORTS = (0x2f8, 0x278)
+WIDTHS = (8, 3)
+
+
+def configuration_bytes(inactive, valid):
+    data = bytearray()
+    for kind, revision, base, width, irq in zip((5, 4), (1, 0), PORTS, WIDTHS, (3, 5)):
+        data.extend((0x15, 0x41, 0xd0, kind, revision, 2 if inactive else 1))
+        data.extend((0x4b, base & 255, base >> 8, width))
+        if inactive:
+            data.extend((0x22, 1 << irq, 0))
+    data.append(0x79)
+    data.append((-sum(data) % 256) ^ (0 if valid else 1))
+    return bytes(data)
 
 
 class ConfigBus:
-    def __init__(self, output, valid):
+    def __init__(self, output, scenario):
         self.output = Path(output)
-        self.resources = RESOURCES if valid else RESOURCES[:-1] + bytes((RESOURCES[-1] ^ 1,))
+        self.scenario = scenario
+        self.inactive = scenario in ('activate', 'range-conflict', 'probe-failure')
+        self.resources = configuration_bytes(self.inactive, scenario != 'bad-checksum')
+        self.bases = [0x3e8, 0x3bc] if self.inactive else list(PORTS)
+        self.enabled = [not self.inactive] * 2
+        self.irq = [3, 5]
+        self.checks = [0, 1] if self.inactive else [0, 0]
+        self.programming = []
+        self.check_reads = []
         self.address = 0
         self.key_bytes = 0
         self.unlocked = False
@@ -57,7 +76,19 @@ class ConfigBus:
         self.read_port = 0
 
     def read(self, port):
-        assert self.unlocked and port == self.read_port == 0x213
+        assert self.unlocked and self.read_port == 0x213
+        if port != self.read_port:
+            assert self.inactive and self.function in (0, 1)
+            function = self.function
+            mode = self.checks[function]
+            assert PORTS[function] <= port < PORTS[function] + WIDTHS[function]
+            value = 0xff
+            if mode & 2 and self.bases[function] == PORTS[function]:
+                value = 0x55 if mode & 1 else 0xaa
+                if self.scenario == 'range-conflict' and mode == 2:
+                    value = 0xff
+            self.check_reads.append([function, port, mode, value])
+            return value
         register = self.address
         if register == 1:
             assert self.isolation_half < 144
@@ -85,8 +116,10 @@ class ConfigBus:
         if register == 6:
             return self.card_number
         assert self.function in (0, 1)
-        base = (0x2f8, 0x278)[self.function]
-        return {7: self.function, 0x30: 1, 0x60: base >> 8, 0x61: base & 255}[register]
+        function = self.function
+        base = self.bases[function]
+        return {7: function, 0x30: int(self.enabled[function]), 0x31: self.checks[function],
+                0x60: base >> 8, 0x61: base & 255, 0x70: self.irq[function]}[register]
 
     def write(self, port, value):
         if port == 0x279:
@@ -117,10 +150,16 @@ class ConfigBus:
                         'card_numbers': self.card_writes,
                         'logical_devices': self.function_writes,
                         'card_number_resets': self.reset_count,
+                        'programming': self.programming,
+                        'range_reads': self.check_reads,
+                        'bases': self.bases,
+                        'active': self.enabled,
+                        'checks': self.checks,
+                        'irq': self.irq,
                     }) + '\n', encoding='utf-8')
         elif self.address == 3:
-            assert value == 0
-            self.isolating = self.card_number == 0
+            assert value in (0, self.card_number)
+            self.isolating = value == 0 and self.card_number == 0
             self.isolation_half = 0
         elif self.address == 6:
             assert value == 1 and self.isolating and self.isolation_half == 144
@@ -131,7 +170,25 @@ class ConfigBus:
             self.function = value
             self.function_writes.append(value)
         else:
-            raise ValueError(f'unexpected ISA PnP register write {self.address:#x}')
+            assert self.inactive and self.function in (0, 1)
+            function = self.function
+            self.programming.append([function, self.address, value])
+            if self.address == 0x30:
+                assert value in (0, 1) and not (self.checks[function] & 2)
+                self.enabled[function] = bool(value)
+                return
+            assert not self.enabled[function]
+            if self.address == 0x31:
+                assert value <= 3
+                self.checks[function] = value
+            elif self.address == 0x60:
+                self.bases[function] = (value << 8) | (self.bases[function] & 255)
+            elif self.address == 0x61:
+                self.bases[function] = (self.bases[function] & 0xff00) | value
+            elif self.address == 0x70:
+                self.irq[function] = value
+            else:
+                raise ValueError(f'unexpected ISA PnP register write {self.address:#x}')
 
 
 def register(name):

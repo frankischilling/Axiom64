@@ -49,9 +49,12 @@ exchange bytes over the serial chardev and compare the printer chardev's
 binary output.
 
 The alternate-port cases use GDB to model the ISA Plug and Play
-configuration registers. Actual QEMU UART and printer devices handle I/O
-at `0x2f8` and `0x278`. The bad checksum cases leave both devices
-unbound and send no printer bytes. Tests cover HPET and calibrated TSC.
+configuration registers and range-check responses. Actual QEMU UART and
+printer devices handle I/O at `0x2f8` and `0x278` after discovery or
+activation. The test checks the register write order, range reads, and IRQ
+selection. Bad checksums, range conflicts, and failed device probes leave
+both devices unbound and produce no printer bytes. The latter two cases
+also check restored register values. Tests cover HPET and calibrated TSC.
 Logs, configuration traces, and transfer bytes stay under
 `build/legacy-ports/`.
 

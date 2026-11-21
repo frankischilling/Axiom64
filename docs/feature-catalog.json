@@ -75,6 +75,8 @@
         "kernel/drivers/platform/isa_pnp.cpp",
         "scripts/legacy_ports_test.py",
         "kernel/mm/memory.cpp",
+        "kernel/mm/mmio.cpp",
+        "kernel/tests/mm/mmio.cpp",
         "scripts/storage_test.py",
         "docs/storage.md",
         "kernel/drivers/virtio/pci.cpp",

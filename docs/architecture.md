@@ -93,6 +93,14 @@ exceed the CPU's physical address limit. It maps configuration registers
 with device cache attributes and uses legacy PCI configuration ports for
 segment-zero buses without a usable ECAM mapping.
 
+The boot-time MMIO mapper checks the CPU's physical address width and
+rejects ranges that share any page with RAM or retained boot data. Device
+pages use a supervisor-only, writable, non-executable uncacheable mapping.
+The mapper reads the processor's page-attribute table to choose the
+uncacheable type and preserves already compatible entries. It stages any
+new page tables and publishes them only after checking the entire range.
+A rejected range leaves the old mappings intact. [Intel system programming manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)
+
 Boot also validates the DSDT referenced by the FADT and the SSDTs listed in
 the ACPI root table. SSDTs retain their firmware order for namespace loading.
 After verifying APIC delivery, the kernel evaluates AML to select the

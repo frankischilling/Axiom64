@@ -37,6 +37,11 @@ from both chipsets under BIOS and UEFI. The native comparison exercises
 invalid flag handling before descriptor lookup. Use a Linux 7.0 VM if the
 host kernel reports `EBADF` for that case.
 
+`make test-suite SUITE=mmio` runs the boot-time mapper against simulated
+page tables with address and undefined behavior sanitizers. It checks physical
+address limits, boot memory reservations, uncacheable mappings, existing
+permissions, and rollback on allocation failures or a conflicting page.
+
 The i440fx link recovery boots in `make test-udp` use GDB to disable one
 PIIX routing byte after firmware setup. The host reads back the programmed
 IRQ, and the guest must report actual RX and TX interrupts. Serial, debugger,

@@ -573,6 +573,16 @@ python3 scripts/ci/paired_network.py --suite "$SUITE" \
 '''
 
 [[step]]
+suites = ["configuration", "mmio"]
+name = "Verify MMIO range admission, uncacheable mappings and allocation rollback"
+run = '''
+mkdir -p build
+g++ -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
+  -Ikernel/include kernel/tests/mm/mmio.cpp kernel/mm/mmio.cpp -o build/mmio-test
+build/mmio-test
+'''
+
+[[step]]
 suites = ["configuration"]
 name = "Test clock scaling, ACPI discovery, PCI interrupts, and firmware routing with sanitizers"
 run = '''

@@ -25,6 +25,7 @@
  */
 #include "boot/boot.hpp"
 #include "mm/file_mapping.hpp"
+#include "mm/mmio.hpp"
 #include "mm/stack.hpp"
 #include "fs/memfd.hpp"
 
@@ -36,6 +37,8 @@ static uint8_t shared_bitmap[max_pages / 8];
 static uint16_t page_references[max_pages];
 static size_t search_page = 1;
 static uint64_t kernel_root;
+static uint64_t mmio_limit;
+static Mmio::CacheLayout mmio_cache;
 static size_t total_pages, free_pages, shared_pages;
 
 static bool used(size_t p) {
@@ -54,6 +57,11 @@ void memory_init() {
         panic("missing memory map");
     direct_map = boot_info.direct_offset;
     kernel_root = read_cr3() & page_mask;
+    mmio_limit = physical_address_limit();
+    uint32_t a = 1, b, c, d;
+    asm volatile("cpuid" : "+a"(a), "=b"(b), "=c"(c), "=d"(d));
+    const bool pat = d & (1u << 16);
+    mmio_cache = {pat ? rdmsr(0x277) : 0x0007040600070406ull, pat};
     memset(bitmap, 0xff, sizeof(bitmap));
     total_pages = 0;
     for (size_t i = 0; i < boot_info.memory_count; i++) {
@@ -81,34 +89,17 @@ void activate_kernel_memory() {
 }
 
 void* map_mmio(uint64_t address, size_t length) {
-    constexpr uint64_t physical_limit = 1ull << 52;
-    if (!length || length > 1024 * 1024 || address >= physical_limit ||
-        length > physical_limit - address || address > UINT64_MAX - direct_map ||
-        length - 1 > UINT64_MAX - direct_map - address ||
-        direct_map + address < 0xffff800000000000ull)
+    Mmio::Range range;
+    if (!Mmio::range(address, length, direct_map, mmio_limit, range) ||
+        !Mmio::permits(range, boot_info))
         return nullptr;
-    for (uint64_t p = align_down(address); p < align_up(address + length); p += page_size) {
-        uint64_t va = direct_map + p;
-        auto table = (uint64_t*)physical(kernel_root);
-        for (int shift = 39; shift > 12; shift -= 9) {
-            auto& item = table[(va >> shift) & 511];
-            if (item & 128)
-                return nullptr; // Never change cache attributes of an existing huge RAM mapping.
-            if (!(item & 1)) {
-                uint64_t next = page_alloc();
-                if (!next)
-                    return nullptr;
-                item = next | 3;
-            }
-            table = (uint64_t*)physical(item & page_mask);
-        }
-        auto& entry = table[(va >> 12) & 511];
-        if ((entry & 1) && ((entry & page_mask) != p || !(entry & 16)))
-            return nullptr;
-        entry = p | 0x1bull | (1ull << 63); // Present, writable, PWT/PCD, supervisor, NX.
-        asm volatile("invlpg (%0)" ::"r"(va) : "memory");
-    }
-    return physical(address);
+    const Mmio::PageTables tables{
+        nullptr, [](void*, uint64_t page) { return static_cast<uint64_t*>(physical(page)); },
+        [](void*) { return page_alloc(); }, [](void*, uint64_t page) { page_free(page); },
+        [](void*, uint64_t va) { asm volatile("invlpg (%0)" ::"r"(va)
+                                              : "memory"); }};
+    return Mmio::install(range, kernel_root, mmio_limit, mmio_cache, tables) ? physical(address)
+                                                                             : nullptr;
 }
 
 static uint64_t allocate_pages(size_t count, size_t ceiling) {

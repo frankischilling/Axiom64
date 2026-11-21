@@ -22,6 +22,13 @@
 # along with this program. If not, see <https://gnu.org/licenses/>.
 
 [[step]]
+suites = ["legacy-ata"]
+name = "Verify ATA data transfers, backend errors, and persistent root boot"
+run = '''
+python3 -B scripts/legacy_ata_test.py
+'''
+
+[[step]]
 suites = ["storage"]
 name = "Test virtio disks and reboot persistence"
 run = '''

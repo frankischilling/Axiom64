@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/drivers/block/block.cpp
- * @brief   Virtio block device I/O.
+ * @brief   Block device access and volume ownership.
  * @author  frankischilling
  * @date    2026-11-18
  *
- * Submits sector reads, writes, and flushes through a virtio queue and handles
- * completion.
+ * Discovers virtio and ATA disks, translates partition I/O, and maintains
+ * volume claims and caches.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -24,13 +24,15 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/block/block.hpp"
+#include "drivers/block/ata.hpp"
 #include "drivers/block/cache.hpp"
 #include "drivers/block/partition.hpp"
 #include "drivers/virtio/pci.hpp"
 
 namespace ax {
 namespace {
-constexpr unsigned max_disks = 8, transfer_sectors = 32;
+constexpr unsigned virtio_slots = 8, max_disks = virtio_slots + ata_device_slots;
+constexpr unsigned transfer_sectors = 32;
 constexpr uint64_t feature_ro = 1ull << 5, feature_flush = 1ull << 9;
 
 struct Request {
@@ -62,7 +64,8 @@ struct Disk {
 };
 
 // Failed attachments retain their ownership records rather than reusing a slot.
-static Disk candidates[max_disks];
+static Disk candidates[virtio_slots];
+static Disk ata_disks[ata_device_slots];
 static Disk* disks[max_disks];
 static unsigned disk_count, attempts;
 static uint64_t buffer_bytes;
@@ -137,7 +140,7 @@ static int request(Disk& d, uint32_t type, uint64_t sector, size_t length) {
 
 static void discover(const PciFunction& p) {
     uint16_t id = p.read16(2);
-    if (attempts == max_disks || p.read16(0) != 0x1af4 || (id != 0x1001 && id != 0x1042))
+    if (attempts == virtio_slots || p.read16(0) != 0x1af4 || (id != 0x1001 && id != 0x1042))
         return;
     auto& d = candidates[attempts++];
     if (!initialize(d, p)) {
@@ -162,6 +165,10 @@ static void discover(const PciFunction& p) {
 
 static Disk* disk_for(unsigned device) {
     return disks[device % max_disks];
+}
+
+static bool is_ata(unsigned device) {
+    return device % max_disks >= virtio_slots;
 }
 
 static Volume* volume_for(unsigned device) {
@@ -192,13 +199,18 @@ static int transfer(unsigned device, uint64_t sector, void* buffer, size_t count
     auto bytes = (uint8_t*)buffer;
     while (count) {
         size_t sectors = min(count, size_t(transfer_sectors)), length = sectors * sector_size;
-        if (write)
-            memcpy(d.data, bytes, length);
-        int result = request(d, write ? 1 : 0, sector, length);
-        if (result)
-            return result;
-        if (!write)
-            memcpy(bytes, d.data, length);
+        if (is_ata(device)) {
+            if (int result =
+                    ata_transfer(device % max_disks - virtio_slots, sector, bytes, sectors, write))
+                return result;
+        } else {
+            if (write)
+                memcpy(d.data, bytes, length);
+            if (int result = request(d, write ? 1 : 0, sector, length))
+                return result;
+            if (!write)
+                memcpy(bytes, d.data, length);
+        }
         bytes += length;
         sector += sectors;
         count -= sectors;
@@ -234,7 +246,18 @@ static bool same_id(const char* left, const char* right) {
 
 void block_init() {
     pci_scan(discover);
-    for (unsigned i = 0; i < disk_count; i++) {
+    ata_init();
+    for (unsigned slot = 0; slot < ata_device_slots; ++slot) {
+        if (const auto* info = ata_info(slot)) {
+            auto& disk = ata_disks[slot];
+            disk.volumes[0].info = *info;
+            disk.live = true;
+            disks[virtio_slots + slot] = &disk;
+        }
+    }
+    for (unsigned i = 0; i < max_disks; i++) {
+        if (!disks[i])
+            continue;
         auto& disk = *disks[i];
         const auto& info = disk.volumes[0].info;
         int error = read_partition_table(info.sectors, partition_sector, &i, disk.partitions);
@@ -261,8 +284,9 @@ unsigned block_device_limit() {
 }
 
 void block_device_name(unsigned device, char (&name)[block_name_size]) {
-    memcpy(name, "/dev/vda", sizeof("/dev/vda"));
-    name[7] += device % max_disks;
+    unsigned disk = device % max_disks;
+    memcpy(name, is_ata(device) ? "/dev/sda" : "/dev/vda", sizeof("/dev/vda"));
+    name[7] += is_ata(device) ? disk - virtio_slots : disk;
     unsigned part = device / max_disks, at = 8;
     if (part >= 100)
         name[at++] = '0' + part / 100;
@@ -276,7 +300,8 @@ void block_device_name(unsigned device, char (&name)[block_name_size]) {
 uint64_t block_device_number(unsigned device) {
     unsigned disk = device % max_disks, part = device / max_disks;
     if (part < 16)
-        return 0xfc00 | (disk * 16 + part);
+        return is_ata(device) ? 0x800 | ((disk - virtio_slots) * 16 + part)
+                              : 0xfc00 | (disk * 16 + part);
     uint64_t minor = disk * max_partitions + part - 16;
     return (259 << 8) | (minor & 255) | ((minor & ~uint64_t(255)) << 12);
 }
@@ -289,7 +314,9 @@ int block_find(const char* selection) {
     if (by_id || by_label) {
         const char* value = selection + (by_id ? sizeof(uuid) - 1 : sizeof(label) - 1);
         int found = -19;
-        for (unsigned disk = 0; disk < disk_count; disk++) {
+        for (unsigned disk = 0; disk < max_disks; disk++) {
+            if (!disks[disk])
+                continue;
             for (unsigned p = 0; p < max_partitions; p++) {
                 const auto& part = disks[disk]->partitions.entries[p];
                 if (!part.sectors ||
@@ -303,8 +330,11 @@ int block_find(const char* selection) {
         return found;
     }
 
-    if (length < 8 || length >= block_name_size || memcmp(selection, "/dev/vd", 7) ||
-        selection[7] < 'a' || selection[7] >= 'a' + int(max_disks) || selection[8] == '0')
+    if (length < 8 || length >= block_name_size || selection[8] == '0')
+        return -19;
+    bool ata = !memcmp(selection, "/dev/sd", 7);
+    if ((!ata && memcmp(selection, "/dev/vd", 7)) || selection[7] < 'a' ||
+        selection[7] >= 'a' + int(ata ? ata_device_slots : virtio_slots))
         return -19;
     unsigned part = 0;
     for (size_t i = 8; i < length; i++) {
@@ -314,7 +344,7 @@ int block_find(const char* selection) {
     }
     if (part > max_partitions)
         return -19;
-    return selection[7] - 'a' + part * max_disks;
+    return selection[7] - 'a' + (ata ? virtio_slots : 0) + part * max_disks;
 }
 
 int block_read(unsigned device, uint64_t sector, void* data, size_t count) {
@@ -413,6 +443,8 @@ int block_flush(unsigned device) {
         return -5;
     if (volume->info.readonly || !volume->info.flush_supported)
         return 0; // Unnegotiated FLUSH means writethrough.
+    if (is_ata(device))
+        return ata_flush(device % max_disks - virtio_slots);
     return request(d, 4, 0, 0);
 }
 } // namespace ax

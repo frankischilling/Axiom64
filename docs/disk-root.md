@@ -1,6 +1,6 @@
 # Persistent root boot
 
-Axiom64 mounts supported ext2, ext3, and ext4 roots on a whole virtio disk or a partition. A small initramfs supplies the initial VFS namespace. The kernel replaces that root before starting any user process. The full disk-root image contains Ring 3 init, shells, the native GNU toolchain, and the Xorg desktop. Writable ext-family data mounts can run alongside the disk root.
+Axiom64 mounts supported ext2, ext3, and ext4 roots on virtio and legacy ATA disks or their partitions. A small initramfs supplies the initial VFS namespace. The kernel replaces that root before starting any user process. The full disk-root image contains Ring 3 init, shells, the native GNU toolchain, and the Xorg desktop. Writable ext-family data mounts can run alongside the disk root.
 
 The [normal VM launcher](build.md) formats new persistent roots with a classic internal journal. The development fixture below uses unjournaled ext2 for compatibility and explicit recovery tests.
 
@@ -29,6 +29,7 @@ Limine's kernel command line selects the root:
 | No `root`, or `root=ramfs` | Use the supplied initramfs |
 | `root=/dev/vda` through `/dev/vdh` | Mount that whole virtio disk as the root |
 | `root=/dev/vda1` | Mount the named partition as root |
+| `root=/dev/sda` through `/dev/sdd` | Mount an ATA disk on an IDE compatibility channel. Append a partition number to select a partition. |
 | `root=PARTUUID=<id>` | Select a GPT partition GUID or an MBR disk signature and hexadecimal partition number, such as `13572468-05` |
 | `root=PARTLABEL=<name>` | Select a GPT partition name in UTF-8. The name is case-sensitive and must fit in one command-line token. |
 | `rootfstype=ext2`, `ext3`, or `ext4` | Select the ext-family driver. Omission also selects that driver. See the [supported formats](ext2.md#supported-format-and-operations). |
@@ -52,7 +53,7 @@ Ordinary boots on QEMU's `pc` machine discover the enabled PIIX4 power-managemen
 
 The [ext-family validation and error policy](ext2.md) applies to the root. A backend failure can leave a volume marked unclean. An explicit writable checked mount can reconcile free counters when the complete structural scan succeeds. Other damage requires a filesystem checker. Broader power-loss recovery, newer ext4 features, and a disk installer remain in development.
 
-Block requests, including mount-time flushes, have a 30-second deadline. A host flush can cover the copied full image even when the guest changed only a small amount of metadata. Device-reset acknowledgement keeps its separate two-second limit. An expired request is logged with its type, sector, length, and timeout errno, then the device is reset and quarantined.
+Virtio requests, including mount-time flushes, have a 30-second deadline. A host flush can cover the copied full image even when the guest changed only a small amount of metadata. Device-reset acknowledgement keeps its separate two-second limit. An expired virtio request is logged with its type, sector, length, and timeout errno, then the device is reset and quarantined. ATA uses bounded polling for each command phase. A timeout disables that ATA channel until reboot.
 
 ## Verification
 

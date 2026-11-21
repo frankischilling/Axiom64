@@ -23,6 +23,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #define _GNU_SOURCE
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -66,6 +67,20 @@ static int check_volume(int readonly) {
     return 0;
 }
 
+static int check_retired(void) {
+    DIR* entries = opendir("/mnt/retired");
+    REQUIRE(entries);
+    unsigned dots = 0;
+    struct dirent* entry;
+    errno = 0;
+    while ((entry = readdir(entries))) {
+        REQUIRE(!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."));
+        dots++;
+    }
+    REQUIRE(!errno && dots == 2 && closedir(entries) == 0);
+    return 0;
+}
+
 static int exercise(const char* phase) {
     int root = !strcmp(phase, "io");
     int readonly = strcmp(phase, "write") && !root;
@@ -86,7 +101,11 @@ static int exercise(const char* phase) {
         }
         REQUIRE(result == 0);
     }
-    REQUIRE(check_volume(readonly) == 0);
+    if (!strcmp(phase, "queue")) {
+        REQUIRE(check_retired() == 0);
+    } else {
+        REQUIRE(check_volume(readonly) == 0);
+    }
     if (!root)
         REQUIRE(umount("/mnt") == 0);
     puts("EXT4_ORPHAN_RECOVERY_PASS");

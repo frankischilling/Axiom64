@@ -347,16 +347,17 @@ bool map_node(Volume& v, Inode& inode, ExtentPage& page, uint32_t block, uint32_
     return publish(v, inode, preferred, block, page, sibling);
 }
 
-bool prune_page(Volume& v, Inode& inode, ExtentPage& page, uint32_t block, uint64_t keep) {
+bool prune_page(Volume& v, Inode& inode, ExtentPage& page, uint32_t block, uint64_t keep,
+                unsigned* budget) {
     bool changed = false;
-    while (page.count()) {
+    while (page.count() && (!budget || *budget)) {
         unsigned last = page.count() - 1;
         uint32_t logical = page.key(last);
         if (page.depth()) {
             uint32_t physical = page.child(last);
             ExtentPage child;
             if (!load_child(v, inode, page, last, child) ||
-                !prune_page(v, inode, child, physical, keep))
+                !prune_page(v, inode, child, physical, keep, budget))
                 return false;
             if (child.count())
                 break;
@@ -368,6 +369,17 @@ bool prune_page(Volume& v, Inode& inode, ExtentPage& page, uint32_t block, uint6
                 break;
             unsigned retained = logical < keep ? keep - logical : 0;
             unsigned released = extent.length - retained;
+            if (budget) {
+                uint32_t first = (extent.physical + retained - v.first) / v.blocks_per_group;
+                uint32_t last =
+                    (extent.physical + extent.length - 1 - v.first) / v.blocks_per_group;
+                unsigned groups = min(last - first + 1, *budget);
+                if (groups <= last - first) {
+                    retained = v.first + (last - groups + 1) * v.blocks_per_group - extent.physical;
+                    released = extent.length - retained;
+                }
+                *budget -= groups;
+            }
             if (!v.free_blocks(extent.physical + retained, released) ||
                 !v.add_blocks(inode, -int(released)))
                 return false;
@@ -440,9 +452,9 @@ bool map_extent(Volume& v, Inode& inode, uint64_t logical, bool create, uint32_t
     return map_leaf(v, inode, root, 0, logical, false, preferred, result, unused);
 }
 
-bool prune_extents(Volume& v, Inode& inode, uint64_t keep) {
+bool prune_extents(Volume& v, Inode& inode, uint64_t keep, unsigned* budget) {
     ExtentPage root;
-    if (!load_root(v, inode, root) || !prune_page(v, inode, root, 0, keep))
+    if (!load_root(v, inode, root) || !prune_page(v, inode, root, 0, keep, budget))
         return false;
     while (root.depth() && root.count() == 1) {
         ExtentPage child;

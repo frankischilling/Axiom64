@@ -5,8 +5,8 @@
  * @author  frankischilling
  * @date    2026-11-20
  *
- * Reads persistent orphan records from the staged journal view and clears
- * them through the same transaction as the validated inode cleanup.
+ * Validates the journal replay view and recovers the inode mappings in
+ * restartable transactions, retiring records only after cleanup.
  *
  * Copyright (C) 2026 frankischilling
  *
@@ -39,6 +39,12 @@ uint32_t checksum(Volume& v, const Inode& inode, uint32_t block, const uint8_t* 
 }
 } // namespace
 
+struct NativeOrphans::Batch {
+    unsigned limit, completed = 0;
+    uint32_t first = 0;
+    bool slots_remaining = false;
+};
+
 bool NativeOrphans::mark(uint32_t number, const uint8_t* allocated, Inode& inode) {
     if (!pending || number < v.first_inode || number > v.inodes || number == v.orphan_inode ||
         !bit(allocated, number) || contains(number) || !v.load_inode(number, inode, false))
@@ -51,7 +57,16 @@ bool NativeOrphans::mark(uint32_t number, const uint8_t* allocated, Inode& inode
     return true;
 }
 
-bool NativeOrphans::check_file(const uint8_t* header, const uint8_t* allocated, bool clear) {
+bool NativeOrphans::finish_inode(uint32_t number, Inode& inode) {
+    if (!u16(inode + 26))
+        return v.delete_inode(number, inode);
+    if (!v.fast_symlink(inode) && !v.size(inode, file_size(inode), true))
+        return false;
+    set32(inode + 20, 0);
+    return v.save_inode(number, inode);
+}
+
+bool NativeOrphans::check_file(const uint8_t* header, const uint8_t* allocated, Batch* batch) {
     if (!v.orphan_inode)
         return true;
     Inode inode;
@@ -78,9 +93,20 @@ bool NativeOrphans::check_file(const uint8_t* header, const uint8_t* allocated, 
                 continue;
             if (!present)
                 return v.fail();
-            if (clear) {
+            if (batch) {
+                if (batch->completed == batch->limit) {
+                    batch->slots_remaining = true;
+                    continue;
+                }
+                if (!batch->first)
+                    batch->first = number;
+                Inode orphan;
+                if (!contains(number) || !v.load_inode(number, orphan) ||
+                    !finish_inode(number, orphan))
+                    return v.fail();
                 set32(data + offset, 0);
                 changed = true;
+                batch->completed++;
             } else {
                 Inode orphan;
                 if (!mark(number, allocated, orphan) || u32(orphan + 20))
@@ -114,14 +140,107 @@ bool NativeOrphans::collect(const uint8_t* header, const uint8_t* allocated) {
             number = u32(inode + 20);
         }
     }
-    return check_file(header, allocated, false);
+    return check_file(header, allocated);
 }
 
-bool NativeOrphans::clear(uint8_t* header) {
-    if ((u32(header + 100) & orphan_present_feature) && !check_file(header, nullptr, true))
+bool NativeOrphans::stage_batch(uint8_t* header, Batch& batch) {
+    uint32_t head = u32(header + last_orphan_offset);
+    while (head && batch.completed < batch.limit) {
+        if (!batch.first)
+            batch.first = head;
+        Inode inode;
+        if (!contains(head) || !v.load_inode(head, inode))
+            return v.fail();
+        uint32_t next = u32(inode + 20);
+        if (!finish_inode(head, inode))
+            return false;
+        head = next;
+        batch.completed++;
+    }
+    bool present = u32(header + 100) & orphan_present_feature;
+    if (present && !head && !check_file(header, nullptr, &batch))
         return false;
-    set32(header + last_orphan_offset, 0);
-    set32(header + 100, u32(header + 100) & ~orphan_present_feature);
+    if (!v.super(header))
+        return false;
+    set32(header + last_orphan_offset, head);
+    if (!head && !batch.slots_remaining)
+        set32(header + 100, u32(header + 100) & ~orphan_present_feature);
+    // Keep recovery armed across commits, including for older deletion markers.
+    set16(header + 58, u16(header + 58) & ~1u);
+    set32(header + 96, u32(header + 96) | 4u);
     return v.save_super(header);
+}
+
+bool NativeOrphans::trim_inode(uint32_t number) {
+    Inode inode;
+    if (!v.load_inode(number, inode) || v.fast_symlink(inode))
+        return v.fail(-28);
+    unsigned capacity = min(max_changes, journal_payload_limit(v.journal));
+    // Extents count released group spans. Indirect mappings count released
+    // blocks, where one pointer block can cover many adjacent data blocks.
+    unsigned limit = max(1u, capacity / 2) * (has_extents(inode) ? 1 : v.block_size / 4);
+    uint64_t length = u16(inode + 26) ? file_size(inode) : 0;
+    uint64_t before = v.inode_sectors(inode);
+    for (;;) {
+        unsigned budget = limit;
+        if (v.prune_mapping(inode, (length + v.block_size - 1) / v.block_size, &budget)) {
+            if (v.inode_sectors(inode) >= before)
+                return v.fail(-28);
+            if (!length) {
+                set32(inode + 4, 0);
+                set32(inode + 108, 0);
+            }
+            // Keep the original record until the final cleanup transaction.
+            if (v.save_inode(number, inode) && v.state(false))
+                return true;
+        }
+        if (v.error != -28 || limit == 1)
+            return false;
+        v.discard();
+        v.error = 0;
+        limit /= 2;
+        if (!v.load_inode(number, inode))
+            return false;
+    }
+}
+
+bool NativeOrphans::recover(uint8_t* header, uint32_t free_blocks, uint32_t free_inodes) {
+    // The caller has validated the complete replay view. Publish that view
+    // first, so each cleanup attempt can discard just its own staged changes.
+    int error = journal_checkpoint(v.journal);
+    if (error)
+        return v.fail(error);
+    v.discard();
+    if (!v.super(header))
+        return false;
+    // Linux persists group counters before it refreshes the superblock totals.
+    // Rebase the counters before any cleanup transaction subtracts from them.
+    if (u32(header + 12) != free_blocks || u32(header + 16) != free_inodes) {
+        set32(header + 12, free_blocks);
+        set32(header + 16, free_inodes);
+        if (!v.save_super(header) || !v.state(false) || !v.flush() || !v.super(header))
+            return false;
+    }
+    unsigned limit = UINT32_MAX;
+    while (native_orphans_pending(header)) {
+        Batch batch{limit};
+        if (stage_batch(header, batch)) {
+            if (!v.flush())
+                return false;
+            continue;
+        }
+        if (v.error != -28)
+            return false;
+        v.discard();
+        v.error = 0;
+        if (!v.super(header))
+            return false;
+        if (batch.completed && limit > 1) {
+            limit = max(1u, min(batch.completed, limit / 2));
+        } else if (!batch.first || !trim_inode(batch.first) || !v.flush() || !v.super(header)) {
+            return v.fail(-28);
+        }
+    }
+    return true;
 }
 } // namespace ax::ext2_detail

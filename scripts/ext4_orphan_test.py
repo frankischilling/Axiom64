@@ -279,7 +279,7 @@ def cut_recovery(directory, seed, target_block, block, images, targets, orphan):
     valid_volume(directory, recovered, targets, orphan)
 
 
-def images(directory, root_test):
+def images(directory, root_test, extra_phases=(), prefix="ext4-orphan"):
     subprocess.run(["make", "-j2", "build/axiom64.elf"], cwd=ROOT, check=True)
     client = directory / "ext4-orphan"
     subprocess.run(["musl-gcc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-static",
@@ -292,8 +292,9 @@ def images(directory, root_test):
     phases = ["write", "verify", "invalid", "error", "pressure"]
     if root_test:
         phases.append("root")
+    phases.extend(extra_phases)
     for phase in phases:
-        name = f"ext4-orphan-{phase}.iso"
+        name = f"{prefix}-{phase}.iso"
         options = ["--kernel-option", "root=/dev/vda", "--kernel-option", "rootfstype=ext4"] if phase == "root" else []
         with (directory / f"image-{phase}.log").open("wb") as log:
             subprocess.run([sys.executable, "-B", "scripts/image.py", "--test", "--suite", "storage",

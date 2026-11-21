@@ -156,7 +156,7 @@ struct Volume;
 void init_extent_tree(uint8_t* inode);
 bool map_extent(Volume&, Inode& inode, uint64_t logical, bool create, uint32_t& result,
                 unsigned preferred);
-bool prune_extents(Volume&, Inode& inode, uint64_t keep);
+bool prune_extents(Volume&, Inode& inode, uint64_t keep, unsigned* budget);
 bool unchanged_extent_nodes(Volume&, const Inode& inode);
 
 struct ExtentOwnership {
@@ -278,10 +278,10 @@ struct Volume {
                 change->rank = max(change->rank, rank);
                 return true;
             }
+        if (journal && change_count >= min(max_changes, journal_payload_limit(journal)))
+            return fail(-28);
         if (change_count == max_changes)
             return fail(-12);
-        if (journal && change_count >= journal_payload_limit(journal))
-            return fail(-28);
         auto change = (Change*)alloc(sizeof(Change));
         if (!change)
             return fail(-12);
@@ -698,7 +698,35 @@ struct Volume {
         return true;
     }
 
-    bool prune(uint32_t& pointer, unsigned depth, uint64_t base, uint64_t keep, uint8_t* inode) {
+    bool prune_indirect_leaves(uint8_t* data, uint64_t base, uint64_t keep, uint8_t* inode,
+                               unsigned* budget, bool& changed) {
+        unsigned pointers = block_size / 4;
+        unsigned first = keep > base ? min<uint64_t>(keep - base, pointers) : 0;
+        unsigned end = pointers;
+        while (end > first && (!budget || *budget)) {
+            uint32_t last = u32(data + (end - 1) * 4);
+            if (!last) {
+                --end;
+                continue;
+            }
+            unsigned available = budget ? min(end - first, *budget) : end - first;
+            unsigned length = 1;
+            while (length < available && length < last &&
+                   u32(data + (end - length - 1) * 4) == last - length)
+                ++length;
+            if (!free_blocks(last - length + 1, length) || !add_blocks(inode, -int(length)))
+                return false;
+            end -= length;
+            memset(data + end * 4, 0, length * 4);
+            if (budget)
+                *budget -= length;
+            changed = true;
+        }
+        return true;
+    }
+
+    bool prune(uint32_t& pointer, unsigned depth, uint64_t base, uint64_t keep, uint8_t* inode,
+               unsigned* budget) {
         if (!pointer)
             return true;
         if (!data_block(pointer))
@@ -706,11 +734,13 @@ struct Volume {
         uint64_t span = 1;
         for (unsigned i = 0; i < depth; i++)
             span *= block_size / 4;
-        if (base + span <= keep)
+        if (base + span <= keep || (budget && !*budget))
             return true;
         if (!depth) {
             if (!free_number(pointer, false) || !add_blocks(inode, -1))
                 return false;
+            if (budget)
+                --*budget;
             pointer = 0;
             return true;
         }
@@ -718,24 +748,54 @@ struct Volume {
         if (!read_block(pointer, data))
             return false;
         bool any = false, changed = false;
-        for (unsigned i = 0; i < block_size / 4; i++) {
-            uint32_t child = u32(data + i * 4), old = child;
-            if (!prune(child, depth - 1, base + uint64_t(i) * (span / (block_size / 4)), keep,
-                       inode))
+        unsigned pointers = block_size / 4;
+        if (depth == 1) {
+            if (!prune_indirect_leaves(data, base, keep, inode, budget, changed))
                 return false;
-            if (child != old) {
-                set32(data + i * 4, child);
-                changed = true;
+            for (unsigned i = 0; !any && i < pointers; i++)
+                any = u32(data + i * 4) != 0;
+        } else {
+            for (unsigned i = 0; i < pointers; i++) {
+                unsigned index = budget ? pointers - i - 1 : i;
+                uint32_t child = u32(data + index * 4), old = child;
+                if (!prune(child, depth - 1, base + uint64_t(index) * (span / pointers), keep,
+                           inode, budget))
+                    return false;
+                if (child != old) {
+                    set32(data + index * 4, child);
+                    changed = true;
+                }
+                any |= child != 0;
             }
-            any |= child != 0;
         }
-        if (!any) {
+        if (!any && (!budget || *budget)) {
             if (!free_number(pointer, false) || !add_blocks(inode, -1))
                 return false;
+            if (budget)
+                --*budget;
             pointer = 0;
             return true;
         }
         return !changed || write_block(pointer, data, 1);
+    }
+
+    bool prune_mapping(Inode& inode, uint64_t keep, unsigned* budget = nullptr) {
+        if (has_extents(inode))
+            return prune_extents(*this, inode, keep, budget);
+        uint64_t pointers = block_size / 4,
+                 base = 12 + pointers + pointers * pointers + pointers * pointers * pointers;
+        for (unsigned i = 15; i; i--) {
+            unsigned slot = i - 1, depth = slot < 12 ? 0 : slot - 11;
+            uint64_t span = 1;
+            for (unsigned level = 0; level < depth; level++)
+                span *= pointers;
+            base -= span;
+            uint32_t pointer = u32(inode + 40 + slot * 4);
+            if (!prune(pointer, depth, base, keep, inode, budget))
+                return false;
+            set32(inode + 40 + slot * 4, pointer);
+        }
+        return true;
     }
 
     bool size(Inode& inode, uint64_t length, bool recovery = false) {
@@ -752,23 +812,9 @@ struct Volume {
                 return false;
         }
         uint64_t old = file_size(inode), keep = (length + block_size - 1) / block_size;
-        if (has_extents(inode)) {
-            if (length <= old && !prune_extents(*this, inode, keep))
-                return false;
-        } else if (length < old || recovery) {
-            uint64_t base = 0;
-            for (unsigned slot = 0; slot < 15; slot++) {
-                unsigned depth = slot < 12 ? 0 : slot - 11;
-                uint64_t span = 1;
-                for (unsigned i = 0; i < depth; i++)
-                    span *= block_size / 4;
-                uint32_t pointer = u32(inode + 40 + slot * 4);
-                if (!prune(pointer, depth, base, keep, inode))
-                    return false;
-                set32(inode + 40 + slot * 4, pointer);
-                base += span;
-            }
-        }
+        if ((length < old || (length == old && (recovery || has_extents(inode)))) &&
+            !prune_mapping(inode, keep))
+            return false;
         uint64_t tail = min(old, length);
         if (tail % block_size) {
             uint32_t block;
@@ -907,9 +953,13 @@ inline bool native_orphans_pending(const uint8_t* header) {
 class NativeOrphans {
     Volume& v;
     uint8_t* pending = nullptr;
+    struct Batch;
 
     bool mark(uint32_t number, const uint8_t* allocated, Inode& inode);
-    bool check_file(const uint8_t* header, const uint8_t* allocated, bool clear);
+    bool check_file(const uint8_t* header, const uint8_t* allocated, Batch* batch = nullptr);
+    bool finish_inode(uint32_t number, Inode& inode);
+    bool trim_inode(uint32_t number);
+    bool stage_batch(uint8_t* header, Batch& batch);
 
   public:
     explicit NativeOrphans(Volume& volume) : v(volume) {
@@ -924,7 +974,7 @@ class NativeOrphans {
     }
 
     bool collect(const uint8_t* header, const uint8_t* allocated);
-    bool clear(uint8_t* header);
+    bool recover(uint8_t* header, uint32_t free_blocks, uint32_t free_inodes);
 };
 
 bool validate_volume(Volume&, uint8_t* header, Recovery);

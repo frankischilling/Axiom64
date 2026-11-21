@@ -38,7 +38,7 @@ struct Validation {
     Volume& v;
     Recovery recovery;
     NativeOrphans orphans;
-    bool reconcile_counts;
+    bool reconcile_counts, native_summary;
     uint16_t *group_free_blocks = nullptr, *group_free_inodes = nullptr;
     uint64_t free_block_total = 0, free_inode_total = 0;
     uint8_t *block_bits = nullptr, *inode_bits = nullptr, *owners = nullptr;
@@ -51,8 +51,9 @@ struct Validation {
     uint8_t inode_table[max_block_size]{};
     uint32_t cached_table = UINT32_MAX;
 
-    explicit Validation(Volume& value, Recovery mode)
-        : v(value), recovery(mode), orphans(value), reconcile_counts(mode == Recovery::checked) {
+    explicit Validation(Volume& value, Recovery mode, bool native = false)
+        : v(value), recovery(mode), orphans(value), reconcile_counts(mode == Recovery::checked),
+          native_summary(native) {
     }
 
     bool recovering() const {
@@ -174,7 +175,7 @@ struct Validation {
         }
         free_block_total = free_blocks;
         free_inode_total = free_inodes;
-        return reconcile_counts ||
+        return reconcile_counts || native_summary ||
                        (free_blocks == u32(header + 12) && free_inodes == u32(header + 16))
                    ? true
                    : v.fail();
@@ -580,11 +581,15 @@ struct Validation {
         return true;
     }
 
+    bool scan(const uint8_t* header) {
+        return allocate() && bitmaps(header) && orphans.collect(header, inode_bits) &&
+               inode_maps() && directories();
+    }
+
     bool reclaim_deleted(uint8_t* header) {
         if (!deleted_bits)
             return true;
-        bool native_pending = native_orphans_pending(header);
-        bool any = native_pending;
+        bool any = false;
         for (uint32_t number = v.first_inode; number <= v.inodes; number++)
             any |= deleted(number);
         if (!any)
@@ -605,17 +610,11 @@ struct Validation {
                 return false;
         }
         for (uint32_t number = v.first_inode; number <= v.inodes; number++) {
-            if (!deleted(number) && !orphans.contains(number))
+            if (!deleted(number))
                 continue;
             if (!v.load_inode(number, data))
                 return false;
-            if (orphans.contains(number) && u16(data + 26)) {
-                if (!v.fast_symlink(data) && !v.size(data, file_size(data), true))
-                    return false;
-                set32(data + 20, 0);
-                if (!v.save_inode(number, data))
-                    return false;
-            } else if (references[number]) {
+            if (references[number]) {
                 set16(data + 26, references[number]);
                 set32(data + 20, 0);
                 if (!v.save_inode(number, data))
@@ -625,22 +624,23 @@ struct Validation {
         }
         if (!v.super(header))
             return false;
-        if (native_pending && !orphans.clear(header))
-            return false;
         // Validate the complete proposed disk image before mount can commit it.
         Validation result{v, Recovery::none};
-        return result.allocate() && result.bitmaps(header) &&
-               result.orphans.collect(header, result.inode_bits) && result.inode_maps() &&
-               result.directories();
+        return result.scan(header);
     }
 };
 } // namespace
 
 bool validate_volume(Volume& v, uint8_t* header, Recovery recovery) {
+    if (native_orphans_pending(header)) {
+        Validation native{v, Recovery::journal, true};
+        if (!native.scan(header) ||
+            !native.orphans.recover(header, native.free_block_total, native.free_inode_total))
+            return false;
+        recovery = Recovery::journal;
+    }
     Validation check{v, recovery};
-    if (!(check.allocate() && check.bitmaps(header) &&
-          check.orphans.collect(header, check.inode_bits) && check.inode_maps() &&
-          check.directories() && check.reconcile(header) && check.reclaim_deleted(header)))
+    if (!(check.scan(header) && check.reconcile(header) && check.reclaim_deleted(header)))
         return false;
     if (v.journal) {
         int error = journal_checkpoint(v.journal);

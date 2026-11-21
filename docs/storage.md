@@ -8,8 +8,16 @@ slave order. Missing slots keep their names reserved. The driver uses
 programmed I/O with 512-byte logical sectors, LBA28 and LBA48 addressing, and
 polled completion. Disks without an advertised flush command are read-only.
 The same partition scanner and filesystem layer handle both disk types.
-ATA DMA, optical ATAPI, native PCI IDE channels, and floppy I/O remain in
-development.
+ATA DMA, optical ATAPI, and native PCI IDE channels remain in development.
+
+The primary ISA floppy controller exposes 1.44 MB media detected at boot as
+`/dev/fd0` and `/dev/fd1`. These whole-media block nodes use major 2 and
+minors 0 and 1. The driver uses a page below 16 MiB for channel 2 DMA and
+checks that each sector completes. It honors write protection and turns off
+idle drive motors. You can read and write sectors directly or mount an ext2
+data volume. A detected media change stops I/O to the old node until reboot.
+Floppy partitions, other media sizes, and booting with a floppy as the root
+filesystem remain unsupported.
 
 ## Attach a disk
 

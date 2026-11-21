@@ -29,6 +29,13 @@ python3 -B scripts/legacy_ata_test.py
 '''
 
 [[step]]
+suites = ["floppy"]
+name = "Test floppy DMA, write protection, and media changes"
+run = '''
+python3 -B scripts/floppy_test.py
+'''
+
+[[step]]
 suites = ["storage"]
 name = "Test virtio disks and reboot persistence"
 run = '''

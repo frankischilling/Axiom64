@@ -26,6 +26,7 @@
 #include "drivers/platform/devices.hpp"
 #include "drivers/platform/legacy_io.hpp"
 #include "drivers/block/block.hpp"
+#include "drivers/block/floppy.hpp"
 #include "boot/boot.hpp"
 #include "process/signals.hpp"
 #include "process/task.hpp"
@@ -1037,6 +1038,7 @@ static void event(InputQueue& q, uint16_t type, uint16_t code, int32_t value) {
 }
 
 void devices_poll() {
+    floppy_poll();
     for (unsigned i = 0; i < 64; i++) {
         int c = serial_read();
         if (c < 0)

@@ -66,6 +66,11 @@ Legacy PCI IDE compatibility channels also support polled ATA disks. Reads,
 writes, partition discovery, and persistent roots use the shared block layer.
 See [storage](storage.md) for device names and supported commands.
 
+The primary ISA floppy controller uses DMA channel 2 and polls command status.
+The kernel reserves a page below 16 MiB and checks DMA completion before
+copying each sector to the caller. Floppy volumes bypass the block cache so
+reads can detect media changes.
+
 PCI discovery uses the validated ACPI MCFG table for PCIe configuration
 registers. Each aperture identifies a PCI segment and bus range. Its base
 address refers to bus zero even when the aperture starts at another bus.

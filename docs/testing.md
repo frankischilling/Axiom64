@@ -50,6 +50,11 @@ LBA28 limit, and recovery after injected read and write errors. It also
 boots a writable ext2 root twice and checks the saved file on the host.
 Results stay under `build/legacy-ata/`. The large-LBA test disks are sparse.
 
+`make test-suite SUITE=floppy` checks raw sector I/O, write protection, the
+DMA address range, write error recovery, and media replacement under BIOS
+and UEFI. It reboots and checks an ext2 data floppy with host `e2fsck`.
+Images, serial logs, and monitor receipts stay under `build/floppy-test/`.
+
 `make test-ipv4-address-lifetimes-guest` runs the finite IPv4 address-control
 client on both Ethernet adapters in eight static/dynamic, BIOS/UEFI and
 modern/legacy PCI profiles. Two workers share immutable images. Original

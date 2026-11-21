@@ -28,6 +28,7 @@ matrix = [
     "multiboot",
     "legacy-ports",
     "legacy-ata",
+    "floppy",
     "network",
     "ipv4-source-filters",
     "ipv6-expiry",

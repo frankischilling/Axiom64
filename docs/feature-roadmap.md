@@ -126,7 +126,7 @@ Acceptance evidence:
 
 ### F03. Writable ext2 and later ext4
 
-Classic ext2 root and data volumes support persistent files, directories, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and reboot verification. The internal journal replays committed records after interruption and logs complete data and metadata operations before updating their home blocks. New [normal VM roots](build.md) use a 32 MiB journal. General crash recovery, indexed directories, extents, and broader ext4 formats remain in development. See [ext2 behavior and verification](ext2.md).
+Classic ext2 root and data volumes support persistent files, writable indexed directories, direct/indirect and sparse storage, mount policy, metadata operations, host fsck, and reboot verification. The internal journal replays committed records after interruption and logs complete data and metadata operations before updating their home blocks. New [normal VM roots](build.md) use a 32 MiB journal. General crash recovery, extents, and broader ext4 formats remain in development. See [ext2 behavior and verification](ext2.md).
 
 Required work:
 

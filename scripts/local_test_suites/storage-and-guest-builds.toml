@@ -44,9 +44,10 @@ make test-guest-media
 
 [[step]]
 suites = ["storage"]
-name = "Test writable ext2 volumes and host fsck"
+name = "Test writable ext2 volumes, indexed directories, and host fsck"
 run = '''
 python3 scripts/ext2_test.py
+make test-ext2-index
 '''
 
 [[step]]

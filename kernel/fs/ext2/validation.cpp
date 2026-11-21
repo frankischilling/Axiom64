@@ -280,8 +280,12 @@ struct Validation {
                 if (type != regular_file && type != directory && type != symlink && type != fifo &&
                     type != 0140000)
                     return v.fail(-95);
-                // Inode flags and fragments need separate policy/layout support.
-                if (u32(data + 32) || u32(data + 112) || u16(data + 116) ||
+                uint32_t accepted_flags =
+                    type == directory && (v.compatible & directory_index_feature)
+                        ? indexed_directory
+                        : 0;
+                // Other inode flags and fragments need separate policy/layout support.
+                if ((u32(data + 32) & ~accepted_flags) || u32(data + 112) || u16(data + 116) ||
                     (type != regular_file && u32(data + 108)))
                     return v.fail(-95);
                 uint64_t length = file_size(data), count = 0, leaves = 0;
@@ -382,6 +386,8 @@ struct Validation {
         bool detached = deleted(number);
         uint8_t disk_inode[ext2_detail::inode_bytes], data[max_block_size];
         if (!inode(number, disk_inode))
+            return false;
+        if ((u32(disk_inode + 32) & indexed_directory) && !validate_directory_index(v, disk_inode))
             return false;
         size_t slots = 8;
         while (slots < file_size(disk_inode) / 12 * 2)

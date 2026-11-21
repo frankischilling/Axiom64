@@ -29,7 +29,9 @@ The backend accepts Linux-created revision 0/1 filesystems with 1,024-, 2,048-, 
 
 Filesystem operations include file and directory creation, short and block-backed symlinks, hard links, unlink/rmdir, rename/replacement, truncation, enumeration, modes, timestamps, `statfs`, `fsync`, and `fdatasync`. Statistics report allocated sectors rather than rounded logical file size. Open descriptions retain unlinked or replaced inodes and directory ancestry needed for traversal; filesystem sync reclaims them after the last reference disappears. A read-only remount returns `EBUSY` while an unlinked inode is still referenced. Timestamps have one-second resolution and signed 32-bit seconds; wider dates and nanosecond storage need later format support.
 
-The kernel preserves reserved descriptor blocks and the resize inode but does not resize a volume. External [xattr and file-capability blocks](file-capabilities.md) support bounded reads/writes, shared-block copy-on-write and clean reboot persistence. The `dir_index` flag is accepted when no allocated directory uses its indexed layout. Classic internal journals have the initial support described below. Stored ACL namespaces, ext4 inode-body attributes, inode flags, fragments, bad-block lists, device/FIFO inodes, compression, extents, 64-bit geometry, flexible/meta block groups, and filesystem checksum formats return `EOPNOTSUPP` before writes. These features remain planned; the backend does not reinterpret their metadata as classic block pointers.
+The kernel preserves reserved descriptor blocks and the resize inode but does not resize a volume. External [xattr and file-capability blocks](file-capabilities.md) support bounded reads and writes, shared-block copy-on-write, and clean reboot persistence. Classic internal journals have the initial support described below. Stored ACL namespaces, ext4 inode-body attributes, fragments, bad-block lists, device/FIFO inodes, compression, extents, 64-bit geometry, flexible/meta block groups, and filesystem checksum formats return `EOPNOTSUPP` before writes.
+
+Volumes with `dir_index` support writable HTree directories with the signed and unsigned legacy, half-MD4, and TEA hashes. The kernel can convert a one-block directory when it first runs out of room, split index leaves and internal nodes, and promote a full root. It verifies each index block and leaf hash range before mounting. An index can have one internal level below the root. Growth beyond that limit returns `ENOSPC`. Deeper trees and newer hash formats require additional format support.
 
 Before a writable mount changes the disk, validation checks capacity and geometry, group/table placement, bitmap reservations and free counts, inode block ownership, allocation counts, directory records and types, names, link counts, parent relationships, and root reachability. Inconsistent metadata returns `EUCLEAN`; an invalid magic returns `EINVAL`. Default writable mounting of an unjournaled volume requires a clean state and no orphan chain. A structurally valid unjournaled volume without the clean flag can be inspected read-only; a default read-only mount cannot be remounted writable.
 
@@ -77,12 +79,15 @@ Limits are 4,096 block groups and 4,096 changed blocks per operation. The inode 
 
 ```sh
 make test-ext2
+make test-ext2-index
 make test-vm-journal
 python3 scripts/ext2_test.py --quick --firmware bios --transport modern
 python3 scripts/ext2_test.py --checks errors --firmware uefi --transport legacy
 python3 scripts/ext2_test.py --checks recovery
 python3 scripts/ext2_deleted_inode_test.py --directory build/ext2-deleted-recovery
 ```
+
+`make test-ext2-index` tests six hash and signedness combinations on indexed ext2 and ext3 volumes. It verifies guest conversion, index growth, collision lookup across leaves, rename, links, enumeration, and read-only reboot. Host filesystem tools check the trees and compare exported names and contents. Three damaged indexes must be rejected without changing the image.
 
 `make test-vm-journal` exercises the normal launch command on BIOS and UEFI. An administrator signs in, creates a file, and syncs it before the test cuts the VM. A fresh boot reopens the same disk, authenticates the same account, and reads the file. Host checks verify the recovery flag before reboot, the file bytes after reboot, and a clean filesystem after shutdown. Separate journal fault tests cover interruption during a transaction.
 

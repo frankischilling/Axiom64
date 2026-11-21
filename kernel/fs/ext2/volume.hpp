@@ -35,6 +35,7 @@
 namespace ax::ext2_detail {
 constexpr size_t max_block_size = 4096, inode_bytes = 128, inode_block_bytes = 15 * 4;
 constexpr unsigned max_changes = 4096;
+constexpr uint32_t indexed_directory = 0x1000, directory_index_feature = 0x20;
 
 inline uint16_t u16(const uint8_t* p) {
     return uint16_t(p[0]) | (uint16_t(p[1]) << 8);
@@ -112,6 +113,9 @@ struct Volume {
     unsigned device, block_size, inode_size, group_count, change_count;
     uint32_t blocks, inodes, first, blocks_per_group, inodes_per_group, first_inode;
     uint32_t gdt, gdt_blocks, reserved_gdt, revision, compatible, readonly_features;
+    uint32_t directory_hash_seed[4];
+    uint8_t default_directory_hash_version;
+    bool unsigned_directory_hash;
     bool typed_entries, claimed, writable_safe;
     Group* groups;
     Change* changes;
@@ -708,6 +712,25 @@ inline bool record(Volume& v, const uint8_t* data, unsigned offset, Record& r) {
     return r.inode && !r.name_length ? v.fail() : true;
 }
 
+inline unsigned dir_record_size(unsigned name_length) {
+    return (8 + name_length + 3) & ~3u;
+}
+
+inline void put_record(Volume& v, uint8_t* data, unsigned offset, unsigned length, const char* name,
+                       uint32_t inode, uint32_t mode) {
+    size_t count = strlen(name);
+    memset(data + offset, 0, length);
+    set32(data + offset, inode);
+    set16(data + offset + 4, length);
+    set16(data + offset + 6, count);
+    if (v.typed_entries)
+        data[offset + 7] = file_type(mode);
+    memcpy(data + offset + 8, name, count);
+}
+
+bool insert_directory_record(Volume&, uint8_t* data, const char* name, uint32_t number,
+                             uint32_t mode);
+
 inline bool directory_block(Volume& v, uint8_t* inode, uint64_t offset, uint32_t& block,
                             uint8_t* data) {
     if ((u16(inode) & 0170000) != directory || file_size(inode) % v.block_size)
@@ -719,4 +742,13 @@ inline bool directory_block(Volume& v, uint8_t* inode, uint64_t offset, uint32_t
 
 enum class Recovery { none, checked, journal };
 bool validate_volume(Volume&, uint8_t* header, Recovery);
+uint32_t directory_hash(const uint8_t* name, unsigned length, unsigned version,
+                        const uint32_t* seed, bool unsigned_bytes);
+bool validate_directory_index(Volume&, uint8_t* inode);
+bool find_indexed_name(Volume&, uint8_t* inode, const char* name, uint32_t& number,
+                       uint64_t* position);
+bool insert_indexed_name(Volume&, uint8_t* inode, unsigned preferred, const char* name,
+                         uint32_t number, uint32_t mode);
+bool start_directory_index(Volume&, uint8_t* inode, unsigned preferred, uint32_t physical,
+                           uint8_t* data);
 } // namespace ax::ext2_detail

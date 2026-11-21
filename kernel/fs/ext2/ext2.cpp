@@ -38,6 +38,8 @@ static bool locate(Volume& v, uint32_t parent, const char* name, uint32_t& numbe
     uint8_t inode[inode_bytes], data[max_block_size];
     if (!v.load_inode(parent, inode))
         return false;
+    if (u32(inode + 32) & indexed_directory)
+        return find_indexed_name(v, inode, name, number, position);
     size_t length = strlen(name);
     for (uint64_t base = 0; base < file_size(inode); base += v.block_size) {
         uint32_t block;
@@ -59,60 +61,47 @@ static bool locate(Volume& v, uint32_t parent, const char* name, uint32_t& numbe
     return v.fail(-2);
 }
 
-static void put_record(Volume& v, uint8_t* data, unsigned offset, unsigned length, const char* name,
-                       uint32_t inode, uint32_t mode) {
-    size_t count = strlen(name);
-    memset(data + offset, 0, length);
-    set32(data + offset, inode);
-    set16(data + offset + 4, length);
-    set16(data + offset + 6, count);
-    if (v.typed_entries)
-        data[offset + 7] = file_type(mode);
-    memcpy(data + offset + 8, name, count);
+static bool add_linear_name(Volume& v, uint8_t* inode, unsigned preferred, const char* name,
+                            uint32_t number, uint32_t mode) {
+    uint8_t data[max_block_size];
+    uint64_t length = file_size(inode);
+    for (uint64_t base = 0; base < length; base += v.block_size) {
+        uint32_t block;
+        if (!directory_block(v, inode, base, block, data))
+            return false;
+        if (insert_directory_record(v, data, name, number, mode))
+            return v.write_block(block, data, 3);
+        if (v.error)
+            return false;
+        if (length == v.block_size && (v.compatible & directory_index_feature) &&
+            v.default_directory_hash_version <= 2 &&
+            start_directory_index(v, inode, preferred, block, data))
+            return insert_indexed_name(v, inode, preferred, name, number, mode);
+        if (v.error)
+            return false;
+    }
+    uint32_t block;
+    if (length > UINT32_MAX - v.block_size ||
+        !v.map_block(inode, length / v.block_size, true, block, preferred))
+        return v.fail(-27);
+    put_record(v, data, 0, v.block_size, name, number, mode);
+    set32(inode + 4, length + v.block_size);
+    return v.write_block(block, data, 3);
 }
 
 static bool add_name(Volume& v, uint32_t parent, const char* name, uint32_t number, uint32_t mode) {
-    uint8_t inode[inode_bytes], data[max_block_size];
+    uint8_t inode[inode_bytes];
     if (!v.load_inode(parent, inode))
         return false;
-    unsigned need = (8 + strlen(name) + 3) & ~3u;
-    uint64_t length = file_size(inode);
-    for (uint64_t base = 0; base <= length; base += v.block_size) {
-        uint32_t block;
-        if (base == length) {
-            if (length > UINT32_MAX - v.block_size ||
-                !v.map_block(inode, base / v.block_size, true, block,
-                             (parent - 1) / v.inodes_per_group))
-                return v.fail(-27);
-            memset(data, 0, v.block_size);
-            put_record(v, data, 0, v.block_size, name, number, mode);
-            set32(inode + 4, length + v.block_size);
-        } else {
-            if (!directory_block(v, inode, base, block, data))
-                return false;
-            bool found = false;
-            for (unsigned offset = 0; offset < v.block_size;) {
-                Record r;
-                if (!record(v, data, offset, r))
-                    return false;
-                unsigned used = r.inode ? (8 + r.name_length + 3) & ~3u : 0;
-                if (r.length - used >= need) {
-                    if (used)
-                        set16(data + offset + 4, used);
-                    put_record(v, data, offset + used, r.length - used, name, number, mode);
-                    found = true;
-                    break;
-                }
-                offset += r.length;
-            }
-            if (!found)
-                continue;
-        }
-        set32(inode + 12, node_now().sec);
-        set32(inode + 16, node_now().sec);
-        return v.write_block(block, data, 3) && v.save_inode(parent, inode);
-    }
-    return v.fail(-28);
+    unsigned preferred = (parent - 1) / v.inodes_per_group;
+    bool inserted = u32(inode + 32) & indexed_directory
+                        ? insert_indexed_name(v, inode, preferred, name, number, mode)
+                        : add_linear_name(v, inode, preferred, name, number, mode);
+    if (!inserted)
+        return false;
+    set32(inode + 12, node_now().sec);
+    set32(inode + 16, node_now().sec);
+    return v.save_inode(parent, inode);
 }
 
 static bool erase_name(Volume& v, uint32_t parent, const char* name, uint32_t expected) {
@@ -777,6 +766,10 @@ static bool layout(Volume& v, uint8_t* header, const BlockInfo& disk, bool check
     v.compatible = v.revision ? u32(header + 92) : 0;
     uint32_t incompatible = v.revision ? u32(header + 96) : 0;
     v.readonly_features = v.revision ? u32(header + 100) : 0;
+    for (unsigned i = 0; i < 4; i++)
+        v.directory_hash_seed[i] = u32(header + 236 + i * 4);
+    v.unsigned_directory_hash = (u32(header + 352) & 2) != 0;
+    v.default_directory_hash_version = header[252];
     v.typed_entries = incompatible & 2;
     if ((v.compatible & ~0x3cu) || (incompatible & ~6u) || (v.readonly_features & ~3u) ||
         (v.inode_size != 128 && v.inode_size != 256))

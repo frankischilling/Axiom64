@@ -67,13 +67,12 @@ bool ecam_allowed(const Acpi::EcamRegion& region, uint64_t limit) {
     uint64_t end = region.bus_address(region.last_bus + 1);
     if (end > limit)
         return false;
-    const auto map = memmap_request.response;
-    for (uint64_t i = 0; i < map->entry_count; ++i) {
-        const auto entry = map->entries[i];
-        if (entry->type == LIMINE_MEMMAP_RESERVED || entry->type == LIMINE_MEMMAP_RESERVED_MAPPED ||
-            !entry->length || entry->base >= end)
+    for (size_t i = 0; i < boot_info.memory_count; ++i) {
+        const auto entry = boot_info.memory_at(boot_info.memory_context, i);
+        if (entry.kind == BootMemoryKind::reserved ||
+            entry.kind == BootMemoryKind::mapped_reserved || !entry.length || entry.base >= end)
             continue;
-        if (entry->base >= start || entry->length > start - entry->base)
+        if (entry.base >= start || entry.length > start - entry.base)
             return false;
     }
     return true;

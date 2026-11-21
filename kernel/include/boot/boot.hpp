@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    kernel/include/boot/boot.hpp
- * @brief   Declares boot requests and early initialization interfaces.
+ * @brief   Declares normalized boot data and early initialization interfaces.
  * @author  frankischilling
  * @date    2026-11-19
  *
@@ -25,14 +25,38 @@
  */
 #pragma once
 #include "core/base.hpp"
-#include "limine.h"
 
 namespace ax {
-extern volatile limine_hhdm_request hhdm_request;
-extern volatile limine_memmap_request memmap_request;
-extern volatile limine_module_request module_request;
-extern volatile limine_framebuffer_request framebuffer_request;
-extern volatile limine_executable_cmdline_request cmdline_request;
+enum class BootMemoryKind { usable, reserved, firmware, retained, mapped_reserved, other };
+
+struct BootMemory {
+    uint64_t base, length;
+    BootMemoryKind kind;
+};
+
+struct BootFramebuffer {
+    void* address;
+    uint64_t width, height, pitch;
+    uint16_t bpp;
+    uint8_t red_mask_size, red_mask_shift, green_mask_size, green_mask_shift, blue_mask_size,
+        blue_mask_shift;
+};
+
+struct BootInfo {
+    const char* protocol;
+    const char* firmware;
+    const char* command;
+    uint64_t direct_offset, rsdp;
+    const void* memory_context;
+    size_t memory_count;
+    BootMemory (*memory_at)(const void*, size_t);
+    const void* initramfs;
+    uint64_t initramfs_size, module_count;
+    BootFramebuffer framebuffer;
+};
+
+extern BootInfo boot_info;
+[[noreturn]] void boot_kernel();
 
 const uint8_t* firmware_read(uint64_t address, size_t length, void* context);
 

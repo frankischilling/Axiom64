@@ -25,6 +25,14 @@ bits 64
 default rel
 section .text
 extern handle_syscall, handle_trap, kernel_stack_top
+extern multiboot_main
+
+global multiboot_entry
+multiboot_entry:
+    lea rsp, [multiboot_stack_top]
+    xor ebp, ebp
+    call multiboot_main
+    ud2
 
 %macro SAVE 0
     push rax
@@ -133,4 +141,7 @@ interrupt_table:
 %endrep
 section .bss
 saved_user_rsp: resq 1
+alignb 16
+multiboot_stack: resb 65536
+multiboot_stack_top:
 section .note.GNU-stack noalloc noexec nowrite progbits

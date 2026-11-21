@@ -50,19 +50,18 @@ static void mark(size_t p, bool allocated) {
 }
 
 void memory_init() {
-    if (!hhdm_request.response || !memmap_request.response)
+    if (!boot_info.direct_offset || !boot_info.memory_at || !boot_info.memory_count)
         panic("missing memory map");
-    direct_map = hhdm_request.response->offset;
+    direct_map = boot_info.direct_offset;
     kernel_root = read_cr3() & page_mask;
     memset(bitmap, 0xff, sizeof(bitmap));
     total_pages = 0;
-    auto map = memmap_request.response;
-    for (size_t i = 0; i < map->entry_count; i++) {
-        auto e = map->entries[i];
-        if (e->type != LIMINE_MEMMAP_USABLE)
+    for (size_t i = 0; i < boot_info.memory_count; i++) {
+        auto e = boot_info.memory_at(boot_info.memory_context, i);
+        if (e.kind != BootMemoryKind::usable)
             continue;
-        uint64_t end = min(align_down(e->base + e->length) / page_size, uint64_t(max_pages));
-        for (uint64_t p = max(align_up(e->base) / page_size, uint64_t(1)); p < end; p++) {
+        uint64_t end = min(align_down(e.base + e.length) / page_size, uint64_t(max_pages));
+        for (uint64_t p = max(align_up(e.base) / page_size, uint64_t(1)); p < end; p++) {
             if (used(p)) {
                 mark(p, false);
                 total_pages++;

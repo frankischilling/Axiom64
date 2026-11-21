@@ -66,6 +66,13 @@ python3 -B scripts/boot_media_test.py
 '''
 
 [[step]]
+suites = ["multiboot"]
+name = "Boot the Multiboot wrapper directly and through optical and floppy media"
+run = '''
+python3 -B scripts/multiboot_test.py
+'''
+
+[[step]]
 suites = ["credentials"]
 name = "Compare identities and permissions with native Linux and both musl linkages"
 run = '''

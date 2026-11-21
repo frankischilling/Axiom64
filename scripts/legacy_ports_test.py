@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # @file    scripts/legacy_ports_test.py
-# @brief   Verify fixed ISA device binding under QEMU.
+# @brief   Verify ISA UART and printer binding under QEMU.
 # @author  frankischilling
 # @date    2026-11-21
 #
@@ -22,8 +22,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://gnu.org/licenses/>.
 
-"""Check fixed ISA UART and LPT output in real QEMU guests."""
+"""Check fixed and firmware-assigned ISA UART and printer I/O in QEMU."""
 import argparse
+from contextlib import ExitStack, contextmanager
 from itertools import product
 import json
 from pathlib import Path
@@ -31,17 +32,22 @@ import shutil
 import subprocess
 import sys
 import time
+import tempfile
 
 from account_normal_test import write_cpio
 from boot_media_test import digest
 from fetch import ROOT
 
 
-def exchange_serial(command, serial):
+def exchange_serial(command, serial, debugger=None):
     deadline = time.monotonic() + 55
-    with serial.open("wb") as output, subprocess.Popen(
-            command, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT) as guest:
+    with ExitStack() as stack:
+        output = stack.enter_context(serial.open("wb"))
+        guest = stack.enter_context(subprocess.Popen(
+            command, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT))
         try:
+            if debugger:
+                stack.enter_context(debugger(guest))
             while b"LEGACY_UART_READY\r\n" not in serial.read_bytes():
                 if guest.poll() is not None or time.monotonic() >= deadline:
                     raise RuntimeError(f"UART prompt missing, see {serial}")
@@ -53,6 +59,15 @@ def exchange_serial(command, serial):
                 guest.kill()
 
 
+def add_firmware(command, case, firmware):
+    if firmware != "uefi":
+        return
+    variables = case / "VARS.fd"
+    shutil.copyfile("/usr/share/OVMF/OVMF_VARS_4M.fd", variables)
+    command += ["-drive", "if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd",
+                "-drive", f"if=pflash,format=raw,file={variables}"]
+
+
 def boot(case, firmware, machine, image, uart, printer):
     port = case / "printer.bin"
     serial = case / "serial.log"
@@ -61,11 +76,7 @@ def boot(case, firmware, machine, image, uart, printer):
                "-serial", "stdio" if uart else "none",
                "-parallel", f"file:{port}" if printer else "none",
                "-device", "isa-debug-exit,iobase=0xf4,iosize=4", "-cdrom", image]
-    if firmware == "uefi":
-        variables = case / "VARS.fd"
-        shutil.copyfile("/usr/share/OVMF/OVMF_VARS_4M.fd", variables)
-        command += ["-drive", "if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd",
-                    "-drive", f"if=pflash,format=raw,file={variables}"]
+    add_firmware(command, case, firmware)
     if uart:
         status = exchange_serial(command, serial)
         log = serial.read_bytes()
@@ -89,9 +100,107 @@ def boot(case, firmware, machine, image, uart, printer):
             "printer_sha256": digest(port) if printer else None, "exit": status}
 
 
+@contextmanager
+def attach_fixture(guest, socket, script, transcript):
+    deadline = time.monotonic() + 5
+    while not socket.is_socket():
+        if guest.poll() is not None or time.monotonic() > deadline:
+            raise RuntimeError("QEMU GDB socket did not become available")
+        time.sleep(0.01)
+    with transcript.open("wb") as log, subprocess.Popen(
+            ["gdb", "-q", "-batch", "-x", script], stdout=log, stderr=subprocess.STDOUT) as debugger:
+        try:
+            yield
+        finally:
+            if debugger.poll() is None:
+                debugger.terminate()
+
+
+def boot_pnp(case, firmware, machine, image, kernel, valid):
+    port = case / "printer.bin"
+    serial = case / "serial.log"
+    receipt = case / "config.json"
+    script = case / "fixture.gdb"
+    fixture = ROOT / "scripts/isa_pnp_fixture.py"
+    symbols = subprocess.check_output(["nm", "-C", kernel], text=True).splitlines()
+    callbacks = []
+    for name in ("pnp_port_read", "pnp_port_write"):
+        matches = [row.split()[0] for row in symbols if f"::{name}(" in row]
+        if len(matches) != 1:
+            raise RuntimeError(f"one guest callback required: {name}")
+        callbacks.append(matches[0])
+    with tempfile.TemporaryDirectory(prefix="axiom64-pnp-gdb-") as temporary:
+        socket = Path(temporary) / "gdb.sock"
+        script.write_text(f'''
+set pagination off
+set confirm off
+target remote {socket}
+python
+exec(compile(open({str(fixture)!r}, "rb").read(), {str(fixture)!r}, "exec"))
+bus = ConfigBus({str(receipt)!r}, {valid!r})
+end
+hbreak *0x{callbacks[0]}
+commands
+silent
+python port_transfer(bus, True)
+continue
+end
+hbreak *0x{callbacks[1]}
+commands
+silent
+python port_transfer(bus, False)
+continue
+end
+continue
+''', encoding="utf-8")
+        command = ["qemu-system-x86_64", "-machine", machine, "-cpu", "max", "-m", "256M",
+                   "-display", "none", "-monitor", "none", "-nic", "none", "-no-reboot",
+                   "-serial", "none", "-parallel", "none",
+                   "-chardev", "stdio,id=uart,signal=off",
+                   "-device", "isa-serial,chardev=uart,index=1,iobase=0x2f8,irq=3",
+                   "-chardev", f"file,id=printer,path={port}",
+                   "-device", "isa-parallel,chardev=printer,index=1,iobase=0x278,irq=5",
+                   "-device", "isa-debug-exit,iobase=0xf4,iosize=4",
+                   "-S", "-chardev", f"socket,id=debug,path={socket},server=on,wait=off",
+                   "-gdb", "chardev:debug", "-cdrom", image]
+        add_firmware(command, case, firmware)
+        (case / "command.json").write_text(json.dumps(command, default=str, indent=2) + "\n")
+        if valid:
+            status = exchange_serial(command, serial,
+                                     lambda guest: attach_fixture(guest, socket, script, case / "gdb.log"))
+        else:
+            with serial.open("wb") as output, subprocess.Popen(
+                    command, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT) as guest:
+                try:
+                    with attach_fixture(guest, socket, script, case / "gdb.log"):
+                        status = guest.wait(timeout=55)
+                finally:
+                    if guest.poll() is None:
+                        guest.kill()
+    log = serial.read_bytes()
+    if valid:
+        for marker in (b"ISA PnP: 1 cards, 0 malformed, UART=2f8 printer=278",
+                       b"ISA: parallel printer at 0x278", b"LEGACY_UART_PAYLOAD",
+                       b"LEGACY_PORTS_PASS uart=1 printer=1", b"AXIOM64_EXIT status=0"):
+            if marker + b"\r\n" not in log:
+                raise RuntimeError(f"{case.name}: missing {marker!r}, see {serial}")
+    elif b"LEGACY_UART_PAYLOAD" in log:
+        raise RuntimeError(f"{case.name}: invalid resources bound a UART")
+    expected = b"A\0\xff\n\r\x7fB" if valid else b""
+    if status != 1 or port.read_bytes() != expected:
+        raise RuntimeError(f"{case.name}: device transfer failed, see {serial}")
+    observations = json.loads(receipt.read_text())
+    if observations != {"serial_reads": 288, "resource_bytes": 22, "card_numbers": [1],
+                        "logical_devices": [0, 1] if valid else [], "card_number_resets": 1}:
+        raise RuntimeError(f"{case.name}: unexpected configuration traffic: {observations}")
+    return {"case": case.name, "iso_sha256": digest(image), "serial_sha256": digest(serial),
+            "printer_sha256": digest(port), "config_sha256": digest(receipt), "exit": status}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "build/legacy-ports")
+    parser.add_argument("--pnp-only", action="store_true", help="run just the alternate-port fixture")
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -102,6 +211,8 @@ def main():
                     ROOT / "userspace/tests/io/legacy-ports.c", "-o", init], check=True)
     images = {}
     for uart, printer in product((False, True), repeat=2):
+        if args.pnp_only and uart != printer:
+            continue
         name = f"uart{int(uart)}-lp{int(printer)}"
         initramfs = output / f"{name}.cpio"
         image = output / f"{name}.iso"
@@ -114,13 +225,20 @@ def main():
         images[uart, printer] = image
 
     cases = []
-    for firmware, (board, machine), (uart, printer) in product(
-            ("bios", "uefi"), (("i440fx-tsc", "pc,hpet=off"), ("q35-hpet", "q35")), images):
-        image = images[uart, printer]
-        case = output / f"{firmware}-{board}-{image.stem}"
-        case.mkdir()
-        cases.append(boot(case, firmware, machine, image, uart, printer))
-        print(f"{case.name}: passed", flush=True)
+    for firmware, (board, machine) in product(
+            ("bios", "uefi"), (("i440fx-tsc", "pc,hpet=off"), ("q35-hpet", "q35"))):
+        if not args.pnp_only:
+            for (uart, printer), image in images.items():
+                case = output / f"{firmware}-{board}-{image.stem}"
+                case.mkdir()
+                cases.append(boot(case, firmware, machine, image, uart, printer))
+                print(f"{case.name}: passed", flush=True)
+        for valid in (True, False):
+            suffix = "pnp" if valid else "pnp-bad-checksum"
+            case = output / f"{firmware}-{board}-{suffix}"
+            case.mkdir()
+            cases.append(boot_pnp(case, firmware, machine, images[valid, valid], kernel, valid))
+            print(f"{case.name}: passed", flush=True)
     (output / "results.json").write_text(json.dumps(
         {"kernel_sha256": digest(kernel), "cases": cases}, indent=2) + "\n")
 

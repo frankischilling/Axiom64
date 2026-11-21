@@ -583,8 +583,13 @@ make test-acpi-routing 2>&1 | tee build/acpi-routing.log
 
 [[step]]
 suites = ["legacy-ports"]
-name = "Verify ISA UART and printer binding and data transfer"
+name = "Verify ISA Plug and Play resources and UART and printer transfers"
 run = '''
+mkdir -p build
+g++ -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
+  -Ikernel/include kernel/tests/drivers/platform/isa_pnp.cpp kernel/drivers/platform/isa_pnp.cpp \
+  -o build/isa-pnp-tests
+build/isa-pnp-tests
 python3 -B scripts/legacy_ports_test.py
 '''
 

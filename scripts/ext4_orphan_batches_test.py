@@ -235,14 +235,18 @@ def verify_many(directory, images, file_format):
             "guest_sha256": digest(guest)}
 
 
-def make_large_file(directory, extent, name):
+def make_large_file(directory, extent, name, *, orphan_file=False):
     disk = directory / name
     with tempfile.TemporaryDirectory(prefix="ext4-orphan-truncate-") as scratch:
         source = Path(scratch)
         (source / "shrink").write_bytes(CONTENTS)
         (source / "independent").write_bytes(b"unchanged\n")
-        mkfs(disk, source, "large_file,metadata_csum" + (",extent" if extent else ""),
-             300, "-g", "256", "-I", "128")
+        features = "large_file,metadata_csum" + (",extent" if extent else "")
+        options = ["-g", "256", "-I", "128"]
+        if orphan_file:
+            features += ",orphan_file"
+            options += ["-E", "orphan_file_size=1k"]
+        mkfs(disk, source, features, 300, *options)
     inode = field(disk, "stat /shrink", rb"Inode:\s+(\d+)")
     debug(disk, "fallocate /shrink 18 275000", write=True)
     allocated = debug(disk, f"blocks <{inode}>").split()

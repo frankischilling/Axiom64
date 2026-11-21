@@ -82,7 +82,7 @@ python3 scripts/ext2_journal_rejection_test.py
 suites = ["storage-journal"]
 name = "Check native orphan records and interrupted cleanup"
 run = '''
-make test-ext4-orphans test-ext4-orphan-batches test-ext4-orphan-writer
+make test-ext4-orphans test-ext4-orphan-batches test-ext4-orphan-writer test-ext4-large-truncate
 '''
 
 [[step]]

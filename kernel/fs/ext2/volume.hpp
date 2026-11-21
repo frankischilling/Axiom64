@@ -169,6 +169,8 @@ struct ExtentOwnership {
 bool validate_extent_tree(Volume&, const Inode& inode, bool allow_unwritten, const ExtentOwnership&,
                           bool allow_past_eof = false);
 
+enum class SizeChange { normal, recovery, stage_shrink };
+
 struct Volume {
     Mount* mount;
     unsigned device, block_size, inode_size, group_count, change_count;
@@ -188,6 +190,7 @@ struct Volume {
     uint32_t* journal_map;
     uint32_t journal_blocks;
     uint32_t orphan_inode;
+    uint32_t pending_shrink;
     uint32_t touched[64];
     unsigned touched_count;
     int error;
@@ -468,10 +471,7 @@ struct Volume {
         return true;
     }
 
-    bool begin() {
-        error = 0;
-        return flush();
-    }
+    bool begin();
 
     int finish(bool success) {
         if (!success) {
@@ -798,7 +798,7 @@ struct Volume {
         return true;
     }
 
-    bool size(Inode& inode, uint64_t length, bool recovery = false) {
+    bool size(Inode& inode, uint64_t length, SizeChange change = SizeChange::normal) {
         if (length > capacity(inode))
             return fail(-27);
         if (length > INT32_MAX) {
@@ -812,7 +812,9 @@ struct Volume {
                 return false;
         }
         uint64_t old = file_size(inode), keep = (length + block_size - 1) / block_size;
-        if ((length < old || (length == old && (recovery || has_extents(inode)))) &&
+        if (change != SizeChange::stage_shrink &&
+            (length < old ||
+             (length == old && (change == SizeChange::recovery || has_extents(inode)))) &&
             !prune_mapping(inode, keep))
             return false;
         uint64_t tail = min(old, length);
@@ -854,7 +856,7 @@ struct Volume {
 
     bool delete_inode(uint32_t number, Inode& inode) {
         bool dir = (u16(inode) & 0170000) == directory;
-        if (!fast_symlink(inode) && !size(inode, 0, true))
+        if (!fast_symlink(inode) && !size(inode, 0, SizeChange::recovery))
             return false;
         uint32_t block = u32(inode + 104), references;
         uint8_t data[max_block_size];
@@ -963,8 +965,9 @@ class NativeOrphans {
     bool mark(uint32_t number, const uint8_t* allocated, Inode& inode);
     bool check_file(const uint8_t* header, const uint8_t* allocated, Batch* batch = nullptr);
     bool finish_inode(uint32_t number, Inode& inode);
-    bool trim_inode(uint32_t number);
+    bool trim_inode(uint32_t number, bool shrinking = false);
     bool stage_batch(uint8_t* header, Batch& batch);
+    int cleanup(uint32_t number, bool shrinking);
 
   public:
     explicit NativeOrphans(Volume& volume) : v(volume) {
@@ -981,7 +984,14 @@ class NativeOrphans {
     bool collect(const uint8_t* header, const uint8_t* allocated);
     bool recover(uint8_t* header, uint32_t free_blocks, uint32_t free_inodes);
     bool add(Inode& inode);
-    int reap(uint32_t number);
+
+    int reap(uint32_t number) {
+        return cleanup(number, false);
+    }
+
+    int finish_shrink(uint32_t number) {
+        return cleanup(number, true);
+    }
 };
 
 bool validate_volume(Volume&, uint8_t* header, Recovery);

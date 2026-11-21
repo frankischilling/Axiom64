@@ -456,18 +456,35 @@ static int64_t write(Node* node, uint64_t offset, const void* buffer, size_t len
     return result ? result : int64_t(length);
 }
 
+static bool stage_truncate(Volume& v, Inode& inode, size_t length, SizeChange change) {
+    if (!v.size(inode, length, change))
+        return false;
+    inode.set_time(inode_ctime, node_now());
+    inode.set_time(inode_mtime, node_now());
+    if (change == SizeChange::stage_shrink && u16(inode + 26))
+        return NativeOrphans(v).add(inode);
+    return v.save_inode(inode.number, inode);
+}
+
 static int truncate(Node* node, size_t length) {
     auto& v = volume(node);
     if (!v.begin())
         return v.error;
     Inode inode;
-    bool success = v.load_inode(node->inode, inode) && v.size(inode, length);
-    if (success) {
-        inode.set_time(inode_ctime, node_now());
-        inode.set_time(inode_mtime, node_now());
-        success = v.save_inode(node->inode, inode);
-    }
-    return v.finish(success);
+    if (!v.load_inode(node->inode, inode))
+        return v.finish(false);
+    uint64_t old = file_size(inode);
+    if (stage_truncate(v, inode, length, SizeChange::normal))
+        return v.finish(true);
+    if (v.error != -28 || !v.journal || length > old)
+        return v.finish(false);
+    v.discard();
+    v.error = 0;
+    if (!v.load_inode(node->inode, inode) ||
+        !stage_truncate(v, inode, length, SizeChange::stage_shrink))
+        return v.finish(false);
+    v.pending_shrink = inode.number;
+    return v.begin() ? 0 : v.error;
 }
 
 static int setattr(Node* node, uint32_t mode, Timestamp atime, Timestamp mtime, uint32_t uid,

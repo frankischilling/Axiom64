@@ -136,7 +136,7 @@ bool NativeOrphans::mark(uint32_t number, const uint8_t* allocated, Inode& inode
 bool NativeOrphans::finish_inode(uint32_t number, Inode& inode) {
     if (!u16(inode + 26))
         return v.delete_inode(number, inode);
-    if (!v.fast_symlink(inode) && !v.size(inode, file_size(inode), true))
+    if (!v.fast_symlink(inode) && !v.size(inode, file_size(inode), SizeChange::recovery))
         return false;
     set32(inode + 20, 0);
     return v.save_inode(number, inode);
@@ -236,7 +236,7 @@ bool NativeOrphans::stage_batch(uint8_t* header, Batch& batch) {
     return v.save_super(header);
 }
 
-bool NativeOrphans::trim_inode(uint32_t number) {
+bool NativeOrphans::trim_inode(uint32_t number, bool shrinking) {
     Inode inode;
     if (!v.load_inode(number, inode) || v.fast_symlink(inode))
         return v.fail(-28);
@@ -244,7 +244,7 @@ bool NativeOrphans::trim_inode(uint32_t number) {
     // Extents count released group spans. Indirect mappings count released
     // blocks, where one pointer block can cover many adjacent data blocks.
     unsigned limit = max(1u, capacity / 2) * (has_extents(inode) ? 1 : v.block_size / 4);
-    uint64_t length = u16(inode + 26) ? file_size(inode) : 0;
+    uint64_t length = shrinking || u16(inode + 26) ? file_size(inode) : 0;
     uint64_t before = v.inode_sectors(inode);
     for (;;) {
         unsigned budget = limit;
@@ -284,22 +284,51 @@ bool NativeOrphans::add(Inode& inode) {
     return v.save_super(header) && v.save_inode(inode.number, inode);
 }
 
-int NativeOrphans::reap(uint32_t number) {
+int NativeOrphans::cleanup(uint32_t number, bool shrinking) {
     for (;;) {
         Inode inode;
-        if (!v.load_inode(number, inode) || u16(inode + 26))
+        if (!v.load_inode(number, inode))
+            return v.finish(false);
+        bool linked = u16(inode + 26) != 0;
+        if ((shrinking && (u16(inode) & 0170000) != regular_file) || (!shrinking && linked))
             return v.finish(v.fail());
-        if (remove_record(v, inode) && v.delete_inode(number, inode))
+        bool success;
+        if (shrinking) {
+            // An open unlinked file keeps its unlink record until reclamation.
+            success = v.size(inode, file_size(inode), SizeChange::recovery);
+            if (success && linked) {
+                success = remove_record(v, inode);
+                set32(inode + 20, 0);
+            }
+            success = success && v.save_inode(number, inode);
+        } else {
+            success = remove_record(v, inode) && v.delete_inode(number, inode);
+        }
+        if (success) {
+            // Flush retains the final overlay on error. The next begin must
+            // retry that overlay, even if it already removes the record.
+            if (shrinking)
+                v.pending_shrink = 0;
             return v.finish(true);
+        }
         int result = v.finish(false);
         if (result != -28)
             return result;
         v.error = 0;
-        if (!trim_inode(number))
+        if (!trim_inode(number, shrinking))
             return v.finish(false);
         if (!v.flush())
             return v.error;
     }
+}
+
+bool Volume::begin() {
+    error = 0;
+    if (!flush())
+        return false;
+    // Complete a published shrink before a writer can grow into its old
+    // mappings or a namespace change can retire the same inode.
+    return !pending_shrink || !NativeOrphans(*this).finish_shrink(pending_shrink);
 }
 
 bool NativeOrphans::recover(uint8_t* header, uint32_t free_blocks, uint32_t free_inodes) {

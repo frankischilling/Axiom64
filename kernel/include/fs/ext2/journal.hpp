@@ -53,6 +53,9 @@ void journal_close(Journal*);
 
 bool journal_pending(const Journal*);
 
+// Maximum number of home blocks that fit with descriptor and commit records.
+unsigned journal_payload_limit(const Journal*);
+
 // Scan the complete committed log before staging any home blocks. The caller
 // validates the resulting filesystem overlay before checkpointing it to disk.
 int journal_stage(Journal*, int (*stage)(void*, uint32_t, const void*), void*);

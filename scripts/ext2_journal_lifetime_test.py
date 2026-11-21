@@ -26,7 +26,8 @@ LAYOUTS = {'1024': (1024, 128, True), '2048': (2048, 256, True),
            '4096': (4096, 256, True), '1024-untyped': (1024, 128, False)}
 CLIENT = 'userspace/tests/fs/ext2-journal-lifetime.c'
 CONTROLS = ('unmarked', 'positive-links', 'named', 'counter', 'unallocated',
-            'flags', 'orphan-list', 'orphan-list-readonly', 'clean', 'hardware-readonly')
+            'flags', 'orphan-list', 'orphan-list-readonly', 'clean', 'hardware-readonly',
+            'native-cycle', 'native-unlisted', 'native-hardware-readonly')
 
 
 def digest(path):
@@ -144,11 +145,12 @@ def retired(raw, text):
     assert len(matches) == 1
     numbers = tuple(map(int, matches[0]))
     assert len(set(numbers)) == 3
-    for number, kind in zip(numbers, (0o100000, 0o120000, 0o040000)):
+    assert struct.unpack_from('<I', raw, 1256)[0] == numbers[-1]
+    for number, kind, next_orphan in zip(numbers, (0o100000, 0o120000, 0o040000), (0, *numbers[:-1])):
         inode = inode_offset(raw, number)
         assert struct.unpack_from('<H', raw, inode)[0] & 0o170000 == kind
         assert struct.unpack_from('<H', raw, inode + 26)[0] == 0
-        assert struct.unpack_from('<I', raw, inode + 20)[0] != 0
+        assert struct.unpack_from('<I', raw, inode + 20)[0] == next_orphan
     inode = inode_offset(raw, numbers[0])
     assert struct.unpack_from('<I', raw, inode + 88)[0] and struct.unpack_from('<I', raw, inode + 104)[0]
     journal = inode_offset(raw, 8)
@@ -157,6 +159,20 @@ def retired(raw, text):
     assert struct.unpack_from('>I', raw, first * size)[0] == 0xc03b3998
     assert struct.unpack_from('>I', raw, first * size + 28)[0] == 0
     return numbers
+
+
+def marker_fixture(original, numbers):
+    """Recreate the deletion marker format used by older Axiom64 volumes."""
+    raw = bytearray(original)
+    struct.pack_into('<I', raw, 1256, 0)
+    size = 1024 << struct.unpack_from('<I', raw, 1048)[0]
+    for number in numbers:
+        inode = inode_offset(raw, number)
+        ctime, = struct.unpack_from('<I', raw, inode + 12)
+        assert ctime
+        struct.pack_into('<I', raw, inode + 20, ctime)
+    struct.pack_into('<I', raw, inode_offset(raw, numbers[-1]) + 4, size)
+    return raw
 
 
 def damaged(original, numbers, name, disk):
@@ -185,6 +201,10 @@ def damaged(original, numbers, name, disk):
         struct.pack_into('<I', raw, 1256, numbers[0])
     elif name == 'clean':
         struct.pack_into('<H', raw, 1082, 1)
+    elif name == 'native-cycle':
+        struct.pack_into('<I', raw, inode + 20, numbers[-1])
+    elif name == 'native-unlisted':
+        struct.pack_into('<I', raw, 1256, 0)
     disk.write_bytes(raw)
     if name == 'named':
         debugfs(disk, 'ln <' + str(numbers[0]) + '> /resurrect', write=True)
@@ -279,6 +299,15 @@ def main():
                     retained.write_bytes(original)
                     row.update(retired_inodes=numbers, baseline_counts=baseline,
                                interrupted=archive_fixture(retained, remove=True))
+                    disk.write_bytes(original)
+                    with (case / 'native-recovery.log').open('wb') as log:
+                        recovered = subprocess.run(['e2fsck', '-fy', str(disk)], stdout=log,
+                                                   stderr=subprocess.STDOUT)
+                    assert recovered.returncode in (0, 1)
+                    strict(disk, case / 'native-fsck.log')
+                    for number in numbers:
+                        assert 'not in use' in debugfs(disk, f'testi <{number}>')
+                    row['native_recovered'] = digest(disk)
                     for mode in ('verify', 'readonly'):
                         disk.write_bytes(original)
                         result, text = boot(image(provider, linkage, mode), disk, case / mode, firmware, transport, cache, mode)
@@ -298,10 +327,18 @@ def main():
                     save(output / 'results.json', rows)
                     print('JOURNAL_LIFETIME_CELL_PASS ' + '/'.join((provider, linkage, firmware, transport, cache, label)), flush=True)
                     if provider == 'build' and linkage == 'static' and cache == 'writethrough':
+                        markers = marker_fixture(original, numbers)
+                        disk.write_bytes(markers)
+                        directory = case / 'old-markers'
+                        result, text = boot(image(provider, linkage, 'verify'), disk, directory,
+                                            firmware, transport, cache, 'verify')
+                        assert counts(text, 'recovered') == baseline
+                        strict(disk, directory / 'fsck.log')
+                        row['boots']['old-markers'] = result
                         for name in CONTROLS:
-                            damaged(original, numbers, name, disk)
+                            damaged(original if name.startswith('native-') else markers, numbers, name, disk)
                             before = digest(disk)
-                            mode = 'reject-unsupported' if name == 'flags' else 'reject-hardware' if name == 'hardware-readonly' else \
+                            mode = 'reject-unsupported' if name == 'flags' else 'reject-hardware' if name.endswith('hardware-readonly') else \
                                    'reject-readonly' if name == 'orphan-list-readonly' else 'reject-damaged'
                             directory = case / name
                             result, _ = boot(image(provider, linkage, mode), disk, directory, firmware, transport, cache, mode)

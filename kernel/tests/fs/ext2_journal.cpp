@@ -24,10 +24,10 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "fs/ext2/journal.hpp"
+#include "../../fs/ext2/volume.hpp"
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <vector>
 
 namespace ax {
@@ -46,6 +46,27 @@ namespace {
 constexpr uint32_t magic = 0xc03b3998;
 constexpr uint8_t uuid[16] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
 
+struct Format {
+    unsigned compat, incompat, tag_bytes, tail_bytes;
+};
+
+constexpr Format formats[] = {{0, 1, 8, 0},   {0, 3, 12, 0},  {1, 1, 8, 0},  {0, 9, 10, 4},
+                              {0, 11, 14, 4}, {0, 17, 16, 4}, {0, 19, 16, 4}};
+
+unsigned tags_per_descriptor(unsigned size, Format format) {
+    return (size - 28 - format.tail_bytes) / format.tag_bytes;
+}
+
+uint32_t reference_crc32c(const uint8_t* bytes, size_t size) {
+    uint32_t crc = UINT32_MAX;
+    for (size_t i = 0; i < size; i++) {
+        crc ^= bytes[i];
+        for (unsigned bit = 0; bit < 8; bit++)
+            crc = (crc >> 1) ^ ((crc & 1) ? 0x82f63b78 : 0);
+    }
+    return crc;
+}
+
 void put(uint8_t* p, uint32_t value) {
     p[0] = value >> 24;
     p[1] = value >> 16;
@@ -60,7 +81,7 @@ struct Device {
     std::vector<uint8_t> durable, cache;
     std::vector<uint32_t> map;
 
-    Device(unsigned block_size, bool volatile_cache)
+    Device(unsigned block_size, bool volatile_cache, Format format = formats[0])
         : size(block_size), writeback(volatile_cache), after(false),
           durable(size_t(block_size) * 4096), map(1024) {
         for (unsigned index = 0; index < map.size(); index++)
@@ -72,9 +93,14 @@ struct Device {
         put(header + 16, map.size());
         put(header + 20, 1);
         put(header + 24, 1);
-        put(header + 40, 1);
+        put(header + 36, format.compat);
+        put(header + 40, format.incompat);
         memcpy(header + 48, uuid, sizeof(uuid));
         put(header + 64, 1);
+        if (format.tail_bytes) {
+            header[80] = 4;
+            put(header + 252, reference_crc32c(header, 1024));
+        }
         for (unsigned block : {4u, 5u, 6u})
             memset(durable.data() + size_t(block) * size, block, size);
         cache = durable;
@@ -139,8 +165,8 @@ void outcome(Device& disk, const std::vector<std::vector<uint8_t>>& data, bool o
     assert(updated || (old_allowed && old));
 }
 
-unsigned fault_matrix(unsigned size, bool writeback) {
-    Device baseline(size, writeback);
+unsigned fault_matrix(unsigned size, bool writeback, Format format) {
+    Device baseline(size, writeback, format);
     std::vector<std::vector<uint8_t>> data(3, std::vector<uint8_t>(size));
     for (unsigned index = 0; index < data.size(); index++)
         memset(data[index].data(), 20 + index, size);
@@ -155,7 +181,7 @@ unsigned fault_matrix(unsigned size, bool writeback) {
     assert(operations == 15);
     for (bool after : {false, true})
         for (unsigned cut = 1; cut <= operations; cut++) {
-            Device crashed(size, writeback);
+            Device crashed(size, writeback, format);
             crashed.fail = cut;
             crashed.after = after;
             journal = crashed.open();
@@ -177,7 +203,7 @@ unsigned fault_matrix(unsigned size, bool writeback) {
             journal_close(journal);
             cases++;
 
-            Device retried(size, writeback);
+            Device retried(size, writeback, format);
             retried.fail = cut;
             retried.after = after;
             journal = retried.open();
@@ -196,9 +222,9 @@ unsigned fault_matrix(unsigned size, bool writeback) {
     return cases;
 }
 
-void multiple_descriptors(unsigned size) {
-    Device disk(size, false);
-    unsigned count = (size - 28) / 8 + 2;
+void multiple_descriptors(unsigned size, Format format) {
+    Device disk(size, false, format);
+    unsigned count = tags_per_descriptor(size, format) + 2;
     std::vector<std::vector<uint8_t>> data(count, std::vector<uint8_t>(size));
     std::vector<JournalWrite> writes(count);
     for (unsigned index = 0; index < count; index++) {
@@ -209,7 +235,7 @@ void multiple_descriptors(unsigned size) {
     assert(!journal_commit(journal, writes.data(), writes.size()));
     journal_close(journal);
     // Reopen a durable committed log before any home block was written.
-    Device crash(size, false);
+    Device crash(size, false, format);
     crash.fail = 2 + 2 + count + 1 + 1 + 1;
     journal = crash.open();
     assert(journal_commit(journal, writes.data(), writes.size()) == -5);
@@ -238,8 +264,8 @@ unsigned negatives() {
                                            {20, 0, 117},
                                            {28, 1024, 117},
                                            {32, 5, 117},
-                                           {36, 1, 95},
-                                           {40, 2, 95},
+                                           {36, 2, 95},
+                                           {40, 4, 95},
                                            {44, 1, 95},
                                            {64, 2, 117},
                                            {68, 1, 117},
@@ -417,18 +443,51 @@ unsigned restart_sequences(unsigned size, bool writeback) {
         }
     return cases;
 }
+
+void transaction_capacity(unsigned size, Format format) {
+    Device device(size, true, format);
+    Journal* journal = device.open();
+    unsigned limit = journal_payload_limit(journal);
+    unsigned tags = tags_per_descriptor(size, format), ring = device.map.size() - 1;
+    auto needed = [tags](unsigned count) { return count + (count + tags - 1) / tags + 1; };
+    assert(needed(limit) <= ring && needed(limit + 1) > ring);
+    std::vector<uint8_t> data(size, 0xa7);
+    std::vector<JournalWrite> writes(limit + 1);
+    for (unsigned index = 0; index < writes.size(); index++)
+        writes[index] = {index + 4, data.data()};
+    ext2_detail::Volume volume{};
+    volume.journal = journal;
+    volume.block_size = size;
+    volume.blocks = 4096;
+    for (unsigned index = 0; index < limit; index++)
+        assert(volume.write_block(writes[index].block, data.data(), 0));
+    assert(volume.write_block(writes[0].block, data.data(), 1));
+    assert(!volume.write_block(writes[limit].block, data.data(), 0));
+    assert(volume.error == -28 && volume.change_count == limit && device.calls == 0);
+    volume.discard();
+    assert(!volume.changes && !volume.change_count);
+    assert(journal_commit(journal, writes.data(), writes.size()) == -28);
+    assert(device.calls == 0 && !journal_pending(journal));
+    assert(!journal_commit(journal, writes.data(), limit));
+    assert(device.durable[(limit + 3) * size] == 0xa7);
+    assert(device.durable[(limit + 4) * size] == 0);
+    journal_close(journal);
+}
 } // namespace
 
 int main() {
     unsigned cases = 0, restarts = 0;
     for (unsigned size : {1024u, 2048u, 4096u}) {
-        for (bool writeback : {false, true}) {
-            cases += fault_matrix(size, writeback);
+        for (bool writeback : {false, true})
             restarts += restart_sequences(size, writeback);
+        for (auto format : formats) {
+            for (bool writeback : {false, true})
+                cases += fault_matrix(size, writeback, format);
+            multiple_descriptors(size, format);
+            transaction_capacity(size, format);
         }
-        multiple_descriptors(size);
     }
     printf("EXT2_JOURNAL_NATIVE_PASS crash_and_retry_cases=%u negatives=%u replay_controls=%u "
-           "restart_cases=%u layouts=3\n",
+           "restart_cases=%u layouts=3 formats=7\n",
            cases, negatives(), replay_controls(), restarts);
 }

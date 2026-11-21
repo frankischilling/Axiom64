@@ -25,6 +25,7 @@
  */
 #include "boot/root.hpp"
 #include "drivers/block/partition.hpp"
+#include "fs/ext2/ext2.hpp"
 #include "fs/vfs.hpp"
 
 namespace ax {
@@ -134,7 +135,7 @@ void boot_root_init(const char* command) {
     int device = block_find(root);
     if (device < 0)
         failure("root-device", device);
-    if (filesystem && strcmp(type, "ext2"))
+    if (filesystem && !ext_volume_type(type))
         failure("rootfstype", -19);
     bool checked =
         policy && (!strcmp(flags, "ro,recovery=check") || !strcmp(flags, "rw,recovery=check"));
@@ -156,6 +157,7 @@ void boot_root_init(const char* command) {
     // /tmp is private scratch space even when ordinary root files are persistent.
     auto temporary = lookup("/tmp");
     temporary->mode = directory | 01777;
-    log("VFS_ROOT_PASS filesystem=ext2 device=%s readonly=%u\n", root, uint64_t(readonly));
+    log("VFS_ROOT_PASS filesystem=%s device=%s readonly=%u\n", filesystem ? type : "ext2", root,
+        uint64_t(readonly));
 }
 } // namespace ax

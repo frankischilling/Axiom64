@@ -20,8 +20,8 @@ REJECTED_EA = {name: 117 for name in ('magic', 'zero-refcount', 'excess-refcount
     'too-few-references', 'multiple-blocks', 'reserved-header', 'external-value', 'zero-namespace',
     'empty-user-name', 'embedded-nul', 'bad-sort', 'unaligned-value', 'value-in-names', 'long-value',
     'overlapping-value', 'entry-hash', 'block-hash', 'outside-device', 'metadata-pointer', 'sector-count',
-    'data-alias', 'missing-feature', 'unallocated-pointer')}
-REJECTED_EA.update({'acl-policy': 95, 'inline-layout': 95})
+    'data-alias', 'missing-feature', 'unallocated-pointer', 'inline-value-offset')}
+REJECTED_EA['acl-policy'] = 95
 
 
 def require(value, message):

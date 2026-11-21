@@ -144,6 +144,8 @@ struct FilesystemOps {
     int (*follow_link)(Node*, Node*&) = nullptr;
     // Positive grants access, negative denies it, and zero applies ordinary DAC.
     int (*access_override)(Node*, unsigned mask) = nullptr;
+    bool (*queue_reclaim)(Node*) = nullptr;
+    void (*reclaim_queued)(Mount*) = nullptr;
 };
 
 struct Mount {
@@ -268,6 +270,8 @@ int node_map_shared(Node*, uint64_t, size_t, bool write, uint64_t&);
 int node_stats(Node*, FilesystemStats&);
 
 bool node_referenced(Node*);
+void node_reference_released(Node*);
+void reclaim_released_nodes();
 bool node_open_for_write(const Node*);
 
 Handle* open_handle(Node*, uint32_t, int* error = nullptr);

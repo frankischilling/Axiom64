@@ -78,6 +78,7 @@ static void release_memory(Task* t) {
         memory->space.destroy();
         if (auto file = memory->exec_file) {
             --file->exec_images;
+            node_reference_released(file);
             inotify_retire_inode(file);
             node_retire_xattrs(file);
             memfd_reap(file);
@@ -130,9 +131,13 @@ static void release_resources(Task* t) {
     release_memory(t);
     release_files(t->files);
     t->files = nullptr;
-    if (t->fs && !--t->fs->references)
-        release(t->fs);
-    t->fs = nullptr;
+    if (auto fs = t->fs) {
+        t->fs = nullptr;
+        node_reference_released(fs->cwd_node);
+        node_reference_released(fs->root_node);
+        if (!--fs->references)
+            release(fs);
+    }
     inotify_reap_inodes();
     if (t->handlers && !--t->handlers->references)
         release(t->handlers);
@@ -514,6 +519,7 @@ Frame* schedule(Frame* f, bool yield) {
         asm volatile("fxsave64 %0" : "=m"(current->fpu));
     }
     if (current && current->state == State::runnable && !yield && signal_deliver(*current)) {
+        reclaim_released_nodes();
         cpu_account(current, true);
         return &current->frame;
     }
@@ -528,6 +534,7 @@ Frame* schedule(Frame* f, bool yield) {
                 continue;
             if (!signal_deliver(*t))
                 continue;
+            reclaim_released_nodes();
             current = t;
             write_cr3(t->memory->space.root);
             arch_task(t->fs_base);
@@ -537,6 +544,7 @@ Frame* schedule(Frame* f, bool yield) {
         }
         // No kernel continuation is retained across a task switch.
         // Timer interrupts during this idle loop only advance the clock.
+        reclaim_released_nodes();
         asm volatile("sti; hlt; cli" ::: "memory");
     }
 }

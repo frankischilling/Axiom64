@@ -1,5 +1,27 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
+# @file    scripts/vm.py
+# @brief   Launch the persistent Axiom64 development VM.
+# @author  frankischilling
+# @date    2026-11-20
+#
+# Formats new state and keeps a lock around each use of the persistent disk.
+#
+# Copyright (C) 2026 frankischilling
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://gnu.org/licenses/>.
+
 """Start a normal VM with a persistent disk that is created once and then preserved."""
 import argparse
 import fcntl
@@ -32,9 +54,11 @@ def create_disk(destination, entries):
         populate(stage, entries)
         with destination.open('wb') as output:
             output.truncate(capacity)
-        subprocess.run(['mke2fs', '-q', '-F', '-t', 'ext2', '-b', '4096', '-I', '128',
-                        '-O', 'none,filetype,sparse_super,large_file', '-N', str(len(entries) + 4096),
-                        '-E', 'lazy_itable_init=0,root_owner=0:0', '-d', str(stage), str(destination)],
+        subprocess.run(['mke2fs', '-q', '-F', '-t', 'ext3', '-b', '4096', '-I', '128',
+                        '-O', 'none,has_journal,filetype,sparse_super,large_file',
+                        '-J', 'size=32', '-N', str(len(entries) + 4096),
+                        '-E', 'lazy_itable_init=0,lazy_journal_init=0,root_owner=0:0',
+                        '-d', str(stage), str(destination)],
                        check=True, capture_output=True)
     commands = [f'set_inode_field {json.dumps(name)} {field} 0'
                 for name in ['/', '/lost+found', *('/' + name for name in sorted(entries))]
@@ -73,7 +97,8 @@ def prepare(state, source):
     create_disk(temporary, entries)
     with temporary.open('r+b') as output:
         os.fsync(output.fileno())
-    record = dict(version=1, disk='root.ext2', disk_bytes=temporary.stat().st_size,
+    record = dict(version=1, disk='root.ext2', filesystem='ext3',
+                  disk_bytes=temporary.stat().st_size,
                   initial_disk_sha256=digest(temporary), initial_rootfs_sha256=digest(source))
     # Exclusive links publish fresh names; a pre-existing disk or manifest is
     # never replaced, even if an external writer ignores the advisory lock.

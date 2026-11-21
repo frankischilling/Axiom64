@@ -1,4 +1,27 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# @file    scripts/ext2_test.py
+# @brief   Check ext2 disk operations and recovery across firmware and transports.
+# @author  frankischilling
+# @date    2026-11-21
+#
+# Builds disk fixtures, boots the guest, and verifies the resulting disk bytes.
+#
+# Copyright (C) 2026 frankischilling
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://gnu.org/licenses/>.
+
 """Boot real ext2 volumes, verify persistence, and check them with host filesystem tools."""
 import argparse
 import hashlib
@@ -115,7 +138,10 @@ def boot(firmware, transport, phase, disks, images, label, timeout, readonly=Fal
     disk_inputs = [dict(name=disk.name, bytes=disk.stat().st_size,
                         sha256=hashlib.sha256(disk.read_bytes()).hexdigest()) for disk in disks]
     mode = "disable-legacy=on" if transport == "modern" else "disable-modern=on"
-    command = ["qemu-system-x86_64", "-machine", "pc", "-cpu", "max", "-m", "512M",
+    # The cache scan needs over 36 MiB of entries plus its index. With the
+    # desktop initramfs under UEFI, 512 MiB can leave less than that budget.
+    memory = "640M" if phase == "cache" else "512M"
+    command = ["qemu-system-x86_64", "-machine", "pc", "-cpu", "max", "-m", memory,
                "-cdrom", str(images[phase]), "-display", "none", "-serial", "stdio", "-monitor", "none",
                "-no-reboot", "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"]
     for index, disk in enumerate(disks):
@@ -183,7 +209,7 @@ def invalid_volumes(prefix):
     original = base.read_bytes()
     variants = [("magic", 22), ("capacity", 117), ("bitmap-location", 117),
                 ("free-count", 117), ("metadata-bit", 117), ("duplicate-block", 117),
-                ("directory-record", 117), ("directory-inode", 117), ("extents", 95),
+                ("directory-record", 117), ("directory-inode", 117), ("inline-data", 95),
                 ("journal", 95), ("checksum", 95), ("inode-flags", 95), ("acl", 95),
                 ("ea-pointer", 117),
                 ("block-size", 95), ("inode-size", 95), ("duplicate-name", 117),
@@ -210,7 +236,7 @@ def invalid_volumes(prefix):
             struct.pack_into("<H" if name == "directory-record" else "<I", data,
                              root_block * 1024 + (4 if name == "directory-record" else 0),
                              7 if name == "directory-record" else 0xffffffff)
-        elif name == "extents": struct.pack_into("<I", data, 1024 + 96, 0x42)
+        elif name == "inline-data": struct.pack_into("<I", data, 1024 + 96, 0x8002)
         elif name == "journal": struct.pack_into("<I", data, 1024 + 92, 0x3c)
         elif name == "checksum": struct.pack_into("<I", data, 1024 + 100, 0x403)
         elif name == "inode-flags": struct.pack_into("<I", data, inode_offset(data, seed_number) + 32, 0x80000)

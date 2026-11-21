@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Compare kernel journal records and recovery with native Linux filesystem tools."""
 import argparse
+import ctypes
 import gzip
 import hashlib
 import json
@@ -25,7 +26,7 @@ output = args.directory.resolve()
 assert output.is_relative_to((ROOT / 'build').resolve())
 output.mkdir(exist_ok=False)
 inputs = ('kernel/fs/ext2/journal.cpp', 'kernel/include/fs/ext2/journal.hpp',
-          'kernel/include/core/base.hpp', 'kernel/tests/fs/ext2_journal.cpp',
+          'kernel/include/core/base.hpp', 'kernel/include/core/crc.hpp', 'kernel/tests/fs/ext2_journal.cpp',
           'kernel/tests/fs/ext2_journal_volume.cpp', 'Makefile', 'scripts/ext2_journal_native_test.py',
           'scripts/ext2_test.py', 'scripts/fixture_archive.py')
 inputs += tuple(Path(module.__file__).resolve().relative_to(ROOT).as_posix()
@@ -41,8 +42,16 @@ for name in inputs:
 subprocess.run(['make', '-s', 'build/ext2-journal-volume-native'], cwd=ROOT, check=True)
 binary = root / 'build/ext2-journal-volume-native'
 rows = []
-for label, size, inode_size, typed in (('1024',1024,128,True), ('2048',2048,256,True),
-                                      ('4096',4096,256,True), ('1024-untyped',1024,128,False)):
+crc32c = ctypes.CDLL('libext2fs.so.2').ext2fs_crc32c_le
+crc32c.argtypes = [ctypes.c_uint32, ctypes.c_char_p, ctypes.c_size_t]
+crc32c.restype = ctypes.c_uint32
+
+profiles = (('1024', 1024, 128, True, 0, 0), ('2048', 2048, 256, True, 0, 0),
+            ('4096', 4096, 256, True, 0, 0), ('1024-untyped', 1024, 128, False, 0, 0),
+            ('v1', 1024, 128, True, 1, 1), ('v2', 1024, 128, True, 0, 9),
+            ('v2-wide', 2048, 256, True, 0, 11), ('v3', 4096, 256, True, 0, 17),
+            ('v3-wide', 1024, 128, True, 0, 19), ('wide', 2048, 256, True, 0, 3))
+for label, size, inode_size, typed, compat, incompat in profiles:
     cell = output / label
     cell.mkdir()
     disk = cell / 'base.raw'
@@ -82,6 +91,13 @@ for label, size, inode_size, typed in (('1024',1024,128,True), ('2048',2048,256,
     assert len(mapping) == length and len(set(mapping)) == length
     map_file = cell / 'journal-map.bin'
     map_file.write_bytes(struct.pack('<'+'I'*length,*mapping))
+    start = mapping[0] * size
+    if incompat:
+        struct.pack_into('>II', raw, start + 36, compat, incompat)
+        if incompat & 24:
+            raw[start + 80] = 4
+            struct.pack_into('>I', raw, start + 252,
+                             crc32c(0xffffffff, bytes(raw[start:start + 1024]), 1024))
     journal_header = bytes(raw[mapping[0]*size:(mapping[0]+1)*size])
     assert struct.unpack_from('>II',journal_header)[0:2] == (0xc03b3998,4)
     (cell / 'linux-journal-header.bin').write_bytes(journal_header)
@@ -152,6 +168,7 @@ for label, size, inode_size, typed in (('1024',1024,128,True), ('2048',2048,256,
         debugfs(volume,'dump /seed '+str(export))
         assert export.read_bytes() == old+appended
     row = dict(passed=True,layout=label,block_size=size,inode_size=inode_size,journal_blocks=length,
+               journal_compat=compat, journal_incompat=incompat or struct.unpack_from('>I', journal_header, 40)[0],
                actual_linux_journal_header_sha256=digest(cell/'linux-journal-header.bin'),
                seed_inode=number,unallocated_referenced_block=added,cut_operation=13,
                durable_journal_committed=True,checkpoint_interrupted=True,
@@ -166,7 +183,7 @@ for label, size, inode_size, typed in (('1024',1024,128,True), ('2048',2048,256,
     print('EXT2_JOURNAL_NATIVE_VOLUME_PASS block_size='+str(size),flush=True)
 assert sources == {name:digest(root/name) for name in inputs}
 receipt = dict(passed=True,terminal=True,source_stable=True,scope='native kernel-module interoperability; no guest mount claim',
-               layouts=4,exact_allocation_pointer_cuts=4,strict_native_postchecks=8,
+               layouts=len(rows),exact_allocation_pointer_cuts=len(rows),strict_native_postchecks=2*len(rows),
                module_host_repair_performed=False,oracle_is_separate_native_repaired_copy=True,
                binary_sha256=digest(binary),source_inputs=sources)
 (output/'receipt.json').open('x').write(json.dumps(receipt,indent=2)+'\n')

@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "boot/boot.hpp"
+#include "mm/file_mapping.hpp"
 #include "mm/stack.hpp"
 #include "fs/memfd.hpp"
 
@@ -567,7 +568,7 @@ void AddressSpace::destroy() {
         destroy_table(root, 4);
         root = 0;
     }
-    memfd_release_mappings(*this);
+    release_file_mappings(*this);
 }
 
 static bool clone_table(uint64_t dest, uint64_t src, int level) {
@@ -601,7 +602,7 @@ static bool clone_table(uint64_t dest, uint64_t src, int level) {
 bool AddressSpace::clone_from(const AddressSpace& src) {
     if (!create())
         return false;
-    if (!clone_table(root, src.root, 4) || !memfd_clone_mappings(*this, src)) {
+    if (!clone_table(root, src.root, 4) || !clone_file_mappings(*this, src)) {
         destroy();
         return false;
     }

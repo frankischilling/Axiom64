@@ -741,6 +741,30 @@ bool node_referenced(Node* node) {
             page_shared(node->backing_physical, node->capacity / page_size));
 }
 
+static bool reclaim_pending;
+
+void node_reference_released(Node* node) {
+    // Reference drops can run in interrupt or socket teardown paths.
+    // Queue the inode here and let the scheduler boundary perform disk I/O.
+    while (node) {
+        node = file_node(node);
+        auto mount = node->mount;
+        if (mount && mount->active && !mount->readonly && !node->links &&
+            mount->ops->queue_reclaim && mount->ops->queue_reclaim(node))
+            reclaim_pending = true;
+        node = node->parent;
+    }
+}
+
+void reclaim_released_nodes() {
+    if (!reclaim_pending)
+        return;
+    reclaim_pending = false;
+    for (auto& mount : mounts)
+        if (mount.active && !mount.readonly && mount.ops->reclaim_queued)
+            mount.ops->reclaim_queued(&mount);
+}
+
 bool node_open_for_write(const Node* node) {
     for (const auto& handle : handles)
         if (handle.references && handle.node == node && (handle.flags & 3) &&
@@ -778,7 +802,8 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
         return -1;
     if (flags & ~uint64_t(1 | 2 | 4 | 8 | 32 | 32768)) // MS_SILENT is used by mount.
         return -22;
-    if (check_dirty && ((flags & 32) || !type || strcmp(type, "ext2")))
+    bool disk = ext_volume_type(type);
+    if (check_dirty && ((flags & 32) || !disk))
         return -22;
     Node* point = nullptr;
     int error = resolve_path(path, point);
@@ -809,7 +834,7 @@ int mount_filesystem(const Path& path, const Path& source, const char* type, uin
     bool queues = type && !strcmp(type, "mqueue");
     if (queues && posix_queue_mounted())
         return -16;
-    bool ram = queues || (type && !strcmp(type, "ramfs")), disk = type && !strcmp(type, "ext2");
+    bool ram = queues || (type && !strcmp(type, "ramfs"));
     bool proc = type && !strcmp(type, "proc");
     if (!ram && !disk && !proc)
         return -19;
@@ -1098,6 +1123,7 @@ void close_handle(Handle* h) {
     h->opened_dentry = nullptr;
     h->pipe = nullptr;
     h->anonymous_path = nullptr;
+    node_reference_released(retired_node);
     node_retire_xattrs(retired_node);
     if (auto metadata = anonymous_path                        ? anonymous_path
                         : descriptor_inode_name(retired_node) ? retired_node

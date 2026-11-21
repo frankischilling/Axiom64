@@ -36,12 +36,12 @@ def variants(native):
     assert count == 6 and len(set(targets)) == count
     assert struct.unpack_from('>II', original, mapping[1] * 1024) == (0xc03b3998, 1)
     first_tag = mapping[1] * 1024 + 12
-    for index, label in enumerate(('checksum', '64-bit', 'uuid', 'journal-target',
+    for index, label in enumerate(('unknown-compat', 'async-commit', 'uuid', 'journal-target',
                                    'geometry', 'journal-inode', 'allocation', 'external')):
         raw = bytearray(original)
         if index in (0, 1):
             struct.pack_into('>I', raw, mapping[0] * 1024 + (36 if index == 0 else 40),
-                             1 if index == 0 else 3)
+                             2 if index == 0 else 5)
         elif index == 2:
             raw[mapping[0] * 1024 + 48] ^= 1
         elif index == 3:

@@ -44,9 +44,11 @@ make test-guest-media
 
 [[step]]
 suites = ["storage"]
-name = "Test writable ext2 volumes and host fsck"
+name = "Test writable ext volumes, indexed directories, extent trees, and host fsck"
 run = '''
 python3 scripts/ext2_test.py
+make test-ext2-index
+make test-ext4-extents
 '''
 
 [[step]]
@@ -72,7 +74,23 @@ suites = ["storage-journal"]
 name = "Recover committed journals and verify guest persistence across all profiles"
 run = '''
 make test-ext2-journal
+python3 scripts/ext2_journal_checksums_test.py --native-directory build/ext2-journal-native
 python3 scripts/ext2_journal_rejection_test.py
+'''
+
+[[step]]
+suites = ["storage-journal"]
+name = "Check orphan cleanup and inode-body attributes across interruption"
+run = '''
+make test-ext4-orphans test-ext4-orphan-batches test-ext4-orphan-writer test-ext4-large-truncate test-ext2-last-reference
+python3 -B scripts/ext4_inode_xattr_test.py
+'''
+
+[[step]]
+suites = ["storage-journal"]
+name = "Recover a normal journaled VM root after abrupt shutdown"
+run = '''
+make test-vm-journal
 '''
 
 [[step]]

@@ -64,6 +64,10 @@ void release(void* pointer) {
 void descriptor_wait_notify(const void*, uint32_t) {
 }
 
+void node_reference_released(Node* node) {
+    assert(!node); // This host harness uses unbound sockets.
+}
+
 void retain(Handle* handle) {
     assert(handle && handle->references);
     handle->references++;

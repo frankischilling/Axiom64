@@ -467,9 +467,10 @@ Acceptance evidence:
 ### F17. AHCI, NVMe, and other storage devices
 
 PCI IDE compatibility disks use programmed I/O. The primary ISA floppy
-controller supports channel 2 DMA and ext2 data volumes. AHCI SATA disks use
-polled DMA, support cache flush and port recovery, and boot ext2 roots by
-device path or PARTUUID on QEMU i440fx and Q35. [Storage drivers](storage.md)
+controller supports channel 2 DMA and ext2 data volumes. AHCI SATA disks
+and PCI NVMe namespaces support polled DMA, flush, recovery, and ext2 root
+boot by device path or PARTUUID on QEMU i440fx and Q35. NVMe uses bounded
+admin and I/O queues and supports multiple NVM namespaces. [Storage drivers](storage.md)
 
 Required work:
 

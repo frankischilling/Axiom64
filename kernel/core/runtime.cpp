@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "core/base.hpp"
+#include "drivers/block/block.hpp"
 #include "drivers/platform/legacy_io.hpp"
 #include "drivers/platform/power.hpp"
 #include "fs/vfs.hpp"
@@ -155,6 +156,10 @@ void log(const char* s, ...) {
     int error = shutdown_filesystems();
     if (error) {
         log("FILESYSTEM_SHUTDOWN_FAIL errno=%d\n", int64_t(-error));
+        status = 1;
+    }
+    if (const int disk_error = block_shutdown()) {
+        log("BLOCK_SHUTDOWN_FAIL errno=%d\n", int64_t(-disk_error));
         status = 1;
     }
     log("AXIOM64_EXIT status=%d\n", int64_t(status));

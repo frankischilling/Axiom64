@@ -1,6 +1,6 @@
 # Persistent root boot
 
-Axiom64 mounts supported ext-family roots on virtio, legacy ATA, and AHCI SATA disks or their partitions. A small initramfs supplies the initial VFS namespace. The kernel replaces that root before starting any user process. The full disk-root image contains Ring 3 init, shells, the native GNU toolchain, and the Xorg desktop. AHCI root tests cover ext2. Writable ext-family data mounts can run alongside the disk root.
+Axiom64 mounts supported ext-family roots on virtio, legacy ATA, AHCI SATA, and NVMe disks or their partitions. A small initramfs supplies the initial VFS namespace. The kernel replaces that root before starting any user process. The full disk-root image contains Ring 3 init, shells, the native GNU toolchain, and the Xorg desktop. AHCI and NVMe root tests cover ext2. Writable ext-family data mounts can run alongside the disk root.
 
 The [normal VM launcher](build.md) formats new persistent roots with a classic internal journal. The development fixture below uses unjournaled ext2 for compatibility and explicit recovery tests.
 
@@ -30,6 +30,7 @@ Limine's kernel command line selects the root:
 | `root=/dev/vda` through `/dev/vdh` | Mount that whole virtio disk as the root |
 | `root=/dev/vda1` | Mount the named partition as root |
 | `root=/dev/sdX` | Mount a detected IDE compatibility or AHCI disk. Append a partition number to select a partition. |
+| `root=/dev/nvme0n7` or `root=/dev/nvme0n7p1` | Mount a detected NVMe namespace or partition. |
 | `root=PARTUUID=<id>` | Select a GPT partition GUID or an MBR disk signature and hexadecimal partition number, such as `13572468-05` |
 | `root=PARTLABEL=<name>` | Select a GPT partition name in UTF-8. The name is case-sensitive and must fit in one command-line token. |
 | `rootfstype=ext2`, `ext3`, or `ext4` | Select the ext-family driver. Omission also selects that driver. See the [supported formats](ext2.md#supported-format-and-operations). |

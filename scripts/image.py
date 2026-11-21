@@ -49,14 +49,17 @@ parser.add_argument("--root-recovery", action="store_true", help="validate a str
 parser.add_argument("--kernel-option", action="append", default=[], help="one additional kernel command-line token")
 args = parser.parse_args()
 if args.root_device is not None:
-    device = re.fullmatch(r"/dev/(?:vd[a-h]|sd[a-d])([1-9][0-9]{0,2})?", args.root_device)
+    device = re.fullmatch(r"/dev/(?:vd[a-h]|sd[a-l])([1-9][0-9]{0,2})?", args.root_device)
+    nvme = re.fullmatch(r"/dev/nvme[0-3]n([1-9][0-9]{0,9})(?:p([1-9][0-9]{0,2}))?",
+                        args.root_device)
     uuid = re.fullmatch(r"PARTUUID=(?:[\da-fA-F]{8}-[\da-fA-F]{2}|"
                         r"[\da-fA-F]{8}(?:-[\da-fA-F]{4}){3}-[\da-fA-F]{12})",
                         args.root_device, re.ASCII)
     label = (args.root_device.startswith("PARTLABEL=") and 10 < len(args.root_device.encode()) < 119
              and not any(character.isspace() for character in args.root_device))
-    if not (uuid or label or (device and int(device[1] or "0") <= 128)):
-        parser.error("--root-device must name a virtio or ATA disk, partition, PARTUUID, or PARTLABEL")
+    if not (uuid or label or (device and int(device[1] or "0") <= 128) or
+            (nvme and int(nvme[1]) < 0xffffffff and int(nvme[2] or "0") <= 128)):
+        parser.error("--root-device must name a virtio, ATA, or NVMe disk or partition, PARTUUID, or PARTLABEL")
 if args.root_readonly and not args.root_device:
     parser.error("--root-readonly requires --root-device")
 if args.root_recovery and not args.root_device:

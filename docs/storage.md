@@ -15,8 +15,7 @@ assigned PCI BAR, takes firmware ownership when the controller offers a
 handoff, and resets the controller before examining its ports. Each disk
 supports 512-byte logical sectors, LBA28 and LBA48, one polled command at a
 time, and contiguous DMA transfers of up to 32 sectors per command. The
-partition scanner, filesystem claims, and block cache work across all
-three disk transports.
+partition scanner, filesystem claims, and block cache also work on SATA.
 
 After failed SATA I/O, the driver resets the port and checks the disk's
 identity before accepting new commands. The failed operation returns its
@@ -24,6 +23,21 @@ error to the caller. A port that fails recovery stays offline and keeps
 its DMA allocation. RAID-mode discovery, controller quirks, ATAPI, native
 command queuing, hotplug, and physical hardware qualification remain open.
 [Intel AHCI 1.3.1](https://www.intel.com/content/dam/www/public/us/en/documents/technical-specifications/serial-ata-ahci-spec-rev1-3-1.pdf)
+
+PCI NVMe controllers expose active NVM namespaces such as `/dev/nvme0n7`.
+The name uses the controller index and namespace ID. Partitions add a
+suffix such as `p1`. The driver resets the controller, creates polled admin
+and I/O queues, and uses one outstanding command at a time. It supports
+512-byte blocks without metadata, flush, and normal controller shutdown
+after the filesystems have been flushed. DMA requests use at most 16 KiB
+and also respect the controller's Maximum Data Transfer Size.
+
+An I/O command with an error completion leaves the queues available for
+the next command. After a lost completion or controller failure, the
+driver reports the error, resets the controller, and revalidates the
+registered namespaces before resuming I/O. Larger logical sectors, zoned
+namespaces, additional queue pairs, interrupts, hotplug, and physical
+qualification remain open. [NVM Express Base Specification](https://nvmexpress.org/specification_type/nvme-base/)
 
 The primary ISA floppy controller exposes 1.44 MB media detected at boot as
 `/dev/fd0` and `/dev/fd1`. These whole-media block nodes use major 2 and

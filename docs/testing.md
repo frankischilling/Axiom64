@@ -86,6 +86,15 @@ contents across reboot and select an MBR partition by PARTUUID. The host
 checks the raw bytes and runs `e2fsck` on each ext2 root. Results stay under
 `build/ahci-test/`.
 
+`make test-suite SUITE=nvme` checks namespace formats, transfer limits,
+and DMA page encoding under sanitizers. QEMU exercises sparse namespace
+IDs, two controllers, queue wrap, injected disk errors, clean shutdown,
+and ext2 reboot persistence through BIOS and UEFI. The guest rejects
+4 KiB and zoned namespace fixtures. Two additional boots use GDB and
+qtest to disable the emulated controller during a guest read and verify
+that later I/O succeeds after recovery. Results stay under
+`build/nvme-test/` and `build/forced-reset-*/`.
+
 `make test-suite SUITE=floppy` checks raw sector I/O, write protection, the
 DMA address range, write error recovery, and media replacement under BIOS
 and UEFI. It reboots and checks an ext2 data floppy with host `e2fsck`.

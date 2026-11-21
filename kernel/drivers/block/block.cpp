@@ -26,12 +26,14 @@
 #include "drivers/block/block.hpp"
 #include "drivers/block/ata.hpp"
 #include "drivers/block/cache.hpp"
+#include "drivers/block/floppy.hpp"
 #include "drivers/block/partition.hpp"
 #include "drivers/virtio/pci.hpp"
 
 namespace ax {
 namespace {
-constexpr unsigned virtio_slots = 8, max_disks = virtio_slots + ata_device_slots;
+constexpr unsigned virtio_slots = 8, floppy_first = virtio_slots + ata_device_slots;
+constexpr unsigned max_disks = floppy_first + floppy_slots;
 constexpr unsigned transfer_sectors = 32;
 constexpr uint64_t feature_ro = 1ull << 5, feature_flush = 1ull << 9;
 
@@ -66,6 +68,7 @@ struct Disk {
 // Failed attachments retain their ownership records rather than reusing a slot.
 static Disk candidates[virtio_slots];
 static Disk ata_disks[ata_device_slots];
+static Disk floppy_disks[floppy_slots];
 static Disk* disks[max_disks];
 static unsigned disk_count, attempts;
 static uint64_t buffer_bytes;
@@ -168,7 +171,8 @@ static Disk* disk_for(unsigned device) {
 }
 
 static bool is_ata(unsigned device) {
-    return device % max_disks >= virtio_slots;
+    const unsigned slot = device % max_disks;
+    return slot >= virtio_slots && slot < floppy_first;
 }
 
 static Volume* volume_for(unsigned device) {
@@ -196,6 +200,8 @@ static int transfer(unsigned device, uint64_t sector, void* buffer, size_t count
     if (!d.live)
         return -5;
     sector += volume->start;
+    if (device % max_disks >= floppy_first)
+        return floppy_transfer(device % max_disks - floppy_first, sector, buffer, count, write);
     auto bytes = (uint8_t*)buffer;
     while (count) {
         size_t sectors = min(count, size_t(transfer_sectors)), length = sectors * sector_size;
@@ -247,6 +253,7 @@ static bool same_id(const char* left, const char* right) {
 void block_init() {
     pci_scan(discover);
     ata_init();
+    floppy_init();
     for (unsigned slot = 0; slot < ata_device_slots; ++slot) {
         if (const auto* info = ata_info(slot)) {
             auto& disk = ata_disks[slot];
@@ -255,7 +262,7 @@ void block_init() {
             disks[virtio_slots + slot] = &disk;
         }
     }
-    for (unsigned i = 0; i < max_disks; i++) {
+    for (unsigned i = 0; i < floppy_first; i++) {
         if (!disks[i])
             continue;
         auto& disk = *disks[i];
@@ -272,6 +279,14 @@ void block_init() {
                                        entry.start};
         }
     }
+    for (unsigned slot = 0; slot < floppy_slots; ++slot) {
+        if (const auto* info = floppy_info(slot)) {
+            auto& disk = floppy_disks[slot];
+            disk.volumes[0].info = *info;
+            disk.live = true;
+            disks[floppy_first + slot] = &disk;
+        }
+    }
 }
 
 const BlockInfo* block_info(unsigned device) {
@@ -285,6 +300,11 @@ unsigned block_device_limit() {
 
 void block_device_name(unsigned device, char (&name)[block_name_size]) {
     unsigned disk = device % max_disks;
+    if (disk >= floppy_first) {
+        memcpy(name, "/dev/fd0", sizeof("/dev/fd0"));
+        name[7] += disk - floppy_first;
+        return;
+    }
     memcpy(name, is_ata(device) ? "/dev/sda" : "/dev/vda", sizeof("/dev/vda"));
     name[7] += is_ata(device) ? disk - virtio_slots : disk;
     unsigned part = device / max_disks, at = 8;
@@ -299,6 +319,8 @@ void block_device_name(unsigned device, char (&name)[block_name_size]) {
 
 uint64_t block_device_number(unsigned device) {
     unsigned disk = device % max_disks, part = device / max_disks;
+    if (disk >= floppy_first)
+        return 0x200 | (disk - floppy_first);
     if (part < 16)
         return is_ata(device) ? 0x800 | ((disk - virtio_slots) * 16 + part)
                               : 0xfc00 | (disk * 16 + part);
@@ -360,6 +382,9 @@ int block_enable_cache(unsigned device, unsigned sectors_per_block, const void* 
     if (!sectors_per_block || sectors_per_block > BlockCache::max_sectors ||
         (sectors_per_block & (sectors_per_block - 1)))
         return -22;
+    // A floppy may be ejected, so reads must reach the controller's change check.
+    if (device % max_disks >= floppy_first)
+        return 0;
     auto cache = static_cast<BlockCache*>(alloc(sizeof(BlockCache)));
     if (!cache)
         return -12;
@@ -442,7 +467,7 @@ int block_flush(unsigned device) {
     if (!d.live)
         return -5;
     if (volume->info.readonly || !volume->info.flush_supported)
-        return 0; // Unnegotiated FLUSH means writethrough.
+        return 0; // Floppy writes are synchronous. Virtio without FLUSH is writethrough.
     if (is_ata(device))
         return ata_flush(device % max_disks - virtio_slots);
     return request(d, 4, 0, 0);

@@ -111,11 +111,12 @@ void* map_mmio(uint64_t address, size_t length) {
     return physical(address);
 }
 
-uint64_t page_alloc(size_t count) {
+static uint64_t allocate_pages(size_t count, size_t ceiling) {
     if (!count || count > free_pages)
         return 0;
+    const size_t cursor = min(search_page, ceiling);
     for (int pass = 0; pass < 2; pass++) {
-        size_t first = pass ? 1 : search_page, end = pass ? search_page : max_pages;
+        size_t first = pass ? 1 : cursor, end = pass ? cursor : ceiling;
         size_t run = 0;
         for (size_t p = first; p < end; p++) {
             run = used(p) ? 0 : run + 1;
@@ -133,6 +134,14 @@ uint64_t page_alloc(size_t count) {
         }
     }
     return 0;
+}
+
+uint64_t page_alloc(size_t count) {
+    return allocate_pages(count, max_pages);
+}
+
+uint64_t page_alloc_below(uint64_t limit) {
+    return allocate_pages(1, min(limit / page_size, uint64_t(max_pages)));
 }
 
 void page_account_shared(uint64_t p, size_t count) {

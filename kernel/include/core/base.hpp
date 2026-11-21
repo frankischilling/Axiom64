@@ -141,6 +141,7 @@ struct PhysicalMemoryStats {
 PhysicalMemoryStats physical_memory_stats();
 
 uint64_t page_alloc(size_t count = 1);
+uint64_t page_alloc_below(uint64_t limit);
 
 void page_account_shared(uint64_t p, size_t count = 1);
 

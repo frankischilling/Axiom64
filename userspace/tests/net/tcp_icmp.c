@@ -33,7 +33,6 @@
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
-#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -56,17 +55,6 @@
             exit(1);                                                                               \
         }                                                                                          \
     } while (0)
-
-// A kernel interrupt can log between writes to the guest serial console.
-static void __attribute__((format(printf, 1, 2))) report(const char* format, ...) {
-    char record[512];
-    va_list args;
-    va_start(args, format);
-    int length = vsnprintf(record, sizeof(record), format, args);
-    va_end(args);
-    CHECK(length > 0 && (size_t)length < sizeof(record));
-    CHECK(write(STDOUT_FILENO, record, (size_t)length) == length);
-}
 
 static int native;
 static volatile sig_atomic_t interrupted;
@@ -96,7 +84,7 @@ static void capture_clock(const char* phase) {
         capture_realtime = realtime;
         capture_after = after;
     }
-    report("ICMP_CAPTURE_CLOCK phase=%s monotonic_before_ns=%llu realtime_ns=%llu "
+    printf("ICMP_CAPTURE_CLOCK phase=%s monotonic_before_ns=%llu realtime_ns=%llu "
            "monotonic_after_ns=%llu\n",
            phase, (unsigned long long)before, (unsigned long long)realtime,
            (unsigned long long)after);
@@ -132,7 +120,7 @@ static void drain(unsigned lane) {
             uint64_t digest = UINT64_C(0xcbf29ce484222325);
             for (ssize_t at = 0; at < length; at++)
                 digest = (digest ^ frame[at]) * UINT64_C(0x100000001b3);
-            report("ICMP_LINK_FRAME lane=%u index=%u length=%zd kind=%u ether_type=%02x%02x "
+            printf("ICMP_LINK_FRAME lane=%u index=%u length=%zd kind=%u ether_type=%02x%02x "
                    "hash=%016llx monotonic_ms=%llu\n",
                    lane, indices[lane], length, source.sll_pkttype, frame[12], frame[13],
                    (unsigned long long)digest, (unsigned long long)milliseconds());
@@ -150,7 +138,7 @@ static void drain(unsigned lane) {
         for (ssize_t at = 0; at < length; at++)
             digest = (digest ^ frame[at]) * UINT64_C(0x100000001b3);
         ipv4_frames[lane]++;
-        report("ICMP_FRAME lane=%u index=%u length=%zd kind=%u hash=%016llx monotonic_ms=%llu "
+        printf("ICMP_FRAME lane=%u index=%u length=%zd kind=%u hash=%016llx monotonic_ms=%llu "
                "packet_realtime_ns=%llu dequeue_ms=%llu\n",
                lane, indices[lane], length, source.sll_pkttype, (unsigned long long)digest,
                (unsigned long long)(mapped / 1000000), (unsigned long long)realtime,
@@ -188,7 +176,7 @@ static void capture_start(void) {
         // Linux enables per-packet stamping on the first timestamp query.
         struct timespec initial;
         CHECK(ioctl(observers[lane], SIOCGSTAMPNS, &initial) == -1 && errno == ENOENT);
-        report("ICMP_CAPTURE_READY lane=%u index=%u timestamp_error=%d\n", lane, indices[lane],
+        printf("ICMP_CAPTURE_READY lane=%u index=%u timestamp_error=%d\n", lane, indices[lane],
                errno);
     }
     CHECK(pthread_create(&observer, NULL, collect, NULL) == 0);
@@ -212,7 +200,7 @@ static void capture_stop(void) {
         socklen_t size = sizeof(statistics);
         CHECK(getsockopt(observers[lane], 263, 6, statistics, &size) == 0 &&
               size == sizeof(statistics) && statistics[0] == observed[lane] && !statistics[1]);
-        report("ICMP_CAPTURE_PASS lane=%u index=%u packets=%u dropped=%u ipv4=%u\n", lane,
+        printf("ICMP_CAPTURE_PASS lane=%u index=%u packets=%u dropped=%u ipv4=%u\n", lane,
                indices[lane], statistics[0], statistics[1], ipv4_frames[lane]);
         CHECK(close(observers[lane]) == 0);
     }
@@ -279,7 +267,7 @@ static void native_error_order(void) {
     uint64_t began = milliseconds();
     unsigned empty_reads = wait_error(fd, ECONNREFUSED);
     CHECK(empty_reads && close(fd) == 0);
-    report("ICMP_ERROR_ORDER_PASS empty_reads=%u error=111 cleared=0 elapsed_ms=%llu\n",
+    printf("ICMP_ERROR_ORDER_PASS empty_reads=%u error=111 cleared=0 elapsed_ms=%llu\n",
            empty_reads, (unsigned long long)(milliseconds() - began));
 }
 
@@ -292,7 +280,7 @@ static void companions_start(void) {
         CHECK(listeners[lane] >= 0 &&
               bind(listeners[lane], (struct sockaddr*)&address, sizeof(address)) == 0 &&
               listen(listeners[lane], 2) == 0);
-        report("ICMP_COMPANION_LISTEN_READY lane=%u\n", lane);
+        printf("ICMP_COMPANION_LISTEN_READY lane=%u\n", lane);
         struct pollfd ready = {.fd = listeners[lane], .events = POLLIN};
         CHECK(poll(&ready, 1, 3000) == 1 && error(listeners[lane]) == 0);
         socklen_t size = sizeof(address);
@@ -331,7 +319,7 @@ static void companions_stop(void) {
         for (unsigned role = 0; role < 2; role++) {
             CHECK(companion_checks[lane][role] == ICMP_CASES + 10 &&
                   close(companions[lane][role]) == 0);
-            report("ICMP_COMPANION_PASS lane=%u role=%u checkpoints=%u\n", lane, role,
+            printf("ICMP_COMPANION_PASS lane=%u role=%u checkpoints=%u\n", lane, role,
                    companion_checks[lane][role]);
         }
         CHECK(close(listeners[lane]) == 0);
@@ -366,7 +354,7 @@ static void on_signal(int number) {
 
 static void case_complete(unsigned lane, unsigned ordinal, uint64_t began) {
     uint64_t ended = milliseconds();
-    report("ICMP_CASE_PASS lane=%u case=%u name=%s elapsed_ms=%llu start_ms=%llu end_ms=%llu\n",
+    printf("ICMP_CASE_PASS lane=%u case=%u name=%s elapsed_ms=%llu start_ms=%llu end_ms=%llu\n",
            lane, ordinal, icmp_cases[ordinal].name, (unsigned long long)(ended - began),
            (unsigned long long)began, (unsigned long long)ended);
 }
@@ -393,7 +381,7 @@ static void active_case(unsigned lane, unsigned ordinal) {
                 CHECK(bind(fd, (struct sockaddr*)&local, sizeof(local)) == -1 &&
                       errno == EADDRINUSE);
             }
-            report("ICMP_RESERVED_PORTS_PASS lane=%u\n", lane);
+            printf("ICMP_RESERVED_PORTS_PASS lane=%u\n", lane);
         }
     }
     struct sockaddr_in address = {.sin_family = AF_INET,
@@ -452,12 +440,12 @@ static void active_case(unsigned lane, unsigned ordinal) {
                     if (!(item.revents & POLLOUT)) {
                         // Linux can retain an asynchronous error readiness flag
                         // after SO_ERROR was consumed and a new connect began.
-                        report("ICMP_RETRY_EVENT lane=%u events=%x error=%d\n", lane, item.revents,
+                        printf("ICMP_RETRY_EVENT lane=%u events=%x error=%d\n", lane, item.revents,
                                reported);
                         CHECK(usleep(1000) == 0);
                     }
                 } while (!(item.revents & POLLOUT));
-                report("ICMP_RETRY_RESULT lane=%u poll=%d events=%x error=%d\n", lane, ready,
+                printf("ICMP_RETRY_RESULT lane=%u poll=%d events=%x error=%d\n", lane, ready,
                        item.revents, reported);
                 CHECK(ready == 1 && (item.revents & POLLOUT) && !reported);
             }
@@ -469,7 +457,7 @@ static void active_case(unsigned lane, unsigned ordinal) {
                 unsigned empty_reads = 0;
                 reported = complete_native_error(fd, reported, began, 200, &empty_reads);
             }
-            report("ICMP_QUOTE_RESULT lane=%u case=%u native=%d poll=%d events=%x error=%d "
+            printf("ICMP_QUOTE_RESULT lane=%u case=%u native=%d poll=%d events=%x error=%d "
                    "elapsed_ms=%llu\n",
                    lane, ordinal, native, ready, item.revents, reported,
                    (unsigned long long)(milliseconds() - began));
@@ -506,7 +494,7 @@ static void active_case(unsigned lane, unsigned ordinal) {
                 }
                 int reported = error(fd);
                 CHECK(reported == ECONNREFUSED && error(fd) == 0);
-                report("ICMP_SOFT_CONSUMED lane=%u error=%d\n", lane, reported);
+                printf("ICMP_SOFT_CONSUMED lane=%u error=%d\n", lane, reported);
             }
             if (test->mode == ICMP_RECOVER) {
                 CHECK(poll(&input, 1, 3000) == 1 && !(input.revents & POLLERR));
@@ -520,7 +508,7 @@ static void active_case(unsigned lane, unsigned ordinal) {
                 int flags = fcntl(fd, F_GETFL);
                 CHECK(flags >= 0 && fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == 0);
                 CHECK(recv(fd, &byte, 1, 0) == -1 && errno == test->error);
-                report("ICMP_BLOCKED_READ_PASS lane=%u error=%d\n", lane, test->error);
+                printf("ICMP_BLOCKED_READ_PASS lane=%u error=%d\n", lane, test->error);
             } else {
                 CHECK(poll(&input, 1, 5000) == 1 && (input.revents & POLLERR));
                 CHECK(error(fd) == test->error);
@@ -528,7 +516,7 @@ static void active_case(unsigned lane, unsigned ordinal) {
             int diagnostic = error(fd);
             CHECK(diagnostic == (test->mode == ICMP_SOFT ? test->error : 0));
             CHECK(error(fd) == 0 && milliseconds() - pending >= 1500);
-            report("ICMP_TERMINAL_ERRORS lane=%u case=%u hard=%d diagnostic=%d\n", lane, ordinal,
+            printf("ICMP_TERMINAL_ERRORS lane=%u case=%u hard=%d diagnostic=%d\n", lane, ordinal,
                    test->error, diagnostic);
             CHECK(recv(fd, &byte, 1, 0) == 0);
             CHECK(send(fd, "x", 1, MSG_NOSIGNAL) == -1 && errno == EPIPE);
@@ -574,7 +562,7 @@ static void passive_start(void) {
 static void passive_case(unsigned lane, unsigned ordinal) {
     int listener = passive_listeners[lane][ordinal];
     struct sockaddr_in address;
-    report("ICMP_LISTEN_READY lane=%u case=%u\n", lane, ordinal);
+    printf("ICMP_LISTEN_READY lane=%u case=%u\n", lane, ordinal);
     uint64_t began = milliseconds();
     struct pollfd ready = {.fd = listener, .events = POLLIN};
     CHECK(poll(&ready, 1, 3000) == 1 && error(listener) == 0);
@@ -619,7 +607,7 @@ static void cycles(void) {
         uint64_t ignored = milliseconds();
         wait_error(fd, ECONNREFUSED);
         CHECK(close(fd) == 0);
-        report("ICMP_CYCLE_PASS cycle=%u lane=%u fd=%d start_ms=%llu ignored_ms=%llu end_ms=%llu\n",
+        printf("ICMP_CYCLE_PASS cycle=%u lane=%u fd=%d start_ms=%llu ignored_ms=%llu end_ms=%llu\n",
                cycle, lane, baseline, (unsigned long long)began, (unsigned long long)ignored,
                (unsigned long long)milliseconds());
         if (cycle % 16 == 15) {
@@ -627,10 +615,11 @@ static void cycles(void) {
             companions_check(1);
         }
     }
-    report("ICMP_RECLAMATION_PASS cycles=128\n");
+    puts("ICMP_RECLAMATION_PASS cycles=128");
 }
 
 int main(int argc, char** argv) {
+    setvbuf(stdout, NULL, _IONBF, 0);
     CHECK(argc == 1 || (argc == 2 && (!strcmp(argv[1], "--native") ||
                                       !strcmp(argv[1], "--native-error-order-check"))));
     native = argc == 2;
@@ -645,7 +634,7 @@ int main(int argc, char** argv) {
     if (!native)
         configure();
     capture_start();
-    report("TCP_ICMP_CONFIG_PASS nics=2\n");
+    puts("TCP_ICMP_CONFIG_PASS nics=2");
     passive_start();
     companions_start();
     for (unsigned lane = 0; lane < 2; lane++) {
@@ -663,6 +652,6 @@ int main(int argc, char** argv) {
     cycles();
     companions_stop();
     capture_stop();
-    report("TCP_ICMP_PASS cases=%zu nics=2 cycles=%u\n", ICMP_CASES, ICMP_CYCLES);
+    printf("TCP_ICMP_PASS cases=%zu nics=2 cycles=%u\n", ICMP_CASES, ICMP_CYCLES);
     return 0;
 }

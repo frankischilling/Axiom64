@@ -12,7 +12,7 @@ make run
 
 The first build downloads verified archives, builds BusyBox, assembles the root filesystem, and produces `build/axiom64.iso`. Allow several gigabytes of free disk space. Host Linux provides the build tools and QEMU emulator; the guest runs Axiom64's kernel.
 
-BusyBox downloads can use the mirrors listed in `dependencies.json` when upstream is unavailable. Every source must supply the same pinned bytes; a hash mismatch stops the build. CI verifies essential boot sources and locked package inputs before compiling providers.
+BusyBox downloads can use the mirrors listed in `dependencies.json` when upstream is unavailable. Every source must supply the same pinned bytes. A hash mismatch stops the build. The local `prepare` test suite verifies essential boot sources and locked package inputs before compiling providers.
 
 `make run` boots through BIOS with a graphical QEMU window and an authenticated serial console. First boot asks you to create an administrator and enter its password privately, then requires login. Later boots use the same account and require its password again. The administrator starts Bash with UID/GID 1000 and explicit `sudo` membership; root's password login is locked. Enter passwords in the guest. The [account documentation](accounts.md) describes the current commands and policy.
 

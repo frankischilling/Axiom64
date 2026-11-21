@@ -263,6 +263,7 @@ int clone_task(Frame* f, uint64_t flags, uint64_t stack, uint64_t parent_tid, ui
         child->memory->brk_end = current->memory->brk_end;
         child->memory->initial_data_size = current->memory->initial_data_size;
         child->memory->dumpable = current->memory->dumpable;
+        child->memory->barrier_registrations = current->memory->barrier_registrations;
         if (auto file = current->memory->exec_file) {
             ++file->exec_images;
             child->memory->exec_file = file;
@@ -424,9 +425,10 @@ void exit_task(Task* t, int status) {
     exit_thread(t, status);
 }
 
-void reap_task(Task* t) {
+void reap_task(Task* t, Process& parent) {
     if (t->state != State::zombie || t->process->live_threads || t->process->leader != t)
         panic("invalid process reap");
+    cpu_reap_child(parent, *t->process);
     release(t->process);
     t->process = nullptr;
     t->state = State::empty;
@@ -980,6 +982,7 @@ extern "C" Frame* handle_trap(Frame* f) {
         if (!interrupt_dispatch(f->vector))
             return f;
         clock_refresh(true);
+        cpu_sample_load();
         if ((f->cs & 3) == 3)
             cpu_account();
         devices_poll();

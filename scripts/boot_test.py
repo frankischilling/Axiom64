@@ -17,9 +17,13 @@ from build_accounts import digest
 from fixture_archive import archive_fixture
 
 
+PREPARED_SUITES = ('guest-system', 'guest-binutils', 'cross-toolchain')
+
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--firmware", choices=["bios", "uefi", "both"], default="both")
-parser.add_argument("--suite", choices=["full", "abi", "desktop", "threads"], default="full")
+parser.add_argument("--suite", choices=["full", "abi", "desktop", "threads", *PREPARED_SUITES],
+                    default="full")
 parser.add_argument("--phase", choices=["all", "cond", "io"], default="all", help="threads test selection")
 parser.add_argument("--timeout", type=int, default=600)
 parser.add_argument("--trace", action="store_true")
@@ -27,14 +31,24 @@ parser.add_argument("--gdb", action="store_true")
 parser.add_argument("--interactive", action="store_true", help="check the normal desktop image and serial shell")
 parser.add_argument("--disk-root", action="store_true", help="boot the generated ext2 root fixture")
 parser.add_argument("--transport", choices=["modern", "legacy"], default="modern")
+parser.add_argument("--prepared-image", type=Path, help="run the test suite from an existing ISO")
 args = parser.parse_args()
 if args.interactive and args.suite != "full":
     parser.error("--interactive uses the full image")
+if args.prepared_image:
+    args.prepared_image = args.prepared_image.resolve()
+    if (args.suite not in ("full", *PREPARED_SUITES) or args.interactive or args.disk_root or args.trace or
+            not args.prepared_image.is_file()):
+        parser.error("--prepared-image requires a supported test ISO on an initramfs root")
+elif args.suite in PREPARED_SUITES:
+    parser.error(f"the {args.suite} suite requires --prepared-image")
+output_directory = args.prepared_image.parent if args.prepared_image else ROOT / "build"
 desktop_checks = args.suite in ["full", "desktop"]
-subprocess.run(["make", "-j2", "build/axiom64.elf",
-                "build/rootfs-desktop.cpio" if args.suite not in ["full", "threads"] or
-                    (args.suite == "threads" and args.phase in ["cond", "io"]) else "build/rootfs.cpio"],
-               cwd=ROOT, check=True)
+if not args.prepared_image:
+    subprocess.run(["make", "-j2", "build/axiom64.elf",
+                    "build/rootfs-desktop.cpio" if args.suite not in ["full", "threads"] or
+                        (args.suite == "threads" and args.phase in ["cond", "io"]) else "build/rootfs.cpio"],
+                   cwd=ROOT, check=True)
 interactive_cpio = None
 login_inputs = None
 if args.interactive:
@@ -68,13 +82,15 @@ image_name = (f"threads-{args.phase}.iso" if args.suite == "threads" else
               "axiom64.iso" if args.interactive else "axiom64-test.iso")
 if args.disk_root:
     image_name = f"disk-root-{args.transport}-" + image_name
-subprocess.run([sys.executable, str(ROOT / "scripts" / "image.py")]
-               + ([] if args.interactive else ["--test", "--suite", args.suite])
-               + (["--phase", args.phase] if args.suite == "threads" else [])
-               + (["--output-name", image_name])
-               + (["--root-device", "/dev/vda"] if args.disk_root else [])
-               + (["--initramfs", str(interactive_cpio)] if interactive_cpio and not args.disk_root else [])
-               + (["--trace"] if args.trace else []), check=True)
+if not args.prepared_image:
+    subprocess.run([sys.executable, str(ROOT / "scripts" / "image.py")]
+                   + ([] if args.interactive else ["--test", "--suite", args.suite])
+                   + (["--phase", args.phase] if args.suite == "threads" else [])
+                   + (["--output-name", image_name])
+                   + (["--root-device", "/dev/vda"] if args.disk_root else [])
+                   + (["--initramfs", str(interactive_cpio)] if interactive_cpio and not args.disk_root else [])
+                   + (["--trace"] if args.trace else []), check=True)
+image_file = args.prepared_image or ROOT / "build" / image_name
 firmwares = ["bios", "uefi"] if args.firmware == "both" else [args.firmware]
 results = []
 for firmware in firmwares:
@@ -82,15 +98,15 @@ for firmware in firmwares:
     prefix = f"threads-{args.phase}" if args.suite == "threads" else "interactive" if args.interactive else "boot"
     if args.disk_root:
         prefix = f"disk-root-{args.transport}-" + prefix
-    logfile = ROOT / "build" / f"{prefix}-{firmware}.log"
+    logfile = output_directory / f"{prefix}-{firmware}.log"
     control = Path("/tmp") / f"axiom64-qmp-{os.getpid()}-{firmware}.sock"
-    screenshot = ROOT / "build" / (f"{prefix}-{firmware}.png" if args.disk_root else
+    screenshot = output_directory / (f"{prefix}-{firmware}.png" if args.disk_root else
                                   f"{'interactive' if args.interactive else 'desktop'}-{firmware}.png")
     control.unlink(missing_ok=True)
     if desktop_checks:
         screenshot.unlink(missing_ok=True)
     command = ["qemu-system-x86_64", "-machine", "pc", "-cpu", "max", "-m", "2G",
-               "-cdrom", str(ROOT / "build" / image_name), "-display", "none",
+               "-cdrom", str(image_file), "-display", "none",
                "-serial", "stdio", "-monitor", "none", "-no-reboot", "-qmp",
                f"unix:{control},server=on,wait=off"]
     if not (args.interactive and args.disk_root):
@@ -104,7 +120,7 @@ for firmware in firmwares:
     if args.gdb:
         command += ["-gdb", "tcp:127.0.0.1:1234"]
     if firmware == "uefi":
-        variables = ROOT / "build" / f"{prefix}-OVMF_VARS.fd"
+        variables = output_directory / f"{prefix}-OVMF_VARS.fd"
         shutil.copy2("/usr/share/OVMF/OVMF_VARS_4M.fd", variables)
         command.extend(["-drive", "if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd",
                         "-drive", f"if=pflash,format=raw,file={variables}"])
@@ -188,6 +204,12 @@ for firmware in firmwares:
             required += ["PLATFORM_POWEROFF method=piix4"]
     else:
         required += ["AXIOM64_TESTS_PASS", "AXIOM64_EXIT status=0"]
+    if args.suite == "guest-system":
+        required += ["BUSYBOX_SHELL_PASS", "ABI_TESTS_PASS linkage=static", "ABI_TESTS_PASS linkage=dynamic"]
+    if args.suite == "guest-binutils":
+        required.append("AXIOM64_BINUTILS_LINK_PASS")
+    if args.suite == "cross-toolchain":
+        required += ["AXIOM64_CROSS_C_STATIC_PASS", "AXIOM64_CROSS_C_DYNAMIC_PASS", "NATIVE_SHARED_CPP_PASS"]
     if args.suite in ["full", "abi"] and not args.interactive:
         required += ["ABI_TESTS_PASS linkage=static", "ABI_TESTS_PASS linkage=dynamic",
                      "IPC_TESTS_PASS", "SIGNAL_TESTS_PASS", "VFS_TESTS_PASS", "BUSYBOX_SHELL_PASS",
@@ -196,8 +218,8 @@ for firmware in firmwares:
                      "THREAD_LIFECYCLE_PASS linkage=static", "THREAD_LIFECYCLE_PASS linkage=dynamic",
                      "THREAD_IO_TESTS_PASS linkage=static", "THREAD_IO_TESTS_PASS linkage=dynamic"]
     if args.suite == "full" and not args.interactive:
-        required += ["NATIVE_C_PASS", "NATIVE_CPP_PASS", "NATIVE_THREADS_PASS",
-                     "NATIVE_DIAGNOSTICS_PASS", "NATIVE_TOOLCHAIN_PASS"]
+        required += ["NATIVE_C_PASS", "NATIVE_ASSEMBLER_PASS", "NATIVE_CPP_PASS", "NATIVE_THREADS_PASS",
+                     "NATIVE_SHARED_CPP_PASS", "NATIVE_DIAGNOSTICS_PASS", "NATIVE_TOOLCHAIN_PASS"]
     if not args.interactive and (args.suite in ["full", "abi"] or
                                 (args.suite == "threads" and args.phase != "cond")):
         required += [f"THREAD_IO_TIMEOUTS_PASS linkage={linkage} operations=10 signals=4 families=4 cycles=300"
@@ -264,7 +286,7 @@ result_name = (f"threads-{args.phase}-results.json" if args.suite == "threads" e
                "interactive-results.json" if args.interactive else "boot-results.json")
 if args.disk_root:
     result_name = f"disk-root-{args.transport}-" + result_name
-(ROOT / "build" / result_name).write_text(json.dumps(results, indent=2) + "\n")
+(output_directory / result_name).write_text(json.dumps(results, indent=2) + "\n")
 if args.interactive:
     expected = {**login_inputs['source_sha256'], **login_inputs['observer_source_sha256']}
     if expected != {name: digest(ROOT / name) for name in expected}:

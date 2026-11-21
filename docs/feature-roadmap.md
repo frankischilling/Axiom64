@@ -81,7 +81,7 @@ Develop each feature as one coherent change with guest tests and documentation. 
 
 Record the exact requirements each change completes. Treat a feature area as unfinished until every requirement has evidence. Report an application as bundled separately from demonstrated. Preserve the full firmware suite; add disk reboot, controlled network peer, threading, audio, and real hardware evidence when the corresponding feature is claimed. Host checks must observe the guest's actual behavior.
 
-Start from current `main` after checking remote updates, ongoing work and CI. Preserve unrelated local changes and use an isolated worktree when needed. Keep private answers under `.local/`; do not copy the questionnaire or private inputs into commits or source bundles.
+Start from current `main` after checking remote updates and ongoing work. Run the relevant [local tests](testing.md) before committing. Preserve unrelated local changes and use an isolated worktree when needed. Keep private notes and inputs under `.local/`.
 
 ## Detailed scope
 
@@ -186,7 +186,7 @@ Acceptance evidence:
 
 ### F06. Demand paging, copy-on-write, and swap
 
-User page tables and shared mappings exist; fork eagerly copies private pages.
+User page tables and shared mappings exist. Private anonymous mappings can resize or relocate. Fork eagerly copies private pages.
 
 Required work:
 
@@ -665,7 +665,7 @@ Acceptance evidence:
 
 ### F28. Native development and full self-hosting
 
-Guest GCC/binutils/Make compile and execute C/C++ examples, including exceptions.
+Guest GCC, binutils, Make, and NASM assemble, compile, link, and execute C and C++. The native toolchain suite builds and loads a shared C++ library and checks cross-library exceptions and thread-local state. The guest builds the kernel and musl from source. It links init, BusyBox, and the static and dynamic ABI clients against the resulting sysroot, then boots the guest-authored ISO under BIOS and UEFI. The full installed userspace still uses the host root filesystem pipeline.
 
 Required work:
 

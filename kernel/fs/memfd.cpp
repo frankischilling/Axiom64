@@ -88,8 +88,10 @@ uint64_t data_page(MemoryFile& memory, uint64_t index, bool create) {
         return 0;
     if (!*slot && create) {
         *slot = page_alloc();
-        if (*slot)
+        if (*slot) {
+            page_account_shared(*slot);
             memory.node.allocated_blocks += page_size / 512;
+        }
     }
     return *slot & page_mask;
 }
@@ -284,6 +286,7 @@ int preallocate(MemoryFile& memory, uint64_t first, uint64_t end) {
             discard_pages(memory, memory.pages, root_shift, 0, first, index + 1, true);
             return -28;
         }
+        page_account_shared(page);
         *slot = page | new_preallocation;
         memory.node.allocated_blocks += page_size / 512;
     }

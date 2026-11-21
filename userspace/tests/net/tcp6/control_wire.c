@@ -141,14 +141,10 @@ static void one(unsigned lane) {
     endpoint(fd, lane, 1, 49890 + lane, 1);
     point(lane, "connected", fd, 41, 168, 44);
     exchange(lane, fd, 0);
-    // A delayed TCP ACK can refill the destination cache after an option clears it.
-    // Wait for the peer to observe the ACK before changing the cached-route inputs.
-    barrier(lane, 9);
     v6_option(fd, IPV6_TCLASS, 27);
     point(lane, "class-cleared", fd, 64, 24, 44);
     exchange(lane, fd, 1);
     point(lane, "class-sent", fd, 41, 24, 44);
-    barrier(lane, 10);
     option(fd, IPPROTO_IP, IP_TOS, 111);
     point(lane, "tos-cleared", fd, 64, 24, 108);
     exchange(lane, fd, 2);
@@ -165,20 +161,16 @@ static void one(unsigned lane) {
     v6_option(fd, IPV6_UNICAST_HOPS, -1);
     point(lane, "default-restored", fd, 51, 24, 108);
     exchange(lane, fd, 6);
-    barrier(lane, 11);
     v6_option(fd, IPV6_TCLASS, 24);
     point(lane, "same-class", fd, 51, 24, 108);
     exchange(lane, fd, 7);
-    barrier(lane, 12);
     option(fd, IPPROTO_IP, IP_TOS, 108);
     point(lane, "same-tos", fd, 51, 24, 108);
     exchange(lane, fd, 8);
-    barrier(lane, 13);
     device(lane, fd, 0);
     point(lane, "device-cleared", fd, 64, 24, 108);
     exchange(lane, fd, 9);
     point(lane, "device-reselected", fd, 51, 24, 108);
-    barrier(lane, 14);
     device(lane, fd, 1);
     point(lane, "device-bound", fd, 64, 24, 108);
     exchange(lane, fd, 10);

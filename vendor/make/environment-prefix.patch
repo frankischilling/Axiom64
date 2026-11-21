@@ -1,0 +1,7 @@
+--- a/src/expand.c
++++ b/src/expand.c
+@@ -119,3 +119,3 @@
+       for (ep = environ; *ep != 0; ++ep)
+-        if ((*ep)[nl] == '=' && strncmp (*ep, v->name, nl) == 0)
++        if (strncmp (*ep, v->name, nl) == 0 && (*ep)[nl] == '=')
+           return xstrdup ((*ep) + nl + 1);

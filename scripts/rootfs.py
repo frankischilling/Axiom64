@@ -3,7 +3,7 @@
 from pathlib import Path
 import subprocess
 from fetch import ROOT, LOCK
-from ports import packages
+from ports import overlay_tar, packages
 from build_musl import loader, runtime_files
 from build_libcap import runtime_files as capability_files
 from build_openssl import runtime_files as crypto_files
@@ -100,31 +100,13 @@ for package, archive in packages():
     if package["name"] in {"mesa", "llvm20-libs", "spirv-tools"}:
         continue
     if args.profile == "desktop" and package["name"] in {
-        "gcc", "g++", "binutils", "musl-dev", "linux-headers", "libstdc++-dev",
-        "make", "isl25", "mpfr4", "gmp", "libgomp"
+        "gcc", "g++", "binutils", "bison", "flex", "m4", "musl-dev", "linux-headers", "libstdc++-dev",
+        "make", "nasm", "isl25", "mpfr4", "gmp", "libgomp", "acl-libs", "libburn", "libedit",
+        "libisoburn", "libisofs", "xorriso"
     }:
         continue
     with tarfile.open(archive, "r:gz", ignore_zeros=True) as stream:
-        for member in stream:
-            path = member.name.rstrip("/")
-            if not path or path.startswith("."):
-                continue
-            if path.startswith("/") or ".." in Path(path).parts:
-                raise RuntimeError(f"unsafe package path: {path}")
-            for parent in reversed(Path(path).parents):
-                if str(parent) != ".":
-                    files.setdefault(str(parent), (0o40755, b""))
-            if member.isdir():
-                files[path] = (0o40000 | member.mode, b"")
-            elif member.issym():
-                files[path] = (0o120000 | member.mode, member.linkname.encode())
-            elif member.isfile():
-                files[path] = (0o100000 | member.mode, stream.extractfile(member).read())
-            elif member.islnk():
-                target = member.linkname.rstrip("/")
-                if target not in files:
-                    raise RuntimeError(f"unresolved package hard link: {path} -> {target}")
-                files[path] = files[target]
+        overlay_tar(files, stream)
 
 # Override both the installed interpreter and native development libc after APK imports.
 for path, value in {**runtime_files(), **capability_files(), **crypto_files(), **download_files(),
@@ -171,7 +153,8 @@ with tempfile.TemporaryDirectory(prefix="axiom64-fonts-") as temporary:
     subprocess.run(["mkfontscale", "-b", "-s", "-l", str(font_stage)], check=True)
     regular(font_path + "/fonts.dir", font_stage / "fonts.dir", 0o100644)
 directory("root/toolchain-test")
-for filename in ["hello.c", "hello.cpp", "broken.c", "threads.cpp", "Makefile"]:
+for filename in ["hello.c", "hello.cpp", "broken.c", "threads.cpp", "library.cpp", "shared.cpp",
+                 "arithmetic.asm", "Makefile"]:
     regular(f"root/toolchain-test/{filename}", ROOT / "userspace/tests/toolchain" / filename, 0o100644)
 
 

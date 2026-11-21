@@ -4,6 +4,14 @@ Axiom64 uses one repository and build system. The kernel is a modular monolith: 
 
 Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies a memory map, direct physical mapping, and framebuffer. The kernel installs its GDT, TSS, IDT, syscall entry, and 100 Hz PIT, selects an [elapsed counter clock](time.md), discovers block devices, and selects either the initramfs or an [ext2 disk root](disk-root.md) before executing `/sbin/init`.
 
+## Subsystem guides
+
+- [Persistent storage](storage.md), [filesystems and mounts](vfs.md), [advisory file locks](file-locks.md), and [extended attributes and file capabilities](file-capabilities.md)
+- [Accounts and authenticated sessions](accounts.md), [threads and futexes](threads.md), and [clocks and elapsed waits](time.md)
+- [Ethernet and packet sockets](network.md), [IPv4 routing and diagnostics](ipv4.md), [IPv6 addresses and sockets](ipv6.md), [UDP sockets](udp.md), [netlink](netlink.md), and [network configuration and DHCP](network-configuration.md)
+
+## Kernel and userspace layout
+
 | Module | Responsibility |
 | --- | --- |
 | `kernel/arch/x86_64/arch.cpp`, `entry.asm` | CPU tables, interrupts, syscall entry, register frames, return to Ring 3 |
@@ -16,10 +24,10 @@ Limine loads the ELF kernel and newc initramfs through BIOS or UEFI. It supplies
 | `kernel/net/`, `kernel/drivers/net/` | Ethernet ownership, virtio-net/e1000 devices, interface ioctls, packet sockets, IPv4/ARP/ICMP, UDP, TCP state/socket/error ownership, and netlink route/address control |
 | `kernel/process/task.cpp` | Process/thread ownership, ELF loading, clone/fork/exec/exit/wait, scheduling, TLS, FPU state |
 | `kernel/process/futex.cpp` | Expected-value waits, wake/bitsets, requeue, deadlines, shared backing lifetime |
-| `kernel/io/io.cpp` | Retained I/O requests, captured vectors, wait completion, and interruption cleanup |
+| `kernel/io/` | Retained I/O requests, packet transfer, wait completion, and interruption cleanup |
 | `kernel/fs/file_lock.cpp` | Canonical-node advisory locks owned by open descriptions |
 | `kernel/fs/vfs.cpp`, `ramfs.cpp` | Filesystem dispatch, mount namespace, RAM volumes, initramfs, file descriptions, pipes |
-| `kernel/fs/ext2/ext2.cpp` | Classic ext2 volumes, mount validation, allocation, file/directory operations, synchronous commits |
+| `kernel/fs/ext2/` | Classic ext2 volumes, mount validation and recovery, allocation, file and directory operations |
 | `kernel/abi/linux/syscall.cpp` | Linux syscall numbers, ABI structures, errors, blocking operations |
 | `kernel/process/signals.cpp` | Queues, masks, actions, signal frames, return, alternate stacks, timers |
 | `kernel/process/signal_wait.cpp` | Captured Linux synchronous signal waits, dequeue order, timeout and interruption |
@@ -58,8 +66,8 @@ interrupt model, resolve PCI pin routes, and read interrupt resources.
 Bridge-local routes take precedence. When a pin has no local route,
 the kernel walks the configured PCI bridge chain and rotates the pin at
 each hop. It rejects ambiguous bridge ranges. The I/O APIC uses the
-firmware's polarity and trigger
-mode. A level-triggered line can serve several devices. Each device clears
+firmware's polarity and trigger mode. A level-triggered line can serve
+several devices. Each device clears
 its own interrupt cause before the local APIC acknowledges the line. A
 repeatedly unclaimed line is masked and the driver resumes polling.
 On i440fx, the evaluator builds the firmware's routing packages and reads
@@ -97,7 +105,7 @@ This is a development OS with a tested compatibility surface. Unsupported syscal
 - [Task credentials and permissions](credentials.md) support ordinary numeric identities, capability transitions, filesystem access and privilege-dropped exec. [Account tools](accounts.md) provide persistent databases and local authentication; authenticated graphical access and complete isolation remain unfinished. [Kernel randomness](random.md) shares a BLAKE2s/ChaCha20 generator across the Linux interfaces. Axiom64 provides validated virtio input, administration, persisted seeds and generation-change handling. See [randomness](random.md) for lifecycle and cryptographic-client acceptance.
 - A RAM or [classic ext2 root](disk-root.md), independent RAM mounts, raw virtio disks, and [writable ext2 data volumes](ext2.md). Partitions, advanced filesystems/recovery, and a package installation service remain planned. See [mounts](vfs.md) and [storage](storage.md) for interfaces and limits.
 - Unix stream sockets, [raw Ethernet packet sockets](network.md), [raw IPv4 ICMP sockets](ipv4.md), [IPv4 UDP sockets](udp.md) and ordinary [IPv4 TCP streams](tcp.md), with static addresses, routes, ARP, loopback and ping on virtio-net and QEMU e1000. [Netlink sockets](netlink.md) add bounded IPv4 route dumps, tagged route control and complete address updates. [DHCP/configuration and resolver metadata modules](network-configuration.md), the [normal manager](network-manager.md) and [DNS queries with TCP fallback](dns.md) have guest checks. [Quoted TCP ICMP errors](tcp-icmp-acceptance.md) validate emitted ownership and Linux hard/soft diagnostics. Bounded IPv4 fragment reassembly has host policy and wire tests. IPv6, IP options/multicast, shared PMTU policy, full ancillary data coverage and the complete socket contract remain required. Unix datagrams carry owned scalar/vector records through socketpairs and named filesystem or abstract endpoints. Sender budgets, retained binding owners and generation-checked destinations preserve queued data across waits and close/reuse. Native comparisons and local root/ordinary BIOS/UEFI runs cover routing, reconnect policy, filesystem permissions and retained sends. Datagram credentials preserve sender identity through queue waits and partial ancillary output. Local checks cover both musl providers, both linkages and BIOS/UEFI as root and UID 65534. Datagram SCM_RIGHTS retains file descriptions through sender close, peeks, truncation and copy faults; bounded graph collection releases unreachable socket cycles. Streams retain sender credentials and SCM_RIGHTS ownership across queue waits and partial reads. Their retained blocking sends, MSG_WAITALL receives and listener shutdown paths have native and guest checks. Stream bindings and receive-source names follow the [Unix stream name contract](io.md#unix-stream-names). Broader stream options and lifecycle coverage remain required.
-- Eager copying on fork, bounded allocations, and no general `mremap` implementation.
+- Eager copying on fork, bounded allocations, and [resize and relocation of private anonymous mappings](resource-limits.md#anonymous-mapping-resize).
 - Fixed framebuffer mode. No accelerated graphics, hardware gamma control, hotplug, or virtual-console switching.
 - Basic terminal discipline and job control; terminal and signal semantics continue to grow with tests.
 - 10 ms timer resolution with HPET or fixed-frequency TSC elapsed accounting. Axiom64 samples a checked UTC RTC calendar at boot; synchronization, clock setting and complete Linux clock-ID semantics remain required. See [clock selection and limits](time.md).

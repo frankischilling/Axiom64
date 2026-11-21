@@ -2,6 +2,18 @@
   "distribution": "Alpine Linux 3.22 x86_64",
   "packages": [
     {
+      "name": "acl-libs",
+      "version": "2.3.2-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/acl-libs-2.3.2-r1.apk",
+      "archive": "acl-libs-2.3.2-r1.apk",
+      "sha256": "83c35935dcc0d592f65bc4626cec243b2c5f1a0a3d3e1361f10c4bb221a941f1",
+      "license": "LGPL-2.1-or-later AND GPL-2.0-or-later",
+      "upstream": "https://savannah.nongnu.org/projects/acl",
+      "origin": "acl",
+      "source_commit": "8bac74716d06c84627ab02d101fd9d2bafd0a34c"
+    },
+    {
       "name": "bash",
       "version": "5.2.37-r0",
       "repository": "main",
@@ -24,6 +36,18 @@
       "upstream": "https://www.gnu.org/software/binutils/",
       "origin": "binutils",
       "source_commit": "c9fc8f3f9e02fef01aa118290fa1343b7cede614"
+    },
+    {
+      "name": "bison",
+      "version": "3.8.2-r2",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/bison-3.8.2-r2.apk",
+      "archive": "bison-3.8.2-r2.apk",
+      "sha256": "b726c1014f18db8b06aaddc0ec9177ad8b6bce196ca928ce73bdcf2d643120fc",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://www.gnu.org/software/bison/bison.html",
+      "origin": "bison",
+      "source_commit": "be0833caee3020f089f02c5d7223e971a9a11ffb"
     },
     {
       "name": "brotli-libs",
@@ -84,6 +108,18 @@
       "upstream": "https://github.com/eudev-project/eudev",
       "origin": "eudev",
       "source_commit": "8bac74716d06c84627ab02d101fd9d2bafd0a34c"
+    },
+    {
+      "name": "flex",
+      "version": "2.6.4-r7",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/flex-2.6.4-r7.apk",
+      "archive": "flex-2.6.4-r7.apk",
+      "sha256": "bd71c91ed105924225664c40907c3557c53196ce4e07c7d8d9bf4f51a612938e",
+      "license": "BSD-2-Clause",
+      "upstream": "https://github.com/westes/flex",
+      "origin": "flex",
+      "source_commit": "be0833caee3020f089f02c5d7223e971a9a11ffb"
     },
     {
       "name": "font-alias",
@@ -242,6 +278,18 @@
       "source_commit": "02365e78d654a7beb23fd35d7d69f4a649009ede"
     },
     {
+      "name": "libburn",
+      "version": "1.5.6-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libburn-1.5.6-r0.apk",
+      "archive": "libburn-1.5.6-r0.apk",
+      "sha256": "ae57e439337ad16af4a4d1bc73e848903e96b82ef1323b4f7fe5d762e0b4e422",
+      "license": "GPL-2.0-or-later",
+      "upstream": "https://dev.lovelyhq.com/libburnia/web/wiki",
+      "origin": "libburn",
+      "source_commit": "a124b5606d594843593939a643487aac05c81526"
+    },
+    {
       "name": "libbz2",
       "version": "1.0.8-r6",
       "repository": "main",
@@ -276,6 +324,18 @@
       "upstream": "https://gitlab.freedesktop.org/mesa/drm",
       "origin": "libdrm",
       "source_commit": "b8caec52f2b5014431a3ac8e53e37414ec9836e4"
+    },
+    {
+      "name": "libedit",
+      "version": "20250104.3.1-r1",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libedit-20250104.3.1-r1.apk",
+      "archive": "libedit-20250104.3.1-r1.apk",
+      "sha256": "e2df23c675224c58983636b66ad418affc426406c0cf506056c20ec404685fc6",
+      "license": "BSD-3-Clause",
+      "upstream": "https://www.thrysoee.dk/editline",
+      "origin": "libedit",
+      "source_commit": "be0833caee3020f089f02c5d7223e971a9a11ffb"
     },
     {
       "name": "libelf",
@@ -384,6 +444,30 @@
       "upstream": "https://xorg.freedesktop.org/",
       "origin": "libice",
       "source_commit": "d4941e833167c30aa1172e6d8420d084698254ab"
+    },
+    {
+      "name": "libisoburn",
+      "version": "1.5.6-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libisoburn-1.5.6-r0.apk",
+      "archive": "libisoburn-1.5.6-r0.apk",
+      "sha256": "6d2f300ca44113e6606c36f6c2c82215c3db2b346e65e5f71b7597510d226f49",
+      "license": "GPL-2.0-or-later",
+      "upstream": "https://dev.lovelyhq.com/libburnia/libisoburn",
+      "origin": "libisoburn",
+      "source_commit": "2b5b2aa3acf10c1b41986a304c027b9af03dadb9"
+    },
+    {
+      "name": "libisofs",
+      "version": "1.5.6-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libisofs-1.5.6-r0.apk",
+      "archive": "libisofs-1.5.6-r0.apk",
+      "sha256": "bae29fc23217c7dc86a54538af5d930ebac4222eb636b5de50c9c7394af04aa8",
+      "license": "GPL-2.0-or-later",
+      "upstream": "https://dev.lovelyhq.com/libburnia/libisofs",
+      "origin": "libisofs",
+      "source_commit": "372ae9fed6e6faf79958d42ef05e11951d19469b"
     },
     {
       "name": "libmd",
@@ -720,6 +804,18 @@
       "upstream": "https://llvm.org/"
     },
     {
+      "name": "m4",
+      "version": "1.4.19-r4",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/m4-1.4.19-r4.apk",
+      "archive": "m4-1.4.19-r4.apk",
+      "sha256": "eb62124bbe5c6f1cc977bd4fb517116bfbc849415997c65c53097eda6a015f32",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://www.gnu.org/software/m4",
+      "origin": "m4",
+      "source_commit": "be0833caee3020f089f02c5d7223e971a9a11ffb"
+    },
+    {
       "name": "make",
       "version": "4.4.1-r3",
       "repository": "main",
@@ -848,6 +944,18 @@
       "upstream": "https://musl.libc.org/",
       "origin": "musl",
       "source_commit": "ddaf59b84bc6983a37d6e24d2210c2c4791642bb"
+    },
+    {
+      "name": "nasm",
+      "version": "2.16.03-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/nasm-2.16.03-r0.apk",
+      "archive": "nasm-2.16.03-r0.apk",
+      "sha256": "015c7d4412e51536e512ea32aedf0bea3372586629cfb9b6531ef9822718bed1",
+      "license": "BSD-2-Clause",
+      "upstream": "https://www.nasm.us",
+      "origin": "nasm",
+      "source_commit": "35052d7065f369f499758533b04be9c9d8e1d733"
     },
     {
       "name": "ncurses-terminfo-base",
@@ -1050,6 +1158,18 @@
       "upstream": "https://www.x.org/wiki",
       "origin": "xorg-server",
       "source_commit": "9698c31a1eadbdcbb6ed7882792bc3b52ba2cf64"
+    },
+    {
+      "name": "xorriso",
+      "version": "1.5.6-r0",
+      "repository": "main",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/xorriso-1.5.6-r0.apk",
+      "archive": "xorriso-1.5.6-r0.apk",
+      "sha256": "27a74546c4280243cda6f4a6099cb6b34160fec95a143a1cbbac2df5a89e708c",
+      "license": "GPL-2.0-or-later",
+      "upstream": "https://dev.lovelyhq.com/libburnia/libisoburn",
+      "origin": "libisoburn",
+      "source_commit": "2b5b2aa3acf10c1b41986a304c027b9af03dadb9"
     },
     {
       "name": "xterm",

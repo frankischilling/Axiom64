@@ -91,6 +91,12 @@ static struct address_record observed_probe(unsigned subject, int fd,
             frame[20] == 58 && frame[54] == 135 &&
             !memcmp(frame + 22, (unsigned char[16]){0}, 16) &&
             (!expected || !memcmp(frame + 62, expected, 16))) {
+            if (!expected) {
+                // The packet socket can see the probe before the adapter emits it.
+                // Wait for the peer to see it on the wire before querying its owner.
+                struct address_record mode = {.flags = state};
+                control(subject, STATE, 0, &mode);
+            }
             struct inventory values = snapshot(subject);
             struct address_record value = {0};
             check(selected(&values, 1, &value) && !memcmp(&value.address, frame + 62, 16) &&
@@ -202,8 +208,6 @@ int main(int argc, char** argv) {
             property(scope, names[at], values[at]);
         control(subject, HELLO, 0, NULL);
         control(subject, BEGIN, 0, NULL);
-        struct address_record mode = {.flags = state};
-        control(subject, STATE, 0, &mode);
         int fd = probe_socket(subject);
         property(scope, "disable_ipv6", 0);
         struct address_record candidate = observed_probe(subject, fd, NULL);

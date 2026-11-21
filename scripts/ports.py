@@ -12,7 +12,7 @@ from fetch import ROOT, verify_archive
 
 BASE = "https://dl-cdn.alpinelinux.org/alpine/v3.22"
 LOCKFILE = ROOT / "ports.lock.json"
-TOOLCHAIN = ["gcc", "g++", "binutils", "musl-dev", "linux-headers", "make"]
+TOOLCHAIN = ["gcc", "g++", "binutils", "musl-dev", "linux-headers", "make", "nasm", "xorriso"]
 
 
 def download(url, destination, *, expected_sha256=None):
@@ -95,6 +95,30 @@ def resolve(names):
         pending.extend(fields.get("D", "").split())
         print(f"Pinned {filename}", flush=True)
     return sorted(selected.values(), key=lambda package: package["name"])
+
+
+def overlay_tar(files, stream):
+    """Merge package file data without executing installation hooks."""
+    for member in stream:
+        path = member.name.rstrip("/")
+        if not path or path.startswith("."):
+            continue
+        if path.startswith("/") or ".." in Path(path).parts:
+            raise RuntimeError(f"unsafe package path: {path}")
+        for parent in reversed(Path(path).parents):
+            if str(parent) != ".":
+                files.setdefault(str(parent), (0o40755, b""))
+        if member.isdir():
+            files[path] = (0o40000 | member.mode, b"")
+        elif member.issym():
+            files[path] = (0o120000 | member.mode, member.linkname.encode())
+        elif member.isfile():
+            files[path] = (0o100000 | member.mode, stream.extractfile(member).read())
+        elif member.islnk():
+            target = member.linkname.rstrip("/")
+            if target not in files:
+                raise RuntimeError(f"unresolved package hard link: {path} -> {target}")
+            files[path] = files[target]
 
 
 def packages():

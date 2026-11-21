@@ -166,6 +166,7 @@ int open_segment(int key, uint64_t size, unsigned flags) {
     auto physical_base = page_alloc(pages);
     if (!physical_base)
         return -12;
+    page_account_shared(physical_base, pages);
     auto& segment = segments[empty];
     auto& status = segment.status;
     segment.physical = physical_base;

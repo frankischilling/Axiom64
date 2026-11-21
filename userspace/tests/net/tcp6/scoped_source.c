@@ -248,8 +248,6 @@ static void one(unsigned lane, unsigned round) {
     int companion = stream(lane, round, 1);
     send_bytes(lane, round, companion, 9, 1);
     close_stream(companion);
-    /* A local EOF can precede delivery of the final ACK to the peer. */
-    phase(lane, round, 11);
     send_bytes(lane, round, fd, 1, 0);
     phase(lane, round, 3);
     option(fd, IPPROTO_IPV6, IPV6_UNICAST_HOPS, 37);

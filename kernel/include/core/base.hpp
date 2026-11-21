@@ -42,13 +42,17 @@ extern "C" int strcmp(const char*, const char*);
 namespace ax {
 constexpr uint64_t page_size = 4096;
 constexpr uint64_t user_limit = 0x0000800000000000;
+constexpr size_t mmap_length_limit = 256 * 1024 * 1024;
 constexpr uint64_t page_mask = 0x000ffffffffff000;
 // Software bit outside the x86-64 physical-address field: mapping may not gain execution.
 constexpr uint64_t page_no_execute = 1ull << 52;
 constexpr uint64_t page_private = 1ull << 53, page_stack = 1ull << 54;
 constexpr uint64_t page_file = 1ull << 55, page_file_access = 1ull << 56,
                    page_file_write = 1ull << 57, page_file_cow = 1ull << 58;
-constexpr uint64_t page_software = 0xe00 | page_no_execute | page_private | page_stack;
+// Non-file entries reuse the file access bit to identify private anonymous mmap pages.
+constexpr uint64_t page_anonymous = page_file_access;
+constexpr uint64_t page_software =
+    0xe00 | page_no_execute | page_private | page_stack | page_anonymous;
 
 constexpr uint64_t align_down(uint64_t x) {
     return x & ~(page_size - 1);
@@ -134,7 +138,15 @@ inline void* physical(uint64_t p) {
     return reinterpret_cast<void*>(p + direct_map);
 }
 
+struct PhysicalMemoryStats {
+    uint64_t total, free, shared;
+};
+
+PhysicalMemoryStats physical_memory_stats();
+
 uint64_t page_alloc(size_t count = 1);
+
+void page_account_shared(uint64_t p, size_t count = 1);
 
 void page_free(uint64_t p, size_t count = 1);
 
@@ -177,7 +189,9 @@ struct AddressSpace {
     uint64_t private_writable_size(uint64_t start = 0, uint64_t length = user_limit,
                                    bool make_writable = false) const;
 
-    bool map(uint64_t va, size_t len, int prot, bool private_mapping = true);
+    bool map(uint64_t va, size_t len, int prot, uint64_t mapping_flags = page_private);
+    bool move_anonymous_mapping(uint64_t source, size_t old_size, uint64_t destination,
+                                size_t new_size, int protection);
 
     bool prepare_mapping(uint64_t va, size_t len);
 

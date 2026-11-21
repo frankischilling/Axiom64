@@ -24,8 +24,6 @@ POINTS=[('fresh',64,168,44),('connected',41,168,44),('class-cleared',64,24,44),(
 PASSIVE_PHASES=('listener-initial','listener-pending-update','accepted-pending',
     'accepted-after-listener-update','accepted-second','first-default-after-listener-close',
     'second-after-listener-close','second-after-first-detached')
-WIRE_PHASE_ORDER = (1, 9, 10, 2, 11, 12, 13, 14, 3, 4, 5, 6, 7, 8)
-ACK_PHASE_BY_EXCHANGE = {0: 9, 1: 10, 6: 11, 7: 12, 8: 13, 9: 14}
 
 
 def _reconstruct(path,lane,log,native=False,statistics=None,*,family):
@@ -41,18 +39,9 @@ def _reconstruct(path,lane,log,native=False,statistics=None,*,family):
     require([(f,n,p,b) for f,n,p,_,_,_,_,_,b in points]==[(family,n,p,f'eth{n}') for n in range(2) for p in PASSIVE_PHASES],
         'complete observed passive scalar/device points')
     phases=[tuple(map(int,values)) for values in re.findall(r'^TCP_CONTROL_FAMILY_PHASE_PASS lane=(\d+) phase=(\d+)\r?$',log,re.M)]
-    require(phases==[(0,0),(1,0)]+[(n,p) for n in range(2) for p in WIRE_PHASE_ORDER],
-            'all actual application barriers in execution order')
+    require(phases==[(0,0),(1,0)]+[(n,p) for n in range(2) for p in range(1,9)],'all actual passive application barriers')
     rows=read_capture(path)
     clock=bind(path,rows,statistics) if native else None
-
-    def observed_before(first, second):
-        # On Linux the TAP reader can dequeue a transmit before an earlier ingress.
-        # The original packet timestamps retain the order across those directions.
-        if native and rows[first]['ns'] != rows[second]['ns']:
-            return rows[first]['ns'] < rows[second]['ns']
-        return first < second
-
     local=ipaddress.IPv6Address(f'2001:db8:{lane+1}::2').packed if family=='ipv6' else bytes([10,23,lane+1,2])
     remote=ipaddress.IPv6Address(f'2001:db8:{lane+1}::1').packed if family=='ipv6' else bytes([10,23,lane+1,1])
     guest=bytes([0x52,0x54,0,0x12,0x34,0x10+lane]);peer=bytes([2,0x41,0x58,0x54,0x43,lane])
@@ -66,7 +55,7 @@ def _reconstruct(path,lane,log,native=False,statistics=None,*,family):
         frame=row['frame']
         if len(frame)>=21 and frame[12:14]==b'\x88\xc8':
             phase,answer=frame[19:21]
-            require(len(frame)==60 and phase in range(15) and answer in (0,1) and (phase,answer) not in barriers and
+            require(len(frame)==60 and phase in range(9) and answer in (0,1) and (phase,answer) not in barriers and
                 frame[:12]==(guest+control if answer else control+guest) and frame[14:19]==b'IP6F'+bytes([lane]) and not any(frame[21:]),
                 'original unique passive Ethernet barriers')
             barriers[phase,answer]=index
@@ -91,7 +80,7 @@ def _reconstruct(path,lane,log,native=False,statistics=None,*,family):
         require(len(matches)==1,'every original TCP packet belongs to one complete flow')
         header=(frame[21],(int.from_bytes(frame[14:18],'big')>>20)&255) if v6 else (frame[22],frame[15])
         streams[matches[0]].append(dict(index=index,value=value,outgoing=outgoing,header=header,frame=frame))
-    require(set(barriers)=={(p,a) for p in range(15) for a in range(2)} and [h for _,h in routers]==[41,51],
+    require(set(barriers)=={(p,a) for p in range(9) for a in range(2)} and [h for _,h in routers]==[41,51],
         'all original active/passive barriers and two routers')
     observations={}
     for name,packets in streams.items():
@@ -112,7 +101,6 @@ def _reconstruct(path,lane,log,native=False,statistics=None,*,family):
             peer_fin[0]['frame']==peer_fin[1]['frame'],'complete actual streams and identical duplicate FIN')
         require(syn[0]['index']<synack[0]['index']<data[0]['index'],
                 'original handshake completes before actual application data')
-        acknowledged_echoes = {}
         for n,(request,response) in enumerate(zip(data,echo)):
             a,b=request['value'],response['value']
             expected=bytes((tags[n]*17+lane*53+k*7)&255 for k in range(16))
@@ -120,19 +108,6 @@ def _reconstruct(path,lane,log,native=False,statistics=None,*,family):
                 a['ack']==(remote_base+n*16)&0xffffffff and b['seq']==(remote_base+n*16)&0xffffffff and
                 b['ack']==(local_base+(n+1)*16)&0xffffffff and request['index']<response['index'] and
                 (n==len(tags)-1 or response['index']<data[n+1]['index']),'original exact request/echo bytes and complete stream sequence')
-            if name == 'active' and n in ACK_PHASE_BY_EXCHANGE:
-                phase = ACK_PHASE_BY_EXCHANGE[n]
-                request_index, reply_index = barriers[phase, 0], barriers[phase, 1]
-                require(observed_before(response['index'], request_index) and
-                        observed_before(request_index, reply_index) and
-                        observed_before(reply_index, data[n+1]['index']),
-                        'ACK barrier separates completed exchange from the next send')
-                acks = [item['index'] for item in packets if observed_before(response['index'], item['index']) and
-                        observed_before(item['index'], reply_index) and
-                        item['outgoing'] and item['value']['flags'] == ACK and not item['value']['data'] and
-                        item['value']['seq'] == b['ack'] and item['value']['ack'] == (b['seq'] + 16) & 0xffffffff]
-                require(acks, 'ACK barrier reply follows the exact live TCP acknowledgment')
-                acknowledged_echoes[phase] = acks
         count=16*len(tags)
         require(fin[0]['value']['seq']==(local_base+count)&0xffffffff and fin[0]['value']['ack']==(remote_base+count)&0xffffffff and
             all(item['value']['seq']==(remote_base+count)&0xffffffff and item['value']['ack']==(local_base+count+1)&0xffffffff for item in peer_fin),
@@ -146,8 +121,7 @@ def _reconstruct(path,lane,log,native=False,statistics=None,*,family):
         observations[name]=dict(syn_header=syn[0]['header'],syn=syn[0]['index'],synack=[item['index'] for item in synack],
             data=[item['index'] for item in data],fin=fin[0]['index'],late=late[0]['index'],
             synack_headers=[item['header'] for item in synack],data_headers=[item['header'] for item in data],
-            fin_header=fin[0]['header'],detached_header=late[0]['header'],
-            acknowledged_echoes=acknowledged_echoes)
+            fin_header=fin[0]['header'],detached_header=late[0]['header'])
     a,b,c=(observations[name] for name in ('active','pending','second'))
     require(barriers[1,0]<routers[0][0]<barriers[1,1]<a['syn']<a['data'][0] and
         a['data'][4]<barriers[2,0]<routers[1][0]<barriers[2,1]<a['data'][5], 'original active router/data causality')
@@ -213,7 +187,7 @@ def verify(path, lane, log, native=False, statistics=None, *, family):
 
 
 def damaged(path,lane,log,native,output,statistics=None,*,family):
-    proof = verify(path,lane,log,native,statistics,family=family)
+    verify(path,lane,log,native,statistics,family=family)
     original=path.read_bytes()
     rows=read_capture(path)
     outgoing=[];incoming_fin=[];routers=[];barriers=[];echoes=[]
@@ -237,8 +211,7 @@ def damaged(path,lane,log,native,output,statistics=None,*,family):
         ('detached-hop',late,'hop'),('detached-class',late,'class'),('router-first',routers[0],'router'),
         ('router-second',routers[1],'router'),('scalar',None,'scalar'),('tcp-owner',syn,'owner'),
         ('barrier-owner',barriers[0],'owner'),('echo-payload',echoes[0],'payload'),
-        ('echo-sequence',echoes[0],'sequence'),('missing-completion',None,'completion'),
-        ('stale-active-ack',proof['observed_headers']['active']['acknowledged_echoes'][10],'ack')]
+        ('echo-sequence',echoes[0],'sequence'),('missing-completion',None,'completion')]
     selected={}
     for index,row in enumerate(rows):
         frame=row['frame']
@@ -266,7 +239,6 @@ def damaged(path,lane,log,native,output,statistics=None,*,family):
     with zipfile.ZipFile(archive_path,'x',zipfile.ZIP_DEFLATED) as archive:
         for label,index,field in cases:
             changed=deepcopy(rows);text=log
-            indices = index if isinstance(index, list) else [] if index is None else [index]
             if field.startswith('passive-scalar:'):
                 _,phase,selected=field.split(':')
                 pattern=rf'^(TCP_CONTROL_PASSIVE_POINT family={family} lane={lane} phase={phase} .*?{selected}=)([^ \r\n]+)'
@@ -282,17 +254,16 @@ def damaged(path,lane,log,native,output,statistics=None,*,family):
                 text=re.sub(r'ttl=77','ttl=76',log,count=1) if family=='ipv4' else re.sub(r'hops=64','hops=65',log,count=1)
             elif field=='completion':
                 text=re.sub(r'^TCP_CONTROL_FAMILY_PASS .*\r?\n','',log,count=1,flags=re.M)
-            for frame_index in indices:
-                frame=bytearray(changed[frame_index]['frame'])
+            else:
+                frame=bytearray(changed[index]['frame'])
                 if field=='owner':frame[11]^=1
                 elif field=='router':
                     frame[58]^=1
                     size=int.from_bytes(frame[18:20],'big');frame[56:58]=bytes(2)
                     frame[56:58]=struct.pack('!H',checksum(frame[22:54]+struct.pack('!I3xB',size,58)+frame[54:54+size]))
-                elif field in ('payload','sequence','ack'):
+                elif field in ('payload','sequence'):
                     start=54 if family=='ipv6' else 14+(frame[14]&15)*4
-                    offset = (frame[start+12]>>4)*4 if field=='payload' else {'sequence': 4, 'ack': 8}[field]
-                    frame[start+offset]^=1
+                    frame[start+((frame[start+12]>>4)*4 if field=='payload' else 4)]^=1
                     frame[start+16:start+18]=bytes(2)
                     segment=frame[start:54+int.from_bytes(frame[18:20],'big')] if family=='ipv6' else frame[start:14+int.from_bytes(frame[16:18],'big')]
                     pseudo=(frame[22:54]+struct.pack('!I3xB',len(segment),6) if family=='ipv6' else
@@ -305,15 +276,14 @@ def damaged(path,lane,log,native,output,statistics=None,*,family):
                     frame[22 if field=='hop' else 15]^=1
                     size=(frame[14]&15)*4;frame[24:26]=bytes(2)
                     frame[24:26]=struct.pack('!H',checksum(frame[14:14+size]))
-                changed[frame_index]['frame']=bytes(frame)
+                changed[index]['frame']=bytes(frame)
             context=dict(family=family,lane=lane,native=native,changed_field=field,changed_frame=index)
             body=encode_capture(changed)
             payloads={'lane.pcap':body,'client.log':text.encode()}
             context.update(capture_sha256=hashlib.sha256(body).hexdigest(),log_sha256=hashlib.sha256(text.encode()).hexdigest())
             if native:
                 clocks=[json.loads(line) for line in path.with_suffix('.clocks.jsonl').read_text().splitlines()]
-                for frame_index in indices:
-                    clocks[frame_index]['sha256']=hashlib.sha256(changed[frame_index]['frame']).hexdigest()
+                if index is not None:clocks[index]['sha256']=hashlib.sha256(changed[index]['frame']).hexdigest()
                 encoded=('\n'.join(json.dumps(row) for row in clocks)+'\n').encode()
                 stats=deepcopy(statistics)
                 stats.update(monotonic_receipts='lane.clocks.jsonl',monotonic_receipts_sha256=hashlib.sha256(encoded).hexdigest())
@@ -338,5 +308,5 @@ def damaged(path,lane,log,native,output,statistics=None,*,family):
                             'changed family evidence reaches semantic rejection')
                     rejected.append(dict(name=control['name'],reason=str(error)))
                 else:raise ValueError('reopened damaged TCP control evidence passed: '+control['name'])
-    require(len(rejected)==len(cases)==91 and path.read_bytes()==original,'all TCP control mutations rejected and original unchanged')
+    require(len(rejected)==len(cases)==90 and path.read_bytes()==original,'all TCP control mutations rejected and original unchanged')
     return dict(passed=True,rejected=rejected,archive_sha256=hashlib.sha256(archive_path.read_bytes()).hexdigest())

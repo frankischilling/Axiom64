@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Check actual TCG observation and reject fabricated or mismatched acceleration evidence."""
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -9,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from guest_kernel_test import run_build_vm
 from qemu_acceleration import Acceleration
 from qmp import Qmp
 
@@ -70,6 +72,26 @@ class AcceleratorEvidence(unittest.TestCase):
                     process.kill()
                 process.wait()
                 process.stderr.close()
+
+    def test_build_vm_uses_the_reported_auto_accelerator_to_run_guest_code(self):
+        with tempfile.TemporaryDirectory(prefix='axiom64-build-accel-') as directory:
+            disk = Path(directory) / 'boot.img'
+            # The BIOS boot sector writes 0x2e to the debug-exit port.
+            instructions = bytes.fromhex('ba f4 00 66 b8 2e 00 00 00 66 ef f4')
+            disk.write_bytes(instructions.ljust(510, b'\0') + b'\x55\xaa')
+            serial = Path(directory) / 'build-serial.log'
+            acceleration = Acceleration('auto')
+            command = ['qemu-system-x86_64', '-machine', acceleration.machine, '-cpu', 'max',
+                       '-smp', '2', '-m', '64M', '-boot', 'a', '-nic', 'none',
+                       '-drive', f'if=floppy,format=raw,readonly=on,file={disk}',
+                       '-display', 'none', '-serial', 'stdio', '-monitor', 'none', '-no-reboot',
+                       '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04']
+            status, _ = run_build_vm(command, serial, acceleration, 10)
+            self.assertEqual(status, 93, serial.read_text(errors='replace'))
+            report = json.loads((serial.parent / 'build-accelerator.json').read_text())
+            self.assertEqual(report, acceleration.evidence)
+            self.assertEqual(report['requested'], 'auto')
+            self.assertIn(report['used'], ('kvm', 'tcg'))
 
 
 if __name__ == '__main__':

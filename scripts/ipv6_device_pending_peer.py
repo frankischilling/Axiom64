@@ -17,6 +17,7 @@ class Peer(ReadyPeer):
         self.state = state
         self.conflicts, self.pending_conflict = [], None
         self.mode_seen = False
+        self.pending_state = None
         self.delivery = delivery
 
     def acknowledge(self, frame):
@@ -36,11 +37,10 @@ class Peer(ReadyPeer):
                     frame[22] == 1 - self.lane and self.pending_conflict is None,
                     'complete ordered pending-device companion request')
             if frame[20] == STATE:
-                require(not self.mode_seen and frame[23] == 0 and
+                require(not self.mode_seen and self.pending_state is None and frame[23] == 0 and
                         frame[24:52] == struct.pack('!I', STATES.index(self.state)) + bytes(24),
                         'one explicit pending-device state')
-                self.mode_seen = True
-                self.acknowledge(frame)
+                self.pending_state = frame
                 return
             require(self.mode_seen and self.state != 'probing' and frame[23] == len(self.conflicts) and
                     len(self.conflicts) < (4 if self.state == 'exhausted' else 1),
@@ -60,6 +60,18 @@ class Peer(ReadyPeer):
         super().receive(frame)
 
     def tick(self):
+        if self.pending_state is not None:
+            subject = self.peers[1 - self.lane]
+            if not subject.probes:
+                return
+            if not self.native:
+                require(self.delivery is not None, 'guest probes require physical capture receipts')
+                probe = bytes.fromhex(subject.probes[0]['frame'])
+                if self.delivery.receipt(1 - self.lane, probe) is None:
+                    return
+            self.acknowledge(self.pending_state)
+            self.pending_state = None
+            self.mode_seen = True
         if self.pending_conflict is None:
             return
         subject = self.peers[1 - self.lane]

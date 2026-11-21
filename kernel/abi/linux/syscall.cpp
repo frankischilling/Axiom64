@@ -33,7 +33,9 @@
 #include "process/signals.hpp"
 #include "process/task.hpp"
 #include "process/cpu.hpp"
+#include "mm/barrier.hpp"
 #include "mm/limits.hpp"
+#include "mm/remap.hpp"
 #include "mm/stack.hpp"
 #include "process/exec_arguments.hpp"
 #include "process/futex.hpp"
@@ -327,12 +329,16 @@ static int64_t block(Wait why, int fd = -1, int pid = -1) {
 
 static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, int fd,
                          uint64_t off) {
-    if (!len || len > 256 * 1024 * 1024 || off % page_size || !(flags & 3) || (flags & 3) == 3)
+    constexpr int map_fixed = 0x10, map_fixed_noreplace = 0x100000;
+    bool no_replace = flags & map_fixed_noreplace;
+    bool fixed = no_replace || (flags & map_fixed);
+    bool replace_existing = fixed && !no_replace;
+    if (!len || len > mmap_length_limit || off % page_size || !(flags & 3) || (flags & 3) == 3)
         return -22;
     // Linux mmap ignores protection bits outside the access permissions.
     prot &= 7;
     len = align_up(len);
-    if (flags & 0x10) {
+    if (fixed) {
         if (addr % page_size || addr < page_size || addr >= user_limit || len > user_limit - addr)
             return -22;
     } else {
@@ -348,6 +354,10 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
         h = fd_handle(fd);
         if (!h)
             return -9;
+    }
+    if (no_replace && current->memory->space.mapped_size(addr, len))
+        return -17;
+    if (h) {
         framebuffer = h->node && h->node->device == Device::framebuffer;
         if (!framebuffer && (!h->node || (h->node->mode & 0170000) != regular_file))
             return -19;
@@ -362,21 +372,21 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
         if (!framebuffer && (flags & 1) && (prot & 2) && (h->flags & 3) != 2)
             return -13;
     }
-    if (!memory_growth_allowed(*current, addr, len, flags & 0x10))
+    if (!memory_growth_allowed(*current, addr, len, replace_existing))
         return -12;
     bool private_mapping = flags & 2, stack_mapping = flags & 0x100;
     if (stack_mapping && (!private_mapping || !(flags & 0x20)))
         return -22;
     if (private_mapping && (prot & 2) && !stack_mapping &&
-        !data_growth_allowed(*current, addr, len, flags & 0x10))
+        !data_growth_allowed(*current, addr, len, replace_existing))
         return -12;
     auto complete = [&]() -> int64_t {
-        if (!(flags & 0x10))
+        if (!fixed)
             current->memory->space.next_map = addr + len + page_size;
         return addr;
     };
     auto replace = [&]() -> int {
-        return flags & 0x10 ? shared_memory_unmap(*current, addr, len) : 0;
+        return replace_existing ? shared_memory_unmap(*current, addr, len) : 0;
     };
     if (framebuffer) {
         int error = replace();
@@ -389,7 +399,7 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
         return result < 0 ? result : complete();
     }
     if (h && is_memfd(h->node)) {
-        int error = memfd_map(*current, *h, addr, len, off, prot, flags & 1, flags & 0x10);
+        int error = memfd_map(*current, *h, addr, len, off, prot, flags & 1, replace_existing);
         return error ? error : complete();
     }
     if (h && (flags & 1)) {
@@ -414,14 +424,19 @@ static int64_t mmap_call(uint64_t addr, size_t len, uint64_t prot, int flags, in
     int error = replace();
     if (error)
         return error;
-    if (!current->memory->space.map(addr, len, 3, private_mapping))
-        return -12;
+    uint64_t mapping_flags = private_mapping ? page_private : 0;
     if (stack_mapping)
-        for (uint64_t page = addr; page < addr + len; page += page_size)
-            *current->memory->space.entry(page) |= page_stack;
+        mapping_flags |= page_stack;
+    else if (private_mapping && (flags & 0x20))
+        mapping_flags |= page_anonymous;
+    if (!current->memory->space.map(addr, len, 3, mapping_flags))
+        return -12;
     if ((flags & 0x21) == 0x21)
-        for (uint64_t page = addr; page < addr + len; page += page_size)
-            *current->memory->space.entry(page) |= 0x400;
+        for (uint64_t page = addr; page < addr + len; page += page_size) {
+            uint64_t& entry = *current->memory->space.entry(page);
+            entry |= 0x400;
+            page_account_shared(entry & page_mask);
+        }
     if (h && off < h->node->size) {
         uint8_t buffer[4096];
         size_t count = min(len, h->node->size - size_t(off));
@@ -562,12 +577,12 @@ static int64_t wait_child(int pid, uint64_t status, int options, uint64_t usage)
         if (status)
             current->memory->space.copy_out(status, &child_status, 4);
         if (usage) {
-            uint64_t zeros[18]{};
-            if (copy_result(usage, zeros, sizeof(zeros)))
+            auto report = linux_resource_usage(cpu_waited_usage(*t.process));
+            if (copy_result(usage, &report, sizeof(report)))
                 return -14;
         }
         if (t.state == State::zombie && !t.process->live_threads)
-            reap_task(&t);
+            reap_task(&t, *current->process);
         else if (continued)
             t.process->continued = false;
         else
@@ -1019,6 +1034,8 @@ static int64_t dispatch(Frame* f) {
         return create_pipe(a, 0);
     case 24:
         return 0;
+    case 25:
+        return remap_anonymous(*current, a, b, c, d);
     case 26:
         if (a % page_size || (c & ~7) || (c & 5) == 5)
             return -22;
@@ -1359,6 +1376,10 @@ static int64_t dispatch(Frame* f) {
     case 160:
     case 302:
         return resource_syscall(f);
+    case 98:
+        return resource_usage_syscall(int32_t(a), b);
+    case 99:
+        return system_information_syscall(a);
     case 101: {
         if (!a)
             return -38;
@@ -1714,6 +1735,8 @@ static int64_t dispatch(Frame* f) {
         return memfd_create(*current, a, b);
     case 322:
         return execveat_user(*f);
+    case 324:
+        return memory_barrier(*current->memory, uint32_t(a), uint32_t(b));
     case 326:
         return io_syscall(*current, *f);
     default:

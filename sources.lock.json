@@ -1,6 +1,23 @@
 {
   "ports": [
     {
+      "origin": "acl",
+      "commit": "8bac74716d06c84627ab02d101fd9d2bafd0a34c",
+      "license": "LGPL-2.1-or-later AND GPL-2.0-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/8bac74716d06c84627ab02d101fd9d2bafd0a34c/main/acl/APKBUILD",
+      "recipe_sha256": "4e199158fd86f7db8dd1f60c2d5195de6f90c3ae99b08c94d7de48084ac096ae",
+      "files": [
+        {
+          "name": "acl-2.3.2.tar.gz",
+          "sha512": "31aeb39958d8af5d08933dd3a89333a41025c3eb49fc461fa3c291caca51dad575ec13faeb7deba9b3c2ebf7615be7d45e2b78e50d4f83d8ec933c95931a7682",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/acl-2.3.2.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/8bac74716d06c84627ab02d101fd9d2bafd0a34c/main/acl/acl-2.3.2.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "bash",
       "commit": "dfdce3cefb431614e410ac9bc3665d33ea45020c",
       "license": "GPL-3.0-or-later",
@@ -406,6 +423,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/CVE-2025-8225.patch",
             "https://raw.githubusercontent.com/alpinelinux/aports/c9fc8f3f9e02fef01aa118290fa1343b7cede614/main/binutils/CVE-2025-8225.patch"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "bison",
+      "commit": "be0833caee3020f089f02c5d7223e971a9a11ffb",
+      "license": "GPL-3.0-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/be0833caee3020f089f02c5d7223e971a9a11ffb/main/bison/APKBUILD",
+      "recipe_sha256": "556c352fa89ee4a6d19741825716e3895f4d3f1b9ece35ad3beddf4fc241365e",
+      "files": [
+        {
+          "name": "bison-3.8.2.tar.xz",
+          "sha512": "d4d23af6671406e97257892f90651b67f2ab95219831372be032190b7156c10a3435d457857e677445df8b2327aacccc15344acbbc3808a6f332a93cce23b444",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/bison-3.8.2.tar.xz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/be0833caee3020f089f02c5d7223e971a9a11ffb/main/bison/bison-3.8.2.tar.xz"
           ]
         }
       ]
@@ -1226,6 +1260,23 @@
       ]
     },
     {
+      "origin": "flex",
+      "commit": "be0833caee3020f089f02c5d7223e971a9a11ffb",
+      "license": "BSD-2-Clause",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/be0833caee3020f089f02c5d7223e971a9a11ffb/main/flex/APKBUILD",
+      "recipe_sha256": "693eb0ec9ce8dbc775f14e8b03bab4d51eb26acc260072ca6b87b2030a7e5068",
+      "files": [
+        {
+          "name": "flex-2.6.4.tar.gz",
+          "sha512": "e9785f3d620a204b7d20222888917dc065c2036cae28667065bf7862dfa1b25235095a12fd04efdbd09bfd17d3452e6b9ef953a8c1137862ff671c97132a082e",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/flex-2.6.4.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/be0833caee3020f089f02c5d7223e971a9a11ffb/main/flex/flex-2.6.4.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "font-alias",
       "commit": "ae9232982eb677d120e663a4ead0cabc81b244d8",
       "license": "custom",
@@ -1773,6 +1824,23 @@
       ]
     },
     {
+      "origin": "libburn",
+      "commit": "a124b5606d594843593939a643487aac05c81526",
+      "license": "GPL-2.0-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/a124b5606d594843593939a643487aac05c81526/main/libburn/APKBUILD",
+      "recipe_sha256": "998fc7ef0da4515fa387b3d52e54ff31458855fdc7a967467f21c9cfc7c5c6f3",
+      "files": [
+        {
+          "name": "libburn-1.5.6.tar.gz",
+          "sha512": "549cb25310aac5ce445639374d84f0c09fb1fdd70be97479588775e5afcc12dd0655c5bf51bd3f1bf8c06a66b318fd1e709dcfd72845e795ffaf353ea621accd",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libburn-1.5.6.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/a124b5606d594843593939a643487aac05c81526/main/libburn/libburn-1.5.6.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "libcap",
       "commit": "f1c200cd047f2bbd6dfffc9ddb73d9e3a980cdea",
       "license": "BSD-3-Clause OR GPL-2.0-only",
@@ -1802,6 +1870,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/drm-libdrm-2.4.124.tar.gz",
             "https://raw.githubusercontent.com/alpinelinux/aports/b8caec52f2b5014431a3ac8e53e37414ec9836e4/main/libdrm/drm-libdrm-2.4.124.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "libedit",
+      "commit": "be0833caee3020f089f02c5d7223e971a9a11ffb",
+      "license": "BSD-3-Clause",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/be0833caee3020f089f02c5d7223e971a9a11ffb/main/libedit/APKBUILD",
+      "recipe_sha256": "2bc6fbd22ffc403602564db470e8711045208509fdf5c0801c8b378c32ab57f5",
+      "files": [
+        {
+          "name": "libedit-20250104-3.1.tar.gz",
+          "sha512": "4b4a8b4b1f2cb952bbb3d128605eba9bc7cd0ad35c44b2c099f067c8bea69455bd11faae4ff20384bbe0ea901b25a1249d8323dea4ccd6141a17393f62bb8df2",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libedit-20250104-3.1.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/be0833caee3020f089f02c5d7223e971a9a11ffb/main/libedit/libedit-20250104-3.1.tar.gz"
           ]
         }
       ]
@@ -1887,6 +1972,40 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/libICE-1.1.2.tar.xz",
             "https://raw.githubusercontent.com/alpinelinux/aports/d4941e833167c30aa1172e6d8420d084698254ab/main/libice/libICE-1.1.2.tar.xz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "libisoburn",
+      "commit": "2b5b2aa3acf10c1b41986a304c027b9af03dadb9",
+      "license": "GPL-2.0-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/2b5b2aa3acf10c1b41986a304c027b9af03dadb9/main/libisoburn/APKBUILD",
+      "recipe_sha256": "db0ae77023a8e16bd859f15aaeafa960ed2a6ec8f5b45877b6ccf2feb1b3ecbe",
+      "files": [
+        {
+          "name": "libisoburn-1.5.6.tar.gz",
+          "sha512": "0fc0058aa4cf755f30d5be0de808012978c657348412c7f129b8f8128da41f18216f3e039050a5851b557ffab344cf7dc44df374400ca008e34e2e2524fbd979",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libisoburn-1.5.6.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/2b5b2aa3acf10c1b41986a304c027b9af03dadb9/main/libisoburn/libisoburn-1.5.6.tar.gz"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "libisofs",
+      "commit": "372ae9fed6e6faf79958d42ef05e11951d19469b",
+      "license": "GPL-2.0-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/372ae9fed6e6faf79958d42ef05e11951d19469b/main/libisofs/APKBUILD",
+      "recipe_sha256": "c15f9ad42d3f6ac026d0d2cc73fc50f335168a50f901fe53fa70957127a6d72f",
+      "files": [
+        {
+          "name": "libisofs-1.5.6.tar.gz",
+          "sha512": "a5f573bbe9758e072fad195cc9beb672568273ddb993ece9c15585ad3f99efb0deae6fefb6d3d40b9712e73e3bc68869d79d923b2a09623d190f5dc84974d65f",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/libisofs-1.5.6.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/372ae9fed6e6faf79958d42ef05e11951d19469b/main/libisofs/libisofs-1.5.6.tar.gz"
           ]
         }
       ]
@@ -2339,6 +2458,55 @@
       ]
     },
     {
+      "origin": "m4",
+      "commit": "be0833caee3020f089f02c5d7223e971a9a11ffb",
+      "license": "GPL-3.0-or-later",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/be0833caee3020f089f02c5d7223e971a9a11ffb/main/m4/APKBUILD",
+      "recipe_sha256": "a92638cd2575c43e4feeaafd085f216c966667ad1adb134c1c432b8901c606ec",
+      "files": [
+        {
+          "name": "m4-1.4.19.tar.gz",
+          "sha512": "f5dd0f02fcae65a176a16af9a8e1747c26e9440c6c224003ba458d3298b777a75ffb189aee9051fb0c4840b2a48278be4a51d959381af0b1d627570f478c58f2",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/m4-1.4.19.tar.gz",
+            "https://raw.githubusercontent.com/alpinelinux/aports/be0833caee3020f089f02c5d7223e971a9a11ffb/main/m4/m4-1.4.19.tar.gz"
+          ]
+        },
+        {
+          "name": "musl-realpath.patch",
+          "sha512": "cc86f883eac255301615278af9ee172e13bbe48ce0ac318ab6c325ab2406000ceb10c5360868111210eb784ea028ef93cdfe12b77e17fa0066786957c347fd71",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/musl-realpath.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/be0833caee3020f089f02c5d7223e971a9a11ffb/main/m4/musl-realpath.patch"
+          ]
+        },
+        {
+          "name": "fix-sysval-test.patch",
+          "sha512": "d251842f8a6d71b4dc6912961bd873383b1b102a14ae3c1d06f44444b3db69d599fd8afec436734c4dad1c08de06c2ef2a48582a1528cc67b20f8db5afe287d9",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/fix-sysval-test.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/be0833caee3020f089f02c5d7223e971a9a11ffb/main/m4/fix-sysval-test.patch"
+          ]
+        },
+        {
+          "name": "test-posix_spawn_file_actions_addclose.patch",
+          "sha512": "78f78f3f3145515da0a4b6f5fc891b0289b20d25f548d403f7de38f27a4b0f4bf06bf987d994ec85b61f4b28de1494a93c3347ff35b695becf8a5e9f2f3f7d49",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/test-posix_spawn_file_actions_addclose.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/be0833caee3020f089f02c5d7223e971a9a11ffb/main/m4/test-posix_spawn_file_actions_addclose.patch"
+          ]
+        },
+        {
+          "name": "0001-test-execute-main.c-set-default-handler-for-SIGPIPE-.patch",
+          "sha512": "23b1638712dcf648a1333c0ffa626666f60248fe8a9c09bfb7dc62680453a29a08007c3f44f9a93b5f5e53106f8e5269c08cc551e3ba4f6719f13edc469870bc",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/0001-test-execute-main.c-set-default-handler-for-SIGPIPE-.patch",
+            "https://raw.githubusercontent.com/alpinelinux/aports/be0833caee3020f089f02c5d7223e971a9a11ffb/main/m4/0001-test-execute-main.c-set-default-handler-for-SIGPIPE-.patch"
+          ]
+        }
+      ]
+    },
+    {
       "origin": "make",
       "commit": "be0833caee3020f089f02c5d7223e971a9a11ffb",
       "license": "GPL-3.0-or-later",
@@ -2661,6 +2829,23 @@
           "urls": [
             "https://distfiles.alpinelinux.org/distfiles/v3.22/iconv.c",
             "https://raw.githubusercontent.com/alpinelinux/aports/ddaf59b84bc6983a37d6e24d2210c2c4791642bb/main/musl/iconv.c"
+          ]
+        }
+      ]
+    },
+    {
+      "origin": "nasm",
+      "commit": "35052d7065f369f499758533b04be9c9d8e1d733",
+      "license": "BSD-2-Clause",
+      "recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/35052d7065f369f499758533b04be9c9d8e1d733/main/nasm/APKBUILD",
+      "recipe_sha256": "6e6e3fb88fec5fe36aabb66c421aa8b9c2c6b9ca84b7ab146ad462a62d5c6557",
+      "files": [
+        {
+          "name": "nasm-2.16.03.tar.xz",
+          "sha512": "0c706e41a9c33e1ac3bad5056e8bf8cbcd51785b551a6e34ce7d0d723df8eaab8603a033e89b3dcda1004b558f9e9ef3196691500f10d8201bf47a323a516f84",
+          "urls": [
+            "https://distfiles.alpinelinux.org/distfiles/v3.22/nasm-2.16.03.tar.xz",
+            "https://distfiles.alpinelinux.org/distfiles/v3.21/nasm-2.16.03.tar.xz"
           ]
         }
       ]
@@ -3331,6 +3516,54 @@
     "public_key_url": "https://github.com/besser82/libxcrypt/releases/download/v4.5.2/libxcrypt-gpgkey.asc",
     "public_key_sha256": "3a2b9dd46fcb218a5ec628452db45bb14825a9f2d0a7301ec154cf87897eec0e",
     "signing_primary_fingerprint": "678CE3FEE430311596DB8C16F52E98007594C21D"
+  },
+  "gnu_cross_toolchain": {
+    "keys_sha256": "ed271ec19112ecf183d4fc5911c9c51a6179da05515776310a5e6015140d8690",
+    "releases": {
+      "binutils": {
+        "directory": "binutils-with-gold-2.46",
+        "archive": "binutils-with-gold-2.46.tar.xz",
+        "url": "https://sourceware.org/pub/binutils/releases/binutils-with-gold-2.46.tar.xz",
+        "sha256": "a389850c2d3919f2cc96fb8b5e7711eacfc819259aaffb11615c9fb9756eaeae",
+        "signature_sha256": "f3bc49a380afdcdc5bbf11faeebd58d12465c13ecd51ff47a1371c9d7dd43a9e",
+        "signer": "3A24BC1E8FB409FA9F14371813FCEF89DD9E3C4F"
+      },
+      "gcc": {
+        "directory": "gcc-16.1.0",
+        "archive": "gcc-16.1.0.tar.xz",
+        "url": "https://gcc.gnu.org/ftp/gcc/releases/gcc-16.1.0/gcc-16.1.0.tar.xz",
+        "sha256": "50efb4d94c3397aff3b0d61a5abd748b4dd31d9d3f2ab7be05b171d36a510f79",
+        "signature_sha256": "33a851c045ea2ef6f580d82b2abfb1dc75d8b270727800028ca5f40c3b4a4246",
+        "signer": "D3A93CAD751C2AF4F8C7AD516C35B99309B5FA62"
+      }
+    },
+    "gcc_prerequisites": {
+      "gmp": {
+        "directory": "gmp-6.3.0",
+        "archive": "gmp-6.3.0.tar.bz2",
+        "sha256": "ac28211a7cfb609bae2e2c8d6058d66c8fe96434f740cf6fe2e47b000d1c20cb"
+      },
+      "mpfr": {
+        "directory": "mpfr-4.2.2",
+        "archive": "mpfr-4.2.2.tar.bz2",
+        "sha256": "9ad62c7dc910303cd384ff8f1f4767a655124980bb6d8650fe62c815a231bb7b"
+      },
+      "mpc": {
+        "directory": "mpc-1.3.1",
+        "archive": "mpc-1.3.1.tar.gz",
+        "sha256": "ab642492f5cf882b74aa0cb730cd410a81edcdbec895183ce930e706c1c759b8"
+      },
+      "isl": {
+        "directory": "isl-0.24",
+        "archive": "isl-0.24.tar.bz2",
+        "sha256": "fcf78dd9656c10eb8cf9fbd5f59a0b6b01386205fe1934b3b287a0a1898145c0"
+      },
+      "gettext": {
+        "directory": "gettext-0.22",
+        "archive": "gettext-0.22.tar.gz",
+        "sha256": "49f089be11b490170bbf09ed2f51e5f5177f55be4cc66504a5861820e0fb06ab"
+      }
+    }
   },
   "openssl_upstream": {
     "version": "3.5.9",

@@ -66,8 +66,8 @@ def execute(command, log, firmware=None):
     text = log.read_text().replace('\r\n', '\n')
     lines = text.splitlines()
     count = sum(line.startswith('WAITID_OBSERVATION ') for line in lines)
-    passed = not timed_out and process.returncode == (1 if firmware else 0) and count == 10 and \
-        lines.count('WAITID_PASS observations=10') == 1 and not any(
+    passed = not timed_out and process.returncode == (1 if firmware else 0) and count == 11 and \
+        lines.count('WAITID_PASS observations=11') == 1 and not any(
         marker in text for marker in ('WAITID_FAIL', 'PANIC:', 'FAULT pid='))
     if firmware:
         passed = passed and lines.count('AXIOM64_TESTS_PASS') == 1 and \
@@ -102,7 +102,8 @@ def main():
                 program, inputs = build(provider, linkage, case,
                     native_root / case.name if args.native else None)
                 if args.native:
-                    command = ['unshare', '--mount', '--pid', '--fork', '--mount-proc', str(program)]
+                    command = ['unshare', '--mount', '--pid', '--fork', '--mount-proc',
+                               str(program), '--native']
                     row = execute(command, case / 'native.log')
                     row.update(provider=provider, linkage=linkage, inputs=inputs)
                     rows.append(row)
@@ -134,7 +135,8 @@ def main():
                 if args.native:
                     print('WAITID_NATIVE_PASS ' + case.name, flush=True)
     assert source == {name: digest(ROOT / name) for name in source}, 'source changed during validation'
-    print('WAITID_MATRIX_PASS profiles=' + str(len(rows)) + ' observations=' + str(len(rows) * 10), flush=True)
+    total = sum(row['observations'] for row in rows)
+    print(f'WAITID_MATRIX_PASS profiles={len(rows)} observations={total}', flush=True)
 
 
 if __name__ == '__main__':

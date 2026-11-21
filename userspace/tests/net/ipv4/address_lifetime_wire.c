@@ -60,14 +60,13 @@ static uint64_t now(clockid_t clock) {
     return (uint64_t)value.tv_sec * 1000000000 + (uint64_t)value.tv_nsec;
 }
 
-static uint64_t event(const char* phase, long long status) {
+static void event(const char* phase, long long status) {
     uint64_t monotonic = now(CLOCK_MONOTONIC), realtime = now(CLOCK_REALTIME);
     printf("LIFETIME_WIRE_EVENT {\"case\":%u,\"lane\":%u,\"index\":%u,\"transport\":%u,"
            "\"survival\":%u,\"source\":%u,\"peer\":%u,\"guard\":%u,\"phase\":\"%s\","
            "\"status\":%lld,\"monotonic_ns\":%llu,\"realtime_ns\":%llu}\n",
            current_case, lane, device, transport, survival, local, peer, guard, phase, status,
            (unsigned long long)monotonic, (unsigned long long)realtime);
-    return monotonic;
 }
 
 static void hex(const void* input, size_t length) {
@@ -337,8 +336,8 @@ static void exercise(void) {
         event("stream-before", 64);
     }
     address(local, 0, 1, 1);
-    /* Start the wait at the same clock sample the independent observer reads. */
-    uint64_t began = event("lifetime-start", 1);
+    uint64_t began = now(CLOCK_MONOTONIC);
+    event("lifetime-start", 1);
     unsigned char bytes[64];
     payload(bytes, transport == 2 ? 5 : 2);
     if (transport != 2) {
@@ -356,7 +355,8 @@ static void exercise(void) {
         uint64_t next = current + 50000000;
         wait_until(next < expiry_deadline ? next : expiry_deadline);
     }
-    require(event("withdrawn", 0) <= expiry_deadline, "bounded actual primary withdrawal");
+    require(now(CLOCK_MONOTONIC) <= expiry_deadline, "bounded actual primary withdrawal");
+    event("withdrawn", 0);
     require(assigned(other) == (survival == 1 || survival == 3),
             "actual cascade or surviving address");
     command('B');

@@ -43,6 +43,10 @@ On unjournaled volumes, default mounts, clean-state mounts and checked read-only
 
 The layout follows the Linux kernel's [superblock](https://www.kernel.org/doc/html/latest/filesystems/ext4/super.html), [inode](https://www.kernel.org/doc/html/latest/filesystems/ext4/inodes.html), [classic block map](https://www.kernel.org/doc/html/latest/filesystems/ext4/ifork.html), and [directory record](https://www.kernel.org/doc/html/latest/filesystems/ext4/directory.html) documentation. Free counters use the classic [group descriptor and superblock fields](https://github.com/torvalds/linux/blob/v6.17/fs/ext2/ext2.h). Classic timestamp handling is checked against the [Linux ext2 implementation](https://github.com/torvalds/linux/blob/master/fs/ext2/inode.c).
 
+Targets through 59 bytes fit in the inode together with a terminating NUL.
+Targets of 60 bytes or more use data blocks. The reader still accepts
+60-byte inline targets written by older Axiom64 kernels.
+
 ## Write and error behavior
 
 Each mutation stages its changed blocks in a bounded overlay. Allocation or validation failure discards that operation before disk writes. Successful staging writes data, pointer blocks, inodes, directory records, allocation metadata, and the superblock, then flushes the device. Ordinary writes currently perform this flush too. Read access times are retained until filesystem sync. There is no permanent copy of the disk volume in RAM.
@@ -67,7 +71,7 @@ Current focused guest checks recover an inode pointer whose allocation bitmap wa
 
 An operation must fit the available journal and the existing 4,096-block overlay bound. Journal sizing, larger-operation handling and modern journal features remain part of the storage roadmap. The format follows the Linux [journal documentation](https://docs.kernel.org/filesystems/ext4/journal.html) and [v6.17 JBD2 definitions](https://github.com/torvalds/linux/blob/v6.17/include/linux/jbd2.h); this implementation uses Axiom64's synchronous block interface.
 
-Limits are 4,096 block groups, 8,192 cached directory/inode identities per mount, and 4,096 changed blocks per operation. The mount scan uses temporary memory proportional to filesystem block/inode counts; unavailable memory returns `ENOMEM`. Removed identities remain cached until unmount. Filesystem calls are serialized on one CPU. Partitions, general block caching and writeback, namespaces, permission enforcement, special-file import, broader date support, and advanced ext2/ext4 features remain planned. Private mappings copy file bytes; ext2 shared mappings return `ENODEV`.
+Limits are 4,096 block groups and 4,096 changed blocks per operation. The inode index grows with the number of cached identities. Cache entries share allocator pages and retain their addresses until unmount, including after unlink. All ext2 mounts share an inode-cache budget of one eighth of managed physical memory, including entry pages and indexes. Unmount returns those pages to the allocator. The mount scan uses temporary memory proportional to filesystem block and inode counts. Allocation failures return `ENOMEM`. Filesystem calls are serialized on one CPU. Partitions, general block caching and writeback, namespaces, permission enforcement, special-file import, broader date support, and advanced ext2/ext4 features remain planned. Private mappings copy file bytes. Ext2 shared mappings return `ENODEV`.
 
 ## Verification
 

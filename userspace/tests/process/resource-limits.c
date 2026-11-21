@@ -56,6 +56,7 @@
 
 static const char* executable;
 static int exec_quota_first;
+static int native_comparison;
 static unsigned observations;
 static volatile sig_atomic_t file_signals;
 
@@ -419,15 +420,84 @@ static void process_exec(void) {
     }
 }
 
+static void anonymous_remap(size_t page) {
+    const int anonymous = MAP_PRIVATE | MAP_ANONYMOUS;
+    const int read_write = PROT_READ | PROT_WRITE;
+    unsigned char* reservation = mmap(NULL, 7 * page, PROT_NONE, anonymous, -1, 0);
+    CHECK(reservation != MAP_FAILED);
+    unsigned char* old = reservation + page;
+    CHECK(mmap(old, 2 * page, read_write, anonymous | MAP_FIXED, -1, 0) == old);
+    CHECK(munmap(old + 2 * page, 2 * page) == 0);
+    old[0] = 'A';
+    old[2 * page - 1] = 'Z';
+
+    CHECK(mremap(old + 1, 2 * page, 3 * page, 0) == MAP_FAILED && errno == EINVAL);
+    CHECK(mremap(old, 2 * page, 0, 0) == MAP_FAILED && errno == EINVAL);
+    CHECK(mremap(old, 2 * page, 3 * page, MREMAP_FIXED, old + 4 * page) == MAP_FAILED &&
+          errno == EINVAL);
+    CHECK(mremap(old, page + 1, 2 * page, 0) == old);
+    CHECK(mremap(old, 2 * page, 3 * page, 0) == old);
+    CHECK(old[0] == 'A' && old[2 * page - 1] == 'Z');
+    CHECK(old[2 * page] == 0 && old[3 * page - 1] == 0);
+    old[3 * page - 1] = 'X';
+    CHECK(mremap(old, 3 * page, page + 1, 0) == old);
+
+    CHECK(mremap(old + 2 * page, page, 2 * page, 0) == MAP_FAILED && errno == EFAULT);
+    unsigned char* blocker = old + 2 * page;
+    CHECK(mmap(blocker, page, read_write, anonymous | MAP_FIXED_NOREPLACE, -1, 0) == blocker);
+    blocker[0] = 'B';
+    CHECK(mprotect(blocker, page, PROT_READ) == 0);
+    CHECK(mremap(old, 2 * page, 3 * page, 0) == MAP_FAILED && errno == ENOMEM);
+
+    CHECK(mprotect(old + page, page, PROT_READ) == 0);
+    CHECK(mremap(old, 2 * page, 3 * page, MREMAP_MAYMOVE) == MAP_FAILED && errno == EFAULT);
+    CHECK(mprotect(old + page, page, read_write) == 0);
+
+    const int resources[] = {RLIMIT_AS, RLIMIT_DATA};
+    for (size_t i = 0; i < sizeof(resources) / sizeof(resources[0]); ++i) {
+        struct rlimit original;
+        CHECK(getrlimit(resources[i], &original) == 0);
+        struct rlimit reduced = original;
+        reduced.rlim_cur = 1;
+        CHECK(setrlimit(resources[i], &reduced) == 0);
+        CHECK(mremap(old, 2 * page, 3 * page, MREMAP_MAYMOVE) == MAP_FAILED && errno == ENOMEM);
+        CHECK(setrlimit(resources[i], &original) == 0);
+        CHECK(old[0] == 'A' && old[2 * page - 1] == 'Z' && blocker[0] == 'B');
+    }
+
+    int channel[2];
+    CHECK(pipe(channel) == 0 && mprotect(old, 2 * page, PROT_NONE) == 0);
+    unsigned char* moved = mremap(old, 2 * page, 3 * page - 1, MREMAP_MAYMOVE);
+    CHECK(moved != MAP_FAILED && moved != old);
+    CHECK(write(channel[1], moved, 1) == -1 && errno == EFAULT);
+    CHECK(write(channel[1], moved + 2 * page, 1) == -1 && errno == EFAULT);
+    CHECK(mprotect(moved, 3 * page, read_write) == 0);
+    CHECK(moved[0] == 'A' && moved[2 * page - 1] == 'Z' && blocker[0] == 'B');
+    CHECK(moved[2 * page] == 0 && moved[3 * page - 1] == 0);
+    CHECK(mmap(old, 2 * page, read_write, anonymous | MAP_FIXED_NOREPLACE, -1, 0) == old);
+    CHECK(old[0] == 0 && old[2 * page - 1] == 0 && moved[0] == 'A');
+    CHECK(close(channel[0]) == 0 && close(channel[1]) == 0);
+    CHECK(munmap(moved, 3 * page) == 0 && munmap(reservation, 7 * page) == 0);
+}
+
 static void address_space(void) {
     long page = sysconf(_SC_PAGESIZE);
     CHECK(page > 0);
+    anonymous_remap((size_t)page);
     unsigned char* held =
         mmap(NULL, (size_t)page * 4, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     CHECK(held != MAP_FAILED);
     held[0] = 'Q';
     void* slot = held + page;
     CHECK(munmap(slot, (size_t)page * 2) == 0);
+    const int fixed = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE;
+    CHECK(mmap(held + 1, (size_t)page, PROT_NONE, fixed, -1, 0) == MAP_FAILED && errno == EINVAL);
+    CHECK(mmap(slot, 2 * (size_t)page + 1, PROT_NONE, fixed, -1, 0) == MAP_FAILED &&
+          errno == EEXIST);
+    CHECK(mmap(slot, (size_t)page, PROT_NONE, fixed, -1, 0) == slot);
+    CHECK(mmap(slot, (size_t)page, PROT_READ, fixed | MAP_FIXED, -1, 0) == MAP_FAILED &&
+          errno == EEXIST);
+    CHECK(munmap(slot, (size_t)page) == 0 && held[0] == 'Q');
     char path[] = "/tmp/resource-map-XXXXXX";
     int file = mkstemp(path);
     CHECK(file >= 0 && ftruncate(file, page) == 0);
@@ -443,6 +513,9 @@ static void address_space(void) {
           errno == ENOMEM);
     CHECK(mmap(NULL, (size_t)page, PROT_READ | PROT_WRITE, MAP_SHARED, file, 0) == MAP_FAILED &&
           errno == ENOMEM);
+    CHECK(mmap(held, (size_t)page, PROT_NONE, fixed, -1, 0) == MAP_FAILED && errno == EEXIST &&
+          held[0] == 'Q');
+    CHECK(mmap(slot, (size_t)page, PROT_NONE, fixed, -1, 0) == MAP_FAILED && errno == ENOMEM);
     uintptr_t old_break = (uintptr_t)syscall(SYS_brk, 0);
     CHECK((uintptr_t)syscall(SYS_brk, old_break + (uintptr_t)page) == old_break);
     CHECK(shmat(segment, NULL, 0) == (void*)-1 && errno == ENOMEM);
@@ -499,6 +572,24 @@ static void address_space(void) {
     void* shared = shmat(segment, NULL, 0);
     CHECK(shared != (void*)-1 && shmdt(shared) == 0 && shmctl(segment, IPC_RMID, NULL) == 0);
     CHECK(munmap(held, (size_t)page * 4) == 0 && close(file) == 0 && unlink(path) == 0);
+    if (!native_comparison) {
+        // The guest has 256 MiB total RAM, including the kernel and initramfs.
+        uintptr_t base = UINT64_C(0x20000000000);
+        int memory = memfd_create("rollback-neighbour", 0);
+        CHECK(memory >= 0 && ftruncate(memory, page) == 0);
+        char* neighbour = mmap((void*)base, (size_t)page, PROT_READ,
+                               MAP_PRIVATE | MAP_FIXED_NOREPLACE, memory, 0);
+        CHECK(neighbour == (void*)base && close(memory) == 0);
+        void* address = (void*)(base + (uintptr_t)page);
+        CHECK(mmap(address, 256 * 1024 * 1024, PROT_READ | PROT_WRITE, fixed, -1, 0) ==
+                  MAP_FAILED &&
+              errno == ENOMEM);
+        CHECK(*neighbour == 0 && munmap(neighbour, (size_t)page) == 0);
+        unsigned char* retry = mmap(address, (size_t)page, PROT_READ | PROT_WRITE, fixed, -1, 0);
+        CHECK(retry == address && *retry == 0);
+        *retry = 'R';
+        CHECK(munmap(retry, (size_t)page) == 0);
+    }
 }
 
 static void isolated(void (*run)(void), const char* name) {
@@ -1271,7 +1362,8 @@ int main(int argc, char** argv) {
     }
     CHECK((argc == 1 || (argc == 2 && !strcmp(argv[1], "--native"))) && geteuid() == 0);
     executable = argv[0];
-    if (argc == 2) {
+    native_comparison = argc == 2;
+    if (native_comparison) {
         struct utsname kernel;
         unsigned major, minor;
         CHECK(uname(&kernel) == 0 && sscanf(kernel.release, "%u.%u", &major, &minor) == 2);

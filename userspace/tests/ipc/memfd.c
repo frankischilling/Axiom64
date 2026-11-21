@@ -204,7 +204,11 @@ static void mappings(void) {
     fd = receive_fd_after_close(fd);
     char* shared = mmap(NULL, page * 2, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     char* private = mmap(NULL, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
-    CHECK(shared != MAP_FAILED && private != MAP_FAILED && private[0] == 'a');
+    CHECK(shared != MAP_FAILED && private != MAP_FAILED);
+    CHECK(mmap(shared + page, page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE,
+               -1, 0) == MAP_FAILED &&
+          errno == EEXIST);
+    CHECK(private[0] == 'a');
     CHECK(pwrite(fd, "b", 1, 0) == 1 && private[0] == 'b' && shared[0] == 'b');
     private[0] = 'c';
     CHECK(shared[0] == 'b');

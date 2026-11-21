@@ -1,15 +1,19 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Observe all three libc/linkage profiles in fresh native Linux namespaces."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 import gzip
 import json
 import os
 from pathlib import Path
 import platform
+from queue import Queue
 import shutil
 import socket
 import subprocess
 import sys
+from threading import Event
 import time
 import zipfile
 
@@ -24,6 +28,68 @@ from tcp6.inputs import digest, freeze, write
 
 PROFILES = ('native', 'static', 'dynamic')
 CLIENT = 'userspace/tests/net/ipv4/address_lifetimes.c'
+ONLINE_CPUS = Path('/sys/devices/system/cpu/online')
+
+
+def cpu_ids(cpu_list):
+    cpus = set()
+    for item in cpu_list.strip().split(','):
+        first, _, last = item.partition('-')
+        cpus.update(range(int(first), int(last or first) + 1))
+    return cpus
+
+
+@contextmanager
+def wake_timer_cpus(path):
+    online = ONLINE_CPUS.read_text()
+    cpus = cpu_ids(online)
+    require(cpus and cpus == os.sched_getaffinity(0), 'native controller can wake every online CPU')
+    ready = Queue()
+    stop = Event()
+
+    def pulse(cpu):
+        os.sched_setaffinity(0, {cpu})
+        affinity = sorted(os.sched_getaffinity(0))
+        require(affinity == [cpu], 'timer wake-up thread owns its selected CPU')
+        started = time.monotonic_ns()
+        ready.put(cpu)
+        pulses = 0
+        previous = started
+        max_gap = 0
+        while not stop.wait(0.020):
+            now = time.monotonic_ns()
+            max_gap = max(max_gap, now - previous)
+            previous = now
+            pulses += 1
+        return dict(affinity=affinity, started_ns=started, finished_ns=time.monotonic_ns(),
+                    pulses=pulses, max_gap_ns=max_gap)
+
+    # An unbound address-lifetime worker can rearm its deferrable timer on
+    # a different CPU from the client. Wake each CPU at regular intervals.
+    with ThreadPoolExecutor(max_workers=len(cpus)) as pool:
+        workers = []
+        try:
+            for cpu in sorted(cpus):
+                workers.append(pool.submit(pulse, cpu))
+            require({ready.get(timeout=5) for _ in cpus} == cpus, 'every timer CPU is ready')
+            yield
+        finally:
+            stop.set()
+            write(path, dict(online=online, online_after=ONLINE_CPUS.read_text(),
+                             workers=[worker.result() for worker in workers]))
+
+
+def verify_wakeups(wakeups, client_affinities, first_ns, last_ns):
+    cpus = cpu_ids(wakeups['online'])
+    workers = wakeups['workers']
+    require(cpus and wakeups['online_after'] == wakeups['online'] and
+            [row['affinity'] for row in workers] == [[cpu] for cpu in sorted(cpus)] and
+            all(set(affinity) == cpus for affinity in client_affinities),
+            'one timer wake-up worker for every available CPU throughout the native cohort')
+    require(all(row['started_ns'] <= first_ns < last_ns <= row['finished_ns'] and
+                type(row['pulses']) is int and row['pulses'] > 0 and
+                type(row['max_gap_ns']) is int and row['max_gap_ns'] > 0 for row in workers),
+            'timer wake-up threads cover the complete native observations')
 
 
 def worker(directory, profile, parent_namespace):
@@ -130,6 +196,8 @@ def verify(directory):
                 'same original native producer and observation readers')
     kernels = set()
     proofs = []
+    affinities = []
+    observation_times = []
     for profile in PROFILES:
         case = directory / profile
         receipt = decode((case / 'completed.json').read_text())
@@ -148,16 +216,25 @@ def verify(directory):
                 command[-3:] == ['--native', 'eth0', 'eth1'] and Path(command[-4]).name == 'ipv4-address-lifetimes-' + profile,
                 'actual native command selects both fixture interfaces')
         runtime = decode((case / 'runtime.json').read_text())
-        require(type(runtime['client_pid']) is int and runtime['client_pid'] > 0 and runtime['affinity'],
-                'actual observed client process and CPU affinity')
+        require(type(runtime['client_pid']) is int and runtime['client_pid'] > 0 and
+                runtime['affinity'] == sorted(set(runtime['affinity'])) and
+                all(type(cpu) is int and cpu >= 0 for cpu in runtime['affinity']),
+                'actual native client process affinity')
+        affinities.append(runtime['affinity'])
         selected_loader = command[0] if profile == 'dynamic' else None
         providers(case, runtime, (case / 'maps.txt').read_text(), profile,
                   set(command[:-3]), selected_loader)
         epoch = native_clock.verify(case / 'kernel-clock.json', case / 'client.log')
+        anchors = decode((case / 'kernel-clock.json').read_text())
+        observation_times += [anchors[0]['events'][0]['before']['monotonic_ns'],
+                              anchors[1]['events'][-1]['after']['monotonic_ns']]
         proof = read(case / 'client.log', stamp_epoch=epoch, native=True)
         require(proof == receipt['observations'], 'exact independent native lifetime observations')
         proofs.append(dict(profile=profile, observations=proof))
     require(len(kernels) == 1, 'one actual native kernel and timer policy throughout the cohort')
+    wakeups_path = directory / 'timer-wakeups.json'
+    require(index['timer_wakeups_sha256'] == digest(wakeups_path), 'original timer wake-up observations')
+    verify_wakeups(decode(wakeups_path.read_text()), affinities, min(observation_times), max(observation_times))
     return dict(passed=True, profiles=3, interfaces_per_profile=2,
                 requests=sum(row['observations']['requests'] for row in proofs),
                 kernel=next(iter(kernels))[0], observations=proofs, wire_or_guest_or_hosted_acceptance=False)
@@ -174,19 +251,23 @@ def produce(directory):
     inputs = decode((directory / 'source/source-inputs.json').read_text())
     parent_namespace = Path('/proc/self/ns/net').stat().st_ino
     failures = []
-    for profile in PROFILES:
-        command = ['unshare', '-n', '--', sys.executable, '-B', '-m', 'ipv4_lifetimes.native',
-                   str(directory / profile), '--worker', '--profile', profile, '--parent-namespace', str(parent_namespace)]
-        with (directory / (profile + '-worker.log')).open('xb') as log:
-            result = subprocess.run(command, cwd=ROOT, env=dict(os.environ, PYTHONPATH=str(ROOT / 'scripts')),
-                                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, timeout=120)
-        write(directory / (profile + '-worker.json'), dict(returncode=result.returncode, log_sha256=digest(directory / (profile + '-worker.log'))))
-        if result.returncode:
-            failures.append(profile)
-        print('IPV4_LIFETIME_NATIVE_RESULT ' + profile + ' status=' + str(result.returncode), flush=True)
+    wakeups_path = directory / 'timer-wakeups.json'
+    with wake_timer_cpus(wakeups_path):
+        for profile in PROFILES:
+            command = ['unshare', '-n', '--', sys.executable, '-B', '-m', 'ipv4_lifetimes.native',
+                       str(directory / profile), '--worker', '--profile', profile, '--parent-namespace', str(parent_namespace)]
+            log_path = directory / (profile + '-worker.log')
+            with log_path.open('xb') as log:
+                result = subprocess.run(command, cwd=ROOT, env=dict(os.environ, PYTHONPATH=str(ROOT / 'scripts')),
+                                        stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, timeout=120)
+            write(directory / (profile + '-worker.json'), dict(returncode=result.returncode, log_sha256=digest(log_path)))
+            if result.returncode:
+                failures.append(profile)
+            print('IPV4_LIFETIME_NATIVE_RESULT ' + profile + ' status=' + str(result.returncode), flush=True)
     require(not failures, 'native profiles failed without retry: ' + ','.join(failures))
     require(all(digest(ROOT / name) == value for name, value in inputs.items()), 'unchanged complete source during native observations')
-    write(directory / 'completed.json', dict(passed=True, schema=1, profiles=list(PROFILES), source=source))
+    write(directory / 'completed.json', dict(passed=True, schema=1, profiles=list(PROFILES), source=source,
+                                             timer_wakeups_sha256=digest(wakeups_path)))
     proof = verify(directory)
     write(directory / 'verified.json', proof)
     return proof

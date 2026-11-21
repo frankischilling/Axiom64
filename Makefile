@@ -246,6 +246,16 @@ test-waitid:
 	$(PYTHON) scripts/waitid_test.py --directory build/waitid
 test-waitid-native:
 	$(PYTHON) scripts/waitid_test.py --directory build/waitid-native --native
+.PHONY: test-sysinfo test-sysinfo-native
+test-sysinfo:
+	$(PYTHON) scripts/sysinfo_test.py
+test-sysinfo-native:
+	$(PYTHON) scripts/sysinfo_test.py --native
+.PHONY: test-membarrier test-membarrier-native
+test-membarrier:
+	$(PYTHON) scripts/membarrier_test.py
+test-membarrier-native:
+	$(PYTHON) scripts/membarrier_test.py --native
 test-proc-identity:
 	$(PYTHON) scripts/proc_identity_test.py --directory build/proc-identity
 test-proc-identity-native:
@@ -819,6 +829,7 @@ build/desktop-terminal: userspace/desktop/terminal.c
 USERSPACE_DATA = $(foreach pattern,*.sh *.conf *.twmrc,$(call rwildcard,userspace/,$(pattern))) $(wildcard userspace/tests/toolchain/*)
 ROOTFS_INPUTS = build/thread-io-static build/thread-io-dynamic build/lifecycle-static build/lifecycle-dynamic build/futex-static build/futex-dynamic build/thread-static build/thread-dynamic build/abi-static build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/net-tests build/ipv4-tests build/udp-tests build/x11-probe build/licenses/.stamp $(USERSPACE_DATA) ports.lock.json dependencies.json scripts/rootfs.py scripts/ports.py scripts/build_busybox.py scripts/fetch.py
 ROOTFS_INPUTS += build/network-manager
+ROOTFS_INPUTS += scripts/configure-busybox.sh
 ROOTFS_INPUTS += build/random-seed-static
 ROOTFS_INPUTS += scripts/build_libcap.py scripts/build_musl.py scripts/build_openssl.py sources.lock.json
 ROOTFS_INPUTS += scripts/build_libxcrypt.py scripts/linux_uapi.py
@@ -837,6 +848,25 @@ disk-root: build/axiom64.elf build/rootfs.cpio
 	$(PYTHON) scripts/image.py --root-device /dev/vda --output-name axiom64-disk.iso
 test: image
 	$(PYTHON) scripts/boot_test.py --firmware both
+.PHONY: test-guest-kernel test-guest-system test-guest-binutils
+test-guest-kernel: build/axiom64.elf build/rootfs.cpio
+	$(PYTHON) -B scripts/guest_kernel_test.py $(GUEST_KERNEL_FLAGS)
+test-guest-system: build/axiom64.elf build/rootfs.cpio
+	$(PYTHON) -B scripts/guest_kernel_test.py --source-tools --system-image $(GUEST_KERNEL_FLAGS)
+test-guest-binutils: build/axiom64.elf build/rootfs.cpio
+	$(PYTHON) -B scripts/guest_binutils_test.py $(GUEST_BINUTILS_FLAGS)
+.PHONY: cross-toolchain cross-toolchain-sources test-cross-toolchain
+cross-toolchain:
+	$(PYTHON) -B scripts/build_cross_toolchain.py $(CROSS_TOOLCHAIN_FLAGS)
+cross-toolchain-sources:
+	$(PYTHON) -B scripts/build_cross_toolchain.py --sources-only $(CROSS_TOOLCHAIN_FLAGS)
+test-cross-toolchain: build/axiom64.elf build/rootfs.cpio
+	$(PYTHON) -B scripts/cross_toolchain_test.py --prefix "$(CROSS_TOOLCHAIN_PREFIX)"
+.PHONY: test-suite test-suites
+test-suite:
+	$(PYTHON) -B scripts/local_validation.py "$(SUITE)"
+test-suites:
+	$(PYTHON) -B scripts/local_validation.py --list
 test-storage:
 	$(PYTHON) scripts/storage_test.py
 test-ext2:
@@ -1070,7 +1100,7 @@ test-ipv6-fragments-native: test-ipv6-fragment-observation
 build/ipv6-wire-host: kernel/tests/net/ipv6_wire.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/wire.hpp
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Ikernel/include $(filter %.cpp,$^) -o $@
-build/ipv6-host: kernel/tests/net/ipv6_host.cpp kernel/tests/net/ipv6_output_owner.cpp kernel/tests/net/ipv6_link_configuration.cpp kernel/tests/net/ipv6_router.cpp kernel/tests/net/ipv6_address_lifecycle.cpp $(IPV6_CORE) kernel/fs/proc/ipv6.cpp kernel/fs/proc/integer.cpp kernel/net/ipv6/socket/send_control.cpp kernel/net/ethernet.cpp kernel/net/netlink/ipv6.cpp kernel/net/netlink/addresses.cpp kernel/net/netlink/link.cpp kernel/net/netlink/inventory.cpp kernel/net/netlink/routes.cpp $(call rwildcard,kernel/include/,*.hpp)
+build/ipv6-host: kernel/tests/net/ipv6_host.cpp kernel/tests/net/ipv6_host_addresses.cpp kernel/tests/net/ipv6_host_packets.cpp kernel/tests/net/ipv6_host_fixture.hpp kernel/tests/net/ipv6_output_owner.cpp kernel/tests/net/ipv6_link_configuration.cpp kernel/tests/net/ipv6_router.cpp kernel/tests/net/ipv6_address_lifecycle.cpp $(IPV6_CORE) kernel/fs/proc/ipv6.cpp kernel/fs/proc/integer.cpp kernel/net/ipv6/socket/send_control.cpp kernel/net/ethernet.cpp kernel/net/netlink/ipv6.cpp kernel/net/netlink/addresses.cpp kernel/net/netlink/link.cpp kernel/net/netlink/inventory.cpp kernel/net/netlink/routes.cpp $(call rwildcard,kernel/include/,*.hpp)
 	@mkdir -p build
 	$(CXX) -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections -Wl,--gc-sections -Ikernel/include $(filter %.cpp,$^) -o $@
 build/ipv6-reassembly-host: kernel/tests/net/ipv6_reassembly.cpp kernel/net/ipv6/reassembly.cpp kernel/net/ipv6/wire.cpp kernel/include/net/ipv6/reassembly.hpp kernel/include/net/ipv6/wire.hpp kernel/include/core/base.hpp
@@ -1162,7 +1192,8 @@ build/ipv4-address-lifetimes-static build/ipv4-address-lifetimes-dynamic: usersp
 test-ipv4-address-lifetimes-guest:
 	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_lifetimes.guest build/ipv4-address-lifetimes-guest --produce
 test-ipv4-address-lifetimes-native:
-	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_lifetimes.native build/ipv4-address-lifetimes-native --produce
+	@mkdir -p build
+	PYTHONPATH=scripts $(PYTHON) -B -m ipv4_lifetimes.native build/ipv4-address-lifetimes-native-controls --produce
 build/ipv4-lifetime-wire-native: userspace/tests/net/ipv4/address_lifetime_wire.c scripts/compile_uapi_client.py scripts/linux_uapi.py Makefile
 	@mkdir -p build
 	$(PYTHON) scripts/compile_uapi_client.py --compiler '$(CC)' --output $@ -- -std=c11 -O2 -g -Wall -Wextra -Werror $<
@@ -1476,13 +1507,15 @@ test-tcp6-abi: build/axiom64.elf build/init busybox
 .PHONY: test-tcp6-control-state
 test-tcp6-control-state: build/axiom64.elf build/init busybox
 	$(PYTHON) scripts/tcp6_control_state_test.py
-build/tcp-native: userspace/tests/net/tcp.c userspace/tests/net/tcp_maxseg.c userspace/tests/net/tcp_maxseg.h
+TCP_SOCKET_TEST_INPUTS = userspace/tests/net/tcp.c userspace/tests/net/tcp_maxseg.c userspace/tests/net/tcp_maxseg.h \
+	userspace/tests/net/tcp_accept.c userspace/tests/net/tcp_test.h
+build/tcp-native: $(TCP_SOCKET_TEST_INPUTS)
 	@mkdir -p build
 	$(CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@
-build/tcp-static: userspace/tests/net/tcp.c userspace/tests/net/tcp_maxseg.c userspace/tests/net/tcp_maxseg.h
+build/tcp-static: $(TCP_SOCKET_TEST_INPUTS)
 	@mkdir -p build
 	$(MUSL_CC) -std=gnu11 -static -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@
-build/tcp-dynamic: userspace/tests/net/tcp.c userspace/tests/net/tcp_maxseg.c userspace/tests/net/tcp_maxseg.h
+build/tcp-dynamic: $(TCP_SOCKET_TEST_INPUTS)
 	@mkdir -p build
 	$(MUSL_CC) -std=gnu11 -O2 -g -Wall -Wextra -Werror -pthread $(filter %.c,$^) -o $@
 .PHONY: test-tcp-native test-tcp-sockets test-tcp-native-wire
@@ -1746,6 +1779,7 @@ clean:
 MUSL_INPUTS = sources.lock.json scripts/build_musl.py scripts/musl_cc.py $(wildcard vendor/musl/patches/*.patch)
 MUSL_PROGRAMS = build/address-query-static build/address-query-dynamic build/credentials-static build/credentials-dynamic build/random-static build/random-dynamic build/abi-static build/file-lock-static build/file-lock-dynamic build/clock-elapsed-tests build/abi-dynamic build/init build/ipc-tests build/signal-tests build/storage-tests build/vfs-tests build/ext2-tests build/root-tests build/net-tests build/ipv4-tests build/udp-tests build/dns-static build/dns-dynamic build/normal-dns-static build/normal-dns-dynamic build/netlink-tests build/network-manager-faults build/network-manager-dynamic-faults build/network-manager build/network-manager-dynamic build/manager-tests build/manager-protocol build/manager-link build/init-supervision build/ownership-tests build/ownership-dynamic build/configuration-tests build/configuration-dynamic build/dhcp-codec-tests build/dhcp-state-tests build/dhcp-profile-tests build/profile-privacy-tests build/profile-privacy-dynamic build/dhcp-transport-tests build/resolver-tests build/thread-static build/thread-io-static build/thread-io-dynamic build/thread-dynamic build/futex-static build/futex-dynamic build/lifecycle-static build/lifecycle-dynamic build/x11-probe build/tcp-static build/tcp-dynamic build/tcp-fault-static build/tcp-fault-dynamic build/tcp-lifetime-static build/tcp-lifetime-dynamic build/tcp-challenge-static build/tcp-challenge-dynamic build/tcp-timeout-static build/tcp-timeout-dynamic build/ipv4-multicast-static build/ipv4-multicast-dynamic
 MUSL_PROGRAMS += build/tcp-icmp-static build/tcp-icmp-dynamic
+MUSL_PROGRAMS += build/desktop-terminal build/file-capabilities-static build/file-capabilities-dynamic
 MUSL_PROGRAMS += build/ipv4-dynamic
 MUSL_PROGRAMS += build/tcp-pmtu-static build/tcp-pmtu-dynamic
 MUSL_PROGRAMS += build/tcp-pressure-static build/tcp-pressure-dynamic

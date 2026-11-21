@@ -109,6 +109,8 @@ extern "C" [[noreturn]] void kernel_main() {
         test_phase = "AXIOM64_PHASE=invalid";
     else if (word(cmd, "phase=full"))
         test_phase = "AXIOM64_PHASE=full";
+    else if (word(cmd, "phase=cache"))
+        test_phase = "AXIOM64_PHASE=cache";
     else if (word(cmd, "phase=cond"))
         test_phase = "AXIOM64_PHASE=cond";
     else if (word(cmd, "phase=io"))

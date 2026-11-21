@@ -31,9 +31,11 @@ namespace ax {
 uint64_t direct_map;
 static constexpr size_t max_pages = (4ull * 1024 * 1024 * 1024) / page_size;
 static uint8_t bitmap[max_pages / 8];
+static uint8_t shared_bitmap[max_pages / 8];
 static uint16_t page_references[max_pages];
 static size_t search_page = 1;
 static uint64_t kernel_root;
+static size_t total_pages, free_pages, shared_pages;
 
 static bool used(size_t p) {
     return bitmap[p / 8] & (1u << (p % 8));
@@ -52,7 +54,7 @@ void memory_init() {
     direct_map = hhdm_request.response->offset;
     kernel_root = read_cr3() & page_mask;
     memset(bitmap, 0xff, sizeof(bitmap));
-    uint64_t available = 0;
+    total_pages = 0;
     auto map = memmap_request.response;
     for (size_t i = 0; i < map->entry_count; i++) {
         auto e = map->entries[i];
@@ -60,11 +62,18 @@ void memory_init() {
             continue;
         uint64_t end = min(align_down(e->base + e->length) / page_size, uint64_t(max_pages));
         for (uint64_t p = max(align_up(e->base) / page_size, uint64_t(1)); p < end; p++) {
-            mark(p, false);
-            available++;
+            if (used(p)) {
+                mark(p, false);
+                total_pages++;
+            }
         }
     }
-    log("Memory: %u MiB available, isolated four-level paging\n", available / 256);
+    free_pages = total_pages;
+    log("Memory: %u MiB available, isolated four-level paging\n", uint64_t(total_pages / 256));
+}
+
+PhysicalMemoryStats physical_memory_stats() {
+    return {total_pages * page_size, free_pages * page_size, shared_pages * page_size};
 }
 
 void activate_kernel_memory() {
@@ -103,7 +112,7 @@ void* map_mmio(uint64_t address, size_t length) {
 }
 
 uint64_t page_alloc(size_t count) {
-    if (!count || count >= max_pages)
+    if (!count || count > free_pages)
         return 0;
     for (int pass = 0; pass < 2; pass++) {
         size_t first = pass ? 1 : search_page, end = pass ? search_page : max_pages;
@@ -116,6 +125,7 @@ uint64_t page_alloc(size_t count) {
                     mark(k, true);
                     page_references[k] = 1;
                 }
+                free_pages -= count;
                 search_page = p + 1;
                 memset(physical(start * page_size), 0, count * page_size);
                 return start * page_size;
@@ -125,6 +135,22 @@ uint64_t page_alloc(size_t count) {
     return 0;
 }
 
+void page_account_shared(uint64_t p, size_t count) {
+    const size_t start = p / page_size;
+    if (p % page_size || start >= max_pages || count > max_pages - start)
+        panic("invalid shared page range");
+    for (size_t index = start; index < start + count; index++) {
+        if (!page_references[index])
+            panic("shared accounting requires an allocated page");
+        uint8_t& flags = shared_bitmap[index / 8];
+        const uint8_t bit = 1u << (index % 8);
+        if (!(flags & bit)) {
+            flags |= bit;
+            shared_pages++;
+        }
+    }
+}
+
 void page_free(uint64_t p, size_t count) {
     if (!p || p % page_size || p / page_size + count > max_pages)
         panic("invalid physical free");
@@ -132,8 +158,16 @@ void page_free(uint64_t p, size_t count) {
         auto index = p / page_size + i;
         if (!page_references[index])
             panic("physical page double free");
-        if (!--page_references[index])
+        if (!--page_references[index]) {
             mark(index, false);
+            free_pages++;
+            uint8_t& flags = shared_bitmap[index / 8];
+            const uint8_t bit = 1u << (index % 8);
+            if (flags & bit) {
+                flags &= ~bit;
+                shared_pages--;
+            }
+        }
     }
     search_page = min(search_page, size_t(p / page_size));
 }
@@ -297,34 +331,102 @@ static uint64_t permissions(int prot) {
     return 4 | ((prot & 3) ? 1 : 0) | ((prot & 2) ? 2 : 0) | ((prot & 4) ? 1 : (1ull << 63));
 }
 
-bool AddressSpace::map(uint64_t va, size_t len, int prot, bool private_mapping) {
-    if (va % page_size || va < page_size || va >= user_limit || len > user_limit - va ||
-        len > SIZE_MAX - page_size)
-        return false;
-    for (uint64_t p = va; p < va + align_up(len); p += page_size) {
-        auto e = entry(p, true);
-        if (!e)
-            return false;
-        if (!(*e & page_mask)) {
-            uint64_t physical_page = page_alloc();
-            if (!physical_page)
-                return false;
-            *e = physical_page;
+static void release_empty_tables(uint64_t table, unsigned level, uint64_t base, uint64_t start,
+                                 uint64_t end) {
+    auto entries = static_cast<uint64_t*>(physical(table));
+    uint64_t span = 1ull << (12 + (level - 1) * 9);
+    for (size_t i = (start - base) / span; i <= (end - base - 1) / span; i++) {
+        auto& entry = entries[i];
+        if (!(entry & 1) || (entry & 128))
+            continue;
+        uint64_t child = entry & page_mask;
+        uint64_t address = base + i * span;
+        if (level > 2)
+            release_empty_tables(child, level - 1, address, max(start, address),
+                                 min(end, address + span));
+        auto children = static_cast<const uint64_t*>(physical(child));
+        size_t used = 0;
+        while (used < 512 && !(children[used] & (page_mask | page_file)))
+            used++;
+        if (used == 512) {
+            entry = 0;
+            page_free(child);
         }
-        *e = (*e & (page_mask | page_software)) | permissions(prot);
-        *e = private_mapping ? *e | page_private : *e & ~page_private;
+    }
+}
+
+static void discard_empty_tables(AddressSpace& space, uint64_t start, uint64_t end) {
+    release_empty_tables(space.root, 4, 0, start, end);
+    if (read_cr3() == space.root)
+        write_cr3(space.root);
+}
+
+bool AddressSpace::map(uint64_t va, size_t len, int prot, uint64_t mapping_flags) {
+    if (!prepare_mapping(va, len))
+        return false;
+    uint64_t end = va + align_up(len);
+    // Pending entries are nonpresent and have no user or file bits set.
+    constexpr uint64_t pending = 1ull << 59;
+    for (uint64_t p = va; p < end; p += page_size) {
+        auto& e = *entry(p);
+        if ((e & page_mask) && !(e & page_file))
+            continue;
+        uint64_t physical_page = e & page_file ? 0 : page_alloc();
+        if (!physical_page) {
+            for (uint64_t previous = va; previous < p; previous += page_size) {
+                auto& candidate = *entry(previous);
+                if ((candidate & pending) && !(candidate & 4)) {
+                    uint64_t allocated = candidate & page_mask;
+                    candidate = 0;
+                    page_free(allocated);
+                }
+            }
+            discard_empty_tables(*this, va, end);
+            return false;
+        }
+        e = physical_page | pending;
+    }
+    for (uint64_t p = va; p < end; p += page_size) {
+        auto& e = *entry(p);
+        e = (e & (page_mask | (page_software & ~page_private))) | permissions(prot) | mapping_flags;
     }
     if (read_cr3() == root)
         write_cr3(root);
     return true;
 }
 
+bool AddressSpace::move_anonymous_mapping(uint64_t source, size_t old_size, uint64_t destination,
+                                          size_t new_size, int protection) {
+    // The caller has checked the source and found a free, disjoint destination.
+    if (!prepare_mapping(destination, new_size))
+        return false;
+    if (!map(destination + old_size, new_size - old_size, protection,
+             page_private | page_anonymous)) {
+        discard_empty_tables(*this, destination, destination + new_size);
+        return false;
+    }
+    // Transfer the old pages only after every allocation has succeeded.
+    for (size_t offset = 0; offset < old_size; offset += page_size) {
+        auto& old = *entry(source + offset);
+        *entry(destination + offset) = old;
+        old = 0;
+    }
+    discard_empty_tables(*this, source, source + old_size);
+    return true;
+}
+
 bool AddressSpace::prepare_mapping(uint64_t va, size_t len) {
     if (va % page_size || va < page_size || va >= user_limit || len > user_limit - va)
         return false;
-    for (uint64_t offset = 0; offset < len; offset += page_size)
-        if (!entry(va + offset, true))
+    uint64_t end = va + align_up(len);
+    constexpr uint64_t leaf_span = 512 * page_size;
+    for (uint64_t address = va; address < end; address = (address | (leaf_span - 1)) + 1) {
+        if (!entry(address, true)) {
+            if (root)
+                discard_empty_tables(*this, va, end);
             return false;
+        }
+    }
     return true;
 }
 

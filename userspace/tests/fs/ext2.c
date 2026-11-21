@@ -116,6 +116,21 @@ static void long_name(unsigned i, char* path) {
     path[prefix + 236] = 0;
 }
 
+static void symlink_boundary(int create) {
+    for (size_t length = 59; length <= 61; length++) {
+        char path[64], target[62], actual_target[62];
+        snprintf(path, sizeof(path), "%s/link-%zu", volume, length);
+        target[0] = '.';
+        memset(target + 1, '/', length - 6);
+        memcpy(target + length - 5, "final", sizeof("final"));
+        if (create)
+            CHECK(symlink(target, path) == 0);
+        CHECK(readlink(path, actual_target, sizeof(actual_target)) == (ssize_t)length);
+        CHECK(memcmp(actual_target, target, length) == 0);
+        expect(open(path, O_RDONLY), "linked-data");
+    }
+}
+
 static void namespace_tests(void) {
     CHECK(mkdir("/tmp/ext2-volume/a", 0755) == 0);
     CHECK(mkdir("/tmp/ext2-volume/b", 0755) == 0);
@@ -156,6 +171,7 @@ static void namespace_tests(void) {
           (ssize_t)strlen(target));
     CHECK(!strcmp(link_text, target));
     expect(open("/tmp/ext2-volume/long-link", O_RDONLY), "linked-data");
+    symlink_boundary(1);
     CHECK(mkdir("/tmp/ext2-volume/many", 0755) == 0);
     for (unsigned i = 0; i < 192; i++) {
         char path[320];
@@ -289,6 +305,7 @@ static void verify_tests(int readonly_disk) {
     ERROR(open("/tmp/ext2-volume/orphan", O_RDONLY), ENOENT);
     expect(open("/tmp/ext2-volume/short-link", O_RDONLY), "linked-data");
     expect(open("/tmp/ext2-volume/long-link", O_RDONLY), "linked-data");
+    symlink_boundary(0);
     int fd = open("/tmp/ext2-volume/pattern", O_RDONLY);
     CHECK(fd >= 0 && fstat(fd, &info) == 0 && (uint64_t)info.st_size == 37 + pattern_length);
     pattern(fd, 0, pattern_length, 37);
@@ -474,6 +491,37 @@ static void full_tests(void) {
     puts("EXT2_FULL_VOLUME_PASS");
 }
 
+static void cache_tests(void) {
+    CHECK(mount("/dev/vda", volume, "ext2", MS_RDONLY, NULL) == 0);
+    int root = open(volume, O_RDONLY | O_DIRECTORY);
+    CHECK(root >= 0);
+    int held = openat(root, "seed.txt", O_RDONLY);
+    struct stat seed, status;
+    CHECK(held >= 0 && fstat(held, &seed) == 0 && seed.st_nlink == 2);
+    CHECK(fstatat(root, "seed-alias", &status, 0) == 0 && status.st_ino == seed.st_ino);
+    const unsigned groups = 384, files_per_group = 192;
+    for (unsigned pass = 0; pass < 2; pass++) {
+        for (unsigned group = 0; group < groups; group++) {
+            char name[24];
+            snprintf(name, sizeof(name), "group-%02u", group);
+            int directory = openat(root, name, O_RDONLY | O_DIRECTORY);
+            CHECK(directory >= 0);
+            for (unsigned file = 0; file < files_per_group; file++) {
+                snprintf(name, sizeof(name), "file-%03u", file);
+                CHECK(fstatat(directory, name, &status, AT_SYMLINK_NOFOLLOW) == 0 &&
+                      S_ISREG(status.st_mode) && status.st_size == 0);
+            }
+            CHECK(close(directory) == 0);
+        }
+    }
+    CHECK(fstatat(root, "seed-alias", &status, 0) == 0 && status.st_ino == seed.st_ino &&
+          status.st_nlink == seed.st_nlink);
+    CHECK(fstat(held, &status) == 0 && status.st_ino == seed.st_ino);
+    expect(held, "host-created seed\n");
+    CHECK(close(root) == 0 && umount(volume) == 0);
+    printf("EXT2_CACHE_PASS entries=%u scans=2\n", groups * files_per_group);
+}
+
 int main(int argc, char** argv) {
     CHECK(argc == 2 && mkdir(volume, 0755) == 0);
     const char* phase = argv[1];
@@ -491,6 +539,8 @@ int main(int argc, char** argv) {
         recovery_tests();
     else if (!strcmp(phase, "full"))
         full_tests();
+    else if (!strcmp(phase, "cache"))
+        cache_tests();
     else
         CHECK(0);
     printf("EXT2_PHASE_PASS phase=%s\n", phase);

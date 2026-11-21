@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /**
  * @file    userspace/tests/fs/legacy-ata.c
- * @brief   Exercise ATA block nodes and a persistent ATA root.
+ * @brief   Exercise ATA and SATA block nodes and persistent roots.
  * @author  frankischilling
  * @date    2026-11-21
  *
@@ -76,12 +76,21 @@ static int check_faults(int fd) {
 
 static int check_data(void) {
     struct stat st;
-    if (stat("/dev/sdc", &st) != -1 || errno != ENOENT)
+#ifdef AXIOM64_AHCI_TEST
+    const char* absent = "/dev/sdd";
+    const char* secondary_name = "/dev/sdc";
+    const unsigned secondary_minor = 32;
+#else
+    const char* absent = "/dev/sdc";
+    const char* secondary_name = "/dev/sdd";
+    const unsigned secondary_minor = 48;
+#endif
+    if (stat(absent, &st) != -1 || errno != ENOENT)
         return -1;
     int primary = block("/dev/sda", 8, 0, 8192 * sector);
     int partition = block("/dev/sda1", 8, 1, 4096 * sector);
     int slave = block("/dev/sdb", 8, 16, boundary + 64 * sector);
-    int secondary = block("/dev/sdd", 8, 48, 4096 * sector);
+    int secondary = block(secondary_name, 8, secondary_minor, 4096 * sector);
     int virtio = block("/dev/vda", 252, 0, 4096 * sector);
     char buffer[2 * sector];
     if (primary < 0 || partition < 0 || slave < 0 || secondary < 0 || virtio < 0 ||
@@ -91,6 +100,19 @@ static int check_data(void) {
         return -1;
     if (check_faults(primary))
         return -1;
+#ifdef AXIOM64_AHCI_TEST
+    unsigned char many[33 * sector];
+    memset(many, 0xa7, sizeof(many));
+    if (pwrite(secondary, many, sizeof(many), 128 * sector) != sizeof(many) || fsync(secondary))
+        return -1;
+    memset(many, 0, sizeof(many));
+    if (pread(secondary, many, sizeof(many), 128 * sector) != sizeof(many))
+        return -1;
+    for (size_t i = 0; i < sizeof(many); ++i)
+        if (many[i] != 0xa7)
+            return -1;
+    puts("AHCI_MULTISECTOR_PASS");
+#endif
     if (pwrite(partition, payload, sizeof(payload), 3) != sizeof(payload) || fsync(partition) ||
         pread(primary, buffer, sizeof(payload), 2048 * sector + 3) != sizeof(payload) ||
         memcmp(buffer, payload, sizeof(payload)))
@@ -119,6 +141,22 @@ static int check_data(void) {
 }
 
 static int check_root(void) {
+#ifdef AXIOM64_AHCI_TEST
+    char probe[8];
+    int first = open("/dev/sda", O_RDONLY);
+    if (first < 0)
+        return -1;
+    ssize_t length = pread(first, probe, sizeof(probe), 0);
+    if (close(first) || length != sizeof(probe))
+        return -1;
+    if (!memcmp(probe, "PATA-MIX", sizeof(probe))) {
+        struct stat st;
+        if (stat("/dev/sdb1", &st) || !S_ISBLK(st.st_mode) || major(st.st_rdev) != 8 ||
+            minor(st.st_rdev) != 17)
+            return -1;
+        puts("AHCI_MIXED_NAMES_PASS");
+    }
+#endif
     char buffer[sizeof(payload)] = {0};
     int fd = open("/ata-written", O_WRONLY | O_CREAT | O_EXCL, 0600);
     if (fd >= 0) {

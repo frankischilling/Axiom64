@@ -29,6 +29,17 @@ python3 -B scripts/legacy_ata_test.py
 '''
 
 [[step]]
+suites = ["ahci"]
+name = "Verify AHCI command encoding, SATA DMA and persistent root boot"
+run = '''
+mkdir -p build
+g++ -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
+  -Ikernel/include kernel/tests/drivers/block/ahci.cpp -o build/ahci-command-test
+build/ahci-command-test
+python3 -B scripts/legacy_ata_test.py --ahci --output build/ahci-test
+'''
+
+[[step]]
 suites = ["floppy"]
 name = "Test floppy DMA, write protection, and media changes"
 run = '''

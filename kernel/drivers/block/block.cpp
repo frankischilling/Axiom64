@@ -5,7 +5,7 @@
  * @author  frankischilling
  * @date    2026-11-18
  *
- * Discovers virtio and ATA disks, translates partition I/O, and maintains
+ * Discovers virtio, ATA, AHCI and floppy disks, translates partition I/O, and maintains
  * volume claims and caches.
  *
  * Copyright (C) 2026 frankischilling
@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/block/block.hpp"
+#include "drivers/block/ahci.hpp"
 #include "drivers/block/ata.hpp"
 #include "drivers/block/cache.hpp"
 #include "drivers/block/floppy.hpp"
@@ -33,9 +34,12 @@
 
 namespace ax {
 namespace {
-constexpr unsigned virtio_slots = 8, floppy_first = virtio_slots + ata_device_slots;
+constexpr unsigned virtio_slots = 8, ahci_first = virtio_slots + ata_device_slots;
+constexpr unsigned floppy_first = ahci_first + ahci_device_slots;
 constexpr unsigned max_disks = floppy_first + floppy_slots;
 constexpr unsigned transfer_sectors = 32;
+static_assert(transfer_sectors <= ahci_transfer_sectors);
+static_assert(ata_device_slots + ahci_device_slots <= 16);
 constexpr uint64_t feature_ro = 1ull << 5, feature_flush = 1ull << 9;
 
 struct Request {
@@ -60,6 +64,7 @@ struct Disk {
     PartitionTable partitions;
     Volume* claims = nullptr;
     bool live = false;
+    unsigned sd_letter = 0;
     uint64_t request_physical = 0;
     Request* request = nullptr;
     uint8_t* data = nullptr;
@@ -69,6 +74,7 @@ struct Disk {
 // Failed attachments retain their ownership records rather than reusing a slot.
 static Disk candidates[virtio_slots];
 static Disk ata_disks[ata_device_slots];
+static Disk ahci_disks[ahci_device_slots];
 static Disk floppy_disks[floppy_slots];
 static Disk* disks[max_disks];
 static unsigned disk_count, attempts;
@@ -173,7 +179,12 @@ static Disk* disk_for(unsigned device) {
 
 static bool is_ata(unsigned device) {
     const unsigned slot = device % max_disks;
-    return slot >= virtio_slots && slot < floppy_first;
+    return slot >= virtio_slots && slot < ahci_first;
+}
+
+static bool is_ahci(unsigned device) {
+    const unsigned slot = device % max_disks;
+    return slot >= ahci_first && slot < floppy_first;
 }
 
 static Volume* volume_for(unsigned device) {
@@ -209,6 +220,10 @@ static int transfer(unsigned device, uint64_t sector, void* buffer, size_t count
         if (is_ata(device)) {
             if (int result =
                     ata_transfer(device % max_disks - virtio_slots, sector, bytes, sectors, write))
+                return result;
+        } else if (is_ahci(device)) {
+            if (int result =
+                    ahci_transfer(device % max_disks - ahci_first, sector, bytes, sectors, write))
                 return result;
         } else {
             if (write)
@@ -254,13 +269,29 @@ static bool same_id(const char* left, const char* right) {
 void block_init() {
     pci_scan(discover);
     ata_init();
+    ahci_init();
     floppy_init();
+    unsigned assigned = 0;
     for (unsigned slot = 0; slot < ata_device_slots; ++slot) {
         if (const auto* info = ata_info(slot)) {
             auto& disk = ata_disks[slot];
             disk.volumes[0].info = *info;
             disk.live = true;
+            disk.sd_letter = slot;
+            assigned |= 1u << slot;
             disks[virtio_slots + slot] = &disk;
+        }
+    }
+    unsigned letter = 0;
+    for (unsigned slot = 0; slot < ahci_device_slots; ++slot) {
+        if (const auto* info = ahci_info(slot)) {
+            while (assigned & (1u << letter))
+                ++letter;
+            auto& disk = ahci_disks[slot];
+            disk.volumes[0].info = *info;
+            disk.live = true;
+            disk.sd_letter = letter++;
+            disks[ahci_first + slot] = &disk;
         }
     }
     for (unsigned i = 0; i < floppy_first; i++) {
@@ -306,8 +337,9 @@ void block_device_name(unsigned device, char (&name)[block_name_size]) {
         name[7] += disk - floppy_first;
         return;
     }
-    memcpy(name, is_ata(device) ? "/dev/sda" : "/dev/vda", sizeof("/dev/vda"));
-    name[7] += is_ata(device) ? disk - virtio_slots : disk;
+    const bool sd = disk >= virtio_slots;
+    memcpy(name, sd ? "/dev/sda" : "/dev/vda", sizeof("/dev/vda"));
+    name[7] += sd ? disks[disk]->sd_letter : disk;
     unsigned part = device / max_disks, at = 8;
     if (part >= 100)
         name[at++] = '0' + part / 100;
@@ -323,8 +355,8 @@ uint64_t block_device_number(unsigned device) {
     if (disk >= floppy_first)
         return 0x200 | (disk - floppy_first);
     if (part < 16)
-        return is_ata(device) ? 0x800 | ((disk - virtio_slots) * 16 + part)
-                              : 0xfc00 | (disk * 16 + part);
+        return disk >= virtio_slots ? 0x800 | (disks[disk]->sd_letter * 16 + part)
+                                    : 0xfc00 | (disk * 16 + part);
     uint64_t minor = disk * max_partitions + part - 16;
     return (259 << 8) | (minor & 255) | ((minor & ~uint64_t(255)) << 12);
 }
@@ -355,9 +387,9 @@ int block_find(const char* selection) {
 
     if (length < 8 || length >= block_name_size || selection[8] == '0')
         return -19;
-    bool ata = !memcmp(selection, "/dev/sd", 7);
-    if ((!ata && memcmp(selection, "/dev/vd", 7)) || selection[7] < 'a' ||
-        selection[7] >= 'a' + int(ata ? ata_device_slots : virtio_slots))
+    bool sd = !memcmp(selection, "/dev/sd", 7);
+    if ((!sd && memcmp(selection, "/dev/vd", 7)) || selection[7] < 'a' ||
+        selection[7] >= 'a' + int(sd ? ata_device_slots + ahci_device_slots : virtio_slots))
         return -19;
     unsigned part = 0;
     for (size_t i = 8; i < length; i++) {
@@ -367,7 +399,13 @@ int block_find(const char* selection) {
     }
     if (part > max_partitions)
         return -19;
-    return selection[7] - 'a' + (ata ? virtio_slots : 0) + part * max_disks;
+    const unsigned letter = selection[7] - 'a';
+    if (!sd)
+        return letter + part * max_disks;
+    for (unsigned disk = virtio_slots; disk < floppy_first; ++disk)
+        if (disks[disk] && disks[disk]->sd_letter == letter)
+            return disk + part * max_disks;
+    return -19;
 }
 
 int block_read(unsigned device, uint64_t sector, void* data, size_t count) {
@@ -471,6 +509,8 @@ int block_flush(unsigned device) {
         return 0; // Floppy writes are synchronous. Virtio without FLUSH is writethrough.
     if (is_ata(device))
         return ata_flush(device % max_disks - virtio_slots);
+    if (is_ahci(device))
+        return ahci_flush(device % max_disks - ahci_first);
     return request(d, 4, 0, 0);
 }
 } // namespace ax

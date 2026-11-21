@@ -1247,8 +1247,8 @@
       "id": "F17",
       "title": "AHCI, NVMe, and other storage devices",
       "milestone": "M6",
-      "state": "planned",
-      "current": "The guest currently has no disk-controller drivers.",
+      "state": "partial",
+      "current": "AHCI SATA disks support polled DMA, cache flush, failed I/O recovery, and ext2 roots in BIOS and UEFI QEMU guests. Legacy ATA compatibility and 1.44 MB floppy devices also work. RAID-mode discovery, controller quirks, NVMe, SCSI, ATAPI, USB storage, hotplug, and physical hardware verification remain open.",
       "scope": [
         "AHCI/SATA, including controller quirks and appropriate RAID-mode discovery",
         "NVMe queues, namespaces, resets, and transfer limits",
@@ -1267,7 +1267,14 @@
         "F03",
         "F19"
       ],
-      "evidence": [],
+      "evidence": [
+        "kernel/drivers/block/ahci.cpp",
+        "kernel/drivers/block/ata.cpp",
+        "kernel/drivers/block/floppy.cpp",
+        "kernel/tests/drivers/block/ahci.cpp",
+        "scripts/legacy_ata_test.py",
+        "docs/storage.md"
+      ],
       "branch": "feature/f17-ahci-nvme-and-other-storage-devices",
       "issue": "https://github.com/frankischilling/Axiom64/issues/17"
     },

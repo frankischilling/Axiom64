@@ -26,11 +26,13 @@
 #include "core/time.hpp"
 #include "drivers/block/ahci_command.hpp"
 #include "drivers/block/ata_identity.hpp"
+#include "drivers/block/poll.hpp"
 #include "drivers/platform/pci.hpp"
 #include "mm/dma.hpp"
 
 namespace ax {
 namespace {
+using BlockPoll::wait;
 constexpr unsigned host_control = 1, host_status = 2, implemented = 3, version = 4;
 constexpr unsigned capabilities2 = 9, ownership = 10;
 constexpr uint32_t ahci_enable = 1u << 31, host_reset = 1;
@@ -75,28 +77,6 @@ struct Port {
 
 Port devices[ahci_device_slots]{};
 unsigned count_devices;
-
-template <typename Ready> bool wait(Ready ready, unsigned timeout_ticks) {
-    clock_refresh();
-    const uint64_t started = ticks;
-    uint64_t last_tick = started;
-    unsigned stagnant = 0;
-    for (uint64_t spins = 0;; ++spins) {
-        if (ready())
-            return true;
-        if ((spins & 255) == 255) {
-            clock_refresh();
-            if (ticks - started >= timeout_ticks)
-                return false;
-            if (ticks != last_tick) {
-                last_tick = ticks;
-                stagnant = 0;
-            } else if (++stagnant == 100000)
-                return false;
-        }
-        asm volatile("pause");
-    }
-}
 
 bool connected(const Port& port) {
     return (port.read(link_status) & 0xf0f) == 0x103;

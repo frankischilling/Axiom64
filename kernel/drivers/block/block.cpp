@@ -5,7 +5,7 @@
  * @author  frankischilling
  * @date    2026-11-18
  *
- * Discovers virtio, ATA, AHCI and floppy disks, translates partition I/O, and maintains
+ * Discovers virtio, ATA, AHCI, NVMe and floppy disks, translates partition I/O, and maintains
  * volume claims and caches.
  *
  * Copyright (C) 2026 frankischilling
@@ -28,6 +28,7 @@
 #include "drivers/block/ata.hpp"
 #include "drivers/block/cache.hpp"
 #include "drivers/block/floppy.hpp"
+#include "drivers/block/nvme.hpp"
 #include "drivers/block/partition.hpp"
 #include "drivers/virtio/pci.hpp"
 #include "mm/dma.hpp"
@@ -35,7 +36,8 @@
 namespace ax {
 namespace {
 constexpr unsigned virtio_slots = 8, ahci_first = virtio_slots + ata_device_slots;
-constexpr unsigned floppy_first = ahci_first + ahci_device_slots;
+constexpr unsigned nvme_first = ahci_first + ahci_device_slots;
+constexpr unsigned floppy_first = nvme_first + nvme_device_slots;
 constexpr unsigned max_disks = floppy_first + floppy_slots;
 constexpr unsigned transfer_sectors = 32;
 static_assert(transfer_sectors <= ahci_transfer_sectors);
@@ -75,6 +77,7 @@ struct Disk {
 static Disk candidates[virtio_slots];
 static Disk ata_disks[ata_device_slots];
 static Disk ahci_disks[ahci_device_slots];
+static Disk nvme_disks[nvme_device_slots];
 static Disk floppy_disks[floppy_slots];
 static Disk* disks[max_disks];
 static unsigned disk_count, attempts;
@@ -184,7 +187,12 @@ static bool is_ata(unsigned device) {
 
 static bool is_ahci(unsigned device) {
     const unsigned slot = device % max_disks;
-    return slot >= ahci_first && slot < floppy_first;
+    return slot >= ahci_first && slot < nvme_first;
+}
+
+static bool is_nvme(unsigned device) {
+    const unsigned slot = device % max_disks;
+    return slot >= nvme_first && slot < floppy_first;
 }
 
 static Volume* volume_for(unsigned device) {
@@ -214,6 +222,8 @@ static int transfer(unsigned device, uint64_t sector, void* buffer, size_t count
     sector += volume->start;
     if (device % max_disks >= floppy_first)
         return floppy_transfer(device % max_disks - floppy_first, sector, buffer, count, write);
+    if (is_nvme(device))
+        return nvme_transfer(device % max_disks - nvme_first, sector, buffer, count, write);
     auto bytes = (uint8_t*)buffer;
     while (count) {
         size_t sectors = min(count, size_t(transfer_sectors)), length = sectors * sector_size;
@@ -264,12 +274,39 @@ static bool same_id(const char* left, const char* right) {
     }
     return !*left && !*right;
 }
+
+static unsigned decimal(char* name, unsigned value) {
+    char digits[10];
+    unsigned count = 0;
+    do {
+        digits[count++] = '0' + value % 10;
+        value /= 10;
+    } while (value);
+    for (unsigned i = 0; i < count; ++i)
+        name[i] = digits[count - i - 1];
+    return count;
+}
+
+static int partition_suffix(const char* text) {
+    if (*text == '0')
+        return -19;
+    unsigned number = 0;
+    for (; *text; ++text) {
+        if (*text < '0' || *text > '9')
+            return -19;
+        number = number * 10 + unsigned(*text - '0');
+        if (number > max_partitions)
+            return -19;
+    }
+    return number;
+}
 } // namespace
 
 void block_init() {
     pci_scan(discover);
     ata_init();
     ahci_init();
+    nvme_init();
     floppy_init();
     unsigned assigned = 0;
     for (unsigned slot = 0; slot < ata_device_slots; ++slot) {
@@ -292,6 +329,14 @@ void block_init() {
             disk.live = true;
             disk.sd_letter = letter++;
             disks[ahci_first + slot] = &disk;
+        }
+    }
+    for (unsigned slot = 0; slot < nvme_device_slots; ++slot) {
+        if (const auto* info = nvme_info(slot)) {
+            auto& disk = nvme_disks[slot];
+            disk.volumes[0].info = *info;
+            disk.live = true;
+            disks[nvme_first + slot] = &disk;
         }
     }
     for (unsigned i = 0; i < floppy_first; i++) {
@@ -321,6 +366,10 @@ void block_init() {
     }
 }
 
+int block_shutdown() {
+    return nvme_shutdown();
+}
+
 const BlockInfo* block_info(unsigned device) {
     auto volume = volume_for(device);
     return volume ? &volume->info : nullptr;
@@ -337,16 +386,23 @@ void block_device_name(unsigned device, char (&name)[block_name_size]) {
         name[7] += disk - floppy_first;
         return;
     }
-    const bool sd = disk >= virtio_slots;
-    memcpy(name, sd ? "/dev/sda" : "/dev/vda", sizeof("/dev/vda"));
-    name[7] += sd ? disks[disk]->sd_letter : disk;
-    unsigned part = device / max_disks, at = 8;
-    if (part >= 100)
-        name[at++] = '0' + part / 100;
-    if (part >= 10)
-        name[at++] = '0' + part / 10 % 10;
+    const unsigned part = device / max_disks;
+    unsigned at = 8;
+    if (is_nvme(device)) {
+        const auto address = nvme_address(disk - nvme_first);
+        memcpy(name, "/dev/nvme", 9);
+        at = 9 + decimal(name + 9, address.controller);
+        name[at++] = 'n';
+        at += decimal(name + at, address.nsid);
+        if (part)
+            name[at++] = 'p';
+    } else {
+        const bool sd = disk >= virtio_slots;
+        memcpy(name, sd ? "/dev/sda" : "/dev/vda", sizeof("/dev/vda"));
+        name[7] += sd ? disks[disk]->sd_letter : disk;
+    }
     if (part)
-        name[at++] = '0' + part % 10;
+        at += decimal(name + at, part);
     name[at] = 0;
 }
 
@@ -354,10 +410,11 @@ uint64_t block_device_number(unsigned device) {
     unsigned disk = device % max_disks, part = device / max_disks;
     if (disk >= floppy_first)
         return 0x200 | (disk - floppy_first);
-    if (part < 16)
+    if (disk < nvme_first && part < 16)
         return disk >= virtio_slots ? 0x800 | (disks[disk]->sd_letter * 16 + part)
                                     : 0xfc00 | (disk * 16 + part);
-    uint64_t minor = disk * max_partitions + part - 16;
+    uint64_t minor =
+        disk >= nvme_first ? disk * (max_partitions + 1) + part : disk * max_partitions + part - 16;
     return (259 << 8) | (minor & 255) | ((minor & ~uint64_t(255)) << 12);
 }
 
@@ -385,24 +442,38 @@ int block_find(const char* selection) {
         return found;
     }
 
-    if (length < 8 || length >= block_name_size || selection[8] == '0')
+    if (length < 8 || length >= block_name_size)
         return -19;
+    if (length >= 9 && !memcmp(selection, "/dev/nvme", 9)) {
+        for (unsigned disk = nvme_first; disk < floppy_first; ++disk) {
+            if (!disks[disk])
+                continue;
+            char name[block_name_size];
+            block_device_name(disk, name);
+            const size_t stem = strlen(name);
+            if (length < stem || memcmp(selection, name, stem))
+                continue;
+            if (length == stem)
+                return disk;
+            if (selection[stem] != 'p' || length == stem + 1)
+                continue;
+            const int part = partition_suffix(selection + stem + 1);
+            if (part > 0)
+                return disk + unsigned(part) * max_disks;
+        }
+        return -19;
+    }
     bool sd = !memcmp(selection, "/dev/sd", 7);
     if ((!sd && memcmp(selection, "/dev/vd", 7)) || selection[7] < 'a' ||
         selection[7] >= 'a' + int(sd ? ata_device_slots + ahci_device_slots : virtio_slots))
         return -19;
-    unsigned part = 0;
-    for (size_t i = 8; i < length; i++) {
-        if (selection[i] < '0' || selection[i] > '9')
-            return -19;
-        part = part * 10 + unsigned(selection[i] - '0');
-    }
-    if (part > max_partitions)
+    const int part = partition_suffix(selection + 8);
+    if (part < 0)
         return -19;
     const unsigned letter = selection[7] - 'a';
     if (!sd)
         return letter + part * max_disks;
-    for (unsigned disk = virtio_slots; disk < floppy_first; ++disk)
+    for (unsigned disk = virtio_slots; disk < nvme_first; ++disk)
         if (disks[disk] && disks[disk]->sd_letter == letter)
             return disk + part * max_disks;
     return -19;
@@ -511,6 +582,8 @@ int block_flush(unsigned device) {
         return ata_flush(device % max_disks - virtio_slots);
     if (is_ahci(device))
         return ahci_flush(device % max_disks - ahci_first);
+    if (is_nvme(device))
+        return nvme_flush(device % max_disks - nvme_first);
     return request(d, 4, 0, 0);
 }
 } // namespace ax

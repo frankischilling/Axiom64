@@ -40,6 +40,18 @@ python3 -B scripts/legacy_ata_test.py --ahci --output build/ahci-test
 '''
 
 [[step]]
+suites = ["nvme"]
+name = "Verify NVMe commands, namespaces, error handling and persistent root boot"
+run = '''
+mkdir -p build
+g++ -std=c++20 -O2 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer \
+  -Ikernel/include kernel/tests/drivers/block/nvme.cpp -o build/nvme-command-test
+build/nvme-command-test
+python3 -B scripts/nvme_test.py
+python3 -B scripts/nvme_reset_test.py
+'''
+
+[[step]]
 suites = ["floppy"]
 name = "Test floppy DMA, write protection, and media changes"
 run = '''

@@ -31,6 +31,7 @@ matrix = [
     "legacy-ports",
     "legacy-ata",
     "ahci",
+    "nvme",
     "floppy",
     "network",
     "ipv4-source-filters",

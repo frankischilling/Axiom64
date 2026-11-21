@@ -28,7 +28,7 @@
 
 namespace ax {
 constexpr size_t sector_size = 512;
-constexpr size_t block_name_size = sizeof("/dev/vdh128");
+constexpr size_t block_name_size = sizeof("/dev/nvme3n4294967295p128");
 
 struct BlockInfo {
     uint64_t sectors;
@@ -36,6 +36,7 @@ struct BlockInfo {
 };
 
 void block_init();
+int block_shutdown();
 
 const BlockInfo* block_info(unsigned device);
 

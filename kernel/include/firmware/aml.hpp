@@ -47,6 +47,7 @@ struct PciBridge {
     uint8_t primary, secondary, subordinate, slot, function;
     bool ari;
     bool routing_rejected;
+    bool invalid_primary = false;
 };
 
 struct PciBridges {
@@ -54,6 +55,33 @@ struct PciBridges {
     unsigned count;
     bool overflow;
 };
+
+struct ParentBridge {
+    const PciBridge* bridge = nullptr;
+    bool invalid = false;
+};
+
+inline ParentBridge parent_bridge(const PciBridges& bridges, uint16_t segment, uint8_t bus) {
+    ParentBridge result;
+    for (unsigned i = 0; i < bridges.count; ++i) {
+        const auto& bridge = bridges.entries[i];
+        if (bridge.segment != segment || bridge.secondary != bus)
+            continue;
+        if (result.bridge || bridge.invalid_primary || bridge.primary >= bus ||
+            bridge.subordinate < bus)
+            return {nullptr, true};
+        result.bridge = &bridge;
+    }
+    if (result.bridge)
+        for (unsigned i = 0; i < bridges.count; ++i) {
+            const auto& peer = bridges.entries[i];
+            if (&peer != result.bridge && peer.segment == segment &&
+                peer.primary == result.bridge->primary &&
+                peer.secondary <= result.bridge->subordinate && peer.subordinate >= bus)
+                return {nullptr, true};
+        }
+    return result;
+}
 
 using PciConfigRead = bool (*)(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t function,
                                uint16_t offset, uint8_t width, uint32_t& value);

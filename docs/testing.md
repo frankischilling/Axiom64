@@ -39,6 +39,12 @@ host kernel reports `EBADF` for that case.
 
 The PCI sanitizer checks cover 32-bit and 64-bit memory BARs, port BARs,
 out-of-range register spans, malformed masks, and refused config restoration.
+They also check full containment through nested bridge windows, including
+64-bit prefetchable memory, ISA I/O restrictions, and ambiguous bus ranges.
+The UDP platform tests pass traffic through two Q35 bridges under BIOS and
+UEFI. The bridge fault cases disable memory decode at the upstream port or
+close the inner bridge window. They check that the kernel avoids mapping the
+blocked BAR and that the independent adapter still appears in userspace.
 Use `make test-virtio` to exercise modern and legacy BARs with real disk I/O.
 
 `make test-suite SUITE=mmio` runs the boot-time mapper against simulated

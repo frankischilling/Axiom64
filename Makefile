@@ -929,6 +929,7 @@ test-udp:
 	$(PYTHON) scripts/udp_matrix.py
 	$(PYTHON) scripts/tests/udp_capture_test.py
 	$(PYTHON) scripts/udp_matrix.py --platform
+	$(PYTHON) scripts/pci_bridge_windows_test.py
 
 .PHONY: test-pci-interrupts
 build/pci-interrupt-tests: kernel/tests/drivers/platform/pci_interrupts.cpp kernel/drivers/platform/pci.cpp $(call rwildcard,kernel/include/,*.hpp)

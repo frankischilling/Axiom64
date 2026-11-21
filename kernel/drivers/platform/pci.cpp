@@ -25,6 +25,7 @@
  */
 #include "drivers/platform/pci.hpp"
 #include "boot/boot.hpp"
+#include "drivers/platform/pci_bridge.hpp"
 #include "firmware/acpi.hpp"
 #include "firmware/aml.hpp"
 
@@ -50,6 +51,7 @@ EcamWindow windows[Acpi::Mcfg::max_regions];
 unsigned window_count;
 Acpi::PciPinRoutes pin_routes;
 Acpi::PciBridges bridges;
+bool bridges_discovered;
 uint32_t sci_gsi;
 
 bool ecam_allowed(const Acpi::EcamRegion& region, uint64_t limit) {
@@ -172,10 +174,6 @@ uint8_t PciFunction::find_capability(uint8_t id, unsigned* boundary) const {
         *boundary = next;
     }
     return found;
-}
-
-PciBarStatus PciFunction::probe_bar(unsigned index, PciBarSpace space, PciBar& resource) const {
-    return PciBarProbe::probe(*this, index, space, physical_address_limit(), resource);
 }
 
 bool PciMsi::start(const PciFunction& pci, Irq::Handler handler, void* context) {
@@ -389,7 +387,7 @@ static void record_bridge(const PciFunction& pci) {
         return;
     uint32_t buses = pci.read32(0x18);
     uint8_t secondary = buses >> 8, subordinate = buses >> 16;
-    if (uint8_t(buses) != pci.bus || secondary <= pci.bus || subordinate < secondary)
+    if (!secondary)
         return;
     if (bridges.count == sizeof(bridges.entries) / sizeof(*bridges.entries)) {
         bridges.overflow = true;
@@ -399,8 +397,16 @@ static void record_bridge(const PciFunction& pci) {
     uint8_t express = pci.find_capability(0x10, &boundary);
     bool ari = express && express + 0x2a <= int(boundary) && (pci.read16(express + 2) & 15) >= 2 &&
                (pci.read16(express + 0x28) & (1u << 5));
-    bridges.entries[bridges.count++] = {pci.segment, pci.bus,      secondary, subordinate,
-                                        pci.slot,    pci.function, ari,       false};
+    bridges.entries[bridges.count++] = {pci.segment, pci.bus,  secondary,
+                                        subordinate, pci.slot, pci.function,
+                                        ari,         false,    uint8_t(buses) != pci.bus};
+}
+
+static void discover_bridges() {
+    if (!bridges_discovered) {
+        scan_pci_functions(record_bridge);
+        bridges_discovered = true;
+    }
 }
 
 static bool read_pci_field(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t function,
@@ -436,6 +442,23 @@ static bool read_pci_field(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t 
     return true;
 }
 
+PciBarStatus PciFunction::probe_bar(unsigned index, PciBarSpace space, PciBar& resource) const {
+    PciBar candidate;
+    const auto status =
+        PciBarProbe::probe(*this, index, space, physical_address_limit(), candidate);
+    if (status != PciBarStatus::valid)
+        return status;
+    const bool prefetchable = space == PciBarSpace::memory && (read32(0x10 + index * 4) & 8);
+    if (!PciBridgeWindows::forwards(bridges, segment, bus, space, prefetchable, candidate,
+                                    read_pci_field)) {
+        log("PCI BAR: bridge window rejects segment=%u bus=%u slot=%u function=%u BAR=%u\n",
+            uint64_t(segment), uint64_t(bus), uint64_t(slot), uint64_t(function), uint64_t(index));
+        return PciBarStatus::invalid;
+    }
+    resource = candidate;
+    return PciBarStatus::valid;
+}
+
 static bool has_piix_pirq(const PciFunction& bridge) {
     const uint32_t id = bridge.read32(0);
     return (id == 0x70008086 || id == 0x71108086) && bridge.read16(0x0a) == 0x0601;
@@ -466,9 +489,7 @@ static bool program_link(uint16_t segment, uint8_t bus, uint8_t slot, uint8_t fu
 
 void pci_configure_intx(const Acpi::DefinitionBlocks& blocks, uint32_t sci, uint32_t link_gsis) {
     sci_gsi = sci;
-    bridges.count = 0;
-    bridges.overflow = false;
-    scan_pci_functions(record_bridge);
+    discover_bridges();
     const auto allowed = has_piix_pirq({0, 1, 0, 0, nullptr}) ? link_gsis : 0;
     if (Acpi::decode_pci_pin_routes(blocks, pin_routes, &bridges, read_pci_field,
                                     {program_link, allowed}))
@@ -483,6 +504,7 @@ void pci_configure_intx(const Acpi::DefinitionBlocks& blocks, uint32_t sci, uint
 }
 
 void pci_scan(void (*visit)(const PciFunction&)) {
+    discover_bridges();
     log("PCI: %u functions discovered\n", uint64_t(scan_pci_functions(visit)));
 }
 } // namespace ax

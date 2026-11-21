@@ -24,33 +24,13 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "boot/root.hpp"
+#include "boot/arguments.hpp"
 #include "drivers/block/partition.hpp"
 #include "fs/ext2/ext2.hpp"
 #include "fs/vfs.hpp"
 
 namespace ax {
 namespace {
-static int option(const char* command, const char* key, char* result, size_t capacity) {
-    size_t key_length = strlen(key);
-    bool found = false;
-    for (size_t at = 0; command[at];) {
-        while (command[at] == ' ' || command[at] == '\t')
-            at++;
-        size_t begin = at;
-        while (command[at] && command[at] != ' ' && command[at] != '\t')
-            at++;
-        size_t length = at - begin;
-        if (length < key_length || memcmp(command + begin, key, key_length))
-            continue;
-        if (found || length == key_length || length - key_length >= capacity)
-            return -22;
-        found = true;
-        memcpy(result, command + begin + key_length, length - key_length);
-        result[length - key_length] = 0;
-    }
-    return found ? 1 : 0;
-}
-
 [[noreturn]] static void failure(const char* stage, int error) {
     log("BOOT_ROOT_FAIL stage=%s errno=%d\n", stage, int64_t(-error));
     poweroff(1);
@@ -114,11 +94,11 @@ static void descriptor_links() {
 }
 } // namespace
 
-void boot_root_init(const char* command) {
+void boot_root_init(const BootArguments& arguments, const char* init) {
     char root[sizeof("PARTLABEL=") - 1 + partition_label_size]{}, type[16]{}, flags[32]{};
-    int selected = option(command, "root=", root, sizeof(root));
-    int filesystem = option(command, "rootfstype=", type, sizeof(type));
-    int policy = option(command, "rootflags=", flags, sizeof(flags));
+    int selected = arguments.read("root=", root, sizeof(root));
+    int filesystem = arguments.read("rootfstype=", type, sizeof(type));
+    int policy = arguments.read("rootflags=", flags, sizeof(flags));
     if (selected < 0 || filesystem < 0 || policy < 0)
         failure("configuration", -22);
     if (strlen(root) >= 32 && memcmp(root, "PARTUUID=", 9) && memcmp(root, "PARTLABEL=", 10))
@@ -126,6 +106,7 @@ void boot_root_init(const char* command) {
     if (!selected || !strcmp(root, "ramfs")) {
         if (filesystem || policy)
             failure("configuration", -22);
+        required(init, regular_file, true);
         volatile_mount("/proc");
         ipc_mount("/dev/shm", "ramfs");
         ipc_mount("/dev/mqueue", "mqueue");
@@ -145,7 +126,7 @@ void boot_root_init(const char* command) {
     int error = vfs_disk_root(unsigned(device), readonly, checked);
     if (error)
         failure(root, error);
-    required("/sbin/init", regular_file, true);
+    required(init, regular_file, true);
     required("/bin/busybox", regular_file, true);
     required("/lib/ld-musl-x86_64.so.1", regular_file, true);
     const char* volatile_paths[] = {"/dev", "/proc", "/sys", "/tmp", "/run"};

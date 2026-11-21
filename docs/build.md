@@ -37,6 +37,41 @@ sudo make -C /root/toolchain-test test
 zsh -f
 ```
 
+## Raw disk and network boot
+
+After `make image`, use `scripts/boot_media.py` to package the same kernel and
+initramfs for a raw virtual disk or a TFTP server. Disk packaging uses
+`dosfstools`, `mtools`, and `sfdisk` (`fdisk` on Ubuntu).
+
+```sh
+python3 scripts/boot_media.py disk build/axiom64-boot.raw
+qemu-system-x86_64 -m 2G -serial stdio -boot order=c \
+    -drive file=build/axiom64-boot.raw,format=raw,if=ide,snapshot=on
+
+python3 scripts/boot_media.py pxe build/axiom64-pxe
+qemu-system-x86_64 -m 2G -serial stdio -boot order=n \
+    -device e1000,netdev=pxe \
+    -netdev user,id=pxe,restrict=on,tftp=build/axiom64-pxe,bootfile=limine-bios-pxe.bin
+```
+
+The disk uses GPT with a BIOS boot partition and a FAT32 EFI system partition.
+For UEFI, add OVMF firmware to the QEMU command. Select `BOOTX64.EFI` as the
+network boot file under UEFI. A separate TFTP server must support the `tsize`
+option. The PXE tree stores a gzip-compressed initramfs to reduce transfer size.
+Both media start the guest from its initramfs. Use the normal VM launcher
+to keep accounts and files across boots.
+
+The first Limine module supplies the initramfs. BIOS and UEFI boot logs report
+the module count and initramfs size. PID 1 defaults to `/sbin/init`. Pass
+`--init-path /absolute/path` to `scripts/image.py` or `scripts/boot_media.py`
+to select another executable on the chosen guest root. Duplicate, empty,
+relative, or oversized `init=` values fail before userspace starts.
+
+Run `make test-suite SUITE=secondary-boot` to check all three media in fresh
+BIOS and UEFI guests. The test uses a small initramfs and retains its serial logs,
+boot products, and PXE packet captures under `build/boot-media-test/`. To run it
+again alongside existing results, use `python3 scripts/boot_media_test.py --output build/boot-media-next`.
+
 The example Makefile compiles and runs C and C++ programs, exercises exceptions, threads, synchronization, and the standard library, and checks a rejected C source file. The standalone `build/axiom64.iso` uses a disposable RAM root: directly booting it starts fresh and does not preserve accounts or files. The normal launch commands use the persistent disk described above. [Mounted ext2 data volumes](ext2.md) and [disk-root fixtures](disk-root.md) provide separate storage tests. The initial target is QEMU's emulated PC with PS/2 input and a 1024x768 boot framebuffer.
 
 On the host, `make test-thread-io` runs the focused BIOS/UEFI [blocking I/O tests](io.md#verification-and-limits). `make test-threads` and `make test` include those tests alongside their broader suites.

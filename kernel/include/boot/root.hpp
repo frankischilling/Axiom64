@@ -25,6 +25,7 @@
 #pragma once
 
 namespace ax {
+class BootArguments;
 // Select and validate the root before starting Ring 3 init.
-void boot_root_init(const char* command_line);
+void boot_root_init(const BootArguments& arguments, const char* init);
 } // namespace ax

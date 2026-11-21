@@ -25,6 +25,7 @@
  */
 #include "boot/boot.hpp"
 #include "arch/x86_64/interrupts.hpp"
+#include "boot/arguments.hpp"
 #include "boot/root.hpp"
 #include "drivers/block/block.hpp"
 #include "drivers/platform/devices.hpp"
@@ -33,6 +34,7 @@
 #include "core/time.hpp"
 #include "core/random.hpp"
 #include "firmware/acpi.hpp"
+#include "fs/vfs.hpp"
 
 namespace ax {
 [[gnu::used, gnu::section(".limine_requests_start")]] static volatile uint64_t requests_start[] =
@@ -58,15 +60,6 @@ namespace ax {
 [[gnu::used, gnu::section(".limine_requests_end")]] static volatile uint64_t requests_end[] =
     LIMINE_REQUESTS_END_MARKER;
 
-static bool word(const char* s, const char* match) {
-    size_t len = strlen(match);
-    for (size_t i = 0; s[i]; i++)
-        if ((i == 0 || s[i - 1] == ' ') && !memcmp(s + i, match, len) &&
-            (!s[i + len] || s[i + len] == ' '))
-            return true;
-    return false;
-}
-
 extern "C" [[noreturn]] void kernel_main() {
     asm volatile("cli");
     serial_init();
@@ -74,50 +67,54 @@ extern "C" [[noreturn]] void kernel_main() {
     if (!LIMINE_BASE_REVISION_SUPPORTED(base_revision))
         panic("unsupported boot protocol");
     auto firmware = firmware_request.response;
-    log("Firmware: %s\n",
-        firmware && firmware->firmware_type == LIMINE_FIRMWARE_TYPE_EFI64 ? "UEFI" : "BIOS");
-    const char* cmd = cmdline_request.response ? cmdline_request.response->cmdline : "";
-    test_mode = word(cmd, "test");
-    trace_syscalls = word(cmd, "trace");
-    if (word(cmd, "suite=desktop"))
+    const char* firmware_name = "unknown";
+    if (firmware && firmware->firmware_type == LIMINE_FIRMWARE_TYPE_X86BIOS)
+        firmware_name = "BIOS";
+    if (firmware && firmware->firmware_type == LIMINE_FIRMWARE_TYPE_EFI64)
+        firmware_name = "UEFI";
+    log("Firmware: %s\n", firmware_name);
+    BootArguments arguments(cmdline_request.response ? cmdline_request.response->cmdline : nullptr);
+    test_mode = arguments.has("test");
+    trace_syscalls = arguments.has("trace");
+    if (arguments.has("suite=desktop"))
         test_suite = "AXIOM64_SUITE=desktop";
-    else if (word(cmd, "suite=abi"))
+    else if (arguments.has("suite=abi"))
         test_suite = "AXIOM64_SUITE=abi";
-    else if (word(cmd, "suite=storage"))
+    else if (arguments.has("suite=storage"))
         test_suite = "AXIOM64_SUITE=storage";
-    else if (word(cmd, "suite=ext2"))
+    else if (arguments.has("suite=ext2"))
         test_suite = "AXIOM64_SUITE=ext2";
-    else if (word(cmd, "suite=root"))
+    else if (arguments.has("suite=root"))
         test_suite = "AXIOM64_SUITE=root";
-    else if (word(cmd, "suite=threads"))
+    else if (arguments.has("suite=threads"))
         test_suite = "AXIOM64_SUITE=threads";
-    else if (word(cmd, "suite=network"))
+    else if (arguments.has("suite=network"))
         test_suite = "AXIOM64_SUITE=network";
-    if (word(cmd, "phase=write"))
+    if (arguments.has("phase=write"))
         test_phase = "AXIOM64_PHASE=write";
-    else if (word(cmd, "phase=verify"))
+    else if (arguments.has("phase=verify"))
         test_phase = "AXIOM64_PHASE=verify";
-    else if (word(cmd, "phase=readonly"))
+    else if (arguments.has("phase=readonly"))
         test_phase = "AXIOM64_PHASE=readonly";
-    else if (word(cmd, "phase=error"))
+    else if (arguments.has("phase=error"))
         test_phase = "AXIOM64_PHASE=error";
-    else if (word(cmd, "phase=recovery"))
+    else if (arguments.has("phase=recovery"))
         test_phase = "AXIOM64_PHASE=recovery";
-    else if (word(cmd, "phase=queue"))
+    else if (arguments.has("phase=queue"))
         test_phase = "AXIOM64_PHASE=queue";
-    else if (word(cmd, "phase=invalid"))
+    else if (arguments.has("phase=invalid"))
         test_phase = "AXIOM64_PHASE=invalid";
-    else if (word(cmd, "phase=full"))
+    else if (arguments.has("phase=full"))
         test_phase = "AXIOM64_PHASE=full";
-    else if (word(cmd, "phase=cache"))
+    else if (arguments.has("phase=cache"))
         test_phase = "AXIOM64_PHASE=cache";
-    else if (word(cmd, "phase=cond"))
+    else if (arguments.has("phase=cond"))
         test_phase = "AXIOM64_PHASE=cond";
-    else if (word(cmd, "phase=io"))
+    else if (arguments.has("phase=io"))
         test_phase = "AXIOM64_PHASE=io";
-    else if (word(cmd, "phase=pressure"))
+    else if (arguments.has("phase=pressure"))
         test_phase = "AXIOM64_PHASE=pressure";
-    else if (word(cmd, "phase=mapping-held"))
+    else if (arguments.has("phase=mapping-held"))
         test_phase = "AXIOM64_PHASE=mapping-held";
     memory_init();
     arch_init();
@@ -126,24 +123,33 @@ extern "C" [[noreturn]] void kernel_main() {
     Acpi::DefinitionBlocks definitions;
     bool have_topology = firmware_discover(rsdp, topology, definitions);
     clock_init(rsdp);
-    if (word(cmd, "irq=pic"))
+    if (arguments.has("irq=pic"))
         log("Interrupts: PIC/PIT selected by boot option\n");
     else if (have_topology)
         interrupt_init_apic(topology);
     else
         log("Interrupts: PIC/PIT fallback, no validated MADT\n");
     firmware_configure_pci_interrupts(rsdp, topology, definitions);
-    random_init(!word(cmd, "random.trust_cpu=off"), word(cmd, "random.trust_virtio=on"));
+    random_init(!arguments.has("random.trust_cpu=off"), arguments.has("random.trust_virtio=on"));
     auto modules = module_request.response;
-    if (!modules || !modules->module_count)
+    if (!modules || !modules->module_count || !modules->modules || !modules->modules[0])
         panic("missing root filesystem");
-    vfs_init(modules->modules[0]->address, modules->modules[0]->size);
+    const auto* initramfs = modules->modules[0];
+    if (!initramfs->address || !initramfs->size)
+        panic("empty root filesystem module");
+    log("Boot modules: count=%u initramfs_bytes=%u\n", modules->module_count, initramfs->size);
+    char init[sizeof(Path::text)] = "/sbin/init";
+    if (arguments.read("init=", init, sizeof(init)) < 0 || init[0] != '/') {
+        log("BOOT_INIT_FAIL stage=configuration errno=22\n");
+        poweroff(1);
+    }
+    vfs_init(initramfs->address, initramfs->size);
     block_init();
-    boot_root_init(cmd);
+    boot_root_init(arguments, init);
     devices_init();
     net_init();
     log("Entering userspace in Ring 3\n");
-    start_init("/sbin/init");
+    start_init(init);
     __builtin_unreachable();
 }
 } // namespace ax

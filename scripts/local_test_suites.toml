@@ -26,6 +26,7 @@ matrix = [
     "boot",
     "secondary-boot",
     "multiboot",
+    "legacy-ports",
     "network",
     "ipv4-source-filters",
     "ipv6-expiry",

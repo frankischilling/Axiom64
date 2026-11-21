@@ -31,6 +31,8 @@ namespace ax {
 uint64_t ticks;
 static Clock::Counter timeline;
 static volatile uint32_t* hpet_registers;
+static uint32_t hpet_period;
+static uint64_t tsc_per_us;
 static bool use_tsc;
 
 static uint64_t timestamp() {
@@ -80,8 +82,10 @@ static bool initialize_hpet(uint64_t rsdp) {
     bool started = (hpet_registers[0x10 / 4] & 3) == 1 && counter_read(initial);
     for (unsigned spins = 0; started && spins < 10000; spins++) {
         if (counter_read(reading) && reading != initial &&
-            timeline.reset(initial, period, 10000000000000ull))
+            timeline.reset(initial, period, 10000000000000ull)) {
+            hpet_period = period;
             return true;
+        }
         asm volatile("pause");
     }
     hpet_registers[0x10 / 4] = hpet_registers[0x10 / 4] & ~3u;
@@ -121,7 +125,10 @@ static bool initialize_tsc() {
         }
     }
     out8(0x61, speaker);
-    return shortest != UINT64_MAX && timeline.reset(timestamp(), 1, shortest);
+    if (shortest == UINT64_MAX || !timeline.reset(timestamp(), 1, shortest))
+        return false;
+    tsc_per_us = (shortest + 9999) / 10000;
+    return true;
 }
 
 void clock_init(uint64_t rsdp) {
@@ -143,5 +150,32 @@ void clock_refresh(bool timer) {
         ticks = max(ticks, timeline.sample(timestamp()));
     else if (timer && ticks != UINT64_MAX)
         ticks++;
+}
+
+bool clock_delay_us(unsigned microseconds) {
+    uint64_t start;
+    uint64_t counts;
+    if (hpet_registers) {
+        if (!counter_read(start))
+            return false;
+        counts = (uint64_t(microseconds) * 1000000000 + hpet_period - 1) / hpet_period;
+    } else if (use_tsc) {
+        start = timestamp();
+        counts = microseconds * tsc_per_us;
+    } else
+        return false;
+
+    for (unsigned attempt = 0; attempt < 100000; ++attempt) {
+        uint64_t reading;
+        if (hpet_registers) {
+            if (!counter_read(reading))
+                return false;
+        } else
+            reading = timestamp();
+        if (reading - start >= counts)
+            return true;
+        asm volatile("pause");
+    }
+    return false;
 }
 } // namespace ax

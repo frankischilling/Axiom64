@@ -37,6 +37,13 @@ from both chipsets under BIOS and UEFI. The native comparison exercises
 invalid flag handling before descriptor lookup. Use a Linux 7.0 VM if the
 host kernel reports `EBADF` for that case.
 
+`make test-suite SUITE=legacy-ports` boots BIOS and UEFI on i440fx and Q35
+with each combination of UART and printer presence. The fixture checks
+device numbers, unprivileged access, and absence of phantom nodes. It
+exchanges bytes over the serial chardev and compares the printer chardev's
+binary output. The cases cover HPET and calibrated TSC. The harness keeps
+logs and output bytes under `build/legacy-ports/`.
+
 `make test-ipv4-address-lifetimes-guest` runs the finite IPv4 address-control
 client on both Ethernet adapters in eight static/dynamic, BIOS/UEFI and
 modern/legacy PCI profiles. Two workers share immutable images. Original

@@ -23,6 +23,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "boot/boot.hpp"
+#include "drivers/platform/legacy_io.hpp"
 #include "limine.h"
 
 namespace ax {

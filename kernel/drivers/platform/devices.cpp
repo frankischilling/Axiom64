@@ -24,6 +24,7 @@
  * along with this program. If not, see <https://gnu.org/licenses/>.
  */
 #include "drivers/platform/devices.hpp"
+#include "drivers/platform/legacy_io.hpp"
 #include "drivers/block/block.hpp"
 #include "boot/boot.hpp"
 #include "process/signals.hpp"
@@ -230,7 +231,7 @@ static void tag(const char* path, Device type, unsigned id = 0) {
     n->device = type;
     n->device_id = id;
     if (type == Device::serial || type == Device::vt || type == Device::keyboard ||
-        type == Device::mouse || type == Device::framebuffer) {
+        type == Device::mouse || type == Device::framebuffer || type == Device::parallel) {
         n->mode = character | 0600;
         n->uid = n->gid = 0;
     }
@@ -287,7 +288,12 @@ void devices_init() {
     }
     tag("/dev/console", Device::serial, 0x501);
     tag("/dev/tty", Device::tty);
-    tag("/dev/ttyS0", Device::serial, 0x440);
+    if (serial_present())
+        tag("/dev/ttyS0", Device::serial, 0x440);
+    if (parallel_init()) {
+        tag("/dev/lp0", Device::parallel);
+        log("ISA: parallel printer at 0x378\n");
+    }
     tag("/dev/null", Device::null);
     tag("/dev/zero", Device::zero);
     tag("/dev/full", Device::full);
@@ -344,6 +350,8 @@ uint64_t device_number(Node* node) {
         return block_device_number(node->device_id);
     case Device::serial:
         return node->device_id;
+    case Device::parallel:
+        return 0x600;
     case Device::tty:
         return 0x500;
     case Device::vt:
@@ -618,6 +626,8 @@ int64_t device_read(Handle* h, void* data, size_t len) {
     case Device::tty:
     case Device::vt:
         return terminal_read(console_input, console_terminal, data, len);
+    case Device::parallel:
+        return -22;
     default:
         return -19;
     }
@@ -626,6 +636,8 @@ int64_t device_read(Handle* h, void* data, size_t len) {
 int64_t device_write(Handle* h, const void* data, size_t len) {
     if (h->node->device == Device::block)
         return block_bytes(h, const_cast<void*>(data), len, true);
+    if (h->node->device == Device::parallel)
+        return parallel_write(data, len);
     auto bytes = (const uint8_t*)data;
     if (h->pty) {
         auto p = h->pty;
@@ -656,8 +668,10 @@ int64_t device_write(Handle* h, const void* data, size_t len) {
     }
     if (h->node->device == Device::serial || h->node->device == Device::tty ||
         h->node->device == Device::vt) {
-        for (size_t i = 0; i < len; i++)
-            putchar(bytes[i]);
+        if (serial_present())
+            for (size_t i = 0; i < len; i++)
+                if (!serial_put(bytes[i]))
+                    return i ? int64_t(i) : -5;
         return len;
     }
     return -19;
